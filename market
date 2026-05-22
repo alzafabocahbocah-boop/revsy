@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.174"
-local VERSION_DATE = "v8.174: Auto-Start POLLING watchdog (cek tiap 2s, max 2 menit) + VERBOSE state diagnostic di console biar tau persis kenapa gak fire. Fire begitu autoStart=ON + rules + not running. Plus FALLBACK recover dari state file kalo BH.autoStart nil."
+local VERSION = "8.175"
+local VERSION_DATE = "v8.175: 🐛 CRITICAL FIX — global `ReplicatedStorage` di-replace ke `RS` (variable yg dideklarasi). User's executor gak punya ReplicatedStorage global → nil → script crash di line 8692 (auto-accept gift hook) DAN beberapa lokasi lain. Crash bikin auto-start watchdog gak ke-reach."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -4344,10 +4344,10 @@ pcall(function()
     end
 end)
 
--- v8.106: AGGRESSIVE FALLBACK — scan SEMUA RemoteEvent/RemoteFunction di ReplicatedStorage
+-- v8.106: AGGRESSIVE FALLBACK — scan SEMUA RemoteEvent/RemoteFunction di RS
 -- yang namanya mengandung "remove" atau "unlist" or "delete" + "list"/"item"
 if not removeRE then
-    L("[Init] 🔍 Aggressive scan: cari removeRE di seluruh ReplicatedStorage...")
+    L("[Init] 🔍 Aggressive scan: cari removeRE di seluruh RS...")
     local candidates = {}
     local function scanFolder(obj, depth)
         if depth > 6 then return end
@@ -8061,9 +8061,9 @@ L("  - Inventory capacity")
     -- Resolve remotes
     local fetchHistRE, addHistRE
     pcall(function()
-        local Booths = ReplicatedStorage:WaitForChild("GameEvents", 5)
-            and ReplicatedStorage.GameEvents:WaitForChild("TradeEvents", 5)
-            and ReplicatedStorage.GameEvents.TradeEvents:WaitForChild("Booths", 5)
+        local Booths = RS:WaitForChild("GameEvents", 5)
+            and RS.GameEvents:WaitForChild("TradeEvents", 5)
+            and RS.GameEvents.TradeEvents:WaitForChild("Booths", 5)
         if Booths then
             fetchHistRE = Booths:WaitForChild("FetchHistory", 5)
             addHistRE = Booths:WaitForChild("AddToHistory", 5)
@@ -8074,7 +8074,7 @@ L("  - Inventory capacity")
     -- Scan PetRegistry untuk picker modal
     local allPetTypes = {}
     pcall(function()
-        local data = ReplicatedStorage:FindFirstChild("Data")
+        local data = RS:FindFirstChild("Data")
         local petReg = data and data:FindFirstChild("PetRegistry")
         local petList = petReg and petReg:FindFirstChild("PetList")
         if petList then
@@ -8092,7 +8092,7 @@ L("  - Inventory capacity")
             end
         end
         for _, alt in ipairs({"PetData", "Pets", "PetTypes"}) do
-            local f = ReplicatedStorage:FindFirstChild(alt)
+            local f = RS:FindFirstChild(alt)
             if f then
                 for _, c in ipairs(f:GetChildren()) do
                     if c:IsA("ModuleScript") or c:IsA("Folder") then
@@ -8689,7 +8689,7 @@ BH.buildGardenPanel = function()
     -- Trade: SendRequest(tradeID, sender, ts) -> RespondRequest(tradeID, true) + spam Accept button
     task.spawn(function()
         task.wait(1)
-        local ge = ReplicatedStorage:FindFirstChild("GameEvents")
+        local ge = RS:FindFirstChild("GameEvents")
         if not ge then L("[AutoAccept] no GameEvents"); return end
 
         -- ===== GIFT =====
