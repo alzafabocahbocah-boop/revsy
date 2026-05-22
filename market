@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.165"
-local VERSION_DATE = "v8.165: Auto-Start COOLDOWN watchdog — hapus firedThisSession (yg bikin stuck setelah fire pertama). Sekarang cooldown 15s: re-fire kalo autoStart ON + rules + not running + >15s sejak fire terakhir. Aman dari toggle race + bisa re-fire continuous."
+local VERSION = "8.166"
+local VERSION_DATE = "v8.166: AGGRESSIVE auto-start diagnostic — log every check tiap 5s biar tau persis kenapa skip (no rules / autoStart OFF / cooldown / etc)"
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -9639,7 +9639,7 @@ task.spawn(function()
 end)
 
 -- v8.48: AUTO-START
--- v8.165: cooldown-based — re-fire setelah 15s sejak fire terakhir kalo listing stop
+-- v8.166: aggressive diagnostic — log every check biar tau persis di mana stuck
 L("🚀 [Auto-Start] spawning watchdog...")
 task.spawn(function()
     L("🚀 [Auto-Start] watchdog task entered, waiting 4s...")
@@ -9650,26 +9650,37 @@ task.spawn(function()
     local checkCount = 0
     while gui.Parent do
         checkCount = checkCount + 1
-        -- Diagnostic log tiap 6 check (~30s)
-        if checkCount % 6 == 0 then
-            L(string.format("🚀 [Auto-Start] check #%d — autoStart=%s, rules=%d, running=%s, cooldown_left=%ds",
-                checkCount, tostring(BH.autoStart), #listingRules, tostring(isRunning),
-                math.max(0, 15 - math.floor(tick() - lastFireTime))))
-        end
+        local cooldownLeft = math.max(0, 15 - math.floor(tick() - lastFireTime))
+        -- Diagnostic log EVERY check biar verbose buat debug
+        L(string.format("🚀 [Auto-Start] check #%d — autoStart=%s, rules=%d, running=%s, cooldown_left=%ds",
+            checkCount, tostring(BH.autoStart), #listingRules, tostring(isRunning), cooldownLeft))
         local cooldownOk = (tick() - lastFireTime) > 15
         if BH.autoStart and #listingRules > 0 and not isRunning and cooldownOk then
-            L("🚀 [Auto-Start] FIRING (autoStart=ON, rules="..#listingRules..", sejak last fire="..math.floor(tick()-lastFireTime).."s)")
-            lastFireTime = tick()  -- set SEBELUM fire biar gak race
+            L("🚀 [Auto-Start] ✓ ALL conditions met — FIRING in 2s...")
+            lastFireTime = tick()
             task.wait(2)
             if not isRunning and BH.autoStart then
+                L("🚀 [Auto-Start] calling BH.onStartClick()...")
                 local ok, err = pcall(BH.onStartClick)
                 if ok then
-                    L("🚀 [Auto-Start] onStartClick() called — OK")
+                    L("🚀 [Auto-Start] ✅ onStartClick() returned OK")
+                    task.wait(1)
+                    L("🚀 [Auto-Start] post-fire isRunning="..tostring(isRunning))
                 else
-                    L("✗ [Auto-Start] FAIL: "..tostring(err))
+                    L("✗ [Auto-Start] ❌ onStartClick FAIL: "..tostring(err))
                 end
             else
                 L("🚀 [Auto-Start] aborted fire — running="..tostring(isRunning).." autoStart="..tostring(BH.autoStart))
+            end
+        else
+            -- Detail kenapa skip
+            local why = {}
+            if not BH.autoStart then table.insert(why, "autoStart=OFF") end
+            if #listingRules == 0 then table.insert(why, "no rules") end
+            if isRunning then table.insert(why, "running") end
+            if not cooldownOk then table.insert(why, "cooldown") end
+            if #why > 0 then
+                L("🚀 [Auto-Start]   skip: "..table.concat(why, ", "))
             end
         end
         task.wait(5)
