@@ -2094,7 +2094,7 @@ end)
 local autoRejoinToggle = addToggleRow(rejBody, "Auto Rejoin (interval)", false)
 -- v8.191: Auto-rejoin kalo server <10 players + anti-same-server (compare names)
 BH.autoRejoinLowPopToggle = addToggleRow(rejBody, "Auto-Rejoin server kosong (<10)", false)
-local rejoinBtn = addButtonRow(rejBody, "🔄 REJOIN NOW", C.accent)
+local rejoinBtn = addButtonRow(rejBody, "🔀 HOP NOW", C.accent)
 
 -- v8.127: bind rejoin settings to persist
 BH.bindInput(intervalBox, "rejoinIntervalMin")
@@ -6479,11 +6479,19 @@ task.spawn(function()
     L("⚠ [Auto-Start] timeout (rules tetep kosong selama 60s)")
 end)
 
--- ===== REJOIN =====
+-- ===== REJOIN (HOP NOW) =====
+-- v8.196: tombol HOP NOW = explicit hop ke server lain (bukan Teleport matchmaking)
 rejoinBtn.MouseButton1Click:Connect(function()
-    L("==== REJOIN ====")
-    task.wait(1)
-    pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+    L("==== HOP NOW ====")
+    task.wait(0.5)
+    -- Pakai BH.manualHop yg di-assign setelah hopToBestServer didefine.
+    -- Fallback ke Teleport matchmaking kalo BH.manualHop belum ready (early click).
+    if BH.manualHop then
+        BH.manualHop()
+    else
+        L("⚠ hop function belum ready, fallback Teleport matchmaking")
+        pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+    end
 end)
 
 -- ===== AUTO REJOIN (interval-based) =====
@@ -6775,6 +6783,9 @@ local function hopToBestServer()
 end
 
 hopNowBtn.MouseButton1Click:Connect(function() task.spawn(hopToBestServer) end)
+
+-- v8.196: expose hopToBestServer ke BH supaya tombol HOP NOW (rejoin tab) bisa pakai juga
+BH.manualHop = function() task.spawn(hopToBestServer) end
 
 -- v8.99: ===== HOP SERVER TAB — PLAYER BLACKLIST =====
 -- Auto-hop ke server lain kalo ada player blacklisted di server ini
