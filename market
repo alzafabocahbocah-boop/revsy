@@ -6536,8 +6536,67 @@ end)
         end
     end)
 
+    -- v8.194: Helper fetch server list + pick different server (avoid same JobId)
+    local function fetchAndHop(reasonLabel)
+        local req = (syn and syn.request) or http_request or request
+        if (fluxus and fluxus.request) then req = fluxus.request end
+        if not req then
+            L("⚠ [Low-Pop] no http function, fallback Teleport matchmaking")
+            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+            return
+        end
+        local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
+        local servers
+        pcall(function()
+            local response = req({Url = url, Method = "GET"})
+            local body = response and (response.Body or response.body)
+            if body then
+                local decoded = HttpService:JSONDecode(body)
+                servers = decoded and decoded.data
+            end
+        end)
+        if not servers or #servers == 0 then
+            L("⚠ [Low-Pop] gak dapet server list, fallback Teleport matchmaking")
+            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+            return
+        end
+
+        local current = tostring(game.JobId)
+        local candidates = {}
+        for _, s in ipairs(servers) do
+            -- Filter: bukan current server, ada slot, populasi sehat (≥10)
+            if s.id ~= current and (s.playing or 0) >= 10 and (s.playing or 0) < (s.maxPlayers or 30) then
+                table.insert(candidates, s)
+            end
+        end
+        if #candidates == 0 then
+            -- Relax filter: any non-current server with slot
+            for _, s in ipairs(servers) do
+                if s.id ~= current and (s.playing or 0) < (s.maxPlayers or 30) then
+                    table.insert(candidates, s)
+                end
+            end
+        end
+        if #candidates == 0 then
+            L("⚠ [Low-Pop] gak ada candidate server beda, fallback Teleport")
+            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+            return
+        end
+
+        -- Random pick from top candidates (sorted by closest to 20 players)
+        table.sort(candidates, function(a, b)
+            return math.abs((a.playing or 0) - 20) < math.abs((b.playing or 0) - 20)
+        end)
+        local pool = math.min(10, #candidates)
+        local pick = candidates[math.random(1, pool)]
+        L(string.format("🎯 [Low-Pop] hop ke %s (%d/%d players)", tostring(pick.id):sub(1,12), pick.playing or 0, pick.maxPlayers or 0))
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
+        end)
+    end
+
     -- Watchdog: tunggu 5 menit dulu (biar server kasih kesempatan populate),
-    -- terus cek tiap 30s. Kalo player <10 + toggle ON, rejoin.
+    -- terus cek tiap 30s. Kalo player <10 + toggle ON, hop ke server lain.
     local lastTrigger = 0
     task.spawn(function()
         L("⏰ [Low-Pop] standby 5 menit dulu sebelum cek...")
@@ -6549,10 +6608,10 @@ end)
                 local count = #Players:GetPlayers()
                 if count < 10 and (os.time() - lastTrigger) > 60 then
                     lastTrigger = os.time()
-                    L("🔄 [Low-Pop] server cuma "..count.." players (<10), rejoin...")
+                    L("🔄 [Low-Pop] server cuma "..count.." players (<10), hop server...")
                     saveServerSnapshot("low_pop_"..count)
                     task.wait(1.5)
-                    pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+                    fetchAndHop("low_pop_"..count)
                     return
                 end
             end
@@ -6603,18 +6662,13 @@ end)
         local retries = (prev.retries or 0)
 
         if sameJobId or overlapPct >= 50 then
-            if retries >= 5 then
-                L("⚠ [Same-Server] retry limit (5x) reached, give up")
-                pcall(function() delfile(STATE_FILE) end)
-                return
-            end
-            L("⚠ [Same-Server] same detected (retry "..(retries+1).."/5), rejoin lagi...")
-            -- Update retries counter
-            prev.retries = retries + 1
-            prev.time = os.time()
+            -- v8.195: NO RAPID RETRY — respect 5-min cooldown
+            -- Watchdog akan handle setelah 5 min standby
+            L(string.format("⚠ [Same-Server] same server detected (jobId match: %s). Tunggu watchdog cycle berikutnya (5 min).", tostring(sameJobId)))
+            -- Keep file BUT mark as 'detected' supaya watchdog tau ini server yg pernah ditinggalin
+            prev.retries = (prev.retries or 0) + 1
+            prev.detectedAt = os.time()
             pcall(function() writefile(STATE_FILE, HttpService:JSONEncode(prev)) end)
-            task.wait(2)
-            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
         else
             L("✅ [Same-Server] different server (overlap < 50%), OK")
             pcall(function() delfile(STATE_FILE) end)
