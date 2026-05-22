@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.179"
-local VERSION_DATE = "v8.179: FIX spam auto-start — balik ke ONE-SHOT (fire SEKALI pas script load, gak re-fire). Re-fire setelah listing stop = lewat toggle OFF/ON di MISC (v8.176 handler langsung fire). Aman dari spam loop."
+local VERSION = "8.180"
+local VERSION_DATE = "v8.180: 🐛 FIX over-listing setelah STOP/run ulang — countActiveFromData skrg strip mutation prefix (Frozen Ice Golem→Ice Golem) + KG normalize age-1 (× 1.1). Dulu mutated pet di booth gak ke-hitung jadi script nge-list lebih banyak melebihi maxListings."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -740,9 +740,13 @@ do
             if listing.ItemType == "Pet" and listing.ItemId then
                 local item = data.Items and data.Items[listing.ItemId]
                 if item and item.PetData then
-                    local pType = item.PetType
-                    local baseKg = BH.computeBaseKgFromPetData(item.PetData)
-                    local typeOk = (not rule.type) or rule.type == pType
+                    local rawType = tostring(item.PetType or "")
+                    -- v8.180: strip mutation prefix biar "Frozen Ice Golem" match rule "Ice Golem"
+                    local pBase = (BH.getBaseName and rawType ~= "") and BH.getBaseName(rawType) or rawType
+                    -- v8.180: KG basis age-1 normalized (× 1.1) — match dgn rule input
+                    local bw = tonumber(item.PetData.BaseWeight) or 0
+                    local baseKg = bw * 1.1
+                    local typeOk = (not rule.type) or rule.type == pBase or rule.type == rawType
                     local kgOk = baseKg >= rule.min and baseKg <= rule.max
                     if typeOk and kgOk then count = count + 1 end
                 end
