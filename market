@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.175"
-local VERSION_DATE = "v8.175: 🐛 CRITICAL FIX — global `ReplicatedStorage` di-replace ke `RS` (variable yg dideklarasi). User's executor gak punya ReplicatedStorage global → nil → script crash di line 8692 (auto-accept gift hook) DAN beberapa lokasi lain. Crash bikin auto-start watchdog gak ke-reach."
+local VERSION = "8.176"
+local VERSION_DATE = "v8.176: FIX Auto-Start toggle ON mid-session — sekarang langsung fire onStartClick begitu user toggle ON (gak perlu reload sc). Watchdog di load awal tetep jalan. Plus expose BH.getIsRunning buat safety check."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -2389,6 +2389,17 @@ do
         -- Save ke state
         BH.marketState.autoStart = BH.autoStart
         BH.saveMarketState(BH.marketState)
+        -- v8.176: kalo user toggle ON dan blm running, langsung fire onStartClick
+        if BH.autoStart and BH.onStartClick then
+            task.spawn(function()
+                task.wait(0.5)
+                local running = BH.getIsRunning and BH.getIsRunning() or false
+                if BH.autoStart and not running then
+                    L("🚀 [Auto-Start] toggle ON → langsung fire onStartClick")
+                    pcall(BH.onStartClick)
+                end
+            end)
+        end
     end)
 end
 
@@ -4974,6 +4985,7 @@ local function refreshPriceList() if refreshBackpackStats then refreshBackpackSt
 -- ===== START AUTO LIST (toggle) =====
 local stopReq = false
 local isRunning = false
+BH.getIsRunning = function() return isRunning end  -- v8.176: expose buat Auto-Start toggle
 local startGradient
 local startGradTask
 
