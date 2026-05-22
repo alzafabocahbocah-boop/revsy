@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.169"
-local VERSION_DATE = "v8.169: HAPUS age lock filter dari listing loop + countMyPetsForRule (yg bikin auto-start break). Card UI dijadiin INACTIVE — toggle masih save state tapi gak ada efek. Auto-start kembali ke perilaku normal."
+local VERSION = "8.173"
+local VERSION_DATE = "v8.173: Auto-Start watchdog + FALLBACK state recovery — kalo BH.autoStart nil (card init gagal), read langsung dari state file. Fire SEKALI begitu conditions met (autoStart + rules + not running), lalu exit. Wait rules kalo blm ada."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -9695,33 +9695,39 @@ task.spawn(function()
 end)
 
 -- v8.48: AUTO-START
--- v8.168: revert ke logika simple yg sebelumnya working (firedThisSession + reset on OFF→ON)
+-- v8.173: watchdog dengan FALLBACK state read — kalo BH.autoStart nil/false padahal state file ON, read langsung dari state
 L("🚀 [Auto-Start] spawning watchdog...")
 task.spawn(function()
-    L("🚀 [Auto-Start] watchdog task entered, waiting 4s...")
-    task.wait(4)
-    L("🚀 [Auto-Start] watchdog ACTIVE — checking every 5s")
-    L("🚀 [Auto-Start] initial state: autoStart="..tostring(BH.autoStart)..", rules="..#listingRules..", running="..tostring(isRunning))
-    local firedThisSession = false
-    while gui.Parent do
-        if BH.autoStart and #listingRules > 0 and not isRunning and not firedThisSession then
-            L("🚀 [Auto-Start] FIRING (autoStart=ON, rules="..#listingRules..")")
-            task.wait(2)
-            if not isRunning and BH.autoStart then
-                local ok, err = pcall(BH.onStartClick)
-                if ok then
-                    L("🚀 [Auto-Start] onStartClick() called — OK")
-                    firedThisSession = true
-                else
-                    L("✗ [Auto-Start] FAIL: "..tostring(err))
-                end
-            end
-        end
-        -- Reset fired flag kalo user toggle OFF (biar ON lagi bisa fire ulang)
-        if not BH.autoStart then
-            firedThisSession = false
-        end
-        task.wait(5)
+    task.wait(3)  -- wait UI/state init
+    -- FALLBACK: kalo BH.autoStart belum di-set (card init gagal), baca langsung dari state
+    if BH.autoStart == nil and BH.marketState and BH.marketState.autoStart == true then
+        BH.autoStart = true
+        L("🚀 [Auto-Start] FALLBACK: BH.autoStart=nil, recover dari state file → ON")
     end
-    L("🚀 [Auto-Start] watchdog EXITED (gui destroyed)")
+    L("🚀 [Auto-Start] state: autoStart="..tostring(BH.autoStart).." rules="..#listingRules.." running="..tostring(isRunning))
+
+    local fired = false
+    while gui.Parent and not fired do
+        if BH.autoStart and #listingRules > 0 and not isRunning then
+            L("🚀 [Auto-Start] FIRING onStartClick...")
+            local ok, err = pcall(BH.onStartClick)
+            if ok then
+                L("🚀 [Auto-Start] ✅ done")
+                fired = true
+            else
+                L("✗ [Auto-Start] ❌ "..tostring(err))
+                fired = true  -- jangan loop terus kalo error
+            end
+        elseif not BH.autoStart then
+            -- autoStart OFF, exit watchdog (user pilih manual)
+            L("🚀 [Auto-Start] autoStart=OFF, exit watchdog")
+            return
+        elseif #listingRules == 0 then
+            -- Tunggu rules ada (mungkin user nambah rule setelah load)
+            task.wait(3)
+        else
+            -- isRunning=true, exit (manual start lagi jalan)
+            return
+        end
+    end
 end)
