@@ -6686,21 +6686,54 @@ end)()
 
 -- ===== HOP SERVER =====
 local function getServerList()
-    local req = (syn and syn.request) or http_request or request
-    if (fluxus and fluxus.request) then req = fluxus.request end
-    if not req then return nil, "no http function" end
+    -- v8.197: try lebih banyak http function + fallback HttpGet
+    local req = (syn and syn.request) or (fluxus and fluxus.request)
+                or (krnl and krnl.request) or http_request or request or httprequest
+    if (http and http.request) then req = http.request end
     local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
-    local ok, response = pcall(function()
-        return req({Url = url, Method = "GET"})
-    end)
-    if not ok or not response then return nil, "request failed" end
-    local body = response.Body or response.body
-    if not body then return nil, "no body" end
-    local okd, data = pcall(function()
-        return game:GetService("HttpService"):JSONDecode(body)
-    end)
-    if not okd or not data then return nil, "decode failed" end
-    return data.data or data
+
+    -- Try standard request first
+    if req then
+        local ok, response = pcall(function()
+            return req({Url = url, Method = "GET"})
+        end)
+        if ok and response then
+            local body = response.Body or response.body or response.body_string
+            if body then
+                local okd, data = pcall(function()
+                    return game:GetService("HttpService"):JSONDecode(body)
+                end)
+                if okd and data then
+                    L("[getServerList] OK via request, "..#(data.data or {}).." servers")
+                    return data.data or data
+                else
+                    L("[getServerList] decode failed")
+                end
+            else
+                L("[getServerList] no body in response")
+            end
+        else
+            L("[getServerList] request call failed: "..tostring(response))
+        end
+    else
+        L("[getServerList] no executor http function found")
+    end
+
+    -- Fallback: HttpGet (might be blocked but worth trying)
+    local okg, body = pcall(function() return game:HttpGet(url) end)
+    if okg and body then
+        local okd, data = pcall(function()
+            return game:GetService("HttpService"):JSONDecode(body)
+        end)
+        if okd and data then
+            L("[getServerList] OK via HttpGet, "..#(data.data or {}).." servers")
+            return data.data or data
+        end
+    else
+        L("[getServerList] HttpGet failed: "..tostring(body))
+    end
+
+    return nil, "all http methods failed"
 end
 
 -- Heuristic: detect Indonesian-style names
@@ -6786,6 +6819,22 @@ hopNowBtn.MouseButton1Click:Connect(function() task.spawn(hopToBestServer) end)
 
 -- v8.196: expose hopToBestServer ke BH supaya tombol HOP NOW (rejoin tab) bisa pakai juga
 BH.manualHop = function() task.spawn(hopToBestServer) end
+
+-- v8.197: log startup status
+task.spawn(function()
+    task.wait(2)
+    local httpName = "NONE"
+    if syn and syn.request then httpName = "syn.request"
+    elseif fluxus and fluxus.request then httpName = "fluxus.request"
+    elseif krnl and krnl.request then httpName = "krnl.request"
+    elseif http_request then httpName = "http_request"
+    elseif request then httpName = "request"
+    elseif httprequest then httpName = "httprequest"
+    elseif http and http.request then httpName = "http.request"
+    end
+    L(string.format("[Startup] HOP ready=%s | http=%s | jobId=%s",
+        tostring(BH.manualHop ~= nil), httpName, tostring(game.JobId):sub(1,12)))
+end)
 
 -- v8.99: ===== HOP SERVER TAB — PLAYER BLACKLIST =====
 -- Auto-hop ke server lain kalo ada player blacklisted di server ini
