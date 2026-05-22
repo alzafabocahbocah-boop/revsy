@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.177"
-local VERSION_DATE = "v8.177: Auto-Start PERSISTENT watchdog — gak pernah exit (sampai gui destroyed). Re-fire onStartClick begitu autoStart=ON + rules + not running + cooldown 10s. Aman buat rejoin (state autoStart=ON → auto fire) + manual stop (10s setelah stop, auto fire lagi)."
+local VERSION = "8.178"
+local VERSION_DATE = "v8.178: PINDAH watchdog ke line ~6286 (right after onStartClick wired) — sebelum semua UI build sisanya. Cegah crash di tab2 setelah Listing yg bisa kill watchdog spawn. Plus tetep persistent loop dengan cooldown 10s."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6284,6 +6284,47 @@ BH.onStartClick = function()
 end
 startBtn.MouseButton1Click:Connect(BH.onStartClick)
 
+-- v8.178: SPAWN watchdog EARLY (right after onStartClick wired) biar gak ke-kill kalo ada error di UI build setelahnya
+task.spawn(function()
+    task.wait(2)
+    L("🚀 [Auto-Start] === STATE DIAGNOSTIC ===")
+    L("🚀   BH.marketState exists: "..tostring(BH.marketState ~= nil))
+    if BH.marketState then
+        L("🚀   BH.marketState.autoStart = "..tostring(BH.marketState.autoStart).." (type: "..type(BH.marketState.autoStart)..")")
+        L("🚀   BH.marketState.listingRules count = "..tostring(BH.marketState.listingRules and #BH.marketState.listingRules or "nil"))
+    end
+    L("🚀   BH.autoStart = "..tostring(BH.autoStart))
+    L("🚀   listingRules count = "..#listingRules)
+
+    -- FALLBACK recover
+    if (BH.autoStart == nil or BH.autoStart == false) and BH.marketState and BH.marketState.autoStart == true then
+        BH.autoStart = true
+        L("🚀 [Auto-Start] FALLBACK applied → ON")
+    end
+
+    -- Persistent loop
+    local checkCount = 0
+    local lastFireTime = 0
+    while gui.Parent do
+        task.wait(3)
+        checkCount = checkCount + 1
+        if checkCount % 10 == 1 then
+            L(string.format("🚀 [Auto-Start] check #%d: autoStart=%s rules=%d running=%s",
+                checkCount, tostring(BH.autoStart), #listingRules, tostring(isRunning)))
+        end
+        local cooldownOk = (tick() - lastFireTime) > 10
+        if BH.autoStart and #listingRules > 0 and not isRunning and cooldownOk then
+            L("🚀 [Auto-Start] ✓ FIRING (check #"..checkCount..")")
+            lastFireTime = tick()
+            local ok, err = pcall(BH.onStartClick)
+            L(ok and "🚀 [Auto-Start] ✅ FIRED" or ("✗ [Auto-Start] ❌ "..tostring(err)))
+            -- Wait sampai isRunning=true atau 5s
+            local w = 0
+            while not isRunning and w < 5 do task.wait(0.5); w = w + 0.5 end
+        end
+    end
+end)
+
 -- ===== REJOIN =====
 rejoinBtn.MouseButton1Click:Connect(function()
     L("==== REJOIN ====")
@@ -9706,56 +9747,4 @@ task.spawn(function()
     pcall(tryClaim)
 end)
 
--- v8.48: AUTO-START
--- v8.177: PERSISTENT watchdog — keep polling forever, re-fire setiap kali listing stop (sampai user toggle OFF)
-L("🚀 [Auto-Start] === STATE DIAGNOSTIC ===")
-L("🚀   BH.marketState exists: "..tostring(BH.marketState ~= nil))
-if BH.marketState then
-    L("🚀   BH.marketState.autoStart = "..tostring(BH.marketState.autoStart).." (type: "..type(BH.marketState.autoStart)..")")
-    L("🚀   BH.marketState.listingRules count = "..tostring(BH.marketState.listingRules and #BH.marketState.listingRules or "nil"))
-end
-L("🚀   BH.autoStart (after card init) = "..tostring(BH.autoStart))
-L("🚀   listingRules count = "..#listingRules)
-L("🚀 [Auto-Start] === SPAWNING PERSISTENT WATCHDOG ===")
-task.spawn(function()
-    -- FALLBACK: kalo BH.autoStart nil/false padahal state file ON, recover
-    if (BH.autoStart == nil or BH.autoStart == false) and BH.marketState and BH.marketState.autoStart == true then
-        BH.autoStart = true
-        L("🚀 [Auto-Start] FALLBACK applied: BH.autoStart was nil/false, recovered → ON")
-    end
-
-    -- Persistent loop — gak pernah exit, kecuali GUI destroyed
-    local checkCount = 0
-    local lastFireTime = 0
-    local justFired = false
-    while gui.Parent do
-        task.wait(3)
-        checkCount = checkCount + 1
-
-        -- Log status tiap 10 check (30s)
-        if checkCount % 10 == 1 then
-            L(string.format("🚀 [Auto-Start] check #%d: autoStart=%s rules=%d running=%s",
-                checkCount, tostring(BH.autoStart), #listingRules, tostring(isRunning)))
-        end
-
-        -- Kondisi fire: autoStart ON + ada rules + lagi gak running + udah cooldown 10s sejak fire terakhir
-        local cooldownOk = (tick() - lastFireTime) > 10
-        if BH.autoStart and #listingRules > 0 and not isRunning and cooldownOk then
-            L("🚀 [Auto-Start] ✓ READY → FIRING onStartClick (check #"..checkCount..")")
-            lastFireTime = tick()
-            local ok, err = pcall(BH.onStartClick)
-            if ok then
-                L("🚀 [Auto-Start] ✅ FIRED")
-                -- Tunggu listing bener-bener running (max 5s)
-                local w = 0
-                while not isRunning and w < 5 do task.wait(0.5); w = w + 0.5 end
-                if isRunning then
-                    L("🚀 [Auto-Start] listing started, watchdog idle sampai listing stop")
-                end
-            else
-                L("✗ [Auto-Start] ❌ ERROR: "..tostring(err))
-            end
-        end
-    end
-    L("🚀 [Auto-Start] watchdog EXITED (gui destroyed)")
-end)
+-- v8.178: watchdog dipindah ke line ~6286 (right after onStartClick wired) biar gak ke-kill kalo crash di UI build
