@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.161"
-local VERSION_DATE = "v8.161: FIX garden panel kosong/hitam — heavy RS scan & event hook dipindah ke task.spawn biar buildGardenPanel langsung selesai render UI (statsCard, tabs, list, gift card) tanpa ke-block."
+local VERSION = "8.165"
+local VERSION_DATE = "v8.165: Auto-Start COOLDOWN watchdog — hapus firedThisSession (yg bikin stuck setelah fire pertama). Sekarang cooldown 15s: re-fire kalo autoStart ON + rules + not running + >15s sejak fire terakhir. Aman dari toggle race + bisa re-fire continuous."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -8659,7 +8659,7 @@ BH.buildGardenPanel = function()
     gGiftBtn.Size = UDim2.new(0.33, -btnPad, 1, 0)
     gGiftBtn.Position = UDim2.new(0, 0, 0, 0)
     gGiftBtn.BackgroundColor3 = C.card gGiftBtn.AutoButtonColor = false
-    gGiftBtn.Text = "Auto Gift: OFF" gGiftBtn.TextColor3 = C.textDim
+    gGiftBtn.Text = "Auto Accept Gift: OFF" gGiftBtn.TextColor3 = C.textDim
     gGiftBtn.Font = FM gGiftBtn.TextSize = 11
     gGiftBtn.BorderSizePixel = 0 gGiftBtn.Parent = btnRow
     Instance.new("UICorner", gGiftBtn).CornerRadius = UDim.new(0, 6)
@@ -8668,7 +8668,7 @@ BH.buildGardenPanel = function()
     gTradeBtn.Size = UDim2.new(0.33, -btnPad, 1, 0)
     gTradeBtn.Position = UDim2.new(0.335, btnPad/2, 0, 0)
     gTradeBtn.BackgroundColor3 = C.card gTradeBtn.AutoButtonColor = false
-    gTradeBtn.Text = "Auto Trade: OFF" gTradeBtn.TextColor3 = C.textDim
+    gTradeBtn.Text = "Auto Accept Trade: OFF" gTradeBtn.TextColor3 = C.textDim
     gTradeBtn.Font = FM gTradeBtn.TextSize = 11
     gTradeBtn.BorderSizePixel = 0 gTradeBtn.Parent = btnRow
     Instance.new("UICorner", gTradeBtn).CornerRadius = UDim.new(0, 6)
@@ -8688,9 +8688,9 @@ BH.buildGardenPanel = function()
     BH.autoTrade = (BH.marketState and BH.marketState.autoTrade) == true
 
     local function refreshAcceptUI()
-        gGiftBtn.Text = "Auto Gift: "..(BH.autoGift and "ON" or "OFF")
+        gGiftBtn.Text = "Auto Accept Gift: "..(BH.autoGift and "ON" or "OFF")
         gGiftBtn.TextColor3 = BH.autoGift and C.accent or C.textDim
-        gTradeBtn.Text = "Auto Trade: "..(BH.autoTrade and "ON" or "OFF")
+        gTradeBtn.Text = "Auto Accept Trade: "..(BH.autoTrade and "ON" or "OFF")
         gTradeBtn.TextColor3 = BH.autoTrade and C.accent or C.textDim
     end
     refreshAcceptUI()
@@ -9639,27 +9639,37 @@ task.spawn(function()
 end)
 
 -- v8.48: AUTO-START
--- v8.160: hapus firedThisSession — bisa re-fire continuous kalo listing berenti
+-- v8.165: cooldown-based — re-fire setelah 15s sejak fire terakhir kalo listing stop
 L("🚀 [Auto-Start] spawning watchdog...")
 task.spawn(function()
     L("🚀 [Auto-Start] watchdog task entered, waiting 4s...")
     task.wait(4)
     L("🚀 [Auto-Start] watchdog ACTIVE — checking every 5s")
     L("🚀 [Auto-Start] initial state: autoStart="..tostring(BH.autoStart)..", rules="..#listingRules..", running="..tostring(isRunning))
-    local lastFire = 0
+    local lastFireTime = 0
+    local checkCount = 0
     while gui.Parent do
-        -- Re-fire continuous: kalo autoStart ON + ada rules + listing stop + udah lewat 10s sejak terakhir
-        if BH.autoStart and #listingRules > 0 and not isRunning and (tick() - lastFire) > 10 then
-            L("🚀 [Auto-Start] FIRING (autoStart=ON, rules="..#listingRules..", since last="..math.floor(tick()-lastFire).."s)")
+        checkCount = checkCount + 1
+        -- Diagnostic log tiap 6 check (~30s)
+        if checkCount % 6 == 0 then
+            L(string.format("🚀 [Auto-Start] check #%d — autoStart=%s, rules=%d, running=%s, cooldown_left=%ds",
+                checkCount, tostring(BH.autoStart), #listingRules, tostring(isRunning),
+                math.max(0, 15 - math.floor(tick() - lastFireTime))))
+        end
+        local cooldownOk = (tick() - lastFireTime) > 15
+        if BH.autoStart and #listingRules > 0 and not isRunning and cooldownOk then
+            L("🚀 [Auto-Start] FIRING (autoStart=ON, rules="..#listingRules..", sejak last fire="..math.floor(tick()-lastFireTime).."s)")
+            lastFireTime = tick()  -- set SEBELUM fire biar gak race
             task.wait(2)
             if not isRunning and BH.autoStart then
-                lastFire = tick()
                 local ok, err = pcall(BH.onStartClick)
                 if ok then
                     L("🚀 [Auto-Start] onStartClick() called — OK")
                 else
                     L("✗ [Auto-Start] FAIL: "..tostring(err))
                 end
+            else
+                L("🚀 [Auto-Start] aborted fire — running="..tostring(isRunning).." autoStart="..tostring(BH.autoStart))
             end
         end
         task.wait(5)
