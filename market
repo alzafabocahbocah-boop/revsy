@@ -2079,18 +2079,28 @@ end)
 
 -- ===== Section 1: Auto Reconnect / Rejoin =====
 local rejBody = makeCollapsibleCard(rejoinScroll, "Auto Reconnect / Rejoin", true)
+-- v8.193: tampilin server info di paling atas
+addReadOnlyRow(rejBody, "Server ID", function()
+    return tostring(game.JobId):sub(1, 16).."..."
+end)
+addReadOnlyRow(rejBody, "Current Players", function()
+    return tostring(#Players:GetPlayers()).." / "..tostring(Players.MaxPlayers or "?")
+end)
 local intervalBox = addInputRow(rejBody, "Rejoin every (minutes)", "", "0 = off")
 local listingBox = addInputRow(rejBody, "Rejoin after N sukses listing", "", "0 = off")
 local elapsedRow = addReadOnlyRow(rejBody, "Elapsed time (min)", function()
     return string.format("%.1f", (workspace.DistributedGameTime or 0) / 60)
 end)
 local autoRejoinToggle = addToggleRow(rejBody, "Auto Rejoin (interval)", false)
+-- v8.191: Auto-rejoin kalo server <10 players + anti-same-server (compare names)
+BH.autoRejoinLowPopToggle = addToggleRow(rejBody, "Auto-Rejoin server kosong (<10)", false)
 local rejoinBtn = addButtonRow(rejBody, "🔄 REJOIN NOW", C.accent)
 
 -- v8.127: bind rejoin settings to persist
 BH.bindInput(intervalBox, "rejoinIntervalMin")
 BH.bindInput(listingBox, "rejoinAfterListings")
 BH.bindToggle(autoRejoinToggle, "autoRejoinEnabled")
+BH.bindToggle(BH.autoRejoinLowPopToggle, "autoRejoinLowPop")
 
 -- ===== Section 2: Hop Server =====
 local hopBody = makeCollapsibleCard(rejoinScroll, "Hop Server (cari server lain)", false)
@@ -6495,6 +6505,122 @@ task.spawn(function()
         end
     end
 end)
+
+-- ===== v8.191: AUTO-REJOIN LOW-POP + ANTI-SAME-SERVER =====
+;(function()
+    local HttpService = game:GetService("HttpService")
+    local STATE_FILE = "zenx_lastServer.json"
+
+    -- Save snapshot server saat ini (sebelum rejoin)
+    local function saveServerSnapshot(reason)
+        local names = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            table.insert(names, p.Name)
+        end
+        local data = {
+            jobId = tostring(game.JobId),
+            names = names,
+            count = #names,
+            time = os.time(),
+            reason = reason or "manual",
+            retries = 0,
+        }
+        pcall(function() writefile(STATE_FILE, HttpService:JSONEncode(data)) end)
+        L("📸 Saved server snapshot: jobId="..tostring(game.JobId):sub(1,12).." players="..#names.." reason="..tostring(reason))
+    end
+
+    -- Hook ke rejoin button + interval auto-rejoin biar nge-save snapshot juga
+    rejoinBtn.MouseButton1Click:Connect(function()
+        if BH.autoRejoinLowPopToggle.get() then
+            saveServerSnapshot("manual_btn")
+        end
+    end)
+
+    -- Watchdog: tunggu 5 menit dulu (biar server kasih kesempatan populate),
+    -- terus cek tiap 30s. Kalo player <10 + toggle ON, rejoin.
+    local lastTrigger = 0
+    task.spawn(function()
+        L("⏰ [Low-Pop] standby 5 menit dulu sebelum cek...")
+        task.wait(300) -- 5 menit
+        L("⏰ [Low-Pop] start watchdog (cek tiap 30s)")
+        while gui.Parent do
+            task.wait(30)
+            if BH.autoRejoinLowPopToggle.get() then
+                local count = #Players:GetPlayers()
+                if count < 10 and (os.time() - lastTrigger) > 60 then
+                    lastTrigger = os.time()
+                    L("🔄 [Low-Pop] server cuma "..count.." players (<10), rejoin...")
+                    saveServerSnapshot("low_pop_"..count)
+                    task.wait(1.5)
+                    pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+                    return
+                end
+            end
+        end
+    end)
+
+    -- INIT: pas script load, cek file. Kalo same server detected, rejoin lagi.
+    task.spawn(function()
+        task.wait(8) -- tunggu Players:GetPlayers() ke-populate
+
+        if not (isfile and isfile(STATE_FILE)) then return end
+        local prev
+        local ok = pcall(function()
+            prev = HttpService:JSONDecode(readfile(STATE_FILE))
+        end)
+        if not ok or type(prev) ~= "table" then return end
+
+        if prev.time and (os.time() - prev.time) > 600 then
+            pcall(function() delfile(STATE_FILE) end)
+            return
+        end
+
+        if not BH.autoRejoinLowPopToggle.get() then
+            pcall(function() delfile(STATE_FILE) end)
+            return
+        end
+
+        -- Same JobId = pasti same server
+        local currentJobId = tostring(game.JobId)
+        local sameJobId = (prev.jobId == currentJobId)
+
+        -- Overlap check via player names
+        local currentNamesSet = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            currentNamesSet[p.Name] = true
+        end
+        local overlap = 0
+        local prevTotal = #(prev.names or {})
+        for _, n in ipairs(prev.names or {}) do
+            if currentNamesSet[n] then overlap = overlap + 1 end
+        end
+        local overlapPct = prevTotal > 0 and (overlap / prevTotal * 100) or 0
+
+        L(string.format("🔍 [Same-Server Check] prev=%s curr=%s | overlap %d/%d (%.0f%%)",
+            tostring(prev.jobId):sub(1,12), currentJobId:sub(1,12),
+            overlap, prevTotal, overlapPct))
+
+        local retries = (prev.retries or 0)
+
+        if sameJobId or overlapPct >= 50 then
+            if retries >= 5 then
+                L("⚠ [Same-Server] retry limit (5x) reached, give up")
+                pcall(function() delfile(STATE_FILE) end)
+                return
+            end
+            L("⚠ [Same-Server] same detected (retry "..(retries+1).."/5), rejoin lagi...")
+            -- Update retries counter
+            prev.retries = retries + 1
+            prev.time = os.time()
+            pcall(function() writefile(STATE_FILE, HttpService:JSONEncode(prev)) end)
+            task.wait(2)
+            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+        else
+            L("✅ [Same-Server] different server (overlap < 50%), OK")
+            pcall(function() delfile(STATE_FILE) end)
+        end
+    end)
+end)()
 
 -- ===== HOP SERVER =====
 local function getServerList()
