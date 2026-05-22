@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.166"
-local VERSION_DATE = "v8.166: AGGRESSIVE auto-start diagnostic — log every check tiap 5s biar tau persis kenapa skip (no rules / autoStart OFF / cooldown / etc)"
+local VERSION = "8.167"
+local VERSION_DATE = "v8.167: Auto-Accept Gift/Trade — scan SEMUA gift/accept remote variants di RS.GameEvents + auto-click button Accept di PlayerGui popup (firesignal + getconnections). Plus diagnostic log nama remote yg ke-detect."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -8711,49 +8711,126 @@ BH.buildGardenPanel = function()
     -- Scan + hook gift remote di background (gak block UI build)
     task.spawn(function()
         task.wait(1)
-        local ok, ge = pcall(function() return ReplicatedStorage:FindFirstChild("GameEvents") end)
-        if not ok or not ge then return end
-        local giftPetRE = ge:FindFirstChild("GiftPet")
-        local acceptPetGiftRE = ge:FindFirstChild("AcceptPetGift")
-        L("[AutoAccept] giftPet="..(giftPetRE and "OK" or "nil").." acceptPet="..(acceptPetGiftRE and "OK" or "nil"))
-        if giftPetRE and acceptPetGiftRE then
-            pcall(function()
-                giftPetRE.OnClientEvent:Connect(function(...)
-                    if not BH.autoGift then return end
-                    local args = {...}
-                    for _, a in ipairs(args) do
-                        if type(a) == "string" and a:find("%-") and #a >= 30 then
-                            task.spawn(function()
-                                pcall(function() acceptPetGiftRE:FireServer(true, a) end)
-                                L("[AutoAccept] gift accepted: "..a:sub(1, 8))
-                            end)
-                            return
+        -- v8.167: hook MULTIPLE gift remote variants (game might use diff names)
+        local ge = ReplicatedStorage:FindFirstChild("GameEvents")
+        if not ge then return end
+        local giftRemotes = {}
+        local acceptRemotes = {}
+        pcall(function()
+            for _, d in ipairs(ge:GetDescendants()) do
+                if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
+                    local n = d.Name:lower()
+                    if n:find("gift") or n:find("petoffer") then
+                        if n:find("accept") or n:find("respond") then
+                            table.insert(acceptRemotes, d)
+                        elseif not n:find("send") and not n:find("give") then
+                            table.insert(giftRemotes, d)
                         end
                     end
-                end)
+                end
+            end
+        end)
+        L("[AutoAccept] gift remotes found: "..#giftRemotes..", accept: "..#acceptRemotes)
+        for _, r in ipairs(giftRemotes) do L("  gift: "..r:GetFullName()) end
+        for _, r in ipairs(acceptRemotes) do L("  accept: "..r:GetFullName()) end
+
+        -- Hook semua gift remote — auto-accept
+        for _, gRE in ipairs(giftRemotes) do
+            pcall(function()
+                if gRE:IsA("RemoteEvent") then
+                    gRE.OnClientEvent:Connect(function(...)
+                        if not BH.autoGift then return end
+                        local args = {...}
+                        L("[AutoAccept] "..gRE.Name.." fired — args="..#args)
+                        -- Cari UUID di args
+                        local uuid
+                        for _, a in ipairs(args) do
+                            if type(a) == "string" and a:find("%-") and #a >= 30 then
+                                uuid = a; break
+                            end
+                        end
+                        if not uuid then return end
+                        -- Try fire ALL accept remotes dengan berbagai signature
+                        for _, accRE in ipairs(acceptRemotes) do
+                            task.spawn(function()
+                                pcall(function() accRE:FireServer(true, uuid) end)
+                                pcall(function() accRE:FireServer(uuid, true) end)
+                                pcall(function() accRE:FireServer(uuid) end)
+                                pcall(function() accRE:FireServer(true) end)
+                            end)
+                        end
+                        L("[AutoAccept] gift accepted via "..#acceptRemotes.." remote(s): "..uuid:sub(1,8))
+                    end)
+                end
             end)
         end
     end)
 
-    -- Trade hook: PlayerGui scan (lazy, di background)
+    -- v8.167: Auto-click ACCEPT button di popup (works untuk gift & trade prompts)
     task.spawn(function()
         task.wait(2)
         local pg = player:FindFirstChild("PlayerGui")
         if not pg then return end
+
+        local function tryClickAccept(d)
+            local name = (d.Name or ""):lower()
+            local text = ""
+            if d:IsA("TextButton") then text = tostring(d.Text or ""):lower() end
+            -- Match exact "Accept" text OR name yg mengandung accept+(gift|trade|prompt|request)
+            local isAcceptText = (text == "accept" or text == "yes" or text == "✓" or text:find("^accept"))
+            local isAcceptName = name:find("accept") or name == "yes"
+            if not (isAcceptText or isAcceptName) then return false end
+            -- Cek context: parent chain ada "gift" / "trade" / "prompt" / "request"?
+            local ctx = ""
+            local cur = d.Parent
+            for i = 1, 8 do
+                if not cur then break end
+                ctx = ctx .. " " .. (cur.Name or ""):lower()
+                cur = cur.Parent
+            end
+            local isGiftCtx = ctx:find("gift") or ctx:find("petoffer")
+            local isTradeCtx = ctx:find("trade") or ctx:find("offer") or ctx:find("request")
+            if (isGiftCtx and BH.autoGift) or (isTradeCtx and BH.autoTrade) then
+                pcall(function()
+                    L("[AutoAccept] clicking: "..d:GetFullName().." (ctx:"..(isGiftCtx and "gift" or "trade")..")")
+                    if firesignal then firesignal(d.Activated) end
+                    if getconnections then
+                        for _, c in ipairs(getconnections(d.MouseButton1Click)) do
+                            pcall(function() c:Fire() end)
+                        end
+                        for _, c in ipairs(getconnections(d.Activated)) do
+                            pcall(function() c:Fire() end)
+                        end
+                    end
+                end)
+                return true
+            end
+            return false
+        end
+
         while gui.Parent do
-            if BH.autoTrade then
+            if BH.autoGift or BH.autoTrade then
                 pcall(function()
                     for _, d in ipairs(pg:GetDescendants()) do
                         if d:IsA("TextButton") or d:IsA("ImageButton") then
-                            local fullText = (tostring(d.Name or "")..((d:IsA("TextButton") and d.Text) or "")):lower()
-                            if fullText:find("accept") and (fullText:find("trade") or fullText:find("offer")) then
-                                pcall(function() if d.Activate then d:Activate() end end)
+                            -- Skip kalo button gak visible
+                            local visible = d.Visible
+                            if visible then
+                                local cur = d.Parent
+                                for _ = 1, 8 do
+                                    if not cur then break end
+                                    if cur:IsA("GuiObject") then
+                                        if cur.Visible == false then visible = false; break end
+                                    end
+                                    cur = cur.Parent
+                                end
                             end
+                            if visible then tryClickAccept(d) end
                         end
                     end
                 end)
             end
-            task.wait(1)
+            task.wait(0.5)
         end
     end)
 
