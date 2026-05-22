@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.183"
-local VERSION_DATE = "v8.183: HIDE log spam — hapus 'skip MUT' + type-mismatch detail per pet di cycle listing (was useful for diagnose v8.180 bug, sekarang gak perlu). Plus visual marker '════ HIST DUMP ════' biar gampang dicari di console."
+local VERSION = "8.184"
+local VERSION_DATE = "v8.184: 🎯 HISTORY SELL FIX — parse langsung dari PlayerGui.TradeBoothHistory.ScrollingFrame.BoothHistoryTemplate (data udah ke-render native). Field: Spacer.ItemName (pet), Spacer.Price.Amount (harga), Spacer.Title.PlrName (buyer), Spacer.Time (timestamp). Cuma 'Sold' yg di-include (skip 'Bought'). FetchHistory remote diabaikan."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -8471,35 +8471,85 @@ L("  - Inventory capacity")
         end
     end
 
+    -- ===== v8.184: PARSE dari PlayerGui.TradeBoothHistory templates (data udah ke-render disitu) =====
+    -- Native UI auto-populate ke ScrollingFrame, kita tinggal baca aja
+    local function parseFromNativeUI()
+        local entries = {}
+        local LP = game:GetService("Players").LocalPlayer
+        local tbh = LP.PlayerGui:FindFirstChild("TradeBoothHistory")
+        if not tbh then return entries end
+        local frame = tbh:FindFirstChild("Frame")
+        if not frame then return entries end
+        local sf = frame:FindFirstChild("ScrollingFrame")
+        if not sf then return entries end
+
+        for _, tmpl in ipairs(sf:GetChildren()) do
+            if tmpl.Name == "BoothHistoryTemplate" then
+                pcall(function()
+                    local spacer = tmpl:FindFirstChild("Spacer")
+                    if not spacer then return end
+                    local title = spacer:FindFirstChild("Title")
+                    local itemNameLbl = spacer:FindFirstChild("ItemName")
+                    local priceFrame = spacer:FindFirstChild("Price")
+                    local timeLbl = spacer:FindFirstChild("Time")
+                    if not (title and itemNameLbl and priceFrame and timeLbl) then return end
+
+                    local labelLbl = title:FindFirstChild("Label")
+                    local plrLbl = title:FindFirstChild("PlrName")
+                    local amountLbl = priceFrame:FindFirstChild("Amount")
+                    if not (labelLbl and amountLbl) then return end
+
+                    -- Filter: cuma "Sold" (skip "Bought")
+                    local kind = tostring(labelLbl.Text)
+                    if kind ~= "Sold" then return end
+
+                    local petName = tostring(itemNameLbl.Text)
+                    local priceStr = tostring(amountLbl.Text):gsub("[^%d]", "")
+                    local price = tonumber(priceStr) or 0
+                    local plrName = plrLbl and tostring(plrLbl.Text) or ""
+                    local timeStr = tostring(timeLbl.Text)
+                    -- timeStr format: "02:44 PM (05/22/26)"
+                    local key = petName.."_"..price.."_"..plrName.."_"..timeStr
+
+                    table.insert(entries, {
+                        PetType = petName,
+                        Price = price,
+                        Time = os.time(),  -- exact unknown, pake current
+                        BuyerName = plrName,
+                        TimeStr = timeStr,
+                        Id = key,
+                    })
+                end)
+            end
+        end
+        return entries
+    end
+
     -- ===== Fetch dari server =====
     local fetching = false
     local function fetchHistory()
-        if not fetchHistRE or fetching then return end
+        if fetching then return end
         fetching = true
         footerLbl.Text = "Fetching..." footerLbl.TextColor3 = C.accent
         task.spawn(function()
-            local ok, result = pcall(function() return fetchHistRE:InvokeServer() end)
+            -- v8.184: trigger FetchHistory (ack) + reset attribute + parse dari UI
+            pcall(function() game.Players.LocalPlayer:SetAttribute("_boothHistoryFetched", false) end)
+            if fetchHistRE then
+                pcall(function() fetchHistRE:InvokeServer() end)
+            end
+            task.wait(1)  -- tunggu UI ke-update
+            -- Parse dari template UI
+            local uiEntries = parseFromNativeUI()
+            local addedUI = 0
+            for _, e in ipairs(uiEntries) do
+                if addEntry(e) then addedUI = addedUI + 1 end
+            end
             fetching = false
-            if not ok then
-                footerLbl.Text = "Error: "..tostring(result):sub(1, 80)
-                footerLbl.TextColor3 = C.danger; return
-            end
-            if type(result) == "boolean" then
-                footerLbl.Text = "✓ fetch ack — data realtime via AddToHistory"
-                footerLbl.TextColor3 = C.textDim; return
-            end
-            if type(result) ~= "table" then
-                footerLbl.Text = "Got "..type(result).." (expected table)"
-                footerLbl.TextColor3 = C.danger; return
-            end
-            local added = 0
-            for _, e in pairs(result) do
-                if type(e) == "table" and addEntry(e) then added = added + 1 end
-            end
             purgeOld()
             refreshUI()
-            footerLbl.Text = "✓ added "..added.." | total="..#salesHistory.." | "..os.date("%H:%M:%S")
+            footerLbl.Text = string.format("✓ UI parse: +%d | total=%d | %s", addedUI, #salesHistory, os.date("%H:%M:%S"))
             footerLbl.TextColor3 = C.success
+            L("[Hist] UI parse: "..addedUI.." new from "..#uiEntries.." templates")
         end)
     end
 
@@ -8701,9 +8751,10 @@ L("  - Inventory capacity")
     end)
 
     -- ===== Initial fetch =====
+    -- v8.184: always trigger (parse dari UI templates, gak butuh fetchHistRE response)
     task.spawn(function()
         task.wait(3)
-        if fetchHistRE then fetchHistory() end
+        fetchHistory()
     end)
 
     refreshUI()
