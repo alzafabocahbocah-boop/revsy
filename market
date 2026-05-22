@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.167"
-local VERSION_DATE = "v8.167: Auto-Accept Gift/Trade — scan SEMUA gift/accept remote variants di RS.GameEvents + auto-click button Accept di PlayerGui popup (firesignal + getconnections). Plus diagnostic log nama remote yg ke-detect."
+local VERSION = "8.169"
+local VERSION_DATE = "v8.169: HAPUS age lock filter dari listing loop + countMyPetsForRule (yg bikin auto-start break). Card UI dijadiin INACTIVE — toggle masih save state tapi gak ada efek. Auto-start kembali ke perilaku normal."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -2302,8 +2302,8 @@ end
 do
     local ageCard = makeCard(miscPanel, 118)
     ageCard.LayoutOrder = -5
-    lblOf(ageCard, "🔒  AGE LOCK (basis KG predictable)", 14, 10, 380, 22, C.accent, 14, FB)
-    lblOf(ageCard, "Pilih age yg boleh ke-list. Age 1 = 6kg, Age 100 = 60kg.", 14, 32, 480, 18, C.textDim, 11)
+    lblOf(ageCard, "🔒  AGE LOCK (currently INACTIVE)", 14, 10, 380, 22, C.textDim, 14, FB)
+    lblOf(ageCard, "Filter age di-pause (bikin auto-start break). Toggle disimpen aja.", 14, 32, 480, 18, C.textDim, 11)
 
     -- Load saved state (table format: {[1]=true, [100]=true})
     BH.ageLockAllowed = {}
@@ -4518,19 +4518,10 @@ BH.countMyPetsForRule = function(r)
     local ruleType = r.type
     local ruleMin = r.min or 0
     local ruleMax = (r.max == math.huge) and math.huge or r.max
-    local ageLockSet = BH.ageLockAllowed  -- v8.155: set of allowed ages, nil/empty = any
-    local hasAgeLock = ageLockSet and next(ageLockSet) ~= nil
     local count = 0
     local debugInfo = {checked=0, typeMatch=0, kgMatch=0, hasBase=0, noBase=0}
     for _, t in ipairs(bp:GetChildren()) do
-        if isPet(t) and not isFav(t) then  -- v8.155: skip fav consistent dengan listing loop
-            -- v8.155: age lock multi-select filter
-            local skipByAge = false
-            if hasAgeLock then
-                local age = getAge(t) or 0
-                if not ageLockSet[age] then skipByAge = true end
-            end
-            if not skipByAge then
+        if isPet(t) then
             debugInfo.checked = debugInfo.checked + 1
             local pType = getPetType(t)
             local pBase = (BH.getBaseName and pType ~= "") and BH.getBaseName(pType) or pType
@@ -4545,7 +4536,6 @@ BH.countMyPetsForRule = function(r)
                     count = count + 1
                 end
             end
-            end  -- skipByAge
         end
     end
     -- v8.122: log diagnostic kalo count==0 tapi ada typeMatch (debug bug)
@@ -5625,22 +5615,8 @@ BH.onStartClick = function()
 
             local pets = {}
             local mutatedDebugCount = 0  -- v8.111: log first 5 mutated pets
-            local ageLockSet = BH.ageLockAllowed  -- v8.155: multi-select age filter
-            local hasAgeLock = ageLockSet and next(ageLockSet) ~= nil
-            local ageSkippedCount = 0
             for _, t in ipairs(bp:GetChildren()) do
-                local skipPet = false
                 if isPet(t) and not isFav(t) then
-                    -- v8.155: age lock multi-select filter
-                    if hasAgeLock then
-                        local petAge = getAge(t) or 0
-                        if not ageLockSet[petAge] then
-                            ageSkippedCount = ageSkippedCount + 1
-                            skipPet = true
-                        end
-                    end
-                end
-                if isPet(t) and not isFav(t) and not skipPet then
                     local uuid = tostring(t:GetAttribute("PET_UUID") or t.Name)
                     local clean = uuid:gsub("^{",""):gsub("}$","")
                     local pType = getPetType(t)
@@ -8708,129 +8684,132 @@ BH.buildGardenPanel = function()
         L("[AutoAccept] trade "..(BH.autoTrade and "ON" or "OFF"))
     end)
 
-    -- Scan + hook gift remote di background (gak block UI build)
+    -- v8.168: AUTO-ACCEPT precise — port dari leveling sc (v12.10 confirmed working)
+    -- Gift: GiftPet(uuid, name, sender) -> AcceptPetGift(true, uuid)
+    -- Trade: SendRequest(tradeID, sender, ts) -> RespondRequest(tradeID, true) + spam Accept button
     task.spawn(function()
         task.wait(1)
-        -- v8.167: hook MULTIPLE gift remote variants (game might use diff names)
         local ge = ReplicatedStorage:FindFirstChild("GameEvents")
-        if not ge then return end
-        local giftRemotes = {}
-        local acceptRemotes = {}
-        pcall(function()
-            for _, d in ipairs(ge:GetDescendants()) do
-                if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
-                    local n = d.Name:lower()
-                    if n:find("gift") or n:find("petoffer") then
-                        if n:find("accept") or n:find("respond") then
-                            table.insert(acceptRemotes, d)
-                        elseif not n:find("send") and not n:find("give") then
-                            table.insert(giftRemotes, d)
-                        end
-                    end
-                end
-            end
-        end)
-        L("[AutoAccept] gift remotes found: "..#giftRemotes..", accept: "..#acceptRemotes)
-        for _, r in ipairs(giftRemotes) do L("  gift: "..r:GetFullName()) end
-        for _, r in ipairs(acceptRemotes) do L("  accept: "..r:GetFullName()) end
+        if not ge then L("[AutoAccept] no GameEvents"); return end
 
-        -- Hook semua gift remote — auto-accept
-        for _, gRE in ipairs(giftRemotes) do
-            pcall(function()
-                if gRE:IsA("RemoteEvent") then
-                    gRE.OnClientEvent:Connect(function(...)
-                        if not BH.autoGift then return end
-                        local args = {...}
-                        L("[AutoAccept] "..gRE.Name.." fired — args="..#args)
-                        -- Cari UUID di args
-                        local uuid
-                        for _, a in ipairs(args) do
-                            if type(a) == "string" and a:find("%-") and #a >= 30 then
-                                uuid = a; break
-                            end
+        -- ===== GIFT =====
+        local giftPetRE = ge:FindFirstChild("GiftPet")
+        local acceptPetGiftRE = ge:FindFirstChild("AcceptPetGift")
+        if giftPetRE and giftPetRE:IsA("RemoteEvent") and acceptPetGiftRE and acceptPetGiftRE:IsA("RemoteEvent") then
+            local count = 0
+            giftPetRE.OnClientEvent:Connect(function(petUUID, petName, senderUsername)
+                if not BH.autoGift then return end
+                -- Instant fire (sebelum proses lain) + retry 50ms backup
+                pcall(function() acceptPetGiftRE:FireServer(true, petUUID) end)
+                task.spawn(function()
+                    task.wait(0.05)
+                    pcall(function() acceptPetGiftRE:FireServer(true, petUUID) end)
+                end)
+                count = count + 1
+                L("[AutoAccept-gift] #"..count.." "..tostring(petUUID):sub(1,8).." from "..tostring(senderUsername))
+            end)
+            L("[AutoAccept] gift hook INSTALLED (GiftPet -> AcceptPetGift)")
+        else
+            L("[AutoAccept] WARN: GiftPet/AcceptPetGift gak ketemu")
+        end
+
+        -- ===== TRADE =====
+        local te = ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE = te:FindFirstChild("SendRequest")
+            local respondReqRE = te:FindFirstChild("RespondRequest")
+            local acceptRE = te:FindFirstChild("Accept")
+            local confirmRE = te:FindFirstChild("Confirm")
+
+            local lastTradeID = nil
+            local tradeAccCount = 0
+            local spamRunning = false
+
+            local function findTradeAcceptBtn()
+                local pg = player:FindFirstChild("PlayerGui")
+                local tui = pg and pg:FindFirstChild("TradingUI")
+                local lt = tui and tui:FindFirstChild("LiveTrade")
+                if not lt or not lt.Visible then return nil end
+                local opts = lt:FindFirstChild("Options")
+                local acc = opts and opts:FindFirstChild("Accept")
+                return acc
+            end
+
+            local function spamConfirm()
+                local btn = findTradeAcceptBtn()
+                if not btn then return false end
+                -- Fire Activated signal (yg game pake)
+                if firesignal then pcall(function() firesignal(btn.Activated) end) end
+                if getconnections then
+                    pcall(function()
+                        for _, c in ipairs(getconnections(btn.Activated)) do
+                            pcall(function() c:Fire() end)
                         end
-                        if not uuid then return end
-                        -- Try fire ALL accept remotes dengan berbagai signature
-                        for _, accRE in ipairs(acceptRemotes) do
-                            task.spawn(function()
-                                pcall(function() accRE:FireServer(true, uuid) end)
-                                pcall(function() accRE:FireServer(uuid, true) end)
-                                pcall(function() accRE:FireServer(uuid) end)
-                                pcall(function() accRE:FireServer(true) end)
-                            end)
-                        end
-                        L("[AutoAccept] gift accepted via "..#acceptRemotes.." remote(s): "..uuid:sub(1,8))
                     end)
                 end
-            end)
-        end
-    end)
-
-    -- v8.167: Auto-click ACCEPT button di popup (works untuk gift & trade prompts)
-    task.spawn(function()
-        task.wait(2)
-        local pg = player:FindFirstChild("PlayerGui")
-        if not pg then return end
-
-        local function tryClickAccept(d)
-            local name = (d.Name or ""):lower()
-            local text = ""
-            if d:IsA("TextButton") then text = tostring(d.Text or ""):lower() end
-            -- Match exact "Accept" text OR name yg mengandung accept+(gift|trade|prompt|request)
-            local isAcceptText = (text == "accept" or text == "yes" or text == "✓" or text:find("^accept"))
-            local isAcceptName = name:find("accept") or name == "yes"
-            if not (isAcceptText or isAcceptName) then return false end
-            -- Cek context: parent chain ada "gift" / "trade" / "prompt" / "request"?
-            local ctx = ""
-            local cur = d.Parent
-            for i = 1, 8 do
-                if not cur then break end
-                ctx = ctx .. " " .. (cur.Name or ""):lower()
-                cur = cur.Parent
-            end
-            local isGiftCtx = ctx:find("gift") or ctx:find("petoffer")
-            local isTradeCtx = ctx:find("trade") or ctx:find("offer") or ctx:find("request")
-            if (isGiftCtx and BH.autoGift) or (isTradeCtx and BH.autoTrade) then
-                pcall(function()
-                    L("[AutoAccept] clicking: "..d:GetFullName().." (ctx:"..(isGiftCtx and "gift" or "trade")..")")
-                    if firesignal then firesignal(d.Activated) end
-                    if getconnections then
-                        for _, c in ipairs(getconnections(d.MouseButton1Click)) do
-                            pcall(function() c:Fire() end)
-                        end
-                        for _, c in ipairs(getconnections(d.Activated)) do
-                            pcall(function() c:Fire() end)
-                        end
-                    end
-                end)
+                -- Brute force remote backup
+                if lastTradeID then
+                    if confirmRE then pcall(function() confirmRE:FireServer(lastTradeID) end) end
+                    if acceptRE then pcall(function() acceptRE:FireServer(lastTradeID) end) end
+                end
                 return true
             end
-            return false
-        end
 
-        while gui.Parent do
-            if BH.autoGift or BH.autoTrade then
-                pcall(function()
-                    for _, d in ipairs(pg:GetDescendants()) do
-                        if d:IsA("TextButton") or d:IsA("ImageButton") then
-                            -- Skip kalo button gak visible
-                            local visible = d.Visible
-                            if visible then
-                                local cur = d.Parent
-                                for _ = 1, 8 do
-                                    if not cur then break end
-                                    if cur:IsA("GuiObject") then
-                                        if cur.Visible == false then visible = false; break end
-                                    end
-                                    cur = cur.Parent
-                                end
-                            end
-                            if visible then tryClickAccept(d) end
+            local function startSpammer()
+                if spamRunning then return end
+                spamRunning = true
+                task.spawn(function()
+                    local iter = 0
+                    while BH.autoTrade and spamRunning do
+                        iter = iter + 1
+                        local stillTrade = spamConfirm()
+                        if not stillTrade then
+                            if iter > 1 then L("[AutoAccept-trade] spammer stop (window closed)") end
+                            break
                         end
+                        if iter == 1 then L("[AutoAccept-trade] spammer started") end
+                        task.wait(3)
                     end
+                    spamRunning = false
                 end)
             end
-            task.wait(0.5)
+
+            for _, r in ipairs(te:GetChildren()) do
+                if r:IsA("RemoteEvent") then
+                    local lname = r.Name:lower()
+                    if not (lname:find("history") or lname:find("inventory")) then
+                        r.OnClientEvent:Connect(function(...)
+                            if not BH.autoTrade then return end
+                            local args = {...}
+                            -- Extract tradeID dari arg[1]
+                            if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("%-") then
+                                lastTradeID = args[1]
+                            end
+                            if lname:find("cancel") or lname:find("reject") or lname:find("decline") then
+                                spamRunning = false
+                                return
+                            end
+                            -- Stage 1: SendRequest -> RespondRequest(tradeID, true)
+                            if r == sendReqRE and respondReqRE and lastTradeID then
+                                local ok = pcall(function() respondReqRE:FireServer(lastTradeID, true) end)
+                                if ok then
+                                    tradeAccCount = tradeAccCount + 1
+                                    L("[AutoAccept-trade] RespondRequest("..lastTradeID:sub(1,8)..", true)")
+                                    task.delay(2, startSpammer)
+                                end
+                                return
+                            end
+                            -- Stage 2/3: UpdateTradeState -> spam
+                            if r.Name == "UpdateTradeState" then
+                                startSpammer()
+                            end
+                        end)
+                    end
+                end
+            end
+            L("[AutoAccept] trade hook INSTALLED (SendRequest -> RespondRequest + Accept button spam)")
+        else
+            L("[AutoAccept] WARN: TradeEvents folder gak ketemu")
         end
     end)
 
@@ -9716,49 +9695,31 @@ task.spawn(function()
 end)
 
 -- v8.48: AUTO-START
--- v8.166: aggressive diagnostic — log every check biar tau persis di mana stuck
+-- v8.168: revert ke logika simple yg sebelumnya working (firedThisSession + reset on OFF→ON)
 L("🚀 [Auto-Start] spawning watchdog...")
 task.spawn(function()
     L("🚀 [Auto-Start] watchdog task entered, waiting 4s...")
     task.wait(4)
     L("🚀 [Auto-Start] watchdog ACTIVE — checking every 5s")
     L("🚀 [Auto-Start] initial state: autoStart="..tostring(BH.autoStart)..", rules="..#listingRules..", running="..tostring(isRunning))
-    local lastFireTime = 0
-    local checkCount = 0
+    local firedThisSession = false
     while gui.Parent do
-        checkCount = checkCount + 1
-        local cooldownLeft = math.max(0, 15 - math.floor(tick() - lastFireTime))
-        -- Diagnostic log EVERY check biar verbose buat debug
-        L(string.format("🚀 [Auto-Start] check #%d — autoStart=%s, rules=%d, running=%s, cooldown_left=%ds",
-            checkCount, tostring(BH.autoStart), #listingRules, tostring(isRunning), cooldownLeft))
-        local cooldownOk = (tick() - lastFireTime) > 15
-        if BH.autoStart and #listingRules > 0 and not isRunning and cooldownOk then
-            L("🚀 [Auto-Start] ✓ ALL conditions met — FIRING in 2s...")
-            lastFireTime = tick()
+        if BH.autoStart and #listingRules > 0 and not isRunning and not firedThisSession then
+            L("🚀 [Auto-Start] FIRING (autoStart=ON, rules="..#listingRules..")")
             task.wait(2)
             if not isRunning and BH.autoStart then
-                L("🚀 [Auto-Start] calling BH.onStartClick()...")
                 local ok, err = pcall(BH.onStartClick)
                 if ok then
-                    L("🚀 [Auto-Start] ✅ onStartClick() returned OK")
-                    task.wait(1)
-                    L("🚀 [Auto-Start] post-fire isRunning="..tostring(isRunning))
+                    L("🚀 [Auto-Start] onStartClick() called — OK")
+                    firedThisSession = true
                 else
-                    L("✗ [Auto-Start] ❌ onStartClick FAIL: "..tostring(err))
+                    L("✗ [Auto-Start] FAIL: "..tostring(err))
                 end
-            else
-                L("🚀 [Auto-Start] aborted fire — running="..tostring(isRunning).." autoStart="..tostring(BH.autoStart))
             end
-        else
-            -- Detail kenapa skip
-            local why = {}
-            if not BH.autoStart then table.insert(why, "autoStart=OFF") end
-            if #listingRules == 0 then table.insert(why, "no rules") end
-            if isRunning then table.insert(why, "running") end
-            if not cooldownOk then table.insert(why, "cooldown") end
-            if #why > 0 then
-                L("🚀 [Auto-Start]   skip: "..table.concat(why, ", "))
-            end
+        end
+        -- Reset fired flag kalo user toggle OFF (biar ON lagi bisa fire ulang)
+        if not BH.autoStart then
+            firedThisSession = false
         end
         task.wait(5)
     end
