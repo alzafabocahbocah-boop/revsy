@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.184" 
-local VERSION_DATE = "v8.184: 🎯 HISTORY SELL FIX — parse langsung dari PlayerGui.TradeBoothHistory.ScrollingFrame.BoothHistoryTemplate (data udah ke-render native). Field: Spacer.ItemName (pet), Spacer.Price.Amount (harga), Spacer.Title.PlrName (buyer), Spacer.Time (timestamp). Cuma 'Sold' yg di-include (skip 'Bought'). FetchHistory remote diabaikan."
+local VERSION = "8.185"
+local VERSION_DATE = "v8.185: 🐛 FIX auto-clean safety guard terlalu agresif — pas user ganti harga rule, SEMUA pet non-match (price wrong), tapi safety abort cegah unlist. Sekarang bedakan price-only mismatch (legitimate, lanjut unlist) vs type/kg mismatch (suspicious bug, abort). PASTIIN AUTO-CLEAN ON di MISC tab biar feature ini jalan."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -2517,22 +2517,53 @@ do
 
         -- v8.150: SAFETY GUARD — kalo 100% listing classified non-match, abort.
         -- Itu hampir pasti bug (KG mismatch atau pet type wrong), bukan keadaan asli
-        if totalListings > 0 and #nonMatching == totalListings and #listingRules > 0 then
-            L("[Auto-Clean] ⚠⚠⚠ SEMUA listing classified non-match — kemungkinan bug match logic, ABORT")
-            -- log sample rule + sample listing untuk diagnose
-            local sampleRule = listingRules[1]
-            L("[Auto-Clean] sample rule: type='"..tostring(sampleRule.type).."' min="..tostring(sampleRule.min).." max="..tostring(sampleRule.max).." price="..tostring(sampleRule.price))
-            for listingUuid, listing in pairs(data.Listings) do
-                if listing.ItemType == "Pet" and listing.ItemId then
-                    local item = data.Items and data.Items[listing.ItemId]
-                    if item and item.PetData then
-                        local bw = tonumber(item.PetData.BaseWeight) or 0
-                        L("[Auto-Clean] sample listing: type='"..tostring(item.PetType).."' BW="..bw.." → age1Kg="..(bw*1.1).." price="..tostring(listing.Price))
-                        break
+        -- v8.185: SMARTER safety guard — bedakan price-only mismatch (legitimate, user ganti harga)
+        -- vs type/kg mismatch (suspicious, probably bug match logic)
+        -- Re-scan: hitung berapa pet yg gagal CUMA gara price (TYPE + KG match)
+        local priceOnlyMismatch = 0
+        for listingUuid, listing in pairs(data.Listings) do
+            if listing.ItemType == "Pet" and listing.ItemId then
+                local item = data.Items and data.Items[listing.ItemId]
+                if item and item.PetData then
+                    local rawType = tostring(item.PetType or "")
+                    local pType = (BH.getBaseName and rawType ~= "") and BH.getBaseName(rawType) or rawType
+                    local bw = tonumber(item.PetData.BaseWeight) or 0
+                    local ageOneKg = bw * 1.1
+                    for _, r in ipairs(listingRules) do
+                        local typeOk = (r.type == pType or r.type == rawType or r.type == "All" or not r.type or r.type == "")
+                        local kgOk = ageOneKg >= (r.min or 0) and ageOneKg <= (r.max or math.huge)
+                        if typeOk and kgOk then
+                            priceOnlyMismatch = priceOnlyMismatch + 1
+                            break
+                        end
                     end
                 end
             end
-            return 0, 0, "SAFETY ABORT — 100% non-match"
+        end
+
+        if totalListings > 0 and #nonMatching == totalListings and #listingRules > 0 then
+            -- Kalo SEMUA non-match TAPI sebagian besar (>50%) cuma gara price → legitimate (user ganti harga)
+            -- Lanjut unlist; sc bakal re-list di harga baru
+            if priceOnlyMismatch > totalListings * 0.5 then
+                L(string.format("[Auto-Clean] %d/%d non-match karena PRICE only → lanjut unlist (user ganti harga)",
+                    priceOnlyMismatch, totalListings))
+            else
+                L("[Auto-Clean] ⚠⚠⚠ SEMUA listing classified non-match (bukan price-issue) — kemungkinan bug match logic, ABORT")
+                -- log sample rule + sample listing untuk diagnose
+                local sampleRule = listingRules[1]
+                L("[Auto-Clean] sample rule: type='"..tostring(sampleRule.type).."' min="..tostring(sampleRule.min).." max="..tostring(sampleRule.max).." price="..tostring(sampleRule.price))
+                for listingUuid, listing in pairs(data.Listings) do
+                    if listing.ItemType == "Pet" and listing.ItemId then
+                        local item = data.Items and data.Items[listing.ItemId]
+                        if item and item.PetData then
+                            local bw = tonumber(item.PetData.BaseWeight) or 0
+                            L("[Auto-Clean] sample listing: type='"..tostring(item.PetType).."' BW="..bw.." → age1Kg="..(bw*1.1).." price="..tostring(listing.Price))
+                            break
+                        end
+                    end
+                end
+                return 0, 0, "SAFETY ABORT — 100% non-match"
+            end
         end
 
         if #toUnlist == 0 then return 0, totalListings - #nonMatching, "all OK" end
