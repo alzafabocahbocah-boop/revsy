@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.186"
-local VERSION_DATE = "v8.186: 🐛 FIX rule edit gak persist — pas user edit MIN/MAX/PRICE/MAX-LIST di cell, value update di memory tapi GAK ke-save ke state file. Akibat: setelah rejoin, state load value LAMA dari file → edit hilang. Sekarang setiap edit langsung saveMarketState."
+local VERSION = "8.187"
+local VERSION_DATE = "v8.187: HISTORY SELL — STOP auto-import dari UI templates (yg di v8.184 bikin history LAMA dianggap entry baru dgn time=sekarang). Sekarang sc cuma listen AddToHistory event (sale baru di sesi ini). Tombol ⬆ IMPORT OLD ditambahin di header buat manual import kalo user mau load history lama."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -8262,7 +8262,7 @@ L("  - Inventory capacity")
     Instance.new("UICorner", sortBtn).CornerRadius = UDim.new(0, 6)
 
     local typeBtn = Instance.new("TextButton")
-    typeBtn.Size = UDim2.new(1, -236, 0, 30) typeBtn.Position = UDim2.new(0, 236, 0, 0)
+    typeBtn.Size = UDim2.new(1, -350, 0, 30) typeBtn.Position = UDim2.new(0, 236, 0, 0)
     typeBtn.BackgroundColor3 = C.card typeBtn.AutoButtonColor = false
     typeBtn.Text = "▼  All Pets" typeBtn.TextColor3 = C.text
     typeBtn.Font = FB typeBtn.TextSize = 12 typeBtn.BorderSizePixel = 0
@@ -8563,32 +8563,58 @@ L("  - Inventory capacity")
     end
 
     -- ===== Fetch dari server =====
+    -- v8.187: SKIP UI parse — UI templates udah berisi history LAMA, kalo di-import otomatis bakal masuk history sc
+    -- dengan time = sekarang (misleading "7m ago" padahal sebenarnya dari berhari-hari lalu).
+    -- Sekarang refresh CUMA trigger FetchHistory remote → kalo server fire AddToHistory, baru add.
+    -- Pet sold beneran di sesi ini → AddToHistory fire → masuk history.
     local fetching = false
     local function fetchHistory()
         if fetching then return end
         fetching = true
-        footerLbl.Text = "Fetching..." footerLbl.TextColor3 = C.accent
+        footerLbl.Text = "Trigger fetch..." footerLbl.TextColor3 = C.accent
         task.spawn(function()
-            -- v8.184: trigger FetchHistory (ack) + reset attribute + parse dari UI
+            -- Reset attribute + invoke remote (trigger server resend)
             pcall(function() game.Players.LocalPlayer:SetAttribute("_boothHistoryFetched", false) end)
             if fetchHistRE then
                 pcall(function() fetchHistRE:InvokeServer() end)
             end
-            task.wait(1)  -- tunggu UI ke-update
-            -- Parse dari template UI
-            local uiEntries = parseFromNativeUI()
-            local addedUI = 0
-            for _, e in ipairs(uiEntries) do
-                if addEntry(e) then addedUI = addedUI + 1 end
-            end
+            task.wait(1.5)
             fetching = false
             purgeOld()
             refreshUI()
-            footerLbl.Text = string.format("✓ UI parse: +%d | total=%d | %s", addedUI, #salesHistory, os.date("%H:%M:%S"))
+            footerLbl.Text = string.format("✓ listen mode | total=%d | %s", #salesHistory, os.date("%H:%M:%S"))
             footerLbl.TextColor3 = C.success
-            L("[Hist] UI parse: "..addedUI.." new from "..#uiEntries.." templates")
+            L("[Hist] refresh: listen-only mode, "..#salesHistory.." total")
         end)
     end
+
+    -- v8.187: tombol IMPORT OLD - manual import dari UI templates (kalo user mau load history lama)
+    -- Pindah TypeBtn ke kanan biar muat IMPORT
+    local importOldBtn = Instance.new("TextButton")
+    importOldBtn.Size = UDim2.new(0, 100, 0, 30)
+    importOldBtn.Position = UDim2.new(1, -110, 0, 0)
+    importOldBtn.BackgroundColor3 = Color3.fromRGB(220, 140, 40)
+    importOldBtn.Text = "⬆ IMPORT OLD"
+    importOldBtn.TextColor3 = Color3.new(0, 0, 0)
+    importOldBtn.Font = FB
+    importOldBtn.TextSize = 10
+    importOldBtn.BorderSizePixel = 0
+    importOldBtn.AutoButtonColor = false
+    importOldBtn.Parent = actionRow
+    Instance.new("UICorner", importOldBtn).CornerRadius = UDim.new(0, 6)
+
+    importOldBtn.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            local entries = parseFromNativeUI()
+            local added = 0
+            for _, e in ipairs(entries) do
+                if addEntry(e) then added = added + 1 end
+            end
+            purgeOld(); refreshUI()
+            footerLbl.Text = string.format("⬆ IMPORTED +%d dari UI templates", added)
+            footerLbl.TextColor3 = C.accent
+        end)
+    end)
 
     -- ===== Realtime AddToHistory subscribe =====
     if addHistRE then
@@ -8788,11 +8814,9 @@ L("  - Inventory capacity")
     end)
 
     -- ===== Initial fetch =====
-    -- v8.184: always trigger (parse dari UI templates, gak butuh fetchHistRE response)
-    task.spawn(function()
-        task.wait(3)
-        fetchHistory()
-    end)
+    -- v8.187: SKIP auto-fetch on load — supaya UI templates lama gak ke-import otomatis sebagai entry baru.
+    -- User bisa klik IMPORT OLD button kalo mau load history dari template UI.
+    -- Sale baru sesi ini → auto masuk via AddToHistory event subscribe.
 
     refreshUI()
 end)()
