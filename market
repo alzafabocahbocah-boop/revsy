@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.180"
-local VERSION_DATE = "v8.180: 🐛 FIX over-listing setelah STOP/run ulang — countActiveFromData skrg strip mutation prefix (Frozen Ice Golem→Ice Golem) + KG normalize age-1 (× 1.1). Dulu mutated pet di booth gak ke-hitung jadi script nge-list lebih banyak melebihi maxListings."
+local VERSION = "8.181"
+local VERSION_DATE = "v8.181: HISTORY SELL — parseEntry lebih robust (lebih banyak fallback field nama + nested e.Item) + DUMP struktur 1 entry pertama ke console biar tau format payload yg sebenarnya. Cegah pet name = '?' kalo field bedanama."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -8274,20 +8274,49 @@ L("  - Inventory capacity")
     footerLbl.Parent = hp
 
     -- ===== Helpers =====
+    local entryDumpedOnce = false  -- v8.181: dump 1st entry struct
+    local function dumpEntry(e, label)
+        local parts = {}
+        for k, v in pairs(e) do
+            if type(v) == "table" then
+                local sub = {}
+                for k2, v2 in pairs(v) do
+                    table.insert(sub, tostring(k2).."="..tostring(v2):sub(1, 25))
+                end
+                table.insert(parts, tostring(k).."={"..table.concat(sub, ",").."}")
+            else
+                table.insert(parts, tostring(k).."="..tostring(v):sub(1, 30))
+            end
+        end
+        L("[Hist] "..(label or "entry").." struct: "..table.concat(parts, " | "):sub(1, 400))
+    end
+
     local function parseEntry(e)
         if type(e) ~= "table" then return nil end
-        local t = tonumber(e.Time or e.Timestamp or e.time or e.At) or os.time()
-        local price = tonumber(e.Price or e.price or e.Cost or e.Amount) or 0
-        local petType = e.PetType or e.petType or e.ItemName or e.Name or "?"
-        local mut = nil
-        local kg = 0
-        if type(e.PetData) == "table" then
-            if tonumber(e.PetData.BaseWeight) then kg = e.PetData.BaseWeight * 1.1 end
-            mut = e.PetData.MutationType
+        -- v8.181: dump first entry biar tau struktur actual
+        if not entryDumpedOnce then
+            entryDumpedOnce = true
+            dumpEntry(e, "SAMPLE")
+        end
+        local t = tonumber(e.Time or e.Timestamp or e.time or e.At or e.SoldAt or e.PurchasedAt) or os.time()
+        local price = tonumber(e.Price or e.price or e.Cost or e.Amount or e.SoldPrice) or 0
+        -- v8.181: lebih banyak fallback + nested Item
+        local petType = e.PetType or e.petType or e.ItemType or e.itemType or e.ItemName or e.Name or e.itemName
+        local mut, kg = nil, 0
+        local petData = e.PetData or e.petData
+        if not petType and e.Item and type(e.Item) == "table" then
+            petType = e.Item.PetType or e.Item.petType or e.Item.Name
+            petData = petData or e.Item.PetData
+        end
+        if type(petData) == "table" then
+            if tonumber(petData.BaseWeight) then kg = petData.BaseWeight * 1.1 end
+            mut = petData.MutationType or petData.Mutation
+            petType = petType or petData.PetType or petData.Type
         elseif tonumber(e.BaseWeight) then
             kg = e.BaseWeight * 1.1
         end
-        local key = tostring(e.Id or e.UUID or e.ListingId or e.ItemId or "")
+        if not petType or petType == "" then petType = "?" end
+        local key = tostring(e.Id or e.UUID or e.ListingId or e.ItemId or e.ListingUUID or e.listingId or "")
         if key == "" then key = tostring(t).."_"..tostring(price).."_"..tostring(petType) end
         return {time = t, petType = tostring(petType), kg = kg, price = price, key = key, mut = mut}
     end
