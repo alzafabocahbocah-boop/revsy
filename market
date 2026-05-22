@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.187"
-local VERSION_DATE = "v8.187: HISTORY SELL — STOP auto-import dari UI templates (yg di v8.184 bikin history LAMA dianggap entry baru dgn time=sekarang). Sekarang sc cuma listen AddToHistory event (sale baru di sesi ini). Tombol ⬆ IMPORT OLD ditambahin di header buat manual import kalo user mau load history lama."
+local VERSION = "8.190"
+local VERSION_DATE = "v8.190: 👥 USER LIST modal — replace tombol 'Sort: NEWEST' di HISTORY SELL. Click → modal popup (mirip pet picker) dgn search + scroll list buyer username + count (sorted by count desc). Click row → username ke-copy ke clipboard. Hapus section FREQUENT BUYERS lama (skrng pake modal lebih clean)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -2412,6 +2412,121 @@ do
         end
     end)
 end
+
+-- v8.189: BUYER TRACKER card — notif sale + count buyer, frequent buyer (>5x) muncul di HISTORY SELL
+do
+    local btCard = makeCard(miscPanel, 86)
+    lblOf(btCard, "📊  BUYER TRACKER & NOTIF", 14, 10, 300, 22, C.accent, 14, FB)
+    lblOf(btCard, "Notif tiap sale + count buyer, yg beli >5x masuk list copy", 14, 32, 480, 18, C.textDim, 11)
+    local btState = (BH.marketState and BH.marketState.buyerTrackerEnabled) == true
+    local btBtn = btnOf(btCard, 14, 54, 220, 26, btState and "📊 Tracker: ON" or "📊 Tracker: OFF", btState and C.success or C.danger)
+    BH.buyerTrackerEnabled = btState
+    btBtn.MouseButton1Click:Connect(function()
+        BH.buyerTrackerEnabled = not BH.buyerTrackerEnabled
+        btBtn.Text = BH.buyerTrackerEnabled and "📊 Tracker: ON" or "📊 Tracker: OFF"
+        btBtn.BackgroundColor3 = BH.buyerTrackerEnabled and C.success or C.danger
+        BH.marketState.buyerTrackerEnabled = BH.buyerTrackerEnabled
+        BH.saveMarketState(BH.marketState)
+        L("[Buyer-Tracker] "..(BH.buyerTrackerEnabled and "enabled" or "disabled"))
+    end)
+end
+
+-- v8.189: Buyer counts + Notif system + Sale watcher (IIFE to escape 200-local limit)
+;(function()
+BH.buyerCounts = (BH.marketState and BH.marketState.buyerCounts) or {}
+BH.frequentBuyerThreshold = 5  -- > 5x masuk frequent list
+
+-- Notif banner di top screen (auto-fade)
+local notifQueue = {}
+local notifShowing = false
+BH.showNotif = function(text, color)
+    table.insert(notifQueue, {text = text, color = color or C.accent})
+    if notifShowing then return end
+    notifShowing = true
+    task.spawn(function()
+        while #notifQueue > 0 do
+            local n = table.remove(notifQueue, 1)
+            local banner = Instance.new("Frame")
+            banner.Size = UDim2.new(0, 400, 0, 40)
+            banner.Position = UDim2.new(0.5, -200, 0, -50)
+            banner.BackgroundColor3 = C.panel
+            banner.BorderSizePixel = 0
+            banner.ZIndex = 100
+            banner.Parent = gui
+            Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 8)
+            local stroke = Instance.new("UIStroke", banner)
+            stroke.Color = n.color; stroke.Thickness = 2
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, -20, 1, 0)
+            lbl.Position = UDim2.new(0, 10, 0, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.Text = n.text
+            lbl.TextColor3 = n.color
+            lbl.Font = FB
+            lbl.TextSize = 13
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.TextTruncate = Enum.TextTruncate.AtEnd
+            lbl.ZIndex = 101
+            lbl.Parent = banner
+            -- Slide in
+            banner:TweenPosition(UDim2.new(0.5, -200, 0, 20), Enum.EasingDirection.Out, Enum.EasingStyle.Back, 0.4, true)
+            task.wait(3)
+            -- Slide out
+            banner:TweenPosition(UDim2.new(0.5, -200, 0, -50), Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.3, true)
+            task.wait(0.4)
+            banner:Destroy()
+        end
+        notifShowing = false
+    end)
+end
+
+-- Setup watcher — listen BoothHistoryTemplate ChildAdded buat detect sale baru
+task.spawn(function()
+    task.wait(5)
+    local LP = game:GetService("Players").LocalPlayer
+    local tbh = LP.PlayerGui:WaitForChild("TradeBoothHistory", 30)
+    if not tbh then L("[Buyer-Tracker] TradeBoothHistory GUI gak ketemu"); return end
+    local sf = tbh.Frame:WaitForChild("ScrollingFrame", 5)
+    if not sf then L("[Buyer-Tracker] ScrollingFrame gak ketemu"); return end
+
+    sf.ChildAdded:Connect(function(template)
+        if template.Name ~= "BoothHistoryTemplate" then return end
+        if not BH.buyerTrackerEnabled then return end
+        task.wait(0.3)
+        pcall(function()
+            local spacer = template:FindFirstChild("Spacer")
+            if not spacer then return end
+            local title = spacer:FindFirstChild("Title")
+            if not title then return end
+            local label = title:FindFirstChild("Label")
+            if not label or tostring(label.Text) ~= "Sold" then return end  -- skip purchases
+
+            local plrLbl = title:FindFirstChild("PlrName")
+            local buyerName = plrLbl and tostring(plrLbl.Text) or "?"
+            local petName = spacer:FindFirstChild("ItemName") and tostring(spacer.ItemName.Text) or "?"
+            local price = spacer:FindFirstChild("Price") and spacer.Price:FindFirstChild("Amount")
+                          and tostring(spacer.Price.Amount.Text) or "?"
+
+            -- Increment count
+            BH.buyerCounts[buyerName] = (BH.buyerCounts[buyerName] or 0) + 1
+            local cnt = BH.buyerCounts[buyerName]
+            BH.marketState.buyerCounts = BH.buyerCounts
+            BH.saveMarketState(BH.marketState)
+
+            -- Notif banner
+            BH.showNotif(string.format("🛒 SOLD: %s @ %s → %s (%dx)", petName, price, buyerName, cnt), C.success)
+            L(string.format("🛒 [Buyer-Tracker] %s @ %s → %s (total %dx)", petName, price, buyerName, cnt))
+
+            -- Refresh frequent buyers UI kalo udah > threshold
+            if cnt >= BH.frequentBuyerThreshold and BH.refreshFrequentBuyers then
+                BH.refreshFrequentBuyers()
+            end
+        end)
+    end)
+
+    L("[Buyer-Tracker] watcher INSTALLED")
+end)
+end)()
 
 -- v8.145: AUTO-UNLIST NON-MATCH card — auto unlist pet di booth yg gak match rule
 do
@@ -8253,13 +8368,20 @@ L("  - Inventory capacity")
     clearBtn.Parent = actionRow
     Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 6)
 
+    -- v8.190: replace Sort dgn USER LIST — opens modal with copyable buyer names
+    local userListBtn = Instance.new("TextButton")
+    userListBtn.Size = UDim2.new(0, 130, 0, 30) userListBtn.Position = UDim2.new(0, 98, 0, 0)
+    userListBtn.BackgroundColor3 = C.card userListBtn.AutoButtonColor = false
+    userListBtn.Text = "👥 USER LIST" userListBtn.TextColor3 = C.accent
+    userListBtn.Font = FB userListBtn.TextSize = 12 userListBtn.BorderSizePixel = 0
+    userListBtn.Parent = actionRow
+    Instance.new("UICorner", userListBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Hidden sortBtn (keep ref biar gak break sortBtn handler di line 8998)
     local sortBtn = Instance.new("TextButton")
-    sortBtn.Size = UDim2.new(0, 130, 0, 30) sortBtn.Position = UDim2.new(0, 98, 0, 0)
-    sortBtn.BackgroundColor3 = C.card sortBtn.AutoButtonColor = false
-    sortBtn.Text = "Sort: NEWEST" sortBtn.TextColor3 = C.text
-    sortBtn.Font = FB sortBtn.TextSize = 12 sortBtn.BorderSizePixel = 0
+    sortBtn.Visible = false
+    sortBtn.Text = "Sort: NEWEST"
     sortBtn.Parent = actionRow
-    Instance.new("UICorner", sortBtn).CornerRadius = UDim.new(0, 6)
 
     local typeBtn = Instance.new("TextButton")
     typeBtn.Size = UDim2.new(1, -350, 0, 30) typeBtn.Position = UDim2.new(0, 236, 0, 0)
@@ -8275,6 +8397,9 @@ L("  - Inventory capacity")
     listFrame.BackgroundColor3 = C.bg listFrame.BorderSizePixel = 0
     listFrame.Parent = hp
     Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0, 8)
+
+    -- v8.190: stub refreshFrequentBuyers (modal-based skrng, dipanggil from watcher gak ngapa2in)
+    BH.refreshFrequentBuyers = function() end
 
     local scroll = Instance.new("ScrollingFrame")
     scroll.Size = UDim2.new(1, -8, 1, -8) scroll.Position = UDim2.new(0, 4, 0, 4)
@@ -8630,6 +8755,138 @@ L("  - Inventory capacity")
         end)
     end
 
+    -- ===== v8.190: USER LIST Modal (buyer list dgn copy) =====
+    local userPicker = Instance.new("Frame")
+    userPicker.Size = UDim2.new(0, 320, 0, 380)
+    userPicker.Position = UDim2.new(0.5, -160, 0.5, -190)
+    userPicker.BackgroundColor3 = C.panel
+    userPicker.BorderSizePixel = 0
+    userPicker.Visible = false
+    userPicker.ZIndex = 50
+    userPicker.Parent = hp
+    Instance.new("UICorner", userPicker).CornerRadius = UDim.new(0, 10)
+    do
+        local s = Instance.new("UIStroke", userPicker)
+        s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5
+    end
+
+    do
+        local uTitle = Instance.new("TextLabel")
+        uTitle.Size = UDim2.new(1, -50, 0, 30) uTitle.Position = UDim2.new(0, 12, 0, 8)
+        uTitle.BackgroundTransparency = 1 uTitle.Text = "User List"
+        uTitle.TextColor3 = C.accent uTitle.Font = FB uTitle.TextSize = 14
+        uTitle.TextXAlignment = Enum.TextXAlignment.Left
+        uTitle.ZIndex = 51 uTitle.Parent = userPicker
+
+        local uClose = Instance.new("TextButton")
+        uClose.Size = UDim2.new(0, 28, 0, 28) uClose.Position = UDim2.new(1, -36, 0, 8)
+        uClose.BackgroundColor3 = C.card uClose.AutoButtonColor = false
+        uClose.Text = "×" uClose.TextColor3 = C.text
+        uClose.Font = FB uClose.TextSize = 16 uClose.BorderSizePixel = 0
+        uClose.ZIndex = 51 uClose.Parent = userPicker
+        Instance.new("UICorner", uClose).CornerRadius = UDim.new(0, 5)
+        uClose.MouseButton1Click:Connect(function() userPicker.Visible = false end)
+    end
+
+    local uSearch = Instance.new("TextBox")
+    uSearch.Size = UDim2.new(1, -24, 0, 30) uSearch.Position = UDim2.new(0, 12, 0, 44)
+    uSearch.BackgroundColor3 = C.input uSearch.BorderSizePixel = 0
+    uSearch.Text = "" uSearch.PlaceholderText = "🔍  Cari username..."
+    uSearch.PlaceholderColor3 = C.textDim
+    uSearch.TextColor3 = C.text uSearch.Font = FM uSearch.TextSize = 12
+    uSearch.ClearTextOnFocus = false uSearch.ZIndex = 51
+    uSearch.Parent = userPicker
+    Instance.new("UICorner", uSearch).CornerRadius = UDim.new(0, 5)
+
+    local uScroll = Instance.new("ScrollingFrame")
+    uScroll.Size = UDim2.new(1, -24, 1, -90) uScroll.Position = UDim2.new(0, 12, 0, 82)
+    uScroll.BackgroundTransparency = 1 uScroll.BorderSizePixel = 0
+    uScroll.ScrollBarThickness = 4 uScroll.ScrollBarImageColor3 = C.accent
+    uScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    uScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    uScroll.ZIndex = 51 uScroll.Parent = userPicker
+    do
+        local lay = Instance.new("UIListLayout")
+        lay.Padding = UDim.new(0, 4); lay.Parent = uScroll
+    end
+
+    local function refreshUserList()
+        for _, c in ipairs(uScroll:GetChildren()) do
+            if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
+        end
+        local query = tostring(uSearch.Text):lower()
+        local sorted = {}
+        for name, cnt in pairs(BH.buyerCounts or {}) do
+            if query == "" or tostring(name):lower():find(query, 1, true) then
+                table.insert(sorted, {name = name, count = cnt})
+            end
+        end
+        table.sort(sorted, function(a, b)
+            if a.count == b.count then return a.name < b.name end
+            return a.count > b.count
+        end)
+
+        if #sorted == 0 then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1, 0, 0, 30) empty.BackgroundTransparency = 1
+            empty.Text = "Belum ada buyer ke-track"
+            empty.TextColor3 = C.textDim empty.Font = FM empty.TextSize = 11
+            empty.ZIndex = 52 empty.Parent = uScroll
+            return
+        end
+
+        for _, u in ipairs(sorted) do
+            local row = Instance.new("TextButton")
+            row.Size = UDim2.new(1, 0, 0, 32)
+            row.BackgroundColor3 = C.card
+            row.AutoButtonColor = false
+            row.Text = ""
+            row.ZIndex = 52
+            row.Parent = uScroll
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, 5)
+
+            local nlbl = Instance.new("TextLabel")
+            nlbl.Size = UDim2.new(1, -50, 1, 0) nlbl.Position = UDim2.new(0, 12, 0, 0)
+            nlbl.BackgroundTransparency = 1
+            nlbl.Text = u.name
+            nlbl.TextColor3 = C.text nlbl.Font = FM nlbl.TextSize = 12
+            nlbl.TextXAlignment = Enum.TextXAlignment.Left
+            nlbl.TextTruncate = Enum.TextTruncate.AtEnd
+            nlbl.ZIndex = 53 nlbl.Parent = row
+
+            local cntLbl = Instance.new("TextLabel")
+            cntLbl.Size = UDim2.new(0, 40, 1, 0) cntLbl.Position = UDim2.new(1, -46, 0, 0)
+            cntLbl.BackgroundTransparency = 1
+            cntLbl.Text = "("..u.count..")"
+            cntLbl.TextColor3 = C.accent cntLbl.Font = FB cntLbl.TextSize = 11
+            cntLbl.ZIndex = 53 cntLbl.Parent = row
+
+            row.MouseButton1Click:Connect(function()
+                local copyFn = setclipboard or (toclipboard) or (writeclipboard)
+                if copyFn then
+                    pcall(copyFn, u.name)
+                    nlbl.Text = "✓ "..u.name.." copied!"
+                    nlbl.TextColor3 = C.success
+                    task.delay(1.2, function()
+                        if nlbl.Parent then
+                            nlbl.Text = u.name
+                            nlbl.TextColor3 = C.text
+                        end
+                    end)
+                else
+                    nlbl.Text = "✗ executor no clipboard fn"
+                    nlbl.TextColor3 = C.danger
+                end
+            end)
+        end
+    end
+
+    uSearch:GetPropertyChangedSignal("Text"):Connect(refreshUserList)
+    userListBtn.MouseButton1Click:Connect(function()
+        userPicker.Visible = not userPicker.Visible
+        if userPicker.Visible then refreshUserList() end
+    end)
+
     -- ===== Pet Type Picker Modal =====
     local picker = Instance.new("Frame")
     picker.Size = UDim2.new(0, 320, 0, 380)
@@ -8817,6 +9074,9 @@ L("  - Inventory capacity")
     -- v8.187: SKIP auto-fetch on load — supaya UI templates lama gak ke-import otomatis sebagai entry baru.
     -- User bisa klik IMPORT OLD button kalo mau load history dari template UI.
     -- Sale baru sesi ini → auto masuk via AddToHistory event subscribe.
+
+    -- v8.189: Refresh frequent buyers on init
+    if BH.refreshFrequentBuyers then BH.refreshFrequentBuyers() end
 
     refreshUI()
 end)()
