@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.199"
-local VERSION_DATE = "v8.199: 🔀 HOP NOW rewrite — explicit server hop (TeleportToPlaceInstance) ganti Teleport matchmaking. 3-tier filter fallback (strict→lenient→super lenient). Server ID + Current Players display di top Rejoin tab. Auto-Rejoin server kosong <10 toggle dgn 5-min standby. Anti-same-server detection via JobId+player names overlap (passive, no rapid retry). NOTE: game punya 'Anti Scam' feature yg block hop — user perlu disable di in-game settings buat hop bener jalan."
+local VERSION = "8.202"
+local VERSION_DATE = "v8.202: HOP sequential busiest — pick #1 paling rame first, kalo teleport gagal coba #2, #3, ... sampai #5. No random. Strict order: rame → sepi."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6558,10 +6558,11 @@ rejoinBtn.MouseButton1Click:Connect(function()
         end
 
         table.sort(candidates, function(a, b)
-            return math.abs((a.playing or 0) - 20) < math.abs((b.playing or 0) - 20)
+            -- v8.202: sort by BUSIEST first
+            return (a.playing or 0) > (b.playing or 0)
         end)
-        local pick = candidates[math.random(1, math.min(10, #candidates))]
-        L("[HopNow] ✓ Pilih: "..tostring(pick.id):sub(1,12).." ("..tostring(pick.playing).."/"..tostring(pick.maxPlayers)..")")
+        local pick = candidates[1]  -- #1 busiest
+        L("[HopNow] ✓ Pilih: "..tostring(pick.id):sub(1,12).." ("..tostring(pick.playing).."/"..tostring(pick.maxPlayers)..") #1 busiest")
         task.wait(0.5)
         local okt, errt = pcall(function()
             TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
@@ -6874,29 +6875,19 @@ local function hopToBestServer()
 
     local current = tostring(game.JobId)
     local candidates = {}
+
+    -- v8.201: Filter sederhana — exclude current, harus ada slot, respect minP saja (skip terlalu sepi)
     for _, s in ipairs(servers) do
         local playing = s.playing or 0
         local max = s.maxPlayers or 30
-        if s.id ~= current and playing >= minP and playing <= maxP and playing < max then
+        if s.id ~= current and playing < max and playing >= minP then
             table.insert(candidates, s)
         end
     end
 
-    -- v8.198: AUTO-FALLBACK ke filter lenient kalo 0 candidate
+    -- Fallback: kalo minP gagal, drop minP (any non-current with slot)
     if #candidates == 0 then
-        L("[WARN] gak ada server cocok dengan filter ("..minP.."-"..maxP.."), fallback lenient (>0 players, ada slot)")
-        for _, s in ipairs(servers) do
-            local playing = s.playing or 0
-            local max = s.maxPlayers or 30
-            if s.id ~= current and playing > 0 and playing < max then
-                table.insert(candidates, s)
-            end
-        end
-    end
-
-    -- Final fallback: ANY non-current server dengan slot
-    if #candidates == 0 then
-        L("[WARN] masih 0, fallback super lenient (ANY server)")
+        L("[WARN] gak ada server >="..minP.." players, drop minP")
         for _, s in ipairs(servers) do
             local playing = s.playing or 0
             local max = s.maxPlayers or 30
@@ -6907,22 +6898,38 @@ local function hopToBestServer()
     end
 
     if #candidates == 0 then
-        L("[ERR] semua fallback gagal — gak ada server beda yg available")
+        L("[ERR] gak ada server beda yg available")
         return
     end
-    L("Kandidat: "..#candidates.." server")
 
-    -- Sort by closeness to target
+    -- v8.202: ALWAYS sort by BUSIEST first
     table.sort(candidates, function(a, b)
-        return math.abs((a.playing or 0) - target) < math.abs((b.playing or 0) - target)
+        return (a.playing or 0) > (b.playing or 0)
     end)
 
-    local best = candidates[1]
-    L("Pilih: "..(best.playing or "?").."/"..(best.maxPlayers or "?").." players (fps "..tostring(best.fps or "?")..")")
-    task.wait(0.5)
-    pcall(function()
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, best.id, player)
-    end)
+    L(string.format("Kandidat: %d server | top: %d/%d players | bottom: %d/%d",
+        #candidates,
+        candidates[1].playing or 0, candidates[1].maxPlayers or 0,
+        candidates[#candidates].playing or 0, candidates[#candidates].maxPlayers or 0))
+
+    -- Pick sequentially dari paling rame, fallback ke berikutnya kalo teleport gagal
+    -- Max try 5 sebelum give up
+    local maxTry = math.min(5, #candidates)
+    for i = 1, maxTry do
+        local pick = candidates[i]
+        L(string.format("Pilih #%d: %d/%d players (jobId=%s)",
+            i, pick.playing or 0, pick.maxPlayers or 0, tostring(pick.id):sub(1,12)))
+        task.wait(0.5)
+        local ok, err = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
+        end)
+        if ok then
+            return -- teleport fired, wait for it
+        else
+            L("[WARN] teleport #"..i.." gagal: "..tostring(err).." → coba next")
+        end
+    end
+    L("[ERR] semua "..maxTry.." top candidate gagal teleport")
 end
 
 hopNowBtn.MouseButton1Click:Connect(function() task.spawn(hopToBestServer) end)
