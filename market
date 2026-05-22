@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.181"
-local VERSION_DATE = "v8.181: HISTORY SELL — parseEntry lebih robust (lebih banyak fallback field nama + nested e.Item) + DUMP struktur 1 entry pertama ke console biar tau format payload yg sebenarnya. Cegah pet name = '?' kalo field bedanama."
+local VERSION = "8.182"
+local VERSION_DATE = "v8.182: HISTORY SELL parser tambah nested e.Listing fallback + dump SEMUA entry yg parse jadi '?' (max 3) biar bisa diagnose field nama. Need user kirim log [Hist] UNKNOWN#1 struct."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -8275,6 +8275,7 @@ L("  - Inventory capacity")
 
     -- ===== Helpers =====
     local entryDumpedOnce = false  -- v8.181: dump 1st entry struct
+    local unknownDumpCount = 0     -- v8.182: dump entries yg parse jadi "?"
     local function dumpEntry(e, label)
         local parts = {}
         for k, v in pairs(e) do
@@ -8288,7 +8289,7 @@ L("  - Inventory capacity")
                 table.insert(parts, tostring(k).."="..tostring(v):sub(1, 30))
             end
         end
-        L("[Hist] "..(label or "entry").." struct: "..table.concat(parts, " | "):sub(1, 400))
+        L("[Hist] "..(label or "entry").." struct: "..table.concat(parts, " | "):sub(1, 500))
     end
 
     local function parseEntry(e)
@@ -8300,20 +8301,31 @@ L("  - Inventory capacity")
         end
         local t = tonumber(e.Time or e.Timestamp or e.time or e.At or e.SoldAt or e.PurchasedAt) or os.time()
         local price = tonumber(e.Price or e.price or e.Cost or e.Amount or e.SoldPrice) or 0
-        -- v8.181: lebih banyak fallback + nested Item
+        -- v8.181+182: lebih banyak fallback + nested Item + listing nested
         local petType = e.PetType or e.petType or e.ItemType or e.itemType or e.ItemName or e.Name or e.itemName
         local mut, kg = nil, 0
         local petData = e.PetData or e.petData
-        if not petType and e.Item and type(e.Item) == "table" then
-            petType = e.Item.PetType or e.Item.petType or e.Item.Name
-            petData = petData or e.Item.PetData
+        -- nested e.Item
+        if e.Item and type(e.Item) == "table" then
+            petType = petType or e.Item.PetType or e.Item.petType or e.Item.Name or e.Item.ItemName
+            petData = petData or e.Item.PetData or e.Item.petData
+        end
+        -- nested e.Listing
+        if e.Listing and type(e.Listing) == "table" then
+            petType = petType or e.Listing.PetType or e.Listing.ItemType
+            petData = petData or e.Listing.PetData
         end
         if type(petData) == "table" then
             if tonumber(petData.BaseWeight) then kg = petData.BaseWeight * 1.1 end
             mut = petData.MutationType or petData.Mutation
-            petType = petType or petData.PetType or petData.Type
+            petType = petType or petData.PetType or petData.Type or petData.Name
         elseif tonumber(e.BaseWeight) then
             kg = e.BaseWeight * 1.1
+        end
+        -- v8.182: kalo masih "?", dump struct ini buat diagnose (max 3 dump)
+        if (not petType or petType == "") and unknownDumpCount < 3 then
+            unknownDumpCount = unknownDumpCount + 1
+            dumpEntry(e, "UNKNOWN#"..unknownDumpCount)
         end
         if not petType or petType == "" then petType = "?" end
         local key = tostring(e.Id or e.UUID or e.ListingId or e.ItemId or e.ListingUUID or e.listingId or "")
