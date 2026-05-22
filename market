@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.173"
-local VERSION_DATE = "v8.173: Auto-Start watchdog + FALLBACK state recovery — kalo BH.autoStart nil (card init gagal), read langsung dari state file. Fire SEKALI begitu conditions met (autoStart + rules + not running), lalu exit. Wait rules kalo blm ada."
+local VERSION = "8.174"
+local VERSION_DATE = "v8.174: Auto-Start POLLING watchdog (cek tiap 2s, max 2 menit) + VERBOSE state diagnostic di console biar tau persis kenapa gak fire. Fire begitu autoStart=ON + rules + not running. Plus FALLBACK recover dari state file kalo BH.autoStart nil."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -9695,39 +9695,65 @@ task.spawn(function()
 end)
 
 -- v8.48: AUTO-START
--- v8.173: watchdog dengan FALLBACK state read — kalo BH.autoStart nil/false padahal state file ON, read langsung dari state
-L("🚀 [Auto-Start] spawning watchdog...")
+-- v8.174: POLLING watchdog — cek tiap 2s, fire begitu conditions met. Plus VERY verbose state diagnostic.
+L("🚀 [Auto-Start] === STATE DIAGNOSTIC ===")
+L("🚀   BH.marketState exists: "..tostring(BH.marketState ~= nil))
+if BH.marketState then
+    L("🚀   BH.marketState.autoStart = "..tostring(BH.marketState.autoStart).." (type: "..type(BH.marketState.autoStart)..")")
+    L("🚀   BH.marketState.listingRules count = "..tostring(BH.marketState.listingRules and #BH.marketState.listingRules or "nil"))
+end
+L("🚀   BH.autoStart (after card init) = "..tostring(BH.autoStart))
+L("🚀   listingRules count = "..#listingRules)
+L("🚀 [Auto-Start] === SPAWNING WATCHDOG ===")
 task.spawn(function()
-    task.wait(3)  -- wait UI/state init
-    -- FALLBACK: kalo BH.autoStart belum di-set (card init gagal), baca langsung dari state
-    if BH.autoStart == nil and BH.marketState and BH.marketState.autoStart == true then
+    -- FALLBACK: kalo BH.autoStart nil/false padahal state file ON, recover
+    if (BH.autoStart == nil or BH.autoStart == false) and BH.marketState and BH.marketState.autoStart == true then
         BH.autoStart = true
-        L("🚀 [Auto-Start] FALLBACK: BH.autoStart=nil, recover dari state file → ON")
+        L("🚀 [Auto-Start] FALLBACK applied: BH.autoStart was nil/false, recovered → ON")
     end
-    L("🚀 [Auto-Start] state: autoStart="..tostring(BH.autoStart).." rules="..#listingRules.." running="..tostring(isRunning))
 
+    -- Polling loop — cek tiap 2s, fire begitu siap
+    local maxAttempts = 60  -- 60 × 2s = 2 menit max wait
+    local attempts = 0
     local fired = false
-    while gui.Parent and not fired do
-        if BH.autoStart and #listingRules > 0 and not isRunning then
-            L("🚀 [Auto-Start] FIRING onStartClick...")
-            local ok, err = pcall(BH.onStartClick)
-            if ok then
-                L("🚀 [Auto-Start] ✅ done")
-                fired = true
-            else
-                L("✗ [Auto-Start] ❌ "..tostring(err))
-                fired = true  -- jangan loop terus kalo error
-            end
-        elseif not BH.autoStart then
-            -- autoStart OFF, exit watchdog (user pilih manual)
-            L("🚀 [Auto-Start] autoStart=OFF, exit watchdog")
-            return
-        elseif #listingRules == 0 then
-            -- Tunggu rules ada (mungkin user nambah rule setelah load)
-            task.wait(3)
-        else
-            -- isRunning=true, exit (manual start lagi jalan)
+
+    while gui.Parent and not fired and attempts < maxAttempts do
+        attempts = attempts + 1
+        task.wait(2)
+
+        -- Log status tiap 5 attempts
+        if attempts % 5 == 1 then
+            L(string.format("🚀 [Auto-Start] poll #%d: autoStart=%s rules=%d running=%s",
+                attempts, tostring(BH.autoStart), #listingRules, tostring(isRunning)))
+        end
+
+        if not BH.autoStart then
+            -- Toggle OFF, exit
+            L("🚀 [Auto-Start] autoStart=OFF, exit polling")
             return
         end
+
+        if isRunning then
+            -- Manual start running, no need auto-start
+            L("🚀 [Auto-Start] isRunning=true (manual), exit polling")
+            return
+        end
+
+        if #listingRules > 0 then
+            -- All conditions met → fire
+            L("🚀 [Auto-Start] ✓ READY (attempt #"..attempts..") → FIRING onStartClick...")
+            local ok, err = pcall(BH.onStartClick)
+            if ok then
+                L("🚀 [Auto-Start] ✅ FIRED")
+                fired = true
+            else
+                L("✗ [Auto-Start] ❌ ERROR: "..tostring(err))
+                fired = true
+            end
+        end
+    end
+
+    if not fired and attempts >= maxAttempts then
+        L("⚠ [Auto-Start] timeout setelah "..attempts.." attempts — rules masih kosong?")
     end
 end)
