@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.178"
-local VERSION_DATE = "v8.178: PINDAH watchdog ke line ~6286 (right after onStartClick wired) — sebelum semua UI build sisanya. Cegah crash di tab2 setelah Listing yg bisa kill watchdog spawn. Plus tetep persistent loop dengan cooldown 10s."
+local VERSION = "8.179"
+local VERSION_DATE = "v8.179: FIX spam auto-start — balik ke ONE-SHOT (fire SEKALI pas script load, gak re-fire). Re-fire setelah listing stop = lewat toggle OFF/ON di MISC (v8.176 handler langsung fire). Aman dari spam loop."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6284,45 +6284,44 @@ BH.onStartClick = function()
 end
 startBtn.MouseButton1Click:Connect(BH.onStartClick)
 
--- v8.178: SPAWN watchdog EARLY (right after onStartClick wired) biar gak ke-kill kalo ada error di UI build setelahnya
+-- v8.179: ONE-SHOT auto-start fire (gak spam). Fire SEKALI begitu siap (max 60s wait for rules).
+-- Re-fire mid-session = lewat toggle OFF/ON (v8.176 handler langsung fire)
 task.spawn(function()
     task.wait(2)
     L("🚀 [Auto-Start] === STATE DIAGNOSTIC ===")
-    L("🚀   BH.marketState exists: "..tostring(BH.marketState ~= nil))
     if BH.marketState then
-        L("🚀   BH.marketState.autoStart = "..tostring(BH.marketState.autoStart).." (type: "..type(BH.marketState.autoStart)..")")
-        L("🚀   BH.marketState.listingRules count = "..tostring(BH.marketState.listingRules and #BH.marketState.listingRules or "nil"))
+        L("🚀   state.autoStart="..tostring(BH.marketState.autoStart).." | rules="..tostring(BH.marketState.listingRules and #BH.marketState.listingRules or "nil"))
     end
-    L("🚀   BH.autoStart = "..tostring(BH.autoStart))
-    L("🚀   listingRules count = "..#listingRules)
+    L("🚀   BH.autoStart="..tostring(BH.autoStart).." | listingRules="..#listingRules)
 
-    -- FALLBACK recover
+    -- FALLBACK recover dari state
     if (BH.autoStart == nil or BH.autoStart == false) and BH.marketState and BH.marketState.autoStart == true then
         BH.autoStart = true
-        L("🚀 [Auto-Start] FALLBACK applied → ON")
+        L("🚀 [Auto-Start] FALLBACK → ON")
     end
 
-    -- Persistent loop
-    local checkCount = 0
-    local lastFireTime = 0
-    while gui.Parent do
-        task.wait(3)
-        checkCount = checkCount + 1
-        if checkCount % 10 == 1 then
-            L(string.format("🚀 [Auto-Start] check #%d: autoStart=%s rules=%d running=%s",
-                checkCount, tostring(BH.autoStart), #listingRules, tostring(isRunning)))
+    -- Wait conditions met (max 60s buat handle slow init)
+    local maxWait = 60
+    local waited = 0
+    while gui.Parent and waited < maxWait do
+        if not BH.autoStart then
+            L("🚀 [Auto-Start] autoStart=OFF, exit (user bisa toggle ON anytime)")
+            return
         end
-        local cooldownOk = (tick() - lastFireTime) > 10
-        if BH.autoStart and #listingRules > 0 and not isRunning and cooldownOk then
-            L("🚀 [Auto-Start] ✓ FIRING (check #"..checkCount..")")
-            lastFireTime = tick()
+        if isRunning then
+            L("🚀 [Auto-Start] isRunning=true, exit (manual start sudah jalan)")
+            return
+        end
+        if #listingRules > 0 then
+            L("🚀 [Auto-Start] ✓ FIRING onStartClick (sekali)...")
             local ok, err = pcall(BH.onStartClick)
             L(ok and "🚀 [Auto-Start] ✅ FIRED" or ("✗ [Auto-Start] ❌ "..tostring(err)))
-            -- Wait sampai isRunning=true atau 5s
-            local w = 0
-            while not isRunning and w < 5 do task.wait(0.5); w = w + 0.5 end
+            return  -- ONE-SHOT, exit setelah fire
         end
+        task.wait(3)
+        waited = waited + 3
     end
+    L("⚠ [Auto-Start] timeout (rules tetep kosong selama 60s)")
 end)
 
 -- ===== REJOIN =====
