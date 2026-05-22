@@ -6874,9 +6874,33 @@ local function hopToBestServer()
             table.insert(candidates, s)
         end
     end
+
+    -- v8.198: AUTO-FALLBACK ke filter lenient kalo 0 candidate
     if #candidates == 0 then
-        L("[ERR] gak ada server cocok dengan filter ("..minP.."-"..maxP..")")
-        L("Coba turunin min atau naikin max")
+        L("[WARN] gak ada server cocok dengan filter ("..minP.."-"..maxP.."), fallback lenient (>0 players, ada slot)")
+        for _, s in ipairs(servers) do
+            local playing = s.playing or 0
+            local max = s.maxPlayers or 30
+            if s.id ~= current and playing > 0 and playing < max then
+                table.insert(candidates, s)
+            end
+        end
+    end
+
+    -- Final fallback: ANY non-current server dengan slot
+    if #candidates == 0 then
+        L("[WARN] masih 0, fallback super lenient (ANY server)")
+        for _, s in ipairs(servers) do
+            local playing = s.playing or 0
+            local max = s.maxPlayers or 30
+            if s.id ~= current and playing < max then
+                table.insert(candidates, s)
+            end
+        end
+    end
+
+    if #candidates == 0 then
+        L("[ERR] semua fallback gagal — gak ada server beda yg available")
         return
     end
     L("Kandidat: "..#candidates.." server")
