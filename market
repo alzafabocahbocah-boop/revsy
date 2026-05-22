@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.185"
-local VERSION_DATE = "v8.185: 🐛 FIX auto-clean safety guard terlalu agresif — pas user ganti harga rule, SEMUA pet non-match (price wrong), tapi safety abort cegah unlist. Sekarang bedakan price-only mismatch (legitimate, lanjut unlist) vs type/kg mismatch (suspicious bug, abort). PASTIIN AUTO-CLEAN ON di MISC tab biar feature ini jalan."
+local VERSION = "8.186"
+local VERSION_DATE = "v8.186: 🐛 FIX rule edit gak persist — pas user edit MIN/MAX/PRICE/MAX-LIST di cell, value update di memory tapi GAK ke-save ke state file. Akibat: setelah rejoin, state load value LAMA dari file → edit hilang. Sekarang setiap edit langsung saveMarketState."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -1688,37 +1688,43 @@ local function buildRuleRow(parent, r, idx, big)
     end
     typeLbl.Parent = row
 
+    -- v8.186: helper buat save state setiap kali cell edit
+    local function saveAfterEdit()
+        BH.marketState.listingRules = listingRules
+        BH.saveMarketState(BH.marketState)
+    end
+
     -- Editable MIN KG (v8.87: shrunk 64→42)
     makeCell(108, 42, "↓", C.textDim, C.text, tostring(r.min), function(txt)
         local n = tonumber(txt)
-        if n and n >= 0 then r.min = n end
+        if n and n >= 0 then r.min = n; saveAfterEdit() end
     end)
 
     -- Editable MAX KG (v8.87: shrunk 64→42)
     local maxKgStr = r.max == math.huge and "∞" or tostring(r.max)
     makeCell(154, 42, "↑", C.textDim, C.text, maxKgStr, function(txt)
         if txt == "" or txt == "∞" or txt == "inf" then
-            r.max = math.huge
+            r.max = math.huge; saveAfterEdit()
         else
             local n = tonumber(txt)
-            if n and n > 0 then r.max = n end
+            if n and n > 0 then r.max = n; saveAfterEdit() end
         end
     end)
 
     -- Editable PRICE (v8.87: shrunk 86→66)
     makeCell(200, 66, "💰", C.accent, C.accent, tostring(r.price), function(txt)
         local n = tonumber(txt)
-        if n and n > 0 then r.price = n end
+        if n and n > 0 then r.price = n; saveAfterEdit() end
     end)
 
     -- Editable MAX LIST (v8.87: shrunk 70→42)
     local mlStr = (r.maxListings == math.huge) and "∞" or tostring(r.maxListings or "∞")
     makeCell(270, 42, "📋", C.success, C.success, mlStr, function(txt)
         if txt == "" or txt == "∞" or txt == "inf" then
-            r.maxListings = math.huge
+            r.maxListings = math.huge; saveAfterEdit()
         else
             local n = tonumber(txt)
-            if n and n > 0 then r.maxListings = n end
+            if n and n > 0 then r.maxListings = n; saveAfterEdit() end
         end
     end)
 
