@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.182"
-local VERSION_DATE = "v8.182: HISTORY SELL parser tambah nested e.Listing fallback + dump SEMUA entry yg parse jadi '?' (max 3) biar bisa diagnose field nama. Need user kirim log [Hist] UNKNOWN#1 struct."
+local VERSION = "8.183"
+local VERSION_DATE = "v8.183: HIDE log spam — hapus 'skip MUT' + type-mismatch detail per pet di cycle listing (was useful for diagnose v8.180 bug, sekarang gak perlu). Plus visual marker '════ HIST DUMP ════' biar gampang dicari di console."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -5838,21 +5838,10 @@ BH.onStartClick = function()
                             if p.wt and ((not r.type) or r.type == p.baseType) and p.wt >= r.min and p.wt <= r.max and active < ml then
                                 rule, ruleIdx = r, ri
                                 break
-                            elseif p.isMut then
-                                debugDecisions = debugDecisions or {}
-                                local why = ""
-                                if not p.wt then why = why.."no-APS-data " end
-                                if r.type and r.type ~= p.baseType then why = why.."type≠('"..tostring(r.type).."'vs'"..p.baseType.."') " end
-                                if p.wt and not (p.wt >= r.min and p.wt <= r.max) then why = why.."kg-out("..string.format("%.2f",p.wt).."∉"..r.min.."-"..(r.max==math.huge and "∞" or r.max)..") " end
-                                if active >= ml then why = why.."slot-full("..active.."/"..ml..") " end
-                                table.insert(debugDecisions, "r"..ri.." '"..(r.type or "All").."' "..r.min.."-"..(r.max==math.huge and "∞" or r.max)..": "..why)
                             end
                         end
                     end
-                    if not rule and p.isMut and debugDecisions then
-                        L("  ⚠ skip MUT '"..(p.petName or "?").."' wt="..(p.wt and string.format("%.2f",p.wt) or "nil")..":")
-                        for _, d in ipairs(debugDecisions) do L("       "..d) end
-                    end
+                    -- v8.183: hide MUT skip spam (was too noisy after v8.180 fix)
 
                     if rule then
                         -- v8.47: pace BEFORE listPet (always runs, gak peduli result)
@@ -8289,7 +8278,11 @@ L("  - Inventory capacity")
                 table.insert(parts, tostring(k).."="..tostring(v):sub(1, 30))
             end
         end
+        L("")
+        L("════════════ HIST DUMP ════════════")
         L("[Hist] "..(label or "entry").." struct: "..table.concat(parts, " | "):sub(1, 500))
+        L("════════════════════════════════════")
+        L("")
     end
 
     local function parseEntry(e)
