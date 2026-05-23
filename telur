@@ -165,11 +165,9 @@ local selectedSeals = {}  -- {uuid = true}
 local selectedMisc = {}   -- {mutName = true} — manual mutation boost
 
 -- v3.19: Session tracker state
-local trackerPet = 0      -- pet increase total
-local trackerEggInc = 0   -- egg increase total
-local trackerEggDec = 0   -- egg decrease total
+local trackerPet = 0          -- pet increase total
+local trackerEggInitial = nil -- egg count saat session start (or after CLEAR)
 local trackerPrevPet = nil
-local trackerPrevEgg = nil
 local trackerStartTime = os.time()
 local trackerVisible = false
 
@@ -232,14 +230,26 @@ local function updateTracker()
     local petTag = selectedPet and (" ("..selectedPet..")") or " (all)"
     local eggTag = selectedEgg and (" ("..selectedEgg..")") or " (all)"
     trackPetLbl.Text = string.format("🐾 Pet +%d%s", trackerPet, petTag)
-    local net = trackerEggInc - trackerEggDec
-    trackEggLbl.Text = string.format("🥚 Egg +%d / -%d%s", trackerEggInc, trackerEggDec, eggTag)
+    -- v3.26: egg = awal vs sekarang, single net delta
+    local currentEgg
+    if selectedEgg then
+        currentEgg = eggCounts[selectedEgg] or 0
+    else
+        currentEgg = 0
+        for _, c in pairs(eggCounts) do currentEgg = currentEgg + c end
+    end
+    local initial = trackerEggInitial or currentEgg
+    local delta = currentEgg - initial
+    local sign = delta >= 0 and "+" or ""
+    trackEggLbl.Text = string.format("🥚 Egg awal:%d → sekarang:%d (%s%d)%s",
+        initial, currentEgg, sign, delta, eggTag)
     trackTimeLbl.Text = "⏱️ Time: " .. formatTime(os.time() - trackerStartTime)
 end
 
 clearBtn.MouseButton1Click:Connect(function()
-    trackerPet = 0; trackerEggInc = 0; trackerEggDec = 0
-    trackerPrevPet = nil; trackerPrevEgg = nil
+    trackerPet = 0
+    trackerEggInitial = nil  -- akan di-set ulang di next refresh
+    trackerPrevPet = nil
     trackerStartTime = os.time()
     updateTracker()
     saveSettings()
@@ -292,9 +302,10 @@ local function saveSettings()
     if not writefile then return end
     local data = {
         selectedSeals = {}, selectedMisc = {},
-        selectedPet = selectedPet, selectedEgg = selectedEgg,  -- v3.24
+        selectedPet = selectedPet, selectedEgg = selectedEgg,
         tracker = {
-            pet = trackerPet, eggInc = trackerEggInc, eggDec = trackerEggDec,
+            pet = trackerPet,
+            eggInitial = trackerEggInitial,  -- v3.26
             startTime = trackerStartTime,
         }
     }
@@ -312,18 +323,16 @@ local function loadSettings()
             if type(data) == "table" then
                 for _, u in ipairs(data.selectedSeals or {}) do selectedSeals[u] = true end
                 for _, m in ipairs(data.selectedMisc or {}) do selectedMisc[m] = true end
-                -- v3.24: restore pet/egg filter
                 if type(data.selectedPet) == "string" then selectedPet = data.selectedPet end
                 if type(data.selectedEgg) == "string" then selectedEgg = data.selectedEgg end
                 if data.tracker then
                     trackerPet = tonumber(data.tracker.pet) or 0
-                    trackerEggInc = tonumber(data.tracker.eggInc) or 0
-                    trackerEggDec = tonumber(data.tracker.eggDec) or 0
+                    trackerEggInitial = tonumber(data.tracker.eggInitial)
                     trackerStartTime = tonumber(data.tracker.startTime) or os.time()
                 end
-                print(string.format("[PetStat] loaded %d seals + %d misc + tracker(p+%d e+%d/-%d) + filter(pet=%s egg=%s)",
+                print(string.format("[PetStat] loaded %d seals + %d misc + tracker(p+%d eggAwal=%s) + filter(pet=%s egg=%s)",
                     #(data.selectedSeals or {}), #(data.selectedMisc or {}),
-                    trackerPet, trackerEggInc, trackerEggDec,
+                    trackerPet, tostring(trackerEggInitial),
                     tostring(selectedPet), tostring(selectedEgg)))
             end
         end
@@ -1024,17 +1033,17 @@ local function refreshAll()
         for _, c in pairs(eggCounts) do currentEgg = currentEgg + c end
     end
 
+    -- Pet: hanya tambah kalo nambah (no decrement)
     if trackerPrevPet ~= nil then
         local dPet = currentPet - trackerPrevPet
         if dPet > 0 then trackerPet = trackerPet + dPet end
     end
-    if trackerPrevEgg ~= nil then
-        local dEgg = currentEgg - trackerPrevEgg
-        if dEgg > 0 then trackerEggInc = trackerEggInc + dEgg
-        elseif dEgg < 0 then trackerEggDec = trackerEggDec + (-dEgg) end
-    end
     trackerPrevPet = currentPet
-    trackerPrevEgg = currentEgg
+
+    -- v3.26: Egg awal = first measurement (atau after CLEAR)
+    if trackerEggInitial == nil then
+        trackerEggInitial = currentEgg
+    end
 
     if trackerVisible then updateTracker() end
     -- v3.19: save tracker state periodically
@@ -1158,8 +1167,8 @@ eggBtn.MouseButton1Click:Connect(function()
         selectedEgg = name
         eggBtn.Text = name:sub(1, 8)..(name:len()>8 and "…" or "")
         updateEgg()
-        trackerPrevEgg = nil
-        saveSettings()  -- v3.24
+        trackerEggInitial = nil  -- v3.26: reset baseline biar awal = current egg dgn filter baru
+        saveSettings()
     end)
 end)
 
