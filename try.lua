@@ -1504,11 +1504,11 @@ expandBtn.MouseButton1Click:Connect(function() setExpanded(not expanded) end)
 -- MINIMIZE — floating logo
 -- ============================================================
 local zLogo = Instance.new("TextButton")
-zLogo.Size = UDim2.new(0, 42, 0, 42)
-zLogo.Position = UDim2.new(0, 10, 0.5, -21)
-zLogo.BackgroundColor3 = C.Accent
-zLogo.Text = "⚡" zLogo.TextColor3 = Color3.new(0,0,0)
-zLogo.Font = Enum.Font.GothamBold zLogo.TextSize = 22
+zLogo.Size = UDim2.new(0, 40, 0, 40)
+zLogo.Position = UDim2.new(0, 10, 0.5, -20)
+zLogo.BackgroundColor3 = Color3.fromRGB(255,255,255)
+zLogo.Text = "Z" zLogo.TextColor3 = Color3.new(0,0,0)
+zLogo.Font = Enum.Font.GothamBold zLogo.TextSize = 20
 zLogo.BorderSizePixel = 0
 zLogo.AutoButtonColor = false
 zLogo.Active = true
