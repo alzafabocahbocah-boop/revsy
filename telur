@@ -260,36 +260,30 @@ trackBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- v3.23: long-press atau click ke-2 minBtn buat manual refresh (force aggressive scan + dump)
-local lastMinClick = 0
-minBtn.MouseButton1Click:Connect(function()
-    local now = tick()
-    if now - lastMinClick < 0.5 then
-        -- Double-click: force refresh + diagnostic dump
-        print("[PetStat] === MANUAL REFRESH (double-tap minBtn) ===")
-        local foundFirst = aggressiveScanAllPetData()
-        ensureContainer(true)
-        print(string.format("[PetStat] container=%s cached=%d", tostring(cachedContainer ~= nil), cachedCount))
-        local lookupSize = 0
-        for _ in pairs(uuidToPetDataCache) do lookupSize = lookupSize + 1 end
-        print(string.format("[PetStat] uuidToPetDataCache size: %d", lookupSize))
-        -- Dump first 3 entries to see format
-        local i = 0
-        for k, v in pairs(uuidToPetDataCache) do
-            i = i + 1
-            if i <= 3 then
-                print(string.format("  [%s] BaseWeight=%s Level=%s Mut=%s",
-                    tostring(k):sub(1,38),
-                    tostring(v.BaseWeight), tostring(v.Level), tostring(v.MutationType or v.Mutation)))
-            end
+-- v3.25: debug dump via double-tap pada zLogo (definisi zLogo di bawah)
+local lastZClick = 0
+local _debugDump  -- forward declare
+_debugDump = function()
+    print("[PetStat] === MANUAL REFRESH (double-tap zLogo) ===")
+    aggressiveScanAllPetData()
+    ensureContainer(true)
+    print(string.format("[PetStat] container=%s cached=%d", tostring(cachedContainer ~= nil), cachedCount))
+    local lookupSize = 0
+    for _ in pairs(uuidToPetDataCache) do lookupSize = lookupSize + 1 end
+    print(string.format("[PetStat] uuidToPetDataCache size: %d", lookupSize))
+    local i = 0
+    for k, v in pairs(uuidToPetDataCache) do
+        i = i + 1
+        if i <= 3 then
+            print(string.format("  [%s] BaseWeight=%s Level=%s Mut=%s",
+                tostring(k):sub(1,38),
+                tostring(v.BaseWeight), tostring(v.Level), tostring(v.MutationType or v.Mutation)))
         end
-        -- Force re-scan all pets
-        for uuid, pd in pairs(petsByUuid) do pd.weight = 0 end
-        scanPets(); updateTotal(); updateEgg(); updateSealPct()
-        print("[PetStat] === DONE ===")
     end
-    lastMinClick = now
-end)
+    for _, pd in pairs(petsByUuid) do pd.weight = 0 end
+    scanPets(); updateTotal(); updateEgg(); updateSealPct()
+    print("[PetStat] === DONE ===")
+end
 
 -- v3.15: Persistence via file (survive rejoin)
 local SETTINGS_FILE = "ZenxPetStat_settings.json"
@@ -644,7 +638,7 @@ local function updateSealPct()
         end
     end
 
-    local final = math.min(total, 50)
+    local final = total
     sealCol.val.Text = string.format("%.2f%%", final)
     if miscCount > 0 then
         sealCol.sub.Text = string.format("%d/%d • +%d/pet", count, totalSeal, miscSum)
@@ -1177,12 +1171,30 @@ if selectedEgg then
     eggBtn.Text = selectedEgg:sub(1, 8)..(selectedEgg:len()>8 and "…" or "")
 end
 
-local minimized = false
-local origSize = main.Size
+-- v3.25: Floating Z logo (saat minimize)
+local zLogo = Instance.new("TextButton")
+zLogo.Size = UDim2.new(0, 40, 0, 40)
+zLogo.Position = UDim2.new(0, 10, 0.5, -20)
+zLogo.BackgroundColor3 = C.text
+zLogo.Text = "Z"
+zLogo.TextColor3 = Color3.new(0,0,0)
+zLogo.Font = FB; zLogo.TextSize = 20
+zLogo.BorderSizePixel = 0
+zLogo.AutoButtonColor = false
+zLogo.Active = true; zLogo.Draggable = true
+zLogo.Visible = false
+zLogo.Parent = gui
+Instance.new("UICorner", zLogo).CornerRadius = UDim.new(1, 0)
+local zStroke = Instance.new("UIStroke", zLogo)
+zStroke.Color = Color3.new(0,0,0); zStroke.Thickness = 1.5
+
 minBtn.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    main.Size = minimized and UDim2.new(0, 300, 0, 32) or origSize
-    minBtn.Text = minimized and "+" or "—"
+    main.Visible = false
+    zLogo.Visible = true
+end)
+zLogo.MouseButton1Click:Connect(function()
+    main.Visible = true
+    zLogo.Visible = false
 end)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
