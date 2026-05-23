@@ -1,0 +1,1218 @@
+-- ===== PET STAT v2.0 =====
+-- Layout:
+--   [📊 PET STAT] [Jenis Pet ▼] [Jenis Egg ▼] [+] [-] [×] [—] [✕]
+--   ┌─────────────┬─────────────┬─────────────┐
+--   │   TOTAL     │    EGG      │  SEAL %     │
+--   │    80       │   1800      │   3.15%     │
+--   │   (Cat)     │  (Common)   │  (auto)     │
+--   └─────────────┴─────────────┴─────────────┘
+--
+-- Seal % auto-detect dari pet di backpack
+-- Formula: % per Seal = 0.05 × W + 1 + (mutBoost/100), combined cap 50%
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local HttpService = game:GetService("HttpService")
+local RS = game:GetService("ReplicatedStorage")
+local player = Players.LocalPlayer
+
+local C = {
+    bg=Color3.fromRGB(18,18,18), panel=Color3.fromRGB(28,28,28), card=Color3.fromRGB(36,36,36),
+    accent=Color3.fromRGB(255,255,255), text=Color3.fromRGB(255,255,255), dim=Color3.fromRGB(200,200,200),
+    green=Color3.fromRGB(100,200,120), orange=Color3.fromRGB(255,140,60), red=Color3.fromRGB(220,80,80),
+    blue=Color3.fromRGB(80,130,200), purple=Color3.fromRGB(160,100,200), selBg=Color3.fromRGB(60,50,20),
+}
+local FB = Enum.Font.GothamBold
+local FM = Enum.Font.Gotham
+
+local MUTATION_BOOST = {
+    -- Mutations
+    Nightmare=22, Venom=30, UFO=30, HyperHunger=30,
+    Golden=10, Rainbow=20, Spectral=8, Silver=5,
+    -- v3.13: Toys
+    ["Small Toy"]=10, ["Medium Toy"]=20, ["Large Toy"]=30,
+}
+local function sealPct(Wh, age, mut)
+    local W = (Wh / 11) * (age + 10)
+    local base = (W <= 100) and (0.05 * W + 1.0) or (6.0 + 0.0125 * (W - 100))
+    return base + ((MUTATION_BOOST[mut or ""] or 0) / 100)
+end
+
+local old = CoreGui:FindFirstChild("PetStatGUI")
+if old then old:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "PetStatGUI"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = CoreGui
+
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 300, 0, 150)
+main.Position = UDim2.new(0, 10, 0.3, 0)
+main.BackgroundColor3 = C.bg
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+
+-- TOP BAR
+local top = Instance.new("Frame")
+top.Size = UDim2.new(1, 0, 0, 32)
+top.BackgroundColor3 = C.panel
+top.BorderSizePixel = 0
+top.Parent = main
+Instance.new("UICorner", top).CornerRadius = UDim.new(0, 10)
+
+local function makeTopBtn(text, x, w, color)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, w, 0, 22); b.Position = UDim2.new(0, x, 0, 5)
+    b.BackgroundColor3 = color or C.card; b.Text = text
+    b.TextColor3 = C.text; b.Font = FB; b.TextSize = 10
+    b.BorderSizePixel = 0; b.AutoButtonColor = false; b.Parent = top
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+    return b
+end
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(0, 50, 0, 22); title.Position = UDim2.new(0, 8, 0, 5)
+title.BackgroundTransparency = 1; title.Text = "📊 PET"
+title.TextColor3 = C.accent; title.Font = FB; title.TextSize = 11
+title.TextXAlignment = Enum.TextXAlignment.Left; title.Parent = top
+
+local petBtn = makeTopBtn("Pet ▼", 62, 70, C.card)
+local eggBtn = makeTopBtn("Egg ▼", 136, 70, C.card)
+local trackBtn = makeTopBtn("+", 210, 22, C.green)
+trackBtn.TextColor3 = Color3.new(1,1,1)
+local minBtn   = makeTopBtn("—", 236, 22, C.card)
+local closeBtn = makeTopBtn("✕", 262, 22, C.red)
+
+-- STATS ROW
+local statsRow = Instance.new("Frame")
+statsRow.Size = UDim2.new(1, -16, 1, -42); statsRow.Position = UDim2.new(0, 8, 0, 36)
+statsRow.BackgroundTransparency = 1; statsRow.Parent = main
+
+local function makeStatColRel(parent, xRel, wRel, hdrText)
+    local col = Instance.new("Frame")
+    col.Size = UDim2.new(wRel, -6, 1, 0); col.Position = UDim2.new(xRel, 3, 0, 0)
+    col.BackgroundColor3 = C.panel; col.BorderSizePixel = 0; col.Parent = parent
+    Instance.new("UICorner", col).CornerRadius = UDim.new(0, 8)
+
+    local hdr = Instance.new("TextLabel")
+    hdr.Size = UDim2.new(1, 0, 0, 16); hdr.Position = UDim2.new(0, 0, 0, 4)
+    hdr.BackgroundTransparency = 1; hdr.Text = hdrText
+    hdr.TextColor3 = C.dim; hdr.Font = FM; hdr.TextSize = 9; hdr.Parent = col
+
+    local val = Instance.new("TextLabel")
+    val.Size = UDim2.new(1, 0, 0, 28); val.Position = UDim2.new(0, 0, 0, 22)
+    val.BackgroundTransparency = 1; val.Text = "—"
+    val.TextColor3 = C.accent; val.Font = FB; val.TextSize = 18; val.Parent = col
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(1, -8, 0, 12); sub.Position = UDim2.new(0, 4, 0, 50)
+    sub.BackgroundTransparency = 1; sub.Text = "(—)"
+    sub.TextColor3 = C.dim; sub.Font = FM; sub.TextSize = 9
+    sub.TextTruncate = Enum.TextTruncate.AtEnd; sub.Parent = col
+    return {col = col, val = val, sub = sub}
+end
+
+local totalCol = makeStatColRel(statsRow, 0,        0.3333, "TOTAL")
+local eggCol   = makeStatColRel(statsRow, 0.3333,   0.3333, "EGG")
+local sealCol  = makeStatColRel(statsRow, 0.6666,   0.3333, "SEAL %")
+sealCol.val.TextColor3 = C.text
+sealCol.sub.Text = "0/0 picked"
+
+-- v3.9: Misc button (mutation boost manual)
+local miscBtn = Instance.new("TextButton")
+miscBtn.Size = UDim2.new(1, -10, 0, 14)
+miscBtn.Position = UDim2.new(0, 5, 1, -24)
+miscBtn.AnchorPoint = Vector2.new(0, 1)
+miscBtn.BackgroundColor3 = C.card
+miscBtn.Text = "misc"
+miscBtn.TextColor3 = Color3.new(1,1,1)
+miscBtn.Font = FB
+miscBtn.TextSize = 9
+miscBtn.BorderSizePixel = 0
+miscBtn.AutoButtonColor = false
+miscBtn.Parent = sealCol.col
+Instance.new("UICorner", miscBtn).CornerRadius = UDim.new(0, 4)
+
+-- v3.3: tombol "pilih seal" di dalam sealCol (di bawah misc)
+local pilihBtn = Instance.new("TextButton")
+pilihBtn.Size = UDim2.new(1, -10, 0, 14)
+pilihBtn.Position = UDim2.new(0, 5, 1, -6)
+pilihBtn.AnchorPoint = Vector2.new(0, 1)
+pilihBtn.BackgroundColor3 = C.card
+pilihBtn.Text = "pilih seal"
+pilihBtn.TextColor3 = Color3.new(1,1,1)
+pilihBtn.Font = FB
+pilihBtn.TextSize = 9
+pilihBtn.BorderSizePixel = 0
+pilihBtn.AutoButtonColor = false
+pilihBtn.Parent = sealCol.col
+Instance.new("UICorner", pilihBtn).CornerRadius = UDim.new(0, 4)
+
+-- Hide sub text behind buttons (val already on top, sub goes between val and misc)
+sealCol.sub.Position = UDim2.new(0, 4, 0, 50)
+
+-- DATA
+local petsByUuid = {}
+local petCounts = {}
+local eggCounts = {}
+local selectedPet, selectedEgg = nil, nil
+local selectedSeals = {}  -- {uuid = true}
+local selectedMisc = {}   -- {mutName = true} — manual mutation boost
+
+-- v3.19: Session tracker state
+local trackerPet = 0      -- pet increase total
+local trackerEggInc = 0   -- egg increase total
+local trackerEggDec = 0   -- egg decrease total
+local trackerPrevPet = nil
+local trackerPrevEgg = nil
+local trackerStartTime = os.time()
+local trackerVisible = false
+
+-- TRACKER PANEL (collapsible)
+local trackerPanel = Instance.new("Frame")
+trackerPanel.Size = UDim2.new(1, -16, 0, 100)
+trackerPanel.Position = UDim2.new(0, 8, 0, 152)
+trackerPanel.BackgroundColor3 = C.panel
+trackerPanel.BorderSizePixel = 0
+trackerPanel.Visible = false
+trackerPanel.Parent = main
+Instance.new("UICorner", trackerPanel).CornerRadius = UDim.new(0, 8)
+
+local trackHdr = Instance.new("TextLabel")
+trackHdr.Size = UDim2.new(1, -70, 0, 18); trackHdr.Position = UDim2.new(0, 8, 0, 4)
+trackHdr.BackgroundTransparency = 1; trackHdr.Text = "📈 SESSION TRACKER"
+trackHdr.TextColor3 = C.accent; trackHdr.Font = FB; trackHdr.TextSize = 10
+trackHdr.TextXAlignment = Enum.TextXAlignment.Left
+trackHdr.Parent = trackerPanel
+
+local clearBtn = Instance.new("TextButton")
+clearBtn.Size = UDim2.new(0, 56, 0, 18); clearBtn.Position = UDim2.new(1, -62, 0, 4)
+clearBtn.BackgroundColor3 = C.red; clearBtn.Text = "CLEAR"
+clearBtn.TextColor3 = Color3.new(1,1,1); clearBtn.Font = FB; clearBtn.TextSize = 9
+clearBtn.BorderSizePixel = 0; clearBtn.AutoButtonColor = false
+clearBtn.Parent = trackerPanel
+Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 4)
+
+local trackPetLbl = Instance.new("TextLabel")
+trackPetLbl.Size = UDim2.new(1, -16, 0, 16); trackPetLbl.Position = UDim2.new(0, 8, 0, 26)
+trackPetLbl.BackgroundTransparency = 1; trackPetLbl.Text = "🐾 Pet +0"
+trackPetLbl.TextColor3 = C.text; trackPetLbl.Font = FB; trackPetLbl.TextSize = 11
+trackPetLbl.TextXAlignment = Enum.TextXAlignment.Left
+trackPetLbl.Parent = trackerPanel
+
+local trackEggLbl = Instance.new("TextLabel")
+trackEggLbl.Size = UDim2.new(1, -16, 0, 16); trackEggLbl.Position = UDim2.new(0, 8, 0, 44)
+trackEggLbl.BackgroundTransparency = 1; trackEggLbl.Text = "🥚 Egg +0 / -0 (net +0)"
+trackEggLbl.TextColor3 = C.text; trackEggLbl.Font = FB; trackEggLbl.TextSize = 11
+trackEggLbl.TextXAlignment = Enum.TextXAlignment.Left
+trackEggLbl.Parent = trackerPanel
+
+local trackTimeLbl = Instance.new("TextLabel")
+trackTimeLbl.Size = UDim2.new(1, -16, 0, 16); trackTimeLbl.Position = UDim2.new(0, 8, 0, 62)
+trackTimeLbl.BackgroundTransparency = 1; trackTimeLbl.Text = "⏱️ Time: 0s"
+trackTimeLbl.TextColor3 = C.dim; trackTimeLbl.Font = FM; trackTimeLbl.TextSize = 10
+trackTimeLbl.TextXAlignment = Enum.TextXAlignment.Left
+trackTimeLbl.Parent = trackerPanel
+
+local function formatTime(s)
+    local h = math.floor(s / 3600)
+    local m = math.floor((s % 3600) / 60)
+    local sec = s % 60
+    if h > 0 then return string.format("%dh %dm %ds", h, m, sec) end
+    if m > 0 then return string.format("%dm %ds", m, sec) end
+    return string.format("%ds", sec)
+end
+
+local function updateTracker()
+    local petTag = selectedPet and (" ("..selectedPet..")") or " (all)"
+    local eggTag = selectedEgg and (" ("..selectedEgg..")") or " (all)"
+    trackPetLbl.Text = string.format("🐾 Pet +%d%s", trackerPet, petTag)
+    local net = trackerEggInc - trackerEggDec
+    trackEggLbl.Text = string.format("🥚 Egg +%d / -%d%s", trackerEggInc, trackerEggDec, eggTag)
+    trackTimeLbl.Text = "⏱️ Time: " .. formatTime(os.time() - trackerStartTime)
+end
+
+clearBtn.MouseButton1Click:Connect(function()
+    trackerPet = 0; trackerEggInc = 0; trackerEggDec = 0
+    trackerPrevPet = nil; trackerPrevEgg = nil
+    trackerStartTime = os.time()
+    updateTracker()
+    saveSettings()
+end)
+
+-- Toggle tracker panel
+local baseMainHeight = 150
+trackBtn.MouseButton1Click:Connect(function()
+    trackerVisible = not trackerVisible
+    trackerPanel.Visible = trackerVisible
+    if trackerVisible then
+        main.Size = UDim2.new(0, 300, 0, baseMainHeight + 108)
+        trackBtn.Text = "−"
+        updateTracker()
+    else
+        main.Size = UDim2.new(0, 300, 0, baseMainHeight)
+        trackBtn.Text = "+"
+    end
+end)
+
+-- v3.23: long-press atau click ke-2 minBtn buat manual refresh (force aggressive scan + dump)
+local lastMinClick = 0
+minBtn.MouseButton1Click:Connect(function()
+    local now = tick()
+    if now - lastMinClick < 0.5 then
+        -- Double-click: force refresh + diagnostic dump
+        print("[PetStat] === MANUAL REFRESH (double-tap minBtn) ===")
+        local foundFirst = aggressiveScanAllPetData()
+        ensureContainer(true)
+        print(string.format("[PetStat] container=%s cached=%d", tostring(cachedContainer ~= nil), cachedCount))
+        local lookupSize = 0
+        for _ in pairs(uuidToPetDataCache) do lookupSize = lookupSize + 1 end
+        print(string.format("[PetStat] uuidToPetDataCache size: %d", lookupSize))
+        -- Dump first 3 entries to see format
+        local i = 0
+        for k, v in pairs(uuidToPetDataCache) do
+            i = i + 1
+            if i <= 3 then
+                print(string.format("  [%s] BaseWeight=%s Level=%s Mut=%s",
+                    tostring(k):sub(1,38),
+                    tostring(v.BaseWeight), tostring(v.Level), tostring(v.MutationType or v.Mutation)))
+            end
+        end
+        -- Force re-scan all pets
+        for uuid, pd in pairs(petsByUuid) do pd.weight = 0 end
+        scanPets(); updateTotal(); updateEgg(); updateSealPct()
+        print("[PetStat] === DONE ===")
+    end
+    lastMinClick = now
+end)
+
+-- v3.15: Persistence via file (survive rejoin)
+local SETTINGS_FILE = "ZenxPetStat_settings.json"
+
+local function saveSettings()
+    if not writefile then return end
+    local data = {
+        selectedSeals = {}, selectedMisc = {},
+        selectedPet = selectedPet, selectedEgg = selectedEgg,  -- v3.24
+        tracker = {
+            pet = trackerPet, eggInc = trackerEggInc, eggDec = trackerEggDec,
+            startTime = trackerStartTime,
+        }
+    }
+    for u in pairs(selectedSeals) do table.insert(data.selectedSeals, u) end
+    for m in pairs(selectedMisc) do table.insert(data.selectedMisc, m) end
+    pcall(function() writefile(SETTINGS_FILE, HttpService:JSONEncode(data)) end)
+end
+
+local function loadSettings()
+    if not (isfile and readfile) then return end
+    pcall(function()
+        if isfile(SETTINGS_FILE) then
+            local raw = readfile(SETTINGS_FILE)
+            local data = HttpService:JSONDecode(raw)
+            if type(data) == "table" then
+                for _, u in ipairs(data.selectedSeals or {}) do selectedSeals[u] = true end
+                for _, m in ipairs(data.selectedMisc or {}) do selectedMisc[m] = true end
+                -- v3.24: restore pet/egg filter
+                if type(data.selectedPet) == "string" then selectedPet = data.selectedPet end
+                if type(data.selectedEgg) == "string" then selectedEgg = data.selectedEgg end
+                if data.tracker then
+                    trackerPet = tonumber(data.tracker.pet) or 0
+                    trackerEggInc = tonumber(data.tracker.eggInc) or 0
+                    trackerEggDec = tonumber(data.tracker.eggDec) or 0
+                    trackerStartTime = tonumber(data.tracker.startTime) or os.time()
+                end
+                print(string.format("[PetStat] loaded %d seals + %d misc + tracker(p+%d e+%d/-%d) + filter(pet=%s egg=%s)",
+                    #(data.selectedSeals or {}), #(data.selectedMisc or {}),
+                    trackerPet, trackerEggInc, trackerEggDec,
+                    tostring(selectedPet), tostring(selectedEgg)))
+            end
+        end
+    end)
+end
+loadSettings()
+
+-- Mutation prefixes for type normalization (from kg.txt)
+local MUTATION_PREFIXES = {
+    "Everchanted ","Rainbow ","Frozen ","Inverted ","Golden ","Diamond ",
+    "Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ",
+    "Twilight ","Voidtouched ","Foxfire ","Aurora ","Static ","Stormcloud ",
+    "Frost ","Burnt ","Lethal ","Cooked ","Choc ","Nightmare ","Venom ",
+    "UFO ","HyperHunger ","Spectral ","Silver ","Corrupted ",
+}
+local function stripMutation(s)
+    if not s then return "" end
+    for _, p in ipairs(MUTATION_PREFIXES) do
+        if s:sub(1, #p) == p then return s:sub(#p + 1) end
+    end
+    return s
+end
+
+-- Find memory container (kg.txt style) — dengan retry
+local function findMemoryContainer()
+    if not getgc then return nil end
+    local best, bestCount = nil, 0
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                local uuidLike = 0
+                for k in pairs(obj) do
+                    if type(k) == "string" and #k >= 32 and k:find("-") then
+                        uuidLike = uuidLike + 1
+                        if uuidLike >= 5 then break end
+                    end
+                end
+                if uuidLike >= 5 then
+                    local sample = nil
+                    for _, v in pairs(obj) do sample = v; break end
+                    if type(sample) == "table" and rawget(sample, "PetData") then
+                        local cnt = 0
+                        for _ in pairs(obj) do cnt = cnt + 1 end
+                        if cnt > bestCount then best = obj; bestCount = cnt end
+                    end
+                end
+            end
+        end
+    end)
+    return best, bestCount
+end
+
+-- v3.6: cached container (kg.txt style — only refresh kalo dapet lebih banyak)
+local cachedContainer, cachedCount = nil, 0
+local function getOrRefreshContainer()
+    local nc, ncnt = findMemoryContainer()
+    if nc and ncnt > 0 and ncnt >= cachedCount then
+        cachedContainer = nc
+        cachedCount = ncnt
+    end
+    return cachedContainer, cachedCount
+end
+
+-- v3.8: persistent cache — uuidToPetData dibuild SEKALI, refresh hanya kalo miss
+local uuidToPetDataCache = {}  -- persists between scans
+local containerLastChecked = 0
+local CONTAINER_RECHECK_INTERVAL = 60  -- detik
+
+local function rebuildLookup()
+    uuidToPetDataCache = {}
+    local container = cachedContainer
+    if not container then return end
+    for k, v in pairs(container) do
+        if type(v) == "table" and v.PetData then
+            local rawKey = tostring(k)
+            local clean = rawKey:gsub("^{", ""):gsub("}$", "")
+            uuidToPetDataCache[clean] = v.PetData
+            uuidToPetDataCache[rawKey] = v.PetData
+        end
+    end
+end
+
+-- v3.23: aggressive scan — walk SEMUA getgc, merge SEMUA uuid→PetData yg ketemu
+local function aggressiveScanAllPetData()
+    if not getgc then return 0 end
+    local count = 0
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                pcall(function()
+                    for k, v in pairs(obj) do
+                        if type(k) == "string" and #k >= 32 and type(v) == "table" then
+                            if rawget(v, "PetData") then
+                                local clean = k:gsub("^{",""):gsub("}$","")
+                                if not uuidToPetDataCache[clean] then
+                                    uuidToPetDataCache[clean] = v.PetData
+                                    uuidToPetDataCache[k] = v.PetData
+                                    count = count + 1
+                                end
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end)
+    return count
+end
+
+local function ensureContainer(forceMiss)
+    local now = os.time()
+    local needRefresh = forceMiss or (cachedContainer == nil) or
+        ((now - containerLastChecked) > CONTAINER_RECHECK_INTERVAL)
+    if needRefresh then
+        local nc, ncnt = findMemoryContainer()
+        if nc and ncnt > 0 and ncnt >= cachedCount then
+            cachedContainer = nc
+            cachedCount = ncnt
+            rebuildLookup()
+        end
+        -- v3.23: kalo force, juga aggressive scan merge tambahan PetData dari getgc
+        if forceMiss then
+            local added = aggressiveScanAllPetData()
+            if added > 0 then
+                print(string.format("[PetStat] aggressive scan: +%d PetData entries", added))
+            end
+        end
+        containerLastChecked = now
+    end
+    return cachedContainer
+end
+
+-- SCAN PETS — persistent across scans (v3.14: pet di garden tetep ke-track)
+local function scanPets()
+    -- v3.14: JANGAN clear petsByUuid — persist supaya pet di garden tetep di list
+    -- Hanya update stats + tambah pet baru. Remove kalo bener-bener gone dari container.
+    petCounts = {}
+
+    local bp = player:FindFirstChild("Backpack")
+    if not bp then return end
+
+    ensureContainer(false)
+
+    local function getStats(uuid, tool)
+        if tool then
+            local bw = tonumber(tool:GetAttribute("BaseWeight") or tool:GetAttribute("kg"))
+            local lvl = tonumber(tool:GetAttribute("Level") or tool:GetAttribute("Age"))
+            local mut = tool:GetAttribute("MutationType") or tool:GetAttribute("Mutation") or tool:GetAttribute("m")
+            if bw and bw > 0 then return bw * 1.1, lvl or 1, mut end
+        end
+        local pd = uuidToPetDataCache[uuid] or uuidToPetDataCache["{"..uuid.."}"]
+        if pd then
+            local bw = tonumber(pd.BaseWeight) or 0
+            return bw * 1.1, tonumber(pd.Level) or 1, pd.MutationType or pd.Mutation
+        end
+        return 0, 1, nil
+    end
+
+    -- Step 1: scan backpack/character — refresh stats, mark inBackpack
+    local seenInBp = {}
+    local function scanCont(c)
+        if not c then return end
+        for _, tool in ipairs(c:GetChildren()) do
+            if tool:IsA("Tool") then
+                local uuid = tool:GetAttribute("PET_UUID")
+                local typeRaw = tool:GetAttribute("f")
+                if uuid and typeRaw then
+                    seenInBp[uuid] = true
+                    local petType = stripMutation(tostring(typeRaw))
+                    local w, a, m = getStats(uuid, tool)
+                    petsByUuid[uuid] = {
+                        name = petType, weight = w, age = a, mutation = m, inBp = true,
+                    }
+                end
+            end
+        end
+    end
+    scanCont(bp)
+    scanCont(player.Character)
+
+    -- Step 2: mark pets yg sebelumnya seen tapi sekarang gak di backpack
+    -- Query LIVE cachedContainer (bukan cached lookup yg stale) — biar gift/sell ke-detect langsung
+    local toRemove = {}
+    for uuid, pd in pairs(petsByUuid) do
+        if not seenInBp[uuid] then
+            local stillExists = false
+            if cachedContainer then
+                if cachedContainer[uuid] or cachedContainer["{"..uuid.."}"] then
+                    stillExists = true
+                end
+            end
+            if stillExists then
+                -- Refresh stats, mark not in backpack (in garden)
+                local w, a, m = getStats(uuid, nil)
+                if w > 0 then pd.weight = w; pd.age = a; pd.mutation = m end
+                pd.inBp = false
+            else
+                table.insert(toRemove, uuid)
+            end
+        end
+    end
+    for _, uuid in ipairs(toRemove) do
+        petsByUuid[uuid] = nil
+        selectedSeals[uuid] = nil
+    end
+    if #toRemove > 0 then saveSettings() end
+
+    -- Step 3: retry stats lookup buat pet yg weight=0 (container belum ready saat scan pertama)
+    local zeroCount = 0
+    local totalCount = 0
+    for _, pd in pairs(petsByUuid) do
+        totalCount = totalCount + 1
+        if pd.weight == 0 then zeroCount = zeroCount + 1 end
+    end
+    -- Kalo > 50% pet weight=0, force re-detect container
+    if zeroCount > 0 and totalCount > 0 and zeroCount >= totalCount / 2 then
+        ensureContainer(true)
+    end
+    for uuid, pd in pairs(petsByUuid) do
+        if pd.weight == 0 then
+            local w, a, m = getStats(uuid, nil)
+            if w > 0 then
+                pd.weight = w; pd.age = a; pd.mutation = m
+            end
+        end
+    end
+
+    -- Step 4: rebuild petCounts
+    for _, pd in pairs(petsByUuid) do
+        petCounts[pd.name] = (petCounts[pd.name] or 0) + 1
+    end
+end
+
+local function scanEggs()
+    eggCounts = {}
+    pcall(function()
+        local function scanTools(container)
+            if not container then return end
+            for _, t in ipairs(container:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("egg") then
+                    eggCounts[t.Name] = (eggCounts[t.Name] or 0) + 1
+                end
+            end
+        end
+        scanTools(player.Backpack)
+        scanTools(player.Character)
+    end)
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if pg then
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") then
+                local txt = d.Text or ""
+                local cnt, name = txt:match("^(%d+)x%s+(.+[Ee]gg.*)$")
+                if not cnt then cnt, name = txt:match("^x(%d+)%s+(.+[Ee]gg.*)$") end
+                if not cnt then name, cnt = txt:match("^(.+[Ee]gg.-)%s+x?(%d+)$") end
+                if cnt and name then
+                    local n = tonumber(cnt)
+                    if n and n > 0 then
+                        eggCounts[name] = math.max(eggCounts[name] or 0, n)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- UPDATE DISPLAY
+local function updateTotal()
+    if selectedPet and petCounts[selectedPet] then
+        totalCol.val.Text = tostring(petCounts[selectedPet])
+        totalCol.sub.Text = "("..selectedPet..")"
+    else
+        local sumAll = 0
+        for _, c in pairs(petCounts) do sumAll = sumAll + c end
+        totalCol.val.Text = tostring(sumAll)
+        totalCol.sub.Text = "(all pets)"
+    end
+end
+local function updateEgg()
+    if selectedEgg and eggCounts[selectedEgg] then
+        eggCol.val.Text = tostring(eggCounts[selectedEgg])
+        eggCol.sub.Text = "("..selectedEgg..")"
+    else
+        local sumAll = 0
+        for _, c in pairs(eggCounts) do sumAll = sumAll + c end
+        eggCol.val.Text = tostring(sumAll)
+        eggCol.sub.Text = "(all eggs)"
+    end
+end
+local function updateSealPct()
+    -- v3.11: misc boost di-apply PER PET (additive ke individual pet's %)
+    local miscSum = 0
+    local miscCount = 0
+    for mutName, on in pairs(selectedMisc) do
+        if on then
+            miscSum = miscSum + (MUTATION_BOOST[mutName] or 0)
+            miscCount = miscCount + 1
+        end
+    end
+
+    local total, count = 0, 0
+    local totalSeal = 0
+    for uuid, pd in pairs(petsByUuid) do
+        if pd.name and pd.name:lower():find("seal", 1, true) then
+            totalSeal = totalSeal + 1
+            if selectedSeals[uuid] then
+                -- Tiap pet: base% + (own mut boost) + (misc boost dari user)
+                local petPct = sealPct(pd.weight, pd.age, pd.mutation) + (miscSum / 100)
+                total = total + petPct
+                count = count + 1
+            end
+        end
+    end
+
+    local final = math.min(total, 50)
+    sealCol.val.Text = string.format("%.2f%%", final)
+    if miscCount > 0 then
+        sealCol.sub.Text = string.format("%d/%d • +%d/pet", count, totalSeal, miscSum)
+    else
+        sealCol.sub.Text = string.format("%d/%d picked", count, totalSeal)
+    end
+end
+
+local function showMiscModal()
+    local backdrop = Instance.new("Frame")
+    backdrop.Size = UDim2.new(1, 0, 1, 0)
+    backdrop.BackgroundColor3 = Color3.new(0,0,0)
+    backdrop.BackgroundTransparency = 0.5
+    backdrop.BorderSizePixel = 0
+    backdrop.ZIndex = 50
+    backdrop.Parent = gui
+
+    local modal = Instance.new("Frame")
+    modal.Size = UDim2.new(0, 280, 0, 360)
+    modal.Position = UDim2.new(0.5, -140, 0.5, -180)
+    modal.BackgroundColor3 = C.bg
+    modal.BorderSizePixel = 0
+    modal.ZIndex = 51
+    modal.Parent = backdrop
+    Instance.new("UICorner", modal).CornerRadius = UDim.new(0, 10)
+
+    local hdr = Instance.new("TextLabel")
+    hdr.Size = UDim2.new(1, -50, 0, 30)
+    hdr.Position = UDim2.new(0, 10, 0, 8)
+    hdr.BackgroundTransparency = 1
+    hdr.Text = "⚡ Misc Mutation Boost"
+    hdr.TextColor3 = C.text
+    hdr.Font = FB; hdr.TextSize = 13
+    hdr.TextXAlignment = Enum.TextXAlignment.Left
+    hdr.ZIndex = 52; hdr.Parent = modal
+
+    local closeM = Instance.new("TextButton")
+    closeM.Size = UDim2.new(0, 24, 0, 24)
+    closeM.Position = UDim2.new(1, -30, 0, 9)
+    closeM.BackgroundColor3 = C.red
+    closeM.Text = "✕"
+    closeM.TextColor3 = Color3.new(1,1,1)
+    closeM.Font = FB; closeM.TextSize = 12
+    closeM.BorderSizePixel = 0
+    closeM.ZIndex = 52; closeM.Parent = modal
+    Instance.new("UICorner", closeM).CornerRadius = UDim.new(0, 4)
+
+    local info = Instance.new("TextLabel")
+    info.Size = UDim2.new(1, -20, 0, 24)
+    info.Position = UDim2.new(0, 10, 0, 40)
+    info.BackgroundTransparency = 1
+    info.Text = "Pilih boost manual yg di-add ke SEAL %"
+    info.TextColor3 = C.dim
+    info.Font = FM; info.TextSize = 10
+    info.TextXAlignment = Enum.TextXAlignment.Left
+    info.TextWrapped = true
+    info.ZIndex = 52; info.Parent = modal
+
+    local listSF = Instance.new("ScrollingFrame")
+    listSF.Size = UDim2.new(1, -20, 1, -76)
+    listSF.Position = UDim2.new(0, 10, 0, 68)
+    listSF.BackgroundColor3 = C.panel
+    listSF.BorderSizePixel = 0
+    listSF.ScrollBarThickness = 4
+    listSF.CanvasSize = UDim2.new(0, 0, 0, 0)
+    listSF.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    listSF.ZIndex = 52; listSF.Parent = modal
+    Instance.new("UICorner", listSF).CornerRadius = UDim.new(0, 6)
+    local lay = Instance.new("UIListLayout"); lay.Padding = UDim.new(0, 3); lay.Parent = listSF
+    local lp = Instance.new("UIPadding", listSF)
+    lp.PaddingTop = UDim.new(0, 4); lp.PaddingLeft = UDim.new(0, 4); lp.PaddingRight = UDim.new(0, 4)
+
+    -- Sorted mutation list (descending by boost)
+    local muts = {}
+    for name, pct in pairs(MUTATION_BOOST) do
+        table.insert(muts, {name = name, pct = pct})
+    end
+    table.sort(muts, function(a, b) return a.pct > b.pct end)
+
+    for _, m in ipairs(muts) do
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, -8, 0, 30)
+        row.BackgroundColor3 = selectedMisc[m.name] and C.selBg or C.card
+        row.BorderSizePixel = 0; row.AutoButtonColor = false; row.Text = ""
+        row.ZIndex = 53; row.Parent = listSF
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+        local cb = Instance.new("TextLabel")
+        cb.Size = UDim2.new(0, 20, 0, 20)
+        cb.Position = UDim2.new(0, 8, 0.5, -10)
+        cb.BackgroundColor3 = selectedMisc[m.name] and C.orange or C.panel
+        cb.Text = selectedMisc[m.name] and "✓" or ""
+        cb.TextColor3 = Color3.new(1,1,1)
+        cb.Font = FB; cb.TextSize = 12
+        cb.BorderSizePixel = 0
+        cb.ZIndex = 54; cb.Parent = row
+        Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 3)
+
+        local nameLbl = Instance.new("TextLabel")
+        nameLbl.Size = UDim2.new(1, -100, 1, 0)
+        nameLbl.Position = UDim2.new(0, 36, 0, 0)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Text = m.name
+        nameLbl.TextColor3 = C.text
+        nameLbl.Font = FB; nameLbl.TextSize = 12
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.ZIndex = 54; nameLbl.Parent = row
+
+        local pctLbl = Instance.new("TextLabel")
+        pctLbl.Size = UDim2.new(0, 60, 1, 0)
+        pctLbl.Position = UDim2.new(1, -68, 0, 0)
+        pctLbl.BackgroundTransparency = 1
+        pctLbl.Text = "+"..m.pct.."%"
+        pctLbl.TextColor3 = C.text
+        pctLbl.Font = FB; pctLbl.TextSize = 12
+        pctLbl.TextXAlignment = Enum.TextXAlignment.Right
+        pctLbl.ZIndex = 54; pctLbl.Parent = row
+        local pP = Instance.new("UIPadding", pctLbl); pP.PaddingRight = UDim.new(0, 8)
+
+        row.MouseButton1Click:Connect(function()
+            selectedMisc[m.name] = not selectedMisc[m.name] or nil
+            row.BackgroundColor3 = selectedMisc[m.name] and C.selBg or C.card
+            cb.BackgroundColor3 = selectedMisc[m.name] and C.orange or C.panel
+            cb.Text = selectedMisc[m.name] and "✓" or ""
+            updateSealPct()
+            saveSettings()
+        end)
+    end
+
+    closeM.MouseButton1Click:Connect(function() backdrop:Destroy() end)
+end
+
+miscBtn.MouseButton1Click:Connect(showMiscModal)
+
+local function showSealPickerModal()
+    -- Compute miscSum saat ini (refresh on each open)
+    local function getMiscSum()
+        local sum, names = 0, {}
+        for mutName, on in pairs(selectedMisc) do
+            if on then
+                sum = sum + (MUTATION_BOOST[mutName] or 0)
+                table.insert(names, mutName)
+            end
+        end
+        return sum, names
+    end
+
+    -- Build list of Seals dengan misc boost applied
+    local function buildSeals()
+        local miscSum = getMiscSum()
+        local seals = {}
+        for uuid, pd in pairs(petsByUuid) do
+            if pd.name and pd.name:lower():find("seal", 1, true) then
+                local basePct = sealPct(pd.weight, pd.age, pd.mutation)
+                local boostedPct = basePct + (miscSum / 100)
+                table.insert(seals, {
+                    uuid = uuid, pd = pd,
+                    basePct = basePct,
+                    pct = boostedPct,
+                    miscBoost = miscSum,
+                })
+            end
+        end
+        table.sort(seals, function(a, b) return a.pct > b.pct end)
+        return seals
+    end
+
+    local seals = buildSeals()
+
+    -- Modal
+    local backdrop = Instance.new("Frame")
+    backdrop.Size = UDim2.new(1, 0, 1, 0)
+    backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+    backdrop.BackgroundTransparency = 0.5
+    backdrop.BorderSizePixel = 0
+    backdrop.ZIndex = 50
+    backdrop.Parent = gui
+
+    local modal = Instance.new("Frame")
+    modal.Size = UDim2.new(0, 360, 0, 440)
+    modal.Position = UDim2.new(0.5, -180, 0.5, -220)
+    modal.BackgroundColor3 = C.bg
+    modal.BorderSizePixel = 0
+    modal.ZIndex = 51
+    modal.Parent = backdrop
+    Instance.new("UICorner", modal).CornerRadius = UDim.new(0, 10)
+
+    local hdr = Instance.new("TextLabel")
+    hdr.Size = UDim2.new(1, -100, 0, 26)
+    hdr.Position = UDim2.new(0, 10, 0, 8)
+    hdr.BackgroundTransparency = 1
+    hdr.Text = "🦭 Pilih Seal ("..#seals..")"
+    hdr.TextColor3 = C.text
+    hdr.Font = FB; hdr.TextSize = 14
+    hdr.TextXAlignment = Enum.TextXAlignment.Left
+    hdr.ZIndex = 52; hdr.Parent = modal
+
+    -- Misc indicator banner (below header)
+    local miscBanner = Instance.new("TextLabel")
+    miscBanner.Size = UDim2.new(1, -20, 0, 20)
+    miscBanner.Position = UDim2.new(0, 10, 0, 34)
+    miscBanner.BackgroundColor3 = C.selBg
+    miscBanner.BorderSizePixel = 0
+    miscBanner.Text = ""
+    miscBanner.TextColor3 = C.text
+    miscBanner.Font = FB; miscBanner.TextSize = 10
+    miscBanner.TextXAlignment = Enum.TextXAlignment.Center
+    miscBanner.ZIndex = 52; miscBanner.Parent = modal
+    Instance.new("UICorner", miscBanner).CornerRadius = UDim.new(0, 4)
+
+    local function updateBanner()
+        local miscSum, names = getMiscSum()
+        if miscSum > 0 then
+            miscBanner.Visible = true
+            miscBanner.Text = "⚡ Misc aktif: "..table.concat(names, ", ").." (+"..miscSum.."/pet)"
+        else
+            miscBanner.Visible = false
+        end
+    end
+
+    local pickAllBtn = Instance.new("TextButton")
+    pickAllBtn.Size = UDim2.new(0, 56, 0, 22)
+    pickAllBtn.Position = UDim2.new(1, -90, 0, 10)
+    pickAllBtn.BackgroundColor3 = C.green
+    pickAllBtn.Text = "ALL"
+    pickAllBtn.TextColor3 = Color3.new(1,1,1)
+    pickAllBtn.Font = FB; pickAllBtn.TextSize = 10
+    pickAllBtn.BorderSizePixel = 0; pickAllBtn.AutoButtonColor = false
+    pickAllBtn.ZIndex = 52; pickAllBtn.Parent = modal
+    Instance.new("UICorner", pickAllBtn).CornerRadius = UDim.new(0, 4)
+
+    local closeM = Instance.new("TextButton")
+    closeM.Size = UDim2.new(0, 24, 0, 24)
+    closeM.Position = UDim2.new(1, -30, 0, 9)
+    closeM.BackgroundColor3 = C.red
+    closeM.Text = "✕"
+    closeM.TextColor3 = Color3.new(1,1,1)
+    closeM.Font = FB; closeM.TextSize = 12
+    closeM.BorderSizePixel = 0
+    closeM.ZIndex = 52; closeM.Parent = modal
+    Instance.new("UICorner", closeM).CornerRadius = UDim.new(0, 4)
+
+    local listSF = Instance.new("ScrollingFrame")
+    listSF.Size = UDim2.new(1, -20, 1, -68)
+    listSF.Position = UDim2.new(0, 10, 0, 60)
+    listSF.BackgroundColor3 = C.panel
+    listSF.BorderSizePixel = 0
+    listSF.ScrollBarThickness = 4
+    listSF.CanvasSize = UDim2.new(0, 0, 0, 0)
+    listSF.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    listSF.ZIndex = 52; listSF.Parent = modal
+    Instance.new("UICorner", listSF).CornerRadius = UDim.new(0, 6)
+    local lay = Instance.new("UIListLayout"); lay.Padding = UDim.new(0, 3); lay.Parent = listSF
+    local lp = Instance.new("UIPadding", listSF)
+    lp.PaddingTop = UDim.new(0, 4); lp.PaddingLeft = UDim.new(0, 4); lp.PaddingRight = UDim.new(0, 4)
+
+    local function rerenderList()
+        seals = buildSeals()
+        updateBanner()
+        for _, c in ipairs(listSF:GetChildren()) do
+            if not (c:IsA("UIListLayout") or c:IsA("UIPadding")) then c:Destroy() end
+        end
+        if #seals == 0 then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1, -8, 0, 40)
+            empty.BackgroundTransparency = 1
+            empty.Text = "Gak ada Seal di backpack"
+            empty.TextColor3 = C.dim
+            empty.Font = FM; empty.TextSize = 12
+            empty.ZIndex = 53
+            empty.Parent = listSF
+            return
+        end
+        for _, s in ipairs(seals) do
+            local row = Instance.new("TextButton")
+            row.Size = UDim2.new(1, -8, 0, 32)
+            row.BackgroundColor3 = selectedSeals[s.uuid] and C.selBg or C.card
+            row.BorderSizePixel = 0; row.AutoButtonColor = false; row.Text = ""
+            row.ZIndex = 53; row.Parent = listSF
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+            local cb = Instance.new("TextLabel")
+            cb.Size = UDim2.new(0, 20, 0, 20)
+            cb.Position = UDim2.new(0, 8, 0.5, -10)
+            cb.BackgroundColor3 = selectedSeals[s.uuid] and C.green or C.panel
+            cb.Text = selectedSeals[s.uuid] and "✓" or ""
+            cb.TextColor3 = Color3.new(1,1,1)
+            cb.Font = FB; cb.TextSize = 12
+            cb.BorderSizePixel = 0
+            cb.ZIndex = 54; cb.Parent = row
+            Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 3)
+
+            local mutTxt = (s.pd.mutation and s.pd.mutation ~= "") and (" • "..s.pd.mutation:sub(1,1)) or ""
+            local locTag = (s.pd.inBp == false) and " 🌱" or ""
+            local nameLbl = Instance.new("TextLabel")
+            nameLbl.Size = UDim2.new(0.5, -40, 0, 16)
+            nameLbl.Position = UDim2.new(0, 36, 0, 3)
+            nameLbl.BackgroundTransparency = 1
+            nameLbl.Text = s.pd.name .. mutTxt .. locTag
+            nameLbl.TextColor3 = C.text
+            nameLbl.Font = FB; nameLbl.TextSize = 11
+            nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+            nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+            nameLbl.ZIndex = 54; nameLbl.Parent = row
+
+            local statLbl = Instance.new("TextLabel")
+            statLbl.Size = UDim2.new(0.5, -40, 0, 12)
+            statLbl.Position = UDim2.new(0, 36, 0, 18)
+            statLbl.BackgroundTransparency = 1
+            local W = s.pd.weight > 0 and (s.pd.weight / 11 * (s.pd.age + 10)) or 0
+            statLbl.Text = string.format("%.2f kg • age %d • Wh=%.2f", W, s.pd.age, s.pd.weight)
+            statLbl.TextColor3 = s.pd.weight == 0 and C.red or C.dim
+            statLbl.Font = FM; statLbl.TextSize = 10
+            statLbl.TextXAlignment = Enum.TextXAlignment.Left
+            statLbl.ZIndex = 54; statLbl.Parent = row
+
+            local pctLbl = Instance.new("TextLabel")
+            pctLbl.Size = UDim2.new(0, 70, 1, 0)
+            pctLbl.Position = UDim2.new(1, -76, 0, 0)
+            pctLbl.BackgroundTransparency = 1
+            -- v3.12: tampilkan boosted % + indicator kalo ada misc
+            if s.miscBoost > 0 then
+                pctLbl.Text = string.format("%.2f%% ⚡", s.pct)
+                pctLbl.TextColor3 = C.text
+            else
+                pctLbl.Text = string.format("%.2f%%", s.pct)
+                pctLbl.TextColor3 = C.text
+            end
+            pctLbl.Font = FB; pctLbl.TextSize = 12
+            pctLbl.TextXAlignment = Enum.TextXAlignment.Right
+            pctLbl.ZIndex = 54; pctLbl.Parent = row
+            local pcP = Instance.new("UIPadding", pctLbl); pcP.PaddingRight = UDim.new(0, 8)
+
+            row.MouseButton1Click:Connect(function()
+                selectedSeals[s.uuid] = not selectedSeals[s.uuid] or nil
+                row.BackgroundColor3 = selectedSeals[s.uuid] and C.selBg or C.card
+                cb.BackgroundColor3 = selectedSeals[s.uuid] and C.green or C.panel
+                cb.Text = selectedSeals[s.uuid] and "✓" or ""
+                updateSealPct()
+                saveSettings()
+            end)
+        end
+    end
+
+    pickAllBtn.MouseButton1Click:Connect(function()
+        local anyOff = false
+        for _, s in ipairs(seals) do
+            if not selectedSeals[s.uuid] then anyOff = true; break end
+        end
+        if anyOff then
+            for _, s in ipairs(seals) do selectedSeals[s.uuid] = true end
+            pickAllBtn.Text = "NONE"
+        else
+            for _, s in ipairs(seals) do selectedSeals[s.uuid] = nil end
+            pickAllBtn.Text = "ALL"
+        end
+        rerenderList(); updateSealPct(); saveSettings()
+    end)
+
+    closeM.MouseButton1Click:Connect(function() backdrop:Destroy() end)
+    rerenderList()
+end
+
+pilihBtn.MouseButton1Click:Connect(showSealPickerModal)
+local function refreshAll()
+    scanPets(); scanEggs()
+    updateTotal(); updateEgg(); updateSealPct()
+
+    -- v3.20: tracker pakai filter selected pet/egg (kalo gak ada filter = total)
+    local currentPet
+    if selectedPet then
+        currentPet = petCounts[selectedPet] or 0
+    else
+        currentPet = 0
+        for _ in pairs(petsByUuid) do currentPet = currentPet + 1 end
+    end
+
+    local currentEgg
+    if selectedEgg then
+        currentEgg = eggCounts[selectedEgg] or 0
+    else
+        currentEgg = 0
+        for _, c in pairs(eggCounts) do currentEgg = currentEgg + c end
+    end
+
+    if trackerPrevPet ~= nil then
+        local dPet = currentPet - trackerPrevPet
+        if dPet > 0 then trackerPet = trackerPet + dPet end
+    end
+    if trackerPrevEgg ~= nil then
+        local dEgg = currentEgg - trackerPrevEgg
+        if dEgg > 0 then trackerEggInc = trackerEggInc + dEgg
+        elseif dEgg < 0 then trackerEggDec = trackerEggDec + (-dEgg) end
+    end
+    trackerPrevPet = currentPet
+    trackerPrevEgg = currentEgg
+
+    if trackerVisible then updateTracker() end
+    -- v3.19: save tracker state periodically
+    saveSettings()
+end
+
+-- PICKER MODAL
+local function showPicker(modalTitle, items, onPick)
+    local backdrop = Instance.new("Frame")
+    backdrop.Size = UDim2.new(1, 0, 1, 0); backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+    backdrop.BackgroundTransparency = 0.5; backdrop.BorderSizePixel = 0
+    backdrop.ZIndex = 50; backdrop.Parent = gui
+
+    local modal = Instance.new("Frame")
+    modal.Size = UDim2.new(0, 300, 0, 360); modal.Position = UDim2.new(0.5, -150, 0.5, -180)
+    modal.BackgroundColor3 = C.bg; modal.BorderSizePixel = 0; modal.ZIndex = 51
+    modal.Parent = backdrop
+    Instance.new("UICorner", modal).CornerRadius = UDim.new(0, 10)
+
+    local hdr = Instance.new("TextLabel")
+    hdr.Size = UDim2.new(1, -20, 0, 30); hdr.Position = UDim2.new(0, 10, 0, 8)
+    hdr.BackgroundTransparency = 1; hdr.Text = modalTitle
+    hdr.TextColor3 = C.accent; hdr.Font = FB; hdr.TextSize = 14
+    hdr.TextXAlignment = Enum.TextXAlignment.Left; hdr.ZIndex = 52; hdr.Parent = modal
+
+    local closeM = Instance.new("TextButton")
+    closeM.Size = UDim2.new(0, 24, 0, 24); closeM.Position = UDim2.new(1, -32, 0, 8)
+    closeM.BackgroundColor3 = C.red; closeM.Text = "✕"
+    closeM.TextColor3 = Color3.new(1,1,1); closeM.Font = FB; closeM.TextSize = 12
+    closeM.BorderSizePixel = 0; closeM.ZIndex = 52; closeM.Parent = modal
+    Instance.new("UICorner", closeM).CornerRadius = UDim.new(0, 4)
+
+    local sbox = Instance.new("TextBox")
+    sbox.Size = UDim2.new(1, -20, 0, 28); sbox.Position = UDim2.new(0, 10, 0, 44)
+    sbox.BackgroundColor3 = C.card; sbox.BorderSizePixel = 0
+    sbox.PlaceholderText = "🔍 search..."; sbox.Text = ""
+    sbox.TextColor3 = C.text; sbox.PlaceholderColor3 = C.dim
+    sbox.Font = FM; sbox.TextSize = 11; sbox.TextXAlignment = Enum.TextXAlignment.Left
+    sbox.ClearTextOnFocus = false; sbox.ZIndex = 52; sbox.Parent = modal
+    Instance.new("UICorner", sbox).CornerRadius = UDim.new(0, 4)
+    local sP = Instance.new("UIPadding", sbox); sP.PaddingLeft = UDim.new(0, 10)
+
+    local listSF = Instance.new("ScrollingFrame")
+    listSF.Size = UDim2.new(1, -20, 1, -90); listSF.Position = UDim2.new(0, 10, 0, 80)
+    listSF.BackgroundColor3 = C.panel; listSF.BorderSizePixel = 0
+    listSF.ScrollBarThickness = 4; listSF.CanvasSize = UDim2.new(0, 0, 0, 0)
+    listSF.AutomaticCanvasSize = Enum.AutomaticSize.Y; listSF.ZIndex = 52; listSF.Parent = modal
+    Instance.new("UICorner", listSF).CornerRadius = UDim.new(0, 6)
+    local lay = Instance.new("UIListLayout"); lay.Padding = UDim.new(0, 3); lay.Parent = listSF
+    local lp = Instance.new("UIPadding", listSF)
+    lp.PaddingTop = UDim.new(0, 4); lp.PaddingLeft = UDim.new(0, 4); lp.PaddingRight = UDim.new(0, 4)
+
+    local function rerender(q)
+        for _, c in ipairs(listSF:GetChildren()) do
+            if not (c:IsA("UIListLayout") or c:IsA("UIPadding")) then c:Destroy() end
+        end
+        local sorted = {}
+        for _, e in ipairs(items) do table.insert(sorted, e) end
+        table.sort(sorted, function(a, b) return a.count > b.count end)
+        local ql = (q or ""):lower()
+        for _, e in ipairs(sorted) do
+            if ql == "" or e.name:lower():find(ql, 1, true) then
+                local r = Instance.new("TextButton")
+                r.Size = UDim2.new(1, -8, 0, 28); r.BackgroundColor3 = C.card
+                r.BorderSizePixel = 0; r.AutoButtonColor = false; r.Text = ""
+                r.ZIndex = 53; r.Parent = listSF
+                Instance.new("UICorner", r).CornerRadius = UDim.new(0, 4)
+                local nL = Instance.new("TextLabel")
+                nL.Size = UDim2.new(1, -60, 1, 0); nL.Position = UDim2.new(0, 8, 0, 0)
+                nL.BackgroundTransparency = 1; nL.Text = e.name
+                nL.TextColor3 = C.text; nL.Font = FM; nL.TextSize = 11
+                nL.TextXAlignment = Enum.TextXAlignment.Left
+                nL.TextTruncate = Enum.TextTruncate.AtEnd; nL.ZIndex = 54; nL.Parent = r
+                local cL = Instance.new("TextLabel")
+                cL.Size = UDim2.new(0, 55, 1, 0); cL.Position = UDim2.new(1, -60, 0, 0)
+                cL.BackgroundTransparency = 1; cL.Text = tostring(e.count).."x"
+                cL.TextColor3 = C.accent; cL.Font = FB; cL.TextSize = 11
+                cL.TextXAlignment = Enum.TextXAlignment.Right; cL.ZIndex = 54; cL.Parent = r
+                local cP = Instance.new("UIPadding", cL); cP.PaddingRight = UDim.new(0, 8)
+                r.MouseButton1Click:Connect(function()
+                    onPick(e.name)
+                    backdrop:Destroy()
+                end)
+            end
+        end
+    end
+    sbox:GetPropertyChangedSignal("Text"):Connect(function() rerender(sbox.Text) end)
+    closeM.MouseButton1Click:Connect(function() backdrop:Destroy() end)
+    rerender("")
+end
+
+-- BUTTON HANDLERS
+petBtn.MouseButton1Click:Connect(function()
+    scanPets()
+    local items = {}
+    for n, c in pairs(petCounts) do table.insert(items, {name = n, count = c}) end
+    if #items == 0 then
+        petBtn.Text = "buka inv dulu"
+        task.wait(2); petBtn.Text = "Pet ▼"
+        return
+    end
+    showPicker("Pilih Pet", items, function(name)
+        selectedPet = name
+        petBtn.Text = name:sub(1, 8)..(name:len()>8 and "…" or "")
+        updateTotal()
+        trackerPrevPet = nil
+        saveSettings()  -- v3.24
+    end)
+end)
+
+eggBtn.MouseButton1Click:Connect(function()
+    scanEggs()
+    local items = {}
+    for n, c in pairs(eggCounts) do table.insert(items, {name = n, count = c}) end
+    if #items == 0 then
+        eggBtn.Text = "no egg"
+        task.wait(2); eggBtn.Text = "Egg ▼"
+        return
+    end
+    showPicker("Pilih Egg", items, function(name)
+        selectedEgg = name
+        eggBtn.Text = name:sub(1, 8)..(name:len()>8 and "…" or "")
+        updateEgg()
+        trackerPrevEgg = nil
+        saveSettings()  -- v3.24
+    end)
+end)
+
+-- v3.24: restore button labels dari saved filter
+if selectedPet then
+    petBtn.Text = selectedPet:sub(1, 8)..(selectedPet:len()>8 and "…" or "")
+end
+if selectedEgg then
+    eggBtn.Text = selectedEgg:sub(1, 8)..(selectedEgg:len()>8 and "…" or "")
+end
+
+local minimized = false
+local origSize = main.Size
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    main.Size = minimized and UDim2.new(0, 300, 0, 32) or origSize
+    minBtn.Text = minimized and "+" or "—"
+end)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+-- v3.8: Init cached container + build lookup ONCE
+local initC, initCnt = findMemoryContainer()
+if initC then
+    cachedContainer = initC
+    cachedCount = initCnt
+    containerLastChecked = os.time()
+    rebuildLookup()
+    print(string.format("[PetStat] Init container: %d entries, lookup built", initCnt))
+else
+    print("[PetStat] Init container: FAIL — getgc unavailable or PetData belum loaded")
+end
+
+task.spawn(function()
+    while gui.Parent do
+        refreshAll()
+        task.wait(3)  -- v3.15: faster refresh
+    end
+end)
+
+-- v3.21: time tick — update tiap detik kalo tracker visible
+task.spawn(function()
+    while gui.Parent do
+        if trackerVisible then
+            trackTimeLbl.Text = "⏱️ Time: " .. formatTime(os.time() - trackerStartTime)
+        end
+        task.wait(1)
+    end
+end)
+
+print("[PetStat] v3.21 loaded")
