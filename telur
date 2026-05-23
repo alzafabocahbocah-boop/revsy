@@ -341,6 +341,34 @@ end
 loadSettings()
 
 -- Mutation prefixes for type normalization (from kg.txt)
+-- v3.27: Master pet types list (semua jenis di game)
+local ALL_PET_TYPES = {
+    "Bee","Black Bear","Brontosaurus","Bunny","Bull","Capybara","Cat","Chicken",
+    "Cow","Crab","Cyclops","Dog","Dragonfly","Dragon Fruit","Duck","Eagle",
+    "Elephant","Fennec Fox","Flamingo","Frog","Giraffe","Goat","Golden Lab",
+    "Grey Mouse","Hamster","Hedgehog","Honey Bee","Horse","Hyena","Ice Golem",
+    "Kappa","King Bee","Komodo Dragon","Krakeon","Ladybug","Lion","Llama",
+    "Mantis","Meerkat","Mimic Octopus","Mole","Monkey","Moon Cat","Mosquito",
+    "Newt","Nightmare Peacock","Otter","Owl","Pack Bee","Panda","Parrot",
+    "Peacock","Penguin","Peryton","Petal Bee","Pig","Polar Bear","Puma",
+    "Queen Bee","Rabbit","Raccoon","Red Fox","Rhino","Ringneck Pheasant",
+    "Robin","Rooster","Ruby Squid","Salamander","Scorpion","Sea Turtle","Seal",
+    "Shark","Shiba Inu","Silver Monkey","Snail","Snow Owl","Snowfall","Spider",
+    "Spotted Deer","Squirrel","Starfish","Stork","Sugar Glider","Swan","T-Rex",
+    "Tarantula","Tortoise","Toucan","Triceratops","Turtle","Wasp","Werewolf",
+    "White Mouse","Wolf","ZapHorse","Beaver","Chocolate Bunny","Hootsie Roll",
+    "Brown Mouse","Black Mouse","Octopus","Snake","Snowman","Reindeer","Yak",
+    "Wolverine","Manta Ray","Jellyfish","Seahorse","Anglerfish","Pufferfish",
+    "Lobster","Bat","Cobra","Iguana","Chameleon","Gecko","Pelican","Vulture",
+    "Hawk","Falcon","Crow","Raven","Magpie","Cardinal","Sparrow","Bluebird",
+    "Hummingbird","Woodpecker","Pheasant","Quail","Turkey","Ostrich","Emu",
+    "Kookaburra","Cockatoo","Macaw","Lemur","Sloth","Anteater","Armadillo",
+    "Tapir","Capuchin","Gorilla","Orangutan","Chimpanzee","Baboon","Bushbaby",
+    "Tarsier","Possum","Skunk","Badger","Weasel","Ferret","Marten","Stoat",
+    "Mink","Mongoose","Pangolin","Aardvark","Echidna","Platypus","Wombat",
+    "Kangaroo","Wallaby","Koala","Tasmanian Devil",
+}
+
 local MUTATION_PREFIXES = {
     "Everchanted ","Rainbow ","Frozen ","Inverted ","Golden ","Diamond ",
     "Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ",
@@ -1138,19 +1166,29 @@ end
 -- BUTTON HANDLERS
 petBtn.MouseButton1Click:Connect(function()
     scanPets()
+    -- v3.27: gunakan ALL_PET_TYPES master list + count dari petCounts
     local items = {}
-    for n, c in pairs(petCounts) do table.insert(items, {name = n, count = c}) end
-    if #items == 0 then
-        petBtn.Text = "buka inv dulu"
-        task.wait(2); petBtn.Text = "Pet ▼"
-        return
+    local seen = {}
+    -- Pet yg dimiliki first (urutkan by count desc)
+    local owned = {}
+    for n, c in pairs(petCounts) do
+        table.insert(owned, {name = n, count = c})
+        seen[n] = true
+    end
+    table.sort(owned, function(a, b) return a.count > b.count end)
+    for _, it in ipairs(owned) do table.insert(items, it) end
+    -- Tambah pet dari master list yg gak dimiliki (count 0)
+    for _, n in ipairs(ALL_PET_TYPES) do
+        if not seen[n] then
+            table.insert(items, {name = n, count = 0})
+        end
     end
     showPicker("Pilih Pet", items, function(name)
         selectedPet = name
         petBtn.Text = name:sub(1, 8)..(name:len()>8 and "…" or "")
         updateTotal()
         trackerPrevPet = nil
-        saveSettings()  -- v3.24
+        saveSettings()
     end)
 end)
 
@@ -1226,6 +1264,26 @@ task.spawn(function()
     end
 end)
 
+-- v3.27: instant refresh saat Tool pet di-add/remove dari backpack/character
+local function hookBackpack(c)
+    if not c then return end
+    c.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.2) -- biar game sempet update state
+            refreshAll()
+        end
+    end)
+    c.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.2)
+            refreshAll()
+        end
+    end)
+end
+hookBackpack(player:FindFirstChild("Backpack"))
+hookBackpack(player.Character)
+player.CharacterAdded:Connect(function(char) hookBackpack(char) end)
+
 -- v3.21: time tick — update tiap detik kalo tracker visible
 task.spawn(function()
     while gui.Parent do
@@ -1236,4 +1294,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.21 loaded")
+print("[PetStat] v3.27 loaded")
