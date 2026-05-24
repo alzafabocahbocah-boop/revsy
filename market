@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.229"
-local VERSION_DATE = "v8.229: tryClaim cepetin — wait 1s→0.2s. Auto-Switch panggil tryClaim(true) skip TBC/findMyBooth check (yg stale setelah release). Verify 5s→3s. Total switch: ~1s (sebelumnya ~3-4s)."
+local VERSION = "8.230"
+local VERSION_DATE = "v8.230: BUGFIX claim — walk-up parent tree biar dapet DIRECT child of Booths. Sebelumnya pass Booth Model langsung tapi struktur game nested (Booths.{uuid}.Default.Booth), claimRE expects UUID folder. Sekarang otomatis walk up sampe parent = Booths."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -7676,8 +7676,19 @@ local function tryClaim(forceFast)
     L(string.format("Target: %s | %s | Y=%.1f | jarak=%.0f",
         target.booth.Name:sub(1, 12).."...", rowLabel, target.pos.Y, target.dist))
     hrp.CFrame = target.part.CFrame + Vector3.new(0, 5, 0)
-    task.wait(0.2) -- v8.229: 1s → 0.2s (cepat)
-    pcall(function() claimRE:FireServer(target.booth) end)
+    task.wait(0.2)
+
+    -- v8.230: walk up tree — claimRE butuh DIRECT child of Booths (mungkin UUID folder, bukan Booth Model)
+    local toClaim = target.booth
+    while toClaim and toClaim.Parent and toClaim.Parent ~= Booths do
+        toClaim = toClaim.Parent
+    end
+    if not toClaim or toClaim.Parent ~= Booths then
+        L("[ERR] gak nemu argument valid buat claimRE (parent tree weird)")
+        return
+    end
+    L(string.format("Claim arg: %s (Class=%s)", toClaim.Name:sub(1,16), toClaim.ClassName))
+    pcall(function() claimRE:FireServer(toClaim) end)
     L("Claimed!")
 end
 claimBtn.MouseButton1Click:Connect(function() task.spawn(tryClaim) end)
