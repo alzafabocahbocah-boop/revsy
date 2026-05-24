@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.209"
-local VERSION_DATE = "v8.209: HOP tiered — primary ≥25 player streaming hop. Kalo 20 page habis tanpa ≥25, fallback ke server 22-24 player (yg ke-collect during scan). Max 10 fallback try."
+local VERSION = "8.211"
+local VERSION_DATE = "v8.211: BUG FIX — Auto-Rejoin Low-Pop watchdog (fetchAndHop) dulu pake logic LAMA (filter ≥10 + random top-10) bisa land di server sepi. Sekarang fetchAndHop CUMA panggil hopToBestServer (streaming ≥25 / fallback 22-24)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6486,94 +6486,20 @@ rejoinBtn.MouseButton1Click:Connect(function()
     task.spawn(function()
         task.wait(0.3)
 
-        -- Step 1: Try BH.manualHop (= hopToBestServer)
-        L("[HopNow] Step 1: try BH.manualHop")
+        -- v8.210: Cuma 1 step — hopToBestServer (streaming ≥25, fallback 22-24)
+        -- Step 2 manual fetch dihapus (redundant + causing low-pop hop bug)
+        L("[HopNow] panggil hopToBestServer")
         if BH.manualHop then
             local ok, err = pcall(BH.manualHop)
             L("[HopNow] manualHop returned ok="..tostring(ok).." err="..tostring(err))
         else
-            L("[HopNow] BH.manualHop = nil (function belum ready)")
-        end
-
-        task.wait(3) -- tunggu hop kelar (kalo sukses, kita udah di-teleport, code below gak jalan)
-
-        -- Step 2: Manual server list fetch + teleport (kalo manualHop fail/error)
-        L("[HopNow] Step 2: manual fetch + teleport")
-        local HttpService = game:GetService("HttpService")
-        local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
-
-        local methods = {
-            {"syn.request", function() return syn and syn.request and syn.request({Url=url, Method="GET"}) end},
-            {"fluxus.request", function() return fluxus and fluxus.request and fluxus.request({Url=url, Method="GET"}) end},
-            {"krnl.request", function() return krnl and krnl.request and krnl.request({Url=url, Method="GET"}) end},
-            {"http_request", function() return http_request and http_request({Url=url, Method="GET"}) end},
-            {"request", function() return request and request({Url=url, Method="GET"}) end},
-            {"httprequest", function() return httprequest and httprequest({Url=url, Method="GET"}) end},
-            {"game:HttpGet", function() return {Body = game:HttpGet(url)} end},
-        }
-
-        local data
-        for _, m in ipairs(methods) do
-            local mname, mfn = m[1], m[2]
-            local ok, res = pcall(mfn)
-            if ok and res then
-                local body = res.Body or res.body or res
-                if type(body) == "string" and #body > 50 then
-                    local okd, decoded = pcall(function() return HttpService:JSONDecode(body) end)
-                    if okd and decoded and decoded.data then
-                        L("[HopNow] ✓ "..mname.." → "..#decoded.data.." servers")
-                        data = decoded.data
-                        break
-                    else
-                        L("[HopNow] "..mname.." → decode failed")
-                    end
-                else
-                    L("[HopNow] "..mname.." → no body (len="..tostring(body and #body or 0)..")")
-                end
-            else
-                L("[HopNow] "..mname.." → error: "..tostring(res))
-            end
-        end
-
-        if not data or #data == 0 then
-            L("[HopNow] ⚠ Semua http method gagal. Fallback Teleport matchmaking.")
-            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+            L("[HopNow] BH.manualHop = nil, gak bisa hop")
             return
         end
 
-        -- Step 3: Filter + pick
+        -- Hint Anti-Scam kalo masih di server sama
+        task.wait(4)
         local current = tostring(game.JobId)
-        local candidates = {}
-        for _, s in ipairs(data) do
-            if s.id ~= current and (s.playing or 0) < (s.maxPlayers or 30) then
-                table.insert(candidates, s)
-            end
-        end
-        L("[HopNow] "..#candidates.." candidates (excluded current "..current:sub(1,12)..")")
-
-        if #candidates == 0 then
-            L("[HopNow] ⚠ Gak ada candidate server. Fallback Teleport.")
-            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
-            return
-        end
-
-        table.sort(candidates, function(a, b)
-            -- v8.202: sort by BUSIEST first
-            return (a.playing or 0) > (b.playing or 0)
-        end)
-        local pick = candidates[1]  -- #1 busiest
-        L("[HopNow] ✓ Pilih: "..tostring(pick.id):sub(1,12).." ("..tostring(pick.playing).."/"..tostring(pick.maxPlayers)..") #1 busiest")
-        task.wait(0.5)
-        local okt, errt = pcall(function()
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
-        end)
-        if not okt then
-            L("[HopNow] ⚠ TeleportToPlaceInstance error: "..tostring(errt).." → fallback Teleport")
-            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
-        end
-
-        -- Hint about Anti-Scam blocker (game-side, beyond script control)
-        task.wait(3)
         if game.JobId == current then
             L("⚠ [HopNow] masih di server sama setelah teleport. KEMUNGKINAN game 'Anti Scam' feature aktif.")
             L("    → Buka Settings game (gear ⚙️) → cari 'Anti Scam' → matikan → coba HOP NOW lagi.")
@@ -6633,61 +6559,15 @@ end)
 
     -- v8.194: Helper fetch server list + pick different server (avoid same JobId)
     local function fetchAndHop(reasonLabel)
-        local req = (syn and syn.request) or http_request or request
-        if (fluxus and fluxus.request) then req = fluxus.request end
-        if not req then
-            L("⚠ [Low-Pop] no http function, fallback Teleport matchmaking")
+        -- v8.211: pakai hopToBestServer (streaming ≥25 / fallback 22-24)
+        -- ganti logic lama yg filter cuma ≥10 + random
+        L("🎯 [Low-Pop] panggil hopToBestServer (reason: "..tostring(reasonLabel)..")")
+        if BH.manualHop then
+            BH.manualHop()
+        else
+            L("⚠ [Low-Pop] BH.manualHop nil, fallback Teleport matchmaking")
             pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
-            return
         end
-        local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
-        local servers
-        pcall(function()
-            local response = req({Url = url, Method = "GET"})
-            local body = response and (response.Body or response.body)
-            if body then
-                local decoded = HttpService:JSONDecode(body)
-                servers = decoded and decoded.data
-            end
-        end)
-        if not servers or #servers == 0 then
-            L("⚠ [Low-Pop] gak dapet server list, fallback Teleport matchmaking")
-            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
-            return
-        end
-
-        local current = tostring(game.JobId)
-        local candidates = {}
-        for _, s in ipairs(servers) do
-            -- Filter: bukan current server, ada slot, populasi sehat (≥10)
-            if s.id ~= current and (s.playing or 0) >= 10 and (s.playing or 0) < (s.maxPlayers or 30) then
-                table.insert(candidates, s)
-            end
-        end
-        if #candidates == 0 then
-            -- Relax filter: any non-current server with slot
-            for _, s in ipairs(servers) do
-                if s.id ~= current and (s.playing or 0) < (s.maxPlayers or 30) then
-                    table.insert(candidates, s)
-                end
-            end
-        end
-        if #candidates == 0 then
-            L("⚠ [Low-Pop] gak ada candidate server beda, fallback Teleport")
-            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
-            return
-        end
-
-        -- Random pick from top candidates (sorted by closest to 20 players)
-        table.sort(candidates, function(a, b)
-            return math.abs((a.playing or 0) - 20) < math.abs((b.playing or 0) - 20)
-        end)
-        local pool = math.min(10, #candidates)
-        local pick = candidates[math.random(1, pool)]
-        L(string.format("🎯 [Low-Pop] hop ke %s (%d/%d players)", tostring(pick.id):sub(1,12), pick.playing or 0, pick.maxPlayers or 0))
-        pcall(function()
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
-        end)
     end
 
     -- Watchdog: tunggu 5 menit dulu (biar server kasih kesempatan populate),
