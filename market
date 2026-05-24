@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.230"
-local VERSION_DATE = "v8.230: BUGFIX claim — walk-up parent tree biar dapet DIRECT child of Booths. Sebelumnya pass Booth Model langsung tapi struktur game nested (Booths.{uuid}.Default.Booth), claimRE expects UUID folder. Sekarang otomatis walk up sampe parent = Booths."
+local VERSION = "8.231"
+local VERSION_DATE = "v8.231: Initial speed-up. Auto-Claim 15s→2s initial delay, first claim ~1s (race start). Auto-Switch hook 15s→3s. Total: dari script load → first claim attempt ~3-5 detik (sebelumnya 15-30s)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6925,16 +6925,14 @@ end
 
 -- v8.226: hook signs + polling watchdog (gabungan: instant via event, fallback via polling)
 task.spawn(function()
-    task.wait(15) -- delay awal pendek (sebelumnya 60s)
+    task.wait(3) -- v8.231: 15s → 3s (cepat detect saat join server baru)
     local n = BH.hookFrontBoothSigns()
     L(string.format("⚡ [AutoSwitch] %d sign DEPAN ke-hook (event-driven)", n))
 
     while true do
-        -- Polling fast (2s) sbg fallback
         if BH.autoSwitchFrontToggle and BH.autoSwitchFrontToggle.get() then
             BH.doAutoSwitch("poll")
         end
-        -- Re-hook signs tiap 60s buat handle new signs (booth baru spawn dll)
         task.wait(2)
     end
 end)
@@ -7699,8 +7697,9 @@ BH.tryClaim = tryClaim -- v8.225: expose biar auto-switch watchdog bisa call
 BH.setupMiscTab = function()
 -- v8.49: pakai TBC sebagai PRIMARY detection (authoritative, fast)
 task.spawn(function()
+    task.wait(2) -- v8.231: initial cuma 2 detik (sebelumnya 15s) — race start cepet
+    local firstRun = true
     while gui.Parent do
-        task.wait(15)
         if autoClaimState then
             local hasMyBooth = false
 
@@ -7737,6 +7736,8 @@ task.spawn(function()
             end
             -- else: silent (don't spam "already have booth" tiap 15s)
         end
+        -- v8.231: interval di end loop (first iter immediate, then 15s)
+        if firstRun then firstRun = false; task.wait(1) else task.wait(15) end
     end
 end)
 
