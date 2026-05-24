@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.216"
-local VERSION_DATE = "v8.216: HOP simplified — scan 2000 server (20 page), sort descending by playing count, try busiest first sequentially (30→29→28→...→1). Max 30 try sebelum matchmaking fallback. Logic linear, mudah dipahami."
+local VERSION = "8.217"
+local VERSION_DATE = "v8.217: HOP fix GameFull race condition — listen TeleportInitFailed event. Pas Roblox return GameFull (server keisi penuh detik teleport), auto-retry ke candidate berikutnya. Plus pcall ok aja udah gak cukup — tunggu 3 detik buat fail event."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6756,6 +6756,21 @@ BH.saveLastHop = function(tier, server)
     end)
 end
 
+-- v8.217: TeleportInitFailed listener buat detect GameFull / fail
+BH.teleportFailFlag = false
+BH.teleportFailMsg = nil
+if not BH.teleportListenerInstalled then
+    pcall(function()
+        TeleportService.TeleportInitFailed:Connect(function(p, result, errMsg)
+            if p == player then
+                BH.teleportFailFlag = true
+                BH.teleportFailMsg = tostring(errMsg or result)
+            end
+        end)
+    end)
+    BH.teleportListenerInstalled = true
+end
+
 local function hopToBestServer()
     L("==== HOP SERVER ====")
     local MAX_PAGES = 20
@@ -6805,12 +6820,32 @@ local function hopToBestServer()
         L(string.format("Try #%d: %d/%d players (jobId=%s)",
             i, s.playing or 0, s.maxPlayers or 0, tostring(s.id):sub(1,12)))
         BH.saveLastHop("RANK_"..i, s)
+
+        -- Reset fail flag sebelum tiap attempt
+        BH.teleportFailFlag = false
+        BH.teleportFailMsg = nil
+
         task.wait(0.2)
         local ok, err = pcall(function()
             TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
         end)
-        if ok then return end
-        L("[WARN] gagal: "..tostring(err).." → next")
+        if not ok then
+            L("[WARN] pcall fail: "..tostring(err).." → next")
+        else
+            -- Tunggu max 3 detik buat TeleportInitFailed event (GameFull, etc)
+            local waited = 0
+            while waited < 3 and not BH.teleportFailFlag do
+                task.wait(0.2)
+                waited = waited + 0.2
+            end
+
+            if BH.teleportFailFlag then
+                L("[WARN] teleport gagal: "..tostring(BH.teleportFailMsg).." → next candidate")
+            else
+                -- No fail event = teleport succeeded (user akan pindah)
+                return
+            end
+        end
     end
 
     -- Ultimate fallback
