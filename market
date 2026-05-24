@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.211"
-local VERSION_DATE = "v8.211: BUG FIX — Auto-Rejoin Low-Pop watchdog (fetchAndHop) dulu pake logic LAMA (filter ≥10 + random top-10) bisa land di server sepi. Sekarang fetchAndHop CUMA panggil hopToBestServer (streaming ≥25 / fallback 22-24)."
+local VERSION = "8.212"
+local VERSION_DATE = "v8.212: HOP 3-tier — Tier 1 (≥25 primary), Tier 2 (22-24 fallback), Tier 3 (1-21 last resort busiest first). Plus ultimate fallback: Teleport matchmaking kalo semua tier gagal. Jamin hop terjadi."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6743,16 +6743,18 @@ end
 
 local function hopToBestServer()
     L("==== HOP SERVER ====")
-    local PRIMARY_MIN = 25   -- v8.209: primary target
-    local FALLBACK_MIN = 22  -- fallback kalo gak ada ≥25
+    local PRIMARY_MIN = 25     -- v8.209: primary target
+    local FALLBACK_MIN = 22    -- fallback kalo gak ada ≥25
+    local LAST_RESORT_MIN = 1  -- v8.212: last resort kalo semua >= 22 gagal
     local MAX_PAGES = 20
-    L(string.format("Streaming hop: cari ≥%d player (primary) / ≥%d (fallback), max %d page",
-        PRIMARY_MIN, FALLBACK_MIN, MAX_PAGES))
+    L(string.format("Streaming hop: ≥%d primary / ≥%d fallback / ≥%d last resort, max %d page",
+        PRIMARY_MIN, FALLBACK_MIN, LAST_RESORT_MIN, MAX_PAGES))
 
     local currentJobId = tostring(game.JobId)
     local cursor = nil
     local totalScanned = 0
-    local fallback = {}  -- 22-24 player servers collected during scan
+    local fallback = {}    -- 22-24
+    local lastResort = {}  -- 1-21
 
     for page = 1, MAX_PAGES do
         local data = getServerPage(cursor)
@@ -6770,7 +6772,6 @@ local function hopToBestServer()
             local maxP = s.maxPlayers or 30
             if s.id ~= currentJobId and pl < maxP then
                 if pl >= PRIMARY_MIN then
-                    -- Primary: ≥25 → langsung hop
                     L(string.format("[page %d] HOP primary → %d/%d players (jobId=%s)",
                         page, pl, maxP, tostring(s.id):sub(1,12)))
                     task.wait(0.2)
@@ -6780,8 +6781,9 @@ local function hopToBestServer()
                     if ok then return end
                     L("[WARN] primary teleport gagal: "..tostring(err))
                 elseif pl >= FALLBACK_MIN then
-                    -- Fallback: 22-24 → simpan dulu
                     table.insert(fallback, s)
+                else
+                    table.insert(lastResort, s)
                 end
             end
         end
@@ -6790,7 +6792,7 @@ local function hopToBestServer()
         if not cursor or cursor == "" then break end
     end
 
-    -- v8.209: primary gagal/abis → coba fallback (22-24)
+    -- Tier 2: 22-24 fallback
     if #fallback > 0 then
         L(string.format("[FALLBACK] primary ≥%d abis, coba %d server fallback (≥%d-24 player)",
             PRIMARY_MIN, #fallback, FALLBACK_MIN))
@@ -6804,11 +6806,31 @@ local function hopToBestServer()
             end)
             if ok then return end
             L("[WARN] fallback teleport gagal: "..tostring(err))
-            if i >= 10 then break end -- max 10 fallback try
+            if i >= 10 then break end
         end
     end
 
-    L(string.format("[ERR] scan %d server, gak ada server ≥%d available", totalScanned, FALLBACK_MIN))
+    -- v8.212: Tier 3 LAST RESORT — any non-current server with slot (busiest first)
+    if #lastResort > 0 then
+        L(string.format("[LAST RESORT] fallback ≥%d abis, coba %d server apa adanya (sort busiest)",
+            FALLBACK_MIN, #lastResort))
+        table.sort(lastResort, function(a, b) return (a.playing or 0) > (b.playing or 0) end)
+        for i, s in ipairs(lastResort) do
+            L(string.format("[last #%d] %d/%d players (jobId=%s)",
+                i, s.playing or 0, s.maxPlayers or 0, tostring(s.id):sub(1,12)))
+            task.wait(0.2)
+            local ok, err = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
+            end)
+            if ok then return end
+            L("[WARN] last resort teleport gagal: "..tostring(err))
+            if i >= 5 then break end
+        end
+    end
+
+    -- v8.212: ULTIMATE fallback — matchmaking teleport
+    L("[ULTIMATE] semua tier gagal → Teleport matchmaking (game pilih server)")
+    pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
 end
 
 hopNowBtn.MouseButton1Click:Connect(function() task.spawn(hopToBestServer) end)
