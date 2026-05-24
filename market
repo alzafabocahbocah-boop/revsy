@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.206"
-local VERSION_DATE = "v8.206: HOP maxTry 5 → 20. Try sampe 20 server rame sequentially sebelum give up. Tunggu 0.3s antar attempt (dari 0.5s) biar lebih cepet."
+local VERSION = "8.209"
+local VERSION_DATE = "v8.209: HOP tiered — primary ≥25 player streaming hop. Kalo 20 page habis tanpa ≥25, fallback ke server 22-24 player (yg ke-collect during scan). Max 10 fallback try."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6772,83 +6772,53 @@ end)
 end)()
 
 -- ===== HOP SERVER =====
-local function getServerList()
-    -- v8.203: pagination — skip server <15 players, fetch sampe 100 yg rame
+-- v8.208: simple per-page fetcher (gak filter, biar caller iterate sendiri)
+local function getServerPage(cursor)
     local req = (syn and syn.request) or (fluxus and fluxus.request)
                 or (krnl and krnl.request) or http_request or request or httprequest
     if (http and http.request) then req = http.request end
 
-    local MIN_PLAYERS = 15    -- threshold "rame"
-    local TARGET = 100        -- ideal target
-    local EARLY_STOP_MIN = 30 -- minimum buat early stop kalo page selanjutnya sepi
-    local MAX_PAGES = 20      -- safety: max 20 pages (2000 server scanned)
+    local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
+    if cursor then url = url .. "&cursor=" .. tostring(cursor) end
 
-    local function fetchPage(cursor)
-        local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
-        if cursor then url = url .. "&cursor=" .. tostring(cursor) end
-
-        if req then
-            local ok, response = pcall(function() return req({Url = url, Method = "GET"}) end)
-            if ok and response then
-                local body = response.Body or response.body or response.body_string
-                if body then
-                    local okd, data = pcall(function() return game:GetService("HttpService"):JSONDecode(body) end)
-                    if okd and data then return data end
-                end
+    if req then
+        local ok, response = pcall(function() return req({Url = url, Method = "GET"}) end)
+        if ok and response then
+            local body = response.Body or response.body or response.body_string
+            if body then
+                local okd, data = pcall(function() return game:GetService("HttpService"):JSONDecode(body) end)
+                if okd and data then return data end
             end
         end
-        -- Fallback HttpGet
-        local okg, body = pcall(function() return game:HttpGet(url) end)
-        if okg and body then
-            local okd, data = pcall(function() return game:GetService("HttpService"):JSONDecode(body) end)
-            if okd and data then return data end
-        end
-        return nil
     end
+    local okg, body = pcall(function() return game:HttpGet(url) end)
+    if okg and body then
+        local okd, data = pcall(function() return game:GetService("HttpService"):JSONDecode(body) end)
+        if okd and data then return data end
+    end
+    return nil
+end
 
+-- v8.208: backwards-compat — collect 100 ≥20-player servers (still used by manual fetch fallback)
+local function getServerList()
     local accepted = {}
     local cursor = nil
     local totalScanned = 0
-    local totalSkipped = 0
-
-    for page = 1, MAX_PAGES do
-        local data = fetchPage(cursor)
-        if not data or not data.data then
-            if page == 1 then return nil, "fetch page 1 failed" end
-            break
-        end
-
-        local pageServers = data.data
-        totalScanned = totalScanned + #pageServers
-        local beforeCount = #accepted
-
-        for _, s in ipairs(pageServers) do
-            local pl = s.playing or 0
-            if pl >= MIN_PLAYERS then
+    for page = 1, 20 do
+        local data = getServerPage(cursor)
+        if not data or not data.data then break end
+        totalScanned = totalScanned + #data.data
+        for _, s in ipairs(data.data) do
+            if (s.playing or 0) >= 20 then
                 table.insert(accepted, s)
-                if #accepted >= TARGET then break end
-            else
-                totalSkipped = totalSkipped + 1
+                if #accepted >= 20 then break end
             end
         end
-
-        if #accepted >= TARGET then break end
-
-        -- v8.205: early stop kalo udah cukup banyak (≥30) DAN page ini sepi (<5 add)
-        local thisPageAdd = #accepted - beforeCount
-        if #accepted >= EARLY_STOP_MIN and thisPageAdd < 5 then
-            L(string.format("[getServerList] early stop di page %d: total %d (target %d), page ini add cuma %d",
-                page, #accepted, TARGET, thisPageAdd))
-            break
-        end
-
+        if #accepted >= 20 then break end
         cursor = data.nextPageCursor
         if not cursor or cursor == "" then break end
     end
-
-    L(string.format("[getServerList] scanned %d server (%d pages), skip <%d players: %d, accepted: %d",
-        totalScanned, math.min(MAX_PAGES, math.ceil(totalScanned/100)), MIN_PLAYERS, totalSkipped, #accepted))
-
+    L(string.format("[getServerList] scanned %d, accepted %d (≥20 players)", totalScanned, #accepted))
     return accepted
 end
 
@@ -6893,71 +6863,72 @@ end
 
 local function hopToBestServer()
     L("==== HOP SERVER ====")
-    local minP = tonumber(hopMinPlayersBox.Text) or 0
-    local maxP = tonumber(hopMaxPlayersBox.Text) or 30
-    local target = tonumber(hopTargetBox.Text) or 20
-    L("Filter: "..minP.."-"..maxP.." players, target "..target)
+    local PRIMARY_MIN = 25   -- v8.209: primary target
+    local FALLBACK_MIN = 22  -- fallback kalo gak ada ≥25
+    local MAX_PAGES = 20
+    L(string.format("Streaming hop: cari ≥%d player (primary) / ≥%d (fallback), max %d page",
+        PRIMARY_MIN, FALLBACK_MIN, MAX_PAGES))
 
-    local servers, err = getServerList()
-    if not servers then L("[ERR] "..tostring(err)) return end
-    L("Found "..#servers.." servers total")
+    local currentJobId = tostring(game.JobId)
+    local cursor = nil
+    local totalScanned = 0
+    local fallback = {}  -- 22-24 player servers collected during scan
 
-    local current = tostring(game.JobId)
-    local candidates = {}
-
-    -- v8.201: Filter sederhana — exclude current, harus ada slot, respect minP saja (skip terlalu sepi)
-    for _, s in ipairs(servers) do
-        local playing = s.playing or 0
-        local max = s.maxPlayers or 30
-        if s.id ~= current and playing < max and playing >= minP then
-            table.insert(candidates, s)
+    for page = 1, MAX_PAGES do
+        local data = getServerPage(cursor)
+        if not data or not data.data then
+            if page == 1 then L("[ERR] page 1 fetch fail") return end
+            break
         end
-    end
+        totalScanned = totalScanned + #data.data
 
-    -- Fallback: kalo minP gagal, drop minP (any non-current with slot)
-    if #candidates == 0 then
-        L("[WARN] gak ada server >="..minP.." players, drop minP")
-        for _, s in ipairs(servers) do
-            local playing = s.playing or 0
-            local max = s.maxPlayers or 30
-            if s.id ~= current and playing < max then
-                table.insert(candidates, s)
+        local pageServers = data.data
+        table.sort(pageServers, function(a, b) return (a.playing or 0) > (b.playing or 0) end)
+
+        for _, s in ipairs(pageServers) do
+            local pl = s.playing or 0
+            local maxP = s.maxPlayers or 30
+            if s.id ~= currentJobId and pl < maxP then
+                if pl >= PRIMARY_MIN then
+                    -- Primary: ≥25 → langsung hop
+                    L(string.format("[page %d] HOP primary → %d/%d players (jobId=%s)",
+                        page, pl, maxP, tostring(s.id):sub(1,12)))
+                    task.wait(0.2)
+                    local ok, err = pcall(function()
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
+                    end)
+                    if ok then return end
+                    L("[WARN] primary teleport gagal: "..tostring(err))
+                elseif pl >= FALLBACK_MIN then
+                    -- Fallback: 22-24 → simpan dulu
+                    table.insert(fallback, s)
+                end
             end
         end
+
+        cursor = data.nextPageCursor
+        if not cursor or cursor == "" then break end
     end
 
-    if #candidates == 0 then
-        L("[ERR] gak ada server beda yg available")
-        return
-    end
-
-    -- v8.202: ALWAYS sort by BUSIEST first
-    table.sort(candidates, function(a, b)
-        return (a.playing or 0) > (b.playing or 0)
-    end)
-
-    L(string.format("Kandidat: %d server | top: %d/%d players | bottom: %d/%d",
-        #candidates,
-        candidates[1].playing or 0, candidates[1].maxPlayers or 0,
-        candidates[#candidates].playing or 0, candidates[#candidates].maxPlayers or 0))
-
-    -- v8.206: try sampe 20 candidate sequentially, dari yg paling rame
-    local maxTry = math.min(20, #candidates)
-    for i = 1, maxTry do
-        local pick = candidates[i]
-        L(string.format("Pilih #%d/%d: %d/%d players (jobId=%s)",
-            i, maxTry, pick.playing or 0, pick.maxPlayers or 0, tostring(pick.id):sub(1,12)))
-        task.wait(0.3)
-        local ok, err = pcall(function()
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, pick.id, player)
-        end)
-        if ok then
-            return -- teleport fired, wait for it
-        else
-            L("[WARN] teleport #"..i.." gagal: "..tostring(err).." → coba next")
+    -- v8.209: primary gagal/abis → coba fallback (22-24)
+    if #fallback > 0 then
+        L(string.format("[FALLBACK] primary ≥%d abis, coba %d server fallback (≥%d-24 player)",
+            PRIMARY_MIN, #fallback, FALLBACK_MIN))
+        table.sort(fallback, function(a, b) return (a.playing or 0) > (b.playing or 0) end)
+        for i, s in ipairs(fallback) do
+            L(string.format("[fallback #%d] %d/%d players (jobId=%s)",
+                i, s.playing or 0, s.maxPlayers or 0, tostring(s.id):sub(1,12)))
+            task.wait(0.2)
+            local ok, err = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
+            end)
+            if ok then return end
+            L("[WARN] fallback teleport gagal: "..tostring(err))
+            if i >= 10 then break end -- max 10 fallback try
         end
     end
-    L(string.format("[ERR] semua %d top candidate gagal teleport — coba klik HOP lagi (fetch fresh)", maxTry))
+
+    L(string.format("[ERR] scan %d server, gak ada server ≥%d available", totalScanned, FALLBACK_MIN))
 end
 
 hopNowBtn.MouseButton1Click:Connect(function() task.spawn(hopToBestServer) end)
