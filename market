@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.226"
-local VERSION_DATE = "v8.226: Auto-Switch SUPER cepat — event-driven (instant kalo sign berubah ke 'Unclaimed Booth') + polling 2s sebagai fallback. Delay awal 15s (sebelumnya 60s). Switch internal delay 0.3s (sebelumnya 3s). Cooldown 5s (sebelumnya 60s). Total response time <2s detect, <1s switch."
+local VERSION = "8.227"
+local VERSION_DATE = "v8.227: BUGFIX tryClaim deep-scan. Sebelumnya iterate Booths:GetChildren() langsung tapi struktur game NESTED (Booths.{uuid}.Default.Booth), jadi gak nemu booth Model. Sekarang scanDeep up to 6 levels — booth depan jauh-jauh juga ke-detect."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -7598,30 +7598,36 @@ local function tryClaim()
     if not Booths then L("[skip] gak di TradeWorld") return end
     if findMyBooth(Booths) then L("[OK] booth-mu udah ada (via workspace)") return end
 
-    -- v8.224: collect unclaimed booths + categorize front/back by Y
+    -- v8.227: DEEP SCAN — handle nested struktur Booths.{uuid}.Default.Booth
     local unclaimed = {}
-    for _, b in ipairs(Booths:GetChildren()) do
-        if b:IsA("Model") and getBoothState(b) == "unclaimed" then
-            local nearestDist, nearestPart = math.huge, nil
-            for _, p in ipairs(b:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    local d = (p.Position - hrp.Position).Magnitude
-                    if d < nearestDist then nearestDist=d; nearestPart=p end
+    local function scanDeep(parent, depth)
+        if depth > 6 then return end
+        for _, c in ipairs(parent:GetChildren()) do
+            if c.Name == "Booth" and c:IsA("Model") and getBoothState(c) == "unclaimed" then
+                local nearestDist, nearestPart = math.huge, nil
+                for _, p in ipairs(c:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        local d = (p.Position - hrp.Position).Magnitude
+                        if d < nearestDist then nearestDist=d; nearestPart=p end
+                    end
                 end
-            end
-            local pos = nil
-            local ok, cf = pcall(function() return b:GetPivot() end)
-            if ok then pos = cf.Position end
-            if pos and nearestPart then
-                table.insert(unclaimed, {
-                    booth = b, pos = pos, part = nearestPart,
-                    dist = nearestDist, isFront = (pos.Y <= 7)
-                })
+                local pos = nil
+                local ok, cf = pcall(function() return c:GetPivot() end)
+                if ok then pos = cf.Position end
+                if pos and nearestPart then
+                    table.insert(unclaimed, {
+                        booth = c, pos = pos, part = nearestPart,
+                        dist = nearestDist, isFront = (pos.Y <= 7)
+                    })
+                end
+            else
+                pcall(function() scanDeep(c, depth+1) end)
             end
         end
     end
+    scanDeep(Booths, 0)
 
-    if #unclaimed == 0 then L("[ERR] gak nemu unclaimed booth") return end
+    if #unclaimed == 0 then L("[ERR] gak nemu unclaimed booth (deep scan)") return end
 
     -- v8.224: sort by FRONT first (Y<=7), then by jarak
     local frontCount, backCount = 0, 0
