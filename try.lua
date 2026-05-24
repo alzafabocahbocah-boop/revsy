@@ -701,16 +701,21 @@ footer.Parent = main
 -- ============================================================
 local cachedContainer, cachedCount = nil, 0
 
-local function renderStats()
-    for _, c in ipairs(scroll:GetChildren()) do
-        if c:IsA("Frame") then c:Destroy() end
-    end
+local function updateHeader()
     local byType, total, age100, lessAge = collectStats(cachedContainer)
     totalVal.Text  = tostring(total)
     age100Val.Text = tostring(age100)
     lessVal.Text   = tostring(lessAge)
     eligibleLbl.Text = "Pet eligible (age 100): "..age100
     footer.Text = "scope: backpack • memData "..(cachedContainer and (cachedCount.." OK") or "FAIL FAIL").." • auto 2s"
+    return byType
+end
+
+local function renderStats()
+    for _, c in ipairs(scroll:GetChildren()) do
+        if c:IsA("Frame") then c:Destroy() end
+    end
+    local byType = updateHeader()
 
     local sorted = {}
     for k, v in pairs(byType) do table.insert(sorted, {name=k, data=v}) end
@@ -1548,9 +1553,33 @@ task.spawn(function()
         if not sg.Parent then break end
         local nc, ncnt = findMemoryContainer()
         if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
+        -- v2.11: ALWAYS update header (regardless of active tab) biar TOTAL/AGE 100 ke-refresh meski di tab GIFT
+        updateHeader()
         if activeTab == "stats" then renderStats() end
     end
 end)
+
+-- v2.11: Backpack ChildRemoved/Added listener — instant update header pas pet di-gift/hatch
+local function hookBp(c)
+    if not c then return end
+    c.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.2)
+            updateHeader()
+            if activeTab == "stats" then renderStats() end
+        end
+    end)
+    c.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.2)
+            updateHeader()
+            if activeTab == "stats" then renderStats() end
+        end
+    end)
+end
+hookBp(player:FindFirstChild("Backpack"))
+hookBp(player.Character)
+player.CharacterAdded:Connect(function(ch) hookBp(ch) end)
 
 print("[ZenxAgeStats] "..VER.." loaded")
 
