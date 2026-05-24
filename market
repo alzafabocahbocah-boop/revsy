@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.233"
-local VERSION_DATE = "v8.233: Auto-Rejoin interval + N-listed sekarang pakai hopToBestServer (scan 5000 + pilih rame), bukan TeleportService:Teleport matchmaking (yg sering kasih server sepi). Consistent dgn manual HOP NOW behavior."
+local VERSION = "8.234"
+local VERSION_DATE = "v8.234: Polling path pakai instantClaimFront. Initial wait 3s→1s. Pas script load, langsung cek front unclaimed dgn fast scanner (early return saat ketemu pertama). Total: dari script load → first switch attempt ~1.3s (sebelumnya 5s)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -7001,15 +7001,59 @@ BH.hookFrontBoothSigns = function()
     return hookCount
 end
 
+-- v8.234: fast scanner — return first front booth unclaimed (gak hitung total)
+BH.findFirstFrontUnclaimed = function()
+    local TW = workspace:FindFirstChild("TradeWorld")
+    local Booths = TW and TW:FindFirstChild("Booths")
+    if not Booths then return nil end
+    local function scan(parent, depth)
+        if depth > 6 then return nil end
+        for _, c in ipairs(parent:GetChildren()) do
+            if c.Name == "Booth" and c:IsA("Model") then
+                local ok, cf = pcall(function() return c:GetPivot() end)
+                if ok and cf.Position.Y <= BH.BOOTH_Y_THRESHOLD then
+                    for _, d in ipairs(c:GetDescendants()) do
+                        if d:IsA("TextLabel") or d:IsA("TextButton") then
+                            local txt = string.lower(tostring(d.Text or ""))
+                            if txt:find("unclaimed", 1, true) then
+                                return c -- FOUND, return early
+                            end
+                        end
+                    end
+                end
+            else
+                local found = scan(c, depth+1)
+                if found then return found end
+            end
+        end
+        return nil
+    end
+    return scan(Booths, 0)
+end
+
 -- v8.226: hook signs + polling watchdog (gabungan: instant via event, fallback via polling)
 task.spawn(function()
-    task.wait(3) -- v8.231: 15s → 3s (cepat detect saat join server baru)
+    task.wait(1) -- v8.234: 3s → 1s (immediate start)
+
+    -- v8.234: IMMEDIATE check pas script load (kalo front udah kosong dari awal)
+    if BH.autoSwitchFrontToggle and BH.autoSwitchFrontToggle.get() then
+        local front = BH.findFirstFrontUnclaimed()
+        if front then
+            L("⚡⚡ [InstantClaim] FOUND front unclaimed at script load!")
+            BH.instantClaimFront(front)
+        end
+    end
+
     local n = BH.hookFrontBoothSigns()
     L(string.format("⚡ [AutoSwitch] %d sign DEPAN ke-hook (event-driven)", n))
 
     while true do
         if BH.autoSwitchFrontToggle and BH.autoSwitchFrontToggle.get() then
-            BH.doAutoSwitch("poll")
+            -- v8.234: polling pakai fast path (instantClaimFront) bukan doAutoSwitch slow
+            local front = BH.findFirstFrontUnclaimed()
+            if front then
+                BH.instantClaimFront(front)
+            end
         end
         task.wait(2)
     end
