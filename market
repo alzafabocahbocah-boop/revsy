@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.212"
-local VERSION_DATE = "v8.212: HOP 3-tier — Tier 1 (≥25 primary), Tier 2 (22-24 fallback), Tier 3 (1-21 last resort busiest first). Plus ultimate fallback: Teleport matchmaking kalo semua tier gagal. Jamin hop terjadi."
+local VERSION = "8.214"
+local VERSION_DATE = "v8.214: Last Hop info auto-copy ke clipboard pas script load di server baru. Bisa langsung paste buat share atau review."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6741,6 +6741,21 @@ local function scanCurrentPlayers()
     return total, indo, foreign, names
 end
 
+-- v8.213: save last hop info biar bisa di-cek di server baru
+BH.LAST_HOP_FILE = "zenx_lastHop.json"
+BH.saveLastHop = function(tier, server)
+    if not writefile then return end
+    pcall(function()
+        writefile(BH.LAST_HOP_FILE, HttpService:JSONEncode({
+            tier = tier,
+            playing = server.playing or 0,
+            maxPlayers = server.maxPlayers or 30,
+            jobId = tostring(server.id):sub(1, 16),
+            time = os.time(),
+        }))
+    end)
+end
+
 local function hopToBestServer()
     L("==== HOP SERVER ====")
     local PRIMARY_MIN = 25     -- v8.209: primary target
@@ -6774,6 +6789,7 @@ local function hopToBestServer()
                 if pl >= PRIMARY_MIN then
                     L(string.format("[page %d] HOP primary → %d/%d players (jobId=%s)",
                         page, pl, maxP, tostring(s.id):sub(1,12)))
+                    BH.saveLastHop("PRIMARY", s)
                     task.wait(0.2)
                     local ok, err = pcall(function()
                         TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
@@ -6800,6 +6816,7 @@ local function hopToBestServer()
         for i, s in ipairs(fallback) do
             L(string.format("[fallback #%d] %d/%d players (jobId=%s)",
                 i, s.playing or 0, s.maxPlayers or 0, tostring(s.id):sub(1,12)))
+            BH.saveLastHop("FALLBACK", s)
             task.wait(0.2)
             local ok, err = pcall(function()
                 TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
@@ -6818,6 +6835,7 @@ local function hopToBestServer()
         for i, s in ipairs(lastResort) do
             L(string.format("[last #%d] %d/%d players (jobId=%s)",
                 i, s.playing or 0, s.maxPlayers or 0, tostring(s.id):sub(1,12)))
+            BH.saveLastHop("LAST_RESORT", s)
             task.wait(0.2)
             local ok, err = pcall(function()
                 TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
@@ -6830,6 +6848,7 @@ local function hopToBestServer()
 
     -- v8.212: ULTIMATE fallback — matchmaking teleport
     L("[ULTIMATE] semua tier gagal → Teleport matchmaking (game pilih server)")
+    BH.saveLastHop("ULTIMATE", {playing=0, maxPlayers=0, id="matchmaking"})
     pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
 end
 
@@ -6852,6 +6871,25 @@ task.spawn(function()
     end
     L(string.format("[Startup] HOP ready=%s | http=%s | jobId=%s",
         tostring(BH.manualHop ~= nil), httpName, tostring(game.JobId):sub(1,12)))
+
+    -- v8.213: cek last hop info
+    if isfile and isfile(BH.LAST_HOP_FILE) then
+        pcall(function()
+            local data = HttpService:JSONDecode(readfile(BH.LAST_HOP_FILE))
+            if data and data.time and (os.time() - data.time) < 120 then
+                local txt = string.format("Last Hop: tier=%s → %d/%d players (jobId=%s) | %ds ago",
+                    tostring(data.tier), tonumber(data.playing) or 0, tonumber(data.maxPlayers) or 0,
+                    tostring(data.jobId), os.time() - data.time)
+                L("📍 "..txt)
+                -- v8.214: auto-copy ke clipboard
+                local copyFn = setclipboard or toclipboard or (Clipboard and Clipboard.set)
+                if copyFn then
+                    pcall(function() copyFn(txt) end)
+                    L("📋 [auto-copy] info ke clipboard")
+                end
+            end
+        end)
+    end
 end)
 
 -- v8.99: ===== HOP SERVER TAB — PLAYER BLACKLIST =====
