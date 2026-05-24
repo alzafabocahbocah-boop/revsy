@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.227"
-local VERSION_DATE = "v8.227: BUGFIX tryClaim deep-scan. Sebelumnya iterate Booths:GetChildren() langsung tapi struktur game NESTED (Booths.{uuid}.Default.Booth), jadi gak nemu booth Model. Sekarang scanDeep up to 6 levels — booth depan jauh-jauh juga ke-detect."
+local VERSION = "8.228"
+local VERSION_DATE = "v8.228: Fix loop unclaim-claim. Cooldown 5s→30s antar switch attempt. Verify after 5s — kalo masih BELAKANG count as failed. 3x failed → pause 5 menit. Sukses → reset counter."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6844,11 +6844,17 @@ end
 
 -- v8.226: function buat switch (dipake dari watchdog + event listener)
 BH.autoSwitchCooldown = 0
+BH.switchGiveUpUntil = 0
+BH.switchAttempts = 0
 BH.doAutoSwitch = function(reason)
     if not BH.autoSwitchFrontToggle or not BH.autoSwitchFrontToggle.get() then return end
-    -- Cooldown 5s antar switch attempt
     local now = tick()
-    if now - (BH.autoSwitchCooldown or 0) < 5 then return end
+
+    -- v8.228: give-up window — kalo udah coba 3x fail, give-up 5 menit
+    if now < (BH.switchGiveUpUntil or 0) then return end
+
+    -- v8.228: Cooldown 30s antar switch attempt (was 5s, terlalu agresif)
+    if now - (BH.autoSwitchCooldown or 0) < 30 then return end
     BH.autoSwitchCooldown = now
 
     local y, row, currentBooth = BH.checkBoothPosition()
@@ -6857,12 +6863,32 @@ BH.doAutoSwitch = function(reason)
     local frontAvail = BH.countFrontUnclaimed()
     if frontAvail == 0 then return end
 
-    L(string.format("⚡ [AutoSwitch:%s] booth BELAKANG (Y=%.0f), %d DEPAN kosong → SWITCH NOW", reason or "?", y, frontAvail))
+    L(string.format("⚡ [AutoSwitch:%s] booth BELAKANG (Y=%.0f), %d DEPAN kosong → SWITCH (attempt #%d)",
+        reason or "?", y, frontAvail, (BH.switchAttempts or 0) + 1))
     if removeBoothRE and currentBooth then
         pcall(function() removeBoothRE:FireServer(currentBooth) end)
-        task.wait(0.3) -- minimal delay
+        task.wait(0.3)
     end
     if BH.tryClaim then task.spawn(BH.tryClaim) end
+
+    -- v8.228: verify after 5s, kalo masih BELAKANG → count as failed
+    task.spawn(function()
+        task.wait(5)
+        local newY, newRow = BH.checkBoothPosition()
+        if newRow == "BELAKANG" then
+            BH.switchAttempts = (BH.switchAttempts or 0) + 1
+            L(string.format("⚠ [AutoSwitch] masih BELAKANG (Y=%.0f) — attempt %d/3", newY or 0, BH.switchAttempts))
+            if BH.switchAttempts >= 3 then
+                BH.switchGiveUpUntil = tick() + 300 -- give up 5 menit
+                BH.switchAttempts = 0
+                L("⚠ [AutoSwitch] 3x gagal — pause 5 menit. Manual claim atau HOP kalo mau coba lagi.")
+            end
+        else
+            -- Sukses dapet depan, reset counter
+            BH.switchAttempts = 0
+            L(string.format("✅ [AutoSwitch] sukses pindah ke DEPAN (Y=%.0f)", newY or 0))
+        end
+    end)
 end
 
 -- v8.226: event-driven hook untuk INSTANT detect saat front booth ke-unclaim
