@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.218"
-local VERSION_DATE = "v8.218: Fix 'page 1 fetch fail' — getServerPage retry 3x dgn backoff (2s,4s) kalo API fail. Plus HOP NOW button 10-detik cooldown buat avoid Roblox rate-limit kalo lo klik berulang."
+local VERSION = "8.226"
+local VERSION_DATE = "v8.226: Auto-Switch SUPER cepat — event-driven (instant kalo sign berubah ke 'Unclaimed Booth') + polling 2s sebagai fallback. Delay awal 15s (sebelumnya 60s). Switch internal delay 0.3s (sebelumnya 3s). Cooldown 5s (sebelumnya 60s). Total response time <2s detect, <1s switch."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -2094,6 +2094,8 @@ end)
 local autoRejoinToggle = addToggleRow(rejBody, "Auto Rejoin (interval)", false)
 -- v8.191: Auto-rejoin kalo server <10 players + anti-same-server (compare names)
 BH.autoRejoinLowPopToggle = addToggleRow(rejBody, "Auto-Rejoin server kosong (<10)", false)
+-- v8.225: Auto-switch ke booth depan kalo lo dapet booth belakang
+BH.autoSwitchFrontToggle = addToggleRow(rejBody, "Auto-Switch ke booth DEPAN kalo available", false)
 local rejoinBtn = addButtonRow(rejBody, "🔀 HOP NOW", C.accent)
 
 -- v8.127: bind rejoin settings to persist
@@ -2101,6 +2103,7 @@ BH.bindInput(intervalBox, "rejoinIntervalMin")
 BH.bindInput(listingBox, "rejoinAfterListings")
 BH.bindToggle(autoRejoinToggle, "autoRejoinEnabled")
 BH.bindToggle(BH.autoRejoinLowPopToggle, "autoRejoinLowPop")
+BH.bindToggle(BH.autoSwitchFrontToggle, "autoSwitchFront")
 
 -- ===== Section 2: Hop Server =====
 local hopBody = makeCollapsibleCard(rejoinScroll, "Hop Server (cari server lain)", false)
@@ -6774,6 +6777,154 @@ BH.saveLastHop = function(tier, server)
     end)
 end
 
+-- v8.222: detect booth user di baris depan (Y<=6) atau belakang (Y>=8)
+-- Keep function buat future use, gak ada auto-action sekarang
+BH.BOOTH_Y_THRESHOLD = 7
+BH.checkBoothPosition = function()
+    local userNameLow = string.lower(player.Name)
+    local displayLow = player.DisplayName and string.lower(player.DisplayName) or nil
+    local function isMine(b)
+        for _, d in ipairs(b:GetDescendants()) do
+            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                local txt = string.lower(tostring(d.Text or ""))
+                if string.find(txt, userNameLow, 1, true) then return true end
+                if displayLow and string.find(txt, displayLow, 1, true) then return true end
+            end
+        end
+        return false
+    end
+    local found = nil
+    local function scan(parent, depth)
+        if depth > 6 or found then return end
+        for _, c in ipairs(parent:GetChildren()) do
+            if found then return end
+            if c.Name == "Booth" and c:IsA("Model") then
+                if isMine(c) then
+                    local ok, cf = pcall(function() return c:GetPivot() end)
+                    if ok then found = {booth = c, pos = cf.Position} end
+                end
+            end
+            pcall(function() scan(c, depth+1) end)
+        end
+    end
+    scan(workspace, 0)
+    if found then
+        local row = (found.pos.Y <= BH.BOOTH_Y_THRESHOLD) and "DEPAN" or "BELAKANG"
+        return found.pos.Y, row, found.booth
+    end
+    return nil, nil, nil
+end
+
+-- v8.225: hitung berapa booth DEPAN yg unclaimed
+BH.countFrontUnclaimed = function()
+    local count = 0
+    local TW = workspace:FindFirstChild("TradeWorld")
+    local Booths = TW and TW:FindFirstChild("Booths")
+    if not Booths then return 0 end
+    for _, parentFolder in ipairs(Booths:GetChildren()) do
+        for _, c in ipairs(parentFolder:GetDescendants()) do
+            if c.Name == "Booth" and c:IsA("Model") then
+                local ok, cf = pcall(function() return c:GetPivot() end)
+                if ok and cf.Position.Y <= BH.BOOTH_Y_THRESHOLD then
+                    for _, d in ipairs(c:GetDescendants()) do
+                        if d:IsA("TextLabel") or d:IsA("TextButton") then
+                            local txt = string.lower(tostring(d.Text or ""))
+                            if txt:find("unclaimed", 1, true) then
+                                count = count + 1
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return count
+end
+
+-- v8.226: function buat switch (dipake dari watchdog + event listener)
+BH.autoSwitchCooldown = 0
+BH.doAutoSwitch = function(reason)
+    if not BH.autoSwitchFrontToggle or not BH.autoSwitchFrontToggle.get() then return end
+    -- Cooldown 5s antar switch attempt
+    local now = tick()
+    if now - (BH.autoSwitchCooldown or 0) < 5 then return end
+    BH.autoSwitchCooldown = now
+
+    local y, row, currentBooth = BH.checkBoothPosition()
+    if not y or row ~= "BELAKANG" then return end
+
+    local frontAvail = BH.countFrontUnclaimed()
+    if frontAvail == 0 then return end
+
+    L(string.format("⚡ [AutoSwitch:%s] booth BELAKANG (Y=%.0f), %d DEPAN kosong → SWITCH NOW", reason or "?", y, frontAvail))
+    if removeBoothRE and currentBooth then
+        pcall(function() removeBoothRE:FireServer(currentBooth) end)
+        task.wait(0.3) -- minimal delay
+    end
+    if BH.tryClaim then task.spawn(BH.tryClaim) end
+end
+
+-- v8.226: event-driven hook untuk INSTANT detect saat front booth ke-unclaim
+BH.hookFrontBoothSigns = function()
+    local TW = workspace:FindFirstChild("TradeWorld")
+    local Booths = TW and TW:FindFirstChild("Booths")
+    if not Booths then return 0 end
+    local hookCount = 0
+    for _, parent in ipairs(Booths:GetChildren()) do
+        for _, c in ipairs(parent:GetDescendants()) do
+            if c.Name == "Booth" and c:IsA("Model") then
+                local ok, cf = pcall(function() return c:GetPivot() end)
+                if ok and cf.Position.Y <= BH.BOOTH_Y_THRESHOLD then
+                    for _, d in ipairs(c:GetDescendants()) do
+                        if (d:IsA("TextLabel") or d:IsA("TextButton")) and not d:GetAttribute("_zenxHooked") then
+                            d:SetAttribute("_zenxHooked", true)
+                            pcall(function()
+                                d:GetPropertyChangedSignal("Text"):Connect(function()
+                                    local txt = string.lower(tostring(d.Text or ""))
+                                    if txt:find("unclaimed", 1, true) then
+                                        BH.doAutoSwitch("event")
+                                    end
+                                end)
+                                hookCount = hookCount + 1
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return hookCount
+end
+
+-- v8.226: hook signs + polling watchdog (gabungan: instant via event, fallback via polling)
+task.spawn(function()
+    task.wait(15) -- delay awal pendek (sebelumnya 60s)
+    local n = BH.hookFrontBoothSigns()
+    L(string.format("⚡ [AutoSwitch] %d sign DEPAN ke-hook (event-driven)", n))
+
+    while true do
+        -- Polling fast (2s) sbg fallback
+        if BH.autoSwitchFrontToggle and BH.autoSwitchFrontToggle.get() then
+            BH.doAutoSwitch("poll")
+        end
+        -- Re-hook signs tiap 60s buat handle new signs (booth baru spawn dll)
+        task.wait(2)
+    end
+end)
+
+-- Hook ulang tiap 60s (handle new signs)
+task.spawn(function()
+    task.wait(75)
+    while true do
+        if BH.autoSwitchFrontToggle and BH.autoSwitchFrontToggle.get() then
+            local n = BH.hookFrontBoothSigns()
+            if n > 0 then L(string.format("⚡ [AutoSwitch] %d sign baru ke-hook", n)) end
+        end
+        task.wait(60)
+    end
+end)
+
 -- v8.217: TeleportInitFailed listener buat detect GameFull / fail
 BH.teleportFailFlag = false
 BH.teleportFailMsg = nil
@@ -6789,10 +6940,55 @@ if not BH.teleportListenerInstalled then
     BH.teleportListenerInstalled = true
 end
 
+-- v8.219: avoid collision dgn alt account lain yg pake sc ini (same device)
+BH.USERS_FILE = "zenx_activeUsers.json"
+BH.savePresence = function(jobId)
+    if not writefile or not isfile or not readfile then return end
+    pcall(function()
+        local data = {}
+        if isfile(BH.USERS_FILE) then
+            local ok, parsed = pcall(function() return HttpService:JSONDecode(readfile(BH.USERS_FILE)) end)
+            if ok and type(parsed) == "table" then data = parsed end
+        end
+        data[tostring(player.UserId)] = {
+            jobId = tostring(jobId or game.JobId),
+            name = player.Name,
+            time = os.time(),
+        }
+        writefile(BH.USERS_FILE, HttpService:JSONEncode(data))
+    end)
+end
+BH.getOtherJobIds = function()
+    local ids = {}
+    if not isfile or not readfile then return ids end
+    pcall(function()
+        if isfile(BH.USERS_FILE) then
+            local data = HttpService:JSONDecode(readfile(BH.USERS_FILE)) or {}
+            local myUid = tostring(player.UserId)
+            local now = os.time()
+            for uid, info in pairs(data) do
+                if uid ~= myUid and type(info) == "table" and info.jobId
+                    and (now - (info.time or 0)) < 600 then
+                    ids[info.jobId] = info.name or uid
+                end
+            end
+        end
+    end)
+    return ids
+end
+
+-- Auto-save current jobId tiap 30s
+task.spawn(function()
+    while true do
+        BH.savePresence(game.JobId)
+        task.wait(30)
+    end
+end)
+
 local function hopToBestServer()
     L("==== HOP SERVER ====")
-    local MAX_PAGES = 20
-    L(string.format("Scan max %d page (2000 server), pick busiest descending: 30→29→28→...", MAX_PAGES))
+    local MAX_PAGES = 50  -- v8.221: 5000 server (up from 2000) buat coverage lebih luas
+    L(string.format("Scan max %d page (%d server), pick busiest descending: 30→29→28→...", MAX_PAGES, MAX_PAGES*100))
 
     local currentJobId = tostring(game.JobId)
     local cursor = nil
@@ -6826,48 +7022,75 @@ local function hopToBestServer()
     -- Step 2: Sort descending by playing (busiest first: 30, 29, 28, ...)
     table.sort(allServers, function(a, b) return (a.playing or 0) > (b.playing or 0) end)
 
+    -- v8.220: split priority (no alt) vs fallback (with alt) — both sorted busiest first
+    local otherIds = BH.getOtherJobIds()
+    local otherCount = 0
+    for _ in pairs(otherIds) do otherCount = otherCount + 1 end
+
+    local priorityServers = {} -- busiest yg gak ada alt account
+    local fallbackServers = {} -- busiest yg ada alt account (used as last resort)
+    for _, s in ipairs(allServers) do
+        if otherIds[tostring(s.id)] then
+            table.insert(fallbackServers, s)
+        else
+            table.insert(priorityServers, s)
+        end
+    end
+
+    if otherCount > 0 then
+        local names = {}
+        for _, n in pairs(otherIds) do table.insert(names, n) end
+        L(string.format("[Multi-acc] %d account aktif (%s) | priority:%d server | fallback:%d server",
+            otherCount, table.concat(names, ", "), #priorityServers, #fallbackServers))
+    end
+
     L(string.format("Total %d server | top:%d/%d | bottom:%d/%d",
         #allServers,
         allServers[1].playing or 0, allServers[1].maxPlayers or 0,
         allServers[#allServers].playing or 0, allServers[#allServers].maxPlayers or 0))
 
-    -- Step 3: Try busiest first, sequentially fallback ke count lebih kecil
-    local maxTry = math.min(30, #allServers)
-    for i = 1, maxTry do
-        local s = allServers[i]
-        L(string.format("Try #%d: %d/%d players (jobId=%s)",
-            i, s.playing or 0, s.maxPlayers or 0, tostring(s.id):sub(1,12)))
-        BH.saveLastHop("RANK_"..i, s)
-
-        -- Reset fail flag sebelum tiap attempt
+    -- Step 3: Try priority first (busiest tanpa alt), kalo abis fallback (busiest dgn alt)
+    local function tryTeleport(s, label, idx)
+        L(string.format("[%s #%d] %d/%d players (jobId=%s)",
+            label, idx, s.playing or 0, s.maxPlayers or 0, tostring(s.id):sub(1,12)))
+        BH.saveLastHop(label.."_"..idx, s)
+        BH.savePresence(s.id)
         BH.teleportFailFlag = false
         BH.teleportFailMsg = nil
-
         task.wait(0.2)
         local ok, err = pcall(function()
             TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, player)
         end)
         if not ok then
             L("[WARN] pcall fail: "..tostring(err).." → next")
-        else
-            -- Tunggu max 3 detik buat TeleportInitFailed event (GameFull, etc)
-            local waited = 0
-            while waited < 3 and not BH.teleportFailFlag do
-                task.wait(0.2)
-                waited = waited + 0.2
-            end
-
-            if BH.teleportFailFlag then
-                L("[WARN] teleport gagal: "..tostring(BH.teleportFailMsg).." → next candidate")
-            else
-                -- No fail event = teleport succeeded (user akan pindah)
-                return
-            end
+            return false
         end
+        local waited = 0
+        while waited < 3 and not BH.teleportFailFlag do
+            task.wait(0.2)
+            waited = waited + 0.2
+        end
+        if BH.teleportFailFlag then
+            L("[WARN] teleport gagal: "..tostring(BH.teleportFailMsg).." → next candidate")
+            return false
+        end
+        return true -- success
+    end
+
+    -- Priority loop (avoid collision, tetep busiest first)
+    local maxPriority = math.min(30, #priorityServers)
+    for i = 1, maxPriority do
+        if tryTeleport(priorityServers[i], "PRI", i) then return end
+    end
+
+    -- v8.221: NO forced fallback ke alt server. Kalo priority habis, langsung matchmaking
+    -- (user request: jangan paksa ke 1 server, mending scan lebih banyak)
+    if #fallbackServers > 0 then
+        L(string.format("[Multi-acc] priority habis (%d), SKIP fallback alt-server, langsung matchmaking", maxPriority))
     end
 
     -- Ultimate fallback
-    L("[ULTIMATE] "..maxTry.." top gagal semua → matchmaking")
+    L("[ULTIMATE] priority habis → matchmaking (game pilih server)")
     BH.saveLastHop("ULTIMATE", {playing=0, maxPlayers=0, id="matchmaking"})
     pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
 end
@@ -7374,25 +7597,55 @@ local function tryClaim()
     local Booths = TW and TW:FindFirstChild("Booths")
     if not Booths then L("[skip] gak di TradeWorld") return end
     if findMyBooth(Booths) then L("[OK] booth-mu udah ada (via workspace)") return end
-    local nearestDist, nearestBooth, nearestPart = math.huge, nil, nil
+
+    -- v8.224: collect unclaimed booths + categorize front/back by Y
+    local unclaimed = {}
     for _, b in ipairs(Booths:GetChildren()) do
         if b:IsA("Model") and getBoothState(b) == "unclaimed" then
+            local nearestDist, nearestPart = math.huge, nil
             for _, p in ipairs(b:GetDescendants()) do
                 if p:IsA("BasePart") then
                     local d = (p.Position - hrp.Position).Magnitude
-                    if d < nearestDist then nearestDist=d; nearestBooth=b; nearestPart=p end
+                    if d < nearestDist then nearestDist=d; nearestPart=p end
                 end
+            end
+            local pos = nil
+            local ok, cf = pcall(function() return b:GetPivot() end)
+            if ok then pos = cf.Position end
+            if pos and nearestPart then
+                table.insert(unclaimed, {
+                    booth = b, pos = pos, part = nearestPart,
+                    dist = nearestDist, isFront = (pos.Y <= 7)
+                })
             end
         end
     end
-    if not nearestBooth then L("[ERR] gak nemu unclaimed booth") return end
-    L("Target: "..nearestBooth.Name:sub(1, 12).."...")
-    hrp.CFrame = nearestPart.CFrame + Vector3.new(0, 5, 0)
+
+    if #unclaimed == 0 then L("[ERR] gak nemu unclaimed booth") return end
+
+    -- v8.224: sort by FRONT first (Y<=7), then by jarak
+    local frontCount, backCount = 0, 0
+    for _, u in ipairs(unclaimed) do
+        if u.isFront then frontCount = frontCount + 1 else backCount = backCount + 1 end
+    end
+    L(string.format("Unclaimed: %d depan (Y≤7), %d belakang (Y≥8)", frontCount, backCount))
+
+    table.sort(unclaimed, function(a, b)
+        if a.isFront ~= b.isFront then return a.isFront end -- depan duluan
+        return a.dist < b.dist -- terus by jarak
+    end)
+
+    local target = unclaimed[1]
+    local rowLabel = target.isFront and "DEPAN ✓" or "BELAKANG (depan udah habis)"
+    L(string.format("Target: %s | %s | Y=%.1f | jarak=%.0f",
+        target.booth.Name:sub(1, 12).."...", rowLabel, target.pos.Y, target.dist))
+    hrp.CFrame = target.part.CFrame + Vector3.new(0, 5, 0)
     task.wait(1)
-    pcall(function() claimRE:FireServer(nearestBooth) end)
+    pcall(function() claimRE:FireServer(target.booth) end)
     L("Claimed!")
 end
 claimBtn.MouseButton1Click:Connect(function() task.spawn(tryClaim) end)
+BH.tryClaim = tryClaim -- v8.225: expose biar auto-switch watchdog bisa call
 
 -- ===== AUTO-CLAIM BACKGROUND LOOP (v8.43) =====
 -- v8.101: WRAP dalam function biar locals dapet quota tersendiri
