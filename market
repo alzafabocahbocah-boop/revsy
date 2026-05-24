@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.231"
-local VERSION_DATE = "v8.231: Initial speed-up. Auto-Claim 15s→2s initial delay, first claim ~1s (race start). Auto-Switch hook 15s→3s. Total: dari script load → first claim attempt ~3-5 detik (sebelumnya 15-30s)."
+local VERSION = "8.232"
+local VERSION_DATE = "v8.232: INSTANT CLAIM — event-driven sekarang SKIP semua scan (tryClaim, countFrontUnclaimed). Pakai referensi booth langsung dari event. Total switch time: ~100-200ms (sebelumnya 1.5s). Race start kompetitif vs player manual."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6891,6 +6891,69 @@ BH.doAutoSwitch = function(reason)
     end)
 end
 
+-- v8.232: INSTANT CLAIM dari event-driven — skip semua scan, pake reference langsung
+BH.instantClaimFront = function(unclaimedBoothModel)
+    if not BH.autoSwitchFrontToggle or not BH.autoSwitchFrontToggle.get() then return end
+    local now = tick()
+    if now < (BH.switchGiveUpUntil or 0) then return end
+    if now - (BH.autoSwitchCooldown or 0) < 30 then return end
+    BH.autoSwitchCooldown = now
+
+    local y, row, currentBooth = BH.checkBoothPosition()
+    if not y or row ~= "BELAKANG" then return end
+
+    -- Walk up untuk dapet UUID folder (claimRE expects ini)
+    local TW = workspace:FindFirstChild("TradeWorld")
+    local Booths = TW and TW:FindFirstChild("Booths")
+    if not Booths then return end
+    local toClaim = unclaimedBoothModel
+    while toClaim and toClaim.Parent and toClaim.Parent ~= Booths do
+        toClaim = toClaim.Parent
+    end
+    if not toClaim or toClaim.Parent ~= Booths then return end
+
+    -- Cek Y biar yakin DEPAN (sanity)
+    local ok, cf = pcall(function() return unclaimedBoothModel:GetPivot() end)
+    if not ok or cf.Position.Y > BH.BOOTH_Y_THRESHOLD then return end
+
+    -- Get teleport part
+    local part = unclaimedBoothModel:FindFirstChildWhichIsA("BasePart", true)
+    if not part then return end
+
+    L(string.format("⚡⚡ [InstantClaim] %s Y=%.0f (attempt #%d)",
+        toClaim.Name:sub(1, 12), cf.Position.Y, (BH.switchAttempts or 0) + 1))
+
+    -- 1. Release current (instant)
+    if removeBoothRE and currentBooth then
+        pcall(function() removeBoothRE:FireServer(currentBooth) end)
+    end
+
+    -- 2. Teleport + claim IMMEDIATELY (no scan, no extra wait)
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then hrp.CFrame = part.CFrame + Vector3.new(0, 5, 0) end
+    task.wait(0.1) -- minimal biar teleport replicate
+    if claimRE then pcall(function() claimRE:FireServer(toClaim) end) end
+    L("⚡⚡ [InstantClaim] DONE")
+
+    -- 3. Verify after 3s
+    task.spawn(function()
+        task.wait(3)
+        local newY, newRow = BH.checkBoothPosition()
+        if newRow == "BELAKANG" then
+            BH.switchAttempts = (BH.switchAttempts or 0) + 1
+            L(string.format("⚠ [InstantClaim] masih BELAKANG — attempt %d/3", BH.switchAttempts))
+            if BH.switchAttempts >= 3 then
+                BH.switchGiveUpUntil = tick() + 300
+                BH.switchAttempts = 0
+                L("⚠ [InstantClaim] 3x gagal — pause 5 menit")
+            end
+        else
+            BH.switchAttempts = 0
+            L(string.format("✅ [InstantClaim] sukses DEPAN (Y=%.0f)", newY or 0))
+        end
+    end)
+end
+
 -- v8.226: event-driven hook untuk INSTANT detect saat front booth ke-unclaim
 BH.hookFrontBoothSigns = function()
     local TW = workspace:FindFirstChild("TradeWorld")
@@ -6902,6 +6965,7 @@ BH.hookFrontBoothSigns = function()
             if c.Name == "Booth" and c:IsA("Model") then
                 local ok, cf = pcall(function() return c:GetPivot() end)
                 if ok and cf.Position.Y <= BH.BOOTH_Y_THRESHOLD then
+                    local boothRef = c -- closure capture
                     for _, d in ipairs(c:GetDescendants()) do
                         if (d:IsA("TextLabel") or d:IsA("TextButton")) and not d:GetAttribute("_zenxHooked") then
                             d:SetAttribute("_zenxHooked", true)
@@ -6909,7 +6973,8 @@ BH.hookFrontBoothSigns = function()
                                 d:GetPropertyChangedSignal("Text"):Connect(function()
                                     local txt = string.lower(tostring(d.Text or ""))
                                     if txt:find("unclaimed", 1, true) then
-                                        BH.doAutoSwitch("event")
+                                        -- v8.232: pakai instant path (skip re-scan)
+                                        BH.instantClaimFront(boothRef)
                                     end
                                 end)
                                 hookCount = hookCount + 1
