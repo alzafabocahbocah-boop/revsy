@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.228"
-local VERSION_DATE = "v8.228: Fix loop unclaim-claim. Cooldown 5s→30s antar switch attempt. Verify after 5s — kalo masih BELAKANG count as failed. 3x failed → pause 5 menit. Sukses → reset counter."
+local VERSION = "8.229"
+local VERSION_DATE = "v8.229: tryClaim cepetin — wait 1s→0.2s. Auto-Switch panggil tryClaim(true) skip TBC/findMyBooth check (yg stale setelah release). Verify 5s→3s. Total switch: ~1s (sebelumnya ~3-4s)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -6869,11 +6869,11 @@ BH.doAutoSwitch = function(reason)
         pcall(function() removeBoothRE:FireServer(currentBooth) end)
         task.wait(0.3)
     end
-    if BH.tryClaim then task.spawn(BH.tryClaim) end
+    if BH.tryClaim then task.spawn(function() BH.tryClaim(true) end) end -- v8.229: forceFast
 
-    -- v8.228: verify after 5s, kalo masih BELAKANG → count as failed
+    -- v8.228: verify after 3s (was 5s), kalo masih BELAKANG → count as failed
     task.spawn(function()
-        task.wait(5)
+        task.wait(3)
         local newY, newRow = BH.checkBoothPosition()
         if newRow == "BELAKANG" then
             BH.switchAttempts = (BH.switchAttempts or 0) + 1
@@ -7603,26 +7603,31 @@ end
 unlistAllListingBtn.MouseButton1Click:Connect(runUnlistAll)
 
 -- ===== CLAIM BOOTH =====
-local function tryClaim()
+local function tryClaim(forceFast)
     L("")
     L("==== CLAIM BOOTH ====")
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then L("[skip] no char") return end
 
-    -- v8.49: cek TBC dulu — authoritative dari server, GAK PERLU workspace scan
-    if BH.TBC then
-        local data = BH.getMyBoothData()
-        if data and data.Booth then
-            BH.myBoothUuid = data.Booth
-            L("[OK] booth-mu udah ada (via TBC): "..tostring(data.Booth):sub(1, 16).."...")
-            return
+    -- v8.229: skip TBC + findMyBooth check kalo forceFast (dipanggil dari Auto-Switch)
+    -- karena kita BARU release booth, TBC mungkin masih stale
+    if not forceFast then
+        if BH.TBC then
+            local data = BH.getMyBoothData()
+            if data and data.Booth then
+                BH.myBoothUuid = data.Booth
+                L("[OK] booth-mu udah ada (via TBC): "..tostring(data.Booth):sub(1, 16).."...")
+                return
+            end
         end
     end
 
     local TW = Workspace:FindFirstChild("TradeWorld")
     local Booths = TW and TW:FindFirstChild("Booths")
     if not Booths then L("[skip] gak di TradeWorld") return end
-    if findMyBooth(Booths) then L("[OK] booth-mu udah ada (via workspace)") return end
+    if not forceFast then
+        if findMyBooth(Booths) then L("[OK] booth-mu udah ada (via workspace)") return end
+    end
 
     -- v8.227: DEEP SCAN — handle nested struktur Booths.{uuid}.Default.Booth
     local unclaimed = {}
@@ -7655,7 +7660,6 @@ local function tryClaim()
 
     if #unclaimed == 0 then L("[ERR] gak nemu unclaimed booth (deep scan)") return end
 
-    -- v8.224: sort by FRONT first (Y<=7), then by jarak
     local frontCount, backCount = 0, 0
     for _, u in ipairs(unclaimed) do
         if u.isFront then frontCount = frontCount + 1 else backCount = backCount + 1 end
@@ -7663,8 +7667,8 @@ local function tryClaim()
     L(string.format("Unclaimed: %d depan (Y≤7), %d belakang (Y≥8)", frontCount, backCount))
 
     table.sort(unclaimed, function(a, b)
-        if a.isFront ~= b.isFront then return a.isFront end -- depan duluan
-        return a.dist < b.dist -- terus by jarak
+        if a.isFront ~= b.isFront then return a.isFront end
+        return a.dist < b.dist
     end)
 
     local target = unclaimed[1]
@@ -7672,7 +7676,7 @@ local function tryClaim()
     L(string.format("Target: %s | %s | Y=%.1f | jarak=%.0f",
         target.booth.Name:sub(1, 12).."...", rowLabel, target.pos.Y, target.dist))
     hrp.CFrame = target.part.CFrame + Vector3.new(0, 5, 0)
-    task.wait(1)
+    task.wait(0.2) -- v8.229: 1s → 0.2s (cepat)
     pcall(function() claimRE:FireServer(target.booth) end)
     L("Claimed!")
 end
