@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.234"
-local VERSION_DATE = "v8.234: Polling path pakai instantClaimFront. Initial wait 3s→1s. Pas script load, langsung cek front unclaimed dgn fast scanner (early return saat ketemu pertama). Total: dari script load → first switch attempt ~1.3s (sebelumnya 5s)."
+local VERSION = "8.236"
+local VERSION_DATE = "v8.236: Edit rule expand — sekarang bisa edit Pet Type, Min KG, Max KG, Max Price (4 input). Sebelumnya cuma Max KG + Max Price."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -3752,8 +3752,10 @@ do
     end
     BH.autoSnipe.updateLabel = updateSnipeLabel
 
-    BH.autoSnipe.kgInput = makeAutoInput(0.45, 0.25, "Max KG")
-    BH.autoSnipe.priceInput = makeAutoInput(0.70, 0.30, "💰 Max Price")
+    BH.autoSnipe.minKgInput = makeAutoInput(0.45, 0.13, "Min KG")
+    BH.autoSnipe.kgInput = makeAutoInput(0.58, 0.13, "Max KG")
+    BH.autoSnipe.priceInput = makeAutoInput(0.71, 0.29, "💰 Max Price")
+    BH.autoSnipe.minKgInput.TextXAlignment = Enum.TextXAlignment.Center
     BH.autoSnipe.kgInput.TextXAlignment = Enum.TextXAlignment.Center
     BH.autoSnipe.priceInput.TextXAlignment = Enum.TextXAlignment.Center
 
@@ -4002,7 +4004,9 @@ do
             info.Size = UDim2.new(1, -60, 1, 0) info.Position = UDim2.new(0, 8, 0, 0)
             info.BackgroundTransparency = 1
             local mutStr = (r.mutation and r.mutation ~= "") and (" ["..r.mutation.."]") or ""
-            local kgStr = (r.maxKg and r.maxKg > 0) and (" ≤"..r.maxKg.."kg") or ""
+            local kgStr = ""
+            if r.minKg and r.minKg > 0 then kgStr = kgStr.." ≥"..r.minKg.."kg" end
+            if r.maxKg and r.maxKg > 0 then kgStr = kgStr.." ≤"..r.maxKg.."kg" end
             local typeStr = (r.petType and r.petType ~= "") and r.petType or "any"
             info.Text = string.format("<b>%s</b>%s%s • <font color='#FFD700'>≤%s</font>",
                 typeStr, mutStr, kgStr, tostring(r.maxPrice))
@@ -4025,28 +4029,29 @@ do
                 -- Inline edit: replace info with input boxes
                 info.Visible = false
                 editBtn.Visible = false
-                local kgEdit = Instance.new("TextBox")
-                kgEdit.Size = UDim2.new(0, 60, 0, 22)
-                kgEdit.Position = UDim2.new(0, 8, 0.5, -11)
-                kgEdit.BackgroundColor3 = C.card
-                kgEdit.Text = tostring(r.maxKg or 0)
-                kgEdit.PlaceholderText = "kg"
-                kgEdit.TextColor3 = C.text kgEdit.Font = F kgEdit.TextSize = 11
-                kgEdit.ClearTextOnFocus = false kgEdit.BorderSizePixel = 0
-                kgEdit.TextXAlignment = Enum.TextXAlignment.Center
-                kgEdit.Parent = row
-                Instance.new("UICorner", kgEdit).CornerRadius = UDim.new(0, 4)
-                local priceEdit = Instance.new("TextBox")
-                priceEdit.Size = UDim2.new(0, 80, 0, 22)
-                priceEdit.Position = UDim2.new(0, 74, 0.5, -11)
-                priceEdit.BackgroundColor3 = C.card
-                priceEdit.Text = tostring(r.maxPrice or 0)
-                priceEdit.PlaceholderText = "price"
-                priceEdit.TextColor3 = C.text priceEdit.Font = F priceEdit.TextSize = 11
-                priceEdit.ClearTextOnFocus = false priceEdit.BorderSizePixel = 0
-                priceEdit.TextXAlignment = Enum.TextXAlignment.Center
-                priceEdit.Parent = row
-                Instance.new("UICorner", priceEdit).CornerRadius = UDim.new(0, 4)
+
+                -- v8.236: 4 inputs in edit row — petType, minKg, maxKg, price
+                local function mkEdit(x, w, txt, ph)
+                    local e = Instance.new("TextBox")
+                    e.Size = UDim2.new(0, w, 0, 22)
+                    e.Position = UDim2.new(0, x, 0.5, -11)
+                    e.BackgroundColor3 = C.card
+                    e.Text = tostring(txt or "")
+                    e.PlaceholderText = ph
+                    e.PlaceholderColor3 = C.textDim
+                    e.TextColor3 = C.text e.Font = F e.TextSize = 10
+                    e.ClearTextOnFocus = false e.BorderSizePixel = 0
+                    e.TextXAlignment = Enum.TextXAlignment.Center
+                    e.Parent = row
+                    Instance.new("UICorner", e).CornerRadius = UDim.new(0, 4)
+                    return e
+                end
+
+                local typeEdit  = mkEdit(8,   70, r.petType or "", "type")
+                local minKgEdit = mkEdit(82,  40, (r.minKg and r.minKg > 0) and r.minKg or "", "min")
+                local maxKgEdit = mkEdit(126, 40, (r.maxKg and r.maxKg > 0) and r.maxKg or "", "max")
+                local priceEdit = mkEdit(170, 55, r.maxPrice or 0, "price")
+
                 local okBtn = Instance.new("TextButton")
                 okBtn.Size = UDim2.new(0, 24, 0, 22)
                 okBtn.Position = UDim2.new(1, -54, 0.5, -11)
@@ -4056,9 +4061,13 @@ do
                 okBtn.BorderSizePixel = 0 okBtn.Parent = row
                 Instance.new("UICorner", okBtn).CornerRadius = UDim.new(0, 4)
                 okBtn.MouseButton1Click:Connect(function()
-                    local newKg = tonumber(kgEdit.Text) or r.maxKg
+                    local newType = typeEdit.Text
+                    local newMin = tonumber(minKgEdit.Text) or 0
+                    local newMax = tonumber(maxKgEdit.Text) or 0
                     local newPrice = tonumber(priceEdit.Text) or r.maxPrice
-                    BH.autoSnipe.rules[idx].maxKg = newKg
+                    BH.autoSnipe.rules[idx].petType = newType
+                    BH.autoSnipe.rules[idx].minKg = newMin
+                    BH.autoSnipe.rules[idx].maxKg = newMax
                     BH.autoSnipe.rules[idx].maxPrice = newPrice
                     if BH.marketState then
                         BH.marketState.autoSnipeRules = BH.autoSnipe.rules
@@ -4110,16 +4119,19 @@ do
         end
         table.sort(picked)
         local maxKg = tonumber(BH.autoSnipe.kgInput.Text) or 0
+        local minKg = tonumber(BH.autoSnipe.minKgInput.Text) or 0
         for _, petName in ipairs(picked) do
             table.insert(BH.autoSnipe.rules, {
                 petType = petName,
                 mutation = "",
+                minKg = minKg,
                 maxKg = maxKg,
                 maxPrice = maxPrice,
             })
         end
         BH.autoSnipe.selectedTypes = {}
         BH.autoSnipe.setPetType("")
+        BH.autoSnipe.minKgInput.Text = ""
         BH.autoSnipe.kgInput.Text = ""
         BH.autoSnipe.priceInput.Text = ""
         BH.autoSnipe.rebuildRules()
@@ -8729,6 +8741,10 @@ do
             -- maxKg: optional. 0 atau nil = no limit
             if rule.maxKg and rule.maxKg > 0 then
                 if (p.kg or 0) > rule.maxKg then return false end
+            end
+            -- v8.235: minKg: optional. 0 atau nil = no minimum
+            if rule.minKg and rule.minKg > 0 then
+                if (p.kg or 0) < rule.minKg then return false end
             end
             -- maxPrice: wajib
             if not p.price or p.price > rule.maxPrice then return false end
