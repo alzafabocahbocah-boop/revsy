@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v5.26 (bounce fresh PS - tunggu publik)"
+local SCRIPT_VERSION = "v5.28 (picker semua jenis + selected gak ilang)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -665,8 +665,17 @@ local psLink = savedState.psLink or ""
 local psLinkCode = savedState.psLinkCode or ""
 local function parsePsLink(link)
     if not link or link == "" then return "" end
+    -- v5.27: support banyak format link PS
+    -- 1. format lama: ...privateServerLinkCode=XXX
     local code = link:match("privateServerLinkCode=([^&%s]+)")
     if code then return code end
+    -- 2. format share baru: ...share?code=XXX&type=Server
+    code = link:match("[?&]code=([^&%s]+)")
+    if code then return code end
+    -- 3. accessCode (reserved server)
+    code = link:match("accessCode=([^&%s]+)")
+    if code then return code end
+    -- 4. bare code (cuma kode-nya doang, panjang >=20)
     if link:match("^[%w%-_]+$") and #link >= 20 then return link end
     return ""
 end
@@ -901,8 +910,35 @@ end
 invRefreshBtn.MouseButton1Click:Connect(buildInvShow)
 
 -- v5.20: PET TYPE PICKER MODAL
+-- v5.28: master list semua jenis pet (biar picker tampil semua, bukan cuma yg dipunya)
+local ALL_PET_TYPES = {
+    "Bee","Black Bear","Brontosaurus","Bunny","Bull","Capybara","Cat","Chicken",
+    "Cow","Crab","Cyclops","Dog","Dragonfly","Dragon Fruit","Duck","Eagle",
+    "Elephant","Fennec Fox","Flamingo","Frog","Giraffe","Goat","Golden Lab",
+    "Grey Mouse","Hamster","Hedgehog","Honey Bee","Horse","Hyena","Ice Golem",
+    "Kappa","King Bee","Komodo Dragon","Krakeon","Ladybug","Lion","Llama",
+    "Mantis","Meerkat","Mimic Octopus","Mole","Monkey","Moon Cat","Mosquito",
+    "Newt","Nightmare Peacock","Otter","Owl","Pack Bee","Panda","Parrot",
+    "Peacock","Penguin","Peryton","Petal Bee","Pig","Polar Bear","Puma",
+    "Queen Bee","Rabbit","Raccoon","Red Fox","Rhino","Ringneck Pheasant",
+    "Robin","Rooster","Ruby Squid","Salamander","Scorpion","Sea Turtle","Seal",
+    "Shark","Shiba Inu","Silver Monkey","Snail","Snow Owl","Snowfall","Spider",
+    "Spotted Deer","Squirrel","Starfish","Stork","Sugar Glider","Swan","T-Rex",
+    "Tarantula","Tortoise","Toucan","Triceratops","Turtle","Wasp","Werewolf",
+    "White Mouse","Wolf","ZapHorse","Beaver","Chocolate Bunny","Hootsie Roll",
+    "Brown Mouse","Black Mouse","Octopus","Snake","Snowman","Reindeer","Yak",
+    "Wolverine","Manta Ray","Jellyfish","Seahorse","Anglerfish","Pufferfish",
+    "Lobster","Bat","Cobra","Iguana","Chameleon","Gecko","Pelican","Vulture",
+    "Hawk","Falcon","Crow","Raven","Magpie","Cardinal","Sparrow","Bluebird",
+    "Hummingbird","Woodpecker","Pheasant","Quail","Turkey","Ostrich","Emu",
+    "Kookaburra","Cockatoo","Macaw","Lemur","Sloth","Anteater","Armadillo",
+    "Tapir","Capuchin","Gorilla","Orangutan","Chimpanzee","Baboon","Bushbaby",
+    "Tarsier","Possum","Skunk","Badger","Weasel","Ferret","Marten","Stoat",
+    "Mink","Mongoose","Pangolin","Aardvark","Echidna","Platypus","Wombat",
+    "Kangaroo","Wallaby","Koala","Tasmanian Devil",
+}
 local function showPetPicker()
-    -- Scan backpack, kumpulin jenis pet + count
+    -- Scan backpack buat count
     local typeCounts = {}
     local bp = player:FindFirstChild("Backpack")
     if bp then
@@ -913,9 +949,25 @@ local function showPetPicker()
             end
         end
     end
+    -- v5.28: gabung semua sumber: punya + master list + yg lagi kepilih (count 0 gpp)
+    local seen = {}
     local items = {}
-    for t, c in pairs(typeCounts) do table.insert(items, {name=t, count=c}) end
-    table.sort(items, function(a,b) return a.count > b.count end)
+    -- 1. yg dipunya (count > 0) duluan
+    local owned = {}
+    for t, c in pairs(typeCounts) do table.insert(owned, {name=t, count=c}); seen[t]=true end
+    table.sort(owned, function(a,b) return a.count > b.count end)
+    for _, it in ipairs(owned) do table.insert(items, it) end
+    -- 2. yg lagi kepilih tapi count 0 (biar gak ilang dari list = gak ke-unselect)
+    for t in pairs(selectedPetTypes) do
+        if not seen[t] then table.insert(items, {name=t, count=0}); seen[t]=true end
+    end
+    -- 3. master list (semua jenis) yg belum kemunculan
+    local rest = {}
+    for _, t in ipairs(ALL_PET_TYPES) do
+        if not seen[t] then table.insert(rest, {name=t, count=0}); seen[t]=true end
+    end
+    table.sort(rest, function(a,b) return a.name < b.name end)
+    for _, it in ipairs(rest) do table.insert(items, it) end
 
     local backdrop = mk("Frame",{Size=UDim2.new(1,0,1,0), BackgroundColor3=C.Black, BackgroundTransparency=0.5, BorderSizePixel=0, ZIndex=50, Parent=sg})
     local modal = mk("Frame",{Size=UDim2.new(0,300,0,380), Position=UDim2.new(0.5,-150,0.5,-190), BackgroundColor3=C.BG, BorderSizePixel=0, ZIndex=51, Parent=backdrop})
@@ -1103,10 +1155,21 @@ local function markRejoinAndTeleport(useDifferent, isRetry)
         task.wait(1)
     end
     cdLbl.Text = "Teleporting..."
+    -- v5.27: diagnostic biar keliatan kenapa bounce jalan/enggak
+    print("[ZenxInv] [Rejoin] bounceMode="..tostring(bounceMode).." psLinkCode="..(psLinkCode ~= "" and (psLinkCode:sub(1,10).."...") or "KOSONG"))
+    if bounceMode and psLinkCode == "" then
+        -- bounce ON tapi link gak ke-parse — kasih tau, jangan diem-diem hop biasa
+        cdLbl.Text = "Bounce ON tapi PS Link kosong/salah!"
+        cdLbl.TextColor3 = C.Red
+        print("[ZenxInv] ⚠ Bounce ON tapi psLinkCode KOSONG — paste link PS yg bener (privateServerLinkCode= / share?code=)")
+        rnBtn.Text = "Rejoin Now"
+        return
+    end
     if bounceMode and psLinkCode ~= "" then
         savedState.bouncePending = true
         savedState.bouncePsCode = psLinkCode
         saveState(savedState)
+        print("[ZenxInv] [Bounce] TP ke PUBLIK dulu, bouncePending=true")
         TS:Teleport(game.PlaceId, player)
     elseif useDifferent then
         teleportToDifferentServer()
