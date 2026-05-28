@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v5.33 (auto-copy log ke clipboard)"
+local SCRIPT_VERSION = "v5.35 (fix interval 0 - rejoin instan loop)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -642,7 +642,8 @@ div(content, 4)
 local rejoinHeader = lbl(content, "REJOIN", 9, C.Teal) rejoinHeader.Size=UDim2.new(1,0,0,14) rejoinHeader.LayoutOrder=5
 local rnBtn = btn(content, "Rejoin Now", 10, C.TDim, C.Teal)
 rnBtn.Size = UDim2.new(1,0,0,24) rnBtn.LayoutOrder=6 stroke(rnBtn, C.Teal, 1.5)
-local rejoinMinutes = savedState.rejoinMinutes or 30
+local rejoinMinutes = tonumber(savedState.rejoinMinutes) or 30
+if rejoinMinutes < 1 then rejoinMinutes = 30 end  -- v5.35: fix interval 0 -> rejoin instan loop
 cfgRow(content, "Interval (menit)", 7, rejoinMinutes, function(v)
     rejoinMinutes = math.max(1, math.min(120, v))
     saveState({autoRejoin=savedState.autoRejoin, rejoinMinutes=rejoinMinutes,
@@ -1214,6 +1215,7 @@ local function markRejoinAndTeleport(useDifferent, isRetry)
     if bounceMode and psLinkCode ~= "" then
         savedState.bouncePending = true
         savedState.bouncePsCode = psLinkCode
+        savedState.bounceTime = os.time()  -- v5.34: timestamp biar gak nyangkut
         saveState(savedState)
         print("[ZenxInv] [Bounce] keluar ke server PUBLIK dulu (TeleportToPlaceInstance), bouncePending=true")
         -- v5.29: JANGAN TS:Teleport(placeId) — dari dalem PS itu balik ke PS yg sama.
@@ -1263,6 +1265,7 @@ local function startAR()
     arTask = task.spawn(function()
         while isAR do
             local mins = rejoinMinutes
+            if mins < 1 then mins = 30 end  -- v5.35: jaga2 jangan sampe 0 (loop instan)
             for i = mins*60, 1, -1 do
                 if not isAR then return end
                 cdLbl.Text = string.format("Rejoin dalam: %02d:%02d", math.floor(i/60), i%60)
@@ -1342,9 +1345,20 @@ elseif rejoinStatus == "same" then
     end)
 end
 
+-- v5.34: bounce cuma diproses kalo MASIH BARU (< 120s). Kalo basi -> clear (anti nyangkut)
+if savedState.bouncePending then
+    local btime = tonumber(savedState.bounceTime) or 0
+    if (os.time() - btime) > 120 or not savedState.bouncePsCode or savedState.bouncePsCode == "" then
+        print("[ZenxInv] bouncePending BASI/invalid -> di-clear (gak auto-TP)")
+        savedState.bouncePending = false
+        savedState.bounceTime = nil
+        saveState(savedState)
+    end
+end
 if savedState.bouncePending and savedState.bouncePsCode and savedState.bouncePsCode ~= "" then
     local psCode = savedState.bouncePsCode
     savedState.bouncePending = false
+    savedState.bounceTime = nil
     saveState(savedState)
     cdLbl.Text = "Bouncing back to PS..."
     cdLbl.TextColor3 = C.Gold
