@@ -4705,9 +4705,18 @@ local BASE_KG_ATTRS = {
 local function getBaseKg(t)
     -- v8.125: APS via memContainer + age-1 normalization
     local okU, uuid = pcall(function() return t:GetAttribute("PET_UUID") end)
+    -- v8.242: diagnostik — kenapa pet (mutasi) gagal ke-detect
+    local pName = (t and t.Name) or "?"
     if okU and uuid and getgenv().ZenxAPS then
         local bw = getgenv().ZenxAPS.getBaseKg(uuid)
         if bw and bw > 0 then return bw * 1.1, "APS-age1" end
+        -- v8.242: punya UUID tapi APS gak punya BaseWeight-nya
+        L(string.format("[BaseKG-DIAG] '%s' uuid=%s → APS.getBaseKg NIL (container belum punya pet ini?)",
+            tostring(pName):sub(1,24), tostring(uuid):sub(1,12)))
+    elseif okU and uuid and not getgenv().ZenxAPS then
+        L(string.format("[BaseKG-DIAG] '%s' punya uuid tapi ZenxAPS belum load", tostring(pName):sub(1,24)))
+    elseif not (okU and uuid) then
+        L(string.format("[BaseKG-DIAG] '%s' GAK PUNYA PET_UUID (atribut nil)", tostring(pName):sub(1,24)))
     end
     -- v8.240: APS gagal → hitung base dari display + umur.
     -- Verified: age100 62kg -> age1 6.2kg. Rumus: base = display × 11 / (age+10) (TANPA ×1.1)
@@ -4718,6 +4727,8 @@ local function getBaseKg(t)
         return base, "formula"
     end
     -- Gak tau umur → return nil (mending gak ke-list drpd salah match)
+    L(string.format("[BaseKG-DIAG] '%s' disp=%s age=%s → return nil (SKIP)",
+        tostring(pName):sub(1,24), tostring(disp), tostring(age)))
     return nil, "unknown"
 end
 
