@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v5.28 (picker semua jenis + selected gak ilang)"
+local SCRIPT_VERSION = "v5.29 (bounce keluar PS beneran + auto-reload URL)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -707,6 +707,25 @@ do
         saveState(savedState)
     end
 end
+-- v5.29: Script URL — buat auto-reload abis teleport (wajib biar bounce balik ke PS otomatis)
+do
+    local r = mk("Frame",{Size=UDim2.new(1,0,0,26), BackgroundColor3=C.Card, BorderSizePixel=0, LayoutOrder=7.75, Parent=content})
+    corner(r, 6) stroke(r, C.Dim, 1.1)
+    local l = lbl(r, "Script URL", 9, C.Gray) l.Size = UDim2.new(0.28,0,1,0) l.Position = UDim2.new(0,8,0,0)
+    local box = mk("TextBox",{
+        Size=UDim2.new(0.67,-10,0,20), Position=UDim2.new(0.33,0,0.5,-10),
+        BackgroundColor3=C.Panel, Text=savedState.scriptUrl or "", PlaceholderText="raw url script (buat auto-reload)",
+        TextColor3=C.White, PlaceholderColor3=C.Dim,
+        Font=Enum.Font.Gotham, TextSize=9, TextScaled=false,
+        TextXAlignment=Enum.TextXAlignment.Left, ClearTextOnFocus=false, Parent=r
+    })
+    corner(box, 5) stroke(box, C.Dim, 1)
+    box:GetPropertyChangedSignal("Text"):Connect(function()
+        savedState.scriptUrl = box.Text
+        saveState(savedState)
+        if box.Text ~= "" then print("[ZenxInv] Script URL set: "..box.Text:sub(1,30).."...") end
+    end)
+end
 local bounceMode = savedState.bounceMode or false
 local _, bcTog, bcTogStroke, bcStroke = togRow(content, "Bounce via Public", "Public dulu, terus balik ke PS", 7.8)
 local function setBounceTog(v)
@@ -1114,12 +1133,19 @@ local function tryQueueOnTeleport()
         print("[ZenxInv] queueonteleport gak ada — re-run manual setelah TP")
         return false
     end
-    local reloadSrc = [[
-        task.wait(2)
-        print("[ZenxInv] post-teleport queued: re-run script manual / set URL")
-    ]]
+    -- v5.29: re-run script BENERAN abis teleport (biar bounce balik ke PS otomatis)
+    local url = savedState.scriptUrl or ""
+    local reloadSrc
+    if url ~= "" then
+        reloadSrc = 'task.wait(3)\nloadstring(game:HttpGet("'..url..'"))()'
+    else
+        reloadSrc = [[
+            task.wait(2)
+            warn("[ZenxInv] post-TP: Script URL belom di-set! Bounce balik ke PS GAK otomatis. Isi field 'Script URL' di GUI.")
+        ]]
+    end
     local ok, err = pcall(function() qot(reloadSrc) end)
-    if ok then print("[ZenxInv] queueonteleport set") return true
+    if ok then print("[ZenxInv] queueonteleport set "..(url~="" and "(auto-reload via URL)" or "(NO URL — manual)")) return true
     else print("[ZenxInv] queueonteleport gagal: "..tostring(err)) return false end
 end
 local rejoinCancelled = false
@@ -1169,8 +1195,10 @@ local function markRejoinAndTeleport(useDifferent, isRetry)
         savedState.bouncePending = true
         savedState.bouncePsCode = psLinkCode
         saveState(savedState)
-        print("[ZenxInv] [Bounce] TP ke PUBLIK dulu, bouncePending=true")
-        TS:Teleport(game.PlaceId, player)
+        print("[ZenxInv] [Bounce] keluar ke server PUBLIK dulu (TeleportToPlaceInstance), bouncePending=true")
+        -- v5.29: JANGAN TS:Teleport(placeId) — dari dalem PS itu balik ke PS yg sama.
+        -- Pake teleportToDifferentServer (fetch server publik + TeleportToPlaceInstance) biar bener2 keluar PS.
+        teleportToDifferentServer()
     elseif useDifferent then
         teleportToDifferentServer()
     else
