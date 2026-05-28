@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v5.29 (bounce keluar PS beneran + auto-reload URL)"
+local SCRIPT_VERSION = "v5.33 (auto-copy log ke clipboard)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -535,8 +535,10 @@ corner(main, 10) stroke(main, C.Teal, 2)
 local TB = mk("Frame",{Size=UDim2.new(1,0,0,34), BackgroundColor3=C.Panel, BorderSizePixel=0, Parent=main})
 corner(TB, 10)
 mk("Frame",{Size=UDim2.new(1,0,0,1.5), Position=UDim2.new(0,0,1,-1.5), BackgroundColor3=C.Teal, BorderSizePixel=0, Parent=TB})
-local titleLbl = lbl(TB, "ZENX INV", 11, C.Teal)
-titleLbl.Size = UDim2.new(0, 80, 1, 0) titleLbl.Position = UDim2.new(0, 10, 0, 0)
+-- v5.30: tampilin versi di title bar biar tau udah update apa belum
+local _verShort = SCRIPT_VERSION:match("^(v[%d%.]+)") or SCRIPT_VERSION
+local titleLbl = lbl(TB, "ZENX INV  "..(_verShort or ""), 11, C.Teal)
+titleLbl.Size = UDim2.new(0, 150, 1, 0) titleLbl.Position = UDim2.new(0, 10, 0, 0)
 -- v5.22: pet picker button di TITLE BAR (kayak kg_stat, selalu keliatan)
 local petPickBtn = btn(TB, "Pet ▼", 10, C.Card, C.Teal)
 petPickBtn.Size = UDim2.new(0,118,0,22) petPickBtn.Position = UDim2.new(1,-200,0.5,-11)
@@ -1058,14 +1060,33 @@ end)
 -- ============================================
 local isAR = false
 local arTask = nil
+-- v5.33: log buffer + auto-copy ke clipboard (biar bisa di-paste sebelum keburu teleport)
+local _bLog = {}
+local function _clip(s)
+    local fns = {setclipboard, toclipboard, (Clipboard and Clipboard.set), setrbxclipboard, (syn and syn.write_clipboard)}
+    for _, f in ipairs(fns) do
+        if type(f) == "function" then
+            local ok = pcall(f, s)
+            if ok then return true end
+        end
+    end
+    return false
+end
+local function blog(msg)
+    table.insert(_bLog, msg)
+    print("[ZenxInv] "..msg)
+    -- auto-copy tiap append biar selalu kebawa walau keburu TP
+    pcall(function() _clip("=== ZenxInv Bounce Log ===\n"..table.concat(_bLog, "\n")) end)
+end
 local function teleportToDifferentServer()
-    local req = (syn and syn.request) or http_request or request
-    if fluxus and fluxus.request then req = fluxus.request end
+    _bLog = {}  -- reset tiap attempt
+    blog("placeId="..tostring(game.PlaceId).." curJob="..tostring(game.JobId):sub(1,12))
+    local req = (syn and syn.request) or http_request or request or (http and http.request) or (fluxus and fluxus.request)
+    blog("req fn = "..(req and "ADA" or "TIDAK ADA"))
     if not req then
-        cdLbl.Text = "Executor gak support HTTP — pakai TP biasa"
+        cdLbl.Text = "✗ Executor gak ada fungsi HTTP request (log di-copy)"
         cdLbl.TextColor3 = C.Red
-        task.wait(1.5)
-        TS:Teleport(game.PlaceId, player)
+        blog("✗ NO http request function — gak bisa fetch server publik")
         return
     end
     local data = nil
@@ -1076,25 +1097,25 @@ local function teleportToDifferentServer()
         if ok and resp then
             local body = resp.Body or resp.body or ""
             local status = resp.StatusCode or resp.status_code or 0
-            print("[ZenxInv] Fetch attempt "..attempt..": status="..tostring(status).." body_len="..#body)
+            blog("try"..attempt..": status="..tostring(status).." body_len="..#body)
             if #body > 0 then
                 local okd, parsed = pcall(function() return HttpService:JSONDecode(body) end)
                 if okd and parsed and parsed.data then data = parsed break
-                else print("[ZenxInv] JSON decode fail attempt "..attempt) end
+                else blog("try"..attempt..": JSON decode fail / no .data") end
             end
         else
-            print("[ZenxInv] Fetch fail attempt "..attempt..": "..tostring(resp))
+            blog("try"..attempt..": REQUEST FAIL: "..tostring(resp):sub(1,80))
         end
         task.wait(1)
     end
     if not data then
-        cdLbl.Text = "Server list fetch GAGAL 3x"
+        cdLbl.Text = "✗ Fetch GAGAL — log udah di-COPY, paste ke chat"
         cdLbl.TextColor3 = C.Red
-        task.wait(2)
-        TS:Teleport(game.PlaceId, player)
+        blog("✗ Fetch GAGAL 3x — bounce gak bisa keluar PS")
+        rnBtn.Text = "Rejoin Now"
         return
     end
-    print("[ZenxInv] Fetched "..#data.data.." servers")
+    blog("Fetched "..#data.data.." servers")
     local triedSet = {}
     for _, j in ipairs(savedState.triedJobIds or {}) do triedSet[j] = true end
     local candidates = {}
@@ -1128,24 +1149,23 @@ local function teleportToDifferentServer()
     TS:TeleportToPlaceInstance(game.PlaceId, target.id, player)
 end
 local function tryQueueOnTeleport()
-    local qot = queueonteleport or queue_on_teleport or (syn and syn.queue_on_teleport)
-    if not qot then
-        print("[ZenxInv] queueonteleport gak ada — re-run manual setelah TP")
+    -- v5.31: AUTOEXEC = cara terbaik (gak perlu URL). Script jalan otomatis tiap join.
+    -- queueonteleport cuma fallback kalo gak pake autoexec + ada Script URL.
+    local url = savedState.scriptUrl or ""
+    if url == "" then
+        -- Gak ada URL — andelin autoexec. bouncePending udah di file, jadi
+        -- begitu script ke-run lagi (via autoexec) di server baru, dia auto lanjut.
+        print("[ZenxInv] (no URL) — pastiin script di FOLDER AUTOEXEC biar auto-jalan abis teleport")
         return false
     end
-    -- v5.29: re-run script BENERAN abis teleport (biar bounce balik ke PS otomatis)
-    local url = savedState.scriptUrl or ""
-    local reloadSrc
-    if url ~= "" then
-        reloadSrc = 'task.wait(3)\nloadstring(game:HttpGet("'..url..'"))()'
-    else
-        reloadSrc = [[
-            task.wait(2)
-            warn("[ZenxInv] post-TP: Script URL belom di-set! Bounce balik ke PS GAK otomatis. Isi field 'Script URL' di GUI.")
-        ]]
+    local qot = queueonteleport or queue_on_teleport or (syn and syn.queue_on_teleport)
+    if not qot then
+        print("[ZenxInv] queueonteleport gak ada — taruh script di autoexec aja")
+        return false
     end
+    local reloadSrc = 'task.wait(3)\nloadstring(game:HttpGet("'..url..'"))()'
     local ok, err = pcall(function() qot(reloadSrc) end)
-    if ok then print("[ZenxInv] queueonteleport set "..(url~="" and "(auto-reload via URL)" or "(NO URL — manual)")) return true
+    if ok then print("[ZenxInv] queueonteleport set (auto-reload via URL)") return true
     else print("[ZenxInv] queueonteleport gagal: "..tostring(err)) return false end
 end
 local rejoinCancelled = false
