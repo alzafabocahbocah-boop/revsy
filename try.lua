@@ -11,7 +11,7 @@ local RS         = game:GetService("ReplicatedStorage")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.11"
+local VER = "v2.12"
 local TARGETS_FILE = "ZenxAgeStats_targets.json"
 local SETTINGS_FILE = "ZenxAgeStats_settings.json"
 local MAX_RECENT = 8
@@ -502,7 +502,7 @@ local function mkColLbl(parent, x, w, text, color, align)
     l.Parent = parent
     return l
 end
-mkColLbl(colHeader, 0.03, 0.47, "PET",     C.Accent, Enum.TextXAlignment.Left)
+mkColLbl(colHeader, 0.03, 0.47, "PET (tap=filter)", C.Accent, Enum.TextXAlignment.Left)
 mkColLbl(colHeader, 0.50, 0.16, "AGE100",  C.Text)
 mkColLbl(colHeader, 0.66, 0.14, "<100",    C.Text)
 mkColLbl(colHeader, 0.80, 0.17, "TOTAL",   C.Text)
@@ -701,13 +701,27 @@ footer.Parent = main
 -- ============================================================
 local cachedContainer, cachedCount = nil, 0
 
+-- v2.12: filter jenis pet — header TOTAL/AGE100/AGE<100 cuma jenis terpilih (nil = semua)
+local selectedPetType = nil
 local function updateHeader()
     local byType, total, age100, lessAge = collectStats(cachedContainer)
+    -- v2.12: kalo ada jenis kepilih, header cuma ngitung jenis itu
+    if selectedPetType then
+        local d = byType[selectedPetType]
+        if d then
+            age100  = d.age100
+            lessAge = d.less100
+            total   = d.age100 + d.less100
+        else
+            age100, lessAge, total = 0, 0, 0
+        end
+    end
     totalVal.Text  = tostring(total)
     age100Val.Text = tostring(age100)
     lessVal.Text   = tostring(lessAge)
     eligibleLbl.Text = "Pet eligible (age 100): "..age100
-    footer.Text = "scope: backpack • memData "..(cachedContainer and (cachedCount.." OK") or "FAIL FAIL").." • auto 2s"
+    local scopeTag = selectedPetType and ("filter: "..selectedPetType) or "scope: backpack"
+    footer.Text = scopeTag.." • memData "..(cachedContainer and (cachedCount.." OK") or "FAIL FAIL").." • auto 2s"
     return byType
 end
 
@@ -726,32 +740,49 @@ local function renderStats()
     for _, item in ipairs(sorted) do
         if filter == "" or item.name:lower():find(filter, 1, true) then
             local petTotal = item.data.age100 + item.data.less100
-            local row = Instance.new("Frame")
+            local isSel = (selectedPetType == item.name)
+            -- v2.12: row jadi TextButton biar bisa di-tap buat filter total
+            local row = Instance.new("TextButton")
             row.Size = UDim2.new(1, -8, 0, 26)
-            row.BackgroundColor3 = C.Panel
+            row.BackgroundColor3 = isSel and C.Accent or C.Panel
+            row.AutoButtonColor = false
+            row.Text = ""
             row.BorderSizePixel = 0 row.Parent = scroll
             Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
             local n = Instance.new("TextLabel")
             n.Size = UDim2.new(0.47, -4, 1, 0) n.Position = UDim2.new(0.03, 0, 0, 0)
-            n.BackgroundTransparency = 1 n.Text = item.name n.TextColor3 = C.Text
+            n.BackgroundTransparency = 1 n.Text = item.name
+            n.TextColor3 = isSel and Color3.new(0,0,0) or C.Text
             n.Font = Enum.Font.Gotham n.TextSize = 11
             n.TextXAlignment = Enum.TextXAlignment.Left
             n.TextTruncate = Enum.TextTruncate.AtEnd n.Parent = row
             local c1 = Instance.new("TextLabel")
             c1.Size = UDim2.new(0.16, 0, 1, 0) c1.Position = UDim2.new(0.50, 0, 0, 0)
             c1.BackgroundTransparency = 1 c1.Text = tostring(item.data.age100)
-            c1.TextColor3 = C.Text c1.Font = Enum.Font.GothamBold c1.TextSize = 12
+            c1.TextColor3 = isSel and Color3.new(0,0,0) or C.Text
+            c1.Font = Enum.Font.GothamBold c1.TextSize = 12
             c1.Parent = row
             local c2 = Instance.new("TextLabel")
             c2.Size = UDim2.new(0.14, 0, 1, 0) c2.Position = UDim2.new(0.66, 0, 0, 0)
             c2.BackgroundTransparency = 1 c2.Text = tostring(item.data.less100)
-            c2.TextColor3 = C.Text c2.Font = Enum.Font.GothamBold c2.TextSize = 12
+            c2.TextColor3 = isSel and Color3.new(0,0,0) or C.Text
+            c2.Font = Enum.Font.GothamBold c2.TextSize = 12
             c2.Parent = row
             local c3 = Instance.new("TextLabel")
             c3.Size = UDim2.new(0.17, 0, 1, 0) c3.Position = UDim2.new(0.80, 0, 0, 0)
             c3.BackgroundTransparency = 1 c3.Text = tostring(petTotal)
-            c3.TextColor3 = C.Accent c3.Font = Enum.Font.GothamBold c3.TextSize = 12
+            c3.TextColor3 = isSel and Color3.new(0,0,0) or C.Accent
+            c3.Font = Enum.Font.GothamBold c3.TextSize = 12
             c3.Parent = row
+            -- v2.12: tap = filter jenis ini; tap lagi = clear
+            row.MouseButton1Click:Connect(function()
+                if selectedPetType == item.name then
+                    selectedPetType = nil
+                else
+                    selectedPetType = item.name
+                end
+                renderStats()
+            end)
         end
     end
     scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
