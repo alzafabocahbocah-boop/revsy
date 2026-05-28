@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.238"
-local VERSION_DATE = "v8.238: Fix akun baru list harga kosong — APS container scan agresif di awal (5s x 2menit) + threshold 5 turun ke 3."
+local VERSION = "8.240"
+local VERSION_DATE = "v8.240: Fix rumus fallback base (buang x1.1). Verified age100 62kg -> age1 6.2kg. List harga 6-6.4 bener lagi."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -4704,15 +4704,21 @@ local BASE_KG_ATTRS = {
 }
 local function getBaseKg(t)
     -- v8.125: APS via memContainer + age-1 normalization
-    -- BaseWeight di memory = age 0. Pet baru hatch minimal age 1 (display = base × 1.1).
-    -- Normalize ke age-1 supaya match rule "6-6.4" untuk pet display 6.05-6.40 kg
     local okU, uuid = pcall(function() return t:GetAttribute("PET_UUID") end)
     if okU and uuid and getgenv().ZenxAPS then
         local bw = getgenv().ZenxAPS.getBaseKg(uuid)
         if bw and bw > 0 then return bw * 1.1, "APS-age1" end
     end
-    -- Fallback: display kg
-    return getCurrentKg(t), "display"
+    -- v8.240: APS gagal → hitung base dari display + umur.
+    -- Verified: age100 62kg -> age1 6.2kg. Rumus: base = display × 11 / (age+10) (TANPA ×1.1)
+    local disp = getCurrentKg(t)
+    local age = getAge(t)
+    if disp and disp > 0 and age and age >= 0 then
+        local base = disp * 11 / (age + 10)
+        return base, "formula"
+    end
+    -- Gak tau umur → return nil (mending gak ke-list drpd salah match)
+    return nil, "unknown"
 end
 
 -- v8.88: count pet di backpack yang match rule (untuk badge [N] di LIST HARGA)
