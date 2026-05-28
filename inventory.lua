@@ -1314,12 +1314,14 @@ end
 setExpanded(false)
 expBtn.MouseButton1Click:Connect(function() setExpanded(not expanded) end)
 
--- v5.36: JANGAN auto-resume Auto Rejoin pas load (itu bikin auto-rejoin pas baru nyala).
--- User harus nyalain manual tiap sesi. Clear flag lama biar gak nyangkut.
+-- v5.37: resume Auto Rejoin KALO user emang nyalain (interval countdown dulu, gak instan).
+-- Loop instan dulu dari path bounce/same-server (udah difix v5.34-36), BUKAN dari sini.
+-- startAR count down mins*60 detik dulu sebelum teleport, jadi aman gak langsung rejoin.
 if savedState.autoRejoin == true then
-    print("[ZenxInv] autoRejoin lama di-clear (gak auto-resume, nyalain manual kalo mau)")
-    savedState.autoRejoin = false
-    saveState(savedState)
+    local mins = tonumber(savedState.rejoinMinutes) or 30
+    if mins < 1 then mins = 30 end
+    print("[ZenxInv] resume Auto Rejoin ON (interval "..mins.." menit — countdown dulu, gak instan)")
+    task.spawn(function() task.wait(2) startAR() end)
 end
 
 dbgLbl.Text = buildDbgText()
