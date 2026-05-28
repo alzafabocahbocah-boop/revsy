@@ -476,7 +476,9 @@ local function ensureContainer(forceMiss)
         ((now - containerLastChecked) > CONTAINER_RECHECK_INTERVAL)
     if needRefresh then
         local nc, ncnt = findMemoryContainer()
-        if nc and ncnt > 0 and ncnt >= cachedCount then
+        -- v3.29: allow update walaupun count TURUN (gift/sell detection)
+        -- Guard cuma reject kalo scan jelas broken (< 30% dari cached = transient load)
+        if nc and ncnt > 0 and (forceMiss or ncnt >= math.floor(cachedCount * 0.3)) then
             cachedContainer = nc
             cachedCount = ncnt
             rebuildLookup()
@@ -1270,12 +1272,14 @@ local function hookBackpack(c)
     c.ChildRemoved:Connect(function(child)
         if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
             task.wait(0.2) -- biar game sempet update state
+            ensureContainer(true) -- v3.29: FORCE re-scan container (gift/sell detection, bypass 60s throttle)
             refreshAll()
         end
     end)
     c.ChildAdded:Connect(function(child)
         if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
             task.wait(0.2)
+            ensureContainer(true) -- v3.29: force re-scan (hatch/trade-in detection)
             refreshAll()
         end
     end)
@@ -1294,4 +1298,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.27 loaded")
+print("[PetStat] v3.29 loaded")
