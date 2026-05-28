@@ -1314,9 +1314,12 @@ end
 setExpanded(false)
 expBtn.MouseButton1Click:Connect(function() setExpanded(not expanded) end)
 
+-- v5.36: JANGAN auto-resume Auto Rejoin pas load (itu bikin auto-rejoin pas baru nyala).
+-- User harus nyalain manual tiap sesi. Clear flag lama biar gak nyangkut.
 if savedState.autoRejoin == true then
-    print("[ZenxInv] resume Auto Rejoin ON")
-    task.spawn(function() task.wait(2) startAR() end)
+    print("[ZenxInv] autoRejoin lama di-clear (gak auto-resume, nyalain manual kalo mau)")
+    savedState.autoRejoin = false
+    saveState(savedState)
 end
 
 dbgLbl.Text = buildDbgText()
