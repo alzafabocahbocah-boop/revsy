@@ -1332,16 +1332,15 @@ if rejoinStatus == "new" then
         if not isAR then cdLbl.Text = "Auto Rejoin: OFF" cdLbl.TextColor3 = C.Gray end
     end)
 elseif rejoinStatus == "same" then
+    -- v5.35: JANGAN auto-teleport (itu bikin loop rejoin pas baru nyala).
+    -- Cuma kasih info — user pencet Rejoin manual kalo emang mau hop.
     local nextRetry = (retryCount or 0) + 1
-    cdLbl.Text = "Server LAMA — Retry #"..nextRetry
-    cdLbl.TextColor3 = C.Red
-    local retryDelay = tonumber(savedState.rejoinDelay) or 5
+    cdLbl.Text = "Server sama kayak sebelumnya (pencet Rejoin manual)"
+    cdLbl.TextColor3 = C.Gold
+    print("[ZenxInv] rejoinStatus=same — auto-retry DIMATIIN (anti loop). Pencet Rejoin manual.")
     task.spawn(function()
-        for j = retryDelay, 1, -1 do
-            cdLbl.Text = "Retry #"..nextRetry.." dalam "..j.." detik"
-            task.wait(1)
-        end
-        markRejoinAndTeleport(true, true)
+        task.wait(8)
+        if not isAR then cdLbl.Text = "Auto Rejoin: OFF" cdLbl.TextColor3 = C.Gray end
     end)
 end
 
