@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.236"
-local VERSION_DATE = "v8.236: Edit rule expand — sekarang bisa edit Pet Type, Min KG, Max KG, Max Price (4 input). Sebelumnya cuma Max KG + Max Price."
+local VERSION = "8.237"
+local VERSION_DATE = "v8.237: Garden server gak ikut auto-hop (interval + low-pop + same-server). Cuma akun di market yg hop."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -1084,6 +1084,7 @@ BH.gardenPanel = gardenPanel  -- store for cross-scope access
 
 -- v8.49: detect garden server (no TradeWorld = garden)
 local isGardenServer = (Workspace:FindFirstChild("TradeWorld") == nil)
+BH.isGardenServer = isGardenServer  -- v8.237: simpen ke BH biar loop auto-rejoin bisa akses
 if isGardenServer then
     -- Hide MARKET/LIST HARGA/SNIPE/HOP SERVER/HISTORY tabs, show GARDEN by default
     sbBtns.MARKET.btn.Visible = false
@@ -6542,7 +6543,10 @@ end)
 task.spawn(function()
     while gui.Parent do
         task.wait(30) -- check every 30s
-        if autoRejoinToggle.get() then
+        -- v8.237: garden server JANGAN auto-hop (cuma market yg hop)
+        if BH.isGardenServer then
+            -- skip — garden anchor, gak ikut hop walaupun toggle ON
+        elseif autoRejoinToggle.get() then
             local intervalMin = tonumber(intervalBox.Text) or 0
             if intervalMin > 0 then
                 local elapsedMin = (workspace.DistributedGameTime or 0) / 60
@@ -6612,6 +6616,11 @@ end)
     -- terus cek tiap 30s. Kalo player <10 + toggle ON, hop ke server lain.
     local lastTrigger = 0
     task.spawn(function()
+        -- v8.237: garden server gak ikut low-pop hop
+        if BH.isGardenServer then
+            L("⏰ [Low-Pop] garden server — watchdog DISABLED (anchor)")
+            return
+        end
         L("⏰ [Low-Pop] standby 5 menit dulu sebelum cek...")
         task.wait(300) -- 5 menit
         L("⏰ [Low-Pop] start watchdog (cek tiap 30s)")
@@ -6635,6 +6644,8 @@ end)
     task.spawn(function()
         task.wait(8) -- tunggu Players:GetPlayers() ke-populate
 
+        -- v8.237: garden server gak ikut same-server re-hop
+        if BH.isGardenServer then return end
         if not (isfile and isfile(STATE_FILE)) then return end
         local prev
         local ok = pcall(function()
