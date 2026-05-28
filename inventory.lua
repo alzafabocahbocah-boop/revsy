@@ -747,6 +747,26 @@ bcTog.MouseButton1Click:Connect(function()
     print("[ZenxInv] Bounce mode: "..(bounceMode and "ON" or "OFF"))
 end)
 local _, arTog, arTogStroke, arStroke = togRow(content, "Auto Rejoin", "Rejoin otomatis sesuai interval", 8)
+-- v5.39: tombol RESET State — hapus semua flag nyangkut (bouncePending, autoRejoin, lastJobId)
+local resetBtn = btn(content, "RESET State (hapus flag nyangkut)", 9, C.RDim, C.Red)
+resetBtn.Size = UDim2.new(1,0,0,22) resetBtn.LayoutOrder = 8.5 stroke(resetBtn, C.Red, 1.2)
+resetBtn.MouseButton1Click:Connect(function()
+    savedState.bouncePending = false
+    savedState.bounceTime = nil
+    savedState.bouncePsCode = nil
+    savedState.autoRejoin = false
+    savedState.lastJobId = nil
+    savedState.rejoinTime = nil
+    savedState.retryCount = 0
+    savedState.triedJobIds = {}
+    saveState(savedState)
+    isAR = false
+    if arTask then pcall(function() task.cancel(arTask) end) arTask = nil end
+    resetBtn.Text = "✓ State di-reset (flag bersih)"
+    resetBtn.TextColor3 = C.Green
+    print("[ZenxInv] STATE RESET — semua flag teleport di-clear")
+    task.spawn(function() task.wait(3) resetBtn.Text = "RESET State (hapus flag nyangkut)" resetBtn.TextColor3 = C.Red end)
+end)
 local cdLbl = lbl(content, "Auto Rejoin: OFF", 9, C.Gray, Enum.TextXAlignment.Center)
 cdLbl.Size = UDim2.new(1,0,0,20) cdLbl.LayoutOrder=9 cdLbl.BackgroundColor3=C.Panel cdLbl.BackgroundTransparency=0
 corner(cdLbl, 6) stroke(cdLbl, C.Dim, 1.1)
