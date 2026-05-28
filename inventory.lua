@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v5.25 (spawn 75px)"
+local SCRIPT_VERSION = "v5.26 (bounce fresh PS - tunggu publik)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -653,6 +653,14 @@ cfgRow(content, "Delay TP (detik)", 7.5, rejoinDelay, function(v)
     savedState.rejoinDelay = rejoinDelay
     saveState(savedState)
 end)
+-- v5.26: tunggu di publik berapa detik sebelum balik ke PS (biar PS lama mati -> fresh)
+local bounceWaitSec = tonumber(savedState.bounceWaitSec) or 20
+savedState.bounceWaitSec = bounceWaitSec
+cfgRow(content, "Tunggu publik (detik)", 7.6, bounceWaitSec, function(v)
+    bounceWaitSec = math.max(0, math.min(180, v))
+    savedState.bounceWaitSec = bounceWaitSec
+    saveState(savedState)
+end)
 local psLink = savedState.psLink or ""
 local psLinkCode = savedState.psLinkCode or ""
 local function parsePsLink(link)
@@ -1230,12 +1238,14 @@ if savedState.bouncePending and savedState.bouncePsCode and savedState.bouncePsC
     cdLbl.Text = "Bouncing back to PS..."
     cdLbl.TextColor3 = C.Gold
     task.spawn(function()
-        local delaySec = tonumber(savedState.rejoinDelay) or 5
-        for i = delaySec, 1, -1 do
-            cdLbl.Text = "TP ke PS dalam "..i.." detik..."
+        -- v5.26: tunggu di publik (bounceWaitSec) biar PS lama mati -> dapet fresh
+        local waitSec = tonumber(savedState.bounceWaitSec) or 20
+        for i = waitSec, 1, -1 do
+            cdLbl.Text = "Tunggu PS lama mati... balik PS dalam "..i.."s"
+            cdLbl.TextColor3 = C.Gold
             task.wait(1)
         end
-        cdLbl.Text = "Teleporting ke PS..."
+        cdLbl.Text = "Teleporting ke PS (fresh)..."
         tryQueueOnTeleport()
         local ok, err = pcall(function()
             TS:TeleportToPrivateServer(game.PlaceId, psCode, {player})
