@@ -1273,20 +1273,11 @@ local function startAR()
                 task.wait(1)
             end
             if isAR then
-                local currentSt = loadState() or {}
-                currentSt.lastJobId = currentJobId
-                currentSt.rejoinTime = os.time()
-                saveState(currentSt)
-                tryQueueOnTeleport()
-                local delaySec = rejoinDelay
-                for j = delaySec, 1, -1 do
-                    if not isAR then return end
-                    cdLbl.Text = "Auto-rejoin dalam "..j.." detik"
-                    cdLbl.TextColor3 = C.Gold
-                    task.wait(1)
-                end
-                cdLbl.Text = "Teleporting..."
-                TS:Teleport(game.PlaceId, player)
+                -- v5.38: interval juga lewat markRejoinAndTeleport (biar ikut bounce/hop publik,
+                -- bukan TS:Teleport biasa yg dari PS balik ke PS lagi)
+                cdLbl.Text = "Auto-rejoin (interval)..."
+                markRejoinAndTeleport(true, false)
+                return
             end
         end
     end)
