@@ -11,7 +11,7 @@ local RS         = game:GetService("ReplicatedStorage")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.14"
+local VER = "v2.15"
 local TARGETS_FILE = "ZenxAgeStats_targets.json"
 local SETTINGS_FILE = "ZenxAgeStats_settings.json"
 local MAX_RECENT = 8
@@ -318,7 +318,7 @@ if not parented then sg.Parent = playerGui end
 -- ============================================================
 local W = 400
 local TITLE_H = 34
-local HEADER_H = 70
+local HEADER_H = 80
 local TAB_H = 30
 local CONTENT_H = 180  -- v2.5: lebih compact, scroll buat baris ke 5+
 local FOOTER_H = 22
@@ -411,14 +411,14 @@ local function mkStat(parent, x, w, labelText, valColor)
     t.Position = UDim2.new(0, 0, 0, 8)
     t.BackgroundTransparency = 1
     t.Text = labelText t.TextColor3 = C.Dim
-    t.Font = Enum.Font.Gotham t.TextSize = 16  -- v2.14: label gede
+    t.Font = Enum.Font.Gotham t.TextSize = 17  -- v2.15: label
     t.Parent = cell
     local v = Instance.new("TextLabel")
-    v.Size = UDim2.new(1, 0, 0, 38)
+    v.Size = UDim2.new(1, 0, 0, 48)
     v.Position = UDim2.new(0, 0, 0, 28)
     v.BackgroundTransparency = 1
     v.Text = "0" v.TextColor3 = valColor or C.Text
-    v.Font = Enum.Font.GothamBold v.TextSize = 34  -- v2.14: value gede
+    v.Font = Enum.Font.GothamBold v.TextSize = 44  -- v2.15: ANGKA gede banget
     v.Parent = cell
     return v
 end
