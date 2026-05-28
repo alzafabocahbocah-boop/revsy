@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.237"
-local VERSION_DATE = "v8.237: Garden server gak ikut auto-hop (interval + low-pop + same-server). Cuma akun di market yg hop."
+local VERSION = "8.238"
+local VERSION_DATE = "v8.238: Fix akun baru list harga kosong — APS container scan agresif di awal (5s x 2menit) + threshold 5 turun ke 3."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -294,10 +294,10 @@ do
                     for k in pairs(obj) do
                         if type(k) == "string" and #k >= 32 and k:find("-") then
                             uuidLike = uuidLike + 1
-                            if uuidLike >= 5 then break end
+                            if uuidLike >= 3 then break end
                         end
                     end
-                    if uuidLike >= 5 then
+                    if uuidLike >= 3 then
                         -- Verify: sample entry has PetData
                         local sample = nil
                         for _, v in pairs(obj) do sample = v; break end
@@ -473,9 +473,20 @@ do
         end)
 
         -- Periodic memContainer re-scan (catch new pets/keep reference live)
+        -- v8.238: akun baru sering telat load container — scan agresif di awal
         task.spawn(function()
+            -- 2 menit pertama: scan tiap 5 detik (cepet detect di akun baru)
+            for i = 1, 24 do
+                task.wait(5)
+                local new, newCnt = ZAPS.findMemoryContainer()
+                if new and newCnt > 0 then
+                    ZAPS.memContainer = new; ZAPS.memContainerCount = newCnt
+                    if BH.refreshPriceCounts then pcall(BH.refreshPriceCounts) end
+                end
+            end
+            -- setelah itu: scan tiap 60 detik
             while true do
-                task.wait(60)  -- 1 menit
+                task.wait(60)
                 local new, newCnt = ZAPS.findMemoryContainer()
                 if new and newCnt > 0 then
                     ZAPS.memContainer = new; ZAPS.memContainerCount = newCnt
