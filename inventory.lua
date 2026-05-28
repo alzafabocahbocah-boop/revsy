@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v5.24 (naik dikit)"
+local SCRIPT_VERSION = "v5.25 (spawn 75px)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -525,7 +525,7 @@ end)
 local main = mk("Frame",{
     Size=UDim2.new(0, GUI_W, 0, GUI_H),
     AnchorPoint=Vector2.new(0, 1),
-    Position=UDim2.new(0, 70, 1, -60),  -- v5.24: naik dikit aja (dari -20)
+    Position=UDim2.new(0, 70, 1, -75),  -- v5.25: spawn 75px dari bawah
     BackgroundColor3=C.BG, BorderSizePixel=0, Active=true, Draggable=true,
     Visible=true,
     Parent=sg
