@@ -427,6 +427,7 @@ end
 -- v3.8: persistent cache — uuidToPetData dibuild SEKALI, refresh hanya kalo miss
 local uuidToPetDataCache = {}  -- persists between scans
 local containerLastChecked = 0
+local lastForceScan = 0  -- v3.30: throttle force getgc rescan (anti lag)
 local CONTAINER_RECHECK_INTERVAL = 60  -- detik
 
 local function rebuildLookup()
@@ -577,9 +578,14 @@ local function scanPets()
         totalCount = totalCount + 1
         if pd.weight == 0 then zeroCount = zeroCount + 1 end
     end
-    -- Kalo > 50% pet weight=0, force re-detect container
+    -- v3.30: force re-scan getgc itu BERAT — throttle max sekali tiap 20s (anti lag).
+    -- Cuma force kalo >50% weight=0 DAN belum force baru-baru ini.
     if zeroCount > 0 and totalCount > 0 and zeroCount >= totalCount / 2 then
-        ensureContainer(true)
+        local now = os.time()
+        if (now - (lastForceScan or 0)) > 20 then
+            lastForceScan = now
+            ensureContainer(true)
+        end
     end
     for uuid, pd in pairs(petsByUuid) do
         if pd.weight == 0 then
@@ -1298,4 +1304,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.29 loaded")
+print("[PetStat] v3.30 loaded")
