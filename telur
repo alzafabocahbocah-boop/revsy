@@ -160,7 +160,18 @@ sealCol.sub.Position = UDim2.new(0, 4, 0, 50)
 local petsByUuid = {}
 local petCounts = {}
 local eggCounts = {}
-local selectedPet, selectedEgg = nil, nil
+local selectedPetTypes = {}  -- v3.37: multi-select {[name]=true}
+local selectedEgg = nil
+local function petTypeCount()
+    local n = 0; for _ in pairs(selectedPetTypes) do n = n + 1 end; return n
+end
+local function petTypesLabel()
+    local n = petTypeCount()
+    if n == 0 then return "Pet ▼" end
+    if n == 1 then local nm; for k in pairs(selectedPetTypes) do nm = k break end
+        return nm:sub(1,8)..(nm:len()>8 and "…" or "") end
+    return n.." pet ▼"
+end
 local selectedSeals = {}  -- {uuid = true}
 local selectedMisc = {}   -- {mutName = true} — manual mutation boost
 
@@ -227,7 +238,7 @@ local function formatTime(s)
 end
 
 local function updateTracker()
-    local petTag = selectedPet and (" ("..selectedPet..")") or " (all)"
+    local petTag = (petTypeCount() == 0) and " (all)" or (" ("..petTypesLabel():gsub(" ▼","")..")")
     local eggTag = selectedEgg and (" ("..selectedEgg..")") or " (all)"
     trackPetLbl.Text = string.format("🐾 Pet +%d%s", trackerPet, petTag)
     -- v3.26: egg = awal vs sekarang, single net delta
@@ -301,8 +312,8 @@ local SETTINGS_FILE = "ZenxPetStat_settings.json"
 local function saveSettings()
     if not writefile then return end
     local data = {
-        selectedSeals = {}, selectedMisc = {},
-        selectedPet = selectedPet, selectedEgg = selectedEgg,
+        selectedSeals = {}, selectedMisc = {}, selectedPetTypes = {},
+        selectedEgg = selectedEgg,
         tracker = {
             pet = trackerPet,
             eggInitial = trackerEggInitial,  -- v3.26
@@ -311,6 +322,7 @@ local function saveSettings()
     }
     for u in pairs(selectedSeals) do table.insert(data.selectedSeals, u) end
     for m in pairs(selectedMisc) do table.insert(data.selectedMisc, m) end
+    for p in pairs(selectedPetTypes) do table.insert(data.selectedPetTypes, p) end
     pcall(function() writefile(SETTINGS_FILE, HttpService:JSONEncode(data)) end)
 end
 
@@ -323,17 +335,22 @@ local function loadSettings()
             if type(data) == "table" then
                 for _, u in ipairs(data.selectedSeals or {}) do selectedSeals[u] = true end
                 for _, m in ipairs(data.selectedMisc or {}) do selectedMisc[m] = true end
-                if type(data.selectedPet) == "string" then selectedPet = data.selectedPet end
+                -- v3.37: multi-select pet types (migrasi dari single selectedPet lama)
+                if type(data.selectedPetTypes) == "table" then
+                    for _, p in ipairs(data.selectedPetTypes) do selectedPetTypes[p] = true end
+                elseif type(data.selectedPet) == "string" then
+                    selectedPetTypes[data.selectedPet] = true
+                end
                 if type(data.selectedEgg) == "string" then selectedEgg = data.selectedEgg end
                 if data.tracker then
                     trackerPet = tonumber(data.tracker.pet) or 0
                     trackerEggInitial = tonumber(data.tracker.eggInitial)
                     trackerStartTime = tonumber(data.tracker.startTime) or os.time()
                 end
-                print(string.format("[PetStat] loaded %d seals + %d misc + tracker(p+%d eggAwal=%s) + filter(pet=%s egg=%s)",
+                print(string.format("[PetStat] loaded %d seals + %d misc + tracker(p+%d eggAwal=%s) + filter(pet=%d jenis egg=%s)",
                     #(data.selectedSeals or {}), #(data.selectedMisc or {}),
                     trackerPet, tostring(trackerEggInitial),
-                    tostring(selectedPet), tostring(selectedEgg)))
+                    petTypeCount(), tostring(selectedEgg)))
             end
         end
     end)
@@ -639,9 +656,11 @@ end
 
 -- UPDATE DISPLAY
 local function updateTotal()
-    if selectedPet then
-        totalCol.val.Text = tostring(petCounts[selectedPet] or 0)
-        totalCol.sub.Text = "("..selectedPet..")"
+    if petTypeCount() > 0 then
+        local sum = 0
+        for name in pairs(selectedPetTypes) do sum = sum + (petCounts[name] or 0) end
+        totalCol.val.Text = tostring(sum)
+        totalCol.sub.Text = "("..petTypesLabel():gsub(" ▼","")..")"
     else
         local sumAll = 0
         for _, c in pairs(petCounts) do sumAll = sumAll + c end
@@ -1056,8 +1075,9 @@ local function refreshAll()
 
     -- v3.20: tracker pakai filter selected pet/egg (kalo gak ada filter = total)
     local currentPet
-    if selectedPet then
-        currentPet = petCounts[selectedPet] or 0
+    if petTypeCount() > 0 then
+        currentPet = 0
+        for name in pairs(selectedPetTypes) do currentPet = currentPet + (petCounts[name] or 0) end
     else
         currentPet = 0
         for _ in pairs(petsByUuid) do currentPet = currentPet + 1 end
@@ -1173,6 +1193,102 @@ local function showPicker(modalTitle, items, onPick)
     rerender("")
 end
 
+-- v3.37: multi-select picker (toggle, checkmark, stay open, DONE/CLEAR)
+local function showMultiPicker(modalTitle, items, selSet, onChange)
+    local backdrop = Instance.new("Frame")
+    backdrop.Size = UDim2.new(1, 0, 1, 0); backdrop.BackgroundColor3 = Color3.new(0,0,0)
+    backdrop.BackgroundTransparency = 0.5; backdrop.BorderSizePixel = 0
+    backdrop.ZIndex = 50; backdrop.Parent = gui
+    local modal = Instance.new("Frame")
+    modal.Size = UDim2.new(0, 300, 0, 380); modal.Position = UDim2.new(0.5, -150, 0.5, -190)
+    modal.BackgroundColor3 = C.bg; modal.BorderSizePixel = 0; modal.ZIndex = 51; modal.Parent = backdrop
+    Instance.new("UICorner", modal).CornerRadius = UDim.new(0, 10)
+    local hdr = Instance.new("TextLabel")
+    hdr.Size = UDim2.new(1, -130, 0, 30); hdr.Position = UDim2.new(0, 10, 0, 8)
+    hdr.BackgroundTransparency = 1; hdr.Text = modalTitle; hdr.TextColor3 = C.accent
+    hdr.Font = FB; hdr.TextSize = 14; hdr.TextXAlignment = Enum.TextXAlignment.Left
+    hdr.ZIndex = 52; hdr.Parent = modal
+    local doneM = Instance.new("TextButton")
+    doneM.Size = UDim2.new(0, 50, 0, 24); doneM.Position = UDim2.new(1, -94, 0, 8)
+    doneM.BackgroundColor3 = C.green; doneM.Text = "DONE"; doneM.TextColor3 = Color3.new(0,0,0)
+    doneM.Font = FB; doneM.TextSize = 10; doneM.BorderSizePixel = 0; doneM.ZIndex = 52; doneM.Parent = modal
+    Instance.new("UICorner", doneM).CornerRadius = UDim.new(0, 4)
+    local clrM = Instance.new("TextButton")
+    clrM.Size = UDim2.new(0, 36, 0, 24); clrM.Position = UDim2.new(1, -40, 0, 8)
+    clrM.BackgroundColor3 = C.red; clrM.Text = "CLR"; clrM.TextColor3 = Color3.new(1,1,1)
+    clrM.Font = FB; clrM.TextSize = 10; clrM.BorderSizePixel = 0; clrM.ZIndex = 52; clrM.Parent = modal
+    Instance.new("UICorner", clrM).CornerRadius = UDim.new(0, 4)
+    local sbox = Instance.new("TextBox")
+    sbox.Size = UDim2.new(1, -20, 0, 28); sbox.Position = UDim2.new(0, 10, 0, 44)
+    sbox.BackgroundColor3 = C.card; sbox.BorderSizePixel = 0; sbox.PlaceholderText = "🔍 search..."
+    sbox.Text = ""; sbox.TextColor3 = C.text; sbox.PlaceholderColor3 = C.dim; sbox.Font = FM
+    sbox.TextSize = 11; sbox.TextXAlignment = Enum.TextXAlignment.Left; sbox.ClearTextOnFocus = false
+    sbox.ZIndex = 52; sbox.Parent = modal
+    Instance.new("UICorner", sbox).CornerRadius = UDim.new(0, 4)
+    local sP = Instance.new("UIPadding", sbox); sP.PaddingLeft = UDim.new(0, 10)
+    local listSF = Instance.new("ScrollingFrame")
+    listSF.Size = UDim2.new(1, -20, 1, -90); listSF.Position = UDim2.new(0, 10, 0, 80)
+    listSF.BackgroundColor3 = C.panel; listSF.BorderSizePixel = 0; listSF.ScrollBarThickness = 4
+    listSF.CanvasSize = UDim2.new(0,0,0,0); listSF.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    listSF.ZIndex = 52; listSF.Parent = modal
+    Instance.new("UICorner", listSF).CornerRadius = UDim.new(0, 6)
+    local lay = Instance.new("UIListLayout"); lay.Padding = UDim.new(0, 3); lay.Parent = listSF
+    local lp = Instance.new("UIPadding", listSF)
+    lp.PaddingTop = UDim.new(0, 4); lp.PaddingLeft = UDim.new(0, 4); lp.PaddingRight = UDim.new(0, 4)
+    local rerender
+    rerender = function(q)
+        for _, c in ipairs(listSF:GetChildren()) do
+            if not (c:IsA("UIListLayout") or c:IsA("UIPadding")) then c:Destroy() end
+        end
+        local sorted = {}
+        for _, e in ipairs(items) do table.insert(sorted, e) end
+        table.sort(sorted, function(a, b)
+            local as = selSet[a.name] and 1 or 0
+            local bs = selSet[b.name] and 1 or 0
+            if as ~= bs then return as > bs end
+            if a.count ~= b.count then return a.count > b.count end
+            return a.name < b.name
+        end)
+        local ql = (q or ""):lower()
+        for _, e in ipairs(sorted) do
+            if ql == "" or e.name:lower():find(ql, 1, true) then
+                local on = selSet[e.name] == true
+                local r = Instance.new("TextButton")
+                r.Size = UDim2.new(1, -8, 0, 28); r.BackgroundColor3 = on and C.accent or C.card
+                r.BorderSizePixel = 0; r.AutoButtonColor = false; r.Text = ""; r.ZIndex = 53; r.Parent = listSF
+                Instance.new("UICorner", r).CornerRadius = UDim.new(0, 4)
+                local ck = Instance.new("TextLabel")
+                ck.Size = UDim2.new(0, 24, 1, 0); ck.Position = UDim2.new(0, 6, 0, 0)
+                ck.BackgroundTransparency = 1; ck.Text = on and "✓" or ""; ck.TextColor3 = Color3.new(0,0,0)
+                ck.Font = FB; ck.TextSize = 13; ck.ZIndex = 54; ck.Parent = r
+                local nL = Instance.new("TextLabel")
+                nL.Size = UDim2.new(1, -90, 1, 0); nL.Position = UDim2.new(0, 32, 0, 0)
+                nL.BackgroundTransparency = 1; nL.Text = e.name; nL.TextColor3 = on and Color3.new(0,0,0) or C.text
+                nL.Font = on and FB or FM; nL.TextSize = 11; nL.TextXAlignment = Enum.TextXAlignment.Left
+                nL.TextTruncate = Enum.TextTruncate.AtEnd; nL.ZIndex = 54; nL.Parent = r
+                local cL = Instance.new("TextLabel")
+                cL.Size = UDim2.new(0, 50, 1, 0); cL.Position = UDim2.new(1, -56, 0, 0)
+                cL.BackgroundTransparency = 1; cL.Text = tostring(e.count).."x"
+                cL.TextColor3 = on and Color3.new(0,0,0) or C.accent; cL.Font = FB; cL.TextSize = 11
+                cL.TextXAlignment = Enum.TextXAlignment.Right; cL.ZIndex = 54; cL.Parent = r
+                local cP = Instance.new("UIPadding", cL); cP.PaddingRight = UDim.new(0, 8)
+                r.MouseButton1Click:Connect(function()
+                    if selSet[e.name] then selSet[e.name] = nil else selSet[e.name] = true end
+                    onChange()
+                    rerender(sbox.Text)
+                end)
+            end
+        end
+    end
+    sbox:GetPropertyChangedSignal("Text"):Connect(function() rerender(sbox.Text) end)
+    doneM.MouseButton1Click:Connect(function() backdrop:Destroy() end)
+    clrM.MouseButton1Click:Connect(function()
+        for k in pairs(selSet) do selSet[k] = nil end
+        onChange(); rerender(sbox.Text)
+    end)
+    rerender("")
+end
+
 -- BUTTON HANDLERS
 petBtn.MouseButton1Click:Connect(function()
     scanPets()
@@ -1193,9 +1309,8 @@ petBtn.MouseButton1Click:Connect(function()
             table.insert(items, {name = n, count = 0})
         end
     end
-    showPicker("Pilih Pet", items, function(name)
-        selectedPet = name
-        petBtn.Text = name:sub(1, 8)..(name:len()>8 and "…" or "")
+    showMultiPicker("Pilih Pet (multi)", items, selectedPetTypes, function()
+        petBtn.Text = petTypesLabel()
         updateTotal()
         trackerPrevPet = nil
         saveSettings()
@@ -1220,9 +1335,9 @@ eggBtn.MouseButton1Click:Connect(function()
     end)
 end)
 
--- v3.24: restore button labels dari saved filter
-if selectedPet then
-    petBtn.Text = selectedPet:sub(1, 8)..(selectedPet:len()>8 and "…" or "")
+-- v3.37: restore button labels dari saved filter
+if petTypeCount() > 0 then
+    petBtn.Text = petTypesLabel()
 end
 if selectedEgg then
     eggBtn.Text = selectedEgg:sub(1, 8)..(selectedEgg:len()>8 and "…" or "")
@@ -1317,4 +1432,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.36 loaded")
+print("[PetStat] v3.37 loaded")
