@@ -544,25 +544,13 @@ local function scanPets()
     scanCont(bp)
     scanCont(player.Character)
 
-    -- Step 2: mark pets yg sebelumnya seen tapi sekarang gak di backpack
-    -- Query LIVE cachedContainer (bukan cached lookup yg stale) — biar gift/sell ke-detect langsung
+    -- Step 2: pet yg ilang dari backpack = di-REMOVE (sold/gift/placed).
+    -- v3.35: container gak reliable buat detect sold (entry stale ketinggalan di memory),
+    -- jadi BACKPACK = sumber kebenaran. Pet ilang dari backpack → langsung turun.
     local toRemove = {}
     for uuid, pd in pairs(petsByUuid) do
         if not seenInBp[uuid] then
-            local stillExists = false
-            if cachedContainer then
-                if cachedContainer[uuid] or cachedContainer["{"..uuid.."}"] then
-                    stillExists = true
-                end
-            end
-            if stillExists then
-                -- Refresh stats, mark not in backpack (in garden)
-                local w, a, m = getStats(uuid, nil)
-                if w > 0 then pd.weight = w; pd.age = a; pd.mutation = m end
-                pd.inBp = false
-            else
-                table.insert(toRemove, uuid)
-            end
+            table.insert(toRemove, uuid)
         end
     end
     for _, uuid in ipairs(toRemove) do
@@ -1302,16 +1290,17 @@ local function hookBackpack(c)
         end
     end)
 end
--- v3.33: debounce hatch rescan — banyak event beruntun jadi 1 scan
+-- v3.36: equip/unequip pet (backpack<->character) fire event tapi GAK ngubah total.
+-- Force getgc scan tiap equip = lag. Jadi refresh RINGAN aja (scan backpack/char doang).
+-- Container stats buat pet baru (hatch) di-handle throttle di scanPets (20s), gak perlu force tiap event.
 local _hatchPending = false
 function scheduleHatchRescan()
-    if _hatchPending then return end  -- udah ada yg ke-jadwal, skip
+    if _hatchPending then return end
     _hatchPending = true
     task.spawn(function()
-        task.wait(0.6)  -- tunggu sampe event berhenti nembak (hatch selesai)
+        task.wait(0.4)
         _hatchPending = false
-        ensureContainer(true)  -- force re-scan SEKALI
-        refreshAll()
+        refreshAll()  -- ringan: scan backpack/character, update count. NO force getgc.
     end)
 end
 hookBackpack(player:FindFirstChild("Backpack"))
@@ -1328,4 +1317,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.34 loaded")
+print("[PetStat] v3.36 loaded")
