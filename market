@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.246-diag"
-local VERSION_DATE = "v8.246-diag: DIAGNOSTIK filter. Cetak [MATCH-DIAG] wt vs min..max tiap pet biar ketauan kenapa pet 6.2 lolos rule max 6.1 (wt dihitung berapa & src apa). Basis v8.245 (BaseWeight server)."
+local VERSION = "8.247-bwdiag"
+local VERSION_DATE = "v8.247-bwdiag: DIAGNOSTIK sumber BaseWeight. Cetak [BW-DIAG] per pet: ada di container? api OK? datastore berisi brp pet & format key-nya. Tujuan: cari tau kenapa BaseWeight server NIL (biar pet muda age-26 bisa dapet base asli, bukan asumsi mature)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -266,6 +266,8 @@ do
 
     function ZAPS.getBaseKg(uuid)
         local key = brace(uuid)
+        local dbg = ZAPS._bwDiagCount or 0
+        local doDbg = dbg < 8  -- log 8 pet pertama aja
         -- v8.124: Priority 0 = memory container (bypass require, works di market!)
         if ZAPS.memContainer then
             local entry = ZAPS.memContainer[key]
@@ -276,9 +278,10 @@ do
         -- Priority 1: query langsung 1 pet via API
         local info = ZAPS.getPetData(uuid)
         if info and info.PetData and info.PetData.BaseWeight then return info.PetData.BaseWeight end
-        -- v8.245 Priority 2: DATASTORE LENGKAP (seluruh inventory, termasuk pet yg gak
-        -- ada di memory container & gak lagi dipegang). Ini sumber BaseWeight paling lengkap.
+        -- v8.245 Priority 2: DATASTORE LENGKAP (seluruh inventory)
         local ds = ZAPS.getAllPets()
+        local dsCount = 0
+        if type(ds) == "table" then for _ in pairs(ds) do dsCount = dsCount + 1 end end
         if ds then
             local entry = ds[key] or ds[tostring(uuid)] or ds[(tostring(uuid):gsub("[{}]",""))]
             if type(entry) == "table" and entry.PetData and entry.PetData.BaseWeight then
@@ -288,6 +291,19 @@ do
         -- fallback ke persistent cache
         local pc = persistentCache[key]
         if pc and pc.BaseWeight then return pc.BaseWeight end
+        -- v8.247 DIAG: semua sumber gagal — tunjukin kenapa
+        if doDbg then
+            ZAPS._bwDiagCount = dbg + 1
+            local inContainer = ZAPS.memContainer and ZAPS.memContainer[key] ~= nil
+            local dsKeys = {}
+            if type(ds) == "table" then
+                local n = 0
+                for k in pairs(ds) do n=n+1; if n<=2 then table.insert(dsKeys, tostring(k)) end end
+            end
+            L(string.format("[BW-DIAG] key=%s | container? %s (cnt=%s) | api=%s | dsCount=%d dsKeys=%s",
+                tostring(key):sub(1,14), tostring(inContainer), tostring(ZAPS.memContainerCount),
+                tostring(ZAPS.api ~= nil), dsCount, table.concat(dsKeys, ",")))
+        end
         return nil
     end
 
@@ -4740,14 +4756,14 @@ local function getBaseKg(t)
     if disp and disp > 0 and age and age >= 0 then
         return disp * 11 / (age + 10), "formula"
     end
-    -- PRIORITAS 3 — cache base dari pet SEJENIS non-mutasi yg punya age.
-    if disp and disp > 0 and BH.getCachedBaseKG then
-        local cached = BH.getCachedBaseKG(t)
-        if cached and cached > 0 then return cached, "cache" end
-    end
-    -- PRIORITAS 4 (jaring terakhir) — gak ada BaseWeight server & age nil (pet mutasi
-    -- yg gak ada di datastore). Asumsi mature age-100. CATATAN: kalo pet sebenernya muda
-    -- (mis. age-35), hasil ini UNDER-estimate. Tapi ini cuma kepake kalo SEMUA sumber gagal.
+    -- v8.246: JANGAN pakai getCachedBaseKG di sini. Cache di-index per JENIS (nama),
+    -- jadi SEMUA pet sejenis dapet base yg SAMA (mis. semua Everchanted Mimic = 6.071),
+    -- padahal display tiap pet beda → pet yg harusnya >6.1 ikut lolos. BUG terbukti di log.
+    -- PRIORITAS 3 (jaring terakhir) — age nil & BaseWeight server gak ada (pet mutasi).
+    -- Asumsi mature age-100, hitung PER-PET dari display masing2: base = display × 11/110.
+    -- Ini ngasih base beda tiap pet (61.36->6.136, 62.29->6.229) jadi filter max jalan bener.
+    -- CATATAN: kalo pet sebenernya muda (age<100), hasil under-estimate — tapi mayoritas
+    -- pet mutasi yg di-list udah mature. Idealnya BaseWeight server (PRIORITAS 1) yg kepake.
     if disp and disp > 0 then
         return disp * 11 / 110, "formula-mature"
     end
@@ -5976,14 +5992,16 @@ BH.onStartClick = function()
                 local matchCount = 0
                 local skipCount = 0
                 local mutCount = 0
-                -- v8.246: DIAG — tunjukin wt vs batas rule biar ketauan kenapa pet di luar range lolos
-                L(string.format("[MATCH-DIAG] rule#%d type='%s' min=%s max=%s",
-                    ri, tostring(r.type), tostring(r.min), tostring(r.max)))
+                -- v8.246: DIAG per-pet — set BH.DEBUG_MATCH=true di console kalo mau cek detail
+                if BH.DEBUG_MATCH then
+                    L(string.format("[MATCH-DIAG] rule#%d type='%s' min=%s max=%s",
+                        ri, tostring(r.type), tostring(r.min), tostring(r.max)))
+                end
                 for _, p in ipairs(pets) do
                     local typeOk = (not r.type) or r.type == p.baseType
                     -- v8.119: skip pet kalo wt nil (APS gak ada data)
                     local kgOk = p.wt and p.wt >= r.min and p.wt <= r.max
-                    if typeOk then
+                    if typeOk and BH.DEBUG_MATCH then
                         L(string.format("[MATCH-DIAG]   '%s' wt=%s cur=%s src=%s kgOk=%s (%s..%s)",
                             tostring(p.petName):sub(1,24), tostring(p.wt), tostring(p.currentKg),
                             tostring(p.wtSrc), tostring(kgOk), tostring(r.min), tostring(r.max)))
