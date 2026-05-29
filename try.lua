@@ -11,7 +11,7 @@ local RS         = game:GetService("ReplicatedStorage")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.16"
+local VER = "v2.17"
 local TARGETS_FILE = "ZenxAgeStats_targets.json"
 local SETTINGS_FILE = "ZenxAgeStats_settings.json"
 local MAX_RECENT = 8
@@ -1580,12 +1580,24 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 end)
 
 task.spawn(function()
+    -- v2.17: getgc itu BERAT — JANGAN scan tiap 2s (bikin lag).
+    -- Scan agresif cuma 30 detik pertama (akun baru), abis itu jarang (60s).
+    local lastScan = 0
+    local startT = tick()
     while sg.Parent do
         task.wait(2)
         if not sg.Parent then break end
-        local nc, ncnt = findMemoryContainer()
-        if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
-        -- v2.11: ALWAYS update header (regardless of active tab) biar TOTAL/AGE 100 ke-refresh meski di tab GIFT
+        local needScan = false
+        if not cachedContainer then needScan = true            -- belum dapet
+        elseif (tick() - startT) < 30 then needScan = true       -- 30s awal: cari container
+        elseif (tick() - lastScan) > 60 then needScan = true     -- abis itu: re-scan tiap 60s
+        end
+        if needScan then
+            local nc, ncnt = findMemoryContainer()
+            if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
+            lastScan = tick()
+        end
+        -- updateHeader/renderStats ringan (cuma baca backpack + cachedContainer) — aman tiap 2s
         updateHeader()
         if activeTab == "stats" then renderStats() end
     end
