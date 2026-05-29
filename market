@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.243"
-local VERSION_DATE = "v8.243: REVERT detection ke 8.236 (findMemoryContainer + getBaseKg). Fix list 6-6.4 jadi nol akibat perubahan 8.238/8.240/8.242."
+local VERSION = "8.249"
+local VERSION_DATE = "v8.249: Tiru pendekatan getgc memory container (terbukti work di game). findMemoryContainer pilih UUID-keyed table terbesar yg berisi pet kita (191 entries, bukan 51) → getBaseKg ambil PetData.BaseWeight asli × 1.1 (age-1 normalize). Akurat utk pet mutasi & age berapa pun, tanpa require/hang."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -265,18 +265,27 @@ do
     end
 
     function ZAPS.getBaseKg(uuid)
+        local key = brace(uuid)
         -- v8.124: Priority 0 = memory container (bypass require, works di market!)
         if ZAPS.memContainer then
-            local key = brace(uuid)
             local entry = ZAPS.memContainer[key]
             if type(entry) == "table" and entry.PetData and entry.PetData.BaseWeight then
                 return entry.PetData.BaseWeight
             end
         end
+        -- Priority 1: query langsung 1 pet via API
         local info = ZAPS.getPetData(uuid)
         if info and info.PetData and info.PetData.BaseWeight then return info.PetData.BaseWeight end
+        -- v8.245 Priority 2: DATASTORE LENGKAP (seluruh inventory, termasuk pet yg gak
+        -- ada di memory container & gak lagi dipegang). Ini sumber BaseWeight paling lengkap.
+        local ds = ZAPS.getAllPets()
+        if ds then
+            local entry = ds[key] or ds[tostring(uuid)] or ds[(tostring(uuid):gsub("[{}]",""))]
+            if type(entry) == "table" and entry.PetData and entry.PetData.BaseWeight then
+                return entry.PetData.BaseWeight
+            end
+        end
         -- fallback ke persistent cache
-        local key = brace(uuid)
         local pc = persistentCache[key]
         if pc and pc.BaseWeight then return pc.BaseWeight end
         return nil
@@ -285,26 +294,48 @@ do
     -- v8.124: scan getgc untuk find UUID→PetData container (bypass require!)
     function ZAPS.findMemoryContainer()
         if not getgc then return nil, 0 end
-        -- v8.243: REVERT ke logic 8.236 (yang kerja). Port kg_stats (8.242) + threshold 3 (8.238)
-        -- malah bikin container salah ke-detect → 6-6.4 jadi nol. Balik ke versi simpel.
-        local best, bestCount = nil, 0
+        local best, bestCount, bestScore = nil, 0, 0
+        -- v8.248: kumpulin UUID pet kita sendiri (dari backpack) buat verifikasi container yg BENAR
+        local myUuids = {}
+        pcall(function()
+            local plr = Players.LocalPlayer
+            local bp = plr and plr:FindFirstChild("Backpack")
+            if bp then
+                for _, t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u = t:GetAttribute("PET_UUID")
+                        if u then
+                            local k = tostring(u)
+                            if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
+                            myUuids[k] = true
+                        end
+                    end
+                end
+            end
+        end)
         local ok = pcall(function()
             for _, obj in pairs(getgc(true)) do
                 if type(obj) == "table" then
-                    local uuidLike = 0
-                    for k in pairs(obj) do
-                        if type(k) == "string" and #k >= 32 and k:find("-") then
-                            uuidLike = uuidLike + 1
-                            if uuidLike >= 5 then break end
+                    -- v8.248: hitung entry valid (key string UUID-like + value tabel ber-PetData).
+                    -- Cek banyak entry, bukan cuma 1 sample (lebih robust).
+                    local validEntries = 0
+                    local containsMine = false
+                    local scanned = 0
+                    for k, v in pairs(obj) do
+                        if type(k) == "string" and #k >= 32 and k:find("-")
+                           and type(v) == "table" and rawget(v, "PetData") then
+                            validEntries = validEntries + 1
+                            if myUuids[k] then containsMine = true end
                         end
+                        scanned = scanned + 1
+                        if scanned > 800 then break end  -- jangan scan tabel kegedean
                     end
-                    if uuidLike >= 5 then
-                        local sample = nil
-                        for _, v in pairs(obj) do sample = v; break end
-                        if type(sample) == "table" and rawget(sample, "PetData") then
-                            local cnt = 0
-                            for _ in pairs(obj) do cnt = cnt + 1 end
-                            if cnt > bestCount then best = obj; bestCount = cnt end
+                    if validEntries >= 3 then
+                        -- v8.248: container yg BERISI pet kita SELALU menang (paling akurat,
+                        -- mirip cek "sample UUID in container: YES"). Kalo gak ketemu, pilih terbesar.
+                        local score = validEntries + (containsMine and 1000000 or 0)
+                        if score > bestScore then
+                            best = obj; bestCount = validEntries; bestScore = score
                         end
                     end
                 end
@@ -406,8 +437,10 @@ do
             L("[APS] memContainer NOT FOUND — fallback ke require")
         end
 
-        -- Step 2: Tetep coba require (buat fallback + mutMap)
-        if not ZAPS.memContainer then
+        -- Step 2: SELALU coba require (buat datastore lengkap + fallback + mutMap)
+        -- v8.245: dulu cuma di-require kalo container GAGAL. Padahal container sering cuma
+        -- berisi sebagian pet (yg lagi aktif). API datastore = SELURUH inventory + BaseWeight.
+        do
             local attempt = 0
             while not ZAPS.api and attempt < 3 do
                 attempt = attempt + 1
@@ -446,6 +479,17 @@ do
         L("[APS] FINAL: memContainer="..(ZAPS.memContainer and ZAPS.memContainerCount.." entries" or "FAIL")..
           " api="..(ZAPS.api and "OK" or "FAIL")..
           " mutMap="..(ZAPS.mutMap and "OK" or "FAIL"))
+        -- v8.245: cek datastore lengkap (sumber BaseWeight semua pet)
+        if ZAPS.api then
+            task.spawn(function()
+                local ds = ZAPS.getAllPets()
+                local n = 0
+                if type(ds) == "table" then for _ in pairs(ds) do n = n + 1 end end
+                L("[APS] datastore inventory: "..n.." pets (BaseWeight tersedia tanpa pegang pet)")
+            end)
+        else
+            L("[APS] ⚠ api=FAIL → datastore gak bisa diakses. BaseWeight cuma dari container/pegang pet.")
+        end
 
         -- Populate persistent cache kalo ada memContainer
         if ZAPS.memContainer then
@@ -4702,15 +4746,33 @@ local BASE_KG_ATTRS = {
     "StartingWeight","STARTING_KG",
 }
 local function getBaseKg(t)
-    -- v8.125: APS via memContainer + age-1 normalization
+    -- v8.245: PRIORITAS 1 — BaseWeight ASLI dari server (via APS: container/API/datastore).
+    -- Ini akurat untuk age BERAPA PUN (35, 70, 100) karena BaseWeight gak tergantung age/mutasi.
+    -- Server simpen base age-0; ×1.1 = normalize ke age-1 (cocok rule).
     local okU, uuid = pcall(function() return t:GetAttribute("PET_UUID") end)
     if okU and uuid and getgenv().ZenxAPS then
         local bw = getgenv().ZenxAPS.getBaseKg(uuid)
         if bw and bw > 0 then return bw * 1.1, "APS-age1" end
     end
-    -- v8.243: REVERT ke 8.236 — APS gagal → fallback display kg (yang kerja).
-    -- Rumus (8.240) butuh age; pet age-nil jadi nil → ilang dari list. Balik ke display.
-    return getCurrentKg(t), "display"
+    -- PRIORITAS 2 — kalo BaseWeight server gak ada, hitung dari display + age (kalo age kebaca).
+    -- Akurat juga, asal age-nya bener. Rumus: base = display × 11 / (age+10).
+    local disp = getCurrentKg(t)
+    local age = getAge(t)
+    if disp and disp > 0 and age and age >= 0 then
+        return disp * 11 / (age + 10), "formula"
+    end
+    -- v8.246: JANGAN pakai getCachedBaseKG di sini. Cache di-index per JENIS (nama),
+    -- jadi SEMUA pet sejenis dapet base yg SAMA (mis. semua Everchanted Mimic = 6.071),
+    -- padahal display tiap pet beda → pet yg harusnya >6.1 ikut lolos. BUG terbukti di log.
+    -- PRIORITAS 3 (jaring terakhir) — age nil & BaseWeight server gak ada (pet mutasi).
+    -- Asumsi mature age-100, hitung PER-PET dari display masing2: base = display × 11/110.
+    -- Ini ngasih base beda tiap pet (61.36->6.136, 62.29->6.229) jadi filter max jalan bener.
+    -- CATATAN: kalo pet sebenernya muda (age<100), hasil under-estimate — tapi mayoritas
+    -- pet mutasi yg di-list udah mature. Idealnya BaseWeight server (PRIORITAS 1) yg kepake.
+    if disp and disp > 0 then
+        return disp * 11 / 110, "formula-mature"
+    end
+    return nil, "unknown"
 end
 
 -- v8.88: count pet di backpack yang match rule (untuk badge [N] di LIST HARGA)
@@ -4722,7 +4784,6 @@ BH.countMyPetsForRule = function(r)
     local ruleMax = (r.max == math.huge) and math.huge or r.max
     local count = 0
     local debugInfo = {checked=0, typeMatch=0, kgMatch=0, hasBase=0, noBase=0}
-    local failLog = {}  -- v8.241: detail pet yg type-match tapi gak ke-count
     for _, t in ipairs(bp:GetChildren()) do
         if isPet(t) then
             debugInfo.checked = debugInfo.checked + 1
@@ -4731,36 +4792,24 @@ BH.countMyPetsForRule = function(r)
             local typeOk = (not ruleType) or (pBase == ruleType) or (pType == ruleType)
             if typeOk then
                 debugInfo.typeMatch = debugInfo.typeMatch + 1
-                local baseKg, src = getBaseKg(t)
+                local baseKg = getBaseKg(t)
                 if baseKg then debugInfo.hasBase = debugInfo.hasBase + 1
                 else debugInfo.noBase = debugInfo.noBase + 1 end
-                local matched = baseKg and baseKg >= ruleMin and (ruleMax == math.huge or baseKg <= ruleMax)
-                if matched then
+                if baseKg and baseKg >= ruleMin and (ruleMax == math.huge or baseKg <= ruleMax) then
                     debugInfo.kgMatch = debugInfo.kgMatch + 1
                     count = count + 1
-                elseif #failLog < 6 then
-                    -- v8.241: catat kenapa gagal (buat pet mutasi yg gak ke-detect)
-                    table.insert(failLog, string.format("'%s' | type=%s disp=%s age=%s base=%s(%s)",
-                        tostring(t.Name):sub(1,30), pType,
-                        tostring(getCurrentKg(t)), tostring(getAge(t)),
-                        tostring(baseKg), tostring(src)))
                 end
             end
         end
     end
+    -- v8.122: log diagnostic kalo count==0 tapi ada typeMatch (debug bug)
     if count == 0 and debugInfo.typeMatch > 0 and ruleType then
-        local diag = "[COUNT-DIAG] r='"..ruleType.."' "..ruleMin.."-"..(ruleMax==math.huge and "∞" or ruleMax)..
+        L("[COUNT-DIAG] r='"..ruleType.."' "..ruleMin.."-"..(ruleMax==math.huge and "∞" or ruleMax)..
           " | checked="..debugInfo.checked..
           " typeMatch="..debugInfo.typeMatch..
           " hasBase="..debugInfo.hasBase..
           " noBase="..debugInfo.noBase..
-          " kgMatch="..debugInfo.kgMatch.."\n"..table.concat(failLog, "\n")
-        L(diag)
-        -- v8.241: auto-copy ke clipboard biar bisa di-paste
-        pcall(function()
-            local fns = {setclipboard, toclipboard, (Clipboard and Clipboard.set), setrbxclipboard}
-            for _, f in ipairs(fns) do if type(f)=="function" then pcall(f, "=== Market COUNT-DIAG ===\n"..diag) break end end
-        end)
+          " kgMatch="..debugInfo.kgMatch)
     end
     return count
 end
@@ -5857,7 +5906,7 @@ BH.onStartClick = function()
                     table.insert(pets, {
                         braced="{"..clean.."}", clean=clean,
                         type=pType, baseType=pBaseType,
-                        wt=baseKg, currentKg=currentKg,
+                        wt=baseKg, currentKg=currentKg, wtSrc=baseKgSrc,
                         isMut=isMut, petName=petName,
                     })
                 end
@@ -5948,10 +5997,20 @@ BH.onStartClick = function()
                 local matchCount = 0
                 local skipCount = 0
                 local mutCount = 0
+                -- v8.246: DIAG per-pet — set BH.DEBUG_MATCH=true di console kalo mau cek detail
+                if BH.DEBUG_MATCH then
+                    L(string.format("[MATCH-DIAG] rule#%d type='%s' min=%s max=%s",
+                        ri, tostring(r.type), tostring(r.min), tostring(r.max)))
+                end
                 for _, p in ipairs(pets) do
                     local typeOk = (not r.type) or r.type == p.baseType
                     -- v8.119: skip pet kalo wt nil (APS gak ada data)
                     local kgOk = p.wt and p.wt >= r.min and p.wt <= r.max
+                    if typeOk and BH.DEBUG_MATCH then
+                        L(string.format("[MATCH-DIAG]   '%s' wt=%s cur=%s src=%s kgOk=%s (%s..%s)",
+                            tostring(p.petName):sub(1,24), tostring(p.wt), tostring(p.currentKg),
+                            tostring(p.wtSrc), tostring(kgOk), tostring(r.min), tostring(r.max)))
+                    end
                     if typeOk and kgOk then
                         if alreadyListed[p.clean] then
                             skipCount = skipCount + 1
