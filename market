@@ -1,9 +1,9 @@
 -- ZENX MARKET v8 — NodeHub style
 -- Left sidebar: Market | List Harga | Snipe
--- Market sub-tabs: Listing | Rejoin | Misc 
+-- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.245"
-local VERSION_DATE = "v8.245: Ambil BaseWeight ASLI dari server (akurat age berapa pun, gak perlu pegang pet). API datastore SELALU di-require (dulu cuma kalo container gagal) + getBaseKg query datastore lengkap. Fallback: formula(age) → cache → asumsi mature."
+local VERSION = "8.246-diag"
+local VERSION_DATE = "v8.246-diag: DIAGNOSTIK filter. Cetak [MATCH-DIAG] wt vs min..max tiap pet biar ketauan kenapa pet 6.2 lolos rule max 6.1 (wt dihitung berapa & src apa). Basis v8.245 (BaseWeight server)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -5885,7 +5885,7 @@ BH.onStartClick = function()
                     table.insert(pets, {
                         braced="{"..clean.."}", clean=clean,
                         type=pType, baseType=pBaseType,
-                        wt=baseKg, currentKg=currentKg,
+                        wt=baseKg, currentKg=currentKg, wtSrc=baseKgSrc,
                         isMut=isMut, petName=petName,
                     })
                 end
@@ -5976,10 +5976,18 @@ BH.onStartClick = function()
                 local matchCount = 0
                 local skipCount = 0
                 local mutCount = 0
+                -- v8.246: DIAG — tunjukin wt vs batas rule biar ketauan kenapa pet di luar range lolos
+                L(string.format("[MATCH-DIAG] rule#%d type='%s' min=%s max=%s",
+                    ri, tostring(r.type), tostring(r.min), tostring(r.max)))
                 for _, p in ipairs(pets) do
                     local typeOk = (not r.type) or r.type == p.baseType
                     -- v8.119: skip pet kalo wt nil (APS gak ada data)
                     local kgOk = p.wt and p.wt >= r.min and p.wt <= r.max
+                    if typeOk then
+                        L(string.format("[MATCH-DIAG]   '%s' wt=%s cur=%s src=%s kgOk=%s (%s..%s)",
+                            tostring(p.petName):sub(1,24), tostring(p.wt), tostring(p.currentKg),
+                            tostring(p.wtSrc), tostring(kgOk), tostring(r.min), tostring(r.max)))
+                    end
                     if typeOk and kgOk then
                         if alreadyListed[p.clean] then
                             skipCount = skipCount + 1
