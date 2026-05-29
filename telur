@@ -603,6 +603,7 @@ local function scanPets()
 end
 
 local lastEggGuiScan = 0  -- v3.31: throttle scan PlayerGui (berat)
+local eggCountsGuiCache = {}  -- v3.34: cache count dari GUI biar gak kedip ke 0
 local function scanEggs()
     eggCounts = {}
     pcall(function()
@@ -617,26 +618,34 @@ local function scanEggs()
         scanTools(player.Backpack)
         scanTools(player.Character)
     end)
-    -- v3.31: scan PlayerGui descendant (BERAT — ribuan elemen) cuma tiap 15 detik, bukan tiap refresh
+    -- v3.31: scan PlayerGui descendant (BERAT) cuma tiap 15 detik
+    -- v3.34: hasilnya disimpen di cache — biar gak kedip 772->0 pas scan di-skip
     local now = os.time()
-    if (now - lastEggGuiScan) < 15 then return end
-    lastEggGuiScan = now
-    local pg = player:FindFirstChildOfClass("PlayerGui")
-    if pg then
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") then
-                local txt = d.Text or ""
-                local cnt, name = txt:match("^(%d+)x%s+(.+[Ee]gg.*)$")
-                if not cnt then cnt, name = txt:match("^x(%d+)%s+(.+[Ee]gg.*)$") end
-                if not cnt then name, cnt = txt:match("^(.+[Ee]gg.-)%s+x?(%d+)$") end
-                if cnt and name then
-                    local n = tonumber(cnt)
-                    if n and n > 0 then
-                        eggCounts[name] = math.max(eggCounts[name] or 0, n)
+    if (now - lastEggGuiScan) >= 15 then
+        lastEggGuiScan = now
+        local fresh = {}
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            for _, d in ipairs(pg:GetDescendants()) do
+                if d:IsA("TextLabel") then
+                    local txt = d.Text or ""
+                    local cnt, name = txt:match("^(%d+)x%s+(.+[Ee]gg.*)$")
+                    if not cnt then cnt, name = txt:match("^x(%d+)%s+(.+[Ee]gg.*)$") end
+                    if not cnt then name, cnt = txt:match("^(.+[Ee]gg.-)%s+x?(%d+)$") end
+                    if cnt and name then
+                        local n = tonumber(cnt)
+                        if n and n > 0 then
+                            fresh[name] = math.max(fresh[name] or 0, n)
+                        end
                     end
                 end
             end
         end
+        eggCountsGuiCache = fresh  -- update cache (replace, biar ngikut kalo telur berkurang)
+    end
+    -- merge cache GUI ke eggCounts (persist antar scan — anti kedip)
+    for k, v in pairs(eggCountsGuiCache) do
+        eggCounts[k] = math.max(eggCounts[k] or 0, v)
     end
 end
 
@@ -1319,4 +1328,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.33 loaded")
+print("[PetStat] v3.34 loaded")
