@@ -10,7 +10,7 @@ local CoreGui    = game:GetService("CoreGui")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.2"
+local VER = "v2.5"
 local KG_THRESHOLD = 6  -- compared against age-1 kg (BaseWeight × 1.1)
 local SETTINGS_FILE = "ZenxKgStats_settings.json"
 
@@ -668,13 +668,44 @@ print("[ZenxKgStats] threshold: "..KG_THRESHOLD.."kg")
 
 render()
 
+-- v2.4: KG = konstan (gak berubah sama umur). Angka cuma berubah pas pet nambah/ilang.
+-- Jadi update PAS BACKPACK BERUBAH (event), bukan polling tiap 2s (itu yg lag tipis).
+local function hookBp(c)
+    if not c then return end
+    c.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.15); render()
+        end
+    end)
+    c.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.15); render()
+        end
+    end)
+end
+hookBp(player:FindFirstChild("Backpack"))
+hookBp(player.Character)
+player.CharacterAdded:Connect(function(ch) hookBp(ch) end)
+
 task.spawn(function()
+    -- getgc scan: belum ketemu / 3x awal / tiap 5 menit. Poll render lambat (safety).
+    local lastScan = 0
+    local scanCount = 0
     while sg.Parent do
-        task.wait(2)
+        task.wait(5)  -- v2.4: poll lambat (event listener yg handle update instan)
         if not sg.Parent then break end
-        local nc, ncnt = findMemoryContainer()
-        if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
-        render()
+        local needScan = false
+        if not cachedContainer then needScan = true
+        elseif scanCount < 3 and (tick() - lastScan) > 4 then needScan = true
+        elseif (tick() - lastScan) > 300 then needScan = true
+        end
+        if needScan then
+            local nc, ncnt = findMemoryContainer()
+            if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
+            lastScan = tick()
+            scanCount = scanCount + 1
+            render()  -- v2.5: render CUMA pas abis re-scan (jarang). Selebihnya event listener.
+        end
     end
 end)
 
