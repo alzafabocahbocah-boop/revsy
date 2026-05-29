@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.243-keydiag"
-local VERSION_DATE = "v8.243-keydiag: DIAGNOSTIK key container. Cetak [KEY-DIAG] lookupKey vs sampleKeys + cek variant match (cari tau kenapa APS.getBaseKg NIL untuk semua pet). Bukan versi final — buat debug brace() format."
+local VERSION = "8.245"
+local VERSION_DATE = "v8.245: Ambil BaseWeight ASLI dari server (akurat age berapa pun, gak perlu pegang pet). API datastore SELALU di-require (dulu cuma kalo container gagal) + getBaseKg query datastore lengkap. Fallback: formula(age) → cache → asumsi mature."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -265,38 +265,27 @@ do
     end
 
     function ZAPS.getBaseKg(uuid)
+        local key = brace(uuid)
         -- v8.124: Priority 0 = memory container (bypass require, works di market!)
         if ZAPS.memContainer then
-            local key = brace(uuid)
             local entry = ZAPS.memContainer[key]
             if type(entry) == "table" and entry.PetData and entry.PetData.BaseWeight then
                 return entry.PetData.BaseWeight
             end
-            -- v8.243 DIAG: key lookup gagal — tunjukin format key vs sample key di container
-            if not ZAPS._diagShown then
-                ZAPS._diagShown = true
-                local sampleKeys = {}
-                local n = 0
-                for k in pairs(ZAPS.memContainer) do
-                    n = n + 1
-                    if n <= 3 then table.insert(sampleKeys, tostring(k)) end
-                end
-                L("[KEY-DIAG] lookupKey='"..tostring(key).."' | containerCount="..tostring(n)..
-                  " | sampleKeys: "..table.concat(sampleKeys, " || "))
-                -- coba lookup pakai uuid mentah (tanpa brace) & dengan }
-                local raw = tostring(uuid)
-                local variants = {raw, raw.."}", "{"..raw, "{"..raw.."}", raw:gsub("[{}]","")}
-                for _, v in ipairs(variants) do
-                    if ZAPS.memContainer[v] then
-                        L("[KEY-DIAG] >>> MATCH dgn variant: '"..v.."' (brace() bikin key salah!)")
-                    end
-                end
-            end
         end
+        -- Priority 1: query langsung 1 pet via API
         local info = ZAPS.getPetData(uuid)
         if info and info.PetData and info.PetData.BaseWeight then return info.PetData.BaseWeight end
+        -- v8.245 Priority 2: DATASTORE LENGKAP (seluruh inventory, termasuk pet yg gak
+        -- ada di memory container & gak lagi dipegang). Ini sumber BaseWeight paling lengkap.
+        local ds = ZAPS.getAllPets()
+        if ds then
+            local entry = ds[key] or ds[tostring(uuid)] or ds[(tostring(uuid):gsub("[{}]",""))]
+            if type(entry) == "table" and entry.PetData and entry.PetData.BaseWeight then
+                return entry.PetData.BaseWeight
+            end
+        end
         -- fallback ke persistent cache
-        local key = brace(uuid)
         local pc = persistentCache[key]
         if pc and pc.BaseWeight then return pc.BaseWeight end
         return nil
@@ -427,8 +416,10 @@ do
             L("[APS] memContainer NOT FOUND — fallback ke require")
         end
 
-        -- Step 2: Tetep coba require (buat fallback + mutMap)
-        if not ZAPS.memContainer then
+        -- Step 2: SELALU coba require (buat datastore lengkap + fallback + mutMap)
+        -- v8.245: dulu cuma di-require kalo container GAGAL. Padahal container sering cuma
+        -- berisi sebagian pet (yg lagi aktif). API datastore = SELURUH inventory + BaseWeight.
+        do
             local attempt = 0
             while not ZAPS.api and attempt < 3 do
                 attempt = attempt + 1
@@ -467,6 +458,17 @@ do
         L("[APS] FINAL: memContainer="..(ZAPS.memContainer and ZAPS.memContainerCount.." entries" or "FAIL")..
           " api="..(ZAPS.api and "OK" or "FAIL")..
           " mutMap="..(ZAPS.mutMap and "OK" or "FAIL"))
+        -- v8.245: cek datastore lengkap (sumber BaseWeight semua pet)
+        if ZAPS.api then
+            task.spawn(function()
+                local ds = ZAPS.getAllPets()
+                local n = 0
+                if type(ds) == "table" then for _ in pairs(ds) do n = n + 1 end end
+                L("[APS] datastore inventory: "..n.." pets (BaseWeight tersedia tanpa pegang pet)")
+            end)
+        else
+            L("[APS] ⚠ api=FAIL → datastore gak bisa diakses. BaseWeight cuma dari container/pegang pet.")
+        end
 
         -- Populate persistent cache kalo ada memContainer
         if ZAPS.memContainer then
@@ -4723,21 +4725,32 @@ local BASE_KG_ATTRS = {
     "StartingWeight","STARTING_KG",
 }
 local function getBaseKg(t)
-    -- v8.125: APS via memContainer + age-1 normalization
+    -- v8.245: PRIORITAS 1 — BaseWeight ASLI dari server (via APS: container/API/datastore).
+    -- Ini akurat untuk age BERAPA PUN (35, 70, 100) karena BaseWeight gak tergantung age/mutasi.
+    -- Server simpen base age-0; ×1.1 = normalize ke age-1 (cocok rule).
     local okU, uuid = pcall(function() return t:GetAttribute("PET_UUID") end)
     if okU and uuid and getgenv().ZenxAPS then
         local bw = getgenv().ZenxAPS.getBaseKg(uuid)
         if bw and bw > 0 then return bw * 1.1, "APS-age1" end
     end
-    -- v8.240: APS gagal → hitung base dari display + umur.
-    -- Verified: age100 62kg -> age1 6.2kg. Rumus: base = display × 11 / (age+10) (TANPA ×1.1)
+    -- PRIORITAS 2 — kalo BaseWeight server gak ada, hitung dari display + age (kalo age kebaca).
+    -- Akurat juga, asal age-nya bener. Rumus: base = display × 11 / (age+10).
     local disp = getCurrentKg(t)
     local age = getAge(t)
     if disp and disp > 0 and age and age >= 0 then
-        local base = disp * 11 / (age + 10)
-        return base, "formula"
+        return disp * 11 / (age + 10), "formula"
     end
-    -- Gak tau umur → return nil (mending gak ke-list drpd salah match)
+    -- PRIORITAS 3 — cache base dari pet SEJENIS non-mutasi yg punya age.
+    if disp and disp > 0 and BH.getCachedBaseKG then
+        local cached = BH.getCachedBaseKG(t)
+        if cached and cached > 0 then return cached, "cache" end
+    end
+    -- PRIORITAS 4 (jaring terakhir) — gak ada BaseWeight server & age nil (pet mutasi
+    -- yg gak ada di datastore). Asumsi mature age-100. CATATAN: kalo pet sebenernya muda
+    -- (mis. age-35), hasil ini UNDER-estimate. Tapi ini cuma kepake kalo SEMUA sumber gagal.
+    if disp and disp > 0 then
+        return disp * 11 / 110, "formula-mature"
+    end
     return nil, "unknown"
 end
 
