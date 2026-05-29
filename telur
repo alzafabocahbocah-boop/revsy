@@ -100,17 +100,17 @@ local function makeStatColRel(parent, xRel, wRel, hdrText)
     Instance.new("UICorner", col).CornerRadius = UDim.new(0, 8)
 
     local hdr = Instance.new("TextLabel")
-    hdr.Size = UDim2.new(1, 0, 0, 16); hdr.Position = UDim2.new(0, 0, 0, 4)
+    hdr.Size = UDim2.new(1, 0, 0, 18); hdr.Position = UDim2.new(0, 0, 0, 4)
     hdr.BackgroundTransparency = 1; hdr.Text = hdrText
-    hdr.TextColor3 = C.dim; hdr.Font = FM; hdr.TextSize = 9; hdr.Parent = col
+    hdr.TextColor3 = C.dim; hdr.Font = FM; hdr.TextSize = 13; hdr.Parent = col  -- v3.32: header gede (9->13)
 
     local val = Instance.new("TextLabel")
-    val.Size = UDim2.new(1, 0, 0, 28); val.Position = UDim2.new(0, 0, 0, 22)
+    val.Size = UDim2.new(1, 0, 0, 34); val.Position = UDim2.new(0, 0, 0, 24)
     val.BackgroundTransparency = 1; val.Text = "—"
-    val.TextColor3 = C.accent; val.Font = FB; val.TextSize = 18; val.Parent = col
+    val.TextColor3 = C.accent; val.Font = FB; val.TextSize = 30; val.Parent = col  -- v3.32: angka GEDE (18->30)
 
     local sub = Instance.new("TextLabel")
-    sub.Size = UDim2.new(1, -8, 0, 12); sub.Position = UDim2.new(0, 4, 0, 50)
+    sub.Size = UDim2.new(1, -8, 0, 12); sub.Position = UDim2.new(0, 4, 0, 60)  -- v3.32: geser bawah (val gede)
     sub.BackgroundTransparency = 1; sub.Text = "(—)"
     sub.TextColor3 = C.dim; sub.Font = FM; sub.TextSize = 9
     sub.TextTruncate = Enum.TextTruncate.AtEnd; sub.Parent = col
@@ -1280,19 +1280,29 @@ end)
 -- v3.27: instant refresh saat Tool pet di-add/remove dari backpack/character
 local function hookBackpack(c)
     if not c then return end
+    -- v3.33: DEBOUNCE — pas hatch banyak telur, event ChildAdded/Removed nembak beruntun.
+    -- Kumpulin jadi SATU scan (abis 0.6s diem) biar gak lag spike.
     c.ChildRemoved:Connect(function(child)
         if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
-            task.wait(0.2) -- biar game sempet update state
-            ensureContainer(true) -- v3.29: FORCE re-scan container (gift/sell detection, bypass 60s throttle)
-            refreshAll()
+            scheduleHatchRescan()
         end
     end)
     c.ChildAdded:Connect(function(child)
         if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
-            task.wait(0.2)
-            ensureContainer(true) -- v3.29: force re-scan (hatch/trade-in detection)
-            refreshAll()
+            scheduleHatchRescan()
         end
+    end)
+end
+-- v3.33: debounce hatch rescan — banyak event beruntun jadi 1 scan
+local _hatchPending = false
+function scheduleHatchRescan()
+    if _hatchPending then return end  -- udah ada yg ke-jadwal, skip
+    _hatchPending = true
+    task.spawn(function()
+        task.wait(0.6)  -- tunggu sampe event berhenti nembak (hatch selesai)
+        _hatchPending = false
+        ensureContainer(true)  -- force re-scan SEKALI
+        refreshAll()
     end)
 end
 hookBackpack(player:FindFirstChild("Backpack"))
@@ -1309,4 +1319,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.31 loaded")
+print("[PetStat] v3.33 loaded")
