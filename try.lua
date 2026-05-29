@@ -11,7 +11,7 @@ local RS         = game:GetService("ReplicatedStorage")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.17"
+local VER = "v2.19"
 local TARGETS_FILE = "ZenxAgeStats_targets.json"
 local SETTINGS_FILE = "ZenxAgeStats_settings.json"
 local MAX_RECENT = 8
@@ -726,11 +726,25 @@ local function updateHeader()
     return byType
 end
 
-local function renderStats()
-    for _, c in ipairs(scroll:GetChildren()) do
-        if c:IsA("Frame") then c:Destroy() end
-    end
+local _lastStatsSig = nil
+local function renderStats(force)
     local byType = updateHeader()
+    -- v2.18: signature dari data — kalo gak berubah, SKIP rebuild (anti lag tiap 2s)
+    local sigParts = {}
+    for k, v in pairs(byType) do
+        sigParts[#sigParts+1] = k.."="..v.age100..","..v.less100
+    end
+    table.sort(sigParts)
+    local selParts = {}
+    for k in pairs(selectedPetTypes) do selParts[#selParts+1] = k end
+    table.sort(selParts)
+    local sig = table.concat(sigParts, "|").."#"..((searchBox and searchBox.Text) or "").."@"..table.concat(selParts, ",")
+    if not force and sig == _lastStatsSig then return end  -- data sama → gak rebuild
+    _lastStatsSig = sig
+
+    for _, c in ipairs(scroll:GetChildren()) do
+        if c:IsA("Frame") or c:IsA("TextButton") then c:Destroy() end
+    end
 
     local sorted = {}
     for k, v in pairs(byType) do table.insert(sorted, {name=k, data=v}) end
@@ -1580,26 +1594,27 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 end)
 
 task.spawn(function()
-    -- v2.17: getgc itu BERAT — JANGAN scan tiap 2s (bikin lag).
-    -- Scan agresif cuma 30 detik pertama (akun baru), abis itu jarang (60s).
+    -- v2.19: begitu container KETEMU, STOP re-scan getgc rutin (itu yg bikin lag berkala).
+    -- Referensi container tetep hidup — game update pet baru di tabel yg sama.
+    -- Re-scan cuma kalo: belum ketemu, ATAU tiap 5 MENIT (safety net kalo stale).
     local lastScan = 0
-    local startT = tick()
+    local scanCount = 0
     while sg.Parent do
         task.wait(2)
         if not sg.Parent then break end
         local needScan = false
-        if not cachedContainer then needScan = true            -- belum dapet
-        elseif (tick() - startT) < 30 then needScan = true       -- 30s awal: cari container
-        elseif (tick() - lastScan) > 60 then needScan = true     -- abis itu: re-scan tiap 60s
+        if not cachedContainer then needScan = true                         -- belum ketemu: cari
+        elseif scanCount < 3 and (tick() - lastScan) > 4 then needScan = true -- 3x awal (akun baru)
+        elseif (tick() - lastScan) > 300 then needScan = true                -- safety: tiap 5 menit
         end
         if needScan then
             local nc, ncnt = findMemoryContainer()
             if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
             lastScan = tick()
+            scanCount = scanCount + 1
         end
-        -- updateHeader/renderStats ringan (cuma baca backpack + cachedContainer) — aman tiap 2s
-        updateHeader()
-        if activeTab == "stats" then renderStats() end
+        updateHeader()  -- ringan — tiap 2s
+        if activeTab == "stats" then renderStats() end  -- skip otomatis kalo data sama
     end
 end)
 
