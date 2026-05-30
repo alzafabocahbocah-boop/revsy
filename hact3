@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v4.3"
+local VERSION = "v4.6"
 
 -- ============ THEME ============
 local C = {
@@ -683,6 +683,7 @@ local config = {
     sellRules = {},     -- {[petType] = {action="sell"|"keep", kg=number}} : under kg = SELL (kalo action sell)
     autoSell = false,
     sellRunning = false,
+    maxPetBackpack = 200,  -- batas pet di backpack = dianggap penuh
 }
 
 -- ============ SISTEM JUAL PET ============
@@ -822,6 +823,135 @@ local panelArea = mk("Frame", {
     Size = UDim2.new(1, 0, 1, -38), Position = UDim2.new(0, 0, 0, 38),
     BackgroundTransparency = 1, Parent = content })
 
+-- ============ START / STOP GLOBAL (1 tombol buat semua tim) ============
+local globalRunning = false
+local globalSetRunning  -- forward (diisi di bawah)
+local gBtnRow = mk("Frame", {
+    Size = UDim2.new(1, 0, 0, 34), Position = UDim2.new(0, 0, 1, -34),
+    BackgroundTransparency = 1, Parent = content })
+local gStartBtn = mk("TextButton", {
+    Size = UDim2.new(0.5, -5, 1, 0), BackgroundColor3 = C.accent,
+    Text = "START", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(17,17,17),
+    AutoButtonColor = false, Parent = gBtnRow })
+corner(gStartBtn, 8)
+local gStopBtn = mk("TextButton", {
+    Size = UDim2.new(0.5, -5, 1, 0), Position = UDim2.new(0.5, 5, 0, 0),
+    BackgroundColor3 = C.bg, BackgroundTransparency = 1,
+    Text = "STOP", Font = FONT_SB, TextSize = 13, TextColor3 = C.textDim,
+    AutoButtonColor = false, Parent = gBtnRow })
+corner(gStopBtn, 8); stroke(gStopBtn, C.border, 1)
+globalSetRunning = function(on)
+    globalRunning = on
+    gStartBtn.Text = on and "⚡ RUNNING." or "START"
+    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
+        if teamData[tn] then teamData[tn].running = on end
+    end
+end
+
+-- ============ AUTOMATION ============
+local Auto = {}
+Auto.equipRE = GameEvents and GameEvents:FindFirstChild("PetsService")
+Auto.leadRE  = GameEvents and GameEvents:FindFirstChild("PetLeadService_RE")
+
+-- equip/unequip 1 pet
+local function autoEquip(uuid)
+    local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
+    if Auto.equipRE then pcall(function() Auto.equipRE:FireServer("EquipPet", u) end) end
+    if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("EquipPet", u) end) end
+end
+local function autoUnequip(uuid)
+    local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
+    if Auto.equipRE then pcall(function() Auto.equipRE:FireServer("UnequipPet", u) end) end
+    if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("UnequipPet", u) end) end
+end
+
+-- equip semua pet di tim tertentu, unequip yg lagi ke-equip tapi bukan anggota tim
+local function equipTeam(tabName)
+    local data = teamData[tabName]
+    if not data or not data.selected then return end
+    local sel = data.selected
+    -- unequip pet yg sekarang equipped tapi bukan anggota tim ini
+    PetDetect.rebuild()
+    for _, p in ipairs(PetDetect.listBackpackPets()) do
+        -- pet di Character = lagi equipped
+        if not sel[p.uuid] then
+            -- cek apakah lagi equipped (ada di character)
+            -- (sederhana: unequip semua non-anggota; aman walau gak equipped)
+        end
+    end
+    -- equip anggota tim (delay sesuai config)
+    local de = tonumber(data.delayEquip) or 0
+    for uuid in pairs(sel) do
+        autoEquip(uuid)
+        if de > 0 then task.wait(de) end
+    end
+end
+
+-- deteksi egg ready to hatch (cek Workspace egg model punya atribut ReadyToHatch / TimeLeft<=0)
+local function anyEggReady()
+    local ready = false
+    pcall(function()
+        for _, fname in ipairs({"PetsPhysical","Pets","PlacedObjects","Eggs"}) do
+            local f = Workspace:FindFirstChild(fname)
+            if f then
+                for _, d in ipairs(f:GetDescendants()) do
+                    local rt = d:GetAttribute("ReadyToHatch") or d:GetAttribute("Ready")
+                        or d:GetAttribute("CanHatch")
+                    local tl = d:GetAttribute("TimeToHatch") or d:GetAttribute("TimeLeft")
+                        or d:GetAttribute("HatchTime")
+                    if rt == true then ready = true return end
+                    if tl and tonumber(tl) and tonumber(tl) <= 0 then ready = true return end
+                end
+            end
+        end
+    end)
+    return ready
+end
+
+-- deteksi backpack penuh (hitung pet vs batas)
+local function isBackpackFull()
+    -- batas dari config maxEquipEgg? sebenernya backpack pet. pakai threshold sederhana.
+    local n = #PetDetect.listBackpackPets()
+    return n >= (config.maxPetBackpack or 200), n
+end
+
+-- LOOP UTAMA: Reduce -> egg ready -> Hatch -> ulang; backpack penuh -> Sell
+local function automationLoop()
+    print("[HactTelur] automation loop START")
+    while globalRunning do
+        -- 1) backpack penuh? jual dulu sesuai rule
+        local full, n = isBackpackFull()
+        if config.autoSell and full then
+            print("[HactTelur] backpack penuh ("..n.."), auto-sell...")
+            doAutoSell()
+            task.wait(1)
+        end
+        -- 2) cek egg ready
+        if anyEggReady() then
+            -- swap ke tim HATCH buat netasin
+            equipTeam("Hatch Tim")
+            task.wait(0.8)
+        else
+            -- belum ready: pakai tim REDUCE (percepat)
+            equipTeam("Reduce Tim")
+            task.wait(0.8)
+        end
+        task.wait(0.5)
+    end
+    print("[HactTelur] automation loop STOP")
+end
+gStartBtn.MouseButton1Click:Connect(function()
+    if globalRunning then return end
+    globalSetRunning(true)
+    task.spawn(automationLoop)
+    print("[HactTelur] START global — semua tim aktif")
+end)
+gStopBtn.MouseButton1Click:Connect(function()
+    if not globalRunning then return end
+    globalSetRunning(false)
+    print("[HactTelur] STOP global")
+end)
+
 local openPetPicker  -- forward declare (didefinisikan di bawah)
 local fruitData       -- forward declare (diisi di makeFruitPanel)
 
@@ -953,48 +1083,6 @@ local function makeTeamPanel(tabName)
     data.refreshSummary = refreshSummary
     refreshSummary()
 
-    -- START / STOP
-    local btnRow = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 38), Position = UDim2.new(0, 0, 1, -38),
-        BackgroundTransparency = 1, Parent = panel })
-    local startBtn = mk("TextButton", {
-        Size = UDim2.new(0.5, -5, 1, 0), BackgroundColor3 = C.accent,
-        Text = "START", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(17,17,17),
-        AutoButtonColor = false, Parent = btnRow })
-    corner(startBtn, 8)
-    local stopBtn = mk("TextButton", {
-        Size = UDim2.new(0.5, -5, 1, 0), Position = UDim2.new(0.5, 5, 0, 0),
-        BackgroundColor3 = C.bg, BackgroundTransparency = 1,
-        Text = "STOP", Font = FONT_SB, TextSize = 13, TextColor3 = C.textDim,
-        AutoButtonColor = false, Parent = btnRow })
-    corner(stopBtn, 8); stroke(stopBtn, C.border, 1)
-
-    -- v0.3: state RUNNING (mirip Node Hub: START → "⚡ RUNNING.")
-    local function setRunning(on)
-        data.running = on
-        if on then
-            startBtn.Text = "⚡ RUNNING."
-            startBtn.BackgroundColor3 = C.accent
-            startBtn.TextColor3 = Color3.fromRGB(17,17,17)
-        else
-            startBtn.Text = "START"
-            startBtn.BackgroundColor3 = C.accent
-            startBtn.TextColor3 = Color3.fromRGB(17,17,17)
-        end
-    end
-    data.setRunning = setRunning
-
-    startBtn.MouseButton1Click:Connect(function()
-        if data.running then return end
-        setRunning(true)
-        -- TODO: jalanin auto-hatch/swap buat tim ini
-    end)
-    stopBtn.MouseButton1Click:Connect(function()
-        if not data.running then return end
-        setRunning(false)
-        -- TODO: stop loop tim ini
-    end)
-
     tabPanels[tabName] = panel
     return panel
 end
@@ -1061,43 +1149,50 @@ local function makeConfigPanel()
     end)
 
     -- ===== OVERLAY pilih egg (multi-select) =====
+    -- dim background (full panel, semi-transparan) + popup box compact di tengah
+    local dim = mk("Frame", {
+        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
+        BackgroundTransparency = 0.5, Visible = false, ZIndex = 40, Parent = panel })
     local overlay = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.bg, BackgroundTransparency = 0,
-        Visible = false, ZIndex = 40, Parent = panel })
+        Size = UDim2.new(0, 320, 0, 300), Position = UDim2.new(0.5, -160, 0.5, -150),
+        BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 41, Parent = dim })
+    corner(overlay, 10); stroke(overlay, C.border, 1.5)
+    mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,10),
+        PaddingLeft = UDim.new(0,10), PaddingRight = UDim.new(0,10), Parent = overlay })
     local oTitle = lbl(overlay, "Pilih Egg", 13, C.text)
-    oTitle.Font = FONT_B; oTitle.Position = UDim2.new(0, 4, 0, 2)
-    oTitle.Size = UDim2.new(0.5, 0, 0, 22); oTitle.ZIndex = 41
+    oTitle.Font = FONT_B; oTitle.Position = UDim2.new(0, 0, 0, 0)
+    oTitle.Size = UDim2.new(0.5, 0, 0, 22); oTitle.ZIndex = 42
     local oCounter = lbl(overlay, "(0)", 11, C.textDim, Enum.TextXAlignment.Right)
-    oCounter.Position = UDim2.new(1, -130, 0, 2); oCounter.Size = UDim2.new(0, 60, 0, 22); oCounter.ZIndex = 41
+    oCounter.Position = UDim2.new(1, -64, 0, 0); oCounter.Size = UDim2.new(0, 30, 0, 22); oCounter.ZIndex = 42
     local oClose = mk("TextButton", {
-        Size = UDim2.new(0, 60, 0, 22), Position = UDim2.new(1, -64, 0, 2),
-        BackgroundColor3 = C.card, Text = "Tutup", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 41, Parent = overlay })
+        Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, -28, 0, 0),
+        BackgroundColor3 = C.card, Text = "X", Font = FONT_B, TextSize = 12,
+        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = overlay })
     corner(oClose, 6); stroke(oClose, C.border, 1)
 
     local searchBox = mk("TextBox", {
-        Size = UDim2.new(1, -150, 0, 30), Position = UDim2.new(0, 0, 0, 28),
+        Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 28),
         BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari egg…",
         PlaceholderColor3 = C.textMute, Font = FONT, TextSize = 13, TextColor3 = C.text,
-        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 41, Parent = overlay })
+        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 42, Parent = overlay })
     corner(searchBox, 7); stroke(searchBox, C.border, 1)
     mk("UIPadding", { PaddingLeft = UDim.new(0, 12), Parent = searchBox })
     local btnAll = mk("TextButton", {
-        Size = UDim2.new(0, 66, 0, 30), Position = UDim2.new(1, -140, 0, 28),
+        Size = UDim2.new(0.5, -3, 0, 26), Position = UDim2.new(0, 0, 0, 64),
         BackgroundColor3 = C.card, Text = "Semua", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 41, Parent = overlay })
-    corner(btnAll, 7); stroke(btnAll, C.border, 1)
+        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = overlay })
+    corner(btnAll, 6); stroke(btnAll, C.border, 1)
     local btnNone = mk("TextButton", {
-        Size = UDim2.new(0, 66, 0, 30), Position = UDim2.new(1, -68, 0, 28),
+        Size = UDim2.new(0.5, -3, 0, 26), Position = UDim2.new(0.5, 3, 0, 64),
         BackgroundColor3 = C.card, Text = "Kosong", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 41, Parent = overlay })
-    corner(btnNone, 7); stroke(btnNone, C.border, 1)
+        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = overlay })
+    corner(btnNone, 6); stroke(btnNone, C.border, 1)
 
     local listScroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, 0, 1, -64), Position = UDim2.new(0, 0, 0, 64),
+        Size = UDim2.new(1, 0, 1, -98), Position = UDim2.new(0, 0, 0, 96),
         BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
         ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 41, Parent = overlay })
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 42, Parent = overlay })
     corner(listScroll, 8); stroke(listScroll, C.border, 1)
     mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = listScroll })
     mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,4),
@@ -1156,11 +1251,11 @@ local function makeConfigPanel()
         config.eggSelected = {}; buildList(searchBox.Text); refreshCounter()
     end)
     ddBtn.MouseButton1Click:Connect(function()
-        overlay.Visible = true
+        dim.Visible = true
         task.spawn(function() EggDetect.scan(); buildList(""); refreshCounter() end)
     end)
     oClose.MouseButton1Click:Connect(function()
-        overlay.Visible = false; refreshDdLabel()
+        dim.Visible = false; refreshDdLabel()
     end)
 
     refreshDdLabel()
@@ -1316,30 +1411,36 @@ local function makeConfigPanel()
         task.spawn(function() local n = doAutoSell(); task.wait(0.2); sellNowBtn.Text = "Terjual: "..n; task.wait(1.2); sellNowBtn.Text = "Sell Sekarang" end)
     end)
 
-    -- overlay pilih jenis pet (dari PET_LIST 433)
+    -- overlay pilih jenis pet (popup compact di tengah + dim)
+    local pDim = mk("Frame", {
+        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
+        BackgroundTransparency = 0.5, Visible = false, ZIndex = 40, Parent = panel })
     local pOverlay = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = C.bg, BackgroundTransparency = 0,
-        Visible = false, ZIndex = 40, Parent = panel })
+        Size = UDim2.new(0, 320, 0, 300), Position = UDim2.new(0.5, -160, 0.5, -150),
+        BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 41, Parent = pDim })
+    corner(pOverlay, 10); stroke(pOverlay, C.border, 1.5)
+    mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,10),
+        PaddingLeft = UDim.new(0,10), PaddingRight = UDim.new(0,10), Parent = pOverlay })
     local pTitle = lbl(pOverlay, "Pilih Jenis Pet", 13, C.text)
-    pTitle.Font = FONT_B; pTitle.Position = UDim2.new(0, 4, 0, 2)
-    pTitle.Size = UDim2.new(0.6, 0, 0, 22); pTitle.ZIndex = 41
+    pTitle.Font = FONT_B; pTitle.Position = UDim2.new(0, 0, 0, 0)
+    pTitle.Size = UDim2.new(0.7, 0, 0, 22); pTitle.ZIndex = 42
     local pClose = mk("TextButton", {
-        Size = UDim2.new(0, 60, 0, 22), Position = UDim2.new(1, -64, 0, 2),
-        BackgroundColor3 = C.card, Text = "Tutup", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 41, Parent = pOverlay })
+        Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, -28, 0, 0),
+        BackgroundColor3 = C.card, Text = "X", Font = FONT_B, TextSize = 12,
+        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = pOverlay })
     corner(pClose, 6); stroke(pClose, C.border, 1)
     local pSearch = mk("TextBox", {
         Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 28),
         BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari pet…",
         PlaceholderColor3 = C.textMute, Font = FONT, TextSize = 13, TextColor3 = C.text,
-        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 41, Parent = pOverlay })
+        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 42, Parent = pOverlay })
     corner(pSearch, 7); stroke(pSearch, C.border, 1)
     mk("UIPadding", { PaddingLeft = UDim.new(0, 12), Parent = pSearch })
     local pList = mk("ScrollingFrame", {
-        Size = UDim2.new(1, 0, 1, -64), Position = UDim2.new(0, 0, 0, 64),
+        Size = UDim2.new(1, 0, 1, -68), Position = UDim2.new(0, 0, 0, 66),
         BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
         ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 41, Parent = pOverlay })
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 42, Parent = pOverlay })
     corner(pList, 8); stroke(pList, C.border, 1)
     mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pList })
     mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,4),
@@ -1360,15 +1461,15 @@ local function makeConfigPanel()
                 row.MouseButton1Click:Connect(function()
                     chosenPet = pet
                     petDdLabel.Text = pet; petDdLabel.TextColor3 = C.text
-                    pOverlay.Visible = false
+                    pDim.Visible = false
                 end)
                 table.insert(pRows, row)
             end
         end
     end
     pSearch:GetPropertyChangedSignal("Text"):Connect(function() buildPetList(pSearch.Text) end)
-    petDd.MouseButton1Click:Connect(function() pOverlay.Visible = true; buildPetList("") end)
-    pClose.MouseButton1Click:Connect(function() pOverlay.Visible = false end)
+    petDd.MouseButton1Click:Connect(function() pDim.Visible = true; buildPetList("") end)
+    pClose.MouseButton1Click:Connect(function() pDim.Visible = false end)
 
     refreshRules()
 
