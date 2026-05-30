@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v5.3"
+local VERSION = "v5.6"
 
 -- ============ THEME ============
 local C = {
@@ -1016,11 +1016,25 @@ local function countEggPlaced()
     return n
 end
 
--- deteksi backpack penuh (hitung pet vs batas)
+-- baca batas max pet dari memory (field MaxPetsInInventory, dinamis ikut upgrade)
+local function getMaxPets()
+    local m = nil
+    pcall(function()
+        for _, obj in ipairs(getgc(true)) do
+            if type(obj) == "table" then
+                local v = rawget(obj, "MaxPetsInInventory")
+                if type(v) == "number" and v > 0 then m = v; return end
+            end
+        end
+    end)
+    return m   -- nil kalau gak ketemu
+end
+-- deteksi backpack penuh: jumlah pet vs MaxPetsInInventory.
 local function isBackpackFull()
-    -- batas dari config maxEquipEgg? sebenernya backpack pet. pakai threshold sederhana.
-    local n = #PetDetect.listBackpackPets()
-    return n >= (config.maxPetBackpack or 200), n
+    local maxPets = getMaxPets() or config.maxPetBackpack or 230
+    local cur = #PetDetect.listBackpackPets()
+    -- penuh kalau sisa slot < 3
+    return cur >= (maxPets - 3), cur, maxPets
 end
 
 -- LOOP UTAMA:
@@ -1031,9 +1045,9 @@ local function automationLoop()
     print("[HactTelur] automation loop START")
     while globalRunning do
         -- backpack penuh? jual dulu
-        local full, n = isBackpackFull()
+        local full, cur, max = isBackpackFull()
         if config.autoSell and full then
-            print("[HactTelur] backpack penuh ("..n.."), auto-sell...")
+            print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), auto-sell...")
             doAutoSell()
             task.wait(1)
         end
@@ -1225,7 +1239,7 @@ local function makeConfigPanel()
     local content = mk("ScrollingFrame", {
         Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ClipsDescendants = true,
         BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
-        CanvasSize = UDim2.new(0, 0, 0, 440), Parent = panel })
+        CanvasSize = UDim2.new(0, 0, 0, 470), Parent = panel })
 
     -- ===== EGG CONFIG (header) =====
     local title = lbl(content, "Egg Config", 13, C.text)
@@ -1537,6 +1551,23 @@ local function makeConfigPanel()
     sellNowBtn.MouseButton1Click:Connect(function()
         sellNowBtn.Text = "menjual…"
         task.spawn(function() local n = doAutoSell(); task.wait(0.2); sellNowBtn.Text = "Terjual: "..n; task.wait(1.2); sellNowBtn.Text = "Sell Sekarang" end)
+    end)
+
+    -- batas jumlah pet di backpack = dianggap penuh (buat auto-sell)
+    local lblBp = lbl(content, "Backpack penuh kalau pet ≥", 12, C.textDim)
+    lblBp.Position = UDim2.new(0, 4, 0, 424); lblBp.Size = UDim2.new(0.65, 0, 0, 30)
+    local bpBox = mk("TextBox", {
+        Size = UDim2.new(0.35, -4, 0, 30), Position = UDim2.new(0.65, 4, 0, 424),
+        BackgroundColor3 = C.input, Text = tostring(config.maxPetBackpack or 200), Font = FONT,
+        TextSize = 13, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
+        ClearTextOnFocus = false, Parent = content })
+    corner(bpBox, 7); stroke(bpBox, C.border, 1)
+    bpBox.FocusLost:Connect(function()
+        local v = tonumber(bpBox.Text) or 200
+        v = math.clamp(math.floor(v), 1, 10000)
+        config.maxPetBackpack = v
+        bpBox.Text = tostring(v)
+        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
     end)
 
     -- overlay pilih jenis pet (popup compact di tengah + dim)
