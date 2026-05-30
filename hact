@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v3.7"
+local VERSION = "v3.9"
 
 -- ============ THEME ============
 local C = {
@@ -680,7 +680,7 @@ local PET_LIST = {
 local config = {
     eggSelected = {},   -- {[eggName] = true} egg yg mau di-hatch
     maxEquipEgg = 0,    -- max egg yg di-equip (farm). 0 = auto/semua. max 13.
-    sellRules = {},     -- {[petType] = kgThreshold} : KG < threshold = SELL, >= = KEEP
+    sellRules = {},     -- {[petType] = {action="sell"|"keep", kg=number}} : under kg = SELL (kalo action sell)
     autoSell = false,
     sellRunning = false,
 }
@@ -714,9 +714,9 @@ function doAutoSell()
     PetDetect.rebuild()
     local sold = 0
     for _, p in ipairs(PetDetect.listBackpackPets()) do
-        local rule = config.sellRules[p.name]   -- threshold KG buat jenis pet ini
-        if rule and p.dispKg and p.dispKg < rule then
-            -- jangan jual pet favorit (safety)
+        local rule = config.sellRules[p.name]   -- {action, kg}
+        if rule and rule.action == "sell" and p.dispKg and p.dispKg < (rule.kg or 0) then
+            -- KEEP rule = gak dijual sama sekali. SELL = jual yg under kg.
             if not p.fav then
                 sellOnePet(p.uuid)
                 sold = sold + 1
@@ -950,7 +950,7 @@ local function makeConfigPanel()
     local content = mk("ScrollingFrame", {
         Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
         BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
-        CanvasSize = UDim2.new(0, 0, 0, 360), Parent = panel })
+        CanvasSize = UDim2.new(0, 0, 0, 440), Parent = panel })
 
     -- ===== EGG CONFIG (header) =====
     local title = lbl(content, "Egg Config", 13, C.text)
@@ -1101,7 +1101,7 @@ local function makeConfigPanel()
 
     -- daftar rule (scroll)
     local ruleScroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, -8, 0, 90), Position = UDim2.new(0, 4, 0, 140),
+        Size = UDim2.new(1, -8, 0, 170), Position = UDim2.new(0, 4, 0, 140),
         BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
         ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(0, 0, 0, 0),
         AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = content })
@@ -1118,16 +1118,55 @@ local function makeConfigPanel()
         ruleRows = {}
         local any = false
         local order = 0
-        for petType, kg in pairs(config.sellRules) do
+        for petType, rule in pairs(config.sellRules) do
             any = true; order = order + 1
             local row = mk("Frame", {
-                Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.cardSel,
+                Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.cardSel,
                 LayoutOrder = order, Parent = ruleScroll })
             corner(row, 5)
+            -- nama pet
             local nm = lbl(row, petType, 11, C.text)
-            nm.Position = UDim2.new(0, 8, 0, 0); nm.Size = UDim2.new(0.5, 0, 1, 0)
-            local th = lbl(row, "< "..tostring(kg).." KG = SELL", 10, C.textDim, Enum.TextXAlignment.Right)
-            th.Position = UDim2.new(0.5, 0, 0, 0); th.Size = UDim2.new(0.5, -34, 1, 0)
+            nm.Position = UDim2.new(0, 8, 0, 0); nm.Size = UDim2.new(0.38, 0, 1, 0)
+            nm.TextTruncate = Enum.TextTruncate.AtEnd
+            -- "under" + input KG (editable)
+            local underL = lbl(row, "under", 10, C.textDim, Enum.TextXAlignment.Right)
+            underL.Position = UDim2.new(0.38, 0, 0, 0); underL.Size = UDim2.new(0, 36, 1, 0)
+            local kgIn = mk("TextBox", {
+                Size = UDim2.new(0, 42, 0, 20), Position = UDim2.new(0.38, 40, 0.5, -10),
+                BackgroundColor3 = C.input, Text = tostring(rule.kg or 0), Font = FONT,
+                TextSize = 11, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
+                ClearTextOnFocus = false, Parent = row })
+            corner(kgIn, 4); stroke(kgIn, C.border, 1)
+            kgIn.FocusLost:Connect(function()
+                local v = tonumber(kgIn.Text) or 0
+                config.sellRules[petType].kg = v
+                kgIn.Text = tostring(v)
+            end)
+            local kgL = lbl(row, "KG", 10, C.textDim)
+            kgL.Position = UDim2.new(0.38, 84, 0, 0); kgL.Size = UDim2.new(0, 22, 1, 0)
+            -- toggle KEEP / SELL
+            local actBtn = mk("TextButton", {
+                Size = UDim2.new(0, 52, 0, 20), Position = UDim2.new(1, -86, 0.5, -10),
+                BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
+            corner(actBtn, 5); stroke(actBtn, C.border, 1)
+            local actL = lbl(actBtn, "", 10, C.text, Enum.TextXAlignment.Center)
+            actL.Size = UDim2.new(1, 0, 1, 0)
+            local function refreshAct()
+                local a = config.sellRules[petType].action
+                actL.Text = a == "keep" and "KEEP" or "SELL"
+                actL.TextColor3 = a == "keep" and C.text or C.danger
+                -- kalo keep, KG gak relevan (semua disimpan) - redupkan input KG
+                kgIn.TextTransparency = a == "keep" and 0.5 or 0
+                underL.TextTransparency = a == "keep" and 0.5 or 0
+                kgL.TextTransparency = a == "keep" and 0.5 or 0
+            end
+            actBtn.MouseButton1Click:Connect(function()
+                local r = config.sellRules[petType]
+                r.action = (r.action == "keep") and "sell" or "keep"
+                refreshAct()
+            end)
+            refreshAct()
+            -- hapus
             local del = mk("TextButton", {
                 Size = UDim2.new(0, 24, 0, 20), Position = UDim2.new(1, -28, 0.5, -10),
                 BackgroundColor3 = C.input, Text = "−", Font = FONT_B, TextSize = 14,
@@ -1143,9 +1182,9 @@ local function makeConfigPanel()
 
     -- baris tambah rule: dropdown pet + KG + tombol +
     local lblType = lbl(panel, "Select Pet Type", 12, C.textDim)
-    lblType.Position = UDim2.new(0, 4, 0, 238); lblType.Size = UDim2.new(0.4, 0, 0, 30)
+    lblType.Position = UDim2.new(0, 4, 0, 318); lblType.Size = UDim2.new(0.4, 0, 0, 30)
     local petDd = mk("TextButton", {
-        Size = UDim2.new(0.6, -4, 0, 30), Position = UDim2.new(0.4, 4, 0, 238),
+        Size = UDim2.new(0.6, -4, 0, 30), Position = UDim2.new(0.4, 4, 0, 318),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = content })
     corner(petDd, 7); stroke(petDd, C.border, 1)
     local petDdLabel = lbl(petDd, "Select Pet...", 12, C.textDim, Enum.TextXAlignment.Left)
@@ -1154,27 +1193,27 @@ local function makeConfigPanel()
     local chosenPet = nil
 
     local lblKg = lbl(panel, "KG Threshold", 12, C.textDim)
-    lblKg.Position = UDim2.new(0, 4, 0, 274); lblKg.Size = UDim2.new(0.4, 0, 0, 30)
+    lblKg.Position = UDim2.new(0, 4, 0, 354); lblKg.Size = UDim2.new(0.4, 0, 0, 30)
     local kgBox = mk("TextBox", {
-        Size = UDim2.new(0.35, -4, 0, 30), Position = UDim2.new(0.4, 4, 0, 274),
+        Size = UDim2.new(0.35, -4, 0, 30), Position = UDim2.new(0.4, 4, 0, 354),
         BackgroundColor3 = C.input, Text = "0", Font = FONT, TextSize = 13, TextColor3 = C.text,
         TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = content })
     corner(kgBox, 7); stroke(kgBox, C.border, 1)
     local addBtn = mk("TextButton", {
-        Size = UDim2.new(0.25, -4, 0, 30), Position = UDim2.new(0.75, 4, 0, 274),
+        Size = UDim2.new(0.25, -4, 0, 30), Position = UDim2.new(0.75, 4, 0, 354),
         BackgroundColor3 = C.card, Text = "+ Tambah", Font = FONT_SB, TextSize = 11,
         TextColor3 = C.text, AutoButtonColor = false, Parent = content })
     corner(addBtn, 7); stroke(addBtn, C.border, 1)
     addBtn.MouseButton1Click:Connect(function()
         if not chosenPet then return end
         local kg = tonumber(kgBox.Text) or 0
-        config.sellRules[chosenPet] = kg
+        config.sellRules[chosenPet] = { action = "sell", kg = kg }
         refreshRules()
     end)
 
     -- toggle Auto Sell + tombol Sell Sekarang
     local togRow = mk("Frame", {
-        Size = UDim2.new(1, -8, 0, 28), Position = UDim2.new(0, 4, 0, 310),
+        Size = UDim2.new(1, -8, 0, 28), Position = UDim2.new(0, 4, 0, 390),
         BackgroundTransparency = 1, Parent = content })
     lbl(togRow, "Auto Sell", 12, C.textDim).Size = UDim2.new(0.5, 0, 1, 0)
     local tog = mk("TextButton", {
