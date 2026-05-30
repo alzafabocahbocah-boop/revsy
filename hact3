@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v4.6"
+local VERSION = "v4.7"
 
 -- ============ THEME ============
 local C = {
@@ -709,23 +709,52 @@ local function sellOnePet(uuid)
     end
     return false
 end
--- AUTO SELL: jual pet yg KG < threshold sesuai rule per jenis pet.
--- pet tanpa rule = KEEP. pet KG >= threshold = KEEP.
+-- favoritkan pet (biar dilindungi, gak ikut kejual)
+local function favoritePet(uuid)
+    local u = fmtUUID(uuid)
+    for _, act in ipairs({"FavoritePet","FavouritePet","SetFavorite","SetFavourite","Favorite","Favourite"}) do
+        if SellSys.petsRE then pcall(function() SellSys.petsRE:FireServer(act, u) end) end
+        if SellSys.leadRE then pcall(function() SellSys.leadRE:FireServer(act, u) end) end
+    end
+end
+-- tentukan nasib pet: "sell" / "keep"
+-- - punya rule SELL + under kg  -> sell
+-- - punya rule KEEP             -> keep (+favorit)
+-- - gak punya rule              -> keep (+favorit)
+-- - KG >= threshold (rule sell) -> keep (+favorit)
+local function petFate(p)
+    local rule = config.sellRules[p.name]
+    if rule and rule.action == "sell" then
+        if p.dispKg and p.dispKg < (rule.kg or 0) then return "sell" end
+        return "keep"
+    end
+    return "keep"  -- KEEP rule atau gak ada rule
+end
+-- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
 function doAutoSell()
     PetDetect.rebuild()
-    local sold = 0
+    local sold, kept = 0, 0
+    local toSell = {}
+    -- 1) favoritkan semua pet yg di-keep (proteksi) + kumpulin yg mau dijual
     for _, p in ipairs(PetDetect.listBackpackPets()) do
-        local rule = config.sellRules[p.name]   -- {action, kg}
-        if rule and rule.action == "sell" and p.dispKg and p.dispKg < (rule.kg or 0) then
-            -- KEEP rule = gak dijual sama sekali. SELL = jual yg under kg.
-            if not p.fav then
-                sellOnePet(p.uuid)
-                sold = sold + 1
-                task.wait(0.12)
-            end
+        local fate = petFate(p)
+        if fate == "keep" then
+            if not p.fav then favoritePet(p.uuid); task.wait(0.05) end
+            kept = kept + 1
+        else
+            table.insert(toSell, p)
         end
     end
-    print("[HactTelur] Auto-sell selesai. Pet terjual: "..sold)
+    task.wait(0.3)  -- kasih waktu server proses favorite
+    -- 2) jual yg SELL (yg gak kefavorit)
+    for _, p in ipairs(toSell) do
+        if not p.fav then
+            sellOnePet(p.uuid)
+            sold = sold + 1
+            task.wait(0.12)
+        end
+    end
+    print("[HactTelur] Auto-sell selesai. Terjual: "..sold..", dilindungi(favorit): "..kept)
     return sold
 end
 
