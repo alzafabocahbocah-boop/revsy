@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v5.6"
+local VERSION = "v5.8"
 
 -- ============ THEME ============
 local C = {
@@ -920,25 +920,35 @@ local function autoUnequip(uuid)
 end
 
 -- equip semua pet di tim tertentu, unequip yg lagi ke-equip tapi bukan anggota tim
+-- tim yg lagi aktif (biar gak spam equip/tabrakan)
+Auto.currentTeam = nil
+-- swap ke tim tertentu: kalau udah tim itu, skip (gak spam).
+-- kalau ganti tim: unequip anggota tim lama, equip anggota tim baru.
 local function equipTeam(tabName)
+    if Auto.currentTeam == tabName then return end  -- udah tim ini, jgn spam
     local data = teamData[tabName]
     if not data or not data.selected then return end
     local sel = data.selected
-    -- unequip pet yg sekarang equipped tapi bukan anggota tim ini
-    PetDetect.rebuild()
-    for _, p in ipairs(PetDetect.listBackpackPets()) do
-        -- pet di Character = lagi equipped
-        if not sel[p.uuid] then
-            -- cek apakah lagi equipped (ada di character)
-            -- (sederhana: unequip semua non-anggota; aman walau gak equipped)
+    -- unequip anggota tim LAMA (biar gak campur)
+    local prev = Auto.currentTeam and teamData[Auto.currentTeam]
+    if prev and prev.selected then
+        local du = tonumber(prev.delayUnequip) or 0
+        for uuid in pairs(prev.selected) do
+            -- jangan unequip pet yg juga anggota tim baru
+            if not sel[uuid] then
+                autoUnequip(uuid)
+                if du > 0 then task.wait(du) end
+            end
         end
     end
-    -- equip anggota tim (delay sesuai config)
+    -- equip anggota tim BARU
     local de = tonumber(data.delayEquip) or 0
     for uuid in pairs(sel) do
         autoEquip(uuid)
         if de > 0 then task.wait(de) end
     end
+    Auto.currentTeam = tabName
+    print("[HactTelur] swap ke "..tabName)
 end
 
 -- deteksi egg ready: atribut READY=true atau TimeToHatch=0 (dari hook).
@@ -1016,24 +1026,32 @@ local function countEggPlaced()
     return n
 end
 
--- baca batas max pet dari memory (field MaxPetsInInventory, dinamis ikut upgrade)
-local function getMaxPets()
-    local m = nil
+-- baca data batas dari memory (tabel yg punya MaxPetsInInventory).
+-- semua dinamis ikut upgrade: MaxPetsInInventory, MaxEggsInFarm, MaxEquippedPets
+local function getGameData()
+    local d = { maxPets = nil, maxEggs = nil, maxEquip = nil }
     pcall(function()
         for _, obj in ipairs(getgc(true)) do
-            if type(obj) == "table" then
-                local v = rawget(obj, "MaxPetsInInventory")
-                if type(v) == "number" and v > 0 then m = v; return end
+            if type(obj) == "table" and rawget(obj, "MaxPetsInInventory") then
+                d.maxPets  = rawget(obj, "MaxPetsInInventory")
+                d.maxEggs  = rawget(obj, "MaxEggsInFarm")
+                d.maxEquip = rawget(obj, "MaxEquippedPets")
+                return
             end
         end
     end)
-    return m   -- nil kalau gak ketemu
+    return d
+end
+local function getMaxPets()
+    return getGameData().maxPets
+end
+local function getMaxEggs()
+    return getGameData().maxEggs
 end
 -- deteksi backpack penuh: jumlah pet vs MaxPetsInInventory.
 local function isBackpackFull()
     local maxPets = getMaxPets() or config.maxPetBackpack or 230
     local cur = #PetDetect.listBackpackPets()
-    -- penuh kalau sisa slot < 3
     return cur >= (maxPets - 3), cur, maxPets
 end
 
@@ -1052,8 +1070,12 @@ local function automationLoop()
             task.wait(1)
         end
 
-        -- target slot egg (Max Equip Egg, default 6, max 13)
-        local target = (config.maxEquipEgg and config.maxEquipEgg > 0) and config.maxEquipEgg or 6
+        -- target slot egg: pakai MaxEggsInFarm (dinamis), dibatasi setting user kalau ada
+        local maxEggs = getMaxEggs() or 13
+        local target = maxEggs
+        if config.maxEquipEgg and config.maxEquipEgg > 0 then
+            target = math.min(config.maxEquipEgg, maxEggs)
+        end
 
         -- fase 1: pakai tim REDUCE + place egg sampai slot penuh
         equipTeam("Reduce Tim")
@@ -1084,6 +1106,7 @@ local function automationLoop()
 end
 gStartBtn.MouseButton1Click:Connect(function()
     if globalRunning then return end
+    Auto.currentTeam = nil
     globalSetRunning(true)
     task.spawn(automationLoop)
     print("[HactTelur] START global — semua tim aktif")
@@ -1091,6 +1114,7 @@ end)
 gStopBtn.MouseButton1Click:Connect(function()
     if not globalRunning then return end
     globalSetRunning(false)
+    Auto.currentTeam = nil
     print("[HactTelur] STOP global")
 end)
 
