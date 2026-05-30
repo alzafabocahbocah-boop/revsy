@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v5.1"
+local VERSION = "v5.3"
 
 -- ============ THEME ============
 local C = {
@@ -883,8 +883,8 @@ Auto.equipRE = GameEvents and GameEvents:FindFirstChild("PetsService")
 Auto.leadRE  = GameEvents and GameEvents:FindFirstChild("PetLeadService_RE")
 Auto.eggRE   = GameEvents and GameEvents:FindFirstChild("PetEggService")
 
--- place egg berjejer. action "CreateEgg" + Vector3(X, 0.1355, Z).
--- Y HARUS ~0.1355 (tinggi tanah garden), BUKAN Y karakter. X/Z di sekitar karakter.
+-- place egg. action "CreateEgg" + Vector3(X, 0.1355, Z).
+-- posisi random di sekitar karakter (area petak kita). Y HARUS 0.1355 (tanah).
 local EGG_GROUND_Y = 0.1355
 local function placeEggs(count)
     if not Auto.eggRE then warn("[HactTelur] PetEggService gak ada"); return 0 end
@@ -894,21 +894,16 @@ local function placeEggs(count)
     count = count or 6
     local placed = 0
     local base = hrp.Position
-    local spacing = 5   -- jarak antar egg
-    local right = hrp.CFrame.RightVector
-    local fwd = hrp.CFrame.LookVector
-    -- titik awal: sedikit di depan karakter, di tanah
-    local startX = base.X + fwd.X * 4
-    local startZ = base.Z + fwd.Z * 4
-    for i = 0, count - 1 do
-        local px = startX + right.X * (i * spacing)
-        local pz = startZ + right.Z * (i * spacing)
-        local v = Vector3.new(px, EGG_GROUND_Y, pz)
+    for i = 1, count do
+        -- offset random kecil di sekitar karakter (radius ~12 stud)
+        local ox = (math.random() * 2 - 1) * 12   -- -12..+12
+        local oz = (math.random() * 2 - 1) * 12
+        local v = Vector3.new(base.X + ox, EGG_GROUND_Y, base.Z + oz)
         pcall(function() Auto.eggRE:FireServer("CreateEgg", v) end)
         placed = placed + 1
-        task.wait(0.15)
+        task.wait(0.2)
     end
-    print("[HactTelur] place "..placed.." egg berjejer (Y="..EGG_GROUND_Y..")")
+    print("[HactTelur] place "..placed.." egg (random sekitar karakter)")
     return placed
 end
 
@@ -966,6 +961,24 @@ end
 local function anyEggReady()
     return #getReadyEggs() > 0
 end
+-- cek SEMUA egg yg ke-place udah ready (gak ada yg masih cooldown)
+local function allEggsReady()
+    local total, ready = 0, 0
+    pcall(function()
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" then
+                total = total + 1
+                local r = d:GetAttribute("READY")
+                local tth = d:GetAttribute("TimeToHatch")
+                if r == true or (tth ~= nil and tonumber(tth) and tonumber(tth) <= 0) then
+                    ready = ready + 1
+                end
+            end
+        end
+    end)
+    -- semua ready kalau ada egg DAN semua-nya ready
+    return total > 0 and ready == total, total, ready
+end
 -- HATCH semua egg yg siap: PetEggService:FireServer("HatchPet", eggInstance)
 local function hatchAllEggs()
     if not Auto.eggRE then return 0 end
@@ -1010,33 +1023,46 @@ local function isBackpackFull()
     return n >= (config.maxPetBackpack or 200), n
 end
 
--- LOOP UTAMA: place egg -> Reduce -> egg ready -> Hatch -> ulang; backpack penuh -> Sell
+-- LOOP UTAMA:
+-- 1) tim Reduce: place egg sampai slot habis
+-- 2) tunggu SEMUA egg ready (ada 1 CD = tetap Reduce)
+-- 3) semua ready -> tim Hatch, hatch semua -> balik ke Reduce
 local function automationLoop()
     print("[HactTelur] automation loop START")
     while globalRunning do
-        -- 1) backpack penuh? jual dulu sesuai rule
+        -- backpack penuh? jual dulu
         local full, n = isBackpackFull()
         if config.autoSell and full then
             print("[HactTelur] backpack penuh ("..n.."), auto-sell...")
             doAutoSell()
             task.wait(1)
         end
-        -- 2) place egg kalo belum ada egg ke-place di garden
-        if not anyEggPlaced() then
-            -- jumlah egg yg di-place: dari maxEquipEgg (kalo 0, default 6)
-            local cnt = (config.maxEquipEgg and config.maxEquipEgg > 0) and config.maxEquipEgg or 6
-            placeEggs(cnt)
+
+        -- target slot egg (Max Equip Egg, default 6, max 13)
+        local target = (config.maxEquipEgg and config.maxEquipEgg > 0) and config.maxEquipEgg or 6
+
+        -- fase 1: pakai tim REDUCE + place egg sampai slot penuh
+        equipTeam("Reduce Tim")
+        local nowPlaced = countEggPlaced()
+        if nowPlaced < target then
+            placeEggs(target - nowPlaced)
             task.wait(1)
         end
-        -- 3) cek egg ready
-        if anyEggReady() then
-            equipTeam("Hatch Tim")   -- swap ke HATCH dulu (boost hatch)
-            task.wait(0.5)
-            hatchAllEggs()           -- hatch semua egg yg siap
-            task.wait(0.5)
-        else
-            equipTeam("Reduce Tim")  -- belum ready: REDUCE (percepat)
+
+        -- fase 2: cek apakah SEMUA egg ready
+        local allReady, total, ready = allEggsReady()
+        if allReady then
+            -- fase 3: semua ready -> HATCH
+            print("[HactTelur] semua egg ready ("..ready.."/"..total.."), hatch!")
+            equipTeam("Hatch Tim")
+            task.wait(0.6)
+            hatchAllEggs()
             task.wait(0.8)
+            -- balik ke reduce di iterasi berikutnya (otomatis di awal loop)
+        else
+            -- masih ada egg CD -> tetap Reduce (percepat), tunggu
+            -- (tim reduce udah ke-equip di fase 1)
+            task.wait(1)
         end
         task.wait(0.5)
     end
