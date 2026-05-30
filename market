@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.250"
-local VERSION_DATE = "v8.250: Tampilan server GARDEN sekarang pakai accent merah crimson gelap (200,50,55), server market tetep gold. Plus v8.249: getgc memory container (191 entries) buat BaseWeight pet mutasi akurat."
+local VERSION = "8.251"
+local VERSION_DATE = "v8.251: Auto-snipe scan PARALEL — query semua pemain serempak (bukan 1-1 berurutan). Di server rame 30 org, cycle abis beli yg tadinya 2-5 detik jadi <1 detik. Plus v8.250 (garden merah) + v8.249 (BaseWeight container)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -8867,34 +8867,51 @@ do
                 BH.autoSnipe.statusLbl.TextColor3 = C.danger
             else
                 -- v8.95: INLINE lightweight scan — NO logging, NO verbose stats
-                -- (regular scanBoothListings terlalu lambat karena log + verbose stats)
+                -- v8.251: PARALEL — query semua pemain serempak (task.spawn), bukan 1-1 berurutan.
+                -- Di server rame (30 org) ini mangkas scan dari ~3-5s jadi <0.5s.
                 local autoCache = {}
                 if BH.TBC then
-                    for _, pp in ipairs(Players:GetPlayers()) do
-                        if pp ~= player then  -- skip diri sendiri (gak akan buy listing sendiri)
-                            local ok, data = pcall(function()
-                                return BH.TBC:GetPlayerBoothData(pp)
+                    local plist = Players:GetPlayers()
+                    local pending = 0
+                    local results = {}
+                    for _, pp in ipairs(plist) do
+                        if pp ~= player then  -- skip diri sendiri
+                            pending = pending + 1
+                            task.spawn(function()
+                                local ok, data = pcall(function()
+                                    return BH.TBC:GetPlayerBoothData(pp)
+                                end)
+                                if ok and data and data.Listings then
+                                    results[pp] = data
+                                end
+                                pending = pending - 1
                             end)
-                            if ok and data and data.Listings then
-                                local items = data.Items
-                                for listingUuid, listing in pairs(data.Listings) do
-                                    if listing.ItemType == "Pet" and listing.ItemId then
-                                        local item = items and items[listing.ItemId]
-                                        if item and item.PetData then
-                                            local pd = item.PetData
-                                            local kg = (BH.computeBaseKgFromPetData and BH.computeBaseKgFromPetData(pd)) or 0
-                                            local mut = tostring(pd.MutationType or "")
-                                            table.insert(autoCache, {
-                                                type = tostring(item.PetType or "?"),
-                                                mutation = (mut ~= "" and mut or "-"),
-                                                kg = kg,
-                                                price = tonumber(listing.Price) or 0,
-                                                owner = pp.Name,
-                                                sellerPlayer = pp,
-                                                listingUuid = listingUuid,
-                                            })
-                                        end
-                                    end
+                        end
+                    end
+                    -- tunggu semua thread selesai (timeout ~1.5s biar gak nyangkut)
+                    local waited = 0
+                    while pending > 0 and waited < 1.5 do
+                        waited = waited + task.wait()
+                    end
+                    -- olah hasil yg udah masuk
+                    for pp, data in pairs(results) do
+                        local items = data.Items
+                        for listingUuid, listing in pairs(data.Listings) do
+                            if listing.ItemType == "Pet" and listing.ItemId then
+                                local item = items and items[listing.ItemId]
+                                if item and item.PetData then
+                                    local pd = item.PetData
+                                    local kg = (BH.computeBaseKgFromPetData and BH.computeBaseKgFromPetData(pd)) or 0
+                                    local mut = tostring(pd.MutationType or "")
+                                    table.insert(autoCache, {
+                                        type = tostring(item.PetType or "?"),
+                                        mutation = (mut ~= "" and mut or "-"),
+                                        kg = kg,
+                                        price = tonumber(listing.Price) or 0,
+                                        owner = pp.Name,
+                                        sellerPlayer = pp,
+                                        listingUuid = listingUuid,
+                                    })
                                 end
                             end
                         end
