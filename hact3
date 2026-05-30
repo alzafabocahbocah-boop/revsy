@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v4.9"
+local VERSION = "v5.1"
 
 -- ============ THEME ============
 local C = {
@@ -946,44 +946,61 @@ local function equipTeam(tabName)
     end
 end
 
--- deteksi egg ready to hatch (cek Workspace egg model punya atribut ReadyToHatch / TimeLeft<=0)
-local function anyEggReady()
-    local ready = false
+-- deteksi egg ready: atribut READY=true atau TimeToHatch=0 (dari hook).
+-- egg model "PetEgg" di Workspace.Farm.Farm.Important.Objects_Physical
+local function getReadyEggs()
+    local eggs = {}
     pcall(function()
-        for _, fname in ipairs({"PetsPhysical","Pets","PlacedObjects","Eggs"}) do
-            local f = Workspace:FindFirstChild(fname)
-            if f then
-                for _, d in ipairs(f:GetDescendants()) do
-                    local rt = d:GetAttribute("ReadyToHatch") or d:GetAttribute("Ready")
-                        or d:GetAttribute("CanHatch")
-                    local tl = d:GetAttribute("TimeToHatch") or d:GetAttribute("TimeLeft")
-                        or d:GetAttribute("HatchTime")
-                    if rt == true then ready = true return end
-                    if tl and tonumber(tl) and tonumber(tl) <= 0 then ready = true return end
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" then
+                local ready = d:GetAttribute("READY")
+                local tth = d:GetAttribute("TimeToHatch")
+                if ready == true or (tth ~= nil and tonumber(tth) and tonumber(tth) <= 0) then
+                    eggs[#eggs+1] = d
                 end
             end
         end
     end)
-    return ready
+    return eggs
+end
+local function anyEggReady()
+    return #getReadyEggs() > 0
+end
+-- HATCH semua egg yg siap: PetEggService:FireServer("HatchPet", eggInstance)
+local function hatchAllEggs()
+    if not Auto.eggRE then return 0 end
+    local eggs = getReadyEggs()
+    local n = 0
+    for _, egg in ipairs(eggs) do
+        pcall(function() Auto.eggRE:FireServer("HatchPet", egg) end)
+        n = n + 1
+        task.wait(0.1)
+    end
+    if n > 0 then print("[HactTelur] hatch "..n.." egg") end
+    return n
 end
 
--- cek apakah ada egg yg udah ke-place di garden (Workspace.Farm...Objects_Physical / PetEgg part)
+-- cek apakah ada egg ke-place di garden (model "PetEgg" + OBJECT_TYPE=PetEgg)
 local function anyEggPlaced()
     local found = false
     pcall(function()
-        -- egg ke-place biasanya jadi part/model bernama "PetEgg" di area Farm
         for _, d in ipairs(Workspace:GetDescendants()) do
-            if not found and (d.Name == "PetEgg" or d.Name:find("Egg")) and (d:IsA("Model") or d:IsA("BasePart")) then
-                -- pastikan punya atribut hatch (egg aktif), bukan model dekorasi
-                if d:GetAttribute("TimeToHatch") or d:GetAttribute("TimeLeft")
-                   or d:GetAttribute("HatchTime") or d:GetAttribute("OwnerId")
-                   or d:GetAttribute("ReadyToHatch") then
-                    found = true
-                end
+            if not found and d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" then
+                found = true
             end
         end
     end)
     return found
+end
+-- hitung egg ke-place
+local function countEggPlaced()
+    local n = 0
+    pcall(function()
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" then n = n + 1 end
+        end
+    end)
+    return n
 end
 
 -- deteksi backpack penuh (hitung pet vs batas)
@@ -1013,8 +1030,10 @@ local function automationLoop()
         end
         -- 3) cek egg ready
         if anyEggReady() then
-            equipTeam("Hatch Tim")   -- swap ke HATCH buat netasin
-            task.wait(0.8)
+            equipTeam("Hatch Tim")   -- swap ke HATCH dulu (boost hatch)
+            task.wait(0.5)
+            hatchAllEggs()           -- hatch semua egg yg siap
+            task.wait(0.5)
         else
             equipTeam("Reduce Tim")  -- belum ready: REDUCE (percepat)
             task.wait(0.8)
@@ -1818,6 +1837,7 @@ openPetPicker = function(tabName)
         for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
             if teamData[tn] and teamData[tn].refreshPct then teamData[tn].refreshPct() end
         end
+        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
     end
     closeBtn.MouseButton1Click:Connect(close)
     doneBtn.MouseButton1Click:Connect(close)
@@ -1842,4 +1862,96 @@ task.spawn(function()
     if teamData["Reduce Tim"].refreshPct then teamData["Reduce Tim"].refreshPct() end
 end)
 
-print("[HactTelur] UI loaded ("..VERSION..") — fungsi auto-hatch/swap nyusul")
+-- ============ AUTO AFK (anti idle kick) ============
+task.spawn(function()
+    local ok, VirtualUser = pcall(function() return game:GetService("VirtualUser") end)
+    if ok and VirtualUser then
+        local plr = game:GetService("Players").LocalPlayer
+        plr.Idled:Connect(function()
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+            end)
+            print("[HactTelur] anti-AFK tick")
+        end)
+        print("[HactTelur] Auto AFK aktif")
+    end
+end)
+
+-- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
+local SAVE_FILE = "hact_telur_save.json"
+local function saveConfig()
+    if not writefile then return end
+    local data = {
+        eggSelected = config.eggSelected,
+        maxEquipEgg = config.maxEquipEgg,
+        sellRules = config.sellRules,
+        autoSell = config.autoSell,
+        maxPetBackpack = config.maxPetBackpack,
+        teams = {},
+    }
+    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
+        local sel = {}
+        if teamData[tn] and teamData[tn].selected then
+            for uuid in pairs(teamData[tn].selected) do sel[#sel+1] = uuid end
+        end
+        data.teams[tn] = {
+            selected = sel,
+            delayEquip = teamData[tn] and teamData[tn].delayEquip or 0,
+            delayUnequip = teamData[tn] and teamData[tn].delayUnequip or 1,
+        }
+    end
+    local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
+    if ok then pcall(function() writefile(SAVE_FILE, json) end) end
+end
+local function loadConfig()
+    if not (readfile and isfile) then return end
+    if not isfile(SAVE_FILE) then return end
+    local ok, raw = pcall(readfile, SAVE_FILE)
+    if not ok or not raw then return end
+    local ok2, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+    if not ok2 or type(data) ~= "table" then return end
+    -- restore
+    if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
+    if data.maxEquipEgg then config.maxEquipEgg = data.maxEquipEgg end
+    if type(data.sellRules) == "table" then config.sellRules = data.sellRules end
+    if data.autoSell ~= nil then config.autoSell = data.autoSell end
+    if data.maxPetBackpack then config.maxPetBackpack = data.maxPetBackpack end
+    if type(data.teams) == "table" then
+        for tn, td in pairs(data.teams) do
+            if teamData[tn] then
+                teamData[tn].selected = {}
+                if type(td.selected) == "table" then
+                    for _, uuid in ipairs(td.selected) do teamData[tn].selected[uuid] = true end
+                end
+                if td.delayEquip then teamData[tn].delayEquip = td.delayEquip end
+                if td.delayUnequip then teamData[tn].delayUnequip = td.delayUnequip end
+            end
+        end
+    end
+    print("[HactTelur] config dimuat dari "..SAVE_FILE)
+end
+-- expose biar bisa dipanggil dari tombol/aksi lain
+_G.HactTelurSave = saveConfig
+-- load saat startup
+pcall(loadConfig)
+-- refresh tampilan tim setelah load (summary pet, label, persen)
+task.spawn(function()
+    task.wait(0.5)
+    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
+        if teamData[tn] then
+            if teamData[tn].refreshSummary then pcall(teamData[tn].refreshSummary) end
+            if teamData[tn].refreshPickLabel then pcall(teamData[tn].refreshPickLabel) end
+            if teamData[tn].refreshPct then pcall(teamData[tn].refreshPct) end
+        end
+    end
+end)
+-- auto-save tiap 20 detik (biar gak ilang)
+task.spawn(function()
+    while true do
+        task.wait(20)
+        pcall(saveConfig)
+    end
+end)
+
+print("[HactTelur] UI loaded ("..VERSION..") — auto-AFK + save aktif")
