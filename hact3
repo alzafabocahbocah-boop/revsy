@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v7.7"
+local VERSION = "v8.0"
 
 -- ============ THEME ============
 local C = {
@@ -1007,6 +1007,28 @@ local function autoUnequip(uuid)
     if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("UnequipPet", u) end) end
 end
 
+-- hitung pet yg ada di garden (PetsPhysical) — buat cek tim hatch udah full
+local function countGardenPets()
+    local n = 0
+    pcall(function()
+        local pp = Workspace:FindFirstChild("PetsPhysical")
+        if not pp then return end
+        local seen = {}
+        for _, m in ipairs(pp:GetDescendants()) do
+            if m:IsA("Model") then
+                local nm = m.Name
+                local uuid = m:GetAttribute("PET_UUID")
+                local key = uuid and tostring(uuid) or nm
+                if (uuid or (nm:sub(1,1)=="{" and nm:sub(-1)=="}") or (#nm>=30 and nm:match("^[%w%-]+$")))
+                   and not seen[key] then
+                    seen[key] = true
+                    n = n + 1
+                end
+            end
+        end
+    end)
+    return n
+end
 -- KOSONGIN GARDEN: unequip semua pet placed (tiru pickupAllGardenPets revsy).
 -- scan PetsPhysical descendants, extract UUID (atribut/nama), unequip semua.
 local function clearGarden()
@@ -1055,23 +1077,17 @@ local function equipTeam(tabName)
     local data = teamData[tabName]
     if not data or not data.selected then return end
     local sel = data.selected
-    -- unequip anggota tim LAMA (biar gak campur)
+    -- unequip anggota tim LAMA — RAPID FIRE (tanpa delay per pet)
     local prev = Auto.currentTeam and teamData[Auto.currentTeam]
     if prev and prev.selected then
-        local du = tonumber(prev.delayUnequip) or 0
         for uuid in pairs(prev.selected) do
-            -- jangan unequip pet yg juga anggota tim baru
-            if not sel[uuid] then
-                autoUnequip(uuid)
-                if du > 0 then task.wait(du) end
-            end
+            if not sel[uuid] then autoUnequip(uuid) end  -- skip yg juga di tim baru
         end
     end
-    -- equip anggota tim BARU
-    local de = tonumber(data.delayEquip) or 0
+    task.wait(0.1)  -- jeda kecil biar server proses unequip
+    -- equip anggota tim BARU — RAPID FIRE
     for uuid in pairs(sel) do
         autoEquip(uuid)
-        if de > 0 then task.wait(de) end
     end
     Auto.currentTeam = tabName
     print("[HactTelur] swap ke "..tabName)
@@ -1124,12 +1140,12 @@ local function hatchAllEggs()
     if not Auto.eggRE then return 0 end
     local eggs = getReadyEggs()
     local n = 0
+    -- RAPID FIRE: hatch semua sekaligus tanpa delay (netas bareng)
     for _, egg in ipairs(eggs) do
         pcall(function() Auto.eggRE:FireServer("HatchPet", egg) end)
         n = n + 1
-        task.wait(0.1)
     end
-    if n > 0 then print("[HactTelur] hatch "..n.." egg") end
+    if n > 0 then print("[HactTelur] hatch "..n.." egg bareng") end
     return n
 end
 
@@ -1222,13 +1238,28 @@ local function automationLoop()
             -- 2) slot penuh: tim Reduce, tunggu SEMUA egg ready
             local allReady, total, ready = allEggsReady()
             if allReady then
-                -- 3) semua ready -> HATCH semua
-                print("[HactTelur] semua egg ready ("..ready.."/"..total.."), hatch!")
+                -- 3) semua ready -> equip HATCH, tunggu tim hact full di garden, baru hatch
+                print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 equipTeam("Hatch Tim")
-                task.wait(0.6)
+                -- tunggu pet tim hatch nongol di garden (sampai 8 / jumlah anggota tim)
+                local hatchTeam = teamData["Hatch Tim"]
+                local wantCount = 0
+                if hatchTeam and hatchTeam.selected then
+                    for _ in pairs(hatchTeam.selected) do wantCount = wantCount + 1 end
+                end
+                wantCount = math.min(wantCount, 8)
+                if wantCount < 1 then wantCount = 1 end
+                -- tunggu max 5 detik sampai pet di garden capai wantCount
+                local waited = 0
+                while globalRunning and waited < 5 do
+                    if countGardenPets() >= wantCount then break end
+                    task.wait(0.25); waited = waited + 0.25
+                end
+                print("[HactTelur] tim hatch siap ("..countGardenPets().."/"..wantCount.."), hatch all!")
                 hatchAllEggs()
-                task.wait(0.8)
-                -- egg habis -> iterasi berikut place lagi
+                task.wait(0.3)
+                -- langsung balik Reduce (cepat)
+                equipTeam("Reduce Tim")
             else
                 -- masih ada CD -> Reduce, tunggu
                 equipTeam("Reduce Tim")
