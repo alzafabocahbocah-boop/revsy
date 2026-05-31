@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v8.8"
+local VERSION = "v9.0"
 
 -- ============ THEME ============
 local C = {
@@ -1212,10 +1212,10 @@ local function backpackMaxNotif()
 end
 local function isBackpackFull()
     local cur = #PetDetect.listBackpackPets()
-    local maxPets = getMaxPets() or 230
-    -- penuh kalau capai batas game ATAU ada notif max
-    local full = (cur >= maxPets) or backpackMaxNotif()
-    return full, cur, maxPets
+    local maxPets = getMaxPets()
+    if not maxPets or maxPets <= 0 then maxPets = 230 end
+    -- penuh kalau jumlah pet capai batas (pakai angka aja, lebih andal)
+    return cur >= maxPets, cur, maxPets
 end
 
 -- LOOP UTAMA:
@@ -1224,19 +1224,32 @@ end
 -- 3) semua ready -> tim Hatch, hatch semua -> balik ke Reduce
 local function automationLoop()
     print("[HactTelur] automation loop START")
+    Auto.sellExhausted = false  -- reset tiap start
     -- kosongin garden dulu (unequip semua pet placed, termasuk place manual)
     clearGarden()
     task.wait(1)
     while globalRunning do
         -- backpack penuh? equip tim SEAL dulu (skill balikin pet jadi egg), baru jual
         local full, cur, max = isBackpackFull()
-        if config.autoSell and full then
+        if config.autoSell and full and not Auto.sellExhausted then
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
             equipTeam("Sell Tim")
             task.wait(2)  -- tunggu tim Seal masuk garden (skill aktif)
-            doAutoSell()
+            local sold = doAutoSell()
             task.wait(1)
             equipTeam("Reduce Tim")  -- balik reduce abis jual
+            if sold == 0 then
+                -- gak ada yg kejual (sisanya keep semua) -> stop sell sampai pet nambah
+                Auto.sellExhausted = true
+                Auto.sellExhaustedCount = #PetDetect.listBackpackPets()
+                print("[HactTelur] gak ada pet buat dijual (sisanya keep), lanjut reduce")
+            end
+        elseif Auto.sellExhausted then
+            -- cek apakah pet udah nambah dari terakhir sell (ada pet baru buat dijual)
+            local nowCount = #PetDetect.listBackpackPets()
+            if nowCount > (Auto.sellExhaustedCount or 0) then
+                Auto.sellExhausted = false  -- pet nambah, boleh sell lagi
+            end
         end
 
         -- target slot egg = batas asli game (MaxEggsInFarm), gak pakai setting manual
