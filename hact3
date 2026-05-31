@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v8.2"
+local VERSION = "v8.5"
 
 -- ============ THEME ============
 local C = {
@@ -1197,10 +1197,32 @@ local function getMaxEggs()
     return getGameData().maxEggs
 end
 -- deteksi backpack penuh: jumlah pet vs MaxPetsInInventory.
+-- backpack penuh: pet udah capai batas game (mis 230/230) ATAU ada notif "max backpack".
+local function backpackMaxNotif()
+    local found = false
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        if not pg then return end
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                local t = (d.Text or ""):lower()
+                if t:find("max") and (t:find("backpack") or t:find("inventory") or t:find("pet")) then
+                    found = true; break
+                end
+                if t:find("inventory full") or t:find("backpack full") or t:find("penuh") then
+                    found = true; break
+                end
+            end
+        end
+    end)
+    return found
+end
 local function isBackpackFull()
-    local maxPets = getMaxPets() or config.maxPetBackpack or 230
     local cur = #PetDetect.listBackpackPets()
-    return cur >= (maxPets - 3), cur, maxPets
+    local maxPets = getMaxPets() or 230
+    -- penuh kalau capai batas game ATAU ada notif max
+    local full = (cur >= maxPets) or backpackMaxNotif()
+    return full, cur, maxPets
 end
 
 -- LOOP UTAMA:
@@ -1213,12 +1235,15 @@ local function automationLoop()
     clearGarden()
     task.wait(1)
     while globalRunning do
-        -- backpack penuh? jual dulu
+        -- backpack penuh? equip tim SEAL dulu (skill balikin pet jadi egg), baru jual
         local full, cur, max = isBackpackFull()
         if config.autoSell and full then
-            print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), auto-sell...")
+            print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
+            equipTeam("Sell Tim")
+            task.wait(2)  -- tunggu tim Seal masuk garden (skill aktif)
             doAutoSell()
             task.wait(1)
+            equipTeam("Reduce Tim")  -- balik reduce abis jual
         end
 
         -- target slot egg = batas asli game (MaxEggsInFarm), gak pakai setting manual
@@ -1683,7 +1708,7 @@ local function makeConfigPanel()
     local petDdLabel = lbl(petDd, "Select Pet...", 12, C.textDim, Enum.TextXAlignment.Left)
     petDdLabel.Position = UDim2.new(0, 12, 0, 0); petDdLabel.Size = UDim2.new(1, -34, 1, 0)
     lbl(petDd, "▼", 10, C.textDim, Enum.TextXAlignment.Right).Position = UDim2.new(1, -24, 0, 0)
-    local chosenPet = nil
+    local chosenPets = {}   -- {[petName]=true} multi-select
 
     local lblKg = lbl(content, "KG Threshold", 12, C.textDim)
     lblKg.Position = UDim2.new(0, 4, 0, 354); lblKg.Size = UDim2.new(0.4, 0, 0, 30)
@@ -1698,10 +1723,18 @@ local function makeConfigPanel()
         TextColor3 = C.text, AutoButtonColor = false, Parent = content })
     corner(addBtn, 7); stroke(addBtn, C.border, 1)
     addBtn.MouseButton1Click:Connect(function()
-        if not chosenPet then return end
         local kg = tonumber(kgBox.Text) or 0
-        config.sellRules[chosenPet] = { action = "sell", kg = kg }
-        refreshRules()
+        local n = 0
+        for pet in pairs(chosenPets) do
+            config.sellRules[pet] = { action = "sell", kg = kg }
+            n = n + 1
+        end
+        if n > 0 then
+            chosenPets = {}
+            petDdLabel.Text = "Select Pet..."; petDdLabel.TextColor3 = C.textDim
+            refreshRules()
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end
     end)
 
     -- toggle Auto Sell + tombol Sell Sekarang
@@ -1785,6 +1818,18 @@ local function makeConfigPanel()
     mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,4),
         PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), Parent = pList })
     local pRows = {}
+    local function updatePetDdLabel()
+        local n = 0
+        for _ in pairs(chosenPets) do n = n + 1 end
+        if n == 0 then
+            petDdLabel.Text = "Select Pet..."; petDdLabel.TextColor3 = C.textDim
+        elseif n == 1 then
+            for p in pairs(chosenPets) do petDdLabel.Text = p end
+            petDdLabel.TextColor3 = C.text
+        else
+            petDdLabel.Text = n.." pet dipilih"; petDdLabel.TextColor3 = C.text
+        end
+    end
     local function buildPetList(filter)
         for _, r in ipairs(pRows) do r:Destroy() end
         pRows = {}
@@ -1795,12 +1840,18 @@ local function makeConfigPanel()
                     Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.cardSel,
                     Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 42, Parent = pList })
                 corner(row, 5)
-                local nl = lbl(row, pet, 12, C.text)
-                nl.Position = UDim2.new(0, 12, 0, 0); nl.Size = UDim2.new(1, -16, 1, 0); nl.ZIndex = 42
+                local check = lbl(row, chosenPets[pet] and "★" or "☆", 14,
+                    chosenPets[pet] and C.text or C.textMute)
+                check.Position = UDim2.new(0, 8, 0, 0); check.Size = UDim2.new(0, 22, 1, 0); check.ZIndex = 42
+                local nl = lbl(row, pet, 12, chosenPets[pet] and C.text or C.textDim)
+                nl.Position = UDim2.new(0, 34, 0, 0); nl.Size = UDim2.new(1, -38, 1, 0); nl.ZIndex = 42
                 row.MouseButton1Click:Connect(function()
-                    chosenPet = pet
-                    petDdLabel.Text = pet; petDdLabel.TextColor3 = C.text
-                    pDim.Visible = false
+                    chosenPets[pet] = (not chosenPets[pet]) or nil
+                    local on = chosenPets[pet] == true
+                    check.Text = on and "★" or "☆"
+                    check.TextColor3 = on and C.text or C.textMute
+                    nl.TextColor3 = on and C.text or C.textDim
+                    updatePetDdLabel()
                 end)
                 table.insert(pRows, row)
             end
@@ -1808,7 +1859,7 @@ local function makeConfigPanel()
     end
     pSearch:GetPropertyChangedSignal("Text"):Connect(function() buildPetList(pSearch.Text) end)
     petDd.MouseButton1Click:Connect(function() pDim.Visible = true; buildPetList("") end)
-    pClose.MouseButton1Click:Connect(function() pDim.Visible = false end)
+    pClose.MouseButton1Click:Connect(function() pDim.Visible = false; updatePetDdLabel() end)
 
     refreshRules()
 
