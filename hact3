@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v9.2"
+local VERSION = "v9.3"
 
 -- ============ THEME ============
 local C = {
@@ -1960,12 +1960,42 @@ local function makeStatPanel()
         s.Position = UDim2.new(0, 0, 1, -20); s.Size = UDim2.new(1, 0, 0, 14)
         return { val = v, sub = s }
     end
-    statCard("TOTAL",  0,      "—", "(semua)")
-    statCard("EGG",    0.3333, "—", "(semua)")
-    statCard("SEAL %", 0.6666, "—", "(auto)")
+    local cardTotal = statCard("TOTAL",  0,      "—", "(pet)")
+    local cardEgg   = statCard("EGG",    0.3333, "—", "(egg)")
+    local cardSeal  = statCard("SEAL %", 0.6666, "—", "(tim sell)")
+
+    -- isi data nyata + refresh berkala
+    local function refreshStat()
+        pcall(function()
+            -- total pet di backpack
+            local pets = PetDetect.listBackpackPets()
+            cardTotal.val.Text = tostring(#pets)
+            -- total egg dimiliki
+            local totalEgg = 0
+            EggDetect.scan()
+            for _, c in pairs(EggDetect.counts or {}) do totalEgg = totalEgg + (tonumber(c) or 0) end
+            cardEgg.val.Text = tostring(totalEgg)
+            -- seal % dari tim sell (pet seal yg dipilih di tim Sell)
+            local sd = teamData["Sell Tim"]
+            if sd and sd.selected then
+                local s = PetDetect.sumPctSelected(sd.selected, "Seal", "seal")
+                cardSeal.val.Text = string.format("%.1f%%", s)
+            else
+                cardSeal.val.Text = "—"
+            end
+        end)
+    end
+    panel.refreshStat = refreshStat
+    -- auto-refresh tiap 3 detik saat panel All Stat aktif
+    task.spawn(function()
+        while panel.Parent do
+            if panel.Visible then refreshStat() end
+            task.wait(3)
+        end
+    end)
 
     -- catatan
-    local note = lbl(panel, "Statistik nyusul — diisi saat fitur jalan", 11, C.textMute, Enum.TextXAlignment.Center)
+    local note = lbl(panel, "Auto-update tiap 3 detik", 11, C.textMute, Enum.TextXAlignment.Center)
     note.Position = UDim2.new(0, 0, 0, 144); note.Size = UDim2.new(1, 0, 0, 20)
 
     tabPanels["All Stat"] = panel
