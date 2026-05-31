@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v9.0"
+local VERSION = "v9.2"
 
 -- ============ THEME ============
 local C = {
@@ -726,29 +726,33 @@ end
 -- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
 function doAutoSell()
     PetDetect.rebuild()
-    local sold, kept = 0, 0
-    local toSell = {}
-    -- 1) favoritkan semua pet yg di-keep (proteksi) + kumpulin yg mau dijual
+    local kept, toSellCount = 0, 0
+    -- 1) favoritkan semua pet yg di-KEEP dulu (proteksi dari Sell All)
     for _, p in ipairs(PetDetect.listBackpackPets()) do
         local fate = petFate(p)
         if fate == "keep" then
-            if not p.fav and p.tool then favoritePet(p.tool); task.wait(0.05) end
+            if not p.fav and p.tool then favoritePet(p.tool); task.wait(0.04) end
             kept = kept + 1
         else
-            table.insert(toSell, p)
+            toSellCount = toSellCount + 1
         end
     end
-    task.wait(0.3)  -- kasih waktu server proses favorite
-    -- 2) jual yg SELL (kirim Instance Tool)
-    for _, p in ipairs(toSell) do
-        if not p.fav and p.tool then
-            sellOnePet(p.tool)
-            sold = sold + 1
-            task.wait(0.12)
-        end
+    -- gak ada yg perlu dijual
+    if toSellCount == 0 then
+        print("[HactTelur] Auto-sell: gak ada pet buat dijual (semua keep:"..kept..")")
+        return 0
     end
-    print("[HactTelur] Auto-sell selesai. Terjual: "..sold..", dilindungi(favorit): "..kept)
-    return sold
+    -- 2) jeda 2 detik biar server bener2 proses favorite (jangan kejual yg keep)
+    task.wait(2)
+    -- 3) SELL ALL (yg gak difavorit kejual semua)
+    if SellSys.sellAllRE then
+        pcall(function() SellSys.sellAllRE:FireServer() end)
+        print("[HactTelur] Sell All! (dijual ~"..toSellCount..", dilindungi favorit: "..kept..")")
+        return toSellCount
+    else
+        warn("[HactTelur] SellAllPets_RE gak ada")
+        return 0
+    end
 end
 
 -- ============ DETEKSI EGG (jumlah egg dimiliki) — metode dari telur PET STAT ============
@@ -971,19 +975,22 @@ local function placeEggs(count)
         print("[HactTelur] area garden GAK ke-detect")
     end
     if not area then return 0 end  -- garden gak ke-detect, jangan place sembarangan
+    -- pegang egg SEKALI di awal (egg tool nempel di tangan selama place)
+    if not holdEggTool() then
+        print("[HactTelur] gak ada egg tool (cek pilihan egg di Config)")
+        return 0
+    end
+    task.wait(0.15)
     for i = 1, count do
-        if not holdEggTool() then
-            print("[HactTelur] gak ada egg tool (cek pilihan egg di Config)")
-            break
-        end
-        task.wait(0.1)
-        -- tebar acak di seluruh area garden (gak peduli karakter di mana)
+        -- pastiin masih pegang egg (kalau habis 1 jenis, equip jenis lain yg dipilih)
+        holdEggTool()
+        -- tebar acak di seluruh area garden
         local px = area.minX + math.random() * (area.maxX - area.minX)
         local pz = area.minZ + math.random() * (area.maxZ - area.minZ)
         local v = Vector3.new(px, EGG_GROUND_Y, pz)
         pcall(function() Auto.eggRE:FireServer("CreateEgg", v) end)
         placed = placed + 1
-        task.wait(0.25)
+        task.wait(0.08)
     end
     return placed
 end
