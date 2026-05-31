@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v9.9"
+local VERSION = "v10.2"
 
 -- ============ THEME ============
 local C = {
@@ -472,6 +472,35 @@ end)
 -- matiin loop automation lama (kalau script di-run ulang)
 if _G.HactTelurStop then pcall(_G.HactTelurStop) end
 
+-- ============ WEBHOOK DISCORD ============
+local Webhook = { url = "", enabled = false }
+-- cari fungsi http request yg disupport executor
+local function httpRequest(opts)
+    local fn = (syn and syn.request) or (http and http.request) or http_request or request
+        or (fluxus and fluxus.request)
+    if fn then return fn(opts) end
+    return nil
+end
+-- kirim embed ke discord. fields = { {name=, value=, inline=}, ... }
+local function sendWebhook(title, desc, color, fields)
+    if not (Webhook.enabled and Webhook.url ~= "") then return end
+    task.spawn(function()
+        local embed = {
+            title = title, description = desc, color = color or 3066993,
+            fields = fields or {},
+            footer = { text = "Hact Telur • "..player.Name },
+        }
+        local body = game:GetService("HttpService"):JSONEncode({ embeds = { embed } })
+        pcall(function()
+            httpRequest({
+                Url = Webhook.url, Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = body,
+            })
+        end)
+    end)
+end
+
 local gui = mk("ScreenGui", {
     Name = "HactTelurGui", ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
@@ -732,6 +761,62 @@ local function petFate(p)
     end
     return "keep"  -- KEEP rule atau gak ada rule
 end
+-- AUTO FAV: favoritkan semua pet yg ada di pemilihan tim (Reduce/Hatch/Sell)
+-- biar selalu kelindungi dari Sell All
+function favTeamPets()
+    PetDetect.rebuild()
+    local teamSel = {}
+    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
+        if teamData[tn] and teamData[tn].selected then
+            for u in pairs(teamData[tn].selected) do
+                teamSel[tostring(u):gsub("[{}]","")] = true
+            end
+        end
+    end
+    local n = 0
+    for _, p in ipairs(PetDetect.listBackpackPets()) do
+        local uclean = tostring(p.uuid):gsub("[{}]","")
+        if teamSel[uclean] and p.tool and not p.fav then
+            favoritePet(p.tool)
+            n = n + 1
+            task.wait(0.04)
+        end
+    end
+    if n > 0 then print("[HactTelur] auto-fav "..n.." pet tim") end
+    return n
+end
+
+-- SYNC FAVORIT IKUT RULE: pet yg masuk kriteria SELL -> unfav (biar kejual),
+-- pet keep -> fav (terlindungi). dipanggil tiap rule diubah.
+function syncFavByRules()
+    PetDetect.rebuild()
+    -- pet tim selalu keep (jgn di-unfav walau masuk rule)
+    local teamSel = {}
+    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
+        if teamData[tn] and teamData[tn].selected then
+            for u in pairs(teamData[tn].selected) do
+                teamSel[tostring(u):gsub("[{}]","")] = true
+            end
+        end
+    end
+    local unfav, fav = 0, 0
+    for _, p in ipairs(PetDetect.listBackpackPets()) do
+        if p.tool then
+            local uclean = tostring(p.uuid):gsub("[{}]","")
+            local isTeam = teamSel[uclean]
+            local fate = petFate(p)
+            if fate == "sell" and not isTeam then
+                -- masuk kriteria jual -> pastiin TIDAK favorit
+                if p.fav then favoritePet(p.tool); unfav = unfav + 1; task.wait(0.04) end
+            else
+                -- keep/tim -> pastiin favorit
+                if not p.fav then favoritePet(p.tool); fav = fav + 1; task.wait(0.04) end
+            end
+        end
+    end
+    print("[HactTelur] sync fav by rule: unfav "..unfav..", fav "..fav)
+    return unfav, fav
+end
 -- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
 function doAutoSell()
     PetDetect.rebuild()
@@ -757,6 +842,10 @@ function doAutoSell()
     if SellSys.sellAllRE then
         pcall(function() SellSys.sellAllRE:FireServer() end)
         print("[HactTelur] Sell All! (dijual ~"..toSellCount..", dilindungi favorit: "..kept..")")
+        sendWebhook("💰 Auto Sell", "Pet dijual otomatis (Sell All).", 15844367, {
+            { name = "Dijual", value = "~"..toSellCount, inline = true },
+            { name = "Dilindungi", value = tostring(kept), inline = true },
+        })
         return toSellCount
     else
         warn("[HactTelur] SellAllPets_RE gak ada")
@@ -1172,7 +1261,12 @@ local function hatchAllEggs()
         pcall(function() Auto.eggRE:FireServer("HatchPet", egg) end)
         n = n + 1
     end
-    if n > 0 then print("[HactTelur] hatch "..n.." egg bareng") end
+    if n > 0 then
+        print("[HactTelur] hatch "..n.." egg bareng")
+        sendWebhook("🥚 Hatch Selesai", "Berhasil menetaskan telur!", 3447003, {
+            { name = "Egg Netas", value = tostring(n), inline = true },
+        })
+    end
     return n
 end
 
@@ -1261,12 +1355,18 @@ local function automationLoop()
     Auto.sellExhausted = false  -- reset tiap start
     -- kosongin garden dulu (unequip semua pet placed, termasuk place manual)
     clearGarden()
+    favTeamPets()  -- fav pet tim di awal (proteksi)
     task.wait(1)
+    local favTick = 0
     while globalRunning do
+        -- selalu jaga pet tim ke-fav (tiap ~10 iterasi)
+        favTick = favTick + 1
+        if favTick >= 10 then favTick = 0; favTeamPets() end
         -- backpack penuh? equip tim SEAL dulu (skill balikin pet jadi egg), baru jual
         local full, cur, max = isBackpackFull()
         if config.autoSell and full and not Auto.sellExhausted then
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
+            favTeamPets()  -- pastiin pet tim ke-fav SEBELUM sell all (jgn kejual)
             equipTeam("Sell Tim")
             task.wait(2)  -- tunggu tim Seal masuk garden (skill aktif)
             local sold = doAutoSell()
@@ -1684,6 +1784,7 @@ local function makeConfigPanel()
                 config.sellRules[petType].kg = v
                 kgIn.Text = tostring(v)
                 if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+                task.spawn(function() pcall(syncFavByRules) end)
             end)
             local kgL = lbl(row, "KG", 10, C.text)
             kgL.Position = UDim2.new(0.38, 84, 0, 0); kgL.Size = UDim2.new(0, 22, 1, 0)
@@ -1708,6 +1809,7 @@ local function makeConfigPanel()
                 r.action = (r.action == "keep") and "sell" or "keep"
                 refreshAct()
                 if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+                task.spawn(function() pcall(syncFavByRules) end)
             end)
             refreshAct()
             -- hapus
@@ -1761,6 +1863,7 @@ local function makeConfigPanel()
             petDdLabel.Text = "Select Pet..."; petDdLabel.TextColor3 = C.textDim
             refreshRules()
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+            task.spawn(function() pcall(syncFavByRules) end)
         end
     end)
 
@@ -2316,6 +2419,49 @@ miscActionRow(4, "Unfav Pet", "Hapus favorit semua pet di backpack", "Unfav All"
     end)
 end)
 
+-- 5) WEBHOOK DISCORD (input URL + toggle)
+do
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card, LayoutOrder = 5, Parent = miscScroll })
+    corner(row, 8); stroke(row, C.border, 1)
+    local t = lbl(row, "Webhook Discord", 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
+    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
+    local d = lbl(row, "Notif tiap hatch & sell", 11, C.textDim, Enum.TextXAlignment.Left)
+    d.Position = UDim2.new(0, 14, 0, 28); d.Size = UDim2.new(1, -80, 0, 16)
+    -- toggle
+    local sw = mk("TextButton", {
+        Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -58, 0, 14),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
+    corner(sw, 12)
+    local knob = mk("Frame", {
+        Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
+        BackgroundColor3 = C.textDim, Parent = sw })
+    corner(knob, 9)
+    sw.MouseButton1Click:Connect(function()
+        Webhook.enabled = not Webhook.enabled
+        sw.BackgroundColor3 = Webhook.enabled and C.accent or C.input
+        knob.BackgroundColor3 = Webhook.enabled and Color3.fromRGB(17,17,17) or C.textDim
+        knob.Position = Webhook.enabled and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        if Webhook.enabled and Webhook.url ~= "" then
+            sendWebhook("✅ Webhook Aktif", "Notif hatch & sell nyala.", 3066993)
+        end
+    end)
+    -- input URL
+    local urlBox = mk("TextBox", {
+        Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 54),
+        BackgroundColor3 = C.input, Text = "", PlaceholderText = "Tempel URL webhook discord...",
+        Font = FONT, TextSize = 11, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false, ClipsDescendants = true, Parent = row })
+    corner(urlBox, 6); stroke(urlBox, C.border, 1); pad(urlBox, 8)
+    urlBox.FocusLost:Connect(function()
+        Webhook.url = urlBox.Text:gsub("%s+", "")
+        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+    end)
+    _G.HactTelurSetWebhookUI = function(url)
+        urlBox.Text = url or ""
+    end
+end
+
 -- toggle tampilan AUTO HACT vs MISC
 showMiscFn = function(on)
     miscContent.Visible = on
@@ -2347,6 +2493,8 @@ local function saveConfig()
         eggSelected = config.eggSelected,
         sellRules = config.sellRules,
         autoSell = config.autoSell,
+        webhookUrl = Webhook.url,
+        webhookEnabled = Webhook.enabled,
         teams = {},
     }
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -2374,6 +2522,11 @@ local function loadConfig()
     if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
     if type(data.sellRules) == "table" then config.sellRules = data.sellRules end
     if data.autoSell ~= nil then config.autoSell = data.autoSell end
+    if data.webhookUrl then
+        Webhook.url = data.webhookUrl
+        if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
+    end
+    if data.webhookEnabled ~= nil then Webhook.enabled = data.webhookEnabled end
     if type(data.teams) == "table" then
         for tn, td in pairs(data.teams) do
             if teamData[tn] then
