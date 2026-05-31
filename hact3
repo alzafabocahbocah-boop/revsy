@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v5.9"
+local VERSION = "v6.1"
 
 -- ============ THEME ============
 local C = {
@@ -1077,35 +1077,36 @@ local function automationLoop()
             task.wait(1)
         end
 
-        -- target slot egg: pakai MaxEggsInFarm (dinamis), dibatasi setting user kalau ada
+        -- target slot egg (dinamis)
         local maxEggs = getMaxEggs() or 13
         local target = maxEggs
         if config.maxEquipEgg and config.maxEquipEgg > 0 then
             target = math.min(config.maxEquipEgg, maxEggs)
         end
 
-        -- fase 1: pakai tim REDUCE + place egg sampai slot penuh
-        equipTeam("Reduce Tim")
         local nowPlaced = countEggPlaced()
+
         if nowPlaced < target then
+            -- 1) slot belum penuh: place egg sampai penuh (pakai reduce biar mulai cd)
+            equipTeam("Reduce Tim")
             placeEggs(target - nowPlaced)
             task.wait(1)
-        end
-
-        -- fase 2: cek apakah SEMUA egg ready
-        local allReady, total, ready = allEggsReady()
-        if allReady then
-            -- fase 3: semua ready -> HATCH
-            print("[HactTelur] semua egg ready ("..ready.."/"..total.."), hatch!")
-            equipTeam("Hatch Tim")
-            task.wait(0.6)
-            hatchAllEggs()
-            task.wait(0.8)
-            -- balik ke reduce di iterasi berikutnya (otomatis di awal loop)
         else
-            -- masih ada egg CD -> tetap Reduce (percepat), tunggu
-            -- (tim reduce udah ke-equip di fase 1)
-            task.wait(1)
+            -- 2) slot penuh: tim Reduce, tunggu SEMUA egg ready
+            local allReady, total, ready = allEggsReady()
+            if allReady then
+                -- 3) semua ready -> HATCH semua
+                print("[HactTelur] semua egg ready ("..ready.."/"..total.."), hatch!")
+                equipTeam("Hatch Tim")
+                task.wait(0.6)
+                hatchAllEggs()
+                task.wait(0.8)
+                -- egg habis -> iterasi berikut place lagi
+            else
+                -- masih ada CD -> Reduce, tunggu
+                equipTeam("Reduce Tim")
+                task.wait(1.5)
+            end
         end
         task.wait(0.5)
     end
