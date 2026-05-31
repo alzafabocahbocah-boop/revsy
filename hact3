@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v6.1"
+local VERSION = "v6.3"
 
 -- ============ THEME ============
 local C = {
@@ -883,9 +883,9 @@ Auto.equipRE = GameEvents and GameEvents:FindFirstChild("PetsService")
 Auto.leadRE  = GameEvents and GameEvents:FindFirstChild("PetLeadService_RE")
 Auto.eggRE   = GameEvents and GameEvents:FindFirstChild("PetEggService")
 
--- place egg. action "CreateEgg" + Vector3(X, 0.1355, Z).
--- posisi random di sekitar karakter (area petak kita). Y HARUS 0.1355 (tanah).
-local EGG_GROUND_Y = 0.1355
+-- place egg. action "CreateEgg" + Vector3(X, 0.3605, Z).
+-- dari hook sc temen: Y=0.3605 (BUKAN 0.1355), posisi grid bulat.
+local EGG_GROUND_Y = 0.3605
 local function placeEggs(count)
     if not Auto.eggRE then warn("[HactTelur] PetEggService gak ada"); return 0 end
     local char = player.Character
@@ -893,17 +893,22 @@ local function placeEggs(count)
     if not hrp then return 0 end
     count = count or 6
     local placed = 0
-    local base = hrp.Position
-    for i = 1, count do
-        -- offset random kecil di sekitar karakter (radius ~12 stud)
-        local ox = (math.random() * 2 - 1) * 12   -- -12..+12
-        local oz = (math.random() * 2 - 1) * 12
-        local v = Vector3.new(base.X + ox, EGG_GROUND_Y, base.Z + oz)
+    -- titik basis = posisi karakter dibulatkan ke grid
+    local baseX = math.floor(hrp.Position.X)
+    local baseZ = math.floor(hrp.Position.Z)
+    -- jejer grid: step 7 stud (sesuai pola hook), 4 kolom per baris
+    local stepX, stepZ, perRow = 7, 7, 4
+    for i = 0, count - 1 do
+        local col = i % perRow
+        local row = math.floor(i / perRow)
+        local px = baseX + col * stepX
+        local pz = baseZ + row * stepZ
+        local v = Vector3.new(px, EGG_GROUND_Y, pz)
         pcall(function() Auto.eggRE:FireServer("CreateEgg", v) end)
         placed = placed + 1
         task.wait(0.2)
     end
-    print("[HactTelur] place "..placed.." egg (random sekitar karakter)")
+    print("[HactTelur] place "..placed.." egg (grid, Y=0.3605)")
     return placed
 end
 
@@ -964,9 +969,9 @@ local function getReadyEggs()
     pcall(function()
         for _, d in ipairs(Workspace:GetDescendants()) do
             if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                local ready = d:GetAttribute("READY")
+                -- READY=true SELALU (bukan indikator). yg bener: TimeToHatch <= 0
                 local tth = d:GetAttribute("TimeToHatch")
-                if ready == true or (tth ~= nil and tonumber(tth) and tonumber(tth) <= 0) then
+                if tth ~= nil and tonumber(tth) and tonumber(tth) <= 0 then
                     eggs[#eggs+1] = d
                 end
             end
@@ -977,16 +982,15 @@ end
 local function anyEggReady()
     return #getReadyEggs() > 0
 end
--- cek SEMUA egg MILIK KITA udah ready (gak ada yg masih cooldown)
+-- cek SEMUA egg MILIK KITA udah ready (TimeToHatch <= 0 semua)
 local function allEggsReady()
     local total, ready = 0, 0
     pcall(function()
         for _, d in ipairs(Workspace:GetDescendants()) do
             if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
                 total = total + 1
-                local r = d:GetAttribute("READY")
                 local tth = d:GetAttribute("TimeToHatch")
-                if r == true or (tth ~= nil and tonumber(tth) and tonumber(tth) <= 0) then
+                if tth ~= nil and tonumber(tth) and tonumber(tth) <= 0 then
                     ready = ready + 1
                 end
             end
