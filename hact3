@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v10.5"
+local VERSION = "v10.6"
 
 -- ============ THEME ============
 local C = {
@@ -816,9 +816,15 @@ local function giftPetsByFilter(cfg)
             local okMut = not hasMut
             if hasMut and p then for mt in pairs(cfg.muts) do if p.mut and p.mut:lower():find(mt:lower(),1,true) then okMut = true break end end end
             local okAge = true
-            if cfg.age and cfg.age > 0 and p then okAge = (p.level or 0) >= cfg.age end
+            if cfg.age and cfg.age ~= 0 and p then
+                if cfg.age > 0 then okAge = (p.level or 0) >= cfg.age
+                else okAge = (p.level or 0) <= math.abs(cfg.age) end
+            end
             local okKg = true
-            if cfg.kg and cfg.kg > 0 and p then okKg = (p.dispKg or 0) <= cfg.kg end
+            if cfg.kg and cfg.kg ~= 0 and p then
+                if cfg.kg > 0 then okKg = (p.dispKg or 0) >= cfg.kg
+                else okKg = (p.dispKg or 0) <= math.abs(cfg.kg) end
+            end
             if okPet and okMut and okAge and okKg then
                 if giftPetToTarget(target, t) then n = n + 1 end
                 task.wait(0.2)
@@ -2517,6 +2523,7 @@ do
         { target="", pets={}, muts={}, age=0, kg=0 },
         { target="", pets={}, muts={}, age=0, kg=0 },
     }
+    _G.HactTelurGiftCfgs = giftCfgs  -- buat save/load
     -- popup multi-select reusable (buat pet type / mutasi)
     local function openMultiPicker(title, list, setRef, onDone)
         local dim = mk("Frame", {
@@ -2607,13 +2614,54 @@ do
         -- Target (input box)
         local tlbl = lbl(body, "Target", 11, C.textDim, Enum.TextXAlignment.Left)
         tlbl.Position = UDim2.new(0, 0, 0, 4); tlbl.Size = UDim2.new(0.4, 0, 0, 28)
-        local tBox = mk("TextBox", {
+        local tBtn = mk("TextButton", {
             Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 4),
-            BackgroundColor3 = C.input, Text = "", PlaceholderText = "nama target...",
-            Font = FONT, TextSize = 11, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
-            ClearTextOnFocus = false, Parent = body })
-        corner(tBox, 6); stroke(tBox, C.border, 1); pad(tBox, 8)
-        tBox.FocusLost:Connect(function() cfg.target = tBox.Text:gsub("%s+","") end)
+            BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = body })
+        corner(tBtn, 6); stroke(tBtn, C.border, 1)
+        local tBtnL = lbl(tBtn, cfg.target ~= "" and cfg.target or "Pilih player...", 11,
+            cfg.target ~= "" and C.text or C.textDim, Enum.TextXAlignment.Left)
+        tBtnL.Position = UDim2.new(0, 10, 0, 0); tBtnL.Size = UDim2.new(1, -16, 1, 0)
+        tBtn.MouseButton1Click:Connect(function()
+            -- popup pilih player di server (single-select)
+            local dim = mk("Frame", {
+                Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
+                BackgroundTransparency = 0.5, ZIndex = 70, Parent = miscContent })
+            local box = mk("Frame", {
+                Size = UDim2.new(0, 300, 0, 320), Position = UDim2.new(0.5, -150, 0.5, -160),
+                BackgroundColor3 = C.panel, ZIndex = 71, Parent = dim })
+            corner(box, 10); stroke(box, C.border, 1)
+            local hd = lbl(box, "Pilih Player Target", 13, C.text); hd.Font = FONT_B
+            hd.Position = UDim2.new(0, 14, 0, 10); hd.Size = UDim2.new(1, -50, 0, 20); hd.ZIndex = 72
+            local cls = mk("TextButton", {
+                Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -32, 0, 8),
+                BackgroundColor3 = C.input, Text = "X", Font = FONT_B, TextSize = 12,
+                TextColor3 = C.text, AutoButtonColor = false, ZIndex = 72, Parent = box })
+            corner(cls, 6)
+            local sc = mk("ScrollingFrame", {
+                Size = UDim2.new(1, -20, 1, -50), Position = UDim2.new(0, 10, 0, 44),
+                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+                CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                ZIndex = 72, Parent = box })
+            mk("UIListLayout", { Padding = UDim.new(0, 3), Parent = sc })
+            local Players = game:GetService("Players")
+            for i, pl in ipairs(Players:GetPlayers()) do
+                if pl ~= player then
+                    local r = mk("TextButton", {
+                        Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.cardSel,
+                        Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 72, Parent = sc })
+                    corner(r, 5)
+                    local nm = lbl(r, pl.Name, 11, C.text, Enum.TextXAlignment.Left)
+                    nm.Position = UDim2.new(0, 12, 0, 0); nm.Size = UDim2.new(1, -16, 1, 0); nm.ZIndex = 72
+                    r.MouseButton1Click:Connect(function()
+                        cfg.target = pl.Name
+                        tBtnL.Text = pl.Name; tBtnL.TextColor3 = C.text
+                        dim:Destroy()
+                        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+                    end)
+                end
+            end
+            cls.MouseButton1Click:Connect(function() dim:Destroy() end)
+        end)
         -- Pet Type
         local petL = fieldRow(38, "Pet Type", "Select Pet...", function(bl)
             openMultiPicker("Pilih Pet Type", PET_LIST, cfg.pets, function()
@@ -2631,21 +2679,28 @@ do
         -- Age (min)
         local aL = lbl(body, "Age (min)", 11, C.textDim, Enum.TextXAlignment.Left)
         aL.Position = UDim2.new(0, 0, 0, 106); aL.Size = UDim2.new(0.4, 0, 0, 28)
+        aL.Text = "Age (-=bwh)"
         local aBox = mk("TextBox", {
             Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 106),
-            BackgroundColor3 = C.input, Text = "0", Font = FONT, TextSize = 11, TextColor3 = C.text,
+            BackgroundColor3 = C.input, Text = tostring(cfg.age or 0), Font = FONT, TextSize = 11, TextColor3 = C.text,
             TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = body })
         corner(aBox, 6); stroke(aBox, C.border, 1)
-        aBox.FocusLost:Connect(function() cfg.age = tonumber(aBox.Text) or 0; aBox.Text = tostring(cfg.age) end)
-        -- KG (max)
-        local kL = lbl(body, "KG (max)", 11, C.textDim, Enum.TextXAlignment.Left)
+        aBox.FocusLost:Connect(function()
+            cfg.age = tonumber(aBox.Text) or 0; aBox.Text = tostring(cfg.age)
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
+        -- KG (-=di bawah)
+        local kL = lbl(body, "KG (-=bwh)", 11, C.textDim, Enum.TextXAlignment.Left)
         kL.Position = UDim2.new(0, 0, 0, 140); kL.Size = UDim2.new(0.4, 0, 0, 28)
         local kBox = mk("TextBox", {
             Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 140),
-            BackgroundColor3 = C.input, Text = "0", Font = FONT, TextSize = 11, TextColor3 = C.text,
+            BackgroundColor3 = C.input, Text = tostring(cfg.kg or 0), Font = FONT, TextSize = 11, TextColor3 = C.text,
             TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = body })
         corner(kBox, 6); stroke(kBox, C.border, 1)
-        kBox.FocusLost:Connect(function() cfg.kg = tonumber(kBox.Text) or 0; kBox.Text = tostring(cfg.kg) end)
+        kBox.FocusLost:Connect(function()
+            cfg.kg = tonumber(kBox.Text) or 0; kBox.Text = tostring(cfg.kg)
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
         -- tombol Gift
         local gBtn = mk("TextButton", {
             Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 178),
@@ -2676,7 +2731,7 @@ end
 
 
 -- 2) REJOIN
-miscActionRow(2, "Rejoin", "Masuk ulang ke server yang sama", "Rejoin", function()
+miscActionRow(10, "Rejoin", "Masuk ulang ke server yang sama", "Rejoin", function()
     print("[HactTelur] rejoin...")
     pcall(function()
         local TS = game:GetService("TeleportService")
@@ -2685,7 +2740,7 @@ miscActionRow(2, "Rejoin", "Masuk ulang ke server yang sama", "Rejoin", function
 end)
 
 -- 3) FAV PET (favoritkan semua)
-miscActionRow(3, "Fav Pet", "Favoritkan semua pet di backpack", "Fav All", function(btn)
+miscActionRow(11, "Fav Pet", "Favoritkan semua pet di backpack", "Fav All", function(btn)
     btn.Text = "..."
     task.spawn(function()
         local n = favAllPets(true)
@@ -2695,7 +2750,7 @@ miscActionRow(3, "Fav Pet", "Favoritkan semua pet di backpack", "Fav All", funct
 end)
 
 -- 4) UNFAV PET (unfavoritkan semua)
-miscActionRow(4, "Unfav Pet", "Hapus favorit semua pet di backpack", "Unfav All", function(btn)
+miscActionRow(12, "Unfav Pet", "Hapus favorit semua pet di backpack", "Unfav All", function(btn)
     btn.Text = "..."
     task.spawn(function()
         local n = favAllPets(false)
@@ -2707,7 +2762,7 @@ end)
 -- 5) WEBHOOK DISCORD (input URL + toggle)
 do
     local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card, LayoutOrder = 5, Parent = miscScroll })
+        Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card, LayoutOrder = 13, Parent = miscScroll })
     corner(row, 8); stroke(row, C.border, 1)
     local t = lbl(row, "Webhook Discord", 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
     t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
@@ -2780,6 +2835,7 @@ local function saveConfig()
         autoSell = config.autoSell,
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
+        giftCfgs = _G.HactTelurGiftCfgs,
         teams = {},
     }
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -2812,6 +2868,18 @@ local function loadConfig()
         if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
     end
     if data.webhookEnabled ~= nil then Webhook.enabled = data.webhookEnabled end
+    if type(data.giftCfgs) == "table" and _G.HactTelurGiftCfgs then
+        for i = 1, 3 do
+            if data.giftCfgs[i] and _G.HactTelurGiftCfgs[i] then
+                local src, dst = data.giftCfgs[i], _G.HactTelurGiftCfgs[i]
+                dst.target = src.target or ""
+                dst.pets = src.pets or {}
+                dst.muts = src.muts or {}
+                dst.age = src.age or 0
+                dst.kg = src.kg or 0
+            end
+        end
+    end
     if type(data.teams) == "table" then
         for tn, td in pairs(data.teams) do
             if teamData[tn] then
