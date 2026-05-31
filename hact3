@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v6.3"
+local VERSION = "v6.9"
 
 -- ============ THEME ============
 local C = {
@@ -883,9 +883,63 @@ Auto.equipRE = GameEvents and GameEvents:FindFirstChild("PetsService")
 Auto.leadRE  = GameEvents and GameEvents:FindFirstChild("PetLeadService_RE")
 Auto.eggRE   = GameEvents and GameEvents:FindFirstChild("PetEggService")
 
--- place egg. action "CreateEgg" + Vector3(X, 0.3605, Z).
--- dari hook sc temen: Y=0.3605 (BUKAN 0.1355), posisi grid bulat.
+-- place egg. HARUS pegang egg dulu (equip Tool), baru FireServer CreateEgg.
+-- posisi: tebar di seluruh petak garden (Can_Plant) milik kita. Y=0.3605.
 local EGG_GROUND_Y = 0.3605
+-- cari & pegang 1 egg tool dari backpack
+local function holdEggTool()
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local bp = player:FindFirstChild("Backpack")
+    if not (char and hum and bp) then return false end
+    for _, t in ipairs(char:GetChildren()) do
+        if t:IsA("Tool") and t.Name:lower():find("egg") then return true end
+    end
+    for _, t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") and t.Name:lower():find("egg") then
+            pcall(function() hum:EquipTool(t) end)
+            return true
+        end
+    end
+    return false
+end
+-- cari GARDEN KITA SENDIRI: sub-farm yg Data.Owner = nama kita.
+-- (bukan kedekatan, jadi walau visit garden orang tetap ke garden kita)
+local function getMyFarm()
+    local farm = Workspace:FindFirstChild("Farm")
+    if not farm then return nil end
+    for _, sub in ipairs(farm:GetChildren()) do
+        local data = sub:FindFirstChild("Data")
+        if data then
+            local owner = data:FindFirstChild("Owner")
+            if owner and owner:IsA("StringValue") and owner.Value == player.Name then
+                return sub
+            end
+        end
+    end
+    return nil
+end
+-- area garden kita: bounding box semua Can_Plant di sub-farm milik kita
+local function getGardenArea()
+    local myFarm = getMyFarm()
+    if not myFarm then return nil end
+    local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+    local found = 0
+    pcall(function()
+        for _, d in ipairs(myFarm:GetDescendants()) do
+            if d.Name:lower():find("can_plant") and d:IsA("BasePart") then
+                found = found + 1
+                local sx, sz = d.Size.X/2, d.Size.Z/2
+                minX = math.min(minX, d.Position.X - sx)
+                maxX = math.max(maxX, d.Position.X + sx)
+                minZ = math.min(minZ, d.Position.Z - sz)
+                maxZ = math.max(maxZ, d.Position.Z + sz)
+            end
+        end
+    end)
+    if found == 0 then return nil end
+    return { minX = minX, maxX = maxX, minZ = minZ, maxZ = maxZ, count = found }
+end
 local function placeEggs(count)
     if not Auto.eggRE then warn("[HactTelur] PetEggService gak ada"); return 0 end
     local char = player.Character
@@ -893,22 +947,27 @@ local function placeEggs(count)
     if not hrp then return 0 end
     count = count or 6
     local placed = 0
-    -- titik basis = posisi karakter dibulatkan ke grid
-    local baseX = math.floor(hrp.Position.X)
-    local baseZ = math.floor(hrp.Position.Z)
-    -- jejer grid: step 7 stud (sesuai pola hook), 4 kolom per baris
-    local stepX, stepZ, perRow = 7, 7, 4
-    for i = 0, count - 1 do
-        local col = i % perRow
-        local row = math.floor(i / perRow)
-        local px = baseX + col * stepX
-        local pz = baseZ + row * stepZ
-        local v = Vector3.new(px, EGG_GROUND_Y, pz)
+    local area = getGardenArea()
+    for i = 1, count do
+        if not holdEggTool() then
+            print("[HactTelur] gak ada egg tool buat dipegang")
+            break
+        end
+        task.wait(0.1)
+        local v
+        if area then
+            -- tebar acak di seluruh area garden (bounding box semua petak)
+            local px = area.minX + math.random() * (area.maxX - area.minX)
+            local pz = area.minZ + math.random() * (area.maxZ - area.minZ)
+            v = Vector3.new(px, EGG_GROUND_Y, pz)
+        else
+            local base = hrp.Position
+            v = Vector3.new(base.X + math.random(-8,8), EGG_GROUND_Y, base.Z + math.random(-8,8))
+        end
         pcall(function() Auto.eggRE:FireServer("CreateEgg", v) end)
         placed = placed + 1
-        task.wait(0.2)
+        task.wait(0.25)
     end
-    print("[HactTelur] place "..placed.." egg (grid, Y=0.3605)")
     return placed
 end
 
@@ -1081,20 +1140,19 @@ local function automationLoop()
             task.wait(1)
         end
 
-        -- target slot egg (dinamis)
-        local maxEggs = getMaxEggs() or 13
-        local target = maxEggs
-        if config.maxEquipEgg and config.maxEquipEgg > 0 then
-            target = math.min(config.maxEquipEgg, maxEggs)
-        end
+        -- target slot egg = batas asli game (MaxEggsInFarm), gak pakai setting manual
+        local target = getMaxEggs() or 13
 
         local nowPlaced = countEggPlaced()
 
         if nowPlaced < target then
-            -- 1) slot belum penuh: place egg sampai penuh (pakai reduce biar mulai cd)
+            -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
             equipTeam("Reduce Tim")
-            placeEggs(target - nowPlaced)
-            task.wait(1)
+            local need = target - nowPlaced
+            placeEggs(need)
+            task.wait(0.6)
+            local after = countEggPlaced()
+            print("[HactTelur] place egg: "..nowPlaced.." -> "..after.." (target "..target..")")
         else
             -- 2) slot penuh: tim Reduce, tunggu SEMUA egg ready
             local allReady, total, ready = allEggsReady()
