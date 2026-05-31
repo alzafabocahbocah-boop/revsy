@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v7.4"
+local VERSION = "v7.6"
 
 -- ============ THEME ============
 local C = {
@@ -886,18 +886,20 @@ Auto.eggRE   = GameEvents and GameEvents:FindFirstChild("PetEggService")
 -- place egg. HARUS pegang egg dulu (equip Tool), baru FireServer CreateEgg.
 -- posisi: tebar di seluruh petak garden (Can_Plant) milik kita. Y=0.3605.
 local EGG_GROUND_Y = 0.3605
--- cek apakah egg ini dipilih di config (Egg Inventory). kalau gak ada yg dipilih, terima semua.
+-- cek apakah egg ini dipilih di config. nama tool ada embel jumlah (mis "Rare Egg x18307").
 local function isEggSelected(toolName)
     local sel = config.eggSelected or {}
-    -- kalau belum pilih egg apapun, terima semua egg
     local anySelected = false
     for _ in pairs(sel) do anySelected = true; break end
-    if not anySelected then return true end
-    -- cocokkan nama tool dgn egg yg dipilih (longgar)
-    local low = toolName:lower()
+    if not anySelected then return true end  -- belum pilih = terima semua
+    -- bersihkan: "Rare Egg x18307" -> "rare egg"
+    local clean = toolName:lower():gsub("%s*x%d+.*$", ""):gsub("%s+$", "")
     for eggName, on in pairs(sel) do
-        if on and (low:find(eggName:lower(), 1, true) or eggName:lower():find(low, 1, true)) then
-            return true
+        if on then
+            local e = eggName:lower()
+            if clean == e or clean:find(e, 1, true) or e:find(clean, 1, true) then
+                return true
+            end
         end
     end
     return false
@@ -916,6 +918,7 @@ local function holdEggTool()
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") and t.Name:lower():find("egg") and isEggSelected(t.Name) then
             pcall(function() hum:EquipTool(t) end)
+            task.wait(0.2)  -- kasih waktu biar ke-pegang
             return true
         end
     end
@@ -1002,6 +1005,28 @@ local function autoUnequip(uuid)
     local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
     if Auto.equipRE then pcall(function() Auto.equipRE:FireServer("UnequipPet", u) end) end
     if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("UnequipPet", u) end) end
+end
+
+-- KOSONGIN GARDEN: unequip semua pet yg ke-place di Workspace.PetsPhysical.PetMover
+-- (termasuk pet jenis lain / place manual). dipanggil sekali pas START.
+local function clearGarden()
+    local n = 0
+    pcall(function()
+        local pp = Workspace:FindFirstChild("PetsPhysical")
+        local mover = pp and pp:FindFirstChild("PetMover")
+        if not mover then return end
+        for _, child in ipairs(mover:GetChildren()) do
+            -- nama child = uuid pet placed
+            local uuid = child.Name
+            if uuid and #uuid > 5 then
+                autoUnequip(uuid)
+                n = n + 1
+                task.wait(0.1)
+            end
+        end
+    end)
+    if n > 0 then print("[HactTelur] kosongin garden: unequip "..n.." pet") end
+    return n
 end
 
 -- equip semua pet di tim tertentu, unequip yg lagi ke-equip tapi bukan anggota tim
@@ -1152,6 +1177,9 @@ end
 -- 3) semua ready -> tim Hatch, hatch semua -> balik ke Reduce
 local function automationLoop()
     print("[HactTelur] automation loop START")
+    -- kosongin garden dulu (unequip semua pet placed, termasuk place manual)
+    clearGarden()
+    task.wait(1)
     while globalRunning do
         -- backpack penuh? jual dulu
         local full, cur, max = isBackpackFull()
