@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v12.6"
+local VERSION = "v12.7"
 
 -- ============ THEME ============
 local C = {
@@ -1501,40 +1501,6 @@ local function getGardenArea()
     if found == 0 then return nil end
     return { minX = minX, maxX = maxX, minZ = minZ, maxZ = maxZ, count = found }
 end
-local function placeEggs(count)
-    if not Auto.eggRE then warn("[HactTelur] PetEggService gak ada"); return 0 end
-    local char = player.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return 0 end
-    count = count or 6
-    local placed = 0
-    local area = getGardenArea()
-    if area then
-        print(string.format("[HactTelur] area garden: X %.0f..%.0f Z %.0f..%.0f (%d petak)",
-            area.minX, area.maxX, area.minZ, area.maxZ, area.count or 0))
-    else
-        print("[HactTelur] area garden GAK ke-detect")
-    end
-    if not area then return 0 end  -- garden gak ke-detect, jangan place sembarangan
-    -- pegang egg SEKALI di awal (egg tool nempel di tangan selama place)
-    if not holdEggTool() then
-        print("[HactTelur] gak ada egg tool (cek pilihan egg di Config)")
-        return 0
-    end
-    task.wait(0.15)
-    for i = 1, count do
-        -- pastiin masih pegang egg (kalau habis 1 jenis, equip jenis lain yg dipilih)
-        holdEggTool()
-        -- tebar acak di seluruh area garden
-        local px = area.minX + math.random() * (area.maxX - area.minX)
-        local pz = area.minZ + math.random() * (area.maxZ - area.minZ)
-        local v = Vector3.new(px, EGG_GROUND_Y, pz)
-        pcall(function() Auto.eggRE:FireServer("CreateEgg", v) end)
-        placed = placed + 1
-        task.wait(0.08)
-    end
-    return placed
-end
 
 -- equip/unequip 1 pet
 local function autoEquip(uuid)
@@ -1752,6 +1718,63 @@ local function getMaxPets()
 end
 local function getMaxEggs()
     return getGameData().maxEggs
+end
+
+-- deteksi notif "max egg" reached di layar
+local function maxEggReached()
+    local found = false
+    pcall(function()
+        local pg = player:FindFirstChild("PlayerGui")
+        if not pg then return end
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible then
+                local t = (d.Text or ""):lower()
+                if t:find("max egg") or t:find("egg.*reached") or t:find("can't place") or t:find("cant place") then
+                    found = true; break
+                end
+            end
+        end
+    end)
+    return found
+end
+
+local function placeEggs(count)
+    if not Auto.eggRE then warn("[HactTelur] PetEggService gak ada"); return 0 end
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return 0 end
+    count = count or 6
+    local area = getGardenArea()
+    if not area then print("[HactTelur] area garden GAK ke-detect"); return 0 end
+    if not holdEggTool() then
+        print("[HactTelur] gak ada egg tool (cek pilihan egg di Config)")
+        return 0
+    end
+    task.wait(0.15)
+    local target = (getMaxEggs() or 13)
+    local placed = 0
+    local stuck = 0  -- berapa kali count gak nambah berturut-turut
+    -- SPAM sampai penuh: place terus + cek count, stop saat target / notif max / mentok
+    for attempt = 1, count * 3 + 10 do  -- kasih percobaan ekstra (anti gagal place)
+        local before = countEggPlaced()
+        if before >= target then break end          -- udah penuh
+        if maxEggReached() then break end            -- notif max muncul
+        holdEggTool()
+        local px = area.minX + math.random() * (area.maxX - area.minX)
+        local pz = area.minZ + math.random() * (area.maxZ - area.minZ)
+        local v = Vector3.new(px, EGG_GROUND_Y, pz)
+        pcall(function() Auto.eggRE:FireServer("CreateEgg", v) end)
+        placed = placed + 1
+        task.wait(0.12)
+        local after = countEggPlaced()
+        if after <= before then
+            stuck = stuck + 1
+            if stuck >= 6 then break end  -- 6x gagal nambah berturut -> mentok, stop
+        else
+            stuck = 0
+        end
+    end
+    return placed
 end
 -- deteksi backpack penuh: jumlah pet vs MaxPetsInInventory.
 -- backpack penuh: pet udah capai batas game (mis 230/230) ATAU ada notif "max backpack".
