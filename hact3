@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v11.8"
+local VERSION = "v12.2"
 
 -- ============ THEME ============
 local C = {
@@ -26,9 +26,9 @@ local C = {
     accent   = Color3.fromRGB(255, 255, 255),  -- putih
     danger   = Color3.fromRGB(200, 90, 90),
 }
-local FONT     = Enum.Font.Gotham
+local FONT     = Enum.Font.GothamMedium
 local FONT_B   = Enum.Font.GothamBold
-local FONT_SB  = Enum.Font.GothamMedium
+local FONT_SB  = Enum.Font.GothamBold
 
 -- ============ UI HELPERS ============
 local function mk(class, props)
@@ -2265,9 +2265,10 @@ local function makeConfigPanel()
         filter = (filter or ""):lower()
         for i, pet in ipairs(PET_LIST) do
             if filter == "" or pet:lower():find(filter, 1, true) then
+                local order = chosenPets[pet] and i or (i + 100000)  -- terpilih naik ke atas
                 local row = mk("TextButton", {
                     Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.cardSel,
-                    Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 42, Parent = pList })
+                    Text = "", AutoButtonColor = false, LayoutOrder = order, ZIndex = 42, Parent = pList })
                 corner(row, 5)
                 local check = lbl(row, chosenPets[pet] and "★" or "☆", 14,
                     chosenPets[pet] and C.text or C.textMute)
@@ -2276,11 +2277,8 @@ local function makeConfigPanel()
                 nl.Position = UDim2.new(0, 34, 0, 0); nl.Size = UDim2.new(1, -38, 1, 0); nl.ZIndex = 42
                 row.MouseButton1Click:Connect(function()
                     chosenPets[pet] = (not chosenPets[pet]) or nil
-                    local on = chosenPets[pet] == true
-                    check.Text = on and "★" or "☆"
-                    check.TextColor3 = on and C.text or C.textMute
-                    nl.TextColor3 = on and C.text or C.textDim
                     updatePetDdLabel()
+                    buildPetList(pSearch.Text)  -- rebuild biar yg dipilih naik ke atas
                 end)
                 table.insert(pRows, row)
             end
@@ -2297,6 +2295,10 @@ local function makeConfigPanel()
         pcall(function() buildList(searchBox.Text or "") end)
         pcall(refreshCounter)
         pcall(refreshRules)
+        -- refresh label target gift (biar username tersimpan tampil walau player offline)
+        if _G.HactTelurGiftTargetLabels then
+            for _, fn in pairs(_G.HactTelurGiftTargetLabels) do pcall(fn) end
+        end
     end
 
     tabPanels["Config"] = panel
@@ -2735,14 +2737,17 @@ do
             CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
             ZIndex = 72, Parent = box })
         mk("UIListLayout", { Padding = UDim.new(0, 3), Parent = sc })
+        mk("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc })
         local function build(filter)
             for _, c in ipairs(sc:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
             filter = (filter or ""):lower()
             for i, it in ipairs(list) do
                 if filter == "" or it:lower():find(filter, 1, true) then
+                    -- terpilih -> LayoutOrder kecil (atas), belum -> +100000 (bawah)
+                    local order = setRef[it] and i or (i + 100000)
                     local r = mk("TextButton", {
                         Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.cardSel,
-                        Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 72, Parent = sc })
+                        Text = "", AutoButtonColor = false, LayoutOrder = order, ZIndex = 72, Parent = sc })
                     corner(r, 5)
                     local ck = lbl(r, setRef[it] and "*" or "o", 13, setRef[it] and C.text or C.textMute)
                     ck.Position = UDim2.new(0, 8, 0, 0); ck.Size = UDim2.new(0, 20, 1, 0); ck.ZIndex = 72
@@ -2750,9 +2755,7 @@ do
                     nm.Position = UDim2.new(0, 32, 0, 0); nm.Size = UDim2.new(1, -36, 1, 0); nm.ZIndex = 72
                     r.MouseButton1Click:Connect(function()
                         setRef[it] = (not setRef[it]) or nil
-                        local on = setRef[it] == true
-                        ck.Text = on and "*" or "o"; ck.TextColor3 = on and C.text or C.textMute
-                        nm.TextColor3 = on and C.text or C.textDim
+                        build(sb.Text)  -- rebuild biar yg dipilih naik ke atas
                     end)
                 end
             end
@@ -2808,6 +2811,24 @@ do
         local tBtnL = lbl(tBtn, cfg.target ~= "" and cfg.target or "Pilih player...", 11,
             cfg.target ~= "" and C.text or C.textDim, Enum.TextXAlignment.Left)
         tBtnL.Position = UDim2.new(0, 10, 0, 0); tBtnL.Size = UDim2.new(1, -16, 1, 0)
+        -- simpan ref label biar bisa di-refresh stlh load config
+        _G.HactTelurGiftTargetLabels = _G.HactTelurGiftTargetLabels or {}
+        _G.HactTelurGiftTargetLabels[idx] = function()
+            if cfg.target == "" then
+                tBtnL.Text = "Pilih player..."
+                tBtnL.TextColor3 = C.textDim
+            else
+                local online = game:GetService("Players"):FindFirstChild(cfg.target)
+                if online then
+                    tBtnL.Text = cfg.target
+                    tBtnL.TextColor3 = C.text
+                else
+                    tBtnL.Text = cfg.target .. " (offline)"
+                    tBtnL.TextColor3 = C.accent
+                end
+            end
+        end
+        _G.HactTelurGiftTargetLabels[idx]()  -- set label awal (cek online/offline)
         tBtn.MouseButton1Click:Connect(function()
             -- popup pilih player di server (single-select)
             local dim = mk("Frame", {
@@ -2841,7 +2862,7 @@ do
                     nm.Position = UDim2.new(0, 12, 0, 0); nm.Size = UDim2.new(1, -16, 1, 0); nm.ZIndex = 72
                     r.MouseButton1Click:Connect(function()
                         cfg.target = pl.Name
-                        tBtnL.Text = pl.Name; tBtnL.TextColor3 = C.text
+                        _G.HactTelurGiftTargetLabels[idx]()
                         dim:Destroy()
                         if _G.HactTelurSave then pcall(_G.HactTelurSave) end
                     end)
