@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v11.6"
+local VERSION = "v11.8"
 
 -- ============ THEME ============
 local C = {
@@ -940,18 +940,15 @@ do
 end
 
 -- gift pet dgn filter lengkap LEWAT TRADE: target, set pet type, set mutasi, age, kg
-local function giftPetsByFilter(cfg)
-    local Players = game:GetService("Players")
-    local target = Players:FindFirstChild(cfg.target or "")
-    if not target then print("[HactTelur] target '"..tostring(cfg.target).."' gak ketemu"); return 0 end
+-- kumpulin uuid pet yg cocok filter cfg (tanpa kirim) — buat cek jumlah
+local function getMatchedPets(cfg)
     local bp = player:FindFirstChild("Backpack")
-    if not bp then return 0 end
+    if not bp then return {} end
     local hasPet = false; for _ in pairs(cfg.pets or {}) do hasPet = true break end
     local hasMut = false; for _ in pairs(cfg.muts or {}) do hasMut = true break end
     PetDetect.rebuild()
     local info = {}
     for _, p in ipairs(PetDetect.listBackpackPets()) do info[tostring(p.uuid):gsub("[{}]","")] = p end
-    -- kumpulin uuid pet yg cocok filter
     local matched = {}
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
@@ -979,6 +976,14 @@ local function giftPetsByFilter(cfg)
             end
         end
     end
+    return matched
+end
+
+local function giftPetsByFilter(cfg)
+    local Players = game:GetService("Players")
+    local target = Players:FindFirstChild(cfg.target or "")
+    if not target then print("[HactTelur] target '"..tostring(cfg.target).."' gak ketemu"); return 0 end
+    local matched = getMatchedPets(cfg)
     if #matched == 0 then return 0 end
     -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
     if cfg.unfavFirst then
@@ -2970,11 +2975,27 @@ do
                 gBtn.BackgroundColor3 = C.danger
                 syncWaitFullFlag()
                 task.spawn(function()
+                    local wasFull = false  -- lacak status full sebelumnya
                     while running do
-                        -- kalo mode tunggu full: cuma gift kalo backpack full
-                        if cfg.waitFull and not isBackpackFull() then
-                            statL.Text = "nunggu backpack full..."
-                            task.wait(2)
+                        if cfg.waitFull then
+                            -- mode tunggu full: trade SEKALI pas backpack full, lalu tunggu full lagi
+                            local full = isBackpackFull()
+                            if full and not wasFull then
+                                -- baru jadi full -> kirim pet cocok
+                                local sent = giftPetsByFilter(cfg)
+                                statL.Text = sent > 0 and ("Terkirim "..sent.." ke "..cfg.target) or "gak ada pet cocok"
+                                wasFull = true  -- udah dikirim, jgn ulang sampai full lagi
+                                task.wait(1)
+                            elseif full then
+                                -- masih full tapi udah dikirim tadi (sisanya gak cukup di-trade) -> diem
+                                statL.Text = "nunggu backpack full lagi..."
+                                task.wait(2)
+                            else
+                                -- belum full / udah turun -> reset, tunggu penuh lagi
+                                wasFull = false
+                                statL.Text = "nunggu backpack full..."
+                                task.wait(2)
+                            end
                         else
                             local sent = giftPetsByFilter(cfg)
                             statL.Text = sent > 0 and ("Terkirim "..sent.." ke "..cfg.target) or "nunggu pet cocok..."
