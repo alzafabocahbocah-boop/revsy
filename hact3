@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v12.2"
+local VERSION = "v12.6"
 
 -- ============ THEME ============
 local C = {
@@ -247,7 +247,15 @@ end
 
 -- build cache uuid -> PetData. MERGE semua container yg berisi pet kita
 -- (pet bisa kesebar di container #2 & #3; garden pet kadang di salah satunya).
-function PetDetect.rebuild()
+PetDetect.lastRebuild = 0
+PetDetect.rebuildTTL = 3  -- detik; getgc berat, jgn scan tiap saat
+function PetDetect.rebuild(force)
+    -- throttle: skip kalau baru rebuild < TTL detik lalu (kecuali force)
+    local now = tick()
+    if not force and PetDetect.cache and (now - PetDetect.lastRebuild) < PetDetect.rebuildTTL then
+        return PetDetect.count or 0
+    end
+    PetDetect.lastRebuild = now
     PetDetect.cache = {}
     if not getgc then return 0 end
     -- 1) kumpulin uuid pet kita (bp + char + garden)
@@ -500,6 +508,103 @@ local function sendWebhook(title, desc, color, fields)
             })
         end)
     end)
+end
+
+-- ============ TRACKING (buat cycle summary webhook) ============
+local Track = {
+    startTime = tick(),
+    cycleCount = 0,
+    totalHatched = 0,
+    totalSold = 0,
+    lastCycleTime = tick(),
+    eggBefore = nil,      -- snapshot egg sebelum aksi
+    lastEggDelta = 0,     -- selisih egg terakhir (+ = balik/nambah, - = kepake)
+    lastEggBefore = 0,
+    lastEggAfter = 0,
+    luckyHatch = 0,       -- akumulasi egg balik dari hatch
+    luckySell = 0,        -- akumulasi egg balik dari sell
+}
+-- hitung total egg (via _G yg di-set setelah EggDetect ada)
+local function totalEggNow()
+    if _G.HactTelurEggTotal then
+        local ok, v = pcall(_G.HactTelurEggTotal)
+        if ok then return v or 0 end
+    end
+    return 0
+end
+-- kirim cycle summary lengkap (gaya Node Hub)
+local function sendCycleSummary(kind, extra)
+    if not (Webhook.enabled and Webhook.url ~= "") then return end
+    extra = extra or {}
+    local now = tick()
+    local dur = now - Track.startTime
+    local function fmtTime(s)
+        s = math.floor(s)
+        return string.format("%02d:%02d:%02d", math.floor(s/3600), math.floor((s%3600)/60), s%60)
+    end
+    -- inventory
+    local cur = #PetDetect.listBackpackPets()
+    local maxP = 230
+    pcall(function()
+        local m = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+        if m and m > 0 then maxP = m end
+    end)
+    local free = maxP - cur
+    -- ping
+    local ping = 0
+    pcall(function() ping = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()) end)
+    -- persen lucky back (egg balik / total aksi)
+    local pctHatch = Track.totalHatched > 0 and (Track.luckyHatch / Track.totalHatched * 100) or 0
+    local pctSell = Track.totalSold > 0 and (Track.luckySell / Track.totalSold * 100) or 0
+    local cycleTime = now - Track.lastCycleTime
+    -- egg delta cycle ini
+    local eb, ea = Track.lastEggBefore, Track.lastEggAfter
+    local delta = Track.lastEggDelta
+    local sign = delta >= 0 and "+" or ""
+    -- LUCK: egg minus (kepake) = BAD, egg plus (balik) = GOOD
+    local luckTxt = delta < 0 and "🔴 BAD Luck" or "🟢 GOOD Luck"
+    local luckyLine = (kind == "sell")
+        and ("**🍀 Lucky Egg Back from Sell ("..string.format("%.2f", pctSell).."%)**\n• Pets sold: "..Track.totalSold.."\n• Egg balik: "..Track.luckySell)
+        or  ("**🍀 Lucky Egg Back from Hatch ("..string.format("%.2f", pctHatch).."%)**\n• Hatched: "..Track.totalHatched.."\n• Egg balik: "..Track.luckyHatch)
+
+    local desc = table.concat({
+        "**👤 PLAYER**",
+        "• "..player.Name.." (ID: "..tostring(player.UserId)..")",
+        "",
+        "**📊 TRACKING**",
+        "• Total Hatched: **"..Track.totalHatched.."**",
+        "• Total Sold: **"..Track.totalSold.."**",
+        "• Cycle Count: **"..Track.cycleCount.."**",
+        "• Duration: `"..fmtTime(dur).."`",
+        "• Cycle Time: `"..fmtTime(cycleTime).."`",
+        "• Game Ping: `"..ping.." ms`",
+        "",
+        "**📦 PETS INVENTORY**",
+        "• Total: **"..cur.."/"..maxP.."** (Free: "..free..")",
+        "",
+        "**🥚 Eggs Remaining**",
+        "• "..eb.." → "..ea.." ("..sign..delta..")",
+        "",
+        luckyLine,
+        "",
+        "**🎯 Luck: "..luckTxt.." ("..sign..delta..")**",
+    }, "\n")
+
+    local title = (kind == "sell") and ("💰 Cycle #"..Track.cycleCount.." — Sell")
+        or ("🥚 Cycle #"..Track.cycleCount.." — Hatch")
+    local color = (kind == "sell") and 15844367 or 3447003
+    task.spawn(function()
+        local embed = {
+            title = title, description = desc, color = color,
+            footer = { text = "Hact Telur • "..player.Name },
+        }
+        local body = game:GetService("HttpService"):JSONEncode({ embeds = { embed } })
+        pcall(function()
+            httpRequest({ Url = Webhook.url, Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" }, Body = body })
+        end)
+    end)
+    Track.lastCycleTime = now
 end
 
 local gui = mk("ScreenGui", {
@@ -981,8 +1086,13 @@ end
 
 local function giftPetsByFilter(cfg)
     local Players = game:GetService("Players")
-    local target = Players:FindFirstChild(cfg.target or "")
-    if not target then print("[HactTelur] target '"..tostring(cfg.target).."' gak ketemu"); return 0 end
+    -- kumpulin target ONLINE dari set cfg.targets
+    local targetList = {}
+    for name in pairs(cfg.targets or {}) do
+        local pl = Players:FindFirstChild(name)
+        if pl then table.insert(targetList, pl) end
+    end
+    if #targetList == 0 then print("[HactTelur] gak ada target online"); return 0 end
     local matched = getMatchedPets(cfg)
     if #matched == 0 then return 0 end
     -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
@@ -995,24 +1105,34 @@ local function giftPetsByFilter(cfg)
         end
         task.wait(0.3)
     end
-    local sent
-    if cfg.method == "gift" then
-        -- gift biasa (PetGiftingService, satu-satu via tool)
-        sent = 0
-        local bp = player:FindFirstChild("Backpack")
-        for _, u in ipairs(matched) do
-            local tool
-            for _, t in ipairs(bp:GetChildren()) do
-                if t:IsA("Tool") and tostring(t:GetAttribute("PET_UUID") or ""):gsub("[{}]","") == u then tool = t break end
+    -- bagi pet rata ke semua target (rotasi)
+    local buckets = {}
+    for i = 1, #targetList do buckets[i] = {} end
+    for i, u in ipairs(matched) do
+        local ti = ((i - 1) % #targetList) + 1
+        table.insert(buckets[ti], u)
+    end
+    local sent = 0
+    for ti, tgt in ipairs(targetList) do
+        local pets = buckets[ti]
+        if #pets > 0 then
+            if cfg.method == "gift" then
+                local bp = player:FindFirstChild("Backpack")
+                for _, u in ipairs(pets) do
+                    local tool
+                    for _, t in ipairs(bp:GetChildren()) do
+                        if t:IsA("Tool") and tostring(t:GetAttribute("PET_UUID") or ""):gsub("[{}]","") == u then tool = t break end
+                    end
+                    if tool and giftPetToTarget(tgt, tool) then sent = sent + 1 end
+                    task.wait(0.2)
+                end
+                print("[HactTelur] gift "..#pets.." pet ke "..tgt.Name)
+            else
+                sent = sent + tradePetsToTarget(tgt, pets)
+                print("[HactTelur] trade "..#pets.." pet ke "..tgt.Name)
+                task.wait(0.5)
             end
-            if tool and giftPetToTarget(target, tool) then sent = sent + 1 end
-            task.wait(0.2)
         end
-        print("[HactTelur] gift "..sent.." pet ke "..cfg.target)
-    else
-        -- via TRADE (default)
-        sent = tradePetsToTarget(target, matched)
-        print("[HactTelur] trade "..sent.." pet ke "..cfg.target)
     end
     return sent
 end
@@ -1132,12 +1252,18 @@ function doAutoSell()
     task.wait(2)
     -- 3) SELL ALL (yg gak difavorit kejual semua)
     if SellSys.sellAllRE then
+        local eggBefore = totalEggNow()  -- egg sebelum sell (skill Seal bisa balikin egg)
         pcall(function() SellSys.sellAllRE:FireServer() end)
         print("[HactTelur] Sell All! (dijual ~"..toSellCount..", dilindungi favorit: "..kept..")")
-        sendWebhook("💰 Auto Sell", "Pet dijual otomatis (Sell All).", 15844367, {
-            { name = "Dijual", value = "~"..toSellCount, inline = true },
-            { name = "Dilindungi", value = tostring(kept), inline = true },
-        })
+        Track.totalSold = Track.totalSold + toSellCount
+        task.wait(0.6)
+        local eggAfter = totalEggNow()
+        local delta = eggAfter - eggBefore  -- positif = egg balik (good luck)
+        Track.lastEggBefore = eggBefore
+        Track.lastEggAfter = eggAfter
+        Track.lastEggDelta = delta
+        if delta > 0 then Track.luckySell = Track.luckySell + delta end
+        sendCycleSummary("sell")
         return toSellCount
     else
         warn("[HactTelur] SellAllPets_RE gak ada")
@@ -1202,6 +1328,13 @@ function EggDetect.getCount(eggName)
         if k:lower():find(low, 1, true) or low:find(k:lower(), 1, true) then return v end
     end
     return 0
+end
+-- expose hitung total egg buat tracking webhook
+_G.HactTelurEggTotal = function()
+    EggDetect.scan()
+    local total = 0
+    for _, c in pairs(EggDetect.counts or {}) do total = total + (tonumber(c) or 0) end
+    return total
 end
 
 local function makeTabBtn(name, order)
@@ -1546,6 +1679,7 @@ end
 -- HATCH semua egg yg siap: PetEggService:FireServer("HatchPet", eggInstance)
 local function hatchAllEggs()
     if not Auto.eggRE then return 0 end
+    local eggBefore = totalEggNow()  -- egg sebelum hatch
     local eggs = getReadyEggs()
     local n = 0
     -- RAPID FIRE: hatch semua sekaligus tanpa delay (netas bareng)
@@ -1555,9 +1689,19 @@ local function hatchAllEggs()
     end
     if n > 0 then
         print("[HactTelur] hatch "..n.." egg bareng")
-        sendWebhook("🥚 Hatch Selesai", "Berhasil menetaskan telur!", 3447003, {
-            { name = "Egg Netas", value = tostring(n), inline = true },
-        })
+        Track.cycleCount = Track.cycleCount + 1
+        Track.totalHatched = Track.totalHatched + n
+        task.wait(0.6)  -- tunggu egg ke-update
+        local eggAfter = totalEggNow()
+        -- delta egg: netas n egg harusnya -n. kalo berkurang < n, ada egg balik (lucky)
+        local delta = eggAfter - eggBefore
+        Track.lastEggBefore = eggBefore
+        Track.lastEggAfter = eggAfter
+        Track.lastEggDelta = delta
+        -- egg balik = (egg yg gak hilang walau netas). expected -n, actual delta.
+        local back = math.max(0, n + delta)  -- n + (negatif delta) ; kalo delta=-n -> 0 balik
+        Track.luckyHatch = Track.luckyHatch + back
+        sendCycleSummary("hatch")
     end
     return n
 end
@@ -2704,9 +2848,9 @@ end
 -- 1) GIFT PET (3 slot: Gift 1/2/3, tiap slot lengkap) — collapsible ala MISC
 do
     local giftCfgs = {
-        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
-        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
-        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
+        { targets={}, pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
+        { targets={}, pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
+        { targets={}, pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
     }
     _G.HactTelurGiftCfgs = giftCfgs  -- buat save/load
     -- popup multi-select reusable (buat pet type / mutasi)
@@ -2808,29 +2952,30 @@ do
             Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 4),
             BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = body })
         corner(tBtn, 6); stroke(tBtn, C.border, 1)
-        local tBtnL = lbl(tBtn, cfg.target ~= "" and cfg.target or "Pilih player...", 11,
-            cfg.target ~= "" and C.text or C.textDim, Enum.TextXAlignment.Left)
+        local tBtnL = lbl(tBtn, "Pilih player...", 11, C.textDim, Enum.TextXAlignment.Left)
         tBtnL.Position = UDim2.new(0, 10, 0, 0); tBtnL.Size = UDim2.new(1, -16, 1, 0)
-        -- simpan ref label biar bisa di-refresh stlh load config
+        -- label target: tampil jumlah / nama (offline kalau gak di server)
         _G.HactTelurGiftTargetLabels = _G.HactTelurGiftTargetLabels or {}
         _G.HactTelurGiftTargetLabels[idx] = function()
-            if cfg.target == "" then
-                tBtnL.Text = "Pilih player..."
-                tBtnL.TextColor3 = C.textDim
-            else
-                local online = game:GetService("Players"):FindFirstChild(cfg.target)
-                if online then
-                    tBtnL.Text = cfg.target
-                    tBtnL.TextColor3 = C.text
+            local Players = game:GetService("Players")
+            local names = {}
+            for n in pairs(cfg.targets or {}) do table.insert(names, n) end
+            if #names == 0 then
+                tBtnL.Text = "Pilih player..."; tBtnL.TextColor3 = C.textDim
+            elseif #names == 1 then
+                local n = names[1]
+                if Players:FindFirstChild(n) then
+                    tBtnL.Text = n; tBtnL.TextColor3 = C.text
                 else
-                    tBtnL.Text = cfg.target .. " (offline)"
-                    tBtnL.TextColor3 = C.accent
+                    tBtnL.Text = n .. " (offline)"; tBtnL.TextColor3 = C.accent
                 end
+            else
+                tBtnL.Text = #names .. " target"; tBtnL.TextColor3 = C.text
             end
         end
-        _G.HactTelurGiftTargetLabels[idx]()  -- set label awal (cek online/offline)
+        _G.HactTelurGiftTargetLabels[idx]()
         tBtn.MouseButton1Click:Connect(function()
-            -- popup pilih player di server (single-select)
+            -- popup pilih player MULTI-SELECT
             local dim = mk("Frame", {
                 Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
                 BackgroundTransparency = 0.5, ZIndex = 70, Parent = miscContent })
@@ -2838,7 +2983,7 @@ do
                 Size = UDim2.new(0, 300, 0, 320), Position = UDim2.new(0.5, -150, 0.5, -160),
                 BackgroundColor3 = C.panel, ZIndex = 71, Parent = dim })
             corner(box, 10); stroke(box, C.border, 1)
-            local hd = lbl(box, "Pilih Player Target", 13, C.text); hd.Font = FONT_B
+            local hd = lbl(box, "Pilih Target (bisa banyak)", 13, C.text); hd.Font = FONT_B
             hd.Position = UDim2.new(0, 14, 0, 10); hd.Size = UDim2.new(1, -50, 0, 20); hd.ZIndex = 72
             local cls = mk("TextButton", {
                 Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -32, 0, 8),
@@ -2850,24 +2995,34 @@ do
                 BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
                 CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
                 ZIndex = 72, Parent = box })
-            mk("UIListLayout", { Padding = UDim.new(0, 3), Parent = sc })
+            mk("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc })
             local Players = game:GetService("Players")
-            for i, pl in ipairs(Players:GetPlayers()) do
-                if pl ~= player then
-                    local r = mk("TextButton", {
-                        Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.cardSel,
-                        Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 72, Parent = sc })
-                    corner(r, 5)
-                    local nm = lbl(r, pl.Name, 11, C.text, Enum.TextXAlignment.Left)
-                    nm.Position = UDim2.new(0, 12, 0, 0); nm.Size = UDim2.new(1, -16, 1, 0); nm.ZIndex = 72
-                    r.MouseButton1Click:Connect(function()
-                        cfg.target = pl.Name
-                        _G.HactTelurGiftTargetLabels[idx]()
-                        dim:Destroy()
-                        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                    end)
+            local function buildPlayers()
+                for _, c in ipairs(sc:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+                local i = 0
+                for _, pl in ipairs(Players:GetPlayers()) do
+                    if pl ~= player then
+                        i = i + 1
+                        local chosen = cfg.targets[pl.Name] == true
+                        local r = mk("TextButton", {
+                            Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.cardSel,
+                            Text = "", AutoButtonColor = false, LayoutOrder = chosen and i or (i + 100000),
+                            ZIndex = 72, Parent = sc })
+                        corner(r, 5)
+                        local ck = lbl(r, chosen and "*" or "o", 13, chosen and C.text or C.textMute)
+                        ck.Position = UDim2.new(0, 8, 0, 0); ck.Size = UDim2.new(0, 20, 1, 0); ck.ZIndex = 72
+                        local nm = lbl(r, pl.Name, 11, chosen and C.text or C.textDim, Enum.TextXAlignment.Left)
+                        nm.Position = UDim2.new(0, 32, 0, 0); nm.Size = UDim2.new(1, -36, 1, 0); nm.ZIndex = 72
+                        r.MouseButton1Click:Connect(function()
+                            cfg.targets[pl.Name] = (not cfg.targets[pl.Name]) or nil
+                            buildPlayers()
+                            _G.HactTelurGiftTargetLabels[idx]()
+                            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+                        end)
+                    end
                 end
             end
+            buildPlayers()
             cls.MouseButton1Click:Connect(function() dim:Destroy() end)
         end)
         mk("Frame", {
@@ -2990,7 +3145,8 @@ do
         local running = false
         gBtn.MouseButton1Click:Connect(function()
             if not running then
-                if cfg.target == "" then statL.Text = "pilih target dulu"; return end
+                local nt = 0; for _ in pairs(cfg.targets or {}) do nt = nt + 1 end
+                if nt == 0 then statL.Text = "pilih target dulu"; return end
                 running = true
                 gBtn.Text = "Auto Gift: ON (stop)"
                 gBtn.BackgroundColor3 = C.danger
@@ -3004,7 +3160,7 @@ do
                             if full and not wasFull then
                                 -- baru jadi full -> kirim pet cocok
                                 local sent = giftPetsByFilter(cfg)
-                                statL.Text = sent > 0 and ("Terkirim "..sent.." ke "..cfg.target) or "gak ada pet cocok"
+                                statL.Text = sent > 0 and ("Terkirim "..sent.." pet") or "gak ada pet cocok"
                                 wasFull = true  -- udah dikirim, jgn ulang sampai full lagi
                                 task.wait(1)
                             elseif full then
@@ -3019,7 +3175,7 @@ do
                             end
                         else
                             local sent = giftPetsByFilter(cfg)
-                            statL.Text = sent > 0 and ("Terkirim "..sent.." ke "..cfg.target) or "nunggu pet cocok..."
+                            statL.Text = sent > 0 and ("Terkirim "..sent.." pet") or "nunggu pet cocok..."
                             task.wait(1)
                         end
                     end
@@ -3196,7 +3352,14 @@ local function loadConfig()
         for i = 1, 3 do
             if data.giftCfgs[i] and _G.HactTelurGiftCfgs[i] then
                 local src, dst = data.giftCfgs[i], _G.HactTelurGiftCfgs[i]
-                dst.target = src.target or ""
+                -- kompat: target lama (string) -> targets set
+                if type(src.targets) == "table" then
+                    dst.targets = src.targets
+                elseif type(src.target) == "string" and src.target ~= "" then
+                    dst.targets = { [src.target] = true }
+                else
+                    dst.targets = {}
+                end
                 dst.pets = src.pets or {}
                 dst.muts = src.muts or {}
                 dst.age = src.age or 0
