@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v11.4"
+local VERSION = "v11.6"
 
 -- ============ THEME ============
 local C = {
@@ -894,6 +894,51 @@ local function giftPetToTarget(targetPlayer, petTool)
     return sent
 end
 -- gift semua pet jenis tertentu ke target (by nama target + set pet type)
+-- ============ AUTO ACCEPT gift & trade MASUK ============
+local AutoAcc = { gift = false, trade = false, lastTradeID = nil }
+do
+    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+    if ge then
+        -- gift masuk: GiftPet.OnClientEvent -> AcceptPetGift(true, uuid)
+        local giftRE = ge:FindFirstChild("GiftPet")
+        local acceptGiftRE = ge:FindFirstChild("AcceptPetGift")
+        if giftRE and acceptGiftRE then
+            giftRE.OnClientEvent:Connect(function(petUUID)
+                if not AutoAcc.gift then return end
+                pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
+                task.spawn(function() task.wait(0.05); pcall(function() acceptGiftRE:FireServer(true, petUUID) end) end)
+                print("[HactTelur] auto-accept gift masuk")
+            end)
+        end
+        -- trade masuk: TradeEvents.SendRequest.OnClientEvent -> RespondRequest(tradeID, true)
+        local te = ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE = te:FindFirstChild("SendRequest")
+            local respondRE = te:FindFirstChild("RespondRequest")
+            if sendReqRE and respondRE then
+                sendReqRE.OnClientEvent:Connect(function(...)
+                    if not AutoAcc.trade then return end
+                    local args = {...}
+                    if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("-") then
+                        AutoAcc.lastTradeID = args[1]
+                    end
+                    if AutoAcc.lastTradeID then
+                        pcall(function() respondRE:FireServer(AutoAcc.lastTradeID, true) end)
+                        print("[HactTelur] auto-accept trade masuk")
+                        -- spam accept GUI biar trade kelar
+                        task.spawn(function()
+                            for i = 1, 8 do
+                                if not AutoAcc.trade then break end
+                                autoAcceptTrade(); task.wait(0.5)
+                            end
+                        end)
+                    end
+                end)
+            end
+        end
+    end
+end
+
 -- gift pet dgn filter lengkap LEWAT TRADE: target, set pet type, set mutasi, age, kg
 local function giftPetsByFilter(cfg)
     local Players = game:GetService("Players")
@@ -1626,9 +1671,10 @@ local function automationLoop()
         -- selalu jaga pet tim ke-fav (tiap ~10 iterasi)
         favTick = favTick + 1
         if favTick >= 10 then favTick = 0; favTeamPets() end
-        -- backpack penuh? equip tim SEAL dulu (skill balikin pet jadi egg), baru jual
+        -- backpack penuh? equip tim SEAL dulu, baru jual.
+        -- TAPI kalo mode gift-tunggu-full ON, auto-sell dimatiin (gift yg ambil alih)
         local full, cur, max = isBackpackFull()
-        if config.autoSell and full and not Auto.sellExhausted then
+        if config.autoSell and full and not Auto.sellExhausted and not Auto.giftWaitFull then
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
             favTeamPets()  -- pastiin pet tim ke-fav SEBELUM sell all (jgn kejual)
             equipTeam("Sell Tim")
@@ -2651,9 +2697,9 @@ end
 -- 1) GIFT PET (3 slot: Gift 1/2/3, tiap slot lengkap) — collapsible ala MISC
 do
     local giftCfgs = {
-        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false },
-        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false },
-        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false },
+        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
+        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
+        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
     }
     _G.HactTelurGiftCfgs = giftCfgs  -- buat save/load
     -- popup multi-select reusable (buat pet type / mutasi)
@@ -2729,7 +2775,7 @@ do
         local expanded = false
         -- body
         local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 320), Position = UDim2.new(0, 10, 0, 44),
+            Size = UDim2.new(1, -20, 0, 358), Position = UDim2.new(0, 10, 0, 44),
             BackgroundTransparency = 1, Visible = false, Parent = row })
         local function fieldRow(y, labelTxt, btnTxt, onClick)
             local fl = lbl(body, labelTxt, 12, C.text, Enum.TextXAlignment.Left)
@@ -2879,14 +2925,42 @@ do
         end)
         mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 248),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-        -- tombol Gift (toggle auto-loop: gift terus sampai distop)
+        -- Trade nunggu backpack full (kalo ON: auto-sell mati, gift yg trigger pas full)
+        local wL = lbl(body, "Tunggu BP Full", 12, C.text, Enum.TextXAlignment.Left)
+        wL.Position = UDim2.new(0, 0, 0, 254); wL.Size = UDim2.new(0.6, 0, 0, 28)
+        local wSw = mk("TextButton", {
+            Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -44, 0, 256),
+            BackgroundColor3 = cfg.waitFull and C.accent or C.input, Text = "", AutoButtonColor = false, Parent = body })
+        corner(wSw, 12)
+        local wKnob = mk("Frame", {
+            Size = UDim2.new(0, 18, 0, 18),
+            Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+            BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim, Parent = wSw })
+        corner(wKnob, 9)
+        local function syncWaitFullFlag()
+            -- kalo ADA slot gift yg waitFull ON, matiin auto-sell (gift yg ambil alih)
+            local any = false
+            for _, c in ipairs(_G.HactTelurGiftCfgs or {}) do if c.waitFull then any = true break end end
+            Auto.giftWaitFull = any
+        end
+        wSw.MouseButton1Click:Connect(function()
+            cfg.waitFull = not cfg.waitFull
+            wSw.BackgroundColor3 = cfg.waitFull and C.accent or C.input
+            wKnob.BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim
+            wKnob.Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+            syncWaitFullFlag()
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 286),
+            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
+        -- tombol Gift (toggle auto-loop)
         local gBtn = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 256),
+            Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 294),
             BackgroundColor3 = C.accent, Text = "Auto Gift: OFF", Font = FONT_B, TextSize = 12,
             TextColor3 = Color3.fromRGB(17,17,17), AutoButtonColor = false, Parent = body })
         corner(gBtn, 7)
         local statL = lbl(body, "", 10, C.textMute, Enum.TextXAlignment.Center)
-        statL.Position = UDim2.new(0, 0, 0, 292); statL.Size = UDim2.new(1, 0, 0, 16)
+        statL.Position = UDim2.new(0, 0, 0, 330); statL.Size = UDim2.new(1, 0, 0, 16)
         local running = false
         gBtn.MouseButton1Click:Connect(function()
             if not running then
@@ -2894,11 +2968,18 @@ do
                 running = true
                 gBtn.Text = "Auto Gift: ON (stop)"
                 gBtn.BackgroundColor3 = C.danger
+                syncWaitFullFlag()
                 task.spawn(function()
                     while running do
-                        local sent = giftPetsByFilter(cfg)
-                        statL.Text = sent > 0 and ("Terkirim "..sent.." ke "..cfg.target) or "nunggu pet cocok..."
-                        task.wait(1)  -- jeda antar putaran gift
+                        -- kalo mode tunggu full: cuma gift kalo backpack full
+                        if cfg.waitFull and not isBackpackFull() then
+                            statL.Text = "nunggu backpack full..."
+                            task.wait(2)
+                        else
+                            local sent = giftPetsByFilter(cfg)
+                            statL.Text = sent > 0 and ("Terkirim "..sent.." ke "..cfg.target) or "nunggu pet cocok..."
+                            task.wait(1)
+                        end
                     end
                 end)
             else
@@ -2913,7 +2994,7 @@ do
             expanded = not expanded
             body.Visible = expanded
             chev.Text = expanded and "v" or ">"
-            row.Size = expanded and UDim2.new(1, 0, 0, 372) or UDim2.new(1, 0, 0, 40)
+            row.Size = expanded and UDim2.new(1, 0, 0, 410) or UDim2.new(1, 0, 0, 40)
         end)
     end
     for i = 1, 3 do makeGiftSlot(i) end
@@ -2947,6 +3028,17 @@ miscActionRow(12, "Unfav Pet", "Hapus favorit semua pet di backpack", "Unfav All
         btn.Text = "-"..n
         task.wait(1.2); btn.Text = "Unfav All"
     end)
+end)
+
+-- Auto Accept Gift masuk
+miscToggleRow(12.5, "Auto Accept Gift", "Terima gift masuk otomatis", function(on)
+    AutoAcc.gift = on
+    print("[HactTelur] Auto Accept Gift "..(on and "ON" or "OFF"))
+end)
+-- Auto Accept Trade masuk
+miscToggleRow(12.7, "Auto Accept Trade", "Terima trade masuk otomatis", function(on)
+    AutoAcc.trade = on
+    print("[HactTelur] Auto Accept Trade "..(on and "ON" or "OFF"))
 end)
 
 -- 5) WEBHOOK DISCORD (input URL + toggle)
@@ -3069,6 +3161,7 @@ local function loadConfig()
                 dst.kg = src.kg or 0
                 dst.method = src.method or "trade"
                 dst.unfavFirst = src.unfavFirst or false
+                dst.waitFull = src.waitFull or false
             end
         end
     end
