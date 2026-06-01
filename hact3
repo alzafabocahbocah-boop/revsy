@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v10.7"
+local VERSION = "v10.8"
 
 -- ============ THEME ============
 local C = {
@@ -750,6 +750,35 @@ local function favoritePet(tool)
     return false
 end
 
+-- ============ TRADE PET (tiru revsy: SendRequest -> AddItem) ============
+local TradeSys = {}
+do
+    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+    local te = ge and ge:FindFirstChild("TradeEvents")
+    if te then
+        TradeSys.sendReqRE = te:FindFirstChild("SendRequest")
+        TradeSys.addItemRE = te:FindFirstChild("AddItem")
+        TradeSys.respondRE = te:FindFirstChild("RespondRequest")
+    end
+end
+-- kirim pet ke target via TRADE. petList = array uuid
+local function tradePetsToTarget(targetPlayer, petList)
+    if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+    pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
+    task.wait(0.8)
+    local added = 0
+    for _, uuid in ipairs(petList) do
+        local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
+        for _, t in ipairs({"Pet","Ticket","Item"}) do
+            local ok = pcall(function() TradeSys.addItemRE:FireServer(t, u) end)
+            if ok then break end
+        end
+        added = added + 1
+        task.wait(0.4)
+    end
+    return added
+end
+
 -- ============ GIFT PET (tiru market sc) ============
 local GiftSys = {}
 do
@@ -794,7 +823,7 @@ local function giftPetToTarget(targetPlayer, petTool)
     return sent
 end
 -- gift semua pet jenis tertentu ke target (by nama target + set pet type)
--- gift pet dgn filter lengkap: target, set pet type, set mutasi, age min, kg max
+-- gift pet dgn filter lengkap LEWAT TRADE: target, set pet type, set mutasi, age, kg
 local function giftPetsByFilter(cfg)
     local Players = game:GetService("Players")
     local target = Players:FindFirstChild(cfg.target or "")
@@ -803,14 +832,16 @@ local function giftPetsByFilter(cfg)
     if not bp then return 0 end
     local hasPet = false; for _ in pairs(cfg.pets or {}) do hasPet = true break end
     local hasMut = false; for _ in pairs(cfg.muts or {}) do hasMut = true break end
-    local n = 0
     PetDetect.rebuild()
     local info = {}
     for _, p in ipairs(PetDetect.listBackpackPets()) do info[tostring(p.uuid):gsub("[{}]","")] = p end
+    -- kumpulin uuid pet yg cocok filter
+    local matched = {}
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
             local uuid = t:GetAttribute("PET_UUID")
-            local p = uuid and info[tostring(uuid):gsub("[{}]","")]
+            local uclean = uuid and tostring(uuid):gsub("[{}]","")
+            local p = uclean and info[uclean]
             local base = t.Name:gsub("%s*%[.*$", ""):gsub("%s+$", "")
             local okPet = not hasPet
             if hasPet then for pt in pairs(cfg.pets) do if base:lower():find(pt:lower(),1,true) then okPet = true break end end end
@@ -823,18 +854,20 @@ local function giftPetsByFilter(cfg)
             end
             local okKg = true
             if cfg.kg and cfg.kg ~= 0 and p then
-                local kgVal = p.age1Kg or p.dispKg or 0  -- pakai berat age-1
+                local kgVal = p.age1Kg or p.dispKg or 0
                 if cfg.kg > 0 then okKg = kgVal >= cfg.kg
                 else okKg = kgVal <= math.abs(cfg.kg) end
             end
-            if okPet and okMut and okAge and okKg then
-                if giftPetToTarget(target, t) then n = n + 1 end
-                task.wait(0.2)
+            if okPet and okMut and okAge and okKg and uclean then
+                table.insert(matched, uclean)
             end
         end
     end
-    print("[HactTelur] gift "..n.." pet ke "..cfg.target)
-    return n
+    if #matched == 0 then return 0 end
+    -- kirim via TRADE (sekaligus)
+    local sent = tradePetsToTarget(target, matched)
+    print("[HactTelur] trade "..sent.." pet ke "..cfg.target)
+    return sent
 end
 local function giftPetsByType(targetName, petTypeSet)
     local Players = game:GetService("Players")
@@ -2703,22 +2736,34 @@ do
             cfg.kg = tonumber(kBox.Text) or 0; kBox.Text = tostring(cfg.kg)
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
         end)
-        -- tombol Gift
+        -- tombol Gift (toggle auto-loop: gift terus sampai distop)
         local gBtn = mk("TextButton", {
             Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 178),
-            BackgroundColor3 = C.accent, Text = "Gift Sekarang", Font = FONT_B, TextSize = 12,
+            BackgroundColor3 = C.accent, Text = "Auto Gift: OFF", Font = FONT_B, TextSize = 12,
             TextColor3 = Color3.fromRGB(17,17,17), AutoButtonColor = false, Parent = body })
         corner(gBtn, 7)
         local statL = lbl(body, "", 10, C.textMute, Enum.TextXAlignment.Center)
         statL.Position = UDim2.new(0, 0, 0, 214); statL.Size = UDim2.new(1, 0, 0, 16)
+        local running = false
         gBtn.MouseButton1Click:Connect(function()
-            if cfg.target == "" then statL.Text = "isi target dulu"; return end
-            gBtn.Text = "..."
-            task.spawn(function()
-                local sent = giftPetsByFilter(cfg)
-                statL.Text = "Terkirim: "..sent.." ke "..cfg.target
-                gBtn.Text = "Gift Sekarang"
-            end)
+            if not running then
+                if cfg.target == "" then statL.Text = "pilih target dulu"; return end
+                running = true
+                gBtn.Text = "Auto Gift: ON (stop)"
+                gBtn.BackgroundColor3 = C.danger
+                task.spawn(function()
+                    while running do
+                        local sent = giftPetsByFilter(cfg)
+                        statL.Text = sent > 0 and ("Terkirim "..sent.." ke "..cfg.target) or "nunggu pet cocok..."
+                        task.wait(2)  -- jeda antar putaran gift
+                    end
+                end)
+            else
+                running = false
+                gBtn.Text = "Auto Gift: OFF"
+                gBtn.BackgroundColor3 = C.accent
+                statL.Text = "dihentikan"
+            end
         end)
         -- toggle expand
         head.MouseButton1Click:Connect(function()
