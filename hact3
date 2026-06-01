@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v11.2"
+local VERSION = "v11.4"
 
 -- ============ THEME ============
 local C = {
@@ -761,23 +761,47 @@ do
         TradeSys.respondRE = te:FindFirstChild("RespondRequest")
     end
 end
--- auto-accept trade dari sisi kita (tekan tombol Accept di TradingUI + fire remote)
-local function autoAcceptTrade()
+-- auto-accept trade dari sisi kita (tekan Accept + auto-YES popup unfair)
+local function clickBtnByText(root, texts)
+    if not root then return false end
+    local hit = false
     pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        local tui = pg and pg:FindFirstChild("TradingUI")
-        local lt = tui and tui:FindFirstChild("LiveTrade")
-        if not lt or not lt.Visible then return end
-        local opts = lt:FindFirstChild("Options")
-        local acc = opts and opts:FindFirstChild("Accept")
-        if acc then
-            if firesignal then pcall(function() firesignal(acc.Activated) end) end
-            if getconnections then
-                for _, c in ipairs(getconnections(acc.Activated)) do
-                    pcall(function() c:Fire() end)
+        for _, d in ipairs(root:GetDescendants()) do
+            if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                local txt = (d:IsA("TextButton") and d.Text or ""):lower()
+                for _, want in ipairs(texts) do
+                    if txt == want or txt:find(want, 1, true) then
+                        if firesignal then pcall(function() firesignal(d.Activated) end) end
+                        if getconnections then
+                            for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end
+                        end
+                        hit = true
+                    end
                 end
             end
         end
+    end)
+    return hit
+end
+local function autoAcceptTrade()
+    pcall(function()
+        local pg = player:FindFirstChild("PlayerGui")
+        if not pg then return end
+        local tui = pg:FindFirstChild("TradingUI")
+        local lt = tui and tui:FindFirstChild("LiveTrade")
+        if lt and lt.Visible then
+            local opts = lt:FindFirstChild("Options")
+            local acc = opts and opts:FindFirstChild("Accept")
+            if acc then
+                if firesignal then pcall(function() firesignal(acc.Activated) end) end
+                if getconnections then
+                    for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end
+                end
+            end
+        end
+        -- auto-YES popup "Unfair Trade" (cari tombol YES/Confirm di seluruh PlayerGui)
+        clickBtnByText(pg, {"yes", "confirm", "continue", "lanjut"})
+        -- backup remote
         local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
         te = te and te:FindFirstChild("TradeEvents")
         if te then
@@ -793,8 +817,26 @@ local function tradePetsToTarget(targetPlayer, petList)
     pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
     task.wait(0.4)
     local added = 0
-    -- AddItem: tahu type yg bener ("Pet") jadi gak usah loop 3x, langsung Pet
+    -- deteksi notif "you can't add more items" di layar
+    local function cantAddMore()
+        local found = false
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            if not pg then return end
+            for _, d in ipairs(pg:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Visible then
+                    local t = (d.Text or ""):lower()
+                    if t:find("can't add more") or t:find("cant add more") or t:find("can.t add more") then
+                        found = true; break
+                    end
+                end
+            end
+        end)
+        return found
+    end
     for _, uuid in ipairs(petList) do
+        -- berhenti kalau slot trade udah penuh (notif muncul)
+        if cantAddMore() then break end
         local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
         pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
         added = added + 1
