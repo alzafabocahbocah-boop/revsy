@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v10.9"
+local VERSION = "v11.1"
 
 -- ============ THEME ============
 local C = {
@@ -895,9 +895,35 @@ local function giftPetsByFilter(cfg)
         end
     end
     if #matched == 0 then return 0 end
-    -- kirim via TRADE (sekaligus)
-    local sent = tradePetsToTarget(target, matched)
-    print("[HactTelur] trade "..sent.." pet ke "..cfg.target)
+    -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
+    if cfg.unfavFirst then
+        local info2 = {}
+        for _, p in ipairs(PetDetect.listBackpackPets()) do info2[tostring(p.uuid):gsub("[{}]","")] = p end
+        for _, u in ipairs(matched) do
+            local p = info2[u]
+            if p and p.fav and p.tool then favoritePet(p.tool); task.wait(0.04) end
+        end
+        task.wait(0.3)
+    end
+    local sent
+    if cfg.method == "gift" then
+        -- gift biasa (PetGiftingService, satu-satu via tool)
+        sent = 0
+        local bp = player:FindFirstChild("Backpack")
+        for _, u in ipairs(matched) do
+            local tool
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") and tostring(t:GetAttribute("PET_UUID") or ""):gsub("[{}]","") == u then tool = t break end
+            end
+            if tool and giftPetToTarget(target, tool) then sent = sent + 1 end
+            task.wait(0.2)
+        end
+        print("[HactTelur] gift "..sent.." pet ke "..cfg.target)
+    else
+        -- via TRADE (default)
+        sent = tradePetsToTarget(target, matched)
+        print("[HactTelur] trade "..sent.." pet ke "..cfg.target)
+    end
     return sent
 end
 local function giftPetsByType(targetName, petTypeSet)
@@ -2585,9 +2611,9 @@ end
 -- 1) GIFT PET (3 slot: Gift 1/2/3, tiap slot lengkap) — collapsible ala MISC
 do
     local giftCfgs = {
-        { target="", pets={}, muts={}, age=0, kg=0 },
-        { target="", pets={}, muts={}, age=0, kg=0 },
-        { target="", pets={}, muts={}, age=0, kg=0 },
+        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false },
+        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false },
+        { target="", pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false },
     }
     _G.HactTelurGiftCfgs = giftCfgs  -- buat save/load
     -- popup multi-select reusable (buat pet type / mutasi)
@@ -2663,22 +2689,26 @@ do
         local expanded = false
         -- body
         local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 248), Position = UDim2.new(0, 10, 0, 44),
+            Size = UDim2.new(1, -20, 0, 320), Position = UDim2.new(0, 10, 0, 44),
             BackgroundTransparency = 1, Visible = false, Parent = row })
         local function fieldRow(y, labelTxt, btnTxt, onClick)
-            local fl = lbl(body, labelTxt, 11, C.textDim, Enum.TextXAlignment.Left)
+            local fl = lbl(body, labelTxt, 12, C.text, Enum.TextXAlignment.Left)
             fl.Position = UDim2.new(0, 0, 0, y); fl.Size = UDim2.new(0.4, 0, 0, 28)
             local b = mk("TextButton", {
                 Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, y),
                 BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = body })
             corner(b, 6); stroke(b, C.border, 1)
-            local bl = lbl(b, btnTxt, 11, C.textDim, Enum.TextXAlignment.Left)
+            local bl = lbl(b, btnTxt, 11, C.text, Enum.TextXAlignment.Left)
             bl.Position = UDim2.new(0, 10, 0, 0); bl.Size = UDim2.new(1, -16, 1, 0)
             b.MouseButton1Click:Connect(function() onClick(bl) end)
+            -- garis pemisah bawah field
+            mk("Frame", {
+                Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, y + 32),
+                BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
             return bl
         end
-        -- Target (input box)
-        local tlbl = lbl(body, "Target", 11, C.textDim, Enum.TextXAlignment.Left)
+        -- Target (pilih player)
+        local tlbl = lbl(body, "Target", 12, C.text, Enum.TextXAlignment.Left)
         tlbl.Position = UDim2.new(0, 0, 0, 4); tlbl.Size = UDim2.new(0.4, 0, 0, 28)
         local tBtn = mk("TextButton", {
             Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 4),
@@ -2728,6 +2758,9 @@ do
             end
             cls.MouseButton1Click:Connect(function() dim:Destroy() end)
         end)
+        mk("Frame", {
+            Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 36),
+            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
         -- Pet Type
         local petL = fieldRow(38, "Pet Type", "Select Pet...", function(bl)
             openMultiPicker("Pilih Pet Type", PET_LIST, cfg.pets, function()
@@ -2743,9 +2776,8 @@ do
             end)
         end)
         -- Age (min)
-        local aL = lbl(body, "Age (min)", 11, C.textDim, Enum.TextXAlignment.Left)
+        local aL = lbl(body, "Age (-=bwh)", 12, C.text, Enum.TextXAlignment.Left)
         aL.Position = UDim2.new(0, 0, 0, 106); aL.Size = UDim2.new(0.4, 0, 0, 28)
-        aL.Text = "Age (-=bwh)"
         local aBox = mk("TextBox", {
             Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 106),
             BackgroundColor3 = C.input, Text = tostring(cfg.age or 0), Font = FONT, TextSize = 11, TextColor3 = C.text,
@@ -2755,8 +2787,10 @@ do
             cfg.age = tonumber(aBox.Text) or 0; aBox.Text = tostring(cfg.age)
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
         end)
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 138),
+            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
         -- KG (-=di bawah)
-        local kL = lbl(body, "KG (-=bwh)", 11, C.textDim, Enum.TextXAlignment.Left)
+        local kL = lbl(body, "KG (-=bwh)", 12, C.text, Enum.TextXAlignment.Left)
         kL.Position = UDim2.new(0, 0, 0, 140); kL.Size = UDim2.new(0.4, 0, 0, 28)
         local kBox = mk("TextBox", {
             Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 140),
@@ -2767,14 +2801,52 @@ do
             cfg.kg = tonumber(kBox.Text) or 0; kBox.Text = tostring(cfg.kg)
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
         end)
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 172),
+            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
+        -- Metode: Trade / Gift (tombol switch)
+        local mL = lbl(body, "Metode", 12, C.text, Enum.TextXAlignment.Left)
+        mL.Position = UDim2.new(0, 0, 0, 178); mL.Size = UDim2.new(0.4, 0, 0, 28)
+        local mBtn = mk("TextButton", {
+            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 178),
+            BackgroundColor3 = C.input, Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)",
+            Font = FONT_B, TextSize = 11, TextColor3 = C.text, AutoButtonColor = false, Parent = body })
+        corner(mBtn, 6); stroke(mBtn, C.border, 1)
+        mBtn.MouseButton1Click:Connect(function()
+            cfg.method = (cfg.method == "gift") and "trade" or "gift"
+            mBtn.Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)"
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 210),
+            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
+        -- Unfav dulu sebelum gift (toggle)
+        local uL = lbl(body, "Unfav dulu", 12, C.text, Enum.TextXAlignment.Left)
+        uL.Position = UDim2.new(0, 0, 0, 216); uL.Size = UDim2.new(0.6, 0, 0, 28)
+        local uSw = mk("TextButton", {
+            Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -44, 0, 218),
+            BackgroundColor3 = cfg.unfavFirst and C.accent or C.input, Text = "", AutoButtonColor = false, Parent = body })
+        corner(uSw, 12)
+        local uKnob = mk("Frame", {
+            Size = UDim2.new(0, 18, 0, 18),
+            Position = cfg.unfavFirst and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+            BackgroundColor3 = cfg.unfavFirst and Color3.fromRGB(17,17,17) or C.textDim, Parent = uSw })
+        corner(uKnob, 9)
+        uSw.MouseButton1Click:Connect(function()
+            cfg.unfavFirst = not cfg.unfavFirst
+            uSw.BackgroundColor3 = cfg.unfavFirst and C.accent or C.input
+            uKnob.BackgroundColor3 = cfg.unfavFirst and Color3.fromRGB(17,17,17) or C.textDim
+            uKnob.Position = cfg.unfavFirst and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 248),
+            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
         -- tombol Gift (toggle auto-loop: gift terus sampai distop)
         local gBtn = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 178),
+            Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 256),
             BackgroundColor3 = C.accent, Text = "Auto Gift: OFF", Font = FONT_B, TextSize = 12,
             TextColor3 = Color3.fromRGB(17,17,17), AutoButtonColor = false, Parent = body })
         corner(gBtn, 7)
         local statL = lbl(body, "", 10, C.textMute, Enum.TextXAlignment.Center)
-        statL.Position = UDim2.new(0, 0, 0, 214); statL.Size = UDim2.new(1, 0, 0, 16)
+        statL.Position = UDim2.new(0, 0, 0, 292); statL.Size = UDim2.new(1, 0, 0, 16)
         local running = false
         gBtn.MouseButton1Click:Connect(function()
             if not running then
@@ -2801,7 +2873,7 @@ do
             expanded = not expanded
             body.Visible = expanded
             chev.Text = expanded and "v" or ">"
-            row.Size = expanded and UDim2.new(1, 0, 0, 300) or UDim2.new(1, 0, 0, 40)
+            row.Size = expanded and UDim2.new(1, 0, 0, 372) or UDim2.new(1, 0, 0, 40)
         end)
     end
     for i = 1, 3 do makeGiftSlot(i) end
@@ -2955,6 +3027,8 @@ local function loadConfig()
                 dst.muts = src.muts or {}
                 dst.age = src.age or 0
                 dst.kg = src.kg or 0
+                dst.method = src.method or "trade"
+                dst.unfavFirst = src.unfavFirst or false
             end
         end
     end
