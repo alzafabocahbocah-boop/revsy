@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v14.5"
+local VERSION = "v14.7"
 
 -- ============ THEME ============
 local C = {
@@ -1753,15 +1753,21 @@ local function getGameData()
     if _gameDataCache and (tick() - _gameDataTime) < 5 then return _gameDataCache end
     local d = { maxPets = nil, maxEggs = nil, maxEquip = nil }
     pcall(function()
-        -- scan semua tabel yg punya MaxPetsInInventory, ambil yg paling masuk akal
-        -- (nilai asli akun biasanya muncul; ambil yg terakhir/terbesar yg valid)
+        -- scan SEMUA tabel, ambil nilai TERBESAR tiap field (nilai asli akun biasanya
+        -- lebih besar dari template/default; ini hindari ke-ambil nilai kecil yg salah)
         for _, obj in ipairs(getgc(true)) do
             if type(obj) == "table" then
                 local mp = rawget(obj, "MaxPetsInInventory")
                 if type(mp) == "number" and mp > 0 then
-                    d.maxPets = mp
-                    d.maxEggs = rawget(obj, "MaxEggsInFarm") or d.maxEggs
-                    d.maxEquip = rawget(obj, "MaxEquippedPets") or d.maxEquip
+                    if not d.maxPets or mp > d.maxPets then d.maxPets = mp end
+                end
+                local me = rawget(obj, "MaxEggsInFarm")
+                if type(me) == "number" and me > 0 then
+                    if not d.maxEggs or me > d.maxEggs then d.maxEggs = me end
+                end
+                local mq = rawget(obj, "MaxEquippedPets")
+                if type(mq) == "number" and mq > 0 then
+                    if not d.maxEquip or mq > d.maxEquip then d.maxEquip = mq end
                 end
             end
         end
@@ -2040,28 +2046,28 @@ local function automationLoop()
             local after = countEggPlaced()
             print("[HactTelur] place egg: "..nowPlaced.." -> "..after.." (target "..target..")")
         else
-            -- 2) slot penuh: tim Reduce, tunggu SEMUA egg ready
+            -- 2) slot penuh: cek ready
             local allReady, total, ready = allEggsReady()
             if allReady then
-                -- 3) semua ready -> equip HATCH, kasih waktu tim hatch masuk, baru hatch
+                -- semua ready -> hatch bareng (efisien)
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 equipTeam("Hatch Tim")
-                -- tunggu tim hatch bener2 masuk garden (3 detik fixed)
                 task.wait(3)
                 print("[HactTelur] tim hatch di garden: "..countGardenPets()..", hatch all!")
                 hatchAllEggs()
-                -- tunggu egg bener2 hilang dari garden (animasi netas selesai)
-                -- poll countEggPlaced sampai turun / timeout 6 detik
-                local waited = 0
-                while waited < 6 do
-                    task.wait(0.4); waited = waited + 0.4
-                    if countEggPlaced() <= 1 then break end  -- garden udah bersih
-                end
-                task.wait(0.5)
-                -- balik Reduce
+                task.wait(2)
+                equipTeam("Reduce Tim")
+            elseif ready > 0 and ready >= math.floor(total * 0.6) then
+                -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
+                -- biar gak stuck nunggu semua (Koi terus balikin egg)
+                print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
+                equipTeam("Hatch Tim")
+                task.wait(3)
+                hatchAllEggs()
+                task.wait(2)
                 equipTeam("Reduce Tim")
             else
-                -- masih ada CD -> Reduce, tunggu
+                -- masih banyak CD -> Reduce, tunggu
                 equipTeam("Reduce Tim")
                 task.wait(1.5)
             end
