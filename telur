@@ -445,6 +445,7 @@ end
 local uuidToPetDataCache = {}  -- persists between scans
 local containerLastChecked = 0
 local lastForceScan = 0  -- v3.30: throttle force getgc rescan (anti lag)
+local lastAutoSave = 0  -- v3.39: throttle saveSettings di refreshAll (anti stutter writefile)
 local CONTAINER_RECHECK_INTERVAL = 60  -- detik
 
 local function rebuildLookup()
@@ -1104,8 +1105,13 @@ local function refreshAll()
     end
 
     if trackerVisible then updateTracker() end
-    -- v3.19: save tracker state periodically
-    saveSettings()
+    -- v3.39: JANGAN saveSettings tiap refresh (writefile tiap 3s = stutter/frame).
+    -- Throttle ke tiap 30 detik. User action (pilih pet/seal) tetep save instan.
+    local now = os.time()
+    if (now - (lastAutoSave or 0)) > 30 then
+        lastAutoSave = now
+        saveSettings()
+    end
 end
 
 -- PICKER MODAL
@@ -1439,4 +1445,4 @@ task.spawn(function()
     end
 end)
 
-print("[PetStat] v3.38 loaded")
+print("[PetStat] v3.39 loaded")
