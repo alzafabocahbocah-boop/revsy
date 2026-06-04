@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v14.2"
+local VERSION = "v14.3"
 
 -- ============ THEME ============
 local C = {
@@ -1875,8 +1875,10 @@ local function isBackpackFull()
     local cur = #PetDetect.listBackpackPets()
     local maxPets = getMaxPets()
     if not maxPets or maxPets <= 0 then maxPets = 230 end
-    -- penuh kalau: capai batas angka, ATAU ada flag limit (dari notif), ATAU notif limit skrg
-    local full = (cur >= maxPets) or Auto.bpFullFlag or backpackLimitNotif()
+    -- cooldown stlh sell: abaikan notif lama (yg blm hilang) biar gak stuck di Seal
+    local inCooldown = (tick() - (Auto.lastSellTime or 0)) < 4
+    local byNotif = (not inCooldown) and (Auto.bpFullFlag or backpackLimitNotif())
+    local full = (cur >= maxPets) or byNotif
     return full, cur, maxPets
 end
 -- LISTENER notif limit TERUS-MENERUS: begitu muncul "limit of pets", set flag.
@@ -2003,11 +2005,13 @@ local function automationLoop()
             equipTeam("Sell Tim")
             task.wait(2)  -- tunggu tim Seal masuk garden (skill aktif)
             local sold = doAutoSell()
+            -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
+            Auto.bpFullFlag = false
+            Auto.lastSellTime = tick()  -- buat cooldown (abaikan notif lama)
             task.wait(1)
-            equipTeam("Reduce Tim")  -- balik reduce abis jual
-            Auto.bpFullFlag = false  -- reset flag stlh proses sell
+            PetDetect.rebuild(true)  -- force scan ulang, pet count terbaru
+            equipTeam("Reduce Tim")  -- langsung balik reduce abis jual
             if sold == 0 then
-                -- gak ada yg kejual (sisanya keep semua) -> stop sell sampai pet nambah
                 Auto.sellExhausted = true
                 Auto.sellExhaustedCount = #PetDetect.listBackpackPets()
                 print("[HactTelur] gak ada pet buat dijual (sisanya keep), lanjut reduce")
