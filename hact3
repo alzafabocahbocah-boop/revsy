@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v15.1"
+local VERSION = "v15.3"
 
 -- ============ THEME ============
 local C = {
@@ -2372,6 +2372,14 @@ local function makeConfigPanel()
         maxBox.Text = tostring(v)
         if _G.HactTelurSave then pcall(_G.HactTelurSave) end
     end)
+    -- update juga saat teks berubah (jaga2 FocusLost gak ke-trigger di mobile)
+    maxBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local v = tonumber(maxBox.Text)
+        if v and v >= 0 then
+            config.maxEggManual = v
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end
+    end)
     _G.HactTelurSetMaxEggUI = function() maxBox.Text = tostring(config.maxEggManual or 0) end
 
     local function eggCount()
@@ -2750,6 +2758,7 @@ local function makeConfigPanel()
         pcall(function() buildList(searchBox.Text or "") end)
         pcall(refreshCounter)
         pcall(refreshRules)
+        if _G.HactTelurSetMaxEggUI then pcall(_G.HactTelurSetMaxEggUI) end
         -- refresh label target gift (biar username tersimpan tampil walau player offline)
         if _G.HactTelurGiftTargetLabels then
             for _, fn in pairs(_G.HactTelurGiftTargetLabels) do pcall(fn) end
@@ -3698,7 +3707,6 @@ local function saveConfig()
         maxEggManual = config.maxEggManual,
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
-        giftCfgs = _G.HactTelurGiftCfgs,
         teams = {},
     }
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -3712,8 +3720,24 @@ local function saveConfig()
             delayUnequip = teamData[tn] and teamData[tn].delayUnequip or 1,
         }
     end
+    -- giftCfgs: bikin salinan bersih (buang field runtime _running biar JSON aman)
+    local giftClean = {}
+    if _G.HactTelurGiftCfgs then
+        for i, c in ipairs(_G.HactTelurGiftCfgs) do
+            giftClean[i] = {
+                targets = c.targets or {}, pets = c.pets or {}, muts = c.muts or {},
+                age = c.age or 0, kg = c.kg or 0, method = c.method or "trade",
+                unfavFirst = c.unfavFirst or false, waitFull = c.waitFull or false,
+            }
+        end
+    end
+    data.giftCfgs = giftClean
     local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
-    if ok then pcall(function() writefile(SAVE_FILE, json) end) end
+    if ok and json then
+        pcall(function() writefile(SAVE_FILE, json) end)
+    else
+        warn("[HactTelur] SAVE GAGAL: JSONEncode error - "..tostring(json))
+    end
 end
 local function loadConfig()
     if not (readfile and isfile) then return end
