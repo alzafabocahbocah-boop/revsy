@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v13.7"
+local VERSION = "v13.9"
 
 -- ============ THEME ============
 local C = {
@@ -1694,7 +1694,7 @@ local function hatchAllEggs()
                 for _, d in ipairs(pg:GetDescendants()) do
                     if d:IsA("TextLabel") and d.Visible then
                         local t = (d.Text or ""):lower()
-                        if t:find("limit of pets") or t:find("reached the limit") or t:find("inventory is full") then
+                        if t:find("cannot open this pet") or t:find("limit of pet") or t:find("reached the limit") or t:find("inventory is full") then
                             hitLimit = true; break
                         end
                     end
@@ -1855,7 +1855,6 @@ local function backpackMaxNotif()
     return found
 end
 local function backpackLimitNotif()
-    -- deteksi notif "reached the limit of pets in your Inventory"
     local found = false
     pcall(function()
         local pg = player:FindFirstChildOfClass("PlayerGui")
@@ -1863,7 +1862,8 @@ local function backpackLimitNotif()
         for _, d in ipairs(pg:GetDescendants()) do
             if d:IsA("TextLabel") and d.Visible then
                 local t = (d.Text or ""):lower()
-                if t:find("limit of pets") or t:find("reached the limit") or t:find("inventory is full") then
+                if t:find("cannot open this pet") or t:find("limit of pet")
+                    or t:find("reached the limit") or t:find("inventory is full") then
                     found = true; break
                 end
             end
@@ -1875,9 +1875,29 @@ local function isBackpackFull()
     local cur = #PetDetect.listBackpackPets()
     local maxPets = getMaxPets()
     if not maxPets or maxPets <= 0 then maxPets = 230 end
-    -- penuh kalau: capai batas angka, ATAU ada flag limit (dari hatch gagal), ATAU notif limit
+    -- penuh kalau: capai batas angka, ATAU ada flag limit (dari notif), ATAU notif limit skrg
     local full = (cur >= maxPets) or Auto.bpFullFlag or backpackLimitNotif()
     return full, cur, maxPets
+end
+-- LISTENER notif limit TERUS-MENERUS: begitu muncul "limit of pets", set flag.
+-- (notif cepet hilang, jadi kita pantau real-time + ingat lewat flag)
+do
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if pg then
+        pg.DescendantAdded:Connect(function(d)
+            if d:IsA("TextLabel") then
+                task.wait(0.05)  -- tunggu text keisi
+                pcall(function()
+                    local t = (d.Text or ""):lower()
+                    if t:find("cannot open this pet") or t:find("limit of pet")
+                        or t:find("reached the limit") or t:find("inventory is full") then
+                        Auto.bpFullFlag = true
+                        print("[HactTelur] NOTIF LIMIT terdeteksi -> backpack penuh, auto-sell")
+                    end
+                end)
+            end
+        end)
+    end
 end
 
 -- LOOP UTAMA:
