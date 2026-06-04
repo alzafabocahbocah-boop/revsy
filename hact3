@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v14.0"
+local VERSION = "v14.2"
 
 -- ============ THEME ============
 local C = {
@@ -852,7 +852,7 @@ local PET_LIST = {
 local config = {
     eggSelected = {},   -- {[eggName] = true} egg yg mau di-hatch
     sellRules = {},     -- {[petType] = {action="sell"|"keep", kg=number}}
-    autoSell = false,
+    autoSell = true,
     sellRunning = false,
 }
 
@@ -1969,6 +1969,8 @@ local function automationLoop()
     print("[HactTelur] automation loop START")
     Auto.sellExhausted = false  -- reset tiap start
     Auto.giftBusy = false  -- reset flag gift/trade
+    Auto.currentTeam = nil  -- reset tim biar equipTeam fresh
+    Auto.bpFullFlag = false
     -- kosongin garden dulu (unequip semua pet placed, termasuk place manual)
     clearGarden()
     favTeamPets()  -- fav pet tim di awal (proteksi)
@@ -1984,12 +1986,12 @@ local function automationLoop()
         if pauseNow then
             task.wait(0.5)
         else
+        local full, cur, max = isBackpackFull()
         -- selalu jaga pet tim ke-fav (tiap ~10 iterasi)
         favTick = favTick + 1
         if favTick >= 10 then favTick = 0; favTeamPets() end
         -- backpack penuh? equip tim SEAL dulu, baru jual.
         -- TAPI kalo mode gift-tunggu-full ON, auto-sell dimatiin (gift yg ambil alih)
-        local full, cur, max = isBackpackFull()
         -- DIAGNOSTIK: kalo full tapi gak sell, kasih tau kenapa
         if full and not (config.autoSell and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy) then
             print(string.format("[HactTelur] FULL tapi skip sell: autoSell=%s sellExhausted=%s giftWaitFull=%s giftBusy=%s",
@@ -2527,7 +2529,10 @@ local function makeConfigPanel()
         knob.Position = UDim2.new(on and 1 or 0, on and -19 or 3, 0.5, -8)
         knob.BackgroundColor3 = on and C.accent or C.textDim
     end
-    tog.MouseButton1Click:Connect(function() config.autoSell = not config.autoSell; refreshTog() end)
+    tog.MouseButton1Click:Connect(function()
+        config.autoSell = not config.autoSell; refreshTog()
+        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+    end)
     refreshTog()
     local sellNowBtn = mk("TextButton", {
         Size = UDim2.new(0, 130, 0, 26), Position = UDim2.new(1, -130, 0, 1),
