@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v15.3"
+local VERSION = "v15.4"
 
 -- ============ THEME ============
 local C = {
@@ -1262,34 +1262,27 @@ function syncFavByRules()
 end
 -- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
 function doAutoSell()
-    PetDetect.rebuild()
+    PetDetect.rebuild(true)
     local kept, toSellCount = 0, 0
-    -- 1) favoritkan semua pet yg di-KEEP dulu (proteksi dari Sell All)
+    -- fav udah diatur real-time (syncFavByRules + favTeamPets), jadi gak perlu fav ulang.
+    -- cuma hitung aja brp yg bakal kejual vs keep.
     for _, p in ipairs(PetDetect.listBackpackPets()) do
         local fate = petFate(p)
-        if fate == "keep" then
-            if not p.fav and p.tool then favoritePet(p.tool); task.wait(0.04) end
-            kept = kept + 1
-        else
-            toSellCount = toSellCount + 1
-        end
+        if fate == "keep" then kept = kept + 1 else toSellCount = toSellCount + 1 end
     end
-    -- gak ada yg perlu dijual
     if toSellCount == 0 then
         print("[HactTelur] Auto-sell: gak ada pet buat dijual (semua keep:"..kept..")")
         return 0
     end
-    -- 2) jeda 2 detik biar server bener2 proses favorite (jangan kejual yg keep)
-    task.wait(2)
-    -- 3) SELL ALL (yg gak difavorit kejual semua)
+    -- SELL ALL langsung (yg gak difavorit kejual). gak nunggu lama.
     if SellSys.sellAllRE then
-        local eggBefore = totalEggNow()  -- egg sebelum sell (skill Seal bisa balikin egg)
+        local eggBefore = totalEggNow()
         pcall(function() SellSys.sellAllRE:FireServer() end)
         print("[HactTelur] Sell All! (dijual ~"..toSellCount..", dilindungi favorit: "..kept..")")
         Track.totalSold = Track.totalSold + toSellCount
         task.wait(0.6)
         local eggAfter = totalEggNow()
-        local delta = eggAfter - eggBefore  -- positif = egg balik (good luck)
+        local delta = eggAfter - eggBefore
         Track.lastEggBefore = eggBefore
         Track.lastEggAfter = eggAfter
         Track.lastEggDelta = delta
@@ -2080,10 +2073,9 @@ local function automationLoop()
     while globalRunning do
         -- pause kalo lagi terima pet / gift / trade.
         -- TAPI kalo backpack penuh (bpFullFlag) & gift gak lagi jalan -> jgn pause, sell dulu!
+        -- terima pet / gift / trade SELALU pause (prioritas, biar gak bentrok)
         local pauseNow = isReceivingPet() or Auto.giftBusy or isTradingManual() or isGiftingOut()
-        if Auto.bpFullFlag and not Auto.giftBusy and not isTradingManual() then
-            pauseNow = false  -- prioritas sell saat penuh
-        end
+        -- (sell saat penuh TIDAK override pause terima pet — terima pet didahulukan)
         if pauseNow then
             task.wait(0.5)
         else
@@ -2100,9 +2092,10 @@ local function automationLoop()
         end
         if config.autoSell and full and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy then
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
-            favTeamPets()  -- pastiin pet tim ke-fav SEBELUM sell all (jgn kejual)
+            favTeamPets()  -- fav pet tim (proteksi)
+            pcall(syncFavByRules)  -- atur fav/unfav sesuai rule SEKARANG (real-time, gak nunggu)
             equipTeam("Sell Tim")
-            task.wait(2)  -- tunggu tim Seal masuk garden (skill aktif)
+            task.wait(3.5)  -- tunggu tim Seal masuk garden (skill aktif) - lebih lama biar mantap
             local sold = doAutoSell()
             -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
             Auto.bpFullFlag = false
