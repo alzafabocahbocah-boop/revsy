@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v14.8"
+local VERSION = "v15.1"
 
 -- ============ THEME ============
 local C = {
@@ -1733,6 +1733,90 @@ local function anyEggPlaced()
     end)
     return found
 end
+
+-- ============ ESP EGG (billboard nama + waktu netas di atas egg) ============
+local EggESP = { on = false, billboards = {} }
+local function fmtEggTime(s)
+    s = math.max(0, math.floor(s))
+    if s <= 0 then return "READY" end
+    if s >= 3600 then return string.format("%dh %dm", math.floor(s/3600), math.floor((s%3600)/60)) end
+    if s >= 60 then return string.format("%dm %ds", math.floor(s/60), s%60) end
+    return s.."s"
+end
+local function makeEggBillboard(egg)
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "HactEggESP"
+    bb.Size = UDim2.new(0, 150, 0, 40)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.AlwaysOnTop = true
+    bb.MaxDistance = 1000
+    bb.Adornee = egg
+    bb.Parent = egg
+    local nameL = Instance.new("TextLabel")
+    nameL.Size = UDim2.new(1, 0, 0.5, 0)
+    nameL.BackgroundTransparency = 1
+    nameL.Font = Enum.Font.GothamBold
+    nameL.TextSize = 13
+    nameL.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameL.TextStrokeTransparency = 0
+    nameL.Text = tostring(egg:GetAttribute("EggName") or "Egg")
+    nameL.Parent = bb
+    local timeL = Instance.new("TextLabel")
+    timeL.Size = UDim2.new(1, 0, 0.5, 0)
+    timeL.Position = UDim2.new(0, 0, 0.5, 0)
+    timeL.BackgroundTransparency = 1
+    timeL.Font = Enum.Font.GothamBold
+    timeL.TextSize = 12
+    timeL.TextStrokeTransparency = 0
+    timeL.Text = "..."
+    timeL.Parent = bb
+    return bb, timeL
+end
+local function updateEggESP()
+    if not EggESP.on then return end
+    pcall(function()
+        local seen = {}
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
+                seen[d] = true
+                local bb = d:FindFirstChild("HactEggESP")
+                local timeL
+                if not bb then
+                    bb, timeL = makeEggBillboard(d)
+                    EggESP.billboards[d] = timeL
+                else
+                    timeL = EggESP.billboards[d]
+                end
+                if timeL then
+                    local tth = tonumber(d:GetAttribute("TimeToHatch")) or 0
+                    local rdy = tth <= 0
+                    timeL.Text = fmtEggTime(tth)
+                    timeL.TextColor3 = rdy and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,210,80)
+                end
+            end
+        end
+        -- bersihin billboard egg yg udah hilang
+        for egg, _ in pairs(EggESP.billboards) do
+            if not seen[egg] then EggESP.billboards[egg] = nil end
+        end
+    end)
+end
+local function clearEggESP()
+    pcall(function()
+        for _, d in ipairs(Workspace:GetDescendants()) do
+            if d.Name == "HactEggESP" then d:Destroy() end
+        end
+    end)
+    EggESP.billboards = {}
+end
+-- loop update ESP tiap 1 detik (countdown jalan)
+task.spawn(function()
+    while true do
+        if EggESP.on then updateEggESP() else end
+        task.wait(1)
+    end
+end)
+
 -- hitung egg ke-place MILIK KITA aja (bukan egg orang lain)
 local function countEggPlaced()
     local n = 0
@@ -1888,23 +1972,31 @@ local function isBackpackFull()
     local full = (cur >= maxPets) or byNotif
     return full, cur, maxPets
 end
--- LISTENER notif limit TERUS-MENERUS: begitu muncul "limit of pets", set flag.
--- (notif cepet hilang, jadi kita pantau real-time + ingat lewat flag)
+-- LISTENER notif limit: pantau label BARU + perubahan .Text (game kadang pakai label sama)
 do
     local pg = player:FindFirstChildOfClass("PlayerGui")
+    local function checkText(t)
+        t = (t or ""):lower()
+        if t:find("cannot open this pet") or t:find("limit of pet")
+            or t:find("reached the limit") or t:find("inventory is full") then
+            Auto.bpFullFlag = true
+            Auto.sellExhausted = false  -- ada limit baru, boleh sell lagi
+            print("[HactTelur] NOTIF LIMIT terdeteksi -> backpack penuh, auto-sell")
+        end
+    end
+    local function attach(d)
+        if d:IsA("TextLabel") then
+            pcall(function()
+                checkText(d.Text)
+                d:GetPropertyChangedSignal("Text"):Connect(function() checkText(d.Text) end)
+            end)
+        end
+    end
     if pg then
-        pg.DescendantAdded:Connect(function(d)
-            if d:IsA("TextLabel") then
-                task.wait(0.05)  -- tunggu text keisi
-                pcall(function()
-                    local t = (d.Text or ""):lower()
-                    if t:find("cannot open this pet") or t:find("limit of pet")
-                        or t:find("reached the limit") or t:find("inventory is full") then
-                        Auto.bpFullFlag = true
-                        print("[HactTelur] NOTIF LIMIT terdeteksi -> backpack penuh, auto-sell")
-                    end
-                end)
-            end
+        pg.DescendantAdded:Connect(function(d) task.wait(0.05); attach(d) end)
+        -- attach ke semua TextLabel yg udah ada
+        task.spawn(function()
+            for _, d in ipairs(pg:GetDescendants()) do attach(d) end
         end)
     end
 end
@@ -2813,7 +2905,66 @@ local function makeStatPanel()
 
     -- catatan
     local note = lbl(panel, "Auto-update tiap 3 detik", 11, C.textMute, Enum.TextXAlignment.Center)
-    note.Position = UDim2.new(0, 0, 0, 144); note.Size = UDim2.new(1, 0, 0, 20)
+    note.Position = UDim2.new(0, 0, 0, 140); note.Size = UDim2.new(1, 0, 0, 16)
+
+    -- ===== DAFTAR EGG DI GARDEN + WAKTU NETAS =====
+    local eggTitle = lbl(panel, "Egg di Garden (waktu netas)", 12, C.text, Enum.TextXAlignment.Left)
+    eggTitle.Font = FONT_B
+    eggTitle.Position = UDim2.new(0, 4, 0, 162); eggTitle.Size = UDim2.new(1, -8, 0, 18)
+    local eggScroll = mk("ScrollingFrame", {
+        Size = UDim2.new(1, -8, 1, -188), Position = UDim2.new(0, 4, 0, 184),
+        BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = panel })
+    corner(eggScroll, 8); stroke(eggScroll, C.border, 1)
+    mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = eggScroll })
+    mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), Parent = eggScroll })
+
+    local function fmtSec(s)
+        s = math.max(0, math.floor(s))
+        if s <= 0 then return "READY" end
+        if s >= 60 then return string.format("%dm %ds", math.floor(s/60), s%60) end
+        return s.."s"
+    end
+    local function refreshEggList()
+        pcall(function()
+            for _, c in ipairs(eggScroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
+            -- kumpulin egg kita
+            local eggs = {}
+            for _, d in ipairs(Workspace:GetDescendants()) do
+                if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" then
+                    if tostring(d:GetAttribute("OWNER")) == player.Name then
+                        local tth = tonumber(d:GetAttribute("TimeToHatch")) or 0
+                        table.insert(eggs, { name = d:GetAttribute("EggName") or "Egg", tth = tth })
+                    end
+                end
+            end
+            -- urut: yg paling cepet netas di atas
+            table.sort(eggs, function(a, b) return a.tth < b.tth end)
+            for i, e in ipairs(eggs) do
+                local row = mk("Frame", {
+                    Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = C.cardSel,
+                    BorderSizePixel = 0, LayoutOrder = i, Parent = eggScroll })
+                corner(row, 5)
+                local nm = lbl(row, e.name, 11, C.text, Enum.TextXAlignment.Left)
+                nm.Position = UDim2.new(0, 8, 0, 0); nm.Size = UDim2.new(0.65, 0, 1, 0)
+                local rdy = e.tth <= 0
+                local tm = lbl(row, fmtSec(e.tth), 11, rdy and C.accent or C.textDim, Enum.TextXAlignment.Right)
+                tm.Font = rdy and FONT_B or FONT
+                tm.Position = UDim2.new(0.65, 0, 0, 0); tm.Size = UDim2.new(0.35, -8, 1, 0)
+            end
+            if #eggs == 0 then
+                local row = mk("Frame", { Size = UDim2.new(1,0,0,24), BackgroundTransparency = 1, Parent = eggScroll })
+                lbl(row, "(belum ada egg di garden)", 11, C.textMute, Enum.TextXAlignment.Center).Size = UDim2.new(1,0,1,0)
+            end
+        end)
+    end
+    -- refresh egg list tiap 2 detik saat panel aktif (countdown jalan)
+    task.spawn(function()
+        while panel.Parent do
+            if panel.Visible then refreshEggList() end
+            task.wait(2)
+        end
+    end)
 
     tabPanels["All Stat"] = panel
     return panel
@@ -3462,6 +3613,12 @@ end)
 miscToggleRow(12.7, "Auto Accept Trade", "Terima trade masuk otomatis", function(on)
     AutoAcc.trade = on
     print("[HactTelur] Auto Accept Trade "..(on and "ON" or "OFF"))
+end)
+-- ESP Egg: tampilin nama + waktu netas di atas egg
+miscToggleRow(12.8, "ESP Egg", "Tampilkan nama & waktu netas di atas egg", function(on)
+    EggESP.on = on
+    if on then updateEggESP() else clearEggESP() end
+    print("[HactTelur] ESP Egg "..(on and "ON" or "OFF"))
 end)
 
 -- 5) WEBHOOK DISCORD (input URL + toggle)
