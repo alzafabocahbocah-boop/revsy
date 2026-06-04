@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v13.9"
+local VERSION = "v14.0"
 
 -- ============ THEME ============
 local C = {
@@ -1975,8 +1975,13 @@ local function automationLoop()
     task.wait(1)
     local favTick = 0
     while globalRunning do
-        -- lagi terima pet, gift/trade (sc/manual), atau gift keluar? pause dulu
-        if isReceivingPet() or Auto.giftBusy or isTradingManual() or isGiftingOut() then
+        -- pause kalo lagi terima pet / gift / trade.
+        -- TAPI kalo backpack penuh (bpFullFlag) & gift gak lagi jalan -> jgn pause, sell dulu!
+        local pauseNow = isReceivingPet() or Auto.giftBusy or isTradingManual() or isGiftingOut()
+        if Auto.bpFullFlag and not Auto.giftBusy and not isTradingManual() then
+            pauseNow = false  -- prioritas sell saat penuh
+        end
+        if pauseNow then
             task.wait(0.5)
         else
         -- selalu jaga pet tim ke-fav (tiap ~10 iterasi)
@@ -1985,6 +1990,11 @@ local function automationLoop()
         -- backpack penuh? equip tim SEAL dulu, baru jual.
         -- TAPI kalo mode gift-tunggu-full ON, auto-sell dimatiin (gift yg ambil alih)
         local full, cur, max = isBackpackFull()
+        -- DIAGNOSTIK: kalo full tapi gak sell, kasih tau kenapa
+        if full and not (config.autoSell and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy) then
+            print(string.format("[HactTelur] FULL tapi skip sell: autoSell=%s sellExhausted=%s giftWaitFull=%s giftBusy=%s",
+                tostring(config.autoSell), tostring(Auto.sellExhausted), tostring(Auto.giftWaitFull), tostring(Auto.giftBusy)))
+        end
         if config.autoSell and full and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy then
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
             favTeamPets()  -- pastiin pet tim ke-fav SEBELUM sell all (jgn kejual)
@@ -1993,6 +2003,7 @@ local function automationLoop()
             local sold = doAutoSell()
             task.wait(1)
             equipTeam("Reduce Tim")  -- balik reduce abis jual
+            Auto.bpFullFlag = false  -- reset flag stlh proses sell
             if sold == 0 then
                 -- gak ada yg kejual (sisanya keep semua) -> stop sell sampai pet nambah
                 Auto.sellExhausted = true
