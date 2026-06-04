@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v14.7"
+local VERSION = "v14.8"
 
 -- ============ THEME ============
 local C = {
@@ -854,6 +854,7 @@ local config = {
     sellRules = {},     -- {[petType] = {action="sell"|"keep", kg=number}}
     autoSell = true,
     sellRunning = false,
+    maxEggManual = 0,   -- 0 = auto (deteksi maks asli akun), >0 = pakai angka ini
 }
 
 -- ============ SISTEM JUAL PET ============
@@ -1813,7 +1814,8 @@ local function placeEggs(count)
         return 0
     end
     task.wait(0.15)
-    local target = (getMaxEggs() or 13)
+    local target = (config.maxEggManual and config.maxEggManual > 0)
+        and config.maxEggManual or (getMaxEggs() or 13)
     local placed = 0
     local stuck = 0  -- berapa kali count gak nambah berturut-turut
     -- SPAM sampai penuh: place terus + cek count, stop saat target / notif max / mentok
@@ -2030,7 +2032,9 @@ local function automationLoop()
         end
 
         -- target slot egg = batas asli game (MaxEggsInFarm), gak pakai setting manual
-        local target = getMaxEggs() or 13
+        -- target slot egg: kalo diatur manual (>0) pakai itu, kalo 0 auto (maks asli)
+        local target = (config.maxEggManual and config.maxEggManual > 0)
+            and config.maxEggManual or (getMaxEggs() or 13)
 
         local nowPlaced = countEggPlaced()
 
@@ -2259,6 +2263,24 @@ local function makeConfigPanel()
     ddLabel.Position = UDim2.new(0, 12, 0, 0); ddLabel.Size = UDim2.new(1, -36, 1, 0)
     local ddChev = lbl(ddBtn, "▼", 10, C.textDim, Enum.TextXAlignment.Right)
     ddChev.Position = UDim2.new(1, -26, 0, 0); ddChev.Size = UDim2.new(0, 18, 1, 0)
+
+    -- baris: Max Place Egg (0 = auto deteksi maks asli)
+    local lblMax = lbl(content, "Max Place Egg (0=auto)", 12, C.textDim)
+    lblMax.Position = UDim2.new(0, 4, 0, 68); lblMax.Size = UDim2.new(0.6, 0, 0, 28)
+    local maxBox = mk("TextBox", {
+        Size = UDim2.new(0.4, -4, 0, 28), Position = UDim2.new(0.6, 4, 0, 68),
+        BackgroundColor3 = C.input, Text = tostring(config.maxEggManual or 0),
+        Font = FONT, TextSize = 12, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
+        ClearTextOnFocus = false, Parent = content })
+    corner(maxBox, 6); stroke(maxBox, C.border, 1)
+    maxBox.FocusLost:Connect(function()
+        local v = tonumber(maxBox.Text) or 0
+        if v < 0 then v = 0 end
+        config.maxEggManual = v
+        maxBox.Text = tostring(v)
+        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+    end)
+    _G.HactTelurSetMaxEggUI = function() maxBox.Text = tostring(config.maxEggManual or 0) end
 
     local function eggCount()
         local n = 0; for _ in pairs(config.eggSelected) do n = n + 1 end; return n
@@ -3516,6 +3538,7 @@ local function saveConfig()
         eggSelected = config.eggSelected,
         sellRules = config.sellRules,
         autoSell = config.autoSell,
+        maxEggManual = config.maxEggManual,
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
         giftCfgs = _G.HactTelurGiftCfgs,
@@ -3546,6 +3569,10 @@ local function loadConfig()
     if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
     if type(data.sellRules) == "table" then config.sellRules = data.sellRules end
     if data.autoSell ~= nil then config.autoSell = data.autoSell end
+    if data.maxEggManual ~= nil then
+        config.maxEggManual = data.maxEggManual
+        if _G.HactTelurSetMaxEggUI then pcall(_G.HactTelurSetMaxEggUI) end
+    end
     if data.webhookUrl then
         Webhook.url = data.webhookUrl
         if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
