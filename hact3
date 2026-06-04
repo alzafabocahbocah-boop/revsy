@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v12.7"
+local VERSION = "v13.5"
 
 -- ============ THEME ============
 local C = {
@@ -567,6 +567,13 @@ local function sendCycleSummary(kind, extra)
         and ("**🍀 Lucky Egg Back from Sell ("..string.format("%.2f", pctSell).."%)**\n• Pets sold: "..Track.totalSold.."\n• Egg balik: "..Track.luckySell)
         or  ("**🍀 Lucky Egg Back from Hatch ("..string.format("%.2f", pctHatch).."%)**\n• Hatched: "..Track.totalHatched.."\n• Egg balik: "..Track.luckyHatch)
 
+    -- token/currency akun ini
+    local tokenLines = {}
+    for k, v in pairs(getTokenCount()) do
+        table.insert(tokenLines, "• "..k..": **"..tostring(v).."**")
+    end
+    local tokenBlock = #tokenLines > 0 and ("\n\n**💎 CURRENCY**\n"..table.concat(tokenLines, "\n")) or ""
+
     local desc = table.concat({
         "**👤 PLAYER**",
         "• "..player.Name.." (ID: "..tostring(player.UserId)..")",
@@ -588,7 +595,7 @@ local function sendCycleSummary(kind, extra)
         luckyLine,
         "",
         "**🎯 Luck: "..luckTxt.." ("..sign..delta..")**",
-    }, "\n")
+    }, "\n") .. tokenBlock
 
     local title = (kind == "sell") and ("💰 Cycle #"..Track.cycleCount.." — Sell")
         or ("🥚 Cycle #"..Track.cycleCount.." — Hatch")
@@ -605,6 +612,26 @@ local function sendCycleSummary(kind, extra)
         end)
     end)
     Track.lastCycleTime = now
+end
+
+-- baca jumlah token/currency akun ini (buat webhook laporan)
+local function getTokenCount()
+    local result = {}
+    pcall(function()
+        -- coba leaderstats
+        local ls = player:FindFirstChild("leaderstats")
+        if ls then
+            for _, c in ipairs(ls:GetChildren()) do
+                if c:IsA("ValueBase") then result[c.Name] = c.Value end
+            end
+        end
+        -- coba atribut umum
+        for _, a in ipairs({"Tokens", "Token", "Sheckles", "Gems", "Cash", "Coins", "Money"}) do
+            local v = player:GetAttribute(a)
+            if v then result[a] = v end
+        end
+    end)
+    return result
 end
 
 local gui = mk("ScreenGui", {
@@ -1095,6 +1122,7 @@ local function giftPetsByFilter(cfg)
     if #targetList == 0 then print("[HactTelur] gak ada target online"); return 0 end
     local matched = getMatchedPets(cfg)
     if #matched == 0 then return 0 end
+    Auto.giftBusy = true  -- automation hatch pause selama gift/trade jalan
     -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
     if cfg.unfavFirst then
         local info2 = {}
@@ -1134,6 +1162,8 @@ local function giftPetsByFilter(cfg)
             end
         end
     end
+    task.wait(0.5)
+    Auto.giftBusy = false  -- gift/trade kelar, automation hatch boleh jalan lagi
     return sent
 end
 local function giftPetsByType(targetName, petTypeSet)
@@ -1264,6 +1294,7 @@ function doAutoSell()
         Track.lastEggDelta = delta
         if delta > 0 then Track.luckySell = Track.luckySell + delta end
         sendCycleSummary("sell")
+        Auto.bpFullFlag = false  -- udah sell, reset flag penuh
         return toSellCount
     else
         warn("[HactTelur] SellAllPets_RE gak ada")
@@ -1655,17 +1686,35 @@ local function hatchAllEggs()
     end
     if n > 0 then
         print("[HactTelur] hatch "..n.." egg bareng")
+        -- cek notif "limit of pets" muncul = backpack penuh, hatch gagal
+        local hitLimit = false
+        pcall(function()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if pg then
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then
+                        local t = (d.Text or ""):lower()
+                        if t:find("limit of pets") or t:find("reached the limit") or t:find("inventory is full") then
+                            hitLimit = true; break
+                        end
+                    end
+                end
+            end
+        end)
+        if hitLimit then
+            Auto.bpFullFlag = true  -- tandai backpack penuh -> loop bakal sell
+            print("[HactTelur] HATCH GAGAL: backpack penuh! -> auto-sell")
+            return 0  -- gak usah lanjut hitung, biar loop ke sell
+        end
         Track.cycleCount = Track.cycleCount + 1
         Track.totalHatched = Track.totalHatched + n
         task.wait(0.6)  -- tunggu egg ke-update
         local eggAfter = totalEggNow()
-        -- delta egg: netas n egg harusnya -n. kalo berkurang < n, ada egg balik (lucky)
         local delta = eggAfter - eggBefore
         Track.lastEggBefore = eggBefore
         Track.lastEggAfter = eggAfter
         Track.lastEggDelta = delta
-        -- egg balik = (egg yg gak hilang walau netas). expected -n, actual delta.
-        local back = math.max(0, n + delta)  -- n + (negatif delta) ; kalo delta=-n -> 0 balik
+        local back = math.max(0, n + delta)
         Track.luckyHatch = Track.luckyHatch + back
         sendCycleSummary("hatch")
     end
@@ -1699,18 +1748,26 @@ end
 
 -- baca data batas dari memory (tabel yg punya MaxPetsInInventory).
 -- semua dinamis ikut upgrade: MaxPetsInInventory, MaxEggsInFarm, MaxEquippedPets
+-- baca data batas dari memory. cache 5 detik (getgc berat).
+local _gameDataCache, _gameDataTime = nil, 0
 local function getGameData()
+    if _gameDataCache and (tick() - _gameDataTime) < 5 then return _gameDataCache end
     local d = { maxPets = nil, maxEggs = nil, maxEquip = nil }
     pcall(function()
+        -- scan semua tabel yg punya MaxPetsInInventory, ambil yg paling masuk akal
+        -- (nilai asli akun biasanya muncul; ambil yg terakhir/terbesar yg valid)
         for _, obj in ipairs(getgc(true)) do
-            if type(obj) == "table" and rawget(obj, "MaxPetsInInventory") then
-                d.maxPets  = rawget(obj, "MaxPetsInInventory")
-                d.maxEggs  = rawget(obj, "MaxEggsInFarm")
-                d.maxEquip = rawget(obj, "MaxEquippedPets")
-                return
+            if type(obj) == "table" then
+                local mp = rawget(obj, "MaxPetsInInventory")
+                if type(mp) == "number" and mp > 0 then
+                    d.maxPets = mp
+                    d.maxEggs = rawget(obj, "MaxEggsInFarm") or d.maxEggs
+                    d.maxEquip = rawget(obj, "MaxEquippedPets") or d.maxEquip
+                end
             end
         end
     end)
+    _gameDataCache = d; _gameDataTime = tick()
     return d
 end
 local function getMaxPets()
@@ -1797,12 +1854,30 @@ local function backpackMaxNotif()
     end)
     return found
 end
+local function backpackLimitNotif()
+    -- deteksi notif "reached the limit of pets in your Inventory"
+    local found = false
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        if not pg then return end
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Visible then
+                local t = (d.Text or ""):lower()
+                if t:find("limit of pets") or t:find("reached the limit") or t:find("inventory is full") then
+                    found = true; break
+                end
+            end
+        end
+    end)
+    return found
+end
 local function isBackpackFull()
     local cur = #PetDetect.listBackpackPets()
     local maxPets = getMaxPets()
     if not maxPets or maxPets <= 0 then maxPets = 230 end
-    -- penuh kalau jumlah pet capai batas (pakai angka aja, lebih andal)
-    return cur >= maxPets, cur, maxPets
+    -- penuh kalau: capai batas angka, ATAU ada flag limit (dari hatch gagal), ATAU notif limit
+    local full = (cur >= maxPets) or Auto.bpFullFlag or backpackLimitNotif()
+    return full, cur, maxPets
 end
 
 -- LOOP UTAMA:
@@ -1826,18 +1901,70 @@ end
 local function isReceivingPet()
     return (tick() - (Auto.lastGiftAct or 0)) < 2
 end
+-- deteksi gift KELUAR (biasa/tiket, manual/sc): hook PetGiftingService & TradeEvents fire
+Auto.lastGiftOut = 0
+do
+    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+    -- hook __namecall biar nangkep semua FireServer ke remote gift/trade
+    pcall(function()
+        local mt = getrawmetatable(game)
+        local old = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local m = getnamecallmethod()
+            if (m == "FireServer" or m == "InvokeServer") and self and self.Name then
+                local n = self.Name
+                if n == "PetGiftingService" or n == "SendRequest" or n == "AddItem"
+                    or n:find("Gift") or n:find("Trade") then
+                    Auto.lastGiftOut = tick()  -- ada aktivitas gift/trade keluar
+                end
+            end
+            return old(self, ...)
+        end)
+        setreadonly(mt, true)
+    end)
+end
+-- lagi gift/trade keluar? (aktivitas dalam 3 detik terakhir)
+local function isGiftingOut()
+    return (tick() - (Auto.lastGiftOut or 0)) < 3
+end
+-- lagi trade/gift manual? (trade UI / gift prompt terbuka di layar)
+local function isTradingManual()
+    local open = false
+    pcall(function()
+        local pg = player:FindFirstChild("PlayerGui")
+        if not pg then return end
+        -- trade window
+        local tui = pg:FindFirstChild("TradingUI")
+        if tui then
+            local lt = tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then open = true; return end
+        end
+        -- cari frame visible bernama trade/gift
+        for _, d in ipairs(pg:GetDescendants()) do
+            if (d:IsA("Frame") or d:IsA("ImageLabel")) and d.Visible then
+                local n = d.Name:lower()
+                if (n:find("trade") or n:find("gift")) and d.AbsoluteSize.X > 200 then
+                    open = true; break
+                end
+            end
+        end
+    end)
+    return open
+end
 
 local function automationLoop()
     print("[HactTelur] automation loop START")
     Auto.sellExhausted = false  -- reset tiap start
+    Auto.giftBusy = false  -- reset flag gift/trade
     -- kosongin garden dulu (unequip semua pet placed, termasuk place manual)
     clearGarden()
     favTeamPets()  -- fav pet tim di awal (proteksi)
     task.wait(1)
     local favTick = 0
     while globalRunning do
-        -- lagi terima pet/gift? pause dulu, resume otomatis stlh 2 detik tenang
-        if isReceivingPet() then
+        -- lagi terima pet, gift/trade (sc/manual), atau gift keluar? pause dulu
+        if isReceivingPet() or Auto.giftBusy or isTradingManual() or isGiftingOut() then
             task.wait(0.5)
         else
         -- selalu jaga pet tim ke-fav (tiap ~10 iterasi)
@@ -1846,7 +1973,7 @@ local function automationLoop()
         -- backpack penuh? equip tim SEAL dulu, baru jual.
         -- TAPI kalo mode gift-tunggu-full ON, auto-sell dimatiin (gift yg ambil alih)
         local full, cur, max = isBackpackFull()
-        if config.autoSell and full and not Auto.sellExhausted and not Auto.giftWaitFull then
+        if config.autoSell and full and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy then
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
             favTeamPets()  -- pastiin pet tim ke-fav SEBELUM sell all (jgn kejual)
             equipTeam("Sell Tim")
@@ -1873,7 +2000,10 @@ local function automationLoop()
 
         local nowPlaced = countEggPlaced()
 
-        if nowPlaced < target then
+        if Auto.giftBusy then
+            -- lagi gift/trade: jangan place/hatch/swap tim, tunggu sampai kelar
+            task.wait(0.5)
+        elseif nowPlaced < target then
             -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
             equipTeam("Reduce Tim")
             local need = target - nowPlaced
@@ -1892,6 +2022,13 @@ local function automationLoop()
                 task.wait(3)
                 print("[HactTelur] tim hatch di garden: "..countGardenPets()..", hatch all!")
                 hatchAllEggs()
+                -- tunggu egg bener2 hilang dari garden (animasi netas selesai)
+                -- poll countEggPlaced sampai turun / timeout 6 detik
+                local waited = 0
+                while waited < 6 do
+                    task.wait(0.4); waited = waited + 0.4
+                    if countEggPlaced() <= 1 then break end  -- garden udah bersih
+                end
                 task.wait(0.5)
                 -- balik Reduce
                 equipTeam("Reduce Tim")
@@ -3329,7 +3466,7 @@ task.spawn(function()
 end)
 
 -- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
-local SAVE_FILE = "hact_telur_save.json"
+local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 local function saveConfig()
     if not writefile then return end
     local data = {
