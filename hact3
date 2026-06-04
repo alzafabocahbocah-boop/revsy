@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v15.4" 
+local VERSION = "v15.9"
 
 -- ============ THEME ============
 local C = {
@@ -1036,11 +1036,49 @@ do
         local giftRE = ge:FindFirstChild("GiftPet")
         local acceptGiftRE = ge:FindFirstChild("AcceptPetGift")
         if giftRE and acceptGiftRE then
-            giftRE.OnClientEvent:Connect(function(petUUID)
+            giftRE.OnClientEvent:Connect(function(petUUID, petName, senderUsername)
                 if not AutoAcc.gift then return end
+                -- 1) fire remote (pet keterima di server)
                 pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
                 task.spawn(function() task.wait(0.05); pcall(function() acceptGiftRE:FireServer(true, petUUID) end) end)
-                print("[HactTelur] auto-accept gift masuk")
+                -- 2) klik ACCEPT_BUTTON di WarningUI biar POPUP HILANG (kayak pencet manual)
+                task.spawn(function()
+                    for _ = 1, 6 do  -- coba beberapa kali (popup mungkin muncul telat)
+                        task.wait(0.2)
+                        local done = false
+                        pcall(function()
+                            local pg = player:FindFirstChild("PlayerGui")
+                            local wui = pg and pg:FindFirstChild("WarningUI")
+                            if not wui then return end
+                            for _, tmpl in ipairs({"WarningTemplate", "InfoTemplate"}) do
+                                local tpl = wui:FindFirstChild(tmpl)
+                                local warn = tpl and tpl:FindFirstChild("WARNING")
+                                local btns = warn and warn:FindFirstChild("Buttons")
+                                local main = btns and btns:FindFirstChild("Main")
+                                local acc = main and main:FindFirstChild("ACCEPT_BUTTON")
+                                if acc then
+                                    -- cari SENSOR (TextButton) dalam ACCEPT_BUTTON
+                                    local sensor
+                                    for _, dd in ipairs(acc:GetDescendants()) do
+                                        if dd:IsA("TextButton") and dd.Name == "SENSOR" then sensor = dd break end
+                                    end
+                                    if sensor and sensor.Visible then
+                                        -- trigger klik (dismiss popup)
+                                        if getconnections then
+                                            for _, c in ipairs(getconnections(sensor.MouseButton1Click)) do
+                                                pcall(function() c.Function() end)
+                                            end
+                                        end
+                                        if firesignal then pcall(function() firesignal(sensor.MouseButton1Click) end) end
+                                        done = true
+                                    end
+                                end
+                            end
+                        end)
+                        if done then break end
+                    end
+                end)
+                print("[HactTelur] auto-accept gift masuk (+ dismiss popup)")
             end)
         end
         -- trade masuk: TradeEvents.SendRequest.OnClientEvent -> RespondRequest(tradeID, true)
@@ -1999,21 +2037,12 @@ end
 -- 2) tunggu SEMUA egg ready (ada 1 CD = tetap Reduce)
 -- 3) semua ready -> tim Hatch, hatch semua -> balik ke Reduce
 -- ============ AUTO PAUSE saat terima pet / gift ============
--- deteksi: GiftPet.OnClientEvent fire = lagi terima pet. pause loop, resume stlh 2s tenang.
+-- pause saat CLAIM/ACCEPT pet: lastGiftAct di-set pas AcceptPetGift di-fire (lihat hook __namecall).
+-- resume 5 detik setelah accept terakhir.
 Auto.lastGiftAct = 0
-do
-    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-    local giftRE = ge and ge:FindFirstChild("GiftPet")
-    if giftRE and giftRE:IsA("RemoteEvent") then
-        giftRE.OnClientEvent:Connect(function()
-            Auto.lastGiftAct = tick()  -- catat waktu terima pet terakhir
-        end)
-        print("[HactTelur] auto-pause terima pet AKTIF")
-    end
-end
--- lagi sibuk terima pet? (ada aktivitas dalam 2 detik terakhir)
+-- lagi claim/accept pet? resume 5 detik setelah accept terakhir
 local function isReceivingPet()
-    return (tick() - (Auto.lastGiftAct or 0)) < 2
+    return (tick() - (Auto.lastGiftAct or 0)) < 5
 end
 -- deteksi gift KELUAR (biasa/tiket, manual/sc): hook PetGiftingService & TradeEvents fire
 Auto.lastGiftOut = 0
@@ -2032,6 +2061,10 @@ do
                 if n == "PetGiftingService" or n == "SendRequest" or n == "AddItem"
                     or n == "GivePet" or n == "AcceptPetGift" then
                     Auto.lastGiftOut = tick()
+                end
+                -- ACCEPT/CLAIM pet masuk -> pause auto-hact (resume 5s stlh accept terakhir)
+                if n == "AcceptPetGift" then
+                    Auto.lastGiftAct = tick()
                 end
             end
             return old(self, ...)
@@ -3727,7 +3760,9 @@ local function saveConfig()
     data.giftCfgs = giftClean
     local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
     if ok and json then
-        pcall(function() writefile(SAVE_FILE, json) end)
+        local wok = pcall(function() writefile(SAVE_FILE, json) end)
+        local nrule = 0; for _ in pairs(config.sellRules) do nrule = nrule + 1 end
+        print("[HactTelur] SAVE: "..nrule.." rule, writefile="..tostring(wok)..", file="..SAVE_FILE)
     else
         warn("[HactTelur] SAVE GAGAL: JSONEncode error - "..tostring(json))
     end
@@ -3741,7 +3776,11 @@ local function loadConfig()
     if not ok2 or type(data) ~= "table" then return end
     -- restore
     if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
-    if type(data.sellRules) == "table" then config.sellRules = data.sellRules end
+    if type(data.sellRules) == "table" then
+        config.sellRules = data.sellRules
+        local nr = 0; for _ in pairs(config.sellRules) do nr = nr + 1 end
+        print("[HactTelur] LOAD: "..nr.." sell rule dari file")
+    end
     if data.autoSell ~= nil then config.autoSell = data.autoSell end
     if data.maxEggManual ~= nil then
         config.maxEggManual = data.maxEggManual
