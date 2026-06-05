@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v16.3"
+local VERSION = "v16.6"
 
 -- ============ THEME ============
 local C = {
@@ -2187,9 +2187,14 @@ local function automationLoop()
             task.wait(0.5)
         else
         local full, cur, max = isBackpackFull()
-        -- selalu jaga pet tim ke-fav (tiap ~10 iterasi)
+        -- v16.4: jaga fav terus-menerus. Pet tim + pet KEEP (yg gak ada di list sell)
+        -- difavoritkan dari awal (saat tim Reduce/Hatch), gak nunggu masuk tim Seal.
         favTick = favTick + 1
-        if favTick >= 10 then favTick = 0; favTeamPets() end
+        if favTick >= 10 then
+            favTick = 0
+            favTeamPets()           -- fav pet tim
+            pcall(syncFavByRules)   -- fav pet keep + unfav pet sell (lebih awal)
+        end
         -- backpack penuh? equip tim SEAL dulu, baru jual.
         -- TAPI kalo mode gift-tunggu-full ON, auto-sell dimatiin (gift yg ambil alih)
         -- DIAGNOSTIK: kalo full tapi gak sell, kasih tau kenapa
@@ -2204,6 +2209,15 @@ local function automationLoop()
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
             favTeamPets()  -- fav pet tim (proteksi)
             pcall(syncFavByRules)  -- atur fav/unfav sesuai rule SEKARANG (real-time, gak nunggu)
+            -- v16.4: JEDA biar favorit bener-bener tercatat server SEBELUM jual.
+            -- (dulu habis fav langsung sell, kadang fav blm masuk -> pet keep ikut kejual)
+            print("[HactTelur] tunggu favorit tercatat (3 detik)...")
+            task.wait(3)
+            pcall(syncFavByRules)  -- pastikan sekali lagi (pet baru / yg ke-skip)
+            task.wait(0.5)
+            if isPausedForGift() then  -- v16.4: gift nyempil pas jeda fav? batal sell
+                print("[HactTelur] gift mulai pas jeda fav, batal sell")
+            else
             equipTeam("Sell Tim")
             task.wait(3.5)  -- tunggu tim Seal masuk garden (skill aktif) - lebih lama biar mantap
             local sold = doAutoSell()
@@ -2218,6 +2232,7 @@ local function automationLoop()
                 Auto.sellExhaustedCount = #PetDetect.listBackpackPets()
                 print("[HactTelur] gak ada pet buat dijual (sisanya keep), lanjut reduce")
             end
+            end  -- tutup guard isPausedForGift (jeda fav)
             end  -- tutup guard isPausedForGift
         elseif Auto.sellExhausted then
             -- cek apakah pet udah nambah dari terakhir sell (ada pet baru buat dijual)
@@ -2772,6 +2787,7 @@ local function makeConfigPanel()
         if _G.HactTelurSave then pcall(_G.HactTelurSave) end
     end)
     refreshTog()
+    _G.HactTelurSetAutoSellUI = refreshTog  -- v16.6: biar toggle autoSell ikut ter-update setelah rejoin
     local sellNowBtn = mk("TextButton", {
         Size = UDim2.new(0, 130, 0, 26), Position = UDim2.new(1, -130, 0, 1),
         BackgroundColor3 = C.card, Text = "Sell Sekarang", Font = FONT_SB, TextSize = 11,
@@ -2864,6 +2880,7 @@ local function makeConfigPanel()
     _G.HactTelurRefreshConfig = function()
         pcall(function() buildList(searchBox.Text or "") end)
         pcall(refreshCounter)
+        pcall(refreshDdLabel)  -- v16.6: update label dropdown egg (Select Egg -> nama/jumlah) setelah rejoin
         pcall(refreshRules)
         if _G.HactTelurSetMaxEggUI then pcall(_G.HactTelurSetMaxEggUI) end
         -- refresh label target gift (biar username tersimpan tampil walau player offline)
@@ -2985,16 +3002,21 @@ local function makeStatPanel()
         s.Position = UDim2.new(0, 0, 1, -20); s.Size = UDim2.new(1, 0, 0, 14)
         return { val = v, sub = s }
     end
-    local cardTotal = statCard("TOTAL",  0,      "—", "(pet)")
+    local cardTotal = statCard("TOTAL",  0,      "—", "(pet / max)")
     local cardEgg   = statCard("EGG",    0.3333, "—", "(egg)")
     local cardSeal  = statCard("SEAL %", 0.6666, "—", "(tim sell)")
 
     -- isi data nyata + refresh berkala
     local function refreshStat()
         pcall(function()
-            -- total pet di backpack
+            -- total pet di backpack + BATAS inventory (cur/max), kayak "191/210"
             local pets = PetDetect.listBackpackPets()
-            cardTotal.val.Text = tostring(#pets)
+            local maxP = getMaxPets()
+            if maxP and maxP > 0 then
+                cardTotal.val.Text = #pets.."/"..maxP
+            else
+                cardTotal.val.Text = tostring(#pets)
+            end
             -- total egg dimiliki
             local totalEgg = 0
             EggDetect.scan()
@@ -3862,7 +3884,10 @@ local function loadConfig()
         local nr = 0; for _ in pairs(config.sellRules) do nr = nr + 1 end
         print("[HactTelur] LOAD: "..nr.." sell rule dari file")
     end
-    if data.autoSell ~= nil then config.autoSell = data.autoSell end
+    if data.autoSell ~= nil then
+        config.autoSell = data.autoSell
+        if _G.HactTelurSetAutoSellUI then pcall(_G.HactTelurSetAutoSellUI) end
+    end
     if data.maxEggManual ~= nil then
         config.maxEggManual = data.maxEggManual
         if _G.HactTelurSetMaxEggUI then pcall(_G.HactTelurSetMaxEggUI) end
