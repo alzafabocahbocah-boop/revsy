@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.251"
-local VERSION_DATE = "v8.251: Auto-snipe scan PARALEL — query semua pemain serempak (bukan 1-1 berurutan). Di server rame 30 org, cycle abis beli yg tadinya 2-5 detik jadi <1 detik. Plus v8.250 (garden merah) + v8.249 (BaseWeight container)."
+local VERSION = "8.252"
+local VERSION_DATE = "v8.252: Auto Accept Gift diperbaiki — klik tombol Accept di popup Gift_Notification (popup hilang + pet keterima) + loop pemindai mandiri. Sebelumnya cuma fire remote, popup nyangkut."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -10019,6 +10019,74 @@ BH.buildGardenPanel = function()
     -- v8.168: AUTO-ACCEPT precise — port dari leveling sc (v12.10 confirmed working)
     -- Gift: GiftPet(uuid, name, sender) -> AcceptPetGift(true, uuid)
     -- Trade: SendRequest(tradeID, sender, ts) -> RespondRequest(tradeID, true) + spam Accept button
+
+    -- v8.252: klik tombol Accept di popup Gift_Notification biar POPUP HILANG + pet keterima.
+    -- Popup gift masuk: Gift_Notification/Frame/Gift_Notification/<Holder>/Frame/Accept (ImageButton).
+    -- Tombol TIDAK simpan uuid -> klik UI = cara utama (server handle via handler client).
+    local function _fireGuiBtn(btn)
+        if not btn then return false end
+        local ok = false
+        if getconnections then
+            pcall(function()
+                for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
+                    if c.Fire then pcall(function() c:Fire() end)
+                    elseif c.Function then pcall(function() c.Function() end) end
+                    ok = true
+                end
+            end)
+            pcall(function()
+                for _, c in ipairs(getconnections(btn.MouseButton1Down)) do
+                    if c.Fire then pcall(function() c:Fire() end)
+                    elseif c.Function then pcall(function() c.Function() end) end
+                end
+            end)
+            pcall(function()
+                for _, c in ipairs(getconnections(btn.Activated)) do
+                    if c.Fire then pcall(function() c:Fire() end)
+                    elseif c.Function then pcall(function() c.Function() end) end
+                    ok = true
+                end
+            end)
+        end
+        if firesignal then
+            pcall(function() firesignal(btn.MouseButton1Down) end)
+            pcall(function() firesignal(btn.MouseButton1Click) end)
+            pcall(function() firesignal(btn.Activated) end)
+            ok = true
+        end
+        return ok
+    end
+
+    local function acceptAllGiftPopups()
+        local clicked = 0
+        pcall(function()
+            local pgg = player:FindFirstChild("PlayerGui")
+            local gn = pgg and pgg:FindFirstChild("Gift_Notification")
+            if not gn then return end
+            local outer = gn:FindFirstChild("Frame")
+            local inner = outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
+            local container = inner or gn
+            for _, holder in ipairs(container:GetChildren()) do
+                local accept
+                local fr = holder:FindFirstChild("Frame")
+                if fr then accept = fr:FindFirstChild("Accept") end
+                if not accept then
+                    for _, dd in ipairs(holder:GetDescendants()) do
+                        if dd.Name == "Accept" and dd:IsA("GuiButton") then accept = dd break end
+                    end
+                end
+                if accept and accept:IsA("GuiButton") then
+                    local vis = true
+                    pcall(function() vis = accept.Visible end)
+                    if vis then
+                        if _fireGuiBtn(accept) then clicked = clicked + 1 end
+                    end
+                end
+            end
+        end)
+        return clicked
+    end
+
     task.spawn(function()
         task.wait(1)
         local ge = RS:FindFirstChild("GameEvents")
@@ -10027,23 +10095,44 @@ BH.buildGardenPanel = function()
         -- ===== GIFT =====
         local giftPetRE = ge:FindFirstChild("GiftPet")
         local acceptPetGiftRE = ge:FindFirstChild("AcceptPetGift")
-        if giftPetRE and giftPetRE:IsA("RemoteEvent") and acceptPetGiftRE and acceptPetGiftRE:IsA("RemoteEvent") then
+        if giftPetRE and giftPetRE:IsA("RemoteEvent") then
             local count = 0
             giftPetRE.OnClientEvent:Connect(function(petUUID, petName, senderUsername)
                 if not BH.autoGift then return end
-                -- Instant fire (sebelum proses lain) + retry 50ms backup
-                pcall(function() acceptPetGiftRE:FireServer(true, petUUID) end)
-                task.spawn(function()
-                    task.wait(0.05)
+                -- backup: fire remote kalau uuid valid
+                if acceptPetGiftRE and acceptPetGiftRE:IsA("RemoteEvent") and type(petUUID) == "string" and #petUUID > 8 then
                     pcall(function() acceptPetGiftRE:FireServer(true, petUUID) end)
+                end
+                -- utama: klik tombol Accept di popup (popup hilang + pet keterima)
+                task.spawn(function()
+                    for _ = 1, 10 do
+                        if not BH.autoGift then break end
+                        local n = acceptAllGiftPopups()
+                        if n > 0 then
+                            count = count + 1
+                            L("[AutoAccept-gift] klik "..n.." popup #"..count.." from "..tostring(senderUsername))
+                            task.wait(0.3)
+                        else
+                            task.wait(0.25)
+                        end
+                    end
                 end)
-                count = count + 1
-                L("[AutoAccept-gift] #"..count.." "..tostring(petUUID):sub(1,8).." from "..tostring(senderUsername))
             end)
-            L("[AutoAccept] gift hook INSTALLED (GiftPet -> AcceptPetGift)")
+            L("[AutoAccept] gift hook INSTALLED (GiftPet -> klik popup Accept)")
         else
-            L("[AutoAccept] WARN: GiftPet/AcceptPetGift gak ketemu")
+            L("[AutoAccept] WARN: GiftPet gak ketemu")
         end
+
+        -- v8.252: loop pemindai mandiri — tangkap popup yg udah ada saat toggle ON,
+        -- atau popup tanpa OnClientEvent. Tidak bergantung event.
+        task.spawn(function()
+            while true do
+                task.wait(0.8)
+                if BH.autoGift then
+                    pcall(acceptAllGiftPopups)
+                end
+            end
+        end)
 
         -- ===== TRADE =====
         local te = ge:FindFirstChild("TradeEvents")
