@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v16.8"
+local VERSION = "v17.2"
 
 -- ============ THEME ============
 local C = {
@@ -158,13 +158,18 @@ function PetDetect.sumPctSelected(selectedSet, keyword, pctType)
             local nm = p.name or ""
             local match = (not kw) or (nm:lower():find(kw, 1, true) ~= nil)
             if match then
-                -- mutasi: dari cache MutationType, fallback prefix nama Tool
+                -- v17.2: mutasi dari NAMA TOOL dulu (prefix lengkap: UFO/Venom/Nightmare jelas),
+                -- baru MutationType (sering cuma code 'A'/'X'/'Z' yg gak dikenal -> boost 0).
                 local pd = PetDetect.cache[uuid] or PetDetect.cache["{"..uuid.."}"]
-                local mut = pd and pd.MutationType
-                if (not mut or mut == "") and p.rawName then
+                local mut = nil
+                if p.rawName then
                     for _, pre in ipairs(PetDetect.MUT_PREFIXES) do
                         if p.rawName:find(pre, 1, true) then mut = pre break end
                     end
+                end
+                -- fallback: MutationType (kalau nama tool gak ada prefix mutasi)
+                if not mut then
+                    mut = pd and pd.MutationType
                 end
                 local add = 0
                 if pctType == "seal" then
@@ -272,6 +277,28 @@ function PetDetect.rebuild(force)
         end
         addTool(player:FindFirstChild("Backpack"))
         addTool(player.Character)
+        -- v17.0: garden (PetsPhysical dll) berisi pet SEMUA pemain di server.
+        -- HANYA ambil pet milik kita (cek OWNER = nama/UserId kita). dulu semua ke-ambil
+        -- -> pet pemain lain ikut kehitung (mis garden orang +8 -> total meleset).
+        local myName = player.Name
+        local myId = tostring(player.UserId)
+        local function ownerIsMine(d)
+            -- cek owner di node ini atau ancestor terdekat (model induk pet).
+            -- atribut aslinya 'owner' (lowercase) — GetAttribute case-sensitive!
+            local cur = d
+            for _ = 1, 6 do  -- naik max 6 level cari atribut owner
+                if not cur or cur == Workspace then break end
+                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                    or cur:GetAttribute("OwnerUserId") or cur:GetAttribute("OwnerId")
+                if o ~= nil then
+                    local os = tostring(o)
+                    return (os == myName or os == myId)
+                end
+                cur = cur.Parent
+            end
+            return nil  -- owner gak ketemu (tak tentu)
+        end
         for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
             local f = Workspace:FindFirstChild(nm)
             if f then
@@ -281,7 +308,14 @@ function PetDetect.rebuild(force)
                         local n = d.Name:gsub("[{}]","")
                         if #n >= 32 and n:find("-") then u = n end
                     end
-                    if u then mine[tostring(u):gsub("[{}]","")] = true end
+                    if u then
+                        local mineFlag = ownerIsMine(d)
+                        -- masukin kalau owner = kita ATAU owner tak ketemu (fallback aman:
+                        -- pet kita yg baru di-place kadang owner blm ke-set). owner pemain lain -> SKIP.
+                        if mineFlag ~= false then
+                            mine[tostring(u):gsub("[{}]","")] = true
+                        end
+                    end
                 end
             end
         end
@@ -303,14 +337,19 @@ function PetDetect.rebuild(force)
                     if scanned > 1500 then break end
                 end
                 -- merge kalo container berisi pet kita (skip DB global 219 yg gak ada pet kita)
+                -- v16.9: HANYA simpan pet yg uuid-nya MILIK KITA (ada di set `mine`).
+                -- dulu merge SEMUA pet di container -> ikut hitung pet pemain lain yg nyangkut
+                -- di container yg sama -> count meledak (mis 341 padahal asli 195).
                 if hasMine and valid >= 1 then
                     for k, v in pairs(obj) do
                         if type(k) == "string" and #k >= 32 and k:find("-")
                            and type(v) == "table" and rawget(v, "PetData") then
                             local clean = k:gsub("[{}]","")
-                            if not PetDetect.cache[clean] then n = n + 1 end
-                            PetDetect.cache[clean] = v.PetData
-                            PetDetect.cache["{"..clean.."}"] = v.PetData
+                            if mine[clean] then  -- cuma pet milik kita
+                                if not PetDetect.cache[clean] then n = n + 1 end
+                                PetDetect.cache[clean] = v.PetData
+                                PetDetect.cache["{"..clean.."}"] = v.PetData
+                            end
                         end
                     end
                 end
@@ -426,8 +465,17 @@ function PetDetect.listBackpackPets()
         if not dispKg and pd and pd.BaseWeight and pd.Level then
             dispKg = pd.BaseWeight * (pd.Level + 10) / 10
         end
-        local mut = pd and pd.MutationType and tostring(pd.MutationType) or nil
-        if mut and PetDetect.MUT_SHORT[mut] then mut = PetDetect.MUT_SHORT[mut] end
+        -- v17.2: mutasi — NAMA TOOL dulu (prefix lengkap), baru MutationType code.
+        local mut = nil
+        if nm then  -- nm = nama tool (rawName), punya prefix mutasi jelas
+            for _, pre in ipairs(PetDetect.MUT_PREFIXES) do
+                if tostring(nm):find(pre, 1, true) then mut = pre break end
+            end
+        end
+        if not mut then
+            mut = pd and pd.MutationType and tostring(pd.MutationType) or nil
+            if mut and PetDetect.MUT_SHORT[mut] then mut = PetDetect.MUT_SHORT[mut] end
+        end
         -- favorit: PetData.IsFavorite, fallback atribut tool
         local fav = false
         if pd and pd.IsFavorite == true then fav = true end
@@ -1659,12 +1707,26 @@ local function autoUnequip(uuid)
     if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("UnequipPet", u) end) end
 end
 
--- hitung pet yg ada di garden (PetsPhysical) — buat cek tim hatch udah full
+-- hitung pet yg ada di garden (PetsPhysical) MILIK KITA — buat cek tim hatch udah full
 local function countGardenPets()
     local n = 0
     pcall(function()
         local pp = Workspace:FindFirstChild("PetsPhysical")
         if not pp then return end
+        local myName = player.Name
+        local myId = tostring(player.UserId)
+        -- cek owner di node atau ancestor (atribut 'owner' lowercase)
+        local function ownerMine(d)
+            local cur = d
+            for _ = 1, 6 do
+                if not cur or cur == Workspace then break end
+                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
+                cur = cur.Parent
+            end
+            return nil
+        end
         local seen = {}
         for _, m in ipairs(pp:GetDescendants()) do
             if m:IsA("Model") then
@@ -1673,8 +1735,11 @@ local function countGardenPets()
                 local key = uuid and tostring(uuid) or nm
                 if (uuid or (nm:sub(1,1)=="{" and nm:sub(-1)=="}") or (#nm>=30 and nm:match("^[%w%-]+$")))
                    and not seen[key] then
-                    seen[key] = true
-                    n = n + 1
+                    -- v17.1: cuma hitung pet kita (owner = kita / owner tak ketemu)
+                    if ownerMine(m) ~= false then
+                        seen[key] = true
+                        n = n + 1
+                    end
                 end
             end
         end
@@ -2292,8 +2357,19 @@ local function automationLoop()
                 -- semua ready -> hatch bareng (efisien)
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 equipTeam("Hatch Tim")
-                task.wait(3)
-                print("[HactTelur] tim hatch di garden: "..countGardenPets()..", hatch all!")
+                -- v17.1: TUNGGU pet tim Hatch (Koi) bener-bener masuk garden baru hatch.
+                -- target = jumlah pet selected di tim Hatch. timeout 8 detik biar gak stuck.
+                local hatchTarget = 0
+                if teamData["Hatch Tim"] and teamData["Hatch Tim"].selected then
+                    for _ in pairs(teamData["Hatch Tim"].selected) do hatchTarget = hatchTarget + 1 end
+                end
+                local waited = 0
+                while waited < 8 do
+                    local g = countGardenPets()
+                    if hatchTarget <= 0 or g >= hatchTarget then break end
+                    task.wait(0.3); waited = waited + 0.3
+                end
+                print("[HactTelur] tim hatch di garden: "..countGardenPets().."/"..hatchTarget..", hatch all!")
                 hatchAllEggs()
                 task.wait(2)
                 equipTeam("Reduce Tim")
@@ -2302,7 +2378,17 @@ local function automationLoop()
                 -- biar gak stuck nunggu semua (Koi terus balikin egg)
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 equipTeam("Hatch Tim")
-                task.wait(3)
+                -- v17.1: tunggu Koi masuk juga di sini
+                local hatchTarget = 0
+                if teamData["Hatch Tim"] and teamData["Hatch Tim"].selected then
+                    for _ in pairs(teamData["Hatch Tim"].selected) do hatchTarget = hatchTarget + 1 end
+                end
+                local waited = 0
+                while waited < 8 do
+                    local g = countGardenPets()
+                    if hatchTarget <= 0 or g >= hatchTarget then break end
+                    task.wait(0.3); waited = waited + 0.3
+                end
                 hatchAllEggs()
                 task.wait(2)
                 equipTeam("Reduce Tim")
