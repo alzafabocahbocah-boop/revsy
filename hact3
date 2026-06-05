@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v15.9"
+local VERSION = "v16.0"
 
 -- ============ THEME ============
 local C = {
@@ -1029,58 +1029,107 @@ end
 -- gift semua pet jenis tertentu ke target (by nama target + set pet type)
 -- ============ AUTO ACCEPT gift & trade MASUK ============
 local AutoAcc = { gift = false, trade = false, lastTradeID = nil }
+
+-- klik 1 tombol GuiButton (ImageButton/TextButton) ala pencet manual via executor
+local function fireGuiButton(btn)
+    if not btn then return false end
+    local ok = false
+    if getconnections then
+        pcall(function()
+            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
+                if c.Fire then pcall(function() c:Fire() end)
+                elseif c.Function then pcall(function() c.Function() end) end
+                ok = true
+            end
+        end)
+        pcall(function()
+            for _, c in ipairs(getconnections(btn.MouseButton1Down)) do
+                if c.Fire then pcall(function() c:Fire() end)
+                elseif c.Function then pcall(function() c.Function() end) end
+            end
+        end)
+    end
+    if firesignal then
+        pcall(function() firesignal(btn.MouseButton1Down) end)
+        pcall(function() firesignal(btn.MouseButton1Click) end)
+        ok = true
+    end
+    return ok
+end
+
+-- klik SEMUA tombol Accept di popup gift masuk (Gift_Notification).
+-- tombol = ImageButton, klik UI memicu handler client -> server (pet keterima + popup hilang).
+-- TIDAK ada uuid di UI, jadi klik tombol adalah cara utama (bukan fire remote langsung).
+local function acceptAllGiftPopups()
+    local clicked = 0
+    pcall(function()
+        local pg = player:FindFirstChild("PlayerGui")
+        local gn = pg and pg:FindFirstChild("Gift_Notification")
+        if not gn then return end
+        -- struktur: Gift_Notification/Frame/Gift_Notification/<Holder>/Frame/Accept
+        local outer = gn:FindFirstChild("Frame")
+        local inner = outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
+        local container = inner or gn
+        for _, holder in ipairs(container:GetChildren()) do
+            -- tombol Accept bisa di holder/Frame/Accept atau langsung descendant bernama "Accept"
+            local accept
+            local fr = holder:FindFirstChild("Frame")
+            if fr then accept = fr:FindFirstChild("Accept") end
+            if not accept then
+                for _, dd in ipairs(holder:GetDescendants()) do
+                    if dd.Name == "Accept" and dd:IsA("GuiButton") then accept = dd break end
+                end
+            end
+            if accept and accept:IsA("GuiButton") then
+                local vis = true
+                pcall(function() vis = accept.Visible end)
+                if vis then
+                    if fireGuiButton(accept) then clicked = clicked + 1 end
+                end
+            end
+        end
+    end)
+    return clicked
+end
+
 do
     local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
     if ge then
-        -- gift masuk: GiftPet.OnClientEvent -> AcceptPetGift(true, uuid)
+        -- gift masuk: saat GiftPet.OnClientEvent -> langsung klik tombol Accept di popup.
         local giftRE = ge:FindFirstChild("GiftPet")
         local acceptGiftRE = ge:FindFirstChild("AcceptPetGift")
-        if giftRE and acceptGiftRE then
+        if giftRE then
             giftRE.OnClientEvent:Connect(function(petUUID, petName, senderUsername)
                 if not AutoAcc.gift then return end
-                -- 1) fire remote (pet keterima di server)
-                pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
-                task.spawn(function() task.wait(0.05); pcall(function() acceptGiftRE:FireServer(true, petUUID) end) end)
-                -- 2) klik ACCEPT_BUTTON di WarningUI biar POPUP HILANG (kayak pencet manual)
+                -- backup: kalau dapat uuid valid, fire remote juga (sebagian gift butuh ini)
+                if acceptGiftRE and type(petUUID) == "string" and #petUUID > 8 then
+                    pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
+                end
+                -- utama: klik tombol Accept di Gift_Notification (popup hilang + pet keterima)
                 task.spawn(function()
-                    for _ = 1, 6 do  -- coba beberapa kali (popup mungkin muncul telat)
-                        task.wait(0.2)
-                        local done = false
-                        pcall(function()
-                            local pg = player:FindFirstChild("PlayerGui")
-                            local wui = pg and pg:FindFirstChild("WarningUI")
-                            if not wui then return end
-                            for _, tmpl in ipairs({"WarningTemplate", "InfoTemplate"}) do
-                                local tpl = wui:FindFirstChild(tmpl)
-                                local warn = tpl and tpl:FindFirstChild("WARNING")
-                                local btns = warn and warn:FindFirstChild("Buttons")
-                                local main = btns and btns:FindFirstChild("Main")
-                                local acc = main and main:FindFirstChild("ACCEPT_BUTTON")
-                                if acc then
-                                    -- cari SENSOR (TextButton) dalam ACCEPT_BUTTON
-                                    local sensor
-                                    for _, dd in ipairs(acc:GetDescendants()) do
-                                        if dd:IsA("TextButton") and dd.Name == "SENSOR" then sensor = dd break end
-                                    end
-                                    if sensor and sensor.Visible then
-                                        -- trigger klik (dismiss popup)
-                                        if getconnections then
-                                            for _, c in ipairs(getconnections(sensor.MouseButton1Click)) do
-                                                pcall(function() c.Function() end)
-                                            end
-                                        end
-                                        if firesignal then pcall(function() firesignal(sensor.MouseButton1Click) end) end
-                                        done = true
-                                    end
-                                end
-                            end
-                        end)
-                        if done then break end
+                    for _ = 1, 10 do  -- popup bisa muncul telat / banyak sekaligus
+                        if not AutoAcc.gift then break end
+                        local n = acceptAllGiftPopups()
+                        if n > 0 then
+                            print("[HactTelur] auto-accept gift: klik "..n.." popup")
+                            task.wait(0.3)
+                        else
+                            task.wait(0.25)
+                        end
                     end
                 end)
-                print("[HactTelur] auto-accept gift masuk (+ dismiss popup)")
             end)
         end
+        -- loop pemindai mandiri: tangkap popup yg sudah ada saat toggle dinyalakan,
+        -- atau popup yg muncul tanpa OnClientEvent (tidak bergantung event).
+        task.spawn(function()
+            while true do
+                task.wait(0.8)
+                if AutoAcc.gift then
+                    pcall(acceptAllGiftPopups)
+                end
+            end
+        end)
         -- trade masuk: TradeEvents.SendRequest.OnClientEvent -> RespondRequest(tradeID, true)
         local te = ge:FindFirstChild("TradeEvents")
         if te then
