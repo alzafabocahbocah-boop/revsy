@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v16.6"
+local VERSION = "v16.8"
 
 -- ============ THEME ============
 local C = {
@@ -650,16 +650,37 @@ local titleBar = mk("Frame", {
     Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, Parent = main })
 local titleLogo = mk("TextLabel", {
     Size = UDim2.new(0, 22, 0, 22), Position = UDim2.new(0, 16, 0, 11),
-    BackgroundTransparency = 1, Text = "H", Font = FONT_B, TextSize = 13,
+    BackgroundTransparency = 1, Text = "Z", Font = FONT_B, TextSize = 13,
     TextColor3 = C.text, Parent = titleBar })
 corner(stroke(titleLogo, C.text, 1.5).Parent, 5)
-local titleTxt = lbl(titleBar, "HACT TELUR", 14, C.text)
+local titleTxt = lbl(titleBar, "ZENX TELUR", 14, C.text)
 titleTxt.Font = FONT_B
 titleTxt.Position = UDim2.new(0, 46, 0, 0)
 titleTxt.Size = UDim2.new(0, 140, 1, 0)
-local verTxt = lbl(titleBar, VERSION, 11, C.textMute)
-verTxt.Position = UDim2.new(0, 150, 0, 0)
-verTxt.Size = UDim2.new(0, 60, 1, 0)
+-- v16.8: versi + total/batas pet di samping (mis "v16.8  180/210"), font agak gede
+local verTxt = lbl(titleBar, VERSION, 12.5, C.text)
+verTxt.Font = FONT_SB
+verTxt.Position = UDim2.new(0, 152, 0, 0)
+verTxt.Size = UDim2.new(0, 150, 1, 0)
+-- update verTxt: tampil versi + cur/max pet, refresh berkala
+local function updateVerTxt()
+    pcall(function()
+        local cur = #PetDetect.listBackpackPets()
+        local maxP = _G.HactTelurGetMaxPets and _G.HactTelurGetMaxPets() or nil
+        if maxP and maxP > 0 then
+            verTxt.Text = VERSION .. "  " .. cur .. "/" .. maxP
+        else
+            verTxt.Text = VERSION .. "  " .. cur
+        end
+    end)
+end
+task.spawn(function()
+    task.wait(2)
+    while titleBar.Parent do
+        updateVerTxt()
+        task.wait(3)
+    end
+end)
 
 -- tombol close (✕) — tutup seluruh skrip
 local closeMain = mk("TextButton", {
@@ -1956,6 +1977,7 @@ end
 local function getMaxPets()
     return getGameData().maxPets
 end
+_G.HactTelurGetMaxPets = getMaxPets  -- v16.8: buat title bar tampil cur/max pet
 local function getMaxEggs()
     return getGameData().maxEggs
 end
@@ -3645,6 +3667,28 @@ do
         end)
         mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 286),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
+        -- v16.7: refresh SEMUA input slot gift dari cfg (biar nilai tersimpan tampil setelah rejoin)
+        _G.HactTelurGiftAgeKgLabels = _G.HactTelurGiftAgeKgLabels or {}
+        _G.HactTelurGiftAgeKgLabels[idx] = function()
+            aBox.Text = tostring(cfg.age or 0)
+            kBox.Text = tostring(cfg.kg or 0)
+            mBtn.Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)"
+            -- label pet & mutasi (jumlah dipilih)
+            local np = 0; for _ in pairs(cfg.pets or {}) do np = np + 1 end
+            petL.Text = np > 0 and (np.." pet") or "Select Pet..."
+            petL.TextColor3 = np > 0 and C.text or C.textDim
+            local nm = 0; for _ in pairs(cfg.muts or {}) do nm = nm + 1 end
+            mutL.Text = nm > 0 and (nm.." mutasi") or "(Opsional)..."
+            mutL.TextColor3 = nm > 0 and C.text or C.textDim
+            -- toggle unfav
+            uSw.BackgroundColor3 = cfg.unfavFirst and C.accent or C.input
+            uKnob.BackgroundColor3 = cfg.unfavFirst and Color3.fromRGB(17,17,17) or C.textDim
+            uKnob.Position = cfg.unfavFirst and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+            -- toggle waitFull
+            wSw.BackgroundColor3 = cfg.waitFull and C.accent or C.input
+            wKnob.BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim
+            wKnob.Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        end
         -- tombol Gift (toggle auto-loop)
         local gBtn = mk("TextButton", {
             Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 294),
@@ -3917,6 +3961,10 @@ local function loadConfig()
                 dst.unfavFirst = src.unfavFirst or false
                 dst.waitFull = src.waitFull or false
             end
+        end
+        -- v16.7: update input age & kg di UI dari nilai yg baru di-load
+        if _G.HactTelurGiftAgeKgLabels then
+            for _, fn in pairs(_G.HactTelurGiftAgeKgLabels) do pcall(fn) end
         end
     end
     if type(data.teams) == "table" then
