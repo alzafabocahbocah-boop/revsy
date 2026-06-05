@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.252"
-local VERSION_DATE = "v8.252: Auto Accept Gift diperbaiki — klik tombol Accept di popup Gift_Notification (popup hilang + pet keterima) + loop pemindai mandiri. Sebelumnya cuma fire remote, popup nyangkut."
+local VERSION = "8.253"
+local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -9952,6 +9952,35 @@ L("  - Inventory capacity")
 end)()
 
 
+-- v8.253: ambil batas pet inventory (MaxPetsInInventory) dari memory game.
+-- cache 5s biar getgc gak berat. ambil nilai TERBESAR valid (hindari template default).
+local _zenxMaxPetsCache, _zenxMaxPetsTime = nil, 0
+local function getMaxPetsZenx()
+    if _zenxMaxPetsCache and (tick() - _zenxMaxPetsTime) < 5 then return _zenxMaxPetsCache end
+    local best = nil
+    if getgc then
+        pcall(function()
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local mp = rawget(obj, "MaxPetsInInventory")
+                    if type(mp) == "number" and mp > 0 then
+                        if not best or mp > best then best = mp end
+                    end
+                end
+            end
+        end)
+    end
+    -- fallback: atribut player kalau memory gak ketemu
+    if not best then
+        for _, attr in ipairs({"MaxPetsInInventory", "MaxPets", "MaxInventory"}) do
+            local v = player:GetAttribute(attr)
+            if v and tonumber(v) and tonumber(v) > 0 then best = tonumber(v) break end
+        end
+    end
+    _zenxMaxPetsCache = best; _zenxMaxPetsTime = tick()
+    return best
+end
+
 -- v8.49: GARDEN PANEL UI build (server-detect)
 BH.buildGardenPanel = function()
     local gp = BH.gardenPanel
@@ -11042,7 +11071,10 @@ BH.buildGardenPanel = function()
         end
         local nTypes = 0 for _ in pairs(tc) do nTypes = nTypes + 1 end
         local filterLabel = gardenFilter == "all" and "" or (" ["..gardenFilter.."]")
-        gStatsLbl.Text = string.format("%d pets  |  %d fav  |  %d types%s", total, favC, nTypes, filterLabel)
+        -- v8.253: tampilkan batas inventory (cur/max), kayak "185/210 pets"
+        local maxP = getMaxPetsZenx()
+        local petsStr = maxP and (total.."/"..maxP) or tostring(total)
+        gStatsLbl.Text = string.format("%s pets  |  %d fav  |  %d types%s", petsStr, favC, nTypes, filterLabel)
         local sorted = {}
         for pt, info in pairs(tc) do table.insert(sorted, {pt=pt, info=info}) end
         table.sort(sorted, function(a, b) return a.info.n > b.info.n end)
