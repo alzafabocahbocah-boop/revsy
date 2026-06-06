@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v18.4"
+local VERSION = "v18.9"
 
 -- ============ THEME ============
 local C = {
@@ -58,6 +58,7 @@ end
 
 -- ============ DETEKSI PET (memory container getgc — terbukti dari market/telur) ============
 local PetDetect = {}
+PetDetect.DEBUG_PCT = false  -- set true buat print nilai seal/koi per pet ke console
 PetDetect.container = nil
 PetDetect.count = 0
 PetDetect.cache = {}            -- uuid(clean & braced) -> PetData
@@ -183,6 +184,11 @@ function PetDetect.sumPctSelected(selectedSet, keyword, pctType)
                 end
                 sum = sum + add
                 n = n + 1
+                if PetDetect.DEBUG_PCT then
+                    print(string.format("[SealDbg] %s | kg=%s age=%s mut=%s -> %.2f",
+                        tostring(nm):sub(1,20), tostring(pd and pd.BaseWeight),
+                        tostring(pd and pd.Level), tostring(mut), add))
+                end
             end
         end
     end
@@ -924,6 +930,8 @@ local config = {
     autoSell = true,
     sellRunning = false,
     maxEggManual = 0,   -- 0 = auto (deteksi maks asli akun), >0 = pakai angka ini
+    hatchDelay = 6,     -- detik jeda setelah tim hatch (Koi) masuk, sebelum hatch
+    autoUnequipWrong = false,  -- buang pet salah (bukan tim Reduce) dari garden
 }
 
 -- ============ SISTEM JUAL PET ============
@@ -1707,6 +1715,163 @@ local function autoUnequip(uuid)
     if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("UnequipPet", u) end) end
 end
 
+-- v18.7: lookup jenis pet di garden lewat getgc (PetType + UUID).
+-- return: { [uuidClean] = "Mimic Octopus", ... }
+local function getGardenPetTypes()
+    local result = {}
+    -- 1) kumpulkan uuid pet di garden
+    local gardenUuids = {}
+    pcall(function()
+        local pp = Workspace:FindFirstChild("PetsPhysical")
+        if not pp then return end
+        for _, m in ipairs(pp:GetDescendants()) do
+            if m:IsA("Model") and m.Name:sub(1,1) == "{" then
+                gardenUuids[m.Name:gsub("[{}]","")] = true
+            end
+        end
+    end)
+    -- 2) lookup jenis dari getgc (data pet punya PetType + UUID)
+    if getgc then
+        pcall(function()
+            for _, obj in pairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local uuid = rawget(obj,"UUID") or rawget(obj,"PetUUID") or rawget(obj,"uuid")
+                    local pt = rawget(obj,"PetType") or rawget(obj,"Type")
+                    if type(uuid)=="string" and type(pt)=="string" then
+                        local clean = uuid:gsub("[{}]","")
+                        if gardenUuids[clean] and not result[clean] then
+                            result[clean] = pt
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    return result
+end
+
+-- v18.7: unequip pet di garden yg UUID-nya TIDAK ada di tim yg dipilih.
+-- allowedUuidSet = teamData[...].selected (set {uuidClean/uuid=true}). return jumlah unequip.
+local function unequipWrongGardenPets(allowedUuidSet)
+    if not allowedUuidSet or not next(allowedUuidSet) then return 0 end
+    -- normalisasi allowed (buang kurung kurawal biar cocok)
+    local allow = {}
+    for u in pairs(allowedUuidSet) do
+        allow[tostring(u):gsub("[{}]","")] = true
+    end
+    -- scan uuid pet di garden
+    local removed = 0
+    pcall(function()
+        local pp = Workspace:FindFirstChild("PetsPhysical")
+        if not pp then return end
+        local myName = player.Name
+        local myId = tostring(player.UserId)
+        local function ownerMine(d)
+            local cur = d
+            for _ = 1, 6 do
+                if not cur or cur == Workspace then break end
+                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
+                cur = cur.Parent
+            end
+            return nil
+        end
+        local seen = {}
+        for _, m in ipairs(pp:GetDescendants()) do
+            if m:IsA("Model") and m.Name:sub(1,1) == "{" then
+                local clean = m.Name:gsub("[{}]","")
+                if not seen[clean] and ownerMine(m) ~= false then
+                    seen[clean] = true
+                    -- pet ini gak ada di tim yg dipilih -> unequip
+                    if not allow[clean] then
+                        autoUnequip(clean)
+                        removed = removed + 1
+                        task.wait(0.1)
+                    end
+                end
+            end
+        end
+    end)
+    if removed > 0 then
+        print("[HactTelur] unequip "..removed.." pet salah (bukan tim) dari garden")
+    end
+    return removed
+end
+
+-- v18.8: tunggu SEMUA pet tim masuk garden (jumlah = tim) DAN uuid-nya sesuai tim.
+-- teamName mis "Hatch Tim"/"Sell Tim". timeout detik. return true kalau lengkap & cocok.
+local function waitTeamInGarden(teamName, timeout)
+    local td = teamData[teamName]
+    if not td or not td.selected then return false end
+    -- daftar uuid tim (target)
+    local want = {}
+    local wantN = 0
+    for u in pairs(td.selected) do
+        want[tostring(u):gsub("[{}]","")] = true
+        wantN = wantN + 1
+    end
+    if wantN == 0 then return false end
+
+    timeout = timeout or 12
+    local waited = 0
+    while waited < timeout do
+        -- scan uuid pet kita di garden
+        local inGarden = {}
+        local nIn = 0
+        pcall(function()
+            local pp = Workspace:FindFirstChild("PetsPhysical")
+            if not pp then return end
+            local myName = player.Name
+            local myId = tostring(player.UserId)
+            local function ownerMine(d)
+                local cur = d
+                for _ = 1, 6 do
+                    if not cur or cur == Workspace then break end
+                    local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                        or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                    if o ~= nil then return (tostring(o)==myName or tostring(o)==myId) end
+                    cur = cur.Parent
+                end
+                return nil
+            end
+            local seen = {}
+            for _, m in ipairs(pp:GetDescendants()) do
+                if m:IsA("Model") and m.Name:sub(1,1)=="{" then
+                    local clean = m.Name:gsub("[{}]","")
+                    if not seen[clean] and ownerMine(m) ~= false then
+                        seen[clean] = true
+                        inGarden[clean] = true
+                        nIn = nIn + 1
+                    end
+                end
+            end
+        end)
+        -- cek: semua pet tim ADA di garden?
+        local allIn = true
+        for u in pairs(want) do
+            if not inGarden[u] then allIn = false break end
+        end
+        -- cek: gak ada pet ASING (yg di garden tapi bukan tim)
+        local noExtra = true
+        for u in pairs(inGarden) do
+            if not want[u] then noExtra = false break end
+        end
+        if allIn and noExtra then
+            return true  -- lengkap & sesuai tim
+        end
+        -- kalau ada pet asing, buang dulu biar bersih
+        if not noExtra then
+            for u in pairs(inGarden) do
+                if not want[u] then autoUnequip(u); task.wait(0.08) end
+            end
+        end
+        task.wait(0.3)
+        waited = waited + 0.3
+    end
+    return false  -- timeout: tim belum lengkap
+end
+
 -- hitung pet yg ada di garden (PetsPhysical) MILIK KITA — buat cek tim hatch udah full
 local function countGardenPets()
     local n = 0
@@ -2083,7 +2248,8 @@ local function placeEggs(count)
     local placed = 0
     local stuck = 0  -- berapa kali count gak nambah berturut-turut
     -- SPAM sampai penuh: place terus + cek count, stop saat target / notif max / mentok
-    for attempt = 1, count * 3 + 10 do  -- kasih percobaan ekstra (anti gagal place)
+    -- v18.5: lebih gigih — kalau stuck, variasikan posisi (jgn nyerah cepat) sampai target.
+    for attempt = 1, count * 8 + 30 do  -- percobaan jauh lebih banyak (anti stuck)
         -- v16.2: gift mulai di tengah place? STOP LANGSUNG (jgn lanjut place).
         if Auto.giftBusy
             or (tick() - (Auto.lastGiftAct or 0)) < 5
@@ -2094,6 +2260,8 @@ local function placeEggs(count)
         if before >= target then break end          -- udah penuh
         if maxEggReached() then break end            -- notif max muncul
         holdEggTool()
+        -- posisi: kalau stuck makin sering, makin lebar sebarannya (cari titik valid baru)
+        local spread = 1 + math.min(stuck, 8) * 0.1
         local px = area.minX + math.random() * (area.maxX - area.minX)
         local pz = area.minZ + math.random() * (area.maxZ - area.minZ)
         local v = Vector3.new(px, EGG_GROUND_Y, pz)
@@ -2103,7 +2271,9 @@ local function placeEggs(count)
         local after = countEggPlaced()
         if after <= before then
             stuck = stuck + 1
-            if stuck >= 6 then break end  -- 6x gagal nambah berturut -> mentok, stop
+            -- v18.5: jangan nyerah di 6 — kasih 20x kesempatan dgn posisi beda dulu
+            if stuck >= 20 then break end
+            task.wait(0.1)  -- jeda kecil biar server sempat proses
         else
             stuck = 0
         end
@@ -2308,7 +2478,11 @@ local function automationLoop()
                 print("[HactTelur] gift mulai pas jeda fav, batal sell")
             else
             equipTeam("Sell Tim")
-            task.wait(6)  -- v17.3: tunggu tim Seal masuk garden (skill aktif) 6 detik biar mantap
+            -- v18.8: tunggu SEMUA tim Sell masuk garden + sesuai tim, baru jual
+            local okSell = waitTeamInGarden("Sell Tim", 15)
+            local sd = config.hatchDelay or 6
+            print("[HactTelur] tim Sell "..(okSell and "LENGKAP" or "timeout").." ("..countGardenPets().."), tunggu "..sd.." detik...")
+            task.wait(sd)  -- jeda biar skill Seal bener-bener aktif
             local sold = doAutoSell()
             -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
             Auto.bpFullFlag = false
@@ -2344,6 +2518,10 @@ local function automationLoop()
         elseif nowPlaced < target then
             -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
             equipTeam("Reduce Tim")
+            -- v18.7: buang pet salah (bukan tim Reduce) dari garden kalau toggle aktif
+            if config.autoUnequipWrong and teamData["Reduce Tim"] then
+                unequipWrongGardenPets(teamData["Reduce Tim"].selected)
+            end
             local need = target - nowPlaced
             placeEggs(need)
             task.wait(0.6)
@@ -2359,19 +2537,11 @@ local function automationLoop()
                 -- semua ready -> hatch bareng (efisien)
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 equipTeam("Hatch Tim")
-                -- v17.3: tunggu Koi masuk garden, LALU jeda 6 detik baru hatch (skill mantap).
-                local hatchTarget = 0
-                if teamData["Hatch Tim"] and teamData["Hatch Tim"].selected then
-                    for _ in pairs(teamData["Hatch Tim"].selected) do hatchTarget = hatchTarget + 1 end
-                end
-                local waited = 0
-                while waited < 10 do  -- timeout nunggu Koi masuk
-                    local g = countGardenPets()
-                    if hatchTarget <= 0 or g >= hatchTarget then break end
-                    task.wait(0.3); waited = waited + 0.3
-                end
-                print("[HactTelur] Koi masuk ("..countGardenPets().."/"..hatchTarget.."), tunggu 6 detik...")
-                task.wait(6)  -- jeda biar skill Koi bener-bener aktif
+                -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
+                local ok = waitTeamInGarden("Hatch Tim", 15)
+                local hd = config.hatchDelay or 6
+                print("[HactTelur] tim Koi "..(ok and "LENGKAP" or "timeout").." ("..countGardenPets().."), tunggu "..hd.." detik...")
+                task.wait(hd)  -- jeda biar skill Koi bener-bener aktif (bisa diatur di Config)
                 print("[HactTelur] hatch all!")
                 hatchAllEggs()
                 task.wait(2)
@@ -2616,6 +2786,31 @@ local function makeConfigPanel()
         end
     end)
     _G.HactTelurSetMaxEggUI = function() maxBox.Text = tostring(config.maxEggManual or 0) end
+
+    -- baris: Delay Hatch (detik) — jeda setelah tim Koi masuk sebelum hatch
+    local lblHd = lbl(content, "Delay Hatch (detik)", 12, C.textDim)
+    lblHd.Position = UDim2.new(0, 4, 0, 104); lblHd.Size = UDim2.new(0.6, 0, 0, 28)
+    local hdBox = mk("TextBox", {
+        Size = UDim2.new(0.4, -4, 0, 28), Position = UDim2.new(0.6, 4, 0, 104),
+        BackgroundColor3 = C.input, Text = tostring(config.hatchDelay or 6),
+        Font = FONT, TextSize = 12, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
+        ClearTextOnFocus = false, Parent = content })
+    corner(hdBox, 6); stroke(hdBox, C.border, 1)
+    hdBox.FocusLost:Connect(function()
+        local v = tonumber(hdBox.Text)
+        if not v or v < 0 then v = 6 end
+        config.hatchDelay = v
+        hdBox.Text = tostring(v)
+        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+    end)
+    hdBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local v = tonumber(hdBox.Text)
+        if v and v >= 0 then
+            config.hatchDelay = v
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end
+    end)
+    _G.HactTelurSetHatchDelayUI = function() hdBox.Text = tostring(config.hatchDelay or 6) end
 
     local function eggCount()
         local n = 0; for _ in pairs(config.eggSelected) do n = n + 1 end; return n
@@ -3603,7 +3798,7 @@ local function makeStatPanel()
             local sd = teamData["Sell Tim"]
             if sd and sd.selected then
                 local s = PetDetect.sumPctSelected(sd.selected, "Seal", "seal")
-                cardSeal.val.Text = string.format("%.1f%%", s)
+                cardSeal.val.Text = string.format("%.2f%%", s)
             else
                 cardSeal.val.Text = "—"
             end
@@ -4452,11 +4647,17 @@ miscToggleRow(12.7, "Auto Accept Trade", "Terima trade masuk otomatis", function
     AutoAcc.trade = on
     print("[HactTelur] Auto Accept Trade "..(on and "ON" or "OFF"))
 end)
--- ESP Egg: tampilin nama + waktu netas di atas egg
-miscToggleRow(12.8, "ESP Egg", "Tampilkan nama & waktu netas di atas egg", function(on)
-    EggESP.on = on
-    if on then updateEggESP() else clearEggESP() end
-    print("[HactTelur] ESP Egg "..(on and "ON" or "OFF"))
+-- v18.7: buang pet salah (bukan tim Reduce) dari garden
+miscToggleRow(12.9, "Auto Unequip Pet Salah", "Buang pet bukan tim Reduce dari garden saat hatch", function(on)
+    config.autoUnequipWrong = on
+    print("[HactTelur] Auto Unequip Pet Salah "..(on and "ON" or "OFF"))
+    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+end)
+
+-- v18.9: debug print nilai seal/koi per pet (buat cek kenapa % segitu)
+miscToggleRow(12.95, "Debug Seal %", "Print nilai % per pet ke console (F9)", function(on)
+    PetDetect.DEBUG_PCT = on
+    print("[HactTelur] Debug Seal% "..(on and "ON - buka console (F9), pilih tim sell ulang" or "OFF"))
 end)
 
 -- 5) WEBHOOK DISCORD (input URL + toggle)
@@ -4534,6 +4735,8 @@ local function saveConfig()
         sellRules = config.sellRules,
         autoSell = config.autoSell,
         maxEggManual = config.maxEggManual,
+        hatchDelay = config.hatchDelay,
+        autoUnequipWrong = config.autoUnequipWrong,
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
         autoBuy = {
@@ -4598,6 +4801,11 @@ local function loadConfig()
         config.maxEggManual = data.maxEggManual
         if _G.HactTelurSetMaxEggUI then pcall(_G.HactTelurSetMaxEggUI) end
     end
+    if data.hatchDelay ~= nil then
+        config.hatchDelay = data.hatchDelay
+        if _G.HactTelurSetHatchDelayUI then pcall(_G.HactTelurSetHatchDelayUI) end
+    end
+    if data.autoUnequipWrong ~= nil then config.autoUnequipWrong = data.autoUnequipWrong end
     if data.webhookUrl then
         Webhook.url = data.webhookUrl
         if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
