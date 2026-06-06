@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v19.8"
+local VERSION = "v19.9"
 
 -- ============ THEME ============
 local C = {
@@ -3451,9 +3451,12 @@ local function firePromptBuy()
     if not ge then print("[HactTelur] BUY GAGAL: GameEvents gak ada"); return false end
     print("[HactTelur] BUY coba: id="..tostring(PromptBuy.itemId).." pay="..tostring(PromptBuy.payWith))
     if PromptBuy.payWith == "token" then
-        -- v19.5: alur asli game = CanPurchase(id) dulu, baru Purchase(id). id = number.
-        local canPur = ge:FindFirstChild("CanPurchase")
-        local pur = ge:FindFirstChild("Purchase")
+        -- v19.9: Purchase/CanPurchase bisa NESTED (bukan anak langsung) -> cari recursive
+        local canPur = ge:FindFirstChild("CanPurchase", true)
+        local pur = ge:FindFirstChild("Purchase", true)
+        -- fallback: cari di seluruh ReplicatedStorage kalau di GameEvents gak ada
+        if not pur then pur = game:GetService("ReplicatedStorage"):FindFirstChild("Purchase", true) end
+        if not canPur then canPur = game:GetService("ReplicatedStorage"):FindFirstChild("CanPurchase", true) end
         print("[HactTelur] CanPurchase="..tostring(canPur and canPur.ClassName).." Purchase="..tostring(pur and pur.ClassName))
         if pur and pur:IsA("RemoteFunction") then
             if canPur and canPur:IsA("RemoteFunction") then
@@ -3465,8 +3468,8 @@ local function firePromptBuy()
             print("[HactTelur] Purchase result: ok="..tostring(ok).." val="..tostring(res))
             return ok
         end
-        print("[HactTelur] BUY GAGAL: Purchase bukan RemoteFunction")
-        local pp = ge:FindFirstChild("PromptPurchase")
+        print("[HactTelur] BUY GAGAL: Purchase gak ketemu / bukan RemoteFunction")
+        local pp = ge:FindFirstChild("PromptPurchase", true)
         if pp then pcall(function() pp:FireServer(PromptBuy.itemId) end); return true end
     else
         pcall(function()
