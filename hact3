@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v17.7"
+local VERSION = "v17.8"
 
 -- ============ THEME ============
 local C = {
@@ -3075,9 +3075,15 @@ end
 -- via RemoteFunction "Purchase":InvokeServer(purchaseId). daftar id dari RS.Data.DevProductIds.
 local PromptBuy = { item = nil, itemId = nil, payWith = "token", on = false }
 
--- ambil daftar dev product (nama -> PurchaseID) dari RS.Data.DevProductIds
+-- ambil daftar SEMUA dev product (nama -> PurchaseID).
+-- v17.8: scan DevProductIds (statis, ada nama) + getgc (runtime, nemu yg disembunyikan).
+-- ID dari getgc namanya "?" -> nama+harga di-lazy-load via GetProductInfo saat tampil.
+-- cache hasil scan biar freeze cuma sekali (scan getgc berat ~1-2 detik).
+local _devProdCache = nil
 local function getDevProductList()
-    local out = {}
+    if _devProdCache then return _devProdCache end
+    local byId = {}  -- id -> name
+    -- sumber 1: DevProductIds statis (punya nama jelas)
     pcall(function()
         local dataF = game:GetService("ReplicatedStorage"):FindFirstChild("Data")
         local mod = dataF and dataF:FindFirstChild("DevProductIds")
@@ -3085,16 +3091,43 @@ local function getDevProductList()
         local ok, tbl = pcall(require, mod)
         if ok and type(tbl) == "table" then
             for name, v in pairs(tbl) do
-                local id = nil
-                if type(v) == "table" then id = v.PurchaseID or v.PurchaseId or v.Id
-                elseif type(v) == "number" then id = v end
-                if type(name) == "string" and id and tonumber(id) and tonumber(id) > 0 then
-                    table.insert(out, { name = name, id = tonumber(id) })
+                local id = (type(v)=="table" and (v.PurchaseID or v.PurchaseId or v.Id)) or (type(v)=="number" and v)
+                if type(name)=="string" and id and tonumber(id) and tonumber(id)>0 then
+                    byId[tonumber(id)] = name
                 end
             end
         end
     end)
-    table.sort(out, function(a, b) return a.name < b.name end)
+    -- sumber 2: getgc — semua tabel yg punya field id produk (yg disembunyikan game)
+    if getgc then
+        pcall(function()
+            for _, obj in pairs(getgc(true)) do
+                if type(obj) == "table" then
+                    for _, key in ipairs({"PurchaseID","PurchaseId","ProductId","DeveloperProductId","DevProductId"}) do
+                        local v = rawget(obj, key)
+                        if type(v)=="number" and v > 1000000 and v < 9999999999 then
+                            if not byId[v] then
+                                local nm = rawget(obj,"Name") or rawget(obj,"DisplayName") or rawget(obj,"Title")
+                                byId[v] = (type(nm)=="string" and nm) or ("Product "..v)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    local out = {}
+    for id, name in pairs(byId) do
+        table.insert(out, { name = name, id = id })
+    end
+    -- yg punya nama jelas (bukan "Product NNN") di atas, sisanya bawah
+    table.sort(out, function(a, b)
+        local an = a.name:match("^Product %d+$") ~= nil
+        local bn = b.name:match("^Product %d+$") ~= nil
+        if an ~= bn then return not an end
+        return a.name < b.name
+    end)
+    _devProdCache = out
     return out
 end
 
@@ -3388,14 +3421,18 @@ local function makeFruitPanel()
                             TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53, Parent = list })
                         corner(b, 6)
                         mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0,8), Parent = b })
-                        -- lazy-load harga Robux (cuma item yg tampil, max 40 biar gak berat)
+                        -- lazy-load nama + harga Robux (item dari getgc namanya "Product NNN")
                         if shown <= 40 then
                             task.spawn(function()
                                 local ok, info = pcall(function()
                                     return game:GetService("MarketplaceService"):GetProductInfo(it.id, Enum.InfoType.Product)
                                 end)
-                                if ok and info and info.PriceInRobux then
-                                    b.Text = it.name.."  |  "..info.PriceInRobux.." R$"
+                                if ok and info then
+                                    local nm = it.name
+                                    if nm:match("^Product %d+$") and info.Name then nm = info.Name end
+                                    local price = info.PriceInRobux and ("  |  "..info.PriceInRobux.." R$") or ""
+                                    b.Text = nm..price
+                                    it.name = nm  -- update cache biar nama nempel
                                 end
                             end)
                         end
