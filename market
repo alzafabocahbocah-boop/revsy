@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.253"
+local VERSION = "8.254"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -2253,6 +2253,10 @@ local autoEquipBtn = btnOf(petCard, 14, 54, 140, 26,
     autoEquipState and C.success or C.danger)
 local equipMode = (BH.marketState and BH.marketState.equipMode) or "BIGGEST"
 local equipModeBtn = btnOf(petCard, 164, 54, 140, 26, "📦 "..equipMode, C.card, C.text)
+-- v8.254: pilih JENIS pet yg di-equip (cuma jenis ini yg dipajang). "ALL" = semua.
+local equipPetType = (BH.marketState and BH.marketState.equipPetType) or "ALL"
+local equipTypeBtn = btnOf(petCard, 314, 54, 150, 26,
+    "🐾 "..(equipPetType == "ALL" and "Semua Jenis" or equipPetType), C.card, C.text)
 
 -- v8.46: ANTI-AFK CARD (wrapped in do-block to manage local count)
 do
@@ -7991,6 +7995,80 @@ equipModeBtn.MouseButton1Click:Connect(function()
     if BH.marketState then BH.marketState.equipMode = equipMode; BH.saveMarketState(BH.marketState) end
 end)
 
+-- v8.254: picker JENIS pet — kumpulkan jenis unik dari backpack, pilih satu (atau ALL)
+equipTypeBtn.MouseButton1Click:Connect(function()
+    -- kumpulkan jenis pet unik di backpack
+    local types = {}
+    local seen = {}
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if isPet(t) then
+                local nm = BH.getPetName(t)
+                if nm and nm ~= "" and not seen[nm] then
+                    seen[nm] = true
+                    table.insert(types, nm)
+                end
+            end
+        end
+    end
+    table.sort(types)
+    table.insert(types, 1, "ALL")  -- opsi semua jenis di atas
+
+    -- overlay + box picker
+    local ov = Instance.new("Frame")
+    ov.Size = UDim2.new(1,0,1,0); ov.BackgroundColor3 = Color3.new(0,0,0)
+    ov.BackgroundTransparency = 0.5; ov.ZIndex = 60; ov.Parent = gui
+    local box = Instance.new("Frame")
+    box.Size = UDim2.new(0, 300, 0, 360); box.Position = UDim2.new(0.5, -150, 0.5, -180)
+    box.BackgroundColor3 = C.panel; box.BorderSizePixel = 0; box.ZIndex = 61; box.Parent = ov
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
+    local st = Instance.new("UIStroke", box); st.Color = C.accent; st.Thickness = 1.5
+    local tt = lblOf(box, "🐾 Pilih Jenis Pet", 14, 10, 250, 22, C.accent, 14, FB)
+    tt.ZIndex = 62
+    local xb = Instance.new("TextButton")
+    xb.Size = UDim2.new(0,26,0,22); xb.Position = UDim2.new(1,-34,0,8)
+    xb.BackgroundColor3 = C.danger; xb.Text = "X"; xb.TextColor3 = C.text
+    xb.Font = FB; xb.TextSize = 12; xb.ZIndex = 62; xb.Parent = box
+    Instance.new("UICorner", xb).CornerRadius = UDim.new(0,6)
+    local sb = Instance.new("TextBox")
+    sb.Size = UDim2.new(1,-28,0,30); sb.Position = UDim2.new(0,14,0,38)
+    sb.BackgroundColor3 = C.card; sb.Text = ""; sb.PlaceholderText = "cari jenis..."
+    sb.TextColor3 = C.text; sb.Font = FM; sb.TextSize = 12; sb.ClearTextOnFocus = false
+    sb.ZIndex = 62; sb.Parent = box
+    Instance.new("UICorner", sb).CornerRadius = UDim.new(0,6)
+    local sf = Instance.new("ScrollingFrame")
+    sf.Size = UDim2.new(1,-20,1,-80); sf.Position = UDim2.new(0,10,0,74)
+    sf.BackgroundTransparency = 1; sf.ScrollBarThickness = 3; sf.BorderSizePixel = 0
+    sf.CanvasSize = UDim2.new(0,0,0,0); sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    sf.ZIndex = 62; sf.Parent = box
+    local ll = Instance.new("UIListLayout"); ll.Padding = UDim.new(0,4); ll.Parent = sf
+    local function build(filter)
+        for _, c in ipairs(sf:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        filter = (filter or ""):lower()
+        for _, nm in ipairs(types) do
+            if filter == "" or nm:lower():find(filter, 1, true) then
+                local b = Instance.new("TextButton")
+                b.Size = UDim2.new(1,0,0,30); b.BackgroundColor3 = (nm == equipPetType) and C.accent or C.card
+                b.Text = (nm == "ALL") and "Semua Jenis" or nm
+                b.TextColor3 = (nm == equipPetType) and Color3.fromRGB(17,17,17) or C.text
+                b.Font = FM; b.TextSize = 12; b.ZIndex = 63; b.Parent = sf
+                Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
+                b.MouseButton1Click:Connect(function()
+                    equipPetType = nm
+                    equipTypeBtn.Text = "🐾 "..(nm == "ALL" and "Semua Jenis" or nm)
+                    if BH.marketState then BH.marketState.equipPetType = nm; BH.saveMarketState(BH.marketState) end
+                    L("[👜] jenis pet display: "..nm)
+                    ov:Destroy()
+                end)
+            end
+        end
+    end
+    build("")
+    sb:GetPropertyChangedSignal("Text"):Connect(function() build(sb.Text) end)
+    xb.MouseButton1Click:Connect(function() ov:Destroy() end)
+end)
+
 local function getRarityScore(name)
     local s = string.lower(name or "")
     if string.find(s, "nightmare") then return 100 end
@@ -8009,8 +8087,15 @@ local function getDisplayPet()
     local cand = {}
     for _, t in ipairs(bp:GetChildren()) do
         if isPet(t) and not isFav(t) then
-            local wt = tonumber(string.match(t.Name, "%[(%d+%.?%d*)%s*KG%]")) or 0
-            table.insert(cand, {tool=t, wt=wt, rarity=getRarityScore(t.Name)})
+            -- v8.254: filter jenis pet (kalau bukan ALL, cuma equip jenis terpilih)
+            local okType = true
+            if equipPetType and equipPetType ~= "ALL" then
+                okType = (BH.getPetName(t) == equipPetType)
+            end
+            if okType then
+                local wt = tonumber(string.match(t.Name, "%[(%d+%.?%d*)%s*KG%]")) or 0
+                table.insert(cand, {tool=t, wt=wt, rarity=getRarityScore(t.Name)})
+            end
         end
     end
     if #cand == 0 then return end
