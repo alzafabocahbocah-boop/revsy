@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v19.6"
+local VERSION = "v19.8"
 
 -- ============ THEME ============
 local C = {
@@ -935,6 +935,8 @@ local config = {
     reqKoiSeal = false,        -- syarat Koi% & Seal% >= min buat start & lanjut
     minKoiSeal = 50,           -- batas minimum % (default 50)
     autoStart = false,         -- mulai automation otomatis setelah load/rejoin
+    autoAccGift = false,       -- auto accept gift masuk
+    autoAccTrade = false,      -- auto accept trade masuk
 }
 
 -- ============ SISTEM JUAL PET ============
@@ -3441,27 +3443,32 @@ end
 
 -- beli 1x: token (RemoteFunction Purchase) atau robux (MarketplaceService prompt)
 local function firePromptBuy()
-    if not PromptBuy.itemId then return false end
+    if not PromptBuy.itemId then
+        print("[HactTelur] BUY GAGAL: itemId kosong (pilih item/ketik ID dulu)")
+        return false
+    end
     local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+    if not ge then print("[HactTelur] BUY GAGAL: GameEvents gak ada"); return false end
+    print("[HactTelur] BUY coba: id="..tostring(PromptBuy.itemId).." pay="..tostring(PromptBuy.payWith))
     if PromptBuy.payWith == "token" then
         -- v19.5: alur asli game = CanPurchase(id) dulu, baru Purchase(id). id = number.
-        local canPur = ge and ge:FindFirstChild("CanPurchase")
-        local pur = ge and ge:FindFirstChild("Purchase")
+        local canPur = ge:FindFirstChild("CanPurchase")
+        local pur = ge:FindFirstChild("Purchase")
+        print("[HactTelur] CanPurchase="..tostring(canPur and canPur.ClassName).." Purchase="..tostring(pur and pur.ClassName))
         if pur and pur:IsA("RemoteFunction") then
-            -- cek dulu (kayak game)
             if canPur and canPur:IsA("RemoteFunction") then
-                pcall(function() canPur:InvokeServer(PromptBuy.itemId) end)
+                local okc, resc = pcall(function() return canPur:InvokeServer(PromptBuy.itemId) end)
+                print("[HactTelur] CanPurchase result: ok="..tostring(okc).." val="..tostring(resc))
                 task.wait(0.1)
             end
-            -- beli
-            local ok = pcall(function() pur:InvokeServer(PromptBuy.itemId) end)
+            local ok, res = pcall(function() return pur:InvokeServer(PromptBuy.itemId) end)
+            print("[HactTelur] Purchase result: ok="..tostring(ok).." val="..tostring(res))
             return ok
         end
-        -- fallback: PromptPurchase RemoteEvent
-        local pp = ge and ge:FindFirstChild("PromptPurchase")
+        print("[HactTelur] BUY GAGAL: Purchase bukan RemoteFunction")
+        local pp = ge:FindFirstChild("PromptPurchase")
         if pp then pcall(function() pp:FireServer(PromptBuy.itemId) end); return true end
     else
-        -- robux: munculkan dialog beli asli (confirm manual, gak bisa auto)
         pcall(function()
             game:GetService("MarketplaceService"):PromptProductPurchase(player, PromptBuy.itemId)
         end)
@@ -4140,7 +4147,8 @@ local miscScroll = mk("ScrollingFrame", {
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscScroll })
 
 -- helper: baris fitur dgn toggle ON/OFF
-local function miscToggleRow(order, title, desc, onChanged)
+local miscToggleRefreshers = {}  -- buat refresh toggle setelah load config
+local function miscToggleRow(order, title, desc, onChanged, getInit)
     local row = mk("Frame", {
         Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card, LayoutOrder = order, Parent = miscScroll })
     corner(row, 8); stroke(row, C.border, 1)
@@ -4156,14 +4164,25 @@ local function miscToggleRow(order, title, desc, onChanged)
         Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
         BackgroundColor3 = C.textDim, Parent = sw })
     corner(knob, 9)
-    local state = false
-    sw.MouseButton1Click:Connect(function()
-        state = not state
+    local state = (getInit and getInit()) or false
+    local function applyVisual()
         sw.BackgroundColor3 = state and C.accent or C.input
         knob.BackgroundColor3 = state and Color3.fromRGB(17,17,17) or C.textDim
         knob.Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+    end
+    applyVisual()  -- tampilkan state awal (dari config)
+    sw.MouseButton1Click:Connect(function()
+        state = not state
+        applyVisual()
         if onChanged then onChanged(state) end
     end)
+    -- daftarkan refresher: baca ulang dari config (dipanggil setelah loadConfig)
+    if getInit then
+        table.insert(miscToggleRefreshers, function()
+            state = getInit() or false
+            applyVisual()
+        end)
+    end
     return row
 end
 -- helper: baris fitur dgn tombol aksi
@@ -4726,33 +4745,37 @@ end)
 -- Auto Accept Gift masuk
 miscToggleRow(12.5, "Auto Accept Gift", "Terima gift masuk otomatis", function(on)
     AutoAcc.gift = on
+    config.autoAccGift = on
     print("[HactTelur] Auto Accept Gift "..(on and "ON" or "OFF"))
-end)
+    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+end, function() return config.autoAccGift end)
 -- Auto Accept Trade masuk
 miscToggleRow(12.7, "Auto Accept Trade", "Terima trade masuk otomatis", function(on)
     AutoAcc.trade = on
+    config.autoAccTrade = on
     print("[HactTelur] Auto Accept Trade "..(on and "ON" or "OFF"))
-end)
+    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+end, function() return config.autoAccTrade end)
 -- v19.1: auto start setelah rejoin (tanpa pencet START)
 miscToggleRow(12.55, "Auto Start", "Mulai otomatis setelah rejoin/load (tanpa pencet START)", function(on)
     config.autoStart = on
     print("[HactTelur] Auto Start "..(on and "ON" or "OFF"))
     if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end)
+end, function() return config.autoStart end)
 
 -- v19.0: syarat Koi% & Seal% >= 50% buat start & auto-stop kalau turun
 miscToggleRow(12.6, "Syarat Koi & Seal >=50%", "Start cuma kalau Koi & Seal >=50%, stop kalau turun", function(on)
     config.reqKoiSeal = on
     print("[HactTelur] Syarat Koi&Seal 50% "..(on and "ON" or "OFF"))
     if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end)
+end, function() return config.reqKoiSeal end)
 
 -- v18.7: buang pet salah (bukan tim Reduce) dari garden
 miscToggleRow(12.9, "Auto Unequip Pet Salah", "Buang pet bukan tim Reduce dari garden saat hatch", function(on)
     config.autoUnequipWrong = on
     print("[HactTelur] Auto Unequip Pet Salah "..(on and "ON" or "OFF"))
     if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end)
+end, function() return config.autoUnequipWrong end)
 
 -- v18.9: debug print nilai seal/koi per pet (buat cek kenapa % segitu)
 miscToggleRow(12.95, "Debug Seal %", "Print nilai % per pet ke console (F9)", function(on)
@@ -4840,6 +4863,8 @@ local function saveConfig()
         reqKoiSeal = config.reqKoiSeal,
         minKoiSeal = config.minKoiSeal,
         autoStart = config.autoStart,
+        autoAccGift = config.autoAccGift,
+        autoAccTrade = config.autoAccTrade,
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
         autoBuy = {
@@ -4912,6 +4937,16 @@ local function loadConfig()
     if data.reqKoiSeal ~= nil then config.reqKoiSeal = data.reqKoiSeal end
     if data.minKoiSeal ~= nil then config.minKoiSeal = data.minKoiSeal end
     if data.autoStart ~= nil then config.autoStart = data.autoStart end
+    if data.autoAccGift ~= nil then
+        config.autoAccGift = data.autoAccGift
+        AutoAcc.gift = data.autoAccGift
+    end
+    if data.autoAccTrade ~= nil then
+        config.autoAccTrade = data.autoAccTrade
+        AutoAcc.trade = data.autoAccTrade
+    end
+    -- v19.7: refresh semua toggle MISC biar nunjukin state tersimpan
+    for _, fn in ipairs(miscToggleRefreshers) do pcall(fn) end
     if data.webhookUrl then
         Webhook.url = data.webhookUrl
         if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
