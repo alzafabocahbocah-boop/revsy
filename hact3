@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v19.4"
+local VERSION = "v19.6"
 
 -- ============ THEME ============
 local C = {
@@ -3444,15 +3444,18 @@ local function firePromptBuy()
     if not PromptBuy.itemId then return false end
     local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
     if PromptBuy.payWith == "token" then
-        -- token: invoke RemoteFunction Purchase dgn purchaseId (coba beberapa format)
+        -- v19.5: alur asli game = CanPurchase(id) dulu, baru Purchase(id). id = number.
+        local canPur = ge and ge:FindFirstChild("CanPurchase")
         local pur = ge and ge:FindFirstChild("Purchase")
         if pur and pur:IsA("RemoteFunction") then
-            local ok = pcall(function() pur:InvokeServer(PromptBuy.itemId) end)
-            if not ok then
-                -- fallback format: nama dev product
-                pcall(function() pur:InvokeServer(PromptBuy.item) end)
+            -- cek dulu (kayak game)
+            if canPur and canPur:IsA("RemoteFunction") then
+                pcall(function() canPur:InvokeServer(PromptBuy.itemId) end)
+                task.wait(0.1)
             end
-            return true
+            -- beli
+            local ok = pcall(function() pur:InvokeServer(PromptBuy.itemId) end)
+            return ok
         end
         -- fallback: PromptPurchase RemoteEvent
         local pp = ge and ge:FindFirstChild("PromptPurchase")
@@ -3655,7 +3658,7 @@ local function makeFruitPanel()
         local chev = lbl(header, ">", 14, C.textDim, Enum.TextXAlignment.Right)
         chev.Position = UDim2.new(1, -26, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
         local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 130), Position = UDim2.new(0, 10, 0, 44),
+            Size = UDim2.new(1, -20, 0, 160), Position = UDim2.new(0, 10, 0, 44),
             BackgroundTransparency = 1, Visible = false, Parent = row })
 
         -- Pay With (token / robux)
@@ -3757,15 +3760,34 @@ local function makeFruitPanel()
             dim.MouseButton1Click:Connect(function() dim:Destroy() end)
         end)
 
+        -- v19.6: input ID manual (buat item yg gak ada di daftar, mis Campfire Egg biasa)
+        local idLbl = lbl(body, "ID Manual", 12, C.textDim)
+        idLbl.Position = UDim2.new(0, 0, 0, 78); idLbl.Size = UDim2.new(0.4, 0, 0, 28)
+        local idBox = mk("TextBox", {
+            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 78),
+            BackgroundColor3 = C.input, Text = "", PlaceholderText = "ketik ID produk...",
+            Font = FONT, TextSize = 11, TextColor3 = C.text, ClearTextOnFocus = false,
+            Parent = body })
+        corner(idBox, 6); stroke(idBox, C.border, 1)
+        idBox.FocusLost:Connect(function()
+            local v = tonumber(idBox.Text)
+            if v and v > 1000000 then
+                PromptBuy.itemId = v
+                PromptBuy.item = "ID: "..tostring(v)
+                selBtn.Text = "ID: "..tostring(v); selBtn.TextColor3 = C.text
+                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+            end
+        end)
+
         -- Buy Now (sekali saja, gak ada auto)
         local buyNow = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 80),
+            Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 116),
             BackgroundColor3 = C.accent, Text = "Buy Now (1x)", Font = FONT_SB, TextSize = 12,
             TextColor3 = Color3.fromRGB(17,17,17), Parent = body })
         corner(buyNow, 6)
         buyNow.MouseButton1Click:Connect(function()
             if not PromptBuy.itemId then
-                buyNow.Text = "pilih item dulu!"
+                buyNow.Text = "pilih item / ketik ID dulu!"
                 task.delay(1.5, function() buyNow.Text = "Buy Now (1x)" end)
                 return
             end
@@ -3782,7 +3804,7 @@ local function makeFruitPanel()
             local exp = not body.Visible
             body.Visible = exp
             chev.Text = exp and "v" or ">"
-            row.Size = exp and UDim2.new(1, 0, 0, 164) or UDim2.new(1, 0, 0, 40)
+            row.Size = exp and UDim2.new(1, 0, 0, 200) or UDim2.new(1, 0, 0, 40)
         end)
         fruitData.promptBuy = { refreshSelBtn = refreshAll }
     end
