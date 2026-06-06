@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v17.6"
+local VERSION = "v17.7"
 
 -- ============ THEME ============
 local C = {
@@ -3008,10 +3008,11 @@ end
 
 -- ============ AUTO BUY (seed/egg/gear) ============
 -- remote: BuySeedStock, BuyGearStock, BuyPetEgg. argumen = nama item (string).
+-- v17.7: multi-select — items = set {nama=true}, beli semua yg dicentang.
 local AutoBuy = {
-    seed = { on = false, item = nil, remote = "BuySeedStock", dataKey = "SeedData" },
-    egg  = { on = false, item = nil, remote = "BuyPetEgg",    dataKey = "PetEggData" },
-    gear = { on = false, item = nil, remote = "BuyGearStock", dataKey = "GearData" },
+    seed = { on = false, items = {}, remote = "BuySeedStock", dataKey = "SeedData" },
+    egg  = { on = false, items = {}, remote = "BuyPetEgg",    dataKey = "PetEggData" },
+    gear = { on = false, items = {}, remote = "BuyGearStock", dataKey = "GearData" },
 }
 
 -- ambil daftar nama item dari RS.Data.<dataKey>
@@ -3043,14 +3044,16 @@ local function getBuyItemList(dataKey)
     return out
 end
 
--- fire beli 1x
+-- fire beli semua item yg dicentang
 local function fireBuy(kind)
     local cfg = AutoBuy[kind]
-    if not cfg or not cfg.item then return end
+    if not cfg then return end
     local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
     local re = ge and ge:FindFirstChild(cfg.remote)
-    if re then
-        pcall(function() re:FireServer(cfg.item) end)
+    if not re then return end
+    for itemName in pairs(cfg.items) do
+        pcall(function() re:FireServer(itemName) end)
+        task.wait(0.1)
     end
 end
 
@@ -3060,7 +3063,7 @@ for _, kind in ipairs({"seed","egg","gear"}) do
         while true do
             task.wait(1)
             local cfg = AutoBuy[kind]
-            if cfg.on and cfg.item then
+            if cfg.on and next(cfg.items) then
                 pcall(function() fireBuy(kind) end)
             end
         end
@@ -3148,15 +3151,16 @@ local function makeFruitPanel()
 
     fruitData = {}
 
-    -- popup dropdown (search + list) untuk pilih item, dipakai ulang tiap baris
-    local function openPicker(kind, titleTxt, onPick)
+    -- popup dropdown MULTI-SELECT (search + list, toggle centang). dipakai seed/egg/gear.
+    local function openPicker(kind, titleTxt, onChange)
         local items = getBuyItemList(AutoBuy[kind].dataKey)
+        local selSet = AutoBuy[kind].items
         local dim = mk("TextButton", {
             Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
             BackgroundTransparency = 0.5, Text = "", AutoButtonColor = false,
             ZIndex = 50, Parent = panel })
         local box = mk("Frame", {
-            Size = UDim2.new(0, 300, 0, 320), Position = UDim2.new(0.5, -150, 0.5, -160),
+            Size = UDim2.new(0, 300, 0, 340), Position = UDim2.new(0.5, -150, 0.5, -170),
             BackgroundColor3 = C.bg, ZIndex = 51, Parent = dim })
         corner(box, 10); stroke(box, C.border, 1.5)
         local t = lbl(box, titleTxt, 13, C.text); t.Font = FONT_SB
@@ -3183,14 +3187,23 @@ local function makeFruitPanel()
             filter = (filter or ""):lower()
             for _, name in ipairs(items) do
                 if filter == "" or name:lower():find(filter, 1, true) then
+                    local on = selSet[name] == true
                     local b = mk("TextButton", {
-                        Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
-                        Text = name, Font = FONT, TextSize = 12, TextColor3 = C.text,
-                        ZIndex = 53, Parent = list })
+                        Size = UDim2.new(1, 0, 0, 30),
+                        BackgroundColor3 = on and C.accent or C.card,
+                        Text = (on and "\u{2713} " or "   ")..name, Font = FONT, TextSize = 12,
+                        TextColor3 = on and Color3.fromRGB(17,17,17) or C.text,
+                        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53, Parent = list })
                     corner(b, 6)
+                    local pad = mk("UIPadding", { PaddingLeft = UDim.new(0, 8), Parent = b })
                     b.MouseButton1Click:Connect(function()
-                        onPick(name)
-                        dim:Destroy()
+                        if selSet[name] then selSet[name] = nil else selSet[name] = true end
+                        local nowOn = selSet[name] == true
+                        b.BackgroundColor3 = nowOn and C.accent or C.card
+                        b.TextColor3 = nowOn and Color3.fromRGB(17,17,17) or C.text
+                        b.Text = (nowOn and "\u{2713} " or "   ")..name
+                        if onChange then onChange() end
+                        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
                     end)
                 end
             end
@@ -3222,21 +3235,26 @@ local function makeFruitPanel()
             Size = UDim2.new(1, -20, 0, 86), Position = UDim2.new(0, 10, 0, 44),
             BackgroundTransparency = 1, Visible = false, Parent = row })
 
-        -- baris "Select ..." (label + tombol pilih)
-        local selLbl = lbl(body, "Select "..name:gsub("Auto Buy ",""), 12, C.textDim)
+        -- baris "Select ..." (label + tombol pilih MULTI)
+        local shortName = name:gsub("Auto Buy ","")
+        local function countSel()
+            local n = 0 for _ in pairs(cfg.items) do n = n + 1 end return n
+        end
+        local selLbl = lbl(body, "Select "..shortName, 12, C.textDim)
         selLbl.Position = UDim2.new(0, 0, 0, 4); selLbl.Size = UDim2.new(0.4, 0, 0, 30)
         local selBtn = mk("TextButton", {
             Size = UDim2.new(0.6, 0, 0, 30), Position = UDim2.new(0.4, 0, 0, 4),
-            BackgroundColor3 = C.input, Text = cfg.item or "Select...",
-            Font = FONT, TextSize = 12, TextColor3 = cfg.item and C.text or C.textDim,
-            Parent = body })
+            BackgroundColor3 = C.input, Text = "Select...",
+            Font = FONT, TextSize = 12, TextColor3 = C.textDim, Parent = body })
         corner(selBtn, 6); stroke(selBtn, C.border, 1)
+        local function updSelBtn()
+            local n = countSel()
+            selBtn.Text = n > 0 and (n.." dipilih") or "Select..."
+            selBtn.TextColor3 = n > 0 and C.text or C.textDim
+        end
+        updSelBtn()
         selBtn.MouseButton1Click:Connect(function()
-            openPicker(kind, "Select "..name:gsub("Auto Buy ",""), function(picked)
-                cfg.item = picked
-                selBtn.Text = picked; selBtn.TextColor3 = C.text
-                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-            end)
+            openPicker(kind, "Select "..shortName.." (multi)", updSelBtn)
         end)
 
         -- baris toggle ON/OFF
@@ -3259,7 +3277,7 @@ local function makeFruitPanel()
             knob.Position = cfg.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
         end
         sw.MouseButton1Click:Connect(function()
-            if not cfg.item then
+            if countSel() == 0 then
                 togLbl.Text = name.." (pilih dulu!)"
                 task.delay(1.5, function() togLbl.Text = name end)
                 return
@@ -3278,8 +3296,7 @@ local function makeFruitPanel()
 
         -- daftar global biar bisa refresh setelah load (rejoin)
         fruitData[kind] = { refreshSelBtn = function()
-            selBtn.Text = cfg.item or "Select..."
-            selBtn.TextColor3 = cfg.item and C.text or C.textDim
+            updSelBtn()
             refreshSw()
         end }
     end
@@ -3361,13 +3378,27 @@ local function makeFruitPanel()
             local function build(filter)
                 for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
                 filter = (filter or ""):lower()
+                local shown = 0
                 for _, it in ipairs(items) do
                     if filter == "" or it.name:lower():find(filter, 1, true) then
+                        shown = shown + 1
                         local b = mk("TextButton", {
                             Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
                             Text = it.name, Font = FONT, TextSize = 11, TextColor3 = C.text,
-                            ZIndex = 53, Parent = list })
+                            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53, Parent = list })
                         corner(b, 6)
+                        mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0,8), Parent = b })
+                        -- lazy-load harga Robux (cuma item yg tampil, max 40 biar gak berat)
+                        if shown <= 40 then
+                            task.spawn(function()
+                                local ok, info = pcall(function()
+                                    return game:GetService("MarketplaceService"):GetProductInfo(it.id, Enum.InfoType.Product)
+                                end)
+                                if ok and info and info.PriceInRobux then
+                                    b.Text = it.name.."  |  "..info.PriceInRobux.." R$"
+                                end
+                            end)
+                        end
                         b.MouseButton1Click:Connect(function()
                             PromptBuy.item = it.name
                             PromptBuy.itemId = it.id
@@ -4347,9 +4378,9 @@ local function saveConfig()
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
         autoBuy = {
-            seed = { on = AutoBuy.seed.on, item = AutoBuy.seed.item },
-            egg  = { on = AutoBuy.egg.on,  item = AutoBuy.egg.item },
-            gear = { on = AutoBuy.gear.on, item = AutoBuy.gear.item },
+            seed = { on = AutoBuy.seed.on, items = AutoBuy.seed.items },
+            egg  = { on = AutoBuy.egg.on,  items = AutoBuy.egg.items },
+            gear = { on = AutoBuy.gear.on, items = AutoBuy.gear.items },
         },
         promptBuy = { on = PromptBuy.on, item = PromptBuy.item, itemId = PromptBuy.itemId, payWith = PromptBuy.payWith },
         teams = {},
@@ -4419,7 +4450,7 @@ local function loadConfig()
             local s = data.autoBuy[kind]
             if type(s) == "table" then
                 AutoBuy[kind].on = s.on or false
-                AutoBuy[kind].item = s.item
+                AutoBuy[kind].items = (type(s.items) == "table") and s.items or {}
             end
         end
         if _G.HactTelurRefreshAutoBuy then pcall(_G.HactTelurRefreshAutoBuy) end
