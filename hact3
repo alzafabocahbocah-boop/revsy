@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v18.1"
+local VERSION = "v18.4"
 
 -- ============ THEME ============
 local C = {
@@ -3208,15 +3208,7 @@ local function firePromptBuy()
     return false
 end
 
--- loop auto prompt purchase (saat on=true): hati2, beli berulang!
-task.spawn(function()
-    while true do
-        task.wait(2)
-        if PromptBuy.on and PromptBuy.itemId then
-            pcall(firePromptBuy)
-        end
-    end
-end)
+-- (v18.2: auto prompt purchase dihapus — Prompt Purchase cuma Buy Now 1x manual)
 
 -- ============ PANEL FRUIT: AUTO BUY (Seed / Egg / Gear) ============
 local function makeFruitPanel()
@@ -3506,9 +3498,9 @@ local function makeFruitPanel()
             dim.MouseButton1Click:Connect(function() dim:Destroy() end)
         end)
 
-        -- Buy Now (sekali) + toggle auto
+        -- Buy Now (sekali saja, gak ada auto)
         local buyNow = mk("TextButton", {
-            Size = UDim2.new(0.48, 0, 0, 28), Position = UDim2.new(0, 0, 0, 80),
+            Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 80),
             BackgroundColor3 = C.accent, Text = "Buy Now (1x)", Font = FONT_SB, TextSize = 12,
             TextColor3 = Color3.fromRGB(17,17,17), Parent = body })
         corner(buyNow, 6)
@@ -3522,41 +3514,16 @@ local function makeFruitPanel()
             buyNow.Text = "dibeli!"
             task.delay(1.2, function() buyNow.Text = "Buy Now (1x)" end)
         end)
-        local autoLbl = lbl(body, "Auto", 11, C.text)
-        autoLbl.Position = UDim2.new(0.52, 0, 0, 80); autoLbl.Size = UDim2.new(0, 40, 0, 28)
-        local sw = mk("TextButton", {
-            Size = UDim2.new(0, 42, 0, 22), Position = UDim2.new(1, -42, 0, 83),
-            BackgroundColor3 = PromptBuy.on and C.accent or C.input, Text = "",
-            AutoButtonColor = false, Parent = body })
-        corner(sw, 11)
-        local knob = mk("Frame", {
-            Size = UDim2.new(0, 18, 0, 18),
-            Position = PromptBuy.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
-            BackgroundColor3 = PromptBuy.on and Color3.fromRGB(17,17,17) or C.textDim, Parent = sw })
-        corner(knob, 9)
         local function refreshAll()
             payBtn.Text = PromptBuy.payWith == "robux" and "Robux" or "Token"
             selBtn.Text = PromptBuy.item or "Select item..."
             selBtn.TextColor3 = PromptBuy.item and C.text or C.textDim
-            sw.BackgroundColor3 = PromptBuy.on and C.accent or C.input
-            knob.BackgroundColor3 = PromptBuy.on and Color3.fromRGB(17,17,17) or C.textDim
-            knob.Position = PromptBuy.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
         end
-        sw.MouseButton1Click:Connect(function()
-            if not PromptBuy.itemId then
-                autoLbl.Text = "pilih!"
-                task.delay(1.2, function() autoLbl.Text = "Auto" end)
-                return
-            end
-            PromptBuy.on = not PromptBuy.on
-            refreshAll()
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
         header.MouseButton1Click:Connect(function()
             local exp = not body.Visible
             body.Visible = exp
             chev.Text = exp and "v" or ">"
-            row.Size = exp and UDim2.new(1, 0, 0, 178) or UDim2.new(1, 0, 0, 40)
+            row.Size = exp and UDim2.new(1, 0, 0, 122) or UDim2.new(1, 0, 0, 40)
         end)
         fruitData.promptBuy = { refreshSelBtn = refreshAll }
     end
@@ -4353,6 +4320,107 @@ miscActionRow(10, "Rejoin", "Masuk ulang ke server yang sama", "Rejoin", functio
         TS:Teleport(game.PlaceId, player)
     end)
 end)
+
+-- v18.4: pindah ke server LAIN (JobId beda) dari place yg sama — bukan publik random,
+-- bukan PS. fetch daftar server via HTTP, pilih JobId != sekarang, TeleportToPlaceInstance.
+-- fallback: Teleport biasa kalau HTTP gak ada.
+local function serverHop()
+    local TS = game:GetService("TeleportService")
+    local httpFn = (syn and syn.request) or (http and http.request) or http_request or request
+    if httpFn then
+        local ok = pcall(function()
+            local cursor = ""
+            for _ = 1, 3 do  -- cek max 3 halaman biar dapet server fresh
+                local url = "https://games.roblox.com/v1/games/"..game.PlaceId
+                    .."/servers/Public?sortOrder=Asc&limit=100"..(cursor ~= "" and ("&cursor="..cursor) or "")
+                local res = httpFn({ Url = url, Method = "GET" })
+                if res and res.Body then
+                    local data = game:GetService("HttpService"):JSONDecode(res.Body)
+                    if data and data.data then
+                        for _, srv in ipairs(data.data) do
+                            -- server fresh: ada slot kosong & JobId BEDA dari sekarang
+                            if srv.id and srv.id ~= game.JobId
+                               and srv.playing and srv.maxPlayers
+                               and srv.playing < srv.maxPlayers then
+                                TS:TeleportToPlaceInstance(game.PlaceId, srv.id, player)
+                                return
+                            end
+                        end
+                        cursor = data.nextPageCursor or ""
+                        if cursor == "" then break end
+                    end
+                end
+            end
+            -- gak nemu server beda dari list -> teleport biasa
+            TS:Teleport(game.PlaceId, player)
+        end)
+        if not ok then
+            pcall(function() TS:Teleport(game.PlaceId, player) end)
+        end
+    else
+        -- gak ada HTTP request -> teleport biasa (umumnya tetap dpt JobId beda)
+        pcall(function() TS:Teleport(game.PlaceId, player) end)
+    end
+end
+
+-- 2b) AUTO UPDATE SERVER (pindah ke server FRESH terjadwal tiap interval)
+do
+    local AUS = { on = false, interval = 50 }  -- menit
+    local row = mk("Frame", {
+        Size = UDim2.new(1, 0, 0, 108), BackgroundColor3 = C.card, LayoutOrder = 10.5, Parent = miscScroll })
+    corner(row, 8); stroke(row, C.border, 1)
+    local t = lbl(row, "Auto Update Server", 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
+    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
+    local d = lbl(row, "Pindah ke server fresh tiap interval", 11, C.textDim, Enum.TextXAlignment.Left)
+    d.Position = UDim2.new(0, 14, 0, 29); d.Size = UDim2.new(1, -80, 0, 16)
+    -- Job ID sekarang
+    local jobLbl = lbl(row, "Job ID: "..tostring(game.JobId):sub(1,28).."...", 10, C.textMute, Enum.TextXAlignment.Left)
+    jobLbl.Position = UDim2.new(0, 14, 0, 48); jobLbl.Size = UDim2.new(1, -28, 0, 14)
+    -- interval input
+    local iLbl = lbl(row, "Interval (menit)", 11, C.text, Enum.TextXAlignment.Left)
+    iLbl.Position = UDim2.new(0, 14, 0, 72); iLbl.Size = UDim2.new(0, 110, 0, 24)
+    local iBox = mk("TextBox", {
+        Size = UDim2.new(0, 60, 0, 26), Position = UDim2.new(0, 128, 0, 71),
+        BackgroundColor3 = C.input, Text = tostring(AUS.interval), Font = FONT, TextSize = 12,
+        TextColor3 = C.text, ClearTextOnFocus = false, Parent = row })
+    corner(iBox, 6); stroke(iBox, C.border, 1)
+    iBox.FocusLost:Connect(function()
+        local v = tonumber(iBox.Text)
+        if v and v >= 1 then AUS.interval = v end
+        iBox.Text = tostring(AUS.interval)
+    end)
+    -- toggle
+    local sw = mk("TextButton", {
+        Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -58, 0, 71),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
+    corner(sw, 12)
+    local knob = mk("Frame", {
+        Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
+        BackgroundColor3 = C.textDim, Parent = sw })
+    corner(knob, 9)
+    sw.MouseButton1Click:Connect(function()
+        AUS.on = not AUS.on
+        sw.BackgroundColor3 = AUS.on and C.accent or C.input
+        knob.BackgroundColor3 = AUS.on and Color3.fromRGB(17,17,17) or C.textDim
+        knob.Position = AUS.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        AUS.lastSwitch = tick()  -- reset timer saat dinyalakan
+    end)
+    -- loop: tiap interval, teleport ke server FRESH (TeleportService cari instance baru)
+    AUS.lastSwitch = tick()
+    task.spawn(function()
+        while true do
+            task.wait(10)
+            if AUS.on then
+                local elapsed = tick() - (AUS.lastSwitch or tick())
+                if elapsed >= AUS.interval * 60 then
+                    print("[HactTelur] Auto Update Server: pindah ke server fresh (JobId beda)...")
+                    AUS.lastSwitch = tick()
+                    pcall(serverHop)
+                end
+            end
+        end
+    end)
+end
 
 -- 3) FAV PET (favoritkan semua)
 miscActionRow(11, "Fav Pet", "Favoritkan semua pet di backpack", "Fav All", function(btn)
