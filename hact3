@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v17.4"
+local VERSION = "v17.5"
 
 -- ============ THEME ============
 local C = {
@@ -3006,13 +3006,73 @@ local function makeConfigPanel()
     return panel
 end
 
--- ============ PANEL FRUIT (baris collapsible, mirip Node Hub MISC) ============
+-- ============ AUTO BUY (seed/egg/gear) ============
+-- remote: BuySeedStock, BuyGearStock, BuyPetEgg. argumen = nama item (string).
+local AutoBuy = {
+    seed = { on = false, item = nil, remote = "BuySeedStock", dataKey = "SeedData" },
+    egg  = { on = false, item = nil, remote = "BuyPetEgg",    dataKey = "PetEggData" },
+    gear = { on = false, item = nil, remote = "BuyGearStock", dataKey = "GearData" },
+}
+
+-- ambil daftar nama item dari RS.Data.<dataKey>
+local function getBuyItemList(dataKey)
+    local out, seen = {}, {}
+    pcall(function()
+        local dataF = game:GetService("ReplicatedStorage"):FindFirstChild("Data")
+        local mod = dataF and dataF:FindFirstChild(dataKey)
+        if not mod then return end
+        local ok, tbl = pcall(require, mod)
+        if ok and type(tbl) == "table" then
+            for k, v in pairs(tbl) do
+                local nm = nil
+                -- kasus 1: key = nama item (string)
+                if type(k) == "string" and #k >= 2 and not k:match("^_") then
+                    nm = k
+                -- kasus 2: array, value punya .Name / .SeedName / .ItemName
+                elseif type(v) == "table" then
+                    nm = v.Name or v.SeedName or v.ItemName or v.DisplayName
+                end
+                if nm and type(nm) == "string" and not seen[nm] then
+                    seen[nm] = true
+                    table.insert(out, nm)
+                end
+            end
+        end
+    end)
+    table.sort(out)
+    return out
+end
+
+-- fire beli 1x
+local function fireBuy(kind)
+    local cfg = AutoBuy[kind]
+    if not cfg or not cfg.item then return end
+    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+    local re = ge and ge:FindFirstChild(cfg.remote)
+    if re then
+        pcall(function() re:FireServer(cfg.item) end)
+    end
+end
+
+-- loop auto-buy: tiap kind punya loop sendiri, jalan saat .on = true
+for _, kind in ipairs({"seed","egg","gear"}) do
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            local cfg = AutoBuy[kind]
+            if cfg.on and cfg.item then
+                pcall(function() fireBuy(kind) end)
+            end
+        end
+    end)
+end
+
+-- ============ PANEL FRUIT: AUTO BUY (Seed / Egg / Gear) ============
 local function makeFruitPanel()
     local panel = mk("Frame", {
         Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
         Visible = false, Parent = panelArea })
 
-    -- scroll biar muat banyak baris
     local scroll = mk("ScrollingFrame", {
         Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
         ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
@@ -3020,56 +3080,154 @@ local function makeFruitPanel()
         Parent = panel })
     mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = scroll })
 
-    -- fitur (kecuali Auto Sprinkler Other Garden)
-    local features = {
-        { key = "autoBoost",     name = "Auto Boost" },
-        { key = "autoFeed",      name = "Auto Feed (Fruit)" },
-        { key = "autoCollect",   name = "Auto Collect (Fruit)" },
-        { key = "autoSellFruit", name = "Auto Sell (Fruit)" },
-        { key = "autoSprinkler", name = "Auto Sprinkler" },
-        { key = "autoAscend",    name = "Auto Ascend" },
-    }
     fruitData = {}
 
-    local function makeRow(feat, order)
+    -- popup dropdown (search + list) untuk pilih item, dipakai ulang tiap baris
+    local function openPicker(kind, titleTxt, onPick)
+        local items = getBuyItemList(AutoBuy[kind].dataKey)
+        local dim = mk("TextButton", {
+            Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
+            BackgroundTransparency = 0.5, Text = "", AutoButtonColor = false,
+            ZIndex = 50, Parent = panel })
+        local box = mk("Frame", {
+            Size = UDim2.new(0, 300, 0, 320), Position = UDim2.new(0.5, -150, 0.5, -160),
+            BackgroundColor3 = C.bg, ZIndex = 51, Parent = dim })
+        corner(box, 10); stroke(box, C.border, 1.5)
+        local t = lbl(box, titleTxt, 13, C.text); t.Font = FONT_SB
+        t.Position = UDim2.new(0, 14, 0, 10); t.Size = UDim2.new(1, -50, 0, 22); t.ZIndex = 52
+        local xb = mk("TextButton", {
+            Size = UDim2.new(0, 24, 0, 24), Position = UDim2.new(1, -32, 0, 8),
+            BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 12,
+            TextColor3 = C.text, ZIndex = 52, Parent = box })
+        corner(xb, 6)
+        local search = mk("TextBox", {
+            Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 40),
+            BackgroundColor3 = C.input, Text = "", PlaceholderText = "Cari...",
+            Font = FONT, TextSize = 12, TextColor3 = C.text, ClearTextOnFocus = false,
+            ZIndex = 52, Parent = box })
+        corner(search, 6); stroke(search, C.border, 1)
+        local list = mk("ScrollingFrame", {
+            Size = UDim2.new(1, -20, 1, -84), Position = UDim2.new(0, 10, 0, 78),
+            BackgroundTransparency = 1, ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
+            CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ZIndex = 52, Parent = box })
+        mk("UIListLayout", { Padding = UDim.new(0, 4), Parent = list })
+        local function build(filter)
+            for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+            filter = (filter or ""):lower()
+            for _, name in ipairs(items) do
+                if filter == "" or name:lower():find(filter, 1, true) then
+                    local b = mk("TextButton", {
+                        Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+                        Text = name, Font = FONT, TextSize = 12, TextColor3 = C.text,
+                        ZIndex = 53, Parent = list })
+                    corner(b, 6)
+                    b.MouseButton1Click:Connect(function()
+                        onPick(name)
+                        dim:Destroy()
+                    end)
+                end
+            end
+        end
+        build("")
+        search:GetPropertyChangedSignal("Text"):Connect(function() build(search.Text) end)
+        xb.MouseButton1Click:Connect(function() dim:Destroy() end)
+        dim.MouseButton1Click:Connect(function() dim:Destroy() end)
+    end
+
+    -- bikin 1 baris auto-buy (collapsible: Select dropdown + toggle ON/OFF)
+    local function makeBuyRow(kind, name, order)
+        local cfg = AutoBuy[kind]
         local row = mk("Frame", {
             Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card,
             BorderSizePixel = 0, ClipsDescendants = true,
-            AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = order, Parent = scroll })
+            LayoutOrder = order, Parent = scroll })
         corner(row, 8); stroke(row, C.border, 1.5)
 
-        -- header (klik buat expand)
         local header = mk("TextButton", {
             Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1,
             Text = "", AutoButtonColor = false, Parent = row })
-        local nameLbl = lbl(header, feat.name, 13, C.text)
-        nameLbl.Font = FONT_SB
-        nameLbl.Position = UDim2.new(0, 14, 0, 0)
-        nameLbl.Size = UDim2.new(1, -40, 0, 40)
-        -- chevron
+        local nameLbl = lbl(header, name, 13, C.text); nameLbl.Font = FONT_SB
+        nameLbl.Position = UDim2.new(0, 14, 0, 0); nameLbl.Size = UDim2.new(1, -40, 0, 40)
         local chev = lbl(header, ">", 14, C.textDim, Enum.TextXAlignment.Right)
-        chev.Position = UDim2.new(1, -26, 0, 0)
-        chev.Size = UDim2.new(0, 16, 0, 40)
+        chev.Position = UDim2.new(1, -26, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
 
-        -- body (expand) — isi pengaturan + toggle ON/OFF di sini, nyusul
         local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 0), Position = UDim2.new(0, 10, 0, 44),
+            Size = UDim2.new(1, -20, 0, 86), Position = UDim2.new(0, 10, 0, 44),
             BackgroundTransparency = 1, Visible = false, Parent = row })
-        local bodyLbl = lbl(body, "— pengaturan "..feat.name.." nyusul —", 11, C.textMute, Enum.TextXAlignment.Center)
-        bodyLbl.Size = UDim2.new(1, 0, 0, 30)
 
-        fruitData[feat.key] = { enabled = false, expanded = false }
-        local fd = fruitData[feat.key]
-
-        -- expand/collapse
-        header.MouseButton1Click:Connect(function()
-            fd.expanded = not fd.expanded
-            body.Visible = fd.expanded
-            chev.Text = fd.expanded and "v" or ">"
-            row.Size = fd.expanded and UDim2.new(1, 0, 0, 84) or UDim2.new(1, 0, 0, 40)
+        -- baris "Select ..." (label + tombol pilih)
+        local selLbl = lbl(body, "Select "..name:gsub("Auto Buy ",""), 12, C.textDim)
+        selLbl.Position = UDim2.new(0, 0, 0, 4); selLbl.Size = UDim2.new(0.4, 0, 0, 30)
+        local selBtn = mk("TextButton", {
+            Size = UDim2.new(0.6, 0, 0, 30), Position = UDim2.new(0.4, 0, 0, 4),
+            BackgroundColor3 = C.input, Text = cfg.item or "Select...",
+            Font = FONT, TextSize = 12, TextColor3 = cfg.item and C.text or C.textDim,
+            Parent = body })
+        corner(selBtn, 6); stroke(selBtn, C.border, 1)
+        selBtn.MouseButton1Click:Connect(function()
+            openPicker(kind, "Select "..name:gsub("Auto Buy ",""), function(picked)
+                cfg.item = picked
+                selBtn.Text = picked; selBtn.TextColor3 = C.text
+                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+            end)
         end)
+
+        -- baris toggle ON/OFF
+        local togLbl = lbl(body, name, 12, C.text)
+        togLbl.Position = UDim2.new(0, 0, 0, 44); togLbl.Size = UDim2.new(0.6, 0, 0, 26)
+        local sw = mk("TextButton", {
+            Size = UDim2.new(0, 42, 0, 22), Position = UDim2.new(1, -42, 0, 46),
+            BackgroundColor3 = cfg.on and C.accent or C.input, Text = "",
+            AutoButtonColor = false, Parent = body })
+        corner(sw, 11)
+        local knob = mk("Frame", {
+            Size = UDim2.new(0, 18, 0, 18),
+            Position = cfg.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+            BackgroundColor3 = cfg.on and Color3.fromRGB(17,17,17) or C.textDim,
+            Parent = sw })
+        corner(knob, 9)
+        local function refreshSw()
+            sw.BackgroundColor3 = cfg.on and C.accent or C.input
+            knob.BackgroundColor3 = cfg.on and Color3.fromRGB(17,17,17) or C.textDim
+            knob.Position = cfg.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        end
+        sw.MouseButton1Click:Connect(function()
+            if not cfg.item then
+                togLbl.Text = name.." (pilih dulu!)"
+                task.delay(1.5, function() togLbl.Text = name end)
+                return
+            end
+            cfg.on = not cfg.on
+            refreshSw()
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
+
+        header.MouseButton1Click:Connect(function()
+            local exp = not body.Visible
+            body.Visible = exp
+            chev.Text = exp and "v" or ">"
+            row.Size = exp and UDim2.new(1, 0, 0, 134) or UDim2.new(1, 0, 0, 40)
+        end)
+
+        -- daftar global biar bisa refresh setelah load (rejoin)
+        fruitData[kind] = { refreshSelBtn = function()
+            selBtn.Text = cfg.item or "Select..."
+            selBtn.TextColor3 = cfg.item and C.text or C.textDim
+            refreshSw()
+        end }
     end
-    for i, feat in ipairs(features) do makeRow(feat, i) end
+
+    makeBuyRow("seed", "Auto Buy Seed", 1)
+    makeBuyRow("egg",  "Auto Buy Egg",  2)
+    makeBuyRow("gear", "Auto Buy Gear", 3)
+
+    -- expose refresh untuk load
+    _G.HactTelurRefreshAutoBuy = function()
+        for _, fd in pairs(fruitData) do
+            if fd.refreshSelBtn then pcall(fd.refreshSelBtn) end
+        end
+    end
 
     tabPanels["Fruit"] = panel
     return panel
@@ -3971,6 +4129,11 @@ local function saveConfig()
         maxEggManual = config.maxEggManual,
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
+        autoBuy = {
+            seed = { on = AutoBuy.seed.on, item = AutoBuy.seed.item },
+            egg  = { on = AutoBuy.egg.on,  item = AutoBuy.egg.item },
+            gear = { on = AutoBuy.gear.on, item = AutoBuy.gear.item },
+        },
         teams = {},
     }
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -4032,6 +4195,17 @@ local function loadConfig()
         if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
     end
     if data.webhookEnabled ~= nil then Webhook.enabled = data.webhookEnabled end
+    -- v17.5: restore auto-buy seed/egg/gear
+    if type(data.autoBuy) == "table" then
+        for _, kind in ipairs({"seed","egg","gear"}) do
+            local s = data.autoBuy[kind]
+            if type(s) == "table" then
+                AutoBuy[kind].on = s.on or false
+                AutoBuy[kind].item = s.item
+            end
+        end
+        if _G.HactTelurRefreshAutoBuy then pcall(_G.HactTelurRefreshAutoBuy) end
+    end
     if type(data.giftCfgs) == "table" and _G.HactTelurGiftCfgs then
         for i = 1, 3 do
             if data.giftCfgs[i] and _G.HactTelurGiftCfgs[i] then
