@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v17.5"
+local VERSION = "v17.6"
 
 -- ============ THEME ============
 local C = {
@@ -3067,6 +3067,72 @@ for _, kind in ipairs({"seed","egg","gear"}) do
     end)
 end
 
+-- ============ PROMPT PURCHASE (beli item Robux pakai TOKEN) ============
+-- game ini: 1 token = 1 robux. item Robux (dev product) bisa dibeli pakai token
+-- via RemoteFunction "Purchase":InvokeServer(purchaseId). daftar id dari RS.Data.DevProductIds.
+local PromptBuy = { item = nil, itemId = nil, payWith = "token", on = false }
+
+-- ambil daftar dev product (nama -> PurchaseID) dari RS.Data.DevProductIds
+local function getDevProductList()
+    local out = {}
+    pcall(function()
+        local dataF = game:GetService("ReplicatedStorage"):FindFirstChild("Data")
+        local mod = dataF and dataF:FindFirstChild("DevProductIds")
+        if not mod then return end
+        local ok, tbl = pcall(require, mod)
+        if ok and type(tbl) == "table" then
+            for name, v in pairs(tbl) do
+                local id = nil
+                if type(v) == "table" then id = v.PurchaseID or v.PurchaseId or v.Id
+                elseif type(v) == "number" then id = v end
+                if type(name) == "string" and id and tonumber(id) and tonumber(id) > 0 then
+                    table.insert(out, { name = name, id = tonumber(id) })
+                end
+            end
+        end
+    end)
+    table.sort(out, function(a, b) return a.name < b.name end)
+    return out
+end
+
+-- beli 1x: token (RemoteFunction Purchase) atau robux (MarketplaceService prompt)
+local function firePromptBuy()
+    if not PromptBuy.itemId then return false end
+    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+    if PromptBuy.payWith == "token" then
+        -- token: invoke RemoteFunction Purchase dgn purchaseId (coba beberapa format)
+        local pur = ge and ge:FindFirstChild("Purchase")
+        if pur and pur:IsA("RemoteFunction") then
+            local ok = pcall(function() pur:InvokeServer(PromptBuy.itemId) end)
+            if not ok then
+                -- fallback format: nama dev product
+                pcall(function() pur:InvokeServer(PromptBuy.item) end)
+            end
+            return true
+        end
+        -- fallback: PromptPurchase RemoteEvent
+        local pp = ge and ge:FindFirstChild("PromptPurchase")
+        if pp then pcall(function() pp:FireServer(PromptBuy.itemId) end); return true end
+    else
+        -- robux: munculkan dialog beli asli (confirm manual, gak bisa auto)
+        pcall(function()
+            game:GetService("MarketplaceService"):PromptProductPurchase(player, PromptBuy.itemId)
+        end)
+        return true
+    end
+    return false
+end
+
+-- loop auto prompt purchase (saat on=true): hati2, beli berulang!
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if PromptBuy.on and PromptBuy.itemId then
+            pcall(firePromptBuy)
+        end
+    end
+end)
+
 -- ============ PANEL FRUIT: AUTO BUY (Seed / Egg / Gear) ============
 local function makeFruitPanel()
     local panel = mk("Frame", {
@@ -3221,6 +3287,157 @@ local function makeFruitPanel()
     makeBuyRow("seed", "Auto Buy Seed", 1)
     makeBuyRow("egg",  "Auto Buy Egg",  2)
     makeBuyRow("gear", "Auto Buy Gear", 3)
+
+    -- ===== PROMPT PURCHASE (beli item Robux pakai token) =====
+    do
+        local row = mk("Frame", {
+            Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card,
+            BorderSizePixel = 0, ClipsDescendants = true,
+            LayoutOrder = 4, Parent = scroll })
+        corner(row, 8); stroke(row, C.border, 1.5)
+        local header = mk("TextButton", {
+            Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1,
+            Text = "", AutoButtonColor = false, Parent = row })
+        local nameLbl = lbl(header, "Prompt — Beli Item (Token)", 13, C.text); nameLbl.Font = FONT_SB
+        nameLbl.Position = UDim2.new(0, 14, 0, 0); nameLbl.Size = UDim2.new(1, -40, 0, 40)
+        local chev = lbl(header, ">", 14, C.textDim, Enum.TextXAlignment.Right)
+        chev.Position = UDim2.new(1, -26, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
+        local body = mk("Frame", {
+            Size = UDim2.new(1, -20, 0, 130), Position = UDim2.new(0, 10, 0, 44),
+            BackgroundTransparency = 1, Visible = false, Parent = row })
+
+        -- Pay With (token / robux)
+        local payLbl = lbl(body, "Pay With", 12, C.textDim)
+        payLbl.Position = UDim2.new(0, 0, 0, 4); payLbl.Size = UDim2.new(0.4, 0, 0, 28)
+        local payBtn = mk("TextButton", {
+            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 4),
+            BackgroundColor3 = C.input, Text = PromptBuy.payWith == "robux" and "Robux" or "Token",
+            Font = FONT, TextSize = 12, TextColor3 = C.text, Parent = body })
+        corner(payBtn, 6); stroke(payBtn, C.border, 1)
+        payBtn.MouseButton1Click:Connect(function()
+            PromptBuy.payWith = (PromptBuy.payWith == "token") and "robux" or "token"
+            payBtn.Text = PromptBuy.payWith == "robux" and "Robux" or "Token"
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
+
+        -- Select Item (dev product)
+        local selLbl = lbl(body, "Select Item", 12, C.textDim)
+        selLbl.Position = UDim2.new(0, 0, 0, 40); selLbl.Size = UDim2.new(0.4, 0, 0, 28)
+        local selBtn = mk("TextButton", {
+            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 40),
+            BackgroundColor3 = C.input, Text = PromptBuy.item or "Select item...",
+            Font = FONT, TextSize = 11, TextColor3 = PromptBuy.item and C.text or C.textDim,
+            Parent = body })
+        corner(selBtn, 6); stroke(selBtn, C.border, 1)
+        selBtn.MouseButton1Click:Connect(function()
+            local items = getDevProductList()
+            local dim = mk("TextButton", {
+                Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
+                BackgroundTransparency = 0.5, Text = "", AutoButtonColor = false,
+                ZIndex = 50, Parent = panel })
+            local box = mk("Frame", {
+                Size = UDim2.new(0, 320, 0, 360), Position = UDim2.new(0.5, -160, 0.5, -180),
+                BackgroundColor3 = C.bg, ZIndex = 51, Parent = dim })
+            corner(box, 10); stroke(box, C.border, 1.5)
+            local t = lbl(box, "Select Item", 13, C.text); t.Font = FONT_SB
+            t.Position = UDim2.new(0, 14, 0, 10); t.Size = UDim2.new(1, -50, 0, 22); t.ZIndex = 52
+            local xb = mk("TextButton", {
+                Size = UDim2.new(0, 24, 0, 24), Position = UDim2.new(1, -32, 0, 8),
+                BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 12,
+                TextColor3 = C.text, ZIndex = 52, Parent = box })
+            corner(xb, 6)
+            local search = mk("TextBox", {
+                Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 40),
+                BackgroundColor3 = C.input, Text = "", PlaceholderText = "Cari...",
+                Font = FONT, TextSize = 12, TextColor3 = C.text, ClearTextOnFocus = false,
+                ZIndex = 52, Parent = box })
+            corner(search, 6); stroke(search, C.border, 1)
+            local list = mk("ScrollingFrame", {
+                Size = UDim2.new(1, -20, 1, -84), Position = UDim2.new(0, 10, 0, 78),
+                BackgroundTransparency = 1, ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
+                CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                ZIndex = 52, Parent = box })
+            mk("UIListLayout", { Padding = UDim.new(0, 4), Parent = list })
+            local function build(filter)
+                for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+                filter = (filter or ""):lower()
+                for _, it in ipairs(items) do
+                    if filter == "" or it.name:lower():find(filter, 1, true) then
+                        local b = mk("TextButton", {
+                            Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+                            Text = it.name, Font = FONT, TextSize = 11, TextColor3 = C.text,
+                            ZIndex = 53, Parent = list })
+                        corner(b, 6)
+                        b.MouseButton1Click:Connect(function()
+                            PromptBuy.item = it.name
+                            PromptBuy.itemId = it.id
+                            selBtn.Text = it.name; selBtn.TextColor3 = C.text
+                            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+                            dim:Destroy()
+                        end)
+                    end
+                end
+            end
+            build("")
+            search:GetPropertyChangedSignal("Text"):Connect(function() build(search.Text) end)
+            xb.MouseButton1Click:Connect(function() dim:Destroy() end)
+            dim.MouseButton1Click:Connect(function() dim:Destroy() end)
+        end)
+
+        -- Buy Now (sekali) + toggle auto
+        local buyNow = mk("TextButton", {
+            Size = UDim2.new(0.48, 0, 0, 28), Position = UDim2.new(0, 0, 0, 80),
+            BackgroundColor3 = C.accent, Text = "Buy Now (1x)", Font = FONT_SB, TextSize = 12,
+            TextColor3 = Color3.fromRGB(17,17,17), Parent = body })
+        corner(buyNow, 6)
+        buyNow.MouseButton1Click:Connect(function()
+            if not PromptBuy.itemId then
+                buyNow.Text = "pilih item dulu!"
+                task.delay(1.5, function() buyNow.Text = "Buy Now (1x)" end)
+                return
+            end
+            firePromptBuy()
+            buyNow.Text = "dibeli!"
+            task.delay(1.2, function() buyNow.Text = "Buy Now (1x)" end)
+        end)
+        local autoLbl = lbl(body, "Auto", 11, C.text)
+        autoLbl.Position = UDim2.new(0.52, 0, 0, 80); autoLbl.Size = UDim2.new(0, 40, 0, 28)
+        local sw = mk("TextButton", {
+            Size = UDim2.new(0, 42, 0, 22), Position = UDim2.new(1, -42, 0, 83),
+            BackgroundColor3 = PromptBuy.on and C.accent or C.input, Text = "",
+            AutoButtonColor = false, Parent = body })
+        corner(sw, 11)
+        local knob = mk("Frame", {
+            Size = UDim2.new(0, 18, 0, 18),
+            Position = PromptBuy.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
+            BackgroundColor3 = PromptBuy.on and Color3.fromRGB(17,17,17) or C.textDim, Parent = sw })
+        corner(knob, 9)
+        local function refreshAll()
+            payBtn.Text = PromptBuy.payWith == "robux" and "Robux" or "Token"
+            selBtn.Text = PromptBuy.item or "Select item..."
+            selBtn.TextColor3 = PromptBuy.item and C.text or C.textDim
+            sw.BackgroundColor3 = PromptBuy.on and C.accent or C.input
+            knob.BackgroundColor3 = PromptBuy.on and Color3.fromRGB(17,17,17) or C.textDim
+            knob.Position = PromptBuy.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+        end
+        sw.MouseButton1Click:Connect(function()
+            if not PromptBuy.itemId then
+                autoLbl.Text = "pilih!"
+                task.delay(1.2, function() autoLbl.Text = "Auto" end)
+                return
+            end
+            PromptBuy.on = not PromptBuy.on
+            refreshAll()
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
+        header.MouseButton1Click:Connect(function()
+            local exp = not body.Visible
+            body.Visible = exp
+            chev.Text = exp and "v" or ">"
+            row.Size = exp and UDim2.new(1, 0, 0, 178) or UDim2.new(1, 0, 0, 40)
+        end)
+        fruitData.promptBuy = { refreshSelBtn = refreshAll }
+    end
 
     -- expose refresh untuk load
     _G.HactTelurRefreshAutoBuy = function()
@@ -4134,6 +4351,7 @@ local function saveConfig()
             egg  = { on = AutoBuy.egg.on,  item = AutoBuy.egg.item },
             gear = { on = AutoBuy.gear.on, item = AutoBuy.gear.item },
         },
+        promptBuy = { on = PromptBuy.on, item = PromptBuy.item, itemId = PromptBuy.itemId, payWith = PromptBuy.payWith },
         teams = {},
     }
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -4205,6 +4423,16 @@ local function loadConfig()
             end
         end
         if _G.HactTelurRefreshAutoBuy then pcall(_G.HactTelurRefreshAutoBuy) end
+    end
+    -- v17.6: restore prompt purchase (beli pakai token)
+    if type(data.promptBuy) == "table" then
+        PromptBuy.on = data.promptBuy.on or false
+        PromptBuy.item = data.promptBuy.item
+        PromptBuy.itemId = data.promptBuy.itemId
+        PromptBuy.payWith = data.promptBuy.payWith or "token"
+        if fruitData and fruitData.promptBuy and fruitData.promptBuy.refreshSelBtn then
+            pcall(fruitData.promptBuy.refreshSelBtn)
+        end
     end
     if type(data.giftCfgs) == "table" and _G.HactTelurGiftCfgs then
         for i = 1, 3 do
