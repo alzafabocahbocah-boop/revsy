@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v19.0"
+local VERSION = "v19.2"
 
 -- ============ THEME ============
 local C = {
@@ -934,6 +934,7 @@ local config = {
     autoUnequipWrong = false,  -- buang pet salah (bukan tim Reduce) dari garden
     reqKoiSeal = false,        -- syarat Koi% & Seal% >= min buat start & lanjut
     minKoiSeal = 50,           -- batas minimum % (default 50)
+    autoStart = false,         -- mulai automation otomatis setelah load/rejoin
 }
 
 -- ============ SISTEM JUAL PET ============
@@ -3381,6 +3382,25 @@ local function getDevProductList()
         end
     end
 
+    -- 2b) PetEggData: egg biasa (bisa dibeli pakai token juga)
+    for _, eggMod in ipairs({"PetEggData","PetEggShopData"}) do
+        local eggData = req(eggMod)
+        if eggData then
+            for name, info in pairs(eggData) do
+                if type(info) == "table" then
+                    local id = info.id or info.PurchaseID or info.PurchaseId
+                        or info.ProductId or info.DevProductId
+                    local price = info.Price or info.price or info.Robux or info.PriceRobux
+                    if id and tonumber(id) and tonumber(id) > 1000000 then
+                        local label = "Egg: "..tostring(name)
+                        if price then label = label.." | "..tostring(price).." R$" end
+                        table.insert(out, { name = label, id = tonumber(id), sort = "zzy "..tostring(name) })
+                    end
+                end
+            end
+        end
+    end
+
     -- 3) fallback: DevProductIds statis (yg belum kebawa di atas)
     local seenId = {}
     for _, it in ipairs(out) do seenId[it.id] = true end
@@ -3767,7 +3787,7 @@ local function makeFruitPanel()
             local exp = not body.Visible
             body.Visible = exp
             chev.Text = exp and "v" or ">"
-            row.Size = exp and UDim2.new(1, 0, 0, 122) or UDim2.new(1, 0, 0, 40)
+            row.Size = exp and UDim2.new(1, 0, 0, 164) or UDim2.new(1, 0, 0, 40)
         end)
         fruitData.promptBuy = { refreshSelBtn = refreshAll }
     end
@@ -4696,6 +4716,13 @@ miscToggleRow(12.7, "Auto Accept Trade", "Terima trade masuk otomatis", function
     AutoAcc.trade = on
     print("[HactTelur] Auto Accept Trade "..(on and "ON" or "OFF"))
 end)
+-- v19.1: auto start setelah rejoin (tanpa pencet START)
+miscToggleRow(12.55, "Auto Start", "Mulai otomatis setelah rejoin/load (tanpa pencet START)", function(on)
+    config.autoStart = on
+    print("[HactTelur] Auto Start "..(on and "ON" or "OFF"))
+    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+end)
+
 -- v19.0: syarat Koi% & Seal% >= 50% buat start & auto-stop kalau turun
 miscToggleRow(12.6, "Syarat Koi & Seal >=50%", "Start cuma kalau Koi & Seal >=50%, stop kalau turun", function(on)
     config.reqKoiSeal = on
@@ -4795,6 +4822,7 @@ local function saveConfig()
         autoUnequipWrong = config.autoUnequipWrong,
         reqKoiSeal = config.reqKoiSeal,
         minKoiSeal = config.minKoiSeal,
+        autoStart = config.autoStart,
         webhookUrl = Webhook.url,
         webhookEnabled = Webhook.enabled,
         autoBuy = {
@@ -4866,6 +4894,7 @@ local function loadConfig()
     if data.autoUnequipWrong ~= nil then config.autoUnequipWrong = data.autoUnequipWrong end
     if data.reqKoiSeal ~= nil then config.reqKoiSeal = data.reqKoiSeal end
     if data.minKoiSeal ~= nil then config.minKoiSeal = data.minKoiSeal end
+    if data.autoStart ~= nil then config.autoStart = data.autoStart end
     if data.webhookUrl then
         Webhook.url = data.webhookUrl
         if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
@@ -4957,6 +4986,28 @@ task.spawn(function()
     while true do
         task.wait(20)
         pcall(saveConfig)
+    end
+end)
+
+-- v19.1: AUTO START — kalau toggle aktif, mulai automation otomatis setelah load/rejoin
+task.spawn(function()
+    task.wait(3)  -- tunggu pet/tim ke-load dulu
+    if config.autoStart and not globalRunning then
+        PetDetect.rebuild(true)
+        task.wait(1)
+        -- hormati syarat Koi&Seal kalau aktif
+        if config.reqKoiSeal then
+            local ok, koi, seal = checkKoiSealOk()
+            if not ok then
+                print(string.format("[HactTelur] Auto Start batal: Koi %.1f%% Seal %.1f%% (<%d%%)",
+                    koi, seal, config.minKoiSeal or 50))
+                return
+            end
+        end
+        print("[HactTelur] AUTO START (setelah rejoin)")
+        Auto.currentTeam = nil
+        globalSetRunning(true)
+        task.spawn(automationLoop)
     end
 end)
 
