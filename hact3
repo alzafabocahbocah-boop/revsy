@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v21.4"
+local VERSION = "v21.5"
 
 -- ============ THEME ============
 local C = {
@@ -720,19 +720,100 @@ titleTxt.Size = UDim2.new(0, 140, 1, 0)
 local verTxt = lbl(titleBar, VERSION, 12.5, C.text)
 verTxt.Font = FONT_SB
 verTxt.Position = UDim2.new(0, 152, 0, 0)
-verTxt.Size = UDim2.new(0, 150, 1, 0)
--- update verTxt: tampil versi + cur/max pet, refresh berkala
+verTxt.Size = UDim2.new(0, 130, 1, 0)
+verTxt.TextXAlignment = Enum.TextXAlignment.Left
+-- v21.5: tombol pilih jenis pet di title bar — klik -> pilih jenis -> verTxt tampil "<jumlah> <jenis>"
+local trackPetType = nil  -- jenis pet yg lagi di-track di title bar
+local trackBtn = mk("TextButton", {
+    Size = UDim2.new(0, 95, 0, 24), Position = UDim2.new(0, 288, 0, 10),
+    BackgroundColor3 = C.input, Text = "jenis pet \u{25BC}", Font = FONT, TextSize = 11,
+    TextColor3 = C.textDim, AutoButtonColor = false, Parent = titleBar })
+corner(trackBtn, 6); stroke(trackBtn, C.border, 1)
+-- hitung jumlah pet jenis tertentu di backpack
+local function countPetType(petType)
+    if not petType then return 0 end
+    local n = 0
+    local low = tostring(petType):lower()
+    pcall(function()
+        for _, p in ipairs(PetDetect.listBackpackPets()) do
+            local nm = tostring(p.name or ""):lower()
+            -- buang mutasi/prefix: cocokkan nama dasar mengandung jenis
+            if nm:find(low, 1, true) then n = n + 1 end
+        end
+    end)
+    return n
+end
+-- update verTxt: tampil versi + cur/max pet, ATAU jumlah jenis pet kalau lagi di-track
 local function updateVerTxt()
     pcall(function()
-        local cur = #PetDetect.listBackpackPets()
         local maxP = _G.HactTelurGetMaxPets and _G.HactTelurGetMaxPets() or nil
-        if maxP and maxP > 0 then
-            verTxt.Text = VERSION .. "  " .. cur .. "/" .. maxP
+        if trackPetType then
+            -- mode track jenis: "v21.5  201/210  70 Brontosaurus"
+            local cur = #PetDetect.listBackpackPets()
+            local cnt = countPetType(trackPetType)
+            local base = maxP and maxP > 0 and (cur.."/"..maxP) or tostring(cur)
+            verTxt.Text = VERSION.."  "..base
+            trackBtn.Text = cnt.." "..trackPetType
+            trackBtn.TextColor3 = C.text
         else
-            verTxt.Text = VERSION .. "  " .. cur
+            local cur = #PetDetect.listBackpackPets()
+            if maxP and maxP > 0 then
+                verTxt.Text = VERSION .. "  " .. cur .. "/" .. maxP
+            else
+                verTxt.Text = VERSION .. "  " .. cur
+            end
+            trackBtn.Text = "jenis pet \u{25BC}"
+            trackBtn.TextColor3 = C.textDim
         end
     end)
 end
+-- popup picker jenis pet (pakai PET_LIST). dibuat saat diklik (PET_LIST udah ada saat itu)
+trackBtn.MouseButton1Click:Connect(function()
+    local old = titleBar:FindFirstChild("TrackPetPicker")
+    if old then old:Destroy(); return end  -- toggle: klik lagi = tutup
+    local pk = mk("Frame", {
+        Name = "TrackPetPicker",
+        Size = UDim2.new(0, 240, 0, 320), Position = UDim2.new(0, 288, 0, 38),
+        BackgroundColor3 = C.panel, Parent = titleBar, ZIndex = 50 })
+    corner(pk, 8); stroke(pk, C.border, 1)
+    local srch = mk("TextBox", {
+        Size = UDim2.new(1, -16, 0, 28), Position = UDim2.new(0, 8, 0, 8),
+        BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari jenis pet...",
+        Font = FONT, TextSize = 12, TextColor3 = C.text, ClearTextOnFocus = false,
+        ZIndex = 51, Parent = pk })
+    corner(srch, 6)
+    -- opsi "reset" (gak track)
+    local scroll = mk("ScrollingFrame", {
+        Size = UDim2.new(1, -16, 1, -44), Position = UDim2.new(0, 8, 0, 42),
+        BackgroundTransparency = 1, ScrollBarThickness = 4, CanvasSize = UDim2.new(0,0,0,0),
+        ZIndex = 51, Parent = pk })
+    local layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0, 3); layout.Parent = scroll
+    local function buildOptions(filter)
+        for _, c in ipairs(scroll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        local opts = { "(stop track)" }
+        for _, p in ipairs(PET_LIST) do
+            if filter == "" or tostring(p):lower():find(filter:lower(), 1, true) then
+                table.insert(opts, p)
+            end
+        end
+        for _, name in ipairs(opts) do
+            local b = mk("TextButton", {
+                Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.card,
+                Text = "  "..name, Font = FONT, TextSize = 12, TextColor3 = C.text,
+                TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = true,
+                ZIndex = 52, Parent = scroll })
+            corner(b, 5)
+            b.MouseButton1Click:Connect(function()
+                if name == "(stop track)" then trackPetType = nil else trackPetType = name end
+                pk:Destroy()
+                updateVerTxt()
+            end)
+        end
+        scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
+    end
+    buildOptions("")
+    srch:GetPropertyChangedSignal("Text"):Connect(function() buildOptions(srch.Text) end)
+end)
 task.spawn(function()
     task.wait(2)
     while titleBar.Parent do
