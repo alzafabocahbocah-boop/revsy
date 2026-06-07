@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.270"
+local VERSION = "8.271"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -4383,8 +4383,10 @@ do
                 and (" ["..entry.mutation.."]") or ""
             -- v8.268: nama MERAH kalau prem, PUTIH kalau biasa
             local nameHex = entry.isPrem and "#FF5050" or "#FFFFFF"
-            info.Text = string.format("<b><font color='%s'>%s</font></b>%s • <font color='#FFD700'>%s</font> • by %s",
-                nameHex, entry.petType or "?", mutStr, tostring(entry.price or 0), entry.seller or "?")
+            -- v8.271: tampilkan egg asal
+            local eggStr = entry.eggName and (" • <font color='#88CCFF'>"..entry.eggName.."</font>") or ""
+            info.Text = string.format("<b><font color='%s'>%s</font></b>%s • <font color='#FFD700'>%s</font> • by %s%s",
+                nameHex, entry.petType or "?", mutStr, tostring(entry.price or 0), entry.seller or "?", eggStr)
             info.RichText = true
             info.TextColor3 = C.text
             info.Font = F info.TextSize = 11
@@ -9334,6 +9336,13 @@ do
                     if not BH.autoSnipe.bought[p.listingUuid] and not onCooldown then
                         for _, rule in ipairs(BH.autoSnipe.rules) do
                             if matchRule(p, rule) then
+                                -- v8.271: GUARD final filter egg tepat sebelum fire (anti-bocor/race)
+                                local esNow = BH.autoSnipe.eggSource or "all"
+                                local skipEgg = (esNow == "prem" and not p.isPrem)
+                                            or (esNow == "biasa" and p.isPrem)
+                                if skipEgg then
+                                    -- gak cocok filter egg terkini -> skip, jangan beli
+                                else
                                 -- v8.265: JANGAN mark bought dulu — tandai cooldown biar gak spam,
                                 -- mark bought HANYA kalau buy sukses (di bawah). Gagal -> bisa retry.
                                 BH.autoSnipe.cooldown[p.listingUuid] = tick()
@@ -9370,6 +9379,7 @@ do
                                             price = petPrice,
                                             seller = petOwner,
                                             isPrem = petPrem,
+                                            eggName = petEgg,
                                             ts = os.time(),
                                         })
                                         while #BH.autoSnipe.history > 100 do
@@ -9389,6 +9399,7 @@ do
                                 end)
                                 boughtThisRound = boughtThisRound + 1
                                 break  -- match satu rule → next pet
+                                end  -- v8.271: tutup else guard filter egg
                             end
                         end
                     end
