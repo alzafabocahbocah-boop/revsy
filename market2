@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.264"
+local VERSION = "8.265"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -3732,6 +3732,7 @@ BH.autoSnipe = BH.autoSnipe or {
     active = false,
     rules = {},          -- list of {petType, mutation, maxKg, maxPrice}
     bought = {},         -- listingUuid → true (skip yang udah dibeli)
+    cooldown = {},       -- v8.265: listingUuid → tick() terakhir gagal (retry setelah 2s)
     boughtCount = 0,
 }
 -- Restore rules dari state file
@@ -3740,6 +3741,8 @@ if BH.marketState and BH.marketState.autoSnipeRules then
 end
 -- v8.258: restore filter asal egg (all/prem/biasa)
 BH.autoSnipe.eggSource = (BH.marketState and BH.marketState.autoSnipeEggSource) or "all"
+-- v8.265: pastikan cooldown table ada (kalau autoSnipe udah dibuat sebelumnya)
+BH.autoSnipe.cooldown = BH.autoSnipe.cooldown or {}
 
 do
     local snAutoPad = Instance.new("UIPadding")
@@ -9301,11 +9304,15 @@ do
                 local boughtThisRound = 0
                 for _, p in ipairs(autoCache) do
                     if not BH.autoSnipe.active then break end
-                    if not BH.autoSnipe.bought[p.listingUuid] then
+                    -- v8.265: skip kalau udah BERHASIL dibeli, ATAU lagi cooldown (baru gagal <2s lalu)
+                    local cd = BH.autoSnipe.cooldown[p.listingUuid]
+                    local onCooldown = cd and (tick() - cd) < 2
+                    if not BH.autoSnipe.bought[p.listingUuid] and not onCooldown then
                         for _, rule in ipairs(BH.autoSnipe.rules) do
                             if matchRule(p, rule) then
-                                -- v8.94: Mark sebelum fire (gak ngebuy 2x sama pet)
-                                BH.autoSnipe.bought[p.listingUuid] = true
+                                -- v8.265: JANGAN mark bought dulu — tandai cooldown biar gak spam,
+                                -- mark bought HANYA kalau buy sukses (di bawah). Gagal -> bisa retry.
+                                BH.autoSnipe.cooldown[p.listingUuid] = tick()
                                 -- BUY in parallel — no wait, fire immediately
                                 local clean = tostring(p.listingUuid):gsub("[{}]","")
                                 local seller, listingUuid = p.sellerPlayer, p.listingUuid
@@ -9316,6 +9323,8 @@ do
                                         return buyRE:InvokeServer(seller, clean)
                                     end)
                                     if ok and (ret == true or ret == nil) then
+                                        -- v8.265: sukses -> baru mark bought permanen
+                                        BH.autoSnipe.bought[listingUuid] = true
                                         BH.autoSnipe.boughtCount = BH.autoSnipe.boughtCount + 1
                                         L(string.format("[AutoSnipe] ✅ Bought %s%s @ %s from %s",
                                             petType or "?",
