@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.269"
+local VERSION = "8.270"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -9305,6 +9305,9 @@ do
                                     local pd = item.PetData
                                     local kg = (BH.computeBaseKgFromPetData and BH.computeBaseKgFromPetData(pd)) or 0
                                     local mut = tostring(pd.MutationType or "")
+                                    -- v8.270: hatchedFrom + isPrem (biar filter egg auto snipe jalan + bisa di-log)
+                                    local hatchedFrom = tostring(pd.HatchedFrom or "")
+                                    local isPrem = hatchedFrom:lower():find("premium") ~= nil
                                     table.insert(autoCache, {
                                         type = tostring(item.PetType or "?"),
                                         mutation = (mut ~= "" and mut or "-"),
@@ -9313,6 +9316,8 @@ do
                                         owner = pp.Name,
                                         sellerPlayer = pp,
                                         listingUuid = listingUuid,
+                                        hatchedFrom = hatchedFrom,
+                                        isPrem = isPrem,
                                     })
                                 end
                             end
@@ -9338,6 +9343,7 @@ do
                                 local petType, petMut, petPrice, petOwner =
                                     p.type, p.mutation, p.price, p.owner
                                 local petPrem = p.isPrem and true or false  -- v8.268
+                                local petEgg = p.hatchedFrom or "?"  -- v8.270
                                 task.spawn(function()
                                     local ok, ret = pcall(function()
                                         return buyRE:InvokeServer(seller, clean)
@@ -9346,10 +9352,12 @@ do
                                         -- v8.265: sukses -> baru mark bought permanen
                                         BH.autoSnipe.bought[listingUuid] = true
                                         BH.autoSnipe.boughtCount = BH.autoSnipe.boughtCount + 1
-                                        L(string.format("[AutoSnipe] ✅ Bought %s%s @ %s from %s",
+                                        -- v8.270: log egg asal (prem/biasa) buat verifikasi filter
+                                        L(string.format("[AutoSnipe] ✅ Bought %s%s @ %s from %s | EGG: %s (%s)",
                                             petType or "?",
                                             (petMut and petMut ~= "-" and " ["..petMut.."]") or "",
-                                            tostring(petPrice), petOwner or "?"))
+                                            tostring(petPrice), petOwner or "?",
+                                            petEgg, petPrem and "PREM" or "biasa"))
                                         BH.autoSnipe.statusLbl.Text = string.format(
                                             "✅ %d bought | latest: %s @ %s",
                                             BH.autoSnipe.boughtCount,
