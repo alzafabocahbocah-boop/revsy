@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.255"
+local VERSION = "8.257"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -3541,8 +3541,8 @@ local function makeSnSubPanel(name)
 end
 local function makeSnSubBtn(name)
     local b = Instance.new("TextButton")
-    -- v8.96: 3 visible tabs (Manual, Otomatis, History) — Buy hidden
-    b.Size = UDim2.new(0.333, -4, 1, 0) b.AutoButtonColor = false
+    -- v8.257: 4 visible tabs (Manual, Otomatis, History, Index Hop) — Buy hidden
+    b.Size = UDim2.new(0.25, -6, 1, 0) b.AutoButtonColor = false
     b.BackgroundColor3 = C.card b.BorderSizePixel = 0
     b.Text = "" b.Parent = snSubTabBar
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)  -- v8.73: smaller corner
@@ -3573,10 +3573,12 @@ makeSnSubBtn("Manual")
 makeSnSubBtn("Buy")           -- v8.96: kept for Server Hunter backend, button hidden
 makeSnSubBtn("Otomatis")
 makeSnSubBtn("History")       -- v8.96: NEW — snipe history
+makeSnSubBtn("Index Hop")    -- v8.257: NEW — auto hop server via Index FindSellers
 local snManualPanel = makeSnSubPanel("Manual")
 local snBuyPanel = makeSnSubPanel("Buy")
 local snAutoPanel = makeSnSubPanel("Otomatis")
 local snHistoryPanel = makeSnSubPanel("History")  -- v8.96
+local snIndexPanel = makeSnSubPanel("Index Hop")  -- v8.257
 snManualPanel.Visible = true
 BH.snSubBtns.Manual.stroke.Thickness = 1.5
 BH.snSubBtns.Manual.lbl.TextColor3 = C.accent
@@ -4518,6 +4520,185 @@ snResetBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+-- v8.257: ===== INDEX HOP TAB — auto hop server via FindSellers =====
+-- Pilih banyak jenis pet. Kalau pet target (jenis) gak ketemu di server dlm X menit,
+-- panggil FindSellers("Pet",{PetData={PetType=jenis}}) -> game auto-hop ke server yg ada pet itu.
+do
+    local hp = snIndexPanel
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0,14) pad.PaddingLeft = UDim.new(0,14)
+    pad.PaddingRight = UDim.new(0,14) pad.PaddingBottom = UDim.new(0,14)
+    pad.Parent = hp
+
+    lblOf(hp, "🌐  INDEX HOP", 0, 0, 300, 22, C.accent, 14, FB)
+    lblOf(hp, "Auto pindah server cari jenis pet (via Index)", 0, 24, 400, 16, C.textDim, 11)
+
+    BH.indexHop = BH.indexHop or {}
+    BH.indexHop.selectedTypes = BH.indexHop.selectedTypes or {}
+    if BH.marketState and BH.marketState.indexHopTypes then
+        BH.indexHop.selectedTypes = BH.marketState.indexHopTypes
+    end
+    BH.indexHop.intervalMin = (BH.marketState and BH.marketState.indexHopInterval) or 2
+    BH.indexHop.active = false
+
+    -- tombol pilih jenis (multi)
+    BH.indexHop.pickBtn = btnOf(hp, 0, 48, 1, 26, "🐾 Pilih Jenis Pet", C.card, C.text)
+    BH.indexHop.pickBtn.Size = UDim2.new(1, 0, 0, 26)
+    BH.indexHop.pickBtn.TextSize = 11
+
+    -- label jenis terpilih
+    BH.indexHop.selLbl = lblOf(hp, "Belum pilih jenis", 0, 80, 400, 16, C.textDim, 10)
+
+    local function updateSelLbl()
+        local picked = {}
+        for k in pairs(BH.indexHop.selectedTypes) do table.insert(picked, k) end
+        if #picked == 0 then
+            BH.indexHop.selLbl.Text = "Belum pilih jenis"
+            BH.indexHop.selLbl.TextColor3 = C.textDim
+        else
+            table.sort(picked)
+            BH.indexHop.selLbl.Text = "Target: "..table.concat(picked, ", ")
+            BH.indexHop.selLbl.TextColor3 = C.accent
+        end
+    end
+    BH.indexHop.updateSelLbl = updateSelLbl
+    updateSelLbl()
+
+    -- interval (menit)
+    lblOf(hp, "Hop tiap (menit):", 0, 102, 120, 20, C.text, 11)
+    BH.indexHop.intervalBox = Instance.new("TextBox")
+    BH.indexHop.intervalBox.Size = UDim2.new(0, 60, 0, 24)
+    BH.indexHop.intervalBox.Position = UDim2.new(0, 124, 0, 100)
+    BH.indexHop.intervalBox.BackgroundColor3 = C.card
+    BH.indexHop.intervalBox.Text = tostring(BH.indexHop.intervalMin)
+    BH.indexHop.intervalBox.PlaceholderText = "2"
+    BH.indexHop.intervalBox.TextColor3 = C.text
+    BH.indexHop.intervalBox.Font = FM BH.indexHop.intervalBox.TextSize = 12
+    BH.indexHop.intervalBox.ClearTextOnFocus = false
+    BH.indexHop.intervalBox.Parent = hp
+    Instance.new("UICorner", BH.indexHop.intervalBox).CornerRadius = UDim.new(0,6)
+    BH.indexHop.intervalBox.FocusLost:Connect(function()
+        local v = tonumber(BH.indexHop.intervalBox.Text)
+        if v and v >= 0.5 then
+            BH.indexHop.intervalMin = v
+            if BH.marketState then BH.marketState.indexHopInterval = v; BH.saveMarketState(BH.marketState) end
+        else
+            BH.indexHop.intervalBox.Text = tostring(BH.indexHop.intervalMin)
+        end
+    end)
+
+    -- toggle start/stop
+    BH.indexHop.toggleBtn = btnOf(hp, 0, 134, 1, 28, "▶ START INDEX HOP", C.success)
+    BH.indexHop.toggleBtn.Size = UDim2.new(1, 0, 0, 28)
+    BH.indexHop.toggleBtn.TextSize = 12
+
+    -- status
+    BH.indexHop.statusLbl = lblOf(hp, "Idle — pilih jenis + START", 0, 168, 400, 32, C.textDim, 10)
+    BH.indexHop.statusLbl.TextWrapped = true
+    BH.indexHop.statusLbl.Size = UDim2.new(1, 0, 0, 32)
+
+    -- picker jenis pet (multi) — pakai BH.allPetTypes
+    BH.indexHop.pickBtn.MouseButton1Click:Connect(function()
+        local types = BH.allPetTypes or {}
+        if #types == 0 then
+            BH.indexHop.statusLbl.Text = "⚠ daftar pet belum ke-load, buka tab History dulu / tunggu"
+            BH.indexHop.statusLbl.TextColor3 = C.danger
+            return
+        end
+        local ov = Instance.new("Frame")
+        ov.Size = UDim2.new(1,0,1,0); ov.BackgroundColor3 = Color3.new(0,0,0)
+        ov.BackgroundTransparency = 0.5; ov.ZIndex = 70; ov.Parent = gui
+        local box = Instance.new("Frame")
+        box.Size = UDim2.new(0, 320, 0, 420); box.Position = UDim2.new(0.5, -160, 0.5, -210)
+        box.BackgroundColor3 = C.panel; box.BorderSizePixel = 0; box.ZIndex = 71; box.Parent = ov
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0,10)
+        Instance.new("UIStroke", box).Color = C.accent
+        local tt = lblOf(box, "🐾 Pilih Jenis (multi)", 12, 8, 240, 22, C.accent, 13, FB)
+        tt.ZIndex = 72
+        local xb = Instance.new("TextButton")
+        xb.Size = UDim2.new(0,26,0,22); xb.Position = UDim2.new(1,-34,0,8)
+        xb.BackgroundColor3 = C.danger; xb.Text = "X"; xb.TextColor3 = C.text
+        xb.Font = FB; xb.TextSize = 12; xb.ZIndex = 72; xb.Parent = box
+        Instance.new("UICorner", xb).CornerRadius = UDim.new(0,4)
+        local sb = Instance.new("TextBox")
+        sb.Size = UDim2.new(1,-24,0,30); sb.Position = UDim2.new(0,12,0,38)
+        sb.BackgroundColor3 = C.card; sb.Text = ""; sb.PlaceholderText = "cari jenis..."
+        sb.TextColor3 = C.text; sb.Font = FM; sb.TextSize = 12; sb.ClearTextOnFocus = false
+        sb.ZIndex = 72; sb.Parent = box
+        Instance.new("UICorner", sb).CornerRadius = UDim.new(0,6)
+        local sf = Instance.new("ScrollingFrame")
+        sf.Size = UDim2.new(1,-20,1,-110); sf.Position = UDim2.new(0,10,0,74)
+        sf.BackgroundTransparency = 1; sf.ScrollBarThickness = 3; sf.BorderSizePixel = 0
+        sf.CanvasSize = UDim2.new(0,0,0,0); sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        sf.ZIndex = 72; sf.Parent = box
+        local ll = Instance.new("UIListLayout"); ll.Padding = UDim.new(0,4); ll.Parent = sf
+        local doneBtn = btnOf(box, 12, 0, 1, 28, "✓ SELESAI", C.success)
+        doneBtn.Size = UDim2.new(1,-24,0,28); doneBtn.Position = UDim2.new(0,12,1,-36)
+        doneBtn.ZIndex = 72
+        local function build(filter)
+            for _, c in ipairs(sf:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+            filter = (filter or ""):lower()
+            for _, nm in ipairs(types) do
+                if filter == "" or nm:lower():find(filter, 1, true) then
+                    local sel = BH.indexHop.selectedTypes[nm] == true
+                    local b = Instance.new("TextButton")
+                    b.Size = UDim2.new(1,0,0,28); b.BackgroundColor3 = sel and C.accent or C.card
+                    b.Text = (sel and "✓ " or "   ")..nm
+                    b.TextColor3 = sel and Color3.fromRGB(17,17,17) or C.text
+                    b.TextXAlignment = Enum.TextXAlignment.Left
+                    b.Font = FM; b.TextSize = 12; b.ZIndex = 73; b.Parent = sf
+                    Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
+                    local lp = Instance.new("UIPadding"); lp.PaddingLeft = UDim.new(0,8); lp.Parent = b
+                    b.MouseButton1Click:Connect(function()
+                        if BH.indexHop.selectedTypes[nm] then
+                            BH.indexHop.selectedTypes[nm] = nil
+                        else
+                            BH.indexHop.selectedTypes[nm] = true
+                        end
+                        build(sb.Text)
+                        updateSelLbl()
+                        if BH.marketState then
+                            BH.marketState.indexHopTypes = BH.indexHop.selectedTypes
+                            BH.saveMarketState(BH.marketState)
+                        end
+                    end)
+                end
+            end
+        end
+        build("")
+        sb:GetPropertyChangedSignal("Text"):Connect(function() build(sb.Text) end)
+        xb.MouseButton1Click:Connect(function() ov:Destroy() end)
+        doneBtn.MouseButton1Click:Connect(function() ov:Destroy() end)
+    end)
+
+    -- toggle handler
+    BH.indexHop.toggleBtn.MouseButton1Click:Connect(function()
+        BH.indexHop.active = not BH.indexHop.active
+        if BH.indexHop.active then
+            local picked = {}
+            for k in pairs(BH.indexHop.selectedTypes) do table.insert(picked, k) end
+            if #picked == 0 then
+                BH.indexHop.active = false
+                BH.indexHop.statusLbl.Text = "❌ Pilih jenis pet dulu"
+                BH.indexHop.statusLbl.TextColor3 = C.danger
+                return
+            end
+            BH.indexHop.toggleBtn.Text = "⛔ STOP INDEX HOP"
+            BH.indexHop.toggleBtn.BackgroundColor3 = C.danger
+            BH.indexHop.statusLbl.Text = "🌐 Active — cek pet tiap "..BH.indexHop.intervalMin.." menit"
+            BH.indexHop.statusLbl.TextColor3 = C.accent
+            BH.indexHop.lastHop = tick()
+            L("[IndexHop] START — "..#picked.." jenis, interval "..BH.indexHop.intervalMin.."m")
+        else
+            BH.indexHop.toggleBtn.Text = "▶ START INDEX HOP"
+            BH.indexHop.toggleBtn.BackgroundColor3 = C.success
+            BH.indexHop.statusLbl.Text = "⛔ Stopped"
+            BH.indexHop.statusLbl.TextColor3 = C.textDim
+            L("[IndexHop] STOP")
+        end
+    end)
+end
+
 end  -- end do block for snipe UI
 
 
@@ -4551,6 +4732,12 @@ local function resolveRemotes(timeout)
         if not claimRE then claimRE = Booths:FindFirstChild("ClaimBooth") or Booths:WaitForChild("ClaimBooth", timeout) end
         if not removeBoothRE then removeBoothRE = Booths:FindFirstChild("RemoveBooth") or Booths:WaitForChild("RemoveBooth", timeout) end
     end)
+    -- v8.257: resolve FindSellers (Index hop) — cari recursive, lokasi bisa beda
+    if not BH.findSellersRE then
+        pcall(function()
+            BH.findSellersRE = RS:FindFirstChild("FindSellers", true)
+        end)
+    end
     return removeRE ~= nil, diag
 end
 
@@ -8116,9 +8303,21 @@ task.spawn(function()
             local char = player.Character
             if char then
                 local hum = char:FindFirstChildOfClass("Humanoid")
-                local hasTool = false
-                for _, c in ipairs(char:GetChildren()) do if c:IsA("Tool") then hasTool = true; break end end
-                if not hasTool and hum then
+                -- cek tool yg lagi dipegang
+                local heldTool = nil
+                for _, c in ipairs(char:GetChildren()) do if c:IsA("Tool") then heldTool = c; break end end
+                -- v8.256: kalau jenis dipilih, pastikan pet yg dipegang SESUAI jenis.
+                -- kalau pegang pet salah -> unequip dulu biar bisa ganti ke yg bener.
+                if heldTool and BH.equipPetType and BH.equipPetType ~= "ALL" and hum then
+                    local heldType = isPet(heldTool) and BH.getPetName(heldTool) or nil
+                    if heldType ~= BH.equipPetType then
+                        -- pet salah / bukan pet -> lepas
+                        pcall(function() hum:UnequipTools() end)
+                        task.wait(0.3)
+                        heldTool = nil
+                    end
+                end
+                if not heldTool and hum then
                     local pet, wt = getDisplayPet()
                     if pet then
                         pcall(function() hum:EquipTool(pet) end)
@@ -9072,7 +9271,108 @@ do
         end
     end)
 
-    -- v8.75: SERVER HUNTER — START/STOP toggle + auto-scan + cross-tab updates
+    -- v8.257: ===== INDEX HOP — loop cek pet target, kalau gak ada -> FindSellers (auto hop) =====
+    task.spawn(function()
+        -- cek apakah jenis pet target ADA di booth server ini (via scanCache/TBC)
+        local function petTypeExistsHere(targetSet)
+            -- pakai scan TBC ringan
+            if not BH.TBC then return false end
+            for _, pp in ipairs(Players:GetPlayers()) do
+                if pp ~= player then
+                    local ok, data = pcall(function() return BH.TBC:GetPlayerBoothData(pp) end)
+                    if ok and data and data.Listings and data.Items then
+                        for _, listing in pairs(data.Listings) do
+                            if listing.ItemType == "Pet" and listing.ItemId then
+                                local item = data.Items[listing.ItemId]
+                                if item and item.PetType and targetSet[tostring(item.PetType)] then
+                                    return true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            return false
+        end
+
+        -- panggil FindSellers buat tiap jenis target -> game auto-hop kalau ketemu
+        local function callFindSellers(targetSet)
+            local re = BH.findSellersRE
+            if not re then
+                pcall(function() re = game:GetService("ReplicatedStorage"):FindFirstChild("FindSellers", true); BH.findSellersRE = re end)
+            end
+            if not re then return false, "FindSellers remote gak ketemu" end
+            for petType in pairs(targetSet) do
+                local petData = {
+                    PetData = {
+                        PetType = petType,
+                        MutationType = "Normal",
+                        BaseWeight = 1,
+                        Level = 0,
+                        Boosts = {},
+                        PetAbility = {},
+                    }
+                }
+                local ok, ret = pcall(function() return re:InvokeServer("Pet", petData) end)
+                if ok and ret == true then
+                    -- ketemu seller -> game auto-hop. selesai.
+                    return true, petType
+                end
+                task.wait(0.3)
+            end
+            return false, "gak ada seller utk jenis terpilih"
+        end
+
+        while gui.Parent do
+            task.wait(5)
+            if BH.indexHop and BH.indexHop.active then
+                local interval = (BH.indexHop.intervalMin or 2) * 60
+                local elapsed = tick() - (BH.indexHop.lastHop or 0)
+                local remain = math.max(0, math.floor(interval - elapsed))
+                -- update countdown
+                if BH.indexHop.statusLbl then
+                    BH.indexHop.statusLbl.Text = string.format("🌐 Active — cek lagi dlm %ds", remain)
+                    BH.indexHop.statusLbl.TextColor3 = C.accent
+                end
+                if elapsed >= interval then
+                    BH.indexHop.lastHop = tick()
+                    local targetSet = BH.indexHop.selectedTypes or {}
+                    -- cek dulu: kalau pet target ADA di sini, gak usah hop
+                    local existsHere = petTypeExistsHere(targetSet)
+                    if existsHere then
+                        if BH.indexHop.statusLbl then
+                            BH.indexHop.statusLbl.Text = "✅ Pet target ADA di server ini — gak hop"
+                            BH.indexHop.statusLbl.TextColor3 = C.success
+                        end
+                        L("[IndexHop] pet target ada di server ini, skip hop")
+                    else
+                        -- gak ada -> FindSellers (game auto-hop)
+                        if BH.indexHop.statusLbl then
+                            BH.indexHop.statusLbl.Text = "🔍 Pet gak ada — cari seller (Index)..."
+                            BH.indexHop.statusLbl.TextColor3 = C.accent
+                        end
+                        L("[IndexHop] pet target gak ada, panggil FindSellers")
+                        local found, info = callFindSellers(targetSet)
+                        if found then
+                            L("[IndexHop] ✅ seller ketemu utk "..tostring(info).." — game auto-hop")
+                            if BH.indexHop.statusLbl then
+                                BH.indexHop.statusLbl.Text = "✅ Seller ketemu ("..tostring(info)..") — hop..."
+                                BH.indexHop.statusLbl.TextColor3 = C.success
+                            end
+                        else
+                            L("[IndexHop] "..tostring(info))
+                            if BH.indexHop.statusLbl then
+                                BH.indexHop.statusLbl.Text = "⚠ "..tostring(info).." — coba lagi nanti"
+                                BH.indexHop.statusLbl.TextColor3 = C.textDim
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+
     local function saveHuntState()
         if not BH.marketState then return end
         BH.marketState.hunt = {
@@ -9263,6 +9563,7 @@ L("  - Inventory capacity")
         table.sort(uniq)
         allPetTypes = uniq
     end
+    BH.allPetTypes = allPetTypes  -- v8.257: dipakai picker Index Hop juga
     L("[Hist] PetRegistry loaded "..#allPetTypes.." types")
 
     -- ===== Panel padding =====
