@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v21.7"
+local VERSION = "v21.9"
 
 -- ============ THEME ============
 local C = {
@@ -377,7 +377,8 @@ end
 -- list SEMUA pet milik kita (termasuk yg di garden/placed) dari container,
 -- dilengkapi data dari tool backpack (nama & dispKg akurat) kalau ada.
 -- return array {uuid, name, rawName, mut, dispKg, level, fav, hasData, inBackpack}
-function PetDetect.listBackpackPets()
+-- v21.8: fungsi RAW (berat). dibungkus cache di bawah biar gak scan ulang tiap panggil.
+function PetDetect._listBackpackPetsRaw()
     -- 1) kumpulin tool yg ada di backpack/character (sumber nama & dispKg paling akurat)
     local toolByUuid = {}
     local function scanTools(holder)
@@ -522,6 +523,17 @@ function PetDetect.listBackpackPets()
             makeEntry(clean, pd, tool)
         end
     end
+    return out
+end
+-- v21.8: WRAPPER cache — listBackpackPets dipanggil di banyak tempat (title bar, automation loop).
+-- Tanpa cache, tiap panggilan scan ulang (berat, apalagi pet banyak) -> lag. Cache 2 detik.
+PetDetect._lbpCache, PetDetect._lbpTime = nil, 0
+function PetDetect.listBackpackPets(force)
+    if not force and PetDetect._lbpCache and (tick() - PetDetect._lbpTime) < 2 then
+        return PetDetect._lbpCache
+    end
+    local out = PetDetect._listBackpackPetsRaw()
+    PetDetect._lbpCache = out; PetDetect._lbpTime = tick()
     return out
 end
 
@@ -733,38 +745,25 @@ local trackBtn = mk("TextButton", {
     TextColor3 = C.textDim, AutoButtonColor = false, Parent = titleBar })
 corner(trackBtn, 6); stroke(trackBtn, C.border, 1)
 -- hitung jumlah pet jenis tertentu di backpack
-local function countPetType(petType)
-    if not petType then return 0 end
-    local n = 0
-    local low = tostring(petType):lower()
-    pcall(function()
-        for _, p in ipairs(PetDetect.listBackpackPets()) do
-            local nm = tostring(p.name or ""):lower()
-            -- buang mutasi/prefix: cocokkan nama dasar mengandung jenis
-            if nm:find(low, 1, true) then n = n + 1 end
-        end
-    end)
-    return n
-end
 -- update verTxt: tampil versi + cur/max pet, ATAU jumlah jenis pet kalau lagi di-track
 local function updateVerTxt()
     pcall(function()
         local maxP = _G.HactTelurGetMaxPets and _G.HactTelurGetMaxPets() or nil
+        -- v21.8: panggil listBackpackPets SEKALI aja (dulu 2x -> berat -> lag). pakai hasilnya buat semua.
+        local pets = PetDetect.listBackpackPets()
+        local cur = #pets
+        local base = maxP and maxP > 0 and (cur.."/"..maxP) or tostring(cur)
         if trackPetType then
-            -- mode track jenis: "v21.5  201/210  70 Brontosaurus"
-            local cur = #PetDetect.listBackpackPets()
-            local cnt = countPetType(trackPetType)
-            local base = maxP and maxP > 0 and (cur.."/"..maxP) or tostring(cur)
+            local low = tostring(trackPetType):lower()
+            local cnt = 0
+            for _, p in ipairs(pets) do
+                if tostring(p.name or ""):lower():find(low, 1, true) then cnt = cnt + 1 end
+            end
             verTxt.Text = VERSION.."  "..base
             trackBtn.Text = cnt.." "..trackPetType
             trackBtn.TextColor3 = C.text
         else
-            local cur = #PetDetect.listBackpackPets()
-            if maxP and maxP > 0 then
-                verTxt.Text = VERSION .. "  " .. cur .. "/" .. maxP
-            else
-                verTxt.Text = VERSION .. "  " .. cur
-            end
+            verTxt.Text = VERSION.."  "..base
             trackBtn.Text = "jenis pet \u{25BC}"
             trackBtn.TextColor3 = C.textDim
         end
@@ -1345,7 +1344,7 @@ local function getMatchedPets(cfg)
     local hasMut = false; for _ in pairs(cfg.muts or {}) do hasMut = true break end
     PetDetect.rebuild()
     local info = {}
-    for _, p in ipairs(PetDetect.listBackpackPets()) do info[tostring(p.uuid):gsub("[{}]","")] = p end
+    for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[tostring(p.uuid):gsub("[{}]","")] = p end
     local matched = {}
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
@@ -1400,7 +1399,7 @@ local function giftPetsByFilter(cfg)
     -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
     if cfg.unfavFirst then
         local info2 = {}
-        for _, p in ipairs(PetDetect.listBackpackPets()) do info2[tostring(p.uuid):gsub("[{}]","")] = p end
+        for _, p in ipairs(PetDetect.listBackpackPets(true)) do info2[tostring(p.uuid):gsub("[{}]","")] = p end
         for _, u in ipairs(matched) do
             local p = info2[u]
             if p and p.fav and p.tool then favoritePet(p.tool); task.wait(0.04) end
@@ -1497,7 +1496,7 @@ function favTeamPets()
         end
     end
     local n = 0
-    for _, p in ipairs(PetDetect.listBackpackPets()) do
+    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
         local uclean = tostring(p.uuid):gsub("[{}]","")
         if teamSel[uclean] and p.tool and not p.fav then
             favoritePet(p.tool)
@@ -1523,7 +1522,7 @@ function syncFavByRules()
         end
     end
     local unfav, fav = 0, 0
-    for _, p in ipairs(PetDetect.listBackpackPets()) do
+    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
         if p.tool then
             local uclean = tostring(p.uuid):gsub("[{}]","")
             local isTeam = teamSel[uclean]
@@ -1546,7 +1545,7 @@ function doAutoSell()
     local kept, toSellCount = 0, 0
     -- fav udah diatur real-time (syncFavByRules + favTeamPets), jadi gak perlu fav ulang.
     -- cuma hitung aja brp yg bakal kejual vs keep.
-    for _, p in ipairs(PetDetect.listBackpackPets()) do
+    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
         local fate = petFate(p)
         if fate == "keep" then kept = kept + 1 else toSellCount = toSellCount + 1 end
     end
@@ -2964,7 +2963,7 @@ local function makeTeamPanel(tabName)
         sumRows = {}
         -- bikin lookup uuid->info dari backpack biar dapet nama
         local info = {}
-        for _, p in ipairs(PetDetect.listBackpackPets()) do info[p.uuid] = p end
+        for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[p.uuid] = p end
         local any = false
         for uuid in pairs(data.selected) do
             any = true
@@ -4433,7 +4432,7 @@ local function favAllPets(wantFav)
         end
     end
     local n = 0
-    for _, p in ipairs(PetDetect.listBackpackPets()) do
+    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
         local uclean = tostring(p.uuid):gsub("[{}]","")
         -- kalau UNFAV: skip pet yg dipakai tim (jgn ikut di-unfav, biar tetap kelindungi)
         if (not wantFav) and teamSel[uclean] then
