@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.262"
+local VERSION = "8.264"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -9430,6 +9430,41 @@ do
                 if ok and ret == true then
                     -- set rotIdx ke yg berhasil biar next hop lanjut jenis berikutnya
                     BH.indexHop.rotIdx = idx
+                    -- v8.263: FindSellers true -> popup FindSellerPrompt muncul -> klik YES otomatis
+                    task.spawn(function()
+                        local pg = player:FindFirstChild("PlayerGui")
+                        local yesBtn = nil
+                        -- tunggu prompt + tombol Yes muncul (maks ~3 detik)
+                        for i = 1, 30 do
+                            local prompt = pg and pg:FindFirstChild("FindSellerPrompt")
+                            if prompt and prompt.Enabled then
+                                local frame = prompt:FindFirstChild("Frame")
+                                local opts = frame and frame:FindFirstChild("Options")
+                                yesBtn = opts and opts:FindFirstChild("Yes")
+                                if yesBtn then break end
+                            end
+                            task.wait(0.1)
+                        end
+                        if yesBtn then
+                            -- fire tombol Yes (klik) -> game TP ke server seller
+                            for _, ev in ipairs({"MouseButton1Click","Activated","MouseButton1Down"}) do
+                                pcall(function()
+                                    if yesBtn[ev] then firesignal(yesBtn[ev]) end
+                                end)
+                            end
+                            -- fallback: fire pakai VirtualInputManager / sclick kalau ada
+                            pcall(function()
+                                if yesBtn.MouseButton1Click then
+                                    for _, conn in ipairs(getconnections(yesBtn.MouseButton1Click)) do
+                                        conn:Fire()
+                                    end
+                                end
+                            end)
+                            L("[IndexHop] klik YES -> TP ke server seller ("..petType..")")
+                        else
+                            L("[IndexHop] ⚠ popup YES gak muncul (seller ketemu tapi prompt timeout)")
+                        end
+                    end)
                     return true, petType
                 end
                 task.wait(0.3)
@@ -9438,47 +9473,47 @@ do
         end
 
         while gui.Parent do
-            task.wait(5)
+            task.wait(3)
             if BH.indexHop and BH.indexHop.active then
+                -- v8.264: kalau gagal hop, retry cepat (gak nunggu interval).
+                -- interval penuh cuma berlaku kalau pet target ADA di server ini.
                 local interval = (BH.indexHop.intervalMin or 2) * 60
                 local elapsed = tick() - (BH.indexHop.lastHop or 0)
-                local remain = math.max(0, math.floor(interval - elapsed))
-                -- update countdown
-                if BH.indexHop.statusLbl then
-                    BH.indexHop.statusLbl.Text = string.format("🌐 Active — cek lagi dlm %ds", remain)
-                    BH.indexHop.statusLbl.TextColor3 = C.accent
-                end
-                if elapsed >= interval then
-                    BH.indexHop.lastHop = tick()
-                    local targetSet = BH.indexHop.selectedTypes or {}
-                    -- cek dulu: kalau pet target ADA di sini, gak usah hop
-                    local existsHere = petTypeExistsHere(targetSet)
-                    if existsHere then
+                local targetSet = BH.indexHop.selectedTypes or {}
+                local existsHere = petTypeExistsHere(targetSet)
+
+                if existsHere then
+                    -- pet target ada -> tunggu interval (jangan spam hop)
+                    local remain = math.max(0, math.floor(interval - elapsed))
+                    if BH.indexHop.statusLbl then
+                        BH.indexHop.statusLbl.Text = string.format("✅ Pet ADA di server ini — cek lagi %ds", remain)
+                        BH.indexHop.statusLbl.TextColor3 = C.success
+                    end
+                    if elapsed >= interval then
+                        BH.indexHop.lastHop = tick()  -- reset timer, cek ulang nanti
+                    end
+                else
+                    -- pet GAK ADA -> langsung cari seller & hop, RETRY CEPAT kalau gagal
+                    if BH.indexHop.statusLbl then
+                        BH.indexHop.statusLbl.Text = "🔍 Pet gak ada — cari seller (cycle)..."
+                        BH.indexHop.statusLbl.TextColor3 = C.accent
+                    end
+                    local found, info = BH.indexHop.callFindSellers(targetSet)
+                    if found then
+                        BH.indexHop.lastHop = tick()
+                        L("[IndexHop] ✅ seller ketemu ("..tostring(info)..") — TP...")
                         if BH.indexHop.statusLbl then
-                            BH.indexHop.statusLbl.Text = "✅ Pet target ADA di server ini — gak hop"
+                            BH.indexHop.statusLbl.Text = "✅ Seller ketemu ("..tostring(info)..") — TP..."
                             BH.indexHop.statusLbl.TextColor3 = C.success
                         end
-                        L("[IndexHop] pet target ada di server ini, skip hop")
+                        -- berhasil -> kasih jeda biar TP kelar sebelum cek lagi
+                        task.wait(4)
                     else
-                        -- gak ada -> FindSellers (game auto-hop)
+                        -- GAGAL semua jenis -> retry cepat (loop lanjut, wait 3s aja di atas)
+                        L("[IndexHop] cycle gagal ("..tostring(info)..") — retry pet berikutnya")
                         if BH.indexHop.statusLbl then
-                            BH.indexHop.statusLbl.Text = "🔍 Pet gak ada — cari seller (Index)..."
-                            BH.indexHop.statusLbl.TextColor3 = C.accent
-                        end
-                        L("[IndexHop] pet target gak ada, panggil FindSellers")
-                        local found, info = BH.indexHop.callFindSellers(targetSet)
-                        if found then
-                            L("[IndexHop] ✅ seller ketemu utk "..tostring(info).." — game auto-hop")
-                            if BH.indexHop.statusLbl then
-                                BH.indexHop.statusLbl.Text = "✅ Seller ketemu ("..tostring(info)..") — hop..."
-                                BH.indexHop.statusLbl.TextColor3 = C.success
-                            end
-                        else
-                            L("[IndexHop] "..tostring(info))
-                            if BH.indexHop.statusLbl then
-                                BH.indexHop.statusLbl.Text = "⚠ "..tostring(info).." — coba lagi nanti"
-                                BH.indexHop.statusLbl.TextColor3 = C.textDim
-                            end
+                            BH.indexHop.statusLbl.Text = "🔄 "..tostring(info).." — cycle lanjut..."
+                            BH.indexHop.statusLbl.TextColor3 = C.textDim
                         end
                     end
                 end
