@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.257"
+local VERSION = "8.259"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -3738,6 +3738,8 @@ BH.autoSnipe = BH.autoSnipe or {
 if BH.marketState and BH.marketState.autoSnipeRules then
     BH.autoSnipe.rules = BH.marketState.autoSnipeRules
 end
+-- v8.258: restore filter asal egg (all/prem/biasa)
+BH.autoSnipe.eggSource = (BH.marketState and BH.marketState.autoSnipeEggSource) or "all"
 
 do
     local snAutoPad = Instance.new("UIPadding")
@@ -4026,10 +4028,31 @@ do
     BH.autoSnipe.toggleBtn.Position = UDim2.new(0.4, 3, 0, 30)
     BH.autoSnipe.toggleBtn.TextSize = 11
 
-    -- Row 3 (y=62): status label
+    -- v8.258: Row 3 (y=62): filter asal egg (Semua/Prem/Biasa)
+    BH.autoSnipe.eggBtn = btnOf(snAutoPanel, 0, 0, 1, 1, "🥚 Egg: Semua", C.card, C.text)
+    BH.autoSnipe.eggBtn.Size = UDim2.new(1, 0, 0, 24)
+    BH.autoSnipe.eggBtn.Position = UDim2.new(0, 0, 0, 62)
+    BH.autoSnipe.eggBtn.TextSize = 11
+    local function eggLabel()
+        local es = BH.autoSnipe.eggSource or "all"
+        return es == "prem" and "🥚 Egg: Prem only"
+            or es == "biasa" and "🥚 Egg: Biasa only"
+            or "🥚 Egg: Semua"
+    end
+    BH.autoSnipe.eggBtn.Text = eggLabel()
+    BH.autoSnipe.eggBtn.MouseButton1Click:Connect(function()
+        local es = BH.autoSnipe.eggSource or "all"
+        es = (es == "all") and "prem" or (es == "prem") and "biasa" or "all"
+        BH.autoSnipe.eggSource = es
+        BH.autoSnipe.eggBtn.Text = eggLabel()
+        if BH.marketState then BH.marketState.autoSnipeEggSource = es; BH.saveMarketState(BH.marketState) end
+        L("[AutoSnipe] filter egg: "..es)
+    end)
+
+    -- Row 4 (y=90): status label
     BH.autoSnipe.statusLbl = Instance.new("TextLabel")
     BH.autoSnipe.statusLbl.Size = UDim2.new(1, 0, 0, 18)
-    BH.autoSnipe.statusLbl.Position = UDim2.new(0, 0, 0, 62)
+    BH.autoSnipe.statusLbl.Position = UDim2.new(0, 0, 0, 90)
     BH.autoSnipe.statusLbl.BackgroundTransparency = 1
     BH.autoSnipe.statusLbl.Text = "Idle — tambah rule lalu klik START"
     BH.autoSnipe.statusLbl.TextColor3 = C.textDim
@@ -4038,10 +4061,10 @@ do
     BH.autoSnipe.statusLbl.TextXAlignment = Enum.TextXAlignment.Left
     BH.autoSnipe.statusLbl.Parent = snAutoPanel
 
-    -- Row 4 (y=84 → bottom): Rules list scroll
+    -- Row 5 (y=112 → bottom): Rules list scroll
     BH.autoSnipe.scroll = Instance.new("ScrollingFrame")
-    BH.autoSnipe.scroll.Size = UDim2.new(1, 0, 1, -88)
-    BH.autoSnipe.scroll.Position = UDim2.new(0, 0, 0, 84)
+    BH.autoSnipe.scroll.Size = UDim2.new(1, 0, 1, -116)
+    BH.autoSnipe.scroll.Position = UDim2.new(0, 0, 0, 112)
     BH.autoSnipe.scroll.BackgroundColor3 = C.card
     BH.autoSnipe.scroll.BorderSizePixel = 0
     BH.autoSnipe.scroll.ScrollBarThickness = 4
@@ -8518,6 +8541,9 @@ local function scanBoothListings()
                             local mut = tostring(pd.MutationType or "")
                             local pType = tostring(item.PetType or "?")
                             local petNick = tostring(pd.Name or "")
+                            -- v8.258: asal egg (buat filter prem vs biasa)
+                            local hatchedFrom = tostring(pd.HatchedFrom or "")
+                            local isPrem = hatchedFrom:lower():find("premium") ~= nil
                             -- Combined search-friendly name
                             local searchName = pType
                             if mut ~= "" then searchName = mut.." "..searchName end
@@ -8539,6 +8565,8 @@ local function scanBoothListings()
                                 itemId = listing.ItemId,
                                 boothUuid = data.Booth,
                                 isMine = isMine,
+                                hatchedFrom = hatchedFrom,  -- v8.258
+                                isPrem = isPrem,            -- v8.258
                             })
                         end
                     end
@@ -9131,6 +9159,10 @@ do
             end
             -- maxPrice: wajib
             if not p.price or p.price > rule.maxPrice then return false end
+            -- v8.258: filter asal egg (prem vs biasa). BH.autoSnipe.eggSource: all/prem/biasa
+            local es = BH.autoSnipe.eggSource or "all"
+            if es == "prem" and not p.isPrem then return false end
+            if es == "biasa" and p.isPrem then return false end
             return true
         end
 
@@ -9303,15 +9335,18 @@ do
             end
             if not re then return false, "FindSellers remote gak ketemu" end
             for petType in pairs(targetSet) do
+                -- v8.259: struktur PERSIS kayak game — PetType & PetAbility di LUAR PetData
                 local petData = {
                     PetData = {
-                        PetType = petType,
                         MutationType = "Normal",
+                        Boosts = {},
                         BaseWeight = 1,
                         Level = 0,
-                        Boosts = {},
-                        PetAbility = {},
-                    }
+                        Hunger = 0,
+                        LevelProgress = 0,
+                    },
+                    PetType = petType,
+                    PetAbility = {},
                 }
                 local ok, ret = pcall(function() return re:InvokeServer("Pet", petData) end)
                 if ok and ret == true then
