@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.271"
+local VERSION = "8.272"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -11152,28 +11152,22 @@ BH.buildGardenPanel = function()
         local char = player.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if not hum then return false end
-        pcall(function() hum:UnequipTools() end)
-        task.wait(0.1)
+        -- v8.272: dipercepat (0.1/0.25/0.4 -> equip 0.12 / give 0.18, hapus unequip + fire ganda)
         pcall(function() hum:EquipTool(petTool) end)
-        task.wait(0.25)
+        task.wait(0.12)
         local sent = false
         if outPGS and outPGS.GivePet then
             pcall(function() outPGS.GivePet(targetPlayer) end)
-            task.wait(0.4)
-            if not petTool.Parent then sent = true end
+            task.wait(0.18)
+            if not petTool.Parent then return true end
         end
-        if not sent and outGiftRE then
+        if outGiftRE then
             local uuid = petTool:GetAttribute("PET_UUID")
             local u = tostring(uuid)
             if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
             pcall(function() outGiftRE:FireServer("GivePet", targetPlayer, u) end)
-            task.wait(0.4)
+            task.wait(0.18)
             if not petTool.Parent then sent = true end
-            if not sent then
-                pcall(function() outGiftRE:FireServer("GivePet", targetPlayer) end)
-                task.wait(0.4)
-                if not petTool.Parent then sent = true end
-            end
         end
         return sent
     end
@@ -11525,7 +11519,7 @@ BH.buildGardenPanel = function()
                             local ok = giftPetToTarget(target, petTool)
                             if ok then giftSent = giftSent + 1 else giftFailed = giftFailed + 1 end
                             giftCounterLbl.Text = "Sent: "..giftSent.."   Failed: "..giftFailed
-                            task.wait(1.5)
+                            task.wait(0.15)  -- v8.272: dipercepat (dulu 1.5 -> lambat banget)
                         end
                     end
                 end
