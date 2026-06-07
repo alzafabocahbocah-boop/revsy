@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v21.0"
+local VERSION = "v21.2"
 
 -- ============ THEME ============
 local C = {
@@ -259,7 +259,7 @@ end
 -- build cache uuid -> PetData. MERGE semua container yg berisi pet kita
 -- (pet bisa kesebar di container #2 & #3; garden pet kadang di salah satunya).
 PetDetect.lastRebuild = 0
-PetDetect.rebuildTTL = 3  -- detik; getgc berat, jgn scan tiap saat
+PetDetect.rebuildTTL = 8  -- v21.2: detik; getgc SANGAT berat (apalagi pet/egg banyak). dulu 3s -> lag.
 function PetDetect.rebuild(force)
     -- throttle: skip kalau baru rebuild < TTL detik lalu (kecuali force)
     local now = tick()
@@ -737,7 +737,7 @@ task.spawn(function()
     task.wait(2)
     while titleBar.Parent do
         updateVerTxt()
-        task.wait(3)
+        task.wait(8)  -- v21.2: dulu 3s, listBackpackPets tiap 3s bikin lag
     end
 end)
 
@@ -1666,36 +1666,41 @@ local function holdEggTool()
     local bp = player:FindFirstChild("Backpack")
     if not (char and hum and bp) then return false end
     -- udah megang egg yg sesuai pilihan?
-    local holdingWrong = false
     for _, t in ipairs(char:GetChildren()) do
-        if t:IsA("Tool") then
-            if t.Name:lower():find("egg") and isEggSelected(t.Name) then
-                return true  -- udah pegang egg yg bener
-            else
-                holdingWrong = true  -- v20.1: pegang item LAIN (bukan egg / egg salah)
-            end
-        end
-    end
-    -- v20.1: kalau lagi pegang item salah (gak sengaja kepencet), unequip dulu biar bersih
-    if holdingWrong then
-        pcall(function() hum:UnequipTools() end)
-        task.wait(0.1)
-    end
-    -- cari egg tool DIPILIH di backpack, equip
-    for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") and t.Name:lower():find("egg") and isEggSelected(t.Name) then
-            pcall(function() hum:EquipTool(t) end)
-            task.wait(0.2)  -- kasih waktu biar ke-pegang
-            -- v20.1: verifikasi beneran ke-pegang
-            for _, ct in ipairs(char:GetChildren()) do
-                if ct:IsA("Tool") and ct.Name:lower():find("egg") and isEggSelected(ct.Name) then
-                    return true
-                end
-            end
-            return true  -- udah coba equip (anggap berhasil walau verif telat)
+            return true  -- udah pegang egg yg bener
         end
     end
-    return false
+    -- v21.1: cari egg tool DIPILIH di backpack, equip — RETRY sampai bener ke-tangan
+    -- (pet hasil hatch sering auto-equip, equip egg sekali kadang gagal/ke-swap balik)
+    local function findEggInBP()
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("egg") and isEggSelected(t.Name) then return t end
+        end
+        return nil
+    end
+    local function holdingEggNow()
+        for _, ct in ipairs(char:GetChildren()) do
+            if ct:IsA("Tool") and ct.Name:lower():find("egg") and isEggSelected(ct.Name) then return true end
+        end
+        return false
+    end
+    for try = 1, 4 do
+        -- lepas dulu apa pun yg di tangan (pet hasil hatch dll) biar bersih
+        pcall(function() hum:UnequipTools() end)
+        task.wait(0.08)
+        local egg = findEggInBP()
+        if not egg then
+            -- egg gak di BP — mungkin lagi ke-pegang? cek
+            if holdingEggNow() then return true end
+            return false
+        end
+        pcall(function() hum:EquipTool(egg) end)
+        task.wait(0.18)
+        if holdingEggNow() then return true end
+        task.wait(0.12)  -- belum ke-pegang, coba lagi
+    end
+    return holdingEggNow()
 end
 -- cari GARDEN KITA: sub-farm yg punya descendant StringValue Owner = nama kita.
 -- struktur: Workspace.Farm.<sub>.Important.Data.Owner
@@ -2036,19 +2041,52 @@ local function anyEggReady()
     return #getReadyEggs() > 0
 end
 -- cek SEMUA egg MILIK KITA udah ready (TimeToHatch <= 0 semua)
-local function allEggsReady()
-    local total, ready = 0, 0
+-- v21.2: CACHE daftar egg + scan CUMA garden kita (bukan seluruh Workspace yg berisi ribuan object).
+-- getMyFarm di-cache juga biar gak cari subtree terus. TTL egg 2 detik (countdown gak perlu super sering).
+local _eggCache = { list = {}, t = 0 }
+local _myFarmCache = { farm = nil, t = 0 }
+local function getMyFarmCached()
+    if _myFarmCache.farm and _myFarmCache.farm.Parent and (tick() - _myFarmCache.t) < 10 then
+        return _myFarmCache.farm
+    end
+    local f = getMyFarm()
+    _myFarmCache.farm = f; _myFarmCache.t = tick()
+    return f
+end
+local function getMyEggsCached(force)
+    if not force and (tick() - _eggCache.t) < 2 then return _eggCache.list end
+    local list = {}
     pcall(function()
-        for _, d in ipairs(Workspace:GetDescendants()) do
+        -- scan CUMA garden kita kalau ketemu (ringan), fallback Workspace (jaga-jaga)
+        local root = getMyFarmCached() or Workspace
+        for _, d in ipairs(root:GetDescendants()) do
             if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                total = total + 1
-                local tth = d:GetAttribute("TimeToHatch")
-                if tth ~= nil and tonumber(tth) and tonumber(tth) <= 0 then
-                    ready = ready + 1
+                table.insert(list, d)
+            end
+        end
+        -- v21.2: kalau scan garden 0 egg TAPI kita lagi place (harusnya ada), fallback full scan sekali
+        if #list == 0 and root ~= Workspace then
+            for _, d in ipairs(Workspace:GetDescendants()) do
+                if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
+                    table.insert(list, d)
                 end
             end
         end
     end)
+    _eggCache.list = list; _eggCache.t = tick()
+    return list
+end
+local function allEggsReady()
+    local total, ready = 0, 0
+    for _, d in ipairs(getMyEggsCached()) do
+        if d and d.Parent then
+            total = total + 1
+            local tth = d:GetAttribute("TimeToHatch")
+            if tth ~= nil and tonumber(tth) and tonumber(tth) <= 0 then
+                ready = ready + 1
+            end
+        end
+    end
     return total > 0 and ready == total, total, ready
 end
 -- HATCH semua egg yg siap: PetEggService:FireServer("HatchPet", eggInstance)
@@ -2154,8 +2192,8 @@ local function updateEggESP()
     if not EggESP.on then return end
     pcall(function()
         local seen = {}
-        for _, d in ipairs(Workspace:GetDescendants()) do
-            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
+        for _, d in ipairs(getMyEggsCached()) do  -- v21.1: pakai cache, jgn scan Workspace lagi
+            if d and d.Parent then
                 seen[d] = true
                 local bb = d:FindFirstChild("HactEggESP")
                 local timeL
@@ -2197,14 +2235,11 @@ end)
 
 -- hitung egg ke-place MILIK KITA aja (bukan egg orang lain)
 local function countEggPlaced()
+    -- v21.1: pakai cache (dulu scan Workspace tiap panggil -> berat, dipanggil tiap 0.5s)
     local n = 0
-    pcall(function()
-        for _, d in ipairs(Workspace:GetDescendants()) do
-            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                n = n + 1
-            end
-        end
-    end)
+    for _, d in ipairs(getMyEggsCached()) do
+        if d and d.Parent then n = n + 1 end
+    end
     return n
 end
 
