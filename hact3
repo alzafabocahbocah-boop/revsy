@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v20.2"
+local VERSION = "v20.3"
 
 -- ============ THEME ============
 local C = {
@@ -1301,6 +1301,10 @@ local function giftPetsByFilter(cfg)
     local matched = getMatchedPets(cfg)
     if #matched == 0 then return 0 end
     Auto.giftBusy = true  -- automation hatch pause selama gift/trade jalan
+    Auto.giftBusySince = tick()  -- v20.3: timestamp buat safety timeout (anti-nyangkut)
+    -- v20.3: bungkus pcall — kalau error di tengah, giftBusy TETAP di-reset (anti-stuck)
+    local sent = 0
+    local okRun, errRun = pcall(function()
     -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
     if cfg.unfavFirst then
         local info2 = {}
@@ -1318,7 +1322,6 @@ local function giftPetsByFilter(cfg)
         local ti = ((i - 1) % #targetList) + 1
         table.insert(buckets[ti], u)
     end
-    local sent = 0
     for ti, tgt in ipairs(targetList) do
         -- v16.3: di-stop di tengah? berhenti kirim LANGSUNG (jgn lanjut ke target berikut)
         if cfg._running == false then break end
@@ -1347,7 +1350,9 @@ local function giftPetsByFilter(cfg)
         end
     end
     task.wait(0.5)
-    Auto.giftBusy = false  -- gift/trade kelar, automation hatch boleh jalan lagi
+    end)  -- end pcall
+    Auto.giftBusy = false  -- v20.3: SELALU reset (di luar pcall) — walau gift error
+    if not okRun then print("[HactTelur] gift/trade error: "..tostring(errRun)..", giftBusy di-reset") end
     return sent
 end
 local function giftPetsByType(targetName, petTypeSet)
@@ -2443,6 +2448,12 @@ end
 -- v16.2: cek pause gift/trade (1 fungsi, dipanggil di BANYAK titik biar STOP LANGSUNG,
 -- gak nunggu cycle selesai). Begitu gift mulai di tengah aksi, aksi berikutnya di-skip.
 local function isPausedForGift()
+    -- v20.3: safety — kalau giftBusy nyangkut >45 detik (gift error di tengah, gak ke-reset),
+    -- auto-lepas biar automation gak stuck selamanya (gejala: egg ready 13 tapi gak pindah hatch).
+    if Auto.giftBusy and Auto.giftBusySince and (tick() - Auto.giftBusySince) > 45 then
+        Auto.giftBusy = false
+        print("[HactTelur] giftBusy nyangkut >45s -> auto-reset (anti-stuck)")
+    end
     return isReceivingPet() or Auto.giftBusy or isTradingManual() or isGiftingOut()
 end
 
