@@ -1,5328 +1,1644 @@
--- ╔══════════════════════════════════════════════════════════════╗
--- ║  HACT TELUR — v0.1 (KERANGKA UI)                               ║
--- ║  UI doang, fungsi auto-hatch/swap nyusul.                      ║
--- ║  Tema: hitam elegan + aksen putih/abu minimalis.              ║
--- ╚══════════════════════════════════════════════════════════════╝
+-- ============================================================
+-- ZENX AGE STATS v2.0
+-- Tab [STATS] / [GIFT]
+-- STATS: per-type pet count (age 100 vs <100)
+-- GIFT : auto-gift pet age 100 ke target player (recent targets saved)
+-- ============================================================
 
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-local CoreGui = game:GetService("CoreGui")
+local Players    = game:GetService("Players")
+local CoreGui    = game:GetService("CoreGui")
+local RS         = game:GetService("ReplicatedStorage")
+local HS         = game:GetService("HttpService")
+local player     = Players.LocalPlayer
+local playerGui  = player:WaitForChild("PlayerGui", 10)
+local VER = "v2.19"
+local TARGETS_FILE = "ZenxAgeStats_targets.json"
+local SETTINGS_FILE = "ZenxAgeStats_settings.json"
+local MAX_RECENT = 8
 
-local VERSION = "v22.2"
-
--- ============ THEME ============
-local C = {
-    bg       = Color3.fromRGB(22, 22, 22),
-    panel    = Color3.fromRGB(26, 26, 26),
-    card     = Color3.fromRGB(30, 30, 30),
-    cardSel  = Color3.fromRGB(34, 34, 34),
-    input    = Color3.fromRGB(30, 30, 30),
-    border   = Color3.fromRGB(60, 60, 60),
-    borderSel= Color3.fromRGB(255, 255, 255),
-    line     = Color3.fromRGB(70, 70, 70),  -- divider lebih terang
-    text     = Color3.fromRGB(240, 240, 240),
-    textDim  = Color3.fromRGB(140, 140, 140),
-    textMute = Color3.fromRGB(100, 100, 100),
-    accent   = Color3.fromRGB(255, 255, 255),  -- putih
-    danger   = Color3.fromRGB(200, 90, 90),
-}
-local FONT     = Enum.Font.GothamMedium
-local FONT_B   = Enum.Font.GothamBold
-local FONT_SB  = Enum.Font.GothamBold
-
--- ============ UI HELPERS ============
-local function mk(class, props)
-    local o = Instance.new(class)
-    for k, v in pairs(props or {}) do o[k] = v end
-    return o
-end
-local function corner(o, r)
-    mk("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = o })
-    return o
-end
-local function stroke(o, col, th)
-    return mk("UIStroke", { Color = col or C.border, Thickness = th or 1.5, Parent = o })
-end
-local function pad(o, all)
-    mk("UIPadding", {
-        PaddingTop = UDim.new(0, all), PaddingBottom = UDim.new(0, all),
-        PaddingLeft = UDim.new(0, all), PaddingRight = UDim.new(0, all), Parent = o })
-end
-local function lbl(parent, text, size, col, xalign)
-    return mk("TextLabel", {
-        BackgroundTransparency = 1, Text = text, Font = FONT,
-        TextSize = size or 13, TextColor3 = col or C.text,
-        TextXAlignment = xalign or Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Center, Parent = parent })
-end
-
--- ============ DETEKSI PET (memory container getgc — terbukti dari market/telur) ============
-local PetDetect = {}
-PetDetect.DEBUG_PCT = false  -- set true buat print nilai seal/koi per pet ke console
-PetDetect.container = nil
-PetDetect.count = 0
-PetDetect.cache = {}            -- uuid(clean & braced) -> PetData
-PetDetect.nameCache = {}        -- uuid -> nama tipe (persisten; diisi pas pet keliatan di backpack)
-PetDetect.MUT_SHORT = {         -- map MutationType pendek -> nama enak dibaca (opsional)
-    EV = "Everchanted",
-}
--- urutan prioritas tipe pet di picker, PER TIM (atas = paling prioritas). Sisanya nyusul.
--- pet yg gak ada di list ditaruh paling bawah (tetep urut KG terbesar).
-PetDetect.PRIORITY = {
-    ["Reduce Tim"] = { "Mimic Octopus", "Birb", "Bald Eagle" },
-    ["Hatch Tim"]  = { "Koi", "Brontosaurus" },
-    ["Sell Tim"]   = { "Seal" },
-}
-function PetDetect.priorityRank(tabName, name)
-    local list = PetDetect.PRIORITY[tabName]
-    if list and name then
-        local low = name:lower()
-        for i, n in ipairs(list) do
-            -- substring match biar toleran prefix mutasi (mis "Everchanted Mimic Octopus")
-            if low:find(n:lower(), 1, true) then return i end
+-- ===== CLEANUP =====
+local function cleanup()
+    for _, p in ipairs({playerGui, CoreGui}) do
+        for _, c in ipairs(p:GetChildren()) do
+            if c.Name == "ZenxAgeStats" then pcall(function() c:Destroy() end) end
         end
     end
-    return 9999  -- bukan prioritas
-end
-
--- rumus per tipe (beda-beda):
---  Koi   : egg-back chance = 0.22 × dispW + 1  (dari tabel resmi, pakai DISPLAY weight)
---  Seal  : rumus PET STAT  = sealPct(BaseWeight×1.1, age) (yg sebelumnya udah bener)
---  Bronto: nyusul (nunggu tabel)
--- mutasi boost additive (HyperHunger/Venom/UFO=30, Nightmare=22, dll).
-PetDetect.MUTATION_BOOST = {
-    Nightmare = 22, Venom = 30, UFO = 30, HyperHunger = 30, Everchanted = 30,
-    Golden = 10, Rainbow = 20, Spectral = 8, Silver = 5,
-    ["Small Toy"] = 10, ["Medium Toy"] = 20, ["Large Toy"] = 30,
-}
-PetDetect.MUT_PREFIXES = {
-    "Everchanted","Rainbow","Frozen","Inverted","Golden","Diamond","Mythical","Hexed",
-    "Ascended","Radiant","Shocked","Bloodlit","Twilight","Voidtouched","Foxfire","Aurora",
-    "Static","Stormcloud","Frost","Burnt","Lethal","Cooked","Choc","Nightmare","Venom",
-    "UFO","HyperHunger","Spectral","Silver","Corrupted",
-}
-PetDetect.MUT_CODE = {
-    EV = "Everchanted", HH = "HyperHunger", NM = "Nightmare", VN = "Venom",
-}
-function PetDetect.normMut(raw)
-    if not raw or raw == "" then return nil end
-    local s = tostring(raw)
-    if PetDetect.MUT_CODE[s] then return PetDetect.MUT_CODE[s] end
-    return (s:gsub("%s+$", ""))
-end
-local function mutBoost(mut)
-    local m = PetDetect.normMut(mut)
-    return (PetDetect.MUTATION_BOOST[m or ""] or 0) / 100
-end
-
--- SEAL: rumus PET STAT (pakai BaseWeight × 1.1 sebagai Wh, lalu W=(Wh/11)*(age+10))
-function PetDetect.sealPct(baseWeight, age, mut)
-    if not baseWeight or not age then return 0 end
-    local Wh = baseWeight * 1.1
-    local W = (Wh / 11) * (age + 10)
-    local base = (W <= 100) and (0.05 * W + 1.0) or (6.0 + 0.0125 * (W - 100))
-    return base + mutBoost(mut)
-end
-
--- KOI: egg-back chance = 0.22 × dispW + 1 (display weight)
-function PetDetect.koiPct(dispW, mut)
-    if not dispW then return 0 end
-    return (0.22 * dispW + 1.0) + mutBoost(mut)
-end
-
--- BRONTO: dari tabel resmi = 0.10 × dispW + 5.25 (display weight)
--- boost mutasi BEDA dari Koi/Seal: proporsional ke berat (bukan additive flat).
---   selisih = (mutBoost/100) × dispW × 0.161  (terverifikasi: venom/golden/nightmare di W=32.73)
-function PetDetect.brontoPct(dispW, mut)
-    if not dispW then return 0 end
-    local base = 0.10 * dispW + 5.25
-    local m = PetDetect.normMut(mut)
-    local mb = PetDetect.MUTATION_BOOST[m or ""] or 0
-    local boost = (mb / 100) * dispW * 0.161
-    return base + boost
-end
-
--- jumlah seal% gabungan dari pet yg DIPILIH (set uuid->true) yg namanya mengandung keyword.
--- nama diambil dari backpack (terbukti akurat), stat (BaseWeight/Level/Mut) dari cache PetData.
--- return: total persen, jumlah pet yg ke-hitung
--- jumlah egg-back% gabungan dari pet yg DIPILIH (set uuid->true) yg namanya mengandung keyword.
--- pctType: "koi"|"bronto"|"seal" buat milih rumus. dispW dari berat sesuai age.
-function PetDetect.sumPctSelected(selectedSet, keyword, pctType)
-    local sum, n = 0, 0
-    if not selectedSet then return 0, 0 end
-    local byUuid = {}
-    for _, p in ipairs(PetDetect.listBackpackPets()) do byUuid[p.uuid] = p end
-    local kw = keyword and keyword:lower() or nil
-    for uuid in pairs(selectedSet) do
-        local p = byUuid[uuid]
-        if p then
-            local nm = p.name or ""
-            local match = (not kw) or (nm:lower():find(kw, 1, true) ~= nil)
-            if match then
-                -- v17.2: mutasi dari NAMA TOOL dulu (prefix lengkap: UFO/Venom/Nightmare jelas),
-                -- baru MutationType (sering cuma code 'A'/'X'/'Z' yg gak dikenal -> boost 0).
-                local pd = PetDetect.cache[uuid] or PetDetect.cache["{"..uuid.."}"]
-                local mut = nil
-                if p.rawName then
-                    for _, pre in ipairs(PetDetect.MUT_PREFIXES) do
-                        if p.rawName:find(pre, 1, true) then mut = pre break end
-                    end
-                end
-                -- fallback: MutationType (kalau nama tool gak ada prefix mutasi)
-                if not mut then
-                    mut = pd and pd.MutationType
-                end
-                local add = 0
-                if pctType == "seal" then
-                    if pd and pd.BaseWeight and pd.Level then
-                        add = PetDetect.sealPct(pd.BaseWeight, pd.Level, mut)
-                    end
-                elseif pctType == "bronto" then
-                    add = PetDetect.brontoPct(p.dispKg, mut)
-                else  -- koi
-                    add = PetDetect.koiPct(p.dispKg, mut)
-                end
-                sum = sum + add
-                n = n + 1
-                if PetDetect.DEBUG_PCT then
-                    print(string.format("[SealDbg] %s | kg=%s age=%s mut=%s -> %.2f",
-                        tostring(nm):sub(1,20), tostring(pd and pd.BaseWeight),
-                        tostring(pd and pd.Level), tostring(mut), add))
-                end
+    pcall(function()
+        if gethui then
+            for _, c in ipairs(gethui():GetChildren()) do
+                if c.Name == "ZenxAgeStats" then c:Destroy() end
             end
         end
-    end
-    return sum, n
+    end)
 end
+cleanup()
 
--- cari container UUID->PetData yg berisi PET KITA (backpack + garden), bukan yg terbanyak.
--- (DB global pet bisa 219 entri tapi GARDEN=0; container milik kita ~56 entri tapi punya garden)
-function PetDetect.findContainer()
+-- ============================================================
+-- MEMORY CONTAINER (getgc bypass)
+-- ============================================================
+local function findMemoryContainer()
     if not getgc then return nil, 0 end
-    -- kumpulin uuid pet kita: dari backpack/char + dari workspace garden
-    local mine = {}
-    pcall(function()
-        local function addTool(holder)
-            if not holder then return end
-            for _, t in ipairs(holder:GetChildren()) do
-                if t:IsA("Tool") then
-                    local u = t:GetAttribute("PET_UUID")
-                    if u then mine[tostring(u):gsub("[{}]","")] = true end
-                end
-            end
-        end
-        addTool(player:FindFirstChild("Backpack"))
-        addTool(player.Character)
-        -- pet di garden (Workspace.PetsPhysical dll)
-        for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
-            local f = Workspace:FindFirstChild(nm)
-            if f then
-                for _, d in ipairs(f:GetDescendants()) do
-                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
-                    if not u then
-                        local n = d.Name:gsub("[{}]","")
-                        if #n >= 32 and n:find("-") then u = n end
-                    end
-                    if u then mine[tostring(u):gsub("[{}]","")] = true end
-                end
-            end
-        end
-    end)
-
-    local best, bestScore, bestCnt = nil, -1, 0
-    pcall(function()
-        for _, obj in pairs(getgc(true)) do
-            if type(obj) == "table" then
-                local valid, mineHits, scanned = 0, 0, 0
-                for k, v in pairs(obj) do
-                    if type(k) == "string" and #k >= 32 and k:find("-")
-                       and type(v) == "table" and rawget(v, "PetData") then
-                        valid = valid + 1
-                        local clean = k:gsub("[{}]","")
-                        if mine[clean] then mineHits = mineHits + 1 end
-                    end
-                    scanned = scanned + 1
-                    if scanned > 1200 then break end
-                end
-                if valid >= 3 then
-                    -- SKOR: utamakan container yg berisi pet kita (mineHits), bukan yg terbesar.
-                    -- mineHits dikali besar biar dominan; valid cuma tie-breaker kecil.
-                    local score = mineHits * 100000 + valid
-                    if score > bestScore then best, bestScore, bestCnt = obj, score, valid end
-                end
-            end
-        end
-    end)
-    return best, bestCnt
-end
-
--- build cache uuid -> PetData. MERGE semua container yg berisi pet kita
--- (pet bisa kesebar di container #2 & #3; garden pet kadang di salah satunya).
-PetDetect.lastRebuild = 0
-PetDetect.rebuildTTL = 8  -- v21.2: detik; getgc SANGAT berat (apalagi pet/egg banyak). dulu 3s -> lag.
-function PetDetect.rebuild(force)
-    -- throttle: skip kalau baru rebuild < TTL detik lalu (kecuali force)
-    local now = tick()
-    if not force and PetDetect.cache and (now - PetDetect.lastRebuild) < PetDetect.rebuildTTL then
-        return PetDetect.count or 0
-    end
-    PetDetect.lastRebuild = now
-    PetDetect.cache = {}
-    if not getgc then return 0 end
-    -- 1) kumpulin uuid pet kita (bp + char + garden)
-    local mine = {}
-    pcall(function()
-        local function addTool(holder)
-            if not holder then return end
-            for _, t in ipairs(holder:GetChildren()) do
-                if t:IsA("Tool") then
-                    local u = t:GetAttribute("PET_UUID")
-                    if u then mine[tostring(u):gsub("[{}]","")] = true end
-                end
-            end
-        end
-        addTool(player:FindFirstChild("Backpack"))
-        addTool(player.Character)
-        -- v17.0: garden (PetsPhysical dll) berisi pet SEMUA pemain di server.
-        -- HANYA ambil pet milik kita (cek OWNER = nama/UserId kita). dulu semua ke-ambil
-        -- -> pet pemain lain ikut kehitung (mis garden orang +8 -> total meleset).
-        local myName = player.Name
-        local myId = tostring(player.UserId)
-        local function ownerIsMine(d)
-            -- cek owner di node ini atau ancestor terdekat (model induk pet).
-            -- atribut aslinya 'owner' (lowercase) — GetAttribute case-sensitive!
-            local cur = d
-            for _ = 1, 6 do  -- naik max 6 level cari atribut owner
-                if not cur or cur == Workspace then break end
-                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                    or cur:GetAttribute("OwnerUserId") or cur:GetAttribute("OwnerId")
-                if o ~= nil then
-                    local os = tostring(o)
-                    return (os == myName or os == myId)
-                end
-                cur = cur.Parent
-            end
-            return nil  -- owner gak ketemu (tak tentu)
-        end
-        for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
-            local f = Workspace:FindFirstChild(nm)
-            if f then
-                for _, d in ipairs(f:GetDescendants()) do
-                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
-                    if not u then
-                        local n = d.Name:gsub("[{}]","")
-                        if #n >= 32 and n:find("-") then u = n end
-                    end
-                    if u then
-                        local mineFlag = ownerIsMine(d)
-                        -- masukin kalau owner = kita ATAU owner tak ketemu (fallback aman:
-                        -- pet kita yg baru di-place kadang owner blm ke-set). owner pemain lain -> SKIP.
-                        if mineFlag ~= false then
-                            mine[tostring(u):gsub("[{}]","")] = true
-                        end
-                    end
-                end
-            end
-        end
-    end)
-    -- 2) walk SEMUA container, merge entry dari container yg berisi >=1 pet kita
-    local n = 0
-    pcall(function()
-        for _, obj in pairs(getgc(true)) do
-            if type(obj) == "table" then
-                -- cek dulu apakah container ini punya pet kita
-                local hasMine, valid, scanned = false, 0, 0
-                for k, v in pairs(obj) do
-                    if type(k) == "string" and #k >= 32 and k:find("-")
-                       and type(v) == "table" and rawget(v, "PetData") then
-                        valid = valid + 1
-                        if mine[k:gsub("[{}]","")] then hasMine = true end
-                    end
-                    scanned = scanned + 1
-                    if scanned > 1500 then break end
-                end
-                -- merge kalo container berisi pet kita (skip DB global 219 yg gak ada pet kita)
-                -- v16.9: HANYA simpan pet yg uuid-nya MILIK KITA (ada di set `mine`).
-                -- dulu merge SEMUA pet di container -> ikut hitung pet pemain lain yg nyangkut
-                -- di container yg sama -> count meledak (mis 341 padahal asli 195).
-                if hasMine and valid >= 1 then
-                    for k, v in pairs(obj) do
-                        if type(k) == "string" and #k >= 32 and k:find("-")
-                           and type(v) == "table" and rawget(v, "PetData") then
-                            local clean = k:gsub("[{}]","")
-                            if mine[clean] then  -- cuma pet milik kita
-                                if not PetDetect.cache[clean] then n = n + 1 end
-                                PetDetect.cache[clean] = v.PetData
-                                PetDetect.cache["{"..clean.."}"] = v.PetData
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
-    PetDetect.count = n
-    return n
-end
-
--- base age-1 dari BaseWeight server (×1.1) — akurat age berapa pun
-function PetDetect.baseKg(pd)
-    if pd and pd.BaseWeight and pd.BaseWeight > 0 then
-        return pd.BaseWeight * 1.1
-    end
-    return nil
-end
-
--- list SEMUA pet milik kita (termasuk yg di garden/placed) dari container,
--- dilengkapi data dari tool backpack (nama & dispKg akurat) kalau ada.
--- return array {uuid, name, rawName, mut, dispKg, level, fav, hasData, inBackpack}
--- v21.8: fungsi RAW (berat). dibungkus cache di bawah biar gak scan ulang tiap panggil.
-function PetDetect._listBackpackPetsRaw()
-    -- 1) kumpulin tool yg ada di backpack/character (sumber nama & dispKg paling akurat)
-    local toolByUuid = {}
-    local function scanTools(holder)
-        if not holder then return end
-        for _, t in ipairs(holder:GetChildren()) do
-            if t:IsA("Tool") then
-                local uuid = t:GetAttribute("PET_UUID")
-                local isPetTool = t:FindFirstChild("PetToolLocal") or uuid
-                if uuid and isPetTool then
-                    local clean = tostring(uuid):gsub("^{", ""):gsub("}$", "")
-                    toolByUuid[clean] = t
-                end
-            end
-        end
-    end
-    scanTools(player:FindFirstChild("Backpack"))
-    scanTools(player.Character)
-
-    -- lookup nama TIPE pet dari workspace (buat pet garden yg PetData-nya gak punya PetType)
-    local gardenName = {}
-    pcall(function()
-        for _, fname in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
-            local f = Workspace:FindFirstChild(fname)
-            if f then
-                for _, d in ipairs(f:GetDescendants()) do
-                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
-                    if not u then
-                        local n = d.Name:gsub("[{}]","")
-                        if #n >= 32 and n:find("-") then u = n end
-                    end
-                    if u then
-                        local clean = tostring(u):gsub("[{}]","")
-                        if not gardenName[clean] then
-                            -- cari nama tipe: atribut PetType/Type, atau dari child TextLabel PET_TYPE
-                            local nm = d:GetAttribute("PetType") or d:GetAttribute("Type")
-                                or d:GetAttribute("PetName") or d:GetAttribute("Name")
-                            if not nm then
-                                for _, c in ipairs(d:GetDescendants()) do
-                                    if c:IsA("TextLabel") and (c.Name == "PET_TYPE" or c.Name == "PetType")
-                                       and c.Text and #c.Text > 0 then
-                                        nm = c.Text break
-                                    end
-                                end
-                            end
-                            if nm and tostring(nm) ~= "" and not tostring(nm):find("-") then
-                                gardenName[clean] = tostring(nm)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
-    PetDetect._gardenName = gardenName
-
-    local out = {}
-    local seen = {}
-
-    -- helper: bikin entry dari uuid + PetData (+ tool kalau ada)
-    local function makeEntry(clean, pd, tool)
-        if seen[clean] then return end
-        seen[clean] = true
-        local nm, dispKg
-        if tool then
-            nm = tostring(tool.Name)
-            dispKg = tonumber(nm:match("%[([%d%.]+)%s*[Kk][Gg]%]"))
-        end
-        -- nama dasar (buang [KG]/[Age]); kalo gak ada tool, ambil dari PetData
-        local baseName
-        if nm then
-            baseName = nm:gsub("%s*%[.-%]", ""):gsub("%s+$", "")
-            -- simpan ke cache persisten (buat nanti pas pet pindah ke garden)
-            if baseName ~= "" then PetDetect.nameCache[clean] = baseName end
-        else
-            -- pet di garden: PetData → workspace → CACHE persisten → UUID
-            local t = pd and (pd.PetType or pd.Type or pd.Kind or pd.Species)
-            if (not t or tostring(t) == "") and PetDetect._gardenName then
-                t = PetDetect._gardenName[clean]
-            end
-            if (not t or tostring(t) == "") then
-                t = PetDetect.nameCache[clean]  -- nama dari waktu pet masih di backpack
-            end
-            if t and tostring(t) ~= "" then
-                baseName = tostring(t)
-            else
-                baseName = clean:sub(1, 8) .. "…"  -- last resort
-            end
-            nm = baseName
-        end
-        -- dispKg: dari tool, fallback hitung dari BaseWeight & Level
-        if not dispKg and pd and pd.BaseWeight and pd.Level then
-            dispKg = pd.BaseWeight * (pd.Level + 10) / 10
-        end
-        -- v17.2: mutasi — NAMA TOOL dulu (prefix lengkap), baru MutationType code.
-        local mut = nil
-        if nm then  -- nm = nama tool (rawName), punya prefix mutasi jelas
-            for _, pre in ipairs(PetDetect.MUT_PREFIXES) do
-                if tostring(nm):find(pre, 1, true) then mut = pre break end
-            end
-        end
-        if not mut then
-            mut = pd and pd.MutationType and tostring(pd.MutationType) or nil
-            if mut and PetDetect.MUT_SHORT[mut] then mut = PetDetect.MUT_SHORT[mut] end
-        end
-        -- favorit: PetData.IsFavorite, fallback atribut tool
-        local fav = false
-        if pd and pd.IsFavorite == true then fav = true end
-        if not fav and tool then
-            for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
-                if tool:GetAttribute(attr) == true then fav = true break end
-            end
-        end
-        table.insert(out, {
-            uuid = clean,
-            name = baseName,
-            rawName = nm,
-            mut = (mut and mut ~= "" and mut) or nil,
-            dispKg = dispKg,
-            age1Kg = PetDetect.baseKg(pd),  -- berat di age 1 (BaseWeight×1.1)
-            level = pd and pd.Level or nil,
-            fav = fav,
-            hasData = pd ~= nil,
-            inBackpack = tool ~= nil,
-            tool = tool,  -- Instance Tool (buat sell/favorite remote)
-        })
-    end
-
-    -- 2) sumber UTAMA: cache (gabungan semua container milik kita, termasuk pet garden)
-    -- cache punya key clean & braced; pakai set biar gak dobel
-    local doneUuid = {}
-    for k, pd in pairs(PetDetect.cache) do
-        local clean = tostring(k):gsub("[{}]", "")
-        if not doneUuid[clean] and type(pd) == "table" then
-            doneUuid[clean] = true
-            makeEntry(clean, pd, toolByUuid[clean])
-        end
-    end
-    -- 3) tambahin tool yg belum ke-cover cache (jaga-jaga)
-    for clean, tool in pairs(toolByUuid) do
-        if not seen[clean] then
-            local pd = PetDetect.cache[clean] or PetDetect.cache["{"..clean.."}"]
-            makeEntry(clean, pd, tool)
-        end
-    end
-    return out
-end
--- v21.8: WRAPPER cache — listBackpackPets dipanggil di banyak tempat (title bar, automation loop).
--- Tanpa cache, tiap panggilan scan ulang (berat, apalagi pet banyak) -> lag. Cache 2 detik.
-PetDetect._lbpCache, PetDetect._lbpTime = nil, 0
-function PetDetect.listBackpackPets(force)
-    if not force and PetDetect._lbpCache and (tick() - PetDetect._lbpTime) < 2 then
-        return PetDetect._lbpCache
-    end
-    local out = PetDetect._listBackpackPetsRaw()
-    PetDetect._lbpCache = out; PetDetect._lbpTime = tick()
-    return out
-end
-
-
--- hapus GUI lama kalau ada (biar gak numpuk & error dobel)
-pcall(function()
-    for _, g in ipairs(CoreGui:GetChildren()) do
-        if g.Name == "HactTelurGui" then g:Destroy() end
-    end
-end)
--- matiin loop automation lama (kalau script di-run ulang)
-if _G.HactTelurStop then pcall(_G.HactTelurStop) end
--- v21.0: generation guard — tiap run naikin gen. instance lama (gen beda) berhenti TOTAL
--- (termasuk loop save), biar gak nimpa file save instance baru dgn config lama.
-_G.HactTelurGen = (_G.HactTelurGen or 0) + 1
-local MY_GEN = _G.HactTelurGen
-local function isCurrentGen() return _G.HactTelurGen == MY_GEN end
-
--- ============ WEBHOOK DISCORD ============
-local Webhook = { url = "", enabled = false }
--- cari fungsi http request yg disupport executor
-local function httpRequest(opts)
-    local fn = (syn and syn.request) or (http and http.request) or http_request or request
-        or (fluxus and fluxus.request)
-    if fn then return fn(opts) end
-    return nil
-end
--- kirim embed ke discord. fields = { {name=, value=, inline=}, ... }
-local function sendWebhook(title, desc, color, fields)
-    if not (Webhook.enabled and Webhook.url ~= "") then return end
-    task.spawn(function()
-        local embed = {
-            title = title, description = desc, color = color or 3066993,
-            fields = fields or {},
-            footer = { text = "Hact Telur • "..player.Name },
-        }
-        local body = game:GetService("HttpService"):JSONEncode({ embeds = { embed } })
-        pcall(function()
-            httpRequest({
-                Url = Webhook.url, Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = body,
-            })
-        end)
-    end)
-end
-
--- ============ TRACKING (buat cycle summary webhook) ============
-local Track = {
-    startTime = tick(),
-    cycleCount = 0,
-    totalHatched = 0,
-    totalSold = 0,
-    lastCycleTime = tick(),
-    eggBefore = nil,      -- snapshot egg sebelum aksi
-    lastEggDelta = 0,     -- selisih egg terakhir (+ = balik/nambah, - = kepake)
-    lastEggBefore = 0,
-    lastEggAfter = 0,
-    luckyHatch = 0,       -- akumulasi egg balik dari hatch
-    luckySell = 0,        -- akumulasi egg balik dari sell
-}
--- hitung total egg (via _G yg di-set setelah EggDetect ada)
-local function totalEggNow()
-    if _G.HactTelurEggTotal then
-        local ok, v = pcall(_G.HactTelurEggTotal)
-        if ok then return v or 0 end
-    end
-    return 0
-end
--- kirim cycle summary lengkap (gaya Node Hub)
-local function sendCycleSummary(kind, extra)
-    if not (Webhook.enabled and Webhook.url ~= "") then return end
-    extra = extra or {}
-    local now = tick()
-    local dur = now - Track.startTime
-    local function fmtTime(s)
-        s = math.floor(s)
-        return string.format("%02d:%02d:%02d", math.floor(s/3600), math.floor((s%3600)/60), s%60)
-    end
-    -- inventory
-    local cur = #PetDetect.listBackpackPets()
-    local maxP = 230
-    pcall(function()
-        local m = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
-        if m and m > 0 then maxP = m end
-    end)
-    local free = maxP - cur
-    -- ping
-    local ping = 0
-    pcall(function() ping = math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()) end)
-    -- persen lucky back (egg balik / total aksi)
-    local pctHatch = Track.totalHatched > 0 and (Track.luckyHatch / Track.totalHatched * 100) or 0
-    local pctSell = Track.totalSold > 0 and (Track.luckySell / Track.totalSold * 100) or 0
-    local cycleTime = now - Track.lastCycleTime
-    -- egg delta cycle ini
-    local eb, ea = Track.lastEggBefore, Track.lastEggAfter
-    local delta = Track.lastEggDelta
-    local sign = delta >= 0 and "+" or ""
-    -- LUCK: egg minus (kepake) = BAD, egg plus (balik) = GOOD
-    local luckTxt = delta < 0 and "🔴 BAD Luck" or "🟢 GOOD Luck"
-    local luckyLine = (kind == "sell")
-        and ("**🍀 Lucky Egg Back from Sell ("..string.format("%.2f", pctSell).."%)**\n• Pets sold: "..Track.totalSold.."\n• Egg balik: "..Track.luckySell)
-        or  ("**🍀 Lucky Egg Back from Hatch ("..string.format("%.2f", pctHatch).."%)**\n• Hatched: "..Track.totalHatched.."\n• Egg balik: "..Track.luckyHatch)
-
-    -- token/currency akun ini
-    local tokenLines = {}
-    for k, v in pairs(getTokenCount()) do
-        table.insert(tokenLines, "• "..k..": **"..tostring(v).."**")
-    end
-    local tokenBlock = #tokenLines > 0 and ("\n\n**💎 CURRENCY**\n"..table.concat(tokenLines, "\n")) or ""
-
-    local desc = table.concat({
-        "**👤 PLAYER**",
-        "• "..player.Name.." (ID: "..tostring(player.UserId)..")",
-        "",
-        "**📊 TRACKING**",
-        "• Total Hatched: **"..Track.totalHatched.."**",
-        "• Total Sold: **"..Track.totalSold.."**",
-        "• Cycle Count: **"..Track.cycleCount.."**",
-        "• Duration: `"..fmtTime(dur).."`",
-        "• Cycle Time: `"..fmtTime(cycleTime).."`",
-        "• Game Ping: `"..ping.." ms`",
-        "",
-        "**📦 PETS INVENTORY**",
-        "• Total: **"..cur.."/"..maxP.."** (Free: "..free..")",
-        "",
-        "**🥚 Eggs Remaining**",
-        "• "..eb.." → "..ea.." ("..sign..delta..")",
-        "",
-        luckyLine,
-        "",
-        "**🎯 Luck: "..luckTxt.." ("..sign..delta..")**",
-    }, "\n") .. tokenBlock
-
-    local title = (kind == "sell") and ("💰 Cycle #"..Track.cycleCount.." — Sell")
-        or ("🥚 Cycle #"..Track.cycleCount.." — Hatch")
-    local color = (kind == "sell") and 15844367 or 3447003
-    task.spawn(function()
-        local embed = {
-            title = title, description = desc, color = color,
-            footer = { text = "Hact Telur • "..player.Name },
-        }
-        local body = game:GetService("HttpService"):JSONEncode({ embeds = { embed } })
-        pcall(function()
-            httpRequest({ Url = Webhook.url, Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" }, Body = body })
-        end)
-    end)
-    Track.lastCycleTime = now
-end
-
--- baca jumlah token/currency akun ini (buat webhook laporan)
-local function getTokenCount()
-    local result = {}
-    pcall(function()
-        -- coba leaderstats
-        local ls = player:FindFirstChild("leaderstats")
-        if ls then
-            for _, c in ipairs(ls:GetChildren()) do
-                if c:IsA("ValueBase") then result[c.Name] = c.Value end
-            end
-        end
-        -- coba atribut umum
-        for _, a in ipairs({"Tokens", "Token", "Sheckles", "Gems", "Cash", "Coins", "Money"}) do
-            local v = player:GetAttribute(a)
-            if v then result[a] = v end
-        end
-    end)
-    return result
-end
-
-local gui = mk("ScreenGui", {
-    Name = "HactTelurGui", ResetOnSpawn = false,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
-
-local main = mk("Frame", {
-    Size = UDim2.new(0, 660, 0, 430),
-    Position = UDim2.new(0.5, -330, 0.5, -215),
-    BackgroundColor3 = C.bg, BorderSizePixel = 0, Parent = gui })
-corner(main, 14)
-stroke(main, C.line, 1.5)
-
--- ---- Title bar ----
--- v21.7: forward-declare PET_LIST di sini biar closure picker jenis pet (di title bar) bisa baca.
--- Dulu PET_LIST dideklarasi jauh di bawah (baris ~1012) -> closure title bar lihatnya nil -> picker KOSONG.
-local PET_LIST
-local titleBar = mk("Frame", {
-    Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, Parent = main })
-local titleLogo = mk("TextLabel", {
-    Size = UDim2.new(0, 22, 0, 22), Position = UDim2.new(0, 16, 0, 11),
-    BackgroundTransparency = 1, Text = "Z", Font = FONT_B, TextSize = 13,
-    TextColor3 = C.text, Parent = titleBar })
-corner(stroke(titleLogo, C.text, 1.5).Parent, 5)
-local titleTxt = lbl(titleBar, "ZENX TELUR", 14, C.text)
-titleTxt.Font = FONT_B
-titleTxt.Position = UDim2.new(0, 46, 0, 0)
-titleTxt.Size = UDim2.new(0, 140, 1, 0)
--- v16.8: versi + total/batas pet di samping (mis "v16.8  180/210"), font agak gede
-local verTxt = lbl(titleBar, VERSION, 12.5, C.text)
-verTxt.Font = FONT_SB
-verTxt.Position = UDim2.new(0, 152, 0, 0)
-verTxt.Size = UDim2.new(0, 130, 1, 0)
-verTxt.TextXAlignment = Enum.TextXAlignment.Left
--- v21.5: tombol pilih jenis pet di title bar — klik -> pilih jenis -> verTxt tampil "<jumlah> <jenis>"
-local trackPetType = nil  -- jenis pet yg lagi di-track di title bar
--- v22.1: setter buat restore dari loadConfig (loadConfig gak bisa akses local ini langsung)
-_G.HactTelurSetTrack = function(v) trackPetType = v end
-local trackBtn = mk("TextButton", {
-    Size = UDim2.new(0, 95, 0, 24), Position = UDim2.new(0, 288, 0, 10),
-    BackgroundColor3 = C.input, Text = "jenis pet \u{25BC}", Font = FONT, TextSize = 11,
-    TextColor3 = C.textDim, AutoButtonColor = false, Parent = titleBar })
-corner(trackBtn, 6); stroke(trackBtn, C.border, 1)
--- hitung jumlah pet jenis tertentu di backpack
--- update verTxt: tampil versi + cur/max pet, ATAU jumlah jenis pet kalau lagi di-track
-local function updateVerTxt()
-    pcall(function()
-        local maxP = _G.HactTelurGetMaxPets and _G.HactTelurGetMaxPets() or nil
-        -- v21.8: panggil listBackpackPets SEKALI aja (dulu 2x -> berat -> lag). pakai hasilnya buat semua.
-        local pets = PetDetect.listBackpackPets()
-        local cur = #pets
-        local base = maxP and maxP > 0 and (cur.."/"..maxP) or tostring(cur)
-        if trackPetType then
-            local low = tostring(trackPetType):lower()
-            local cnt = 0
-            for _, p in ipairs(pets) do
-                if tostring(p.name or ""):lower():find(low, 1, true) then cnt = cnt + 1 end
-            end
-            verTxt.Text = VERSION.."  "..base
-            trackBtn.Text = cnt.." "..trackPetType
-            trackBtn.TextColor3 = C.text
-        else
-            verTxt.Text = VERSION.."  "..base
-            trackBtn.Text = "jenis pet \u{25BC}"
-            trackBtn.TextColor3 = C.textDim
-        end
-    end)
-end
--- popup picker jenis pet (pakai PET_LIST). dibuat saat diklik (PET_LIST udah ada saat itu)
-trackBtn.MouseButton1Click:Connect(function()
-    local old = gui:FindFirstChild("TrackPetPicker")
-    if old then old:Destroy(); return end  -- toggle: klik lagi = tutup
-    -- v21.6: parent ke ROOT gui + ZIndex tinggi biar TAMPIL PALING DEPAN (gak ketutup tab)
-    local ap = trackBtn.AbsolutePosition
-    local pk = mk("Frame", {
-        Name = "TrackPetPicker",
-        Size = UDim2.new(0, 240, 0, 320),
-        Position = UDim2.new(0, ap.X, 0, ap.Y + 28),
-        BackgroundColor3 = C.panel, Parent = gui, ZIndex = 9000 })
-    corner(pk, 8); stroke(pk, C.border, 1)
-    local srch = mk("TextBox", {
-        Size = UDim2.new(1, -16, 0, 28), Position = UDim2.new(0, 8, 0, 8),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari jenis pet...",
-        Font = FONT, TextSize = 12, TextColor3 = C.text, ClearTextOnFocus = false,
-        ZIndex = 9001, Parent = pk })
-    corner(srch, 6)
-    -- opsi "reset" (gak track)
-    local scroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, -16, 1, -44), Position = UDim2.new(0, 8, 0, 42),
-        BackgroundTransparency = 1, ScrollBarThickness = 4, CanvasSize = UDim2.new(0,0,0,0),
-        ZIndex = 9001, Parent = pk })
-    local layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0, 3); layout.Parent = scroll
-    local function buildOptions(filter)
-        for _, c in ipairs(scroll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-        local opts = { "(stop track)" }
-        for _, p in ipairs(PET_LIST) do
-            if filter == "" or tostring(p):lower():find(filter:lower(), 1, true) then
-                table.insert(opts, p)
-            end
-        end
-        for _, name in ipairs(opts) do
-            local b = mk("TextButton", {
-                Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.card,
-                Text = "  "..name, Font = FONT, TextSize = 12, TextColor3 = C.text,
-                TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = true,
-                ZIndex = 9002, Parent = scroll })
-            corner(b, 5)
-            b.MouseButton1Click:Connect(function()
-                if name == "(stop track)" then trackPetType = nil else trackPetType = name end
-                config.trackPetType = trackPetType  -- v22.1: simpan biar persist
-                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                pk:Destroy()
-                updateVerTxt()
-            end)
-        end
-        scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
-    end
-    buildOptions("")
-    srch:GetPropertyChangedSignal("Text"):Connect(function() buildOptions(srch.Text) end)
-end)
-task.spawn(function()
-    task.wait(2)
-    while titleBar.Parent do
-        updateVerTxt()
-        task.wait(8)  -- v21.2: dulu 3s, listBackpackPets tiap 3s bikin lag
-    end
-end)
-
--- tombol close (✕) — tutup seluruh skrip
-local closeMain = mk("TextButton", {
-    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -38, 0, 7),
-    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 14,
-    TextColor3 = C.textDim, AutoButtonColor = false, Parent = titleBar })
-corner(closeMain, 7); stroke(closeMain, C.border, 1.5)
--- tombol minimize (—) — kecilin jadi logo
-local minBtn = mk("TextButton", {
-    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -74, 0, 7),
-    BackgroundColor3 = C.card, Text = "\u{2013}", Font = FONT_B, TextSize = 16,
-    TextColor3 = C.textDim, AutoButtonColor = false, Parent = titleBar })
-corner(minBtn, 7); stroke(minBtn, C.border, 1.5)
--- drag
-do
-    local UIS = game:GetService("UserInputService")
-    local dragging, dragStart, startPos
-    titleBar.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            dragging = true; dragStart = i.Position; startPos = main.Position
-        end
-    end)
-    UIS.InputChanged:Connect(function(i)
-        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - dragStart
-            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
-        end
-    end)
-    UIS.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
-    end)
-end
-
--- ============ LOGO MINI (Z) — muncul saat minimize ============
--- posisi TETAP di pojok kiri (gak bisa digeser). desain: hitam elegan + ring putih halus.
-local miniLogo = mk("TextButton", {
-    Size = UDim2.new(0, 50, 0, 50), Position = UDim2.new(0, 16, 0.4, 0),
-    BackgroundColor3 = Color3.fromRGB(20, 20, 20), Text = "", AutoButtonColor = false,
-    Visible = false, ZIndex = 60, Parent = gui })
-mk("UICorner", { CornerRadius = UDim.new(1, 0), Parent = miniLogo })  -- bulat penuh = mulus
--- gradient halus biar ada kedalaman (gak flat)
-mk("UIGradient", {
-    Color = ColorSequence.new(Color3.fromRGB(34,34,34), Color3.fromRGB(16,16,16)),
-    Rotation = 90, Parent = miniLogo })
--- ring luar putih halus & tipis (ApplyStrokeMode default = Contextual, sudut lebih mulus)
-local miniStroke = mk("UIStroke", {
-    Color = Color3.fromRGB(245,245,245), Thickness = 1.5,
-    Transparency = 0.1, Parent = miniLogo })
--- ring dalam tipis abu (memberi efek bevel halus)
-local innerRing = mk("Frame", {
-    Size = UDim2.new(1, -8, 1, -8), Position = UDim2.new(0, 4, 0, 4),
-    BackgroundTransparency = 1, ZIndex = 60, Parent = miniLogo })
-mk("UICorner", { CornerRadius = UDim.new(1, 0), Parent = innerRing })
-mk("UIStroke", { Color = Color3.fromRGB(70,70,70), Thickness = 1, Transparency = 0.3, Parent = innerRing })
--- huruf Z
-local miniZ = lbl(miniLogo, "Z", 24, Color3.fromRGB(248,248,248), Enum.TextXAlignment.Center)
-miniZ.Font = Enum.Font.GothamBold; miniZ.Size = UDim2.new(1, 0, 1, 0); miniZ.ZIndex = 61
--- hover halus: ring makin terang
-miniLogo.MouseEnter:Connect(function() miniStroke.Transparency = 0 end)
-miniLogo.MouseLeave:Connect(function() miniStroke.Transparency = 0.1 end)
-
--- minimize: sembunyiin panel, tampilin logo
-local function doMinimize()
-    main.Visible = false
-    miniLogo.Visible = true
-end
--- restore: dari logo balik ke panel
-local function doRestore()
-    miniLogo.Visible = false
-    main.Visible = true
-end
-minBtn.MouseButton1Click:Connect(doMinimize)
--- klik logo → restore (logo gak bisa digeser jadi langsung aja)
-miniLogo.MouseButton1Click:Connect(doRestore)
--- close: hancurin semua (UI + logo), skrip selesai
-closeMain.MouseButton1Click:Connect(function()
-    gui:Destroy()
-end)
-
-local divider = mk("Frame", {
-    Size = UDim2.new(1, 0, 0, 1.5), Position = UDim2.new(0, 0, 0, 44),
-    BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = main })
-
--- ============ SIDEBAR KIRI ============
-local sidebar = mk("Frame", {
-    Size = UDim2.new(0, 140, 1, -45), Position = UDim2.new(0, 0, 0, 45),
-    BackgroundTransparency = 1, Parent = main })
-local sideDiv = mk("Frame", {
-    Size = UDim2.new(0, 1.5, 1, 0), Position = UDim2.new(1, 0, 0, 0),
-    BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = sidebar })
-
-local sidebarItems = { "AUTO HACT", "MISC" }
-local activeSide = "AUTO HACT"
-local showMiscFn  -- forward declare (diisi setelah miscContent dibuat)
-local statRefreshFn  -- forward declare (diisi di makeStatPanel)
-local sideBtns = {}
-
-local function makeSideBtn(name, y)
-    local btn = mk("TextButton", {
-        Size = UDim2.new(1, 0, 0, 40), Position = UDim2.new(0, 0, 0, y),
-        BackgroundColor3 = C.panel, BackgroundTransparency = 1,
-        Text = "", AutoButtonColor = false, Parent = sidebar })
-    local accent = mk("Frame", {
-        Size = UDim2.new(0, 2, 1, 0), BackgroundColor3 = C.accent,
-        BorderSizePixel = 0, Visible = false, Parent = btn })
-    local t = lbl(btn, name, 13, C.textDim)
-    t.Position = UDim2.new(0, 16, 0, 0)
-    t.Size = UDim2.new(1, -16, 1, 0)
-    sideBtns[name] = { btn = btn, accent = accent, label = t }
-    btn.MouseButton1Click:Connect(function()
-        activeSide = name
-        for n, d in pairs(sideBtns) do
-            local on = (n == name)
-            d.accent.Visible = on
-            d.btn.BackgroundTransparency = on and 0 or 1
-            d.label.TextColor3 = on and C.text or C.textDim
-            d.label.Font = on and FONT_B or FONT
-        end
-        -- switch konten kiri (AUTO HACT vs MISC)
-        if showMiscFn then
-            showMiscFn(name == "MISC")
-        end
-    end)
-    return btn
-end
-makeSideBtn("AUTO HACT", 14)
-makeSideBtn("MISC", 56)
--- set default active
-do
-    local d = sideBtns["AUTO HACT"]
-    d.accent.Visible = true; d.btn.BackgroundTransparency = 0
-    d.label.TextColor3 = C.text; d.label.Font = FONT_B
-end
-
--- ============ KONTEN KANAN ============
-local content = mk("Frame", {
-    Size = UDim2.new(1, -141, 1, -45), Position = UDim2.new(0, 141, 0, 45),
-    BackgroundTransparency = 1, Parent = main })
-pad(content, 16)
-
--- ---- Tab bar (rata penuh: 6 tab sama lebar) ----
-local tabBar = mk("Frame", {
-    Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Parent = content })
-mk("UIListLayout", {
-    FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 5),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-    HorizontalAlignment = Enum.HorizontalAlignment.Left, Parent = tabBar })
-
-local tabs = { "Reduce Tim", "Hatch Tim", "Sell Tim", "Config", "Fruit", "All Stat" }
-local activeTab = "Reduce Tim"
-local tabBtns = {}
-local tabPanels = {}
-local tabLabel = {
-    ["Reduce Tim"] = "Reduce", ["Hatch Tim"] = "Hatch", ["Sell Tim"] = "Sell",
-    ["Config"] = "Config", ["Fruit"] = "Fruit", ["All Stat"] = "All Stat",
-}
-local NUM_TABS = #tabs
-
--- ===== DATA (didefinisikan SEBELUM makeTabBtn biar jadi upvalue, bukan global nil) =====
-local teamData = {
-    ["Reduce Tim"] = { label = "Pilih Pet Reduce", selected = {}, delayEquip = 0, delayUnequip = 1 },
-    ["Hatch Tim"]  = { label = "Pilih Pet Hatch",  selected = {}, delayEquip = 0, delayUnequip = 1 },
-    ["Sell Tim"]   = { label = "Pilih Pet Sell",   selected = {}, delayEquip = 0, delayUnequip = 1 },
-}
-
--- daftar semua egg di game (dari EggModels). dipakai di Egg Config.
-local EGG_LIST = {
-    "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Epic Egg","Divine Egg",
-    "Bug Egg","Exotic Bug Egg","Jungle Egg","Night Egg","Premium Night Egg","Bee Egg","Anti Bee Egg",
-    "Premium Anti Bee Egg","Hive Egg","Premium Hive Egg","Rainbow Premium Hive Egg","Prototype Bee Egg",
-    "Premium Prototype Bee Egg","Dinosaur Egg","Primal Egg","Premium Primal Egg","Rainbow Premium Primal Egg",
-    "Zen Egg","Corrupted Zen Egg","Sprout Egg","Enchanted Egg","Gem Egg","Gourmet Egg","Paradise Egg",
-    "Oasis Egg","Premium Oasis Egg","Safari Egg","Premium Safari Egg","Rainbow Premium Safari Egg",
-    "Fall Egg","Premium Fall Egg","GIANT Premium Fall Egg","Spooky Egg","Premium Spooky Egg",
-    "Ghostly Premium Spooky Egg","Christmas Egg","Premium Christmas Egg","Festive Premium Christmas Egg",
-    "Winter Egg","Premium Winter Egg","Festive Premium Winter Egg","New Year's Egg","Premium New Year's Egg",
-    "Rainbow Premium New Year's Egg","Carnival Egg","Premium Carnival Egg","Rainbow Premium Carnival Egg",
-    "Bird Egg","Premium Bird Egg","Rainbow Premium Bird Egg","Easter Egg","Golden Egg","Premium Golden Egg",
-    "Gilded Choc Golden Egg","Gilded Choc Premium Golden Egg","Springtide Egg","Premium Springtide Egg",
-    "Gilded Choc Springtide Egg","Gilded Choc Premium Springtide Egg","Common Summer Egg","Rare Summer Egg",
-    "Black Spotty Egg","Fake Egg",
-    "Campfire Egg","Premium Campfire Egg",
-}
-
--- daftar semua jenis pet di game (dari PetRegistry.PetList). dipakai di Sell Config.
-PET_LIST = {
-    "Albino Peacock","Amethyst Beetle","Angora Goat","Ankylosaurus","Apple Gazelle","Arctic Fox","Armadillo","Ash Raven","Axolotl","Bacon Pig","Badger","Bagel Bunny","Bald Eagle","Barn Owl","Bat","Bear Bee","Bear on Bike","Bearded Dragon","Beaver","Bee","Birb","Black Bird","Black Bunny","Black Cat","Black Spotty Dragon","Blood Hedgehog","Blood Kiwi","Blood Owl","Blue Jay","Blue Whale","Bone Dog","Brontosaurus","Brown Mouse","Brown Owl","Bumblebee","Bunny","Butterfly","Calico","Camel","Candy Squirrel","Cape Buffalo","Capybara","Cardinal","Carnival Elephant","Carpenter Bee","Cat","Caterpillar","Celebration Puppy","Cerberus","Champion Beetle","Cheetah","Chicken","Chicken Zombie","Chimera","Chimpanzee","Chinchilla","Chipmunk","Chocolate Bunny","Christmas Gorilla","Christmas Spirit","Chubby Chipmunk","Clam","Cockatrice","Cocoa Cat","Cooked Owl","Corrupted Kitsune","Corrupted Kodama","Cow","Crab","Crocodile","Crow","Cuckoo","Dairy Cow","Dark Spriggan","Deer","Diamond Dragonfly","Diamond Panther","Dilophosaurus","Disco Bee","Dog","Dragonfly","Drake","Easter Bunny","Easter Egg Chick","Echo Frog","Eggnog Chick","Elemental Bee","Elephant","Elk","Emerald Snake","Empress Bee","Farmer Chipmunk","Fennec Fox","Festive Frost Squirrel","Festive Ice Golem","Festive Moose","Festive Nutcracker","Festive Partridge","Festive Reindeer","Festive Santa Bear","Festive Turtle Dove","Festive Wendigo","Festive Yeti","Firefly","Firemite","Firework Sprite","Flame Bee","Flamingo","Football","Fortune Squirrel","French Fry Ferret","French Hen","Frog","Frost Dragon","Frost Squirrel","Galah Cockatoo","Gardener Bee","Gecko","Geode Turtle","German Shepherd","Ghost Bear","Ghostly Bat","Ghostly Black Cat","Ghostly Bone Dog","Ghostly Dark Spriggan","Ghostly Headless Horseman","Ghostly Mummy","Ghostly Scarab","Ghostly Spider","Ghostly Tomb Marmot","Giant Ant","Giant Scorpion","Gift Rat","Giraffe","Glass Cat","Glass Dog","Glimmering Sprite","Gnome","Goat","Goblin","Goblin Gardener","Goblin Miner","Gold Finch","Golden Bee","Golden Goose","Golden Lab","Golden Piggy","Golem","Gorilla Chef","Green Bean","Grey Mouse","Griffin","Grizzly Bear","Gummy Bear","Hamster","Hazehound","Headless Horseman","Hedgehog","Hex Serpent","Hippo","Honey Badger","Honey Bee","Hootsie Roll","Hotdog Daschund","Hummingbird","Hyacinth Macaw","Hydra","Hyena","Hyrax","Ice Golem","Idol Chipmunk","Iguana","Iguanodon","Imp","Jackalope","Jandel Monkey","Jerboa","Junkbot","Kappa","King Bee","Kitsune","Kiwi","Kodama","Koi","Krampus","Ladybug","Leaf Insect","Lemon Lion","Lich","Lion","Lioness","Lobster Thermidor","Luminous Sprite","Lyrebird","Magpie","Mallard","Mandrake","Maneki-neko","Mantis Shrimp","Marmot","Marshmallow Lamb","Meerkat","Messenger Pigeon","Mimic Octopus","Mistletoad","Mizuchi","Mochi Mouse","Mole","Monitor Lizard","Monkey","Moon Cat","Moose","Moss Wyvern","Moth","Mummy","Night Owl","Nihonzaru","Nurse Bee","Nutcracker","Nyala","Orange Tabby","Orangutan","Orchid Mantis","Ostrich","Owl","Oxpecker","Pachycephalosaurus","Pack Bee","Pack Mule","Pancake Mole","Panda","Parasaurolophus","Partridge","Peach Wasp","Peacock","Penguin","Performer Seal","Peryton","Petal Bee","Phoenix","Pig","Pine Beetle","Pink Bunny","Pink Panda","Pixie","Polar Bear","Praying Mantis","Prince Wasp","Professor Bee","Pterodactyl","Pumpkin Rat","Queen Bee","Quetzal","Raccoon","Radioactive Stegosaurus","Raiju","Raptor","Reaper","Red Dragon","Red Fox","Red Giant Ant","Red Panda","Red Rose Fox","Red Squirrel","Red-Nosed Reindeer","Reindeer","Rhino","Robin","Rooster","Ruby Squid","Salmon","Sand Snake","Santa Bear","Sapphire Macaw","Scarab","Scarlet Macaw","Sea Otter","Sea Turtle","Seagull","Seal","Seedling","Sheckling","Shiba Inu","Show Pony","Shroomie","Silver Dragonfly","Silver Monkey","Silver Piggy","Smithing Dog","Snail","Snow Bunny","Snowman Builder","Snowman Soldier","Space Squirrel","Spaghetti Sloth","Specter","Spider","Spinosaurus","Spotted Deer","Spriggan","Spring Bee","Squirrel","Stag Beetle","Star Wolf","Starfish","Stegosaurus","Stork","Sugar Glider","Summer Kiwi","Sunny-Side Chicken","Sushi Bear","Swan","T-Rex","Tanchozuru","Tanuki","Tarantula Hawk","Termite","Tiger","Tomb Marmot","Topaz Snail","Toucan","Trapdoor Spider","Tree Frog","Triceratops","Tsuchinoko","Turtle","Turtle Dove","Unicycle Monkey","Wasp","Water Buffalo","Wendigo","White Tiger","Wind Wyvern","Wind-Up Rat","Wisp","Wolf","Woodpecker","Woody","Yeti","Zebra","Fire Wisp","Cicada","Newt","Nightjar",
-}
-
--- penyimpanan config (persist selama sesi)
-local config = {
-    eggSelected = {},   -- {[eggName] = true} egg yg mau di-hatch
-    sellRules = {},     -- {[petType] = {action="sell"|"keep", kg=number}}
-    autoSell = true,
-    sellRunning = false,
-    maxEggManual = 0,   -- 0 = auto (deteksi maks asli akun), >0 = pakai angka ini
-    hatchDelay = 6,     -- detik jeda setelah tim hatch (Koi) masuk, sebelum hatch
-    autoUnequipWrong = false,  -- buang pet salah (bukan tim Reduce) dari garden
-    reqKoiSeal = false,        -- syarat Koi% & Seal% >= min buat start & lanjut
-    minKoiSeal = 50,           -- batas minimum % (default 50)
-    autoStart = false,         -- mulai automation otomatis setelah load/rejoin
-    autoAccGift = false,       -- auto accept gift masuk
-    autoAccTrade = false,      -- auto accept trade masuk
-}
-
--- ============ SISTEM JUAL PET ============
-local GameEvents = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-local SellSys = {}
-do
-    -- remote ASLI (dari hook): pakai Instance Tool pet, bukan uuid string
-    SellSys.favRE = GameEvents and GameEvents:FindFirstChild("Favorite_Item")
-    SellSys.sellOneRE = GameEvents and GameEvents:FindFirstChild("SellPetShopSelected")
-    SellSys.sellAllRE = GameEvents and GameEvents:FindFirstChild("SellAllPets_RE")
-end
--- jual satu pet (kirim Instance Tool)
-local function sellOnePet(tool)
-    if SellSys.sellOneRE and tool then
-        pcall(function() SellSys.sellOneRE:FireServer(tool) end)
-        return true
-    end
-    return false
-end
--- favoritkan pet (kirim Instance Tool). Favorite_Item = toggle.
-local function favoritePet(tool)
-    if SellSys.favRE and tool then
-        pcall(function() SellSys.favRE:FireServer(tool) end)
-        return true
-    end
-    return false
-end
-
--- ============ TRADE PET (tiru revsy: SendRequest -> AddItem) ============
-local TradeSys = {}
-do
-    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-    local te = ge and ge:FindFirstChild("TradeEvents")
-    if te then
-        TradeSys.sendReqRE = te:FindFirstChild("SendRequest")
-        TradeSys.addItemRE = te:FindFirstChild("AddItem")
-        TradeSys.respondRE = te:FindFirstChild("RespondRequest")
-    end
-end
--- auto-accept trade dari sisi kita (tekan Accept + auto-YES popup unfair)
-local function clickBtnByText(root, texts)
-    if not root then return false end
-    local hit = false
-    pcall(function()
-        for _, d in ipairs(root:GetDescendants()) do
-            if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
-                local txt = (d:IsA("TextButton") and d.Text or ""):lower()
-                for _, want in ipairs(texts) do
-                    if txt == want or txt:find(want, 1, true) then
-                        if firesignal then pcall(function() firesignal(d.Activated) end) end
-                        if getconnections then
-                            for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end
-                        end
-                        hit = true
-                    end
-                end
-            end
-        end
-    end)
-    return hit
-end
-local function autoAcceptTrade()
-    pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        if not pg then return end
-        local tui = pg:FindFirstChild("TradingUI")
-        local lt = tui and tui:FindFirstChild("LiveTrade")
-        if lt and lt.Visible then
-            local opts = lt:FindFirstChild("Options")
-            local acc = opts and opts:FindFirstChild("Accept")
-            if acc then
-                if firesignal then pcall(function() firesignal(acc.Activated) end) end
-                if getconnections then
-                    for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end
-                end
-            end
-        end
-        -- auto-YES popup "Unfair Trade" (cari tombol YES/Confirm di seluruh PlayerGui)
-        clickBtnByText(pg, {"yes", "confirm", "continue", "lanjut"})
-        -- backup remote
-        local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-        te = te and te:FindFirstChild("TradeEvents")
-        if te then
-            local a = te:FindFirstChild("Accept"); local c = te:FindFirstChild("Confirm")
-            if c then pcall(function() c:FireServer() end) end
-            if a then pcall(function() a:FireServer() end) end
-        end
-    end)
-end
--- kirim pet ke target via TRADE. petList = array uuid
-local function tradePetsToTarget(targetPlayer, petList, stopCheck)
-    if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
-    pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
-    task.wait(0.4)
-    local added = 0
-    -- deteksi notif "you can't add more items" di layar
-    local function cantAddMore()
-        local found = false
-        pcall(function()
-            local pg = player:FindFirstChild("PlayerGui")
-            if not pg then return end
-            for _, d in ipairs(pg:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Visible then
-                    local t = (d.Text or ""):lower()
-                    if t:find("can't add more") or t:find("cant add more") or t:find("can.t add more") then
-                        found = true; break
-                    end
-                end
-            end
-        end)
-        return found
-    end
-    for _, uuid in ipairs(petList) do
-        -- v16.3: di-stop di tengah? berhenti tambah item LANGSUNG
-        if stopCheck and stopCheck() then break end
-        -- berhenti kalau slot trade udah penuh (notif muncul)
-        if cantAddMore() then break end
-        local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
-        pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
-        added = added + 1
-        task.wait(0.12)
-    end
-    -- auto-accept (spam 4x cepat)
-    for i = 1, 4 do
-        autoAcceptTrade()
-        task.wait(0.3)
-    end
-    return added
-end
-
--- ============ GIFT PET (tiru market sc) ============
-local GiftSys = {}
-do
-    local RS = game:GetService("ReplicatedStorage")
-    GiftSys.giftRE = GameEvents and GameEvents:FindFirstChild("PetGiftingService")
-    if not GiftSys.giftRE then GiftSys.giftRE = RS:FindFirstChild("PetGiftingService", true) end
-    pcall(function()
-        local mods = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
-        local gm = mods and mods:FindFirstChild("PetGiftingInputService")
-        if gm then local ok, mod = pcall(require, gm); if ok then GiftSys.pgs = mod end end
-    end)
-end
--- gift 1 pet (Instance Tool) ke targetPlayer (Player instance)
-local function giftPetToTarget(targetPlayer, petTool)
-    local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not (hum and petTool and targetPlayer) then return false end
-    -- v22.2: dipercepat — delay dikurangi (0.1/0.25/0.4 -> 0.04/0.12/0.18)
-    pcall(function() hum:EquipTool(petTool) end)  -- EquipTool auto-swap, gak perlu unequip dulu
-    task.wait(0.12)
-    local sent = false
-    -- cara 1: module PetGiftingInputService.GivePet(target) — paling cepat
-    if GiftSys.pgs and GiftSys.pgs.GivePet then
-        pcall(function() GiftSys.pgs.GivePet(targetPlayer) end)
-        task.wait(0.18)
-        if not petTool.Parent then return true end
-    end
-    -- cara 2: remote PetGiftingService:FireServer("GivePet", target, uuid)
-    if GiftSys.giftRE then
-        local uuid = petTool:GetAttribute("PET_UUID")
-        local u = tostring(uuid); if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
-        pcall(function() GiftSys.giftRE:FireServer("GivePet", targetPlayer, u) end)
-        task.wait(0.18)
-        if not petTool.Parent then sent = true end
-    end
-    return sent
-end
--- gift semua pet jenis tertentu ke target (by nama target + set pet type)
--- ============ AUTO ACCEPT gift & trade MASUK ============
-local AutoAcc = { gift = false, trade = false, lastTradeID = nil }
-
--- klik 1 tombol GuiButton (ImageButton/TextButton) ala pencet manual via executor
-local function fireGuiButton(btn)
-    if not btn then return false end
-    local ok = false
-    if getconnections then
-        pcall(function()
-            for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
-                if c.Fire then pcall(function() c:Fire() end)
-                elseif c.Function then pcall(function() c.Function() end) end
-                ok = true
-            end
-        end)
-        pcall(function()
-            for _, c in ipairs(getconnections(btn.MouseButton1Down)) do
-                if c.Fire then pcall(function() c:Fire() end)
-                elseif c.Function then pcall(function() c.Function() end) end
-            end
-        end)
-    end
-    if firesignal then
-        pcall(function() firesignal(btn.MouseButton1Down) end)
-        pcall(function() firesignal(btn.MouseButton1Click) end)
-        ok = true
-    end
-    return ok
-end
-
--- klik SEMUA tombol Accept di popup gift masuk (Gift_Notification).
--- tombol = ImageButton, klik UI memicu handler client -> server (pet keterima + popup hilang).
--- TIDAK ada uuid di UI, jadi klik tombol adalah cara utama (bukan fire remote langsung).
-local function acceptAllGiftPopups()
-    local clicked = 0
-    pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        local gn = pg and pg:FindFirstChild("Gift_Notification")
-        if not gn then return end
-        -- struktur: Gift_Notification/Frame/Gift_Notification/<Holder>/Frame/Accept
-        local outer = gn:FindFirstChild("Frame")
-        local inner = outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
-        local container = inner or gn
-        for _, holder in ipairs(container:GetChildren()) do
-            -- tombol Accept bisa di holder/Frame/Accept atau langsung descendant bernama "Accept"
-            local accept
-            local fr = holder:FindFirstChild("Frame")
-            if fr then accept = fr:FindFirstChild("Accept") end
-            if not accept then
-                for _, dd in ipairs(holder:GetDescendants()) do
-                    if dd.Name == "Accept" and dd:IsA("GuiButton") then accept = dd break end
-                end
-            end
-            if accept and accept:IsA("GuiButton") then
-                local vis = true
-                pcall(function() vis = accept.Visible end)
-                if vis then
-                    if fireGuiButton(accept) then clicked = clicked + 1 end
-                end
-            end
-        end
-    end)
-    return clicked
-end
-
-do
-    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-    if ge then
-        -- gift masuk: saat GiftPet.OnClientEvent -> langsung klik tombol Accept di popup.
-        local giftRE = ge:FindFirstChild("GiftPet")
-        local acceptGiftRE = ge:FindFirstChild("AcceptPetGift")
-        if giftRE then
-            giftRE.OnClientEvent:Connect(function(petUUID, petName, senderUsername)
-                if not AutoAcc.gift then return end
-                -- backup: kalau dapat uuid valid, fire remote juga (sebagian gift butuh ini)
-                if acceptGiftRE and type(petUUID) == "string" and #petUUID > 8 then
-                    pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
-                end
-                -- utama: klik tombol Accept di Gift_Notification (popup hilang + pet keterima)
-                task.spawn(function()
-                    for _ = 1, 10 do  -- popup bisa muncul telat / banyak sekaligus
-                        if not AutoAcc.gift then break end
-                        local n = acceptAllGiftPopups()
-                        if n > 0 then
-                            print("[HactTelur] auto-accept gift: klik "..n.." popup")
-                            task.wait(0.3)
-                        else
-                            task.wait(0.25)
-                        end
-                    end
-                end)
-            end)
-        end
-        -- loop pemindai mandiri: tangkap popup yg sudah ada saat toggle dinyalakan,
-        -- atau popup yg muncul tanpa OnClientEvent (tidak bergantung event).
-        task.spawn(function()
-            while true do
-                task.wait(0.8)
-                if AutoAcc.gift then
-                    pcall(acceptAllGiftPopups)
-                end
-            end
-        end)
-        -- trade masuk: TradeEvents.SendRequest.OnClientEvent -> RespondRequest(tradeID, true)
-        local te = ge:FindFirstChild("TradeEvents")
-        if te then
-            local sendReqRE = te:FindFirstChild("SendRequest")
-            local respondRE = te:FindFirstChild("RespondRequest")
-            if sendReqRE and respondRE then
-                sendReqRE.OnClientEvent:Connect(function(...)
-                    if not AutoAcc.trade then return end
-                    local args = {...}
-                    if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("-") then
-                        AutoAcc.lastTradeID = args[1]
-                    end
-                    if AutoAcc.lastTradeID then
-                        pcall(function() respondRE:FireServer(AutoAcc.lastTradeID, true) end)
-                        print("[HactTelur] auto-accept trade masuk")
-                        -- spam accept GUI biar trade kelar
-                        task.spawn(function()
-                            for i = 1, 8 do
-                                if not AutoAcc.trade then break end
-                                autoAcceptTrade(); task.wait(0.5)
-                            end
-                        end)
-                    end
-                end)
-            end
-        end
-    end
-end
-
--- gift pet dgn filter lengkap LEWAT TRADE: target, set pet type, set mutasi, age, kg
--- kumpulin uuid pet yg cocok filter cfg (tanpa kirim) — buat cek jumlah
-local function getMatchedPets(cfg)
+    -- v2.9: Get backpack UUIDs to find the RIGHT container (yg sesuai pet user)
+    local backpackUUIDs = {}
+    local bpCount = 0
     local bp = player:FindFirstChild("Backpack")
-    if not bp then return {} end
-    local hasPet = false; for _ in pairs(cfg.pets or {}) do hasPet = true break end
-    local hasMut = false; for _ in pairs(cfg.muts or {}) do hasMut = true break end
-    PetDetect.rebuild()
-    local info = {}
-    for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[tostring(p.uuid):gsub("[{}]","")] = p end
-    local matched = {}
-    for _, t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
-            local uuid = t:GetAttribute("PET_UUID")
-            local uclean = uuid and tostring(uuid):gsub("[{}]","")
-            local p = uclean and info[uclean]
-            local base = t.Name:gsub("%s*%[.*$", ""):gsub("%s+$", "")
-            local okPet = not hasPet
-            if hasPet then for pt in pairs(cfg.pets) do if base:lower():find(pt:lower(),1,true) then okPet = true break end end end
-            local okMut = not hasMut
-            if hasMut and p then for mt in pairs(cfg.muts) do if p.mut and p.mut:lower():find(mt:lower(),1,true) then okMut = true break end end end
-            local okAge = true
-            if cfg.age and cfg.age ~= 0 and p then
-                if cfg.age > 0 then okAge = (p.level or 0) >= cfg.age
-                else okAge = (p.level or 0) <= math.abs(cfg.age) end
-            end
-            local okKg = true
-            if cfg.kg and cfg.kg ~= 0 and p then
-                local kgVal = p.age1Kg or p.dispKg or 0
-                if cfg.kg > 0 then okKg = kgVal >= cfg.kg
-                else okKg = kgVal <= math.abs(cfg.kg) end
-            end
-            if okPet and okMut and okAge and okKg and uclean then
-                table.insert(matched, uclean)
-            end
-        end
-    end
-    return matched
-end
-
--- v16.1: Auto dideklarasi DI SINI (sebelum giftPetsByFilter) biar Auto.giftBusy gak nil.
--- Dulu local Auto={} ada di ~baris 1530, jadi giftPetsByFilter nangkep Auto sbg global nil
--- -> error "attempt to index nil with 'giftBusy'". Isi field Auto tetap di section AUTOMATION.
-local Auto = {}
-
-local function giftPetsByFilter(cfg)
-    local Players = game:GetService("Players")
-    -- kumpulin target ONLINE dari set cfg.targets
-    local targetList = {}
-    for name in pairs(cfg.targets or {}) do
-        local pl = Players:FindFirstChild(name)
-        if pl then table.insert(targetList, pl) end
-    end
-    if #targetList == 0 then print("[HactTelur] gak ada target online"); return 0 end
-    local matched = getMatchedPets(cfg)
-    if #matched == 0 then return 0 end
-    Auto.giftBusy = true  -- automation hatch pause selama gift/trade jalan
-    Auto.giftBusySince = tick()  -- v20.3: timestamp buat safety timeout (anti-nyangkut)
-    -- v20.3: bungkus pcall — kalau error di tengah, giftBusy TETAP di-reset (anti-stuck)
-    local sent = 0
-    local okRun, errRun = pcall(function()
-    -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
-    if cfg.unfavFirst then
-        local info2 = {}
-        for _, p in ipairs(PetDetect.listBackpackPets(true)) do info2[tostring(p.uuid):gsub("[{}]","")] = p end
-        for _, u in ipairs(matched) do
-            local p = info2[u]
-            if p and p.fav and p.tool then favoritePet(p.tool); task.wait(0.04) end
-        end
-        task.wait(0.3)
-    end
-    -- bagi pet rata ke semua target (rotasi)
-    local buckets = {}
-    for i = 1, #targetList do buckets[i] = {} end
-    for i, u in ipairs(matched) do
-        local ti = ((i - 1) % #targetList) + 1
-        table.insert(buckets[ti], u)
-    end
-    for ti, tgt in ipairs(targetList) do
-        -- v16.3: di-stop di tengah? berhenti kirim LANGSUNG (jgn lanjut ke target berikut)
-        if cfg._running == false then break end
-        local pets = buckets[ti]
-        if #pets > 0 then
-            if cfg.method == "gift" then
-                local bp = player:FindFirstChild("Backpack")
-                for _, u in ipairs(pets) do
-                    -- v16.3: cek stop SEBELUM tiap pet dikirim
-                    if cfg._running == false then break end
-                    local tool
-                    for _, t in ipairs(bp:GetChildren()) do
-                        if t:IsA("Tool") and tostring(t:GetAttribute("PET_UUID") or ""):gsub("[{}]","") == u then tool = t break end
-                    end
-                    if tool and giftPetToTarget(tgt, tool) then sent = sent + 1 end
-                    task.wait(0.06)  -- v22.2: dipercepat (dulu 0.2)
-                end
-                print("[HactTelur] gift "..sent.." pet ke "..tgt.Name)
-            else
-                if cfg._running ~= false then
-                    sent = sent + tradePetsToTarget(tgt, pets, function() return cfg._running == false end)
-                    print("[HactTelur] trade "..#pets.." pet ke "..tgt.Name)
-                    task.wait(0.5)
-                end
-            end
-        end
-    end
-    task.wait(0.5)
-    end)  -- end pcall
-    Auto.giftBusy = false  -- v20.3: SELALU reset (di luar pcall) — walau gift error
-    if not okRun then print("[HactTelur] gift/trade error: "..tostring(errRun)..", giftBusy di-reset") end
-    return sent
-end
-local function giftPetsByType(targetName, petTypeSet)
-    local Players = game:GetService("Players")
-    local target = Players:FindFirstChild(targetName)
-    if not target then print("[HactTelur] target '"..tostring(targetName).."' gak ketemu / gak di server ini"); return 0 end
-    local bp = player:FindFirstChild("Backpack")
-    if not bp then return 0 end
-    local n = 0
-    for _, t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
-            -- cocokin nama pet (buang embel KG/age)
-            local base = t.Name:gsub("%s*%[.*$", ""):gsub("%s+$", "")
-            local match = false
-            for pt in pairs(petTypeSet) do
-                if base:lower():find(pt:lower(), 1, true) then match = true break end
-            end
-            if match then
-                if giftPetToTarget(target, t) then n = n + 1 end
-                task.wait(0.2)
-            end
-        end
-    end
-    print("[HactTelur] gift "..n.." pet ke "..targetName)
-    return n
-end
--- tentukan nasib pet: "sell" / "keep"
--- - punya rule SELL + under kg  -> sell
--- - punya rule KEEP             -> keep (+favorit)
--- - gak punya rule              -> keep (+favorit)
--- - KG >= threshold (rule sell) -> keep (+favorit)
-local function petFate(p)
-    local rule = config.sellRules[p.name]
-    if rule and rule.action == "sell" then
-        if p.dispKg and p.dispKg < (rule.kg or 0) then return "sell" end
-        return "keep"
-    end
-    return "keep"  -- KEEP rule atau gak ada rule
-end
--- AUTO FAV: favoritkan semua pet yg ada di pemilihan tim (Reduce/Hatch/Sell)
--- biar selalu kelindungi dari Sell All
-function favTeamPets()
-    PetDetect.rebuild()
-    local teamSel = {}
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        if teamData[tn] and teamData[tn].selected then
-            for u in pairs(teamData[tn].selected) do
-                teamSel[tostring(u):gsub("[{}]","")] = true
-            end
-        end
-    end
-    local n = 0
-    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
-        local uclean = tostring(p.uuid):gsub("[{}]","")
-        if teamSel[uclean] and p.tool and not p.fav then
-            favoritePet(p.tool)
-            n = n + 1
-            task.wait(0.04)
-        end
-    end
-    if n > 0 then print("[HactTelur] auto-fav "..n.." pet tim") end
-    return n
-end
-
--- SYNC FAVORIT IKUT RULE: pet yg masuk kriteria SELL -> unfav (biar kejual),
--- pet keep -> fav (terlindungi). dipanggil tiap rule diubah.
-function syncFavByRules()
-    PetDetect.rebuild()
-    -- pet tim selalu keep (jgn di-unfav walau masuk rule)
-    local teamSel = {}
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        if teamData[tn] and teamData[tn].selected then
-            for u in pairs(teamData[tn].selected) do
-                teamSel[tostring(u):gsub("[{}]","")] = true
-            end
-        end
-    end
-    local unfav, fav = 0, 0
-    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
-        if p.tool then
-            local uclean = tostring(p.uuid):gsub("[{}]","")
-            local isTeam = teamSel[uclean]
-            local fate = petFate(p)
-            if fate == "sell" and not isTeam then
-                -- masuk kriteria jual -> pastiin TIDAK favorit
-                if p.fav then favoritePet(p.tool); unfav = unfav + 1; task.wait(0.04) end
-            else
-                -- keep/tim -> pastiin favorit
-                if not p.fav then favoritePet(p.tool); fav = fav + 1; task.wait(0.04) end
-            end
-        end
-    end
-    print("[HactTelur] sync fav by rule: unfav "..unfav..", fav "..fav)
-    return unfav, fav
-end
--- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
-function doAutoSell()
-    PetDetect.rebuild(true)
-    local kept, toSellCount = 0, 0
-    -- fav udah diatur real-time (syncFavByRules + favTeamPets), jadi gak perlu fav ulang.
-    -- cuma hitung aja brp yg bakal kejual vs keep.
-    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
-        local fate = petFate(p)
-        if fate == "keep" then kept = kept + 1 else toSellCount = toSellCount + 1 end
-    end
-    if toSellCount == 0 then
-        print("[HactTelur] Auto-sell: gak ada pet buat dijual (semua keep:"..kept..")")
-        return 0
-    end
-    -- SELL ALL langsung (yg gak difavorit kejual). gak nunggu lama.
-    if SellSys.sellAllRE then
-        local eggBefore = totalEggNow()
-        pcall(function() SellSys.sellAllRE:FireServer() end)
-        print("[HactTelur] Sell All! (dijual ~"..toSellCount..", dilindungi favorit: "..kept..")")
-        Track.totalSold = Track.totalSold + toSellCount
-        task.wait(0.6)
-        local eggAfter = totalEggNow()
-        local delta = eggAfter - eggBefore
-        Track.lastEggBefore = eggBefore
-        Track.lastEggAfter = eggAfter
-        Track.lastEggDelta = delta
-        if delta > 0 then Track.luckySell = Track.luckySell + delta end
-        sendCycleSummary("sell")
-        return toSellCount
-    else
-        warn("[HactTelur] SellAllPets_RE gak ada")
-        return 0
-    end
-end
-
--- ============ DETEKSI EGG (jumlah egg dimiliki) — metode dari telur PET STAT ============
-local EggDetect = {}
-EggDetect.counts = {}          -- {[eggName] = jumlah}
-EggDetect.guiCache = {}        -- cache hasil scan PlayerGui (anti-kedip)
-EggDetect.lastGuiScan = 0
-function EggDetect.scan()
-    local counts = {}
-    pcall(function()
-        local function scanTools(container)
-            if not container then return end
-            for _, t in ipairs(container:GetChildren()) do
-                if t:IsA("Tool") and t.Name:lower():find("egg") then
-                    counts[t.Name] = (counts[t.Name] or 0) + 1
-                end
-            end
-        end
-        scanTools(player:FindFirstChild("Backpack"))
-        scanTools(player.Character)
-    end)
-    -- scan PlayerGui TextLabel tiap 15 detik (buat egg yg ditumpuk/stack, mis "18x Bug Egg")
-    local now = os.time()
-    if (now - EggDetect.lastGuiScan) >= 15 then
-        EggDetect.lastGuiScan = now
-        local fresh = {}
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        if pg then
-            for _, d in ipairs(pg:GetDescendants()) do
-                if d:IsA("TextLabel") then
-                    local txt = d.Text or ""
-                    local cnt, name = txt:match("^(%d+)x%s+(.+[Ee]gg.*)$")
-                    if not cnt then cnt, name = txt:match("^x(%d+)%s+(.+[Ee]gg.*)$") end
-                    if not cnt then name, cnt = txt:match("^(.+[Ee]gg.-)%s+x?(%d+)$") end
-                    if cnt and name then
-                        local n = tonumber(cnt)
-                        if n and n > 0 then fresh[name] = math.max(fresh[name] or 0, n) end
-                    end
-                end
-            end
-        end
-        EggDetect.guiCache = fresh
-    end
-    for k, v in pairs(EggDetect.guiCache) do
-        counts[k] = math.max(counts[k] or 0, v)
-    end
-    EggDetect.counts = counts
-    return counts
-end
--- ambil jumlah egg tertentu (cocokkan nama longgar)
-function EggDetect.getCount(eggName)
-    local c = EggDetect.counts
-    if c[eggName] then return c[eggName] end
-    -- cocokkan longgar (mis "Bug Egg" vs "Bug Egg [Premium]")
-    local low = eggName:lower()
-    for k, v in pairs(c) do
-        if k:lower():find(low, 1, true) or low:find(k:lower(), 1, true) then return v end
-    end
-    return 0
-end
--- expose hitung total egg buat tracking webhook
-_G.HactTelurEggTotal = function()
-    EggDetect.scan()
-    local total = 0
-    for _, c in pairs(EggDetect.counts or {}) do total = total + (tonumber(c) or 0) end
-    return total
-end
-
-local function makeTabBtn(name, order)
-    -- rata penuh: tiap tab = 1/6 lebar, dikurangi gap biar gak overflow
-    local btn = mk("TextButton", {
-        Size = UDim2.new(1 / NUM_TABS, -5, 1, 0),
-        BackgroundColor3 = C.card, Text = "", AutoButtonColor = false,
-        LayoutOrder = order, Parent = tabBar })
-    corner(btn, 8)
-    local st = stroke(btn, C.border, 1)
-    local t = lbl(btn, tabLabel[name] or name, 12, C.textDim, Enum.TextXAlignment.Center)
-    t.Size = UDim2.new(1, 0, 1, 0)
-    t.TextTruncate = Enum.TextTruncate.AtEnd
-    tabBtns[name] = { btn = btn, label = t, st = st }
-    btn.MouseButton1Click:Connect(function()
-        activeTab = name
-        -- pastiin konten AUTO HACT tampil (kalau abis dari MISC)
-        if showMiscFn then showMiscFn(false) end
-        if activeSide ~= "AUTO HACT" then
-            activeSide = "AUTO HACT"
-            for n, d in pairs(sideBtns) do
-                local on = (n == "AUTO HACT")
-                d.accent.Visible = on
-                d.btn.BackgroundTransparency = on and 0 or 1
-                d.label.TextColor3 = on and C.text or C.textDim
-                d.label.Font = on and FONT_B or FONT
-            end
-        end
-        for n, d in pairs(tabBtns) do
-            local on = (n == name)
-            d.btn.BackgroundColor3 = on and C.card or C.bg
-            d.btn.BackgroundTransparency = on and 0 or 1
-            d.label.TextColor3 = on and C.text or C.textDim
-            d.label.Font = on and FONT_B or FONT
-            d.st.Color = on and C.borderSel or C.border
-        end
-        for n, p in pairs(tabPanels) do p.Visible = (n == name) end
-        -- refresh persen kalo tab tim
-        if teamData[name] and teamData[name].refreshPct then teamData[name].refreshPct() end
-        -- refresh stat kalo tab All Stat
-        if name == "All Stat" and statRefreshFn then
-            statRefreshFn()
-        end
-    end)
-    return btn
-end
-for i, name in ipairs(tabs) do makeTabBtn(name, i) end
-
--- ---- Area panel (di bawah tab bar) ----
-local panelArea = mk("Frame", {
-    Size = UDim2.new(1, 0, 1, -38), Position = UDim2.new(0, 0, 0, 38),
-    BackgroundTransparency = 1, Parent = content })
-
--- ============ START / STOP GLOBAL (1 tombol buat semua tim) ============
-local globalRunning = false
-local globalSetRunning  -- forward (diisi di bawah)
-local gBtnRow = mk("Frame", {
-    Size = UDim2.new(1, 0, 0, 34), Position = UDim2.new(0, 0, 1, -34),
-    BackgroundTransparency = 1, Parent = content })
-local gStartBtn = mk("TextButton", {
-    Size = UDim2.new(0.5, -5, 1, 0), BackgroundColor3 = C.accent,
-    Text = "START", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(17,17,17),
-    AutoButtonColor = false, Parent = gBtnRow })
-corner(gStartBtn, 8)
-local gStopBtn = mk("TextButton", {
-    Size = UDim2.new(0.5, -5, 1, 0), Position = UDim2.new(0.5, 5, 0, 0),
-    BackgroundColor3 = C.bg, BackgroundTransparency = 1,
-    Text = "STOP", Font = FONT_SB, TextSize = 13, TextColor3 = C.textDim,
-    AutoButtonColor = false, Parent = gBtnRow })
-corner(gStopBtn, 8); stroke(gStopBtn, C.border, 1)
-globalSetRunning = function(on)
-    globalRunning = on
-    gStartBtn.Text = on and "⚡ RUNNING." or "START"
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        if teamData[tn] then teamData[tn].running = on end
-    end
-end
--- biar loop lama bisa dimatiin kalau script di-run ulang
-_G.HactTelurStop = function() globalRunning = false end
-
--- ============ AUTOMATION ============
--- Auto sudah dideklarasi di atas (sebelum giftPetsByFilter). Di sini cuma isi field-nya.
-Auto.equipRE = GameEvents and GameEvents:FindFirstChild("PetsService")
-Auto.leadRE  = GameEvents and GameEvents:FindFirstChild("PetLeadService_RE")
-Auto.eggRE   = GameEvents and GameEvents:FindFirstChild("PetEggService")
-
--- place egg. HARUS pegang egg dulu (equip Tool), baru FireServer CreateEgg.
--- posisi: tebar di seluruh petak garden (Can_Plant) milik kita. Y=0.3605.
-local EGG_GROUND_Y = 0.3605
--- cek apakah egg ini dipilih di config. nama tool ada embel jumlah (mis "Rare Egg x18307").
-local function isEggSelected(toolName)
-    local sel = config.eggSelected or {}
-    local anySelected = false
-    for _ in pairs(sel) do anySelected = true; break end
-    if not anySelected then return true end  -- belum pilih = terima semua
-    -- bersihkan: "Rare Egg x18307" -> "rare egg"
-    local clean = toolName:lower():gsub("%s*x%d+.*$", ""):gsub("%s+$", "")
-    for eggName, on in pairs(sel) do
-        if on then
-            local e = eggName:lower()
-            if clean == e or clean:find(e, 1, true) or e:find(clean, 1, true) then
-                return true
-            end
-        end
-    end
-    return false
-end
--- cari & pegang 1 egg tool dari backpack — CUMA egg yg dipilih di config
-local function holdEggTool()
-    local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local bp = player:FindFirstChild("Backpack")
-    if not (char and hum and bp) then return false end
-    -- udah megang egg yg sesuai pilihan?
-    for _, t in ipairs(char:GetChildren()) do
-        if t:IsA("Tool") and t.Name:lower():find("egg") and isEggSelected(t.Name) then
-            return true  -- udah pegang egg yg bener
-        end
-    end
-    -- v21.1: cari egg tool DIPILIH di backpack, equip — RETRY sampai bener ke-tangan
-    -- (pet hasil hatch sering auto-equip, equip egg sekali kadang gagal/ke-swap balik)
-    local function findEggInBP()
+    if bp then
         for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") and t.Name:lower():find("egg") and isEggSelected(t.Name) then return t end
-        end
-        return nil
-    end
-    local function holdingEggNow()
-        for _, ct in ipairs(char:GetChildren()) do
-            if ct:IsA("Tool") and ct.Name:lower():find("egg") and isEggSelected(ct.Name) then return true end
-        end
-        return false
-    end
-    for try = 1, 4 do
-        -- lepas dulu apa pun yg di tangan (pet hasil hatch dll) biar bersih
-        pcall(function() hum:UnequipTools() end)
-        task.wait(0.08)
-        local egg = findEggInBP()
-        if not egg then
-            -- egg gak di BP — mungkin lagi ke-pegang? cek
-            if holdingEggNow() then return true end
-            return false
-        end
-        pcall(function() hum:EquipTool(egg) end)
-        task.wait(0.18)
-        if holdingEggNow() then return true end
-        task.wait(0.12)  -- belum ke-pegang, coba lagi
-    end
-    return holdingEggNow()
-end
--- cari GARDEN KITA: sub-farm yg punya descendant StringValue Owner = nama kita.
--- struktur: Workspace.Farm.<sub>.Important.Data.Owner
-local function getMyFarm()
-    local farm = Workspace:FindFirstChild("Farm")
-    if not farm then return nil end
-    for _, sub in ipairs(farm:GetChildren()) do
-        local found = false
-        pcall(function()
-            for _, d in ipairs(sub:GetDescendants()) do
-                if d:IsA("StringValue") and d.Name == "Owner" and d.Value == player.Name then
-                    found = true; break
+            if t:IsA("Tool") then
+                local u = t:GetAttribute("PET_UUID")
+                if u then
+                    local k = tostring(u)
+                    if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
+                    backpackUUIDs[k] = true
+                    bpCount = bpCount + 1
                 end
             end
-        end)
-        if found then return sub end
+        end
+    end
+
+    local best, bestCount, bestMatch = nil, 0, 0
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                -- Count UUID-like keys AND how many match backpack
+                local uuidLike, matchCount = 0, 0
+                for k in pairs(obj) do
+                    if type(k) == "string" and #k >= 32 and k:find("-") then
+                        uuidLike = uuidLike + 1
+                        if backpackUUIDs[k] then matchCount = matchCount + 1 end
+                        if uuidLike >= 50 and matchCount == 0 then break end
+                    end
+                end
+                if uuidLike >= 5 then
+                    local sample = nil
+                    for _, v in pairs(obj) do sample = v; break end
+                    if type(sample) == "table" and rawget(sample, "PetData") then
+                        local cnt = 0
+                        for _ in pairs(obj) do cnt = cnt + 1 end
+                        -- Prefer container with MORE matches to backpack
+                        -- Fallback: if backpack empty, use largest
+                        local better = false
+                        if bpCount > 0 then
+                            if matchCount > bestMatch then better = true
+                            elseif matchCount == bestMatch and cnt > bestCount then better = true end
+                        else
+                            if cnt > bestCount then better = true end
+                        end
+                        if better then
+                            best = obj
+                            bestCount = cnt
+                            bestMatch = matchCount
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if best then
+        print("[ZenxAgeStats] container: "..bestCount.." entries, "..bestMatch.."/"..bpCount.." backpack match")
+    end
+    return best, bestCount
+end
+
+local MUTATION_PREFIXES = {
+    "Everchanted ","Rainbow ","Frozen ","Inverted ","Golden ","Diamond ",
+    "Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ",
+    "Twilight ","Voidtouched ","Foxfire ","Aurora ","Static ","Stormcloud ",
+    "Frost ","Burnt ","Lethal ","Cooked ","Choc ",
+}
+local function stripMutation(s)
+    if not s then return "" end
+    for _, p in ipairs(MUTATION_PREFIXES) do
+        if s:sub(1, #p) == p then return s:sub(#p + 1) end
+    end
+    return s
+end
+
+local function getPetLevel(container, uuid)
+    if not container or not uuid then return 0 end
+    local key = tostring(uuid)
+    if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+    local entry = container[key]
+    if type(entry) == "table" and entry.PetData and entry.PetData.Level then
+        return tonumber(entry.PetData.Level) or 0
+    end
+    return 0
+end
+
+local function collectStats(container)
+    local byType, total, age100, lessAge = {}, 0, 0, 0
+    local bp = player:FindFirstChild("Backpack")
+    if not bp then return byType, total, age100, lessAge end
+    for _, tool in ipairs(bp:GetChildren()) do
+        if tool:IsA("Tool") then
+            local uuid = tool:GetAttribute("PET_UUID")
+            if uuid then
+                local pType = stripMutation(tostring(tool:GetAttribute("f") or "?"))
+                local level = getPetLevel(container, uuid)
+                if not byType[pType] then byType[pType] = {age100=0, less100=0} end
+                if level >= 100 then
+                    byType[pType].age100 = byType[pType].age100 + 1
+                    age100 = age100 + 1
+                else
+                    byType[pType].less100 = byType[pType].less100 + 1
+                    lessAge = lessAge + 1
+                end
+                total = total + 1
+            end
+        end
+    end
+    return byType, total, age100, lessAge
+end
+
+-- ============================================================
+-- RECENT TARGETS (persistence)
+-- ============================================================
+local function loadTargets()
+    local ok, content = pcall(function()
+        if isfile and readfile and isfile(TARGETS_FILE) then return readfile(TARGETS_FILE) end
+        return nil
+    end)
+    if not ok or not content then return {} end
+    local ok2, data = pcall(function() return HS:JSONDecode(content) end)
+    if ok2 and type(data) == "table" then return data end
+    return {}
+end
+
+local function saveTargets(list)
+    pcall(function()
+        if writefile then writefile(TARGETS_FILE, HS:JSONEncode(list)) end
+    end)
+end
+
+local function addRecentTarget(name)
+    if not name or name == "" then return end
+    local list = loadTargets()
+    -- remove duplicate
+    for i = #list, 1, -1 do
+        if (list[i] or ""):lower() == name:lower() then table.remove(list, i) end
+    end
+    -- prepend
+    table.insert(list, 1, name)
+    -- trim to MAX_RECENT
+    while #list > MAX_RECENT do table.remove(list) end
+    saveTargets(list)
+end
+
+local function removeRecentTarget(name)
+    local list = loadTargets()
+    for i = #list, 1, -1 do
+        if (list[i] or ""):lower() == name:lower() then table.remove(list, i) end
+    end
+    saveTargets(list)
+end
+
+-- ============================================================
+-- GIFT SETTINGS (persist across rejoin)
+-- ============================================================
+local function loadSettings()
+    local ok, content = pcall(function()
+        if isfile and readfile and isfile(SETTINGS_FILE) then return readfile(SETTINGS_FILE) end
+        return nil
+    end)
+    if not ok or not content then return {} end
+    local ok2, data = pcall(function() return HS:JSONDecode(content) end)
+    if ok2 and type(data) == "table" then return data end
+    return {}
+end
+
+local function saveSettings(s)
+    pcall(function()
+        if writefile then writefile(SETTINGS_FILE, HS:JSONEncode(s)) end
+    end)
+end
+
+-- ============================================================
+-- GIFT LOGIC (dari rainbow leveling)
+-- ============================================================
+local giftRE = nil
+local PGS = nil  -- PetGiftingService module
+pcall(function()
+    local ge = RS:FindFirstChild("GameEvents")
+    if ge then giftRE = ge:FindFirstChild("PetGiftingService") end
+    if not giftRE then giftRE = RS:FindFirstChild("PetGiftingService", true) end
+end)
+pcall(function()
+    local mods = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
+    local gm = mods and mods:FindFirstChild("PetGiftingInputService")
+    if gm then
+        local ok, mod = pcall(require, gm)
+        if ok then PGS = mod end
+    end
+end)
+
+local function findPlayerByName(name)
+    if not name or name == "" then return nil end
+    local low = name:lower()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and (p.Name:lower() == low or p.DisplayName:lower() == low) then
+            return p
+        end
+    end
+    -- partial match
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and (p.Name:lower():find(low, 1, true) or p.DisplayName:lower():find(low, 1, true)) then
+            return p
+        end
     end
     return nil
 end
--- area garden kita: bounding box semua Can_Plant di sub-farm milik kita
-local function getGardenArea()
-    local myFarm = getMyFarm()
-    if not myFarm then return nil end
-    local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
-    local found = 0
-    pcall(function()
-        for _, d in ipairs(myFarm:GetDescendants()) do
-            if d.Name:lower():find("can_plant") and d:IsA("BasePart") then
-                found = found + 1
-                local sx, sz = d.Size.X/2, d.Size.Z/2
-                minX = math.min(minX, d.Position.X - sx)
-                maxX = math.max(maxX, d.Position.X + sx)
-                minZ = math.min(minZ, d.Position.Z - sz)
-                maxZ = math.max(maxZ, d.Position.Z + sz)
-            end
-        end
-    end)
-    if found == 0 then return nil end
-    return { minX = minX, maxX = maxX, minZ = minZ, maxZ = maxZ, count = found }
-end
 
--- equip/unequip 1 pet
-local function autoEquip(uuid)
-    local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
-    if Auto.equipRE then pcall(function() Auto.equipRE:FireServer("EquipPet", u) end) end
-    if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("EquipPet", u) end) end
-end
-local function autoUnequip(uuid)
-    local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
-    if Auto.equipRE then pcall(function() Auto.equipRE:FireServer("UnequipPet", u) end) end
-    if Auto.leadRE then pcall(function() Auto.leadRE:FireServer("UnequipPet", u) end) end
-end
-
--- v18.7: lookup jenis pet di garden lewat getgc (PetType + UUID).
--- return: { [uuidClean] = "Mimic Octopus", ... }
-local function getGardenPetTypes()
-    local result = {}
-    -- 1) kumpulkan uuid pet di garden
-    local gardenUuids = {}
-    pcall(function()
-        local pp = Workspace:FindFirstChild("PetsPhysical")
-        if not pp then return end
-        for _, m in ipairs(pp:GetDescendants()) do
-            if m:IsA("Model") and m.Name:sub(1,1) == "{" then
-                gardenUuids[m.Name:gsub("[{}]","")] = true
-            end
-        end
-    end)
-    -- 2) lookup jenis dari getgc (data pet punya PetType + UUID)
-    if getgc then
-        pcall(function()
-            for _, obj in pairs(getgc(true)) do
-                if type(obj) == "table" then
-                    local uuid = rawget(obj,"UUID") or rawget(obj,"PetUUID") or rawget(obj,"uuid")
-                    local pt = rawget(obj,"PetType") or rawget(obj,"Type")
-                    if type(uuid)=="string" and type(pt)=="string" then
-                        local clean = uuid:gsub("[{}]","")
-                        if gardenUuids[clean] and not result[clean] then
-                            result[clean] = pt
-                        end
-                    end
-                end
-            end
-        end)
-    end
-    return result
-end
-
--- v18.7: unequip pet di garden yg UUID-nya TIDAK ada di tim yg dipilih.
--- allowedUuidSet = teamData[...].selected (set {uuidClean/uuid=true}). return jumlah unequip.
-local function unequipWrongGardenPets(allowedUuidSet)
-    if not allowedUuidSet or not next(allowedUuidSet) then return 0 end
-    -- normalisasi allowed (buang kurung kurawal biar cocok)
-    local allow = {}
-    for u in pairs(allowedUuidSet) do
-        allow[tostring(u):gsub("[{}]","")] = true
-    end
-    -- scan uuid pet di garden
-    local removed = 0
-    pcall(function()
-        local pp = Workspace:FindFirstChild("PetsPhysical")
-        if not pp then return end
-        local myName = player.Name
-        local myId = tostring(player.UserId)
-        local function ownerMine(d)
-            local cur = d
-            for _ = 1, 6 do
-                if not cur or cur == Workspace then break end
-                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
-                cur = cur.Parent
-            end
-            return nil
-        end
-        local seen = {}
-        for _, m in ipairs(pp:GetDescendants()) do
-            if m:IsA("Model") and m.Name:sub(1,1) == "{" then
-                local clean = m.Name:gsub("[{}]","")
-                if not seen[clean] and ownerMine(m) ~= false then
-                    seen[clean] = true
-                    -- pet ini gak ada di tim yg dipilih -> unequip
-                    if not allow[clean] then
-                        autoUnequip(clean)
-                        removed = removed + 1
-                        task.wait(0.1)
-                    end
-                end
-            end
-        end
-    end)
-    if removed > 0 then
-        print("[HactTelur] unequip "..removed.." pet salah (bukan tim) dari garden")
-    end
-    return removed
-end
-
--- v18.8: tunggu SEMUA pet tim masuk garden (jumlah = tim) DAN uuid-nya sesuai tim.
--- teamName mis "Hatch Tim"/"Sell Tim". timeout detik. return true kalau lengkap & cocok.
-local function waitTeamInGarden(teamName, timeout)
-    local td = teamData[teamName]
-    if not td or not td.selected then return false end
-    -- daftar uuid tim (target)
-    local want = {}
-    local wantN = 0
-    for u in pairs(td.selected) do
-        want[tostring(u):gsub("[{}]","")] = true
-        wantN = wantN + 1
-    end
-    if wantN == 0 then return false end
-
-    timeout = timeout or 12
-    local waited = 0
-    while waited < timeout do
-        -- scan uuid pet kita di garden
-        local inGarden = {}
-        local nIn = 0
-        pcall(function()
-            local pp = Workspace:FindFirstChild("PetsPhysical")
-            if not pp then return end
-            local myName = player.Name
-            local myId = tostring(player.UserId)
-            local function ownerMine(d)
-                local cur = d
-                for _ = 1, 6 do
-                    if not cur or cur == Workspace then break end
-                    local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                        or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                    if o ~= nil then return (tostring(o)==myName or tostring(o)==myId) end
-                    cur = cur.Parent
-                end
-                return nil
-            end
-            local seen = {}
-            for _, m in ipairs(pp:GetDescendants()) do
-                if m:IsA("Model") and m.Name:sub(1,1)=="{" then
-                    local clean = m.Name:gsub("[{}]","")
-                    if not seen[clean] and ownerMine(m) ~= false then
-                        seen[clean] = true
-                        inGarden[clean] = true
-                        nIn = nIn + 1
-                    end
-                end
-            end
-        end)
-        -- cek: semua pet tim ADA di garden?
-        local allIn = true
-        for u in pairs(want) do
-            if not inGarden[u] then allIn = false break end
-        end
-        -- cek: gak ada pet ASING (yg di garden tapi bukan tim)
-        local noExtra = true
-        for u in pairs(inGarden) do
-            if not want[u] then noExtra = false break end
-        end
-        if allIn and noExtra then
-            return true  -- lengkap & sesuai tim
-        end
-        -- kalau ada pet asing, buang dulu biar bersih
-        if not noExtra then
-            for u in pairs(inGarden) do
-                if not want[u] then autoUnequip(u); task.wait(0.08) end
-            end
-        end
-        task.wait(0.3)
-        waited = waited + 0.3
-    end
-    return false  -- timeout: tim belum lengkap
-end
-
--- hitung pet yg ada di garden (PetsPhysical) MILIK KITA — buat cek tim hatch udah full
-local function countGardenPets()
-    local n = 0
-    pcall(function()
-        local pp = Workspace:FindFirstChild("PetsPhysical")
-        if not pp then return end
-        local myName = player.Name
-        local myId = tostring(player.UserId)
-        -- cek owner di node atau ancestor (atribut 'owner' lowercase)
-        local function ownerMine(d)
-            local cur = d
-            for _ = 1, 6 do
-                if not cur or cur == Workspace then break end
-                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
-                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
-                if o ~= nil then return (tostring(o) == myName or tostring(o) == myId) end
-                cur = cur.Parent
-            end
-            return nil
-        end
-        local seen = {}
-        for _, m in ipairs(pp:GetDescendants()) do
-            if m:IsA("Model") then
-                local nm = m.Name
-                local uuid = m:GetAttribute("PET_UUID")
-                local key = uuid and tostring(uuid) or nm
-                if (uuid or (nm:sub(1,1)=="{" and nm:sub(-1)=="}") or (#nm>=30 and nm:match("^[%w%-]+$")))
-                   and not seen[key] then
-                    -- v17.1: cuma hitung pet kita (owner = kita / owner tak ketemu)
-                    if ownerMine(m) ~= false then
-                        seen[key] = true
-                        n = n + 1
-                    end
-                end
-            end
-        end
-    end)
-    return n
-end
--- KOSONGIN GARDEN: unequip semua pet placed (tiru pickupAllGardenPets revsy).
--- scan PetsPhysical descendants, extract UUID (atribut/nama), unequip semua.
-local function clearGarden()
-    local pp = Workspace:FindFirstChild("PetsPhysical")
-    if not pp then return 0 end
-    local uuids, seen = {}, {}
-    local function extractUUID(model)
-        if not model or not model:IsA("Model") then return end
-        local nm = model.Name
-        local uuid = nil
-        local attr = model:GetAttribute("PET_UUID")
-        if attr then
-            uuid = tostring(attr):gsub("^{",""):gsub("}$","")
-        elseif nm:sub(1,1) == "{" and nm:sub(-1) == "}" then
-            uuid = nm:sub(2, -2)
-        elseif #nm >= 30 and nm:match("^[%w%-]+$") then
-            uuid = nm
-        end
-        if uuid and #uuid >= 20 and not seen[uuid] then
-            seen[uuid] = true
-            table.insert(uuids, uuid)
-        end
-    end
-    pcall(function()
-        for _, m in ipairs(pp:GetDescendants()) do extractUUID(m) end
-        for _, n in ipairs({"Pets","PlacedPets","ActivePets"}) do
-            local f = Workspace:FindFirstChild(n)
-            if f then for _, m in ipairs(f:GetDescendants()) do extractUUID(m) end end
-        end
-    end)
-    -- rapid-fire unequip semua
-    for _, uuid in ipairs(uuids) do
-        autoUnequip(uuid)
-    end
-    if #uuids > 0 then print("[HactTelur] kosongin garden: unequip "..#uuids.." pet") end
-    return #uuids
-end
-
--- equip semua pet di tim tertentu, unequip yg lagi ke-equip tapi bukan anggota tim
--- tim yg lagi aktif (biar gak spam equip/tabrakan)
-Auto.currentTeam = nil
--- swap ke tim tertentu: kalau udah tim itu, skip (gak spam).
--- kalau ganti tim: unequip anggota tim lama, equip anggota tim baru.
-local function equipTeam(tabName)
-    if Auto.currentTeam == tabName then return end  -- udah tim ini, jgn spam
-    local data = teamData[tabName]
-    if not data or not data.selected then return end
-    local sel = data.selected
-    -- unequip anggota tim LAMA — RAPID FIRE (tanpa delay per pet)
-    local prev = Auto.currentTeam and teamData[Auto.currentTeam]
-    if prev and prev.selected then
-        for uuid in pairs(prev.selected) do
-            if not sel[uuid] then autoUnequip(uuid) end  -- skip yg juga di tim baru
-        end
-    end
-    task.wait(0.1)  -- jeda kecil biar server proses unequip
-    -- equip anggota tim BARU — RAPID FIRE
-    for uuid in pairs(sel) do
-        autoEquip(uuid)
-    end
-    Auto.currentTeam = tabName
-    print("[HactTelur] swap ke "..tabName)
-end
-
--- deteksi egg ready: atribut READY=true atau TimeToHatch=0 (dari hook).
--- egg model "PetEgg" di Workspace.Farm.Farm.Important.Objects_Physical
--- cek egg milik kita (OWNER = nama kita)
-local function isMyEgg(d)
-    local owner = d:GetAttribute("OWNER")
-    if owner == nil then return false end
-    return tostring(owner) == player.Name
-end
-local function getReadyEggs()
-    local eggs = {}
-    pcall(function()
-        for _, d in ipairs(Workspace:GetDescendants()) do
-            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                -- READY=true SELALU (bukan indikator). yg bener: TimeToHatch <= 0
-                local tth = d:GetAttribute("TimeToHatch")
-                if tth ~= nil and tonumber(tth) and tonumber(tth) <= 0 then
-                    eggs[#eggs+1] = d
-                end
-            end
-        end
-    end)
-    return eggs
-end
-local function anyEggReady()
-    return #getReadyEggs() > 0
-end
--- cek SEMUA egg MILIK KITA udah ready (TimeToHatch <= 0 semua)
--- v21.2: CACHE daftar egg + scan CUMA garden kita (bukan seluruh Workspace yg berisi ribuan object).
--- getMyFarm di-cache juga biar gak cari subtree terus. TTL egg 2 detik (countdown gak perlu super sering).
-local _eggCache = { list = {}, t = 0 }
-local _myFarmCache = { farm = nil, t = 0 }
-local function getMyFarmCached()
-    if _myFarmCache.farm and _myFarmCache.farm.Parent and (tick() - _myFarmCache.t) < 10 then
-        return _myFarmCache.farm
-    end
-    local f = getMyFarm()
-    _myFarmCache.farm = f; _myFarmCache.t = tick()
-    return f
-end
-local function getMyEggsCached(force)
-    if not force and (tick() - _eggCache.t) < 2 then return _eggCache.list end
-    local list = {}
-    pcall(function()
-        -- scan CUMA garden kita kalau ketemu (ringan), fallback Workspace (jaga-jaga)
-        local root = getMyFarmCached() or Workspace
-        for _, d in ipairs(root:GetDescendants()) do
-            if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                table.insert(list, d)
-            end
-        end
-        -- v21.2: kalau scan garden 0 egg TAPI kita lagi place (harusnya ada), fallback full scan sekali
-        if #list == 0 and root ~= Workspace then
-            for _, d in ipairs(Workspace:GetDescendants()) do
-                if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                    table.insert(list, d)
-                end
-            end
-        end
-    end)
-    _eggCache.list = list; _eggCache.t = tick()
-    return list
-end
-local function allEggsReady()
-    local total, ready = 0, 0
-    for _, d in ipairs(getMyEggsCached()) do
-        if d and d.Parent then
-            total = total + 1
-            local tth = d:GetAttribute("TimeToHatch")
-            if tth ~= nil and tonumber(tth) and tonumber(tth) <= 0 then
-                ready = ready + 1
-            end
-        end
-    end
-    return total > 0 and ready == total, total, ready
-end
--- HATCH semua egg yg siap: PetEggService:FireServer("HatchPet", eggInstance)
-local function hatchAllEggs()
-    if not Auto.eggRE then return 0 end
-    local eggBefore = totalEggNow()  -- egg sebelum hatch
-    local eggs = getReadyEggs()
-    local n = 0
-    -- RAPID FIRE: hatch semua sekaligus tanpa delay (netas bareng)
-    for _, egg in ipairs(eggs) do
-        pcall(function() Auto.eggRE:FireServer("HatchPet", egg) end)
-        n = n + 1
-    end
-    if n > 0 then
-        print("[HactTelur] hatch "..n.." egg bareng")
-        -- cek notif "limit of pets" muncul = backpack penuh, hatch gagal
-        local hitLimit = false
-        pcall(function()
-            local pg = player:FindFirstChildOfClass("PlayerGui")
-            if pg then
-                for _, d in ipairs(pg:GetDescendants()) do
-                    if d:IsA("TextLabel") and d.Visible then
-                        local t = (d.Text or ""):lower()
-                        if t:find("cannot open this pet") or t:find("limit of pet") or t:find("reached the limit") or t:find("inventory is full") then
-                            hitLimit = true; break
-                        end
-                    end
-                end
-            end
-        end)
-        if hitLimit then
-            Auto.bpFullFlag = true  -- tandai backpack penuh -> loop bakal sell
-            print("[HactTelur] HATCH GAGAL: backpack penuh! -> auto-sell")
-            return 0  -- gak usah lanjut hitung, biar loop ke sell
-        end
-        Track.cycleCount = Track.cycleCount + 1
-        Track.totalHatched = Track.totalHatched + n
-        task.wait(0.6)  -- tunggu egg ke-update
-        local eggAfter = totalEggNow()
-        local delta = eggAfter - eggBefore
-        Track.lastEggBefore = eggBefore
-        Track.lastEggAfter = eggAfter
-        Track.lastEggDelta = delta
-        local back = math.max(0, n + delta)
-        Track.luckyHatch = Track.luckyHatch + back
-        sendCycleSummary("hatch")
-    end
-    return n
-end
-
--- cek apakah ada egg ke-place MILIK KITA
-local function anyEggPlaced()
-    local found = false
-    pcall(function()
-        for _, d in ipairs(Workspace:GetDescendants()) do
-            if not found and d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                found = true
-            end
-        end
-    end)
-    return found
-end
-
--- ============ ESP EGG (billboard nama + waktu netas di atas egg) ============
-local EggESP = { on = false, billboards = {} }
-local function fmtEggTime(s)
-    s = math.max(0, math.floor(s))
-    if s <= 0 then return "READY" end
-    if s >= 3600 then return string.format("%dh %dm", math.floor(s/3600), math.floor((s%3600)/60)) end
-    if s >= 60 then return string.format("%dm %ds", math.floor(s/60), s%60) end
-    return s.."s"
-end
-local function makeEggBillboard(egg)
-    local bb = Instance.new("BillboardGui")
-    bb.Name = "HactEggESP"
-    bb.Size = UDim2.new(0, 150, 0, 40)
-    bb.StudsOffset = Vector3.new(0, 3, 0)
-    bb.AlwaysOnTop = true
-    bb.MaxDistance = 1000
-    bb.Adornee = egg
-    bb.Parent = egg
-    local nameL = Instance.new("TextLabel")
-    nameL.Size = UDim2.new(1, 0, 0.5, 0)
-    nameL.BackgroundTransparency = 1
-    nameL.Font = Enum.Font.GothamBold
-    nameL.TextSize = 13
-    nameL.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nameL.TextStrokeTransparency = 0
-    nameL.Text = tostring(egg:GetAttribute("EggName") or "Egg")
-    nameL.Parent = bb
-    local timeL = Instance.new("TextLabel")
-    timeL.Size = UDim2.new(1, 0, 0.5, 0)
-    timeL.Position = UDim2.new(0, 0, 0.5, 0)
-    timeL.BackgroundTransparency = 1
-    timeL.Font = Enum.Font.GothamBold
-    timeL.TextSize = 12
-    timeL.TextStrokeTransparency = 0
-    timeL.Text = "..."
-    timeL.Parent = bb
-    return bb, timeL
-end
-local function updateEggESP()
-    if not EggESP.on then return end
-    pcall(function()
-        local seen = {}
-        for _, d in ipairs(getMyEggsCached()) do  -- v21.1: pakai cache, jgn scan Workspace lagi
-            if d and d.Parent then
-                seen[d] = true
-                local bb = d:FindFirstChild("HactEggESP")
-                local timeL
-                if not bb then
-                    bb, timeL = makeEggBillboard(d)
-                    EggESP.billboards[d] = timeL
-                else
-                    timeL = EggESP.billboards[d]
-                end
-                if timeL then
-                    local tth = tonumber(d:GetAttribute("TimeToHatch")) or 0
-                    local rdy = tth <= 0
-                    timeL.Text = fmtEggTime(tth)
-                    timeL.TextColor3 = rdy and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,210,80)
-                end
-            end
-        end
-        -- bersihin billboard egg yg udah hilang
-        for egg, _ in pairs(EggESP.billboards) do
-            if not seen[egg] then EggESP.billboards[egg] = nil end
-        end
-    end)
-end
-local function clearEggESP()
-    pcall(function()
-        for _, d in ipairs(Workspace:GetDescendants()) do
-            if d.Name == "HactEggESP" then d:Destroy() end
-        end
-    end)
-    EggESP.billboards = {}
-end
--- loop update ESP tiap 1 detik (countdown jalan)
-task.spawn(function()
-    while true do
-        if EggESP.on then updateEggESP() else end
-        task.wait(1)
-    end
-end)
-
--- hitung egg ke-place MILIK KITA aja (bukan egg orang lain)
-local function countEggPlaced()
-    -- v21.1: pakai cache (dulu scan Workspace tiap panggil -> berat, dipanggil tiap 0.5s)
-    local n = 0
-    for _, d in ipairs(getMyEggsCached()) do
-        if d and d.Parent then n = n + 1 end
-    end
-    return n
-end
-
--- baca data batas dari memory (tabel yg punya MaxPetsInInventory).
--- semua dinamis ikut upgrade: MaxPetsInInventory, MaxEggsInFarm, MaxEquippedPets
--- baca data batas dari memory. cache 30 detik (getgc SANGAT berat -> lag tiap 5s kalau cache pendek).
--- max pets/eggs cuma berubah saat upgrade (jarang), jadi 30s aman.
-local _gameDataCache, _gameDataTime = nil, 0
-local function getGameData()
-    if _gameDataCache and (tick() - _gameDataTime) < 30 then return _gameDataCache end
-    local d = { maxPets = nil, maxEggs = nil, maxEquip = nil }
-    pcall(function()
-        -- scan SEMUA tabel, ambil nilai TERBESAR tiap field (nilai asli akun biasanya
-        -- lebih besar dari template/default; ini hindari ke-ambil nilai kecil yg salah)
-        for _, obj in ipairs(getgc(true)) do
-            if type(obj) == "table" then
-                local mp = rawget(obj, "MaxPetsInInventory")
-                if type(mp) == "number" and mp > 0 then
-                    if not d.maxPets or mp > d.maxPets then d.maxPets = mp end
-                end
-                local me = rawget(obj, "MaxEggsInFarm")
-                if type(me) == "number" and me > 0 then
-                    if not d.maxEggs or me > d.maxEggs then d.maxEggs = me end
-                end
-                local mq = rawget(obj, "MaxEquippedPets")
-                if type(mq) == "number" and mq > 0 then
-                    if not d.maxEquip or mq > d.maxEquip then d.maxEquip = mq end
-                end
-            end
-        end
-    end)
-    _gameDataCache = d; _gameDataTime = tick()
-    return d
-end
-local function getMaxPets()
-    return getGameData().maxPets
-end
-_G.HactTelurGetMaxPets = getMaxPets  -- v16.8: buat title bar tampil cur/max pet
-local function getMaxEggs()
-    return getGameData().maxEggs
-end
-
--- deteksi notif "max egg" reached di layar
-local function maxEggReached()
-    local found = false
-    pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        if not pg then return end
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Visible then
-                local t = (d.Text or ""):lower()
-                if t:find("max egg") or t:find("egg limit") or t:find("maximum egg") then
-                    found = true; break
-                end
-            end
-        end
-    end)
-    return found
-end
-
-local function placeEggs(count)
-    if not Auto.eggRE then warn("[HactTelur] PetEggService gak ada"); return 0 end
+local function giftPetToPlayer(targetPlayer, petTool)
+    if not targetPlayer or not petTool then return false end
     local char = player.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then print("[HactTelur] place gagal: gak ada HRP"); return 0 end
-    count = count or 6
-    local area = getGardenArea()
-    if not area then print("[HactTelur] place gagal: area garden GAK ke-detect"); return 0 end
-    if not holdEggTool() then
-        print("[HactTelur] place gagal: gak ada egg tool (cek pilihan egg di Config)")
-        return 0
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+
+    -- dipercepat: EquipTool auto-swap (gak perlu unequip dulu), delay dikecilin
+    pcall(function() hum:EquipTool(petTool) end)
+    task.wait(0.12)
+
+    -- Try module path first (paling cepat)
+    local sent = false
+    if PGS and PGS.GivePet then
+        pcall(function() PGS.GivePet(targetPlayer) end)
+        task.wait(0.18)
+        if not petTool.Parent or petTool.Parent == nil then return true end
     end
-    task.wait(0.15)
-    local target = (config.maxEggManual and config.maxEggManual > 0)
-        and config.maxEggManual or (getMaxEggs() or 13)
-    local placed = 0
-    local stuck = 0  -- berapa kali count gak nambah berturut-turut
-    -- SPAM sampai penuh: place terus + cek count, stop saat target / notif max / mentok
-    -- v18.5: lebih gigih — kalau stuck, variasikan posisi (jgn nyerah cepat) sampai target.
-    for attempt = 1, count * 8 + 30 do  -- percobaan jauh lebih banyak (anti stuck)
-        -- v16.2: gift mulai di tengah place? STOP LANGSUNG (jgn lanjut place).
-        if Auto.giftBusy
-            or (tick() - (Auto.lastGiftAct or 0)) < 5
-            or (tick() - (Auto.lastGiftOut or 0)) < 3 then
-            break
-        end
-        local before = countEggPlaced()
-        if before >= target then break end          -- udah penuh
-        if maxEggReached() then break end            -- notif max muncul
-        holdEggTool()
-        -- posisi: kalau stuck makin sering, makin lebar sebarannya (cari titik valid baru)
-        local spread = 1 + math.min(stuck, 8) * 0.1
-        local px = area.minX + math.random() * (area.maxX - area.minX)
-        local pz = area.minZ + math.random() * (area.maxZ - area.minZ)
-        local v = Vector3.new(px, EGG_GROUND_Y, pz)
-        pcall(function() Auto.eggRE:FireServer("CreateEgg", v) end)
-        placed = placed + 1
-        task.wait(0.12)
-        local after = countEggPlaced()
-        if after <= before then
-            stuck = stuck + 1
-            -- v18.5: jangan nyerah di 6 — kasih 20x kesempatan dgn posisi beda dulu
-            if stuck >= 20 then break end
-            task.wait(0.1)  -- jeda kecil biar server sempat proses
-        else
-            stuck = 0
-        end
+    -- Fallback: remote
+    if giftRE then
+        local uuid = petTool:GetAttribute("PET_UUID")
+        local u = tostring(uuid)
+        if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
+        pcall(function() giftRE:FireServer("GivePet", targetPlayer, u) end)
+        task.wait(0.18)
+        if not petTool.Parent or petTool.Parent == nil then sent = true end
     end
-    return placed
+    return sent
 end
--- deteksi backpack penuh: jumlah pet vs MaxPetsInInventory.
--- backpack penuh: pet udah capai batas game (mis 230/230) ATAU ada notif "max backpack".
-local function backpackMaxNotif()
-    local found = false
-    pcall(function()
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        if not pg then return end
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") or d:IsA("TextButton") then
-                local t = (d.Text or ""):lower()
-                if t:find("max") and (t:find("backpack") or t:find("inventory") or t:find("pet")) then
-                    found = true; break
-                end
-                if t:find("inventory full") or t:find("backpack full") or t:find("penuh") then
-                    found = true; break
-                end
+
+-- ============================================================
+-- COLORS
+-- ============================================================
+local C = {
+    BG     = Color3.fromRGB(18, 18, 18),
+    Panel  = Color3.fromRGB(28, 28, 28),
+    Card   = Color3.fromRGB(36, 36, 36),
+    Accent = Color3.fromRGB(255, 200, 0),
+    Text   = Color3.fromRGB(230, 230, 230),
+    Dim    = Color3.fromRGB(140, 140, 140),
+    Green  = Color3.fromRGB(100, 200, 120),
+    Orange = Color3.fromRGB(255, 140, 60),
+    Red    = Color3.fromRGB(220, 80, 80),
+    Blue   = Color3.fromRGB(80, 130, 200),
+}
+
+-- ============================================================
+-- ScreenGui
+-- ============================================================
+local sg = Instance.new("ScreenGui")
+sg.Name = "ZenxAgeStats"
+sg.ResetOnSpawn = false
+sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+sg.DisplayOrder = 9999
+local parented = false
+pcall(function() if gethui then sg.Parent = gethui(); parented = true end end)
+if not parented then sg.Parent = playerGui end
+
+-- ============================================================
+-- DIMENSIONS
+-- ============================================================
+local W = 400
+local TITLE_H = 34
+local HEADER_H = 80
+local TAB_H = 30
+local CONTENT_H = 180  -- v2.5: lebih compact, scroll buat baris ke 5+
+local FOOTER_H = 22
+
+local COLLAPSED_HEIGHT = TITLE_H + 8 + HEADER_H + 8  -- ~ 104 (just header)
+local EXPANDED_HEIGHT  = COLLAPSED_HEIGHT + TAB_H + 6 + CONTENT_H + 4 + FOOTER_H
+
+-- ============================================================
+-- MAIN WINDOW
+-- ============================================================
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, W, 0, EXPANDED_HEIGHT)
+main.Position = UDim2.new(0, 10, 0.5, -EXPANDED_HEIGHT/2)
+main.BackgroundColor3 = C.BG
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = sg
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+local mainStroke = Instance.new("UIStroke", main)
+mainStroke.Color = C.Accent
+mainStroke.Thickness = 1.5
+
+-- ============================================================
+-- TITLE BAR
+-- ============================================================
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, TITLE_H)
+titleBar.BackgroundColor3 = C.Panel
+titleBar.BorderSizePixel = 0
+titleBar.Parent = main
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
+local tbFix = Instance.new("Frame")
+tbFix.Size = UDim2.new(1, 0, 0, 10)
+tbFix.Position = UDim2.new(0, 0, 1, -10)
+tbFix.BackgroundColor3 = C.Panel
+tbFix.BorderSizePixel = 0
+tbFix.Parent = titleBar
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Size = UDim2.new(1, -98, 1, 0)
+titleLbl.Position = UDim2.new(0, 12, 0, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.Text = "ZENX AGE STATS "..VER
+titleLbl.TextColor3 = C.Accent
+titleLbl.Font = Enum.Font.GothamBold
+titleLbl.TextSize = 13
+titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.Parent = titleBar
+
+local function mkTitleBtn(x, txt, color, txtColor)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 26, 0, 22)
+    b.Position = UDim2.new(1, x, 0.5, -11)
+    b.BackgroundColor3 = color
+    b.Text = txt b.TextColor3 = txtColor or Color3.new(1,1,1)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.Parent = titleBar
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+    return b
+end
+
+local expandBtn = mkTitleBtn(-92, "+", C.Accent, Color3.new(0,0,0))
+local minBtn    = mkTitleBtn(-62, "—", C.Blue)
+local closeBtn  = mkTitleBtn(-32, "✕", C.Red)
+closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
+
+-- ============================================================
+-- HEADER STATS
+-- ============================================================
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, -16, 0, HEADER_H)
+header.Position = UDim2.new(0, 8, 0, TITLE_H + 8)
+header.BackgroundColor3 = C.Card
+header.BorderSizePixel = 0
+header.Parent = main
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 6)
+
+local function mkStat(parent, x, w, labelText, valColor)
+    local cell = Instance.new("Frame")
+    cell.Size = UDim2.new(w, 0, 1, 0)
+    cell.Position = UDim2.new(x, 0, 0, 0)
+    cell.BackgroundTransparency = 1
+    cell.Parent = parent
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(1, 0, 0, 18)
+    t.Position = UDim2.new(0, 0, 0, 8)
+    t.BackgroundTransparency = 1
+    t.Text = labelText t.TextColor3 = C.Dim
+    t.Font = Enum.Font.Gotham t.TextSize = 17  -- v2.15: label
+    t.Parent = cell
+    local v = Instance.new("TextLabel")
+    v.Size = UDim2.new(1, 0, 0, 48)
+    v.Position = UDim2.new(0, 0, 0, 28)
+    v.BackgroundTransparency = 1
+    v.Text = "0" v.TextColor3 = valColor or C.Text
+    v.Font = Enum.Font.GothamBold v.TextSize = 44  -- v2.15: ANGKA gede banget
+    v.Parent = cell
+    return v
+end
+local totalVal  = mkStat(header, 0,    0.33, "TOTAL",     C.Text)
+local age100Val = mkStat(header, 0.33, 0.33, "AGE 100",   C.Text)
+local lessVal   = mkStat(header, 0.66, 0.33, "AGE <100",  C.Text)
+
+-- ============================================================
+-- TAB ROW [STATS] [GIFT]
+-- ============================================================
+local tabRow = Instance.new("Frame")
+tabRow.Size = UDim2.new(1, -16, 0, TAB_H)
+tabRow.Position = UDim2.new(0, 8, 0, TITLE_H + 8 + HEADER_H + 6)
+tabRow.BackgroundTransparency = 1
+tabRow.Parent = main
+
+local function mkTabBtn(x, w, label)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(w, -3, 1, 0)
+    b.Position = UDim2.new(x, x > 0 and 3 or 0, 0, 0)
+    b.BackgroundColor3 = C.Card
+    b.Text = label
+    b.TextColor3 = C.Dim
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.Parent = tabRow
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+    return b
+end
+
+local tabStatsBtn = mkTabBtn(0,    0.5, "STATS")
+local tabGiftBtn  = mkTabBtn(0.5,  0.5, "GIFT")
+
+-- ============================================================
+-- CONTENT AREAS (statsPanel / giftPanel)
+-- ============================================================
+local CONTENT_Y = TITLE_H + 8 + HEADER_H + 6 + TAB_H + 6
+
+-- ===== STATS PANEL =====
+local statsPanel = Instance.new("Frame")
+statsPanel.Size = UDim2.new(1, -16, 0, CONTENT_H)
+statsPanel.Position = UDim2.new(0, 8, 0, CONTENT_Y)
+statsPanel.BackgroundTransparency = 1
+statsPanel.Parent = main
+
+local searchBox = Instance.new("TextBox")
+searchBox.Size = UDim2.new(1, 0, 0, 28)
+searchBox.BackgroundColor3 = C.Card
+searchBox.Text = ""
+searchBox.PlaceholderText = "Cari jenis pet..."
+searchBox.PlaceholderColor3 = C.Dim
+searchBox.TextColor3 = C.Text
+searchBox.Font = Enum.Font.Gotham
+searchBox.TextSize = 12
+searchBox.TextXAlignment = Enum.TextXAlignment.Left
+searchBox.ClearTextOnFocus = false
+searchBox.BorderSizePixel = 0
+searchBox.Parent = statsPanel
+Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 4)
+local sPad = Instance.new("UIPadding", searchBox)
+sPad.PaddingLeft = UDim.new(0, 10)
+
+local colHeader = Instance.new("Frame")
+colHeader.Size = UDim2.new(1, 0, 0, 22)
+colHeader.Position = UDim2.new(0, 0, 0, 34)
+colHeader.BackgroundColor3 = C.Panel
+colHeader.BorderSizePixel = 0
+colHeader.Parent = statsPanel
+Instance.new("UICorner", colHeader).CornerRadius = UDim.new(0, 4)
+
+local function mkColLbl(parent, x, w, text, color, align)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(w, 0, 1, 0)
+    l.Position = UDim2.new(x, 0, 0, 0)
+    l.BackgroundTransparency = 1
+    l.Text = text l.TextColor3 = color
+    l.Font = Enum.Font.GothamBold l.TextSize = 10
+    l.TextXAlignment = align or Enum.TextXAlignment.Center
+    l.Parent = parent
+    return l
+end
+mkColLbl(colHeader, 0.03, 0.47, "PET (tap=multi)", C.Accent, Enum.TextXAlignment.Left)
+mkColLbl(colHeader, 0.50, 0.16, "AGE100",  C.Text)
+mkColLbl(colHeader, 0.66, 0.14, "<100",    C.Text)
+mkColLbl(colHeader, 0.80, 0.17, "TOTAL",   C.Text)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, 0, 1, -60)
+scroll.Position = UDim2.new(0, 0, 0, 60)
+scroll.BackgroundColor3 = C.Card
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 4
+scroll.ScrollBarImageColor3 = C.Accent
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.Parent = statsPanel
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 6)
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 2)
+layout.Parent = scroll
+local listPad = Instance.new("UIPadding", scroll)
+listPad.PaddingTop = UDim.new(0, 4) listPad.PaddingBottom = UDim.new(0, 4)
+listPad.PaddingLeft = UDim.new(0, 4) listPad.PaddingRight = UDim.new(0, 4)
+
+-- ===== GIFT PANEL =====
+local giftPanel = Instance.new("Frame")
+giftPanel.Size = UDim2.new(1, -16, 0, CONTENT_H)
+giftPanel.Position = UDim2.new(0, 8, 0, CONTENT_Y)
+giftPanel.BackgroundTransparency = 1
+giftPanel.Visible = false
+giftPanel.Parent = main
+
+-- Target input — NODE HUB style picker
+local targetLbl = Instance.new("TextLabel")
+targetLbl.Size = UDim2.new(1, 0, 0, 16)
+targetLbl.Position = UDim2.new(0, 0, 0, 0)
+targetLbl.BackgroundTransparency = 1
+targetLbl.Text = "Target Player"
+targetLbl.TextColor3 = C.Dim
+targetLbl.Font = Enum.Font.GothamBold
+targetLbl.TextSize = 10
+targetLbl.TextXAlignment = Enum.TextXAlignment.Left
+targetLbl.Parent = giftPanel
+
+-- Target picker button (click to open modal)
+local targetBtn = Instance.new("TextButton")
+targetBtn.Size = UDim2.new(1, 0, 0, 32)
+targetBtn.Position = UDim2.new(0, 0, 0, 18)
+targetBtn.BackgroundColor3 = C.Card
+targetBtn.Text = "Pilih target gift..."
+targetBtn.TextColor3 = C.Dim
+targetBtn.Font = Enum.Font.Gotham
+targetBtn.TextSize = 12
+targetBtn.TextXAlignment = Enum.TextXAlignment.Left
+targetBtn.BorderSizePixel = 0
+targetBtn.AutoButtonColor = false
+targetBtn.Parent = giftPanel
+Instance.new("UICorner", targetBtn).CornerRadius = UDim.new(0, 4)
+local tbPad = Instance.new("UIPadding", targetBtn)
+tbPad.PaddingLeft = UDim.new(0, 10)
+tbPad.PaddingRight = UDim.new(0, 10)
+-- arrow indicator
+local arrowLbl = Instance.new("TextLabel")
+arrowLbl.Size = UDim2.new(0, 20, 1, 0)
+arrowLbl.Position = UDim2.new(1, -28, 0, 0)
+arrowLbl.BackgroundTransparency = 1
+arrowLbl.Text = "▼"
+arrowLbl.TextColor3 = C.Dim
+arrowLbl.Font = Enum.Font.Gotham
+arrowLbl.TextSize = 10
+arrowLbl.Parent = targetBtn
+
+-- Current selected targets (multi-select set: {[name]=true})
+local selectedTargets = {}
+local function targetCount()
+    local n = 0; for _ in pairs(selectedTargets) do n = n + 1 end; return n
+end
+
+-- ============================================================
+-- FILTER ROW: jenis pet | KG | Age
+-- ============================================================
+-- Pet picker button (col 1)
+local petPickBtn = Instance.new("TextButton")
+petPickBtn.Size = UDim2.new(0.46, -2, 0, 30)
+petPickBtn.Position = UDim2.new(0, 0, 0, 58)
+petPickBtn.BackgroundColor3 = C.Card
+petPickBtn.Text = "Jenis Pet ▼"
+petPickBtn.TextColor3 = C.Dim
+petPickBtn.Font = Enum.Font.Gotham
+petPickBtn.TextSize = 11
+petPickBtn.TextXAlignment = Enum.TextXAlignment.Left
+petPickBtn.BorderSizePixel = 0
+petPickBtn.AutoButtonColor = false
+petPickBtn.Parent = giftPanel
+Instance.new("UICorner", petPickBtn).CornerRadius = UDim.new(0, 4)
+local ppPad = Instance.new("UIPadding", petPickBtn)
+ppPad.PaddingLeft = UDim.new(0, 8) ppPad.PaddingRight = UDim.new(0, 8)
+
+-- KG input (col 2)
+local kgBox = Instance.new("TextBox")
+kgBox.Size = UDim2.new(0.25, -2, 0, 30)
+kgBox.Position = UDim2.new(0.48, 0, 0, 58)
+kgBox.BackgroundColor3 = C.Card
+kgBox.Text = ""
+kgBox.PlaceholderText = "KG"
+kgBox.PlaceholderColor3 = C.Dim
+kgBox.TextColor3 = C.Text
+kgBox.Font = Enum.Font.Gotham
+kgBox.TextSize = 12
+kgBox.TextXAlignment = Enum.TextXAlignment.Center
+kgBox.ClearTextOnFocus = false
+kgBox.BorderSizePixel = 0
+kgBox.Parent = giftPanel
+Instance.new("UICorner", kgBox).CornerRadius = UDim.new(0, 4)
+
+-- Age input (col 3)
+local ageBox = Instance.new("TextBox")
+ageBox.Size = UDim2.new(0.25, -2, 0, 30)
+ageBox.Position = UDim2.new(0.75, 2, 0, 58)
+ageBox.BackgroundColor3 = C.Card
+ageBox.Text = ""
+ageBox.PlaceholderText = "Age"
+ageBox.PlaceholderColor3 = C.Dim
+ageBox.TextColor3 = C.Text
+ageBox.Font = Enum.Font.Gotham
+ageBox.TextSize = 12
+ageBox.TextXAlignment = Enum.TextXAlignment.Center
+ageBox.ClearTextOnFocus = false
+ageBox.BorderSizePixel = 0
+ageBox.Parent = giftPanel
+Instance.new("UICorner", ageBox).CornerRadius = UDim.new(0, 4)
+
+-- Filter state
+local selectedPetTypes = {}  -- multi-select set: {[petName]=true}
+local function petTypeCount()
+    local n = 0; for _ in pairs(selectedPetTypes) do n = n + 1 end; return n
+end
+
+-- ============================================================
+-- GIFT ON/OFF TOGGLE
+-- ============================================================
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(1, 0, 0, 34)
+toggleBtn.Position = UDim2.new(0, 0, 0, 96)
+toggleBtn.BackgroundColor3 = C.Red
+toggleBtn.Text = "GIFT  OFF"
+toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 13
+toggleBtn.BorderSizePixel = 0
+toggleBtn.AutoButtonColor = false
+toggleBtn.Parent = giftPanel
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 5)
+
+-- Status
+local statusLbl = Instance.new("TextLabel")
+statusLbl.Size = UDim2.new(1, 0, 0, 18)
+statusLbl.Position = UDim2.new(0, 0, 0, 138)
+statusLbl.BackgroundTransparency = 1
+statusLbl.Text = "Status: idle"
+statusLbl.TextColor3 = C.Dim
+statusLbl.Font = Enum.Font.Gotham
+statusLbl.TextSize = 11
+statusLbl.TextXAlignment = Enum.TextXAlignment.Left
+statusLbl.Parent = giftPanel
+
+-- Counter
+local gCounterLbl = Instance.new("TextLabel")
+gCounterLbl.Size = UDim2.new(1, 0, 0, 18)
+gCounterLbl.Position = UDim2.new(0, 0, 0, 158)
+gCounterLbl.BackgroundTransparency = 1
+gCounterLbl.Text = "Sent: 0   Failed: 0"
+gCounterLbl.TextColor3 = C.Accent
+gCounterLbl.Font = Enum.Font.GothamBold
+gCounterLbl.TextSize = 11
+gCounterLbl.TextXAlignment = Enum.TextXAlignment.Left
+gCounterLbl.Parent = giftPanel
+
+-- legacy stub
+local eligibleLbl = {Text = ""}
+
+-- ============================================================
+-- FOOTER
+-- ============================================================
+local footer = Instance.new("TextLabel")
+footer.Size = UDim2.new(1, -16, 0, 16)
+footer.Position = UDim2.new(0, 8, 1, -FOOTER_H + 4)
+footer.BackgroundTransparency = 1
+footer.Text = "scope: backpack • auto 2s"
+footer.TextColor3 = C.Dim
+footer.Font = Enum.Font.Gotham
+footer.TextSize = 10
+footer.TextXAlignment = Enum.TextXAlignment.Left
+footer.Parent = main
+
+-- ============================================================
+-- RENDER STATS
+-- ============================================================
+local cachedContainer, cachedCount = nil, 0
+
+-- v2.16: filter stats IKUT pilihan di GIFT (selectedPetTypes). Gak ada filter terpisah.
+local function updateHeader()
+    local byType, total, age100, lessAge = collectStats(cachedContainer)
+    -- v2.16: kalo ada jenis kepilih di GIFT, header jumlahin jenis2 itu
+    if petTypeCount() > 0 then
+        age100, lessAge, total = 0, 0, 0
+        for t in pairs(selectedPetTypes) do
+            local d = byType[t]
+            if d then
+                age100  = age100  + d.age100
+                lessAge = lessAge + d.less100
+                total   = total   + d.age100 + d.less100
             end
         end
-    end)
-    return found
-end
-local function backpackLimitNotif()
-    local found = false
-    pcall(function()
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        if not pg then return end
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Visible then
-                local t = (d.Text or ""):lower()
-                if t:find("cannot open this pet") or t:find("limit of pet")
-                    or t:find("reached the limit") or t:find("inventory is full") then
-                    found = true; break
-                end
-            end
-        end
-    end)
-    return found
-end
-local function isBackpackFull()
-    local cur = #PetDetect.listBackpackPets()
-    local maxPets = getMaxPets()
-    if not maxPets or maxPets <= 0 then maxPets = 230 end
-    -- cooldown stlh sell: abaikan notif lama (yg blm hilang) biar gak stuck di Seal
-    local inCooldown = (tick() - (Auto.lastSellTime or 0)) < 4
-    local byNotif = (not inCooldown) and (Auto.bpFullFlag or backpackLimitNotif())
-    local full = (cur >= maxPets) or byNotif
-    return full, cur, maxPets
-end
--- LISTENER notif limit: pantau label BARU + perubahan .Text (game kadang pakai label sama)
-do
-    local pg = player:FindFirstChildOfClass("PlayerGui")
-    local function checkText(t)
-        t = (t or ""):lower()
-        if t:find("cannot open this pet") or t:find("limit of pet")
-            or t:find("reached the limit") or t:find("inventory is full") then
-            Auto.bpFullFlag = true
-            Auto.sellExhausted = false  -- ada limit baru, boleh sell lagi
-            print("[HactTelur] NOTIF LIMIT terdeteksi -> backpack penuh, auto-sell")
-        end
     end
-    local function attach(d)
-        if d:IsA("TextLabel") then
-            pcall(function()
-                checkText(d.Text)
-                d:GetPropertyChangedSignal("Text"):Connect(function() checkText(d.Text) end)
+    totalVal.Text  = tostring(total)
+    age100Val.Text = tostring(age100)
+    lessVal.Text   = tostring(lessAge)
+    eligibleLbl.Text = "Pet eligible (age 100): "..age100
+    local nF = petTypeCount()
+    local scopeTag = (nF == 0) and "scope: backpack" or ("filter(gift): "..nF.." jenis")
+    footer.Text = scopeTag.." • memData "..(cachedContainer and (cachedCount.." OK") or "FAIL FAIL").." • auto 2s"
+    return byType
+end
+
+local _lastStatsSig = nil
+local function renderStats(force)
+    local byType = updateHeader()
+    -- v2.18: signature dari data — kalo gak berubah, SKIP rebuild (anti lag tiap 2s)
+    local sigParts = {}
+    for k, v in pairs(byType) do
+        sigParts[#sigParts+1] = k.."="..v.age100..","..v.less100
+    end
+    table.sort(sigParts)
+    local selParts = {}
+    for k in pairs(selectedPetTypes) do selParts[#selParts+1] = k end
+    table.sort(selParts)
+    local sig = table.concat(sigParts, "|").."#"..((searchBox and searchBox.Text) or "").."@"..table.concat(selParts, ",")
+    if not force and sig == _lastStatsSig then return end  -- data sama → gak rebuild
+    _lastStatsSig = sig
+
+    for _, c in ipairs(scroll:GetChildren()) do
+        if c:IsA("Frame") or c:IsA("TextButton") then c:Destroy() end
+    end
+
+    local sorted = {}
+    for k, v in pairs(byType) do table.insert(sorted, {name=k, data=v}) end
+    table.sort(sorted, function(a, b)
+        return (a.data.age100 + a.data.less100) > (b.data.age100 + b.data.less100)
+    end)
+    local filter = (searchBox.Text or ""):lower()
+    for _, item in ipairs(sorted) do
+        if filter == "" or item.name:lower():find(filter, 1, true) then
+            local petTotal = item.data.age100 + item.data.less100
+            local isSel = selectedPetTypes[item.name] == true
+            -- v2.13: row TextButton, tap = toggle filter (multi)
+            local row = Instance.new("TextButton")
+            row.Size = UDim2.new(1, -8, 0, 26)
+            row.BackgroundColor3 = isSel and C.Accent or C.Panel
+            row.AutoButtonColor = false
+            row.Text = ""
+            row.BorderSizePixel = 0 row.Parent = scroll
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+            local n = Instance.new("TextLabel")
+            n.Size = UDim2.new(0.47, -4, 1, 0) n.Position = UDim2.new(0.03, 0, 0, 0)
+            n.BackgroundTransparency = 1 n.Text = (isSel and "• " or "")..item.name
+            n.TextColor3 = isSel and Color3.new(0,0,0) or C.Text
+            n.Font = Enum.Font.Gotham n.TextSize = 11
+            n.TextXAlignment = Enum.TextXAlignment.Left
+            n.TextTruncate = Enum.TextTruncate.AtEnd n.Parent = row
+            local c1 = Instance.new("TextLabel")
+            c1.Size = UDim2.new(0.16, 0, 1, 0) c1.Position = UDim2.new(0.50, 0, 0, 0)
+            c1.BackgroundTransparency = 1 c1.Text = tostring(item.data.age100)
+            c1.TextColor3 = isSel and Color3.new(0,0,0) or C.Text
+            c1.Font = Enum.Font.GothamBold c1.TextSize = 12
+            c1.Parent = row
+            local c2 = Instance.new("TextLabel")
+            c2.Size = UDim2.new(0.14, 0, 1, 0) c2.Position = UDim2.new(0.66, 0, 0, 0)
+            c2.BackgroundTransparency = 1 c2.Text = tostring(item.data.less100)
+            c2.TextColor3 = isSel and Color3.new(0,0,0) or C.Text
+            c2.Font = Enum.Font.GothamBold c2.TextSize = 12
+            c2.Parent = row
+            local c3 = Instance.new("TextLabel")
+            c3.Size = UDim2.new(0.17, 0, 1, 0) c3.Position = UDim2.new(0.80, 0, 0, 0)
+            c3.BackgroundTransparency = 1 c3.Text = tostring(petTotal)
+            c3.TextColor3 = isSel and Color3.new(0,0,0) or C.Accent
+            c3.Font = Enum.Font.GothamBold c3.TextSize = 12
+            c3.Parent = row
+            -- v2.13: tap = toggle jenis ini di filter (bisa pilih banyak)
+            row.MouseButton1Click:Connect(function()
+                if selectedPetTypes[item.name] then
+                    selectedPetTypes[item.name] = nil
+                else
+                    selectedPetTypes[item.name] = true
+                end
+                renderStats()
             end)
         end
     end
-    if pg then
-        pg.DescendantAdded:Connect(function(d) task.wait(0.05); attach(d) end)
-        -- attach ke semua TextLabel yg udah ada
-        task.spawn(function()
-            for _, d in ipairs(pg:GetDescendants()) do attach(d) end
-        end)
-    end
+    scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
 end
 
--- LOOP UTAMA:
--- 1) tim Reduce: place egg sampai slot habis
--- 2) tunggu SEMUA egg ready (ada 1 CD = tetap Reduce)
--- 3) semua ready -> tim Hatch, hatch semua -> balik ke Reduce
--- ============ AUTO PAUSE saat terima pet / gift ============
--- pause saat CLAIM/ACCEPT pet: lastGiftAct di-set pas AcceptPetGift di-fire (lihat hook __namecall).
--- resume 5 detik setelah accept terakhir.
-Auto.lastGiftAct = 0
--- lagi claim/accept pet? resume 3 detik setelah accept terakhir (v21.3: dulu 5s, kelamaan)
-local function isReceivingPet()
-    return (tick() - (Auto.lastGiftAct or 0)) < 3
-end
--- deteksi gift KELUAR (biasa/tiket, manual/sc): hook PetGiftingService & TradeEvents fire
-Auto.lastGiftOut = 0
-do
-    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-    -- hook __namecall biar nangkep semua FireServer ke remote gift/trade
-    pcall(function()
-        local mt = getrawmetatable(game)
-        local old = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local m = getnamecallmethod()
-            if (m == "FireServer" or m == "InvokeServer") and self and self.Name then
-                local n = self.Name
-                -- cuma remote gift/trade SPESIFIK (jgn nama longgar biar gak false positive)
-                if n == "PetGiftingService" or n == "SendRequest" or n == "AddItem"
-                    or n == "GivePet" or n == "AcceptPetGift" then
-                    Auto.lastGiftOut = tick()
-                end
-                -- ACCEPT/CLAIM pet masuk -> pause auto-hact (resume 5s stlh accept terakhir)
-                if n == "AcceptPetGift" then
-                    Auto.lastGiftAct = tick()
-                end
-            end
-            return old(self, ...)
-        end)
-        setreadonly(mt, true)
-    end)
-end
--- lagi gift/trade keluar? (aktivitas dalam 3 detik terakhir)
-local function isGiftingOut()
-    return (tick() - (Auto.lastGiftOut or 0)) < 3
-end
--- lagi trade/gift manual? (trade UI / gift prompt terbuka di layar)
-local function isTradingManual()
-    local open = false
-    pcall(function()
-        local pg = player:FindFirstChild("PlayerGui")
-        if not pg then return end
-        -- v19.3: pakai TradingUI.Enabled (akurat). LiveTrade.Visible stuck=true walau trade tutup.
-        local tui = pg:FindFirstChild("TradingUI")
-        if tui and tui:IsA("ScreenGui") then
-            open = tui.Enabled == true
-        end
-    end)
-    return open
+-- ============================================================
+-- TARGET PICKER MODAL (NODE HUB style)
+-- ============================================================
+local pickerOverlay = nil
+
+-- ============================================================
+-- PERSIST GIFT SETTINGS (targets, pet types, kg, age)
+-- ============================================================
+local function persistGiftSettings()
+    local types = {}
+    for k in pairs(selectedPetTypes) do table.insert(types, k) end
+    local targets = {}
+    for k in pairs(selectedTargets) do table.insert(targets, k) end
+    saveSettings({
+        targets    = targets,
+        petTypes   = types,
+        kg         = kgBox.Text,
+        age        = ageBox.Text,
+        giftActive = _G.ZenxGiftActive == true,  -- persisted state
+    })
 end
 
--- v16.2: cek pause gift/trade (1 fungsi, dipanggil di BANYAK titik biar STOP LANGSUNG,
--- gak nunggu cycle selesai). Begitu gift mulai di tengah aksi, aksi berikutnya di-skip.
--- v21.4: pause selama MASIH ada aktivitas gift (terima/keluar/trade UI/giftBusy).
--- Hitung mundur resume baru MULAI saat gift BENAR-BENAR berhenti (gak ada aktivitas baru).
--- Kalau gift beruntun, timer ke-reset terus (krn lastGiftAct/lastGiftOut ke-update tiap aktivitas).
--- Retry bertingkat: tunggu 3s sunyi -> kalau aktivitas lagi, ulang; safety paksa-resume 3->6->9s.
-local RESUME_QUIET = 3  -- detik "sunyi" (gak ada gift) sebelum resume
-local function isPausedForGift()
-    -- giftBusy aktif = lagi gift/trade KELUAR (proses kita) -> pause penuh
-    if Auto.giftBusy then
-        -- safety: giftBusy nyangkut kelamaan (gift error) -> retry bertingkat 30/60/90s
-        if Auto.giftBusySince then
-            local d = tick() - Auto.giftBusySince
-            if d > 90 then
-                print("[HactTelur] giftBusy nyangkut >90s -> PAKSA reset")
-                Auto.giftBusy = false
-            elseif d > 30 and not Auto._gbWarn30 then
-                Auto._gbWarn30 = true
-                print("[HactTelur] giftBusy >30s... (tunggu)")
-            end
-        end
-        if Auto.giftBusy then
-            Auto._wasPaused = true; Auto._pauseSince = Auto._pauseSince or tick()
-            return true
-        end
-    end
-    Auto._gbWarn30 = nil
-
-    -- aktivitas gift terakhir: terima pet (lastGiftAct), gift keluar (lastGiftOut), atau trade UI buka
-    local tradeOpen = isTradingManual()
-    local lastAct = math.max(Auto.lastGiftAct or 0, Auto.lastGiftOut or 0)
-    local quiet = tick() - lastAct  -- berapa lama udah "sunyi" (gak ada aktivitas gift)
-
-    -- masih ada aktivitas? (trade UI kebuka ATAU baru aja ada gift) -> pause, RESET hitung mundur
-    if tradeOpen or quiet < RESUME_QUIET then
-        if not Auto._wasPaused then
-            local why = tradeOpen and "trade UI kebuka" or "terima/gift pet"
-            print("[HactTelur] ⏸ PAUSE: "..why.." (tunggu sampai bener-bener selesai)")
-            Auto._wasPaused = true
-            Auto._pauseSince = tick()
-            Auto._resumeStage = 0
-        end
-        -- safety paksa-resume bertingkat 3->6->9 detik HANYA kalau trade UI yg nyangkut kebuka
-        -- (terima/gift pet normal bakal sunyi sendiri; ini buat kasus trade UI stuck)
-        if tradeOpen and Auto._pauseSince then
-            local pd = tick() - Auto._pauseSince
-            local stage = Auto._resumeStage or 0
-            if stage == 0 and pd > 3 then Auto._resumeStage = 1; print("[HactTelur] ⏳ masih pause 3s, cek lagi...")
-            elseif stage == 1 and pd > 6 then Auto._resumeStage = 2; print("[HactTelur] ⏳ masih pause 6s, cek lagi...")
-            elseif stage == 2 and pd > 9 then
-                print("[HactTelur] ⚠ pause 9s (trade UI nyangkut), PAKSA resume")
-                Auto.lastGiftAct = 0; Auto.lastGiftOut = 0
-                Auto._wasPaused = false; Auto._pauseSince = nil; Auto._resumeStage = 0
-                return false
-            end
-        end
-        return true
-    end
-
-    -- udah sunyi >= RESUME_QUIET detik -> resume
-    if Auto._wasPaused then
-        print("[HactTelur] ▶ RESUME automation (gift udah selesai, sunyi "..RESUME_QUIET.."s)")
-        Auto._wasPaused = false; Auto._pauseSince = nil; Auto._resumeStage = 0
-    end
-    return false
-end
-
--- v20.5: checkKoiSealOk dipindah ke SINI (sebelum automationLoop) — dulu di bawah,
--- jadi nil saat automationLoop manggil (error "call a nil value" line 2478 -> loop stuck gak pindah hatch)
-local function checkKoiSealOk()
-    local allSel = {}
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        if teamData[tn] and teamData[tn].selected then
-            for u in pairs(teamData[tn].selected) do allSel[u] = true end
-        end
-    end
-    local koi = PetDetect.sumPctSelected(allSel, "Koi", "koi")
-    local seal = PetDetect.sumPctSelected(allSel, "Seal", "seal")
-    local minP = config.minKoiSeal or 50
-    local ok = (koi >= minP) and (seal >= minP)
-    return ok, koi, seal
-end
-
-local function automationLoop()
-    print("[HactTelur] automation loop START")
-    Auto.sellExhausted = false  -- reset tiap start
-    Auto.giftBusy = false  -- reset flag gift/trade
-    Auto.currentTeam = nil  -- reset tim biar equipTeam fresh
-    Auto.bpFullFlag = false
-    -- kosongin garden dulu (unequip semua pet placed, termasuk place manual)
-    clearGarden()
-    favTeamPets()  -- fav pet tim di awal (proteksi)
-    task.wait(1)
-    local favTick = 0
-    local pctCheckTick = 0
-    while globalRunning do
-        -- v19.0: cek Koi% & Seal% tiap ~10 detik. kalau turun di bawah min -> STOP.
-        if config.reqKoiSeal then
-            pctCheckTick = pctCheckTick + 1
-            if pctCheckTick >= 20 then  -- ~10 detik (loop ~0.5s)
-                pctCheckTick = 0
-                local ok, koi, seal = checkKoiSealOk()
-                if not ok then
-                    local minP = config.minKoiSeal or 50
-                    print(string.format("[HactTelur] STOP otomatis: Koi %.2f%% Seal %.2f%% turun di bawah %d%%", koi, seal, minP))
-                    globalSetRunning(false)
-                    Auto.currentTeam = nil
-                    task.spawn(function() task.wait(0.3); clearGarden() end)
-                    break
-                end
-            end
-        end
-        -- pause kalo lagi terima pet / gift / trade.
-        -- TAPI kalo backpack penuh (bpFullFlag) & gift gak lagi jalan -> jgn pause, sell dulu!
-        -- terima pet / gift / trade SELALU pause (prioritas, biar gak bentrok)
-        local pauseNow = isPausedForGift()
-        -- (sell saat penuh TIDAK override pause terima pet — terima pet didahulukan)
-        if pauseNow then
-            task.wait(0.5)
+local function updateTargetBtn()
+    local cnt = targetCount()
+    if cnt == 0 then
+        targetBtn.Text = "Pilih target gift..."
+        targetBtn.TextColor3 = C.Dim
+    elseif cnt == 1 then
+        -- show the single name
+        local name
+        for n in pairs(selectedTargets) do name = n; break end
+        local p = findPlayerByName(name)
+        if p then
+            targetBtn.Text = name
+            targetBtn.TextColor3 = C.Text
         else
-        local full, cur, max = isBackpackFull()
-        -- v16.4: jaga fav terus-menerus. Pet tim + pet KEEP (yg gak ada di list sell)
-        -- difavoritkan dari awal (saat tim Reduce/Hatch), gak nunggu masuk tim Seal.
-        favTick = favTick + 1
-        if favTick >= 10 and not Auto.giftBusy then
-            -- v17.4: saat gift jalan (giftBusy), JANGAN fav — biar gak nabrak "Unfav dulu" gift.
-            -- pet yg di-unfav buat gift bakal ke-fav lagi kalau ini jalan -> gift gagal.
-            favTick = 0
-            favTeamPets()           -- fav pet tim
-            pcall(syncFavByRules)   -- fav pet keep + unfav pet sell (lebih awal)
+            targetBtn.Text = name.." (offline)"
+            targetBtn.TextColor3 = C.Accent
         end
-        -- backpack penuh? equip tim SEAL dulu, baru jual.
-        -- TAPI kalo mode gift-tunggu-full ON, auto-sell dimatiin (gift yg ambil alih)
-        -- DIAGNOSTIK: kalo full tapi gak sell, kasih tau kenapa
-        if full and not (config.autoSell and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy) then
-            print(string.format("[HactTelur] FULL tapi skip sell: autoSell=%s sellExhausted=%s giftWaitFull=%s giftBusy=%s",
-                tostring(config.autoSell), tostring(Auto.sellExhausted), tostring(Auto.giftWaitFull), tostring(Auto.giftBusy)))
-        end
-        if config.autoSell and full and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy then
-            if isPausedForGift() then  -- v16.2: gift mulai? batal sell, balik atas
-                task.wait(0.3)
-            else
-            print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
-            favTeamPets()  -- fav pet tim (proteksi)
-            pcall(syncFavByRules)  -- atur fav/unfav sesuai rule SEKARANG (real-time, gak nunggu)
-            -- v16.4: JEDA biar favorit bener-bener tercatat server SEBELUM jual.
-            -- (dulu habis fav langsung sell, kadang fav blm masuk -> pet keep ikut kejual)
-            print("[HactTelur] tunggu favorit tercatat (3 detik)...")
-            task.wait(3)
-            pcall(syncFavByRules)  -- pastikan sekali lagi (pet baru / yg ke-skip)
-            task.wait(0.5)
-            if isPausedForGift() then  -- v16.4: gift nyempil pas jeda fav? batal sell
-                print("[HactTelur] gift mulai pas jeda fav, batal sell")
-            else
-            equipTeam("Sell Tim")
-            -- v18.8: tunggu SEMUA tim Sell masuk garden + sesuai tim, baru jual
-            local okSell = waitTeamInGarden("Sell Tim", 15)
-            local sd = config.hatchDelay or 6
-            print("[HactTelur] tim Sell "..(okSell and "LENGKAP" or "timeout").." ("..countGardenPets().."), tunggu "..sd.." detik...")
-            task.wait(sd)  -- jeda biar skill Seal bener-bener aktif
-            local sold = doAutoSell()
-            -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
-            Auto.bpFullFlag = false
-            Auto.lastSellTime = tick()  -- buat cooldown (abaikan notif lama)
-            task.wait(1)
-            PetDetect.rebuild(true)  -- force scan ulang, pet count terbaru
-            equipTeam("Reduce Tim")  -- langsung balik reduce abis jual
-            if sold == 0 then
-                Auto.sellExhausted = true
-                Auto.sellExhaustedCount = #PetDetect.listBackpackPets()
-                print("[HactTelur] gak ada pet buat dijual (sisanya keep), lanjut reduce")
-            end
-            end  -- tutup guard isPausedForGift (jeda fav)
-            end  -- tutup guard isPausedForGift
-        elseif Auto.sellExhausted then
-            -- cek apakah pet udah nambah dari terakhir sell (ada pet baru buat dijual)
-            local nowCount = #PetDetect.listBackpackPets()
-            if nowCount > (Auto.sellExhaustedCount or 0) then
-                Auto.sellExhausted = false  -- pet nambah, boleh sell lagi
-            end
-        end
-
-        -- target slot egg = batas asli game (MaxEggsInFarm), gak pakai setting manual
-        -- target slot egg: kalo diatur manual (>0) pakai itu, kalo 0 auto (maks asli)
-        local target = (config.maxEggManual and config.maxEggManual > 0)
-            and config.maxEggManual or (getMaxEggs() or 13)
-
-        local nowPlaced = countEggPlaced()
-
-        if isPausedForGift() then
-            -- v16.2: lagi gift/trade (terima/keluar/manual): jangan place/hatch/swap tim
-            task.wait(0.4)
-        elseif nowPlaced < target then
-            -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
-            equipTeam("Reduce Tim")
-            -- v18.7: buang pet salah (bukan tim Reduce) dari garden kalau toggle aktif
-            if config.autoUnequipWrong and teamData["Reduce Tim"] then
-                unequipWrongGardenPets(teamData["Reduce Tim"].selected)
-            end
-            local need = target - nowPlaced
-            placeEggs(need)
-            task.wait(0.6)
-            local after = countEggPlaced()
-            print("[HactTelur] place egg: "..nowPlaced.." -> "..after.." (target "..target..")")
-        else
-            -- 2) slot penuh: cek ready
-            local allReady, total, ready = allEggsReady()
-            if isPausedForGift() then
-                -- v16.2: gift mulai sebelum hatch? batal, balik atas (jgn swap tim Hatch)
-                task.wait(0.3)
-            elseif allReady then
-                -- semua ready -> hatch bareng (efisien)
-                print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
-                equipTeam("Hatch Tim")
-                -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
-                local ok = waitTeamInGarden("Hatch Tim", 15)
-                local hd = config.hatchDelay or 6
-                print("[HactTelur] tim Koi "..(ok and "LENGKAP" or "timeout").." ("..countGardenPets().."), tunggu "..hd.." detik...")
-                task.wait(hd)  -- jeda biar skill Koi bener-bener aktif (bisa diatur di Config)
-                print("[HactTelur] hatch all!")
-                hatchAllEggs()
-                task.wait(2)
-                equipTeam("Reduce Tim")
-            elseif ready > 0 and ready >= math.floor(total * 0.6) then
-                -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
-                -- biar gak stuck nunggu semua (Koi terus balikin egg)
-                print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
-                equipTeam("Hatch Tim")
-                -- v17.3: tunggu Koi masuk + jeda 6 detik baru hatch
-                local hatchTarget = 0
-                if teamData["Hatch Tim"] and teamData["Hatch Tim"].selected then
-                    for _ in pairs(teamData["Hatch Tim"].selected) do hatchTarget = hatchTarget + 1 end
-                end
-                local waited = 0
-                while waited < 10 do
-                    local g = countGardenPets()
-                    if hatchTarget <= 0 or g >= hatchTarget then break end
-                    task.wait(0.3); waited = waited + 0.3
-                end
-                print("[HactTelur] Koi masuk ("..countGardenPets().."/"..hatchTarget.."), tunggu 6 detik...")
-                task.wait(6)
-                hatchAllEggs()
-                task.wait(2)
-                equipTeam("Reduce Tim")
-            else
-                -- masih banyak CD -> Reduce, tunggu
-                equipTeam("Reduce Tim")
-                task.wait(1.5)
-            end
-        end
-        task.wait(0.5)
-        end  -- tutup else (pause terima pet)
+    else
+        targetBtn.Text = cnt.." targets ▼"
+        targetBtn.TextColor3 = C.Accent
     end
-    print("[HactTelur] automation loop STOP")
 end
 
--- v19.0: cek Koi% & Seal% dua-duanya >= 50% (dari tim Sell + Hatch yg dipilih).
--- return: ok(bool), koiPct, sealPct
-gStartBtn.MouseButton1Click:Connect(function()
-    if globalRunning then return end
-    -- v19.0: syarat START — Koi% & Seal% dua-duanya >= 50%
-    if config.reqKoiSeal then
-        PetDetect.rebuild(true)
-        local ok, koi, seal = checkKoiSealOk()
-        if not ok then
-            local minP = config.minKoiSeal or 50
-            gStartBtn.Text = string.format("Koi %.0f%% Seal %.0f%% (<%d%%)", koi, seal, minP)
-            task.delay(2.5, function() if not globalRunning then gStartBtn.Text = "START" end end)
-            print(string.format("[HactTelur] START dibatalkan: Koi %.2f%% Seal %.2f%% (min %d%%)", koi, seal, minP))
-            return
-        end
+local function toggleTarget(name)
+    if not name or name == "" then return end
+    if selectedTargets[name] then
+        selectedTargets[name] = nil
+    else
+        selectedTargets[name] = true
     end
-    Auto.currentTeam = nil
-    globalSetRunning(true)
-    task.spawn(automationLoop)
-    print("[HactTelur] START global — semua tim aktif")
-end)
-
-gStopBtn.MouseButton1Click:Connect(function()
-    if not globalRunning then return end
-    globalSetRunning(false)
-    Auto.currentTeam = nil
-    -- kosongin garden pas stop juga (unequip semua pet)
-    task.spawn(function() task.wait(0.3); clearGarden() end)
-    print("[HactTelur] STOP global")
-end)
-
-local openPetPicker  -- forward declare (didefinisikan di bawah)
-local fruitData       -- forward declare (diisi di makeFruitPanel)
-
--- ============ PANEL TIM (Reduce / Hatch / Sell) ============
--- Dipakai 3x dgn label beda. selectedPets = set per-tim (placeholder).
-local function makeDelayInput(parent, labelTxt, x, default)
-    local wrap = mk("Frame", {
-        Size = UDim2.new(0.5, -5, 0, 50), Position = UDim2.new(x, x > 0 and 5 or 0, 0, 0),
-        BackgroundTransparency = 1, Parent = parent })
-    local l = lbl(wrap, labelTxt, 11, C.textDim)
-    l.Size = UDim2.new(1, 0, 0, 16)
-    local box = mk("TextBox", {
-        Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 18),
-        BackgroundColor3 = C.input, Text = tostring(default), Font = FONT,
-        TextSize = 13, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
-        ClearTextOnFocus = false, Parent = wrap })
-    corner(box, 7); stroke(box, C.border, 1)
-    mk("UIPadding", { PaddingLeft = UDim.new(0, 12), Parent = box })
-    return box
+    persistGiftSettings()
+    updateTargetBtn()
 end
 
-local function makeTeamPanel(tabName)
-    local panel = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-        Visible = (tabName == activeTab), Parent = panelArea })
-    local data = teamData[tabName]
+local function openTargetPicker()
+    if pickerOverlay then pickerOverlay:Destroy() end
 
-    -- panel persentase (pojok kanan atas) — Koi / Bronto / Seal
-    local pctBox = mk("Frame", {
-        Size = UDim2.new(0, 150, 0, 62), Position = UDim2.new(1, -150, 0, 0),
-        BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 5, Parent = panel })
-    corner(pctBox, 8); stroke(pctBox, C.border, 1.5)
-    mk("UIPadding", { PaddingTop = UDim.new(0,6), PaddingLeft = UDim.new(0,10),
-        PaddingRight = UDim.new(0,10), Parent = pctBox })
-    mk("UIListLayout", { Padding = UDim.new(0,2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pctBox })
-    local function pctRow(name)
-        local r = mk("Frame", { Size = UDim2.new(1,0,0,16), BackgroundTransparency = 1, ZIndex = 6, Parent = pctBox })
-        local l = lbl(r, name, 11, C.textDim); l.Size = UDim2.new(0.5, 0, 1, 0); l.ZIndex = 6
-        local v = lbl(r, "—", 11, C.text, Enum.TextXAlignment.Right)
-        v.Font = FONT_B; v.Size = UDim2.new(0.5, 0, 1, 0); v.ZIndex = 6
-        return v
+    pickerOverlay = Instance.new("Frame")
+    pickerOverlay.Size = UDim2.new(1, 0, 1, 0)
+    pickerOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
+    pickerOverlay.BackgroundTransparency = 0.4
+    pickerOverlay.BorderSizePixel = 0
+    pickerOverlay.ZIndex = 100
+    pickerOverlay.Parent = main
+
+    local backBtn = Instance.new("TextButton")
+    backBtn.Size = UDim2.new(1, 0, 1, 0)
+    backBtn.BackgroundTransparency = 1
+    backBtn.Text = "" backBtn.AutoButtonColor = false
+    backBtn.ZIndex = 100
+    backBtn.Parent = pickerOverlay
+
+    local box = Instance.new("Frame")
+    box.Size = UDim2.new(0.85, 0, 0.75, 0)
+    box.Position = UDim2.new(0.5, 0, 0.5, 0)
+    box.AnchorPoint = Vector2.new(0.5, 0.5)
+    box.BackgroundColor3 = C.BG
+    box.BorderSizePixel = 0
+    box.ZIndex = 101
+    box.Parent = pickerOverlay
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+    local bStroke = Instance.new("UIStroke", box)
+    bStroke.Color = C.Accent
+    bStroke.Thickness = 1.5
+
+    -- Guard so backBtn click doesn't propagate when clicking inside box
+    local guard = Instance.new("TextButton")
+    guard.Size = UDim2.new(1, 0, 1, 0)
+    guard.BackgroundTransparency = 1
+    guard.Text = "" guard.AutoButtonColor = false
+    guard.ZIndex = 101
+    guard.Parent = box
+
+    -- Title bar
+    local pTitleBar = Instance.new("Frame")
+    pTitleBar.Size = UDim2.new(1, 0, 0, 32)
+    pTitleBar.BackgroundColor3 = C.Panel
+    pTitleBar.BorderSizePixel = 0
+    pTitleBar.ZIndex = 102
+    pTitleBar.Parent = box
+    Instance.new("UICorner", pTitleBar).CornerRadius = UDim.new(0, 8)
+    local pTbFix = Instance.new("Frame")
+    pTbFix.Size = UDim2.new(1, 0, 0, 10)
+    pTbFix.Position = UDim2.new(0, 0, 1, -10)
+    pTbFix.BackgroundColor3 = C.Panel
+    pTbFix.BorderSizePixel = 0
+    pTbFix.ZIndex = 102
+    pTbFix.Parent = pTitleBar
+
+    local pTitle = Instance.new("TextLabel")
+    pTitle.Size = UDim2.new(1, -120, 1, 0)
+    pTitle.Position = UDim2.new(0, 12, 0, 0)
+    pTitle.BackgroundTransparency = 1
+    pTitle.Text = "Target (multi)"
+    pTitle.TextColor3 = C.Accent
+    pTitle.Font = Enum.Font.GothamBold
+    pTitle.TextSize = 13
+    pTitle.TextXAlignment = Enum.TextXAlignment.Left
+    pTitle.ZIndex = 103
+    pTitle.Parent = pTitleBar
+
+    local doneBtn = Instance.new("TextButton")
+    doneBtn.Size = UDim2.new(0, 56, 0, 22)
+    doneBtn.Position = UDim2.new(1, -110, 0.5, -11)
+    doneBtn.BackgroundColor3 = C.Green
+    doneBtn.Text = "DONE"
+    doneBtn.TextColor3 = Color3.new(0, 0, 0)
+    doneBtn.Font = Enum.Font.GothamBold
+    doneBtn.TextSize = 10
+    doneBtn.BorderSizePixel = 0
+    doneBtn.AutoButtonColor = false
+    doneBtn.ZIndex = 103
+    doneBtn.Parent = pTitleBar
+    Instance.new("UICorner", doneBtn).CornerRadius = UDim.new(0, 4)
+
+    local clearBtn = Instance.new("TextButton")
+    clearBtn.Size = UDim2.new(0, 40, 0, 22)
+    clearBtn.Position = UDim2.new(1, -50, 0.5, -11)
+    clearBtn.BackgroundColor3 = C.Red
+    clearBtn.Text = "CLR"
+    clearBtn.TextColor3 = Color3.new(1, 1, 1)
+    clearBtn.Font = Enum.Font.GothamBold
+    clearBtn.TextSize = 10
+    clearBtn.BorderSizePixel = 0
+    clearBtn.AutoButtonColor = false
+    clearBtn.ZIndex = 103
+    clearBtn.Parent = pTitleBar
+    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 4)
+
+    -- Search box
+    local pSearch = Instance.new("TextBox")
+    pSearch.Size = UDim2.new(1, -16, 0, 28)
+    pSearch.Position = UDim2.new(0, 8, 0, 40)
+    pSearch.BackgroundColor3 = C.Card
+    pSearch.Text = ""
+    pSearch.PlaceholderText = "Search..."
+    pSearch.PlaceholderColor3 = C.Dim
+    pSearch.TextColor3 = C.Text
+    pSearch.Font = Enum.Font.Gotham
+    pSearch.TextSize = 12
+    pSearch.TextXAlignment = Enum.TextXAlignment.Center
+    pSearch.ClearTextOnFocus = false
+    pSearch.BorderSizePixel = 0
+    pSearch.ZIndex = 102
+    pSearch.Parent = box
+    Instance.new("UICorner", pSearch).CornerRadius = UDim.new(0, 4)
+
+    -- List scroll
+    local pScroll = Instance.new("ScrollingFrame")
+    pScroll.Size = UDim2.new(1, -16, 1, -80)
+    pScroll.Position = UDim2.new(0, 8, 0, 76)
+    pScroll.BackgroundTransparency = 1
+    pScroll.BorderSizePixel = 0
+    pScroll.ScrollBarThickness = 4
+    pScroll.ScrollBarImageColor3 = C.Accent
+    pScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    pScroll.ZIndex = 102
+    pScroll.Parent = box
+    local pLayout = Instance.new("UIListLayout")
+    pLayout.Padding = UDim.new(0, 4)
+    pLayout.Parent = pScroll
+
+    local function closePicker()
+        if pickerOverlay then pickerOverlay:Destroy() end
+        pickerOverlay = nil
     end
-    local pctKoi   = pctRow("Koi")
-    local pctBront = pctRow("Bronto")
-    local pctSeal  = pctRow("Seal")
-    -- fungsi refresh (dipanggil saat tab dibuka / pilihan berubah)
-    data.refreshPct = function()
-        task.spawn(function()
-            -- gabung semua pet yg dipilih dari semua tim (Reduce/Hatch/Sell)
-            local allSel = {}
-            for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-                if teamData[tn] and teamData[tn].selected then
-                    for u in pairs(teamData[tn].selected) do allSel[u] = true end
-                end
-            end
-            local k = PetDetect.sumPctSelected(allSel, "Koi", "koi")
-            local b = PetDetect.sumPctSelected(allSel, "Brontosaurus", "bronto")
-            local s = PetDetect.sumPctSelected(allSel, "Seal", "seal")
-            pctKoi.Text   = string.format("%.2f%%", k)
-            pctBront.Text = string.format("%.2f%%", b)
-            pctSeal.Text  = string.format("%.2f%%", s)
-        end)
-    end
-
-    -- delay row (dikecilin lebarnya biar gak ketabrak panel persen)
-    local delayRow = mk("Frame", {
-        Size = UDim2.new(1, -160, 0, 50), BackgroundTransparency = 1, Parent = panel })
-    makeDelayInput(delayRow, "Delay Equip (sec)", 0, data.delayEquip)
-    makeDelayInput(delayRow, "Delay Unequip (sec)", 0.5, data.delayUnequip)
-
-    -- TOMBOL pilih pet (buka picker) — sesuai req: search pet diganti jadi tombol
-    local pickBtn = mk("TextButton", {
-        Size = UDim2.new(1, 0, 0, 38), Position = UDim2.new(0, 0, 0, 62),
-        BackgroundColor3 = C.card, Text = "", AutoButtonColor = false, Parent = panel })
-    corner(pickBtn, 8); stroke(pickBtn, C.border, 1)
-    local pickLbl = lbl(pickBtn, data.label .. "  (0 dipilih)", 12, C.text)
-    pickLbl.Position = UDim2.new(0, 14, 0, 0)
-    pickLbl.Size = UDim2.new(1, -40, 1, 0)
-    pickLbl.Font = FONT_SB
-    local chevron = lbl(pickBtn, ">", 14, C.textDim, Enum.TextXAlignment.Right)
-    chevron.Position = UDim2.new(1, -30, 0, 0)
-    chevron.Size = UDim2.new(0, 20, 1, 0)
-    pickBtn.MouseButton1Click:Connect(function()
-        openPetPicker(tabName)
+    backBtn.MouseButton1Click:Connect(closePicker)
+    doneBtn.MouseButton1Click:Connect(closePicker)
+    clearBtn.MouseButton1Click:Connect(function()
+        selectedTargets = {}
+        persistGiftSettings()
+        updateTargetBtn()
     end)
-    data.pickLbl = pickLbl
 
-    -- v0.9: ringkasan pet yg dipakai (muncul di bawah tombol pilih)
-    local sumScroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, 0, 1, -158), Position = UDim2.new(0, 0, 0, 106),
-        BackgroundColor3 = C.card, BorderSizePixel = 0,
-        ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
-        CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Parent = panel })
-    corner(sumScroll, 8); stroke(sumScroll, C.border, 1.5)
-    mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sumScroll })
-    mk("UIPadding", { PaddingTop = UDim.new(0,6), PaddingBottom = UDim.new(0,6),
-        PaddingLeft = UDim.new(0,10), PaddingRight = UDim.new(0,10), Parent = sumScroll })
-
-    local sumRows = {}
-    local function refreshSummary()
-        for _, r in ipairs(sumRows) do r:Destroy() end
-        sumRows = {}
-        -- bikin lookup uuid->info dari backpack biar dapet nama
-        local info = {}
-        for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[p.uuid] = p end
-        local any = false
-        for uuid in pairs(data.selected) do
-            any = true
-            local p = info[uuid]
-            local txt
-            if p then
-                txt = "• " .. ((p.mut and ("["..p.mut.."] ") or "") .. p.name)
-                if p.dispKg then txt = txt .. string.format("  (%.2f KG)", p.dispKg) end
-            else
-                txt = "• " .. uuid:sub(1, 8) .. "…"  -- gak ketemu di backpack (mungkin di-place)
-            end
-            local row = lbl(sumScroll, txt, 11, C.text)
-            row.Size = UDim2.new(1, 0, 0, 15)
-            row.TextTruncate = Enum.TextTruncate.AtEnd
-            table.insert(sumRows, row)
+    local function renderList(filter)
+        for _, c in ipairs(pScroll:GetChildren()) do
+            if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
         end
-        if not any then
-            local empty = lbl(sumScroll, "Belum ada pet dipilih", 11, C.textMute, Enum.TextXAlignment.Center)
-            empty.Size = UDim2.new(1, 0, 0, 15)
-            table.insert(sumRows, empty)
-        end
-    end
-    data.refreshSummary = refreshSummary
-    refreshSummary()
-
-    tabPanels[tabName] = panel
-    return panel
-end
-
--- ============ PANEL CONFIG ============
-local function makeConfigPanel()
-    local panel = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-        Visible = false, Parent = panelArea })
-
-    -- area scroll (semua isi config masuk sini biar gak kepotong)
-    local content = mk("ScrollingFrame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ClipsDescendants = true,
-        BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
-        CanvasSize = UDim2.new(0, 0, 0, 470), Parent = panel })
-
-    -- ===== EGG CONFIG (header) =====
-    local title = lbl(content, "Egg Config", 13, C.text)
-    title.Font = FONT_B
-    title.Position = UDim2.new(0, 4, 0, 0)
-    title.Size = UDim2.new(1, -8, 0, 20)
-
-    -- baris: "Egg Inventory" + dropdown Select Egg
-    local lblInv = lbl(content, "Egg Inventory", 12, C.textDim)
-    lblInv.Position = UDim2.new(0, 4, 0, 32)
-    lblInv.Size = UDim2.new(0.5, 0, 0, 32)
-
-    local ddBtn = mk("TextButton", {
-        Size = UDim2.new(0.5, -4, 0, 32), Position = UDim2.new(0.5, 4, 0, 32),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = content })
-    corner(ddBtn, 7); stroke(ddBtn, C.border, 1)
-    local ddLabel = lbl(ddBtn, "Select Egg…", 12, C.textDim, Enum.TextXAlignment.Left)
-    ddLabel.Position = UDim2.new(0, 12, 0, 0); ddLabel.Size = UDim2.new(1, -36, 1, 0)
-    local ddChev = lbl(ddBtn, "▼", 10, C.textDim, Enum.TextXAlignment.Right)
-    ddChev.Position = UDim2.new(1, -26, 0, 0); ddChev.Size = UDim2.new(0, 18, 1, 0)
-
-    -- baris: Max Place Egg (0 = auto deteksi maks asli)
-    local lblMax = lbl(content, "Max Place Egg (0=auto)", 12, C.textDim)
-    lblMax.Position = UDim2.new(0, 4, 0, 68); lblMax.Size = UDim2.new(0.6, 0, 0, 28)
-    local maxBox = mk("TextBox", {
-        Size = UDim2.new(0.4, -4, 0, 28), Position = UDim2.new(0.6, 4, 0, 68),
-        BackgroundColor3 = C.input, Text = tostring(config.maxEggManual or 0),
-        Font = FONT, TextSize = 12, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
-        ClearTextOnFocus = false, Parent = content })
-    corner(maxBox, 6); stroke(maxBox, C.border, 1)
-    maxBox.FocusLost:Connect(function()
-        local v = tonumber(maxBox.Text) or 0
-        if v < 0 then v = 0 end
-        config.maxEggManual = v
-        maxBox.Text = tostring(v)
-        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-    end)
-    -- update juga saat teks berubah (jaga2 FocusLost gak ke-trigger di mobile)
-    maxBox:GetPropertyChangedSignal("Text"):Connect(function()
-        local v = tonumber(maxBox.Text)
-        if v and v >= 0 then
-            config.maxEggManual = v
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end
-    end)
-    _G.HactTelurSetMaxEggUI = function() maxBox.Text = tostring(config.maxEggManual or 0) end
-
-    -- baris: Delay Hatch (detik) — jeda setelah tim Koi masuk sebelum hatch
-    local lblHd = lbl(content, "Delay Hatch (detik)", 12, C.textDim)
-    lblHd.Position = UDim2.new(0, 4, 0, 104); lblHd.Size = UDim2.new(0.6, 0, 0, 28)
-    local hdBox = mk("TextBox", {
-        Size = UDim2.new(0.4, -4, 0, 28), Position = UDim2.new(0.6, 4, 0, 104),
-        BackgroundColor3 = C.input, Text = tostring(config.hatchDelay or 6),
-        Font = FONT, TextSize = 12, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
-        ClearTextOnFocus = false, Parent = content })
-    corner(hdBox, 6); stroke(hdBox, C.border, 1)
-    hdBox.FocusLost:Connect(function()
-        local v = tonumber(hdBox.Text)
-        if not v or v < 0 then v = 6 end
-        config.hatchDelay = v
-        hdBox.Text = tostring(v)
-        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-    end)
-    -- v20.6: GetPropertyChangedSignal DIHAPUS — dia auto-save saat UI pertama dibuat
-    -- (Text di-set default "6"), nimpa file save jadi 6 SEBELUM loadConfig jalan.
-    -- Cukup FocusLost buat save. UI restore lewat HactTelurSetHatchDelayUI.
-    _G.HactTelurSetHatchDelayUI = function() hdBox.Text = tostring(config.hatchDelay or 6) end
-
-    local function eggCount()
-        local n = 0; for _ in pairs(config.eggSelected) do n = n + 1 end; return n
-    end
-    local function refreshDdLabel()
-        local n = eggCount()
-        if n == 0 then ddLabel.Text = "Select Egg…"; ddLabel.TextColor3 = C.textDim
-        elseif n == 1 then
-            local nm; for k in pairs(config.eggSelected) do nm = k break end
-            ddLabel.Text = nm; ddLabel.TextColor3 = C.text
-        else ddLabel.Text = n .. " egg dipilih"; ddLabel.TextColor3 = C.text end
-    end
-
-    -- ===== OVERLAY pilih egg (multi-select) =====
-    -- dim background (full panel, semi-transparan) + popup box compact di tengah
-    local dim = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
-        BackgroundTransparency = 0.5, Visible = false, ZIndex = 40, Parent = panel })
-    local overlay = mk("Frame", {
-        Size = UDim2.new(0, 320, 0, 300), Position = UDim2.new(0.5, -160, 0.5, -150),
-        BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 41, Parent = dim })
-    corner(overlay, 10); stroke(overlay, C.border, 1.5)
-    mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,10),
-        PaddingLeft = UDim.new(0,10), PaddingRight = UDim.new(0,10), Parent = overlay })
-    local oTitle = lbl(overlay, "Pilih Egg", 13, C.text)
-    oTitle.Font = FONT_B; oTitle.Position = UDim2.new(0, 0, 0, 0)
-    oTitle.Size = UDim2.new(0.5, 0, 0, 22); oTitle.ZIndex = 42
-    local oCounter = lbl(overlay, "(0)", 11, C.textDim, Enum.TextXAlignment.Right)
-    oCounter.Position = UDim2.new(1, -64, 0, 0); oCounter.Size = UDim2.new(0, 30, 0, 22); oCounter.ZIndex = 42
-    local oClose = mk("TextButton", {
-        Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, -28, 0, 0),
-        BackgroundColor3 = C.card, Text = "X", Font = FONT_B, TextSize = 12,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = overlay })
-    corner(oClose, 6); stroke(oClose, C.border, 1)
-
-    local searchBox = mk("TextBox", {
-        Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 28),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari egg…",
-        PlaceholderColor3 = C.textMute, Font = FONT, TextSize = 13, TextColor3 = C.text,
-        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 42, Parent = overlay })
-    corner(searchBox, 7); stroke(searchBox, C.border, 1)
-    mk("UIPadding", { PaddingLeft = UDim.new(0, 12), Parent = searchBox })
-    local btnAll = mk("TextButton", {
-        Size = UDim2.new(0.5, -3, 0, 26), Position = UDim2.new(0, 0, 0, 64),
-        BackgroundColor3 = C.card, Text = "Semua", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = overlay })
-    corner(btnAll, 6); stroke(btnAll, C.border, 1)
-    local btnNone = mk("TextButton", {
-        Size = UDim2.new(0.5, -3, 0, 26), Position = UDim2.new(0.5, 3, 0, 64),
-        BackgroundColor3 = C.card, Text = "Kosong", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = overlay })
-    corner(btnNone, 6); stroke(btnNone, C.border, 1)
-
-    local listScroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, 0, 1, -98), Position = UDim2.new(0, 0, 0, 96),
-        BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
-        ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 42, Parent = overlay })
-    corner(listScroll, 8); stroke(listScroll, C.border, 1)
-    mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = listScroll })
-    mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,4),
-        PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), Parent = listScroll })
-
-    local rows = {}
-    local function refreshCounter() oCounter.Text = "("..eggCount()..")" end
-    local function buildList(filter)
-        for _, r in ipairs(rows) do r:Destroy() end
-        rows = {}
         filter = (filter or ""):lower()
-        -- bikin list egg + jumlah, sort: jumlah terbanyak di atas, lalu alfabet
-        local list = {}
-        for _, egg in ipairs(EGG_LIST) do
-            list[#list+1] = { name = egg, count = EggDetect.getCount(egg) }
+
+        -- Build combined list: saved + server players + already-selected (preserve picks)
+        local saved = loadTargets()
+        local seen = {}
+        local items = {}
+        -- 1) Selected targets first (so they don't disappear)
+        for n in pairs(selectedTargets) do
+            local p = findPlayerByName(n)
+            table.insert(items, {name=n, saved=true, online=(p ~= nil), picked=true})
+            seen[n:lower()] = true
         end
-        table.sort(list, function(a, b)
+        -- 2) Recent saved (yellow)
+        for _, name in ipairs(saved) do
+            if not seen[name:lower()] then
+                local p = findPlayerByName(name)
+                table.insert(items, {name=name, saved=true, online=(p ~= nil), picked=false})
+                seen[name:lower()] = true
+            end
+        end
+        -- 3) Server players not in saved
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player and not seen[p.Name:lower()] then
+                table.insert(items, {name=p.Name, saved=false, online=true, picked=false})
+            end
+        end
+
+        for _, it in ipairs(items) do
+            if filter == "" or it.name:lower():find(filter, 1, true) then
+                local row = Instance.new("TextButton")
+                row.Size = UDim2.new(1, -4, 0, 30)
+                local isPicked = selectedTargets[it.name] == true
+                if isPicked then
+                    row.BackgroundColor3 = C.Green
+                    row.TextColor3 = Color3.new(0, 0, 0)
+                    row.Font = Enum.Font.GothamBold
+                elseif it.saved then
+                    row.BackgroundColor3 = C.Accent
+                    row.TextColor3 = Color3.new(0, 0, 0)
+                    row.Font = Enum.Font.GothamBold
+                else
+                    row.BackgroundColor3 = C.Card
+                    row.TextColor3 = C.Text
+                    row.Font = Enum.Font.Gotham
+                end
+                local prefix = isPicked and "v " or "  "
+                local suffix = (it.saved and not it.online) and " (offline)" or ""
+                row.Text = prefix..it.name..suffix
+                row.TextSize = 12
+                row.TextXAlignment = Enum.TextXAlignment.Left
+                row.BorderSizePixel = 0
+                row.AutoButtonColor = false
+                row.ZIndex = 103
+                row.Parent = pScroll
+                Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+                local rPad = Instance.new("UIPadding", row)
+                rPad.PaddingLeft = UDim.new(0, 10)
+
+                row.MouseButton1Click:Connect(function()
+                    toggleTarget(it.name)
+                    renderList(pSearch.Text)
+                end)
+            end
+        end
+        pScroll.CanvasSize = UDim2.new(0, 0, 0, pLayout.AbsoluteContentSize.Y + 8)
+    end
+
+    pSearch:GetPropertyChangedSignal("Text"):Connect(function() renderList(pSearch.Text) end)
+    renderList("")
+end
+
+targetBtn.MouseButton1Click:Connect(openTargetPicker)
+
+-- legacy stub (some code references it)
+local function renderRecent() end
+
+-- ============================================================
+-- PET TYPE PICKER MODAL (multi-select)
+-- ============================================================
+local function updatePetPickBtn()
+    local cnt = petTypeCount()
+    if cnt == 0 then
+        petPickBtn.Text = "Jenis Pet ▼"
+        petPickBtn.TextColor3 = C.Dim
+    else
+        petPickBtn.Text = cnt.." pet ▼"
+        petPickBtn.TextColor3 = C.Accent
+    end
+end
+
+local function openPetPicker()
+    if pickerOverlay then pickerOverlay:Destroy() end
+
+    pickerOverlay = Instance.new("Frame")
+    pickerOverlay.Size = UDim2.new(1, 0, 1, 0)
+    pickerOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
+    pickerOverlay.BackgroundTransparency = 0.4
+    pickerOverlay.BorderSizePixel = 0
+    pickerOverlay.ZIndex = 100
+    pickerOverlay.Parent = main
+
+    local backBtn = Instance.new("TextButton")
+    backBtn.Size = UDim2.new(1, 0, 1, 0)
+    backBtn.BackgroundTransparency = 1
+    backBtn.Text = "" backBtn.AutoButtonColor = false
+    backBtn.ZIndex = 100
+    backBtn.Parent = pickerOverlay
+
+    local box = Instance.new("Frame")
+    box.Size = UDim2.new(0.85, 0, 0.75, 0)
+    box.Position = UDim2.new(0.5, 0, 0.5, 0)
+    box.AnchorPoint = Vector2.new(0.5, 0.5)
+    box.BackgroundColor3 = C.BG
+    box.BorderSizePixel = 0
+    box.ZIndex = 101
+    box.Parent = pickerOverlay
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+    local bStroke = Instance.new("UIStroke", box)
+    bStroke.Color = C.Accent
+    bStroke.Thickness = 1.5
+
+    local guard = Instance.new("TextButton")
+    guard.Size = UDim2.new(1, 0, 1, 0)
+    guard.BackgroundTransparency = 1
+    guard.Text = "" guard.AutoButtonColor = false
+    guard.ZIndex = 101
+    guard.Parent = box
+
+    local pTitleBar = Instance.new("Frame")
+    pTitleBar.Size = UDim2.new(1, 0, 0, 32)
+    pTitleBar.BackgroundColor3 = C.Panel
+    pTitleBar.BorderSizePixel = 0
+    pTitleBar.ZIndex = 102
+    pTitleBar.Parent = box
+    Instance.new("UICorner", pTitleBar).CornerRadius = UDim.new(0, 8)
+    local pTbFix = Instance.new("Frame")
+    pTbFix.Size = UDim2.new(1, 0, 0, 10)
+    pTbFix.Position = UDim2.new(0, 0, 1, -10)
+    pTbFix.BackgroundColor3 = C.Panel
+    pTbFix.BorderSizePixel = 0
+    pTbFix.ZIndex = 102
+    pTbFix.Parent = pTitleBar
+
+    local pTitle = Instance.new("TextLabel")
+    pTitle.Size = UDim2.new(1, -120, 1, 0)
+    pTitle.Position = UDim2.new(0, 12, 0, 0)
+    pTitle.BackgroundTransparency = 1
+    pTitle.Text = "Pilih Jenis Pet"
+    pTitle.TextColor3 = C.Accent
+    pTitle.Font = Enum.Font.GothamBold
+    pTitle.TextSize = 13
+    pTitle.TextXAlignment = Enum.TextXAlignment.Left
+    pTitle.ZIndex = 103
+    pTitle.Parent = pTitleBar
+
+    local doneBtn = Instance.new("TextButton")
+    doneBtn.Size = UDim2.new(0, 56, 0, 22)
+    doneBtn.Position = UDim2.new(1, -110, 0.5, -11)
+    doneBtn.BackgroundColor3 = C.Green
+    doneBtn.Text = "✓ DONE"
+    doneBtn.TextColor3 = Color3.new(0, 0, 0)
+    doneBtn.Font = Enum.Font.GothamBold
+    doneBtn.TextSize = 10
+    doneBtn.BorderSizePixel = 0
+    doneBtn.AutoButtonColor = false
+    doneBtn.ZIndex = 103
+    doneBtn.Parent = pTitleBar
+    Instance.new("UICorner", doneBtn).CornerRadius = UDim.new(0, 4)
+
+    local clearBtn = Instance.new("TextButton")
+    clearBtn.Size = UDim2.new(0, 40, 0, 22)
+    clearBtn.Position = UDim2.new(1, -50, 0.5, -11)
+    clearBtn.BackgroundColor3 = C.Red
+    clearBtn.Text = "CLR"
+    clearBtn.TextColor3 = Color3.new(1, 1, 1)
+    clearBtn.Font = Enum.Font.GothamBold
+    clearBtn.TextSize = 10
+    clearBtn.BorderSizePixel = 0
+    clearBtn.AutoButtonColor = false
+    clearBtn.ZIndex = 103
+    clearBtn.Parent = pTitleBar
+    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 4)
+
+    local pSearch = Instance.new("TextBox")
+    pSearch.Size = UDim2.new(1, -16, 0, 28)
+    pSearch.Position = UDim2.new(0, 8, 0, 40)
+    pSearch.BackgroundColor3 = C.Card
+    pSearch.Text = ""
+    pSearch.PlaceholderText = "Cari pet..."
+    pSearch.PlaceholderColor3 = C.Dim
+    pSearch.TextColor3 = C.Text
+    pSearch.Font = Enum.Font.Gotham
+    pSearch.TextSize = 12
+    pSearch.ClearTextOnFocus = false
+    pSearch.BorderSizePixel = 0
+    pSearch.ZIndex = 102
+    pSearch.Parent = box
+    Instance.new("UICorner", pSearch).CornerRadius = UDim.new(0, 4)
+    local psPad = Instance.new("UIPadding", pSearch)
+    psPad.PaddingLeft = UDim.new(0, 10)
+
+    local pScroll = Instance.new("ScrollingFrame")
+    pScroll.Size = UDim2.new(1, -16, 1, -80)
+    pScroll.Position = UDim2.new(0, 8, 0, 76)
+    pScroll.BackgroundTransparency = 1
+    pScroll.BorderSizePixel = 0
+    pScroll.ScrollBarThickness = 4
+    pScroll.ScrollBarImageColor3 = C.Accent
+    pScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    pScroll.ZIndex = 102
+    pScroll.Parent = box
+    local pLayout = Instance.new("UIListLayout")
+    pLayout.Padding = UDim.new(0, 3)
+    pLayout.Parent = pScroll
+
+    local function closePicker()
+        if pickerOverlay then pickerOverlay:Destroy() end
+        pickerOverlay = nil
+        updatePetPickBtn()
+    end
+    backBtn.MouseButton1Click:Connect(closePicker)
+    doneBtn.MouseButton1Click:Connect(closePicker)
+    clearBtn.MouseButton1Click:Connect(function()
+        selectedPetTypes = {}
+        persistGiftSettings()
+    end)
+
+    local function renderList(filter)
+        for _, c in ipairs(pScroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        filter = (filter or ""):lower()
+        -- Build pet type list from: backpack + memContainer (storage/booth) + already-selected types
+        local byType = {}
+        -- 1) backpack
+        local bp = player:FindFirstChild("Backpack")
+        if bp then
+            for _, tool in ipairs(bp:GetChildren()) do
+                if tool:IsA("Tool") and tool:GetAttribute("PET_UUID") then
+                    local pType = stripMutation(tostring(tool:GetAttribute("f") or "?"))
+                    byType[pType] = (byType[pType] or 0) + 1
+                end
+            end
+        end
+        -- 2) memContainer (storage, booth, pets seen)
+        if cachedContainer then
+            for _, entry in pairs(cachedContainer) do
+                if type(entry) == "table" and entry.PetType then
+                    local pType = stripMutation(tostring(entry.PetType))
+                    if not byType[pType] then byType[pType] = 0 end
+                    -- don't double-count backpack, but make sure type exists in list
+                end
+            end
+        end
+        -- 3) already-selected types (so they don't disappear if not in backpack)
+        for k in pairs(selectedPetTypes) do
+            if not byType[k] then byType[k] = 0 end
+        end
+        local items = {}
+        for k, v in pairs(byType) do table.insert(items, {name=k, count=v}) end
+        table.sort(items, function(a, b)
+            -- Selected first
+            local aSel = selectedPetTypes[a.name] and 1 or 0
+            local bSel = selectedPetTypes[b.name] and 1 or 0
+            if aSel ~= bSel then return aSel > bSel end
+            -- Then by count desc (backpack > 0)
             if a.count ~= b.count then return a.count > b.count end
+            -- Then alphabetical
             return a.name < b.name
         end)
-        for i, item in ipairs(list) do
-            local egg = item.name
-            if filter == "" or egg:lower():find(filter, 1, true) then
-                local row = mk("TextButton", {
-                    Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.cardSel,
-                    Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 42, Parent = listScroll })
-                corner(row, 6)
-                local check = lbl(row, config.eggSelected[egg] and "★" or "☆", 15,
-                    config.eggSelected[egg] and C.text or C.textMute)
-                check.Position = UDim2.new(0, 10, 0, 0); check.Size = UDim2.new(0, 24, 1, 0); check.ZIndex = 42
-                local nameL = lbl(row, egg, 12, config.eggSelected[egg] and C.text or C.textDim)
-                nameL.Position = UDim2.new(0, 38, 0, 0); nameL.Size = UDim2.new(1, -100, 1, 0); nameL.ZIndex = 42
-                nameL.TextTruncate = Enum.TextTruncate.AtEnd
-                -- jumlah egg di kanan
-                local cntL = lbl(row, "| "..item.count, 11, item.count > 0 and C.text or C.textMute, Enum.TextXAlignment.Right)
-                cntL.Position = UDim2.new(1, -62, 0, 0); cntL.Size = UDim2.new(0, 56, 1, 0); cntL.ZIndex = 42
-                if item.count > 0 then cntL.Font = FONT_B end
+
+        for _, it in ipairs(items) do
+            if filter == "" or it.name:lower():find(filter, 1, true) then
+                local sel = selectedPetTypes[it.name] == true
+                local row = Instance.new("TextButton")
+                row.Size = UDim2.new(1, -4, 0, 28)
+                row.BackgroundColor3 = sel and C.Accent or C.Card
+                row.Text = (sel and "✓ " or "  ")..it.name..(it.count > 0 and ("  ("..it.count..")") or "")
+                row.TextColor3 = sel and Color3.new(0,0,0) or C.Text
+                row.Font = sel and Enum.Font.GothamBold or Enum.Font.Gotham
+                row.TextSize = 12
+                row.TextXAlignment = Enum.TextXAlignment.Left
+                row.BorderSizePixel = 0
+                row.AutoButtonColor = false
+                row.ZIndex = 103
+                row.Parent = pScroll
+                Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+                local rPad = Instance.new("UIPadding", row)
+                rPad.PaddingLeft = UDim.new(0, 10)
                 row.MouseButton1Click:Connect(function()
-                    config.eggSelected[egg] = (not config.eggSelected[egg]) or nil
-                    local on = config.eggSelected[egg] == true
-                    check.Text = on and "★" or "☆"
-                    check.TextColor3 = on and C.text or C.textMute
-                    nameL.TextColor3 = on and C.text or C.textDim
-                    refreshCounter()
-                    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                end)
-                table.insert(rows, row)
-            end
-        end
-    end
-    searchBox:GetPropertyChangedSignal("Text"):Connect(function() buildList(searchBox.Text) end)
-    btnAll.MouseButton1Click:Connect(function()
-        for _, e in ipairs(EGG_LIST) do config.eggSelected[e] = true end
-        buildList(searchBox.Text); refreshCounter()
-    end)
-    btnNone.MouseButton1Click:Connect(function()
-        config.eggSelected = {}; buildList(searchBox.Text); refreshCounter()
-    end)
-    ddBtn.MouseButton1Click:Connect(function()
-        dim.Visible = true
-        task.spawn(function() EggDetect.scan(); buildList(""); refreshCounter() end)
-    end)
-    oClose.MouseButton1Click:Connect(function()
-        dim.Visible = false; refreshDdLabel()
-    end)
-
-    refreshDdLabel()
-
-    -- ===== SELL PET CONFIG (rule per jenis pet: KG < threshold = SELL) =====
-    local sTitle = lbl(content, "Sell Pet Config", 13, C.text)
-    sTitle.Font = FONT_B
-    sTitle.Position = UDim2.new(0, 4, 0, 116)
-    sTitle.Size = UDim2.new(0.6, 0, 0, 20)
-    local sHint = lbl(content, "KG < threshold = SELL", 10, C.textMute, Enum.TextXAlignment.Right)
-    sHint.Position = UDim2.new(0.5, 0, 0, 118); sHint.Size = UDim2.new(0.5, -4, 0, 16)
-
-    -- daftar rule (scroll)
-    local ruleScroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, -8, 0, 170), Position = UDim2.new(0, 4, 0, 140),
-        BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
-        ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(0, 0, 0, 0),
-        ClipsDescendants = true,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = content })
-    corner(ruleScroll, 7); stroke(ruleScroll, C.border, 1)
-    mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = ruleScroll })
-    mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,4),
-        PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), Parent = ruleScroll })
-    local ruleEmpty = lbl(ruleScroll, "belum ada rule", 11, C.textMute, Enum.TextXAlignment.Center)
-    ruleEmpty.Size = UDim2.new(1, 0, 0, 24)
-
-    local ruleRows = {}
-    local function refreshRules()
-        for _, r in ipairs(ruleRows) do r:Destroy() end
-        ruleRows = {}
-        local any = false
-        local order = 0
-        for petType, rule in pairs(config.sellRules) do
-            any = true; order = order + 1
-            local row = mk("Frame", {
-                Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = Color3.fromRGB(44, 44, 44),
-                LayoutOrder = order, Parent = ruleScroll })
-            corner(row, 5)
-            -- nama pet
-            local nm = lbl(row, petType, 11, C.text)
-            nm.Font = FONT_B
-            nm.Position = UDim2.new(0, 8, 0, 0); nm.Size = UDim2.new(0.38, 0, 1, 0)
-            nm.TextTruncate = Enum.TextTruncate.AtEnd
-            -- "under" + input KG (editable)
-            local underL = lbl(row, "under", 10, C.text, Enum.TextXAlignment.Right)
-            underL.Position = UDim2.new(0.38, 0, 0, 0); underL.Size = UDim2.new(0, 36, 1, 0)
-            local kgIn = mk("TextBox", {
-                Size = UDim2.new(0, 42, 0, 20), Position = UDim2.new(0.38, 40, 0.5, -10),
-                BackgroundColor3 = C.input, Text = tostring(rule.kg or 0), Font = FONT,
-                TextSize = 11, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
-                ClearTextOnFocus = false, Parent = row })
-            corner(kgIn, 4); stroke(kgIn, C.border, 1)
-            kgIn.FocusLost:Connect(function()
-                local v = tonumber(kgIn.Text) or 0
-                config.sellRules[petType].kg = v
-                kgIn.Text = tostring(v)
-                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                task.spawn(function() if not Auto.giftBusy then pcall(syncFavByRules) end end)
-            end)
-            local kgL = lbl(row, "KG", 10, C.text)
-            kgL.Position = UDim2.new(0.38, 84, 0, 0); kgL.Size = UDim2.new(0, 22, 1, 0)
-            -- toggle KEEP / SELL
-            local actBtn = mk("TextButton", {
-                Size = UDim2.new(0, 52, 0, 20), Position = UDim2.new(1, -86, 0.5, -10),
-                BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
-            corner(actBtn, 5); stroke(actBtn, C.border, 1)
-            local actL = lbl(actBtn, "", 10, C.text, Enum.TextXAlignment.Center)
-            actL.Size = UDim2.new(1, 0, 1, 0)
-            local function refreshAct()
-                local a = config.sellRules[petType].action
-                actL.Text = a == "keep" and "KEEP" or "SELL"
-                actL.TextColor3 = a == "keep" and C.text or C.danger
-                -- kalo keep, KG gak relevan (semua disimpan) - redupkan input KG
-                kgIn.TextTransparency = a == "keep" and 0.5 or 0
-                underL.TextTransparency = a == "keep" and 0.5 or 0
-                kgL.TextTransparency = a == "keep" and 0.5 or 0
-            end
-            actBtn.MouseButton1Click:Connect(function()
-                local r = config.sellRules[petType]
-                r.action = (r.action == "keep") and "sell" or "keep"
-                refreshAct()
-                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                task.spawn(function() if not Auto.giftBusy then pcall(syncFavByRules) end end)
-            end)
-            refreshAct()
-            -- hapus
-            local del = mk("TextButton", {
-                Size = UDim2.new(0, 24, 0, 20), Position = UDim2.new(1, -28, 0.5, -10),
-                BackgroundColor3 = C.input, Text = "−", Font = FONT_B, TextSize = 14,
-                TextColor3 = C.danger, AutoButtonColor = false, Parent = row })
-            corner(del, 5)
-            del.MouseButton1Click:Connect(function()
-                config.sellRules[petType] = nil; refreshRules()
-                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-            end)
-            table.insert(ruleRows, row)
-        end
-        ruleEmpty.Visible = not any
-    end
-
-    -- baris tambah rule: dropdown pet + KG + tombol +
-    local lblType = lbl(content, "Select Pet Type", 12, C.textDim)
-    lblType.Position = UDim2.new(0, 4, 0, 318); lblType.Size = UDim2.new(0.4, 0, 0, 30)
-    local petDd = mk("TextButton", {
-        Size = UDim2.new(0.6, -4, 0, 30), Position = UDim2.new(0.4, 4, 0, 318),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = content })
-    corner(petDd, 7); stroke(petDd, C.border, 1)
-    local petDdLabel = lbl(petDd, "Select Pet...", 12, C.textDim, Enum.TextXAlignment.Left)
-    petDdLabel.Position = UDim2.new(0, 12, 0, 0); petDdLabel.Size = UDim2.new(1, -34, 1, 0)
-    lbl(petDd, "▼", 10, C.textDim, Enum.TextXAlignment.Right).Position = UDim2.new(1, -24, 0, 0)
-    local chosenPets = {}   -- {[petName]=true} multi-select
-
-    local lblKg = lbl(content, "KG Threshold", 12, C.textDim)
-    lblKg.Position = UDim2.new(0, 4, 0, 354); lblKg.Size = UDim2.new(0.4, 0, 0, 30)
-    local kgBox = mk("TextBox", {
-        Size = UDim2.new(0.35, -4, 0, 30), Position = UDim2.new(0.4, 4, 0, 354),
-        BackgroundColor3 = C.input, Text = "0", Font = FONT, TextSize = 13, TextColor3 = C.text,
-        TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = content })
-    corner(kgBox, 7); stroke(kgBox, C.border, 1)
-    local addBtn = mk("TextButton", {
-        Size = UDim2.new(0.25, -4, 0, 30), Position = UDim2.new(0.75, 4, 0, 354),
-        BackgroundColor3 = C.card, Text = "+ Tambah", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, Parent = content })
-    corner(addBtn, 7); stroke(addBtn, C.border, 1)
-    addBtn.MouseButton1Click:Connect(function()
-        local kg = tonumber(kgBox.Text) or 0
-        local n = 0
-        for pet in pairs(chosenPets) do
-            config.sellRules[pet] = { action = "sell", kg = kg }
-            n = n + 1
-        end
-        -- v20.8: log detail buat debug save
-        local names = {}
-        for p in pairs(config.sellRules) do table.insert(names, p) end
-        print("[HactTelur] +Tambah "..n.." pet | sellRules sekarang: "..table.concat(names, ", "))
-        if n > 0 then
-            chosenPets = {}
-            petDdLabel.Text = "Select Pet..."; petDdLabel.TextColor3 = C.textDim
-            refreshRules()
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-            task.spawn(function() if not Auto.giftBusy then pcall(syncFavByRules) end end)
-        end
-    end)
-
-    -- toggle Auto Sell + tombol Sell Sekarang
-    local togRow = mk("Frame", {
-        Size = UDim2.new(1, -8, 0, 28), Position = UDim2.new(0, 4, 0, 390),
-        BackgroundTransparency = 1, Parent = content })
-    lbl(togRow, "Auto Sell", 12, C.textDim).Size = UDim2.new(0.5, 0, 1, 0)
-    local tog = mk("TextButton", {
-        Size = UDim2.new(0, 44, 0, 22), Position = UDim2.new(0, 96, 0.5, -11),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = togRow })
-    corner(tog, 11); stroke(tog, C.border, 1)
-    local knob = mk("Frame", { Size = UDim2.new(0, 16, 0, 16), Position = UDim2.new(0, 3, 0.5, -8),
-        BackgroundColor3 = C.textDim, Parent = tog })
-    corner(knob, 8)
-    local function refreshTog()
-        local on = config.autoSell
-        knob.Position = UDim2.new(on and 1 or 0, on and -19 or 3, 0.5, -8)
-        knob.BackgroundColor3 = on and C.accent or C.textDim
-    end
-    tog.MouseButton1Click:Connect(function()
-        config.autoSell = not config.autoSell; refreshTog()
-        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-    end)
-    refreshTog()
-    _G.HactTelurSetAutoSellUI = refreshTog  -- v16.6: biar toggle autoSell ikut ter-update setelah rejoin
-    local sellNowBtn = mk("TextButton", {
-        Size = UDim2.new(0, 130, 0, 26), Position = UDim2.new(1, -130, 0, 1),
-        BackgroundColor3 = C.card, Text = "Sell Sekarang", Font = FONT_SB, TextSize = 11,
-        TextColor3 = C.text, AutoButtonColor = false, Parent = togRow })
-    corner(sellNowBtn, 7); stroke(sellNowBtn, C.border, 1)
-    sellNowBtn.MouseButton1Click:Connect(function()
-        sellNowBtn.Text = "menjual…"
-        task.spawn(function() local n = doAutoSell(); task.wait(0.2); sellNowBtn.Text = "Terjual: "..n; task.wait(1.2); sellNowBtn.Text = "Sell Sekarang" end)
-    end)
-
-    -- overlay pilih jenis pet (popup compact di tengah + dim)
-    local pDim = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
-        BackgroundTransparency = 0.5, Visible = false, ZIndex = 40, Parent = panel })
-    local pOverlay = mk("Frame", {
-        Size = UDim2.new(0, 320, 0, 300), Position = UDim2.new(0.5, -160, 0.5, -150),
-        BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 41, Parent = pDim })
-    corner(pOverlay, 10); stroke(pOverlay, C.border, 1.5)
-    mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,10),
-        PaddingLeft = UDim.new(0,10), PaddingRight = UDim.new(0,10), Parent = pOverlay })
-    local pTitle = lbl(pOverlay, "Pilih Jenis Pet", 13, C.text)
-    pTitle.Font = FONT_B; pTitle.Position = UDim2.new(0, 0, 0, 0)
-    pTitle.Size = UDim2.new(0.7, 0, 0, 22); pTitle.ZIndex = 42
-    local pClose = mk("TextButton", {
-        Size = UDim2.new(0, 28, 0, 22), Position = UDim2.new(1, -28, 0, 0),
-        BackgroundColor3 = C.card, Text = "X", Font = FONT_B, TextSize = 12,
-        TextColor3 = C.text, AutoButtonColor = false, ZIndex = 42, Parent = pOverlay })
-    corner(pClose, 6); stroke(pClose, C.border, 1)
-    local pSearch = mk("TextBox", {
-        Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 28),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari pet…",
-        PlaceholderColor3 = C.textMute, Font = FONT, TextSize = 13, TextColor3 = C.text,
-        TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = 42, Parent = pOverlay })
-    corner(pSearch, 7); stroke(pSearch, C.border, 1)
-    mk("UIPadding", { PaddingLeft = UDim.new(0, 12), Parent = pSearch })
-    local pList = mk("ScrollingFrame", {
-        Size = UDim2.new(1, 0, 1, -68), Position = UDim2.new(0, 0, 0, 66),
-        BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
-        ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 42, Parent = pOverlay })
-    corner(pList, 8); stroke(pList, C.border, 1)
-    mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pList })
-    mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingBottom = UDim.new(0,4),
-        PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), Parent = pList })
-    local pRows = {}
-    local function updatePetDdLabel()
-        local n = 0
-        for _ in pairs(chosenPets) do n = n + 1 end
-        if n == 0 then
-            petDdLabel.Text = "Select Pet..."; petDdLabel.TextColor3 = C.textDim
-        elseif n == 1 then
-            for p in pairs(chosenPets) do petDdLabel.Text = p end
-            petDdLabel.TextColor3 = C.text
-        else
-            petDdLabel.Text = n.." pet dipilih"; petDdLabel.TextColor3 = C.text
-        end
-    end
-    local function buildPetList(filter)
-        for _, r in ipairs(pRows) do r:Destroy() end
-        pRows = {}
-        filter = (filter or ""):lower()
-        for i, pet in ipairs(PET_LIST) do
-            if filter == "" or pet:lower():find(filter, 1, true) then
-                local order = chosenPets[pet] and i or (i + 100000)  -- terpilih naik ke atas
-                local row = mk("TextButton", {
-                    Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.cardSel,
-                    Text = "", AutoButtonColor = false, LayoutOrder = order, ZIndex = 42, Parent = pList })
-                corner(row, 5)
-                local check = lbl(row, chosenPets[pet] and "★" or "☆", 14,
-                    chosenPets[pet] and C.text or C.textMute)
-                check.Position = UDim2.new(0, 8, 0, 0); check.Size = UDim2.new(0, 22, 1, 0); check.ZIndex = 42
-                local nl = lbl(row, pet, 12, chosenPets[pet] and C.text or C.textDim)
-                nl.Position = UDim2.new(0, 34, 0, 0); nl.Size = UDim2.new(1, -38, 1, 0); nl.ZIndex = 42
-                row.MouseButton1Click:Connect(function()
-                    chosenPets[pet] = (not chosenPets[pet]) or nil
-                    updatePetDdLabel()
-                    buildPetList(pSearch.Text)  -- rebuild biar yg dipilih naik ke atas
-                end)
-                table.insert(pRows, row)
-            end
-        end
-    end
-    pSearch:GetPropertyChangedSignal("Text"):Connect(function() buildPetList(pSearch.Text) end)
-    petDd.MouseButton1Click:Connect(function() pDim.Visible = true; buildPetList("") end)
-    pClose.MouseButton1Click:Connect(function() pDim.Visible = false; updatePetDdLabel() end)
-
-    refreshRules()
-
-    -- expose refresh biar UI ke-update setelah loadConfig (egg checklist + rule list)
-    _G.HactTelurRefreshConfig = function()
-        pcall(function() buildList(searchBox.Text or "") end)
-        pcall(refreshCounter)
-        pcall(refreshDdLabel)  -- v16.6: update label dropdown egg (Select Egg -> nama/jumlah) setelah rejoin
-        pcall(refreshRules)
-        if _G.HactTelurSetMaxEggUI then pcall(_G.HactTelurSetMaxEggUI) end
-        -- refresh label target gift (biar username tersimpan tampil walau player offline)
-        if _G.HactTelurGiftTargetLabels then
-            for _, fn in pairs(_G.HactTelurGiftTargetLabels) do pcall(fn) end
-        end
-    end
-
-    tabPanels["Config"] = panel
-    return panel
-end
-
--- ============ AUTO BUY (seed/egg/gear) ============
--- remote: BuySeedStock, BuyGearStock, BuyPetEgg. argumen = nama item (string).
--- v17.7: multi-select — items = set {nama=true}, beli semua yg dicentang.
-local AutoBuy = {
-    seed = { on = false, items = {}, remote = "BuySeedStock", dataKey = "SeedData" },
-    egg  = { on = false, items = {}, remote = "BuyPetEgg",    dataKey = "PetEggData" },
-    gear = { on = false, items = {}, remote = "BuyGearStock", dataKey = "GearData" },
-}
-
--- ambil daftar nama item dari RS.Data.<dataKey>
-local function getBuyItemList(dataKey)
-    local out, seen = {}, {}
-    pcall(function()
-        local dataF = game:GetService("ReplicatedStorage"):FindFirstChild("Data")
-        local mod = dataF and dataF:FindFirstChild(dataKey)
-        if not mod then return end
-        local ok, tbl = pcall(require, mod)
-        if ok and type(tbl) == "table" then
-            for k, v in pairs(tbl) do
-                local nm = nil
-                -- kasus 1: key = nama item (string)
-                if type(k) == "string" and #k >= 2 and not k:match("^_") then
-                    nm = k
-                -- kasus 2: array, value punya .Name / .SeedName / .ItemName
-                elseif type(v) == "table" then
-                    nm = v.Name or v.SeedName or v.ItemName or v.DisplayName
-                end
-                if nm and type(nm) == "string" and not seen[nm] then
-                    seen[nm] = true
-                    table.insert(out, nm)
-                end
-            end
-        end
-    end)
-    table.sort(out)
-    return out
-end
-
--- fire beli semua item yg dicentang
-local function fireBuy(kind)
-    local cfg = AutoBuy[kind]
-    if not cfg then return end
-    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-    local re = ge and ge:FindFirstChild(cfg.remote)
-    if not re then return end
-    for itemName in pairs(cfg.items) do
-        pcall(function() re:FireServer(itemName) end)
-        task.wait(0.1)
-    end
-end
-
--- loop auto-buy: tiap kind punya loop sendiri, jalan saat .on = true
-for _, kind in ipairs({"seed","egg","gear"}) do
-    task.spawn(function()
-        while true do
-            task.wait(1)
-            local cfg = AutoBuy[kind]
-            if cfg.on and next(cfg.items) then
-                pcall(function() fireBuy(kind) end)
-            end
-        end
-    end)
-end
-
--- ============ PROMPT PURCHASE (beli item Robux pakai TOKEN) ============
--- game ini: 1 token = 1 robux. item Robux (dev product) bisa dibeli pakai token
--- via RemoteFunction "Purchase":InvokeServer(purchaseId). daftar id dari RS.Data.DevProductIds.
-local PromptBuy = { item = nil, itemId = nil, payWith = "token", on = false }
-
--- ambil daftar item beli pakai token: dari module shop/pack (nama rapi + harga + id).
--- v17.9: baca ExoticPackData (tiap pack x4 varian 1/3/10/50 -> Products+FallbackPrices)
--- + SeedShopData (seed biasa). format nama: "+50 PREMIUM BIRD EGG! | 4999 R$".
-local _devProdCache = nil
-local function getDevProductList()
-    if _devProdCache then return _devProdCache end
-    local out = {}
-    local function req(name)
-        local dataF = game:GetService("ReplicatedStorage"):FindFirstChild("Data")
-        local mod = dataF and dataF:FindFirstChild(name)
-        if not mod then return nil end
-        local ok, tbl = pcall(require, mod)
-        if ok and type(tbl) == "table" then return tbl end
-        return nil
-    end
-
-    -- 1) ExoticPackData: tiap pack punya Products{1,3,10,50} + FallbackPrices{...}
-    local exotic = req("ExoticPackData")
-    if exotic then
-        for key, pack in pairs(exotic) do
-            if type(pack) == "table" then
-                local title = pack.Title or pack.Pity or tostring(key)
-                local products = pack.Products
-                local prices = pack.FallbackPrices
-                if type(products) == "table" then
-                    for amount, pid in pairs(products) do
-                        if type(pid) == "number" and pid > 0 then
-                            local price = (type(prices)=="table" and prices[amount]) or nil
-                            local label = "+"..tostring(amount).." "..title
-                            if price then label = label.."  |  "..price.." R$" end
-                            table.insert(out, { name = label, id = pid, sort = title.." "..string.format("%03d", tonumber(amount) or 0) })
-                        end
+                    if selectedPetTypes[it.name] then
+                        selectedPetTypes[it.name] = nil
+                    else
+                        selectedPetTypes[it.name] = true
                     end
-                end
+                    persistGiftSettings()
+                    renderList(pSearch.Text)
+                end)
             end
         end
+        pScroll.CanvasSize = UDim2.new(0, 0, 0, pLayout.AbsoluteContentSize.Y + 8)
     end
 
-    -- 2.5) InfinitePackData & EventInfinitePackData: FallbackPrices = {id=harga}
-    for _, modName in ipairs({"InfinitePackData","EventInfinitePackData"}) do
-        local m = req(modName)
-        if m and type(m.FallbackPrices) == "table" then
-            for pid, price in pairs(m.FallbackPrices) do
-                if type(pid) == "number" and pid > 1000000 then
-                    table.insert(out, { name = modName:gsub("Data","").." | "..tostring(price).." R$",
-                        id = pid, sort = "yyy "..modName.." "..string.format("%05d", tonumber(price) or 0) })
-                end
-            end
-        end
-    end
-
-    -- 2) SeedShopData: seed biasa (nama, price sheckles, id dev product)
-    local seedShop = req("SeedShopData")
-    if seedShop then
-        for name, info in pairs(seedShop) do
-            if type(info) == "table" and info.id and tonumber(info.id) then
-                local label = "Seed: "..tostring(name)
-                table.insert(out, { name = label, id = tonumber(info.id), sort = "zzz "..tostring(name) })
-            end
-        end
-    end
-
-    -- 2b) PetEggData: egg biasa. PurchaseID = id token, FallbackPrice = harga ROBUX
-    -- (Price = sheckles, JANGAN dipakai). bisa beli pakai token.
-    local eggData = req("PetEggData")
-    if eggData then
-        for name, info in pairs(eggData) do
-            if type(info) == "table" and info.PurchaseID and tonumber(info.PurchaseID) then
-                local id = tonumber(info.PurchaseID)
-                local price = info.FallbackPrice  -- harga robux/token
-                local label = "Egg: "..(info.EggName or tostring(name))
-                if price then label = label.." | "..tostring(price).." R$" end
-                table.insert(out, { name = label, id = id, sort = "zzy "..tostring(name) })
-            end
-        end
-    end
-
-    -- 3) fallback: DevProductIds statis (yg belum kebawa di atas)
-    local seenId = {}
-    for _, it in ipairs(out) do seenId[it.id] = true end
-    local devIds = req("DevProductIds")
-    if devIds then
-        for name, v in pairs(devIds) do
-            local id = (type(v)=="table" and (v.PurchaseID or v.PurchaseId)) or (type(v)=="number" and v)
-            if type(name)=="string" and id and tonumber(id) and tonumber(id)>0 and not seenId[tonumber(id)] then
-                table.insert(out, { name = name, id = tonumber(id), sort = "zzzz "..name })
-            end
-        end
-    end
-
-    -- 3) getgc: SEMUA dev product id di memory (566+, termasuk egg premium tersembunyi).
-    -- ini yg bikin lengkap. nama+harga di-lazy-load via GetProductInfo saat tampil.
-    -- freeze ~1-2 detik sekali (di-cache), sama kayak sc lain.
-    local seenId2 = {}
-    for _, it in ipairs(out) do seenId2[it.id] = true end
-    if getgc then
-        pcall(function()
-            for _, obj in pairs(getgc(true)) do
-                if type(obj) == "table" then
-                    for _, key in ipairs({"PurchaseID","PurchaseId","ProductId","DeveloperProductId","DevProductId"}) do
-                        local v = rawget(obj, key)
-                        if type(v) == "number" and v > 1000000 and v < 9999999999 and not seenId2[v] then
-                            seenId2[v] = true
-                            local nm = rawget(obj,"Name") or rawget(obj,"DisplayName") or rawget(obj,"Title")
-                            table.insert(out, {
-                                name = (type(nm)=="string" and nm) or ("Product "..v),
-                                id = v, sort = "zzzzz "..tostring(v),
-                            })
-                        end
-                    end
-                end
-            end
-        end)
-    end
-
-    table.sort(out, function(a, b) return (a.sort or a.name) < (b.sort or b.name) end)
-    _devProdCache = out
-    return out
+    pSearch:GetPropertyChangedSignal("Text"):Connect(function() renderList(pSearch.Text) end)
+    renderList("")
 end
 
--- beli 1x: token (RemoteFunction Purchase) atau robux (MarketplaceService prompt)
-local function firePromptBuy()
-    if not PromptBuy.itemId then
-        print("[HactTelur] BUY GAGAL: itemId kosong (pilih item/ketik ID dulu)")
-        return false
-    end
-    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-    if not ge then print("[HactTelur] BUY GAGAL: GameEvents gak ada"); return false end
-    print("[HactTelur] BUY coba: id="..tostring(PromptBuy.itemId).." pay="..tostring(PromptBuy.payWith))
-    if PromptBuy.payWith == "token" then
-        -- v19.9: Purchase/CanPurchase bisa NESTED (bukan anak langsung) -> cari recursive
-        local canPur = ge:FindFirstChild("CanPurchase", true)
-        local pur = ge:FindFirstChild("Purchase", true)
-        -- fallback: cari di seluruh ReplicatedStorage kalau di GameEvents gak ada
-        if not pur then pur = game:GetService("ReplicatedStorage"):FindFirstChild("Purchase", true) end
-        if not canPur then canPur = game:GetService("ReplicatedStorage"):FindFirstChild("CanPurchase", true) end
-        print("[HactTelur] CanPurchase="..tostring(canPur and canPur.ClassName).." Purchase="..tostring(pur and pur.ClassName))
-        if pur and pur:IsA("RemoteFunction") then
-            if canPur and canPur:IsA("RemoteFunction") then
-                local okc, resc = pcall(function() return canPur:InvokeServer(PromptBuy.itemId) end)
-                print("[HactTelur] CanPurchase result: ok="..tostring(okc).." val="..tostring(resc))
-                task.wait(0.1)
-            end
-            local ok, res = pcall(function() return pur:InvokeServer(PromptBuy.itemId) end)
-            print("[HactTelur] Purchase result: ok="..tostring(ok).." val="..tostring(res))
-            return ok
+petPickBtn.MouseButton1Click:Connect(openPetPicker)
+updatePetPickBtn()
+
+-- Persist on kg/age text change
+kgBox:GetPropertyChangedSignal("Text"):Connect(persistGiftSettings)
+ageBox:GetPropertyChangedSignal("Text"):Connect(persistGiftSettings)
+
+-- Load saved settings (targets + petTypes + kg + age)
+local _savedGS = loadSettings()
+if type(_savedGS) == "table" then
+    -- New format: array of targets
+    if type(_savedGS.targets) == "table" then
+        for _, n in ipairs(_savedGS.targets) do
+            if type(n) == "string" then selectedTargets[n] = true end
         end
-        print("[HactTelur] BUY GAGAL: Purchase gak ketemu / bukan RemoteFunction")
-        local pp = ge:FindFirstChild("PromptPurchase", true)
-        if pp then pcall(function() pp:FireServer(PromptBuy.itemId) end); return true end
+    end
+    -- Backward compat: old single target field
+    if _savedGS.target and _savedGS.target ~= "" then
+        selectedTargets[_savedGS.target] = true
+    end
+    updateTargetBtn()
+    if type(_savedGS.petTypes) == "table" then
+        for _, n in ipairs(_savedGS.petTypes) do
+            if type(n) == "string" then selectedPetTypes[n] = true end
+        end
+        updatePetPickBtn()
+    end
+    if type(_savedGS.kg) == "string" then kgBox.Text = _savedGS.kg end
+    if type(_savedGS.age) == "string" then ageBox.Text = _savedGS.age end
+end
+
+-- ============================================================
+-- GIFT LOOP
+-- ============================================================
+local giftActive = false
+local giftStopReq = false
+local sentCount, failCount = 0, 0
+
+local function setRunning(v)
+    if v then
+        toggleBtn.Text = "GIFT  ON"
+        toggleBtn.BackgroundColor3 = C.Green
+        toggleBtn.TextColor3 = Color3.new(0, 0, 0)
     else
-        pcall(function()
-            game:GetService("MarketplaceService"):PromptProductPurchase(player, PromptBuy.itemId)
-        end)
-        return true
+        toggleBtn.Text = "GIFT  OFF"
+        toggleBtn.BackgroundColor3 = C.Red
+        toggleBtn.TextColor3 = Color3.new(1, 1, 1)
     end
-    return false
 end
 
--- (v18.2: auto prompt purchase dihapus — Prompt Purchase cuma Buy Now 1x manual)
+-- Check pet matches filter (jenis pet / kg / age)
+local function petMatchesFilter(tool)
+    local uuid = tool:GetAttribute("PET_UUID")
+    if not uuid then return false end
+    -- v2.11: SKIP favorite pets (cek multiple field names)
+    if tool:GetAttribute("FAVORITE") == true then return false end
+    if tool:GetAttribute("IsFavorited") == true then return false end
+    if tool:GetAttribute("Favorited") == true then return false end
+    -- pet type filter
+    if petTypeCount() > 0 then
+        local pType = stripMutation(tostring(tool:GetAttribute("f") or "?"))
+        if not selectedPetTypes[pType] then return false end
+    end
+    -- get kg + level
+    local key = tostring(uuid)
+    if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+    local entry = cachedContainer and cachedContainer[key]
+    if not entry or not entry.PetData then return false end
+    -- v2.11: also check IsFavorite di PetData
+    if entry.PetData.IsFavorite == true then return false end
+    local bw = tonumber(entry.PetData.BaseWeight) or 0
+    local lvl = tonumber(entry.PetData.Level) or 0
+    local kg = bw * (10 + lvl) / 10
+    -- KG filter: minimum threshold
+    local kgMin = tonumber(kgBox.Text) or 0
+    if kgMin > 0 and kg < kgMin then return false end
+    -- Age filter: exact level (e.g. 100 = only level 100)
+    local ageReq = tonumber(ageBox.Text) or 0
+    if ageReq > 0 and lvl < ageReq then return false end
+    return true
+end
 
--- ============ PANEL FRUIT: AUTO BUY (Seed / Egg / Gear) ============
-local function makeFruitPanel()
-    local panel = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-        Visible = false, Parent = panelArea })
+-- v2.10: startGift can be called from click OR auto-load
+local function startGift()
+    if giftActive then return end
+    if targetCount() == 0 then
+        statusLbl.Text = "Error: Belum pilih target"
+        statusLbl.TextColor3 = C.Red
+        return
+    end
+    if not giftRE and not PGS then
+        statusLbl.Text = "Error: Gift remote/module gak ditemukan"
+        statusLbl.TextColor3 = C.Red
+        return
+    end
 
-    local scroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-        ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
-        CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Parent = panel })
-    mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = scroll })
-    -- v18.0: padding bawah 90px biar baris terakhir bisa di-scroll naik, gak ketutup START/STOP
-    mk("UIPadding", { PaddingBottom = UDim.new(0, 90), Parent = scroll })
+    giftActive = true
+    giftStopReq = false
+    sentCount, failCount = 0, 0
+    gCounterLbl.Text = "Sent: 0   Failed: 0"
+    setRunning(true)
+    statusLbl.Text = "Status: starting..."
+    statusLbl.TextColor3 = C.Accent
+    _G.ZenxGiftActive = true
+    persistGiftSettings()
 
-    fruitData = {}
-
-    -- popup dropdown MULTI-SELECT (search + list, toggle centang). dipakai seed/egg/gear.
-    local function openPicker(kind, titleTxt, onChange)
-        local items = getBuyItemList(AutoBuy[kind].dataKey)
-        local selSet = AutoBuy[kind].items
-        local dim = mk("TextButton", {
-            Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
-            BackgroundTransparency = 0.5, Text = "", AutoButtonColor = false,
-            ZIndex = 50, Parent = panel })
-        local box = mk("Frame", {
-            Size = UDim2.new(0, 300, 0, 340), Position = UDim2.new(0.5, -150, 0.5, -170),
-            BackgroundColor3 = C.bg, ZIndex = 51, Parent = dim })
-        corner(box, 10); stroke(box, C.border, 1.5)
-        local t = lbl(box, titleTxt, 13, C.text); t.Font = FONT_SB
-        t.Position = UDim2.new(0, 14, 0, 10); t.Size = UDim2.new(1, -50, 0, 22); t.ZIndex = 52
-        local xb = mk("TextButton", {
-            Size = UDim2.new(0, 24, 0, 24), Position = UDim2.new(1, -32, 0, 8),
-            BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 12,
-            TextColor3 = C.text, ZIndex = 52, Parent = box })
-        corner(xb, 6)
-        local search = mk("TextBox", {
-            Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 40),
-            BackgroundColor3 = C.input, Text = "", PlaceholderText = "Cari...",
-            Font = FONT, TextSize = 12, TextColor3 = C.text, ClearTextOnFocus = false,
-            ZIndex = 52, Parent = box })
-        corner(search, 6); stroke(search, C.border, 1)
-        local list = mk("ScrollingFrame", {
-            Size = UDim2.new(1, -20, 1, -84), Position = UDim2.new(0, 10, 0, 78),
-            BackgroundTransparency = 1, ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
-            CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            ZIndex = 52, Parent = box })
-        mk("UIListLayout", { Padding = UDim.new(0, 4), Parent = list })
-        local function build(filter)
-            for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-            filter = (filter or ""):lower()
-            for _, name in ipairs(items) do
-                if filter == "" or name:lower():find(filter, 1, true) then
-                    local on = selSet[name] == true
-                    local b = mk("TextButton", {
-                        Size = UDim2.new(1, 0, 0, 30),
-                        BackgroundColor3 = on and C.accent or C.card,
-                        Text = (on and "\u{2713} " or "   ")..name, Font = FONT, TextSize = 12,
-                        TextColor3 = on and Color3.fromRGB(17,17,17) or C.text,
-                        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53, Parent = list })
-                    corner(b, 6)
-                    local pad = mk("UIPadding", { PaddingLeft = UDim.new(0, 8), Parent = b })
-                    b.MouseButton1Click:Connect(function()
-                        if selSet[name] then selSet[name] = nil else selSet[name] = true end
-                        local nowOn = selSet[name] == true
-                        b.BackgroundColor3 = nowOn and C.accent or C.card
-                        b.TextColor3 = nowOn and Color3.fromRGB(17,17,17) or C.text
-                        b.Text = (nowOn and "\u{2713} " or "   ")..name
-                        if onChange then onChange() end
-                        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                    end)
+    task.spawn(function()
+        math.randomseed(tick())  -- v2.11: fresh seed
+        local lastPoolLog = 0
+        while not giftStopReq do
+            -- Refresh online targets each cycle (with dedup)
+            local poolTargets = {}
+            local seenPlayer = {}
+            for name in pairs(selectedTargets) do
+                local p = findPlayerByName(name)
+                if p and not seenPlayer[p] then
+                    table.insert(poolTargets, p)
+                    seenPlayer[p] = true
                 end
             end
-        end
-        build("")
-        search:GetPropertyChangedSignal("Text"):Connect(function() build(search.Text) end)
-        xb.MouseButton1Click:Connect(function() dim:Destroy() end)
-        dim.MouseButton1Click:Connect(function() dim:Destroy() end)
-    end
 
-    -- bikin 1 baris auto-buy (collapsible: Select dropdown + toggle ON/OFF)
-    local function makeBuyRow(kind, name, order)
-        local cfg = AutoBuy[kind]
-        local row = mk("Frame", {
-            Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card,
-            BorderSizePixel = 0, ClipsDescendants = true,
-            LayoutOrder = order, Parent = scroll })
-        corner(row, 8); stroke(row, C.border, 1.5)
-
-        local header = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1,
-            Text = "", AutoButtonColor = false, Parent = row })
-        local nameLbl = lbl(header, name, 13, C.text); nameLbl.Font = FONT_SB
-        nameLbl.Position = UDim2.new(0, 14, 0, 0); nameLbl.Size = UDim2.new(1, -40, 0, 40)
-        local chev = lbl(header, ">", 14, C.textDim, Enum.TextXAlignment.Right)
-        chev.Position = UDim2.new(1, -26, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
-
-        local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 86), Position = UDim2.new(0, 10, 0, 44),
-            BackgroundTransparency = 1, Visible = false, Parent = row })
-
-        -- baris "Select ..." (label + tombol pilih MULTI)
-        local shortName = name:gsub("Auto Buy ","")
-        local function countSel()
-            local n = 0 for _ in pairs(cfg.items) do n = n + 1 end return n
-        end
-        local selLbl = lbl(body, "Select "..shortName, 12, C.textDim)
-        selLbl.Position = UDim2.new(0, 0, 0, 4); selLbl.Size = UDim2.new(0.4, 0, 0, 30)
-        local selBtn = mk("TextButton", {
-            Size = UDim2.new(0.6, 0, 0, 30), Position = UDim2.new(0.4, 0, 0, 4),
-            BackgroundColor3 = C.input, Text = "Select...",
-            Font = FONT, TextSize = 12, TextColor3 = C.textDim, Parent = body })
-        corner(selBtn, 6); stroke(selBtn, C.border, 1)
-        local function updSelBtn()
-            local n = countSel()
-            selBtn.Text = n > 0 and (n.." dipilih") or "Select..."
-            selBtn.TextColor3 = n > 0 and C.text or C.textDim
-        end
-        updSelBtn()
-        selBtn.MouseButton1Click:Connect(function()
-            openPicker(kind, "Select "..shortName.." (multi)", updSelBtn)
-        end)
-
-        -- baris toggle ON/OFF
-        local togLbl = lbl(body, name, 12, C.text)
-        togLbl.Position = UDim2.new(0, 0, 0, 44); togLbl.Size = UDim2.new(0.6, 0, 0, 26)
-        local sw = mk("TextButton", {
-            Size = UDim2.new(0, 42, 0, 22), Position = UDim2.new(1, -42, 0, 46),
-            BackgroundColor3 = cfg.on and C.accent or C.input, Text = "",
-            AutoButtonColor = false, Parent = body })
-        corner(sw, 11)
-        local knob = mk("Frame", {
-            Size = UDim2.new(0, 18, 0, 18),
-            Position = cfg.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
-            BackgroundColor3 = cfg.on and Color3.fromRGB(17,17,17) or C.textDim,
-            Parent = sw })
-        corner(knob, 9)
-        local function refreshSw()
-            sw.BackgroundColor3 = cfg.on and C.accent or C.input
-            knob.BackgroundColor3 = cfg.on and Color3.fromRGB(17,17,17) or C.textDim
-            knob.Position = cfg.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-        end
-        sw.MouseButton1Click:Connect(function()
-            if countSel() == 0 then
-                togLbl.Text = name.." (pilih dulu!)"
-                task.delay(1.5, function() togLbl.Text = name end)
-                return
+            -- v2.11: log pool size periodically biar bisa diagnose
+            if tick() - lastPoolLog > 10 then
+                lastPoolLog = tick()
+                local names = {}
+                for _, p in ipairs(poolTargets) do table.insert(names, p.Name) end
+                print(string.format("[ZenxGift] pool=%d/%d (online/selected) — %s",
+                    #poolTargets, targetCount(), table.concat(names, ", ")))
             end
-            cfg.on = not cfg.on
-            refreshSw()
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
 
-        header.MouseButton1Click:Connect(function()
-            local exp = not body.Visible
-            body.Visible = exp
-            chev.Text = exp and "v" or ">"
-            row.Size = exp and UDim2.new(1, 0, 0, 134) or UDim2.new(1, 0, 0, 40)
-        end)
+            if #poolTargets == 0 then
+                statusLbl.Text = "Waiting: target offline semua... ("..targetCount().." selected)"
+                statusLbl.TextColor3 = C.Orange
+                task.wait(5)
+            else
+                local bp = player:FindFirstChild("Backpack")
+                if not bp then task.wait(2); else
 
-        -- daftar global biar bisa refresh setelah load (rejoin)
-        fruitData[kind] = { refreshSelBtn = function()
-            updSelBtn()
-            refreshSw()
-        end }
-    end
+                -- save recent for online targets
+                for _, p in ipairs(poolTargets) do addRecentTarget(p.Name) end
 
-    makeBuyRow("seed", "Auto Buy Seed", 1)
-    makeBuyRow("egg",  "Auto Buy Egg",  2)
-    makeBuyRow("gear", "Auto Buy Gear", 3)
-
-    -- ===== PROMPT PURCHASE (beli item Robux pakai token) =====
-    do
-        local row = mk("Frame", {
-            Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card,
-            BorderSizePixel = 0, ClipsDescendants = true,
-            LayoutOrder = 4, Parent = scroll })
-        corner(row, 8); stroke(row, C.border, 1.5)
-        local header = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1,
-            Text = "", AutoButtonColor = false, Parent = row })
-        local nameLbl = lbl(header, "Prompt — Beli Item (Token)", 13, C.text); nameLbl.Font = FONT_SB
-        nameLbl.Position = UDim2.new(0, 14, 0, 0); nameLbl.Size = UDim2.new(1, -40, 0, 40)
-        local chev = lbl(header, ">", 14, C.textDim, Enum.TextXAlignment.Right)
-        chev.Position = UDim2.new(1, -26, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
-        local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 160), Position = UDim2.new(0, 10, 0, 44),
-            BackgroundTransparency = 1, Visible = false, Parent = row })
-
-        -- Pay With (token / robux)
-        local payLbl = lbl(body, "Pay With", 12, C.textDim)
-        payLbl.Position = UDim2.new(0, 0, 0, 4); payLbl.Size = UDim2.new(0.4, 0, 0, 28)
-        local payBtn = mk("TextButton", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 4),
-            BackgroundColor3 = C.input, Text = PromptBuy.payWith == "robux" and "Robux" or "Token",
-            Font = FONT, TextSize = 12, TextColor3 = C.text, Parent = body })
-        corner(payBtn, 6); stroke(payBtn, C.border, 1)
-        payBtn.MouseButton1Click:Connect(function()
-            PromptBuy.payWith = (PromptBuy.payWith == "token") and "robux" or "token"
-            payBtn.Text = PromptBuy.payWith == "robux" and "Robux" or "Token"
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
-
-        -- Select Item (dev product)
-        local selLbl = lbl(body, "Select Item", 12, C.textDim)
-        selLbl.Position = UDim2.new(0, 0, 0, 40); selLbl.Size = UDim2.new(0.4, 0, 0, 28)
-        local selBtn = mk("TextButton", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 40),
-            BackgroundColor3 = C.input, Text = PromptBuy.item or "Select item...",
-            Font = FONT, TextSize = 11, TextColor3 = PromptBuy.item and C.text or C.textDim,
-            Parent = body })
-        corner(selBtn, 6); stroke(selBtn, C.border, 1)
-        selBtn.MouseButton1Click:Connect(function()
-            local items = getDevProductList()
-            local dim = mk("TextButton", {
-                Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
-                BackgroundTransparency = 0.5, Text = "", AutoButtonColor = false,
-                ZIndex = 50, Parent = panel })
-            local box = mk("Frame", {
-                Size = UDim2.new(0, 320, 0, 360), Position = UDim2.new(0.5, -160, 0.5, -180),
-                BackgroundColor3 = C.bg, ZIndex = 51, Parent = dim })
-            corner(box, 10); stroke(box, C.border, 1.5)
-            local t = lbl(box, "Select Item", 13, C.text); t.Font = FONT_SB
-            t.Position = UDim2.new(0, 14, 0, 10); t.Size = UDim2.new(1, -50, 0, 22); t.ZIndex = 52
-            local xb = mk("TextButton", {
-                Size = UDim2.new(0, 24, 0, 24), Position = UDim2.new(1, -32, 0, 8),
-                BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 12,
-                TextColor3 = C.text, ZIndex = 52, Parent = box })
-            corner(xb, 6)
-            local search = mk("TextBox", {
-                Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 40),
-                BackgroundColor3 = C.input, Text = "", PlaceholderText = "Cari...",
-                Font = FONT, TextSize = 12, TextColor3 = C.text, ClearTextOnFocus = false,
-                ZIndex = 52, Parent = box })
-            corner(search, 6); stroke(search, C.border, 1)
-            local list = mk("ScrollingFrame", {
-                Size = UDim2.new(1, -20, 1, -84), Position = UDim2.new(0, 10, 0, 78),
-                BackgroundTransparency = 1, ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
-                CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                ZIndex = 52, Parent = box })
-            mk("UIListLayout", { Padding = UDim.new(0, 4), Parent = list })
-            local function build(filter)
-                for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-                filter = (filter or ""):lower()
-                local shown = 0
-                for _, it in ipairs(items) do
-                    if filter == "" or it.name:lower():find(filter, 1, true) then
-                        shown = shown + 1
-                        local b = mk("TextButton", {
-                            Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
-                            Text = it.name, Font = FONT, TextSize = 11, TextColor3 = C.text,
-                            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 53, Parent = list })
-                        corner(b, 6)
-                        mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0,8), Parent = b })
-                        -- nama+harga lengkap dari module. item getgc (Product NNN) / tanpa harga
-                        -- -> lazy-load nama asli + harga via GetProductInfo (item yg tampil aja).
-                        if shown <= 40 and (it.name:match("^Product %d+$") or not it.name:find("R%$")) then
-                            task.spawn(function()
-                                local ok, info = pcall(function()
-                                    return game:GetService("MarketplaceService"):GetProductInfo(it.id, Enum.InfoType.Product)
-                                end)
-                                if ok and info then
-                                    local nm = it.name
-                                    if nm:match("^Product %d+$") and info.Name and info.Name ~= "" then
-                                        nm = info.Name
-                                        it.name = nm  -- update cache biar search & save dpt nama bener
-                                    end
-                                    local price = info.PriceInRobux and ("  |  "..info.PriceInRobux.." R$") or ""
-                                    b.Text = nm..price
-                                end
-                            end)
-                        end
-                        b.MouseButton1Click:Connect(function()
-                            PromptBuy.item = it.name
-                            PromptBuy.itemId = it.id
-                            selBtn.Text = it.name; selBtn.TextColor3 = C.text
-                            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                            dim:Destroy()
-                        end)
+                local matching = {}
+                for _, t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") and petMatchesFilter(t) then
+                        table.insert(matching, t)
                     end
                 end
-            end
-            build("")
-            search:GetPropertyChangedSignal("Text"):Connect(function() build(search.Text) end)
-            xb.MouseButton1Click:Connect(function() dim:Destroy() end)
-            dim.MouseButton1Click:Connect(function() dim:Destroy() end)
-        end)
-
-        -- v19.6: input ID manual (buat item yg gak ada di daftar, mis Campfire Egg biasa)
-        local idLbl = lbl(body, "ID Manual", 12, C.textDim)
-        idLbl.Position = UDim2.new(0, 0, 0, 78); idLbl.Size = UDim2.new(0.4, 0, 0, 28)
-        local idBox = mk("TextBox", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 78),
-            BackgroundColor3 = C.input, Text = "", PlaceholderText = "ketik ID produk...",
-            Font = FONT, TextSize = 11, TextColor3 = C.text, ClearTextOnFocus = false,
-            Parent = body })
-        corner(idBox, 6); stroke(idBox, C.border, 1)
-        idBox.FocusLost:Connect(function()
-            local v = tonumber(idBox.Text)
-            if v and v > 1000000 then
-                PromptBuy.itemId = v
-                PromptBuy.item = "ID: "..tostring(v)
-                selBtn.Text = "ID: "..tostring(v); selBtn.TextColor3 = C.text
-                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-            end
-        end)
-
-        -- Buy Now (sekali saja, gak ada auto)
-        local buyNow = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 116),
-            BackgroundColor3 = C.accent, Text = "Buy Now (1x)", Font = FONT_SB, TextSize = 12,
-            TextColor3 = Color3.fromRGB(17,17,17), Parent = body })
-        corner(buyNow, 6)
-        buyNow.MouseButton1Click:Connect(function()
-            if not PromptBuy.itemId then
-                buyNow.Text = "pilih item / ketik ID dulu!"
-                task.delay(1.5, function() buyNow.Text = "Buy Now (1x)" end)
-                return
-            end
-            firePromptBuy()
-            buyNow.Text = "dibeli!"
-            task.delay(1.2, function() buyNow.Text = "Buy Now (1x)" end)
-        end)
-        local function refreshAll()
-            payBtn.Text = PromptBuy.payWith == "robux" and "Robux" or "Token"
-            selBtn.Text = PromptBuy.item or "Select item..."
-            selBtn.TextColor3 = PromptBuy.item and C.text or C.textDim
-        end
-        header.MouseButton1Click:Connect(function()
-            local exp = not body.Visible
-            body.Visible = exp
-            chev.Text = exp and "v" or ">"
-            row.Size = exp and UDim2.new(1, 0, 0, 200) or UDim2.new(1, 0, 0, 40)
-        end)
-        fruitData.promptBuy = { refreshSelBtn = refreshAll }
-    end
-
-    -- expose refresh untuk load
-    _G.HactTelurRefreshAutoBuy = function()
-        for _, fd in pairs(fruitData) do
-            if fd.refreshSelBtn then pcall(fd.refreshSelBtn) end
-        end
-    end
-
-    tabPanels["Fruit"] = panel
-    return panel
-end
-
--- ============ PANEL ALL STAT (3 kartu: TOTAL / EGG / SEAL %) ============
-local function makeStatPanel()
-    local panel = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-        Visible = false, Parent = panelArea })
-
-    -- baris filter (dropdown jenis pet & egg) — placeholder tombol
-    local filterRow = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1, Parent = panel })
-    local function filterBtn(txt, x, w)
-        local b = mk("TextButton", {
-            Size = UDim2.new(w, -4, 1, 0), Position = UDim2.new(x, x > 0 and 4 or 0, 0, 0),
-            BackgroundColor3 = C.card, Text = "", AutoButtonColor = false, Parent = filterRow })
-        corner(b, 7); stroke(b, C.border, 1.5)
-        local l = lbl(b, txt, 12, C.text)
-        l.Position = UDim2.new(0, 12, 0, 0); l.Size = UDim2.new(1, -28, 1, 0)
-        local ch = lbl(b, "v", 11, C.textDim, Enum.TextXAlignment.Right)
-        ch.Position = UDim2.new(1, -22, 0, 0); ch.Size = UDim2.new(0, 14, 1, 0)
-        return b
-    end
-    filterBtn("Jenis Pet: Semua", 0, 0.5)
-    filterBtn("Jenis Egg: Semua", 0.5, 0.5)
-
-    -- 3 kartu stat
-    local cardRow = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 90), Position = UDim2.new(0, 0, 0, 42),
-        BackgroundTransparency = 1, Parent = panel })
-    local function statCard(hdr, x, valTxt, subTxt)
-        local col = mk("Frame", {
-            Size = UDim2.new(0.3333, -6, 1, 0), Position = UDim2.new(x, x > 0 and 3 or 0, 0, 0),
-            BackgroundColor3 = C.card, BorderSizePixel = 0, Parent = cardRow })
-        corner(col, 8); stroke(col, C.border, 1.5)
-        local h = lbl(col, hdr, 12, C.textDim, Enum.TextXAlignment.Center)
-        h.Position = UDim2.new(0, 0, 0, 8); h.Size = UDim2.new(1, 0, 0, 16)
-        local v = lbl(col, valTxt, 26, C.text, Enum.TextXAlignment.Center)
-        v.Font = FONT_B; v.Position = UDim2.new(0, 0, 0, 28); v.Size = UDim2.new(1, 0, 0, 34)
-        local s = lbl(col, subTxt, 10, C.textMute, Enum.TextXAlignment.Center)
-        s.Position = UDim2.new(0, 0, 1, -20); s.Size = UDim2.new(1, 0, 0, 14)
-        return { val = v, sub = s }
-    end
-    local cardTotal = statCard("TOTAL",  0,      "—", "(pet / max)")
-    local cardEgg   = statCard("EGG",    0.3333, "—", "(egg)")
-    local cardSeal  = statCard("SEAL %", 0.6666, "—", "(tim sell)")
-
-    -- isi data nyata + refresh berkala
-    local function refreshStat()
-        pcall(function()
-            -- total pet di backpack + BATAS inventory (cur/max), kayak "191/210"
-            local pets = PetDetect.listBackpackPets()
-            local maxP = getMaxPets()
-            if maxP and maxP > 0 then
-                cardTotal.val.Text = #pets.."/"..maxP
-            else
-                cardTotal.val.Text = tostring(#pets)
-            end
-            -- total egg dimiliki
-            local totalEgg = 0
-            EggDetect.scan()
-            for _, c in pairs(EggDetect.counts or {}) do totalEgg = totalEgg + (tonumber(c) or 0) end
-            cardEgg.val.Text = tostring(totalEgg)
-            -- seal % dari tim sell (pet seal yg dipilih di tim Sell)
-            local sd = teamData["Sell Tim"]
-            if sd and sd.selected then
-                local s = PetDetect.sumPctSelected(sd.selected, "Seal", "seal")
-                cardSeal.val.Text = string.format("%.2f%%", s)
-            else
-                cardSeal.val.Text = "—"
-            end
-        end)
-    end
-    statRefreshFn = refreshStat  -- simpan ke variabel modul (jgn ke Frame)
-    -- auto-refresh tiap 3 detik saat panel All Stat aktif
-    task.spawn(function()
-        while panel.Parent do
-            if panel.Visible then refreshStat() end
-            task.wait(3)
-        end
-    end)
-
-    -- catatan
-    local note = lbl(panel, "Auto-update tiap 3 detik", 11, C.textMute, Enum.TextXAlignment.Center)
-    note.Position = UDim2.new(0, 0, 0, 140); note.Size = UDim2.new(1, 0, 0, 16)
-
-    -- ===== DAFTAR EGG DI GARDEN + WAKTU NETAS =====
-    local eggTitle = lbl(panel, "Egg di Garden (waktu netas)", 12, C.text, Enum.TextXAlignment.Left)
-    eggTitle.Font = FONT_B
-    eggTitle.Position = UDim2.new(0, 4, 0, 162); eggTitle.Size = UDim2.new(1, -8, 0, 18)
-    local eggScroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, -8, 1, -188), Position = UDim2.new(0, 4, 0, 184),
-        BackgroundColor3 = C.card, BorderSizePixel = 0, ScrollBarThickness = 4,
-        CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = panel })
-    corner(eggScroll, 8); stroke(eggScroll, C.border, 1)
-    mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = eggScroll })
-    mk("UIPadding", { PaddingTop = UDim.new(0,4), PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), Parent = eggScroll })
-
-    local function fmtSec(s)
-        s = math.max(0, math.floor(s))
-        if s <= 0 then return "READY" end
-        if s >= 60 then return string.format("%dm %ds", math.floor(s/60), s%60) end
-        return s.."s"
-    end
-    local function refreshEggList()
-        pcall(function()
-            for _, c in ipairs(eggScroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
-            -- kumpulin egg kita
-            local eggs = {}
-            for _, d in ipairs(Workspace:GetDescendants()) do
-                if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" then
-                    if tostring(d:GetAttribute("OWNER")) == player.Name then
-                        local tth = tonumber(d:GetAttribute("TimeToHatch")) or 0
-                        table.insert(eggs, { name = d:GetAttribute("EggName") or "Egg", tth = tth })
-                    end
-                end
-            end
-            -- urut: yg paling cepet netas di atas
-            table.sort(eggs, function(a, b) return a.tth < b.tth end)
-            for i, e in ipairs(eggs) do
-                local row = mk("Frame", {
-                    Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = C.cardSel,
-                    BorderSizePixel = 0, LayoutOrder = i, Parent = eggScroll })
-                corner(row, 5)
-                local nm = lbl(row, e.name, 11, C.text, Enum.TextXAlignment.Left)
-                nm.Position = UDim2.new(0, 8, 0, 0); nm.Size = UDim2.new(0.65, 0, 1, 0)
-                local rdy = e.tth <= 0
-                local tm = lbl(row, fmtSec(e.tth), 11, rdy and C.accent or C.textDim, Enum.TextXAlignment.Right)
-                tm.Font = rdy and FONT_B or FONT
-                tm.Position = UDim2.new(0.65, 0, 0, 0); tm.Size = UDim2.new(0.35, -8, 1, 0)
-            end
-            if #eggs == 0 then
-                local row = mk("Frame", { Size = UDim2.new(1,0,0,24), BackgroundTransparency = 1, Parent = eggScroll })
-                lbl(row, "(belum ada egg di garden)", 11, C.textMute, Enum.TextXAlignment.Center).Size = UDim2.new(1,0,1,0)
-            end
-        end)
-    end
-    -- refresh egg list tiap 2 detik saat panel aktif (countdown jalan)
-    task.spawn(function()
-        while panel.Parent do
-            if panel.Visible then refreshEggList() end
-            task.wait(2)
-        end
-    end)
-
-    tabPanels["All Stat"] = panel
-    return panel
-end
-
--- ============ PET PICKER (panel terpisah, muncul saat tombol dipencet) ============
--- placeholder fungsi — nanti diisi: list pet dari backpack/container, multi-select
-openPetPicker = function(tabName)
-    -- overlay
-    local overlay = mk("Frame", {
-        Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
-        BackgroundTransparency = 0.45, ZIndex = 50, Parent = main })
-    local pick = mk("Frame", {
-        Size = UDim2.new(0, 420, 0, 360),
-        Position = UDim2.new(0.5, -210, 0.5, -180),
-        BackgroundColor3 = C.panel, ZIndex = 51, Parent = overlay })
-    corner(pick, 12); stroke(pick, C.border, 1)
-    -- header
-    local hd = lbl(pick, teamData[tabName].label, 13, C.text)
-    hd.Font = FONT_B; hd.ZIndex = 52
-    hd.Position = UDim2.new(0, 16, 0, 12); hd.Size = UDim2.new(1, -60, 0, 22)
-    local closeBtn = mk("TextButton", {
-        Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -38, 0, 10),
-        BackgroundTransparency = 1, Text = "X", Font = FONT_B, TextSize = 14,
-        TextColor3 = C.textDim, ZIndex = 52, Parent = pick })
-    -- search
-    local search = mk("TextBox", {
-        Size = UDim2.new(1, -32, 0, 32), Position = UDim2.new(0, 16, 0, 44),
-        BackgroundColor3 = C.input, PlaceholderText = "Search pet...",
-        Text = "", Font = FONT, TextSize = 12, TextColor3 = C.text,
-        PlaceholderColor3 = C.textMute, TextXAlignment = Enum.TextXAlignment.Left,
-        ClearTextOnFocus = false, ZIndex = 52, Parent = pick })
-    corner(search, 7); stroke(search, C.border, 1)
-    mk("UIPadding", { PaddingLeft = UDim.new(0, 12), Parent = search })
-    -- list (scroll)
-    local list = mk("ScrollingFrame", {
-        Size = UDim2.new(1, -32, 1, -130), Position = UDim2.new(0, 16, 0, 84),
-        BackgroundTransparency = 1, ScrollBarThickness = 3,
-        ScrollBarImageColor3 = C.border, CanvasSize = UDim2.new(0,0,0,0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 52, Parent = pick })
-    mk("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
-    local statusLbl = lbl(list, "Memuat pet...", 12, C.textMute, Enum.TextXAlignment.Center)
-    statusLbl.Size = UDim2.new(1, 0, 0, 40); statusLbl.ZIndex = 52
-    -- done btn
-    local doneBtn = mk("TextButton", {
-        Size = UDim2.new(1, -32, 0, 32), Position = UDim2.new(0, 16, 1, -42),
-        BackgroundColor3 = C.accent, Text = "DONE", Font = FONT_B, TextSize = 12,
-        TextColor3 = Color3.fromRGB(17,17,17), ZIndex = 52, Parent = pick })
-    corner(doneBtn, 7)
-
-    local sel = teamData[tabName].selected   -- set uuid -> true (persist di teamData)
-    local rows = {}
-
-    local function refreshPickLabel()
-        local cnt = 0
-        for _ in pairs(sel) do cnt = cnt + 1 end
-        teamData[tabName].pickLbl.Text = teamData[tabName].label .. "  (" .. cnt .. " dipilih)"
-    end
-
-    local function buildList(filter)
-        for _, r in ipairs(rows) do r:Destroy() end
-        rows = {}
-        local allPets = PetDetect.listBackpackPets()
-        -- FILTER: pet favorit ATAU yang udah dipilih (biar pet di garden gak hilang dari pilihan)
-        local pets = {}
-        for _, p in ipairs(allPets) do
-            if p.fav or sel[p.uuid] then table.insert(pets, p) end
-        end
-        if #pets == 0 then
-            statusLbl.Text = (#allPets == 0)
-                and "Gak ada pet (container belum ke-scan)"
-                or "Gak ada pet FAVORIT (favoritin dulu pet di game)"
-            statusLbl.Visible = true
-            return
-        end
-        -- SORT: prioritas tipe dulu (per tim), lalu KG terbesar
-        table.sort(pets, function(a, b)
-            local ra, rb = PetDetect.priorityRank(tabName, a.name), PetDetect.priorityRank(tabName, b.name)
-            if ra ~= rb then return ra < rb end
-            local ka, kb = a.dispKg or 0, b.dispKg or 0
-            if ka ~= kb then return ka > kb end       -- KG terbesar dulu
-            return (a.name or "") < (b.name or "")
-        end)
-        statusLbl.Visible = false
-        filter = (filter or ""):lower()
-        local shown = 0
-        for i, p in ipairs(pets) do
-            -- label: [Mut] Nama | X.XX KG | Lv N
-            local disp = (p.mut and ("["..p.mut.."] ") or "") .. p.name
-            local meta = ""
-            if p.dispKg then meta = meta .. string.format("%.2f KG", p.dispKg) end
-            if p.level then meta = meta .. (meta ~= "" and " | " or "") .. "Lv " .. tostring(p.level) end
-            if meta == "" then meta = "(no data)" end
-            local full = disp .. "  |  " .. meta
-            if filter == "" or disp:lower():find(filter, 1, true) then
-                shown = shown + 1
-                local row = mk("TextButton", {
-                    Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.card,
-                    Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 52, Parent = list })
-                corner(row, 7)
-                local rst = stroke(row, sel[p.uuid] and C.borderSel or C.border, 1.5)
-                local star = lbl(row, sel[p.uuid] and "★" or "☆", 13,
-                    sel[p.uuid] and C.text or C.textDim)
-                star.Position = UDim2.new(0, 10, 0, 0); star.Size = UDim2.new(0, 18, 1, 0); star.ZIndex = 52
-                local nl = lbl(row, full, 11, sel[p.uuid] and C.text or C.textDim)
-                nl.Position = UDim2.new(0, 32, 0, 0); nl.Size = UDim2.new(1, -40, 1, 0); nl.ZIndex = 52
-                nl.TextTruncate = Enum.TextTruncate.AtEnd
-                row.MouseButton1Click:Connect(function()
-                    if sel[p.uuid] then sel[p.uuid] = nil else sel[p.uuid] = true end
-                    local on = sel[p.uuid]
-                    rst.Color = on and C.borderSel or C.border
-                    star.Text = on and "★" or "☆"
-                    star.TextColor3 = on and C.text or C.textDim
-                    nl.TextColor3 = on and C.text or C.textDim
-                    refreshPickLabel()
-                end)
-                table.insert(rows, row)
-            end
-        end
-        if shown == 0 then
-            statusLbl.Text = "Gak ada hasil buat '" .. filter .. "'"
-            statusLbl.Visible = true
-        end
-    end
-
-    -- scan container dulu (async biar gak nge-freeze), lalu build
-    task.spawn(function()
-        PetDetect.rebuild()
-        buildList("")
-    end)
-    search:GetPropertyChangedSignal("Text"):Connect(function()
-        buildList(search.Text)
-    end)
-
-    local function close()
-        overlay:Destroy()
-        refreshPickLabel()
-        if teamData[tabName].refreshSummary then teamData[tabName].refreshSummary() end
-        for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-            if teamData[tn] and teamData[tn].refreshPct then teamData[tn].refreshPct() end
-        end
-        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-    end
-    closeBtn.MouseButton1Click:Connect(close)
-    doneBtn.MouseButton1Click:Connect(close)
-end
-
--- ============ BUILD PANELS ============
-makeTeamPanel("Reduce Tim")
-makeTeamPanel("Hatch Tim")
-makeTeamPanel("Sell Tim")
-makeConfigPanel()
-makeFruitPanel()
-makeStatPanel()
--- set default tab visible
-tabPanels["Reduce Tim"].Visible = true
-do
-    local d = tabBtns["Reduce Tim"]
-    d.btn.BackgroundColor3 = C.card; d.label.TextColor3 = C.text; d.label.Font = FONT_B
-end
--- hitung persen awal (scan container dulu)
-task.spawn(function()
-    PetDetect.rebuild()
-    if teamData["Reduce Tim"].refreshPct then teamData["Reduce Tim"].refreshPct() end
-end)
-
--- ============ PANEL MISC (Auto Gift, Rejoin, Fav Pet, Unfav Pet) ============
-local miscContent = mk("Frame", {
-    Size = UDim2.new(1, -141, 1, -45), Position = UDim2.new(0, 141, 0, 45),
-    BackgroundTransparency = 1, Visible = false, Parent = main })
-pad(miscContent, 16)
-local miscScroll = mk("ScrollingFrame", {
-    Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0,
-    ScrollBarThickness = 3, ScrollBarImageColor3 = C.border,
-    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    Parent = miscContent })
-mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscScroll })
-
--- helper: baris fitur dgn toggle ON/OFF
-local miscToggleRefreshers = {}  -- buat refresh toggle setelah load config
-local function miscToggleRow(order, title, desc, onChanged, getInit)
-    local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card, LayoutOrder = order, Parent = miscScroll })
-    corner(row, 8); stroke(row, C.border, 1)
-    local t = lbl(row, title, 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
-    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
-    local d = lbl(row, desc, 11, C.textDim, Enum.TextXAlignment.Left)
-    d.Position = UDim2.new(0, 14, 0, 29); d.Size = UDim2.new(1, -80, 0, 16)
-    local sw = mk("TextButton", {
-        Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -58, 0.5, -12),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
-    corner(sw, 12)
-    local knob = mk("Frame", {
-        Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
-        BackgroundColor3 = C.textDim, Parent = sw })
-    corner(knob, 9)
-    local state = (getInit and getInit()) or false
-    local function applyVisual()
-        sw.BackgroundColor3 = state and C.accent or C.input
-        knob.BackgroundColor3 = state and Color3.fromRGB(17,17,17) or C.textDim
-        knob.Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-    end
-    applyVisual()  -- tampilkan state awal (dari config)
-    sw.MouseButton1Click:Connect(function()
-        state = not state
-        applyVisual()
-        if onChanged then onChanged(state) end
-    end)
-    -- daftarkan refresher: baca ulang dari config (dipanggil setelah loadConfig)
-    if getInit then
-        table.insert(miscToggleRefreshers, function()
-            state = getInit() or false
-            applyVisual()
-        end)
-    end
-    return row
-end
--- helper: baris fitur dgn tombol aksi
-local function miscActionRow(order, title, desc, btnText, onClick)
-    local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card, LayoutOrder = order, Parent = miscScroll })
-    corner(row, 8); stroke(row, C.border, 1)
-    local t = lbl(row, title, 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
-    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -110, 0, 18)
-    local d = lbl(row, desc, 11, C.textDim, Enum.TextXAlignment.Left)
-    d.Position = UDim2.new(0, 14, 0, 29); d.Size = UDim2.new(1, -110, 0, 16)
-    local btn = mk("TextButton", {
-        Size = UDim2.new(0, 90, 0, 30), Position = UDim2.new(1, -104, 0.5, -15),
-        BackgroundColor3 = C.accent, Text = btnText, Font = FONT_B, TextSize = 12,
-        TextColor3 = Color3.fromRGB(17,17,17), AutoButtonColor = false, Parent = row })
-    corner(btn, 7)
-    btn.MouseButton1Click:Connect(function() if onClick then onClick(btn) end end)
-    return row
-end
-
--- favoritkan / unfavoritkan SEMUA pet di backpack
-local function favAllPets(wantFav)
-    PetDetect.rebuild()
-    -- kumpulin uuid pet yg dipilih di tim manapun (Reduce/Hatch/Sell)
-    local teamSel = {}
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        if teamData[tn] and teamData[tn].selected then
-            for u in pairs(teamData[tn].selected) do
-                teamSel[tostring(u):gsub("[{}]","")] = true
-            end
-        end
-    end
-    local n = 0
-    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
-        local uclean = tostring(p.uuid):gsub("[{}]","")
-        -- kalau UNFAV: skip pet yg dipakai tim (jgn ikut di-unfav, biar tetap kelindungi)
-        if (not wantFav) and teamSel[uclean] then
-            -- skip
-        elseif p.tool and (p.fav ~= wantFav) then
-            favoritePet(p.tool)  -- Favorite_Item = toggle
-            n = n + 1
-            task.wait(0.04)
-        end
-    end
-    return n
-end
-
--- 1) GIFT PET (3 slot: Gift 1/2/3, tiap slot lengkap) — collapsible ala MISC
-do
-    local giftCfgs = {
-        { targets={}, pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
-        { targets={}, pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
-        { targets={}, pets={}, muts={}, age=0, kg=0, method="trade", unfavFirst=false, waitFull=false },
-    }
-    _G.HactTelurGiftCfgs = giftCfgs  -- buat save/load
-    -- popup multi-select reusable (buat pet type / mutasi)
-    local function openMultiPicker(title, list, setRef, onDone)
-        local dim = mk("Frame", {
-            Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
-            BackgroundTransparency = 0.5, ZIndex = 70, Parent = miscContent })
-        local box = mk("Frame", {
-            Size = UDim2.new(0, 300, 0, 320), Position = UDim2.new(0.5, -150, 0.5, -160),
-            BackgroundColor3 = C.panel, ZIndex = 71, Parent = dim })
-        corner(box, 10); stroke(box, C.border, 1)
-        local hd = lbl(box, title, 13, C.text); hd.Font = FONT_B
-        hd.Position = UDim2.new(0, 14, 0, 10); hd.Size = UDim2.new(1, -50, 0, 20); hd.ZIndex = 72
-        local cls = mk("TextButton", {
-            Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -32, 0, 8),
-            BackgroundColor3 = C.input, Text = "X", Font = FONT_B, TextSize = 12,
-            TextColor3 = C.text, AutoButtonColor = false, ZIndex = 72, Parent = box })
-        corner(cls, 6)
-        local sb = mk("TextBox", {
-            Size = UDim2.new(1, -28, 0, 28), Position = UDim2.new(0, 14, 0, 42),
-            BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari...", Font = FONT,
-            TextSize = 11, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
-            ClearTextOnFocus = false, ZIndex = 72, Parent = box })
-        corner(sb, 6); pad(sb, 8)
-        local sc = mk("ScrollingFrame", {
-            Size = UDim2.new(1, -20, 1, -82), Position = UDim2.new(0, 10, 0, 78),
-            BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-            CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            ZIndex = 72, Parent = box })
-        mk("UIListLayout", { Padding = UDim.new(0, 3), Parent = sc })
-        mk("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc })
-        local function build(filter)
-            for _, c in ipairs(sc:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-            filter = (filter or ""):lower()
-            for i, it in ipairs(list) do
-                if filter == "" or it:lower():find(filter, 1, true) then
-                    -- terpilih -> LayoutOrder kecil (atas), belum -> +100000 (bawah)
-                    local order = setRef[it] and i or (i + 100000)
-                    local r = mk("TextButton", {
-                        Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.cardSel,
-                        Text = "", AutoButtonColor = false, LayoutOrder = order, ZIndex = 72, Parent = sc })
-                    corner(r, 5)
-                    local ck = lbl(r, setRef[it] and "*" or "o", 13, setRef[it] and C.text or C.textMute)
-                    ck.Position = UDim2.new(0, 8, 0, 0); ck.Size = UDim2.new(0, 20, 1, 0); ck.ZIndex = 72
-                    local nm = lbl(r, it, 11, setRef[it] and C.text or C.textDim)
-                    nm.Position = UDim2.new(0, 32, 0, 0); nm.Size = UDim2.new(1, -36, 1, 0); nm.ZIndex = 72
-                    r.MouseButton1Click:Connect(function()
-                        setRef[it] = (not setRef[it]) or nil
-                        build(sb.Text)  -- rebuild biar yg dipilih naik ke atas
-                    end)
-                end
-            end
-        end
-        sb:GetPropertyChangedSignal("Text"):Connect(function() build(sb.Text) end)
-        cls.MouseButton1Click:Connect(function() dim:Destroy(); if onDone then onDone() end end)
-        build("")
-    end
-
-    -- buat tiap slot Gift sebagai baris collapsible
-    local function makeGiftSlot(idx)
-        local cfg = giftCfgs[idx]
-        local row = mk("Frame", {
-            Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card, LayoutOrder = idx,
-            ClipsDescendants = true, Parent = miscScroll })
-        corner(row, 8); stroke(row, C.border, 1)
-        -- header
-        local head = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, Text = "",
-            AutoButtonColor = false, Parent = row })
-        local ht = lbl(head, "Gift "..idx, 13, C.text, Enum.TextXAlignment.Left); ht.Font = FONT_B
-        ht.Position = UDim2.new(0, 14, 0, 0); ht.Size = UDim2.new(1, -50, 0, 40)
-        local chev = lbl(head, ">", 12, C.textDim, Enum.TextXAlignment.Right)
-        chev.Position = UDim2.new(1, -28, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
-        local expanded = false
-        -- body
-        local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 358), Position = UDim2.new(0, 10, 0, 44),
-            BackgroundTransparency = 1, Visible = false, Parent = row })
-        local function fieldRow(y, labelTxt, btnTxt, onClick)
-            local fl = lbl(body, labelTxt, 12, C.text, Enum.TextXAlignment.Left)
-            fl.Position = UDim2.new(0, 0, 0, y); fl.Size = UDim2.new(0.4, 0, 0, 28)
-            local b = mk("TextButton", {
-                Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, y),
-                BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = body })
-            corner(b, 6); stroke(b, C.border, 1)
-            local bl = lbl(b, btnTxt, 11, C.text, Enum.TextXAlignment.Left)
-            bl.Position = UDim2.new(0, 10, 0, 0); bl.Size = UDim2.new(1, -16, 1, 0)
-            b.MouseButton1Click:Connect(function() onClick(bl) end)
-            -- garis pemisah bawah field
-            mk("Frame", {
-                Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, y + 32),
-                BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-            return bl
-        end
-        -- Target (pilih player)
-        local tlbl = lbl(body, "Target", 12, C.text, Enum.TextXAlignment.Left)
-        tlbl.Position = UDim2.new(0, 0, 0, 4); tlbl.Size = UDim2.new(0.4, 0, 0, 28)
-        local tBtn = mk("TextButton", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 4),
-            BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = body })
-        corner(tBtn, 6); stroke(tBtn, C.border, 1)
-        local tBtnL = lbl(tBtn, "Pilih player...", 11, C.textDim, Enum.TextXAlignment.Left)
-        tBtnL.Position = UDim2.new(0, 10, 0, 0); tBtnL.Size = UDim2.new(1, -16, 1, 0)
-        -- label target: tampil jumlah / nama (offline kalau gak di server)
-        _G.HactTelurGiftTargetLabels = _G.HactTelurGiftTargetLabels or {}
-        _G.HactTelurGiftTargetLabels[idx] = function()
-            local Players = game:GetService("Players")
-            local names = {}
-            for n in pairs(cfg.targets or {}) do table.insert(names, n) end
-            if #names == 0 then
-                tBtnL.Text = "Pilih player..."; tBtnL.TextColor3 = C.textDim
-            elseif #names == 1 then
-                local n = names[1]
-                if Players:FindFirstChild(n) then
-                    tBtnL.Text = n; tBtnL.TextColor3 = C.text
+                if #matching == 0 then
+                    statusLbl.Text = "Waiting: no pet match filter di backpack..."
+                    statusLbl.TextColor3 = C.Orange
+                    task.wait(5)
                 else
-                    tBtnL.Text = n .. " (offline)"; tBtnL.TextColor3 = C.accent
-                end
-            else
-                tBtnL.Text = #names .. " target"; tBtnL.TextColor3 = C.text
-            end
-        end
-        _G.HactTelurGiftTargetLabels[idx]()
-        tBtn.MouseButton1Click:Connect(function()
-            -- popup pilih player MULTI-SELECT
-            local dim = mk("Frame", {
-                Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(0,0,0),
-                BackgroundTransparency = 0.5, ZIndex = 70, Parent = miscContent })
-            local box = mk("Frame", {
-                Size = UDim2.new(0, 300, 0, 320), Position = UDim2.new(0.5, -150, 0.5, -160),
-                BackgroundColor3 = C.panel, ZIndex = 71, Parent = dim })
-            corner(box, 10); stroke(box, C.border, 1)
-            local hd = lbl(box, "Pilih Target (bisa banyak)", 13, C.text); hd.Font = FONT_B
-            hd.Position = UDim2.new(0, 14, 0, 10); hd.Size = UDim2.new(1, -50, 0, 20); hd.ZIndex = 72
-            local cls = mk("TextButton", {
-                Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -32, 0, 8),
-                BackgroundColor3 = C.input, Text = "X", Font = FONT_B, TextSize = 12,
-                TextColor3 = C.text, AutoButtonColor = false, ZIndex = 72, Parent = box })
-            corner(cls, 6)
-            local sc = mk("ScrollingFrame", {
-                Size = UDim2.new(1, -20, 1, -50), Position = UDim2.new(0, 10, 0, 44),
-                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-                CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-                ZIndex = 72, Parent = box })
-            mk("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc })
-            local Players = game:GetService("Players")
-            local function buildPlayers()
-                for _, c in ipairs(sc:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-                local i = 0
-                for _, pl in ipairs(Players:GetPlayers()) do
-                    if pl ~= player then
-                        i = i + 1
-                        local chosen = cfg.targets[pl.Name] == true
-                        local r = mk("TextButton", {
-                            Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.cardSel,
-                            Text = "", AutoButtonColor = false, LayoutOrder = chosen and i or (i + 100000),
-                            ZIndex = 72, Parent = sc })
-                        corner(r, 5)
-                        local ck = lbl(r, chosen and "*" or "o", 13, chosen and C.text or C.textMute)
-                        ck.Position = UDim2.new(0, 8, 0, 0); ck.Size = UDim2.new(0, 20, 1, 0); ck.ZIndex = 72
-                        local nm = lbl(r, pl.Name, 11, chosen and C.text or C.textDim, Enum.TextXAlignment.Left)
-                        nm.Position = UDim2.new(0, 32, 0, 0); nm.Size = UDim2.new(1, -36, 1, 0); nm.ZIndex = 72
-                        r.MouseButton1Click:Connect(function()
-                            cfg.targets[pl.Name] = (not cfg.targets[pl.Name]) or nil
-                            buildPlayers()
-                            _G.HactTelurGiftTargetLabels[idx]()
-                            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                        end)
+                    local petTool = matching[math.random(1, #matching)]
+                    local target = poolTargets[math.random(1, #poolTargets)]
+                    local petName = petTool.Name
+                    statusLbl.Text = "→ "..target.Name:sub(1,14).." : "..petName:sub(1,18)
+                    statusLbl.TextColor3 = C.Blue
+                    local ok = giftPetToPlayer(target, petTool)
+                    if ok then
+                        sentCount = sentCount + 1
+                    else
+                        failCount = failCount + 1
                     end
+                    gCounterLbl.Text = "Sent: "..sentCount.."   Failed: "..failCount
+                    task.wait(0.15)  -- dipercepat (dulu 1.5)
+                end
                 end
             end
-            buildPlayers()
-            cls.MouseButton1Click:Connect(function() dim:Destroy() end)
-        end)
-        mk("Frame", {
-            Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 36),
-            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-        -- Pet Type
-        local petL = fieldRow(38, "Pet Type", "Select Pet...", function(bl)
-            openMultiPicker("Pilih Pet Type", PET_LIST, cfg.pets, function()
-                local n=0; for _ in pairs(cfg.pets) do n=n+1 end
-                bl.Text = n>0 and (n.." pet") or "Select Pet..."; bl.TextColor3 = n>0 and C.text or C.textDim
-            end)
-        end)
-        -- Mutation Filter
-        local mutL = fieldRow(72, "Mutasi", "(Opsional)...", function(bl)
-            openMultiPicker("Pilih Mutasi", PetDetect.MUT_PREFIXES, cfg.muts, function()
-                local n=0; for _ in pairs(cfg.muts) do n=n+1 end
-                bl.Text = n>0 and (n.." mutasi") or "(Opsional)..."; bl.TextColor3 = n>0 and C.text or C.textDim
-            end)
-        end)
-        -- Age (min)
-        local aL = lbl(body, "Age (-=bwh)", 12, C.text, Enum.TextXAlignment.Left)
-        aL.Position = UDim2.new(0, 0, 0, 106); aL.Size = UDim2.new(0.4, 0, 0, 28)
-        local aBox = mk("TextBox", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 106),
-            BackgroundColor3 = C.input, Text = tostring(cfg.age or 0), Font = FONT, TextSize = 11, TextColor3 = C.text,
-            TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = body })
-        corner(aBox, 6); stroke(aBox, C.border, 1)
-        aBox.FocusLost:Connect(function()
-            cfg.age = tonumber(aBox.Text) or 0; aBox.Text = tostring(cfg.age)
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 138),
-            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-        -- KG (-=di bawah)
-        local kL = lbl(body, "KG (-=bwh)", 12, C.text, Enum.TextXAlignment.Left)
-        kL.Position = UDim2.new(0, 0, 0, 140); kL.Size = UDim2.new(0.4, 0, 0, 28)
-        local kBox = mk("TextBox", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 140),
-            BackgroundColor3 = C.input, Text = tostring(cfg.kg or 0), Font = FONT, TextSize = 11, TextColor3 = C.text,
-            TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = body })
-        corner(kBox, 6); stroke(kBox, C.border, 1)
-        kBox.FocusLost:Connect(function()
-            cfg.kg = tonumber(kBox.Text) or 0; kBox.Text = tostring(cfg.kg)
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 172),
-            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-        -- Metode: Trade / Gift (tombol switch)
-        local mL = lbl(body, "Metode", 12, C.text, Enum.TextXAlignment.Left)
-        mL.Position = UDim2.new(0, 0, 0, 178); mL.Size = UDim2.new(0.4, 0, 0, 28)
-        local mBtn = mk("TextButton", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 178),
-            BackgroundColor3 = C.input, Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)",
-            Font = FONT_B, TextSize = 11, TextColor3 = C.text, AutoButtonColor = false, Parent = body })
-        corner(mBtn, 6); stroke(mBtn, C.border, 1)
-        mBtn.MouseButton1Click:Connect(function()
-            cfg.method = (cfg.method == "gift") and "trade" or "gift"
-            mBtn.Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)"
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 210),
-            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-        -- Unfav dulu sebelum gift (toggle)
-        local uL = lbl(body, "Unfav dulu", 12, C.text, Enum.TextXAlignment.Left)
-        uL.Position = UDim2.new(0, 0, 0, 216); uL.Size = UDim2.new(0.6, 0, 0, 28)
-        local uSw = mk("TextButton", {
-            Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -44, 0, 218),
-            BackgroundColor3 = cfg.unfavFirst and C.accent or C.input, Text = "", AutoButtonColor = false, Parent = body })
-        corner(uSw, 12)
-        local uKnob = mk("Frame", {
-            Size = UDim2.new(0, 18, 0, 18),
-            Position = cfg.unfavFirst and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
-            BackgroundColor3 = cfg.unfavFirst and Color3.fromRGB(17,17,17) or C.textDim, Parent = uSw })
-        corner(uKnob, 9)
-        uSw.MouseButton1Click:Connect(function()
-            cfg.unfavFirst = not cfg.unfavFirst
-            uSw.BackgroundColor3 = cfg.unfavFirst and C.accent or C.input
-            uKnob.BackgroundColor3 = cfg.unfavFirst and Color3.fromRGB(17,17,17) or C.textDim
-            uKnob.Position = cfg.unfavFirst and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 248),
-            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-        -- Trade nunggu backpack full (kalo ON: auto-sell mati, gift yg trigger pas full)
-        local wL = lbl(body, "Tunggu BP Full", 12, C.text, Enum.TextXAlignment.Left)
-        wL.Position = UDim2.new(0, 0, 0, 254); wL.Size = UDim2.new(0.6, 0, 0, 28)
-        local wSw = mk("TextButton", {
-            Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -44, 0, 256),
-            BackgroundColor3 = cfg.waitFull and C.accent or C.input, Text = "", AutoButtonColor = false, Parent = body })
-        corner(wSw, 12)
-        local wKnob = mk("Frame", {
-            Size = UDim2.new(0, 18, 0, 18),
-            Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9),
-            BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim, Parent = wSw })
-        corner(wKnob, 9)
-        local function syncWaitFullFlag()
-            -- blokir auto-sell HANYA kalo ada slot gift yg waitFull ON DAN lagi running
-            -- (kalo gift gak jalan, sell tetep boleh biar backpack gak penuh nyangkut)
-            local any = false
-            for _, c in ipairs(_G.HactTelurGiftCfgs or {}) do
-                if c.waitFull and c._running then any = true break end
-            end
-            Auto.giftWaitFull = any
         end
-        wSw.MouseButton1Click:Connect(function()
-            cfg.waitFull = not cfg.waitFull
-            wSw.BackgroundColor3 = cfg.waitFull and C.accent or C.input
-            wKnob.BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim
-            wKnob.Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-            syncWaitFullFlag()
-            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-        end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 286),
-            BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
-        -- v16.7: refresh SEMUA input slot gift dari cfg (biar nilai tersimpan tampil setelah rejoin)
-        _G.HactTelurGiftAgeKgLabels = _G.HactTelurGiftAgeKgLabels or {}
-        _G.HactTelurGiftAgeKgLabels[idx] = function()
-            aBox.Text = tostring(cfg.age or 0)
-            kBox.Text = tostring(cfg.kg or 0)
-            mBtn.Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)"
-            -- label pet & mutasi (jumlah dipilih)
-            local np = 0; for _ in pairs(cfg.pets or {}) do np = np + 1 end
-            petL.Text = np > 0 and (np.." pet") or "Select Pet..."
-            petL.TextColor3 = np > 0 and C.text or C.textDim
-            local nm = 0; for _ in pairs(cfg.muts or {}) do nm = nm + 1 end
-            mutL.Text = nm > 0 and (nm.." mutasi") or "(Opsional)..."
-            mutL.TextColor3 = nm > 0 and C.text or C.textDim
-            -- toggle unfav
-            uSw.BackgroundColor3 = cfg.unfavFirst and C.accent or C.input
-            uKnob.BackgroundColor3 = cfg.unfavFirst and Color3.fromRGB(17,17,17) or C.textDim
-            uKnob.Position = cfg.unfavFirst and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-            -- toggle waitFull
-            wSw.BackgroundColor3 = cfg.waitFull and C.accent or C.input
-            wKnob.BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim
-            wKnob.Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-        end
-        -- tombol Gift (toggle auto-loop)
-        local gBtn = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 294),
-            BackgroundColor3 = C.accent, Text = "Auto Gift: OFF", Font = FONT_B, TextSize = 12,
-            TextColor3 = Color3.fromRGB(17,17,17), AutoButtonColor = false, Parent = body })
-        corner(gBtn, 7)
-        local statL = lbl(body, "", 10, C.textMute, Enum.TextXAlignment.Center)
-        statL.Position = UDim2.new(0, 0, 0, 330); statL.Size = UDim2.new(1, 0, 0, 16)
-        local running = false
-        gBtn.MouseButton1Click:Connect(function()
-            if not running then
-                local nt = 0; for _ in pairs(cfg.targets or {}) do nt = nt + 1 end
-                if nt == 0 then statL.Text = "pilih target dulu"; return end
-                running = true
-                cfg._running = true
-                gBtn.Text = "Auto Gift: ON (stop)"
-                gBtn.BackgroundColor3 = C.danger
-                syncWaitFullFlag()
-                task.spawn(function()
-                    local wasFull = false  -- lacak status full sebelumnya
-                    while running do
-                        if cfg.waitFull then
-                            -- mode tunggu full: trade SEKALI pas backpack full, lalu tunggu full lagi
-                            local full = isBackpackFull()
-                            if full and not wasFull then
-                                -- baru jadi full -> kirim pet cocok
-                                local sent = giftPetsByFilter(cfg)
-                                statL.Text = sent > 0 and ("Terkirim "..sent.." pet") or "gak ada pet cocok"
-                                wasFull = true  -- udah dikirim, jgn ulang sampai full lagi
-                                task.wait(1)
-                            elseif full then
-                                -- masih full tapi udah dikirim tadi (sisanya gak cukup di-trade) -> diem
-                                statL.Text = "nunggu backpack full lagi..."
-                                task.wait(2)
-                            else
-                                -- belum full / udah turun -> reset, tunggu penuh lagi
-                                wasFull = false
-                                statL.Text = "nunggu backpack full..."
-                                task.wait(2)
-                            end
-                        else
-                            local sent = giftPetsByFilter(cfg)
-                            statL.Text = sent > 0 and ("Terkirim "..sent.." pet") or "nunggu pet cocok..."
-                            task.wait(1)
-                        end
-                    end
-                end)
-            else
-                running = false
-                cfg._running = false
-                syncWaitFullFlag()
-                gBtn.Text = "Auto Gift: OFF"
-                gBtn.BackgroundColor3 = C.accent
-                statL.Text = "dihentikan"
-            end
-        end)
-        -- toggle expand
-        head.MouseButton1Click:Connect(function()
-            expanded = not expanded
-            body.Visible = expanded
-            chev.Text = expanded and "v" or ">"
-            row.Size = expanded and UDim2.new(1, 0, 0, 410) or UDim2.new(1, 0, 0, 40)
-        end)
-    end
-    for i = 1, 3 do makeGiftSlot(i) end
+        giftActive = false
+        setRunning(false)
+        statusLbl.Text = "Stop: Stopped (Sent: "..sentCount..")"
+        statusLbl.TextColor3 = C.Dim
+        _G.ZenxGiftActive = false
+        persistGiftSettings()
+    end)
 end
 
+local function stopGift()
+    if not giftActive then return end
+    giftStopReq = true
+    statusLbl.Text = "Status: stopping..."
+    statusLbl.TextColor3 = C.Orange
+end
 
--- 2) REJOIN
-miscActionRow(10, "Rejoin", "Masuk ulang ke server yang sama", "Rejoin", function()
-    print("[HactTelur] rejoin...")
-    pcall(function()
-        local TS = game:GetService("TeleportService")
-        TS:Teleport(game.PlaceId, player)
-    end)
-end)
-
--- v18.4: pindah ke server LAIN (JobId beda) dari place yg sama — bukan publik random,
--- bukan PS. fetch daftar server via HTTP, pilih JobId != sekarang, TeleportToPlaceInstance.
--- fallback: Teleport biasa kalau HTTP gak ada.
-local function serverHop()
-    local TS = game:GetService("TeleportService")
-    local httpFn = (syn and syn.request) or (http and http.request) or http_request or request
-    if httpFn then
-        local ok = pcall(function()
-            local cursor = ""
-            for _ = 1, 3 do  -- cek max 3 halaman biar dapet server fresh
-                local url = "https://games.roblox.com/v1/games/"..game.PlaceId
-                    .."/servers/Public?sortOrder=Asc&limit=100"..(cursor ~= "" and ("&cursor="..cursor) or "")
-                local res = httpFn({ Url = url, Method = "GET" })
-                if res and res.Body then
-                    local data = game:GetService("HttpService"):JSONDecode(res.Body)
-                    if data and data.data then
-                        for _, srv in ipairs(data.data) do
-                            -- server fresh: ada slot kosong & JobId BEDA dari sekarang
-                            if srv.id and srv.id ~= game.JobId
-                               and srv.playing and srv.maxPlayers
-                               and srv.playing < srv.maxPlayers then
-                                TS:TeleportToPlaceInstance(game.PlaceId, srv.id, player)
-                                return
-                            end
-                        end
-                        cursor = data.nextPageCursor or ""
-                        if cursor == "" then break end
-                    end
-                end
-            end
-            -- gak nemu server beda dari list -> teleport biasa
-            TS:Teleport(game.PlaceId, player)
-        end)
-        if not ok then
-            pcall(function() TS:Teleport(game.PlaceId, player) end)
-        end
+toggleBtn.MouseButton1Click:Connect(function()
+    if giftActive then
+        stopGift()
     else
-        -- gak ada HTTP request -> teleport biasa (umumnya tetap dpt JobId beda)
-        pcall(function() TS:Teleport(game.PlaceId, player) end)
-    end
-end
-
--- 2b) AUTO UPDATE SERVER (pindah ke server FRESH terjadwal tiap interval)
-do
-    -- v20.4: restore dari config (sebelumnya gak ke-save, selalu reset abis rejoin)
-    local AUS = {
-        on = (config.autoUpdateServer and config.autoUpdateServer.on) or false,
-        interval = (config.autoUpdateServer and config.autoUpdateServer.interval) or 50,
-    }  -- menit
-    local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 108), BackgroundColor3 = C.card, LayoutOrder = 10.5, Parent = miscScroll })
-    corner(row, 8); stroke(row, C.border, 1)
-    local t = lbl(row, "Auto Update Server", 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
-    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
-    local d = lbl(row, "Pindah ke server fresh tiap interval", 11, C.textDim, Enum.TextXAlignment.Left)
-    d.Position = UDim2.new(0, 14, 0, 29); d.Size = UDim2.new(1, -80, 0, 16)
-    -- Job ID sekarang
-    local jobLbl = lbl(row, "Job ID: "..tostring(game.JobId):sub(1,28).."...", 10, C.textMute, Enum.TextXAlignment.Left)
-    jobLbl.Position = UDim2.new(0, 14, 0, 48); jobLbl.Size = UDim2.new(1, -28, 0, 14)
-    -- interval input
-    local iLbl = lbl(row, "Interval (menit)", 11, C.text, Enum.TextXAlignment.Left)
-    iLbl.Position = UDim2.new(0, 14, 0, 72); iLbl.Size = UDim2.new(0, 110, 0, 24)
-    local iBox = mk("TextBox", {
-        Size = UDim2.new(0, 60, 0, 26), Position = UDim2.new(0, 128, 0, 71),
-        BackgroundColor3 = C.input, Text = tostring(AUS.interval), Font = FONT, TextSize = 12,
-        TextColor3 = C.text, ClearTextOnFocus = false, Parent = row })
-    corner(iBox, 6); stroke(iBox, C.border, 1)
-    -- v20.4: helper simpan ke config
-    local function saveAUS()
-        config.autoUpdateServer = { on = AUS.on, interval = AUS.interval }
-        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-    end
-    iBox.FocusLost:Connect(function()
-        local v = tonumber(iBox.Text)
-        if v and v >= 1 then AUS.interval = v end
-        iBox.Text = tostring(AUS.interval)
-        saveAUS()
-    end)
-    -- toggle
-    local sw = mk("TextButton", {
-        Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -58, 0, 71),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
-    corner(sw, 12)
-    local knob = mk("Frame", {
-        Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
-        BackgroundColor3 = C.textDim, Parent = sw })
-    corner(knob, 9)
-    local function applyAUSVisual()
-        sw.BackgroundColor3 = AUS.on and C.accent or C.input
-        knob.BackgroundColor3 = AUS.on and Color3.fromRGB(17,17,17) or C.textDim
-        knob.Position = AUS.on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-    end
-    applyAUSVisual()  -- v20.4: tampilkan state tersimpan
-    sw.MouseButton1Click:Connect(function()
-        AUS.on = not AUS.on
-        applyAUSVisual()
-        AUS.lastSwitch = tick()  -- reset timer saat dinyalakan
-        saveAUS()
-    end)
-    -- v20.4: daftarkan refresher biar ke-update setelah loadConfig
-    table.insert(miscToggleRefreshers, function()
-        if config.autoUpdateServer then
-            AUS.on = config.autoUpdateServer.on or false
-            AUS.interval = config.autoUpdateServer.interval or 50
-            iBox.Text = tostring(AUS.interval)
-            applyAUSVisual()
-        end
-    end)
-    -- loop: tiap interval, teleport ke server FRESH (TeleportService cari instance baru)
-    AUS.lastSwitch = tick()
-    task.spawn(function()
-        while true do
-            task.wait(10)
-            if AUS.on then
-                local elapsed = tick() - (AUS.lastSwitch or tick())
-                if elapsed >= AUS.interval * 60 then
-                    print("[HactTelur] Auto Update Server: pindah ke server fresh (JobId beda)...")
-                    AUS.lastSwitch = tick()
-                    pcall(serverHop)
-                end
-            end
-        end
-    end)
-end
-
--- 3) FAV PET (favoritkan semua)
-miscActionRow(11, "Fav Pet", "Favoritkan semua pet di backpack", "Fav All", function(btn)
-    btn.Text = "..."
-    task.spawn(function()
-        local n = favAllPets(true)
-        btn.Text = "+"..n
-        task.wait(1.2); btn.Text = "Fav All"
-    end)
-end)
-
--- 4) UNFAV PET (unfavoritkan semua)
-miscActionRow(12, "Unfav Pet", "Hapus favorit semua pet di backpack", "Unfav All", function(btn)
-    btn.Text = "..."
-    task.spawn(function()
-        local n = favAllPets(false)
-        btn.Text = "-"..n
-        task.wait(1.2); btn.Text = "Unfav All"
-    end)
-end)
-
--- Auto Accept Gift masuk
--- v20.7: ESP Egg toggle (billboard nama + waktu netas di atas egg) + auto save
-miscToggleRow(12.4, "ESP Egg", "Tampilkan nama + waktu netas di atas egg", function(on)
-    EggESP.on = on
-    config.eggESP = on
-    if not on then clearEggESP() end
-    print("[HactTelur] ESP Egg "..(on and "ON" or "OFF"))
-    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end, function() return config.eggESP end)
--- Auto Accept Gift masuk
-miscToggleRow(12.5, "Auto Accept Gift", "Terima gift masuk otomatis", function(on)
-    AutoAcc.gift = on
-    config.autoAccGift = on
-    print("[HactTelur] Auto Accept Gift "..(on and "ON" or "OFF"))
-    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end, function() return config.autoAccGift end)
--- Auto Accept Trade masuk
-miscToggleRow(12.7, "Auto Accept Trade", "Terima trade masuk otomatis", function(on)
-    AutoAcc.trade = on
-    config.autoAccTrade = on
-    print("[HactTelur] Auto Accept Trade "..(on and "ON" or "OFF"))
-    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end, function() return config.autoAccTrade end)
--- v19.1: auto start setelah rejoin (tanpa pencet START)
-miscToggleRow(12.55, "Auto Start", "Mulai otomatis setelah rejoin/load (tanpa pencet START)", function(on)
-    config.autoStart = on
-    print("[HactTelur] Auto Start "..(on and "ON" or "OFF"))
-    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end, function() return config.autoStart end)
-
--- v19.0: syarat Koi% & Seal% >= 50% buat start & auto-stop kalau turun
-miscToggleRow(12.6, "Syarat Koi & Seal >=50%", "Start cuma kalau Koi & Seal >=50%, stop kalau turun", function(on)
-    config.reqKoiSeal = on
-    print("[HactTelur] Syarat Koi&Seal 50% "..(on and "ON" or "OFF"))
-    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end, function() return config.reqKoiSeal end)
-
--- v18.7: buang pet salah (bukan tim Reduce) dari garden
-miscToggleRow(12.9, "Auto Unequip Pet Salah", "Buang pet bukan tim Reduce dari garden saat hatch", function(on)
-    config.autoUnequipWrong = on
-    print("[HactTelur] Auto Unequip Pet Salah "..(on and "ON" or "OFF"))
-    if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-end, function() return config.autoUnequipWrong end)
-
--- v18.9: debug print nilai seal/koi per pet (buat cek kenapa % segitu)
-miscToggleRow(12.95, "Debug Seal %", "Print nilai % per pet ke console (F9)", function(on)
-    PetDetect.DEBUG_PCT = on
-    print("[HactTelur] Debug Seal% "..(on and "ON - buka console (F9), pilih tim sell ulang" or "OFF"))
-end)
-
--- 5) WEBHOOK DISCORD (input URL + toggle)
-do
-    local row = mk("Frame", {
-        Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card, LayoutOrder = 13, Parent = miscScroll })
-    corner(row, 8); stroke(row, C.border, 1)
-    local t = lbl(row, "Webhook Discord", 13, C.text, Enum.TextXAlignment.Left); t.Font = FONT_B
-    t.Position = UDim2.new(0, 14, 0, 9); t.Size = UDim2.new(1, -80, 0, 18)
-    local d = lbl(row, "Notif tiap hatch & sell", 11, C.textDim, Enum.TextXAlignment.Left)
-    d.Position = UDim2.new(0, 14, 0, 28); d.Size = UDim2.new(1, -80, 0, 16)
-    -- toggle
-    local sw = mk("TextButton", {
-        Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -58, 0, 14),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = row })
-    corner(sw, 12)
-    local knob = mk("Frame", {
-        Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, 3, 0.5, -9),
-        BackgroundColor3 = C.textDim, Parent = sw })
-    corner(knob, 9)
-    sw.MouseButton1Click:Connect(function()
-        Webhook.enabled = not Webhook.enabled
-        sw.BackgroundColor3 = Webhook.enabled and C.accent or C.input
-        knob.BackgroundColor3 = Webhook.enabled and Color3.fromRGB(17,17,17) or C.textDim
-        knob.Position = Webhook.enabled and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-        if Webhook.enabled and Webhook.url ~= "" then
-            sendWebhook("✅ Webhook Aktif", "Notif hatch & sell nyala.", 3066993)
-        end
-    end)
-    -- input URL
-    local urlBox = mk("TextBox", {
-        Size = UDim2.new(1, -28, 0, 30), Position = UDim2.new(0, 14, 0, 54),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "Tempel URL webhook discord...",
-        Font = FONT, TextSize = 11, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Left,
-        ClearTextOnFocus = false, ClipsDescendants = true, Parent = row })
-    corner(urlBox, 6); stroke(urlBox, C.border, 1); pad(urlBox, 8)
-    urlBox.FocusLost:Connect(function()
-        Webhook.url = urlBox.Text:gsub("%s+", "")
-        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-    end)
-    _G.HactTelurSetWebhookUI = function(url)
-        urlBox.Text = url or ""
-    end
-end
-
--- toggle tampilan AUTO HACT vs MISC
-showMiscFn = function(on)
-    miscContent.Visible = on
-    content.Visible = not on
-end
-_G.HactTelurShowMisc = showMiscFn
-
--- ============ AUTO AFK (anti idle kick) ============
-task.spawn(function()
-    local ok, VirtualUser = pcall(function() return game:GetService("VirtualUser") end)
-    if ok and VirtualUser then
-        local plr = game:GetService("Players").LocalPlayer
-        plr.Idled:Connect(function()
-            pcall(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new())
-            end)
-            print("[HactTelur] anti-AFK tick")
-        end)
-        print("[HactTelur] Auto AFK aktif")
+        startGift()
     end
 end)
 
--- ============ SAVE / LOAD CONFIG (biar gak pilih ulang pas rejoin) ============
-local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
-local function saveConfig()
-    if not writefile then return end
-    if not isCurrentGen() then return end  -- v21.0: instance lama jgn nimpa file
-    local data = {
-        eggSelected = config.eggSelected,
-        sellRules = config.sellRules,
-        autoSell = config.autoSell,
-        maxEggManual = config.maxEggManual,
-        hatchDelay = config.hatchDelay,
-        autoUnequipWrong = config.autoUnequipWrong,
-        reqKoiSeal = config.reqKoiSeal,
-        minKoiSeal = config.minKoiSeal,
-        autoStart = config.autoStart,
-        autoAccGift = config.autoAccGift,
-        autoAccTrade = config.autoAccTrade,
-        autoUpdateServer = config.autoUpdateServer,  -- v20.4
-        eggESP = config.eggESP,  -- v20.7
-        trackPetType = config.trackPetType,  -- v22.1
-        webhookUrl = Webhook.url,
-        webhookEnabled = Webhook.enabled,
-        autoBuy = {
-            seed = { on = AutoBuy.seed.on, items = AutoBuy.seed.items },
-            egg  = { on = AutoBuy.egg.on,  items = AutoBuy.egg.items },
-            gear = { on = AutoBuy.gear.on, items = AutoBuy.gear.items },
-        },
-        promptBuy = { on = PromptBuy.on, item = PromptBuy.item, itemId = PromptBuy.itemId, payWith = PromptBuy.payWith },
-        teams = {},
-    }
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        local sel = {}
-        if teamData[tn] and teamData[tn].selected then
-            for uuid in pairs(teamData[tn].selected) do sel[#sel+1] = uuid end
-        end
-        data.teams[tn] = {
-            selected = sel,
-            delayEquip = teamData[tn] and teamData[tn].delayEquip or 0,
-            delayUnequip = teamData[tn] and teamData[tn].delayUnequip or 1,
-        }
-    end
-    -- giftCfgs: bikin salinan bersih (buang field runtime _running biar JSON aman)
-    local giftClean = {}
-    if _G.HactTelurGiftCfgs then
-        for i, c in ipairs(_G.HactTelurGiftCfgs) do
-            giftClean[i] = {
-                targets = c.targets or {}, pets = c.pets or {}, muts = c.muts or {},
-                age = c.age or 0, kg = c.kg or 0, method = c.method or "trade",
-                unfavFirst = c.unfavFirst or false, waitFull = c.waitFull or false,
-            }
-        end
-    end
-    data.giftCfgs = giftClean
-    local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
-    if ok and json then
-        local wok = pcall(function() writefile(SAVE_FILE, json) end)
-        local rnames = {}
-        for p in pairs(config.sellRules) do table.insert(rnames, p) end
-        print("[HactTelur] SAVE: "..#rnames.." rule ["..table.concat(rnames, ",").."], writefile="..tostring(wok))
+-- ============================================================
+-- TAB SWITCH
+-- ============================================================
+local activeTab = "stats"
+local function setTab(tab)
+    activeTab = tab
+    if tab == "stats" then
+        tabStatsBtn.BackgroundColor3 = C.Accent
+        tabStatsBtn.TextColor3 = Color3.new(0, 0, 0)
+        tabGiftBtn.BackgroundColor3 = C.Card
+        tabGiftBtn.TextColor3 = C.Dim
+        statsPanel.Visible = true
+        giftPanel.Visible = false
     else
-        warn("[HactTelur] SAVE GAGAL: JSONEncode error - "..tostring(json))
+        tabGiftBtn.BackgroundColor3 = C.Accent
+        tabGiftBtn.TextColor3 = Color3.new(0, 0, 0)
+        tabStatsBtn.BackgroundColor3 = C.Card
+        tabStatsBtn.TextColor3 = C.Dim
+        statsPanel.Visible = false
+        giftPanel.Visible = true
+        renderRecent()
     end
 end
-local function loadConfig()
-    if not (readfile and isfile) then return end
-    if not isfile(SAVE_FILE) then return end
-    local ok, raw = pcall(readfile, SAVE_FILE)
-    if not ok or not raw then return end
-    local ok2, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
-    if not ok2 or type(data) ~= "table" then return end
-    -- restore
-    if type(data.eggSelected) == "table" then config.eggSelected = data.eggSelected end
-    if type(data.sellRules) == "table" then
-        config.sellRules = data.sellRules
-        local nr = 0; for _ in pairs(config.sellRules) do nr = nr + 1 end
-        print("[HactTelur] LOAD: "..nr.." sell rule dari file")
+tabStatsBtn.MouseButton1Click:Connect(function() setTab("stats") end)
+tabGiftBtn.MouseButton1Click:Connect(function() setTab("gift") end)
+setTab("stats")
+
+-- ============================================================
+-- TOGGLE EXPAND
+-- ============================================================
+local expanded = false
+local function setExpanded(v)
+    expanded = v
+    tabRow.Visible = v
+    statsPanel.Visible = v and (activeTab == "stats")
+    giftPanel.Visible = v and (activeTab == "gift")
+    footer.Visible = v
+    if v then
+        main.Size = UDim2.new(0, W, 0, EXPANDED_HEIGHT)
+        expandBtn.Text = "—"
+    else
+        main.Size = UDim2.new(0, W, 0, COLLAPSED_HEIGHT)
+        expandBtn.Text = "+"
     end
-    if data.autoSell ~= nil then
-        config.autoSell = data.autoSell
-        if _G.HactTelurSetAutoSellUI then pcall(_G.HactTelurSetAutoSellUI) end
-    end
-    if data.maxEggManual ~= nil then
-        config.maxEggManual = data.maxEggManual
-        if _G.HactTelurSetMaxEggUI then pcall(_G.HactTelurSetMaxEggUI) end
-    end
-    if data.hatchDelay ~= nil then
-        config.hatchDelay = data.hatchDelay
-        if _G.HactTelurSetHatchDelayUI then pcall(_G.HactTelurSetHatchDelayUI) end
-    end
-    if data.autoUnequipWrong ~= nil then config.autoUnequipWrong = data.autoUnequipWrong end
-    if data.reqKoiSeal ~= nil then config.reqKoiSeal = data.reqKoiSeal end
-    if data.minKoiSeal ~= nil then config.minKoiSeal = data.minKoiSeal end
-    if data.autoStart ~= nil then config.autoStart = data.autoStart end
-    if data.autoAccGift ~= nil then
-        config.autoAccGift = data.autoAccGift
-        AutoAcc.gift = data.autoAccGift
-    end
-    if data.autoAccTrade ~= nil then
-        config.autoAccTrade = data.autoAccTrade
-        AutoAcc.trade = data.autoAccTrade
-    end
-    if type(data.autoUpdateServer) == "table" then config.autoUpdateServer = data.autoUpdateServer end  -- v20.4
-    if data.eggESP ~= nil then  -- v20.7
-        config.eggESP = data.eggESP
-        EggESP.on = data.eggESP
-    end
-    if type(data.trackPetType) == "string" then  -- v22.1: restore track jenis pet
-        config.trackPetType = data.trackPetType
-        if _G.HactTelurSetTrack then pcall(_G.HactTelurSetTrack, data.trackPetType) end
-    end
-    -- v19.7: refresh semua toggle MISC biar nunjukin state tersimpan
-    for _, fn in ipairs(miscToggleRefreshers) do pcall(fn) end
-    if data.webhookUrl then
-        Webhook.url = data.webhookUrl
-        if _G.HactTelurSetWebhookUI then pcall(_G.HactTelurSetWebhookUI, data.webhookUrl) end
-    end
-    if data.webhookEnabled ~= nil then Webhook.enabled = data.webhookEnabled end
-    -- v17.5: restore auto-buy seed/egg/gear
-    if type(data.autoBuy) == "table" then
-        for _, kind in ipairs({"seed","egg","gear"}) do
-            local s = data.autoBuy[kind]
-            if type(s) == "table" then
-                AutoBuy[kind].on = s.on or false
-                AutoBuy[kind].items = (type(s.items) == "table") and s.items or {}
-            end
-        end
-        if _G.HactTelurRefreshAutoBuy then pcall(_G.HactTelurRefreshAutoBuy) end
-    end
-    -- v17.6: restore prompt purchase (beli pakai token)
-    if type(data.promptBuy) == "table" then
-        PromptBuy.on = data.promptBuy.on or false
-        PromptBuy.item = data.promptBuy.item
-        PromptBuy.itemId = data.promptBuy.itemId
-        PromptBuy.payWith = data.promptBuy.payWith or "token"
-        if fruitData and fruitData.promptBuy and fruitData.promptBuy.refreshSelBtn then
-            pcall(fruitData.promptBuy.refreshSelBtn)
-        end
-    end
-    if type(data.giftCfgs) == "table" and _G.HactTelurGiftCfgs then
-        for i = 1, 3 do
-            if data.giftCfgs[i] and _G.HactTelurGiftCfgs[i] then
-                local src, dst = data.giftCfgs[i], _G.HactTelurGiftCfgs[i]
-                -- kompat: target lama (string) -> targets set
-                if type(src.targets) == "table" then
-                    dst.targets = src.targets
-                elseif type(src.target) == "string" and src.target ~= "" then
-                    dst.targets = { [src.target] = true }
-                else
-                    dst.targets = {}
-                end
-                dst.pets = src.pets or {}
-                dst.muts = src.muts or {}
-                dst.age = src.age or 0
-                dst.kg = src.kg or 0
-                dst.method = src.method or "trade"
-                dst.unfavFirst = src.unfavFirst or false
-                dst.waitFull = src.waitFull or false
-            end
-        end
-        -- v16.7: update input age & kg di UI dari nilai yg baru di-load
-        if _G.HactTelurGiftAgeKgLabels then
-            for _, fn in pairs(_G.HactTelurGiftAgeKgLabels) do pcall(fn) end
-        end
-    end
-    if type(data.teams) == "table" then
-        for tn, td in pairs(data.teams) do
-            if teamData[tn] then
-                teamData[tn].selected = {}
-                if type(td.selected) == "table" then
-                    for _, uuid in ipairs(td.selected) do teamData[tn].selected[uuid] = true end
-                end
-                if td.delayEquip then teamData[tn].delayEquip = td.delayEquip end
-                if td.delayUnequip then teamData[tn].delayUnequip = td.delayUnequip end
-            end
-        end
-    end
-    print("[HactTelur] config dimuat dari "..SAVE_FILE)
 end
--- expose biar bisa dipanggil dari tombol/aksi lain
-_G.HactTelurSave = saveConfig
--- load saat startup
-pcall(loadConfig)
--- refresh tampilan Config (egg checklist + sell rule) setelah load
-task.spawn(function()
-    task.wait(0.3)
-    if _G.HactTelurRefreshConfig then pcall(_G.HactTelurRefreshConfig) end
+setExpanded(false)
+expandBtn.MouseButton1Click:Connect(function() setExpanded(not expanded) end)
+
+-- ============================================================
+-- MINIMIZE — floating logo
+-- ============================================================
+local zLogo = Instance.new("TextButton")
+zLogo.Size = UDim2.new(0, 40, 0, 40)
+zLogo.Position = UDim2.new(0, 10, 0.5, -20)
+zLogo.BackgroundColor3 = Color3.fromRGB(255,255,255)
+zLogo.Text = "Z" zLogo.TextColor3 = Color3.new(0,0,0)
+zLogo.Font = Enum.Font.GothamBold zLogo.TextSize = 20
+zLogo.BorderSizePixel = 0
+zLogo.AutoButtonColor = false
+zLogo.Active = true
+zLogo.Draggable = true
+zLogo.Visible = false
+zLogo.Parent = sg
+Instance.new("UICorner", zLogo).CornerRadius = UDim.new(1, 0)
+local zStroke = Instance.new("UIStroke", zLogo)
+zStroke.Color = Color3.new(0,0,0) zStroke.Thickness = 1.5
+
+minBtn.MouseButton1Click:Connect(function()
+    main.Visible = false
+    zLogo.Visible = true
 end)
--- refresh tampilan tim setelah load (summary pet, label, persen)
+zLogo.MouseButton1Click:Connect(function()
+    main.Visible = true
+    zLogo.Visible = false
+end)
+
+-- ============================================================
+-- INIT + AUTO-REFRESH
+-- ============================================================
+cachedContainer, cachedCount = findMemoryContainer()
+print("[ZenxAgeStats] memContainer: "..(cachedContainer and cachedCount.." entries" or "FAIL"))
+print("[ZenxAgeStats] giftRE="..(giftRE and "OK" or "FAIL").." PGS="..(PGS and "OK" or "FAIL"))
+
+renderStats()
+renderRecent()
+
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    if activeTab == "stats" then renderStats() end
+end)
+
 task.spawn(function()
-    task.wait(0.5)
-    for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
-        if teamData[tn] then
-            if teamData[tn].refreshSummary then pcall(teamData[tn].refreshSummary) end
-            if teamData[tn].refreshPickLabel then pcall(teamData[tn].refreshPickLabel) end
-            if teamData[tn].refreshPct then pcall(teamData[tn].refreshPct) end
+    -- v2.19: begitu container KETEMU, STOP re-scan getgc rutin (itu yg bikin lag berkala).
+    -- Referensi container tetep hidup — game update pet baru di tabel yg sama.
+    -- Re-scan cuma kalo: belum ketemu, ATAU tiap 5 MENIT (safety net kalo stale).
+    local lastScan = 0
+    local scanCount = 0
+    while sg.Parent do
+        task.wait(2)
+        if not sg.Parent then break end
+        local needScan = false
+        if not cachedContainer then needScan = true                         -- belum ketemu: cari
+        elseif scanCount < 3 and (tick() - lastScan) > 4 then needScan = true -- 3x awal (akun baru)
+        elseif (tick() - lastScan) > 300 then needScan = true                -- safety: tiap 5 menit
         end
-    end
-end)
--- auto-save tiap 20 detik (biar gak ilang)
-task.spawn(function()
-    while true do
-        task.wait(20)
-        pcall(saveConfig)
+        if needScan then
+            local nc, ncnt = findMemoryContainer()
+            if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
+            lastScan = tick()
+            scanCount = scanCount + 1
+        end
+        updateHeader()  -- ringan — tiap 2s
+        if activeTab == "stats" then renderStats() end  -- skip otomatis kalo data sama
     end
 end)
 
--- v19.1: AUTO START — kalau toggle aktif, mulai automation otomatis setelah load/rejoin
-task.spawn(function()
-    task.wait(3)  -- tunggu pet/tim ke-load dulu
-    if config.autoStart and not globalRunning then
-        PetDetect.rebuild(true)
-        task.wait(1)
-        -- hormati syarat Koi&Seal kalau aktif
-        if config.reqKoiSeal then
-            local ok, koi, seal = checkKoiSealOk()
-            if not ok then
-                print(string.format("[HactTelur] Auto Start batal: Koi %.1f%% Seal %.1f%% (<%d%%)",
-                    koi, seal, config.minKoiSeal or 50))
-                return
-            end
+-- v2.11: Backpack ChildRemoved/Added listener — instant update header pas pet di-gift/hatch
+local function hookBp(c)
+    if not c then return end
+    c.ChildRemoved:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.2)
+            updateHeader()
+            if activeTab == "stats" then renderStats() end
         end
-        print("[HactTelur] AUTO START (setelah rejoin)")
-        Auto.currentTeam = nil
-        globalSetRunning(true)
-        task.spawn(automationLoop)
-    end
-end)
+    end)
+    c.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
+            task.wait(0.2)
+            updateHeader()
+            if activeTab == "stats" then renderStats() end
+        end
+    end)
+end
+hookBp(player:FindFirstChild("Backpack"))
+hookBp(player.Character)
+player.CharacterAdded:Connect(function(ch) hookBp(ch) end)
 
-print("[HactTelur] UI loaded ("..VERSION..") — auto-AFK + save aktif")
+print("[ZenxAgeStats] "..VER.." loaded")
+
+-- v2.10: Restore gift state — kalo terakhir ON, auto-resume after rejoin
+if type(_savedGS) == "table" and _savedGS.giftActive == true then
+    print("[ZenxAgeStats] gift was ON, auto-resuming...")
+    task.spawn(function()
+        task.wait(3)  -- delay biar memContainer + players settle dulu
+        startGift()
+    end)
+end
