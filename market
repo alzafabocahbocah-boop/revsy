@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.255"
+local VERSION = "8.256"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -8116,9 +8116,21 @@ task.spawn(function()
             local char = player.Character
             if char then
                 local hum = char:FindFirstChildOfClass("Humanoid")
-                local hasTool = false
-                for _, c in ipairs(char:GetChildren()) do if c:IsA("Tool") then hasTool = true; break end end
-                if not hasTool and hum then
+                -- cek tool yg lagi dipegang
+                local heldTool = nil
+                for _, c in ipairs(char:GetChildren()) do if c:IsA("Tool") then heldTool = c; break end end
+                -- v8.256: kalau jenis dipilih, pastikan pet yg dipegang SESUAI jenis.
+                -- kalau pegang pet salah -> unequip dulu biar bisa ganti ke yg bener.
+                if heldTool and BH.equipPetType and BH.equipPetType ~= "ALL" and hum then
+                    local heldType = isPet(heldTool) and BH.getPetName(heldTool) or nil
+                    if heldType ~= BH.equipPetType then
+                        -- pet salah / bukan pet -> lepas
+                        pcall(function() hum:UnequipTools() end)
+                        task.wait(0.3)
+                        heldTool = nil
+                    end
+                end
+                if not heldTool and hum then
                     local pet, wt = getDisplayPet()
                     if pet then
                         pcall(function() hum:EquipTool(pet) end)
