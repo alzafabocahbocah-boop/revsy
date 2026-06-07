@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.254"
+local VERSION = "8.255"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -2254,9 +2254,10 @@ local autoEquipBtn = btnOf(petCard, 14, 54, 140, 26,
 local equipMode = (BH.marketState and BH.marketState.equipMode) or "BIGGEST"
 local equipModeBtn = btnOf(petCard, 164, 54, 140, 26, "📦 "..equipMode, C.card, C.text)
 -- v8.254: pilih JENIS pet yg di-equip (cuma jenis ini yg dipajang). "ALL" = semua.
-local equipPetType = (BH.marketState and BH.marketState.equipPetType) or "ALL"
-local equipTypeBtn = btnOf(petCard, 314, 54, 150, 26,
-    "🐾 "..(equipPetType == "ALL" and "Semua Jenis" or equipPetType), C.card, C.text)
+-- pakai BH.equipPetType (bukan local) biar gak nambah local var di scope utama.
+BH.equipPetType = (BH.marketState and BH.marketState.equipPetType) or "ALL"
+BH.equipTypeBtn = btnOf(petCard, 314, 54, 150, 26,
+    "🐾 "..(BH.equipPetType == "ALL" and "Semua Jenis" or BH.equipPetType), C.card, C.text)
 
 -- v8.46: ANTI-AFK CARD (wrapped in do-block to manage local count)
 do
@@ -7996,7 +7997,7 @@ equipModeBtn.MouseButton1Click:Connect(function()
 end)
 
 -- v8.254: picker JENIS pet — kumpulkan jenis unik dari backpack, pilih satu (atau ALL)
-equipTypeBtn.MouseButton1Click:Connect(function()
+BH.equipTypeBtn.MouseButton1Click:Connect(function()
     -- kumpulkan jenis pet unik di backpack
     local types = {}
     local seen = {}
@@ -8049,14 +8050,14 @@ equipTypeBtn.MouseButton1Click:Connect(function()
         for _, nm in ipairs(types) do
             if filter == "" or nm:lower():find(filter, 1, true) then
                 local b = Instance.new("TextButton")
-                b.Size = UDim2.new(1,0,0,30); b.BackgroundColor3 = (nm == equipPetType) and C.accent or C.card
+                b.Size = UDim2.new(1,0,0,30); b.BackgroundColor3 = (nm == BH.equipPetType) and C.accent or C.card
                 b.Text = (nm == "ALL") and "Semua Jenis" or nm
-                b.TextColor3 = (nm == equipPetType) and Color3.fromRGB(17,17,17) or C.text
+                b.TextColor3 = (nm == BH.equipPetType) and Color3.fromRGB(17,17,17) or C.text
                 b.Font = FM; b.TextSize = 12; b.ZIndex = 63; b.Parent = sf
                 Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
                 b.MouseButton1Click:Connect(function()
-                    equipPetType = nm
-                    equipTypeBtn.Text = "🐾 "..(nm == "ALL" and "Semua Jenis" or nm)
+                    BH.equipPetType = nm
+                    BH.equipTypeBtn.Text = "🐾 "..(nm == "ALL" and "Semua Jenis" or nm)
                     if BH.marketState then BH.marketState.equipPetType = nm; BH.saveMarketState(BH.marketState) end
                     L("[👜] jenis pet display: "..nm)
                     ov:Destroy()
@@ -8089,8 +8090,8 @@ local function getDisplayPet()
         if isPet(t) and not isFav(t) then
             -- v8.254: filter jenis pet (kalau bukan ALL, cuma equip jenis terpilih)
             local okType = true
-            if equipPetType and equipPetType ~= "ALL" then
-                okType = (BH.getPetName(t) == equipPetType)
+            if BH.equipPetType and BH.equipPetType ~= "ALL" then
+                okType = (BH.getPetName(t) == BH.equipPetType)
             end
             if okType then
                 local wt = tonumber(string.match(t.Name, "%[(%d+%.?%d*)%s*KG%]")) or 0
