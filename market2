@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.267"
+local VERSION = "8.269"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -4381,8 +4381,10 @@ do
             info.BackgroundTransparency = 1
             local mutStr = (entry.mutation and entry.mutation ~= "-" and entry.mutation ~= "")
                 and (" ["..entry.mutation.."]") or ""
-            info.Text = string.format("<b>%s</b>%s • <font color='#FFD700'>%s</font> • by %s",
-                entry.petType or "?", mutStr, tostring(entry.price or 0), entry.seller or "?")
+            -- v8.268: nama MERAH kalau prem, PUTIH kalau biasa
+            local nameHex = entry.isPrem and "#FF5050" or "#FFFFFF"
+            info.Text = string.format("<b><font color='%s'>%s</font></b>%s • <font color='#FFD700'>%s</font> • by %s",
+                nameHex, entry.petType or "?", mutStr, tostring(entry.price or 0), entry.seller or "?")
             info.RichText = true
             info.TextColor3 = C.text
             info.Font = F info.TextSize = 11
@@ -4564,7 +4566,7 @@ do
     if BH.marketState and BH.marketState.indexHopTypes then
         BH.indexHop.selectedTypes = BH.marketState.indexHopTypes
     end
-    BH.indexHop.intervalMin = (BH.marketState and BH.marketState.indexHopInterval) or 2
+    BH.indexHop.intervalSec = (BH.marketState and BH.marketState.indexHopInterval) or 5
     BH.indexHop.active = false
 
     -- tombol pilih jenis (multi)
@@ -4591,13 +4593,13 @@ do
     updateSelLbl()
 
     -- interval (menit)
-    lblOf(hp, "Hop tiap (menit):", 0, 102, 120, 20, C.text, 11)
+    lblOf(hp, "Cek tiap (detik):", 0, 102, 120, 20, C.text, 11)
     BH.indexHop.intervalBox = Instance.new("TextBox")
     BH.indexHop.intervalBox.Size = UDim2.new(0, 60, 0, 24)
     BH.indexHop.intervalBox.Position = UDim2.new(0, 124, 0, 100)
     BH.indexHop.intervalBox.BackgroundColor3 = C.card
-    BH.indexHop.intervalBox.Text = tostring(BH.indexHop.intervalMin)
-    BH.indexHop.intervalBox.PlaceholderText = "2"
+    BH.indexHop.intervalBox.Text = tostring(BH.indexHop.intervalSec)
+    BH.indexHop.intervalBox.PlaceholderText = "5"
     BH.indexHop.intervalBox.TextColor3 = C.text
     BH.indexHop.intervalBox.Font = FM BH.indexHop.intervalBox.TextSize = 12
     BH.indexHop.intervalBox.ClearTextOnFocus = false
@@ -4605,11 +4607,11 @@ do
     Instance.new("UICorner", BH.indexHop.intervalBox).CornerRadius = UDim.new(0,6)
     BH.indexHop.intervalBox.FocusLost:Connect(function()
         local v = tonumber(BH.indexHop.intervalBox.Text)
-        if v and v >= 0.5 then
-            BH.indexHop.intervalMin = v
+        if v and v >= 1 then
+            BH.indexHop.intervalSec = v
             if BH.marketState then BH.marketState.indexHopInterval = v; BH.saveMarketState(BH.marketState) end
         else
-            BH.indexHop.intervalBox.Text = tostring(BH.indexHop.intervalMin)
+            BH.indexHop.intervalBox.Text = tostring(BH.indexHop.intervalSec)
         end
     end)
 
@@ -4763,10 +4765,10 @@ do
             end
             BH.indexHop.toggleBtn.Text = "⛔ STOP INDEX HOP"
             BH.indexHop.toggleBtn.BackgroundColor3 = C.danger
-            BH.indexHop.statusLbl.Text = "🌐 Active — cek pet tiap "..BH.indexHop.intervalMin.." menit"
+            BH.indexHop.statusLbl.Text = "🌐 Active — cek pet tiap "..BH.indexHop.intervalSec.." detik"
             BH.indexHop.statusLbl.TextColor3 = C.accent
             BH.indexHop.lastHop = tick()
-            L("[IndexHop] START — "..#picked.." jenis, interval "..BH.indexHop.intervalMin.."m")
+            L("[IndexHop] START — "..#picked.." jenis, interval "..BH.indexHop.intervalSec.."s")
         else
             BH.indexHop.toggleBtn.Text = "▶ START INDEX HOP"
             BH.indexHop.toggleBtn.BackgroundColor3 = C.success
@@ -9335,6 +9337,7 @@ do
                                 local seller, listingUuid = p.sellerPlayer, p.listingUuid
                                 local petType, petMut, petPrice, petOwner =
                                     p.type, p.mutation, p.price, p.owner
+                                local petPrem = p.isPrem and true or false  -- v8.268
                                 task.spawn(function()
                                     local ok, ret = pcall(function()
                                         return buyRE:InvokeServer(seller, clean)
@@ -9352,15 +9355,16 @@ do
                                             BH.autoSnipe.boughtCount,
                                             petType or "?", tostring(petPrice))
                                         BH.autoSnipe.statusLbl.TextColor3 = C.success
-                                        -- v8.96: append ke history + persist (max 50 entries)
+                                        -- v8.268: append ke history + persist (max 100 entries)
                                         table.insert(BH.autoSnipe.history, 1, {
                                             petType = petType,
                                             mutation = petMut,
                                             price = petPrice,
                                             seller = petOwner,
+                                            isPrem = petPrem,
                                             ts = os.time(),
                                         })
-                                        while #BH.autoSnipe.history > 50 do
+                                        while #BH.autoSnipe.history > 100 do
                                             table.remove(BH.autoSnipe.history)
                                         end
                                         if BH.marketState then
@@ -9439,7 +9443,7 @@ do
         end
 
         while gui.Parent do
-            task.wait(3)
+            task.wait(BH.indexHop.intervalSec or 5)
             if BH.indexHop and BH.indexHop.active then
                 local targetSet = BH.indexHop.selectedTypes or {}
                 local picked = false
