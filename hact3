@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v21.2"
+local VERSION = "v21.4"
 
 -- ============ THEME ============
 local C = {
@@ -2434,9 +2434,9 @@ end
 -- pause saat CLAIM/ACCEPT pet: lastGiftAct di-set pas AcceptPetGift di-fire (lihat hook __namecall).
 -- resume 5 detik setelah accept terakhir.
 Auto.lastGiftAct = 0
--- lagi claim/accept pet? resume 5 detik setelah accept terakhir
+-- lagi claim/accept pet? resume 3 detik setelah accept terakhir (v21.3: dulu 5s, kelamaan)
 local function isReceivingPet()
-    return (tick() - (Auto.lastGiftAct or 0)) < 5
+    return (tick() - (Auto.lastGiftAct or 0)) < 3
 end
 -- deteksi gift KELUAR (biasa/tiket, manual/sc): hook PetGiftingService & TradeEvents fire
 Auto.lastGiftOut = 0
@@ -2487,14 +2487,69 @@ end
 
 -- v16.2: cek pause gift/trade (1 fungsi, dipanggil di BANYAK titik biar STOP LANGSUNG,
 -- gak nunggu cycle selesai). Begitu gift mulai di tengah aksi, aksi berikutnya di-skip.
+-- v21.4: pause selama MASIH ada aktivitas gift (terima/keluar/trade UI/giftBusy).
+-- Hitung mundur resume baru MULAI saat gift BENAR-BENAR berhenti (gak ada aktivitas baru).
+-- Kalau gift beruntun, timer ke-reset terus (krn lastGiftAct/lastGiftOut ke-update tiap aktivitas).
+-- Retry bertingkat: tunggu 3s sunyi -> kalau aktivitas lagi, ulang; safety paksa-resume 3->6->9s.
+local RESUME_QUIET = 3  -- detik "sunyi" (gak ada gift) sebelum resume
 local function isPausedForGift()
-    -- v20.3: safety — kalau giftBusy nyangkut >45 detik (gift error di tengah, gak ke-reset),
-    -- auto-lepas biar automation gak stuck selamanya (gejala: egg ready 13 tapi gak pindah hatch).
-    if Auto.giftBusy and Auto.giftBusySince and (tick() - Auto.giftBusySince) > 45 then
-        Auto.giftBusy = false
-        print("[HactTelur] giftBusy nyangkut >45s -> auto-reset (anti-stuck)")
+    -- giftBusy aktif = lagi gift/trade KELUAR (proses kita) -> pause penuh
+    if Auto.giftBusy then
+        -- safety: giftBusy nyangkut kelamaan (gift error) -> retry bertingkat 30/60/90s
+        if Auto.giftBusySince then
+            local d = tick() - Auto.giftBusySince
+            if d > 90 then
+                print("[HactTelur] giftBusy nyangkut >90s -> PAKSA reset")
+                Auto.giftBusy = false
+            elseif d > 30 and not Auto._gbWarn30 then
+                Auto._gbWarn30 = true
+                print("[HactTelur] giftBusy >30s... (tunggu)")
+            end
+        end
+        if Auto.giftBusy then
+            Auto._wasPaused = true; Auto._pauseSince = Auto._pauseSince or tick()
+            return true
+        end
     end
-    return isReceivingPet() or Auto.giftBusy or isTradingManual() or isGiftingOut()
+    Auto._gbWarn30 = nil
+
+    -- aktivitas gift terakhir: terima pet (lastGiftAct), gift keluar (lastGiftOut), atau trade UI buka
+    local tradeOpen = isTradingManual()
+    local lastAct = math.max(Auto.lastGiftAct or 0, Auto.lastGiftOut or 0)
+    local quiet = tick() - lastAct  -- berapa lama udah "sunyi" (gak ada aktivitas gift)
+
+    -- masih ada aktivitas? (trade UI kebuka ATAU baru aja ada gift) -> pause, RESET hitung mundur
+    if tradeOpen or quiet < RESUME_QUIET then
+        if not Auto._wasPaused then
+            local why = tradeOpen and "trade UI kebuka" or "terima/gift pet"
+            print("[HactTelur] ⏸ PAUSE: "..why.." (tunggu sampai bener-bener selesai)")
+            Auto._wasPaused = true
+            Auto._pauseSince = tick()
+            Auto._resumeStage = 0
+        end
+        -- safety paksa-resume bertingkat 3->6->9 detik HANYA kalau trade UI yg nyangkut kebuka
+        -- (terima/gift pet normal bakal sunyi sendiri; ini buat kasus trade UI stuck)
+        if tradeOpen and Auto._pauseSince then
+            local pd = tick() - Auto._pauseSince
+            local stage = Auto._resumeStage or 0
+            if stage == 0 and pd > 3 then Auto._resumeStage = 1; print("[HactTelur] ⏳ masih pause 3s, cek lagi...")
+            elseif stage == 1 and pd > 6 then Auto._resumeStage = 2; print("[HactTelur] ⏳ masih pause 6s, cek lagi...")
+            elseif stage == 2 and pd > 9 then
+                print("[HactTelur] ⚠ pause 9s (trade UI nyangkut), PAKSA resume")
+                Auto.lastGiftAct = 0; Auto.lastGiftOut = 0
+                Auto._wasPaused = false; Auto._pauseSince = nil; Auto._resumeStage = 0
+                return false
+            end
+        end
+        return true
+    end
+
+    -- udah sunyi >= RESUME_QUIET detik -> resume
+    if Auto._wasPaused then
+        print("[HactTelur] ▶ RESUME automation (gift udah selesai, sunyi "..RESUME_QUIET.."s)")
+        Auto._wasPaused = false; Auto._pauseSince = nil; Auto._resumeStage = 0
+    end
+    return false
 end
 
 -- v20.5: checkKoiSealOk dipindah ke SINI (sebelum automationLoop) — dulu di bawah,
