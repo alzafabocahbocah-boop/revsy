@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v24.7"
+local VERSION = "v24.8"
 
 -- ============ THEME ============
 local C = {
@@ -2765,6 +2765,8 @@ local function automationLoop()
     Auto.giftBusy = false  -- reset flag gift/trade
     Auto.currentTeam = nil  -- reset tim biar equipTeam fresh
     Auto.bpFullFlag = false
+    -- v24.8: buang bekasan dari semua tim dulu (pet lama yg diganti) biar jumlah tim akurat
+    pruneTeamBekasan("Reduce Tim"); pruneTeamBekasan("Hatch Tim"); pruneTeamBekasan("Sell Tim")
     -- kosongin garden dulu (unequip semua pet placed, termasuk place manual)
     clearGarden()
     favTeamPets()  -- fav pet tim di awal (proteksi)
@@ -3003,6 +3005,41 @@ local function makeDelayInput(parent, labelTxt, x, default)
     corner(box, 7); stroke(box, C.border, 1)
     mk("UIPadding", { PaddingLeft = UDim.new(0, 12), Parent = box })
     return box
+end
+
+-- v24.8: buang uuid "bekasan" dari teamData[tabName].selected — pet yg udah GAK ADA
+-- di backpack DAN gak di garden (udah kejual/gift/ganti). biar jumlah dipilih akurat
+-- (dulu pet Koi lama yg diganti masih kehitung -> "kepilih 10 padahal 8" -> waitTeam nunggu 10 -> hatch gagal).
+local function pruneTeamBekasan(tabName)
+    local data = teamData[tabName]
+    if not data or not data.selected then return 0 end
+    local inBp = {}
+    for _, p in ipairs(PetDetect.listBackpackPets()) do
+        inBp[tostring(p.uuid):gsub("[{}]","")] = true
+    end
+    local inGarden = {}
+    pcall(function()
+        for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+            local f = Workspace:FindFirstChild(nm)
+            if f then
+                for _, m in ipairs(f:GetDescendants()) do
+                    if m:IsA("Model") and m.Name:sub(1,1) == "{" then
+                        inGarden[m.Name:gsub("[{}]","")] = true
+                    end
+                end
+            end
+        end
+    end)
+    local removed = 0
+    for uuid in pairs(data.selected) do
+        local uclean = tostring(uuid):gsub("[{}]","")
+        if not inBp[uclean] and not inGarden[uclean] then
+            data.selected[uuid] = nil
+            removed = removed + 1
+        end
+    end
+    if removed > 0 then print("[HactTelur] prune "..removed.." bekasan dari "..tabName) end
+    return removed
 end
 
 local function makeTeamPanel(tabName)
@@ -4364,6 +4401,7 @@ openPetPicker = function(tabName)
     local rows = {}
 
     local function refreshPickLabel()
+        pruneTeamBekasan(tabName)  -- v24.8: buang bekasan dulu biar hitungan akurat
         local cnt = 0
         for _ in pairs(sel) do cnt = cnt + 1 end
         teamData[tabName].pickLbl.Text = teamData[tabName].label .. "  (" .. cnt .. " dipilih)"
