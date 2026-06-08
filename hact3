@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v23.2"
+local VERSION = "v23.3"
 
 -- ============ THEME ============
 local C = {
@@ -2624,18 +2624,34 @@ local function isPausedForGift()
         Auto.giftBusy = false
     end
 
-    if tradeOpen or quiet < RESUME_QUIET then
+    -- v23.3: PAUSE selama Auto Gift AKTIF & masih ADA pet match (belum habis di-gift).
+    -- Ini bikin automation BENER-BENER stop selama gift jalan, gak peduli 'sunyi' brp detik.
+    -- (dulu cuma andelin lastGiftOut -> kalau gift gagal/jeda, pause kadaluarsa -> place/hatch jalan).
+    local giftStillHasPets = false
+    pcall(function()
+        local cfgs = _G.HactTelurGiftCfgs
+        if cfgs then
+            for _, cfg in ipairs(cfgs) do
+                if cfg._running and cfg.method == "gift" and #getMatchedPets(cfg) > 0 then
+                    giftStillHasPets = true break
+                end
+            end
+        end
+    end)
+
+    if tradeOpen or quiet < RESUME_QUIET or giftStillHasPets then
         if not Auto._wasPaused then
-            local why = tradeOpen and "trade UI kebuka" or "kirim/terima pet"
-            print("[HactTelur] ⏸ PAUSE: "..why.." (tunggu beres, resume "..RESUME_QUIET.."s setelah sunyi)")
+            local why = tradeOpen and "trade UI kebuka"
+                or (giftStillHasPets and "auto gift jalan (masih ada pet)") or "kirim/terima pet"
+            print("[HactTelur] ⏸ PAUSE: "..why.." (automation stop dulu)")
             Auto._wasPaused = true
             Auto._pauseSince = tick()
             -- v22.8: unequip pet di garden pas mulai pause (sama kayak STOP) biar pet gak nyangkut ke-place
             Auto.currentTeam = nil
             task.spawn(function() pcall(clearGarden) end)
         end
-        -- safety paksa-resume kalau trade UI nyangkut kebuka kelamaan (3->6->9s)
-        if tradeOpen and Auto._pauseSince then
+        -- safety paksa-resume kalau trade UI nyangkut kebuka kelamaan (cuma buat trade UI, bukan gift)
+        if tradeOpen and not giftStillHasPets and Auto._pauseSince then
             local pd = tick() - Auto._pauseSince
             if pd > 9 then
                 print("[HactTelur] ⚠ trade UI nyangkut 9s, PAKSA resume")
