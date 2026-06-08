@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v24.2"
+local VERSION = "v24.3"
 
 -- ============ THEME ============
 local C = {
@@ -3098,6 +3098,31 @@ local function makeTeamPanel(tabName)
         -- bikin lookup uuid->info dari backpack biar dapet nama
         local info = {}
         for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[p.uuid] = p end
+        -- v24.3: kumpulin uuid pet yg ADA di garden (ke-place) — biar gak ke-hapus pas lagi dipakai
+        local inGarden = {}
+        pcall(function()
+            for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+                local f = Workspace:FindFirstChild(nm)
+                if f then
+                    for _, m in ipairs(f:GetDescendants()) do
+                        if m:IsA("Model") and m.Name:sub(1,1) == "{" then
+                            inGarden[m.Name:gsub("[{}]","")] = true
+                        end
+                    end
+                end
+            end
+        end)
+        -- v24.3: BERSIHKAN bekasan — pet yg gak ada di backpack DAN gak di garden = udah hilang
+        -- (kejual/ke-gift/menetas). hapus dari selected biar daftar gak penuh bekasan.
+        local removed = 0
+        for uuid in pairs(data.selected) do
+            local uclean = tostring(uuid):gsub("[{}]","")
+            if not info[uuid] and not inGarden[uclean] then
+                data.selected[uuid] = nil
+                removed = removed + 1
+            end
+        end
+        if removed > 0 then print("[HactTelur] bersihin "..removed.." pet bekasan (udah ilang) dari "..tabName) end
         local any = false
         for uuid in pairs(data.selected) do
             any = true
@@ -3107,7 +3132,7 @@ local function makeTeamPanel(tabName)
                 txt = "• " .. ((p.mut and ("["..p.mut.."] ") or "") .. p.name)
                 if p.dispKg then txt = txt .. string.format("  (%.2f KG)", p.dispKg) end
             else
-                txt = "• " .. uuid:sub(1, 8) .. "…"  -- gak ketemu di backpack (mungkin di-place)
+                txt = "• " .. uuid:sub(1, 8) .. "… (di garden)"  -- gak di bp tapi di garden
             end
             local row = lbl(sumScroll, txt, 11, C.text)
             row.Size = UDim2.new(1, 0, 0, 15)
