@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v22.1"
+local VERSION = "v22.3"
 
 -- ============ THEME ============
 local C = {
@@ -1180,29 +1180,23 @@ local function giftPetToTarget(targetPlayer, petTool)
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not (hum and petTool and targetPlayer) then return false end
-    pcall(function() hum:UnequipTools() end)
-    task.wait(0.1)
-    pcall(function() hum:EquipTool(petTool) end)
-    task.wait(0.25)
+    -- v22.3: timing dinaikin lagi dikit (equip 0.12->0.2, give 0.18->0.25) — v22.2 kekencengan, gift 0 terkirim
+    pcall(function() hum:EquipTool(petTool) end)  -- EquipTool auto-swap, gak perlu unequip dulu
+    task.wait(0.2)
     local sent = false
-    -- cara 1: module PetGiftingInputService.GivePet(target)
+    -- cara 1: module PetGiftingInputService.GivePet(target) — paling cepat
     if GiftSys.pgs and GiftSys.pgs.GivePet then
         pcall(function() GiftSys.pgs.GivePet(targetPlayer) end)
-        task.wait(0.4)
-        if not petTool.Parent then sent = true end
+        task.wait(0.25)
+        if not petTool.Parent then return true end
     end
     -- cara 2: remote PetGiftingService:FireServer("GivePet", target, uuid)
-    if not sent and GiftSys.giftRE then
+    if GiftSys.giftRE then
         local uuid = petTool:GetAttribute("PET_UUID")
         local u = tostring(uuid); if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
         pcall(function() GiftSys.giftRE:FireServer("GivePet", targetPlayer, u) end)
-        task.wait(0.4)
+        task.wait(0.25)
         if not petTool.Parent then sent = true end
-        if not sent then
-            pcall(function() GiftSys.giftRE:FireServer("GivePet", targetPlayer) end)
-            task.wait(0.4)
-            if not petTool.Parent then sent = true end
-        end
     end
     return sent
 end
@@ -1432,7 +1426,7 @@ local function giftPetsByFilter(cfg)
                         if t:IsA("Tool") and tostring(t:GetAttribute("PET_UUID") or ""):gsub("[{}]","") == u then tool = t break end
                     end
                     if tool and giftPetToTarget(tgt, tool) then sent = sent + 1 end
-                    task.wait(0.2)
+                    task.wait(0.06)  -- v22.2: dipercepat (dulu 0.2)
                 end
                 print("[HactTelur] gift "..sent.." pet ke "..tgt.Name)
             else
@@ -2736,6 +2730,11 @@ local function automationLoop()
             local sd = config.hatchDelay or 6
             print("[HactTelur] tim Sell "..(okSell and "LENGKAP" or "timeout").." ("..countGardenPets().."), tunggu "..sd.." detik...")
             task.wait(sd)  -- jeda biar skill Seal bener-bener aktif
+            -- v22.3: CEK FAV LAGI tepat sebelum jual — pastikan gak ada pet keep yg belum di-fav
+            -- (pet baru nyempil / fav ke-reset) biar gak ikut kejual
+            print("[HactTelur] cek fav terakhir sebelum jual...")
+            pcall(syncFavByRules)
+            task.wait(0.6)  -- kasih waktu fav tercatat server
             local sold = doAutoSell()
             -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
             Auto.bpFullFlag = false
