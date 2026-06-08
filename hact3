@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v24.5"
+local VERSION = "v24.6"
 
 -- ============ THEME ============
 local C = {
@@ -2911,9 +2911,10 @@ local function automationLoop()
                 local hd = config.hatchDelay or 6
                 -- v23.0: tim Koi HARUS lengkap. kalau gak lengkap (mis gift nyempil, cuma 5 masuk) -> BATAL hatch.
                 if not ok then
-                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), BATAL hatch — ulang nanti")
-                    Auto.currentTeam = nil
-                    task.spawn(function() pcall(clearGarden) end)
+                    -- v24.6: balik Reduce + tunggu (jgn loop hatch terus / clearGarden async yg bentrok)
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu...")
+                    equipTeam("Reduce Tim")
+                    task.wait(3)
                 else
                     print("[HactTelur] tim Koi LENGKAP ("..countGardenPets().."), tunggu "..hd.." detik...")
                     task.wait(hd)  -- jeda biar skill Koi bener-bener aktif (bisa diatur di Config)
@@ -2926,12 +2927,13 @@ local function automationLoop()
                 -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 equipTeam("Hatch Tim")
-                -- v23.0: tim Koi HARUS lengkap (8). kalau gift nyempil cuma sebagian -> batal hatch.
                 local ok = waitTeamInGarden("Hatch Tim", 12)
                 if not ok then
-                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), BATAL hatch — ulang nanti")
-                    Auto.currentTeam = nil
-                    task.spawn(function() pcall(clearGarden) end)
+                    -- v24.6: tim Koi gak lengkap -> BALIK ke Reduce + TUNGGU (jgn loop hatch terus).
+                    -- dulu cuma clearGarden async -> bentrok sama equipTeam berikutnya -> 0 pet -> loop.
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), balik Reduce, tunggu egg sisanya...")
+                    equipTeam("Reduce Tim")
+                    task.wait(3)  -- kasih waktu egg sisa ready / Koi CD selesai
                 else
                     print("[HactTelur] Koi LENGKAP ("..countGardenPets().."), tunggu 6 detik...")
                     task.wait(6)
