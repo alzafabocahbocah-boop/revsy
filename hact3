@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v24.0"
+local VERSION = "v24.2"
 
 -- ============ THEME ============
 local C = {
@@ -775,26 +775,46 @@ end
 trackBtn.MouseButton1Click:Connect(function()
     local old = gui:FindFirstChild("TrackPetPicker")
     if old then old:Destroy(); return end  -- toggle: klik lagi = tutup
-    -- v21.6: parent ke ROOT gui + ZIndex tinggi biar TAMPIL PALING DEPAN (gak ketutup tab)
+    -- v24.2: parent ke ROOT gui + ZIndex tinggi biar TAMPIL PALING DEPAN
     local ap = trackBtn.AbsolutePosition
     local pk = mk("Frame", {
         Name = "TrackPetPicker",
-        Size = UDim2.new(0, 240, 0, 320),
+        Size = UDim2.new(0, 240, 0, 340),
         Position = UDim2.new(0, ap.X, 0, ap.Y + 28),
         BackgroundColor3 = C.panel, Parent = gui, ZIndex = 9000 })
     corner(pk, 8); stroke(pk, C.border, 1)
+    -- v24.2: tombol CLOSE X biar gampang tutup
+    local xb = mk("TextButton", {
+        Size = UDim2.new(0, 26, 0, 26), Position = UDim2.new(1, -30, 0, 6),
+        BackgroundColor3 = C.danger, Text = "X", Font = FONT_B, TextSize = 14,
+        TextColor3 = Color3.fromRGB(255,255,255), ZIndex = 9003, Parent = pk })
+    corner(xb, 6)
+    xb.MouseButton1Click:Connect(function() pk:Destroy() end)
     local srch = mk("TextBox", {
-        Size = UDim2.new(1, -16, 0, 28), Position = UDim2.new(0, 8, 0, 8),
+        Size = UDim2.new(1, -48, 0, 28), Position = UDim2.new(0, 8, 0, 6),
         BackgroundColor3 = C.input, Text = "", PlaceholderText = "cari jenis pet...",
         Font = FONT, TextSize = 12, TextColor3 = C.text, ClearTextOnFocus = false,
         ZIndex = 9001, Parent = pk })
     corner(srch, 6)
-    -- opsi "reset" (gak track)
     local scroll = mk("ScrollingFrame", {
-        Size = UDim2.new(1, -16, 1, -44), Position = UDim2.new(0, 8, 0, 42),
-        BackgroundTransparency = 1, ScrollBarThickness = 4, CanvasSize = UDim2.new(0,0,0,0),
+        Size = UDim2.new(1, -16, 1, -44), Position = UDim2.new(0, 8, 0, 40),
+        BackgroundTransparency = 1, ScrollBarThickness = 5, CanvasSize = UDim2.new(0,0,0,0),
         ZIndex = 9001, Parent = pk })
     local layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0, 3); layout.Parent = scroll
+    -- v24.2: auto-close picker kalau panel utama disembunyiin/minimize (biar gak nyangkut di layar)
+    task.spawn(function()
+        while pk.Parent do
+            if not main.Visible then pk:Destroy(); break end
+            task.wait(0.3)
+        end
+    end)
+    local function pickThis(name)
+        if name == "(stop track)" then trackPetType = nil else trackPetType = name end
+        config.trackPetType = trackPetType
+        if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        pk:Destroy()
+        updateVerTxt()
+    end
     local function buildOptions(filter)
         for _, c in ipairs(scroll:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
         local opts = { "(stop track)" }
@@ -805,18 +825,13 @@ trackBtn.MouseButton1Click:Connect(function()
         end
         for _, name in ipairs(opts) do
             local b = mk("TextButton", {
-                Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.card,
+                Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.card,
                 Text = "  "..name, Font = FONT, TextSize = 12, TextColor3 = C.text,
                 TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = true,
                 ZIndex = 9002, Parent = scroll })
             corner(b, 5)
-            b.MouseButton1Click:Connect(function()
-                if name == "(stop track)" then trackPetType = nil else trackPetType = name end
-                config.trackPetType = trackPetType  -- v22.1: simpan biar persist
-                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                pk:Destroy()
-                updateVerTxt()
-            end)
+            -- v24.2: pakai Activated (lebih andal di mobile drbnda MouseButton1Click yg sering ke-skip)
+            b.Activated:Connect(function() pickThis(name) end)
         end
         scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 6)
     end
