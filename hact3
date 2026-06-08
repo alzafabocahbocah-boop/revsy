@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v25.4"
+local VERSION = "v26.0"
 
 -- ============ THEME ============
 local C = {
@@ -2632,6 +2632,32 @@ do
         setreadonly(mt, true)
     end)
 end
+-- v25.9: hook Notification — sinyal teks dari server:
+--   "Sent gift request!" = kita lagi kirim gift -> pause (update lastGiftOut)
+--   "Trade completed!"    = gift BERHASIL diterima lawan -> tahan 3 detik baru resume
+--     (biar gak bentrok sama send gift request berikutnya)
+Auto.lastTradeComplete = 0
+do
+    pcall(function()
+        local notifRE = RS:FindFirstChild("Notification", true)
+        if notifRE and notifRE:IsA("RemoteEvent") then
+            notifRE.OnClientEvent:Connect(function(...)
+                local args = {...}
+                local msg = ""
+                local a1 = args[1]
+                if type(a1) == "string" then msg = a1
+                elseif type(a1) == "table" then msg = tostring(a1.Text or a1.Message or a1.text or "") end
+                local low = msg:lower()
+                if low:find("sent gift request") or low:find("gift request") then
+                    Auto.lastGiftOut = tick()  -- v26.0: send gift req -> jeda start
+                elseif low:find("trade completed") or low:find("trade complete") then
+                    Auto.lastTradeComplete = tick()
+                    Auto.lastGiftOut = tick()  -- v26.0: trade complete JUGA jeda start (patokan sama)
+                end
+            end)
+        end
+    end)
+end
 -- lagi gift/trade keluar? (aktivitas dalam 3 detik terakhir)
 local function isGiftingOut()
     return (tick() - (Auto.lastGiftOut or 0)) < 3
@@ -2658,6 +2684,22 @@ end
 -- Kalau gift beruntun, timer ke-reset terus (krn lastGiftAct/lastGiftOut ke-update tiap aktivitas).
 -- Retry bertingkat: tunggu 3s sunyi -> kalau aktivitas lagi, ulang; safety paksa-resume 3->6->9s.
 local RESUME_QUIET = 5  -- v22.6: detik "sunyi" (gak ada remote send gift) sebelum resume
+-- v25.5: cek apakah Auto Gift lagi AKTIF (running + method gift). dipakai buat STOP semua
+-- fav/unfav otomatis selama gift, biar gak bentrok sama unfav-buat-gift. lebih reliable dari
+-- Auto.giftBusy (yg cuma true sesaat per putaran -> celah fav nyempil).
+local function isGiftRunning()
+    local r = false
+    pcall(function()
+        local cfgs = _G.HactTelurGiftCfgs
+        if cfgs then
+            for _, cfg in ipairs(cfgs) do
+                if cfg._running and cfg.method == "gift" then r = true break end
+            end
+        end
+    end)
+    return r or Auto.giftBusy
+end
+
 local function isPausedForGift()
     -- v22.5: pause berdasarkan AKTIVITAS NYATA (sinyal dari hook namecall):
     --   - lastGiftOut: di-update tiap FireServer gift/trade KELUAR (kita kirim pet)
@@ -2675,29 +2717,17 @@ local function isPausedForGift()
         Auto.giftBusy = false
     end
 
-    -- v23.3: PAUSE selama Auto Gift AKTIF & masih ADA pet match (belum habis di-gift).
-    -- Ini bikin automation BENER-BENER stop selama gift jalan, gak peduli 'sunyi' brp detik.
-    -- (dulu cuma andelin lastGiftOut -> kalau gift gagal/jeda, pause kadaluarsa -> place/hatch jalan).
-    local giftStillHasPets = false
-    pcall(function()
-        local cfgs = _G.HactTelurGiftCfgs
-        if cfgs then
-            for _, cfg in ipairs(cfgs) do
-                if cfg._running and cfg.method == "gift" and #getMatchedPets(cfg) > 0 then
-                    giftStillHasPets = true break
-                end
-            end
-        end
-    end)
-
-    if tradeOpen or quiet < RESUME_QUIET or giftStillHasPets then
+    -- v26.0: send gift request DAN trade completed SAMA-SAMA menjeda start.
+    -- keduanya update lastGiftOut -> pakai patokan quiet yg SAMA (RESUME_QUIET).
+    -- automation START cuma kalau KEDUANYA udah sunyi (gak ada send gift / trade complete) selama 5 detik.
+    if tradeOpen or quiet < RESUME_QUIET then
         if not Auto._wasPaused then
             local why = tradeOpen and "trade UI kebuka"
-                or (giftStillHasPets and "auto gift jalan (masih ada pet)") or "kirim/terima pet"
+                or "gift aktif (send req / trade complete)"
             print("[HactTelur] ⏸ PAUSE: "..why.." (automation stop dulu)")
             Auto._wasPaused = true
             Auto._pauseSince = tick()
-            -- v22.8: unequip pet di garden pas mulai pause (sama kayak STOP) biar pet gak nyangkut ke-place
+            -- v22.8: unequip pet di garden pas mulai pause biar pet gak nyangkut ke-place
             -- v23.4: cuma sekali per 8 detik (jgn spam clearGarden -> banjir error 'Anchored nil')
             if (tick() - (Auto._lastClear or 0)) > 8 then
                 Auto._lastClear = tick()
@@ -2705,8 +2735,8 @@ local function isPausedForGift()
                 task.spawn(function() pcall(clearGarden) end)
             end
         end
-        -- safety paksa-resume kalau trade UI nyangkut kebuka kelamaan (cuma buat trade UI, bukan gift)
-        if tradeOpen and not giftStillHasPets and Auto._pauseSince then
+        -- safety paksa-resume kalau trade UI nyangkut kebuka kelamaan
+        if tradeOpen and Auto._pauseSince then
             local pd = tick() - Auto._pauseSince
             if pd > 9 then
                 print("[HactTelur] ⚠ trade UI nyangkut 9s, PAKSA resume")
@@ -2834,9 +2864,9 @@ local function automationLoop()
         -- v16.4: jaga fav terus-menerus. Pet tim + pet KEEP (yg gak ada di list sell)
         -- difavoritkan dari awal (saat tim Reduce/Hatch), gak nunggu masuk tim Seal.
         favTick = favTick + 1
-        if favTick >= 10 and not Auto.giftBusy then
-            -- v17.4: saat gift jalan (giftBusy), JANGAN fav — biar gak nabrak "Unfav dulu" gift.
-            -- pet yg di-unfav buat gift bakal ke-fav lagi kalau ini jalan -> gift gagal.
+        if favTick >= 10 and not isGiftRunning() then
+            -- v25.5: pakai isGiftRunning (bukan cuma giftBusy) — saat gift aktif JANGAN fav,
+            -- biar pet yg di-unfav buat gift gak ke-fav ulang -> bentrok.
             favTick = 0
             favTeamPets()           -- fav pet tim
             pcall(syncFavByRules)   -- fav pet keep + unfav pet sell (lebih awal)
@@ -3418,7 +3448,7 @@ local function makeConfigPanel()
                 config.sellRules[petType].kg = v
                 kgIn.Text = tostring(v)
                 if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                task.spawn(function() if not Auto.giftBusy then pcall(syncFavByRules) end end)
+                task.spawn(function() if not isGiftRunning() then pcall(syncFavByRules) end end)
             end)
             local kgL = lbl(row, "KG", 10, C.text)
             kgL.Position = UDim2.new(0.38, 84, 0, 0); kgL.Size = UDim2.new(0, 22, 1, 0)
@@ -3443,7 +3473,7 @@ local function makeConfigPanel()
                 r.action = (r.action == "keep") and "sell" or "keep"
                 refreshAct()
                 if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-                task.spawn(function() if not Auto.giftBusy then pcall(syncFavByRules) end end)
+                task.spawn(function() if not isGiftRunning() then pcall(syncFavByRules) end end)
             end)
             refreshAct()
             -- hapus
@@ -3501,7 +3531,7 @@ local function makeConfigPanel()
             petDdLabel.Text = "Select Pet..."; petDdLabel.TextColor3 = C.textDim
             refreshRules()
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
-            task.spawn(function() if not Auto.giftBusy then pcall(syncFavByRules) end end)
+            task.spawn(function() if not isGiftRunning() then pcall(syncFavByRules) end end)
         end
     end)
 
