@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v22.6"
+local VERSION = "v23.1"
 
 -- ============ THEME ============
 local C = {
@@ -1523,13 +1523,31 @@ function syncFavByRules()
             end
         end
     end
+    -- v23.1: kumpulin pet yg LAGI di-target gift aktif (method gift + unfavFirst + running).
+    -- pet ini JANGAN di-fav (walau posisi keep), biar gift bisa unfav & kirim. Kalau gak,
+    -- sync fav ulang -> gift unfav -> bentrok bolak-balik (mis Mimic keep tapi mau di-gift).
+    local giftTargeted = {}
+    pcall(function()
+        local cfgs = _G.HactTelurGiftCfgs
+        if cfgs then
+            for _, cfg in ipairs(cfgs) do
+                if cfg._running and cfg.method == "gift" and cfg.unfavFirst then
+                    for _, p in ipairs(getMatchedPets(cfg)) do
+                        giftTargeted[tostring(p):gsub("[{}]","")] = true
+                    end
+                end
+            end
+        end
+    end)
     local unfav, fav = 0, 0
     for _, p in ipairs(PetDetect.listBackpackPets(true)) do
         if p.tool then
             local uclean = tostring(p.uuid):gsub("[{}]","")
             local isTeam = teamSel[uclean]
             local fate = petFate(p)
-            if fate == "sell" and not isTeam then
+            if giftTargeted[uclean] then
+                -- v23.1: lagi mau di-gift -> JANGAN sentuh fav (biar gift yg kelola unfav-nya)
+            elseif fate == "sell" and not isTeam then
                 -- masuk kriteria jual -> pastiin TIDAK favorit
                 if p.fav then favoritePet(p.tool); unfav = unfav + 1; task.wait(0.04) end
             else
@@ -2604,6 +2622,9 @@ local function isPausedForGift()
             print("[HactTelur] ⏸ PAUSE: "..why.." (tunggu beres, resume "..RESUME_QUIET.."s setelah sunyi)")
             Auto._wasPaused = true
             Auto._pauseSince = tick()
+            -- v22.8: unequip pet di garden pas mulai pause (sama kayak STOP) biar pet gak nyangkut ke-place
+            Auto.currentTeam = nil
+            task.spawn(function() pcall(clearGarden) end)
         end
         -- safety paksa-resume kalau trade UI nyangkut kebuka kelamaan (3->6->9s)
         if tradeOpen and Auto._pauseSince then
@@ -2717,13 +2738,22 @@ local function automationLoop()
             -- v18.8: tunggu SEMUA tim Sell masuk garden + sesuai tim, baru jual
             local okSell = waitTeamInGarden("Sell Tim", 15)
             local sd = config.hatchDelay or 6
-            print("[HactTelur] tim Sell "..(okSell and "LENGKAP" or "timeout").." ("..countGardenPets().."), tunggu "..sd.." detik...")
+            -- v23.0: tim Sell HARUS lengkap. kalau gak lengkap (mis. gift nyempil, cuma 5 masuk) -> BATAL jual.
+            if not okSell then
+                print("[HactTelur] tim Sell GAK LENGKAP ("..countGardenPets().."), BATAL jual — ulang nanti")
+                Auto.currentTeam = nil
+                task.spawn(function() pcall(clearGarden) end)
+            else
+            print("[HactTelur] tim Sell LENGKAP ("..countGardenPets().."), tunggu "..sd.." detik...")
             task.wait(sd)  -- jeda biar skill Seal bener-bener aktif
             -- v22.3: CEK FAV LAGI tepat sebelum jual — pastikan gak ada pet keep yg belum di-fav
-            -- (pet baru nyempil / fav ke-reset) biar gak ikut kejual
             print("[HactTelur] cek fav terakhir sebelum jual...")
             pcall(syncFavByRules)
             task.wait(0.6)  -- kasih waktu fav tercatat server
+            -- v22.9: kalau gift nyempil & garden ke-clear di tengah -> garden kosong -> batal sell (biar gak sell 0)
+            if isPausedForGift() or countGardenPets() == 0 then
+                print("[HactTelur] garden kosong / gift nyempil pas mau jual, batal sell (ulang nanti)")
+            else
             local sold = doAutoSell()
             -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
             Auto.bpFullFlag = false
@@ -2736,7 +2766,9 @@ local function automationLoop()
                 Auto.sellExhaustedCount = #PetDetect.listBackpackPets()
                 print("[HactTelur] gak ada pet buat dijual (sisanya keep), lanjut reduce")
             end
+            end  -- v22.9: tutup guard garden kosong
             end  -- tutup guard isPausedForGift (jeda fav)
+            end  -- v23.0: tutup guard okSell (tim Sell lengkap)
             end  -- tutup guard isPausedForGift
         elseif Auto.sellExhausted then
             -- cek apakah pet udah nambah dari terakhir sell (ada pet baru buat dijual)
@@ -2781,33 +2813,36 @@ local function automationLoop()
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
                 local ok = waitTeamInGarden("Hatch Tim", 15)
                 local hd = config.hatchDelay or 6
-                print("[HactTelur] tim Koi "..(ok and "LENGKAP" or "timeout").." ("..countGardenPets().."), tunggu "..hd.." detik...")
-                task.wait(hd)  -- jeda biar skill Koi bener-bener aktif (bisa diatur di Config)
-                print("[HactTelur] hatch all!")
-                hatchAllEggs()
-                task.wait(2)
-                equipTeam("Reduce Tim")
+                -- v23.0: tim Koi HARUS lengkap. kalau gak lengkap (mis gift nyempil, cuma 5 masuk) -> BATAL hatch.
+                if not ok then
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), BATAL hatch — ulang nanti")
+                    Auto.currentTeam = nil
+                    task.spawn(function() pcall(clearGarden) end)
+                else
+                    print("[HactTelur] tim Koi LENGKAP ("..countGardenPets().."), tunggu "..hd.." detik...")
+                    task.wait(hd)  -- jeda biar skill Koi bener-bener aktif (bisa diatur di Config)
+                    print("[HactTelur] hatch all!")
+                    hatchAllEggs()
+                    task.wait(2)
+                    equipTeam("Reduce Tim")
+                end
             elseif ready > 0 and ready >= math.floor(total * 0.6) then
                 -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
-                -- biar gak stuck nunggu semua (Koi terus balikin egg)
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 equipTeam("Hatch Tim")
-                -- v17.3: tunggu Koi masuk + jeda 6 detik baru hatch
-                local hatchTarget = 0
-                if teamData["Hatch Tim"] and teamData["Hatch Tim"].selected then
-                    for _ in pairs(teamData["Hatch Tim"].selected) do hatchTarget = hatchTarget + 1 end
+                -- v23.0: tim Koi HARUS lengkap (8). kalau gift nyempil cuma sebagian -> batal hatch.
+                local ok = waitTeamInGarden("Hatch Tim", 12)
+                if not ok then
+                    print("[HactTelur] tim Koi GAK LENGKAP ("..countGardenPets().."), BATAL hatch — ulang nanti")
+                    Auto.currentTeam = nil
+                    task.spawn(function() pcall(clearGarden) end)
+                else
+                    print("[HactTelur] Koi LENGKAP ("..countGardenPets().."), tunggu 6 detik...")
+                    task.wait(6)
+                    hatchAllEggs()
+                    task.wait(2)
+                    equipTeam("Reduce Tim")
                 end
-                local waited = 0
-                while waited < 10 do
-                    local g = countGardenPets()
-                    if hatchTarget <= 0 or g >= hatchTarget then break end
-                    task.wait(0.3); waited = waited + 0.3
-                end
-                print("[HactTelur] Koi masuk ("..countGardenPets().."/"..hatchTarget.."), tunggu 6 detik...")
-                task.wait(6)
-                hatchAllEggs()
-                task.wait(2)
-                equipTeam("Reduce Tim")
             else
                 -- masih banyak CD -> Reduce, tunggu
                 equipTeam("Reduce Tim")
@@ -4794,12 +4829,34 @@ do
                                 task.wait(2)
                             end
                         else
+                            -- v22.7: patokan ULANG = masih ADA pet yg match (jenis+age+kg), BUKAN berhasil/gagal.
+                            -- spam kirim terus walau lawan full, sampai pet match BENER-BENER habis dari kita.
+                            local beforeMatch = #getMatchedPets(cfg)
                             local sent = giftPetsByFilter(cfg)
-                            statL.Text = sent > 0 and ("Terkirim "..sent.." pet") or "nunggu pet cocok..."
-                            -- v22.4: kalau ADA yg dikirim -> cek lagi cepat (kirim sisa).
-                            -- kalau 0 (gak ada pet cocok) -> tunggu LAMA (8s) biar automation hatch
-                            -- dapat giliran jalan. Dulu task.wait(1) terus -> hatch ke-pause melulu, "gak mulai lagi".
-                            if sent > 0 then task.wait(1) else task.wait(8) end
+                            local stillMatch = #getMatchedPets(cfg)  -- masih ada pet cocok di backpack?
+                            if stillMatch > 0 then
+                                -- v22.7: cek apakah match BERKURANG (ada progress). kalau gak berkurang
+                                -- beberapa kali (lawan full permanen / gak bisa di-gift) -> jgn spam selamanya,
+                                -- tunggu lama biar hatch jalan, nanti coba lagi.
+                                if stillMatch >= beforeMatch then
+                                    cfg._stuckCount = (cfg._stuckCount or 0) + 1
+                                else
+                                    cfg._stuckCount = 0  -- ada progress, reset
+                                end
+                                if (cfg._stuckCount or 0) >= 3 then
+                                    statL.Text = "gift mentok (sisa "..stillMatch.."), tunggu..."
+                                    cfg._stuckCount = 0
+                                    task.wait(8)  -- kasih hatch jalan, nanti coba lagi
+                                else
+                                    statL.Text = "kirim... sisa "..stillMatch.." pet cocok"
+                                    task.wait(0.5)  -- spam terus sampai habis
+                                end
+                            else
+                                -- pet match udah HABIS -> tunggu lama (8s) biar automation hatch jalan
+                                cfg._stuckCount = 0
+                                statL.Text = "nunggu pet cocok..."
+                                task.wait(8)
+                            end
                         end
                     end
                 end)
