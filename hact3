@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v23.1"
+local VERSION = "v23.2"
 
 -- ============ THEME ============
 local C = {
@@ -1561,6 +1561,21 @@ function syncFavByRules()
 end
 -- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
 function doAutoSell()
+    -- v23.2: JANGAN sell kalau ada Auto Gift aktif (method gift + unfavFirst). Pet keep yg lagi
+    -- di-unfav SEMENTARA buat gift bakal ikut kejual (SellAll jual semua non-favorit). Tunda dulu.
+    local giftActive = false
+    pcall(function()
+        local cfgs = _G.HactTelurGiftCfgs
+        if cfgs then
+            for _, cfg in ipairs(cfgs) do
+                if cfg._running and cfg.method == "gift" then giftActive = true break end
+            end
+        end
+    end)
+    if giftActive then
+        print("[HactTelur] Auto-sell DITUNDA: ada gift aktif (pet keep lagi di-unfav buat gift)")
+        return 0
+    end
     PetDetect.rebuild(true)
     local kept, toSellCount = 0, 0
     -- fav udah diatur real-time (syncFavByRules + favTeamPets), jadi gak perlu fav ulang.
@@ -2163,19 +2178,12 @@ local function getMyEggsCached(force)
     if not force and (tick() - _eggCache.t) < 2 then return _eggCache.list end
     local list = {}
     pcall(function()
-        -- scan CUMA garden kita kalau ketemu (ringan), fallback Workspace (jaga-jaga)
-        local root = getMyFarmCached() or Workspace
-        for _, d in ipairs(root:GetDescendants()) do
+        -- v23.2: balik ke full Workspace scan biar AKURAT (egg gak selalu di subtree garden).
+        -- tetap RINGAN krn di-cache 2 detik (cuma 1x scan per 2s, bukan tiap loop 0.5s).
+        -- dulu scan garden doang -> egg ke-place gak kehitung -> place maksa -> "Max Eggs Reached" error.
+        for _, d in ipairs(Workspace:GetDescendants()) do
             if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
                 table.insert(list, d)
-            end
-        end
-        -- v21.2: kalau scan garden 0 egg TAPI kita lagi place (harusnya ada), fallback full scan sekali
-        if #list == 0 and root ~= Workspace then
-            for _, d in ipairs(Workspace:GetDescendants()) do
-                if d.Name == "PetEgg" and d:GetAttribute("OBJECT_TYPE") == "PetEgg" and isMyEgg(d) then
-                    table.insert(list, d)
-                end
             end
         end
     end)
