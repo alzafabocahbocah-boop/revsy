@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v25.2"
+local VERSION = "v25.4"
 
 -- ============ THEME ============
 local C = {
@@ -2791,6 +2791,18 @@ local function automationLoop()
     clearGarden()
     favTeamPets()  -- fav pet tim di awal (proteksi)
     task.wait(1)
+    -- v25.4: loop trigger pegang EGG tiap 2 detik saat fase reduce/place.
+    -- Auto.eggHoldActive=true -> tetep klik egg walau udah pegang (anti pet baru nyangkut di tangan).
+    -- di-set false saat hatch/sell/gift (biar gak ganggu equip pet di fase itu).
+    Auto.eggHoldActive = false
+    task.spawn(function()
+        while globalRunning do
+            if Auto.eggHoldActive and not Auto.giftBusy then
+                pcall(holdEggTool)
+            end
+            task.wait(2)
+        end
+    end)
     local favTick = 0
     local pctCheckTick = 0
     while globalRunning do
@@ -2841,6 +2853,7 @@ local function automationLoop()
                 task.wait(0.3)
             else
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
+            Auto.eggHoldActive = false  -- v25.4: fase sell -> stop trigger egg
             favTeamPets()  -- fav pet tim (proteksi)
             pcall(syncFavByRules)  -- atur fav/unfav sesuai rule SEKARANG (real-time, gak nunggu)
             -- v16.4: JEDA biar favorit bener-bener tercatat server SEBELUM jual.
@@ -2908,6 +2921,7 @@ local function automationLoop()
             task.wait(0.4)
         elseif nowPlaced < target then
             -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
+            Auto.eggHoldActive = true  -- v25.4: fase reduce -> trigger pegang egg tiap 2s
             equipTeam("Reduce Tim")
             -- v18.7: buang pet salah (bukan tim Reduce) dari garden kalau toggle aktif
             if config.autoUnequipWrong and teamData["Reduce Tim"] then
@@ -2926,6 +2940,7 @@ local function automationLoop()
                 task.wait(0.3)
             elseif allReady then
                 -- semua ready -> hatch bareng (efisien)
+                Auto.eggHoldActive = false  -- v25.4: fase hatch -> stop trigger egg (biar equip Koi gak keganggu)
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 equipTeam("Hatch Tim")
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
@@ -2944,9 +2959,13 @@ local function automationLoop()
                     hatchAllEggs()
                     task.wait(2)
                     equipTeam("Reduce Tim")
+                    -- v25.3: balik pegang EGG tool (pet baru hasil hatch sering auto-equip ke tangan).
+                    -- biar lanjut place egg, bukan nyangkut megang pet.
+                    pcall(holdEggTool)
                 end
             elseif ready > 0 and ready >= math.floor(total * 0.6) then
                 -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
+                Auto.eggHoldActive = false  -- v25.4: fase hatch -> stop trigger egg
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 equipTeam("Hatch Tim")
                 local ok = waitTeamInGarden("Hatch Tim", 12)
@@ -2962,6 +2981,7 @@ local function automationLoop()
                     hatchAllEggs()
                     task.wait(2)
                     equipTeam("Reduce Tim")
+                    pcall(holdEggTool)  -- v25.3: balik pegang egg
                 end
             else
                 -- masih banyak CD -> Reduce, tunggu
