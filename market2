@@ -2,7 +2,7 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.272"
+local VERSION = "8.273"
 local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
 
 local Players = game:GetService("Players")
@@ -1120,6 +1120,7 @@ local function makeSbBtn(name, comingSoon)
 end
 
 makeSbBtn("MARKET")
+makeSbBtn("SHOP")
 makeSbBtn("LIST HARGA")
 makeSbBtn("SNIPE")
 makeSbBtn("HOP SERVER")
@@ -1135,6 +1136,7 @@ local function makePanel(name)
     return p
 end
 local marketPanel = makePanel("MARKET")
+local shopPanel = makePanel("SHOP")  -- v8.273: auto buy seed & gear
 local pricePanel = makePanel("LIST HARGA")
 local snipePanel = makePanel("SNIPE")
 local hopServerPanel = makePanel("HOP SERVER")
@@ -11648,6 +11650,178 @@ BH.buildGardenPanel = function()
     task.spawn(function()
         task.wait(2)
         pcall(BH.refreshGardenStats)
+    end)
+end
+
+-- v8.273: ===== SHOP — AUTO BUY SEED & GEAR =====
+do
+    local RS = game:GetService("ReplicatedStorage")
+    -- resolve remote buy
+    local function getGE() return RS:FindFirstChild("GameEvents") end
+    local buySeedRE = getGE() and getGE():FindFirstChild("BuySeedStock")
+    local buyGearRE = getGE() and getGE():FindFirstChild("BuyGearStock")
+    if not buySeedRE then buySeedRE = RS:FindFirstChild("BuySeedStock", true) end
+    if not buyGearRE then buyGearRE = RS:FindFirstChild("BuyGearStock", true) end
+
+    -- baca daftar nama seed/gear dari RS.Data (atau modul). return array nama.
+    local function readDataList(modName)
+        local out = {}
+        pcall(function()
+            local data = RS:FindFirstChild("Data")
+            local mod = data and data:FindFirstChild(modName)
+            if mod then
+                local t = require(mod)
+                if type(t) == "table" then
+                    for k, v in pairs(t) do
+                        if type(k) == "string" then table.insert(out, k) end
+                    end
+                end
+            end
+        end)
+        table.sort(out)
+        return out
+    end
+
+    BH.autoShop = BH.autoShop or {
+        active = false,
+        seeds = {},   -- {[name]=true} dipilih
+        gears = {},   -- {[name]=true} dipilih
+    }
+    -- restore dari state
+    if BH.marketState then
+        BH.autoShop.seeds = BH.marketState.autoShopSeeds or {}
+        BH.autoShop.gears = BH.marketState.autoShopGears or {}
+    end
+    local function saveShop()
+        if BH.marketState then
+            BH.marketState.autoShopSeeds = BH.autoShop.seeds
+            BH.marketState.autoShopGears = BH.autoShop.gears
+            BH.saveMarketState(BH.marketState)
+        end
+    end
+
+    -- ===== UI =====
+    lblOf(shopPanel, "🛒 AUTO BUY SEED & GEAR", 0, 6, 320, 20, C.accent, 14, FB)
+    lblOf(shopPanel, "Pilih item, ON, beli terus selama stock ada", 0, 28, 360, 16, C.textDim, 11)
+
+    -- counter status
+    local statusLbl = lblOf(shopPanel, "Idle", 0, 48, 360, 16, C.textDim, 11)
+
+    -- tombol pilih seed
+    local seedBtn = btnOf(shopPanel, 0, 72, 175, 32, "🌱 Pilih Seed", C.card, C.text)
+    local gearBtn = btnOf(shopPanel, 185, 72, 175, 32, "⚙️ Pilih Gear", C.card, C.text)
+    local seedSelLbl = lblOf(shopPanel, "Seed: -", 0, 110, 360, 16, C.textDim, 10)
+    local gearSelLbl = lblOf(shopPanel, "Gear: -", 0, 128, 360, 16, C.textDim, 10)
+
+    local function updateSelLbls()
+        local s = {}; for n in pairs(BH.autoShop.seeds) do table.insert(s, n) end
+        local g = {}; for n in pairs(BH.autoShop.gears) do table.insert(g, n) end
+        seedSelLbl.Text = "Seed: " .. (#s > 0 and table.concat(s, ", ") or "-")
+        gearSelLbl.Text = "Gear: " .. (#g > 0 and table.concat(g, ", ") or "-")
+    end
+    updateSelLbls()
+
+    -- popup multi-select (dipakai buat seed & gear)
+    local function openPicker(title, listFn, selTable)
+        local old = gui:FindFirstChild("ShopPicker")
+        if old then old:Destroy() end
+        local pk = Instance.new("Frame")
+        pk.Name = "ShopPicker"
+        pk.Size = UDim2.new(0, 280, 0, 360)
+        pk.Position = UDim2.new(0.5, -140, 0.5, -180)
+        pk.BackgroundColor3 = C.panel; pk.ZIndex = 9000; pk.Parent = gui
+        Instance.new("UICorner", pk).CornerRadius = UDim.new(0, 10)
+        local st = Instance.new("UIStroke", pk); st.Color = C.border
+        local ti = Instance.new("TextLabel")
+        ti.Size = UDim2.new(1, -50, 0, 30); ti.Position = UDim2.new(0, 10, 0, 6)
+        ti.BackgroundTransparency = 1; ti.Text = title; ti.TextColor3 = C.accent
+        ti.Font = FB; ti.TextSize = 14; ti.TextXAlignment = Enum.TextXAlignment.Left
+        ti.ZIndex = 9001; ti.Parent = pk
+        local xb = Instance.new("TextButton")
+        xb.Size = UDim2.new(0, 28, 0, 28); xb.Position = UDim2.new(1, -34, 0, 6)
+        xb.BackgroundColor3 = C.danger; xb.Text = "X"; xb.TextColor3 = Color3.fromRGB(255,255,255)
+        xb.Font = FB; xb.TextSize = 14; xb.ZIndex = 9001; xb.Parent = pk
+        Instance.new("UICorner", xb).CornerRadius = UDim.new(0, 6)
+        xb.MouseButton1Click:Connect(function() pk:Destroy() end)
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.new(1, -16, 1, -46); scroll.Position = UDim2.new(0, 8, 0, 40)
+        scroll.BackgroundTransparency = 1; scroll.ScrollBarThickness = 5
+        scroll.CanvasSize = UDim2.new(0,0,0,0); scroll.ZIndex = 9001; scroll.Parent = pk
+        local lay = Instance.new("UIListLayout"); lay.Padding = UDim.new(0, 3); lay.Parent = scroll
+        local names = listFn()
+        if #names == 0 then
+            local e = Instance.new("TextLabel")
+            e.Size = UDim2.new(1, 0, 0, 40); e.BackgroundTransparency = 1
+            e.Text = "(gak ketemu data — coba di server market)"; e.TextColor3 = C.textDim
+            e.Font = FM; e.TextSize = 11; e.ZIndex = 9002; e.Parent = scroll
+        end
+        for _, name in ipairs(names) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C.card
+            b.Font = FM; b.TextSize = 12; b.TextXAlignment = Enum.TextXAlignment.Left
+            b.ZIndex = 9002; b.Parent = scroll
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+            local function refresh()
+                b.Text = (selTable[name] and "  ✓ " or "    ") .. name
+                b.TextColor3 = selTable[name] and C.accent or C.text
+            end
+            refresh()
+            b.Activated:Connect(function()
+                selTable[name] = (not selTable[name]) or nil
+                refresh(); updateSelLbls(); saveShop()
+            end)
+        end
+        scroll.CanvasSize = UDim2.new(0, 0, 0, lay.AbsoluteContentSize.Y + 6)
+    end
+    seedBtn.MouseButton1Click:Connect(function()
+        openPicker("🌱 Pilih Seed", function() return readDataList("SeedData") end, BH.autoShop.seeds)
+    end)
+    gearBtn.MouseButton1Click:Connect(function()
+        openPicker("⚙️ Pilih Gear", function() return readDataList("GearData") end, BH.autoShop.gears)
+    end)
+
+    -- toggle ON/OFF
+    local toggleBtn = btnOf(shopPanel, 0, 154, 360, 38, "▶ START AUTO BUY", C.success, Color3.fromRGB(17,17,17))
+    local function setToggleVisual()
+        toggleBtn.Text = BH.autoShop.active and "⛔ STOP AUTO BUY" or "▶ START AUTO BUY"
+        toggleBtn.BackgroundColor3 = BH.autoShop.active and C.danger or C.success
+    end
+    toggleBtn.MouseButton1Click:Connect(function()
+        BH.autoShop.active = not BH.autoShop.active
+        setToggleVisual()
+        statusLbl.Text = BH.autoShop.active and "Aktif — beli selama stock ada" or "Idle"
+        statusLbl.TextColor3 = BH.autoShop.active and C.accent or C.textDim
+    end)
+    setToggleVisual()
+
+    -- ===== LOOP BELI =====
+    local bought = 0
+    task.spawn(function()
+        while gui.Parent do
+            task.wait(1)
+            if BH.autoShop.active then
+                local did = 0
+                -- beli seed yg dipilih
+                for name in pairs(BH.autoShop.seeds) do
+                    if buySeedRE then
+                        pcall(function() buySeedRE:FireServer(name) end)
+                        did = did + 1
+                    end
+                end
+                -- beli gear yg dipilih
+                for name in pairs(BH.autoShop.gears) do
+                    if buyGearRE then
+                        pcall(function() buyGearRE:FireServer(name) end)
+                        did = did + 1
+                    end
+                end
+                if did > 0 then
+                    bought = bought + did
+                    statusLbl.Text = "Beli... total fire: "..bought
+                    statusLbl.TextColor3 = C.accent
+                end
+            end
+        end
     end)
 end
 
