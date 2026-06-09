@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v26.2"
+local VERSION = "v26.3"
 
 -- ============ THEME ============
 local C = {
@@ -1581,19 +1581,12 @@ function syncFavByRules()
 end
 -- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
 function doAutoSell()
-    -- v23.2: JANGAN sell kalau ada Auto Gift aktif (method gift + unfavFirst). Pet keep yg lagi
-    -- di-unfav SEMENTARA buat gift bakal ikut kejual (SellAll jual semua non-favorit). Tunda dulu.
-    local giftActive = false
-    pcall(function()
-        local cfgs = _G.HactTelurGiftCfgs
-        if cfgs then
-            for _, cfg in ipairs(cfgs) do
-                if cfg._running and cfg.method == "gift" then giftActive = true break end
-            end
-        end
-    end)
-    if giftActive then
-        print("[HactTelur] Auto-sell DITUNDA: ada gift aktif (pet keep lagi di-unfav buat gift)")
+    -- v26.3: tunda sell CUMA kalau baru aja "Trade completed!" (dalam 3 detik) — pet keep lagi
+    -- transisi unfav buat gift. KALAU cuma fitur gift ON tapi gak ada trade complete, sell JALAN
+    -- (dulu: gift cfg running = langsung tunda -> sell ke-block terus walau gift gak ngapa2in).
+    local recentTrade = (tick() - (Auto.lastTradeComplete or 0)) < 3
+    if recentTrade then
+        print("[HactTelur] Auto-sell DITUNDA: baru trade complete (tunggu fav stabil)")
         return 0
     end
     PetDetect.rebuild(true)
