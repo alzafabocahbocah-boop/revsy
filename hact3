@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v26.0"
+local VERSION = "v26.1"
 
 -- ============ THEME ============
 local C = {
@@ -2648,11 +2648,10 @@ do
                 if type(a1) == "string" then msg = a1
                 elseif type(a1) == "table" then msg = tostring(a1.Text or a1.Message or a1.text or "") end
                 local low = msg:lower()
-                if low:find("sent gift request") or low:find("gift request") then
-                    Auto.lastGiftOut = tick()  -- v26.0: send gift req -> jeda start
-                elseif low:find("trade completed") or low:find("trade complete") then
+                -- v26.1: CUMA cek "Trade completed!" — gift bener2 sukses diterima lawan.
+                -- begitu muncul -> automation STOP MENDADAK + unequip pet garden.
+                if low:find("trade completed") or low:find("trade complete") then
                     Auto.lastTradeComplete = tick()
-                    Auto.lastGiftOut = tick()  -- v26.0: trade complete JUGA jeda start (patokan sama)
                 end
             end)
         end
@@ -2708,8 +2707,10 @@ local function isPausedForGift()
     -- Selama masih ada aktivitas, pause. Kalau SUNYI >= RESUME_QUIET (3 detik) -> resume.
     -- giftBusy gak lagi bikin pause penuh sendiri (dulu bikin nyangkut); cuma jadi 1 sinyal.
     local tradeOpen = isTradingManual()
-    local lastAct = math.max(Auto.lastGiftAct or 0, Auto.lastGiftOut or 0)
-    local quiet = tick() - lastAct  -- udah berapa lama "sunyi" (gak ada gift keluar/masuk)
+    -- v26.1: PATOKAN = "Trade completed!" notif. begitu trade complete -> pause RESUME_QUIET detik.
+    -- (send gift request DIBUANG — cuma trade complete yg jadi acuan)
+    local sinceTrade = tick() - (Auto.lastTradeComplete or 0)
+    local quiet = sinceTrade  -- "sunyi" = berapa lama sejak trade complete terakhir
 
     -- safety: giftBusy nyangkut kelamaan (proses gift error gak ke-reset) -> paksa reset
     if Auto.giftBusy and Auto.giftBusySince and (tick() - Auto.giftBusySince) > 30 then
@@ -2717,23 +2718,18 @@ local function isPausedForGift()
         Auto.giftBusy = false
     end
 
-    -- v26.0: send gift request DAN trade completed SAMA-SAMA menjeda start.
-    -- keduanya update lastGiftOut -> pakai patokan quiet yg SAMA (RESUME_QUIET).
-    -- automation START cuma kalau KEDUANYA udah sunyi (gak ada send gift / trade complete) selama 5 detik.
+    -- v26.1: trade complete -> pause sampai sunyi RESUME_QUIET detik.
     if tradeOpen or quiet < RESUME_QUIET then
         if not Auto._wasPaused then
-            local why = tradeOpen and "trade UI kebuka"
-                or "gift aktif (send req / trade complete)"
-            print("[HactTelur] ⏸ PAUSE: "..why.." (automation stop dulu)")
+            local why = tradeOpen and "trade UI kebuka" or "TRADE COMPLETE (gift sukses)"
+            print("[HactTelur] ⏸ PAUSE: "..why.." (automation STOP)")
             Auto._wasPaused = true
             Auto._pauseSince = tick()
-            -- v22.8: unequip pet di garden pas mulai pause biar pet gak nyangkut ke-place
-            -- v23.4: cuma sekali per 8 detik (jgn spam clearGarden -> banjir error 'Anchored nil')
-            if (tick() - (Auto._lastClear or 0)) > 8 then
-                Auto._lastClear = tick()
-                Auto.currentTeam = nil
-                task.spawn(function() pcall(clearGarden) end)
-            end
+            -- begitu pause -> langsung unequip pet garden (stop mendadak)
+            Auto.currentTeam = nil
+            Auto.eggHoldActive = false
+            task.spawn(function() pcall(clearGarden) end)
+            Auto._lastClear = tick()
         end
         -- safety paksa-resume kalau trade UI nyangkut kebuka kelamaan
         if tradeOpen and Auto._pauseSince then
@@ -2756,7 +2752,11 @@ local function isPausedForGift()
     return false
 end
 
--- v20.5: checkKoiSealOk dipindah ke SINI (sebelum automationLoop) — dulu di bawah,
+-- v26.1: cek CEPAT — baru aja "Trade completed!" (dalam 0.5 detik)? dipanggil di titik2 kritis
+-- (sebelum sell/hatch/equip) biar STOP MENDADAK walau jeda cuma 0.1 detik. unequip garden juga.
+local function justTradeComplete()
+    return (tick() - (Auto.lastTradeComplete or 0)) < RESUME_QUIET
+end
 -- jadi nil saat automationLoop manggil (error "call a nil value" line 2478 -> loop stuck gak pindah hatch)
 local function checkKoiSealOk()
     local allSel = {}
@@ -2906,14 +2906,29 @@ local function automationLoop()
                 task.spawn(function() pcall(clearGarden) end)
             else
             print("[HactTelur] tim Sell LENGKAP ("..countGardenPets().."), tunggu "..sd.." detik...")
-            task.wait(sd)  -- jeda biar skill Seal bener-bener aktif
+            -- v26.1: wait sambil CEK trade complete tiap 0.1s -> stop MENDADAK kalau gift sukses di tengah
+            local sellAborted = false
+            local tEnd = tick() + sd
+            while tick() < tEnd do
+                if justTradeComplete() or isPausedForGift() then
+                    print("[HactTelur] TRADE COMPLETE pas tunggu sell -> STOP mendadak, unequip garden")
+                    Auto.currentTeam = nil
+                    task.spawn(function() pcall(clearGarden) end)
+                    sellAborted = true
+                    break
+                end
+                task.wait(0.1)
+            end
+            if sellAborted then
+                -- batal sell, balik atas (jangan jual)
+            else
             -- v22.3: CEK FAV LAGI tepat sebelum jual — pastikan gak ada pet keep yg belum di-fav
             print("[HactTelur] cek fav terakhir sebelum jual...")
             pcall(syncFavByRules)
             task.wait(0.6)  -- kasih waktu fav tercatat server
             -- v22.9: kalau gift nyempil & garden ke-clear di tengah -> garden kosong -> batal sell (biar gak sell 0)
-            if isPausedForGift() or countGardenPets() == 0 then
-                print("[HactTelur] garden kosong / gift nyempil pas mau jual, batal sell (ulang nanti)")
+            if isPausedForGift() or justTradeComplete() or countGardenPets() == 0 then
+                print("[HactTelur] garden kosong / trade complete pas mau jual, batal sell (ulang nanti)")
             else
             local sold = doAutoSell()
             -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
@@ -2928,6 +2943,7 @@ local function automationLoop()
                 print("[HactTelur] gak ada pet buat dijual (sisanya keep), lanjut reduce")
             end
             end  -- v22.9: tutup guard garden kosong
+            end  -- v26.1: tutup guard sellAborted (trade complete pas tunggu sell)
             end  -- tutup guard isPausedForGift (jeda fav)
             end  -- v23.0: tutup guard okSell (tim Sell lengkap)
             end  -- tutup guard isPausedForGift
