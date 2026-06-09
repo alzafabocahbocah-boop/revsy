@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v26.9"
+local VERSION = "v27.1"
 
 -- ============ THEME ============
 local C = {
@@ -2903,7 +2903,36 @@ local function automationLoop()
     end)
     local favTick = 0
     local pctCheckTick = 0
+    -- v27.0: WATCHDOG auto-restart cycle. tandai lastLoopTick tiap iterasi loop.
+    -- kalau 10 detik GAK ADA progress (loop nyangkut) PADAHAL gak lagi pause (trade complete/gift/
+    -- trade UI), berarti automation bug -> RESTART cycle otomatis (reset state + clear garden +
+    -- currentTeam=nil), kayak matiin-nyalain start tapi otomatis.
+    Auto.lastLoopTick = tick()
+    Auto._watchdogGen = (Auto._watchdogGen or 0) + 1
+    local myWd = Auto._watchdogGen
+    task.spawn(function()
+        while globalRunning and Auto._watchdogGen == myWd do
+            task.wait(5)
+            if not globalRunning then break end
+            local stuck = tick() - (Auto.lastLoopTick or tick())
+            -- pause sah (trade complete/gift/trade UI)? -> bukan nyangkut, reset timer
+            if isPausedForGift() or Auto.giftBusy then
+                Auto.lastLoopTick = tick()
+            elseif stuck > 30 then
+                print("[HactTelur] ⚠ WATCHDOG: nyangkut "..math.floor(stuck).."s tanpa pause -> RESTART cycle")
+                -- restart cycle: reset state biar loop fresh (kayak start ulang)
+                Auto.currentTeam = nil
+                Auto.giftBusy = false
+                Auto.sellExhausted = false
+                Auto.bpFullFlag = false
+                Auto.eggPhase = "reduce"
+                pcall(clearGarden)
+                Auto.lastLoopTick = tick()
+            end
+        end
+    end)
     while globalRunning do
+        Auto.lastLoopTick = tick()  -- v27.0: tandai loop masih jalan (watchdog baca ini)
         -- v19.0: cek Koi% & Seal% tiap ~10 detik. kalau turun di bawah min -> STOP.
         if config.reqKoiSeal then
             pctCheckTick = pctCheckTick + 1
