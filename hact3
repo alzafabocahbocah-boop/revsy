@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.3"
+local VERSION = "v27.6"
 
 -- ============ THEME ============
 local C = {
@@ -4214,7 +4214,7 @@ local function makeFruitPanel()
         local chev = lbl(header, ">", 14, C.textDim, Enum.TextXAlignment.Right)
         chev.Position = UDim2.new(1, -26, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
         local body = mk("Frame", {
-            Size = UDim2.new(1, -20, 0, 160), Position = UDim2.new(0, 10, 0, 44),
+            Size = UDim2.new(1, -20, 0, 138), Position = UDim2.new(0, 10, 0, 44),
             BackgroundTransparency = 1, Visible = false, Parent = row })
 
         -- Pay With (token / robux)
@@ -4360,7 +4360,7 @@ local function makeFruitPanel()
             local exp = not body.Visible
             body.Visible = exp
             chev.Text = exp and "v" or ">"
-            row.Size = exp and UDim2.new(1, 0, 0, 200) or UDim2.new(1, 0, 0, 40)
+            row.Size = exp and UDim2.new(1, 0, 0, 178) or UDim2.new(1, 0, 0, 40)
         end)
         fruitData.promptBuy = { refreshSelBtn = refreshAll }
     end
@@ -4968,25 +4968,56 @@ do
             Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 36),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
         -- Pet Type
-        local petL = fieldRow(38, "Pet Type", "Select Pet...", function(bl)
-            openMultiPicker("Pilih Pet Type", PET_LIST, cfg.pets, function()
-                -- v27.2: sebutkan NAMA pet (bukan cuma jumlah). kalau banyak, potong + "+N"
+        -- v27.4: Pet Type field CUSTOM — lebih tinggi (2 baris), tampil NAMA + JUMLAH pet
+        -- (mis "Mimic Octopus 80, Ruby Squid 40, ..."), TextWrapped biar muat 2 baris.
+        local petTypeLbl
+        do
+            local fl = lbl(body, "Pet Type", 12, C.text, Enum.TextXAlignment.Left)
+            fl.Position = UDim2.new(0, 0, 0, 38); fl.Size = UDim2.new(0.32, 0, 0, 50)
+            local b = mk("TextButton", {
+                Size = UDim2.new(0.68, 0, 0, 50), Position = UDim2.new(0.32, 0, 0, 38),
+                BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, Parent = body })
+            corner(b, 6); stroke(b, C.border, 1)
+            petTypeLbl = lbl(b, "Select Pet...", 10, C.textDim, Enum.TextXAlignment.Left)
+            petTypeLbl.Position = UDim2.new(0, 8, 0, 0); petTypeLbl.Size = UDim2.new(1, -14, 1, 0)
+            petTypeLbl.TextWrapped = true
+            petTypeLbl.TextYAlignment = Enum.TextYAlignment.Center
+            -- fungsi update: tampil nama + jumlah pet di backpack
+            local function refreshPetTypeLbl()
                 local names = {}
-                for pt in pairs(cfg.pets) do table.insert(names, pt) end
+                for pt in pairs(cfg.pets or {}) do table.insert(names, pt) end
                 table.sort(names)
                 if #names == 0 then
-                    bl.Text = "Select Pet..."; bl.TextColor3 = C.textDim
-                else
-                    local shown = {}
-                    for i = 1, math.min(3, #names) do table.insert(shown, names[i]) end
-                    local txt = table.concat(shown, ", ")
-                    if #names > 3 then txt = txt .. " +" .. (#names - 3) end
-                    bl.Text = txt; bl.TextColor3 = C.text
+                    petTypeLbl.Text = "Select Pet..."; petTypeLbl.TextColor3 = C.textDim
+                    return
                 end
+                -- hitung jumlah tiap type di backpack (force rebuild biar update <1s,
+                -- aman krn loop ini cuma jalan pas panel gift DIBUKA)
+                local counts = {}
+                pcall(function()
+                    for _, p in ipairs(PetDetect.listBackpackPets(true)) do
+                        local nm = tostring(p.name or "")
+                        for _, pt in ipairs(names) do
+                            if nm:lower():find(pt:lower(), 1, true) then
+                                counts[pt] = (counts[pt] or 0) + 1
+                            end
+                        end
+                    end
+                end)
+                local parts = {}
+                for _, pt in ipairs(names) do
+                    table.insert(parts, pt .. " " .. (counts[pt] or 0))
+                end
+                petTypeLbl.Text = table.concat(parts, ",  ")
+                petTypeLbl.TextColor3 = C.text
+            end
+            b.MouseButton1Click:Connect(function()
+                openMultiPicker("Pilih Pet Type", PET_LIST, cfg.pets, refreshPetTypeLbl)
             end)
-        end)
-        -- Mutation Filter
-        local mutL = fieldRow(72, "Mutasi", "(Opsional)...", function(bl)
+            cfg._refreshPetTypeLbl = refreshPetTypeLbl  -- biar bisa di-refresh dari luar (load)
+        end
+        -- Mutation Filter (geser ke bawah karena pet type makin tinggi)
+        local mutL = fieldRow(94, "Mutasi", "(Opsional)...", function(bl)
             openMultiPicker("Pilih Mutasi", PetDetect.MUT_PREFIXES, cfg.muts, function()
                 local n=0; for _ in pairs(cfg.muts) do n=n+1 end
                 bl.Text = n>0 and (n.." mutasi") or "(Opsional)..."; bl.TextColor3 = n>0 and C.text or C.textDim
@@ -4994,9 +5025,9 @@ do
         end)
         -- Age (min)
         local aL = lbl(body, "Age (-=bwh)", 12, C.text, Enum.TextXAlignment.Left)
-        aL.Position = UDim2.new(0, 0, 0, 106); aL.Size = UDim2.new(0.4, 0, 0, 28)
+        aL.Position = UDim2.new(0, 0, 0, 128); aL.Size = UDim2.new(0.4, 0, 0, 28)
         local aBox = mk("TextBox", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 106),
+            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 128),
             BackgroundColor3 = C.input, Text = tostring(cfg.age or 0), Font = FONT, TextSize = 11, TextColor3 = C.text,
             TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = body })
         corner(aBox, 6); stroke(aBox, C.border, 1)
@@ -5004,13 +5035,13 @@ do
             cfg.age = tonumber(aBox.Text) or 0; aBox.Text = tostring(cfg.age)
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
         end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 138),
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 160),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
         -- KG (-=di bawah)
         local kL = lbl(body, "KG (-=bwh)", 12, C.text, Enum.TextXAlignment.Left)
-        kL.Position = UDim2.new(0, 0, 0, 140); kL.Size = UDim2.new(0.4, 0, 0, 28)
+        kL.Position = UDim2.new(0, 0, 0, 162); kL.Size = UDim2.new(0.4, 0, 0, 28)
         local kBox = mk("TextBox", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 140),
+            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 162),
             BackgroundColor3 = C.input, Text = tostring(cfg.kg or 0), Font = FONT, TextSize = 11, TextColor3 = C.text,
             TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, Parent = body })
         corner(kBox, 6); stroke(kBox, C.border, 1)
@@ -5018,13 +5049,13 @@ do
             cfg.kg = tonumber(kBox.Text) or 0; kBox.Text = tostring(cfg.kg)
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
         end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 172),
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 194),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
         -- Metode: Trade / Gift (tombol switch)
         local mL = lbl(body, "Metode", 12, C.text, Enum.TextXAlignment.Left)
-        mL.Position = UDim2.new(0, 0, 0, 178); mL.Size = UDim2.new(0.4, 0, 0, 28)
+        mL.Position = UDim2.new(0, 0, 0, 200); mL.Size = UDim2.new(0.4, 0, 0, 28)
         local mBtn = mk("TextButton", {
-            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 178),
+            Size = UDim2.new(0.6, 0, 0, 28), Position = UDim2.new(0.4, 0, 0, 200),
             BackgroundColor3 = C.input, Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)",
             Font = FONT_B, TextSize = 11, TextColor3 = C.text, AutoButtonColor = false, Parent = body })
         corner(mBtn, 6); stroke(mBtn, C.border, 1)
@@ -5033,13 +5064,13 @@ do
             mBtn.Text = (cfg.method == "gift") and "Gift Biasa" or "Trade (Tiket)"
             if _G.HactTelurSave then pcall(_G.HactTelurSave) end
         end)
-        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 210),
+        mk("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0, 232),
             BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = body })
         -- Unfav dulu sebelum gift (toggle)
         local uL = lbl(body, "Unfav dulu", 12, C.text, Enum.TextXAlignment.Left)
-        uL.Position = UDim2.new(0, 0, 0, 216); uL.Size = UDim2.new(0.6, 0, 0, 28)
+        uL.Position = UDim2.new(0, 0, 0, 238); uL.Size = UDim2.new(0.6, 0, 0, 28)
         local uSw = mk("TextButton", {
-            Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -44, 0, 218),
+            Size = UDim2.new(0, 44, 0, 24), Position = UDim2.new(1, -44, 0, 240),
             BackgroundColor3 = cfg.unfavFirst and C.accent or C.input, Text = "", AutoButtonColor = false, Parent = body })
         corner(uSw, 12)
         local uKnob = mk("Frame", {
@@ -5200,6 +5231,29 @@ do
             body.Visible = expanded
             chev.Text = expanded and "v" or ">"
             row.Size = expanded and UDim2.new(1, 0, 0, 410) or UDim2.new(1, 0, 0, 40)
+            -- v27.6: pas slot DIBUKA (expanded) -> loop refresh real-time. kalau tab gift gak
+            -- keliatan (pindah ke AUTO HACT) -> loop IDLE (gak refresh, hemat), lanjut otomatis
+            -- pas balik ke tab gift. loop mati cuma kalau slot di-collapse (expanded=false).
+            if expanded then
+                task.spawn(function()
+                    local function visibleOnScreen()
+                        local o = body
+                        while o and o:IsA("GuiObject") do
+                            if not o.Visible then return false end
+                            o = o.Parent
+                        end
+                        return true
+                    end
+                    while expanded and body.Parent do
+                        if visibleOnScreen() then
+                            if cfg._refreshPetTypeLbl then pcall(cfg._refreshPetTypeLbl) end
+                            task.wait(0.8)  -- keliatan -> refresh cepat
+                        else
+                            task.wait(1.5)  -- ketutup (pindah tab) -> idle, gak refresh (hemat)
+                        end
+                    end
+                end)
+            end
         end)
         -- v26.4: AUTO-ON gift pas script start kalau slot ini udah punya target (dari save).
         -- tunggu load kelar (2.5s) baru cek, lalu simulasi klik gBtn biar gift langsung jalan.
