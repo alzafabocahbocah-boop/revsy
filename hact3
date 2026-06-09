@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v26.5"
+local VERSION = "v26.9"
 
 -- ============ THEME ============
 local C = {
@@ -1126,8 +1126,38 @@ local function autoAcceptTrade()
     end)
 end
 -- kirim pet ke target via TRADE. petList = array uuid
+-- v26.9: pegang Trading Ticket pas mau trade (gift lewat trade butuh item tiket di tangan).
+-- kalau lagi pegang tool lain, lepas dulu lalu equip tiket.
+local function holdTradingTicket()
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local bp = player:FindFirstChild("Backpack")
+    if not (char and hum and bp) then return false end
+    local function findTicket(container)
+        if not container then return nil end
+        for _, t in ipairs(container:GetChildren()) do
+            if t:IsA("Tool") then
+                local n = t.Name:lower()
+                if n:find("trading") and n:find("ticket") or n:find("trade ticket") then return t end
+            end
+        end
+        return nil
+    end
+    -- udah pegang tiket?
+    if findTicket(char) then return true end
+    -- cari di backpack, lepas tool lain, equip tiket
+    local tk = findTicket(bp)
+    if not tk then return false end  -- gak punya tiket
+    pcall(function() hum:UnequipTools() end)
+    task.wait(0.1)
+    pcall(function() hum:EquipTool(tk) end)
+    task.wait(0.15)
+    return findTicket(char) ~= nil
+end
+
 local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+    pcall(holdTradingTicket)  -- v26.9: pegang tiket dulu sebelum kirim trade request
     pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
     task.wait(0.4)
     local added = 0
@@ -1392,6 +1422,7 @@ end
 -- v16.1/v23.6: Auto dideklarasi DI ATAS (sebelum GiftSys/giftPetToTarget). Isi field Auto di section AUTOMATION.
 -- (deklarasi 'local Auto = {}' dipindah ke atas biar gak nil saat gift dipanggil)
 
+local clearGarden  -- v26.7: forward-declare (giftPetsByFilter manggil clearGarden yg didefinisi nanti)
 local function giftPetsByFilter(cfg)
     local Players = game:GetService("Players")
     -- kumpulin target ONLINE dari set cfg.targets
@@ -1405,6 +1436,12 @@ local function giftPetsByFilter(cfg)
     if #matched == 0 then return 0 end
     Auto.giftBusy = true  -- automation hatch pause selama gift/trade jalan
     Auto.giftBusySince = tick()  -- v20.3: timestamp buat safety timeout (anti-nyangkut)
+    -- v26.7: clear garden dulu pas gift mulai — biar tim hatch (Koi) yg lagi placed gak nyangkut
+    -- campur sama pet yg mau di-gift. reset currentTeam biar abis gift equipTeam fresh.
+    Auto.eggPhase = "hatch"  -- stop pencet egg selama gift
+    Auto.currentTeam = nil
+    if clearGarden then pcall(clearGarden) end
+    task.wait(0.2)
     -- v20.3: bungkus pcall — kalau error di tengah, giftBusy TETAP di-reset (anti-stuck)
     local sent = 0
     local okRun, errRun = pcall(function()
@@ -2136,7 +2173,7 @@ local function countGardenPets()
 end
 -- KOSONGIN GARDEN: unequip semua pet placed (tiru pickupAllGardenPets revsy).
 -- scan PetsPhysical descendants, extract UUID (atribut/nama), unequip semua.
-local function clearGarden()
+clearGarden = function()
     local pp = Workspace:FindFirstChild("PetsPhysical")
     if not pp then return 0 end
     local uuids, seen = {}, {}
@@ -2685,10 +2722,21 @@ local function isTradingManual()
     pcall(function()
         local pg = player:FindFirstChild("PlayerGui")
         if not pg then return end
-        -- v19.3: pakai TradingUI.Enabled (akurat). LiveTrade.Visible stuck=true walau trade tutup.
-        local tui = pg:FindFirstChild("TradingUI")
-        if tui and tui:IsA("ScreenGui") then
-            open = tui.Enabled == true
+        -- v26.8: cek beberapa kemungkinan nama UI trade (mode tiket/trade pakai UI).
+        -- begitu salah satu UI trade KEBUKA -> automation berhenti.
+        for _, nm in ipairs({"TradingUI", "TradeUI", "TradingScreen", "Trade", "LiveTradeUI"}) do
+            local tui = pg:FindFirstChild(nm)
+            if tui and tui:IsA("ScreenGui") and tui.Enabled == true then
+                open = true
+                break
+            end
+        end
+        -- juga cek LiveTrade frame yg Visible (sebagian game pakai ini saat trade aktif)
+        if not open then
+            local lt = pg:FindFirstChild("LiveTrade", true)
+            if lt and lt:IsA("Frame") and lt.Visible == true and lt.Parent and lt.Parent.Visible ~= false then
+                open = true
+            end
         end
     end)
     return open
@@ -2845,12 +2893,12 @@ local function automationLoop()
     Auto.eggPhase = "reduce"  -- default
     task.spawn(function()
         while globalRunning do
-            if not Auto.giftBusy and not isPausedForGift() then
+            -- v26.6: pencet egg CUMA saat fase REDUCE. saat hatch/sell, pet tim lagi di-equip ke
+            -- garden -> UnequipTools() bentrok -> error 'ActivePetsService Anchored nil' banjir.
+            if Auto.eggPhase == "reduce" and not Auto.giftBusy and not isPausedForGift() then
                 pcall(forceReEquipEgg)
             end
-            -- interval beda: reduce 3s, fase lain (hatch/sell) 6s
-            local iv = (Auto.eggPhase == "reduce") and 3 or 6
-            task.wait(iv)
+            task.wait(3)
         end
     end)
     local favTick = 0
