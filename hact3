@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v26.1"
+local VERSION = "v26.2"
 
 -- ============ THEME ============
 local C = {
@@ -2856,8 +2856,11 @@ local function automationLoop()
         -- TAPI kalo backpack penuh (bpFullFlag) & gift gak lagi jalan -> jgn pause, sell dulu!
         -- terima pet / gift / trade SELALU pause (prioritas, biar gak bentrok)
         local pauseNow = isPausedForGift()
-        -- (sell saat penuh TIDAK override pause terima pet — terima pet didahulukan)
-        if pauseNow then
+        -- v26.2: kalau backpack PENUH, sell HARUS jalan walau ada pause trade complete —
+        -- soalnya kalau penuh & sell ke-block terus, hatch juga mandek (gak ada slot).
+        -- jadi: pause skip-aksi cuma kalau backpack BELUM penuh. kalau penuh -> lanjut ke sell.
+        local fullCheck = isBackpackFull()
+        if pauseNow and not fullCheck then
             task.wait(0.5)
         else
         local full, cur, max = isBackpackFull()
@@ -2879,7 +2882,7 @@ local function automationLoop()
                 tostring(config.autoSell), tostring(Auto.sellExhausted), tostring(Auto.giftWaitFull), tostring(Auto.giftBusy)))
         end
         if config.autoSell and full and not Auto.sellExhausted and not Auto.giftWaitFull and not Auto.giftBusy then
-            if isPausedForGift() then  -- v16.2: gift mulai? batal sell, balik atas
+            if isTradingManual() then  -- v26.2: cuma batal kalau trade UI manual KEBUKA (bukan trade complete timer)
                 task.wait(0.3)
             else
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
@@ -2892,8 +2895,8 @@ local function automationLoop()
             task.wait(3)
             pcall(syncFavByRules)  -- pastikan sekali lagi (pet baru / yg ke-skip)
             task.wait(0.5)
-            if isPausedForGift() then  -- v16.4: gift nyempil pas jeda fav? batal sell
-                print("[HactTelur] gift mulai pas jeda fav, batal sell")
+            if isTradingManual() then  -- v26.2: batal cuma kalau trade UI manual kebuka
+                print("[HactTelur] trade UI kebuka pas jeda fav, batal sell")
             else
             equipTeam("Sell Tim")
             -- v18.8: tunggu SEMUA tim Sell masuk garden + sesuai tim, baru jual
@@ -2906,12 +2909,13 @@ local function automationLoop()
                 task.spawn(function() pcall(clearGarden) end)
             else
             print("[HactTelur] tim Sell LENGKAP ("..countGardenPets().."), tunggu "..sd.." detik...")
-            -- v26.1: wait sambil CEK trade complete tiap 0.1s -> stop MENDADAK kalau gift sukses di tengah
+            -- v26.2: udah commit sell (backpack penuh) -> cuma batal kalau trade UI MANUAL kebuka,
+            -- bukan trade complete timer (biar sell gak ke-block terus pas gift on + penuh).
             local sellAborted = false
             local tEnd = tick() + sd
             while tick() < tEnd do
-                if justTradeComplete() or isPausedForGift() then
-                    print("[HactTelur] TRADE COMPLETE pas tunggu sell -> STOP mendadak, unequip garden")
+                if isTradingManual() then
+                    print("[HactTelur] trade UI kebuka pas tunggu sell -> batal, unequip garden")
                     Auto.currentTeam = nil
                     task.spawn(function() pcall(clearGarden) end)
                     sellAborted = true
@@ -2926,9 +2930,9 @@ local function automationLoop()
             print("[HactTelur] cek fav terakhir sebelum jual...")
             pcall(syncFavByRules)
             task.wait(0.6)  -- kasih waktu fav tercatat server
-            -- v22.9: kalau gift nyempil & garden ke-clear di tengah -> garden kosong -> batal sell (biar gak sell 0)
-            if isPausedForGift() or justTradeComplete() or countGardenPets() == 0 then
-                print("[HactTelur] garden kosong / trade complete pas mau jual, batal sell (ulang nanti)")
+            -- v22.9: garden kosong -> batal sell (biar gak sell 0). trade UI manual -> batal juga.
+            if isTradingManual() or countGardenPets() == 0 then
+                print("[HactTelur] garden kosong / trade UI kebuka pas mau jual, batal sell (ulang nanti)")
             else
             local sold = doAutoSell()
             -- reset flag penuh DULU + force rebuild biar count fresh (pet udah turun)
