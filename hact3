@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v26.3"
+local VERSION = "v26.5"
 
 -- ============ THEME ============
 local C = {
@@ -1861,6 +1861,31 @@ local function holdEggTool()
     end
     return holdingEggNow()
 end
+-- v26.5: PENCET EGG 2X (unequip lalu equip lagi) walau udah pegang. dipanggil berkala
+-- biar megang egg gak pernah berhenti & pet baru/nyangkut langsung kelempar.
+local function forceReEquipEgg()
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local bp = player:FindFirstChild("Backpack")
+    if not (char and hum and bp) then return false end
+    -- cari egg tool dipilih (di tangan ATAU di backpack)
+    local function findEgg()
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("egg") and isEggSelected(t.Name) then return t end
+        end
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("egg") and isEggSelected(t.Name) then return t end
+        end
+        return nil
+    end
+    local egg = findEgg()
+    if not egg then return false end
+    -- pencet 2x: unequip semua -> equip egg lagi
+    pcall(function() hum:UnequipTools() end)
+    task.wait(0.1)
+    pcall(function() hum:EquipTool(egg) end)
+    return true
+end
 -- cari GARDEN KITA: sub-farm yg punya descendant StringValue Owner = nama kita.
 -- struktur: Workspace.Farm.<sub>.Important.Data.Owner
 local function getMyFarm()
@@ -2720,7 +2745,7 @@ local function isPausedForGift()
             Auto._pauseSince = tick()
             -- begitu pause -> langsung unequip pet garden (stop mendadak)
             Auto.currentTeam = nil
-            Auto.eggHoldActive = false
+            Auto.eggPhase = "hatch"
             task.spawn(function() pcall(clearGarden) end)
             Auto._lastClear = tick()
         end
@@ -2814,16 +2839,18 @@ local function automationLoop()
     clearGarden()
     favTeamPets()  -- fav pet tim di awal (proteksi)
     task.wait(1)
-    -- v25.4: loop trigger pegang EGG tiap 2 detik saat fase reduce/place.
-    -- Auto.eggHoldActive=true -> tetep klik egg walau udah pegang (anti pet baru nyangkut di tangan).
-    -- di-set false saat hatch/sell/gift (biar gak ganggu equip pet di fase itu).
-    Auto.eggHoldActive = false
+    -- v26.5: loop PENCET EGG 2x (unequip-equip) — gak pernah berhenti selama automation jalan.
+    -- reduce: tiap 3 detik. hatch/sell: tiap 6 detik. (Auto.eggPhase nentuin interval)
+    -- pakai forceReEquipEgg biar bener2 pencet 2x walau udah pegang egg.
+    Auto.eggPhase = "reduce"  -- default
     task.spawn(function()
         while globalRunning do
-            if Auto.eggHoldActive and not Auto.giftBusy then
-                pcall(holdEggTool)
+            if not Auto.giftBusy and not isPausedForGift() then
+                pcall(forceReEquipEgg)
             end
-            task.wait(2)
+            -- interval beda: reduce 3s, fase lain (hatch/sell) 6s
+            local iv = (Auto.eggPhase == "reduce") and 3 or 6
+            task.wait(iv)
         end
     end)
     local favTick = 0
@@ -2879,7 +2906,7 @@ local function automationLoop()
                 task.wait(0.3)
             else
             print("[HactTelur] inventory penuh ("..tostring(cur).."/"..tostring(max).."), pasang tim Seal...")
-            Auto.eggHoldActive = false  -- v25.4: fase sell -> stop trigger egg
+            Auto.eggPhase = "sell"  -- v26.5: fase sell -> pencet egg tiap 6s
             favTeamPets()  -- fav pet tim (proteksi)
             pcall(syncFavByRules)  -- atur fav/unfav sesuai rule SEKARANG (real-time, gak nunggu)
             -- v16.4: JEDA biar favorit bener-bener tercatat server SEBELUM jual.
@@ -2964,7 +2991,7 @@ local function automationLoop()
             task.wait(0.4)
         elseif nowPlaced < target then
             -- 1) slot belum penuh: terus place sampai 13 (dipanggil tiap iterasi)
-            Auto.eggHoldActive = true  -- v25.4: fase reduce -> trigger pegang egg tiap 2s
+            Auto.eggPhase = "reduce"  -- v26.5: fase reduce -> pencet egg tiap 3s
             equipTeam("Reduce Tim")
             -- v18.7: buang pet salah (bukan tim Reduce) dari garden kalau toggle aktif
             if config.autoUnequipWrong and teamData["Reduce Tim"] then
@@ -2983,7 +3010,7 @@ local function automationLoop()
                 task.wait(0.3)
             elseif allReady then
                 -- semua ready -> hatch bareng (efisien)
-                Auto.eggHoldActive = false  -- v25.4: fase hatch -> stop trigger egg (biar equip Koi gak keganggu)
+                Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] semua egg ready ("..ready.."/"..total.."), pasang tim hatch...")
                 equipTeam("Hatch Tim")
                 -- v18.8: tunggu SEMUA Koi masuk garden + sesuai tim, baru hatch
@@ -3008,7 +3035,7 @@ local function automationLoop()
                 end
             elseif ready > 0 and ready >= math.floor(total * 0.6) then
                 -- sebagian besar ready (sisanya egg balik dari Koi yg CD) -> hatch yg ready aja
-                Auto.eggHoldActive = false  -- v25.4: fase hatch -> stop trigger egg
+                Auto.eggPhase = "hatch"  -- v26.5: fase hatch -> pencet egg tiap 6s
                 print("[HactTelur] "..ready.."/"..total.." ready (Koi balikin egg), hatch yg ready...")
                 equipTeam("Hatch Tim")
                 local ok = waitTeamInGarden("Hatch Tim", 12)
@@ -4985,19 +5012,19 @@ do
         local statL = lbl(body, "", 10, C.textMute, Enum.TextXAlignment.Center)
         statL.Position = UDim2.new(0, 0, 0, 330); statL.Size = UDim2.new(1, 0, 0, 16)
         local running = false
-        gBtn.MouseButton1Click:Connect(function()
-            if not running then
-                local nt = 0; for _ in pairs(cfg.targets or {}) do nt = nt + 1 end
-                if nt == 0 then statL.Text = "pilih target dulu"; return end
-                running = true
-                cfg._running = true
-                gBtn.Text = "Auto Gift: ON (stop)"
-                gBtn.BackgroundColor3 = C.danger
-                syncWaitFullFlag()
-                task.spawn(function()
-                    local wasFull = false  -- lacak status full sebelumnya
-                    while running do
-                        if cfg.waitFull then
+        local function doStartGift()
+            if running then return end
+            local nt = 0; for _ in pairs(cfg.targets or {}) do nt = nt + 1 end
+            if nt == 0 then statL.Text = "pilih target dulu"; return end
+            running = true
+            cfg._running = true
+            gBtn.Text = "Auto Gift: ON (stop)"
+            gBtn.BackgroundColor3 = C.danger
+            syncWaitFullFlag()
+            task.spawn(function()
+                local wasFull = false  -- lacak status full sebelumnya
+                while running do
+                    if cfg.waitFull then
                             -- mode tunggu full: trade SEKALI pas backpack full, lalu tunggu full lagi
                             local full = isBackpackFull()
                             if full and not wasFull then
@@ -5048,21 +5075,35 @@ do
                         end
                     end
                 end)
-            else
-                running = false
-                cfg._running = false
-                syncWaitFullFlag()
-                gBtn.Text = "Auto Gift: OFF"
-                gBtn.BackgroundColor3 = C.accent
-                statL.Text = "dihentikan"
-            end
-        end)
+            end  -- tutup function doStartGift
+            gBtn.MouseButton1Click:Connect(function()
+                if not running then
+                    doStartGift()
+                else
+                    running = false
+                    cfg._running = false
+                    syncWaitFullFlag()
+                    gBtn.Text = "Auto Gift: OFF"
+                    gBtn.BackgroundColor3 = C.accent
+                    statL.Text = "dihentikan"
+                end
+            end)
         -- toggle expand
         head.MouseButton1Click:Connect(function()
             expanded = not expanded
             body.Visible = expanded
             chev.Text = expanded and "v" or ">"
             row.Size = expanded and UDim2.new(1, 0, 0, 410) or UDim2.new(1, 0, 0, 40)
+        end)
+        -- v26.4: AUTO-ON gift pas script start kalau slot ini udah punya target (dari save).
+        -- tunggu load kelar (2.5s) baru cek, lalu simulasi klik gBtn biar gift langsung jalan.
+        task.spawn(function()
+            task.wait(2.5)
+            local nt = 0; for _ in pairs(cfg.targets or {}) do nt = nt + 1 end
+            if nt > 0 and not running then
+                print("[HactTelur] Auto Gift slot "..idx.." auto-ON (ada target tersimpan)")
+                doStartGift()
+            end
         end)
     end
     for i = 1, 3 do makeGiftSlot(i) end
@@ -5447,7 +5488,9 @@ local function loadConfig()
     end
     if type(data.trackPetType) == "string" then  -- v22.1: restore track jenis pet
         config.trackPetType = data.trackPetType
+        trackPetType = data.trackPetType  -- v26.4: set variabel lokal LANGSUNG (jangan cuma via _G)
         if _G.HactTelurSetTrack then pcall(_G.HactTelurSetTrack, data.trackPetType) end
+        task.spawn(function() task.wait(1); pcall(updateVerTxt) end)  -- refresh tampilan trackBtn
     end
     -- v19.7: refresh semua toggle MISC biar nunjukin state tersimpan
     for _, fn in ipairs(miscToggleRefreshers) do pcall(fn) end
