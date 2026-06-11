@@ -2,8 +2,13 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.272"
-local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
+local VERSION = "8.281"
+local VERSION_DATE = "v8.281: dump struktur sale event lebih detail (2 level + tipe) buat diagnose History Sell jenis pet ?. + fix limit-200."
+
+warn("============================================")
+warn("  ZENX MARKET LOADING — VERSI 8.281")
+warn("  (kalau ini gak muncul, file lama yg jalan)")
+warn("============================================")
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -12,6 +17,22 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 local pg = player:WaitForChild("PlayerGui")
+
+-- v8.279: bunuh GUI ZENX MARKET lama (dr load sebelumnya) biar gak dobel.
+-- DIBUNGKUS task.spawn biar local di dalam gak nambah ke scope chunk utama
+-- (Luau limit 200 local/chunk — v8.278 nembus limit gara2 blok ini gak dibungkus).
+task.spawn(function()
+    pcall(function()
+        for _, where in ipairs({ pg, game:GetService("CoreGui") }) do
+            for _, g in ipairs(where:GetChildren()) do
+                if g:IsA("ScreenGui") and (g.Name == "ZenxMarketGui" or g.Name:find("ZenxMarket", 1, true)
+                   or g.Name:find("ZenxV8", 1, true)) then
+                    pcall(function() g:Destroy() end)
+                end
+            end
+        end
+    end)
+end)
 
 _G.ZenxV8 = _G.ZenxV8 or {}
 local function L(s) table.insert(_G.ZenxV8, s) print("[ZV8]", s) end
@@ -1120,6 +1141,7 @@ local function makeSbBtn(name, comingSoon)
 end
 
 makeSbBtn("MARKET")
+makeSbBtn("SHOP")
 makeSbBtn("LIST HARGA")
 makeSbBtn("SNIPE")
 makeSbBtn("HOP SERVER")
@@ -1135,6 +1157,7 @@ local function makePanel(name)
     return p
 end
 local marketPanel = makePanel("MARKET")
+makePanel("SHOP")  -- v8.274: JANGAN pakai local (tembus limit 200 local Luau). akses via panels["SHOP"]
 local pricePanel = makePanel("LIST HARGA")
 local snipePanel = makePanel("SNIPE")
 local hopServerPanel = makePanel("HOP SERVER")
@@ -3524,8 +3547,8 @@ do
 local snSubTabBar = Instance.new("Frame")
 snSubTabBar.Size = UDim2.new(1, -24, 0, 26) snSubTabBar.Position = UDim2.new(0, 12, 0, 8)
 snSubTabBar.BackgroundTransparency = 1 snSubTabBar.Parent = snipePanel
-local snSubLayout = Instance.new("UIListLayout") snSubLayout.FillDirection = Enum.FillDirection.Horizontal
-snSubLayout.Padding = UDim.new(0, 8) snSubLayout.Parent = snSubTabBar
+do local l = Instance.new("UIListLayout") l.FillDirection = Enum.FillDirection.Horizontal
+l.Padding = UDim.new(0, 8) l.Parent = snSubTabBar end
 
 local function makeSnSubPanel(name)
     local sp = Instance.new("Frame")
@@ -3592,10 +3615,8 @@ snPad.PaddingRight = UDim.new(0, 14) snPad.PaddingBottom = UDim.new(0, 14)
 snPad.Parent = snManualPanel
 
 -- v8.73: title, subtitle, count label di-hide — search jadi y=0
-local snTitleLbl = lblOf(snManualPanel, "🎯  SNIPE MANUAL", 0, 0, 400, 24, C.accent, 14, FB)
-local snSubLbl = lblOf(snManualPanel, "Scan semua pet — auto-refresh 10s", 0, 24, 600, 16, C.textDim, 10)
-snTitleLbl.Visible = false
-snSubLbl.Visible = false
+lblOf(snManualPanel, "🎯  SNIPE MANUAL", 0, 0, 400, 24, C.accent, 14, FB).Visible = false
+lblOf(snManualPanel, "Scan semua pet — auto-refresh 10s", 0, 24, 600, 16, C.textDim, 10).Visible = false
 
 -- v8.49: hide refresh+TP, counter inline
 snRefreshBtn = btnOf(snManualPanel, 0, 0, 1, 1, "🔄 MUAT ULANG", C.accent)
@@ -3641,8 +3662,8 @@ snSearch.PlaceholderColor3 = C.textDim
 snSearch.Font = F snSearch.TextSize = 12
 snSearch.ClearTextOnFocus = false snSearch.Parent = snManualPanel
 Instance.new("UICorner", snSearch).CornerRadius = UDim.new(0, 6)
-local snSearchPad = Instance.new("UIPadding")
-snSearchPad.PaddingLeft = UDim.new(0, 12) snSearchPad.Parent = snSearch
+do local p = Instance.new("UIPadding")
+p.PaddingLeft = UDim.new(0, 12) p.Parent = snSearch end
 
 -- v8.74: refresh button (20% kanan)
 snRefreshBtn.Size = UDim2.new(0.2, 0, 0, 28)
@@ -3655,8 +3676,8 @@ snRefreshBtn.Visible = true
 local snFilterFrame = Instance.new("Frame")
 snFilterFrame.Size = UDim2.new(1, 0, 0, 28) snFilterFrame.Position = UDim2.new(0, 0, 0, 34)  -- v8.73: y=96 → 34
 snFilterFrame.BackgroundTransparency = 1 snFilterFrame.Parent = snManualPanel
-local snFilterLayout = Instance.new("UIListLayout") snFilterLayout.FillDirection = Enum.FillDirection.Horizontal
-snFilterLayout.Padding = UDim.new(0, 4) snFilterLayout.Parent = snFilterFrame
+do local l = Instance.new("UIListLayout") l.FillDirection = Enum.FillDirection.Horizontal
+l.Padding = UDim.new(0, 4) l.Parent = snFilterFrame end
 
 local function makeFilterBox(parent, placeholder, w)
     local b = Instance.new("TextBox")
@@ -3722,9 +3743,9 @@ snScroll.ScrollBarThickness = 4 snScroll.Parent = snManualPanel
 Instance.new("UICorner", snScroll).CornerRadius = UDim.new(0, 8)
 snScrollLayout = Instance.new("UIListLayout")
 snScrollLayout.Padding = UDim.new(0, 3) snScrollLayout.Parent = snScroll
-local snScrollPad = Instance.new("UIPadding")
-snScrollPad.PaddingTop = UDim.new(0, 4) snScrollPad.PaddingLeft = UDim.new(0, 4) snScrollPad.PaddingRight = UDim.new(0, 4)
-snScrollPad.Parent = snScroll
+do local p = Instance.new("UIPadding")
+p.PaddingTop = UDim.new(0, 4) p.PaddingLeft = UDim.new(0, 4) p.PaddingRight = UDim.new(0, 4)
+p.Parent = snScroll end
 
 -- v8.84: ===== AUTO SNIPE TAB (auto-buy berdasarkan rules) =====
 -- Continuously scan market di server ini, auto-buy pet yang match rules
@@ -9825,16 +9846,24 @@ L("  - Inventory capacity")
             if type(v) == "table" then
                 local sub = {}
                 for k2, v2 in pairs(v) do
-                    table.insert(sub, tostring(k2).."="..tostring(v2):sub(1, 25))
+                    if type(v2) == "table" then
+                        local sub2 = {}
+                        for k3, v3 in pairs(v2) do
+                            table.insert(sub2, tostring(k3).."="..tostring(v3):sub(1,20))
+                        end
+                        table.insert(sub, tostring(k2).."={"..table.concat(sub2,",").."}")
+                    else
+                        table.insert(sub, tostring(k2).."="..tostring(v2):sub(1, 30))
+                    end
                 end
                 table.insert(parts, tostring(k).."={"..table.concat(sub, ",").."}")
             else
-                table.insert(parts, tostring(k).."="..tostring(v):sub(1, 30))
+                table.insert(parts, tostring(k).."("..type(v)..")="..tostring(v):sub(1, 40))
             end
         end
         L("")
-        L("════════════ HIST DUMP ════════════")
-        L("[Hist] "..(label or "entry").." struct: "..table.concat(parts, " | "):sub(1, 500))
+        L("════════════ HIST DUMP ("..(label or "entry")..") ════════════")
+        L("[Hist] "..table.concat(parts, " | "):sub(1, 900))
         L("════════════════════════════════════")
         L("")
     end
@@ -9870,7 +9899,7 @@ L("  - Inventory capacity")
             kg = e.BaseWeight * 1.1
         end
         -- v8.182: kalo masih "?", dump struct ini buat diagnose (max 3 dump)
-        if (not petType or petType == "") and unknownDumpCount < 3 then
+        if (not petType or petType == "") and unknownDumpCount < 5 then
             unknownDumpCount = unknownDumpCount + 1
             dumpEntry(e, "UNKNOWN#"..unknownDumpCount)
         end
@@ -11651,6 +11680,182 @@ BH.buildGardenPanel = function()
     end)
 end
 
+-- v8.273: ===== SHOP — AUTO BUY SEED & GEAR =====
+-- v8.280: dibungkus task.spawn(function) (bukan 'do') — 'do...end' TIDAK bikin
+-- scope fungsi, jadi local-nya tetap kehitung di chunk utama -> nembus limit 200.
+-- pakai fungsi = local pindah ke scope fungsi -> chunk utama lega.
+task.spawn(function()
+    local shopPanel = panels["SHOP"]  -- v8.274: ambil dari panels (bukan local di main chunk)
+    local RS = game:GetService("ReplicatedStorage")
+    -- resolve remote buy
+    local function getGE() return RS:FindFirstChild("GameEvents") end
+    local buySeedRE = getGE() and getGE():FindFirstChild("BuySeedStock")
+    local buyGearRE = getGE() and getGE():FindFirstChild("BuyGearStock")
+    if not buySeedRE then buySeedRE = RS:FindFirstChild("BuySeedStock", true) end
+    if not buyGearRE then buyGearRE = RS:FindFirstChild("BuyGearStock", true) end
+
+    -- baca daftar nama seed/gear dari RS.Data (atau modul). return array nama.
+    local function readDataList(modName)
+        local out = {}
+        pcall(function()
+            local data = RS:FindFirstChild("Data")
+            local mod = data and data:FindFirstChild(modName)
+            if mod then
+                local t = require(mod)
+                if type(t) == "table" then
+                    for k, v in pairs(t) do
+                        if type(k) == "string" then table.insert(out, k) end
+                    end
+                end
+            end
+        end)
+        table.sort(out)
+        return out
+    end
+
+    BH.autoShop = BH.autoShop or {
+        active = false,
+        seeds = {},   -- {[name]=true} dipilih
+        gears = {},   -- {[name]=true} dipilih
+    }
+    -- restore dari state
+    if BH.marketState then
+        BH.autoShop.seeds = BH.marketState.autoShopSeeds or {}
+        BH.autoShop.gears = BH.marketState.autoShopGears or {}
+    end
+    local function saveShop()
+        if BH.marketState then
+            BH.marketState.autoShopSeeds = BH.autoShop.seeds
+            BH.marketState.autoShopGears = BH.autoShop.gears
+            BH.saveMarketState(BH.marketState)
+        end
+    end
+
+    -- ===== UI =====
+    lblOf(shopPanel, "🛒 AUTO BUY SEED & GEAR", 0, 6, 320, 20, C.accent, 14, FB)
+    lblOf(shopPanel, "Pilih item, ON, beli terus selama stock ada", 0, 28, 360, 16, C.textDim, 11)
+
+    -- counter status
+    local statusLbl = lblOf(shopPanel, "Idle", 0, 48, 360, 16, C.textDim, 11)
+
+    -- tombol pilih seed
+    local seedBtn = btnOf(shopPanel, 0, 72, 175, 32, "🌱 Pilih Seed", C.card, C.text)
+    local gearBtn = btnOf(shopPanel, 185, 72, 175, 32, "⚙️ Pilih Gear", C.card, C.text)
+    local seedSelLbl = lblOf(shopPanel, "Seed: -", 0, 110, 360, 16, C.textDim, 10)
+    local gearSelLbl = lblOf(shopPanel, "Gear: -", 0, 128, 360, 16, C.textDim, 10)
+
+    local function updateSelLbls()
+        local s = {}; for n in pairs(BH.autoShop.seeds) do table.insert(s, n) end
+        local g = {}; for n in pairs(BH.autoShop.gears) do table.insert(g, n) end
+        seedSelLbl.Text = "Seed: " .. (#s > 0 and table.concat(s, ", ") or "-")
+        gearSelLbl.Text = "Gear: " .. (#g > 0 and table.concat(g, ", ") or "-")
+    end
+    updateSelLbls()
+
+    -- popup multi-select (dipakai buat seed & gear)
+    local function openPicker(title, listFn, selTable)
+        local old = gui:FindFirstChild("ShopPicker")
+        if old then old:Destroy() end
+        local pk = Instance.new("Frame")
+        pk.Name = "ShopPicker"
+        pk.Size = UDim2.new(0, 280, 0, 360)
+        pk.Position = UDim2.new(0.5, -140, 0.5, -180)
+        pk.BackgroundColor3 = C.panel; pk.ZIndex = 9000; pk.Parent = gui
+        Instance.new("UICorner", pk).CornerRadius = UDim.new(0, 10)
+        local st = Instance.new("UIStroke", pk); st.Color = C.border
+        local ti = Instance.new("TextLabel")
+        ti.Size = UDim2.new(1, -50, 0, 30); ti.Position = UDim2.new(0, 10, 0, 6)
+        ti.BackgroundTransparency = 1; ti.Text = title; ti.TextColor3 = C.accent
+        ti.Font = FB; ti.TextSize = 14; ti.TextXAlignment = Enum.TextXAlignment.Left
+        ti.ZIndex = 9001; ti.Parent = pk
+        local xb = Instance.new("TextButton")
+        xb.Size = UDim2.new(0, 28, 0, 28); xb.Position = UDim2.new(1, -34, 0, 6)
+        xb.BackgroundColor3 = C.danger; xb.Text = "X"; xb.TextColor3 = Color3.fromRGB(255,255,255)
+        xb.Font = FB; xb.TextSize = 14; xb.ZIndex = 9001; xb.Parent = pk
+        Instance.new("UICorner", xb).CornerRadius = UDim.new(0, 6)
+        xb.MouseButton1Click:Connect(function() pk:Destroy() end)
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.new(1, -16, 1, -46); scroll.Position = UDim2.new(0, 8, 0, 40)
+        scroll.BackgroundTransparency = 1; scroll.ScrollBarThickness = 5
+        scroll.CanvasSize = UDim2.new(0,0,0,0); scroll.ZIndex = 9001; scroll.Parent = pk
+        local lay = Instance.new("UIListLayout"); lay.Padding = UDim.new(0, 3); lay.Parent = scroll
+        local names = listFn()
+        if #names == 0 then
+            local e = Instance.new("TextLabel")
+            e.Size = UDim2.new(1, 0, 0, 40); e.BackgroundTransparency = 1
+            e.Text = "(gak ketemu data — coba di server market)"; e.TextColor3 = C.textDim
+            e.Font = FM; e.TextSize = 11; e.ZIndex = 9002; e.Parent = scroll
+        end
+        for _, name in ipairs(names) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 28); b.BackgroundColor3 = C.card
+            b.Font = FM; b.TextSize = 12; b.TextXAlignment = Enum.TextXAlignment.Left
+            b.ZIndex = 9002; b.Parent = scroll
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+            local function refresh()
+                b.Text = (selTable[name] and "  ✓ " or "    ") .. name
+                b.TextColor3 = selTable[name] and C.accent or C.text
+            end
+            refresh()
+            b.Activated:Connect(function()
+                selTable[name] = (not selTable[name]) or nil
+                refresh(); updateSelLbls(); saveShop()
+            end)
+        end
+        scroll.CanvasSize = UDim2.new(0, 0, 0, lay.AbsoluteContentSize.Y + 6)
+    end
+    seedBtn.MouseButton1Click:Connect(function()
+        openPicker("🌱 Pilih Seed", function() return readDataList("SeedData") end, BH.autoShop.seeds)
+    end)
+    gearBtn.MouseButton1Click:Connect(function()
+        openPicker("⚙️ Pilih Gear", function() return readDataList("GearData") end, BH.autoShop.gears)
+    end)
+
+    -- toggle ON/OFF
+    local toggleBtn = btnOf(shopPanel, 0, 154, 360, 38, "▶ START AUTO BUY", C.success, Color3.fromRGB(17,17,17))
+    local function setToggleVisual()
+        toggleBtn.Text = BH.autoShop.active and "⛔ STOP AUTO BUY" or "▶ START AUTO BUY"
+        toggleBtn.BackgroundColor3 = BH.autoShop.active and C.danger or C.success
+    end
+    toggleBtn.MouseButton1Click:Connect(function()
+        BH.autoShop.active = not BH.autoShop.active
+        setToggleVisual()
+        statusLbl.Text = BH.autoShop.active and "Aktif — beli selama stock ada" or "Idle"
+        statusLbl.TextColor3 = BH.autoShop.active and C.accent or C.textDim
+    end)
+    setToggleVisual()
+
+    -- ===== LOOP BELI =====
+    local bought = 0
+    task.spawn(function()
+        while gui.Parent do
+            task.wait(1)
+            if BH.autoShop.active then
+                local did = 0
+                -- beli seed yg dipilih
+                for name in pairs(BH.autoShop.seeds) do
+                    if buySeedRE then
+                        pcall(function() buySeedRE:FireServer(name) end)
+                        did = did + 1
+                    end
+                end
+                -- beli gear yg dipilih
+                for name in pairs(BH.autoShop.gears) do
+                    if buyGearRE then
+                        pcall(function() buyGearRE:FireServer(name) end)
+                        did = did + 1
+                    end
+                end
+                if did > 0 then
+                    bought = bought + did
+                    statusLbl.Text = "Beli... total fire: "..bought
+                    statusLbl.TextColor3 = C.accent
+                end
+            end
+        end
+    end)
+end)
+
 -- v8.49: build garden panel after all helpers defined
 pcall(BH.buildGardenPanel)
 
@@ -11664,3 +11869,48 @@ task.spawn(function()
 end)
 
 -- v8.178: watchdog dipindah ke line ~6286 (right after onStartClick wired) biar gak ke-kill kalo crash di UI build
+
+-- ===== v8.276: AUTO BUY TRADING TICKET (Sheckles, KHUSUS server garden) =====
+-- Ditaruh di AKHIR script (setelah UI kebangun) + self-contained (gak pakai
+-- local luar) biar gak ganggu inisialisasi UI. Jalan otomatis tanpa GUI/toggle.
+-- fire BuyGearStock(namaTiket) tiap 5s. game auto-tolak kalau stock habis /
+-- Sheckles kurang -> aman. pas habis "nunggu" sendiri sampai restock.
+task.spawn(function()
+    local rs = game:GetService("ReplicatedStorage")
+    local ws = game:GetService("Workspace")
+    -- garden server = gak ada TradeWorld
+    if ws:FindFirstChild("TradeWorld") ~= nil then return end
+    -- auto-detect nama tiket dari GearData (fallback "Trading Ticket")
+    local ticketName = "Trading Ticket"
+    pcall(function()
+        local dataF = rs:FindFirstChild("Data")
+        local mod = dataF and dataF:FindFirstChild("GearData")
+        if mod then
+            local ok, tbl = pcall(require, mod)
+            if ok and type(tbl) == "table" then
+                for k, v in pairs(tbl) do
+                    local nm
+                    if type(k) == "string" then nm = k
+                    elseif type(v) == "table" then nm = v.Name or v.ItemName or v.DisplayName end
+                    if type(nm) == "string" then
+                        local low = nm:lower()
+                        if low:find("trading", 1, true) and low:find("ticket", 1, true) then
+                            ticketName = nm; break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    print("[AutoTicket] server garden — auto-buy '"..ticketName.."' aktif (Sheckles)")
+    local ge = rs:FindFirstChild("GameEvents")
+    local re = ge and ge:FindFirstChild("BuyGearStock")
+    if not re then
+        print("[AutoTicket] BuyGearStock remote gak ketemu — auto-buy batal")
+        return
+    end
+    while true do
+        task.wait(5)
+        pcall(function() re:FireServer(ticketName) end)
+    end
+end)
