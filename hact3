@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.11"
+local VERSION = "v27.14"
 
 -- ============ THEME ============
 local C = {
@@ -1025,7 +1025,10 @@ local teamData = {
 }
 
 -- daftar semua egg di game (dari EggModels). dipakai di Egg Config.
-local EGG_LIST = {
+-- v27.12: EGG_LIST auto-detect dari RS.Data.PetRegistry.PetEggs (sumber master game).
+-- daftar egg selalu sinkron sama game (Rainbow/Gilded/Campfire dll otomatis kebawa).
+-- fallback ke list hardcoded kalau module gak ke-load.
+local EGG_LIST_FALLBACK = {
     "Common Egg","Uncommon Egg","Rare Egg","Legendary Egg","Mythical Egg","Epic Egg","Divine Egg",
     "Bug Egg","Exotic Bug Egg","Jungle Egg","Night Egg","Premium Night Egg","Bee Egg","Anti Bee Egg",
     "Premium Anti Bee Egg","Hive Egg","Premium Hive Egg","Rainbow Premium Hive Egg","Prototype Bee Egg",
@@ -1042,6 +1045,39 @@ local EGG_LIST = {
     "Black Spotty Egg","Fake Egg",
     "Campfire Egg","Premium Campfire Egg",
 }
+local EGG_LIST = {}
+do
+    local ok = pcall(function()
+        local reg = game:GetService("ReplicatedStorage"):FindFirstChild("Data")
+        reg = reg and reg:FindFirstChild("PetRegistry")
+        local eggs = reg and reg:FindFirstChild("PetEggs")
+        if eggs then
+            local mod = require(eggs)
+            if type(mod) == "table" then
+                local names = {}
+                for k, v in pairs(mod) do
+                    local nm
+                    if type(k) == "string" then nm = k
+                    elseif type(v) == "table" then nm = v.Name or v.EggName end
+                    -- ambil nama yg mengandung 'egg' atau exception khusus (Lich Crystal)
+                    if type(nm) == "string" and (nm:lower():find("egg", 1, true) or nm == "Lich Crystal") then
+                        names[#names+1] = nm
+                    end
+                end
+                if #names > 0 then
+                    table.sort(names)
+                    for _, n in ipairs(names) do EGG_LIST[#EGG_LIST+1] = n end
+                end
+            end
+        end
+    end)
+    if not ok or #EGG_LIST == 0 then
+        EGG_LIST = EGG_LIST_FALLBACK
+        warn("[HactTelur] EGG_LIST auto-detect gagal -> pakai fallback ("..#EGG_LIST_FALLBACK.." egg)")
+    else
+        print("[HactTelur] EGG_LIST auto-detect: "..#EGG_LIST.." egg dari PetRegistry.PetEggs")
+    end
+end
 
 -- daftar semua jenis pet di game (dari PetRegistry.PetList). dipakai di Sell Config.
 PET_LIST = {
@@ -1609,15 +1645,17 @@ function syncFavByRules()
             end
         end
     end
-    -- v23.1: kumpulin pet yg LAGI di-target gift aktif (method gift + unfavFirst + running).
-    -- pet ini JANGAN di-fav (walau posisi keep), biar gift bisa unfav & kirim. Kalau gak,
-    -- sync fav ulang -> gift unfav -> bentrok bolak-balik (mis Mimic keep tapi mau di-gift).
+    -- v23.1: kumpulin pet yg LAGI di-target gift/trade aktif (running + unfavFirst).
+    -- pet ini JANGAN di-fav (walau posisi keep), biar gift/trade bisa unfav & kirim. Kalau gak,
+    -- sync fav ulang -> fav balik pet di tengah proses -> bentrok bolak-balik.
+    -- v27.14: dulu cuma method=="gift" -> mode TRADE (tiket) pet-nya ke-fav lagi di tengah
+    -- trade (bug). sekarang gift & trade dua2nya dilindungi.
     local giftTargeted = {}
     pcall(function()
         local cfgs = _G.HactTelurGiftCfgs
         if cfgs then
             for _, cfg in ipairs(cfgs) do
-                if cfg._running and cfg.method == "gift" and cfg.unfavFirst then
+                if cfg._running and (cfg.method == "gift" or cfg.method == "trade") and cfg.unfavFirst then
                     for _, p in ipairs(getMatchedPets(cfg)) do
                         giftTargeted[tostring(p):gsub("[{}]","")] = true
                     end
@@ -5916,6 +5954,14 @@ local function saveConfig()
         end
     end
     data.giftCfgs = giftClean
+    -- v27.13 DIAG: log nilai toggle yg mau disimpan
+    do
+        local diag = {}
+        for i, c in ipairs(giftClean) do
+            diag[#diag+1] = "G"..i..":unfav="..tostring(c.unfavFirst).." bpfull="..tostring(c.waitFull)
+        end
+        print("[HactTelur] SAVE giftCfgs -> "..table.concat(diag, " "))
+    end
     local ok, json = pcall(function() return game:GetService("HttpService"):JSONEncode(data) end)
     if ok and json then
         local wok = pcall(function() writefile(SAVE_FILE, json) end)
@@ -6022,6 +6068,10 @@ local function loadConfig()
                 dst.method = src.method or "trade"
                 dst.unfavFirst = src.unfavFirst or false
                 dst.waitFull = src.waitFull or false
+                -- v27.13 DIAG
+                print("[HactTelur] LOAD giftCfg G"..i.." -> unfav="..tostring(dst.unfavFirst)
+                    .." (src="..tostring(src.unfavFirst)..") bpfull="..tostring(dst.waitFull)
+                    .." (src="..tostring(src.waitFull)..")")
             end
         end
         -- v16.7: update input age & kg di UI dari nilai yg baru di-load
