@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.281"
-local VERSION_DATE = "v8.281: dump struktur sale event lebih detail (2 level + tipe) buat diagnose History Sell jenis pet ?. + fix limit-200."
+local VERSION = "8.284"
+local VERSION_DATE = "v8.284: pause listing 5s (reset ulang tiap ubah rule)."
 
 warn("============================================")
-warn("  ZENX MARKET LOADING — VERSI 8.281")
+warn("  ZENX MARKET LOADING — VERSI 8.284")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -1740,7 +1740,10 @@ local function buildRuleRow(parent, r, idx, big)
         box.Font = FB box.TextSize = fSize
         box.TextXAlignment = Enum.TextXAlignment.Left
         box.ClearTextOnFocus = false box.Parent = wrap
-        box:GetPropertyChangedSignal("Text"):Connect(function() onChange(box.Text) end)
+        -- v8.282: apply pas FocusLost (Enter/klik luar) — BUKAN tiap karakter.
+        -- dulu pakai GetPropertyChangedSignal("Text") -> tiap ketik/hapus ke-apply,
+        -- jadi pas user hapus angka mau ganti, nilai setengah keburu ke-set / batal.
+        box.FocusLost:Connect(function() onChange(box.Text) end)
         return wrap, box
     end
 
@@ -1776,6 +1779,10 @@ local function buildRuleRow(parent, r, idx, big)
     local function saveAfterEdit()
         BH.marketState.listingRules = listingRules
         BH.saveMarketState(BH.marketState)
+        -- v8.284: pas ubah rule (harga/kg/dll), PAUSE listing 5s. tiap ubah lagi
+        -- timer reset (tick()+5), jadi selama user masih ngedit terus nunggu.
+        BH.listPauseUntil = tick() + 5
+        L("[Listing] rule diubah → pause listing 5s")
     end
 
     -- Editable MIN KG (v8.87: shrunk 64→42)
@@ -6196,6 +6203,12 @@ BH.onStartClick = function()
 
         -- Helper: list pets matching rules (single pass through backpack)
         local function listMatchingPets()
+            -- v8.283: kalau rule baru diubah, pause listing 10s (skip cycle).
+            if BH.listPauseUntil and tick() < BH.listPauseUntil then
+                local sisa = math.ceil(BH.listPauseUntil - tick())
+                L("[Listing] pause aktif ("..sisa.."s lagi) — skip cycle")
+                return 0
+            end
             local bp = player:FindFirstChild("Backpack")
             if not bp then return 0 end
 
