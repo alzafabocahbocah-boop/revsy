@@ -2,8 +2,8 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.276"
-local VERSION_DATE = "v8.276: Auto buy Trading Ticket (Sheckles) otomatis di server garden, tanpa GUI. + v8.253 garden inventory cap."
+local VERSION = "8.277"
+local VERSION_DATE = "v8.277: auto-ticket dipindah ke akhir script (self-contained) — fix UI garden gak muncul di v8.276."
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -1180,54 +1180,6 @@ task.spawn(function()
     sbBtns.MARKET.stroke.Thickness = 1.5
     sbBtns.MARKET.lbl.TextColor3 = C.accent
 end)
-
--- ===== v8.276: AUTO BUY TRADING TICKET (pakai Sheckles, KHUSUS server garden) =====
--- jalan otomatis tanpa GUI/toggle. fire BuyGearStock("Trading Ticket") berulang.
--- game auto-tolak kalau stock habis / Sheckles kurang -> aman, gak error.
--- pas stock habis dia "nunggu" sendiri sampai restock (terus nyoba tiap interval).
-if isGardenServer then
-    task.spawn(function()
-        -- auto-detect nama item tiket dari GearData (fallback "Trading Ticket")
-        local ticketName = "Trading Ticket"
-        pcall(function()
-            local dataF = RS:FindFirstChild("Data")
-            local mod = dataF and dataF:FindFirstChild("GearData")
-            if mod then
-                local ok, tbl = pcall(require, mod)
-                if ok and type(tbl) == "table" then
-                    for k, v in pairs(tbl) do
-                        local nm
-                        if type(k) == "string" then nm = k
-                        elseif type(v) == "table" then nm = v.Name or v.ItemName or v.DisplayName end
-                        if type(nm) == "string" then
-                            local low = nm:lower()
-                            if low:find("trading", 1, true) and low:find("ticket", 1, true) then
-                                ticketName = nm; break
-                            end
-                        end
-                    end
-                end
-            end
-        end)
-        L("[AutoTicket] server garden — auto-buy '"..ticketName.."' aktif (Sheckles)")
-
-        local ge = RS:FindFirstChild("GameEvents")
-        local re = ge and ge:FindFirstChild("BuyGearStock")
-        if not re then
-            L("[AutoTicket] BuyGearStock remote gak ketemu — auto-buy batal")
-            return
-        end
-        while true do
-            task.wait(5)  -- interval coba beli (kalau stock ada, beli; kalau habis, no-op)
-            -- v8.276: izinkan dimatiin lewat state kalau perlu (default ON)
-            local enabled = true
-            if BH.marketState and BH.marketState.autoTicketEnabled == false then enabled = false end
-            if enabled then
-                pcall(function() re:FireServer(ticketName) end)
-            end
-        end
-    end)
-end
 
 -- ===== SUB-TABS (Market) =====
 local subTabBar = Instance.new("Frame")
@@ -11885,3 +11837,48 @@ task.spawn(function()
 end)
 
 -- v8.178: watchdog dipindah ke line ~6286 (right after onStartClick wired) biar gak ke-kill kalo crash di UI build
+
+-- ===== v8.276: AUTO BUY TRADING TICKET (Sheckles, KHUSUS server garden) =====
+-- Ditaruh di AKHIR script (setelah UI kebangun) + self-contained (gak pakai
+-- local luar) biar gak ganggu inisialisasi UI. Jalan otomatis tanpa GUI/toggle.
+-- fire BuyGearStock(namaTiket) tiap 5s. game auto-tolak kalau stock habis /
+-- Sheckles kurang -> aman. pas habis "nunggu" sendiri sampai restock.
+task.spawn(function()
+    local rs = game:GetService("ReplicatedStorage")
+    local ws = game:GetService("Workspace")
+    -- garden server = gak ada TradeWorld
+    if ws:FindFirstChild("TradeWorld") ~= nil then return end
+    -- auto-detect nama tiket dari GearData (fallback "Trading Ticket")
+    local ticketName = "Trading Ticket"
+    pcall(function()
+        local dataF = rs:FindFirstChild("Data")
+        local mod = dataF and dataF:FindFirstChild("GearData")
+        if mod then
+            local ok, tbl = pcall(require, mod)
+            if ok and type(tbl) == "table" then
+                for k, v in pairs(tbl) do
+                    local nm
+                    if type(k) == "string" then nm = k
+                    elseif type(v) == "table" then nm = v.Name or v.ItemName or v.DisplayName end
+                    if type(nm) == "string" then
+                        local low = nm:lower()
+                        if low:find("trading", 1, true) and low:find("ticket", 1, true) then
+                            ticketName = nm; break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    print("[AutoTicket] server garden — auto-buy '"..ticketName.."' aktif (Sheckles)")
+    local ge = rs:FindFirstChild("GameEvents")
+    local re = ge and ge:FindFirstChild("BuyGearStock")
+    if not re then
+        print("[AutoTicket] BuyGearStock remote gak ketemu — auto-buy batal")
+        return
+    end
+    while true do
+        task.wait(5)
+        pcall(function() re:FireServer(ticketName) end)
+    end
+end)
