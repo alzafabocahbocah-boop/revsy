@@ -2,8 +2,13 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.275"
-local VERSION_DATE = "v8.253: Garden panel tampilkan batas inventory (cur/max pets, mis 185/210). Baca MaxPetsInInventory dari memory game. Plus v8.252 (auto-accept gift fix)."
+local VERSION = "8.278"
+local VERSION_DATE = "v8.278: print versi mencolok di awal + kill GUI lama sebelum build (anti dobel/instance lama). auto-ticket garden tetap aktif."
+
+warn("============================================")
+warn("  ZENX MARKET LOADING — VERSI 8.278")
+warn("  (kalau ini gak muncul, file lama yg jalan)")
+warn("============================================")
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -12,6 +17,18 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 local pg = player:WaitForChild("PlayerGui")
+
+-- v8.278: bunuh GUI ZENX MARKET lama (dr load sebelumnya) biar gak dobel / instance lama nyangkut
+pcall(function()
+    for _, where in ipairs({ pg, game:GetService("CoreGui") }) do
+        for _, g in ipairs(where:GetChildren()) do
+            if g:IsA("ScreenGui") and (g.Name == "ZenxMarketGui" or g.Name:find("ZenxMarket", 1, true)
+               or g.Name:find("ZenxV8", 1, true)) then
+                pcall(function() g:Destroy() end)
+            end
+        end
+    end
+end)
 
 _G.ZenxV8 = _G.ZenxV8 or {}
 local function L(s) table.insert(_G.ZenxV8, s) print("[ZV8]", s) end
@@ -11837,3 +11854,48 @@ task.spawn(function()
 end)
 
 -- v8.178: watchdog dipindah ke line ~6286 (right after onStartClick wired) biar gak ke-kill kalo crash di UI build
+
+-- ===== v8.276: AUTO BUY TRADING TICKET (Sheckles, KHUSUS server garden) =====
+-- Ditaruh di AKHIR script (setelah UI kebangun) + self-contained (gak pakai
+-- local luar) biar gak ganggu inisialisasi UI. Jalan otomatis tanpa GUI/toggle.
+-- fire BuyGearStock(namaTiket) tiap 5s. game auto-tolak kalau stock habis /
+-- Sheckles kurang -> aman. pas habis "nunggu" sendiri sampai restock.
+task.spawn(function()
+    local rs = game:GetService("ReplicatedStorage")
+    local ws = game:GetService("Workspace")
+    -- garden server = gak ada TradeWorld
+    if ws:FindFirstChild("TradeWorld") ~= nil then return end
+    -- auto-detect nama tiket dari GearData (fallback "Trading Ticket")
+    local ticketName = "Trading Ticket"
+    pcall(function()
+        local dataF = rs:FindFirstChild("Data")
+        local mod = dataF and dataF:FindFirstChild("GearData")
+        if mod then
+            local ok, tbl = pcall(require, mod)
+            if ok and type(tbl) == "table" then
+                for k, v in pairs(tbl) do
+                    local nm
+                    if type(k) == "string" then nm = k
+                    elseif type(v) == "table" then nm = v.Name or v.ItemName or v.DisplayName end
+                    if type(nm) == "string" then
+                        local low = nm:lower()
+                        if low:find("trading", 1, true) and low:find("ticket", 1, true) then
+                            ticketName = nm; break
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    print("[AutoTicket] server garden — auto-buy '"..ticketName.."' aktif (Sheckles)")
+    local ge = rs:FindFirstChild("GameEvents")
+    local re = ge and ge:FindFirstChild("BuyGearStock")
+    if not re then
+        print("[AutoTicket] BuyGearStock remote gak ketemu — auto-buy batal")
+        return
+    end
+    while true do
+        task.wait(5)
+        pcall(function() re:FireServer(ticketName) end)
+    end
+end)
