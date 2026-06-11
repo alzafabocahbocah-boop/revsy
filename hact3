@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.16"
+local VERSION = "v27.18"
 
 -- ============ THEME ============
 local C = {
@@ -1798,16 +1798,20 @@ function EggDetect.scan()
     EggDetect.counts = counts
     return counts
 end
--- ambil jumlah egg tertentu (cocokkan nama longgar)
+-- ambil jumlah egg tertentu (EXACT match setelah buang suffix " xNNN")
 function EggDetect.getCount(eggName)
     local c = EggDetect.counts
     if c[eggName] then return c[eggName] end
-    -- cocokkan longgar (mis "Bug Egg" vs "Bug Egg [Premium]")
-    local low = eggName:lower()
+    -- v27.18: dulu substring dua arah -> "Premium Springtide Egg" kebaca pakai
+    -- count "Springtide Egg" biasa (nampil punya padahal enggak). skrg exact
+    -- setelah normalisasi suffix xNNN.
+    local want = eggName:lower():gsub("%s*x%d+.*$", ""):gsub("%s+$", "")
+    local best = 0
     for k, v in pairs(c) do
-        if k:lower():find(low, 1, true) or low:find(k:lower(), 1, true) then return v end
+        local kk = k:lower():gsub("%s*x%d+.*$", ""):gsub("%s+$", "")
+        if kk == want and v > best then best = v end
     end
-    return 0
+    return best
 end
 -- expose hitung total egg buat tracking webhook
 _G.HactTelurEggTotal = function()
@@ -1914,8 +1918,9 @@ local function isEggSelected(toolName)
     local clean = toolName:lower():gsub("%s*x%d+.*$", ""):gsub("%s+$", "")
     for eggName, on in pairs(sel) do
         if on then
-            local e = eggName:lower()
-            if clean == e or clean:find(e, 1, true) or e:find(clean, 1, true) then
+            -- v27.18: EXACT match aja. dulu pakai :find() dua arah -> pilih
+            -- "Springtide Egg" ikut match "Premium/Rainbow Springtide Egg" (substring).
+            if clean == eggName:lower() then
                 return true
             end
         end
@@ -4128,6 +4133,10 @@ local AutoBoost = {
     _gen = 0,
     lastStatus = "idle",
 }
+-- v27.17: internal AutoBoost dibungkus IIFE (function scope sendiri) — hemat ~11
+-- register chunk utama; script udah mepet limit 200 (pelajaran dari market).
+-- akses dari luar: AutoBoost.start() / AutoBoost.stop()
+;(function()
 local BOOST_AMT = { Small = 0.1, Medium = 0.2, Large = 0.3 }
 local function boostAmtMatch(a, t) return a and math.abs(a - t) < 0.001 end
 
@@ -4296,6 +4305,10 @@ local function boostStart()
         print("[HactTelur] AutoBoost STOP")
     end)
 end
+-- expose ke luar IIFE (dipakai UI tab Fruit)
+AutoBoost.start = boostStart
+AutoBoost.stop  = boostStop
+end)()  -- tutup IIFE AutoBoost
 _G.HactTelurAutoBoost = AutoBoost  -- expose buat save/load kalau perlu
 
 -- ============ PANEL FRUIT: AUTO BUY (Seed / Egg / Gear) ============
@@ -4667,13 +4680,15 @@ local function makeFruitPanel()
                 Size = UDim2.new(0, 88, 0, 28), Position = UDim2.new(0, x, 0, 4),
                 BackgroundColor3 = C.input, Text = size, Font = FONT_SB, TextSize = 12,
                 TextColor3 = C.textDim, Parent = body })
-            corner(b, 6); stroke(b, C.border, 1)
+            corner(b, 6)
+            local st = stroke(b, C.border, 1)  -- v27.17: simpan 1 stroke, mutate (dulu stroke() baru tiap toggle -> numpuk)
             local function upd()
                 if AutoBoost.sizes[size] then
                     b.BackgroundColor3 = C.cardSel; b.TextColor3 = C.text
-                    stroke(b, C.borderSel, 1.5)
+                    st.Color = C.borderSel; st.Thickness = 1.5
                 else
                     b.BackgroundColor3 = C.input; b.TextColor3 = C.textDim
+                    st.Color = C.border; st.Thickness = 1
                 end
             end
             b.MouseButton1Click:Connect(function()
@@ -4702,7 +4717,7 @@ local function makeFruitPanel()
             end
         end
         startBtn.MouseButton1Click:Connect(function()
-            if AutoBoost.running then boostStop() else boostStart() end
+            if AutoBoost.running then AutoBoost.stop() else AutoBoost.start() end
             updStart()
         end)
 
