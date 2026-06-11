@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.15"
+local VERSION = "v27.16"
 
 -- ============ THEME ============
 local C = {
@@ -5906,10 +5906,11 @@ local SAVE_FILE = "hact_telur_save_" .. tostring(player.UserId) .. ".json"
 local function saveConfig()
     if not writefile then return end
     if not isCurrentGen() then return end  -- v21.0: instance lama jgn nimpa file
-    -- v27.15: JANGAN save sebelum loadConfig selesai. dulu UI kebangun dgn default
-    -- (unfav=false) lalu ada trigger save dini -> nimpa file jadi false SEBELUM
-    -- load baca file lama -> toggle Unfav/BP Full ke-reset tiap rejoin.
-    if not _G.HactTelurLoadDone then return end
+    -- v27.16: guard per-INSTANCE (bukan global). dulu pakai _G.HactTelurLoadDone
+    -- yg persist antar execute -> pas exe ulang TANPA rejoin, flag lama masih true,
+    -- save dini instance baru (UI default false) nimpa file sebelum load. sekarang
+    -- pakai local loadDone (fresh tiap execute) + cek isCurrentGen.
+    if not (isCurrentGen() and _G.HactTelurLoadDoneGen == MY_GEN) then return end
     local data = {
         eggSelected = config.eggSelected,
         sellRules = config.sellRules,
@@ -6101,9 +6102,11 @@ end
 _G.HactTelurSave = saveConfig
 -- load saat startup
 pcall(loadConfig)
--- v27.15: tandai load selesai -> mulai sekarang save BOLEH jalan (sebelum ini di-skip)
-_G.HactTelurLoadDone = true
-print("[HactTelur] load selesai, save aktif")
+-- v27.16: tandai load selesai UNTUK GEN INI. save baru boleh jalan kalau
+-- _G.HactTelurLoadDoneGen == MY_GEN (instance ini). re-exec tanpa rejoin = gen baru,
+-- jadi flag lama gak kepake -> save dini ke-block sampai load gen baru kelar.
+_G.HactTelurLoadDoneGen = MY_GEN
+print("[HactTelur] load selesai (gen "..MY_GEN.."), save aktif")
 -- refresh tampilan Config (egg checklist + sell rule) setelah load
 task.spawn(function()
     task.wait(0.3)
