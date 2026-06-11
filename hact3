@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.8"
+local VERSION = "v27.9"
 
 -- ============ THEME ============
 local C = {
@@ -4077,6 +4077,189 @@ end
 
 -- (v18.2: auto prompt purchase dihapus — Prompt Purchase cuma Buy Now 1x manual)
 
+-- ============ AUTO BOOST PET (Pet Toy) — v27.9 ============
+-- isi toy boost ke pet pas boost-nya habis (Time<=0). monitoring via getgc
+-- (PetData.Boosts), gak baca UI. size cocokin BoostAmount: 0.1=Small 0.2=Med 0.3=Large.
+-- apply: equip toy -> PetBoostService:FireServer("ApplyBoost","{UUID}")
+local AutoBoost = {
+    sizes   = { Small=false, Medium=false, Large=false },  -- multi-select
+    running = false,
+    scanSec = 10,
+    perPetWait = 0.10,
+    equipWait  = 0.15,
+    _gen = 0,
+    lastStatus = "idle",
+}
+local BOOST_AMT = { Small = 0.1, Medium = 0.2, Large = 0.3 }
+local function boostAmtMatch(a, t) return a and math.abs(a - t) < 0.001 end
+
+local function boostRemote()
+    local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+    return ge and ge:FindFirstChild("PetBoostService")
+end
+
+-- cari toy tool by size (Character/Backpack, fallback seluruh game)
+local function findToyTool(size)
+    local function scan(parent)
+        if not parent then return nil end
+        for _, t in pairs(parent:GetChildren()) do
+            if t:IsA("Tool") and t.Name:find(size.." Pet Toy", 1, true)
+               and t.Name:find("Passive Boost", 1, true) then return t end
+        end
+        return nil
+    end
+    local f = scan(player.Character) or scan(player:FindFirstChild("Backpack"))
+    if f then return f end
+    for _, t in pairs(game:GetDescendants()) do
+        if t:IsA("Tool") and t.Name:find(size.." Pet Toy", 1, true)
+           and t.Name:find("Passive Boost", 1, true) and t:GetAttribute("e") then return t end
+    end
+    return nil
+end
+
+-- pet placed (part ber-UUID di workspace)
+local function boostFindPets()
+    local pets = {}
+    for _, p in pairs(Workspace:GetDescendants()) do
+        if (p:IsA("BasePart") or p:IsA("Model")) then
+            local u = p:GetAttribute("UUID")
+            if u then pets[#pets+1] = tostring(u):gsub("[{}]","") end
+        end
+    end
+    return pets
+end
+
+-- cache tabel getgc yg punya [uuid].PetData.Boosts
+local function boostRefreshTables()
+    AutoBoost._tables = {}
+    if not getgc then return end
+    local sample
+    local pets = boostFindPets()
+    if pets[1] then sample = pets[1] end
+    if not sample then return end
+    local braced = "{"..sample.."}"
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                local v = rawget(obj, braced) or rawget(obj, sample)
+                if type(v) == "table" and type(rawget(v,"PetData")) == "table" then
+                    AutoBoost._tables[#AutoBoost._tables+1] = obj
+                end
+            end
+        end
+    end)
+end
+
+-- list boost PASSIVE_BOOST utk uuid -> { {amount,time}, ... }
+local function boostGetPassive(uuidClean)
+    if not AutoBoost._tables then return nil end
+    local braced = "{"..uuidClean.."}"
+    for _, tbl in ipairs(AutoBoost._tables) do
+        local v = rawget(tbl, braced) or rawget(tbl, uuidClean)
+        if type(v) == "table" and type(rawget(v,"PetData")) == "table" then
+            local boosts = v.PetData.Boosts
+            if type(boosts) == "table" then
+                local out = {}
+                for _, b in pairs(boosts) do
+                    if type(b)=="table" and b.BoostType=="PASSIVE_BOOST" then
+                        out[#out+1] = { amount=b.BoostAmount, time=b.Time }
+                    end
+                end
+                return out
+            end
+        end
+    end
+    return nil
+end
+
+-- pet uuid: boost size ini masih aktif (Time>0)?
+local function boostHasActive(uuidClean, size)
+    local boosts = boostGetPassive(uuidClean)
+    if not boosts then return false end
+    local tgt = BOOST_AMT[size]
+    for _, b in ipairs(boosts) do
+        if boostAmtMatch(b.amount, tgt) and (b.time or 0) > 0 then return true end
+    end
+    return false
+end
+
+local function boostEquipToy(size)
+    local char = player.Character
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not (char and hum) then return false end
+    local toy = findToyTool(size)
+    if not toy then return false end
+    if toy.Parent ~= char then
+        pcall(function() hum:UnequipTools() end); task.wait(0.1)
+        pcall(function() hum:EquipTool(toy) end); task.wait(AutoBoost.equipWait)
+    end
+    return toy
+end
+
+local function boostStop()
+    AutoBoost.running = false
+    AutoBoost.lastStatus = "stopped"
+    local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if hum then pcall(function() hum:UnequipTools() end) end
+end
+
+local function boostStart()
+    if AutoBoost.running then return end
+    local re = boostRemote()
+    if not re then AutoBoost.lastStatus = "no remote"; return end
+    AutoBoost.running = true
+    AutoBoost._gen = AutoBoost._gen + 1
+    local myGen = AutoBoost._gen
+    print("[HactTelur] AutoBoost START")
+    task.spawn(function()
+        while AutoBoost.running and AutoBoost._gen == myGen do
+            local sizes = {}
+            for _, s in ipairs({"Small","Medium","Large"}) do
+                if AutoBoost.sizes[s] then sizes[#sizes+1] = s end
+            end
+            if #sizes == 0 then
+                AutoBoost.lastStatus = "no size selected"; task.wait(2)
+            else
+                boostRefreshTables()
+                local pets = boostFindPets()
+                local results = {}
+                for _, size in ipairs(sizes) do
+                    if not AutoBoost.running then break end
+                    local need = {}
+                    for _, u in ipairs(pets) do
+                        if not boostHasActive(u, size) then need[#need+1] = u end
+                    end
+                    if #need == 0 then
+                        results[#results+1] = size..":aktif"
+                    else
+                        local toy = boostEquipToy(size)
+                        if not toy then results[#results+1] = size..":no-toy"
+                        else
+                            local fired = 0
+                            for _, u in ipairs(need) do
+                                if not AutoBoost.running then break end
+                                if (toy:GetAttribute("e") or 0) <= 0 then break end
+                                pcall(function() re:FireServer("ApplyBoost", "{"..u.."}") end)
+                                fired = fired + 1
+                                task.wait(AutoBoost.perPetWait)
+                            end
+                            results[#results+1] = size..":isi"..fired.."(e="..(toy:GetAttribute("e") or "?")..")"
+                        end
+                    end
+                    task.wait(0.2)
+                end
+                AutoBoost.lastStatus = table.concat(results, " ")
+                local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                if hum then pcall(function() hum:UnequipTools() end) end
+                local t0 = tick()
+                while AutoBoost.running and (tick()-t0) < AutoBoost.scanSec do task.wait(1) end
+            end
+        end
+        print("[HactTelur] AutoBoost STOP")
+    end)
+end
+_G.HactTelurAutoBoost = AutoBoost  -- expose buat save/load kalau perlu
+
 -- ============ PANEL FRUIT: AUTO BUY (Seed / Egg / Gear) ============
 local function makeFruitPanel()
     local panel = mk("Frame", {
@@ -4419,6 +4602,97 @@ local function makeFruitPanel()
         for _, fd in pairs(fruitData) do
             if fd.refreshSelBtn then pcall(fd.refreshSelBtn) end
         end
+    end
+
+    -- ===== AUTO BOOST PET (Pet Toy) =====
+    do
+        local row = mk("Frame", {
+            Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card,
+            BorderSizePixel = 0, ClipsDescendants = true,
+            LayoutOrder = 5, Parent = scroll })
+        corner(row, 8); stroke(row, C.border, 1.5)
+        local header = mk("TextButton", {
+            Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1,
+            Text = "", AutoButtonColor = false, Parent = row })
+        local nameLbl = lbl(header, "Auto Boost Pet (Toy)", 13, C.text); nameLbl.Font = FONT_SB
+        nameLbl.Position = UDim2.new(0, 14, 0, 0); nameLbl.Size = UDim2.new(1, -40, 0, 40)
+        local chev = lbl(header, ">", 14, C.textDim, Enum.TextXAlignment.Right)
+        chev.Position = UDim2.new(1, -26, 0, 0); chev.Size = UDim2.new(0, 16, 0, 40)
+        local body = mk("Frame", {
+            Size = UDim2.new(1, -20, 0, 110), Position = UDim2.new(0, 10, 0, 44),
+            BackgroundTransparency = 1, Visible = false, Parent = row })
+
+        -- 3 toggle size
+        local sizeBtns = {}
+        local function mkSizeBtn(size, x)
+            local b = mk("TextButton", {
+                Size = UDim2.new(0, 88, 0, 28), Position = UDim2.new(0, x, 0, 4),
+                BackgroundColor3 = C.input, Text = size, Font = FONT_SB, TextSize = 12,
+                TextColor3 = C.textDim, Parent = body })
+            corner(b, 6); stroke(b, C.border, 1)
+            local function upd()
+                if AutoBoost.sizes[size] then
+                    b.BackgroundColor3 = C.cardSel; b.TextColor3 = C.text
+                    stroke(b, C.borderSel, 1.5)
+                else
+                    b.BackgroundColor3 = C.input; b.TextColor3 = C.textDim
+                end
+            end
+            b.MouseButton1Click:Connect(function()
+                AutoBoost.sizes[size] = not AutoBoost.sizes[size]; upd()
+                if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+            end)
+            upd(); sizeBtns[size] = b
+        end
+        mkSizeBtn("Small", 0); mkSizeBtn("Medium", 94); mkSizeBtn("Large", 188)
+
+        -- START/STOP + status
+        local startBtn = mk("TextButton", {
+            Size = UDim2.new(0, 130, 0, 28), Position = UDim2.new(0, 0, 0, 40),
+            BackgroundColor3 = C.input, Text = "START", Font = FONT_SB, TextSize = 12,
+            TextColor3 = C.text, Parent = body })
+        corner(startBtn, 6); stroke(startBtn, C.border, 1)
+        local statusLbl = lbl(body, "idle", 11, C.textDim)
+        statusLbl.Position = UDim2.new(0, 140, 0, 40); statusLbl.Size = UDim2.new(1, -140, 0, 28)
+        statusLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        local function updStart()
+            if AutoBoost.running then
+                startBtn.Text = "STOP"; startBtn.BackgroundColor3 = Color3.fromRGB(90,50,50)
+            else
+                startBtn.Text = "START"; startBtn.BackgroundColor3 = C.input
+            end
+        end
+        startBtn.MouseButton1Click:Connect(function()
+            if AutoBoost.running then boostStop() else boostStart() end
+            updStart()
+        end)
+
+        -- refresh status tiap 2 detik selama panel kebuka
+        task.spawn(function()
+            while row.Parent do
+                if body.Visible then
+                    statusLbl.Text = AutoBoost.lastStatus or "idle"
+                    updStart()
+                end
+                task.wait(2)
+            end
+        end)
+
+        header.MouseButton1Click:Connect(function()
+            local exp = not body.Visible
+            body.Visible = exp
+            chev.Text = exp and "v" or ">"
+            row.Size = exp and UDim2.new(1, 0, 0, 158) or UDim2.new(1, 0, 0, 40)
+        end)
+
+        fruitData.autoBoost = { refreshSelBtn = function()
+            for s, b in pairs(sizeBtns) do
+                if AutoBoost.sizes[s] then b.BackgroundColor3 = C.cardSel; b.TextColor3 = C.text
+                else b.BackgroundColor3 = C.input; b.TextColor3 = C.textDim end
+            end
+            updStart()
+        end }
     end
 
     tabPanels["Fruit"] = panel
