@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.6"
+local VERSION = "v27.8"
 
 -- ============ THEME ============
 local C = {
@@ -62,6 +62,7 @@ PetDetect.DEBUG_PCT = false  -- set true buat print nilai seal/koi per pet ke co
 PetDetect.container = nil
 PetDetect.count = 0
 PetDetect.cache = {}            -- uuid(clean & braced) -> PetData
+PetDetect.typeCache = {}        -- uuid(clean) -> PetType (dr level luar PetData, persisten)
 PetDetect.nameCache = {}        -- uuid -> nama tipe (persisten; diisi pas pet keliatan di backpack)
 PetDetect.MUT_SHORT = {         -- map MutationType pendek -> nama enak dibaca (opsional)
     EV = "Everchanted",
@@ -355,6 +356,12 @@ function PetDetect.rebuild(force)
                                 if not PetDetect.cache[clean] then n = n + 1 end
                                 PetDetect.cache[clean] = v.PetData
                                 PetDetect.cache["{"..clean.."}"] = v.PetData
+                                -- v27.7: PetType ada di level LUAR PetData (sibling).
+                                -- simpan terpisah biar resolve nama pet garden gak jatuh ke UUID.
+                                local pt = rawget(v, "PetType")
+                                if pt and tostring(pt) ~= "" then
+                                    PetDetect.typeCache[clean] = tostring(pt)
+                                end
                             end
                         end
                     end
@@ -453,8 +460,12 @@ function PetDetect._listBackpackPetsRaw()
             -- simpan ke cache persisten (buat nanti pas pet pindah ke garden)
             if baseName ~= "" then PetDetect.nameCache[clean] = baseName end
         else
-            -- pet di garden: PetData → workspace → CACHE persisten → UUID
+            -- pet di garden: PetData → typeCache → workspace → CACHE persisten → UUID
             local t = pd and (pd.PetType or pd.Type or pd.Kind or pd.Species)
+            -- v27.7: PetType gak ada di dalam PetData; ambil dari typeCache (level luar)
+            if (not t or tostring(t) == "") and PetDetect.typeCache then
+                t = PetDetect.typeCache[clean]
+            end
             if (not t or tostring(t) == "") and PetDetect._gardenName then
                 t = PetDetect._gardenName[clean]
             end
@@ -2928,6 +2939,44 @@ local function automationLoop()
     Auto.lastLoopTick = tick()
     Auto._watchdogGen = (Auto._watchdogGen or 0) + 1
     local myWd = Auto._watchdogGen
+    -- v27.8: watchdog level-2 (PROGRESS TIM). watchdog v27.0 cuma cek loop muter,
+    -- tapi loop bisa muter terus di 1 tim/fase tanpa maju (nyangkut di 1 tim lama).
+    -- di sini kita track perubahan (currentTeam+eggPhase). kalau gak berubah lama
+    -- DAN gak lagi pause sah -> nyangkut -> restart cycle.
+    Auto._progSig = nil
+    Auto._progSince = tick()
+    task.spawn(function()
+        while globalRunning and Auto._watchdogGen == myWd do
+            task.wait(5)
+            if not globalRunning then break end
+            -- pause sah? jangan hitung sbg nyangkut, reset timer progress
+            if isPausedForGift() or Auto.giftBusy then
+                Auto._progSince = tick()
+                Auto._progSig = nil
+            else
+                local sig = tostring(Auto.currentTeam)
+                if sig ~= Auto._progSig then
+                    -- tim berubah = progress nyata -> reset
+                    Auto._progSig = sig
+                    Auto._progSince = tick()
+                else
+                    local noProg = tick() - (Auto._progSince or tick())
+                    if noProg > 60 then
+                        print("[HactTelur] ⚠ WATCHDOG2: tim '"..sig.."' "..math.floor(noProg).."s gak pindah -> RESTART cycle")
+                        Auto.currentTeam = nil
+                        Auto.giftBusy = false
+                        Auto.sellExhausted = false
+                        Auto.bpFullFlag = false
+                        Auto.eggPhase = "reduce"
+                        pcall(clearGarden)
+                        Auto.lastLoopTick = tick()
+                        Auto._progSince = tick()
+                        Auto._progSig = nil
+                    end
+                end
+            end
+        end
+    end)
     task.spawn(function()
         while globalRunning and Auto._watchdogGen == myWd do
             task.wait(5)
