@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v3.3  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v3.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v3.3"
+local VER       = "v3.4"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- ---------- palette (samain dgn ZENX TELUR) ----------
@@ -112,7 +112,7 @@ local function loadState()
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
                 for k in pairs(SETMAP) do
-                    -- v3.3: clear isi table yg SAMA (bukan bikin table baru) — kalau
+                    -- v3.4: clear isi table yg SAMA (bukan bikin table baru) — kalau
                     -- re-assign, referensi yg udah dipegang picker/loop jadi basi -> filter gak jalan.
                     for kk in pairs(state[k]) do state[k][kk] = nil end
                     if type(d[k]) == "table" then for _, n in ipairs(d[k]) do state[k][n] = true end end
@@ -122,31 +122,37 @@ local function loadState()
     end)
 end
 
--- v3.3: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
+-- v3.4: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
 -- nampilin nilai tersimpan. dulu loadState di akhir -> UI udah terlanjur kosong.
 loadState()
 
--- v3.3: AUTO SKIP LOADING — pas habis rejoin/hop kadang nyangkut di LoadingGui.
--- paksa loading screen hilang + simulasi klik biar game lanjut (gak nyangkut animasi).
+-- v3.4: AUTO SKIP "Press any key to play!" — pas habis rejoin, GAG2 nahan di layar
+-- intro yg minta pencet tombol apa aja. kirim keypress (Space) biar lanjut otomatis.
 task.spawn(function()
+    local VIM = game:GetService("VirtualInputManager")
     local pg = player:FindFirstChildOfClass("PlayerGui")
-    for _ = 1, 30 do  -- coba ~15 detik (tiap 0.5s)
+    for _ = 1, 40 do  -- coba ~20 detik
         pg = pg or player:FindFirstChildOfClass("PlayerGui")
-        if pg then
-            local lg = pg:FindFirstChild("LoadingGui")
-            if lg and lg.Enabled then
-                pcall(function() lg.Enabled = false end)
-                local VIM = game:GetService("VirtualInputManager")
-                pcall(function()
-                    local cam = workspace.CurrentCamera
-                    local vs = cam and cam.ViewportSize or Vector2.new(800, 600)
-                    local cx, cy = vs.X/2, vs.Y/2
-                    VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                    task.wait(0.05)
-                    VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                end)
-                print("[ZenxFarm] skip loading screen")
-            end
+        local lg = pg and pg:FindFirstChild("LoadingGui")
+        -- selama LoadingGui masih nyala (intro "press any key") -> kirim key
+        if lg and lg.Enabled then
+            pcall(function()
+                -- tekan Space (key apa aja kebaca sbg "any key")
+                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                task.wait(0.05)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end)
+            -- + klik tengah layar buat jaga2
+            pcall(function()
+                local cam = workspace.CurrentCamera
+                local vs = cam and cam.ViewportSize or Vector2.new(800, 600)
+                VIM:SendMouseButtonEvent(vs.X/2, vs.Y/2, 0, true, game, 0)
+                task.wait(0.05)
+                VIM:SendMouseButtonEvent(vs.X/2, vs.Y/2, 0, false, game, 0)
+            end)
+            print("[ZenxFarm] press any key -> auto masuk")
+        else
+            break  -- udah masuk
         end
         task.wait(0.5)
     end
@@ -225,7 +231,7 @@ function Farm.collectOnce()
                             end
                         end
                     end
-                    -- v3.3: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
+                    -- v3.4: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
                     -- (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
                     if fruitCount == 0 then
                         local ready = plant:GetAttribute("PlantGrowthReady") == true
@@ -374,7 +380,7 @@ task.spawn(function()
 end)
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(3)  -- v3.3: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
+        task.wait(3)  -- v3.4: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
     end
 end)
@@ -650,7 +656,7 @@ local minBtn   = titleBtn(-70, "—", C.card)
 local closeBtn = titleBtn(-36, "✕", C.red)
 
 -- ===== HOP: cari server lain lalu pindah =====
--- v3.3: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
+-- v3.4: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
 -- kumpulin yg ada slot, sort ascending (playing terkecil dulu), teleport ke yg paling sepi.
 local function doHop()
     local TS = game:GetService("TeleportService")
