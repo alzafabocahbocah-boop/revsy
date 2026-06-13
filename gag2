@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v2.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v2.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v2.4"
+local VER       = "v2.6"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- ---------- palette (samain dgn ZENX TELUR) ----------
@@ -70,9 +70,12 @@ local state = {
     selectedCollect = {},       -- collect buah
     selectedSell    = {},       -- sell buah
     selectedPlant   = {},       -- plant seed
+    allPlantSeed    = true,      -- tanam semua seed (allKey terpisah dari buy seed)
     selectedPetType = {},       -- jenis pet (PetName)
     selectedPetRare = {},       -- rarity pet
     autoGift        = false,
+    autoAfk         = false,
+    autoAfk         = false,
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
     giftPets        = {},       -- jenis pet yg dikirim (by Tool name, mis "Owl"/"Big Owl")
@@ -80,7 +83,7 @@ local state = {
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
     "IceSerpent","Monkey","Owl","Raccoon","Robin","Unicorn"}
 local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Divine"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","sellAll","allPetType","allPetRare","autoGift"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","sellAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
@@ -106,7 +109,7 @@ local function loadState()
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
                 for k in pairs(SETMAP) do
-                    -- v2.4: clear isi table yg SAMA (bukan bikin table baru) — kalau
+                    -- v2.6: clear isi table yg SAMA (bukan bikin table baru) — kalau
                     -- re-assign, referensi yg udah dipegang picker/loop jadi basi -> filter gak jalan.
                     for kk in pairs(state[k]) do state[k][kk] = nil end
                     if type(d[k]) == "table" then for _, n in ipairs(d[k]) do state[k][n] = true end end
@@ -116,7 +119,7 @@ local function loadState()
     end)
 end
 
--- v2.4: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
+-- v2.6: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
 -- nampilin nilai tersimpan. dulu loadState di akhir -> UI udah terlanjur kosong.
 loadState()
 
@@ -193,7 +196,7 @@ function Farm.collectOnce()
                             end
                         end
                     end
-                    -- v2.4: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
+                    -- v2.6: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
                     -- (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
                     if fruitCount == 0 then
                         local ready = plant:GetAttribute("PlantGrowthReady") == true
@@ -342,7 +345,7 @@ task.spawn(function()
 end)
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(3)  -- v2.4: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
+        task.wait(3)  -- v2.6: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
     end
 end)
@@ -472,6 +475,20 @@ task.spawn(function()
         task.wait(3)
         if isCurrentGen() and state.autoGift then pcall(Farm.giftOnce) end
     end
+end)
+
+-- ===== AUTO AFK: anti-kick idle =====
+-- Roblox kick player yg idle ~20 menit. pas event Idled nyala, kita "gerakin"
+-- pakai VirtualUser biar timer idle reset. cuma jalan kalau state.autoAfk ON.
+pcall(function()
+    local VU = game:GetService("VirtualUser")
+    player.Idled:Connect(function()
+        if not (isCurrentGen() and state.autoAfk) then return end
+        pcall(function()
+            VU:CaptureController()
+            VU:ClickButton2(Vector2.new())  -- klik kosong, reset idle timer
+        end)
+    end)
 end)
 
 -- ============================================================
@@ -782,7 +799,7 @@ local applyPlant
 do
     local card, body, setH = mkFarmCard(4, "Auto Plant Seed", "tanam seed otomatis (tap utk atur)")
     setH(132)
-    mkTypeRow(body, 4, "Jenis Seed", fruitList, state.selectedPlant, "buyAllSeeds", "ikut Buy Seed")
+    mkTypeRow(body, 4, "Jenis Seed", fruitList, state.selectedPlant, "allPlantSeed", "Semua seed")
     -- location: random / lokasi kamu
     lbl(body, "Location", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,40)
     local locBtn = mk("TextButton", { Size = UDim2.new(0.58, 0, 0, 28), Position = UDim2.new(0.42, 0, 0, 37),
@@ -870,6 +887,38 @@ do
     end)
 end
 
+-- ====== MISC: Auto AFK (toggle simpel) ======
+local applyAfk
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
+    corner(card, 8)
+    local nameL = lbl(card, "Auto AFK", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "anti-kick saat idle lama", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyAfk = function()
+        if state.autoAfk then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.autoAfk = not state.autoAfk; saveState(); applyAfk()
+        print("[ZenxFarm] Auto AFK -> "..(state.autoAfk and "ON" or "OFF"))
+    end)
+    applyAfk()
+end
+
 
 -- ----- minimize / close -----
 -- logo mini "Z" elegan (tiru ZENX TELUR): bulat hitam, gradient halus, ring putih + ring abu (bevel)
@@ -899,6 +948,6 @@ floatLogo.MouseButton1Click:Connect(function() main.Visible = true; floatLogo.Vi
 closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
 
 -- ----- boot -----
-applyCollect(); applySell(); applyBuySeed(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift()
+applyCollect(); applySell(); applyBuySeed(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
