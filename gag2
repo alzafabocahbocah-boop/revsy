@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v7.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v7.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v7.4"
+local VER       = "v7.6"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -306,6 +306,7 @@ local state = {
     collectAll    = true,       -- collect semua buah
     collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
+    collectExpensiveFirst = false, -- v7.6: collect buah termahal duluan
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
     selectedShovel = {},        -- v7.0: jenis seed yg di-shovel (HANYA yg dipilih)
     shovelAll     = false,      -- v7.0: false = cuma yg dipilih (default gak shovel semua)
@@ -341,7 +342,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","autoShovel","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","autoShovel","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
@@ -451,6 +452,43 @@ local function passMutation(obj, selSet, allKey)
     return false
 end
 
+-- v7.6: nilai/harga tiap crop buat "collect termahal duluan".
+-- sumber: harga seed dari game (RemoteDeveloperProducts) — berkorelasi sama nilai buah.
+-- makin mahal seed, makin mahal buahnya. dipakai buat URUTKAN collect (mahal dulu).
+local CROP_PRICE = {
+    ["Carrot"]=3, ["Tulip"]=4, ["Strawberry"]=7, ["Blueberry"]=12, ["Tomato"]=15,
+    ["Bamboo"]=17, ["Apple"]=29, ["Pumpkin"]=34, ["Corn"]=69, ["Mushroom"]=69,
+    ["Cactus"]=79, ["Green Bean"]=99, ["Pineapple"]=99, ["Banana"]=119, ["Grape"]=139,
+    ["Coconut"]=149, ["Mango"]=199, ["Thorn Rose"]=229, ["Dragon Fruit"]=239,
+    ["Acorn"]=379, ["Cherry"]=479, ["Sunflower"]=599, ["Venus Fly Trap"]=799,
+    ["Lotus"]=899, ["Pomegranate"]=999, ["Beanstalk"]=1199, ["Poison Apple"]=1299,
+    ["Moon Bloom"]=1349, ["Dragon's Breath"]=1499,
+}
+Farm._priceCache = nil
+function Farm.cropValue(seedName)
+    if not seedName then return 0 end
+    -- coba baca nilai asli dari SeedData game (sekali, lalu cache)
+    if Farm._priceCache == nil then
+        Farm._priceCache = {}
+        pcall(function()
+            local sd = RS:FindFirstChild("SharedModules") and RS.SharedModules:FindFirstChild("SeedData")
+            if sd then
+                local ok, data = pcall(require, sd)
+                if ok and type(data) == "table" then
+                    for k, v in pairs(data) do
+                        if type(v) == "table" then
+                            local val = v.SellValue or v.Value or v.BaseValue or v.Price or v.SellPrice
+                            if type(val) == "number" then Farm._priceCache[k] = val end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    -- prioritas: nilai asli SeedData > tabel harga seed > 1
+    return Farm._priceCache[seedName] or CROP_PRICE[seedName] or 1
+end
+
 function Farm.collectOnce()
     local p = pkt("Garden", "CollectFruit")
     if not p or not p.Fire then print("[ZenxFarm] CollectFruit packet gak ada"); return end
@@ -460,50 +498,64 @@ function Farm.collectOnce()
     local _t0 = tick()  -- v6.8: timing — ukur durasi 1 siklus collect
     local fired, skipped = 0, 0
     local typesFired = {}
+
+    -- v7.6: kumpulin dulu semua plant yg mau di-collect, biar bisa diurutkan.
+    -- (kalau collectExpensiveFirst ON -> urut termahal dulu, biar yg mahal keangkut
+    --  duluan sebelum backpack penuh.)
+    local todo = {}
     for _, plot in ipairs(gardens:GetChildren()) do
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
                 local plantId = plant:GetAttribute("PlantId")
-                -- filter jenis buah (SeedName). collectAll=true -> collect semua.
                 local seedName = plant:GetAttribute("SeedName")
                 local okType
                 if state.collectAll then okType = true
                 else okType = (seedName ~= nil and state.selectedCollect[seedName] == true) end
                 if plantId and not okType then skipped = skipped + 1 end
                 if plantId and okType then
-                    typesFired[seedName or "?"] = (typesFired[seedName or "?"] or 0) + 1
-                    local fruits = plant:FindFirstChild("Fruits")
-                    local fruitCount = 0
-                    -- v6.9: MULTI-HARVEST (buah numpuk di pohon) — kalau collectMulti ON
-                    if fruits and state.collectMulti then
-                        for _, fruit in ipairs(fruits:GetChildren()) do
-                            -- nama fruit: <pid>_<PlantUUID>_<FruitUUID> -> ambil UUID terakhir
-                            local fruitUUID = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
-                            -- v5.9: filter mutasi (kalau collectMutAll OFF, cuma mutasi terpilih)
-                            local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll")
-                            if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
-                                pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
-                                fired = fired + 1; fruitCount = fruitCount + 1
-                                -- v6.7: jeda tiap 25 fire (dulu tiap 5) — 5x lebih sedikit
-                                if fired % 25 == 0 then task.wait() end
-                            end
-                        end
-                    end
-                    -- v6.9: SINGLE-HARVEST (Bamboo/Mushroom/GreenBean) — kalau collectSingle ON.
-                    -- game fire 2x: (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
-                    if fruitCount == 0 and state.collectSingle then
-                        local ready = plant:GetAttribute("PlantGrowthReady") == true
-                        if ready then
-                            local pid = tostring(plantId)
-                            pcall(function() p:Fire(pid, pid) end)
-                            task.wait()  -- jeda 1 frame (tiru 2 event terpisah)
-                            pcall(function() p:Fire(pid, "") end)
-                            fired = fired + 1
-                            task.wait()
-                        end
-                    end
+                    todo[#todo+1] = { plant = plant, plantId = plantId, seedName = seedName,
+                                      value = Farm.cropValue(seedName) }
                 end
+            end
+        end
+    end
+    -- urutkan termahal dulu kalau diaktifkan
+    if state.collectExpensiveFirst then
+        table.sort(todo, function(a, b) return a.value > b.value end)
+    end
+
+    for _, e in ipairs(todo) do
+        local plant, plantId, seedName = e.plant, e.plantId, e.seedName
+        typesFired[seedName or "?"] = (typesFired[seedName or "?"] or 0) + 1
+        local fruits = plant:FindFirstChild("Fruits")
+        local fruitCount = 0
+        -- v6.9: MULTI-HARVEST (buah numpuk di pohon) — kalau collectMulti ON
+        if fruits and state.collectMulti then
+            for _, fruit in ipairs(fruits:GetChildren()) do
+                -- nama fruit: <pid>_<PlantUUID>_<FruitUUID> -> ambil UUID terakhir
+                local fruitUUID = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
+                -- v5.9: filter mutasi (kalau collectMutAll OFF, cuma mutasi terpilih)
+                local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll")
+                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
+                    pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
+                    fired = fired + 1; fruitCount = fruitCount + 1
+                    -- v6.7: jeda tiap 25 fire (dulu tiap 5) — 5x lebih sedikit
+                    if fired % 25 == 0 then task.wait() end
+                end
+            end
+        end
+        -- v6.9: SINGLE-HARVEST (Bamboo/Mushroom/GreenBean) — kalau collectSingle ON.
+        -- game fire 2x: (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
+        if fruitCount == 0 and state.collectSingle then
+            local ready = plant:GetAttribute("PlantGrowthReady") == true
+            if ready then
+                local pid = tostring(plantId)
+                pcall(function() p:Fire(pid, pid) end)
+                task.wait()  -- jeda 1 frame (tiru 2 event terpisah)
+                pcall(function() p:Fire(pid, "") end)
+                fired = fired + 1
+                task.wait()
             end
         end
     end
@@ -1704,17 +1756,19 @@ end
 local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedList() end return Farm.seedList end
 
 -- ====== CARD 1: AUTO COLLECT ======
-local applyCollect, applyCollectMulti, applyCollectSingle
+local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(216)
+    setH(256)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
     -- v6.9: pisah multi & single harvest
     applyCollectMulti  = mkBodyToggle(body, 84,  "Multi Harvest",  "collectMulti",  "Multi Harvest")
     applyCollectSingle = mkBodyToggle(body, 124, "Single Harvest", "collectSingle", "Single Harvest")
-    applyCollect = mkBodyToggle(body, 164, "Auto Collect", "autoCollect", "Auto Collect")
+    -- v7.6: collect termahal dulu
+    applyCollectExp    = mkBodyToggle(body, 164, "Termahal Dulu",  "collectExpensiveFirst", "Termahal Dulu")
+    applyCollect = mkBodyToggle(body, 204, "Auto Collect", "autoCollect", "Auto Collect")
 end
 
 -- ====== CARD 2: AUTO SELL ======
@@ -2071,9 +2125,24 @@ floatLogo.MouseEnter:Connect(function() floatStroke.Transparency = 0 end)
 floatLogo.MouseLeave:Connect(function() floatStroke.Transparency = 0.1 end)
 minBtn.MouseButton1Click:Connect(function() main.Visible = false; floatLogo.Visible = true end)
 floatLogo.MouseButton1Click:Connect(function() main.Visible = true; floatLogo.Visible = false end)
-closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
+closeBtn.MouseButton1Click:Connect(function()
+    -- v7.5: CLOSE = stop SEMUA kegiatan sc, bukan cuma sembunyiin UI.
+    -- 1) matikan generation guard -> semua loop (collect/sell/plant/shovel/dll) berhenti
+    --    karena semuanya cek isCurrentGen(). naikkan gen biar MY_GEN gak lagi current.
+    genv.ZenxFarmGen = (genv.ZenxFarmGen or 0) + 1
+    -- 2) matikan semua toggle state (jaga2 kalau ada yg baca state langsung)
+    for _, k in ipairs(SETBOOL) do state[k] = false end
+    -- 3) matikan flag teleport biar gak nyangkut
+    pcall(function()
+        local g = (typeof(getgenv)=="function" and getgenv() or _G)
+        g.ZenxAllowTP = false
+    end)
+    print("[ZenxFarm] CLOSED — semua kegiatan sc dihentikan")
+    -- 4) baru hapus UI
+    sg:Destroy()
+end)
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
