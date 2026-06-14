@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v5.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v5.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v5.4"
+local VER       = "v5.6"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -827,44 +827,78 @@ local minBtn   = titleBtn(-70, "—", C.card)
 local closeBtn = titleBtn(-36, "✕", C.red)
 
 -- ===== HOP: cari server lain lalu pindah =====
--- v4.4: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
--- kumpulin yg ada slot, sort ascending (playing terkecil dulu), teleport ke yg paling sepi.
+-- v5.5: FIX "balik ke server sama". penyebab dulu: kalau scan server gagal (API
+-- rate-limit) -> jatuh ke TS:Teleport biasa yg GAK exclude server skrg -> sering balik.
+-- sekarang: retry scan beberapa kali; kalau tetap gagal, JANGAN teleport biasa
+-- (lebih baik gak hop daripada balik ke server yg sama).
 local function doHop()
     local TS = game:GetService("TeleportService")
     local plr = Players.LocalPlayer
     local placeId = game.PlaceId
     local currentJob = tostring(game.JobId)
-    print("[ZenxFarm] hop... cari server ada slot")
-    local candidates = {}
-    local cursor = nil
-    -- scan sampai 5 page (500 server) biar banyak pilihan
-    for page = 1, 5 do
-        local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Desc&limit=100"
-        if cursor then url = url .. "&cursor=" .. cursor end
-        local ok, body = pcall(function() return HS:JSONDecode(game:HttpGet(url)) end)
-        if not ok or not body or not body.data then break end
-        for _, s in ipairs(body.data) do
-            local pl = s.playing or 0
-            local maxP = s.maxPlayers or 6
-            -- sisa slot minimal 2 (biar gak langsung penuh pas masuk) + bukan server skrg
-            if tostring(s.id) ~= currentJob and (maxP - pl) >= 2 then
-                candidates[#candidates+1] = s
+    print("[ZenxFarm] hop... cari server lain")
+
+    local function scanServers()
+        local candidates = {}
+        local cursor = nil
+        for page = 1, 5 do
+            local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Desc&limit=100"
+            if cursor then url = url .. "&cursor=" .. cursor end
+            local ok, body = pcall(function() return HS:JSONDecode(game:HttpGet(url)) end)
+            if not ok or not body or not body.data then break end
+            for _, s in ipairs(body.data) do
+                local pl = s.playing or 0
+                local maxP = s.maxPlayers or 6
+                -- bukan server skrg + masih ada slot
+                if tostring(s.id) ~= currentJob and (maxP - pl) >= 2 then
+                    candidates[#candidates+1] = s
+                end
             end
+            cursor = body.nextPageCursor
+            if not cursor or cursor == "" then break end
         end
-        cursor = body.nextPageCursor
-        if not cursor or cursor == "" then break end
+        return candidates
     end
+
+    -- retry scan: API server-list sering rate-limit; coba sampai 4x dgn jeda
+    local candidates = {}
+    for attempt = 1, 4 do
+        candidates = scanServers()
+        if #candidates > 0 then break end
+        print("[ZenxFarm] scan kosong (rate-limit?), retry "..attempt.."/4...")
+        task.wait(2)
+    end
+
     if #candidates > 0 then
         -- pilih random dari kandidat (biar multi-akun gak numpuk di server sama)
         pcall(function() math.randomseed(tick() + (tonumber(tostring(game.JobId):gsub("%D","")) or 0)) end)
-        local pick = candidates[math.random(1, #candidates)]
-        print(string.format("[ZenxFarm] %d kandidat | pindah ke %s (%d/%d)",
-            #candidates, tostring(pick.id):sub(1,8), pick.playing or 0, pick.maxPlayers or 0))
-        local ok = pcall(function() TS:TeleportToPlaceInstance(placeId, pick.id, plr) end)
-        if ok then return end
+        -- v5.6: coba beberapa kandidat berbeda. kalau teleport ke satu server gagal
+        -- (penuh/mati/basi), langsung coba kandidat lain — jangan nyerah di 1 percobaan.
+        -- log error-nya juga (dulu ketelan pcall -> keliatan "pindah" padahal gagal).
+        pcall(function() math.randomseed(tick() + (tonumber(tostring(game.JobId):gsub("%D","")) or 0)) end)
+        -- acak urutan kandidat
+        for i = #candidates, 2, -1 do
+            local j = math.random(1, i)
+            candidates[i], candidates[j] = candidates[j], candidates[i]
+        end
+        local tries = math.min(#candidates, 5)
+        for i = 1, tries do
+            local pick = candidates[i]
+            print(string.format("[ZenxFarm] coba %d/%d -> server %s (%d/%d)",
+                i, tries, tostring(pick.id):sub(1,8), pick.playing or 0, pick.maxPlayers or 0))
+            local ok, err = pcall(function() TS:TeleportToPlaceInstance(placeId, pick.id, plr) end)
+            if ok then
+                task.wait(3)  -- kasih waktu teleport mulai; kalau beneran jalan, script bakal di-kill
+                print("[ZenxFarm] teleport ke "..tostring(pick.id):sub(1,8).." dikirim (nunggu pindah...)")
+                return true
+            else
+                print("[ZenxFarm] GAGAL teleport ke server itu: "..tostring(err).." -> coba lain")
+            end
+        end
     end
-    print("[ZenxFarm] gak ada server lega, fallback teleport biasa")
-    pcall(function() TS:Teleport(placeId, plr) end)
+    -- v5.5: TIDAK fallback ke TS:Teleport biasa (itu yg bikin balik ke server sama).
+    print("[ZenxFarm] gagal nemu server lain — hop dibatalin (biar gak balik ke server sama)")
+    return false
 end
 hopBtn.MouseButton1Click:Connect(function()
     hopBtn.Text = "..."; task.spawn(doHop)
@@ -924,8 +958,13 @@ do
                         local pp = Players:GetPlayerByUserId(uid)
                         if pp then nm = pp.Name end
                         print("[ZenxFarm] BOT terdeteksi: "..nm.." (Sheckles berubah "..cnt.."x/2s, 2 window) -> HOP")
-                        state.antiBot = false
-                        task.spawn(doHop)
+                        -- v5.5: hop dulu; cuma matiin Anti-Bot kalau hop BERHASIL.
+                        -- kalau hop gagal (gak nemu server lain), biarin Anti-Bot tetap ON
+                        -- biar nyoba lagi nanti — daripada mati percuma tanpa pindah.
+                        task.spawn(function()
+                            local ok = doHop()
+                            if ok then state.antiBot = false end
+                        end)
                         break
                     end
                 end
