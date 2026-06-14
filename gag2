@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.5  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.5"
+local VER       = "v6.6"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -32,6 +32,61 @@ end
 -- ternyata auto-rejoin (teleport balik pas 267) malah sering bikin error 267 lagi —
 -- teleport-nya sendiri ketrigger anti-cheat / data load gagal. lebih aman rejoin MANUAL.
 -- blok deteksi 267 + OnTeleport.Failed dihapus total. gak ada teleport otomatis lagi.
+
+-- v6.6: BLOCK "tiba-tiba kepental ke server lain".
+-- game/anti-cheat kadang maksa TeleportService:Teleport(...) buat mental-in kita ke
+-- server publik lain. kita HOOK TeleportService biar teleport yg BUKAN dari kita
+-- diblokir. teleport dari tombol HOP kita tetap jalan (ditandai flag ZenxAllowTP).
+-- catatan jujur: gak semua kepentalan bisa diblok dari client (kalau server bener2
+-- shutdown/migrate, itu di luar kuasa script). tapi ini nangkis mayoritas kasus.
+local genvTP = (typeof(getgenv) == "function") and getgenv() or _G
+genvTP.ZenxAllowTP = false   -- default: teleport diblok
+-- helper buat HOP kita sendiri: buka izin sebentar lalu teleport
+local function zenxTeleport(fn)
+    genvTP.ZenxAllowTP = true
+    local ok = pcall(fn)
+    task.delay(5, function() genvTP.ZenxAllowTP = false end)  -- tutup lagi stlh 5s
+    return ok
+end
+genvTP.ZenxTeleport = zenxTeleport  -- biar doHop bisa akses
+do
+    local TS = game:GetService("TeleportService")
+    local blocked = 0
+    -- hook lewat hookmetamethod kalau ada (paling bersih); fallback ke replace fungsi
+    local function shouldBlock()
+        return not genvTP.ZenxAllowTP
+    end
+    if hookmetamethod and getnamecallmethod then
+        local old
+        old = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if self == TS and (method == "Teleport" or method == "TeleportToPlaceInstance"
+               or method == "TeleportToPrivateServer") then
+                if shouldBlock() then
+                    blocked = blocked + 1
+                    warn("[ZenxFarm] teleport DIBLOK (kepental dicegah) #"..blocked.." method="..method)
+                    return  -- gak diteruskan -> teleport gak jalan
+                end
+            end
+            return old(self, ...)
+        end)
+        print("[ZenxFarm] anti-kepental aktif (hookmetamethod)")
+    else
+        -- fallback: replace fungsi TeleportService langsung (kalau executor support)
+        pcall(function()
+            local origTP = TS.Teleport
+            TS.Teleport = function(self, ...)
+                if shouldBlock() then
+                    blocked = blocked + 1
+                    warn("[ZenxFarm] teleport DIBLOK (fallback) #"..blocked)
+                    return
+                end
+                return origTP(self, ...)
+            end
+        end)
+        print("[ZenxFarm] anti-kepental aktif (fallback replace)")
+    end
+end
 
 -- v4.5: TUNGGU MINIMAL (game loaded + character) — biar UI langsung kebuild.
 -- skip "Press any key to play" dipindah ke BACKGROUND (task.spawn) -> gak nahan script.
@@ -1115,7 +1170,15 @@ local function doHop()
             local pick = candidates[i]
             print(string.format("[ZenxFarm] coba %d/%d -> server %s (%d/%d)",
                 i, tries, tostring(pick.id):sub(1,8), pick.playing or 0, pick.maxPlayers or 0))
-            local ok, err = pcall(function() TS:TeleportToPlaceInstance(placeId, pick.id, plr) end)
+            -- v6.6: pakai izin teleport kita (zenxTeleport) biar gak keblok anti-kepental
+            local zt = (typeof(getgenv)=="function" and getgenv() or _G).ZenxTeleport
+            local ok, err = pcall(function()
+                if zt then
+                    return zt(function() TS:TeleportToPlaceInstance(placeId, pick.id, plr) end)
+                else
+                    return TS:TeleportToPlaceInstance(placeId, pick.id, plr)
+                end
+            end)
             if ok then
                 task.wait(3)  -- kasih waktu teleport mulai; kalau beneran jalan, script bakal di-kill
                 print("[ZenxFarm] teleport ke "..tostring(pick.id):sub(1,8).." dikirim (nunggu pindah...)")
