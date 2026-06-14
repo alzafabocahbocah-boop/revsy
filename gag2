@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v5.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v5.9  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v5.7"
+local VER       = "v5.9"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -265,6 +265,10 @@ local state = {
     selectedSeeds   = {},       -- buy seed
     selectedCollect = {},       -- collect buah
     selectedSell    = {},       -- sell buah
+    selectedCollectMut = {},    -- v5.9: filter mutasi collect
+    selectedSellMut    = {},    -- v5.9: filter mutasi sell
+    collectMutAll   = true,     -- collect semua mutasi (default: gak filter mutasi)
+    sellMutAll      = true,     -- sell semua mutasi
     selectedPlant   = {},       -- plant seed
     allPlantSeed    = true,      -- tanam semua seed (allKey terpisah dari buy seed)
     selectedPetType = {},       -- jenis pet (PetName)
@@ -282,9 +286,14 @@ local state = {
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
     "IceSerpent","Monkey","Owl","Raccoon","Robin","Unicorn"}
 local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Divine"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","sellAll","sellWhenFull","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+-- v5.9: daftar mutasi Grow a Garden (umum). kalau game nambah, tinggal tambah di sini.
+local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
+    "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
+    "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
+                 selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
                  giftSeeds="giftSeeds", giftPets="giftPets"}
 local function saveState()
@@ -364,6 +373,32 @@ end
 -- struktur: Workspace.Gardens.PlotN.Plants.<pid>_<PlantUUID>
 --             .Fruits.<pid>_<PlantUUID>_<FruitUUID>
 -- arg1 = PlantId (attr .PlantId di plant), arg2 = FruitUUID (UUID terakhir di nama fruit)
+-- v5.9: deteksi mutasi sebuah fruit/objek. game biasanya simpen mutasi di attribute
+-- (nama belum pasti) atau di nama objek. coba beberapa kemungkinan attribute umum.
+-- return: nama mutasi (string) atau nil kalau gak ada / gak kedeteksi.
+local MUT_ATTR_KEYS = {"Mutation","Mutations","Variant","Variants","Type","Modifier"}
+local function getMutation(obj)
+    for _, k in ipairs(MUT_ATTR_KEYS) do
+        local v = obj:GetAttribute(k)
+        if type(v) == "string" and v ~= "" and v:lower() ~= "none" and v:lower() ~= "normal" then
+            return v
+        end
+    end
+    return nil
+end
+-- cek apakah objek lolos filter mutasi. allKey true -> lolos semua.
+local function passMutation(obj, selSet, allKey)
+    if state[allKey] then return true end
+    -- ada minimal 1 mutasi terpilih cocok
+    local m = getMutation(obj)
+    if not m then return false end  -- filter mutasi aktif tapi objek gak punya mutasi -> skip
+    -- m bisa multi (mis "Gold,Wet"). cek tiap bagian.
+    for part in tostring(m):gmatch("[^,%s]+") do
+        if selSet[part] then return true end
+    end
+    return false
+end
+
 function Farm.collectOnce()
     local p = pkt("Garden", "CollectFruit")
     if not p or not p.Fire then print("[ZenxFarm] CollectFruit packet gak ada"); return end
@@ -391,7 +426,9 @@ function Farm.collectOnce()
                         for _, fruit in ipairs(fruits:GetChildren()) do
                             -- nama fruit: <pid>_<PlantUUID>_<FruitUUID> -> ambil UUID terakhir
                             local fruitUUID = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
-                            if fruitUUID and #tostring(fruitUUID) >= 30 then
+                            -- v5.9: filter mutasi (kalau collectMutAll OFF, cuma mutasi terpilih)
+                            local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll")
+                            if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
                                 pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                                 fired = fired + 1; fruitCount = fruitCount + 1
                                 if fired % 5 == 0 then task.wait() end
@@ -501,7 +538,9 @@ function Farm.sellOnce()
             local id = o:GetAttribute("Id")
             if id then
                 local jenis = fruitObjType(o.Name)
-                if state.selectedSell[jenis] then
+                -- v5.9: filter jenis + mutasi (kalau sellMutAll OFF, cuma mutasi terpilih)
+                local okMut = passMutation(o, state.selectedSellMut, "sellMutAll")
+                if state.selectedSell[jenis] and okMut then
                     pcall(function() p:Fire(tostring(id)) end)
                     sold = sold + 1
                     types[jenis] = (types[jenis] or 0) + 1
@@ -579,7 +618,7 @@ end
 -- loop tiap fitur: jalan kalau toggle ON. berhenti kalau ada eksekusi baru (gen berubah).
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(0.5)
+        task.wait(0.2)  -- v5.8: dipercepat dari 0.5s -> 0.2s (collect lebih sering)
         if isCurrentGen() and state.autoCollect then pcall(Farm.collectOnce) end
     end
 end)
@@ -1161,8 +1200,18 @@ local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange)
     rebuild = function(q)
         for _, ch in ipairs(sc:GetChildren()) do if ch:IsA("TextButton") then ch:Destroy() end end
         q = (q or ""):lower()
+        -- v5.9: urutkan yg DIPILIH ke atas dulu (selected → unselected), tetap alfabet
+        local items = {}
         for _, name in ipairs(listFn()) do
-            if q == "" or name:lower():find(q, 1, true) then
+            if q == "" or name:lower():find(q, 1, true) then items[#items+1] = name end
+        end
+        table.sort(items, function(a, b)
+            local sa, sb = (selSet[a] == true), (selSet[b] == true)
+            if sa ~= sb then return sa end   -- yg dipilih (true) naik ke atas
+            return a:lower() < b:lower()       -- sisanya alfabet
+        end)
+        for _, name in ipairs(items) do
+            do
                 local on = selSet[name] == true
                 local r = mk("TextButton", { Size = UDim2.new(1,0,0,26), BackgroundColor3 = on and C.card or C.panel,
                     Text = (on and "✓ " or "   ")..name, TextColor3 = on and C.accent or C.text,
@@ -1196,12 +1245,21 @@ local function mkTypeRow(body, y, labelTxt, listFn, selSet, allKey, allLabel)
     corner(btn, 6); stroke(btn, C.border, 1)
     local btnL = lbl(btn, "", 12, C.text, Enum.TextXAlignment.Left)
     btnL.Position = UDim2.new(0, 8, 0, 0); btnL.Size = UDim2.new(1, -12, 1, 0)
+    btnL.TextTruncate = Enum.TextTruncate.AtEnd  -- v5.9: nama panjang dipotong "...", gak meluber
     local function upd()
         if state[allKey] then btnL.Text = allLabel; btnL.TextColor3 = C.green
         else
-            local n = 0; for _ in pairs(selSet) do n = n + 1 end
-            btnL.Text = n > 0 and (n.." dipilih") or "pilih..."
-            btnL.TextColor3 = n > 0 and C.text or C.textDim
+            -- v5.9: tampilin NAMA item yg dipilih (urut alfabet), bukan cuma "N dipilih"
+            local names = {}
+            for nm in pairs(selSet) do names[#names+1] = nm end
+            table.sort(names, function(a,b) return a:lower() < b:lower() end)
+            if #names > 0 then
+                btnL.Text = table.concat(names, ", ")
+                btnL.TextColor3 = C.text
+            else
+                btnL.Text = "pilih..."
+                btnL.TextColor3 = C.textDim
+            end
         end
     end
     btn.MouseButton1Click:Connect(function()
@@ -1244,20 +1302,24 @@ local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedLis
 local applyCollect
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(96)
-    mkTypeRow(body, 4, "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
-    applyCollect = mkBodyToggle(body, 44, "Auto Collect", "autoCollect", "Auto Collect")
+    setH(136)
+    mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
+    -- v5.9: filter mutasi (default Semua mutasi)
+    mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
+    applyCollect = mkBodyToggle(body, 84, "Auto Collect", "autoCollect", "Auto Collect")
 end
 
 -- ====== CARD 2: AUTO SELL ======
 local applySell, applySellFull
 do
     local card, body, setH = mkFarmCard(2, "Auto Sell", "jual buah ke counter (tap utk atur)")
-    setH(132)
-    mkTypeRow(body, 4, "Jenis Buah", fruitList, state.selectedSell, "sellAll", "Semua buah")
+    setH(172)
+    mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedSell, "sellAll", "Semua buah")
+    -- v5.9: filter mutasi
+    mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedSellMut, "sellMutAll", "Semua mutasi")
     -- v5.7: toggle mode "sell pas penuh" (OFF = sell rutin tiap 5 detik)
-    applySellFull = mkBodyToggle(body, 44, "Sell pas penuh", "sellWhenFull", "Sell When Full")
-    applySell = mkBodyToggle(body, 84, "Auto Sell", "autoSell", "Auto Sell")
+    applySellFull = mkBodyToggle(body, 84,  "Sell pas penuh", "sellWhenFull", "Sell When Full")
+    applySell     = mkBodyToggle(body, 124, "Auto Sell", "autoSell", "Auto Sell")
 end
 
 -- ====== CARD 3: AUTO BUY SEED ======
