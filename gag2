@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v7.2  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v7.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v7.2"
+local VER       = "v7.4"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -674,38 +674,42 @@ function Farm.buySeedOnce()
 end
 
 -- v7.1: AUTO BUY GEAR — beli alat/gear dari gear shop.
--- CATATAN JUJUR: remote gear BELUM kebukti via sniff. kita coba beberapa nama kandidat
--- (GearShop.PurchaseGear / Gear.Purchase / dll). list gear = hardcoded umum, fallback.
--- kalau remote gak ketemu -> print minta sniff.
+-- v7.4: list gear sekarang dari SUMBER ASLI game (lengkap):
+--   1) StockValues.GearShop.Items (stok toko yg lagi ada)
+--   2) parse Workspace.RemoteDeveloperProducts (semua entri "Gear:")
+-- CATATAN: remote BELI gear masih kandidat (perlu sniff kalau gak jalan).
 local function loadGearList()
-    -- coba ambil dari data game dulu
-    local list = {}
+    local seen, list = {}, {}
+    local function addName(nm)
+        if type(nm) == "string" and nm ~= "" and not seen[nm] then
+            seen[nm] = true; list[#list+1] = nm
+        end
+    end
+    -- 1) stok gear shop (paling akurat — gear yg beneran ada di toko)
     pcall(function()
-        local sm = RS:FindFirstChild("SharedModules") or RS
-        for _, child in ipairs(sm:GetDescendants()) do
-            if child.Name:lower():find("gear") and child:IsA("ModuleScript") then
-                local ok, data = pcall(require, child)
-                if ok and type(data) == "table" then
-                    for k, v in pairs(data) do
-                        local nm
-                        if type(k) == "string" then nm = k
-                        elseif type(v) == "table" then nm = v.Name or v.GearName end
-                        if type(nm) == "string" then list[#list+1] = nm end
-                    end
-                end
-            end
+        local sv = RS:FindFirstChild("StockValues")
+        local gs = sv and sv:FindFirstChild("GearShop")
+        local items = gs and gs:FindFirstChild("Items")
+        if items then for _, it in ipairs(items:GetChildren()) do addName(it.Name) end end
+    end)
+    -- 2) parse RemoteDeveloperProducts: entri format "Gear:<Nama>:<qty>"
+    pcall(function()
+        local raw = workspace:GetAttribute("RemoteDeveloperProducts")
+        if type(raw) == "string" then
+            -- ambil tiap "Gear:Nama:..." -> Nama (tanpa qty/Gift)
+            for name in raw:gmatch('"Gear:([^:"]+):') do addName(name) end
         end
     end)
+    -- 3) fallback terakhir (kalau dua-duanya kosong)
     if #list == 0 then
-        -- fallback hardcoded (gear umum di Grow a Garden) — bisa kurang akurat
-        list = {"Watering Can","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
-            "Godly Sprinkler","Master Sprinkler","Lightning Rod","Favorite Tool","Harvest Tool",
-            "Friendship Pot","Cleaning Spray","Magnifying Glass","Tanning Mirror","Reclaimer"}
+        list = {"Common Watering Can","Super Watering Can","Trowel","Common Sprinkler",
+            "Uncommon Sprinkler","Rare Sprinkler","Legendary Sprinkler","Super Sprinkler",
+            "Basic Pot","Gnome","Trowel","Speed Mushroom","Shrink Mushroom","Supersize Mushroom",
+            "Jump Mushroom","Invisibility Mushroom","Flashbang","Lantern","Sign","Teleporter",
+            "Wheelbarrow","Cleaning Spray","Favorite Tool","Harvest Tool","Friendship Pot"}
+        local s2 = {}; for _, n in ipairs(list) do if not s2[n] then s2[n]=true end end
     end
-    -- unik-kan
-    local seen, uniq = {}, {}
-    for _, n in ipairs(list) do if not seen[n] then seen[n] = true; uniq[#uniq+1] = n end end
-    return uniq
+    return list
 end
 
 Farm.buyPerGear = 2
@@ -1777,7 +1781,9 @@ do
     setH(126)
     -- list seed garden KITA + jumlahnya (urut terbanyak). countFn dipanggil tiap buka picker.
     local shovelListFn  = function() return Farm.shovelSeedList() end
-    local shovelCountFn = function() return Farm._shovelCounts or {} end
+    -- v7.4: count dihitung FRESH langsung (dulu baca _shovelCounts yg blm keisi
+    -- pas picker pertama dibuka -> count gak kelihatan). sekarang selalu real-time.
+    local shovelCountFn = function() return Farm.countMyGardenSeeds() end
     mkTypeRow(body, 4, "Jenis Seed", shovelListFn, state.selectedShovel, "shovelAll", "Semua seed", shovelCountFn)
     applyShovel = mkBodyToggle(body, 44, "Auto Shovel", "autoShovel", "Auto Shovel")
 end
@@ -1969,6 +1975,75 @@ do
         print("[ZenxFarm] Auto Grab Seed -> "..(state.autoGrabSeed and "ON" or "OFF"))
     end)
     applyGrabSeed()
+end
+
+-- ====== MISC: Weather & Restock Info (live, cuma display) ======
+-- v7.3: pakai data yg PASTI kebaca dari game:
+--   Workspace.ActiveWeather / ActivePhase / PhaseDuration (timestamp akhir fase)
+--   StockValues.<shop>.UnixNextRestock (timestamp restock berikutnya)
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 158), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 6, Parent = miscList })
+    corner(card, 8); stroke(card, C.borderBright, 1)  -- garis agak terang (info penting)
+    local nameL = lbl(card, "Weather & Restock", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -28, 0, 18)
+    local sub = lbl(card, "info live (baca langsung dari game)", 11, C.textMute, Enum.TextXAlignment.Left)
+    sub.Position = UDim2.new(0, 14, 0, 30); sub.Size = UDim2.new(1, -28, 0, 14)
+
+    local rowWeather = lbl(card, "Cuaca: -", 12, C.text, Enum.TextXAlignment.Left)
+    rowWeather.Position = UDim2.new(0, 14, 0, 52); rowWeather.Size = UDim2.new(1, -28, 0, 16)
+    local rowPhase = lbl(card, "Fase: -", 12, C.textDim, Enum.TextXAlignment.Left)
+    rowPhase.Position = UDim2.new(0, 14, 0, 72); rowPhase.Size = UDim2.new(1, -28, 0, 16)
+    local rowSeed = lbl(card, "Restock Seed: -", 12, C.text, Enum.TextXAlignment.Left)
+    rowSeed.Position = UDim2.new(0, 14, 0, 96); rowSeed.Size = UDim2.new(1, -28, 0, 16)
+    local rowGear = lbl(card, "Restock Gear: -", 12, C.text, Enum.TextXAlignment.Left)
+    rowGear.Position = UDim2.new(0, 14, 0, 116); rowGear.Size = UDim2.new(1, -28, 0, 16)
+    local rowCrate = lbl(card, "Restock Crate: -", 12, C.text, Enum.TextXAlignment.Left)
+    rowCrate.Position = UDim2.new(0, 14, 0, 136); rowCrate.Size = UDim2.new(1, -28, 0, 16)
+
+    local function fmtLeft(sec)
+        if sec == nil then return "-" end
+        if sec < 0 then sec = 0 end
+        local m = math.floor(sec / 60); local s = math.floor(sec % 60)
+        if m > 60 then
+            local h = math.floor(m/60); m = m % 60
+            return string.format("%dj %dm", h, m)
+        end
+        return string.format("%dm %02ds", m, s)
+    end
+    local function getRestockLeft(shop)
+        local sv = RS:FindFirstChild("StockValues")
+        if not sv then return nil end
+        local s = sv:FindFirstChild(shop)
+        if not s then return nil end
+        local nx = s:FindFirstChild("UnixNextRestock")
+        if not nx then return nil end
+        return tonumber(nx.Value) - os.time()
+    end
+
+    task.spawn(function()
+        while isCurrentGen() do
+            pcall(function()
+                local w = workspace:GetAttribute("ActiveWeather")
+                local ph = workspace:GetAttribute("ActivePhase")
+                local pend = workspace:GetAttribute("PhaseDuration")  -- timestamp akhir fase
+                rowWeather.Text = "Cuaca: "..tostring(w or "-")
+                -- warnain cuaca spesial
+                local wl = tostring(w):lower()
+                if wl:find("rain") or wl:find("moon") or wl:find("blood") or wl:find("gold") then
+                    rowWeather.TextColor3 = C.green
+                else
+                    rowWeather.TextColor3 = C.text
+                end
+                local phLeft = pend and (tonumber(pend) - os.time()) or nil
+                rowPhase.Text = "Fase: "..tostring(ph or "-")..(phLeft and ("  (ganti "..fmtLeft(phLeft)..")") or "")
+                rowSeed.Text  = "Restock Seed: "..fmtLeft(getRestockLeft("SeedShop"))
+                rowGear.Text  = "Restock Gear: "..fmtLeft(getRestockLeft("GearShop"))
+                rowCrate.Text = "Restock Crate: "..fmtLeft(getRestockLeft("CrateShop"))
+            end)
+            task.wait(1)
+        end
+    end)
 end
 
 -- ----- minimize / close -----
