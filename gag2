@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.1"
+local VER       = "v6.2"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -925,18 +925,31 @@ function Farm.grabSeedOnce()
         -- pilih seed terdekat ke karakter
         local nearest, bestD
         for _, o in ipairs(pending) do
-            if o.Parent then
-                local d = (o.Position - root.Position).Magnitude
-                if not bestD or d < bestD then bestD, nearest = d, o end
+            -- v6.2: validasi KETAT — cegah teleport ke titik aneh kalau seed keburu
+            -- keambil orang (part ke-destroy / posisi ke-reset ke 0,0,0 sebelum hilang).
+            if o.Parent and o:IsDescendantOf(workspace) then
+                local sp = o.Position
+                -- buang posisi sampah: (0,0,0) atau dekat origin = seed udah invalid
+                if sp.Magnitude > 1 then
+                    local d = (sp - root.Position).Magnitude
+                    -- cuma kalau jaraknya masuk akal (<150 stud). seed event jatuh di
+                    -- sekitar map, gak mungkin ratusan ribu stud — itu tanda posisi ngaco.
+                    if d < 150 and (not bestD or d < bestD) then
+                        bestD, nearest = d, o
+                    end
+                end
             end
         end
-        if nearest and nearest.Parent then
+        if nearest and nearest.Parent and nearest:IsDescendantOf(workspace) then
             local sp = nearest.Position
-            pcall(function() root.CFrame = CFrame.new(sp.X, root.Position.Y, sp.Z) end)
-            pcall(function()
-                firetouchinterest(root, nearest, 0)
-                firetouchinterest(root, nearest, 1)
-            end)
+            -- cek SEKALI LAGI tepat sebelum teleport (seed bisa hilang di frame ini)
+            if sp.Magnitude > 1 and (sp - root.Position).Magnitude < 150 then
+                pcall(function() root.CFrame = CFrame.new(sp.X, root.Position.Y, sp.Z) end)
+                pcall(function()
+                    firetouchinterest(root, nearest, 0)
+                    firetouchinterest(root, nearest, 1)
+                end)
+            end
         end
     end
 end
