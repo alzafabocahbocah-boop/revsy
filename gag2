@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v7.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v7.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v7.7"
+local VER       = "v7.8"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -505,65 +505,69 @@ function Farm.collectOnce()
     local fired, skipped = 0, 0
     local typesFired = {}
 
-    -- v7.6: kumpulin dulu semua plant yg mau di-collect, biar bisa diurutkan.
-    -- (kalau collectExpensiveFirst ON -> urut termahal dulu, biar yg mahal keangkut
-    --  duluan sebelum backpack penuh.)
-    local todo = {}
-    for _, plot in ipairs(gardens:GetChildren()) do
-        local plants = plot:FindFirstChild("Plants")
-        if plants then
-            for _, plant in ipairs(plants:GetChildren()) do
-                local plantId = plant:GetAttribute("PlantId")
-                local seedName = plant:GetAttribute("SeedName")
-                local okType
-                if state.collectAll then okType = true
-                else okType = (seedName ~= nil and state.selectedCollect[seedName] == true) end
-                if plantId and not okType then skipped = skipped + 1 end
-                if plantId and okType then
-                    todo[#todo+1] = { plant = plant, plantId = plantId, seedName = seedName,
-                                      value = Farm.cropValue(seedName) }
-                end
-            end
-        end
-    end
-    -- urutkan termahal dulu kalau diaktifkan
-    if state.collectExpensiveFirst then
-        table.sort(todo, function(a, b) return a.value > b.value end)
-    end
-
-    for _, e in ipairs(todo) do
-        local plant, plantId, seedName = e.plant, e.plantId, e.seedName
+    -- proses 1 tanaman (fire buahnya). dipakai dua jalur di bawah.
+    local function processPlant(plant, plantId, seedName)
         typesFired[seedName or "?"] = (typesFired[seedName or "?"] or 0) + 1
         local fruits = plant:FindFirstChild("Fruits")
         local fruitCount = 0
-        -- v6.9: MULTI-HARVEST (buah numpuk di pohon) — kalau collectMulti ON
         if fruits and state.collectMulti then
             for _, fruit in ipairs(fruits:GetChildren()) do
-                -- nama fruit: <pid>_<PlantUUID>_<FruitUUID> -> ambil UUID terakhir
                 local fruitUUID = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
-                -- v5.9: filter mutasi (kalau collectMutAll OFF, cuma mutasi terpilih)
                 local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll")
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     fired = fired + 1; fruitCount = fruitCount + 1
-                    -- v6.7: jeda tiap 25 fire (dulu tiap 5) — 5x lebih sedikit
                     if fired % 25 == 0 then task.wait() end
                 end
             end
         end
-        -- v6.9: SINGLE-HARVEST (Bamboo/Mushroom/GreenBean) — kalau collectSingle ON.
-        -- game fire 2x: (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
         if fruitCount == 0 and state.collectSingle then
-            local ready = plant:GetAttribute("PlantGrowthReady") == true
-            if ready then
+            if plant:GetAttribute("PlantGrowthReady") == true then
                 local pid = tostring(plantId)
                 pcall(function() p:Fire(pid, pid) end)
-                task.wait()  -- jeda 1 frame (tiru 2 event terpisah)
+                task.wait()
                 pcall(function() p:Fire(pid, "") end)
                 fired = fired + 1
                 task.wait()
             end
         end
+    end
+
+    if not state.collectExpensiveFirst then
+        -- v7.8: JALUR CEPAT (default) — fire langsung tanpa bangun tabel.
+        -- ini balikin performa: gak ada alokasi tabel tiap siklus -> gak bikin lemot.
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local plantId = plant:GetAttribute("PlantId")
+                    local seedName = plant:GetAttribute("SeedName")
+                    local okType = state.collectAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
+                    if plantId and not okType then skipped = skipped + 1 end
+                    if plantId and okType then processPlant(plant, plantId, seedName) end
+                end
+            end
+        end
+    else
+        -- JALUR TERMAHAL DULU — bangun tabel + sort (cuma pas fitur ON, jadi
+        -- beban sort cuma dibayar kalau kamu emang mau prioritas mahal).
+        local todo = {}
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local plantId = plant:GetAttribute("PlantId")
+                    local seedName = plant:GetAttribute("SeedName")
+                    local okType = state.collectAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
+                    if plantId and not okType then skipped = skipped + 1 end
+                    if plantId and okType then
+                        todo[#todo+1] = { plant, plantId, seedName, Farm.cropValue(seedName) }
+                    end
+                end
+            end
+        end
+        table.sort(todo, function(a, b) return a[4] > b[4] end)  -- termahal dulu
+        for _, e in ipairs(todo) do processPlant(e[1], e[2], e[3]) end
     end
     if fired > 0 then
         local tlist = {}
