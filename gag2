@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v4.2  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v4.3  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,10 +11,10 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v4.2"
+local VER       = "v4.3"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
--- v4.2: TUNGGU GAME FULLY LOADED dulu — sebelum ini script "mati" (gak ada UI/loop).
+-- v4.3: TUNGGU GAME FULLY LOADED dulu — sebelum ini script "mati" (gak ada UI/loop).
 -- penting buat auto re-exec abis rejoin: kalau jalan kepagian (game blm load) -> error.
 -- siap = game.Loaded + character spawn + LoadingGui (intro "tap to play") udah hilang.
 do
@@ -38,40 +38,39 @@ do
             return nil
         end })
     end
-    -- v4.2: deteksi kapan intro "Press any key/Fully Loaded" muncul (Image 2),
-    -- baru fire signal di situ. jangan fire pas masih loading data (Image 1).
-    local function introTextVisible()
-        for _, d in ipairs(pg:GetDescendants()) do
-            if d:IsA("TextLabel") and d.Visible then
-                local t = tostring(d.Text):lower()
-                if t:find("press any key") or t:find("tap anywhere") or t:find("fully load") then
-                    return true
+    -- v4.3: SPAM fire signal terus dari awal sampai BENER-BENER masuk.
+    -- "masuk" dideteksi dari karakter udah bisa main: Humanoid Running + WalkSpeed>0
+    -- + camera Custom (subject humanoid). gak usah deteksi teks/loading.
+    local function reallyIn()
+        local c = player.Character
+        local hum = c and c:FindFirstChildOfClass("Humanoid")
+        local hrp = c and c:FindFirstChild("HumanoidRootPart")
+        if not (hum and hrp) then return false end
+        -- udah main = humanoid jalan + bisa gerak + gak di-anchor
+        local moving = hum:GetState() == Enum.HumanoidStateType.Running
+                    or hum:GetState() == Enum.HumanoidStateType.RunningNoPhysics
+        local cam = workspace.CurrentCamera
+        local camOk = cam and cam.CameraType == Enum.CameraType.Custom
+        return (hum.WalkSpeed > 0) and (not hrp.Anchored) and (moving or camOk)
+            and (player:GetAttribute("LoadingScreenDone") == true or moving)
+    end
+    for _ = 1, 200 do  -- max ~60 detik (spam tiap 0.3s)
+        if reallyIn() then break end
+        -- spam SEMUA tipe input terus (keyboard plg penting — "press any key")
+        if firesignal then
+            pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.Space), false) end)
+            pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.E), false) end)
+            pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.Return), false) end)
+            pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.MouseButton1), false) end)
+            pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Touch), false) end)
+        end
+        pcall(function()
+            if getconnections then
+                for _, c in ipairs(getconnections(UISx.InputBegan)) do
+                    pcall(function() if c.Function then c.Function(fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.Space), false) end end)
                 end
             end
-        end
-        return false
-    end
-    local function alreadyIn()
-        return player:GetAttribute("LoadingScreenDone") == true
-            or player:GetAttribute("LoadingScreenActive") == false
-    end
-    for _ = 1, 80 do  -- max ~40 detik
-        if alreadyIn() then break end
-        -- cuma fire kalau intro "press any key" udah muncul (game udah Fully Loaded)
-        if introTextVisible() then
-            if firesignal then
-                pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.MouseButton1), false) end)
-                pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Touch), false) end)
-                pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.Space), false) end)
-            end
-            pcall(function()
-                if getconnections then
-                    for _, c in ipairs(getconnections(UISx.InputBegan)) do
-                        pcall(function() if c.Function then c.Function(fakeInput(Enum.UserInputType.MouseButton1), false) end end)
-                    end
-                end
-            end)
-        end
+        end)
         task.wait(0.3)
     end
     task.wait(0.5)  -- jeda kecil biar data game settle
@@ -175,7 +174,7 @@ local function loadState()
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
                 for k in pairs(SETMAP) do
-                    -- v4.2: clear isi table yg SAMA (bukan bikin table baru) — kalau
+                    -- v4.3: clear isi table yg SAMA (bukan bikin table baru) — kalau
                     -- re-assign, referensi yg udah dipegang picker/loop jadi basi -> filter gak jalan.
                     for kk in pairs(state[k]) do state[k][kk] = nil end
                     if type(d[k]) == "table" then for _, n in ipairs(d[k]) do state[k][n] = true end end
@@ -185,11 +184,11 @@ local function loadState()
     end)
 end
 
--- v4.2: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
+-- v4.3: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
 -- nampilin nilai tersimpan. dulu loadState di akhir -> UI udah terlanjur kosong.
 loadState()
 
--- v4.2: AUTO RE-EXEC abis rejoin/hop — daftarin loadstring ke queue_on_teleport.
+-- v4.3: AUTO RE-EXEC abis rejoin/hop — daftarin loadstring ke queue_on_teleport.
 -- tiap teleport (HOP / Anti-Bot hop / rejoin), script auto ke-load lagi di server baru.
 do
     local SCRIPT_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/gag2"
@@ -202,47 +201,8 @@ do
         print("[ZenxFarm] executor gak support queue_on_teleport")
     end
 end
--- v4.2: AUTO SKIP intro pakai firesignal (kebukti berhasil di console).
--- game nungguin 1 input apa aja setelah loaded. firesignal InputBegan = input palsu kebaca.
-task.spawn(function()
-    local UIS = game:GetService("UserInputService")
-    local function fakeInput(itype, kc)
-        return setmetatable({
-            UserInputType = itype or Enum.UserInputType.MouseButton1,
-            KeyCode = kc or Enum.KeyCode.Unknown,
-            Position = Vector3.new(), Delta = Vector3.new(),
-            UserInputState = Enum.UserInputState.Begin,
-        }, { __index = function(_, k)
-            if k == "IsModifierKeyDown" then return function() return false end end
-            return nil
-        end })
-    end
-    local pg = player:FindFirstChildOfClass("PlayerGui")
-    for _ = 1, 40 do  -- coba ~24 detik
-        pg = pg or player:FindFirstChildOfClass("PlayerGui")
-        -- v4.2: cek attribute (akurat), bukan LoadingGui
-        local done = player:GetAttribute("LoadingScreenDone") == true
-                  or player:GetAttribute("LoadingScreenActive") == false
-        if not done then
-            if firesignal then
-                pcall(function() firesignal(UIS.InputBegan, fakeInput(Enum.UserInputType.MouseButton1), false) end)
-                pcall(function() firesignal(UIS.InputBegan, fakeInput(Enum.UserInputType.Touch), false) end)
-                pcall(function() firesignal(UIS.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.Space), false) end)
-            end
-            pcall(function()
-                if getconnections then
-                    for _, c in ipairs(getconnections(UIS.InputBegan)) do
-                        pcall(function() if c.Function then c.Function(fakeInput(Enum.UserInputType.MouseButton1), false) end end)
-                    end
-                end
-            end)
-            print("[ZenxFarm] auto skip intro (firesignal)")
-        else
-            break  -- udah masuk
-        end
-        task.wait(0.6)
-    end
-end)
+-- (auto-skip intro udah dihandle di blok awal — spam sampai bener-bener masuk)
+
 
 -- ---------- cleanup GUI lama ----------
 for _, where in ipairs({ CoreGui, player:FindFirstChildOfClass("PlayerGui") }) do
@@ -317,7 +277,7 @@ function Farm.collectOnce()
                             end
                         end
                     end
-                    -- v4.2: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
+                    -- v4.3: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
                     -- (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
                     if fruitCount == 0 then
                         local ready = plant:GetAttribute("PlantGrowthReady") == true
@@ -466,7 +426,7 @@ task.spawn(function()
 end)
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(3)  -- v4.2: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
+        task.wait(3)  -- v4.3: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
     end
 end)
@@ -742,7 +702,7 @@ local minBtn   = titleBtn(-70, "—", C.card)
 local closeBtn = titleBtn(-36, "✕", C.red)
 
 -- ===== HOP: cari server lain lalu pindah =====
--- v4.2: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
+-- v4.3: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
 -- kumpulin yg ada slot, sort ascending (playing terkecil dulu), teleport ke yg paling sepi.
 local function doHop()
     local TS = game:GetService("TeleportService")
