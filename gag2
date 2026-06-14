@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v3.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v3.9  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,10 +11,10 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v3.8"
+local VER       = "v3.9"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
--- v3.8: TUNGGU GAME FULLY LOADED dulu — sebelum ini script "mati" (gak ada UI/loop).
+-- v3.9: TUNGGU GAME FULLY LOADED dulu — sebelum ini script "mati" (gak ada UI/loop).
 -- penting buat auto re-exec abis rejoin: kalau jalan kepagian (game blm load) -> error.
 -- siap = game.Loaded + character spawn + LoadingGui (intro "tap to play") udah hilang.
 do
@@ -148,7 +148,7 @@ local function loadState()
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
                 for k in pairs(SETMAP) do
-                    -- v3.8: clear isi table yg SAMA (bukan bikin table baru) — kalau
+                    -- v3.9: clear isi table yg SAMA (bukan bikin table baru) — kalau
                     -- re-assign, referensi yg udah dipegang picker/loop jadi basi -> filter gak jalan.
                     for kk in pairs(state[k]) do state[k][kk] = nil end
                     if type(d[k]) == "table" then for _, n in ipairs(d[k]) do state[k][n] = true end end
@@ -158,11 +158,11 @@ local function loadState()
     end)
 end
 
--- v3.8: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
+-- v3.9: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
 -- nampilin nilai tersimpan. dulu loadState di akhir -> UI udah terlanjur kosong.
 loadState()
 
--- v3.8: AUTO RE-EXEC abis rejoin/hop — daftarin loadstring ke queue_on_teleport.
+-- v3.9: AUTO RE-EXEC abis rejoin/hop — daftarin loadstring ke queue_on_teleport.
 -- tiap teleport (HOP / Anti-Bot hop / rejoin), script auto ke-load lagi di server baru.
 do
     local SCRIPT_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/gag2"
@@ -175,7 +175,7 @@ do
         print("[ZenxFarm] executor gak support queue_on_teleport")
     end
 end
--- v3.8: AUTO SKIP "Tap anywhere to play!" — coba SEMUA metode (cloud = touch event).
+-- v3.9: AUTO SKIP "Tap anywhere to play!" — coba SEMUA metode (cloud = touch event).
 -- pas tab manual = touch layar. jadi simulasi touch (VIM TouchEvent) paling mirip.
 task.spawn(function()
     local UIS = game:GetService("UserInputService")
@@ -294,7 +294,7 @@ function Farm.collectOnce()
                             end
                         end
                     end
-                    -- v3.8: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
+                    -- v3.9: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
                     -- (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
                     if fruitCount == 0 then
                         local ready = plant:GetAttribute("PlantGrowthReady") == true
@@ -443,7 +443,7 @@ task.spawn(function()
 end)
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(3)  -- v3.8: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
+        task.wait(3)  -- v3.9: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
     end
 end)
@@ -719,27 +719,43 @@ local minBtn   = titleBtn(-70, "—", C.card)
 local closeBtn = titleBtn(-36, "✕", C.red)
 
 -- ===== HOP: cari server lain lalu pindah =====
--- v3.8: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
+-- v3.9: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
 -- kumpulin yg ada slot, sort ascending (playing terkecil dulu), teleport ke yg paling sepi.
 local function doHop()
     local TS = game:GetService("TeleportService")
     local plr = Players.LocalPlayer
     local placeId = game.PlaceId
-    print("[ZenxFarm] hop... cari server lain")
-    local ok, body = pcall(function()
-        return HS:JSONDecode(game:HttpGet(
-            "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Asc&limit=100"))
-    end)
-    if ok and body and body.data then
+    local currentJob = tostring(game.JobId)
+    print("[ZenxFarm] hop... cari server ada slot")
+    local candidates = {}
+    local cursor = nil
+    -- scan sampai 5 page (500 server) biar banyak pilihan
+    for page = 1, 5 do
+        local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Desc&limit=100"
+        if cursor then url = url .. "&cursor=" .. cursor end
+        local ok, body = pcall(function() return HS:JSONDecode(game:HttpGet(url)) end)
+        if not ok or not body or not body.data then break end
         for _, s in ipairs(body.data) do
-            if s.id ~= game.JobId and s.playing < s.maxPlayers then
-                print("[ZenxFarm] pindah ke "..s.id:sub(1,8).."...")
-                pcall(function() TS:TeleportToPlaceInstance(placeId, s.id, plr) end)
-                return
+            local pl = s.playing or 0
+            local maxP = s.maxPlayers or 6
+            -- sisa slot minimal 2 (biar gak langsung penuh pas masuk) + bukan server skrg
+            if tostring(s.id) ~= currentJob and (maxP - pl) >= 2 then
+                candidates[#candidates+1] = s
             end
         end
+        cursor = body.nextPageCursor
+        if not cursor or cursor == "" then break end
     end
-    print("[ZenxFarm] fallback teleport biasa")
+    if #candidates > 0 then
+        -- pilih random dari kandidat (biar multi-akun gak numpuk di server sama)
+        pcall(function() math.randomseed(tick() + (tonumber(tostring(game.JobId):gsub("%D","")) or 0)) end)
+        local pick = candidates[math.random(1, #candidates)]
+        print(string.format("[ZenxFarm] %d kandidat | pindah ke %s (%d/%d)",
+            #candidates, tostring(pick.id):sub(1,8), pick.playing or 0, pick.maxPlayers or 0))
+        local ok = pcall(function() TS:TeleportToPlaceInstance(placeId, pick.id, plr) end)
+        if ok then return end
+    end
+    print("[ZenxFarm] gak ada server lega, fallback teleport biasa")
     pcall(function() TS:Teleport(placeId, plr) end)
 end
 hopBtn.MouseButton1Click:Connect(function()
