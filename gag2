@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v3.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v3.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,10 +11,10 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v3.7"
+local VER       = "v3.8"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
--- v3.7: TUNGGU GAME FULLY LOADED dulu — sebelum ini script "mati" (gak ada UI/loop).
+-- v3.8: TUNGGU GAME FULLY LOADED dulu — sebelum ini script "mati" (gak ada UI/loop).
 -- penting buat auto re-exec abis rejoin: kalau jalan kepagian (game blm load) -> error.
 -- siap = game.Loaded + character spawn + LoadingGui (intro "tap to play") udah hilang.
 do
@@ -26,10 +26,18 @@ do
     -- sambil nunggu, script auto-skip (v3.5) yg jalan nanti bakal nutup intro.
     local pg = player:WaitForChild("PlayerGui", 30)
     local UISx = game:GetService("UserInputService")
+    local VIMx = game:GetService("VirtualInputManager")
     for _ = 1, 60 do  -- max ~30 detik
         local lg = pg and pg:FindFirstChild("LoadingGui")
         if not lg or not lg.Enabled then break end
-        -- coba skip intro tiap iterasi (biar gak nyangkut nunggu)
+        -- coba skip intro: touch event (cloud) + getconnections
+        pcall(function()
+            local cam = workspace.CurrentCamera
+            local vs = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+            VIMx:SendTouchEvent(1, vs.X/2, vs.Y/2, 0)
+            task.wait(0.05)
+            VIMx:SendTouchEvent(0, vs.X/2, vs.Y/2, 0)
+        end)
         pcall(function()
             if getconnections then
                 for _, c in ipairs(getconnections(UISx.InputBegan)) do
@@ -140,7 +148,7 @@ local function loadState()
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
                 for k in pairs(SETMAP) do
-                    -- v3.7: clear isi table yg SAMA (bukan bikin table baru) — kalau
+                    -- v3.8: clear isi table yg SAMA (bukan bikin table baru) — kalau
                     -- re-assign, referensi yg udah dipegang picker/loop jadi basi -> filter gak jalan.
                     for kk in pairs(state[k]) do state[k][kk] = nil end
                     if type(d[k]) == "table" then for _, n in ipairs(d[k]) do state[k][n] = true end end
@@ -150,11 +158,11 @@ local function loadState()
     end)
 end
 
--- v3.7: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
+-- v3.8: load state DI SINI (sebelum UI dibangun) — biar textbox/picker langsung
 -- nampilin nilai tersimpan. dulu loadState di akhir -> UI udah terlanjur kosong.
 loadState()
 
--- v3.7: AUTO RE-EXEC abis rejoin/hop — daftarin loadstring ke queue_on_teleport.
+-- v3.8: AUTO RE-EXEC abis rejoin/hop — daftarin loadstring ke queue_on_teleport.
 -- tiap teleport (HOP / Anti-Bot hop / rejoin), script auto ke-load lagi di server baru.
 do
     local SCRIPT_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/gag2"
@@ -167,39 +175,49 @@ do
         print("[ZenxFarm] executor gak support queue_on_teleport")
     end
 end
--- v3.7: AUTO SKIP "Tap anywhere to play!" — GAG2 nahan di intro nunggu input.
--- VIM gak jalan di cloud emulator, jadi pakai getconnections(InputBegan) fire langsung.
+-- v3.8: AUTO SKIP "Tap anywhere to play!" — coba SEMUA metode (cloud = touch event).
+-- pas tab manual = touch layar. jadi simulasi touch (VIM TouchEvent) paling mirip.
 task.spawn(function()
     local UIS = game:GetService("UserInputService")
+    local VIM = game:GetService("VirtualInputManager")
     local pg = player:FindFirstChildOfClass("PlayerGui")
     for _ = 1, 40 do  -- coba ~20 detik
         pg = pg or player:FindFirstChildOfClass("PlayerGui")
         local lg = pg and pg:FindFirstChild("LoadingGui")
         if lg and lg.Enabled then
-            -- METODE UTAMA: fire semua connection InputBegan (game nungguin input apa aja)
+            local cam = workspace.CurrentCamera
+            local vs = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+            local cx, cy = vs.X/2, vs.Y/2
+            -- METODE 1: TOUCH event (paling mirip tab manual di cloud/mobile)
+            pcall(function()
+                VIM:SendTouchEvent(1, cx, cy, 0)        -- jari turun (begin)
+                task.wait(0.05)
+                VIM:SendTouchEvent(2, cx, cy, 0)        -- jari diem (move)
+                task.wait(0.05)
+                VIM:SendTouchEvent(0, cx, cy, 0)        -- jari angkat (end) -> tap
+            end)
+            -- METODE 2: getconnections (kalau ada)
             pcall(function()
                 if getconnections then
                     for _, c in ipairs(getconnections(UIS.InputBegan)) do
                         pcall(function() if c.Fire then c:Fire({UserInputType=Enum.UserInputType.Touch, KeyCode=Enum.KeyCode.Unknown}, false) end end)
-                        pcall(function() if c.Function then c.Function({UserInputType=Enum.UserInputType.Touch}, false) end end)
-                    end
-                    for _, c in ipairs(getconnections(UIS.TouchTap)) do
-                        pcall(function() if c.Fire then c:Fire({Vector2.new()}, false) end end)
                     end
                 end
             end)
-            -- FALLBACK: VIM (kalau bukan cloud)
+            -- METODE 3: VIM key + mouse (kalau bukan cloud)
             pcall(function()
-                local VIM = game:GetService("VirtualInputManager")
                 VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
                 task.wait(0.03)
                 VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                task.wait(0.03)
+                VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
             end)
-            print("[ZenxFarm] auto skip intro (tap to play)")
+            print("[ZenxFarm] auto skip intro (touch+key)")
         else
             break  -- udah masuk
         end
-        task.wait(0.5)
+        task.wait(0.6)
     end
 end)
 
@@ -276,7 +294,7 @@ function Farm.collectOnce()
                             end
                         end
                     end
-                    -- v3.7: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
+                    -- v3.8: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
                     -- (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
                     if fruitCount == 0 then
                         local ready = plant:GetAttribute("PlantGrowthReady") == true
@@ -425,7 +443,7 @@ task.spawn(function()
 end)
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(3)  -- v3.7: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
+        task.wait(3)  -- v3.8: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
     end
 end)
@@ -701,7 +719,7 @@ local minBtn   = titleBtn(-70, "—", C.card)
 local closeBtn = titleBtn(-36, "✕", C.red)
 
 -- ===== HOP: cari server lain lalu pindah =====
--- v3.7: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
+-- v3.8: cari server PALING SEPI (kebalikan market). scan max 30 page (3000 server),
 -- kumpulin yg ada slot, sort ascending (playing terkecil dulu), teleport ke yg paling sepi.
 local function doHop()
     local TS = game:GetService("TeleportService")
