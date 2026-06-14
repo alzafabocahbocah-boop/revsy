@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.0  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.0"
+local VER       = "v6.1"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -890,10 +890,10 @@ task.spawn(function()
     end
 end)
 
--- ===== AUTO GRAB SEED JATUH (event) — v5.4: teleport ke TITIK JATUH, gak ke atas =====
--- grab butuh karakter pindah ke seed (server cek jarak) — sama kayak sc lain.
--- TAPI jangan ikut terbang: ambil X/Z seed, pakai Y KARAKTER (tinggi tanah).
--- jadi karakter geser horizontal ke bawah seed, bukan loncat ke udara ngejar seed melayang.
+-- ===== AUTO GRAB SEED JATUH (event) — v6.1: NGEBUT (biar gak kalah sama orang) =====
+-- prioritas KECEPATAN: fire touch DULUAN tanpa nunggu/pindah (firetouchinterest sering
+-- udah cukup walau gak nempel). baru kalau seed masih ada di scan berikutnya, geser
+-- karakter ke titik jatuhnya. buang task.wait per-seed (dulu 0.05s/seed = lambat).
 function Farm.grabSeedOnce()
     local map = workspace:FindFirstChild("Map")
     local folder = map and map:FindFirstChild("SeedPackSpawnClient")
@@ -901,27 +901,48 @@ function Farm.grabSeedOnce()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
+    if not firetouchinterest then return end
+
+    -- PASS 1: fire touch SEMUA seed langsung (tanpa pindah, tanpa delay) — secepat mungkin
+    local pending = {}
     for _, o in ipairs(folder:GetDescendants()) do
-        if o:IsA("BasePart") and not o:GetAttribute("_zgrab") then
-            o:SetAttribute("_zgrab", true)
-            -- titik jatuh: X/Z dari seed, Y tetap punya karakter (gak naik ke udara)
-            pcall(function()
-                local sp = o.Position
-                root.CFrame = CFrame.new(sp.X, root.Position.Y, sp.Z)
-            end)
-            task.wait(0.05)
-            if firetouchinterest then
+        if o:IsA("BasePart") then
+            local tries = o:GetAttribute("_zgrabN") or 0
+            if tries < 3 then  -- coba grab tiap seed maks 3x
                 pcall(function()
                     firetouchinterest(root, o, 0)
                     firetouchinterest(root, o, 1)
                 end)
+                o:SetAttribute("_zgrabN", tries + 1)
+                pending[#pending+1] = o
             end
+        end
+    end
+
+    -- PASS 2: buat seed yg masih ada (touch gak cukup) -> geser karakter ke titik jatuh,
+    -- lalu touch lagi. cuma 1x geser ke seed terdekat biar gak loncat-loncat.
+    if #pending > 0 then
+        -- pilih seed terdekat ke karakter
+        local nearest, bestD
+        for _, o in ipairs(pending) do
+            if o.Parent then
+                local d = (o.Position - root.Position).Magnitude
+                if not bestD or d < bestD then bestD, nearest = d, o end
+            end
+        end
+        if nearest and nearest.Parent then
+            local sp = nearest.Position
+            pcall(function() root.CFrame = CFrame.new(sp.X, root.Position.Y, sp.Z) end)
+            pcall(function()
+                firetouchinterest(root, nearest, 0)
+                firetouchinterest(root, nearest, 1)
+            end)
         end
     end
 end
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(0.05)
+        task.wait(0.03)  -- v6.1: 0.05 -> 0.03s (scan lebih sering, lebih cepat nyamber)
         if isCurrentGen() and state.autoGrabSeed then pcall(Farm.grabSeedOnce) end
     end
 end)
