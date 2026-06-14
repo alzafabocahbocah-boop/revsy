@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v5.2  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v5.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v5.2"
+local VER       = "v5.4"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -733,9 +733,10 @@ task.spawn(function()
     end
 end)
 
--- ===== AUTO GRAB SEED JATUH (event) — logika versi 1.0 (kebukti ambil) =====
--- seed jatuh = BasePart di Workspace.Map.SeedPackSpawnClient. ambil = teleport ke
--- seed (offset Y +2) + firetouchinterest. touch-based, gak ada remote.
+-- ===== AUTO GRAB SEED JATUH (event) — v5.4: teleport ke TITIK JATUH, gak ke atas =====
+-- grab butuh karakter pindah ke seed (server cek jarak) — sama kayak sc lain.
+-- TAPI jangan ikut terbang: ambil X/Z seed, pakai Y KARAKTER (tinggi tanah).
+-- jadi karakter geser horizontal ke bawah seed, bukan loncat ke udara ngejar seed melayang.
 function Farm.grabSeedOnce()
     local map = workspace:FindFirstChild("Map")
     local folder = map and map:FindFirstChild("SeedPackSpawnClient")
@@ -746,8 +747,12 @@ function Farm.grabSeedOnce()
     for _, o in ipairs(folder:GetDescendants()) do
         if o:IsA("BasePart") and not o:GetAttribute("_zgrab") then
             o:SetAttribute("_zgrab", true)
-            pcall(function() root.CFrame = o.CFrame + Vector3.new(0, 2, 0) end)
-            task.wait(0.04)
+            -- titik jatuh: X/Z dari seed, Y tetap punya karakter (gak naik ke udara)
+            pcall(function()
+                local sp = o.Position
+                root.CFrame = CFrame.new(sp.X, root.Position.Y, sp.Z)
+            end)
+            task.wait(0.05)
             if firetouchinterest then
                 pcall(function()
                     firetouchinterest(root, o, 0)
