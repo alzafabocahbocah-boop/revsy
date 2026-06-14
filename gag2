@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v4.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v4.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v4.6"
+local VER       = "v4.7"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -61,12 +61,43 @@ task.spawn(function()
         local camOk = cam and cam.CameraType == Enum.CameraType.Custom
         return (hum.WalkSpeed > 0) and (not hrp.Anchored) and (moving or camOk)
     end
+    -- v4.7: VirtualInputManager — kirim input HARDWARE asli (lewat pipeline Roblox).
+    -- ini yg paling ampuh: game "ngerasa" kita pencet keyboard/mouse beneran,
+    -- persis kayak pencet manual. firesignal sering gak nembus -> VIM nembus.
+    local VIM = nil
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    local cam = workspace.CurrentCamera
+    local function screenCenter()
+        local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
+        return vp.X/2, vp.Y/2
+    end
+    local function vimKey(kc)
+        if not VIM then return end
+        pcall(function() VIM:SendKeyEvent(true,  kc, false, game) end)
+        task.wait(0.03)
+        pcall(function() VIM:SendKeyEvent(false, kc, false, game) end)
+    end
+    local function vimClick()
+        if not VIM then return end
+        local x, y = screenCenter()
+        pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true,  game, 0) end)
+        task.wait(0.03)
+        pcall(function() VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
+    end
+
     for _ = 1, 200 do  -- max ~60 detik (spam tiap 0.3s)
         if reallyIn() then
             print("[ZenxFarm] auto-skip: berhasil masuk!")
             break
         end
-        -- spam SEMUA tipe input terus (keyboard plg penting — "press any key")
+        -- 1) VIM: input hardware asli (PRIORITAS — paling ampuh)
+        if VIM then
+            vimKey(Enum.KeyCode.Space)
+            vimKey(Enum.KeyCode.Return)
+            vimKey(Enum.KeyCode.E)
+            vimClick()  -- klik tengah layar (mouse / touch di mobile/cloud)
+        end
+        -- 2) firesignal: fallback kalau VIM gak ada
         if firesignal then
             pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.Space), false) end)
             pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.E), false) end)
@@ -74,6 +105,7 @@ task.spawn(function()
             pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.MouseButton1), false) end)
             pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Touch), false) end)
         end
+        -- 3) panggil langsung connection InputBegan (fallback terakhir)
         pcall(function()
             if getconnections then
                 for _, c in ipairs(getconnections(UISx.InputBegan)) do
