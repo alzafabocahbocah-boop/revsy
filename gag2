@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.6"
+local VER       = "v6.7"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -472,7 +472,10 @@ function Farm.collectOnce()
                             if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
                                 pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                                 fired = fired + 1; fruitCount = fruitCount + 1
-                                if fired % 5 == 0 then task.wait() end
+                                -- v6.7: jeda tiap 25 fire (dulu tiap 5) — 5x lebih sedikit
+                                -- task.wait -> satu siklus collect jauh lebih cepat kelar,
+                                -- jadi abis sell langsung collect lagi (gak macet lama).
+                                if fired % 25 == 0 then task.wait() end
                             end
                         end
                     end
@@ -671,21 +674,31 @@ task.spawn(function()
 end)
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(5)
-        if isCurrentGen() and state.autoSell then
-            if state.sellWhenFull then
-                -- v5.7: mode "pas penuh" — sell HANYA kalau isi >= kapasitas
-                local cur = getInvCount()
-                local mx  = getInvMax()
-                if cur >= mx then
-                    print(string.format("[ZenxFarm] backpack penuh (%d/%d) -> sell", cur, mx))
-                    pcall(Farm.sellOnce)
+        pcall(function()
+            -- v6.7: cek tiap 1s (dulu 5s) biar pas penuh langsung dijual, gak nunggu lama.
+            -- seluruh loop dibungkus pcall biar gak mati total kalau ada error.
+            task.wait(1)
+            if isCurrentGen() and state.autoSell then
+                if state.sellWhenFull then
+                    -- mode "pas penuh" — sell HANYA kalau isi >= kapasitas
+                    local cur = getInvCount()
+                    local mx  = getInvMax()
+                    if cur >= mx then
+                        print(string.format("[ZenxFarm] backpack penuh (%d/%d) -> sell", cur, mx))
+                        Farm.sellOnce()
+                    end
+                else
+                    -- mode interval: jangan tiap 1s (kebanyakan) — pakai counter tiap 5s
+                    Farm._sellTick = (Farm._sellTick or 0) + 1
+                    if Farm._sellTick >= 5 then
+                        Farm._sellTick = 0
+                        Farm.sellOnce()
+                    end
                 end
-            else
-                pcall(Farm.sellOnce)  -- mode interval biasa
             end
-        end
+        end)
     end
+    print("[ZenxFarm] loop sell berhenti (generasi berubah)")
 end)
 task.spawn(function()
     while isCurrentGen() do
