@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.3  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.3"
+local VER       = "v6.4"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -954,6 +954,54 @@ end)
 -- prioritas KECEPATAN: fire touch DULUAN tanpa nunggu/pindah (firetouchinterest sering
 -- udah cukup walau gak nempel). baru kalau seed masih ada di scan berikutnya, geser
 -- karakter ke titik jatuhnya. buang task.wait per-seed (dulu 0.05s/seed = lambat).
+
+-- v6.4: grab 1 seed secepat mungkin (touch + opsional geser ke titik jatuh).
+-- dipakai bareng oleh listener event (instan pas spawn) DAN polling (jaring pengaman).
+local function grabOneSeed(o)
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not (root and firetouchinterest and o and o:IsA("BasePart")) then return end
+    -- 1) fire touch LANGSUNG (tanpa pindah) — paling cepat
+    pcall(function()
+        firetouchinterest(root, o, 0)
+        firetouchinterest(root, o, 1)
+    end)
+    -- 2) kalau masih ada & posisinya valid, geser ke titik jatuh lalu touch lagi
+    if o.Parent and o:IsDescendantOf(workspace) then
+        local sp = o.Position
+        if sp.Magnitude > 1 and (sp - root.Position).Magnitude < 150 then
+            pcall(function() root.CFrame = CFrame.new(sp.X, root.Position.Y, sp.Z) end)
+            pcall(function()
+                firetouchinterest(root, o, 0)
+                firetouchinterest(root, o, 1)
+            end)
+        end
+    end
+end
+
+-- v6.4: LISTENER INSTAN — grab seed DETIK ITU JUGA pas muncul (sebelum sempat jatuh).
+-- ini yg bikin sc lain selalu duluan: mereka pakai event, bukan nunggu polling.
+do
+    local function hookFolder(folder)
+        if not folder then return end
+        folder.DescendantAdded:Connect(function(o)
+            if not (isCurrentGen() and state.autoGrabSeed) then return end
+            if o:IsA("BasePart") then
+                grabOneSeed(o)  -- instan, gak nunggu loop
+            end
+        end)
+    end
+    task.spawn(function()
+        -- folder bisa belum ada pas script jalan -> tungguin
+        for _ = 1, 60 do
+            local map = workspace:FindFirstChild("Map")
+            local folder = map and map:FindFirstChild("SeedPackSpawnClient")
+            if folder then hookFolder(folder); break end
+            task.wait(1)
+        end
+    end)
+end
+
 function Farm.grabSeedOnce()
     local map = workspace:FindFirstChild("Map")
     local folder = map and map:FindFirstChild("SeedPackSpawnClient")
