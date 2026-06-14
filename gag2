@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v4.4"
+local VER       = "v4.5"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -28,17 +28,14 @@ do
     end
 end
 
--- v4.4: TUNGGU GAME FULLY LOADED dulu — sebelum ini script "mati" (gak ada UI/loop).
--- penting buat auto re-exec abis rejoin: kalau jalan kepagian (game blm load) -> error.
--- siap = game.Loaded + character spawn + LoadingGui (intro "tap to play") udah hilang.
-do
-    if not game:IsLoaded() then game.Loaded:Wait() end
-    -- tunggu character
-    if not player.Character then player.CharacterAdded:Wait() end
-    player.Character:WaitForChild("HumanoidRootPart", 30)
-    -- tunggu intro "Tap anywhere to play" kelar (LoadingGui hilang).
-    -- sambil nunggu, script auto-skip (v3.5) yg jalan nanti bakal nutup intro.
-    local pg = player:WaitForChild("PlayerGui", 30)
+-- v4.5: TUNGGU MINIMAL (game loaded + character) — biar UI langsung kebuild.
+-- skip "Press any key to play" dipindah ke BACKGROUND (task.spawn) -> gak nahan script.
+if not game:IsLoaded() then game.Loaded:Wait() end
+if not player.Character then player.CharacterAdded:Wait() end
+player.Character:WaitForChild("HumanoidRootPart", 30)
+
+-- v4.5: SKIP "Press any key to play" — jalan di BACKGROUND, gak blokir UI.
+task.spawn(function()
     local UISx = game:GetService("UserInputService")
     -- fake InputObject lengkap (biar diterima kayak input asli)
     local function fakeInput(itype, kc)
@@ -52,24 +49,23 @@ do
             return nil
         end })
     end
-    -- v4.4: SPAM fire signal terus dari awal sampai BENER-BENER masuk.
     -- "masuk" dideteksi dari karakter udah bisa main: Humanoid Running + WalkSpeed>0
-    -- + camera Custom (subject humanoid). gak usah deteksi teks/loading.
     local function reallyIn()
         local c = player.Character
         local hum = c and c:FindFirstChildOfClass("Humanoid")
         local hrp = c and c:FindFirstChild("HumanoidRootPart")
         if not (hum and hrp) then return false end
-        -- udah main = humanoid jalan + bisa gerak + gak di-anchor
         local moving = hum:GetState() == Enum.HumanoidStateType.Running
                     or hum:GetState() == Enum.HumanoidStateType.RunningNoPhysics
         local cam = workspace.CurrentCamera
         local camOk = cam and cam.CameraType == Enum.CameraType.Custom
         return (hum.WalkSpeed > 0) and (not hrp.Anchored) and (moving or camOk)
-            and (player:GetAttribute("LoadingScreenDone") == true or moving)
     end
     for _ = 1, 200 do  -- max ~60 detik (spam tiap 0.3s)
-        if reallyIn() then break end
+        if reallyIn() then
+            print("[ZenxFarm] auto-skip: berhasil masuk!")
+            break
+        end
         -- spam SEMUA tipe input terus (keyboard plg penting — "press any key")
         if firesignal then
             pcall(function() firesignal(UISx.InputBegan, fakeInput(Enum.UserInputType.Keyboard, Enum.KeyCode.Space), false) end)
@@ -87,8 +83,8 @@ do
         end)
         task.wait(0.3)
     end
-    task.wait(0.5)  -- jeda kecil biar data game settle
-end
+end)
+
 
 -- ---------- palette (samain dgn ZENX TELUR) ----------
 local C = {
