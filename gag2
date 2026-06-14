@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v5.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v5.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v5.1"
+local VER       = "v5.2"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -28,50 +28,22 @@ do
     end
 end
 
--- v5.0: AUTO-REJOIN kalau kena kick/disconnect (Error 267 "save data didn't load" dll).
--- error ini sering kejadian pas rejoin — kadang masalah Roblox murni, kadang anti-cheat.
--- solusi paling andal: deteksi prompt error -> teleport balik otomatis ke game yg sama.
+-- v5.2: AUTO-REJOIN — versi AMAN (anti hop-loop).
+-- v5.0/5.1 dulu nge-scan teks CoreGui cari "disconnect/kicked" tiap detik -> sering
+-- salah-match teks UI lain -> teleport -> re-exec -> match lagi -> HOP LOOP gak berhenti.
+-- sekarang: cuma rejoin kalau teleport yg KITA mulai sendiri beneran GAGAL (aman, gak loop).
+-- kick 267 dari Roblox/anti-cheat TIDAK auto-rejoin lagi (biar gak muter). kalau mau,
+-- nanti kita bikin toggle khusus yg deteksinya bener-bener spesifik.
 do
     local TS = game:GetService("TeleportService")
     local placeId = game.PlaceId
-    local rejoined = false
-    local function rejoin(why)
-        if rejoined then return end
-        rejoined = true
-        print("[ZenxFarm] kena: "..tostring(why).." -> auto-rejoin...")
-        for attempt = 1, 20 do
-            local ok = pcall(function() TS:Teleport(placeId, player) end)
-            if ok then break end
-            task.wait(3)
-        end
-    end
-    -- 1) lewat event teleport gagal
     pcall(function()
         player.OnTeleport:Connect(function(stx)
             if stx == Enum.TeleportState.Failed then
-                pcall(function() rejoin("teleport failed") end)
+                print("[ZenxFarm] teleport gagal -> coba ulang sekali")
+                pcall(function() TS:Teleport(placeId, player) end)
             end
         end)
-    end)
-    -- 2) deteksi prompt "Disconnected"/"kicked"/267 di CoreGui (paling spesifik & aman).
-    -- ErrorMessageChanged sengaja TIDAK dipakai: dia nyala buat error apa aja -> bisa
-    -- bikin rejoin gak perlu. cuma rejoin kalau kebukti prompt kick beneran muncul.
-    task.spawn(function()
-        while not rejoined do
-            task.wait(1)
-            pcall(function()
-                for _, g in ipairs(CoreGui:GetDescendants()) do
-                    if (g:IsA("TextLabel") or g:IsA("TextButton")) then
-                        local t = tostring(g.Text):lower()
-                        if t:find("disconnect") or t:find("kicked")
-                        or t:find("error code: 267") or t:find("save data didn") then
-                            rejoin("prompt: "..tostring(g.Text):sub(1,40))
-                            break
-                        end
-                    end
-                end
-            end)
-        end
     end)
 end
 
