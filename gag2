@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.5  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.4"
+local VER       = "v6.5"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -28,84 +28,10 @@ do
     end
 end
 
--- v6.3: AUTO-REJOIN — versi AMAN + deteksi kick 267 yg KETAT.
--- pelajaran dari v5.0 (yg bikin hop-loop): deteksi gak boleh asal "ada kata disconnect".
--- sekarang trigger HANYA kalau ketemu prompt kick yg PERSIS:
---   (a) judul "disconnect/koneksi terputus" DAN (b) ada "267" DAN (c) ada tombol keluar/leave
--- + harus kebukti 2x scan berturut (biar bukan teks sekejap) + maks 3x retry (gak muter).
-do
-    local TS = game:GetService("TeleportService")
-    local placeId = game.PlaceId
-
-    -- teleport gagal yg kita mulai sendiri -> coba ulang sekali (aman)
-    pcall(function()
-        player.OnTeleport:Connect(function(stx)
-            if stx == Enum.TeleportState.Failed then
-                print("[ZenxFarm] teleport gagal -> coba ulang sekali")
-                pcall(function() TS:Teleport(placeId, player) end)
-            end
-        end)
-    end)
-
-    -- deteksi prompt kick 267 yg spesifik
-    task.spawn(function()
-        -- v6.3: pakai cek generasi mandiri (isCurrentGen blm didefinisikan di titik ini)
-        local genv2 = (typeof(getgenv) == "function") and getgenv() or _G
-        local myGen2 = nil
-        local function stillMe()
-            return myGen2 == nil or genv2.ZenxFarmGen == myGen2
-        end
-        task.wait(2)  -- kasih waktu script utama set generasi dulu
-        myGen2 = genv2.ZenxFarmGen
-        local confirms = 0   -- berapa scan berturut ketemu prompt 267
-        local retries  = 0   -- berapa kali udah coba rejoin
-        local done = false
-        while stillMe() and not done do
-            task.wait(1.5)
-            local found267 = false
-            pcall(function()
-                local hasTitle, has267, hasBtn = false, false, false
-                for _, g in ipairs(CoreGui:GetDescendants()) do
-                    if g:IsA("TextLabel") or g:IsA("TextButton") then
-                        local t = tostring(g.Text):lower()
-                        -- (a) judul prompt kick
-                        if t:find("koneksi terputus") or t:find("disconnect") then hasTitle = true end
-                        -- (b) kode error 267 (yg spesifik buat save-data-fail)
-                        if t:find("267") then has267 = true end
-                        -- (c) tombol keluar/leave (ciri prompt kick beneran)
-                        if g:IsA("TextButton") and (t == "keluar" or t == "leave"
-                           or t:find("keluar") or t:find("leave")) then hasBtn = true end
-                    end
-                end
-                -- WAJIB ketiganya ada (judul + 267 + tombol) -> baru dianggap kick 267
-                found267 = hasTitle and has267 and hasBtn
-            end)
-
-            if found267 then
-                confirms = confirms + 1
-                if confirms >= 2 then  -- konfirmasi 2x berturut (bukan teks sekejap)
-                    if retries < 3 then
-                        retries = retries + 1
-                        confirms = 0
-                        print("[ZenxFarm] kick 267 terdeteksi -> auto-rejoin ("..retries.."/3)")
-                        -- rejoin ke server (teleport biasa; Roblox bakal kasih server baru)
-                        local ok = pcall(function() TS:Teleport(placeId, player) end)
-                        if ok then
-                            done = true  -- teleport jalan; script bakal di-kill & re-exec
-                        else
-                            task.wait(3)  -- gagal, tunggu lalu loop coba lagi (sampai batas)
-                        end
-                    else
-                        print("[ZenxFarm] udah 3x rejoin gagal — berhenti (rejoin manual aja)")
-                        done = true
-                    end
-                end
-            else
-                confirms = 0  -- prompt ilang/gak lengkap -> reset hitungan
-            end
-        end
-    end)
-end
+-- v6.5: AUTO-REJOIN DIMATIKAN (atas permintaan).
+-- ternyata auto-rejoin (teleport balik pas 267) malah sering bikin error 267 lagi —
+-- teleport-nya sendiri ketrigger anti-cheat / data load gagal. lebih aman rejoin MANUAL.
+-- blok deteksi 267 + OnTeleport.Failed dihapus total. gak ada teleport otomatis lagi.
 
 -- v4.5: TUNGGU MINIMAL (game loaded + character) — biar UI langsung kebuild.
 -- skip "Press any key to play" dipindah ke BACKGROUND (task.spawn) -> gak nahan script.
@@ -676,11 +602,17 @@ function Farm.buySeedOnce()
 end
 
 -- loop tiap fitur: jalan kalau toggle ON. berhenti kalau ada eksekusi baru (gen berubah).
+-- v6.5: loop diperkuat — SELURUH isi dibungkus pcall biar thread gak mati total
+-- kalau ada 1 error. dulu kalau error di luar pcall(collectOnce), thread mati ->
+-- "auto collect tiba-tiba berhenti". sekarang gak bisa mati gara-gara error.
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(0.2)  -- v5.8: dipercepat dari 0.5s -> 0.2s (collect lebih sering)
-        if isCurrentGen() and state.autoCollect then pcall(Farm.collectOnce) end
+        pcall(function()
+            task.wait(0.2)  -- collect tiap 0.2s
+            if isCurrentGen() and state.autoCollect then Farm.collectOnce() end
+        end)
     end
+    print("[ZenxFarm] loop collect berhenti (generasi berubah / execute ulang)")
 end)
 task.spawn(function()
     while isCurrentGen() do
@@ -763,19 +695,17 @@ function Farm.plantOnce()
     local planted = 0
     for _, s in ipairs(seeds) do
         if not state.autoPlant then break end
-        -- equip Tool (game butuh seed di-pegang — arg3 = Tool di Workspace.<char>)
-        pcall(function() hum:EquipTool(s.tool) end)
-        task.wait(0.1)
+        -- v6.5: BRUTAL — fire langsung tanpa equip & tanpa wait per-seed.
+        -- (dari sniff, arg3 cukup referensi Tool; gak wajib di-equip dulu)
         local pos = plantPos()
         pcall(function() p:Fire(pos, s.name, s.tool) end)
         planted = planted + 1
-        task.wait(0.15)
     end
     if planted > 0 then print("[ZenxFarm] plant: "..planted.." seed (loc="..tostring(state.plantLocation)..")") end
 end
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(4)
+        task.wait(0.2)  -- v6.5: 4s -> 0.2s (plant brutal/cepat)
         if isCurrentGen() and state.autoPlant then pcall(Farm.plantOnce) end
     end
 end)
