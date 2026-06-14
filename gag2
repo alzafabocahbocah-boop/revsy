@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v5.9  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.0  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v5.9"
+local VER       = "v6.0"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -646,12 +646,72 @@ task.spawn(function()
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
     end
 end)
--- ===== AUTO PLANT (placeholder — fungsi nyusul via sniff PlantSeed) =====
+-- ===== AUTO PLANT — format hasil sniff: PlantSeed:Fire(position, seedName, seedTool) =====
+-- arg1 = Vector3 posisi tanam, arg2 = nama seed (string), arg3 = Tool seed (di-equip).
+-- alur: ambil Tool seed dari Backpack/Character -> equip ke karakter -> fire di posisi.
+-- posisi: "self" = sekitar karakter (offset acak kecil biar gak numpuk 1 titik),
+--         "random" = acak di area kebun (pakai bounding box plot kamu).
 function Farm.plantOnce()
-    -- TODO: Plant.PlantSeed:Fire(arg1,arg2,arg3) — perlu sniff dulu format-nya.
-    -- location: state.plantLocation ("self"=lokasi kamu / "random"=acak di garden)
-    -- jenis seed: state.selectedPlant (atau buyAllSeeds)
-    print("[ZenxFarm] (placeholder) plant dipanggil — loc="..tostring(state.plantLocation))
+    local p = pkt("Plant", "PlantSeed")
+    if not p or not p.Fire then print("[ZenxFarm] PlantSeed packet gak ada"); return end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not (char and hum and hrp) then return end
+    local bp = player:FindFirstChildOfClass("Backpack")
+
+    -- kumpulin Tool seed yg ada (dari Backpack + Character). seed = attr SeedTool / nama cocok.
+    local function collectSeedTools()
+        local tools = {}
+        for _, holder in ipairs({char, bp}) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    if t:IsA("Tool") then
+                        -- nama seed: attr SeedTool, atau dari nama Tool sendiri
+                        local seedName = t:GetAttribute("SeedTool") or t.Name
+                        if seedName then
+                            -- filter pilihan: allPlantSeed=true -> semua; else cuma yg dipilih
+                            local ok = state.allPlantSeed or (state.selectedPlant[seedName] == true)
+                            if ok then tools[#tools+1] = {tool = t, name = seedName} end
+                        end
+                    end
+                end
+            end
+        end
+        return tools
+    end
+
+    -- titik tanam
+    local function plantPos()
+        if state.plantLocation == "random" then
+            -- acak di sekitar karakter dalam radius (anggap kebun kamu di sekitarmu)
+            local r = 12
+            local ox = (math.random() * 2 - 1) * r
+            local oz = (math.random() * 2 - 1) * r
+            return hrp.Position + Vector3.new(ox, 0, oz)
+        else
+            -- "self": sekitar karakter, offset kecil acak biar gak numpuk 1 titik
+            local ox = (math.random() * 2 - 1) * 4
+            local oz = (math.random() * 2 - 1) * 4
+            return hrp.Position + Vector3.new(ox, 0, oz)
+        end
+    end
+
+    local seeds = collectSeedTools()
+    if #seeds == 0 then return end  -- gak ada seed cocok di inventory
+
+    local planted = 0
+    for _, s in ipairs(seeds) do
+        if not state.autoPlant then break end
+        -- equip Tool (game butuh seed di-pegang — arg3 = Tool di Workspace.<char>)
+        pcall(function() hum:EquipTool(s.tool) end)
+        task.wait(0.1)
+        local pos = plantPos()
+        pcall(function() p:Fire(pos, s.name, s.tool) end)
+        planted = planted + 1
+        task.wait(0.15)
+    end
+    if planted > 0 then print("[ZenxFarm] plant: "..planted.." seed (loc="..tostring(state.plantLocation)..")") end
 end
 task.spawn(function()
     while isCurrentGen() do
