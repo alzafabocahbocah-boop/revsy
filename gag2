@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v7.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v7.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v7.6"
+local VER       = "v7.7"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -307,6 +307,7 @@ local state = {
     collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
     collectExpensiveFirst = false, -- v7.6: collect buah termahal duluan
+    debugLog      = false,      -- v7.7: print detail tiap siklus (default OFF, cegah console flood -> lag)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
     selectedShovel = {},        -- v7.0: jenis seed yg di-shovel (HANYA yg dipilih)
     shovelAll     = false,      -- v7.0: false = cuma yg dipilih (default gak shovel semua)
@@ -342,7 +343,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","autoShovel","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","debugLog","autoShovel","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
@@ -403,6 +404,11 @@ local genv = (typeof(getgenv) == "function") and getgenv() or _G
 genv.ZenxFarmGen = (genv.ZenxFarmGen or 0) + 1
 local MY_GEN = genv.ZenxFarmGen
 local function isCurrentGen() return genv.ZenxFarmGen == MY_GEN end
+
+-- v7.7: debug-print — cuma jalan kalau state.debugLog ON.
+-- print yg berulang tiap siklus (collect/sell/buy/dll) PAKAI INI, biar console
+-- gak kebanjiran ribuan baris -> itu penyebab "lama-lama nge-frame".
+local function dprint(...) if state.debugLog then print(...) end end
 
 -- ============================================================
 -- FUNGSI FARM (placeholder — diisi nanti via debug)
@@ -564,7 +570,7 @@ function Farm.collectOnce()
         for nm, c in pairs(typesFired) do tlist[#tlist+1] = nm.."("..c..")" end
         -- v6.8: tambah DURASI siklus — biar ketahuan collect makan waktu berapa detik
         local _dur = tick() - _t0
-        print(string.format("[ZenxFarm] collect fired=%d skipped=%d durasi=%.2fs | jenis: %s",
+        dprint(string.format("[ZenxFarm] collect fired=%d skipped=%d durasi=%.2fs | jenis: %s",
             fired, skipped, _dur, (#tlist>0 and table.concat(tlist,", ") or "-")))
     end
 end
@@ -661,7 +667,7 @@ function Farm.sellOnce()
     end
     if sold > 0 then
         local tl = {}; for n, c in pairs(types) do tl[#tl+1] = n.."("..c..")" end
-        print("[ZenxFarm] sell per-jenis: "..table.concat(tl, ", "))
+        dprint("[ZenxFarm] sell per-jenis: "..table.concat(tl, ", "))
     end
 end
 
@@ -722,7 +728,7 @@ function Farm.buySeedOnce()
         end
         task.wait()  -- 1 frame antar seed biar gak banjir
     end
-    print("[ZenxFarm] buy seed: "..#list.." jenis x"..Farm.buyPerSeed.." = "..fired.." fire")
+    dprint("[ZenxFarm] buy seed: "..#list.." jenis x"..Farm.buyPerSeed.." = "..fired.." fire")
 end
 
 -- v7.1: AUTO BUY GEAR — beli alat/gear dari gear shop.
@@ -791,7 +797,7 @@ function Farm.buyGearOnce()
         end
         task.wait()
     end
-    print("[ZenxFarm] buy gear: "..#list.." jenis x"..Farm.buyPerGear.." = "..fired.." fire")
+    dprint("[ZenxFarm] buy gear: "..#list.." jenis x"..Farm.buyPerGear.." = "..fired.." fire")
 end
 task.spawn(function()
     while isCurrentGen() do
@@ -912,7 +918,7 @@ function Farm.plantOnce()
         pcall(function() p:Fire(pos, s.name, s.tool) end)
         planted = planted + 1
     end
-    if planted > 0 then print("[ZenxFarm] plant: "..planted.." seed (loc="..tostring(state.plantLocation)..")") end
+    if planted > 0 then dprint("[ZenxFarm] plant: "..planted.." seed (loc="..tostring(state.plantLocation)..")") end
 end
 task.spawn(function()
     while isCurrentGen() do
@@ -1280,7 +1286,7 @@ function Farm.shovelOnce()
             end
         end
     end
-    if removed > 0 then print("[ZenxFarm] shovel: "..removed.." tanaman digali") end
+    if removed > 0 then dprint("[ZenxFarm] shovel: "..removed.." tanaman digali") end
     if not p then print("[ZenxFarm] shovel: remote belum ketemu — perlu sniff (jalanin debug shovel)") end
 end
 task.spawn(function()
@@ -2035,9 +2041,43 @@ end
 -- v7.3: pakai data yg PASTI kebaca dari game:
 --   Workspace.ActiveWeather / ActivePhase / PhaseDuration (timestamp akhir fase)
 --   StockValues.<shop>.UnixNextRestock (timestamp restock berikutnya)
+
+-- ====== MISC: Debug Log (toggle) — default OFF biar console gak banjir ======
+-- v7.7: print detail tiap siklus bikin console kebanjiran -> "lama-lama nge-frame".
+-- default OFF. nyalain cuma pas mau liat log detail (collect fired/durasi dll).
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 7, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Debug Log", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "log detail (OFF = anti lag, nyalain pas debug)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    local function applyDbg()
+        if state.debugLog then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.debugLog = not state.debugLog; saveState(); applyDbg()
+        print("[ZenxFarm] Debug Log -> "..(state.debugLog and "ON" or "OFF"))
+    end)
+    applyDbg()
+end
+
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 158), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 6, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 8, Parent = miscList })
     corner(card, 8); stroke(card, C.borderBright, 1)  -- garis agak terang (info penting)
     local nameL = lbl(card, "Weather & Restock", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -28, 0, 18)
