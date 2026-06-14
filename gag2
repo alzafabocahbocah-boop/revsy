@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v5.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v5.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v5.6"
+local VER       = "v5.7"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -259,6 +259,8 @@ local state = {
     buyAllSeeds   = true,       -- borong semua seed
     collectAll    = true,       -- collect semua buah
     sellAll       = true,       -- sell semua buah
+    sellWhenFull  = false,      -- v5.7: MODE sell pas backpack penuh (OFF=interval biasa)
+    sellMaxFallback = 200,      -- v5.7: batas penuh kalau deteksi otomatis gagal
     plantLocation = "self",     -- "self" (lokasi kamu) atau "random"
     selectedSeeds   = {},       -- buy seed
     selectedCollect = {},       -- collect buah
@@ -280,7 +282,7 @@ local state = {
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
     "IceSerpent","Monkey","Owl","Raccoon","Robin","Unicorn"}
 local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Divine"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","sellAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","sellAll","sellWhenFull","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
@@ -438,6 +440,50 @@ local function getFruitHolders()
     end
     return holders
 end
+
+-- v5.7: deteksi isi & kapasitas inventory (buat mode "sell pas penuh").
+-- "isi" = jumlah item (buah/tool) di Character+Backpack.
+local function getInvCount()
+    local n = 0
+    for _, holder in ipairs(getFruitHolders()) do
+        for _, o in ipairs(holder:GetChildren()) do
+            -- item inventory = Tool, atau objek buah (punya attr .Id)
+            if o:IsA("Tool") or o:GetAttribute("Id") ~= nil then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+-- "kapasitas max" — coba beberapa sumber dari data game. kalau gagal -> fallback.
+Farm._invMaxCache = nil
+local function getInvMax()
+    local plr = Players.LocalPlayer
+    if not plr then return state.sellMaxFallback end
+    -- 1) attribute di player (nama-nama umum)
+    for _, key in ipairs({"MaxInventory","InventoryLimit","BackpackLimit","MaxBackpack",
+                          "InventorySize","MaxItems","ItemLimit","MaxSlots"}) do
+        local v = plr:GetAttribute(key)
+        if type(v) == "number" and v > 0 then return v end
+    end
+    -- 2) leaderstats / folder nilai (mis "Inventory" = "45/200")
+    -- 3) scan PlayerGui cari teks pola "X/Y" yg Y-nya kelihatan kayak kapasitas
+    local pg = plr:FindFirstChildOfClass("PlayerGui")
+    if pg then
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") then
+                local _, mx = tostring(d.Text):match("(%d+)%s*/%s*(%d+)")
+                if mx then
+                    local m = tonumber(mx)
+                    -- kapasitas masuk akal: 10..5000 (buang angka acak kecil/besar)
+                    if m and m >= 10 and m <= 5000 then return m end
+                end
+            end
+        end
+    end
+    -- 4) fallback manual
+    return state.sellMaxFallback
+end
 function Farm.sellOnce()
     if state.sellAll then
         local p = pkt("NPCS", "SellAll")
@@ -540,7 +586,19 @@ end)
 task.spawn(function()
     while isCurrentGen() do
         task.wait(5)
-        if isCurrentGen() and state.autoSell then pcall(Farm.sellOnce) end
+        if isCurrentGen() and state.autoSell then
+            if state.sellWhenFull then
+                -- v5.7: mode "pas penuh" — sell HANYA kalau isi >= kapasitas
+                local cur = getInvCount()
+                local mx  = getInvMax()
+                if cur >= mx then
+                    print(string.format("[ZenxFarm] backpack penuh (%d/%d) -> sell", cur, mx))
+                    pcall(Farm.sellOnce)
+                end
+            else
+                pcall(Farm.sellOnce)  -- mode interval biasa
+            end
+        end
     end
 end)
 task.spawn(function()
@@ -1192,12 +1250,14 @@ do
 end
 
 -- ====== CARD 2: AUTO SELL ======
-local applySell
+local applySell, applySellFull
 do
     local card, body, setH = mkFarmCard(2, "Auto Sell", "jual buah ke counter (tap utk atur)")
-    setH(96)
+    setH(132)
     mkTypeRow(body, 4, "Jenis Buah", fruitList, state.selectedSell, "sellAll", "Semua buah")
-    applySell = mkBodyToggle(body, 44, "Auto Sell", "autoSell", "Auto Sell")
+    -- v5.7: toggle mode "sell pas penuh" (OFF = sell rutin tiap 5 detik)
+    applySellFull = mkBodyToggle(body, 44, "Sell pas penuh", "sellWhenFull", "Sell When Full")
+    applySell = mkBodyToggle(body, 84, "Auto Sell", "autoSell", "Auto Sell")
 end
 
 -- ====== CARD 3: AUTO BUY SEED ======
@@ -1452,6 +1512,6 @@ floatLogo.MouseButton1Click:Connect(function() main.Visible = true; floatLogo.Vi
 closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
 
 -- ----- boot -----
-applyCollect(); applySell(); applyBuySeed(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed()
+applyCollect(); applySell(); applySellFull(); applyBuySeed(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
