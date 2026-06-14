@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v5.0  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v5.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v5.0"
+local VER       = "v5.1"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -33,7 +33,6 @@ end
 -- solusi paling andal: deteksi prompt error -> teleport balik otomatis ke game yg sama.
 do
     local TS = game:GetService("TeleportService")
-    local GuiS = game:GetService("GuiService")
     local placeId = game.PlaceId
     local rejoined = false
     local function rejoin(why)
@@ -46,20 +45,17 @@ do
             task.wait(3)
         end
     end
-    -- 1) lewat GuiService (paling cepat ketrigger pas error prompt muncul)
-    pcall(function()
-        GuiS.ErrorMessageChanged:Connect(function()
-            local msg = GuiS:GetErrorMessage and GuiS:GetErrorMessage() or ""
-            rejoin("error prompt: "..tostring(msg))
-        end)
-    end)
-    -- 2) lewat event teleport gagal
+    -- 1) lewat event teleport gagal
     pcall(function()
         player.OnTeleport:Connect(function(stx)
-            if stx == Enum.TeleportState.Failed then rejoin("teleport failed") end
+            if stx == Enum.TeleportState.Failed then
+                pcall(function() rejoin("teleport failed") end)
+            end
         end)
     end)
-    -- 3) fallback: pantau munculnya prompt "Disconnected"/"kicked" di CoreGui
+    -- 2) deteksi prompt "Disconnected"/"kicked"/267 di CoreGui (paling spesifik & aman).
+    -- ErrorMessageChanged sengaja TIDAK dipakai: dia nyala buat error apa aja -> bisa
+    -- bikin rejoin gak perlu. cuma rejoin kalau kebukti prompt kick beneran muncul.
     task.spawn(function()
         while not rejoined do
             task.wait(1)
