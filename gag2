@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v4.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v5.0  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v4.7"
+local VER       = "v5.0"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -26,6 +26,57 @@ do
     else
         print("[ZenxFarm] executor gak support queue_on_teleport")
     end
+end
+
+-- v5.0: AUTO-REJOIN kalau kena kick/disconnect (Error 267 "save data didn't load" dll).
+-- error ini sering kejadian pas rejoin — kadang masalah Roblox murni, kadang anti-cheat.
+-- solusi paling andal: deteksi prompt error -> teleport balik otomatis ke game yg sama.
+do
+    local TS = game:GetService("TeleportService")
+    local GuiS = game:GetService("GuiService")
+    local placeId = game.PlaceId
+    local rejoined = false
+    local function rejoin(why)
+        if rejoined then return end
+        rejoined = true
+        print("[ZenxFarm] kena: "..tostring(why).." -> auto-rejoin...")
+        for attempt = 1, 20 do
+            local ok = pcall(function() TS:Teleport(placeId, player) end)
+            if ok then break end
+            task.wait(3)
+        end
+    end
+    -- 1) lewat GuiService (paling cepat ketrigger pas error prompt muncul)
+    pcall(function()
+        GuiS.ErrorMessageChanged:Connect(function()
+            local msg = GuiS:GetErrorMessage and GuiS:GetErrorMessage() or ""
+            rejoin("error prompt: "..tostring(msg))
+        end)
+    end)
+    -- 2) lewat event teleport gagal
+    pcall(function()
+        player.OnTeleport:Connect(function(stx)
+            if stx == Enum.TeleportState.Failed then rejoin("teleport failed") end
+        end)
+    end)
+    -- 3) fallback: pantau munculnya prompt "Disconnected"/"kicked" di CoreGui
+    task.spawn(function()
+        while not rejoined do
+            task.wait(1)
+            pcall(function()
+                for _, g in ipairs(CoreGui:GetDescendants()) do
+                    if (g:IsA("TextLabel") or g:IsA("TextButton")) then
+                        local t = tostring(g.Text):lower()
+                        if t:find("disconnect") or t:find("kicked")
+                        or t:find("error code: 267") or t:find("save data didn") then
+                            rejoin("prompt: "..tostring(g.Text):sub(1,40))
+                            break
+                        end
+                    end
+                end
+            end)
+        end
+    end)
 end
 
 -- v4.5: TUNGGU MINIMAL (game loaded + character) — biar UI langsung kebuild.
@@ -67,9 +118,11 @@ task.spawn(function()
     local VIM = nil
     pcall(function() VIM = game:GetService("VirtualInputManager") end)
     local cam = workspace.CurrentCamera
-    local function screenCenter()
+    -- v4.9: klik skip di POJOK KIRI BAWAH (bukan tengah) — biar gak keklik tombol/objek
+    -- yg ada di tengah layar. loading screen nerima klik di mana aja, jadi pojok aman.
+    local function clickPos()
         local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
-        return vp.X/2, vp.Y/2
+        return 40, vp.Y - 60   -- 40px dari kiri, 60px dari bawah
     end
     local function vimKey(kc)
         if not VIM then return end
@@ -79,23 +132,45 @@ task.spawn(function()
     end
     local function vimClick()
         if not VIM then return end
-        local x, y = screenCenter()
+        local x, y = clickPos()
         pcall(function() VIM:SendMouseButtonEvent(x, y, 0, true,  game, 0) end)
         task.wait(0.03)
         pcall(function() VIM:SendMouseButtonEvent(x, y, 0, false, game, 0) end)
     end
 
+    -- v5.0: cek apakah masih "Loading player data..." — kalau iya, JANGAN nembak input
+    -- dulu (cegah anti-cheat ketrigger -> kick 267). nembak cuma pas udah "Press any key".
+    local function dataStillLoading()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        if not pg then return false end
+        for _, d in ipairs(pg:GetDescendants()) do
+            if d:IsA("TextLabel") then
+                local t = tostring(d.Text):lower()
+                if t:find("loading player data") or t:find("loading data") then
+                    -- masih loading kalau belum 100%
+                    if not t:find("100") then return true end
+                end
+            end
+        end
+        return false
+    end
+
+    task.wait(1)  -- jeda awal kecil: kasih game waktu mulai load (jangan nembak dari frame 0)
     for _ = 1, 200 do  -- max ~60 detik (spam tiap 0.3s)
         if reallyIn() then
             print("[ZenxFarm] auto-skip: berhasil masuk!")
             break
         end
+        -- tahan input selama data masih loading (anti kick 267)
+        if dataStillLoading() then
+            task.wait(0.3)
+        else
         -- 1) VIM: input hardware asli (PRIORITAS — paling ampuh)
         if VIM then
             vimKey(Enum.KeyCode.Space)
             vimKey(Enum.KeyCode.Return)
             vimKey(Enum.KeyCode.E)
-            vimClick()  -- klik tengah layar (mouse / touch di mobile/cloud)
+            vimClick()  -- klik pojok kiri bawah (mouse / touch di mobile/cloud)
         end
         -- 2) firesignal: fallback kalau VIM gak ada
         if firesignal then
@@ -114,6 +189,7 @@ task.spawn(function()
             end
         end)
         task.wait(0.3)
+        end  -- tutup: else (dataStillLoading)
     end
 end)
 
@@ -742,8 +818,9 @@ local sg = mk("ScreenGui", { Name = "ZenxFarm", ResetOnSpawn = false, ZIndexBeha
 local W, H = 560, 360
 local TITLE_H = 40
 
+-- v4.8: posisi awal GUI di POJOK KIRI BAWAH (margin 20px), biar gak nutupin tengah layar.
 local main = mk("Frame", {
-    Size = UDim2.new(0, W, 0, H), Position = UDim2.new(0.5, -W/2, 0.5, -H/2),
+    Size = UDim2.new(0, W, 0, H), Position = UDim2.new(0, 20, 1, -H - 20),
     BackgroundColor3 = C.bg, BorderSizePixel = 0, Active = true, Parent = sg })
 corner(main, 10); stroke(main, C.border, 1)
 
