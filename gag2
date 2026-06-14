@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.9  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v7.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.9"
+local VER       = "v7.2"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -251,20 +251,22 @@ end)
 
 -- ---------- palette (samain dgn ZENX TELUR) ----------
 local C = {
-    bg       = Color3.fromRGB(22, 22, 22),
+    bg       = Color3.fromRGB(20, 20, 20),
     panel    = Color3.fromRGB(26, 26, 26),
     card     = Color3.fromRGB(30, 30, 30),
-    cardSel  = Color3.fromRGB(34, 34, 34),
-    input    = Color3.fromRGB(30, 30, 30),
-    border   = Color3.fromRGB(60, 60, 60),
+    cardSel  = Color3.fromRGB(36, 36, 36),
+    input    = Color3.fromRGB(28, 28, 28),
+    -- v7.2: garis dipertegas (gaya node hub) — border lebih kebaca, ada tingkatan
+    border   = Color3.fromRGB(90, 90, 90),     -- garis kartu (lebih terang dari dulu 60)
+    borderBright = Color3.fromRGB(130, 130, 130), -- garis aktif/penting
     borderSel= Color3.fromRGB(255, 255, 255),
-    line     = Color3.fromRGB(95, 95, 95),
-    text     = Color3.fromRGB(240, 240, 240),
-    textDim  = Color3.fromRGB(140, 140, 140),
-    textMute = Color3.fromRGB(100, 100, 100),
+    line     = Color3.fromRGB(110, 110, 110),
+    text     = Color3.fromRGB(242, 242, 242),
+    textDim  = Color3.fromRGB(145, 145, 145),
+    textMute = Color3.fromRGB(105, 105, 105),
     accent   = Color3.fromRGB(255, 255, 255),
-    green    = Color3.fromRGB(100, 200, 120),
-    red      = Color3.fromRGB(200, 90, 90),
+    green    = Color3.fromRGB(105, 205, 125),
+    red      = Color3.fromRGB(205, 95, 95),
 }
 local FONT    = Enum.Font.GothamSemibold
 local FONT_B  = Enum.Font.GothamBold
@@ -292,6 +294,9 @@ local state = {
     autoCollect   = false,
     autoSell      = false,
     autoBuySeed   = false,
+    autoBuyGear   = false,      -- v7.1: auto beli gear/alat
+    buyAllGears   = true,       -- v7.1: borong semua gear
+    selectedGear  = {},         -- v7.1: gear yg dipilih (kalau buyAllGears off)
     autoPlant     = false,
     autoBuyPet    = false,
     petTeleport   = true,       -- teleport ke pet dulu sebelum beli (biar lolos proximity)
@@ -302,6 +307,8 @@ local state = {
     collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
+    selectedShovel = {},        -- v7.0: jenis seed yg di-shovel (HANYA yg dipilih)
+    shovelAll     = false,      -- v7.0: false = cuma yg dipilih (default gak shovel semua)
     sellAll       = true,       -- sell semua buah
     sellWhenFull  = false,      -- v5.7: MODE sell pas backpack penuh (OFF=interval biasa)
     sellMaxFallback = 200,      -- v5.7: batas penuh kalau deteksi otomatis gagal
@@ -334,10 +341,11 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","autoShovel","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","autoShovel","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
+                 selectedShovel="selectedShovel", selectedGear="selectedGear",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
                  giftSeeds="giftSeeds", giftPets="giftPets"}
 local function saveState()
@@ -664,6 +672,79 @@ function Farm.buySeedOnce()
     end
     print("[ZenxFarm] buy seed: "..#list.." jenis x"..Farm.buyPerSeed.." = "..fired.." fire")
 end
+
+-- v7.1: AUTO BUY GEAR — beli alat/gear dari gear shop.
+-- CATATAN JUJUR: remote gear BELUM kebukti via sniff. kita coba beberapa nama kandidat
+-- (GearShop.PurchaseGear / Gear.Purchase / dll). list gear = hardcoded umum, fallback.
+-- kalau remote gak ketemu -> print minta sniff.
+local function loadGearList()
+    -- coba ambil dari data game dulu
+    local list = {}
+    pcall(function()
+        local sm = RS:FindFirstChild("SharedModules") or RS
+        for _, child in ipairs(sm:GetDescendants()) do
+            if child.Name:lower():find("gear") and child:IsA("ModuleScript") then
+                local ok, data = pcall(require, child)
+                if ok and type(data) == "table" then
+                    for k, v in pairs(data) do
+                        local nm
+                        if type(k) == "string" then nm = k
+                        elseif type(v) == "table" then nm = v.Name or v.GearName end
+                        if type(nm) == "string" then list[#list+1] = nm end
+                    end
+                end
+            end
+        end
+    end)
+    if #list == 0 then
+        -- fallback hardcoded (gear umum di Grow a Garden) — bisa kurang akurat
+        list = {"Watering Can","Trowel","Recall Wrench","Basic Sprinkler","Advanced Sprinkler",
+            "Godly Sprinkler","Master Sprinkler","Lightning Rod","Favorite Tool","Harvest Tool",
+            "Friendship Pot","Cleaning Spray","Magnifying Glass","Tanning Mirror","Reclaimer"}
+    end
+    -- unik-kan
+    local seen, uniq = {}, {}
+    for _, n in ipairs(list) do if not seen[n] then seen[n] = true; uniq[#uniq+1] = n end end
+    return uniq
+end
+
+Farm.buyPerGear = 2
+function Farm.buyGearOnce()
+    -- coba beberapa nama remote gear
+    local p = pkt("GearShop", "PurchaseGear") or pkt("GearShop", "Purchase")
+          or pkt("Gear", "Purchase") or pkt("Gear", "PurchaseGear")
+          or pkt("SeedShop", "PurchaseGear") or pkt("Shop", "PurchaseGear")
+    if not p or not p.Fire then
+        print("[ZenxFarm] buy gear: remote belum ketemu — perlu sniff (jalanin debug gear)")
+        return
+    end
+    if not Farm.gearList then Farm.gearList = loadGearList(); print("[ZenxFarm] gear list: "..#Farm.gearList.." gear") end
+    local list = Farm.gearList
+    if not state.buyAllGears then
+        local sel = {}
+        for _, name in ipairs(list) do if state.selectedGear[name] then sel[#sel+1] = name end end
+        list = sel
+    end
+    if #list == 0 then return end
+    local fired = 0
+    for _, name in ipairs(list) do
+        if not state.autoBuyGear then break end
+        for _ = 1, Farm.buyPerGear do
+            pcall(function() p:Fire(name) end)
+            fired = fired + 1
+        end
+        task.wait()
+    end
+    print("[ZenxFarm] buy gear: "..#list.." jenis x"..Farm.buyPerGear.." = "..fired.." fire")
+end
+task.spawn(function()
+    while isCurrentGen() do
+        pcall(function()
+            task.wait(3)
+            if isCurrentGen() and state.autoBuyGear then Farm.buyGearOnce() end
+        end)
+    end
+end)
 
 -- loop tiap fitur: jalan kalau toggle ON. berhenti kalau ada eksekusi baru (gen berubah).
 -- v6.5: loop diperkuat — SELURUH isi dibungkus pcall biar thread gak mati total
@@ -1073,9 +1154,46 @@ task.spawn(function()
 end)
 
 -- ===== AUTO SHOVEL: gali/hapus tanaman di garden =====
--- v6.9: shovel buat ngapus tanaman. remote belum 100% pasti — coba beberapa kemungkinan
--- yg ketangkap debug (Plant.RemovePlant / Garden.RemovePlant / dll). kalau gak ada,
--- fallback: equip Tool "Shovel" + fire di tiap tanaman. perlu sniff utk akurat.
+-- v6.9: shovel buat ngapus tanaman. remote belum 100% pasti — coba beberapa kemungkinan.
+-- v7.0: cuma shovel jenis seed yg DIPILIH (state.selectedShovel), di garden KITA.
+
+-- v7.0: hitung tiap jenis seed di garden KITA -> {name=count}, buat list picker.
+function Farm.countMyGardenSeeds()
+    local counts = {}
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return counts end
+    local MY = player.UserId
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                -- garden kita aja
+                if (not ownerId or ownerId == MY) then
+                    local seedName = plant:GetAttribute("SeedName") or "?"
+                    counts[seedName] = (counts[seedName] or 0) + 1
+                end
+            end
+        end
+    end
+    return counts
+end
+-- list nama seed garden kita, URUT terbanyak dulu, format "Nama (jumlah)"
+function Farm.shovelSeedList()
+    local counts = Farm.countMyGardenSeeds()
+    local arr = {}
+    for nm, c in pairs(counts) do arr[#arr+1] = {name = nm, count = c} end
+    table.sort(arr, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end  -- terbanyak dulu
+        return a.name:lower() < b.name:lower()
+    end)
+    -- simpan map nama->count buat label, return list nama (dgn count di kurung)
+    Farm._shovelCounts = counts
+    local names = {}
+    for _, e in ipairs(arr) do names[#names+1] = e.name end
+    return names
+end
+
 function Farm.shovelOnce()
     -- cari packet shovel dari beberapa kandidat nama
     local p = pkt("Plant", "RemovePlant") or pkt("Garden", "RemovePlant")
@@ -1093,7 +1211,10 @@ function Farm.shovelOnce()
                 -- cuma tanaman KITA (ownerId == kita)
                 local ownerId = tonumber(plant.Name:match("^(%d+)_"))
                 local plantId = plant:GetAttribute("PlantId")
-                if plantId and (not ownerId or ownerId == MY) then
+                -- v7.0: filter jenis — cuma shovel seed yg dipilih
+                local seedName = plant:GetAttribute("SeedName")
+                local okType = state.shovelAll or (seedName ~= nil and state.selectedShovel[seedName] == true)
+                if plantId and (not ownerId or ownerId == MY) and okType then
                     if p and p.Fire then
                         pcall(function() p:Fire(tostring(plantId)) end)
                         removed = removed + 1
@@ -1352,7 +1473,7 @@ local SIDEBAR_W = 150
 local sidebar = mk("Frame", {
     Size = UDim2.new(0, SIDEBAR_W, 1, -TITLE_H - 16), Position = UDim2.new(0, 8, 0, TITLE_H + 8),
     BackgroundColor3 = C.panel, BorderSizePixel = 0, Parent = main })
-corner(sidebar, 8)
+corner(sidebar, 8); stroke(sidebar, C.border, 1)  -- v7.2: garis sidebar dipertegas
 
 local content = mk("Frame", {
     Size = UDim2.new(1, -SIDEBAR_W - 24, 1, -TITLE_H - 16), Position = UDim2.new(0, SIDEBAR_W + 16, 0, TITLE_H + 8),
@@ -1366,9 +1487,10 @@ local function mkTabBtn(y, id, txt)
         Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 0, y),
         BackgroundColor3 = C.card, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = sidebar })
     corner(b, 6)
+    local s = stroke(b, C.border, 1)  -- v7.2: garis tab dipertegas
     local t = lbl(b, txt, 13, C.textDim, Enum.TextXAlignment.Left)
     t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(1, -12, 1, 0)
-    return b, t
+    return b, t, s
 end
 
 local activeTab = "farm"
@@ -1380,13 +1502,15 @@ local function selectTab(id)
         ref.btn.BackgroundColor3 = (k == id) and C.cardSel or C.card
         ref.lbl.TextColor3 = (k == id) and C.text or C.textDim
         ref.lbl.Font = (k == id) and FONT_B or FONT
+        -- v7.2: tab aktif garisnya putih terang (node-hub highlight)
+        if ref.strk then ref.strk.Color = (k == id) and C.borderSel or C.border end
     end
 end
 
-local farmBtn, farmLbl = mkTabBtn(0, "farm", "AUTO FARM")
-local miscBtn, miscLbl = mkTabBtn(48, "misc", "MISC")
-tabBtns.farm = { btn = farmBtn, lbl = farmLbl }
-tabBtns.misc = { btn = miscBtn, lbl = miscLbl }
+local farmBtn, farmLbl, farmStrk = mkTabBtn(0, "farm", "AUTO FARM")
+local miscBtn, miscLbl, miscStrk = mkTabBtn(48, "misc", "MISC")
+tabBtns.farm = { btn = farmBtn, lbl = farmLbl, strk = farmStrk }
+tabBtns.misc = { btn = miscBtn, lbl = miscLbl, strk = miscStrk }
 farmBtn.MouseButton1Click:Connect(function() selectTab("farm") end)
 miscBtn.MouseButton1Click:Connect(function() selectTab("misc") end)
 
@@ -1403,6 +1527,7 @@ local function mkFarmCard(order, title, desc)
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = order, Parent = farmList })
     corner(card, 8)
+    local cardStroke = stroke(card, C.border, 1)  -- v7.2: garis kartu dipertegas
     local hd = mk("TextButton", { Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1,
         Text = "", AutoButtonColor = false, Parent = card })
     local nameL = lbl(hd, title, 14, C.text, Enum.TextXAlignment.Left)
@@ -1420,13 +1545,17 @@ local function mkFarmCard(order, title, desc)
         expanded = not expanded
         body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
+        arrow.TextColor3 = expanded and C.text or C.textDim
+        -- v7.2: pas dibuka, kartu jadi sedikit lebih terang + garis dipertegas
+        card.BackgroundColor3 = expanded and C.cardSel or C.card
+        cardStroke.Color = expanded and C.borderBright or C.border
         card.Size = UDim2.new(1, 0, 0, expanded and (bodyH + 64) or 56)
     end)
     return card, body, setBodyH
 end
 
 -- ===== helper: modal pilih jenis (multi-select + opsi "Semua") =====
-local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange)
+local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange, countFn)
     local ov = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
         BackgroundTransparency = 0.4, ZIndex = 50, BorderSizePixel = 0, Parent = main })
     local bgc = mk("TextButton", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "",
@@ -1457,21 +1586,36 @@ local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange)
     rebuild = function(q)
         for _, ch in ipairs(sc:GetChildren()) do if ch:IsA("TextButton") then ch:Destroy() end end
         q = (q or ""):lower()
-        -- v5.9: urutkan yg DIPILIH ke atas dulu (selected → unselected), tetap alfabet
+        local counts = countFn and countFn() or nil  -- v7.0: jumlah per item (opsional)
         local items = {}
         for _, name in ipairs(listFn()) do
             if q == "" or name:lower():find(q, 1, true) then items[#items+1] = name end
         end
-        table.sort(items, function(a, b)
-            local sa, sb = (selSet[a] == true), (selSet[b] == true)
-            if sa ~= sb then return sa end   -- yg dipilih (true) naik ke atas
-            return a:lower() < b:lower()       -- sisanya alfabet
-        end)
+        if countFn then
+            -- v7.0: ada count -> JANGAN sort alfabet. pertahankan urutan listFn
+            -- (udah terurut terbanyak dulu). yg dipilih tetap naik ke atas.
+            local order = {}; for i, n in ipairs(items) do order[n] = i end
+            table.sort(items, function(a, b)
+                local sa, sb = (selSet[a] == true), (selSet[b] == true)
+                if sa ~= sb then return sa end
+                return (order[a] or 0) < (order[b] or 0)  -- pertahankan urutan terbanyak
+            end)
+        else
+            -- v5.9: urutkan yg DIPILIH ke atas dulu, sisanya alfabet
+            table.sort(items, function(a, b)
+                local sa, sb = (selSet[a] == true), (selSet[b] == true)
+                if sa ~= sb then return sa end
+                return a:lower() < b:lower()
+            end)
+        end
         for _, name in ipairs(items) do
             do
                 local on = selSet[name] == true
+                -- v7.0: label + jumlah (mis "Carrot (12)")
+                local labelText = name
+                if counts then labelText = name.." ("..(counts[name] or 0)..")" end
                 local r = mk("TextButton", { Size = UDim2.new(1,0,0,26), BackgroundColor3 = on and C.card or C.panel,
-                    Text = (on and "✓ " or "   ")..name, TextColor3 = on and C.accent or C.text,
+                    Text = (on and "✓ " or "   ")..labelText, TextColor3 = on and C.accent or C.text,
                     Font = FONT, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left,
                     BorderSizePixel = 0, AutoButtonColor = false, ZIndex = 53, Parent = sc })
                 corner(r, 4)
@@ -1495,7 +1639,7 @@ local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange)
 end
 
 -- ===== helper: baris "Jenis X" + tombol pilih, di dalam body =====
-local function mkTypeRow(body, y, labelTxt, listFn, selSet, allKey, allLabel)
+local function mkTypeRow(body, y, labelTxt, listFn, selSet, allKey, allLabel, countFn)
     lbl(body, labelTxt, 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,y)
     local btn = mk("TextButton", { Size = UDim2.new(0.58, 0, 0, 28), Position = UDim2.new(0.42, 0, 0, y-3),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
@@ -1520,7 +1664,7 @@ local function mkTypeRow(body, y, labelTxt, listFn, selSet, allKey, allLabel)
         end
     end
     btn.MouseButton1Click:Connect(function()
-        openTypePicker(labelTxt, listFn, selSet, allKey, upd)
+        openTypePicker(labelTxt, listFn, selSet, allKey, upd, countFn)
     end)
     upd()
     return upd
@@ -1626,6 +1770,28 @@ do
     applyBuyPet = mkBodyToggle(body, 124, "Auto Buy Pet",    "autoBuyPet",  "Auto Buy Pet")
 end
 
+-- ====== CARD 6: AUTO SHOVEL (v7.1: pindah dari MISC ke AUTO FARM) ======
+local applyShovel
+do
+    local card, body, setH = mkFarmCard(6, "Auto Shovel", "gali tanaman kamu (pilih jenis, tap utk atur)")
+    setH(126)
+    -- list seed garden KITA + jumlahnya (urut terbanyak). countFn dipanggil tiap buka picker.
+    local shovelListFn  = function() return Farm.shovelSeedList() end
+    local shovelCountFn = function() return Farm._shovelCounts or {} end
+    mkTypeRow(body, 4, "Jenis Seed", shovelListFn, state.selectedShovel, "shovelAll", "Semua seed", shovelCountFn)
+    applyShovel = mkBodyToggle(body, 44, "Auto Shovel", "autoShovel", "Auto Shovel")
+end
+
+-- ====== CARD 7: AUTO BUY GEAR (v7.1) ======
+local applyBuyGear
+do
+    local card, body, setH = mkFarmCard(7, "Auto Buy Gear", "beli gear/alat otomatis (tap utk atur)")
+    setH(96)
+    local gearListFn = function() if not Farm.gearList then Farm.gearList = loadGearList() end return Farm.gearList end
+    mkTypeRow(body, 4, "Jenis Gear", gearListFn, state.selectedGear, "buyAllGears", "Semua gear")
+    applyBuyGear = mkBodyToggle(body, 44, "Auto Buy", "autoBuyGear", "Auto Buy Gear")
+end
+
 
 -- ----- panel MISC: Auto Send Gift -----
 local miscPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
@@ -1648,7 +1814,7 @@ do
 
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = 1, Parent = miscList })
-    corner(card, 8)
+    corner(card, 8); stroke(card, C.border, 1)  -- v7.2 garis tegas
     local hd = mk("TextButton", { Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = card })
     local nameL = lbl(hd, "Auto Send Gift", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -50, 0, 18)
@@ -1689,7 +1855,7 @@ local applyAfk
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
-    corner(card, 8)
+    corner(card, 8); stroke(card, C.border, 1)  -- v7.2 garis tegas
     local nameL = lbl(card, "Auto AFK", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
     local descL = lbl(card, "anti-kick saat idle lama", 11, C.textMute, Enum.TextXAlignment.Left)
@@ -1721,7 +1887,7 @@ local applySteal
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = 3, Parent = miscList })
-    corner(card, 8)
+    corner(card, 8); stroke(card, C.border, 1)  -- v7.2 garis tegas
     local hd = mk("TextButton", { Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = card })
     local nameL = lbl(hd, "Auto Steal", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -50, 0, 18)
@@ -1746,7 +1912,7 @@ local applyAntiBot
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 4, Parent = miscList })
-    corner(card, 8)
+    corner(card, 8); stroke(card, C.border, 1)  -- v7.2 garis tegas
     local nameL = lbl(card, "Anti-Bot Auto Hop", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
     local descL = lbl(card, "hop kalau ada bot (jual cepat berulang)", 11, C.textMute, Enum.TextXAlignment.Left)
@@ -1778,7 +1944,7 @@ local applyGrabSeed
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 5, Parent = miscList })
-    corner(card, 8)
+    corner(card, 8); stroke(card, C.border, 1)  -- v7.2 garis tegas
     local nameL = lbl(card, "Auto Grab Seed Jatuh", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
     local descL = lbl(card, "ambil seed event dari langit otomatis", 11, C.textMute, Enum.TextXAlignment.Left)
@@ -1804,39 +1970,6 @@ do
     end)
     applyGrabSeed()
 end
-
--- ====== MISC: Auto Shovel (toggle simpel) ======
-local applyShovel
-do
-    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 6, Parent = miscList })
-    corner(card, 8)
-    local nameL = lbl(card, "Auto Shovel", 14, C.text, Enum.TextXAlignment.Left)
-    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
-    local descL = lbl(card, "gali/hapus tanaman kamu otomatis", 11, C.textMute, Enum.TextXAlignment.Left)
-    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
-    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
-    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
-    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
-        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
-    corner(knob, 10)
-    applyShovel = function()
-        if state.autoShovel then
-            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
-            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
-        else
-            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
-            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
-        end
-    end
-    sw.MouseButton1Click:Connect(function()
-        state.autoShovel = not state.autoShovel; saveState(); applyShovel()
-        print("[ZenxFarm] Auto Shovel -> "..(state.autoShovel and "ON" or "OFF"))
-    end)
-    applyShovel()
-end
-
 
 -- ----- minimize / close -----
 -- logo mini "Z" elegan (tiru ZENX TELUR): bulat hitam, gradient halus, ring putih + ring abu (bevel)
@@ -1866,6 +1999,6 @@ floatLogo.MouseButton1Click:Connect(function() main.Visible = true; floatLogo.Vi
 closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applySell(); applySellFull(); applyBuySeed(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
