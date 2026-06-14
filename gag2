@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v4.5  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v4.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v4.5"
+local VER       = "v4.6"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -82,6 +82,52 @@ task.spawn(function()
             end
         end)
         task.wait(0.3)
+    end
+end)
+
+-- v4.6: HIDE PAKSA loading screen "Press any key / Fully Loaded".
+-- karakter biasanya udah spawn di balik overlay -> tinggal sembunyiin + klik tombolnya.
+-- jalan paralel (task.spawn) bareng skip input di atas.
+task.spawn(function()
+    local pg = player:WaitForChild("PlayerGui", 30)
+    local function looksLikeLoading(g)
+        for _, d in ipairs(g:GetDescendants()) do
+            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                local t = tostring(d.Text):lower()
+                if t:find("press any key") or t:find("fully loaded")
+                or t:find("to play") or t:find("tap anywhere")
+                or t:find("tap to") then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    for _ = 1, 200 do  -- ~60 detik
+        for _, where in ipairs({pg, CoreGui}) do
+            for _, g in ipairs(where:GetChildren()) do
+                if g:IsA("ScreenGui") and g.Enabled and looksLikeLoading(g) then
+                    -- 1) coba "klik" semua tombol di dalemnya (kalau loading pakai TextButton)
+                    for _, d in ipairs(g:GetDescendants()) do
+                        if d:IsA("GuiButton") then
+                            if getconnections then
+                                for _, sig in ipairs({"Activated","MouseButton1Click","MouseButton1Down"}) do
+                                    pcall(function()
+                                        for _, c in ipairs(getconnections(d[sig])) do
+                                            if c.Function then c.Function() end
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                    -- 2) sembunyiin overlay-nya
+                    pcall(function() g.Enabled = false end)
+                    print("[ZenxFarm] loading screen disembunyiin: "..g.Name)
+                end
+            end
+        end
+        task.wait(0.2)
     end
 end)
 
