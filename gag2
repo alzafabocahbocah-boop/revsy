@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v6.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v6.9  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v6.8"
+local VER       = "v6.9"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -299,6 +299,9 @@ local state = {
     allPetRare    = true,       -- beli semua rarity
     buyAllSeeds   = true,       -- borong semua seed
     collectAll    = true,       -- collect semua buah
+    collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
+    collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
+    autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
     sellAll       = true,       -- sell semua buah
     sellWhenFull  = false,      -- v5.7: MODE sell pas backpack penuh (OFF=interval biasa)
     sellMaxFallback = 200,      -- v5.7: batas penuh kalau deteksi otomatis gagal
@@ -331,7 +334,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","autoShovel","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
@@ -464,7 +467,8 @@ function Farm.collectOnce()
                     typesFired[seedName or "?"] = (typesFired[seedName or "?"] or 0) + 1
                     local fruits = plant:FindFirstChild("Fruits")
                     local fruitCount = 0
-                    if fruits then
+                    -- v6.9: MULTI-HARVEST (buah numpuk di pohon) — kalau collectMulti ON
+                    if fruits and state.collectMulti then
                         for _, fruit in ipairs(fruits:GetChildren()) do
                             -- nama fruit: <pid>_<PlantUUID>_<FruitUUID> -> ambil UUID terakhir
                             local fruitUUID = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
@@ -474,15 +478,13 @@ function Farm.collectOnce()
                                 pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                                 fired = fired + 1; fruitCount = fruitCount + 1
                                 -- v6.7: jeda tiap 25 fire (dulu tiap 5) — 5x lebih sedikit
-                                -- task.wait -> satu siklus collect jauh lebih cepat kelar,
-                                -- jadi abis sell langsung collect lagi (gak macet lama).
                                 if fired % 25 == 0 then task.wait() end
                             end
                         end
                     end
-                    -- v4.4: single-harvest (Bamboo/Mushroom/GreenBean) — game fire 2x:
-                    -- (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
-                    if fruitCount == 0 then
+                    -- v6.9: SINGLE-HARVEST (Bamboo/Mushroom/GreenBean) — kalau collectSingle ON.
+                    -- game fire 2x: (plantId, plantId) LALU (plantId, "") dgn jeda. tiru persis.
+                    if fruitCount == 0 and state.collectSingle then
                         local ready = plant:GetAttribute("PlantGrowthReady") == true
                         if ready then
                             local pid = tostring(plantId)
@@ -1070,6 +1072,49 @@ task.spawn(function()
     end
 end)
 
+-- ===== AUTO SHOVEL: gali/hapus tanaman di garden =====
+-- v6.9: shovel buat ngapus tanaman. remote belum 100% pasti — coba beberapa kemungkinan
+-- yg ketangkap debug (Plant.RemovePlant / Garden.RemovePlant / dll). kalau gak ada,
+-- fallback: equip Tool "Shovel" + fire di tiap tanaman. perlu sniff utk akurat.
+function Farm.shovelOnce()
+    -- cari packet shovel dari beberapa kandidat nama
+    local p = pkt("Plant", "RemovePlant") or pkt("Garden", "RemovePlant")
+          or pkt("Plant", "Shovel") or pkt("Garden", "Shovel")
+          or pkt("Plant", "DeletePlant") or pkt("Farming", "RemovePlant")
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return end
+    local MY = player.UserId
+    local removed = 0
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if not state.autoShovel then break end
+                -- cuma tanaman KITA (ownerId == kita)
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                local plantId = plant:GetAttribute("PlantId")
+                if plantId and (not ownerId or ownerId == MY) then
+                    if p and p.Fire then
+                        pcall(function() p:Fire(tostring(plantId)) end)
+                        removed = removed + 1
+                        if removed % 10 == 0 then task.wait() end
+                    end
+                end
+            end
+        end
+    end
+    if removed > 0 then print("[ZenxFarm] shovel: "..removed.." tanaman digali") end
+    if not p then print("[ZenxFarm] shovel: remote belum ketemu — perlu sniff (jalanin debug shovel)") end
+end
+task.spawn(function()
+    while isCurrentGen() do
+        pcall(function()
+            task.wait(2)
+            if isCurrentGen() and state.autoShovel then Farm.shovelOnce() end
+        end)
+    end
+end)
+
 -- ===== AUTO AFK: anti-kick idle =====
 -- Roblox kick player yg idle ~20 menit. pas event Idled nyala, kita "gerakin"
 -- pakai VirtualUser biar timer idle reset. cuma jalan kalau state.autoAfk ON.
@@ -1511,14 +1556,17 @@ end
 local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedList() end return Farm.seedList end
 
 -- ====== CARD 1: AUTO COLLECT ======
-local applyCollect
+local applyCollect, applyCollectMulti, applyCollectSingle
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(136)
+    setH(216)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
-    applyCollect = mkBodyToggle(body, 84, "Auto Collect", "autoCollect", "Auto Collect")
+    -- v6.9: pisah multi & single harvest
+    applyCollectMulti  = mkBodyToggle(body, 84,  "Multi Harvest",  "collectMulti",  "Multi Harvest")
+    applyCollectSingle = mkBodyToggle(body, 124, "Single Harvest", "collectSingle", "Single Harvest")
+    applyCollect = mkBodyToggle(body, 164, "Auto Collect", "autoCollect", "Auto Collect")
 end
 
 -- ====== CARD 2: AUTO SELL ======
@@ -1757,6 +1805,38 @@ do
     applyGrabSeed()
 end
 
+-- ====== MISC: Auto Shovel (toggle simpel) ======
+local applyShovel
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 6, Parent = miscList })
+    corner(card, 8)
+    local nameL = lbl(card, "Auto Shovel", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "gali/hapus tanaman kamu otomatis", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyShovel = function()
+        if state.autoShovel then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.autoShovel = not state.autoShovel; saveState(); applyShovel()
+        print("[ZenxFarm] Auto Shovel -> "..(state.autoShovel and "ON" or "OFF"))
+    end)
+    applyShovel()
+end
+
 
 -- ----- minimize / close -----
 -- logo mini "Z" elegan (tiru ZENX TELUR): bulat hitam, gradient halus, ring putih + ring abu (bevel)
@@ -1786,6 +1866,6 @@ floatLogo.MouseButton1Click:Connect(function() main.Visible = true; floatLogo.Vi
 closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
 
 -- ----- boot -----
-applyCollect(); applySell(); applySellFull(); applyBuySeed(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applySell(); applySellFull(); applyBuySeed(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
