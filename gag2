@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v8.9  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v9.0  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v8.9"
+local VER       = "v9.0"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -529,6 +529,9 @@ function Farm.collectOnce()
     local typesFired = {}
 
     -- proses 1 tanaman (fire buahnya). dipakai dua jalur di bawah.
+    -- v8.7: niru sc temen — jeda KONSISTEN tiap fire (~0.02s) biar server gak drop
+    -- fire (burst kebanyakan -> server rate-limit -> buah gak kekoleksi -> keliatan lambat).
+    -- jeda kecil rata = tiap fire keproses = collect mulus.
     local function processPlant(plant, plantId, seedName)
         typesFired[seedName or "?"] = (typesFired[seedName or "?"] or 0) + 1
         local fruits = plant:FindFirstChild("Fruits")
@@ -540,20 +543,17 @@ function Farm.collectOnce()
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     fired = fired + 1; fruitCount = fruitCount + 1
-                    if fired % 50 == 0 then task.wait() end  -- v8.5: tiap 50 (dulu 25) - lebih cepat
+                    task.wait()  -- v8.7: jeda konsisten tiap fire (anti burst-drop)
                 end
             end
         end
         if fruitCount == 0 and state.collectSingle then
             if plant:GetAttribute("PlantGrowthReady") == true then
                 local pid = tostring(plantId)
-                -- v8.6: BUANG task.wait per-tanaman (dulu 2x wait/tanaman -> 266 tanaman
-                -- = ~530 frame jeda = lambat banget). fire 2x beruntun tanpa jeda,
-                -- jeda berkala aja tiap 50 fire (sama kayak multi-harvest).
                 pcall(function() p:Fire(pid, pid) end)
                 pcall(function() p:Fire(pid, "") end)
                 fired = fired + 1
-                if fired % 50 == 0 then task.wait() end
+                task.wait()  -- v8.7: jeda konsisten tiap fire
             end
         end
     end
