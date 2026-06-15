@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v9.9  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v10.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v9.9"
+local VER       = "v10.2"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -41,6 +41,7 @@ end
 -- shutdown/migrate, itu di luar kuasa script). tapi ini nangkis mayoritas kasus.
 local genvTP = (typeof(getgenv) == "function") and getgenv() or _G
 genvTP.ZenxAllowTP = false   -- default: teleport diblok
+if genvTP.ZenxAntiKepental == nil then genvTP.ZenxAntiKepental = false end  -- v10.1: default OFF (gak ngeblok kecuali dinyalain)
 -- helper buat HOP kita sendiri: buka izin sebentar lalu teleport
 local function zenxTeleport(fn)
     genvTP.ZenxAllowTP = true
@@ -54,7 +55,9 @@ do
     local blocked = 0
     -- hook lewat hookmetamethod kalau ada (paling bersih); fallback ke replace fungsi
     local function shouldBlock()
-        return not genvTP.ZenxAllowTP
+        -- v10.0: cuma blok kalau anti-kepental ON. matiin pas main di private server orang
+        -- (server bisa shutdown -> Roblox teleport balik = normal, jangan diblok).
+        return genvTP.ZenxAntiKepental and not genvTP.ZenxAllowTP
     end
     if hookmetamethod and getnamecallmethod then
         local old
@@ -70,7 +73,7 @@ do
             end
             return old(self, ...)
         end)
-        print("[ZenxFarm] anti-kepental aktif (hookmetamethod)")
+        print("[ZenxFarm] anti-kepental hook terpasang (status: "..(genvTP.ZenxAntiKepental and "ON-ngeblok" or "OFF-bebas")..")")
     else
         -- fallback: replace fungsi TeleportService langsung (kalau executor support)
         pcall(function()
@@ -340,6 +343,7 @@ local state = {
     autoSteal       = false,
     stealTeleport   = true,     -- teleport ke buah dulu (matikan kalau mau diam di tempat)
     antiBot         = false,    -- auto hop kalau ada player bot (Sheckles berubah 10s berturut)
+    antiKepental    = false,    -- v10.1: default OFF (sering bikin kepental di private server). nyalain manual kalau mau proteksi di public.
     autoGrabSeed    = false,    -- auto ambil seed jatuh (event)
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
@@ -353,7 +357,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
@@ -877,15 +881,17 @@ function Farm.buyGearOnce()
     end
     dprint("[ZenxFarm] buy gear: "..#list.." jenis x"..Farm.buyPerGear.." = "..fired.." fire")
 end
--- v9.9: buy gear CUMA pas shop baru restock (dulu tiap 3s -> spam 14 fire/3s -> lag +
--- collect error). gear restock ~5 menit; beli pas UnixNextRestock berubah aja.
-Farm._lastGearRestock = 0
+-- v10.2: buy gear CUMA pas shop baru restock. FIX bug: dulu kalau UnixNextRestock
+-- gak kebaca (nil), kondisi "restock==nil" selalu true -> spam 14 fire/3s -> server
+-- timeout 30-60s -> collect ke-block. sekarang: kalau restock kebaca, beli pas berubah;
+-- kalau gak kebaca, fallback jeda waktu (max 1x per 60s, gak spam).
+Farm._lastGearRestock = nil
+Farm._lastGearBuyTime = 0
 task.spawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(3)
             if isCurrentGen() and state.autoBuyGear then
-                -- cek timestamp restock gear
                 local restock = nil
                 pcall(function()
                     local sv = RS:FindFirstChild("StockValues")
@@ -893,9 +899,21 @@ task.spawn(function()
                     local nx = gs and gs:FindFirstChild("UnixNextRestock")
                     if nx then restock = nx.Value end
                 end)
-                -- beli kalau: restock berubah (stok baru), ATAU pertama kali (lastGearRestock=0)
-                if restock == nil or restock ~= Farm._lastGearRestock then
-                    Farm._lastGearRestock = restock or 0
+                local doBuy = false
+                if restock ~= nil then
+                    -- restock kebaca: beli cuma kalau BERUBAH (stok baru)
+                    if restock ~= Farm._lastGearRestock then
+                        Farm._lastGearRestock = restock
+                        doBuy = true
+                    end
+                else
+                    -- restock GAK kebaca: jangan spam, beli max 1x per 60 detik
+                    if tick() - Farm._lastGearBuyTime >= 60 then
+                        doBuy = true
+                    end
+                end
+                if doBuy then
+                    Farm._lastGearBuyTime = tick()
                     Farm.buyGearOnce()
                 end
             end
@@ -2387,6 +2405,43 @@ do
     applyAntiBot()
 end
 
+-- ====== MISC: Anti Kepental (toggle) — v10.0 ======
+-- MATIIN kalau main di private server orang (server bisa shutdown -> Roblox teleport
+-- balik = normal). nyalain kalau mau cegah anti-cheat mental-in ke server lain.
+local applyAntiKepental
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 5, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Anti Kepental", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "matiin kalau main di private server orang", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyAntiKepental = function()
+        -- sinkron ke flag global yg dibaca hook teleport
+        local g = (typeof(getgenv) == "function") and getgenv() or _G
+        g.ZenxAntiKepental = state.antiKepental
+        if state.antiKepental then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.antiKepental = not state.antiKepental; saveState(); applyAntiKepental()
+        print("[ZenxFarm] Anti Kepental -> "..(state.antiKepental and "ON" or "OFF (teleport bebas)"))
+    end)
+    applyAntiKepental()
+end
+
 -- ====== MISC: Auto Grab Seed Jatuh (toggle simpel) ======
 local applyGrabSeed
 do
@@ -2565,6 +2620,6 @@ closeBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel(); applySprinkler()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
