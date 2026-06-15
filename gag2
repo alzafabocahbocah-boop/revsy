@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v8.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v8.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v8.4"
+local VER       = "v8.7"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -340,6 +340,7 @@ local state = {
     autoGrabSeed    = false,    -- auto ambil seed jatuh (event)
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
+    giftSeedQty     = 0,        -- v8.7: jumlah seed per kirim (0 = semua)
     giftPets        = {},       -- jenis pet yg dikirim (by Tool name, mis "Owl"/"Big Owl")
 }
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
@@ -361,6 +362,7 @@ local function saveState()
     pcall(function()
         if not writefile then return end
         local out = { plantLocation = state.plantLocation, giftTarget = state.giftTarget }
+        out.giftSeedQty = state.giftSeedQty or 0  -- v8.7
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
         for _, k in ipairs(SETBOOL) do out[k] = state[k] end
         for k in pairs(SETMAP) do
@@ -378,6 +380,7 @@ local function loadState()
                 for _, k in ipairs(SETBOOL) do if d[k] ~= nil then state[k] = d[k] and true or false end end
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
+                if type(d.giftSeedQty) == "number" then state.giftSeedQty = d.giftSeedQty end
                 -- v8.2: koordinat sprinkler
                 if type(d.sprCoords) == "table" then
                     state.sprCoords = {}
@@ -534,18 +537,20 @@ function Farm.collectOnce()
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     fired = fired + 1; fruitCount = fruitCount + 1
-                    if fired % 25 == 0 then task.wait() end
+                    if fired % 50 == 0 then task.wait() end  -- v8.5: tiap 50 (dulu 25) - lebih cepat
                 end
             end
         end
         if fruitCount == 0 and state.collectSingle then
             if plant:GetAttribute("PlantGrowthReady") == true then
                 local pid = tostring(plantId)
+                -- v8.6: BUANG task.wait per-tanaman (dulu 2x wait/tanaman -> 266 tanaman
+                -- = ~530 frame jeda = lambat banget). fire 2x beruntun tanpa jeda,
+                -- jeda berkala aja tiap 50 fire (sama kayak multi-harvest).
                 pcall(function() p:Fire(pid, pid) end)
-                task.wait()
                 pcall(function() p:Fire(pid, "") end)
                 fired = fired + 1
-                task.wait()
+                if fired % 50 == 0 then task.wait() end
             end
         end
     end
@@ -836,7 +841,7 @@ end)
 task.spawn(function()
     while isCurrentGen() do
         pcall(function()
-            task.wait(0.2)  -- collect tiap 0.2s
+            task.wait(0.1)  -- v8.5: collect tiap 0.1s (dulu 0.2s)
             if isCurrentGen() and state.autoCollect then Farm.collectOnce() end
         end)
     end
@@ -1090,6 +1095,9 @@ function Farm.giftOnce()
             local petId    = t:GetAttribute("PetId")
             if seedName and state.giftSeeds[seedName] then
                 local cnt = t:GetAttribute("Count") or 1
+                -- v8.7: batasi jumlah kalau giftSeedQty > 0 (0 = kirim semua)
+                local qty = state.giftSeedQty or 0
+                if qty > 0 and cnt > qty then cnt = qty end
                 if cnt > 0 then
                     items[#items+1] = {ItemKey = seedName, Count = cnt, Category = "Seeds"}
                 end
@@ -2107,15 +2115,31 @@ do
         print("[ZenxFarm] gift penerima: "..nameBox.Text)
     end)
 
-    mkTypeRow(body, 44, "Jenis Seed", seedListFn, state.giftSeeds, "_giftAllSeed_NEVER", "pilih seed...")
-    mkTypeRow(body, 84, "Jenis Pet",  petGiftList, state.giftPets,  "_giftAllPet_NEVER",  "pilih pet...")
-    applyGift = mkBodyToggle(body, 124, "Auto Send", "autoGift", "Auto Send Gift")
+    -- v8.7: jumlah seed per kirim (0 = semua)
+    lbl(body, "Jumlah Seed", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,44)
+    local qtyBox = mk("TextBox", { Size = UDim2.new(0.58, 0, 0, 28), Position = UDim2.new(0.42, 0, 0, 41),
+        BackgroundColor3 = C.input, Text = tostring(state.giftSeedQty or 0), PlaceholderText = "0 = semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(qtyBox, 6); stroke(qtyBox, C.border, 1)
+    qtyBox.FocusLost:Connect(function()
+        local n = tonumber(qtyBox.Text) or 0
+        if n < 0 then n = 0 end
+        n = math.floor(n)
+        state.giftSeedQty = n
+        qtyBox.Text = tostring(n)
+        saveState()
+        print("[ZenxFarm] gift jumlah seed: "..(n == 0 and "semua" or tostring(n)))
+    end)
+
+    mkTypeRow(body, 84,  "Jenis Seed", seedListFn, state.giftSeeds, "_giftAllSeed_NEVER", "pilih seed...")
+    mkTypeRow(body, 124, "Jenis Pet",  petGiftList, state.giftPets,  "_giftAllPet_NEVER",  "pilih pet...")
+    applyGift = mkBodyToggle(body, 164, "Auto Send", "autoGift", "Auto Send Gift")
 
     local expanded = false
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 218 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 258 or 56)
     end)
 end
 
