@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v8.2  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v8.3  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v8.2"
+local VER       = "v8.3"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -1293,10 +1293,26 @@ function Farm.shovelSeedList()
 end
 
 function Farm.shovelOnce()
-    -- v8.0: remote ASLI dari sniff = Shovel.UseShovel (dulu nebak Plant.RemovePlant dll)
-    local p = pkt("Shovel", "UseShovel") or pkt("Plant", "RemovePlant") or pkt("Garden", "RemovePlant")
+    -- v8.3: format ASLI dari sniff:
+    --   Shovel.UseShovel(plantId_str, "", "Shovel", shovelTool)
+    --   plantId = "<ownerId>_<UUID>" (dari plant.Name, len ~48), butuh tool Shovel di-equip
+    local p = pkt("Shovel", "UseShovel")
+    if not p or not p.Fire then print("[ZenxFarm] shovel: remote Shovel.UseShovel gak ada"); return end
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    -- cari & equip tool Shovel
+    local shovelTool
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then for _, t in ipairs(h:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+        end end
+        if shovelTool then break end
+    end
+    if not shovelTool then dprint("[ZenxFarm] shovel: tool Shovel gak ada di backpack"); return end
+    if shovelTool.Parent ~= char and hum then pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.1) end
+
     local MY = player.UserId
     local removed = 0
     for _, plot in ipairs(gardens:GetChildren()) do
@@ -1304,25 +1320,21 @@ function Farm.shovelOnce()
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
                 if not state.autoShovel then break end
-                -- cuma tanaman KITA (ownerId == kita)
                 local ownerId = tonumber(plant.Name:match("^(%d+)_"))
-                local plantId = plant:GetAttribute("PlantId")
-                -- v7.0: filter jenis — cuma shovel seed yg dipilih
+                -- v8.3: plantId = NAMA model (format <owner>_<uuid>), bukan attribute
+                local plantId = plant.Name
                 local seedName = plant:GetAttribute("SeedName")
                 local okType = state.shovelAll or (seedName ~= nil and state.selectedShovel[seedName] == true)
-                if plantId and (not ownerId or ownerId == MY) and okType then
-                    if p and p.Fire then
-                        -- coba beberapa pola arg (UseShovel mungkin butuh plantId atau plant)
-                        pcall(function() p:Fire(tostring(plantId)) end)
-                        removed = removed + 1
-                        if removed % 10 == 0 then task.wait() end
-                    end
+                if (not ownerId or ownerId == MY) and okType and #plantId >= 30 then
+                    -- format persis: (plantId, "", "Shovel", tool)
+                    pcall(function() p:Fire(plantId, "", shovelTool.Name, shovelTool) end)
+                    removed = removed + 1
+                    if removed % 10 == 0 then task.wait() end
                 end
             end
         end
     end
     if removed > 0 then dprint("[ZenxFarm] shovel: "..removed.." tanaman digali") end
-    if not p then print("[ZenxFarm] shovel: remote gak ketemu") end
 end
 task.spawn(function()
     while isCurrentGen() do
