@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v9.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v9.5  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v9.4"
+local VER       = "v9.5"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -307,6 +307,7 @@ local state = {
     collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
     collectExpensiveFirst = false, -- v7.6: collect buah termahal duluan
+    collectMostFirst = false,   -- v9.5: collect per jenis, dari total buah terbanyak dulu
     debugLog      = false,      -- v7.7: print detail tiap siklus (default OFF, cegah console flood -> lag)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
     autoSprinkler = false,      -- v8.0: auto taro sprinkler di garden
@@ -352,7 +353,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
@@ -557,7 +558,42 @@ function Farm.collectOnce()
         end
     end
 
-    if not state.collectExpensiveFirst then
+    if state.collectMostFirst then
+        -- v9.5: collect PER JENIS, urut dari total buah TERBANYAK dulu.
+        -- selesaiin 1 jenis sampai habis baru pindah ke jenis terbanyak berikutnya
+        -- (gak loncat-loncat antar jenis -> kerasa lebih rapi & gak "lemot pertukaran").
+        local byType = {}  -- seedName -> { plants={...}, fruits=N }
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local plantId = plant:GetAttribute("PlantId")
+                    local seedName = plant:GetAttribute("SeedName")
+                    local okType = state.collectAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
+                    if plantId and not okType then skipped = skipped + 1 end
+                    if plantId and okType then
+                        local e = byType[seedName or "?"]
+                        if not e then e = { list = {}, fruits = 0 }; byType[seedName or "?"] = e end
+                        e.list[#e.list+1] = { plant, plantId, seedName }
+                        local fr = plant:FindFirstChild("Fruits")
+                        if fr then e.fruits = e.fruits + #fr:GetChildren() end
+                    end
+                end
+            end
+        end
+        -- urutkan jenis dari total buah terbanyak
+        local order = {}
+        for sn, e in pairs(byType) do order[#order+1] = { sn, e } end
+        table.sort(order, function(a, b) return a[2].fruits > b[2].fruits end)
+        -- collect jenis per jenis (terbanyak dulu, sampai habis baru lanjut)
+        for _, o in ipairs(order) do
+            if not state.autoCollect then break end
+            for _, t in ipairs(o[2].list) do
+                if not state.autoCollect then break end
+                processPlant(t[1], t[2], t[3])
+            end
+        end
+    elseif not state.collectExpensiveFirst then
         -- v7.8: JALUR CEPAT (default) — fire langsung tanpa bangun tabel.
         -- ini balikin performa: gak ada alokasi tabel tiap siklus -> gak bikin lemot.
         for _, plot in ipairs(gardens:GetChildren()) do
@@ -1974,10 +2010,10 @@ end
 local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedList() end return Farm.seedList end
 
 -- ====== CARD 1: AUTO COLLECT ======
-local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp
+local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(256)
+    setH(296)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
@@ -1986,7 +2022,9 @@ do
     applyCollectSingle = mkBodyToggle(body, 124, "Single Harvest", "collectSingle", "Single Harvest")
     -- v7.6: collect termahal dulu
     applyCollectExp    = mkBodyToggle(body, 164, "Termahal Dulu",  "collectExpensiveFirst", "Termahal Dulu")
-    applyCollect = mkBodyToggle(body, 204, "Auto Collect", "autoCollect", "Auto Collect")
+    -- v9.5: collect per jenis dari terbanyak dulu
+    applyCollectMost   = mkBodyToggle(body, 204, "Terbanyak Dulu", "collectMostFirst", "Terbanyak Dulu")
+    applyCollect = mkBodyToggle(body, 244, "Auto Collect", "autoCollect", "Auto Collect")
 end
 
 -- ====== CARD 2: AUTO SELL ======
@@ -2476,6 +2514,6 @@ closeBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel(); applySprinkler()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel(); applySprinkler()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
