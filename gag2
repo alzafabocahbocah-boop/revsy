@@ -1,8 +1,8 @@
 -- ============================================================
--- ZENX FARM  v9.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v9.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
--- MISC: coming soon 
+-- MISC: coming soon
 -- ============================================================
 
 local Players   = game:GetService("Players")
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v9.7"
+local VER       = "v9.8"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -1394,16 +1394,16 @@ function Farm.shovelSeedList()
 end
 
 function Farm.shovelOnce()
-    -- v8.3: format ASLI dari sniff:
-    --   Shovel.UseShovel(plantId_str, "", "Shovel", shovelTool)
-    --   plantId = "<ownerId>_<UUID>" (dari plant.Name, len ~48), butuh tool Shovel di-equip
+    -- v9.8: format ASLI: Shovel.UseShovel(plantId, "", "Shovel", tool)
+    -- FIX dari debug: game nolak "You can't remove your only carrot!" = gak boleh gali
+    -- tanaman TERAKHIR dari suatu jenis. dulu sc nyangkut spam UUID yg sama (ditolak terus).
+    -- solusi: SISAIN min 1 per jenis + jangan gali tanaman terakhir tiap jenis.
     local p = pkt("Shovel", "UseShovel")
     if not p or not p.Fire then print("[ZenxFarm] shovel: remote Shovel.UseShovel gak ada"); return end
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    -- cari & equip tool Shovel
     local shovelTool
     for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
         if h then for _, t in ipairs(h:GetChildren()) do
@@ -1412,31 +1412,49 @@ function Farm.shovelOnce()
         if shovelTool then break end
     end
     if not shovelTool then dprint("[ZenxFarm] shovel: tool Shovel gak ada di backpack"); return end
-    -- v8.4: cuma equip + wait kalau BELUM dipegang (dulu tiap siklus -> lambat)
     if shovelTool.Parent ~= char and hum then pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.1) end
 
     local MY = player.UserId
+    -- HITUNG dulu jumlah tanaman KITA per jenis (buat aturan "sisain 1 per jenis")
+    local typeCount = {}
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if (not ownerId or ownerId == MY) then
+                    local sn = plant:GetAttribute("SeedName") or "?"
+                    typeCount[sn] = (typeCount[sn] or 0) + 1
+                end
+            end
+        end
+    end
+
     local removed = 0
+    local galiPerType = {}  -- berapa udah digali per jenis (biar sisain 1)
     for _, plot in ipairs(gardens:GetChildren()) do
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
                 if not state.autoShovel then break end
                 local ownerId = tonumber(plant.Name:match("^(%d+)_"))
-                -- v8.3: plantId = NAMA model (format <owner>_<uuid>), bukan attribute
                 local plantId = plant.Name
-                local seedName = plant:GetAttribute("SeedName")
-                local okType = state.shovelAll or (seedName ~= nil and state.selectedShovel[seedName] == true)
-                if (not ownerId or ownerId == MY) and okType and #plantId >= 30 then
-                    -- format persis: (plantId, "", "Shovel", tool)
+                local seedName = plant:GetAttribute("SeedName") or "?"
+                local okType = state.shovelAll or (state.selectedShovel[seedName] == true)
+                -- SISAIN 1 per jenis: kalau gali tanaman ini bakal nyisain < 1, SKIP
+                -- (total jenis - udah digali - 1 ini >= 1)  => boleh kalau masih > 1 tersisa
+                local sisa = (typeCount[seedName] or 0) - (galiPerType[seedName] or 0)
+                local bolehGali = sisa > 1  -- harus nyisain minimal 1
+                if (not ownerId or ownerId == MY) and okType and #plantId >= 30 and bolehGali then
                     pcall(function() p:Fire(plantId, "", shovelTool.Name, shovelTool) end)
                     removed = removed + 1
-                    if removed % 30 == 0 then task.wait() end  -- v8.4: tiap 30 (dulu 10)
+                    galiPerType[seedName] = (galiPerType[seedName] or 0) + 1
+                    if removed % 30 == 0 then task.wait() end
                 end
             end
         end
     end
-    if removed > 0 then dprint("[ZenxFarm] shovel: "..removed.." tanaman digali") end
+    if removed > 0 then dprint("[ZenxFarm] shovel: "..removed.." tanaman digali (sisain 1/jenis)") end
 end
 task.spawn(function()
     while isCurrentGen() do
