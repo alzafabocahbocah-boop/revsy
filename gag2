@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v9.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v9.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v9.1"
+local VER       = "v9.4"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -437,7 +437,6 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- FUNGSI FARM (placeholder — diisi nanti via debug)
 -- ============================================================
 local Farm = {}
-Farm.collectBatch = 8  -- v9.0: fire berapa kali baru jeda (besar=ngebut, kecil=aman). atur di slider.
 
 -- ===== akses Networking packet (sistem Packet GAG 2) =====
 local NET = nil
@@ -530,10 +529,8 @@ function Farm.collectOnce()
     local typesFired = {}
 
     -- proses 1 tanaman (fire buahnya). dipakai dua jalur di bawah.
-    -- v9.0: jeda BERKALA (tiap N fire), bukan tiap fire — biar gak numpuk jadi lemot
-    -- pas transisi antar jenis (dulu tiap strawberry single = 1 wait -> numpuk 0.1-0.2s).
-    -- Farm.collectBatch = fire berapa kali baru jeda. makin besar = makin ngebut (tapi
-    -- jangan kebanyakan, nanti server drop). default 8 = seimbang.
+    -- v9.4: jeda KONSISTEN tiap fire (~0.02s, niru pola sc temen yg gacor).
+    -- tiap fire dikasih jeda kecil -> server gak nge-drop -> collect mulus & rapi.
     local function processPlant(plant, plantId, seedName)
         typesFired[seedName or "?"] = (typesFired[seedName or "?"] or 0) + 1
         local fruits = plant:FindFirstChild("Fruits")
@@ -545,7 +542,7 @@ function Farm.collectOnce()
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     fired = fired + 1; fruitCount = fruitCount + 1
-                    if fired % (Farm.collectBatch or 8) == 0 then task.wait() end
+                    task.wait()  -- jeda konsisten tiap fire (pola temen yg gacor)
                 end
             end
         end
@@ -555,7 +552,7 @@ function Farm.collectOnce()
                 pcall(function() p:Fire(pid, pid) end)
                 pcall(function() p:Fire(pid, "") end)
                 fired = fired + 1
-                if fired % (Farm.collectBatch or 8) == 0 then task.wait() end
+                task.wait()  -- jeda konsisten tiap fire
             end
         end
     end
@@ -1980,7 +1977,7 @@ local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedLis
 local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(296)
+    setH(256)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
@@ -1989,35 +1986,7 @@ do
     applyCollectSingle = mkBodyToggle(body, 124, "Single Harvest", "collectSingle", "Single Harvest")
     -- v7.6: collect termahal dulu
     applyCollectExp    = mkBodyToggle(body, 164, "Termahal Dulu",  "collectExpensiveFirst", "Termahal Dulu")
-
-    -- v9.0: pengatur kecepatan collect (batch fire sebelum jeda). besar=ngebut, kecil=aman
-    lbl(body, "Kecepatan", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,208)
-    local minB = mk("TextButton", { Size = UDim2.new(0, 30, 0, 26), Position = UDim2.new(0.42, 0, 0, 205),
-        BackgroundColor3 = C.input, Text = "−", TextColor3 = C.text, Font = FONT_B, TextSize = 16,
-        AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
-    corner(minB, 6); stroke(minB, C.border, 1)
-    local valL = mk("TextLabel", { Size = UDim2.new(0, 70, 0, 26), Position = UDim2.new(0.42, 36, 0, 205),
-        BackgroundColor3 = C.input, Text = tostring(Farm.collectBatch), TextColor3 = C.text,
-        Font = FONT, TextSize = 12, BorderSizePixel = 0, Parent = body })
-    corner(valL, 6); stroke(valL, C.border, 1)
-    local plusB = mk("TextButton", { Size = UDim2.new(0, 30, 0, 26), Position = UDim2.new(0.42, 112, 0, 205),
-        BackgroundColor3 = C.input, Text = "+", TextColor3 = C.text, Font = FONT_B, TextSize = 16,
-        AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
-    corner(plusB, 6); stroke(plusB, C.border, 1)
-    local function updVal()
-        valL.Text = tostring(Farm.collectBatch).." / jeda"
-    end
-    minB.MouseButton1Click:Connect(function()
-        Farm.collectBatch = math.max(1, (Farm.collectBatch or 8) - 2); updVal()
-        print("[ZenxFarm] collect batch: "..Farm.collectBatch)
-    end)
-    plusB.MouseButton1Click:Connect(function()
-        Farm.collectBatch = math.min(50, (Farm.collectBatch or 8) + 2); updVal()
-        print("[ZenxFarm] collect batch: "..Farm.collectBatch)
-    end)
-    updVal()
-
-    applyCollect = mkBodyToggle(body, 244, "Auto Collect", "autoCollect", "Auto Collect")
+    applyCollect = mkBodyToggle(body, 204, "Auto Collect", "autoCollect", "Auto Collect")
 end
 
 -- ====== CARD 2: AUTO SELL ======
