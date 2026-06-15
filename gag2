@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v9.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v9.9  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v9.8"
+local VER       = "v9.9"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -877,11 +877,28 @@ function Farm.buyGearOnce()
     end
     dprint("[ZenxFarm] buy gear: "..#list.." jenis x"..Farm.buyPerGear.." = "..fired.." fire")
 end
+-- v9.9: buy gear CUMA pas shop baru restock (dulu tiap 3s -> spam 14 fire/3s -> lag +
+-- collect error). gear restock ~5 menit; beli pas UnixNextRestock berubah aja.
+Farm._lastGearRestock = 0
 task.spawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(3)
-            if isCurrentGen() and state.autoBuyGear then Farm.buyGearOnce() end
+            if isCurrentGen() and state.autoBuyGear then
+                -- cek timestamp restock gear
+                local restock = nil
+                pcall(function()
+                    local sv = RS:FindFirstChild("StockValues")
+                    local gs = sv and sv:FindFirstChild("GearShop")
+                    local nx = gs and gs:FindFirstChild("UnixNextRestock")
+                    if nx then restock = nx.Value end
+                end)
+                -- beli kalau: restock berubah (stok baru), ATAU pertama kali (lastGearRestock=0)
+                if restock == nil or restock ~= Farm._lastGearRestock then
+                    Farm._lastGearRestock = restock or 0
+                    Farm.buyGearOnce()
+                end
+            end
         end)
     end
 end)
