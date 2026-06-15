@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v7.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v8.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v7.8"
+local VER       = "v8.1"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -309,6 +309,11 @@ local state = {
     collectExpensiveFirst = false, -- v7.6: collect buah termahal duluan
     debugLog      = false,      -- v7.7: print detail tiap siklus (default OFF, cegah console flood -> lag)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
+    autoSprinkler = false,      -- v8.0: auto taro sprinkler di garden
+    sprClusterMode = false,     -- v8.1: false=deket jenis seed, true=di seed terbanyak
+    selectedSprSeed = {},       -- v8.1: jenis seed yg dikasih sprinkler (multi)
+    selectedSprType = {},       -- v8.1: jenis sprinkler yg dipakai (multi)
+    sprAllType    = true,       -- v8.1: pakai semua jenis sprinkler yg ada
     selectedShovel = {},        -- v7.0: jenis seed yg di-shovel (HANYA yg dipilih)
     shovelAll     = false,      -- v7.0: false = cuma yg dipilih (default gak shovel semua)
     sellAll       = true,       -- sell semua buah
@@ -343,11 +348,12 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","debugLog","autoShovel","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","autoGrabSeed"}
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
                  selectedShovel="selectedShovel", selectedGear="selectedGear",
+                 selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
                  giftSeeds="giftSeeds", giftPets="giftPets"}
 local function saveState()
@@ -1160,6 +1166,21 @@ function Farm.grabSeedOnce()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
+
+    -- v7.9: PASS 0 — ClickPack("1") (metode sc cepat: fire remote langsung,
+    -- gak perlu touch/teleport). aman: kalau gak ada seed, gak ngefek apa2.
+    -- ini metode utama; touch di bawah jadi cadangan kalau ClickPack gak cukup.
+    local hasSeed = false
+    for _, o in ipairs(folder:GetDescendants()) do
+        if o:IsA("BasePart") and o.Name == "Part" and o.Anchored then hasSeed = true; break end
+    end
+    if hasSeed then
+        local cp = pkt("SeedPack", "ClickPack")
+        if cp and cp.Fire then
+            for _ = 1, 5 do pcall(function() cp:Fire("1") end) end
+        end
+    end
+
     if not firetouchinterest then return end
 
     -- PASS 1: fire touch SEMUA seed langsung (tanpa pindah, tanpa delay) — secepat mungkin
@@ -1261,10 +1282,8 @@ function Farm.shovelSeedList()
 end
 
 function Farm.shovelOnce()
-    -- cari packet shovel dari beberapa kandidat nama
-    local p = pkt("Plant", "RemovePlant") or pkt("Garden", "RemovePlant")
-          or pkt("Plant", "Shovel") or pkt("Garden", "Shovel")
-          or pkt("Plant", "DeletePlant") or pkt("Farming", "RemovePlant")
+    -- v8.0: remote ASLI dari sniff = Shovel.UseShovel (dulu nebak Plant.RemovePlant dll)
+    local p = pkt("Shovel", "UseShovel") or pkt("Plant", "RemovePlant") or pkt("Garden", "RemovePlant")
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
     local MY = player.UserId
@@ -1282,6 +1301,7 @@ function Farm.shovelOnce()
                 local okType = state.shovelAll or (seedName ~= nil and state.selectedShovel[seedName] == true)
                 if plantId and (not ownerId or ownerId == MY) and okType then
                     if p and p.Fire then
+                        -- coba beberapa pola arg (UseShovel mungkin butuh plantId atau plant)
                         pcall(function() p:Fire(tostring(plantId)) end)
                         removed = removed + 1
                         if removed % 10 == 0 then task.wait() end
@@ -1291,13 +1311,142 @@ function Farm.shovelOnce()
         end
     end
     if removed > 0 then dprint("[ZenxFarm] shovel: "..removed.." tanaman digali") end
-    if not p then print("[ZenxFarm] shovel: remote belum ketemu — perlu sniff (jalanin debug shovel)") end
+    if not p then print("[ZenxFarm] shovel: remote gak ketemu") end
 end
 task.spawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(2)
             if isCurrentGen() and state.autoShovel then Farm.shovelOnce() end
+        end)
+    end
+end)
+
+-- ===== AUTO PLACE SPRINKLER (v8.1) =====
+-- format ASLI dari sniff: Place.PlaceSprinkler(pos_Vector3, name_string, tool_Instance, num)
+-- mode:
+--   sprClusterMode OFF -> taro 1 sprinkler DEKAT tiap jenis seed yg dipilih (selectedSprSeed)
+--   sprClusterMode ON  -> taro 1 sprinkler di titik seed PALING BANYAK ngumpul
+-- jenis sprinkler: pilih (selectedSprType) — pakai stok yg ADA di antara yg dipilih,
+--   kalau 1 jenis habis, otomatis pakai jenis lain yg masih ada.
+-- "1 per jenis": tiap target (jenis seed / cluster) cuma ditaro 1x; ditaro lagi setelah
+--   cooldown (sprinkler lama expired) — default 90s.
+
+local SPRINKLER_TYPES = {"Common Sprinkler","Uncommon Sprinkler","Rare Sprinkler",
+    "Legendary Sprinkler","Super Sprinkler","Master Sprinkler","Godly Sprinkler"}
+Farm._sprPlaced = {}     -- [targetKey] = tick() terakhir taro
+local SPR_COOLDOWN = 90  -- detik sebelum taro lagi di target sama
+
+-- centroid (titik tengah) tanaman per jenis seed, di garden KITA
+function Farm.plantCentroids()
+    local res = {}  -- [seedName] = {sum=Vector3, n=int}
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return res end
+    local MY = player.UserId
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if (not ownerId or ownerId == MY) then
+                    local nm = plant:GetAttribute("SeedName") or "?"
+                    local ok, piv = pcall(function() return plant:GetPivot().Position end)
+                    if ok and piv then
+                        local e = res[nm] or { sum = Vector3.new(), n = 0 }
+                        e.sum = e.sum + piv; e.n = e.n + 1
+                        res[nm] = e
+                    end
+                end
+            end
+        end
+    end
+    return res
+end
+
+-- ambil 1 Tool sprinkler yg tersedia (dari jenis yg dipilih, yg masih ada stoknya)
+function Farm.pickSprinklerTool()
+    local char = player.Character
+    local holders = { char, player:FindFirstChildOfClass("Backpack") }
+    -- kumpulin semua tool sprinkler per nama
+    local avail = {}  -- nama -> Tool
+    for _, h in ipairs(holders) do
+        if h then
+            for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("sprinkler") then
+                    -- filter: kalau gak sprAllType, cuma yg dipilih
+                    local ok = state.sprAllType or state.selectedSprType[t.Name] == true
+                    if ok and not avail[t.Name] then avail[t.Name] = t end
+                end
+            end
+        end
+    end
+    -- prioritas urutan SPRINKLER_TYPES (bagus dulu? atau apa adanya). pakai yg pertama ketemu.
+    for _, nm in ipairs(SPRINKLER_TYPES) do
+        if avail[nm] then return avail[nm] end
+    end
+    -- kalau ada sprinkler lain di luar list, pakai juga
+    for _, t in pairs(avail) do return t end
+    return nil
+end
+
+function Farm.placeSprinklerOnce()
+    local p = pkt("Place", "PlaceSprinkler")
+    if not p or not p.Fire then print("[ZenxFarm] sprinkler: remote Place.PlaceSprinkler gak ada"); return end
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not root then return end
+
+    local centroids = Farm.plantCentroids()
+
+    -- tentukan target: {key, pos}
+    local targets = {}
+    if state.sprClusterMode then
+        -- mode cluster: cari jenis seed dgn tanaman TERBANYAK -> taro di titik tengahnya
+        local bestNm, bestN, bestPos
+        for nm, e in pairs(centroids) do
+            if not bestN or e.n > bestN then bestN = e.n; bestNm = nm; bestPos = e.sum / e.n end
+        end
+        if bestPos then targets[#targets+1] = { key = "cluster:"..tostring(bestNm), pos = bestPos } end
+    else
+        -- mode deket jenis seed: tiap jenis terpilih -> 1 sprinkler di titik tengah jenis itu
+        for nm, e in pairs(centroids) do
+            if state.selectedSprSeed[nm] == true then
+                targets[#targets+1] = { key = "seed:"..nm, pos = e.sum / e.n }
+            end
+        end
+    end
+    if #targets == 0 then dprint("[ZenxFarm] sprinkler: gak ada target (pilih jenis seed dulu / cek garden)"); return end
+
+    local placed = 0
+    for _, tg in ipairs(targets) do
+        -- 1 per jenis: skip kalau baru ditaro (belum lewat cooldown)
+        local last = Farm._sprPlaced[tg.key]
+        if last and (tick() - last) < SPR_COOLDOWN then
+            -- masih ada sprinkler di sini, skip
+        else
+            local tool = Farm.pickSprinklerTool()
+            if not tool then
+                dprint("[ZenxFarm] sprinkler: stok habis (jenis terpilih)")
+                break
+            end
+            if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
+            -- taro di titik tengah jenis seed (turunin sedikit ke tanah)
+            local pos = Vector3.new(tg.pos.X, tg.pos.Y, tg.pos.Z)
+            pcall(function() p:Fire(pos, tool.Name, tool, 1) end)
+            Farm._sprPlaced[tg.key] = tick()
+            placed = placed + 1
+            dprint("[ZenxFarm] sprinkler "..tool.Name.." -> "..tg.key.." @ "..string.format("%.0f,%.0f", pos.X, pos.Z))
+            task.wait(0.2)
+        end
+    end
+    if placed > 0 then dprint("[ZenxFarm] sprinkler: taro "..placed.." titik") end
+end
+task.spawn(function()
+    while isCurrentGen() do
+        pcall(function()
+            task.wait(3)  -- cek tiap 3 detik
+            if isCurrentGen() and state.autoSprinkler then Farm.placeSprinklerOnce() end
         end)
     end
 end)
@@ -1640,10 +1789,12 @@ local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange, countF
         BackgroundColor3 = C.card, Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 52, Parent = boxF })
     corner(allBtn, 6)
     local allL = lbl(allBtn, "", 12, C.text, Enum.TextXAlignment.Center); allL.Size = UDim2.new(1,0,1,0); allL.ZIndex = 53
+    if not allKey then allBtn.Visible = false end  -- v8.1: gak ada opsi "Semua" kalau allKey nil
     local sc = mk("ScrollingFrame", { Size = UDim2.new(1,-20,1,-104), Position = UDim2.new(0,10,0,98),
         BackgroundTransparency = 1, ScrollBarThickness = 3, BorderSizePixel = 0, ZIndex = 52, Parent = boxF })
     local scl = mk("UIListLayout", { Padding = UDim.new(0,3), Parent = sc })
     local function updAll()
+        if not allKey then return end
         allBtn.BackgroundColor3 = state[allKey] and C.green or C.card
         allL.Text = (state[allKey] and "✓ " or "   ").."Semua"
         allL.TextColor3 = state[allKey] and Color3.new(0,0,0) or C.text
@@ -1687,7 +1838,7 @@ local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange, countF
                 corner(r, 4)
                 r.MouseButton1Click:Connect(function()
                     if selSet[name] then selSet[name] = nil else selSet[name] = true end
-                    state[allKey] = false
+                    if allKey then state[allKey] = false end
                     saveState(); updAll(); rebuild(search.Text); onChange()
                     -- log biar keliatan pilihan kesimpan
                     local cur = {}; for nm in pairs(selSet) do cur[#cur+1] = nm end
@@ -1698,6 +1849,7 @@ local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange, countF
         sc.CanvasSize = UDim2.new(0,0,0,scl.AbsoluteContentSize.Y + 8)
     end
     allBtn.MouseButton1Click:Connect(function()
+        if not allKey then return end
         state[allKey] = not state[allKey]; saveState(); updAll(); onChange()
     end)
     search:GetPropertyChangedSignal("Text"):Connect(function() rebuild(search.Text) end)
@@ -1714,7 +1866,7 @@ local function mkTypeRow(body, y, labelTxt, listFn, selSet, allKey, allLabel, co
     btnL.Position = UDim2.new(0, 8, 0, 0); btnL.Size = UDim2.new(1, -12, 1, 0)
     btnL.TextTruncate = Enum.TextTruncate.AtEnd  -- v5.9: nama panjang dipotong "...", gak meluber
     local function upd()
-        if state[allKey] then btnL.Text = allLabel; btnL.TextColor3 = C.green
+        if allKey and state[allKey] then btnL.Text = allLabel; btnL.TextColor3 = C.green
         else
             -- v5.9: tampilin NAMA item yg dipilih (urut alfabet), bukan cuma "N dipilih"
             local names = {}
@@ -1860,6 +2012,22 @@ do
     local gearListFn = function() if not Farm.gearList then Farm.gearList = loadGearList() end return Farm.gearList end
     mkTypeRow(body, 4, "Jenis Gear", gearListFn, state.selectedGear, "buyAllGears", "Semua gear")
     applyBuyGear = mkBodyToggle(body, 44, "Auto Buy", "autoBuyGear", "Auto Buy Gear")
+end
+
+-- ====== CARD 8: AUTO SPRINKLER (v8.1) ======
+local applySprinkler, applySprMode
+do
+    local card, body, setH = mkFarmCard(8, "Auto Sprinkler", "taro sprinkler otomatis (tap utk atur)")
+    setH(216)
+    -- pilih jenis seed yg dikasih sprinkler (mode deket seed)
+    mkTypeRow(body, 4,  "Jenis Seed", function() return Farm.shovelSeedList() end,
+        state.selectedSprSeed, nil, nil, function() return Farm.countMyGardenSeeds() end)
+    -- pilih jenis sprinkler yg dipakai
+    mkTypeRow(body, 44, "Jenis Sprinkler", function() return SPRINKLER_TYPES end,
+        state.selectedSprType, "sprAllType", "Semua sprinkler")
+    -- mode: OFF = deket jenis seed, ON = di seed terbanyak (cluster)
+    applySprMode  = mkBodyToggle(body, 84,  "Mode: Seed Terbanyak", "sprClusterMode", "Sprinkler Cluster Mode")
+    applySprinkler = mkBodyToggle(body, 124, "Auto Sprinkler", "autoSprinkler", "Auto Sprinkler")
 end
 
 
@@ -2187,6 +2355,6 @@ closeBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAfk(); applySteal(); applyAntiBot(); applyGrabSeed(); applyShovel(); applySprinkler(); applySprMode()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
