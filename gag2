@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v9.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v9.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v9.6"
+local VER       = "v9.7"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -559,10 +559,13 @@ function Farm.collectOnce()
     end
 
     if state.collectMostFirst then
-        -- v9.6: mode FOKUS — collect 1 jenis (yg buahnya TERBANYAK), KUNCI ke jenis itu.
-        -- ganti jenis HANYA setelah auto-sell (bp kosong, Farm._focusType di-reset).
-        -- jadi kalau jenis terbanyak numpuk lagi stlh sell, balik fokus ke situ.
-        local byType = {}  -- seedName -> { list, fruits }
+        -- v9.7: mode FOKUS anti-kejar-regrowth.
+        -- collect 1 jenis (terbanyak) SEKALI LEWAT, lalu LEPAS (tandai _focusDone) ->
+        -- pindah ke jenis terbanyak berikutnya. JANGAN balik ngejar buah yg numpuk lagi
+        -- (dulu strawberry 400 turun 390 tumbuh 420 -> stuck terus -> lemot & jenis lain
+        -- gak kebagian). stlh SEMUA jenis kebagian 1x / stlh sell -> ronde baru.
+        Farm._focusDone = Farm._focusDone or {}
+        local byType = {}
         for _, plot in ipairs(gardens:GetChildren()) do
             local plants = plot:FindFirstChild("Plants")
             if plants then
@@ -581,24 +584,28 @@ function Farm.collectOnce()
                 end
             end
         end
-        -- tentukan jenis FOKUS: kalau udah ada fokus & jenis itu masih ada buahnya, lanjut.
-        -- kalau fokus kosong / udah gak ada buah -> pilih jenis dgn buah terbanyak SEKARANG.
-        local focus = Farm._focusType
-        if not focus or not byType[focus] or byType[focus].fruits == 0 then
-            local bestN
-            focus = nil
+        -- pilih jenis terbanyak yg BELUM kebagian ronde ini (_focusDone)
+        local focus, bestN
+        for sn, e in pairs(byType) do
+            if e.fruits > 0 and not Farm._focusDone[sn] and (not bestN or e.fruits > bestN) then
+                bestN = e.fruits; focus = sn
+            end
+        end
+        -- semua jenis udah kebagian / gak ada yg punya buah -> mulai ronde baru
+        if not focus then
+            Farm._focusDone = {}
             for sn, e in pairs(byType) do
                 if e.fruits > 0 and (not bestN or e.fruits > bestN) then bestN = e.fruits; focus = sn end
             end
-            Farm._focusType = focus
-            if focus then dprint("[ZenxFarm] collect fokus: "..focus.." ("..byType[focus].fruits.." buah)") end
         end
-        -- collect cuma jenis fokus
+        -- collect jenis fokus SEKALI LEWAT, lalu tandai selesai (lepas, gak ngejar regrowth)
         if focus and byType[focus] then
+            dprint("[ZenxFarm] collect fokus: "..focus.." ("..byType[focus].fruits.." buah)")
             for _, t in ipairs(byType[focus].list) do
                 if not state.autoCollect then break end
                 processPlant(t[1], t[2], t[3])
             end
+            Farm._focusDone[focus] = true
         end
     elseif not state.collectExpensiveFirst then
         -- v7.8: JALUR CEPAT (default) — fire langsung tanpa bangun tabel.
@@ -906,7 +913,7 @@ task.spawn(function()
                     if cur >= mx then
                         print(string.format("[ZenxFarm] backpack penuh (%d/%d) -> sell", cur, mx))
                         Farm.sellOnce()
-                        Farm._focusType = nil  -- v9.6: stlh sell, re-pick jenis terbanyak (bisa balik ke jenis sama)
+                        Farm._focusDone = {}; Farm._focusType = nil  -- v9.7: stlh sell, ronde baru
                     end
                 else
                     -- mode interval: jangan tiap 1s (kebanyakan) — pakai counter tiap 5s
@@ -914,7 +921,7 @@ task.spawn(function()
                     if Farm._sellTick >= 5 then
                         Farm._sellTick = 0
                         Farm.sellOnce()
-                        Farm._focusType = nil  -- v9.6: re-pick jenis terbanyak stlh sell
+                        Farm._focusDone = {}; Farm._focusType = nil  -- v9.7: ronde baru stlh sell
                     end
                 end
             end
