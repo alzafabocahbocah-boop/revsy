@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v11.9  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v12.0  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v11.9"
+local VER       = "v12.0"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -1065,16 +1065,21 @@ end
 
 -- v11.6: baca STOK dari server (StockValues.<Shop>.Items.<name> = NumberValue stok).
 -- 0 = kosong, >0 = ada. nama tanpa "Seed" (Carrot, bukan Carrot Seed).
+-- v11.6: baca STOK dari server. v12.0: cache ref folder Items (gak nyari berulang -> enteng)
+Farm._stockItems = {}  -- shopName -> Items folder
 function Farm.getStock(shopName, itemName)
-    local ok, val = pcall(function()
-        local sv = RS:FindFirstChild("StockValues")
-        local shop = sv and sv:FindFirstChild(shopName)
-        local items = shop and shop:FindFirstChild("Items")
-        local n = items and items:FindFirstChild(itemName)
-        if n and n:IsA("ValueBase") then return n.Value end
-        return nil
-    end)
-    if ok then return val end
+    local items = Farm._stockItems[shopName]
+    if not items or not items.Parent then
+        local ok = pcall(function()
+            local sv = RS:FindFirstChild("StockValues")
+            local shop = sv and sv:FindFirstChild(shopName)
+            items = shop and shop:FindFirstChild("Items")
+        end)
+        if not ok or not items then return nil end
+        Farm._stockItems[shopName] = items
+    end
+    local n = items:FindFirstChild(itemName)
+    if n and n:IsA("ValueBase") then return n.Value end
     return nil
 end
 
@@ -1100,11 +1105,12 @@ function Farm.buySeedOnce()
         local stok = Farm.getStock("SeedShop", short)
         if stok == nil then stok = Farm.getStock("SeedShop", name) end
         if stok and stok > 0 then
+            if stok > 20 then stok = 20 end  -- v12.0: batasi max 20 per siklus (safety)
             for _ = 1, stok do  -- fire sebanyak stok
                 if not state.autoBuySeed then break end
                 pcall(function() p:Fire(name) end)
                 fired = fired + 1
-                task.wait(0.05)  -- jeda anti-burst
+                if fired % 5 == 0 then task.wait() end  -- v12.0: jeda tiap 5 fire (dulu tiap fire -> lama/lag)
             end
         end
     end
@@ -1174,11 +1180,12 @@ function Farm.buyGearOnce()
         if not state.autoBuyGear then break end
         local stok = Farm.getStock("GearShop", name)
         if stok and stok > 0 then
+            if stok > 20 then stok = 20 end  -- v12.0: safety cap
             for _ = 1, stok do
                 if not state.autoBuyGear then break end
                 pcall(function() p:Fire(name) end)
                 fired = fired + 1
-                task.wait(0.05)  -- jeda anti-burst
+                if fired % 5 == 0 then task.wait() end  -- v12.0: jeda tiap 5 fire (dulu tiap fire)
             end
         end
     end
