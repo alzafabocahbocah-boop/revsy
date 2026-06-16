@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v11.2  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v11.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v11.2"
+local VER       = "v11.4"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -346,6 +346,7 @@ local state = {
     autoGift        = false,
     autoAcceptGift  = false,    -- v8.9: auto claim gift masuk dari mailbox
     autoAfk         = false,
+    antiLag         = false,    -- v11.4: matiin efek visual berat (max enteng)
     autoSteal       = false,
     stealTeleport   = true,     -- teleport ke buah dulu (matikan kalau mau diam di tempat)
     antiBot         = false,    -- auto hop kalau ada player bot (Sheckles berubah 10s berturut)
@@ -355,6 +356,8 @@ local state = {
     giftSeeds       = {},       -- jenis seed yg dikirim
     giftSeedQty     = 0,        -- v8.7: jumlah seed per kirim (0 = semua)
     giftPets        = {},       -- jenis pet yg dikirim (by Tool name, mis "Owl"/"Big Owl")
+    giftFruits      = {},        -- v11.3: jenis FRUIT yg dikirim
+    giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
 }
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
     "IceSerpent","Monkey","Owl","Raccoon","Robin","Unicorn"}
@@ -363,7 +366,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
 -- mulai kosong (biar gak kebablasan gali "Semua"). toggle autoShovel kesave seperti biasa.
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
@@ -373,12 +376,13 @@ local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect
                  selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
                  selectedSprPos="selectedSprPos",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
-                 giftSeeds="giftSeeds", giftPets="giftPets"}
+                 giftSeeds="giftSeeds", giftPets="giftPets", giftFruits="giftFruits"}
 local function saveState()
     pcall(function()
         if not writefile then return end
         local out = { plantLocation = state.plantLocation, giftTarget = state.giftTarget }
         out.giftSeedQty = state.giftSeedQty or 0  -- v8.7
+        out.giftFruitWeightF = state.giftFruitWeightF or 0  -- v11.3
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -399,6 +403,7 @@ local function loadState()
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
                 if type(d.giftSeedQty) == "number" then state.giftSeedQty = d.giftSeedQty end
+                if type(d.giftFruitWeightF) == "number" then state.giftFruitWeightF = d.giftFruitWeightF end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -481,6 +486,73 @@ function Farm.gardenKg(fruit, seedName)
     local sm = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("SizeMultiplier")
     if type(sm) == "number" then return sm * (Farm._baseW[seedName] or 1) end
     return 0
+end
+
+-- v11.4: ANTI-LAG agresif — matiin efek visual berat. _antiLagOn nandain status.
+Farm._antiLagOn = false
+Farm._antiLagConn = nil
+function Farm.applyAntiLagToObj(d)
+    pcall(function()
+        if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+           or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+            d.Enabled = false
+        elseif d:IsA("Explosion") then
+            d.Visible = false
+        elseif d:IsA("PostEffect") then  -- Bloom/Blur/ColorCorrection/DepthOfField/SunRays
+            d.Enabled = false
+        elseif d:IsA("MaterialVariant") then
+        end
+    end)
+end
+function Farm.setAntiLag(on)
+    local Light = game:GetService("Lighting")
+    local run = game:GetService("RunService")
+    if on then
+        Farm._antiLagOn = true
+        pcall(function()
+            -- kualitas grafis minimum
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        end)
+        pcall(function()
+            local sg = game:GetService("UserGameSettings") or UserSettings():GetService("UserGameSettings")
+            if sg then sg.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1 end
+        end)
+        -- lighting: matiin efek berat
+        pcall(function()
+            Light.GlobalShadows = false
+            Light.FogEnd = 1e6
+            Light.Brightness = 1
+            for _, e in ipairs(Light:GetChildren()) do
+                if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then pcall(function() e.Enabled = false end) end
+                if e:IsA("Atmosphere") then pcall(function() e:Destroy() end) end
+            end
+        end)
+        -- matiin SEMUA partikel/trail/beam yg ada + Terrain detail
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do Farm.applyAntiLagToObj(d) end
+        end)
+        pcall(function()
+            local ter = workspace:FindFirstChildOfClass("Terrain")
+            if ter then ter.WaterWaveSize = 0; ter.WaterWaveSpeed = 0; ter.WaterReflectance = 0; ter.WaterTransparency = 1 end
+        end)
+        -- listener: efek baru yg muncul langsung dimatiin
+        if not Farm._antiLagConn then
+            Farm._antiLagConn = workspace.DescendantAdded:Connect(function(d)
+                if Farm._antiLagOn then Farm.applyAntiLagToObj(d) end
+            end)
+        end
+        print("[ZenxFarm] anti-lag ON (efek visual dimatiin, max enteng)")
+    else
+        Farm._antiLagOn = false
+        if Farm._antiLagConn then Farm._antiLagConn:Disconnect(); Farm._antiLagConn = nil end
+        pcall(function()
+            Light.GlobalShadows = true
+            for _, e in ipairs(Light:GetChildren()) do
+                if e:IsA("PostEffect") or e:IsA("Sky") then pcall(function() e.Enabled = true end) end
+            end
+        end)
+        print("[ZenxFarm] anti-lag OFF (efek balik normal, perlu rejoin biar full balik)")
+    end
 end
 
 -- ===== akses Networking packet (sistem Packet GAG 2) =====
@@ -1288,6 +1360,16 @@ function Farm.giftOnce()
                 -- pakai nama Tool (mis "Big Owl"/"Owl") biar varian besar kebedain
                 if state.giftPets[t.Name] then
                     items[#items+1] = {ItemKey = tostring(petId), Count = 1, Category = "Pets"}
+                end
+            else
+                -- v11.3: FRUIT — punya Id + Fruit/FruitName + Weight. filter jenis + berat.
+                local fid = t:GetAttribute("Id")
+                local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                if fid and fjenis and state.giftFruits[fjenis] then
+                    local w = t:GetAttribute("Weight") or 0
+                    if passWeight(w, state.giftFruitWeightF) then  -- filter berat KHUSUS fruit
+                        items[#items+1] = {ItemKey = tostring(fid), Count = 1, Category = "Fruits"}
+                    end
                 end
             end
         end
@@ -2474,11 +2556,11 @@ do
     local hd = mk("TextButton", { Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = card })
     local nameL = lbl(hd, "Auto Send Gift", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -50, 0, 18)
-    local descL = lbl(hd, "kirim seed + pet ke player (tap utk atur)", 11, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(hd, "kirim seed/pet/fruit ke player (tap utk atur)", 11, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -50, 0, 14)
     local arrow = lbl(hd, "▾", 14, C.textDim, Enum.TextXAlignment.Center)
     arrow.Position = UDim2.new(1, -32, 0, 19); arrow.Size = UDim2.new(0, 20, 0, 18)
-    local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 200), Position = UDim2.new(0, 10, 0, 60),
+    local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 320), Position = UDim2.new(0, 10, 0, 60),
         BackgroundTransparency = 1, Visible = false, Parent = card })
 
     -- penerima: textbox + indikator
@@ -2512,15 +2594,27 @@ do
 
     mkTypeRow(body, 84,  "Jenis Seed", seedListFn, state.giftSeeds, "_giftAllSeed_NEVER", "pilih seed...")
     mkTypeRow(body, 124, "Jenis Pet",  petGiftList, state.giftPets,  "_giftAllPet_NEVER",  "pilih pet...")
-    applyGift = mkBodyToggle(body, 164, "Auto Send", "autoGift", "Auto Send Gift")
+    -- v11.3: jenis FRUIT + filter berat (KHUSUS fruit)
+    mkTypeRow(body, 164, "Jenis Fruit", function() return fruitList() end, state.giftFruits, "_giftAllFruit_NEVER", "pilih fruit...")
+    lbl(body, "Filter kg (fruit)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,208)
+    local gfwBox = mk("TextBox", { Size = UDim2.new(0.35, 0, 0, 28), Position = UDim2.new(0.65, 0, 0, 205),
+        BackgroundColor3 = C.input, Text = tostring(state.giftFruitWeightF or 0), PlaceholderText = "0=semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(gfwBox, 6); stroke(gfwBox, C.border, 1)
+    gfwBox.FocusLost:Connect(function()
+        local n = tonumber(gfwBox.Text) or 0
+        state.giftFruitWeightF = n; gfwBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] gift filter fruit: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
+    end)
+    applyGift = mkBodyToggle(body, 244, "Auto Send", "autoGift", "Auto Send Gift")
     -- v8.9: auto claim gift masuk
-    applyAcceptGift = mkBodyToggle(body, 204, "Auto Accept Gift", "autoAcceptGift", "Auto Accept Gift")
+    applyAcceptGift = mkBodyToggle(body, 284, "Auto Accept Gift", "autoAcceptGift", "Auto Accept Gift")
 
     local expanded = false
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 298 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 378 or 56)
     end)
 end
 
@@ -2554,6 +2648,39 @@ do
         print("[ZenxFarm] Auto AFK -> "..(state.autoAfk and "ON" or "OFF"))
     end)
     applyAfk()
+end
+
+-- ====== MISC: Anti-Lag (toggle) — v11.4 ======
+local applyAntiLag
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 6, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Anti-Lag (Max Enteng)", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "matiin efek visual (tampilan jelek tapi kenceng)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyAntiLag = function()
+        if state.antiLag then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+        pcall(function() Farm.setAntiLag(state.antiLag) end)
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.antiLag = not state.antiLag; saveState(); applyAntiLag()
+        print("[ZenxFarm] Anti-Lag -> "..(state.antiLag and "ON" or "OFF"))
+    end)
+    applyAntiLag()
 end
 
 -- ====== MISC: Auto Steal (toggle simpel) ======
@@ -2935,6 +3062,6 @@ do
 end
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applyAntiLag(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
