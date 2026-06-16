@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v11.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v11.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v11.7"
+local VER       = "v11.8"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -348,6 +348,8 @@ local state = {
     autoAfk         = false,
     antiLag         = false,    -- v11.4: matiin efek visual berat (max enteng)
     hidePlants      = false,    -- v11.7: sembunyiin visual tanaman (buah tetep keliatan)
+    hideFruits      = false,    -- v11.8: sembunyiin buah juga
+    hideFruitFaint  = true,     -- v11.8: true=sisain samar (transparan 0.7), false=ilang total
     autoSteal       = false,
     stealTeleport   = true,     -- teleport ke buah dulu (matikan kalau mau diam di tempat)
     antiBot         = false,    -- auto hop kalau ada player bot (Sheckles berubah 10s berturut)
@@ -367,7 +369,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
 -- mulai kosong (biar gak kebablasan gali "Semua"). toggle autoShovel kesave seperti biasa.
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
@@ -612,6 +614,52 @@ function Farm.setHidePlants(on)
     else
         if Farm._hidePlantsConn then Farm._hidePlantsConn:Disconnect(); Farm._hidePlantsConn = nil end
         print("[ZenxFarm] sembunyiin pohon OFF")
+    end
+end
+
+-- v11.8: SEMBUNYIIN BUAH — mode samar (transparan 0.7) atau ilang total (1).
+Farm._hideFruitsOn = false
+Farm._hideFruitsConn = nil
+function Farm.hideFruitParts(fruit, hide)
+    local tval = hide and (state.hideFruitFaint and 0.7 or 1) or 0
+    pcall(function()
+        for _, d in ipairs(fruit:GetDescendants()) do
+            if d:IsA("BasePart") then d.Transparency = tval
+            elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = tval end
+        end
+        if fruit:IsA("BasePart") then fruit.Transparency = tval end
+    end)
+end
+function Farm.setHideFruits(on)
+    local gardens = workspace:FindFirstChild("Gardens")
+    Farm._hideFruitsOn = on
+    if gardens then
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local fr = plant:FindFirstChild("Fruits")
+                    if fr then
+                        for _, fruit in ipairs(fr:GetChildren()) do
+                            Farm.hideFruitParts(fruit, on)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if on then
+        if not Farm._hideFruitsConn then
+            Farm._hideFruitsConn = workspace.DescendantAdded:Connect(function(d)
+                if Farm._hideFruitsOn and d.Parent and d.Parent.Name == "Fruits" then
+                    task.wait(0.1); Farm.hideFruitParts(d, true)
+                end
+            end)
+        end
+        print("[ZenxFarm] sembunyiin buah ON ("..(state.hideFruitFaint and "samar" or "ilang total")..")")
+    else
+        if Farm._hideFruitsConn then Farm._hideFruitsConn:Disconnect(); Farm._hideFruitsConn = nil end
+        print("[ZenxFarm] sembunyiin buah OFF")
     end
 end
 
@@ -2804,6 +2852,54 @@ do
     applyHidePlants()
 end
 
+-- ====== MISC: Sembunyiin Buah (toggle + mode samar) — v11.8 ======
+local applyHideFruits
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 8, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Sembunyiin Buah", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "buah disembunyiin (paling enteng)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0, 16),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    -- baris mode: samar vs ilang total
+    local modeBtn = mk("TextButton", { Size = UDim2.new(1, -28, 0, 28), Position = UDim2.new(0, 14, 0, 56),
+        BackgroundColor3 = C.input, Text = "", TextColor3 = C.text, Font = FONT, TextSize = 12,
+        AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(modeBtn, 6); stroke(modeBtn, C.border, 1)
+    local function refreshMode()
+        modeBtn.Text = "Mode: "..(state.hideFruitFaint and "Sisain samar 👁" or "Ilang total ✕")
+    end
+    applyHideFruits = function()
+        if state.hideFruits then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+        refreshMode()
+        task.spawn(function() pcall(function() Farm.setHideFruits(state.hideFruits) end) end)
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.hideFruits = not state.hideFruits; saveState(); applyHideFruits()
+        print("[ZenxFarm] Sembunyiin Buah -> "..(state.hideFruits and "ON" or "OFF"))
+    end)
+    modeBtn.MouseButton1Click:Connect(function()
+        state.hideFruitFaint = not state.hideFruitFaint; saveState(); refreshMode()
+        -- terapkan ulang kalau lagi ON
+        if state.hideFruits then task.spawn(function() pcall(function() Farm.setHideFruits(true) end) end) end
+        print("[ZenxFarm] mode buah -> "..(state.hideFruitFaint and "samar" or "ilang total"))
+    end)
+    applyHideFruits()
+end
+
 -- ====== MISC: Auto Steal (toggle simpel) ======
 local applySteal
 do
@@ -3183,6 +3279,6 @@ do
 end
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applyAntiLag(); applyHidePlants(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applyAntiLag(); applyHidePlants(); applyHideFruits(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
