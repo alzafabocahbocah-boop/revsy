@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v11.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v11.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v11.1"
+local VER       = "v11.2"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -324,6 +324,10 @@ local state = {
     selectedSprPos = {},        -- v8.8: posisi sprinkler yg dipilih (multi-select, label->true)
     selectedShovel = {},        -- v7.0: jenis seed yg di-shovel (HANYA yg dipilih)
     shovelAll     = false,      -- v7.0: false = cuma yg dipilih (default gak shovel semua)
+    shovelFruit   = false,      -- v11.2: auto buang buah satuan (jelek/kecil) — SELALU OFF tiap load
+    shovelFruitAll = false,     -- v11.2: jenis buat shovel fruit
+    selectedShovelFruit = {},   -- v11.2: jenis terpilih shovel fruit
+    shovelFruitKg = 0,          -- v11.2: ambang kg — buah DI BAWAH ini dibuang (0=off)
     sellAll       = true,       -- sell semua buah
     sellWhenFull  = false,      -- v5.7: MODE sell pas backpack penuh (OFF=interval biasa)
     sellMaxFallback = 200,      -- v5.7: batas penuh kalau deteksi otomatis gagal
@@ -359,9 +363,9 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
--- v11.0: autoShovel + shovelAll + selectedShovel SENGAJA gak kesave -> SELALU mulai bersih
--- tiap load/rejoin (Auto Shovel OFF, jenis kosong) biar gak lupa & kebablasan gali tanaman.
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+-- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
+-- mulai kosong (biar gak kebablasan gali "Semua"). toggle autoShovel kesave seperti biasa.
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
@@ -1581,6 +1585,73 @@ function Farm.shovelOnce()
     end
     if removed > 0 then dprint("[ZenxFarm] shovel: "..removed.." tanaman digali (sisain 1/jenis)") end
 end
+
+-- v11.2: AUTO SHOVEL FRUIT — buang BUAH satuan (jelek/kecil) dari pohon.
+-- format dari sniff: UseShovel(plantId, FRUITname, "Shovel", tool) -> arg2 = nama buah
+-- (bukan "" kayak shovel tanaman). filter: buang buah DI BAWAH shovelFruitKg (kg).
+function Farm.shovelFruitOnce()
+    local p = pkt("Shovel", "UseShovel")
+    if not p or not p.Fire then return end
+    local sw = pkt("Shovel", "SwingShovel")
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local shovelTool
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then for _, t in ipairs(h:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+        end end
+        if shovelTool then break end
+    end
+    if not shovelTool then dprint("[ZenxFarm] shovelFruit: tool Shovel gak ada"); return end
+    if shovelTool.Parent ~= char and hum then pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.1) end
+
+    Farm.updateBaseW()  -- kalibrasi kg dulu
+    local thr = state.shovelFruitKg or 0  -- ambang kg: buang buah DI BAWAH ini
+    if thr <= 0 then dprint("[ZenxFarm] shovelFruit: ambang kg 0 -> gak ada yg dibuang"); return end
+    local MY = player.UserId
+    local removed = 0
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if not state.shovelFruit then break end
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                local seedName = plant:GetAttribute("SeedName") or "?"
+                local okType = state.shovelFruitAll or (state.selectedShovelFruit[seedName] == true)
+                if (not ownerId or ownerId == MY) and okType then
+                    local fruits = plant:FindFirstChild("Fruits")
+                    if fruits then
+                        for _, fruit in ipairs(fruits:GetChildren()) do
+                            if not state.shovelFruit then break end
+                            local kg = Farm.gardenKg(fruit, seedName)
+                            -- buang kalau buah DI BAWAH ambang (kecil/jelek)
+                            if kg > 0 and kg < thr then
+                                local fruitName = fruit.Name  -- format <plantId>_<fruitUUID>
+                                if #fruitName >= 30 then
+                                    pcall(function() p:Fire(plant.Name, fruitName, shovelTool.Name, shovelTool) end)
+                                    if sw and sw.Fire then pcall(function() sw:Fire() end) end
+                                    removed = removed + 1
+                                    if removed % 15 == 0 then task.wait() end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if removed > 0 then dprint(string.format("[ZenxFarm] shovelFruit: %d buah <%.2fkg dibuang", removed, thr)) end
+end
+task.spawn(function()
+    while isCurrentGen() do
+        pcall(function()
+            task.wait(1)
+            if isCurrentGen() and state.shovelFruit then Farm.shovelFruitOnce() end
+        end)
+    end
+end)
 task.spawn(function()
     while isCurrentGen() do
         pcall(function()
@@ -2280,6 +2351,28 @@ do
     local shovelCountFn = function() return Farm.countMyGardenSeeds() end
     mkTypeRow(body, 4, "Jenis Seed", shovelListFn, state.selectedShovel, "shovelAll", "Semua seed", shovelCountFn)
     applyShovel = mkBodyToggle(body, 44, "Auto Shovel", "autoShovel", "Auto Shovel")
+end
+
+-- ====== CARD: AUTO SHOVEL FRUIT (v11.2) — buang buah satuan kecil/jelek ======
+do
+    local card, body, setH = mkFarmCard(100, "Auto Shovel Fruit", "buang buah kecil dari pohon (sisain yg gede)")
+    setH(126)
+    local listFn  = function() return Farm.shovelSeedList() end
+    local countFn = function() return Farm.countMyGardenSeeds() end
+    mkTypeRow(body, 4, "Jenis Seed", listFn, state.selectedShovelFruit, "shovelFruitAll", "Semua seed", countFn)
+    -- ambang kg: buah DI BAWAH angka ini dibuang
+    lbl(body, "Buang < kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
+    local kgBox = mk("TextBox", { Size = UDim2.new(0.4, 0, 0, 28), Position = UDim2.new(0.6, 0, 0, 45),
+        BackgroundColor3 = C.input, Text = tostring(state.shovelFruitKg or 0), PlaceholderText = "0=off",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(kgBox, 6); stroke(kgBox, C.border, 1)
+    kgBox.FocusLost:Connect(function()
+        local n = tonumber(kgBox.Text) or 0
+        if n < 0 then n = 0 end
+        state.shovelFruitKg = n; kgBox.Text = tostring(n)
+        print("[ZenxFarm] shovel fruit: buang buah < "..n.."kg")
+    end)
+    mkBodyToggle(body, 84, "Auto Shovel Fruit", "shovelFruit", "Auto Shovel Fruit")
 end
 
 -- ====== CARD 7: AUTO BUY GEAR (v7.1) ======
