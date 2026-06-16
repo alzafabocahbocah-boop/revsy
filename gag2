@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v10.3  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v10.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v10.3"
+local VER       = "v10.4"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -582,16 +582,18 @@ function Farm.collectOnce()
                         local e = byType[seedName or "?"]
                         if not e then e = { list = {}, fruits = 0 }; byType[seedName or "?"] = e end
                         e.list[#e.list+1] = { plant, plantId, seedName }
-                        -- v10.3 FIX: hitung buah multi-harvest (folder Fruits) + single-harvest
-                        -- (tanaman ready tanpa buah folder). dulu cuma hitung folder Fruits ->
-                        -- tanaman single-harvest (Rainbow dll) fruits=0 -> gak pernah kepilih
-                        -- fokus -> collect DIAM TOTAL. sekarang single-ready dihitung 1.
+                        -- v10.4 FIX: hitung cuma buah yg BISA dikoleksi sesuai toggle.
+                        -- dulu (v10.3) single-ready selalu dihitung -> kalau Single Harvest
+                        -- OFF, fokus nyangkut di jenis single (gak kekoleksi) -> buah multi
+                        -- gak kebagian giliran. sekarang ngitung niru processPlant:
+                        --   multi (folder Fruits) cuma kalau Multi Harvest ON
+                        --   single-ready cuma kalau Single Harvest ON
                         local fr = plant:FindFirstChild("Fruits")
                         local nf = fr and #fr:GetChildren() or 0
-                        if nf > 0 then
+                        if nf > 0 and state.collectMulti then
                             e.fruits = e.fruits + nf
-                        elseif plant:GetAttribute("PlantGrowthReady") == true then
-                            e.fruits = e.fruits + 1  -- single-harvest ready = 1 "buah"
+                        elseif nf == 0 and state.collectSingle and plant:GetAttribute("PlantGrowthReady") == true then
+                            e.fruits = e.fruits + 1
                         end
                     end
                 end
