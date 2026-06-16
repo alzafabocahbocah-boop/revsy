@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v12.0  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v12.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v12.0"
+local VER       = "v12.1"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -452,6 +452,25 @@ local genv = (typeof(getgenv) == "function") and getgenv() or _G
 genv.ZenxFarmGen = (genv.ZenxFarmGen or 0) + 1
 local MY_GEN = genv.ZenxFarmGen
 local function isCurrentGen() return genv.ZenxFarmGen == MY_GEN end
+
+-- v12.1: STAGGER START — daripada semua loop task.spawn serempak (bikin lag awal 1-2s),
+-- daftarin ke antrian, dispatcher ngeluarin satu-satu tiap 0.4s. ~20 loop kesebar ~8 detik.
+local _staggerQ = {}
+local function staggerSpawn(fn)
+    _staggerQ[#_staggerQ+1] = fn
+end
+task.spawn(function()
+    task.wait(1)  -- kasih UI napas dulu
+    while true do
+        if #_staggerQ > 0 then
+            local fn = table.remove(_staggerQ, 1)
+            if isCurrentGen() then task.spawn(fn) end
+            task.wait(0.4)  -- jeda antar start loop
+        else
+            task.wait(0.5)
+        end
+    end
+end)
 
 -- v7.7: debug-print — cuma jalan kalau state.debugLog ON.
 -- print yg berulang tiap siklus (collect/sell/buy/dll) PAKAI INI, biar console
@@ -1197,7 +1216,7 @@ end
 -- kalau gak kebaca, fallback jeda waktu (max 1x per 60s, gak spam).
 Farm._lastGearRestock = nil
 Farm._lastGearBuyTime = 0
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(3)
@@ -1235,7 +1254,7 @@ end)
 -- v6.5: loop diperkuat — SELURUH isi dibungkus pcall biar thread gak mati total
 -- kalau ada 1 error. dulu kalau error di luar pcall(collectOnce), thread mati ->
 -- "auto collect tiba-tiba berhenti". sekarang gak bisa mati gara-gara error.
-task.spawn(function()
+staggerSpawn(function()
     -- v10.5: heartbeat + expose state buat diagnosa (cek loop hidup & state asli)
     local gDbg = (typeof(getgenv) == "function") and getgenv() or _G
     gDbg.ZenxState = state
@@ -1250,7 +1269,7 @@ task.spawn(function()
     end
     print("[ZenxFarm] loop collect berhenti (generasi berubah / execute ulang)")
 end)
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
             -- v6.7: cek tiap 1s (dulu 5s) biar pas penuh langsung dijual, gak nunggu lama.
@@ -1280,7 +1299,7 @@ task.spawn(function()
     end
     print("[ZenxFarm] loop sell berhenti (generasi berubah)")
 end)
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         task.wait(3)  -- v4.4: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
@@ -1351,7 +1370,7 @@ function Farm.plantOnce()
     end
     if planted > 0 then dprint("[ZenxFarm] plant: "..planted.." seed (loc="..tostring(state.plantLocation)..")") end
 end
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         task.wait(0.2)  -- v6.5: 4s -> 0.2s (plant brutal/cepat)
         if isCurrentGen() and state.autoPlant then pcall(Farm.plantOnce) end
@@ -1401,7 +1420,7 @@ function Farm.buyPetOnce()
         end
     end
 end
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         task.wait(1)
         if isCurrentGen() and state.autoBuyPet then pcall(Farm.buyPetOnce) end
@@ -1528,13 +1547,13 @@ function Farm.giftOnce()
     pcall(function() sb:Fire(uid, items, "") end)
     print("[ZenxFarm] gift terkirim ke "..target..": "..#items.." item")
 end
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         task.wait(2)
         if isCurrentGen() and state.autoSteal then pcall(Farm.stealOnce) end
     end
 end)
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         task.wait(3)
         if isCurrentGen() and state.autoGift then pcall(Farm.giftOnce) end
@@ -1571,7 +1590,7 @@ function Farm.acceptGiftOnce()
     end
     if claimed > 0 then dprint("[ZenxFarm] accept gift: "..claimed.." gift di-claim") end
 end
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(3)
@@ -1706,7 +1725,7 @@ function Farm.grabSeedOnce()
         end
     end
 end
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         task.wait(0.03)  -- v6.1: 0.05 -> 0.03s (scan lebih sering, lebih cepat nyamber)
         if isCurrentGen() and state.autoGrabSeed then pcall(Farm.grabSeedOnce) end
@@ -1876,7 +1895,7 @@ function Farm.shovelFruitOnce()
     end
     if removed > 0 then dprint(string.format("[ZenxFarm] shovelFruit: %d buah <%.2fkg dibuang", removed, thr)) end
 end
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(1)
@@ -1884,7 +1903,7 @@ task.spawn(function()
         end)
     end
 end)
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(0.3)  -- v8.4: 2s -> 0.3s (shovel lebih cepat)
@@ -1996,7 +2015,7 @@ function Farm.placeSprinklerOnce()
     end
     if placed > 0 then dprint("[ZenxFarm] sprinkler: place "..placed.." titik") end
 end
-task.spawn(function()
+staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
             task.wait(3)
