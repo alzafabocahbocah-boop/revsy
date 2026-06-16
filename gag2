@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v10.5  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v10.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v10.5"
+local VER       = "v10.8"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -442,6 +442,34 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- FUNGSI FARM (placeholder — diisi nanti via debug)
 -- ============================================================
 local Farm = {}
+-- v10.8: tracking berat (kg). _baseW = faktor Weight/SizeMulti per jenis (auto-kalibrasi
+-- dari buah di tas yg punya Weight+SizeMultiplier). _collectKg/_sellKg = total sesi.
+Farm._baseW = {}
+Farm._collectKg = 0
+Farm._sellKg = 0
+function Farm.updateBaseW()
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local w = t:GetAttribute("Weight")
+                    local sm = t:GetAttribute("SizeMultiplier")
+                    local jenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                    if type(w) == "number" and type(sm) == "number" and sm > 0 and jenis then
+                        Farm._baseW[jenis] = w / sm
+                    end
+                end
+            end
+        end
+    end
+end
+function Farm.gardenKg(fruit, seedName)
+    local w = fruit:GetAttribute("Weight")
+    if type(w) == "number" then return w end
+    local sm = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("SizeMultiplier")
+    if type(sm) == "number" then return sm * (Farm._baseW[seedName] or 1) end
+    return 0
+end
 
 -- ===== akses Networking packet (sistem Packet GAG 2) =====
 local NET = nil
@@ -533,6 +561,16 @@ function Farm.collectOnce()
     local fired, skipped = 0, 0
     local typesFired = {}
 
+    -- v10.6 FIX: kalau collectAll=false TAPI gak ada jenis yg dipilih, anggap SEMUA.
+    -- (dulu bisa kejadian collectAll jadi false tapi selectedCollect kosong -> okType
+    --  false buat semua -> collect DIAM TOTAL walau toggle nyala. ini jaring pengaman.)
+    local effAll = state.collectAll
+    if not effAll then
+        local any = false
+        for _ in pairs(state.selectedCollect) do any = true; break end
+        if not any then effAll = true end  -- gak ada yg dipilih = ambil semua
+    end
+
     -- proses 1 tanaman (fire buahnya). dipakai dua jalur di bawah.
     -- v9.4: jeda KONSISTEN tiap fire (~0.02s, niru pola sc temen yg gacor).
     -- tiap fire dikasih jeda kecil -> server gak nge-drop -> collect mulus & rapi.
@@ -546,6 +584,7 @@ function Farm.collectOnce()
                 local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll")
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
+                    Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
                     fired = fired + 1; fruitCount = fruitCount + 1
                     task.wait()  -- jeda konsisten tiap fire (pola temen yg gacor)
                 end
@@ -576,7 +615,7 @@ function Farm.collectOnce()
                 for _, plant in ipairs(plants:GetChildren()) do
                     local plantId = plant:GetAttribute("PlantId")
                     local seedName = plant:GetAttribute("SeedName")
-                    local okType = state.collectAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
+                    local okType = effAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
                     if plantId and not okType then skipped = skipped + 1 end
                     if plantId and okType then
                         local e = byType[seedName or "?"]
@@ -631,7 +670,7 @@ function Farm.collectOnce()
                 for _, plant in ipairs(plants:GetChildren()) do
                     local plantId = plant:GetAttribute("PlantId")
                     local seedName = plant:GetAttribute("SeedName")
-                    local okType = state.collectAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
+                    local okType = effAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
                     if plantId and not okType then skipped = skipped + 1 end
                     if plantId and okType then processPlant(plant, plantId, seedName) end
                 end
@@ -647,7 +686,7 @@ function Farm.collectOnce()
                 for _, plant in ipairs(plants:GetChildren()) do
                     local plantId = plant:GetAttribute("PlantId")
                     local seedName = plant:GetAttribute("SeedName")
-                    local okType = state.collectAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
+                    local okType = effAll or (seedName ~= nil and state.selectedCollect[seedName] == true)
                     if plantId and not okType then skipped = skipped + 1 end
                     if plantId and okType then
                         todo[#todo+1] = { plant, plantId, seedName, Farm.cropValue(seedName) }
@@ -731,11 +770,23 @@ local function getInvMax()
     return state.sellMaxFallback
 end
 function Farm.sellOnce()
+    Farm.updateBaseW()  -- v10.8: kalibrasi base weight dari buah di tas
     if state.sellAll then
         local p = pkt("NPCS", "SellAll")
         if not p or not p.Fire then print("[ZenxFarm] SellAll packet gak ada"); return end
+        -- v10.8: jumlahin berat semua buah di inventory SEBELUM dijual
+        local kg = 0
+        for _, holder in ipairs(getFruitHolders()) do
+            for _, o in ipairs(holder:GetChildren()) do
+                if o:GetAttribute("Id") then
+                    local w = o:GetAttribute("Weight")
+                    if type(w) == "number" then kg = kg + w end
+                end
+            end
+        end
+        Farm._sellKg = Farm._sellKg + kg
         pcall(function() p:Fire() end)
-        print("[ZenxFarm] SellAll fired")
+        print(string.format("[ZenxFarm] SellAll fired (%.2f kg)", kg))
         return
     end
     -- per-jenis
@@ -750,6 +801,8 @@ function Farm.sellOnce()
                 -- v5.9: filter jenis + mutasi (kalau sellMutAll OFF, cuma mutasi terpilih)
                 local okMut = passMutation(o, state.selectedSellMut, "sellMutAll")
                 if state.selectedSell[jenis] and okMut then
+                    local w = o:GetAttribute("Weight")
+                    if type(w) == "number" then Farm._sellKg = Farm._sellKg + w end  -- v10.8
                     pcall(function() p:Fire(tostring(id)) end)
                     sold = sold + 1
                     types[jenis] = (types[jenis] or 0) + 1
@@ -1902,10 +1955,13 @@ end
 
 local farmBtn, farmLbl, farmStrk = mkTabBtn(0, "farm", "AUTO FARM")
 local miscBtn, miscLbl, miscStrk = mkTabBtn(48, "misc", "MISC")
+local statsBtn, statsLbl, statsStrk = mkTabBtn(96, "stats", "STATISTIK")
 tabBtns.farm = { btn = farmBtn, lbl = farmLbl, strk = farmStrk }
 tabBtns.misc = { btn = miscBtn, lbl = miscLbl, strk = miscStrk }
+tabBtns.stats = { btn = statsBtn, lbl = statsLbl, strk = statsStrk }
 farmBtn.MouseButton1Click:Connect(function() selectTab("farm") end)
 miscBtn.MouseButton1Click:Connect(function() selectTab("misc") end)
+statsBtn.MouseButton1Click:Connect(function() selectTab("stats") end)
 
 -- ----- panel AUTO FARM -----
 local farmPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Parent = content })
@@ -2099,7 +2155,7 @@ local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedLis
 local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(296)
+    setH(310)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
@@ -2111,19 +2167,37 @@ do
     -- v9.5: collect per jenis dari terbanyak dulu
     applyCollectMost   = mkBodyToggle(body, 204, "Terbanyak Dulu", "collectMostFirst", "Terbanyak Dulu")
     applyCollect = mkBodyToggle(body, 244, "Auto Collect", "autoCollect", "Auto Collect")
+    -- v10.8: label berat dikoleksi (sesi ini)
+    local ckgL = lbl(body, "Dikoleksi: 0.00 kg", 12, C.green, Enum.TextXAlignment.Left)
+    ckgL.Position = UDim2.new(0, 0, 0, 286); ckgL.Size = UDim2.new(1, 0, 0, 16)
+    task.spawn(function()
+        while ckgL.Parent do
+            ckgL.Text = string.format("Dikoleksi sesi ini: %.2f kg", Farm._collectKg)
+            task.wait(1)
+        end
+    end)
 end
 
 -- ====== CARD 2: AUTO SELL ======
 local applySell, applySellFull
 do
     local card, body, setH = mkFarmCard(2, "Auto Sell", "jual buah ke counter (tap utk atur)")
-    setH(172)
+    setH(202)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedSell, "sellAll", "Semua buah")
     -- v5.9: filter mutasi
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedSellMut, "sellMutAll", "Semua mutasi")
     -- v5.7: toggle mode "sell pas penuh" (OFF = sell rutin tiap 5 detik)
     applySellFull = mkBodyToggle(body, 84,  "Sell pas penuh", "sellWhenFull", "Sell When Full")
     applySell     = mkBodyToggle(body, 124, "Auto Sell", "autoSell", "Auto Sell")
+    -- v10.8: label berat terjual (sesi ini)
+    local skgL = lbl(body, "Terjual: 0.00 kg", 12, C.green, Enum.TextXAlignment.Left)
+    skgL.Position = UDim2.new(0, 0, 0, 166); skgL.Size = UDim2.new(1, 0, 0, 16)
+    task.spawn(function()
+        while skgL.Parent do
+            skgL.Text = string.format("Terjual sesi ini: %.2f kg", Farm._sellKg)
+            task.wait(1)
+        end
+    end)
 end
 
 -- ====== CARD 3: AUTO BUY SEED ======
@@ -2635,6 +2709,113 @@ closeBtn.MouseButton1Click:Connect(function()
     -- 4) baru hapus UI
     sg:Destroy()
 end)
+
+-- ----- panel STATISTIK (v10.7) -----
+-- kg buah = attribute Weight (kalau ada) / SizeMulti (fallback), dibulatkan.
+-- dari kalibrasi: Weight ≈ kg yg ditampilin game.
+do
+    local statsPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
+    panels.stats = statsPanel
+    local statsList = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
+        ScrollBarThickness = 3, BorderSizePixel = 0, CanvasSize = UDim2.new(0,0,0,0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = statsPanel })
+    mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = statsList })
+
+    -- kartu ringkasan
+    local sumCard = mk("Frame", { Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 0, Parent = statsList })
+    corner(sumCard, 8); stroke(sumCard, C.border, 1)
+    local sumL = lbl(sumCard, "", 13, C.text, Enum.TextXAlignment.Left)
+    sumL.Position = UDim2.new(0, 14, 0, 10); sumL.Size = UDim2.new(1, -28, 1, -20)
+    sumL.TextYAlignment = Enum.TextYAlignment.Top; sumL.TextWrapped = true
+
+    -- tombol refresh
+    local refBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.input,
+        Text = "🔄 Hitung Ulang", TextColor3 = C.text, Font = FONT_B, TextSize = 13,
+        AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = 1, Parent = statsList })
+    corner(refBtn, 6); stroke(refBtn, C.border, 1)
+
+    -- container per jenis (diisi pas refresh)
+    local perCard = mk("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 2, AutomaticSize = Enum.AutomaticSize.Y, Parent = statsList })
+    corner(perCard, 8); stroke(perCard, C.border, 1)
+    local perLayout = mk("UIListLayout", { Padding = UDim.new(0,2), Parent = perCard })
+    mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,10),
+        PaddingLeft = UDim.new(0,14), PaddingRight = UDim.new(0,14), Parent = perCard })
+
+    local function fruitKg(fruit)
+        local w = fruit:GetAttribute("Weight")
+        if type(w) == "number" then return w end
+        local sm = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("SizeMultiplier")
+        if type(sm) == "number" then return sm end
+        return 0
+    end
+
+    local function computeStats()
+        Farm.updateBaseW()  -- v10.8: kalibrasi dulu biar kg akurat
+        -- bersihin baris lama
+        for _, c in ipairs(perCard:GetChildren()) do
+            if c:IsA("TextLabel") then c:Destroy() end
+        end
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then sumL.Text = "Gardens gak ketemu"; return end
+        local MY = player.UserId
+        local byType = {}  -- jenis -> {n=buah, kg=total, plants=, ready=, mut={}}
+        local totalFruit, totalKg, totalPlant, readyPlant = 0, 0, 0, 0
+        local mutCount = {}
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, pl in ipairs(plants:GetChildren()) do
+                    local owner = tonumber(pl.Name:match("^(%d+)_"))
+                    if (not owner or owner == MY) then
+                        totalPlant = totalPlant + 1
+                        local jenis = pl:GetAttribute("SeedName") or "?"
+                        local e = byType[jenis]
+                        if not e then e = { n=0, kg=0, plants=0, ready=0 }; byType[jenis] = e end
+                        e.plants = e.plants + 1
+                        if pl:GetAttribute("PlantGrowthReady") == true then e.ready = e.ready + 1; readyPlant = readyPlant + 1 end
+                        local fr = pl:FindFirstChild("Fruits")
+                        if fr then
+                            for _, fruit in ipairs(fr:GetChildren()) do
+                                local kg = Farm.gardenKg(fruit, jenis)
+                                e.n = e.n + 1; e.kg = e.kg + kg
+                                totalFruit = totalFruit + 1; totalKg = totalKg + kg
+                                local mut = fruit:GetAttribute("Mutation")
+                                if mut and mut ~= "" and mut ~= "None" then mutCount[mut] = (mutCount[mut] or 0) + 1 end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        -- ringkasan
+        local mutStr = {}
+        for m, c in pairs(mutCount) do mutStr[#mutStr+1] = m.." x"..c end
+        sumL.Text = string.format(
+            "TOTAL DI KEBUN\nBuah: %d   |   Berat: %.2f kg\nTanaman: %d (ready: %d)\nMutasi: %s",
+            totalFruit, totalKg, totalPlant, readyPlant,
+            (#mutStr > 0 and table.concat(mutStr, ", ") or "-"))
+        -- urutkan jenis dari kg terbanyak
+        local order = {}
+        for j, e in pairs(byType) do order[#order+1] = {j, e} end
+        table.sort(order, function(a,b) return a[2].kg > b[2].kg end)
+        for i, o in ipairs(order) do
+            local j, e = o[1], o[2]
+            local row = lbl(perCard, string.format("%s — %d buah, %.2f kg  (%d tanaman)", j, e.n, e.kg, e.plants),
+                12, C.text, Enum.TextXAlignment.Left)
+            row.Size = UDim2.new(1, 0, 0, 18); row.LayoutOrder = i
+        end
+        if #order == 0 then
+            local row = lbl(perCard, "(belum ada buah di kebun)", 12, C.textDim, Enum.TextXAlignment.Left)
+            row.Size = UDim2.new(1, 0, 0, 18)
+        end
+    end
+    refBtn.MouseButton1Click:Connect(computeStats)
+    -- auto-hitung pas tab dibuka pertama kali
+    statsBtn.MouseButton1Click:Connect(function() task.wait(0.05); computeStats() end)
+    computeStats()
+end
 
 -- ----- boot -----
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
