@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v11.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v11.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v11.4"
+local VER       = "v11.7"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -347,6 +347,7 @@ local state = {
     autoAcceptGift  = false,    -- v8.9: auto claim gift masuk dari mailbox
     autoAfk         = false,
     antiLag         = false,    -- v11.4: matiin efek visual berat (max enteng)
+    hidePlants      = false,    -- v11.7: sembunyiin visual tanaman (buah tetep keliatan)
     autoSteal       = false,
     stealTeleport   = true,     -- teleport ke buah dulu (matikan kalau mau diam di tempat)
     antiBot         = false,    -- auto hop kalau ada player bot (Sheckles berubah 10s berturut)
@@ -366,7 +367,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
 -- mulai kosong (biar gak kebablasan gali "Semua"). toggle autoShovel kesave seperti biasa.
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
@@ -552,6 +553,65 @@ function Farm.setAntiLag(on)
             end
         end)
         print("[ZenxFarm] anti-lag OFF (efek balik normal, perlu rejoin biar full balik)")
+    end
+end
+
+-- v11.7: SEMBUNYIIN VISUAL TANAMAN (buah TETEP keliatan). ngurangin beban render berat.
+-- cara: di tiap plant Model, set part jadi transparan — KECUALI yg di folder Fruits.
+Farm._hidePlantsOn = false
+Farm._hidePlantsConn = nil
+function Farm.hidePlantParts(plant, hide)
+    pcall(function()
+        local fruits = plant:FindFirstChild("Fruits")
+        for _, d in ipairs(plant:GetDescendants()) do
+            if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture") then
+                -- skip kalau bagian dari folder Fruits (biar buah tetep keliatan)
+                local inFruit = false
+                if fruits then
+                    local par = d
+                    while par and par ~= plant do
+                        if par == fruits then inFruit = true; break end
+                        par = par.Parent
+                    end
+                end
+                if not inFruit then
+                    if d:IsA("BasePart") then
+                        d.Transparency = hide and 1 or 0
+                    else
+                        d.Transparency = hide and 1 or 0
+                    end
+                end
+            end
+        end
+    end)
+end
+function Farm.setHidePlants(on)
+    local gardens = workspace:FindFirstChild("Gardens")
+    Farm._hidePlantsOn = on
+    if gardens then
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    Farm.hidePlantParts(plant, on)
+                end
+            end
+        end
+    end
+    if on then
+        -- listener: tanaman baru yg muncul ikut disembunyiin
+        if not Farm._hidePlantsConn then
+            Farm._hidePlantsConn = workspace.DescendantAdded:Connect(function(d)
+                if Farm._hidePlantsOn and d.Parent and d.Parent.Name == "Plants" then
+                    task.wait(0.1)
+                    Farm.hidePlantParts(d, true)
+                end
+            end)
+        end
+        print("[ZenxFarm] sembunyiin pohon ON (buah tetep keliatan)")
+    else
+        if Farm._hidePlantsConn then Farm._hidePlantsConn:Disconnect(); Farm._hidePlantsConn = nil end
+        print("[ZenxFarm] sembunyiin pohon OFF")
     end
 end
 
@@ -948,6 +1008,21 @@ local function loadSeedList()
     return list
 end
 
+-- v11.6: baca STOK dari server (StockValues.<Shop>.Items.<name> = NumberValue stok).
+-- 0 = kosong, >0 = ada. nama tanpa "Seed" (Carrot, bukan Carrot Seed).
+function Farm.getStock(shopName, itemName)
+    local ok, val = pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        local shop = sv and sv:FindFirstChild(shopName)
+        local items = shop and shop:FindFirstChild("Items")
+        local n = items and items:FindFirstChild(itemName)
+        if n and n:IsA("ValueBase") then return n.Value end
+        return nil
+    end)
+    if ok then return val end
+    return nil
+end
+
 Farm.buyPerSeed = 4   -- tiap seed di-fire berapa kali per siklus (kurangi biar gak lag)
 function Farm.buySeedOnce()
     local p = pkt("SeedShop", "PurchaseSeed")
@@ -961,16 +1036,24 @@ function Farm.buySeedOnce()
         list = sel
     end
     if #list == 0 then return end
+    -- v11.6: CEK STOK SERVER — cuma beli yg stok > 0, sebanyak stoknya. yg kosong di-skip.
+    -- nama stok tanpa "Seed" (Carrot, bukan Carrot Seed) -> coba 2 bentuk nama.
     local fired = 0
     for _, name in ipairs(list) do
         if not state.autoBuySeed then break end
-        for _ = 1, Farm.buyPerSeed do
-            pcall(function() p:Fire(name) end)
-            fired = fired + 1
+        local short = name:gsub("%s*Seed$", "")  -- "Carrot Seed" -> "Carrot"
+        local stok = Farm.getStock("SeedShop", short)
+        if stok == nil then stok = Farm.getStock("SeedShop", name) end
+        if stok and stok > 0 then
+            for _ = 1, stok do  -- fire sebanyak stok
+                if not state.autoBuySeed then break end
+                pcall(function() p:Fire(name) end)
+                fired = fired + 1
+                task.wait(0.05)  -- jeda anti-burst
+            end
         end
-        task.wait()  -- 1 frame antar seed biar gak banjir
     end
-    dprint("[ZenxFarm] buy seed: "..#list.." jenis x"..Farm.buyPerSeed.." = "..fired.." fire")
+    if fired > 0 then dprint("[ZenxFarm] buy seed: "..fired.." fire (cuma yg ada stok)") end
 end
 
 -- v7.1: AUTO BUY GEAR — beli alat/gear dari gear shop.
@@ -1012,7 +1095,7 @@ local function loadGearList()
     return list
 end
 
-Farm.buyPerGear = 2
+Farm.buyPerGear = 1  -- v11.5: 1 fire per gear (dulu 2 -> burst gede). restock biasanya 1-2 stok aja.
 function Farm.buyGearOnce()
     -- coba beberapa nama remote gear
     local p = pkt("GearShop", "PurchaseGear") or pkt("GearShop", "Purchase")
@@ -1030,16 +1113,21 @@ function Farm.buyGearOnce()
         list = sel
     end
     if #list == 0 then return end
+    -- v11.6: CEK STOK SERVER — cuma beli gear yg stok > 0, sebanyak stoknya. yg kosong skip.
     local fired = 0
     for _, name in ipairs(list) do
         if not state.autoBuyGear then break end
-        for _ = 1, Farm.buyPerGear do
-            pcall(function() p:Fire(name) end)
-            fired = fired + 1
+        local stok = Farm.getStock("GearShop", name)
+        if stok and stok > 0 then
+            for _ = 1, stok do
+                if not state.autoBuyGear then break end
+                pcall(function() p:Fire(name) end)
+                fired = fired + 1
+                task.wait(0.05)  -- jeda anti-burst
+            end
         end
-        task.wait()
     end
-    dprint("[ZenxFarm] buy gear: "..#list.." jenis x"..Farm.buyPerGear.." = "..fired.." fire")
+    if fired > 0 then dprint("[ZenxFarm] buy gear: "..fired.." fire (cuma yg ada stok)") end
 end
 -- v10.2: buy gear CUMA pas shop baru restock. FIX bug: dulu kalau UnixNextRestock
 -- gak kebaca (nil), kondisi "restock==nil" selalu true -> spam 14 fire/3s -> server
@@ -2683,6 +2771,39 @@ do
     applyAntiLag()
 end
 
+-- ====== MISC: Sembunyiin Pohon (toggle) — v11.7 ======
+local applyHidePlants
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 7, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Sembunyiin Pohon", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "tanaman invisible, buah tetep keliatan (enteng)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyHidePlants = function()
+        if state.hidePlants then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+        task.spawn(function() pcall(function() Farm.setHidePlants(state.hidePlants) end) end)
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.hidePlants = not state.hidePlants; saveState(); applyHidePlants()
+        print("[ZenxFarm] Sembunyiin Pohon -> "..(state.hidePlants and "ON" or "OFF"))
+    end)
+    applyHidePlants()
+end
+
 -- ====== MISC: Auto Steal (toggle simpel) ======
 local applySteal
 do
@@ -3062,6 +3183,6 @@ do
 end
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applyAntiLag(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyAcceptGift(); applyAfk(); applyAntiLag(); applyHidePlants(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
