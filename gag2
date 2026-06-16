@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v10.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v11.0  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v10.8"
+local VER       = "v11.0"
 local SAVE_FILE = "ZenxFarm_settings.json"
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
@@ -311,6 +311,8 @@ local state = {
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
     collectExpensiveFirst = false, -- v7.6: collect buah termahal duluan
     collectMostFirst = false,   -- v9.5: collect per jenis, dari total buah terbanyak dulu
+    collectWeightF  = 0,        -- v10.9: filter berat collect (0=off, +N=di atas N kg, -N=di bawah N kg)
+    sellWeightF     = 0,        -- v10.9: filter berat sell (0=off, +N=di atas, -N=di bawah)
     debugLog      = false,      -- v7.7: print detail tiap siklus (default OFF, cegah console flood -> lag)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
     autoSprinkler = false,      -- v8.0: auto taro sprinkler di garden
@@ -357,11 +359,13 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Shocked","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoShovel","autoSprinkler","sprClusterMode","sprAllType","shovelAll","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+-- v11.0: autoShovel + shovelAll + selectedShovel SENGAJA gak kesave -> SELALU mulai bersih
+-- tiap load/rejoin (Auto Shovel OFF, jenis kosong) biar gak lupa & kebablasan gali tanaman.
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
-                 selectedShovel="selectedShovel", selectedGear="selectedGear",
+                 selectedGear="selectedGear",
                  selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
                  selectedSprPos="selectedSprPos",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
@@ -371,6 +375,8 @@ local function saveState()
         if not writefile then return end
         local out = { plantLocation = state.plantLocation, giftTarget = state.giftTarget }
         out.giftSeedQty = state.giftSeedQty or 0  -- v8.7
+        out.collectWeightF = state.collectWeightF or 0  -- v10.9
+        out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
         for _, k in ipairs(SETBOOL) do out[k] = state[k] end
         for k in pairs(SETMAP) do
@@ -389,6 +395,8 @@ local function loadState()
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
                 if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
                 if type(d.giftSeedQty) == "number" then state.giftSeedQty = d.giftSeedQty end
+                if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
+                if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
                 if type(d.sprCoords) == "table" then
                     state.sprCoords = {}
@@ -514,6 +522,13 @@ local function passMutation(obj, selSet, allKey)
     return false
 end
 
+-- v10.9: filter berat. f=0 -> lolos semua. f>0 -> cuma kg DI ATAS f. f<0 -> cuma DI BAWAH |f|.
+local function passWeight(kg, f)
+    if not f or f == 0 then return true end
+    if f > 0 then return kg >= f end
+    return kg <= -f
+end
+
 -- v7.6: nilai/harga tiap crop buat "collect termahal duluan".
 -- sumber: harga seed dari game (RemoteDeveloperProducts) — berkorelasi sama nilai buah.
 -- makin mahal seed, makin mahal buahnya. dipakai buat URUTKAN collect (mahal dulu).
@@ -560,6 +575,7 @@ function Farm.collectOnce()
     local _t0 = tick()  -- v6.8: timing — ukur durasi 1 siklus collect
     local fired, skipped = 0, 0
     local typesFired = {}
+    if state.collectWeightF ~= 0 then Farm.updateBaseW() end  -- v10.9: kalibrasi kalau filter berat aktif
 
     -- v10.6 FIX: kalau collectAll=false TAPI gak ada jenis yg dipilih, anggap SEMUA.
     -- (dulu bisa kejadian collectAll jadi false tapi selectedCollect kosong -> okType
@@ -582,7 +598,8 @@ function Farm.collectOnce()
             for _, fruit in ipairs(fruits:GetChildren()) do
                 local fruitUUID = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
                 local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll")
-                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut then
+                local okW = passWeight(Farm.gardenKg(fruit, seedName), state.collectWeightF)  -- v10.9
+                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
                     fired = fired + 1; fruitCount = fruitCount + 1
@@ -771,7 +788,8 @@ local function getInvMax()
 end
 function Farm.sellOnce()
     Farm.updateBaseW()  -- v10.8: kalibrasi base weight dari buah di tas
-    if state.sellAll then
+    -- v10.9: kalau filter berat aktif, SellAll gak bisa (jual semua sekaligus) -> pakai per-fruit
+    if state.sellAll and state.sellWeightF == 0 then
         local p = pkt("NPCS", "SellAll")
         if not p or not p.Fire then print("[ZenxFarm] SellAll packet gak ada"); return end
         -- v10.8: jumlahin berat semua buah di inventory SEBELUM dijual
@@ -789,7 +807,7 @@ function Farm.sellOnce()
         print(string.format("[ZenxFarm] SellAll fired (%.2f kg)", kg))
         return
     end
-    -- per-jenis
+    -- per-jenis (atau semua jenis kalau sellAll + filter berat aktif)
     local p = pkt("NPCS", "SellFruit")
     if not p or not p.Fire then print("[ZenxFarm] SellFruit packet gak ada"); return end
     local sold, types = 0, {}
@@ -798,10 +816,12 @@ function Farm.sellOnce()
             local id = o:GetAttribute("Id")
             if id then
                 local jenis = fruitObjType(o.Name)
-                -- v5.9: filter jenis + mutasi (kalau sellMutAll OFF, cuma mutasi terpilih)
                 local okMut = passMutation(o, state.selectedSellMut, "sellMutAll")
-                if state.selectedSell[jenis] and okMut then
-                    local w = o:GetAttribute("Weight")
+                local w = o:GetAttribute("Weight") or 0
+                local okW = passWeight(w, state.sellWeightF)  -- v10.9 filter berat
+                -- sellAll=true -> semua jenis lolos; else cuma jenis terpilih
+                local okType = state.sellAll or state.selectedSell[jenis]
+                if okType and okMut and okW then
                     if type(w) == "number" then Farm._sellKg = Farm._sellKg + w end  -- v10.8
                     pcall(function() p:Fire(tostring(id)) end)
                     sold = sold + 1
@@ -2167,14 +2187,16 @@ do
     -- v9.5: collect per jenis dari terbanyak dulu
     applyCollectMost   = mkBodyToggle(body, 204, "Terbanyak Dulu", "collectMostFirst", "Terbanyak Dulu")
     applyCollect = mkBodyToggle(body, 244, "Auto Collect", "autoCollect", "Auto Collect")
-    -- v10.8: label berat dikoleksi (sesi ini)
-    local ckgL = lbl(body, "Dikoleksi: 0.00 kg", 12, C.green, Enum.TextXAlignment.Left)
-    ckgL.Position = UDim2.new(0, 0, 0, 286); ckgL.Size = UDim2.new(1, 0, 0, 16)
-    task.spawn(function()
-        while ckgL.Parent do
-            ckgL.Text = string.format("Dikoleksi sesi ini: %.2f kg", Farm._collectKg)
-            task.wait(1)
-        end
+    -- v10.9: filter berat collect (+N = di atas N kg, -N = di bawah, 0 = semua)
+    lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,288)
+    local cwBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 285),
+        BackgroundColor3 = C.input, Text = tostring(state.collectWeightF or 0), PlaceholderText = "0=semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(cwBox, 6); stroke(cwBox, C.border, 1)
+    cwBox.FocusLost:Connect(function()
+        local n = tonumber(cwBox.Text) or 0
+        state.collectWeightF = n; cwBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] filter collect: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
     end)
 end
 
@@ -2189,14 +2211,16 @@ do
     -- v5.7: toggle mode "sell pas penuh" (OFF = sell rutin tiap 5 detik)
     applySellFull = mkBodyToggle(body, 84,  "Sell pas penuh", "sellWhenFull", "Sell When Full")
     applySell     = mkBodyToggle(body, 124, "Auto Sell", "autoSell", "Auto Sell")
-    -- v10.8: label berat terjual (sesi ini)
-    local skgL = lbl(body, "Terjual: 0.00 kg", 12, C.green, Enum.TextXAlignment.Left)
-    skgL.Position = UDim2.new(0, 0, 0, 166); skgL.Size = UDim2.new(1, 0, 0, 16)
-    task.spawn(function()
-        while skgL.Parent do
-            skgL.Text = string.format("Terjual sesi ini: %.2f kg", Farm._sellKg)
-            task.wait(1)
-        end
+    -- v10.9: filter berat sell (+N = di atas N kg, -N = di bawah, 0 = semua)
+    lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,168)
+    local swBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 165),
+        BackgroundColor3 = C.input, Text = tostring(state.sellWeightF or 0), PlaceholderText = "0=semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(swBox, 6); stroke(swBox, C.border, 1)
+    swBox.FocusLost:Connect(function()
+        local n = tonumber(swBox.Text) or 0
+        state.sellWeightF = n; swBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] filter sell: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
     end)
 end
 
