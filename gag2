@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v15.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v15.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v15.1"
+local VER       = "v15.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -375,6 +375,7 @@ local state = {
     dgiftFruitIds   = {},         -- v14.1: pilih buah SATUAN (by Id) — kalau diisi, ini yg dipakai
     dgiftFruitWeightF = 0,        -- filter berat (0=semua, +N=atas, -N=bawah)
     dgiftMode       = "type",     -- v14.3: "type" (1 jenis + threshold kg) atau "uuid" (per buah)
+    dgiftApproach   = true,       -- v15.2: samperin target dulu sebelum gift no-mailbox
     dgiftOnce       = false,      -- sekali kirim lalu OFF
 }
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
@@ -384,7 +385,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -1774,6 +1775,26 @@ end
 -- ===== v13.5: GIFT LANGSUNG (Gifting.Send) — TANPA mailbox, gak perlu di-claim =====
 -- format terkonfirmasi via sniffer: Gifting.Send:Fire(userId, "HarvestedFruits", fruitId)
 -- kirim FRUIT dari tas (filter jenis + berat). target & filter pakai state dgiftXXX.
+-- v15.2: gift no-mailbox HARUS deket target. samperin dulu (teleport CFrame ke target).
+function Farm.approachPlayer(name)
+    if not name or name == "" then return false, "no target" end
+    local lname = tostring(name):lower()
+    local tp
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and (p.Name:lower() == lname or (p.DisplayName and p.DisplayName:lower() == lname)) then
+            tp = p; break
+        end
+    end
+    if not tp then return false, "target gak di server ini" end
+    local thrp = tp.Character and tp.Character:FindFirstChild("HumanoidRootPart")
+    if not thrp then return false, "char target gak ada" end
+    local mychar = player.Character
+    local myhrp = mychar and mychar:FindFirstChild("HumanoidRootPart")
+    if not myhrp then return false, "char kita gak ada" end
+    -- berdiri ~4 stud di depan target
+    pcall(function() myhrp.CFrame = thrp.CFrame * CFrame.new(0, 0, 4) end)
+    return true
+end
 Farm._dgiftStatus = nil
 function Farm.directGiftOnce()
     local gs = pkt("Gifting", "Send")
@@ -1782,6 +1803,16 @@ function Farm.directGiftOnce()
     if not target or target == "" then Farm._dgiftStatus = "notarget"; return end
     local uid = resolveTargetId(target)
     if not uid then Farm._dgiftStatus = "notfound"; print("[ZenxFarm] user '"..target.."' gak ketemu"); return end
+
+    -- v15.2: samperin target dulu (gift no-mailbox butuh deket)
+    if state.dgiftApproach then
+        local okA, errA = Farm.approachPlayer(target)
+        if okA then
+            task.wait(0.35)  -- kasih waktu posisi keupdate
+        else
+            print("[ZenxFarm] samperin gagal: "..tostring(errA).." — tetep coba kirim")
+        end
+    end
 
     local sent = 0
     -- v14.3: 2 mode eksplisit:
@@ -3423,13 +3454,15 @@ do
     modeTypeBtn.MouseButton1Click:Connect(function() state.dgiftMode = "type"; saveState(); applyMode() end)
     modeUuidBtn.MouseButton1Click:Connect(function() state.dgiftMode = "uuid"; saveState(); applyMode() end)
     applyMode()
+    -- v15.2: samperin target dulu (gift no-mailbox butuh deket player)
+    mkBodyToggle(body, 192, "Samperin Target", "dgiftApproach", "Samperin Target Sebelum Gift")
     -- sekali kirim
-    mkBodyToggle(body, 192, "Sekali Kirim", "dgiftOnce", "Gift Langsung Sekali Kirim")
-    applyDirectGift = mkBodyToggle(body, 232, "Auto Gift Langsung", "autoDirectGift", "Auto Gift Langsung")
+    mkBodyToggle(body, 232, "Sekali Kirim", "dgiftOnce", "Gift Langsung Sekali Kirim")
+    applyDirectGift = mkBodyToggle(body, 272, "Auto Gift Langsung", "autoDirectGift", "Auto Gift Langsung")
     Farm._applyDGiftRef = applyDirectGift
     -- status warna
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
-    statusL.Position = UDim2.new(0, 0, 0, 272); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
+    statusL.Position = UDim2.new(0, 0, 0, 312); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
     task.spawn(function()
         while statusL.Parent do
             local s = Farm._dgiftStatus
@@ -3447,7 +3480,7 @@ do
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 400 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 440 or 56)
     end)
 end
 
