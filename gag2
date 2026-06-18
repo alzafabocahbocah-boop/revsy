@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v13.2  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v13.4  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v13.2"
+local VER       = "v13.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -495,34 +495,73 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- FUNGSI FARM (placeholder — diisi nanti via debug)
 -- ============================================================
 local Farm = {}
--- v10.8: tracking berat (kg). _baseW = faktor Weight/SizeMulti per jenis (auto-kalibrasi
--- dari buah di tas yg punya Weight+SizeMultiplier). _collectKg/_sellKg = total sesi.
-Farm._baseW = {}
+-- v13.4: kg buah garden = SizeMulti × rasio[jenis]. rasio KONSTAN per jenis.
+-- buah garden CUMA punya SizeMulti (gak nyimpen kg langsung — udah dibuktiin via debug),
+-- jadi kg HARUS dihitung. rasio di-hardcode (dari kalibrasi) + auto-update dari tas + DISIMPAN
+-- ke settings, biar sekali pernah liat jenisnya -> kepake permanen, GAK butuh contoh lagi.
+Farm._baseW = {
+    ["Dragon's Breath"] = 7.500,  -- terkonfirmasi
+    ["Strawberry"] = 1.000,
+    ["Blueberry"]  = 1.150,
+    ["Tomato"]     = 0.900,
+}
 Farm._collectKg = 0
 Farm._sellKg = 0
 function Farm.updateBaseW()
+    local changed = false
     for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") then
                     local w = t:GetAttribute("Weight")
                     local sm = t:GetAttribute("SizeMultiplier")
-                    local jenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
-                    if type(w) == "number" and type(sm) == "number" and sm > 0 and jenis then
-                        Farm._baseW[jenis] = w / sm
+                    if type(w) == "number" and type(sm) == "number" and sm > 0 then
+                        local ratio = w / sm
+                        -- simpan ke SEMUA nama yg mungkin dipakai garden (Fruit/FruitName/SeedName/CorePartName)
+                        for _, key in ipairs({ t:GetAttribute("Fruit"), t:GetAttribute("FruitName"),
+                                               t:GetAttribute("SeedName"), t:GetAttribute("CorePartName") }) do
+                            if key and math.abs((Farm._baseW[key] or 0) - ratio) > 0.001 then
+                                Farm._baseW[key] = ratio; changed = true
+                            end
+                        end
                     end
                 end
             end
         end
     end
+    if changed and Farm._saveBaseW then pcall(Farm._saveBaseW) end  -- simpan rasio baru ke settings
 end
 function Farm.gardenKg(fruit, seedName)
     local w = fruit:GetAttribute("Weight")
     if type(w) == "number" then return w end
     local sm = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("SizeMultiplier")
-    if type(sm) == "number" then return sm * (Farm._baseW[seedName] or 1) end
-    return 0
+    if type(sm) ~= "number" then return nil end
+    -- v13.4: CorePartName = kunci jenis paling andal (selalu ada di buah garden).
+    local core = fruit:GetAttribute("CorePartName")
+    local base = (core and Farm._baseW[core]) or (seedName and Farm._baseW[seedName])
+    if not base then return nil end  -- v13.3: BELUM kekalibrasi -> JANGAN tebak (return nil)
+    return sm * base
 end
+-- v13.4: simpan/load rasio kg ke file (per-user) biar permanen — gak butuh contoh lagi.
+local BASEW_FILE = "ZenxFarm_kgratio_" .. tostring(player and player.UserId or "guest") .. ".json"
+function Farm._saveBaseW()
+    pcall(function()
+        if writefile then writefile(BASEW_FILE, HS:JSONEncode(Farm._baseW)) end
+    end)
+end
+function Farm._loadBaseW()
+    pcall(function()
+        if isfile and readfile and isfile(BASEW_FILE) then
+            local d = HS:JSONDecode(readfile(BASEW_FILE))
+            if type(d) == "table" then
+                for k, v in pairs(d) do
+                    if type(v) == "number" then Farm._baseW[k] = v end  -- merge (hardcode + tersimpan)
+                end
+            end
+        end
+    end)
+end
+Farm._loadBaseW()
 
 -- v12.9: hitung SEED di tas per jenis (buat ditampilin di picker Jenis Seed Auto Gift)
 function Farm.countSeedsInBag()
@@ -768,9 +807,10 @@ end
 
 -- v10.9: filter berat. f=0 -> lolos semua. f>0 -> cuma kg DI ATAS f. f<0 -> cuma DI BAWAH |f|.
 local function passWeight(kg, f)
-    if not f or f == 0 then return true end
-    if f > 0 then return kg >= f end
-    return kg <= -f
+    if not f or f == 0 then return true end       -- filter off -> semua lolos
+    if kg == nil then return false end             -- v13.3: kg gak ketauan + filter aktif -> JANGAN proses (aman)
+    if f > 0 then return kg >= f end               -- +N = di atas N
+    return kg <= -f                                -- -N = di bawah N
 end
 
 -- v7.6: nilai/harga tiap crop buat "collect termahal duluan".
