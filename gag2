@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v15.0  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v15.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v15.0"
+local VER       = "v15.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -364,6 +364,7 @@ local state = {
     giftSeedQty     = 0,        -- v8.7: jumlah seed per kirim (0 = semua)
     giftPets        = {},       -- jenis pet yg dikirim (by Tool name, mis "Owl"/"Big Owl")
     giftFruits      = {},        -- v11.3: jenis FRUIT yg dikirim
+    giftGears       = {},        -- v15.1: jenis GEAR yg dikirim via mailbox (ganti dari fruit)
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
     giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
     -- v13.5: GIFT LANGSUNG (Gifting.Send, tanpa mailbox)
@@ -395,7 +396,7 @@ local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect
                  selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
                  selectedSprPos="selectedSprPos",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
-                 giftSeeds="giftSeeds", giftPets="giftPets", giftFruits="giftFruits", dgiftFruits="dgiftFruits", dgiftGears="dgiftGears"}
+                 giftSeeds="giftSeeds", giftPets="giftPets", giftFruits="giftFruits", giftGears="giftGears", dgiftFruits="dgiftFruits", dgiftGears="dgiftGears"}
 local function saveState()
     pcall(function()
         if not writefile then return end
@@ -1727,14 +1728,25 @@ function Farm.giftOnce()
                     items[#items+1] = {ItemKey = tostring(petId), Count = 1, Category = "Pets"}
                 end
             else
-                -- v11.3: FRUIT — punya Id + Fruit/FruitName + Weight. filter jenis + berat.
-                local fid = t:GetAttribute("Id")
-                local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
-                if fid and fjenis and state.giftFruits[fjenis] then
-                    local w = t:GetAttribute("Weight") or 0
-                    if passWeight(w, state.giftFruitWeightF) then  -- filter berat KHUSUS fruit
-                        items[#items+1] = {ItemKey = tostring(fid), Count = 1, Category = "Fruits"}
+                -- v15.1: GEAR — Tool yg bukan seed/pet/fruit. filter jenis (by Tool.Name).
+                if Farm._isGearTool and Farm._isGearTool(t) and state.giftGears[t.Name] then
+                    -- key UUID gear (data-driven — coba beberapa nama atribut umum)
+                    local key = t:GetAttribute("Id") or t:GetAttribute("Uuid")
+                              or t:GetAttribute("UUID") or t:GetAttribute("ToolId")
+                              or t:GetAttribute("ItemId") or t:GetAttribute("GearId")
+                              or t.Name
+                    -- kategori: pakai MainCategory tool kalau ada, fallback "Gears"
+                    local cat = t:GetAttribute("MainCategory") or "Gears"
+                    -- DEBUG sekali: dump atribut gear pertama biar bisa konfirmasi
+                    if not Farm._gearGiftDebugged then
+                        Farm._gearGiftDebugged = true
+                        print("[ZenxFarm] DEBUG gear gift (mailbox) — tool '"..t.Name.."':")
+                        for k, v in pairs(t:GetAttributes()) do
+                            print("    ."..tostring(k).." = "..tostring(v))
+                        end
+                        print("    -> coba kirim: Category='"..tostring(cat).."', ItemKey='"..tostring(key).."'")
                     end
+                    items[#items+1] = {ItemKey = tostring(key), Count = 1, Category = cat}
                 end
             end
         end
@@ -1781,43 +1793,24 @@ function Farm.directGiftOnce()
             for _, t in ipairs(holder:GetChildren()) do
                 if not state.autoDirectGift and not state.dgiftOnce then break end
                 if t:IsA("Tool") then
-                    if useIds then
-                        -- mode per-UUID: buah satuan by Id (gak diubah)
-                        local fid = t:GetAttribute("Id")
-                        local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
-                        if fid and fjenis and state.dgiftFruitIds[tostring(fid)] == true then
+                    local fid = t:GetAttribute("Id")
+                    local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                    if fid and fjenis then
+                        local kirim = false
+                        if useIds then
+                            -- mode per-buah: cuma yg Id-nya dipilih
+                            kirim = state.dgiftFruitIds[tostring(fid)] == true
+                        else
+                            -- mode per-jenis: jenis cocok (atau semua) + lolos threshold kg
+                            local jenisOk = state.dgiftFruits[fjenis] or (next(state.dgiftFruits) == nil)
+                            local w = t:GetAttribute("Weight") or 0
+                            kirim = jenisOk and passWeight(w, state.dgiftFruitWeightF)
+                        end
+                        if kirim then
                             pcall(function() gs:Fire(uid, "HarvestedFruits", tostring(fid)) end)
-                            state.dgiftFruitIds[tostring(fid)] = nil  -- udah dikirim, hapus
+                            if useIds then state.dgiftFruitIds[tostring(fid)] = nil end  -- udah dikirim, hapus dari pilihan
                             sent = sent + 1
                             task.wait(0.1)
-                        end
-                    else
-                        -- v14.4: mode per-jenis = GEAR. kirim gear yg jenisnya dipilih (atau semua).
-                        if Farm._isGearTool and Farm._isGearTool(t) then
-                            local nm = t.Name
-                            local jenisOk = state.dgiftGears[nm] or (next(state.dgiftGears) == nil)
-                            if jenisOk then
-                                -- key UUID gear (data-driven — coba beberapa nama atribut umum)
-                                local key = t:GetAttribute("Id") or t:GetAttribute("Uuid")
-                                          or t:GetAttribute("UUID") or t:GetAttribute("ToolId")
-                                          or t:GetAttribute("ItemId") or t:GetAttribute("GearId")
-                                -- kategori: pakai MainCategory tool kalau ada, fallback "Gear"
-                                local cat = t:GetAttribute("MainCategory") or "Gear"
-                                -- DEBUG sekali: dump atribut gear pertama biar bisa konfirmasi
-                                if not Farm._gearGiftDebugged then
-                                    Farm._gearGiftDebugged = true
-                                    print("[ZenxFarm] DEBUG gear gift — tool '"..nm.."':")
-                                    for k, v in pairs(t:GetAttributes()) do
-                                        print("    ."..tostring(k).." = "..tostring(v))
-                                    end
-                                    print("    -> coba kirim: category='"..tostring(cat).."', key='"..tostring(key).."'")
-                                end
-                                if key then
-                                    pcall(function() gs:Fire(uid, cat, tostring(key)) end)
-                                    sent = sent + 1
-                                    task.wait(0.1)
-                                end
-                            end
                         end
                     end
                 end
@@ -1826,7 +1819,7 @@ function Farm.directGiftOnce()
     end
     if sent > 0 then
         Farm._dgiftStatus = "ok"
-        print("[ZenxFarm] gift langsung ke "..target..": "..sent.." item")
+        print("[ZenxFarm] gift langsung ke "..target..": "..sent.." buah")
     else
         Farm._dgiftStatus = "empty"
     end
@@ -3299,25 +3292,15 @@ do
 
     mkTypeRow(body, 84,  "Jenis Seed", seedListFn, state.giftSeeds, "_giftAllSeed_NEVER", "pilih seed...", function() return Farm.countSeedsInBag() end)
     mkTypeRow(body, 124, "Jenis Pet",  petGiftList, state.giftPets,  "_giftAllPet_NEVER",  "pilih pet...")
-    -- v11.3: jenis FRUIT + filter berat (KHUSUS fruit)
-    mkTypeRow(body, 164, "Jenis Fruit", function() return fruitList() end, state.giftFruits, "_giftAllFruit_NEVER", "pilih fruit...")
-    lbl(body, "Filter kg (fruit)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,208)
-    local gfwBox = mk("TextBox", { Size = UDim2.new(0.35, 0, 0, 28), Position = UDim2.new(0.65, 0, 0, 205),
-        BackgroundColor3 = C.input, Text = tostring(state.giftFruitWeightF or 0), PlaceholderText = "0=semua",
-        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
-    corner(gfwBox, 6); stroke(gfwBox, C.border, 1)
-    gfwBox.FocusLost:Connect(function()
-        local n = tonumber(gfwBox.Text) or 0
-        state.giftFruitWeightF = n; gfwBox.Text = tostring(n); saveState()
-        print("[ZenxFarm] gift filter fruit: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
-    end)
+    -- v15.1: jenis GEAR (ganti dari fruit). kirim gear yg dipegang/di tas.
+    mkTypeRow(body, 164, "Jenis Gear", function() return Farm.gearInBagList and Farm.gearInBagList() or {} end, state.giftGears, "_giftAllGear_NEVER", "pilih gear...", function() return Farm.countGearInBag and Farm.countGearInBag() or {} end)
     -- v12.7: mode sekali kirim (kirim 1x lalu Auto Gift OFF)
-    mkBodyToggle(body, 244, "Sekali Kirim", "giftOnce", "Sekali Kirim (1x lalu OFF)")
-    applyGift = mkBodyToggle(body, 284, "Auto Send", "autoGift", "Auto Send Gift")
+    mkBodyToggle(body, 208, "Sekali Kirim", "giftOnce", "Sekali Kirim (1x lalu OFF)")
+    applyGift = mkBodyToggle(body, 248, "Auto Send", "autoGift", "Auto Send Gift")
     Farm._applyGiftRef = applyGift  -- biar giftOnce bisa matiin toggle dari kode
     -- v12.8: label status simpel + warna (hijau=kekirim, merah=belum/gagal)
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
-    statusL.Position = UDim2.new(0, 0, 0, 324); statusL.Size = UDim2.new(1, 0, 0, 20)
+    statusL.Position = UDim2.new(0, 0, 0, 288); statusL.Size = UDim2.new(1, 0, 0, 20)
     statusL.Font = FONT_B
     task.spawn(function()
         while statusL.Parent do
@@ -3339,7 +3322,7 @@ do
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 360 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 324 or 56)
     end)
 end
 
@@ -3394,7 +3377,7 @@ do
     -- ----- kontrol mode "type": jenis fruit + threshold kg -----
     local typeWrap = mk("Frame", { Size = UDim2.new(1, 0, 0, 84), Position = UDim2.new(0, 0, 0, 100),
         BackgroundTransparency = 1, Parent = body })
-    mkTypeRow(typeWrap, 0, "Jenis Gear", function() return Farm.gearInBagList and Farm.gearInBagList() or {} end, state.dgiftGears, "_dgiftAllGear_NEVER", "pilih gear...", function() return Farm.countGearInBag and Farm.countGearInBag() or {} end)
+    mkTypeRow(typeWrap, 0, "Jenis Fruit", function() return Farm.fruitsInBagList and Farm.fruitsInBagList() or {} end, state.dgiftFruits, "_dgiftAllFruit_NEVER", "pilih fruit...", function() return Farm.countFruitsInBag and Farm.countFruitsInBag() or {} end)
     lbl(typeWrap, "Threshold kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,44)
     local fwBox = mk("TextBox", { Size = UDim2.new(0.4, 0, 0, 28), Position = UDim2.new(0.6, 0, 0, 41),
         BackgroundColor3 = C.input, Text = tostring(state.dgiftFruitWeightF or 0), PlaceholderText = "0=semua",
