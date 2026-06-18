@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v12.2  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v13.0  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,8 +11,11 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v12.2"
-local SAVE_FILE = "ZenxFarm_settings.json"
+local VER       = "v13.0"
+-- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
+-- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
+local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
+local SAVE_FILE_OLD = "ZenxFarm_settings.json"  -- file lama (sebelum per-user) buat migrasi
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL — daftarin queue_on_teleport sebelum apapun.
 -- biar pas teleport (HOP/anti-bot/rejoin), queue keburu kedaftar walau script blm kelar.
@@ -332,6 +335,7 @@ local state = {
     sellWhenFull  = false,      -- v5.7: MODE sell pas backpack penuh (OFF=interval biasa)
     sellMaxFallback = 200,      -- v5.7: batas penuh kalau deteksi otomatis gagal
     plantLocation = "self",     -- "self" (lokasi kamu) atau "random"
+    plantSpread   = 0,          -- v12.6: radius sebar tanam (stud). 0 = pas di posisi kamu
     selectedSeeds   = {},       -- buy seed
     selectedCollect = {},       -- collect buah
     selectedSell    = {},       -- sell buah
@@ -361,6 +365,7 @@ local state = {
     giftPets        = {},       -- jenis pet yg dikirim (by Tool name, mis "Owl"/"Big Owl")
     giftFruits      = {},        -- v11.3: jenis FRUIT yg dikirim
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
+    giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
 }
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
     "IceSerpent","Monkey","Owl","Raccoon","Robin","Unicorn"}
@@ -383,7 +388,8 @@ local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect
 local function saveState()
     pcall(function()
         if not writefile then return end
-        local out = { plantLocation = state.plantLocation, giftTarget = state.giftTarget }
+        -- v13.0: giftTarget SENGAJA gak disave (biar diketik ulang tiap rejoin -> gak salah kirim)
+        local out = { plantLocation = state.plantLocation, plantSpread = state.plantSpread or 0 }
         out.giftSeedQty = state.giftSeedQty or 0  -- v8.7
         out.giftFruitWeightF = state.giftFruitWeightF or 0  -- v11.3
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
@@ -399,12 +405,18 @@ local function saveState()
 end
 local function loadState()
     pcall(function()
-        if isfile and readfile and isfile(SAVE_FILE) then
-            local d = HS:JSONDecode(readfile(SAVE_FILE))
+        -- v12.5: utamain file per-user; kalau belum ada, migrasi dari file lama sekali.
+        local useFile = SAVE_FILE
+        if isfile and not isfile(SAVE_FILE) and SAVE_FILE_OLD and isfile(SAVE_FILE_OLD) then
+            useFile = SAVE_FILE_OLD
+        end
+        if isfile and readfile and isfile(useFile) then
+            local d = HS:JSONDecode(readfile(useFile))
             if type(d) == "table" then
                 for _, k in ipairs(SETBOOL) do if d[k] ~= nil then state[k] = d[k] and true or false end end
                 if type(d.plantLocation) == "string" then state.plantLocation = d.plantLocation end
-                if type(d.giftTarget) == "string" then state.giftTarget = d.giftTarget end
+                if type(d.plantSpread) == "number" then state.plantSpread = d.plantSpread end
+                -- v13.0: giftTarget gak di-load (selalu kosong tiap masuk)
                 if type(d.giftSeedQty) == "number" then state.giftSeedQty = d.giftSeedQty end
                 if type(d.giftFruitWeightF) == "number" then state.giftFruitWeightF = d.giftFruitWeightF end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
@@ -508,6 +520,26 @@ function Farm.gardenKg(fruit, seedName)
     local sm = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("SizeMultiplier")
     if type(sm) == "number" then return sm * (Farm._baseW[seedName] or 1) end
     return 0
+end
+
+-- v12.9: hitung SEED di tas per jenis (buat ditampilin di picker Jenis Seed Auto Gift)
+function Farm.countSeedsInBag()
+    local counts = {}
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local sn = t:GetAttribute("SeedName")
+                    if not sn and t.Name:match("Seed%s*$") then sn = t.Name:gsub("%s*Seed%s*$","") end
+                    if sn then
+                        local cnt = t:GetAttribute("Count") or 1
+                        counts[sn] = (counts[sn] or 0) + cnt
+                    end
+                end
+            end
+        end
+    end
+    return counts
 end
 
 -- v11.4: ANTI-LAG agresif — matiin efek visual berat. _antiLagOn nandain status.
@@ -1353,18 +1385,12 @@ function Farm.plantOnce()
 
     -- titik tanam
     local function plantPos()
-        if state.plantLocation == "random" then
-            -- acak di sekitar karakter dalam radius (anggap kebun kamu di sekitarmu)
-            local r = 12
-            local ox = (math.random() * 2 - 1) * r
-            local oz = (math.random() * 2 - 1) * r
-            return hrp.Position + Vector3.new(ox, 0, oz)
-        else
-            -- "self": sekitar karakter, offset kecil acak biar gak numpuk 1 titik
-            local ox = (math.random() * 2 - 1) * 4
-            local oz = (math.random() * 2 - 1) * 4
-            return hrp.Position + Vector3.new(ox, 0, oz)
-        end
+        -- v12.6: radius sebar bisa diatur (state.plantSpread). 0 = pas di posisi kamu.
+        local r = state.plantSpread or 0
+        if r <= 0 then return hrp.Position end
+        local ox = (math.random() * 2 - 1) * r
+        local oz = (math.random() * 2 - 1) * r
+        return hrp.Position + Vector3.new(ox, 0, oz)
     end
 
     local seeds = collectSeedTools()
@@ -1554,9 +1580,24 @@ function Farm.giftOnce()
             end
         end
     end
-    if #items == 0 then return end  -- gak ada item -> loop "berhenti" sendiri
-    pcall(function() sb:Fire(uid, items, "") end)
-    print("[ZenxFarm] gift terkirim ke "..target..": "..#items.." item")
+    if #items == 0 then
+        Farm._giftStatus = "empty"
+        return
+    end
+    local ok = pcall(function() sb:Fire(uid, items, "") end)
+    if ok then
+        Farm._giftStatus = "ok"
+        print("[ZenxFarm] gift terkirim ke "..target..": "..#items.." item")
+    else
+        Farm._giftStatus = "fail"
+        print("[ZenxFarm] gift GAGAL ke "..target)
+    end
+    -- v12.7: mode "sekali kirim" -> auto matiin Auto Gift setelah 1x kirim berhasil
+    if ok and state.giftOnce then
+        state.autoGift = false
+        if Farm._applyGiftRef then pcall(Farm._applyGiftRef) end
+        print("[ZenxFarm] sekali kirim selesai -> Auto Gift OFF")
+    end
 end
 staggerSpawn(function()
     while isCurrentGen() do
@@ -1779,6 +1820,43 @@ function Farm.shovelSeedList()
     end)
     -- simpan map nama->count buat label, return list nama (dgn count di kurung)
     Farm._shovelCounts = counts
+    local names = {}
+    for _, e in ipairs(arr) do names[#names+1] = e.name end
+    return names
+end
+
+-- v12.4: hitung BUAH per jenis (bukan tanaman) di garden kita — buat Shovel Fruit.
+-- 1 tanaman bisa banyak buah, jadi ini ngitung total buah, bukan jumlah pohon.
+function Farm.countMyGardenFruits()
+    local counts = {}
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return counts end
+    local MY = player.UserId
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if (not ownerId or ownerId == MY) then
+                    local seedName = plant:GetAttribute("SeedName") or "?"
+                    local fr = plant:FindFirstChild("Fruits")
+                    local nf = fr and #fr:GetChildren() or 0
+                    if nf > 0 then counts[seedName] = (counts[seedName] or 0) + nf end
+                end
+            end
+        end
+    end
+    return counts
+end
+-- list jenis buah garden kita, urut buah terbanyak dulu
+function Farm.shovelFruitList()
+    local counts = Farm.countMyGardenFruits()
+    local arr = {}
+    for nm, c in pairs(counts) do arr[#arr+1] = {name = nm, count = c} end
+    table.sort(arr, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end
+        return a.name:lower() < b.name:lower()
+    end)
     local names = {}
     for _, e in ipairs(arr) do names[#names+1] = e.name end
     return names
@@ -2570,7 +2648,7 @@ end
 local applyPlant
 do
     local card, body, setH = mkFarmCard(4, "Auto Plant Seed", "tanam seed otomatis (tap utk atur)")
-    setH(132)
+    setH(168)
     mkTypeRow(body, 4, "Jenis Seed", fruitList, state.selectedPlant, "allPlantSeed", "Semua seed")
     -- location: random / lokasi kamu
     lbl(body, "Location", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,40)
@@ -2585,7 +2663,19 @@ do
         saveState(); updLoc()
     end)
     updLoc()
-    applyPlant = mkBodyToggle(body, 80, "Auto Plant", "autoPlant", "Auto Plant Seed")
+    -- v12.6: input radius sebar (stud). 0 = pas di posisi kamu
+    lbl(body, "Sebar (stud)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,76)
+    local spreadBox = mk("TextBox", { Size = UDim2.new(0.4, 0, 0, 28), Position = UDim2.new(0.6, 0, 0, 73),
+        BackgroundColor3 = C.input, Text = tostring(state.plantSpread or 0), PlaceholderText = "0=tepat",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(spreadBox, 6); stroke(spreadBox, C.border, 1)
+    spreadBox.FocusLost:Connect(function()
+        local n = tonumber(spreadBox.Text) or 0
+        if n < 0 then n = 0 end
+        state.plantSpread = n; spreadBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] sebar tanam: "..(n == 0 and "tepat di posisi" or (n.." stud")))
+    end)
+    applyPlant = mkBodyToggle(body, 116, "Auto Plant", "autoPlant", "Auto Plant Seed")
 end
 
 -- ====== CARD 5: AUTO BUY PET (pet liar) ======
@@ -2619,9 +2709,9 @@ end
 do
     local card, body, setH = mkFarmCard(100, "Auto Shovel Fruit", "buang buah kecil dari pohon (sisain yg gede)")
     setH(126)
-    local listFn  = function() return Farm.shovelSeedList() end
-    local countFn = function() return Farm.countMyGardenSeeds() end
-    mkTypeRow(body, 4, "Jenis Seed", listFn, state.selectedShovelFruit, "shovelFruitAll", "Semua seed", countFn)
+    local listFn  = function() return Farm.shovelFruitList() end
+    local countFn = function() return Farm.countMyGardenFruits() end
+    mkTypeRow(body, 4, "Jenis Buah", listFn, state.selectedShovelFruit, "shovelFruitAll", "Semua buah", countFn)
     -- ambang kg: buah DI BAWAH angka ini dibuang
     lbl(body, "Buang < kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
     local kgBox = mk("TextBox", { Size = UDim2.new(0.4, 0, 0, 28), Position = UDim2.new(0.6, 0, 0, 45),
@@ -2740,7 +2830,7 @@ do
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -50, 0, 14)
     local arrow = lbl(hd, "▾", 14, C.textDim, Enum.TextXAlignment.Center)
     arrow.Position = UDim2.new(1, -32, 0, 19); arrow.Size = UDim2.new(0, 20, 0, 18)
-    local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 320), Position = UDim2.new(0, 10, 0, 60),
+    local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 400), Position = UDim2.new(0, 10, 0, 60),
         BackgroundTransparency = 1, Visible = false, Parent = card })
 
     -- penerima: textbox + indikator
@@ -2772,7 +2862,7 @@ do
         print("[ZenxFarm] gift jumlah seed: "..(n == 0 and "semua" or tostring(n)))
     end)
 
-    mkTypeRow(body, 84,  "Jenis Seed", seedListFn, state.giftSeeds, "_giftAllSeed_NEVER", "pilih seed...")
+    mkTypeRow(body, 84,  "Jenis Seed", seedListFn, state.giftSeeds, "_giftAllSeed_NEVER", "pilih seed...", function() return Farm.countSeedsInBag() end)
     mkTypeRow(body, 124, "Jenis Pet",  petGiftList, state.giftPets,  "_giftAllPet_NEVER",  "pilih pet...")
     -- v11.3: jenis FRUIT + filter berat (KHUSUS fruit)
     mkTypeRow(body, 164, "Jenis Fruit", function() return fruitList() end, state.giftFruits, "_giftAllFruit_NEVER", "pilih fruit...")
@@ -2786,15 +2876,37 @@ do
         state.giftFruitWeightF = n; gfwBox.Text = tostring(n); saveState()
         print("[ZenxFarm] gift filter fruit: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
     end)
-    applyGift = mkBodyToggle(body, 244, "Auto Send", "autoGift", "Auto Send Gift")
+    -- v12.7: mode sekali kirim (kirim 1x lalu Auto Gift OFF)
+    mkBodyToggle(body, 244, "Sekali Kirim", "giftOnce", "Sekali Kirim (1x lalu OFF)")
+    applyGift = mkBodyToggle(body, 284, "Auto Send", "autoGift", "Auto Send Gift")
+    Farm._applyGiftRef = applyGift  -- biar giftOnce bisa matiin toggle dari kode
+    -- v12.8: label status simpel + warna (hijau=kekirim, merah=belum/gagal)
+    local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
+    statusL.Position = UDim2.new(0, 0, 0, 324); statusL.Size = UDim2.new(1, 0, 0, 20)
+    statusL.Font = FONT_B
+    task.spawn(function()
+        while statusL.Parent do
+            local s = Farm._giftStatus
+            if s == "ok" then
+                statusL.Text = "Kekirim ✓"; statusL.TextColor3 = C.green
+            elseif s == "fail" then
+                statusL.Text = "Belum (gagal)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
+            elseif s == "empty" then
+                statusL.Text = "Belum (gak ada item)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
+            else
+                statusL.Text = "Belum"; statusL.TextColor3 = C.textMute
+            end
+            task.wait(0.5)
+        end
+    end)
     -- v8.9: auto claim gift masuk
-    applyAcceptGift = mkBodyToggle(body, 284, "Auto Accept Gift", "autoAcceptGift", "Auto Accept Gift")
+    applyAcceptGift = mkBodyToggle(body, 356, "Auto Accept Gift", "autoAcceptGift", "Auto Accept Gift")
 
     local expanded = false
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 378 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 450 or 56)
     end)
 end
 
