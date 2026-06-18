@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v13.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v13.9  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v13.6"
+local VER       = "v13.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -380,9 +380,9 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
--- v13.1: autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
--- (fitur "berisiko" — biar gak kejual/kegali gak sengaja gara2 toggle nyangkut)
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed"}
+-- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
+-- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
 -- mulai kosong (biar gak kebablasan gali "Semua"). toggle autoShovel kesave seperti biasa.
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
@@ -2562,6 +2562,61 @@ local function mkFarmCard(order, title, desc)
 end
 
 -- ===== helper: modal pilih jenis (multi-select + opsi "Semua") =====
+-- v13.9: picker daftar PLAYER di server (buat Gift Langsung — tap, gak ngetik)
+local function openPlayerPicker(onPick)
+    local ov = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
+        BackgroundTransparency = 0.4, ZIndex = 50, BorderSizePixel = 0, Parent = main })
+    local bgc = mk("TextButton", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "",
+        AutoButtonColor = false, ZIndex = 50, Parent = ov })
+    bgc.MouseButton1Click:Connect(function() ov:Destroy() end)
+    local boxF = mk("Frame", { Size = UDim2.new(0, 300, 0, 360), Position = UDim2.new(0.5,0,0.5,0),
+        AnchorPoint = Vector2.new(0.5,0.5), BackgroundColor3 = C.bg, BorderSizePixel = 0, ZIndex = 51, Parent = ov })
+    corner(boxF, 8)
+    local tl = lbl(boxF, "Pilih Player di Server", 13, C.accent, Enum.TextXAlignment.Left)
+    tl.Position = UDim2.new(0,10,0,6); tl.Size = UDim2.new(1,-20,0,24); tl.ZIndex = 52; tl.Font = FONT_B
+    local search = mk("TextBox", { Size = UDim2.new(1,-58,0,26), Position = UDim2.new(0,10,0,32),
+        BackgroundColor3 = C.card, Text = "", PlaceholderText = "cari...", TextColor3 = C.text,
+        Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, ZIndex = 52, Parent = boxF })
+    corner(search, 4)
+    local refBtn = mk("TextButton", { Size = UDim2.new(0,38,0,26), Position = UDim2.new(1,-48,0,32),
+        BackgroundColor3 = C.card, Text = "⟳", TextColor3 = C.text, Font = FONT_B, TextSize = 14,
+        BorderSizePixel = 0, ZIndex = 52, Parent = boxF })
+    corner(refBtn, 4)
+    local sc = mk("ScrollingFrame", { Size = UDim2.new(1,-20,1,-72), Position = UDim2.new(0,10,0,66),
+        BackgroundTransparency = 1, ScrollBarThickness = 3, BorderSizePixel = 0, ZIndex = 52, Parent = boxF })
+    mk("UIListLayout", { Padding = UDim.new(0,3), Parent = sc })
+    local rebuild
+    rebuild = function(q)
+        for _, ch in ipairs(sc:GetChildren()) do if ch:IsA("TextButton") then ch:Destroy() end end
+        q = (q or ""):lower()
+        local me = player.UserId
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p.UserId ~= me then
+                local nm = p.Name
+                local disp = p.DisplayName ~= nm and (p.DisplayName.." (@"..nm..")") or nm
+                if q == "" or nm:lower():find(q,1,true) or p.DisplayName:lower():find(q,1,true) then
+                    local b = mk("TextButton", { Size = UDim2.new(1,0,0,30), BackgroundColor3 = C.card,
+                        Text = "", AutoButtonColor = true, BorderSizePixel = 0, ZIndex = 53, Parent = sc })
+                    corner(b, 4)
+                    local l = lbl(b, disp, 12, C.text, Enum.TextXAlignment.Left)
+                    l.Position = UDim2.new(0,8,0,0); l.Size = UDim2.new(1,-12,1,0); l.ZIndex = 54
+                    b.MouseButton1Click:Connect(function()
+                        if onPick then onPick(nm) end
+                        ov:Destroy()
+                    end)
+                end
+            end
+        end
+        if #sc:GetChildren() <= 1 then  -- cuma layout, gak ada player
+            local l = lbl(sc, "(gak ada player lain di server)", 12, C.textMute, Enum.TextXAlignment.Center)
+            l.Size = UDim2.new(1,0,0,30); l.ZIndex = 54
+        end
+    end
+    search:GetPropertyChangedSignal("Text"):Connect(function() rebuild(search.Text) end)
+    refBtn.MouseButton1Click:Connect(function() rebuild(search.Text) end)
+    rebuild("")
+end
+
 local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange, countFn)
     local ov = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
         BackgroundTransparency = 0.4, ZIndex = 50, BorderSizePixel = 0, Parent = main })
@@ -3026,14 +3081,12 @@ do
             task.wait(0.5)
         end
     end)
-    -- v8.9: auto claim gift masuk
-    applyAcceptGift = mkBodyToggle(body, 356, "Auto Accept Gift", "autoAcceptGift", "Auto Accept Gift")
 
     local expanded = false
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 450 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 360 or 56)
     end)
 end
 
@@ -3054,13 +3107,26 @@ do
     local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 280), Position = UDim2.new(0, 10, 0, 60),
         BackgroundTransparency = 1, Visible = false, Parent = card })
 
-    -- penerima
+    -- penerima: tombol -> popup daftar player di server (tap, gak ngetik)
     lbl(body, "Penerima", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,4)
-    local nameBox = mk("TextBox", { Size = UDim2.new(0.58, 0, 0, 28), Position = UDim2.new(0.42, 0, 0, 1),
-        BackgroundColor3 = C.input, Text = "", PlaceholderText = "username...",
-        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
-    corner(nameBox, 6); stroke(nameBox, C.border, 1)
-    nameBox:GetPropertyChangedSignal("Text"):Connect(function() state.dgiftTarget = nameBox.Text end)
+    local pickBtn = mk("TextButton", { Size = UDim2.new(0.58, 0, 0, 28), Position = UDim2.new(0.42, 0, 0, 1),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
+    corner(pickBtn, 6); stroke(pickBtn, C.border, 1)
+    local pickL = lbl(pickBtn, "pilih player...", 12, C.textMute, Enum.TextXAlignment.Left)
+    pickL.Position = UDim2.new(0, 8, 0, 0); pickL.Size = UDim2.new(1, -12, 1, 0)
+    local function refreshPick()
+        if state.dgiftTarget and state.dgiftTarget ~= "" then
+            pickL.Text = state.dgiftTarget; pickL.TextColor3 = C.text
+        else
+            pickL.Text = "pilih player..."; pickL.TextColor3 = C.textMute
+        end
+    end
+    refreshPick()
+    pickBtn.MouseButton1Click:Connect(function()
+        openPlayerPicker(function(chosen)
+            state.dgiftTarget = chosen; refreshPick()
+        end)
+    end)
     -- jenis fruit
     mkTypeRow(body, 44, "Jenis Fruit", fruitListFn, state.dgiftFruits, "_dgiftAllFruit_NEVER", "pilih fruit...", function() return Farm.countMyGardenFruits and Farm.countMyGardenFruits() or {} end)
     -- filter kg
@@ -3099,6 +3165,37 @@ do
         arrow.Text = expanded and "▴" or "▾"
         card.Size = UDim2.new(1, 0, 0, expanded and 340 or 56)
     end)
+end
+
+-- ====== MISC: Auto Accept Gift (kartu sendiri) — v13.8 ======
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 3, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Auto Accept Gift", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "terima gift masuk (mailbox + langsung)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyAcceptGift = function()
+        if state.autoAcceptGift then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.autoAcceptGift = not state.autoAcceptGift; saveState(); applyAcceptGift()
+        print("[ZenxFarm] Auto Accept Gift -> "..(state.autoAcceptGift and "ON" or "OFF"))
+    end)
+    applyAcceptGift()
 end
 
 -- ====== MISC: Auto AFK (toggle simpel) ======
