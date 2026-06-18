@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v14.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v14.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v14.1"
+local VER       = "v14.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -372,6 +372,7 @@ local state = {
     dgiftFruits     = {},         -- jenis fruit yg dikirim langsung
     dgiftFruitIds   = {},         -- v14.1: pilih buah SATUAN (by Id) — kalau diisi, ini yg dipakai
     dgiftFruitWeightF = 0,        -- filter berat (0=semua, +N=atas, -N=bawah)
+    dgiftMode       = "type",     -- v14.3: "type" (1 jenis + threshold kg) atau "uuid" (per buah)
     dgiftOnce       = false,      -- sekali kirim lalu OFF
 }
 local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
@@ -402,6 +403,7 @@ local function saveState()
         out.giftSeedQty = state.giftSeedQty or 0  -- v8.7
         out.giftFruitWeightF = state.giftFruitWeightF or 0  -- v11.3
         out.dgiftFruitWeightF = state.dgiftFruitWeightF or 0  -- v13.5
+        out.dgiftMode = state.dgiftMode or "type"  -- v14.3
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -430,6 +432,7 @@ local function loadState()
                 if type(d.giftSeedQty) == "number" then state.giftSeedQty = d.giftSeedQty end
                 if type(d.giftFruitWeightF) == "number" then state.giftFruitWeightF = d.giftFruitWeightF end
                 if type(d.dgiftFruitWeightF) == "number" then state.dgiftFruitWeightF = d.dgiftFruitWeightF end
+                if d.dgiftMode == "type" or d.dgiftMode == "uuid" then state.dgiftMode = d.dgiftMode end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -863,6 +866,45 @@ local CROP_PRICE = {
     ["Moon Bloom"]=1349, ["Dragon's Breath"]=1499,
 }
 Farm._priceCache = nil
+-- v14.2: HARGA JUAL per buah. rumus terkonfirmasi (kalibrasi dari jual):
+--   harga = SellValueData[jenis] × SizeMultiplier^2.5 × mutMult
+-- (akurat 1.0003 — Dragon's Breath sm=1.2379 -> 3400×1.2379^2.5 = 5794, asli 5796)
+Farm._sellBase = nil  -- SellValueData (base per jenis)
+-- multiplier mutasi (PERLU KALIBRASI lanjutan; sementara estimasi umum GAG, NORMAL=1)
+Farm._mutMult = {
+    Gold = 20, Rainbow = 50, Electric = 1,  -- Electric blm dikalibrasi pasti -> 1 dulu
+}
+function Farm.getSellBase()
+    if Farm._sellBase == nil then
+        Farm._sellBase = {}
+        pcall(function()
+            local svd = RS:FindFirstChild("SharedModules") and RS.SharedModules:FindFirstChild("SellValueData")
+            if svd then
+                local ok, d = pcall(require, svd)
+                if ok and type(d) == "table" then for k, v in pairs(d) do
+                    if type(v) == "number" then Farm._sellBase[k] = v end
+                end end
+            end
+        end)
+    end
+    return Farm._sellBase
+end
+-- harga jual 1 buah (Tool inventory ATAU model garden). butuh SizeMultiplier/SizeMulti + jenis.
+function Farm.fruitPrice(fruit)
+    local base = Farm.getSellBase()
+    local jenis = fruit:GetAttribute("Fruit") or fruit:GetAttribute("FruitName") or fruit:GetAttribute("CorePartName")
+    local b = jenis and base[jenis]
+    if not b then return nil end
+    local sm = fruit:GetAttribute("SizeMultiplier") or fruit:GetAttribute("SizeMulti")
+    if type(sm) ~= "number" then return nil end
+    local price = b * (sm ^ 2.5)
+    local mut = fruit:GetAttribute("Mutation")
+    if mut and mut ~= "" and mut ~= "None" then
+        price = price * (Farm._mutMult[mut] or 1)
+    end
+    return math.floor(price)
+end
+
 function Farm.cropValue(seedName)
     if not seedName then return 0 end
     -- coba baca nilai asli dari SeedData game (sekali, lalu cache)
@@ -1692,8 +1734,10 @@ function Farm.directGiftOnce()
     if not uid then Farm._dgiftStatus = "notfound"; print("[ZenxFarm] user '"..target.."' gak ketemu"); return end
 
     local sent = 0
-    -- v14.1: kalau ada buah SATUAN dipilih, kirim PERSIS yg itu (by Id). abaikan jenis+filter.
-    local useIds = next(state.dgiftFruitIds) ~= nil
+    -- v14.3: 2 mode eksplisit:
+    --   "uuid" -> kirim buah satuan yg dipilih (by Id), abaikan jenis & threshold
+    --   "type" -> kirim semua buah jenis terpilih yg lolos threshold kg
+    local useIds = (state.dgiftMode == "uuid")
     for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
@@ -1707,7 +1751,7 @@ function Farm.directGiftOnce()
                             -- mode per-buah: cuma yg Id-nya dipilih
                             kirim = state.dgiftFruitIds[tostring(fid)] == true
                         else
-                            -- mode per-jenis: jenis cocok (atau semua) + lolos filter berat
+                            -- mode per-jenis: jenis cocok (atau semua) + lolos threshold kg
                             local jenisOk = state.dgiftFruits[fjenis] or (next(state.dgiftFruits) == nil)
                             local w = t:GetAttribute("Weight") or 0
                             kirim = jenisOk and passWeight(w, state.dgiftFruitWeightF)
@@ -2697,8 +2741,10 @@ local function openFruitPicker(selSet, onChange)
                         if fid and fj then
                             local w = t:GetAttribute("Weight") or 0
                             local mut = t:GetAttribute("Mutation")
+                            local price = Farm.fruitPrice and Farm.fruitPrice(t) or nil
                             list[#list+1] = { id = tostring(fid), jenis = fj, w = w,
-                                              mut = (mut and mut ~= "" and mut ~= "None") and mut or nil }
+                                              mut = (mut and mut ~= "" and mut ~= "None") and mut or nil,
+                                              price = price }
                         end
                     end
                 end
@@ -2708,6 +2754,14 @@ local function openFruitPicker(selSet, onChange)
         table.sort(list, function(a,b) return a.w > b.w end)
         for _, f in ipairs(list) do
             local label = f.jenis.." "..string.format("%.2f", f.w).."kg"..(f.mut and (" ["..f.mut.."]") or "")
+            if f.price then
+                local pstr
+                if f.price >= 1e9 then pstr = string.format("%.2fB", f.price/1e9)
+                elseif f.price >= 1e6 then pstr = string.format("%.2fM", f.price/1e6)
+                elseif f.price >= 1e3 then pstr = string.format("%.1fK", f.price/1e3)
+                else pstr = tostring(f.price) end
+                label = label.."  ¢"..pstr
+            end
             if q == "" or label:lower():find(q,1,true) then
                 local b = mk("TextButton", { Size = UDim2.new(1,0,0,30), BackgroundColor3 = C.card,
                     Text = "", AutoButtonColor = true, BorderSizePixel = 0, ZIndex = 53, Parent = sc })
@@ -3227,7 +3281,7 @@ do
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -50, 0, 14)
     local arrow = lbl(hd, "▾", 14, C.textDim, Enum.TextXAlignment.Center)
     arrow.Position = UDim2.new(1, -32, 0, 19); arrow.Size = UDim2.new(0, 20, 0, 18)
-    local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 320), Position = UDim2.new(0, 10, 0, 60),
+    local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 340), Position = UDim2.new(0, 10, 0, 60),
         BackgroundTransparency = 1, Visible = false, Parent = card })
 
     -- penerima: tombol -> popup daftar player di server (tap, gak ngetik)
@@ -3250,12 +3304,37 @@ do
             state.dgiftTarget = chosen; refreshPick()
         end)
     end)
-    -- jenis fruit (per-jenis: kirim SEMUA fruit jenis ini yg lolos filter)
-    mkTypeRow(body, 44, "Jenis Fruit", function() return Farm.fruitsInBagList and Farm.fruitsInBagList() or {} end, state.dgiftFruits, "_dgiftAllFruit_NEVER", "pilih fruit...", function() return Farm.countFruitsInBag and Farm.countFruitsInBag() or {} end)
-    -- v14.1: pilih buah SATUAN (by berat). kalau ada yg dipilih, ini yg diutamain (bukan jenis).
-    lbl(body, "Pilih Buah (satuan)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
-    local fruitPickBtn = mk("TextButton", { Size = UDim2.new(0.5, 0, 0, 28), Position = UDim2.new(0.5, 0, 0, 85),
-        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
+    -- v14.3: PEMILIH MODE — 2 pilihan: "1 Jenis Buah" (+threshold kg) atau "Per UUID" (buah satuan)
+    lbl(body, "Mode Kirim", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,44)
+    local modeTypeBtn = mk("TextButton", { Size = UDim2.new(0.5, -4, 0, 28), Position = UDim2.new(0, 0, 0, 64),
+        BackgroundColor3 = C.input, Text = "1 Jenis Buah", TextColor3 = C.textDim, Font = FONT_B,
+        TextSize = 12, AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
+    corner(modeTypeBtn, 6); local modeTypeStrk = stroke(modeTypeBtn, C.border, 1)
+    local modeUuidBtn = mk("TextButton", { Size = UDim2.new(0.5, -4, 0, 28), Position = UDim2.new(0.5, 4, 0, 64),
+        BackgroundColor3 = C.input, Text = "Per UUID", TextColor3 = C.textDim, Font = FONT_B,
+        TextSize = 12, AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
+    corner(modeUuidBtn, 6); local modeUuidStrk = stroke(modeUuidBtn, C.border, 1)
+
+    -- ----- kontrol mode "type": jenis fruit + threshold kg -----
+    local typeWrap = mk("Frame", { Size = UDim2.new(1, 0, 0, 84), Position = UDim2.new(0, 0, 0, 100),
+        BackgroundTransparency = 1, Parent = body })
+    mkTypeRow(typeWrap, 0, "Jenis Fruit", function() return Farm.fruitsInBagList and Farm.fruitsInBagList() or {} end, state.dgiftFruits, "_dgiftAllFruit_NEVER", "pilih fruit...", function() return Farm.countFruitsInBag and Farm.countFruitsInBag() or {} end)
+    lbl(typeWrap, "Threshold kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,44)
+    local fwBox = mk("TextBox", { Size = UDim2.new(0.4, 0, 0, 28), Position = UDim2.new(0.6, 0, 0, 41),
+        BackgroundColor3 = C.input, Text = tostring(state.dgiftFruitWeightF or 0), PlaceholderText = "0=semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = typeWrap })
+    corner(fwBox, 6); stroke(fwBox, C.border, 1)
+    fwBox.FocusLost:Connect(function()
+        local n = tonumber(fwBox.Text) or 0
+        state.dgiftFruitWeightF = n; fwBox.Text = tostring(n); saveState()
+    end)
+
+    -- ----- kontrol mode "uuid": pilih buah satuan -----
+    local uuidWrap = mk("Frame", { Size = UDim2.new(1, 0, 0, 40), Position = UDim2.new(0, 0, 0, 100),
+        BackgroundTransparency = 1, Parent = body })
+    lbl(uuidWrap, "Pilih Buah (satuan)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,4)
+    local fruitPickBtn = mk("TextButton", { Size = UDim2.new(0.5, 0, 0, 28), Position = UDim2.new(0.5, 0, 0, 1),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = uuidWrap })
     corner(fruitPickBtn, 6); stroke(fruitPickBtn, C.border, 1)
     local fruitPickL = lbl(fruitPickBtn, "pilih buah...", 12, C.textMute, Enum.TextXAlignment.Center)
     fruitPickL.Size = UDim2.new(1,0,1,0)
@@ -3268,23 +3347,30 @@ do
     fruitPickBtn.MouseButton1Click:Connect(function()
         openFruitPicker(state.dgiftFruitIds, refreshFruitPick)
     end)
-    -- filter kg (cuma kepake kalau pakai per-jenis, bukan per-buah)
-    lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,128)
-    local fwBox = mk("TextBox", { Size = UDim2.new(0.4, 0, 0, 28), Position = UDim2.new(0.6, 0, 0, 125),
-        BackgroundColor3 = C.input, Text = tostring(state.dgiftFruitWeightF or 0), PlaceholderText = "0=semua",
-        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
-    corner(fwBox, 6); stroke(fwBox, C.border, 1)
-    fwBox.FocusLost:Connect(function()
-        local n = tonumber(fwBox.Text) or 0
-        state.dgiftFruitWeightF = n; fwBox.Text = tostring(n); saveState()
-    end)
+
+    -- ----- terapin mode: tunjukin kontrol yg relevan aja -----
+    local function applyMode()
+        local isType = (state.dgiftMode ~= "uuid")
+        typeWrap.Visible = isType
+        uuidWrap.Visible = not isType
+        if isType then
+            modeTypeBtn.BackgroundColor3 = C.green; modeTypeBtn.TextColor3 = Color3.new(0,0,0); modeTypeStrk.Color = C.green
+            modeUuidBtn.BackgroundColor3 = C.input; modeUuidBtn.TextColor3 = C.textDim; modeUuidStrk.Color = C.border
+        else
+            modeUuidBtn.BackgroundColor3 = C.green; modeUuidBtn.TextColor3 = Color3.new(0,0,0); modeUuidStrk.Color = C.green
+            modeTypeBtn.BackgroundColor3 = C.input; modeTypeBtn.TextColor3 = C.textDim; modeTypeStrk.Color = C.border
+        end
+    end
+    modeTypeBtn.MouseButton1Click:Connect(function() state.dgiftMode = "type"; saveState(); applyMode() end)
+    modeUuidBtn.MouseButton1Click:Connect(function() state.dgiftMode = "uuid"; saveState(); applyMode() end)
+    applyMode()
     -- sekali kirim
-    mkBodyToggle(body, 164, "Sekali Kirim", "dgiftOnce", "Gift Langsung Sekali Kirim")
-    applyDirectGift = mkBodyToggle(body, 204, "Auto Gift Langsung", "autoDirectGift", "Auto Gift Langsung")
+    mkBodyToggle(body, 192, "Sekali Kirim", "dgiftOnce", "Gift Langsung Sekali Kirim")
+    applyDirectGift = mkBodyToggle(body, 232, "Auto Gift Langsung", "autoDirectGift", "Auto Gift Langsung")
     Farm._applyDGiftRef = applyDirectGift
     -- status warna
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
-    statusL.Position = UDim2.new(0, 0, 0, 244); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
+    statusL.Position = UDim2.new(0, 0, 0, 272); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
     task.spawn(function()
         while statusL.Parent do
             local s = Farm._dgiftStatus
@@ -3302,7 +3388,7 @@ do
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 380 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 400 or 56)
     end)
 end
 
@@ -3767,10 +3853,13 @@ do
 
     -- kartu ringkasan
     local sumCard = mk("Frame", { Size = UDim2.new(1, 0, 0, 96), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 0, Parent = statsList })
+        BorderSizePixel = 0, LayoutOrder = 0, AutomaticSize = Enum.AutomaticSize.Y, Parent = statsList })
     corner(sumCard, 8); stroke(sumCard, C.border, 1)
+    mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,12),
+        PaddingLeft = UDim.new(0,14), PaddingRight = UDim.new(0,14), Parent = sumCard })
     local sumL = lbl(sumCard, "", 13, C.text, Enum.TextXAlignment.Left)
-    sumL.Position = UDim2.new(0, 14, 0, 10); sumL.Size = UDim2.new(1, -28, 1, -20)
+    sumL.Position = UDim2.new(0, 0, 0, 0); sumL.Size = UDim2.new(1, 0, 0, 0)
+    sumL.AutomaticSize = Enum.AutomaticSize.Y
     sumL.TextYAlignment = Enum.TextYAlignment.Top; sumL.TextWrapped = true
 
     -- tombol refresh
@@ -3801,9 +3890,34 @@ do
         for _, c in ipairs(perCard:GetChildren()) do
             if c:IsA("TextLabel") then c:Destroy() end
         end
+        local MY = player.UserId
+        -- v14.3: HITUNG BUAH + MUTASI DI TAS (Character + Backpack) — yg dipegang
+        local bagFruit, bagKg = 0, 0
+        local bagMut = {}      -- mutasi -> jumlah
+        local bagByType = {}   -- jenis -> {n, kg}
+        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local fid = t:GetAttribute("Id")
+                        local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                        if fid and fj then
+                            local kg = Farm.gardenKg(t, fj)
+                            bagFruit = bagFruit + 1; bagKg = bagKg + kg
+                            local e = bagByType[fj]
+                            if not e then e = { n = 0, kg = 0 }; bagByType[fj] = e end
+                            e.n = e.n + 1; e.kg = e.kg + kg
+                            local mut = t:GetAttribute("Mutation")
+                            if mut and mut ~= "" and mut ~= "None" then
+                                bagMut[mut] = (bagMut[mut] or 0) + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then sumL.Text = "Gardens gak ketemu"; return end
-        local MY = player.UserId
         local byType = {}  -- jenis -> {n=buah, kg=total, plants=, ready=, mut={}}
         local totalFruit, totalKg, totalPlant, readyPlant = 0, 0, 0, 0
         local mutCount = {}
@@ -3836,10 +3950,14 @@ do
         -- ringkasan
         local mutStr = {}
         for m, c in pairs(mutCount) do mutStr[#mutStr+1] = m.." x"..c end
+        local bagMutStr = {}
+        for m, c in pairs(bagMut) do bagMutStr[#bagMutStr+1] = m.." x"..c end
         sumL.Text = string.format(
-            "TOTAL DI KEBUN\nBuah: %d   |   Berat: %.2f kg\nTanaman: %d (ready: %d)\nMutasi: %s",
+            "TOTAL DI KEBUN\nBuah: %d   |   Berat: %.2f kg\nTanaman: %d (ready: %d)\nMutasi: %s\n\nTOTAL DI TAS (yg dipegang)\nBuah: %d   |   Berat: %.2f kg\nMutasi: %s",
             totalFruit, totalKg, totalPlant, readyPlant,
-            (#mutStr > 0 and table.concat(mutStr, ", ") or "-"))
+            (#mutStr > 0 and table.concat(mutStr, ", ") or "-"),
+            bagFruit, bagKg,
+            (#bagMutStr > 0 and table.concat(bagMutStr, ", ") or "-"))
         -- urutkan jenis dari kg terbanyak
         local order = {}
         for j, e in pairs(byType) do order[#order+1] = {j, e} end
