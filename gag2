@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v16.5  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v16.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v16.5"
+local VER       = "v16.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -4307,11 +4307,25 @@ do
     sumL.AutomaticSize = Enum.AutomaticSize.Y; sumL.TextWrapped = true
     sumL.TextYAlignment = Enum.TextYAlignment.Top
 
-    -- tombol hitung ulang
-    local refBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.input,
-        Text = "🔄 Hitung Ulang", TextColor3 = C.text, Font = FONT_B, TextSize = 13,
-        AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = 2, Parent = kalkList })
+    -- tombol: hitung ulang + copy teks
+    local kalkText = ""
+    local btnRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundTransparency = 1,
+        LayoutOrder = 2, Parent = kalkList })
+    local refBtn = mk("TextButton", { Size = UDim2.new(0.58, -4, 1, 0), Position = UDim2.new(0,0,0,0),
+        BackgroundColor3 = C.input, Text = "🔄 Hitung Ulang", TextColor3 = C.text, Font = FONT_B,
+        TextSize = 13, AutoButtonColor = false, BorderSizePixel = 0, Parent = btnRow })
     corner(refBtn, 6); stroke(refBtn, C.border, 1)
+    local copyBtn = mk("TextButton", { Size = UDim2.new(0.42, -4, 1, 0), Position = UDim2.new(0.58, 4, 0, 0),
+        BackgroundColor3 = C.green, Text = "📋 Copy Teks", TextColor3 = Color3.new(0,0,0), Font = FONT_B,
+        TextSize = 13, AutoButtonColor = false, BorderSizePixel = 0, Parent = btnRow })
+    corner(copyBtn, 6)
+    copyBtn.MouseButton1Click:Connect(function()
+        local fn = setclipboard or toclipboard or (syn and syn.write_clipboard) or writeclipboard
+        local ok = false
+        if fn then pcall(function() fn(kalkText); ok = true end) end
+        copyBtn.Text = ok and "✓ Tersalin" or "gagal copy"
+        task.delay(1.2, function() copyBtn.Text = "📋 Copy Teks" end)
+    end)
 
     -- container per jenis
     local perCard = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), BackgroundColor3 = C.card,
@@ -4352,6 +4366,8 @@ do
         sumL.Text = string.format("TOTAL BUAH (inventory + hotbar)\nJumlah: %d buah\nTotal nilai: %s", totalN, Farm.abbrev(totalVal))
         -- urut harga terbesar
         table.sort(list, function(a,b) return a.price > b.price end)
+        -- v16.6: susun teks buat di-copy
+        local tlines = { string.format("Jumlah: %d buah", totalN), "Total nilai: "..Farm.abbrev(totalVal) }
         if #list == 0 then
             local r = lbl(perCard, "gak ada buah di tas", 12, C.textMute, Enum.TextXAlignment.Left)
             r.Size = UDim2.new(1,0,0,18); r.LayoutOrder = 1
@@ -4361,8 +4377,10 @@ do
                     f.jenis, f.kg, (f.mut and ("   "..f.mut) or ""), Farm.abbrev(f.price))
                 local r = lbl(perCard, txt, 12, C.text, Enum.TextXAlignment.Left)
                 r.Size = UDim2.new(1,0,0,18); r.LayoutOrder = i
+                tlines[#tlines+1] = txt
             end
         end
+        kalkText = table.concat(tlines, "\n")
     end
     refBtn.MouseButton1Click:Connect(computeKalk)
     kwBox.FocusLost:Connect(function()
