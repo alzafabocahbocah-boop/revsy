@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v17.0  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v17.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v17.0"
+local VER       = "v17.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2939,19 +2939,23 @@ hopBtn.MouseButton1Click:Connect(function()
     hopBtn.Text = "..."; task.spawn(doHop)
 end)
 
--- v17.0: AUTO HOP tiap X menit (pakai doHop yg sama)
+-- v17.0: AUTO HOP tiap X menit (pakai doHop yg sama). _hopNextAt buat countdown UI.
+Farm._hopNextAt = nil
 staggerSpawn(function()
     while isCurrentGen() do
         if not state.autoHop then
+            Farm._hopNextAt = nil
             task.wait(2)
         else
             local mins = math.max(1, state.hopMinutes or 30)
             local target = mins * 60
+            Farm._hopNextAt = os.clock() + target
             local waited = 0
             while isCurrentGen() and state.autoHop and waited < target do
-                task.wait(5); waited = waited + 5
+                task.wait(1); waited = waited + 1
             end
             if isCurrentGen() and state.autoHop then
+                Farm._hopNextAt = nil
                 print("[ZenxFarm] auto hop (tiap "..mins.." menit) -> hop sekarang")
                 pcall(doHop)
                 task.wait(15)
@@ -4587,7 +4591,7 @@ do
         AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = hopPanel })
     mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = hopList })
 
-    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 200), BackgroundColor3 = C.card,
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 260), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 0, Parent = hopList })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Auto Hop Server", 15, C.text, Enum.TextXAlignment.Left)
@@ -4643,8 +4647,41 @@ do
         state.autoHop = not state.autoHop; saveState(); applyHop()
         print("[ZenxFarm] Auto Hop -> "..(state.autoHop and ("ON (tiap "..(state.hopMinutes or 30).." menit)") or "OFF"))
     end)
-    lbl(body, "ⓘ hop pakai server-list Roblox (anti balik ke server sama)", 11, C.textMute, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,124)
     applyHop()
+
+    -- v17.1: countdown real-time + progress bar
+    local cdL = lbl(body, "Hop berikutnya: —", 13, C.green, Enum.TextXAlignment.Left)
+    cdL.Position = UDim2.new(0,0,0,128); cdL.Size = UDim2.new(1,0,0,18)
+    local barBg = mk("Frame", { Size = UDim2.new(1, 0, 0, 8), Position = UDim2.new(0, 0, 0, 150),
+        BackgroundColor3 = C.input, BorderSizePixel = 0, Parent = body })
+    corner(barBg, 4)
+    local barFill = mk("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = C.green,
+        BorderSizePixel = 0, Parent = barBg })
+    corner(barFill, 4)
+    lbl(body, "ⓘ hop pakai server-list Roblox (anti balik ke server sama)", 11, C.textMute, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,166)
+
+    -- updater tiap detik
+    task.spawn(function()
+        while sg and sg.Parent do
+            if state.autoHop and Farm._hopNextAt then
+                local rem = math.max(0, Farm._hopNextAt - os.clock())
+                local m = math.floor(rem / 60); local s = math.floor(rem % 60)
+                cdL.Text = string.format("Hop berikutnya: %dm %02ds", m, s)
+                cdL.TextColor3 = C.green
+                local total = math.max(1, (state.hopMinutes or 30) * 60)
+                barFill.Size = UDim2.new(math.clamp(1 - rem/total, 0, 1), 0, 1, 0)
+            elseif state.autoHop then
+                cdL.Text = "Hop berikutnya: lagi hop..."
+                cdL.TextColor3 = C.green
+                barFill.Size = UDim2.new(1, 0, 1, 0)
+            else
+                cdL.Text = "Hop berikutnya: — (OFF)"
+                cdL.TextColor3 = C.textMute
+                barFill.Size = UDim2.new(0, 0, 1, 0)
+            end
+            task.wait(1)
+        end
+    end)
 end
 
 -- ----- boot -----
