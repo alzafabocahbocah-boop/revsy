@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v15.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v15.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v15.4"
+local VER       = "v15.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -360,6 +360,7 @@ local state = {
     antiKepental    = false,    -- v10.1: default OFF (sering bikin kepental di private server). nyalain manual kalau mau proteksi di public.
     autoGrabSeed    = false,    -- auto ambil seed jatuh (event)
     espPrice        = false,    -- v15.4: ESP harga buah di kebun (label melayang)
+    espInvent       = false,    -- v15.6: ESP harga buah di grid inventory (harga aja)
     collectFreshOnly = false,   -- v15.4: skip collect buah yg udah basi (decay tinggi)
     collectFreshMax = 0.5,      -- v15.4: batas decay (0-1). buah > ini = basi -> skip collect
     giftTarget      = "",       -- nama penerima
@@ -388,7 +389,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly"}
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -996,21 +997,22 @@ end
 local function makeEspLabel()
     local bg = Instance.new("BillboardGui")
     bg.Name = "ZenxEsp"
-    bg.Size = UDim2.new(0, 90, 0, 22)
+    bg.Size = UDim2.new(0, 150, 0, 18)
     bg.StudsOffset = Vector3.new(0, 2.2, 0)
     bg.AlwaysOnTop = true
     bg.MaxDistance = 200
     local lb = Instance.new("TextLabel")
     lb.Name = "P"
     lb.Size = UDim2.new(1,0,1,0)
-    lb.BackgroundTransparency = 0.35
-    lb.BackgroundColor3 = Color3.fromRGB(15,17,22)
-    lb.TextColor3 = Color3.fromRGB(120, 230, 140)
-    lb.Font = Enum.Font.GothamBold
-    lb.TextScaled = true
+    lb.BackgroundTransparency = 1          -- tanpa kotak hitam
+    lb.TextColor3 = Color3.fromRGB(245,245,245)  -- default putih (kg + mutasi)
+    lb.Font = Enum.Font.GothamSemibold
+    lb.TextSize = 14
+    lb.RichText = true                     -- biar harga bisa beda warna
+    lb.TextStrokeTransparency = 0.4        -- outline tipis biar kebaca tanpa bg
+    lb.TextStrokeColor3 = Color3.fromRGB(0,0,0)
     lb.Text = ""
     lb.Parent = bg
-    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0,5); c.Parent = lb
     return bg
 end
 function Farm.applyEspPrice()
@@ -1046,13 +1048,17 @@ function Farm.applyEspPrice()
                                             end
                                             g.Adornee = adornee
                                             g.Parent = espHost()
-                                            -- warna: ijo=fresh, oranye=mulai basi, merah=basi
+                                            -- warna HARGA ikut freshness: ijo=fresh, oranye=mulai basi, merah=basi
                                             local dec = fruit:GetAttribute("DecayAlpha") or 0
-                                            local col = Color3.fromRGB(120,230,140)
-                                            if dec > 0.5 then col = Color3.fromRGB(235,90,90)
-                                            elseif dec > 0.25 then col = Color3.fromRGB(240,180,70) end
-                                            g.P.TextColor3 = col
-                                            g.P.Text = "¢"..Farm.abbrev(price)
+                                            local hex = "78E68C"  -- ijo
+                                            if dec > 0.5 then hex = "EB5A5A"      -- merah
+                                            elseif dec > 0.25 then hex = "F0B446" end  -- oranye
+                                            -- kg + mutasi (mutasi None disembunyiin)
+                                            local kg = fruit:GetAttribute("Weight") or Farm.gardenKg(fruit, plant:GetAttribute("SeedName"))
+                                            local mut = fruit:GetAttribute("Mutation")
+                                            local tail = string.format("%.1fkg", kg or 0)
+                                            if mut and mut ~= "" and mut ~= "None" then tail = tail.." "..mut end
+                                            g.P.Text = string.format('<font color="#%s">¢%s</font> | %s', hex, Farm.abbrev(price), tail)
                                         end
                                     end
                                 end
@@ -1067,6 +1073,98 @@ function Farm.applyEspPrice()
             task.wait(1.5)
         end
         clearAll()
+    end)
+end
+
+-- v15.6: ESP HARGA INVENTORY — tempel harga (aja) di tiap sel grid inventory game.
+-- sel: BackpackGui.Backpack.Inventory...UIGridFrame, tiap sel ada teks ToolName + ToolCount(kg).
+-- gak ada UUID di sel -> cocokin ke buah di tas via NAMA + BERAT terdekat, lalu hitung harga.
+Farm._espInvGen = 0
+function Farm.applyEspInvent()
+    Farm._espInvGen = Farm._espInvGen + 1
+    local myGen = Farm._espInvGen
+    local function findGrid()
+        local pg = player:FindFirstChild("PlayerGui")
+        local bgui = pg and pg:FindFirstChild("BackpackGui")
+        local inv = bgui and bgui:FindFirstChild("Inventory", true)
+        if not inv then return nil end
+        local sf = inv:FindFirstChild("ScrollingFrame")
+        local grid = sf and sf:FindFirstChild("UIGridFrame")
+        return grid or inv:FindFirstChild("UIGridFrame", true)
+    end
+    local function clearLabels(grid)
+        if not grid then return end
+        for _, cell in ipairs(grid:GetChildren()) do
+            local l = cell:FindFirstChild("ZenxInvPrice")
+            if l then l:Destroy() end
+        end
+    end
+    if not state.espInvent then
+        local g = findGrid(); if g then clearLabels(g) end
+        return
+    end
+    task.spawn(function()
+        while state.espInvent and Farm._espInvGen == myGen do
+            local grid = findGrid()
+            if grid and grid.Visible then
+                -- lookup buah di tas: nama -> list {w, price}
+                local byName = {}
+                for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+                    if holder then
+                        for _, t in ipairs(holder:GetChildren()) do
+                            local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                            local w  = t:GetAttribute("Weight")
+                            if fj and type(w) == "number" then
+                                local pr = Farm.fruitPrice(t)
+                                if pr then
+                                    byName[fj] = byName[fj] or {}
+                                    table.insert(byName[fj], { w = w, p = pr })
+                                end
+                            end
+                        end
+                    end
+                end
+                -- tiap sel: baca ToolName + ToolCount, cocokin berat terdekat, tempel harga
+                for _, cell in ipairs(grid:GetChildren()) do
+                    if cell:IsA("GuiObject") then
+                        local nameLbl = cell:FindFirstChild("ToolName", true)
+                        local cntLbl  = cell:FindFirstChild("ToolCount", true)
+                        local nm = nameLbl and nameLbl.Text
+                        local cw = cntLbl and tonumber(tostring(cntLbl.Text):match("([%d%.]+)"))
+                        local price
+                        if nm and cw and byName[nm] then
+                            local best, bestD
+                            for _, e in ipairs(byName[nm]) do
+                                local d = math.abs(e.w - cw)
+                                if not bestD or d < bestD then bestD = d; best = e end
+                            end
+                            if best and bestD and bestD < 0.5 then price = best.p end
+                        end
+                        local lbl0 = cell:FindFirstChild("ZenxInvPrice")
+                        if price then
+                            if not lbl0 then
+                                lbl0 = Instance.new("TextLabel")
+                                lbl0.Name = "ZenxInvPrice"
+                                lbl0.Size = UDim2.new(1, 0, 0, 14)
+                                lbl0.Position = UDim2.new(0, 0, 0, 1)
+                                lbl0.BackgroundTransparency = 1
+                                lbl0.Font = Enum.Font.GothamBold
+                                lbl0.TextSize = 12
+                                lbl0.TextColor3 = Color3.fromRGB(120,230,140)
+                                lbl0.TextStrokeTransparency = 0.4
+                                lbl0.ZIndex = 10
+                                lbl0.Parent = cell
+                            end
+                            lbl0.Text = "¢"..Farm.abbrev(price)
+                        elseif lbl0 then
+                            lbl0:Destroy()
+                        end
+                    end
+                end
+            end
+            task.wait(1)
+        end
+        local g = findGrid(); if g then clearLabels(g) end
     end)
 end
 
@@ -3165,10 +3263,10 @@ end
 local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedList() end return Farm.seedList end
 
 -- ====== CARD 1: AUTO COLLECT ======
-local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost
+local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost, applyFreshOnly
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(310)
+    setH(404)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
@@ -3190,6 +3288,18 @@ do
         local n = tonumber(cwBox.Text) or 0
         state.collectWeightF = n; cwBox.Text = tostring(n); saveState()
         print("[ZenxFarm] filter collect: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
+    end)
+    -- v15.4: skip buah basi (gabung di sini, bukan kartu sendiri)
+    applyFreshOnly = mkBodyToggle(body, 324, "Fresh Only (skip basi)", "collectFreshOnly", "Collect Fresh Only")
+    lbl(body, "Batas decay (0-1)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,368)
+    local fmBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 365),
+        BackgroundColor3 = C.input, Text = tostring(state.collectFreshMax or 0.5), PlaceholderText = "0.5",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(fmBox, 6); stroke(fmBox, C.border, 1)
+    fmBox.FocusLost:Connect(function()
+        local n = tonumber(fmBox.Text)
+        if n then n = math.clamp(n, 0, 1) else n = 0.5 end
+        state.collectFreshMax = n; fmBox.Text = tostring(n); saveState()
     end)
 end
 
@@ -3678,15 +3788,15 @@ do
     applyAfk()
 end
 
--- ====== MISC: ESP Harga Buah (toggle) — v15.4 ======
+-- ====== MISC: ESP Harga Garden (toggle) — v15.4 ======
 local applyEspPriceUI
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
     corner(card, 8); stroke(card, C.border, 1)
-    local nameL = lbl(card, "ESP Harga Buah", 14, C.text, Enum.TextXAlignment.Left)
+    local nameL = lbl(card, "ESP Harga Garden", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
-    local descL = lbl(card, "label harga melayang di atas buah kebun", 11, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "harga+kg+mutasi di atas buah kebun", 11, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
     local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
@@ -3711,35 +3821,24 @@ do
     applyEspPriceUI()
 end
 
--- ====== MISC: Collect Fresh Only (toggle + threshold) — v15.4 ======
-local applyFreshOnly
+-- ====== MISC: ESP Harga Inventory (toggle) — v15.6 ======
+local applyEspInventUI
 do
-    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 88), BackgroundColor3 = C.card,
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
     corner(card, 8); stroke(card, C.border, 1)
-    local nameL = lbl(card, "Collect Fresh Only", 14, C.text, Enum.TextXAlignment.Left)
+    local nameL = lbl(card, "ESP Harga Inventory", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
-    local descL = lbl(card, "skip collect buah yg udah basi (decay tinggi)", 11, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "harga di tiap buah grid inventory", 11, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
-    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0, 13),
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
     corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    -- threshold input (0-1)
-    lbl(card, "Batas decay (0-1)", 12, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0, 14, 0, 60)
-    local thBox = mk("TextBox", { Size = UDim2.new(0, 60, 0, 24), Position = UDim2.new(1, -74, 0, 58),
-        BackgroundColor3 = C.input, Text = tostring(state.collectFreshMax or 0.5), PlaceholderText = "0.5",
-        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = card })
-    corner(thBox, 6); stroke(thBox, C.border, 1)
-    thBox.FocusLost:Connect(function()
-        local n = tonumber(thBox.Text)
-        if n then n = math.clamp(n, 0, 1) else n = 0.5 end
-        state.collectFreshMax = n; thBox.Text = tostring(n); saveState()
-    end)
-    applyFreshOnly = function()
-        if state.collectFreshOnly then
+    applyEspInventUI = function()
+        if state.espInvent then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
         else
@@ -3748,10 +3847,11 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.collectFreshOnly = not state.collectFreshOnly; saveState(); applyFreshOnly()
-        print("[ZenxFarm] Collect Fresh Only -> "..(state.collectFreshOnly and "ON" or "OFF"))
+        state.espInvent = not state.espInvent; saveState(); applyEspInventUI()
+        pcall(Farm.applyEspInvent)
+        print("[ZenxFarm] ESP Harga Inventory -> "..(state.espInvent and "ON" or "OFF"))
     end)
-    applyFreshOnly()
+    applyEspInventUI()
 end
 
 -- ====== MISC: Anti-Lag (toggle) — v11.4 ======
@@ -4152,6 +4252,7 @@ task.spawn(function()
     pcall(function() applyHideFruits() end)
     task.wait(0.5)
     pcall(function() if state.espPrice then Farm.applyEspPrice() end end)  -- v15.4
+    pcall(function() if state.espInvent then Farm.applyEspInvent() end end)  -- v15.6
 end)
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
