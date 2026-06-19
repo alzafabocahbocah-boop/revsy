@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v15.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v16.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v15.8"
+local VER       = "v16.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -998,7 +998,7 @@ local function makeEspLabel()
     local bg = Instance.new("BillboardGui")
     bg.Name = "ZenxEsp"
     bg.Size = UDim2.new(0, 150, 0, 18)
-    bg.StudsOffset = Vector3.new(0, 2.2, 0)
+    bg.StudsOffset = Vector3.new(2.2, 0, 0)   -- v15.9: di SAMPING buah (kanan), bukan tengah
     bg.AlwaysOnTop = true
     bg.MaxDistance = 200
     local lb = Instance.new("TextLabel")
@@ -1009,6 +1009,7 @@ local function makeEspLabel()
     lb.Font = Enum.Font.GothamSemibold
     lb.TextSize = 14
     lb.RichText = true                     -- biar harga bisa beda warna
+    lb.TextXAlignment = Enum.TextXAlignment.Left  -- v15.9: mulai dari deket buah
     lb.TextStrokeTransparency = 0.4        -- outline tipis biar kebaca tanpa bg
     lb.TextStrokeColor3 = Color3.fromRGB(0,0,0)
     lb.Text = ""
@@ -1058,7 +1059,7 @@ function Farm.applyEspPrice()
                                             local mut = fruit:GetAttribute("Mutation")
                                             local tail = string.format("%.1fkg", kg or 0)
                                             if mut and mut ~= "" and mut ~= "None" then tail = tail.." "..mut end
-                                            g.P.Text = string.format('<font color="#%s">¢%s</font> | %s', hex, Farm.abbrev(price), tail)
+                                            g.P.Text = string.format('<font color="#%s">%s</font> | %s', hex, Farm.abbrev(price), tail)
                                         end
                                     end
                                 end
@@ -1070,7 +1071,7 @@ function Farm.applyEspPrice()
             for f, g in pairs(Farm._espMap) do
                 if not alive[f] then if g then pcall(function() g:Destroy() end) end; Farm._espMap[f] = nil end
             end
-            task.wait(1.5)
+            task.wait(20)  -- v15.9: refresh ESP garden tiap 20s
         end
         clearAll()
     end)
@@ -1168,12 +1169,12 @@ function Farm.applyEspInvent()
                     if dec > 0.5 then col = Color3.fromRGB(235,90,90)       -- merah
                     elseif dec > 0.25 then col = Color3.fromRGB(245,210,70) end  -- kuning
                     lbl0.TextColor3 = col
-                    lbl0.Text = "¢"..Farm.abbrev(price)
+                    lbl0.Text = Farm.abbrev(price)
                 elseif lbl0 then
                     lbl0:Destroy()
                 end
             end
-            task.wait(1)
+            task.wait(20)  -- v15.9: refresh ESP inventory tiap 20s
         end
         clearLabels()
     end)
@@ -2919,15 +2920,18 @@ end
 local farmBtn, farmLbl, farmStrk = mkTabBtn(0, "farm", "AUTO FARM")
 local giftBtn, giftLbl, giftStrk = mkTabBtn(48, "gift", "AUTO GIFT")
 local buyBtn, buyLbl, buyStrk = mkTabBtn(96, "buy", "AUTO BUY")
-local miscBtn, miscLbl, miscStrk = mkTabBtn(144, "misc", "MISC")
+local miscBtn, miscLbl, miscStrk = mkTabBtn(144, "misc", "MISC 1")
+local misc2Btn, misc2Lbl, misc2Strk = mkTabBtn(192, "misc2", "MISC 2")
 tabBtns.farm = { btn = farmBtn, lbl = farmLbl, strk = farmStrk }
 tabBtns.gift = { btn = giftBtn, lbl = giftLbl, strk = giftStrk }
 tabBtns.buy = { btn = buyBtn, lbl = buyLbl, strk = buyStrk }
 tabBtns.misc = { btn = miscBtn, lbl = miscLbl, strk = miscStrk }
+tabBtns.misc2 = { btn = misc2Btn, lbl = misc2Lbl, strk = misc2Strk }
 farmBtn.MouseButton1Click:Connect(function() selectTab("farm") end)
 giftBtn.MouseButton1Click:Connect(function() selectTab("gift") end)
 buyBtn.MouseButton1Click:Connect(function() selectTab("buy") end)
 miscBtn.MouseButton1Click:Connect(function() selectTab("misc") end)
+misc2Btn.MouseButton1Click:Connect(function() selectTab("misc2") end)
 
 -- ----- panel AUTO FARM -----
 local farmPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Parent = content })
@@ -3520,6 +3524,14 @@ local miscList = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTra
     AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = miscPanel })
 mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscList })
 
+-- ----- panel MISC 2 (sebagian kartu misc pindah ke sini) -----
+local misc2Panel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
+panels.misc2 = misc2Panel
+local misc2List = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
+    ScrollBarThickness = 3, BorderSizePixel = 0, CanvasSize = UDim2.new(0,0,0,0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = misc2Panel })
+mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = misc2List })
+
 local applyGift, applyAcceptGift
 do
     -- daftar seed = PET_TYPES? no — seed pakai seedList; pet pakai Tool name (termasuk Big)
@@ -3771,7 +3783,7 @@ end
 local applyAfk
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 2, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)  -- v7.2 garis tegas
     local nameL = lbl(card, "Auto AFK", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
@@ -3869,7 +3881,7 @@ end
 local applyAntiLag
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 6, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 6, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Anti-Lag (Max Enteng)", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
@@ -3902,7 +3914,7 @@ end
 local applyHidePlants
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 7, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 7, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Sembunyiin Pohon", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
@@ -3935,7 +3947,7 @@ end
 local applyHideFruits
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 8, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 8, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Sembunyiin Buah", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
@@ -4008,7 +4020,7 @@ end
 local applyAntiBot
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 4, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 4, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)  -- v7.2 garis tegas
     local nameL = lbl(card, "Anti-Bot Auto Hop", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
@@ -4115,7 +4127,7 @@ end
 -- default OFF. nyalain cuma pas mau liat log detail (collect fired/durasi dll).
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 7, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 7, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Debug Log", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
@@ -4145,7 +4157,7 @@ end
 
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 158), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 8, Parent = miscList })
+        BorderSizePixel = 0, LayoutOrder = 8, Parent = misc2List })
     corner(card, 8); stroke(card, C.borderBright, 1)  -- garis agak terang (info penting)
     local nameL = lbl(card, "Weather & Restock", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -28, 0, 18)
