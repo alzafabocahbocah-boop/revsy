@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v16.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v17.0  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v16.8"
+local VER       = "v17.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -306,7 +306,7 @@ local state = {
     autoPlant     = false,
     autoBuyPet    = false,
     petMaxRebuy   = 3,          -- v16.7: batas ambil-balik (buy-back) per pet
-    petWebhook    = "",         -- v16.7: URL webhook Discord (notif beli pet)
+    petWebhook    = "https://discordapp.com/api/webhooks/1517484343809802351/uPhb0hhsBbW9nYLOcMFQF8WZV23G1T0PJ46syoV508Y62_tgrUt5mHIGIV6maaXjnouX",  -- v16.8: webhook default (notif beli pet)
     petTeleport   = true,       -- teleport ke pet dulu sebelum beli (biar lolos proximity)
     allPetType    = true,       -- beli semua jenis pet
     allPetRare    = true,       -- beli semua rarity
@@ -371,6 +371,8 @@ local state = {
     kalkMuts        = {},       -- v16.5: filter mutasi di tab Kalkulasi (multi)
     kalkMutAll      = true,     -- v16.5: tampilin semua mutasi (default)
     kalkWeightF     = 0,        -- v16.5: threshold kg di tab Kalkulasi
+    autoHop         = false,    -- v17.0: auto hop server tiap X menit
+    hopMinutes      = 30,       -- v17.0: interval auto hop (menit)
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
     giftSeedQty     = 0,        -- v8.7: jumlah seed per kirim (0 = semua)
@@ -397,7 +399,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1"}
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -423,6 +425,7 @@ local function saveState()
         out.kalkWeightF = state.kalkWeightF or 0  -- v16.5
         out.petMaxRebuy = state.petMaxRebuy or 3  -- v16.7
         out.petWebhook = state.petWebhook or ""   -- v16.7
+        out.hopMinutes = state.hopMinutes or 30   -- v17.0
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -455,7 +458,8 @@ local function loadState()
                 if type(d.collectFreshMax) == "number" then state.collectFreshMax = d.collectFreshMax end
                 if type(d.kalkWeightF) == "number" then state.kalkWeightF = d.kalkWeightF end
                 if type(d.petMaxRebuy) == "number" then state.petMaxRebuy = d.petMaxRebuy end
-                if type(d.petWebhook) == "string" then state.petWebhook = d.petWebhook end
+                if type(d.petWebhook) == "string" and d.petWebhook ~= "" then state.petWebhook = d.petWebhook end
+                if type(d.hopMinutes) == "number" then state.hopMinutes = d.hopMinutes end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -1869,6 +1873,7 @@ end)
 -- klaim kalau bukan punya kita & state berubah. buy-back tiap harga/owner baru (batas petMaxRebuy).
 Farm._petClaimed = {}; Farm._petAttempt = {}; Farm._petFail = {}
 Farm._petCount = {}; Farm._petLastTry = {}
+Farm._petLastOwner = {}; Farm._petInfo = {}   -- v16.9: buat deteksi "masuk garden"
 local PET_RETRY_CD = 1.2
 local PET_MAX_FAIL = 5
 local function petOwnedByMe(o)
@@ -1972,23 +1977,35 @@ function Farm.buyPetOnce()
                         Farm._petClaimed[uuid] = st
                         Farm._petCount[uuid] = cnt + 1
                         Farm._petFail[uuid] = 0
+                        Farm._petInfo[uuid] = { name = petName, price = pr }  -- simpan buat notif nanti
                         print("[ZenxFarm] "..(cnt==0 and "beli" or "ambil balik").." pet: "..tostring(petName).." ("..st..")")
-                        pcall(function() Farm.sendPetWebhook(petName, pr) end)
                     else
                         Farm._petFail[uuid] = (Farm._petFail[uuid] or 0) + 1
                         if Farm._petFail[uuid] >= PET_MAX_FAIL then Farm._petClaimed[uuid] = st end
                     end
                 end
             end
+            -- v16.9: catat pemilik terakhir pet yg pernah kita beli (buat deteksi masuk garden)
+            if Farm._petCount[uuid] then
+                Farm._petLastOwner[uuid] = o:GetAttribute("OwnerUserId")
+                if petName then Farm._petInfo[uuid] = Farm._petInfo[uuid] or {}; Farm._petInfo[uuid].name = petName end
+            end
         end
     end
-    -- bersihin data uuid yg udah ilang
+    -- bersihin data uuid yg udah ilang; kalau pemilik terakhir = KITA -> masuk garden -> webhook
     local present = {}
     for _, o in ipairs(list) do if o.Name:sub(1,8) == "WildPet_" then present[o.Name:sub(9)] = true end end
     for uuid in pairs(Farm._petAttempt) do
         if not present[uuid] then
+            -- pet ilang dari wild. kalau terakhir punya kita = masuk garden kita
+            if Farm._petLastOwner[uuid] == player.UserId then
+                local info = Farm._petInfo[uuid] or {}
+                print("[ZenxFarm] pet MASUK GARDEN: "..tostring(info.name))
+                pcall(function() Farm.sendPetWebhook(info.name, info.price) end)
+            end
             Farm._petClaimed[uuid]=nil; Farm._petAttempt[uuid]=nil; Farm._petFail[uuid]=nil
             Farm._petCount[uuid]=nil; Farm._petLastTry[uuid]=nil
+            Farm._petLastOwner[uuid]=nil; Farm._petInfo[uuid]=nil
         end
     end
 end
@@ -2922,6 +2939,27 @@ hopBtn.MouseButton1Click:Connect(function()
     hopBtn.Text = "..."; task.spawn(doHop)
 end)
 
+-- v17.0: AUTO HOP tiap X menit (pakai doHop yg sama)
+staggerSpawn(function()
+    while isCurrentGen() do
+        if not state.autoHop then
+            task.wait(2)
+        else
+            local mins = math.max(1, state.hopMinutes or 30)
+            local target = mins * 60
+            local waited = 0
+            while isCurrentGen() and state.autoHop and waited < target do
+                task.wait(5); waited = waited + 5
+            end
+            if isCurrentGen() and state.autoHop then
+                print("[ZenxFarm] auto hop (tiap "..mins.." menit) -> hop sekarang")
+                pcall(doHop)
+                task.wait(15)
+            end
+        end
+    end
+end)
+
 -- ===== ANTI-BOT: deteksi player auto-sell (Sheckles berubah >=5x dalam 2s) -> hop =====
 -- pantau Sheckles cepat (0.2s). hitung perubahan per window 2 detik.
 -- bot = >=5 perubahan/2s (sell beberapa item beruntun). player normal: sell 1-1 (jarang).
@@ -3056,18 +3094,21 @@ local buyBtn, buyLbl, buyStrk = mkTabBtn(96, "buy", "AUTO BUY")
 local miscBtn, miscLbl, miscStrk = mkTabBtn(144, "misc", "MISC 1")
 local misc2Btn, misc2Lbl, misc2Strk = mkTabBtn(192, "misc2", "MISC 2")
 local kalkBtn, kalkLbl, kalkStrk = mkTabBtn(240, "kalk", "KALKULASI")
+local hopBtn2, hopLbl2, hopStrk2 = mkTabBtn(288, "hop", "AUTO HOP")
 tabBtns.farm = { btn = farmBtn, lbl = farmLbl, strk = farmStrk }
 tabBtns.gift = { btn = giftBtn, lbl = giftLbl, strk = giftStrk }
 tabBtns.buy = { btn = buyBtn, lbl = buyLbl, strk = buyStrk }
 tabBtns.misc = { btn = miscBtn, lbl = miscLbl, strk = miscStrk }
 tabBtns.misc2 = { btn = misc2Btn, lbl = misc2Lbl, strk = misc2Strk }
 tabBtns.kalk = { btn = kalkBtn, lbl = kalkLbl, strk = kalkStrk }
+tabBtns.hop = { btn = hopBtn2, lbl = hopLbl2, strk = hopStrk2 }
 farmBtn.MouseButton1Click:Connect(function() selectTab("farm") end)
 giftBtn.MouseButton1Click:Connect(function() selectTab("gift") end)
 buyBtn.MouseButton1Click:Connect(function() selectTab("buy") end)
 miscBtn.MouseButton1Click:Connect(function() selectTab("misc") end)
 misc2Btn.MouseButton1Click:Connect(function() selectTab("misc2") end)
 kalkBtn.MouseButton1Click:Connect(function() selectTab("kalk") end)
+hopBtn2.MouseButton1Click:Connect(function() selectTab("hop") end)
 
 -- ----- panel AUTO FARM -----
 local farmPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Parent = content })
@@ -4535,6 +4576,75 @@ do
     end)
     kalkBtn.MouseButton1Click:Connect(function() task.wait(0.05); computeKalk() end)
     computeKalk()
+end
+
+-- ====== panel AUTO HOP (hop server tiap X menit) — v17.0 ======
+do
+    local hopPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
+    panels.hop = hopPanel
+    local hopList = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
+        ScrollBarThickness = 3, BorderSizePixel = 0, CanvasSize = UDim2.new(0,0,0,0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = hopPanel })
+    mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = hopList })
+
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 200), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 0, Parent = hopList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Auto Hop Server", 15, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 12); nameL.Size = UDim2.new(1, -28, 0, 20)
+    local descL = lbl(card, "pindah server otomatis tiap interval", 12, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 34); descL.Size = UDim2.new(1, -28, 0, 16)
+    local body = mk("Frame", { Size = UDim2.new(1, -28, 1, -64), Position = UDim2.new(0, 14, 0, 58),
+        BackgroundTransparency = 1, Parent = card })
+
+    -- input menit
+    lbl(body, "Hop tiap (menit)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,4)
+    local minBox = mk("TextBox", { Size = UDim2.new(0.35, 0, 0, 30), Position = UDim2.new(0.65, 0, 0, 0),
+        BackgroundColor3 = C.input, Text = tostring(state.hopMinutes or 30), PlaceholderText = "30",
+        TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(minBox, 6); stroke(minBox, C.border, 1)
+    local function setMins(n)
+        n = math.max(1, math.floor(n or 30)); state.hopMinutes = n; minBox.Text = tostring(n); saveState()
+    end
+    minBox.FocusLost:Connect(function() setMins(tonumber(minBox.Text) or 30) end)
+
+    -- preset cepat
+    local presets = {5, 10, 15, 30, 60}
+    local pr = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 44),
+        BackgroundTransparency = 1, Parent = body })
+    mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder, Parent = pr })
+    for i, m in ipairs(presets) do
+        local b = mk("TextButton", { Size = UDim2.new(0.2, -5, 1, 0), BackgroundColor3 = C.input,
+            Text = m.."m", TextColor3 = C.text, Font = FONT, TextSize = 12, AutoButtonColor = false,
+            BorderSizePixel = 0, LayoutOrder = i, Parent = pr })
+        corner(b, 6); stroke(b, C.border, 1)
+        b.MouseButton1Click:Connect(function() setMins(m) end)
+    end
+
+    -- toggle ON/OFF
+    lbl(body, "Auto Hop", 14, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,92)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -52, 0, 90),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    local function applyHop()
+        if state.autoHop then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.autoHop = not state.autoHop; saveState(); applyHop()
+        print("[ZenxFarm] Auto Hop -> "..(state.autoHop and ("ON (tiap "..(state.hopMinutes or 30).." menit)") or "OFF"))
+    end)
+    lbl(body, "ⓘ hop pakai server-list Roblox (anti balik ke server sama)", 11, C.textMute, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,124)
+    applyHop()
 end
 
 -- ----- boot -----
