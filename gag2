@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v16.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v16.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v16.6"
+local VER       = "v16.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -305,10 +305,13 @@ local state = {
     selectedGear  = {},         -- v7.1: gear yg dipilih (kalau buyAllGears off)
     autoPlant     = false,
     autoBuyPet    = false,
+    petMaxRebuy   = 3,          -- v16.7: batas ambil-balik (buy-back) per pet
+    petWebhook    = "",         -- v16.7: URL webhook Discord (notif beli pet)
     petTeleport   = true,       -- teleport ke pet dulu sebelum beli (biar lolos proximity)
     allPetType    = true,       -- beli semua jenis pet
     allPetRare    = true,       -- beli semua rarity
     buyAllSeeds   = true,       -- borong semua seed
+    buyDefaultsV1 = false,      -- v16.8: udah set default gear/seed otomatis sekali?
     collectAll    = true,       -- collect semua buah
     collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
@@ -394,7 +397,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll"}
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -418,6 +421,8 @@ local function saveState()
         out.dgiftMode = state.dgiftMode or "type"  -- v14.3
         out.collectFreshMax = state.collectFreshMax or 0.5  -- v15.4
         out.kalkWeightF = state.kalkWeightF or 0  -- v16.5
+        out.petMaxRebuy = state.petMaxRebuy or 3  -- v16.7
+        out.petWebhook = state.petWebhook or ""   -- v16.7
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -449,6 +454,8 @@ local function loadState()
                 if d.dgiftMode == "type" or d.dgiftMode == "uuid" then state.dgiftMode = d.dgiftMode end
                 if type(d.collectFreshMax) == "number" then state.collectFreshMax = d.collectFreshMax end
                 if type(d.kalkWeightF) == "number" then state.kalkWeightF = d.kalkWeightF end
+                if type(d.petMaxRebuy) == "number" then state.petMaxRebuy = d.petMaxRebuy end
+                if type(d.petWebhook) == "string" then state.petWebhook = d.petWebhook end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -1616,6 +1623,38 @@ local function loadGearList()
     return list
 end
 
+-- v16.8: set default pilihan gear & seed OTOMATIS (sekali jalan, anti-typo via match nama).
+-- gear: semua sprinkler + watering can + super watering + trowel.
+-- seed: Bamboo, Mushroom, Moon Bloom, Dragon's Breath, Venus Fly Trap.
+local function applyBuyDefaults()
+    if state.buyDefaultsV1 then return end
+    state.buyDefaultsV1 = true
+    local okG = pcall(function()
+        local gears = loadGearList()
+        for _, nm in ipairs(gears) do
+            local ln = nm:lower()
+            if ln:find("sprinkler") or ln:find("watering can") or ln == "trowel" then
+                state.selectedGear[nm] = true
+            end
+        end
+        state.buyAllGears = false
+    end)
+    local okS = pcall(function()
+        local seeds = loadSeedList()
+        for _, nm in ipairs(seeds) do
+            local ln = nm:lower()
+            if ln == "mushroom" or ln:find("bamboo") or ln:find("moon")
+            or ln:find("breath") or ln:find("venus") then
+                state.selectedSeeds[nm] = true
+            end
+        end
+        state.buyAllSeeds = false
+    end)
+    saveState()
+    print("[ZenxFarm] default buy gear/seed di-set (gear:"..tostring(okG)..", seed:"..tostring(okS)..")")
+end
+applyBuyDefaults()
+
 Farm.buyPerGear = 1  -- v11.5: 1 fire per gear (dulu 2 -> burst gede). restock biasanya 1-2 stok aja.
 function Farm.buyGearOnce()
     -- coba beberapa nama remote gear
@@ -1823,46 +1862,133 @@ staggerSpawn(function()
     end
 end)
 
--- ===== AUTO BUY PET: Pets.WildPetTame:Fire(petPart) =====
--- pet liar = Part "WildPet_<UUID>" di workspace. beli sebelum timer habis.
--- opsional teleport karakter ke pet dulu (proximity check).
-local boughtPet = {}  -- anti beli ganda (uuid -> true)
+-- ===== AUTO BUY PET: tame pet liar + auto ambil-balik (buy-back) + webhook =====
+-- pet liar = Part "WildPet_<uuid>" di Workspace.Map.WildPetRef.
+-- atribut: PetName, Price, Rarity, OwnerUserId(0=blm ada yg punya), OwnerName, State.
+-- state pet: "mine"(punya kita), "p<harga>"(bisa di-bid), "free"(baru blm berharga).
+-- klaim kalau bukan punya kita & state berubah. buy-back tiap harga/owner baru (batas petMaxRebuy).
+Farm._petClaimed = {}; Farm._petAttempt = {}; Farm._petFail = {}
+Farm._petCount = {}; Farm._petLastTry = {}
+local PET_RETRY_CD = 1.2
+local PET_MAX_FAIL = 5
+local function petOwnedByMe(o)
+    local oid = o:GetAttribute("OwnerUserId")
+    if oid ~= nil and oid == player.UserId then return true end
+    local onm = o:GetAttribute("OwnerName")
+    if onm and onm ~= "" and (onm == player.Name or onm == player.DisplayName) then return true end
+    return false
+end
+local function petPriceOf(o)
+    local v = o:GetAttribute("Price")
+    if type(v) == "number" and v > 0 then return v end
+    return nil
+end
+local function petStateStr(o)
+    if petOwnedByMe(o) then return "mine" end
+    local pr = petPriceOf(o)
+    if pr then return "p"..tostring(pr) end
+    return "free"
+end
+-- daftar jenis pet (statis + pet liar yg lagi muncul)
+function Farm.scanPetTypes()
+    local set = {}
+    for _, nm in ipairs(PET_TYPES) do set[nm] = true end
+    local wpr = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("WildPetRef")
+    if wpr then
+        for _, o in ipairs(wpr:GetChildren()) do
+            local pn = o:GetAttribute("PetName")
+            if pn then set[tostring(pn)] = true end
+        end
+    end
+    local arr = {}; for nm in pairs(set) do arr[#arr+1] = nm end; table.sort(arr)
+    return arr
+end
+-- webhook Discord: kirim pas berhasil beli pet (username, sheckles, pet)
+local function execRequest()
+    return (syn and syn.request) or (http and http.request) or http_request or request
+        or (fluxus and fluxus.request)
+end
+function Farm.sendPetWebhook(petName, price)
+    local url = state.petWebhook
+    if not url or url == "" then return end
+    local req = execRequest()
+    if not req then return end
+    local sheck = 0
+    pcall(function()
+        local ls = player:FindFirstChild("leaderstats")
+        local sv = ls and ls:FindFirstChild("Sheckles")
+        if sv then sheck = sv.Value end
+    end)
+    local body = HS:JSONEncode({
+        embeds = {{
+            title = "🐾 Pet Dibeli",
+            color = 5763719,
+            fields = {
+                { name = "Username", value = player.Name, inline = true },
+                { name = "Sheckles", value = Farm.abbrev(sheck), inline = true },
+                { name = "Buy Pet", value = tostring(petName)..(price and (" (¢"..Farm.abbrev(price)..")") or ""), inline = false },
+            },
+        }},
+    })
+    pcall(function()
+        req({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
+    end)
+end
 function Farm.buyPetOnce()
     local p = pkt("Pets", "WildPetTame")
     if not p or not p.Fire then return end
-    local plr = Players.LocalPlayer
-    local char = plr and plr.Character
+    local char = player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    -- pet liar ada di Workspace.Map.WildPetRef (lebih ringan dari GetDescendants)
     local wpr = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("WildPetRef")
     local list = wpr and wpr:GetChildren() or {}
-    local bought = 0
     for _, o in ipairs(list) do
         if o:IsA("BasePart") and o.Name:sub(1,8) == "WildPet_" then
             local uuid = o.Name:sub(9)
-            if not boughtPet[uuid] then
-                local petName = o:GetAttribute("PetName")
-                local rarity  = o:GetAttribute("Rarity")
-                -- filter jenis + rarity
-                local okType = state.allPetType or (petName and state.selectedPetType[petName])
-                local okRare = state.allPetRare or (rarity and state.selectedPetRare[rarity])
-                if okType and okRare then
-                    if state.petTeleport and hrp then
-                        pcall(function() hrp.CFrame = o.CFrame + Vector3.new(0, 3, 0) end)
-                        task.wait(0.15)
+            local petName = o:GetAttribute("PetName")
+            local rarity  = o:GetAttribute("Rarity")
+            local okType = state.allPetType or (petName and state.selectedPetType[petName])
+            local okRare = state.allPetRare or (rarity and state.selectedPetRare[rarity])
+            local st = petStateStr(o)
+            if okType and okRare and st ~= "mine" and Farm._petClaimed[uuid] ~= st then
+                if Farm._petAttempt[uuid] ~= st then Farm._petAttempt[uuid] = st; Farm._petFail[uuid] = 0 end
+                local cnt = Farm._petCount[uuid] or 0
+                local maxR = state.petMaxRebuy or 3
+                local within = Farm._petLastTry[uuid] and (os.clock() - Farm._petLastTry[uuid] < PET_RETRY_CD)
+                if cnt < maxR and (Farm._petFail[uuid] or 0) < PET_MAX_FAIL and not within then
+                    Farm._petLastTry[uuid] = os.clock()
+                    -- chase: teleport nyusul pet yg gerak, lalu langsung fire
+                    if hrp then
+                        for _ = 1, 3 do
+                            if o.Parent then pcall(function() hrp.CFrame = o.CFrame + Vector3.new(0,2.5,0) end); task.wait(0.06) end
+                        end
+                        if o.Parent then pcall(function() hrp.CFrame = o.CFrame + Vector3.new(0,2.5,0) end) end
                     end
                     pcall(function() p:Fire(o) end)
-                    boughtPet[uuid] = true
-                    bought = bought + 1
-                    print("[ZenxFarm] beli pet: "..tostring(petName).." ("..tostring(rarity)..")")
-                    task.wait(0.2)
+                    task.wait(0.5)
+                    local now = (not o.Parent) and "gone" or petStateStr(o)
+                    local success = (now == "gone") or (now == "mine") or (now ~= st)
+                    if success then
+                        local pr = petPriceOf(o) or tonumber((st:gsub("^p", "")))
+                        Farm._petClaimed[uuid] = st
+                        Farm._petCount[uuid] = cnt + 1
+                        Farm._petFail[uuid] = 0
+                        print("[ZenxFarm] "..(cnt==0 and "beli" or "ambil balik").." pet: "..tostring(petName).." ("..st..")")
+                        pcall(function() Farm.sendPetWebhook(petName, pr) end)
+                    else
+                        Farm._petFail[uuid] = (Farm._petFail[uuid] or 0) + 1
+                        if Farm._petFail[uuid] >= PET_MAX_FAIL then Farm._petClaimed[uuid] = st end
+                    end
                 end
             end
         end
     end
-    if bought == 0 then
-        for uuid in pairs(boughtPet) do
-            if not (wpr and wpr:FindFirstChild("WildPet_"..uuid)) then boughtPet[uuid] = nil end
+    -- bersihin data uuid yg udah ilang
+    local present = {}
+    for _, o in ipairs(list) do if o.Name:sub(1,8) == "WildPet_" then present[o.Name:sub(9)] = true end end
+    for uuid in pairs(Farm._petAttempt) do
+        if not present[uuid] then
+            Farm._petClaimed[uuid]=nil; Farm._petAttempt[uuid]=nil; Farm._petFail[uuid]=nil
+            Farm._petCount[uuid]=nil; Farm._petLastTry[uuid]=nil
         end
     end
 end
@@ -3395,17 +3521,36 @@ do
     applyPlant = mkBodyToggle(body, 116, "Auto Plant", "autoPlant", "Auto Plant Seed")
 end
 
--- ====== CARD 5: AUTO BUY PET (pet liar) ======
-local applyBuyPet, applyPetTp
+-- ====== CARD 5: AUTO BUY PET (pet liar + buy-back + webhook) ======
+local applyBuyPet
 do
-    local card, body, setH = mkFarmCard(3, "Auto Buy Pet", "beli pet liar yg muncul (tap utk atur)", buyList)
-    setH(168)
-    local petTypeList = function() return PET_TYPES end
+    local card, body, setH = mkFarmCard(3, "Auto Buy Pet", "tame pet liar + ambil balik (tap utk atur)", buyList)
+    setH(248)
+    local petTypeList = function() return Farm.scanPetTypes() end
     local petRareList = function() return PET_RARITIES end
     mkTypeRow(body, 4,  "Jenis Pet", petTypeList, state.selectedPetType, "allPetType", "Semua jenis")
     mkTypeRow(body, 44, "Rarity",    petRareList, state.selectedPetRare, "allPetRare", "Semua rarity")
-    applyPetTp  = mkBodyToggle(body, 84,  "Teleport ke pet", "petTeleport", "Pet Teleport")
-    applyBuyPet = mkBodyToggle(body, 124, "Auto Buy Pet",    "autoBuyPet",  "Auto Buy Pet")
+    -- batas ambil-balik per pet
+    lbl(body, "Max ambil-balik/pet", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
+    local mrBox = mk("TextBox", { Size = UDim2.new(0.3, 0, 0, 28), Position = UDim2.new(0.7, 0, 0, 85),
+        BackgroundColor3 = C.input, Text = tostring(state.petMaxRebuy or 3), PlaceholderText = "3",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(mrBox, 6); stroke(mrBox, C.border, 1)
+    mrBox.FocusLost:Connect(function()
+        local n = tonumber(mrBox.Text); if not n or n < 0 then n = 3 end
+        state.petMaxRebuy = math.floor(n); mrBox.Text = tostring(state.petMaxRebuy); saveState()
+    end)
+    -- webhook URL
+    lbl(body, "Webhook (notif beli)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,124)
+    local whBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 28), Position = UDim2.new(0, 0, 0, 144),
+        BackgroundColor3 = C.input, Text = state.petWebhook or "", PlaceholderText = "https://discord.com/api/webhooks/...",
+        TextColor3 = C.text, Font = FONT, TextSize = 11, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(whBox, 6); stroke(whBox, C.border, 1)
+    whBox.FocusLost:Connect(function()
+        state.petWebhook = whBox.Text; saveState()
+        print("[ZenxFarm] webhook pet -> "..(state.petWebhook ~= "" and "diset" or "kosong"))
+    end)
+    applyBuyPet = mkBodyToggle(body, 184, "Auto Buy Pet", "autoBuyPet", "Auto Buy Pet")
 end
 
 -- ====== CARD 6: AUTO SHOVEL (v7.1: pindah dari MISC ke AUTO FARM) ======
@@ -4393,7 +4538,7 @@ do
 end
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyDirectGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
 task.spawn(function()
