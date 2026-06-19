@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v15.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v15.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v15.6"
+local VER       = "v15.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1083,88 +1083,99 @@ Farm._espInvGen = 0
 function Farm.applyEspInvent()
     Farm._espInvGen = Farm._espInvGen + 1
     local myGen = Farm._espInvGen
-    local function findGrid()
+    -- cari SEMUA sel (grid atas + hotbar bawah): GuiObject yg punya ToolName + ToolCount
+    local function findCells()
         local pg = player:FindFirstChild("PlayerGui")
         local bgui = pg and pg:FindFirstChild("BackpackGui")
-        local inv = bgui and bgui:FindFirstChild("Inventory", true)
-        if not inv then return nil end
-        local sf = inv:FindFirstChild("ScrollingFrame")
-        local grid = sf and sf:FindFirstChild("UIGridFrame")
-        return grid or inv:FindFirstChild("UIGridFrame", true)
+        local root = bgui or pg
+        if not root then return {} end
+        local cells, seen = {}, {}
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Name == "ToolName" then
+                -- naik ke cell (tombol terdekat)
+                local cell = d.Parent
+                while cell and cell ~= root
+                  and not (cell:IsA("TextButton") or cell:IsA("ImageButton")) do
+                    cell = cell.Parent
+                end
+                if cell and cell ~= root and not seen[cell]
+                  and cell:FindFirstChild("ToolCount", true) then  -- ada berat = buah
+                    seen[cell] = true
+                    cells[#cells+1] = cell
+                end
+            end
+        end
+        return cells
     end
-    local function clearLabels(grid)
-        if not grid then return end
-        for _, cell in ipairs(grid:GetChildren()) do
+    local function clearLabels()
+        for _, cell in ipairs(findCells()) do
             local l = cell:FindFirstChild("ZenxInvPrice")
             if l then l:Destroy() end
         end
     end
-    if not state.espInvent then
-        local g = findGrid(); if g then clearLabels(g) end
-        return
-    end
+    if not state.espInvent then clearLabels(); return end
     task.spawn(function()
         while state.espInvent and Farm._espInvGen == myGen do
-            local grid = findGrid()
-            if grid and grid.Visible then
-                -- lookup buah di tas: nama -> list {w, price}
-                local byName = {}
-                for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
-                    if holder then
-                        for _, t in ipairs(holder:GetChildren()) do
-                            local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
-                            local w  = t:GetAttribute("Weight")
-                            if fj and type(w) == "number" then
-                                local pr = Farm.fruitPrice(t)
-                                if pr then
-                                    byName[fj] = byName[fj] or {}
-                                    table.insert(byName[fj], { w = w, p = pr })
-                                end
+            -- lookup buah di tas: nama -> list {w, price}
+            local byName = {}
+            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+                if holder then
+                    for _, t in ipairs(holder:GetChildren()) do
+                        local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                        local w  = t:GetAttribute("Weight")
+                        if fj and type(w) == "number" then
+                            local pr = Farm.fruitPrice(t)
+                            if pr then
+                                byName[fj] = byName[fj] or {}
+                                table.insert(byName[fj], { w = w, p = pr, dec = t:GetAttribute("DecayAlpha") or 0 })
                             end
-                        end
-                    end
-                end
-                -- tiap sel: baca ToolName + ToolCount, cocokin berat terdekat, tempel harga
-                for _, cell in ipairs(grid:GetChildren()) do
-                    if cell:IsA("GuiObject") then
-                        local nameLbl = cell:FindFirstChild("ToolName", true)
-                        local cntLbl  = cell:FindFirstChild("ToolCount", true)
-                        local nm = nameLbl and nameLbl.Text
-                        local cw = cntLbl and tonumber(tostring(cntLbl.Text):match("([%d%.]+)"))
-                        local price
-                        if nm and cw and byName[nm] then
-                            local best, bestD
-                            for _, e in ipairs(byName[nm]) do
-                                local d = math.abs(e.w - cw)
-                                if not bestD or d < bestD then bestD = d; best = e end
-                            end
-                            if best and bestD and bestD < 0.5 then price = best.p end
-                        end
-                        local lbl0 = cell:FindFirstChild("ZenxInvPrice")
-                        if price then
-                            if not lbl0 then
-                                lbl0 = Instance.new("TextLabel")
-                                lbl0.Name = "ZenxInvPrice"
-                                lbl0.Size = UDim2.new(1, 0, 0, 14)
-                                lbl0.Position = UDim2.new(0, 0, 0, 1)
-                                lbl0.BackgroundTransparency = 1
-                                lbl0.Font = Enum.Font.GothamBold
-                                lbl0.TextSize = 12
-                                lbl0.TextColor3 = Color3.fromRGB(120,230,140)
-                                lbl0.TextStrokeTransparency = 0.4
-                                lbl0.ZIndex = 10
-                                lbl0.Parent = cell
-                            end
-                            lbl0.Text = "¢"..Farm.abbrev(price)
-                        elseif lbl0 then
-                            lbl0:Destroy()
                         end
                     end
                 end
             end
+            -- tiap sel (grid + hotbar): baca ToolName + ToolCount, cocokin berat terdekat
+            for _, cell in ipairs(findCells()) do
+                local nameLbl = cell:FindFirstChild("ToolName", true)
+                local cntLbl  = cell:FindFirstChild("ToolCount", true)
+                local nm = nameLbl and nameLbl.Text
+                local cw = cntLbl and tonumber(tostring(cntLbl.Text):match("([%d%.]+)"))
+                local price, decay
+                if nm and cw and byName[nm] then
+                    local best, bestD
+                    for _, e in ipairs(byName[nm]) do
+                        local d = math.abs(e.w - cw)
+                        if not bestD or d < bestD then bestD = d; best = e end
+                    end
+                    if best and bestD and bestD < 0.5 then price = best.p; decay = best.dec end
+                end
+                local lbl0 = cell:FindFirstChild("ZenxInvPrice")
+                if price then
+                    if not lbl0 then
+                        lbl0 = Instance.new("TextLabel")
+                        lbl0.Name = "ZenxInvPrice"
+                        lbl0.Size = UDim2.new(1, 0, 0, 14)
+                        lbl0.Position = UDim2.new(0, 0, 0, 1)
+                        lbl0.BackgroundTransparency = 1
+                        lbl0.Font = Enum.Font.GothamBold
+                        lbl0.TextSize = 12
+                        lbl0.TextStrokeTransparency = 0.4
+                        lbl0.ZIndex = 20
+                        lbl0.Parent = cell
+                    end
+                    -- warna ikut freshness: putih=fresh, kuning=mulai basi, merah=basi
+                    local dec = decay or 0
+                    local col = Color3.fromRGB(245,245,245)  -- putih
+                    if dec > 0.5 then col = Color3.fromRGB(235,90,90)       -- merah
+                    elseif dec > 0.25 then col = Color3.fromRGB(245,210,70) end  -- kuning
+                    lbl0.TextColor3 = col
+                    lbl0.Text = "¢"..Farm.abbrev(price)
+                elseif lbl0 then
+                    lbl0:Destroy()
+                end
+            end
             task.wait(1)
         end
-        local g = findGrid(); if g then clearLabels(g) end
+        clearLabels()
     end)
 end
 
