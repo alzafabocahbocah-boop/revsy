@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v16.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v16.5  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v16.1"
+local VER       = "v16.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -363,6 +363,11 @@ local state = {
     espInvent       = false,    -- v15.6: ESP harga buah di grid inventory (harga aja)
     collectFreshOnly = false,   -- v15.4: skip collect buah yg udah basi (decay tinggi)
     collectFreshMax = 0.5,      -- v15.4: batas decay (0-1). buah > ini = basi -> skip collect
+    kalkFruits      = {},       -- v16.5: filter jenis buah di tab Kalkulasi (multi)
+    kalkFruitAll    = true,     -- v16.5: tampilin semua jenis (default)
+    kalkMuts        = {},       -- v16.5: filter mutasi di tab Kalkulasi (multi)
+    kalkMutAll      = true,     -- v16.5: tampilin semua mutasi (default)
+    kalkWeightF     = 0,        -- v16.5: threshold kg di tab Kalkulasi
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
     giftSeedQty     = 0,        -- v8.7: jumlah seed per kirim (0 = semua)
@@ -389,7 +394,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent"}
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -401,7 +406,7 @@ local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect
                  selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
                  selectedSprPos="selectedSprPos",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
-                 giftSeeds="giftSeeds", giftPets="giftPets", giftFruits="giftFruits", giftGears="giftGears", dgiftFruits="dgiftFruits", dgiftGears="dgiftGears"}
+                 giftSeeds="giftSeeds", giftPets="giftPets", giftFruits="giftFruits", giftGears="giftGears", dgiftFruits="dgiftFruits", dgiftGears="dgiftGears", kalkFruits="kalkFruits", kalkMuts="kalkMuts"}
 local function saveState()
     pcall(function()
         if not writefile then return end
@@ -412,6 +417,7 @@ local function saveState()
         out.dgiftFruitWeightF = state.dgiftFruitWeightF or 0  -- v13.5
         out.dgiftMode = state.dgiftMode or "type"  -- v14.3
         out.collectFreshMax = state.collectFreshMax or 0.5  -- v15.4
+        out.kalkWeightF = state.kalkWeightF or 0  -- v16.5
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -442,6 +448,7 @@ local function loadState()
                 if type(d.dgiftFruitWeightF) == "number" then state.dgiftFruitWeightF = d.dgiftFruitWeightF end
                 if d.dgiftMode == "type" or d.dgiftMode == "uuid" then state.dgiftMode = d.dgiftMode end
                 if type(d.collectFreshMax) == "number" then state.collectFreshMax = d.collectFreshMax end
+                if type(d.kalkWeightF) == "number" then state.kalkWeightF = d.kalkWeightF end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -2147,7 +2154,7 @@ function Farm.acceptGiftOnce()
         if id and g:IsA("GuiObject") then
             pcall(function() cl:Fire(id) end)
             claimed = claimed + 1
-            task.wait(0.15)
+            task.wait(0.1)
         end
     end
     if claimed > 0 then dprint("[ZenxFarm] accept gift: "..claimed.." gift di-claim") end
@@ -2155,7 +2162,7 @@ end
 staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
-            task.wait(3)
+            task.wait(1)  -- v16.2: dari 3s -> 1s biar accept gift lebih cepet
             if isCurrentGen() and state.autoAcceptGift then Farm.acceptGiftOnce() end
         end)
     end
@@ -2922,16 +2929,19 @@ local giftBtn, giftLbl, giftStrk = mkTabBtn(48, "gift", "AUTO GIFT")
 local buyBtn, buyLbl, buyStrk = mkTabBtn(96, "buy", "AUTO BUY")
 local miscBtn, miscLbl, miscStrk = mkTabBtn(144, "misc", "MISC 1")
 local misc2Btn, misc2Lbl, misc2Strk = mkTabBtn(192, "misc2", "MISC 2")
+local kalkBtn, kalkLbl, kalkStrk = mkTabBtn(240, "kalk", "KALKULASI")
 tabBtns.farm = { btn = farmBtn, lbl = farmLbl, strk = farmStrk }
 tabBtns.gift = { btn = giftBtn, lbl = giftLbl, strk = giftStrk }
 tabBtns.buy = { btn = buyBtn, lbl = buyLbl, strk = buyStrk }
 tabBtns.misc = { btn = miscBtn, lbl = miscLbl, strk = miscStrk }
 tabBtns.misc2 = { btn = misc2Btn, lbl = misc2Lbl, strk = misc2Strk }
+tabBtns.kalk = { btn = kalkBtn, lbl = kalkLbl, strk = kalkStrk }
 farmBtn.MouseButton1Click:Connect(function() selectTab("farm") end)
 giftBtn.MouseButton1Click:Connect(function() selectTab("gift") end)
 buyBtn.MouseButton1Click:Connect(function() selectTab("buy") end)
 miscBtn.MouseButton1Click:Connect(function() selectTab("misc") end)
 misc2Btn.MouseButton1Click:Connect(function() selectTab("misc2") end)
+kalkBtn.MouseButton1Click:Connect(function() selectTab("kalk") end)
 
 -- ----- panel AUTO FARM -----
 local farmPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Parent = content })
@@ -4261,6 +4271,108 @@ closeBtn.MouseButton1Click:Connect(function()
     -- 4) baru hapus UI
     sg:Destroy()
 end)
+
+-- ====== panel KALKULASI (total buah + nilai inventory & hotbar) — v16.3 ======
+do
+    local kalkPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
+    panels.kalk = kalkPanel
+    local kalkList = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
+        ScrollBarThickness = 3, BorderSizePixel = 0, CanvasSize = UDim2.new(0,0,0,0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = kalkPanel })
+    mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = kalkList })
+
+    -- v16.5: kartu FILTER (jenis buah + mutasi + threshold kg)
+    local filtCard = mk("Frame", { Size = UDim2.new(1, 0, 0, 132), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 0, Parent = kalkList })
+    corner(filtCard, 8); stroke(filtCard, C.border, 1)
+    local fbody = mk("Frame", { Size = UDim2.new(1, -28, 1, -16), Position = UDim2.new(0, 14, 0, 10),
+        BackgroundTransparency = 1, Parent = filtCard })
+    mkTypeRow(fbody, 4,  "Jenis Buah", function() return Farm.fruitsInBagList and Farm.fruitsInBagList() or {} end,
+        state.kalkFruits, "kalkFruitAll", "Semua buah", function() return Farm.countFruitsInBag and Farm.countFruitsInBag() or {} end)
+    mkTypeRow(fbody, 44, "Mutasi", function() return MUTATIONS end, state.kalkMuts, "kalkMutAll", "Semua mutasi")
+    lbl(fbody, "Threshold kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
+    local kwBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 85),
+        BackgroundColor3 = C.input, Text = tostring(state.kalkWeightF or 0), PlaceholderText = "0=semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = fbody })
+    corner(kwBox, 6); stroke(kwBox, C.border, 1)
+
+    -- kartu ringkasan total
+    local sumCard = mk("Frame", { Size = UDim2.new(1, 0, 0, 90), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 1, AutomaticSize = Enum.AutomaticSize.Y, Parent = kalkList })
+    corner(sumCard, 8); stroke(sumCard, C.borderBright, 1)
+    mk("UIPadding", { PaddingTop = UDim.new(0,12), PaddingBottom = UDim.new(0,12),
+        PaddingLeft = UDim.new(0,14), PaddingRight = UDim.new(0,14), Parent = sumCard })
+    local sumL = lbl(sumCard, "tekan Hitung Ulang", 14, C.text, Enum.TextXAlignment.Left)
+    sumL.Position = UDim2.new(0,0,0,0); sumL.Size = UDim2.new(1,0,0,0)
+    sumL.AutomaticSize = Enum.AutomaticSize.Y; sumL.TextWrapped = true
+    sumL.TextYAlignment = Enum.TextYAlignment.Top
+
+    -- tombol hitung ulang
+    local refBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.input,
+        Text = "🔄 Hitung Ulang", TextColor3 = C.text, Font = FONT_B, TextSize = 13,
+        AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = 2, Parent = kalkList })
+    corner(refBtn, 6); stroke(refBtn, C.border, 1)
+
+    -- container per jenis
+    local perCard = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 3, AutomaticSize = Enum.AutomaticSize.Y, Parent = kalkList })
+    corner(perCard, 8); stroke(perCard, C.border, 1)
+    mk("UIPadding", { PaddingTop = UDim.new(0,8), PaddingBottom = UDim.new(0,8),
+        PaddingLeft = UDim.new(0,12), PaddingRight = UDim.new(0,12), Parent = perCard })
+    mk("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = perCard })
+
+    local function computeKalk()
+        for _, c in ipairs(perCard:GetChildren()) do
+            if c:IsA("TextLabel") then c:Destroy() end
+        end
+        local list = {}      -- {jenis, kg, mut, price}
+        local totalN, totalVal = 0, 0
+        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                    local fid = t:GetAttribute("Id")
+                    if fj and fid then
+                        local kg = t:GetAttribute("Weight") or 0
+                        -- v16.5: filter jenis + mutasi + kg
+                        local okFruit = state.kalkFruitAll or state.kalkFruits[fj]
+                        local okMut = passMutation(t, state.kalkMuts, "kalkMutAll")
+                        local okW = passWeight(kg, state.kalkWeightF)
+                        if okFruit and okMut and okW then
+                            local pr = Farm.fruitPrice(t) or 0
+                            local mut = t:GetAttribute("Mutation")
+                            if mut == "" or mut == "None" then mut = nil end
+                            totalN = totalN + 1; totalVal = totalVal + pr
+                            list[#list+1] = { jenis = fj, kg = kg, mut = mut, price = pr }
+                        end
+                    end
+                end
+            end
+        end
+        sumL.Text = string.format("TOTAL BUAH (inventory + hotbar)\nJumlah: %d buah\nTotal nilai: %s", totalN, Farm.abbrev(totalVal))
+        -- urut harga terbesar
+        table.sort(list, function(a,b) return a.price > b.price end)
+        if #list == 0 then
+            local r = lbl(perCard, "gak ada buah di tas", 12, C.textMute, Enum.TextXAlignment.Left)
+            r.Size = UDim2.new(1,0,0,18); r.LayoutOrder = 1
+        else
+            for i, f in ipairs(list) do
+                local txt = string.format("%s   %.1fkg%s   %s",
+                    f.jenis, f.kg, (f.mut and ("   "..f.mut) or ""), Farm.abbrev(f.price))
+                local r = lbl(perCard, txt, 12, C.text, Enum.TextXAlignment.Left)
+                r.Size = UDim2.new(1,0,0,18); r.LayoutOrder = i
+            end
+        end
+    end
+    refBtn.MouseButton1Click:Connect(computeKalk)
+    kwBox.FocusLost:Connect(function()
+        local n = tonumber(kwBox.Text) or 0
+        state.kalkWeightF = n; kwBox.Text = tostring(n); saveState()
+        computeKalk()
+    end)
+    kalkBtn.MouseButton1Click:Connect(function() task.wait(0.05); computeKalk() end)
+    computeKalk()
+end
 
 -- ----- boot -----
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyPetTp(); applyGift(); applyDirectGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
