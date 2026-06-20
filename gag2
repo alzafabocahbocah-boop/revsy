@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v20.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v20.5  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v20.4"
+local VER       = "v20.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -3412,12 +3412,19 @@ staggerSpawn(function()
             local startT = os.clock()
             Farm._hopNextAt = startT + target
             print("[ZenxFarm] auto hop: mulai nunggu "..mins.." menit ("..target.."s)...")
+            local soloHop = false
             while isCurrentGen() and state.autoHop and (os.clock() - startT) < target do
                 task.wait(1)
+                -- v20.5: akun buy-pet, kalau sendirian di server (>20s) -> hop sekarang, gak nunggu interval
+                if state.autoBuyPet and (os.clock() - startT) > 20 and #Players:GetPlayers() <= 1 then
+                    print("[ZenxFarm] auto hop: SENDIRIAN di server -> hop sekarang (skip interval)")
+                    soloHop = true
+                    break
+                end
             end
             if isCurrentGen() and state.autoHop then
                 Farm._hopNextAt = nil
-                print("[ZenxFarm] auto hop: WAKTU TIBA -> panggil doHop")
+                if not soloHop then print("[ZenxFarm] auto hop: WAKTU TIBA -> panggil doHop") end
                 task.spawn(doHop)
                 task.wait(20)
             else
