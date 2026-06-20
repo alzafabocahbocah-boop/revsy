@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v20.5  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v20.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v20.5"
+local VER       = "v20.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -307,6 +307,10 @@ local state = {
     autoBuyPet    = false,
     petMaxRebuy   = 3,          -- v16.7: batas ambil-balik (buy-back) per pet
     petMaxPrice   = 0,          -- v17.2: batas harga pet (0=bebas). lebih dari ini -> skip
+    petBuyBig     = true,       -- v20.7: sikat pet Big (2x) walau di luar filter jenis
+    petBuyMega    = true,       -- v20.7: sikat pet Mega/Huge (4x)
+    petBuyRainbow = true,       -- v20.7: sikat pet Rainbow (mutasi)
+    petDefV5      = false,      -- v20.7: flag apply default
     petWebhook    = "https://discordapp.com/api/webhooks/1517484343809802351/uPhb0hhsBbW9nYLOcMFQF8WZV23G1T0PJ46syoV508Y62_tgrUt5mHIGIV6maaXjnouX",  -- v16.8: webhook default (notif beli pet)
     petTeleport   = true,       -- teleport ke pet dulu sebelum beli (biar lolos proximity)
     allPetType    = true,       -- beli semua jenis pet
@@ -422,7 +426,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -2044,7 +2048,7 @@ local function execRequest()
     return (syn and syn.request) or (http and http.request) or http_request or request
         or (fluxus and fluxus.request)
 end
-function Farm.sendPetWebhook(petName, price)
+function Farm.sendPetWebhook(petName, price, tier, rb)
     local url = state.petWebhook
     if not url or url == "" then return end
     local req = execRequest()
@@ -2055,20 +2059,60 @@ function Farm.sendPetWebhook(petName, price)
         local sv = ls and ls:FindFirstChild("Sheckles")
         if sv then sheck = sv.Value end
     end)
+    local special = ""
+    if rb then special = special.." 🌈RAINBOW" end
+    if tier == "Mega" then special = special.." ⭐MEGA" elseif tier == "Big" then special = special.." 🔶BIG" end
+    local isSpecial = (rb or tier == "Mega" or tier == "Big")
     local body = HS:JSONEncode({
         embeds = {{
-            title = "🐾 Pet Dibeli",
-            color = 5763719,
+            title = isSpecial and ("🎉 PET SPESIAL!"..special) or "🐾 Pet Dibeli",
+            color = isSpecial and 16766720 or 5763719,
             fields = {
                 { name = "Username", value = player.Name, inline = true },
                 { name = "Sheckles", value = Farm.abbrev(sheck), inline = true },
-                { name = "Buy Pet", value = tostring(petName)..(price and (" (¢"..Farm.abbrev(price)..")") or ""), inline = false },
+                { name = "Buy Pet", value = tostring(petName)..(tier and tier~="Normal" and (" ["..tier.."]") or "")..(rb and " [Rainbow]" or "")..(price and (" (¢"..Farm.abbrev(price)..")") or ""), inline = false },
             },
         }},
     })
     pcall(function()
         req({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
     end)
+end
+-- v20.7: deteksi ukuran pet (Normal/Big/Mega) dari ukuran model fisik di WildPetSpawns.
+-- game: Big=2x, Huge/Mega=4x scale. baseline = ukuran terkecil yg pernah keliat per jenis.
+Farm._petBase = Farm._petBase or {}
+function Farm.petSizeTier(uuid, petName)
+    if not petName then return "Normal", 1 end
+    local map = workspace:FindFirstChild("Map")
+    local spawns = map and map:FindFirstChild("WildPetSpawns")
+    if not spawns then return "Normal", 1 end
+    local model
+    for _, m in ipairs(spawns:GetChildren()) do
+        if m.Name:find(uuid, 1, true) then model = m; break end
+    end
+    if not model then return "Normal", 1 end
+    local sz
+    pcall(function()
+        if model:IsA("Model") then local _, s = model:GetBoundingBox(); sz = s
+        elseif model:IsA("BasePart") then sz = model.Size end
+    end)
+    if not sz then return "Normal", 1 end
+    local lin = math.max(sz.X, sz.Y, sz.Z)
+    local base = Farm._petBase[petName]
+    if not base or lin < base then Farm._petBase[petName] = lin; base = lin end
+    local scale = lin / base
+    if scale >= 2.8 then return "Mega", scale
+    elseif scale >= 1.4 then return "Big", scale
+    else return "Normal", scale end
+end
+-- v20.7: deteksi Rainbow (best-effort sampai ada sampel asli: cek atribut + nama)
+function Farm.isRainbowPet(part, petName)
+    local r = false
+    pcall(function()
+        if part:GetAttribute("Rainbow") or part:GetAttribute("IsRainbow") or part:GetAttribute("Mutation") == "Rainbow" then r = true end
+        if petName and tostring(petName):lower():find("rainbow") then r = true end
+    end)
+    return r
 end
 function Farm.buyPetOnce()
     local p = pkt("Pets", "WildPetTame")
@@ -2097,8 +2141,17 @@ function Farm.buyPetOnce()
             end)
             local affordable = (not prNow) or prNow <= sheck
             local st = petStateStr(o)
-            -- cuma klaim pet yg PUNYA HARGA (prNow) & MAMPU BAYAR & di bawah batas harga
-            if okType and okRare and prNow and okPrice and affordable and st ~= "mine" and Farm._petClaimed[uuid] ~= st then
+            -- v20.7: deteksi Big/Mega/Rainbow -> sikat walau di luar filter jenis/harga
+            local tier = Farm.petSizeTier(uuid, petName)
+            local isRb = Farm.isRainbowPet(o, petName)
+            local wantSpecial = (tier == "Big" and state.petBuyBig)
+                or (tier == "Mega" and state.petBuyMega)
+                or (isRb and state.petBuyRainbow)
+            -- special: abaikan filter jenis+rarity+harga (tetep wajib punya harga & mampu bayar)
+            local passFilter = wantSpecial or (okType and okRare and okPrice)
+            -- cuma klaim pet yg PUNYA HARGA (prNow) & MAMPU BAYAR & lolos filter
+            if passFilter and prNow and affordable and st ~= "mine" and Farm._petClaimed[uuid] ~= st then
+                if wantSpecial then dprint("[ZenxFarm] SPECIAL pet: "..tostring(petName).." tier="..tier..(isRb and " RAINBOW" or "").." -> sikat") end
                 if Farm._petAttempt[uuid] ~= st then Farm._petAttempt[uuid] = st; Farm._petFail[uuid] = 0 end
                 local cnt = Farm._petCount[uuid] or 0
                 local maxR = state.petMaxRebuy or 3
@@ -2153,7 +2206,8 @@ function Farm.buyPetOnce()
             -- v16.9: catat pemilik terakhir pet yg pernah kita beli (buat deteksi masuk garden)
             if Farm._petCount[uuid] then
                 Farm._petLastOwner[uuid] = o:GetAttribute("OwnerUserId")
-                if petName then Farm._petInfo[uuid] = Farm._petInfo[uuid] or {}; Farm._petInfo[uuid].name = petName end
+                if petName then Farm._petInfo[uuid] = Farm._petInfo[uuid] or {}; Farm._petInfo[uuid].name = petName
+                    Farm._petInfo[uuid].tier = Farm.petSizeTier(uuid, petName); Farm._petInfo[uuid].rb = Farm.isRainbowPet(o, petName) end
             end
         end
     end
@@ -2165,8 +2219,8 @@ function Farm.buyPetOnce()
             -- pet ilang dari wild. kalau terakhir punya kita = masuk garden kita
             if Farm._petLastOwner[uuid] == player.UserId then
                 local info = Farm._petInfo[uuid] or {}
-                print("[ZenxFarm] pet MASUK GARDEN: "..tostring(info.name))
-                pcall(function() Farm.sendPetWebhook(info.name, info.price) end)
+                print("[ZenxFarm] pet MASUK GARDEN: "..tostring(info.name)..(info.tier and info.tier~="Normal" and (" ["..info.tier.."]") or "")..(info.rb and " [RAINBOW]" or ""))
+                pcall(function() Farm.sendPetWebhook(info.name, info.price, info.tier, info.rb) end)
             end
             Farm._petClaimed[uuid]=nil; Farm._petAttempt[uuid]=nil; Farm._petFail[uuid]=nil
             Farm._petCount[uuid]=nil; Farm._petLastTry[uuid]=nil
@@ -2569,7 +2623,8 @@ function Farm.giftPetOnce()
             total = total + #items; task.wait(0.5)
         end
     end
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    -- v20.6: scan BACKPACK doang. pet aktif/dipasang (PetVisualController) gak keikut -> aman.
+    for _, holder in ipairs({ player:FindFirstChildOfClass("Backpack") }) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") then
@@ -4041,9 +4096,10 @@ end
 
 -- ====== CARD 5: AUTO BUY PET (pet liar + buy-back + webhook) ======
 local applyBuyPet
+local applyBuyBig, applyBuyMega, applyBuyRb
 do
     local card, body, setH = mkFarmCard(3, "Auto Buy Pet", "tame pet liar + ambil balik (tap utk atur)", buyList)
-    setH(288)
+    setH(352)
     local petTypeList = function() return Farm.scanPetTypes() end
     local petRareList = function() return PET_RARITIES end
     mkTypeRow(body, 4,  "Jenis Pet", petTypeList, state.selectedPetType, "allPetType", "Semua jenis")
@@ -4087,7 +4143,10 @@ do
         state.petWebhook = whBox.Text; saveState()
         print("[ZenxFarm] webhook pet -> "..(state.petWebhook ~= "" and "diset" or "kosong"))
     end)
-    applyBuyPet = mkBodyToggle(body, 220, "Auto Buy Pet", "autoBuyPet", "Auto Buy Pet")
+    applyBuyBig = mkBodyToggle(body, 216, "Sikat Big (2x)", "petBuyBig", "Buy Big")
+    applyBuyMega = mkBodyToggle(body, 248, "Sikat Mega (4x)", "petBuyMega", "Buy Mega")
+    applyBuyRb = mkBodyToggle(body, 280, "Sikat Rainbow", "petBuyRainbow", "Buy Rainbow")
+    applyBuyPet = mkBodyToggle(body, 312, "Auto Buy Pet", "autoBuyPet", "Auto Buy Pet")
 end
 
 -- ====== CARD 6: AUTO SHOVEL (v7.1: pindah dari MISC ke AUTO FARM) ======
@@ -5364,6 +5423,7 @@ state.autoAcceptGift = true
 if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; state.autoHop = true; if not state.hopMinutes or state.hopMinutes <= 0 then state.hopMinutes = 45 end if state.hopMinutes == 30 then state.hopMinutes = 45 end end
 
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyGiftPet(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
+pcall(function() if applyBuyBig then applyBuyBig() end; if applyBuyMega then applyBuyMega() end; if applyBuyRb then applyBuyRb() end end)
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
 task.spawn(function()
