@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v19.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v19.9  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v19.8"
+local VER       = "v19.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2642,6 +2642,14 @@ staggerSpawn(function()
             if Farm._applyAcceptRef then pcall(Farm._applyAcceptRef) end
             saveState()
         end
+        -- v20.1: akun buy-pet -> auto hop nyala (interval 30 menit)
+        if state.autoBuyPet and not state.autoHop then
+            state.autoHop = true
+            state.hopMinutes = 30
+            if Farm._applyHopRef then pcall(Farm._applyHopRef) end
+            saveState()
+            print("[ZenxFarm] Buy Pet ON -> Auto Hop nyala (30 menit)")
+        end
     end
 end)
 -- v18.7: NOTIF webhook pas sheckles akun ini < batas (sekali tiap turun, anti-spam)
@@ -3391,9 +3399,10 @@ hopBtn.MouseButton1Click:Connect(function()
     hopBtn.Text = "..."; task.spawn(doHop)
 end)
 
--- v17.0: AUTO HOP tiap X menit (pakai doHop yg sama). _hopNextAt buat countdown UI.
+-- v20.0: AUTO HOP tiap X menit (pakai doHop yg sama). _hopNextAt buat countdown UI.
 Farm._hopNextAt = nil
 staggerSpawn(function()
+    print("[ZenxFarm] loop auto-hop AKTIF")
     while isCurrentGen() do
         if not state.autoHop then
             Farm._hopNextAt = nil
@@ -3401,19 +3410,23 @@ staggerSpawn(function()
         else
             local mins = math.max(1, state.hopMinutes or 30)
             local target = mins * 60
-            Farm._hopNextAt = os.clock() + target
-            local waited = 0
-            while isCurrentGen() and state.autoHop and waited < target do
-                task.wait(1); waited = waited + 1
+            local startT = os.clock()
+            Farm._hopNextAt = startT + target
+            print("[ZenxFarm] auto hop: mulai nunggu "..mins.." menit ("..target.."s)...")
+            while isCurrentGen() and state.autoHop and (os.clock() - startT) < target do
+                task.wait(1)
             end
             if isCurrentGen() and state.autoHop then
                 Farm._hopNextAt = nil
-                print("[ZenxFarm] auto hop (tiap "..mins.." menit) -> hop sekarang")
-                pcall(doHop)
-                task.wait(15)
+                print("[ZenxFarm] auto hop: WAKTU TIBA -> panggil doHop")
+                task.spawn(doHop)
+                task.wait(20)
+            else
+                print("[ZenxFarm] auto hop: batal (toggle="..tostring(state.autoHop)..", gen="..tostring(isCurrentGen())..")")
             end
         end
     end
+    print("[ZenxFarm] loop auto-hop BERHENTI (gen berubah)")
 end)
 
 -- ===== ANTI-BOT: deteksi player auto-sell (Sheckles berubah >=5x dalam 2s) -> hop =====
@@ -5301,6 +5314,7 @@ do
         print("[ZenxFarm] Auto Hop -> "..(state.autoHop and ("ON (tiap "..(state.hopMinutes or 30).." menit)") or "OFF"))
     end)
     applyHop()
+    Farm._applyHopRef = applyHop
 
     -- v17.1: countdown real-time + progress bar
     local cdL = lbl(body, "Hop berikutnya: —", 13, C.green, Enum.TextXAlignment.Left)
@@ -5340,7 +5354,7 @@ end
 -- ----- boot -----
 -- v18.6: auto accept gift selalu nyala; akun buy pet -> auto sell nyala
 state.autoAcceptGift = true
-if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false end
+if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; state.autoHop = true; if not state.hopMinutes or state.hopMinutes <= 0 then state.hopMinutes = 30 end end
 
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyGiftPet(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
