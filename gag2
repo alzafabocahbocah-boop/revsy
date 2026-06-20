@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v17.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v17.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v17.7"
+local VER       = "v17.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -379,6 +379,12 @@ local state = {
     giftSeedQty     = 0,        -- v8.7: jumlah seed per kirim (0 = semua)
     giftPets        = {},       -- jenis pet yg dikirim (by Tool name, mis "Owl"/"Big Owl")
     giftFruits      = {},        -- v11.3: jenis FRUIT yg dikirim
+    gfTarget        = "",        -- v17.8: penerima gift fruit mailbox (gak disave)
+    gfFruits        = {},        -- v17.8: jenis fruit yg dikirim (mailbox)
+    gfAllFruit      = false,     -- v17.8: kirim semua jenis buah
+    gfWeightF       = 0,         -- v17.8: threshold kg
+    gfAuto          = false,     -- v17.8: auto kirim terus
+    gfOnce          = true,      -- v17.8: sekali kirim lalu OFF (default aman)
     giftGears       = {},        -- v15.1: jenis GEAR yg dikirim via mailbox (ganti dari fruit)
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
     giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
@@ -400,7 +406,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop"}
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -412,7 +418,7 @@ local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect
                  selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
                  selectedSprPos="selectedSprPos",
                  selectedPetType="selectedPetType", selectedPetRare="selectedPetRare",
-                 giftSeeds="giftSeeds", giftPets="giftPets", giftFruits="giftFruits", giftGears="giftGears", dgiftFruits="dgiftFruits", dgiftGears="dgiftGears", kalkFruits="kalkFruits", kalkMuts="kalkMuts"}
+                 giftSeeds="giftSeeds", giftPets="giftPets", giftFruits="giftFruits", giftGears="giftGears", dgiftFruits="dgiftFruits", dgiftGears="dgiftGears", kalkFruits="kalkFruits", kalkMuts="kalkMuts", gfFruits="gfFruits"}
 local function saveState()
     pcall(function()
         if not writefile then return end
@@ -428,6 +434,7 @@ local function saveState()
         out.petMaxPrice = state.petMaxPrice or 0  -- v17.2
         out.petWebhook = state.petWebhook or ""   -- v16.7
         out.hopMinutes = state.hopMinutes or 30   -- v17.0
+        out.gfWeightF = state.gfWeightF or 0      -- v17.8
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -463,6 +470,7 @@ local function loadState()
                 if type(d.petMaxPrice) == "number" then state.petMaxPrice = d.petMaxPrice end
                 if type(d.petWebhook) == "string" and d.petWebhook ~= "" then state.petWebhook = d.petWebhook end
                 if type(d.hopMinutes) == "number" then state.hopMinutes = d.hopMinutes end
+                if type(d.gfWeightF) == "number" then state.gfWeightF = d.gfWeightF end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -2309,6 +2317,71 @@ staggerSpawn(function()
     end
 end)
 
+-- ===== v17.8: GIFT FRUIT lewat MAILBOX (Mailbox.SendBatch, Category="HarvestedFruits") =====
+-- terkonfirmasi via spy: SendBatch:Fire(userId, {{ItemKey=<fruitUUID>, Count=1, Category="HarvestedFruits"}, ...}, "")
+-- bisa kirim ke siapa aja (termasuk OFFLINE). fruit = Tool ber-atribut .Id (UUID) + .Fruit/.FruitName.
+Farm._gfStatus = nil
+function Farm.giftFruitOnce()
+    local target = state.gfTarget
+    if not target or target == "" then Farm._gfStatus = "notarget"; return end
+    local sb = pkt("Mailbox", "SendBatch")
+    if not sb or not sb.Fire then Farm._gfStatus = "nosend"; print("[ZenxFarm] SendBatch gak ada"); return end
+    -- resolve userId penerima (cache)
+    if not Farm._gfId or Farm._gfIdName ~= target then
+        Farm._gfId = resolveTargetId(target)
+        Farm._gfIdName = target
+        if not Farm._gfId then Farm._gfStatus = "notfound"; print("[ZenxFarm] gift fruit: user '"..target.."' gak ketemu"); return end
+        print("[ZenxFarm] gift fruit target: "..target.." (id "..tostring(Farm._gfId)..")")
+    end
+    local uid = Farm._gfId
+    if not uid then return end
+
+    -- kumpulin fruit dari character + backpack, filter jenis + threshold kg. kirim per batch (max 8).
+    local batch, total = {}, 0
+    local function flush()
+        if #batch > 0 then
+            local items = batch; batch = {}
+            pcall(function() sb:Fire(uid, items, "") end)
+            total = total + #items
+            task.wait(0.25)
+        end
+    end
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                local fid = t:GetAttribute("Id")
+                local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                if fid and fjenis then
+                    local jenisOk = state.gfAllFruit or state.gfFruits[fjenis]
+                    local w = t:GetAttribute("Weight") or 0
+                    if jenisOk and passWeight(w, state.gfWeightF) then
+                        batch[#batch+1] = { ItemKey = tostring(fid), Count = 1, Category = "HarvestedFruits" }
+                        if #batch >= 8 then flush() end
+                    end
+                end
+            end
+        end
+    end
+    flush()
+    if total > 0 then
+        Farm._gfStatus = "ok"
+        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah")
+        if state.gfOnce then
+            state.gfAuto = false
+            if Farm._applyGFRef then pcall(Farm._applyGFRef) end
+            print("[ZenxFarm] gift fruit sekali kirim -> OFF")
+        end
+    else
+        Farm._gfStatus = "empty"
+    end
+end
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(3)
+        if isCurrentGen() and state.gfAuto then pcall(Farm.giftFruitOnce) end
+    end
+end)
+
 -- ===== AUTO ACCEPT GIFT (v8.9) =====
 -- format ASLI dari sniff: Mailbox.Claim:Fire("4:<UUID>")
 -- daftar gift masuk: PlayerGui.MailboxUI.Frame.RecieveFrame.Gift_<id>
@@ -4035,6 +4108,85 @@ do
     applyAcceptGift()
 end
 
+-- ====== AUTO GIFT: Auto Gift Fruit (lewat mailbox) — v17.8 ======
+local applyGiftFruit
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = 4, Parent = giftList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local hd = mk("TextButton", { Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = card })
+    local nameL = lbl(hd, "Auto Gift Fruit", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -50, 0, 18)
+    local descL = lbl(hd, "kirim buah lewat mailbox (bisa ke offline)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -50, 0, 14)
+    local arrow = lbl(hd, "▾", 14, C.textDim, Enum.TextXAlignment.Center)
+    arrow.Position = UDim2.new(1, -32, 0, 19); arrow.Size = UDim2.new(0, 20, 0, 18)
+    local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 300), Position = UDim2.new(0, 10, 0, 60),
+        BackgroundTransparency = 1, Visible = false, Parent = card })
+
+    -- penerima (ketik username — boleh yg lagi offline)
+    lbl(body, "Penerima", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,4)
+    local nameBox = mk("TextBox", { Size = UDim2.new(0.58, 0, 0, 28), Position = UDim2.new(0.42, 0, 0, 1),
+        BackgroundColor3 = C.input, Text = state.gfTarget or "", PlaceholderText = "username...",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(nameBox, 6); stroke(nameBox, C.border, 1)
+    nameBox.FocusLost:Connect(function()
+        state.gfTarget = nameBox.Text
+        Farm._gfId = nil; Farm._gfIdName = nil  -- reset cache id
+    end)
+
+    -- jenis fruit + threshold kg
+    mkTypeRow(body, 44, "Jenis Fruit", function() return Farm.fruitsInBagList and Farm.fruitsInBagList() or {} end,
+        state.gfFruits, "gfAllFruit", "Semua buah", function() return Farm.countFruitsInBag and Farm.countFruitsInBag() or {} end)
+    lbl(body, "Threshold kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
+    local fwBox = mk("TextBox", { Size = UDim2.new(0.4, 0, 0, 28), Position = UDim2.new(0.6, 0, 0, 85),
+        BackgroundColor3 = C.input, Text = tostring(state.gfWeightF or 0), PlaceholderText = "0=semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(fwBox, 6); stroke(fwBox, C.border, 1)
+    fwBox.FocusLost:Connect(function()
+        local n = tonumber(fwBox.Text) or 0
+        state.gfWeightF = n; fwBox.Text = tostring(n); saveState()
+    end)
+
+    -- tombol kirim sekarang (sekali jalan)
+    local sendBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 124),
+        BackgroundColor3 = C.green, Text = "KIRIM SEKARANG", TextColor3 = Color3.new(0,0,0), Font = FONT_B,
+        TextSize = 13, AutoButtonColor = true, BorderSizePixel = 0, Parent = body })
+    corner(sendBtn, 6)
+    sendBtn.MouseButton1Click:Connect(function()
+        sendBtn.Text = "ngirim..."
+        task.spawn(function() pcall(Farm.giftFruitOnce); task.wait(0.4); sendBtn.Text = "KIRIM SEKARANG" end)
+    end)
+
+    -- toggle sekali kirim + auto
+    mkBodyToggle(body, 168, "Sekali Kirim", "gfOnce", "Gift Fruit Sekali Kirim")
+    applyGiftFruit = mkBodyToggle(body, 208, "Auto Gift Fruit", "gfAuto", "Auto Gift Fruit")
+    Farm._applyGFRef = applyGiftFruit
+
+    -- status
+    local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
+    statusL.Position = UDim2.new(0, 0, 0, 250); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
+    task.spawn(function()
+        while statusL.Parent do
+            local s = Farm._gfStatus
+            if s == "ok" then statusL.Text = "Kekirim ✓"; statusL.TextColor3 = C.green
+            elseif s == "notarget" then statusL.Text = "Belum (isi penerima)"; statusL.TextColor3 = C.textMute
+            elseif s == "notfound" then statusL.Text = "Belum (user gak ketemu)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
+            elseif s == "empty" then statusL.Text = "Belum (gak ada buah cocok)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
+            elseif s == "nosend" then statusL.Text = "Belum (SendBatch gak ada)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
+            else statusL.Text = "Belum"; statusL.TextColor3 = C.textMute end
+            task.wait(0.5)
+        end
+    end)
+
+    local expanded = false
+    hd.MouseButton1Click:Connect(function()
+        expanded = not expanded; body.Visible = expanded
+        arrow.Text = expanded and "▴" or "▾"
+        card.Size = UDim2.new(1, 0, 0, expanded and 372 or 56)
+    end)
+end
+
 -- ====== MISC: Auto AFK (toggle simpel) ======
 local applyAfk
 do
@@ -4741,7 +4893,7 @@ do
 end
 
 -- ----- boot -----
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
+applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
 task.spawn(function()
