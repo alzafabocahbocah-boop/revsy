@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v17.6  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v17.7  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v17.6"
+local VER       = "v17.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1982,7 +1982,6 @@ function Farm.buyPetOnce()
                     local got = false
                     if hrp then
                         -- LENGKET ke pet: pin HRP ke posisi pet TIAP FRAME (Heartbeat) sambil nembak.
-                        -- ini bikin karakter nempel ngikutin pet yg gerak (kayak sc lain), gak teleport putus2.
                         local stuck = true
                         local hb = game:GetService("RunService").Heartbeat:Connect(function()
                             if stuck and o.Parent and hrp and hrp.Parent then
@@ -1992,14 +1991,17 @@ function Farm.buyPetOnce()
                                 end)
                             end
                         end)
-                        for _ = 1, 8 do
+                        task.wait(0.2)  -- v17.7: settle dulu biar posisi nempel ke-register server SEBELUM fire
+                        dprint("[ZenxFarm] coba beli "..tostring(petName).." | st="..st.." dist="..tostring(o.Parent and math.floor((hrp.Position-o.Position).Magnitude) or "-"))
+                        for i = 1, 6 do
                             if not o.Parent then got = true; break end
                             pcall(function() p:Fire(o) end)
-                            task.wait(0.15)
+                            task.wait(0.22)
                             if (not o.Parent) or petOwnedByMe(o) or petStateStr(o) ~= st then got = true; break end
                         end
                         stuck = false
                         pcall(function() hb:Disconnect() end)
+                        dprint("[ZenxFarm] hasil "..tostring(petName).." -> "..(got and "OK" or "gagal").." | owner="..tostring(o.Parent and o:GetAttribute("OwnerUserId") or "gone"))
                     else
                         for _ = 1, 3 do
                             pcall(function() p:Fire(o) end)
