@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v21.1  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v21.3  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v21.1"
+local VER       = "v21.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2761,23 +2761,44 @@ end)
 -- format ASLI dari sniff: Mailbox.Claim:Fire("4:<UUID>")
 -- daftar gift masuk: PlayerGui.MailboxUI.Frame.RecieveFrame.Gift_<id>
 -- nama frame "Gift_4:xxx" -> buang "Gift_" -> dapet id buat Claim.
+-- v21.2: buka mailbox biar UI kebangun (akun baru: auto-claim gak jalan sampai mailbox dibuka sekali).
+function Farm.openMailbox()
+    -- 1) fire remote (beberapa kemungkinan nama)
+    for _, nm in ipairs({ "OpenInbox", "Open", "List", "GetInbox", "Inbox" }) do
+        local op = pkt("Mailbox", nm)
+        if op and op.Fire then pcall(function() op:Fire() end) end
+    end
+    -- 2) trigger tombol mailbox di PlayerGui (biar UI-nya beneran kebangun) — best-effort
+    local pg = Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("PlayerGui")
+    if pg and getconnections then
+        pcall(function()
+            for _, d in ipairs(pg:GetDescendants()) do
+                if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Name:lower():find("mail") then
+                    for _, ev in ipairs({ "MouseButton1Click", "Activated" }) do
+                        pcall(function()
+                            for _, conn in ipairs(getconnections(d[ev])) do
+                                if conn.Fire then conn:Fire() end
+                            end
+                        end)
+                    end
+                end
+            end
+        end)
+    end
+end
 function Farm.acceptGiftOnce()
     local cl = pkt("Mailbox", "Claim")
     if not cl or not cl.Fire then return end
-    -- refresh daftar gift dulu (biar RecieveFrame keisi walau mailbox blm dibuka manual)
-    local op = pkt("Mailbox", "OpenInbox") or pkt("Mailbox", "List")
-    if op and op.Fire then pcall(function() op:Fire() end) end
     local plr = Players.LocalPlayer
     local pg = plr and plr:FindFirstChild("PlayerGui")
     local mb = pg and pg:FindFirstChild("MailboxUI")
     local frame = mb and mb:FindFirstChild("Frame")
     local recv = frame and frame:FindFirstChild("RecieveFrame")
-    if not recv then return end  -- mailbox belum kebuka / gak ada gift
+    if not recv then return end  -- UI belum kebangun (loop 15s yg buka) / gak ada gift
 
     local claimed = 0
     for _, g in ipairs(recv:GetChildren()) do
         if not state.autoAcceptGift then break end
-        -- frame gift namanya "Gift_4:<uuid>" — buang prefix "Gift_"
         local id = g.Name:match("^Gift_(.+)$")
         if id and g:IsA("GuiObject") then
             pcall(function() cl:Fire(id) end)
@@ -2787,6 +2808,26 @@ function Farm.acceptGiftOnce()
     end
     if claimed > 0 then dprint("[ZenxFarm] accept gift: "..claimed.." gift di-claim") end
 end
+-- v21.3: buka mailbox tiap 15 detik, TAPI cuma kalau sheckles akun ini < batas (300M default).
+-- (kondisi: akun pet lagi nunggu kiriman buah -> inbox kudu di-refresh biar auto-claim jalan)
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(15)
+        if isCurrentGen() and state.autoAcceptGift then
+            local shk
+            pcall(function()
+                local ls = player:FindFirstChild("leaderstats")
+                local sv = ls and ls:FindFirstChild("Sheckles")
+                if sv then shk = sv.Value end
+            end)
+            local batas = state.gfSheckMax or 300000000
+            if shk and shk < batas then
+                pcall(Farm.openMailbox)
+                dprint("[ZenxFarm] buka mailbox (sheckles "..Farm.abbrev(shk).." < "..Farm.abbrev(batas)..")")
+            end
+        end
+    end
+end)
 staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
