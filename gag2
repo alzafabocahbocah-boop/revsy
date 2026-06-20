@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v20.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v20.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v20.7"
+local VER       = "v20.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2141,17 +2141,17 @@ function Farm.buyPetOnce()
             end)
             local affordable = (not prNow) or prNow <= sheck
             local st = petStateStr(o)
-            -- v20.7: deteksi Big/Mega/Rainbow -> sikat walau di luar filter jenis/harga
             local tier = Farm.petSizeTier(uuid, petName)
             local isRb = Farm.isRainbowPet(o, petName)
-            local wantSpecial = (tier == "Big" and state.petBuyBig)
+            -- v20.8: HARUS jenis yg dipilih (okType+okRare). Big/Mega/Rainbow cuma nge-bypass BATAS HARGA,
+            -- bukan filter jenis. jadi cuma jenis pilihanmu yg dibeli, tapi versi Big/Mega/Rainbow-nya ikut.
+            local isSpecialSize = (tier == "Big" and state.petBuyBig)
                 or (tier == "Mega" and state.petBuyMega)
                 or (isRb and state.petBuyRainbow)
-            -- special: abaikan filter jenis+rarity+harga (tetep wajib punya harga & mampu bayar)
-            local passFilter = wantSpecial or (okType and okRare and okPrice)
+            local passFilter = okType and okRare and (okPrice or isSpecialSize)
             -- cuma klaim pet yg PUNYA HARGA (prNow) & MAMPU BAYAR & lolos filter
             if passFilter and prNow and affordable and st ~= "mine" and Farm._petClaimed[uuid] ~= st then
-                if wantSpecial then dprint("[ZenxFarm] SPECIAL pet: "..tostring(petName).." tier="..tier..(isRb and " RAINBOW" or "").." -> sikat") end
+                if isSpecialSize and not okPrice then dprint("[ZenxFarm] SPECIAL "..tostring(petName).." tier="..tier..(isRb and " RAINBOW" or "").." -> sikat (bypass batas harga)") end
                 if Farm._petAttempt[uuid] ~= st then Farm._petAttempt[uuid] = st; Farm._petFail[uuid] = 0 end
                 local cnt = Farm._petCount[uuid] or 0
                 local maxR = state.petMaxRebuy or 3
