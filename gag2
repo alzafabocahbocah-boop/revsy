@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v19.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v19.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v19.7"
+local VER       = "v19.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -3284,7 +3284,8 @@ local function doHop()
         local req = (syn and syn.request) or (http and http.request) or http_request or request
             or (fluxus and fluxus.request)
         if req then
-            local ok, resp = pcall(function() return req({ Url = url, Method = "GET" }) end)
+            local ok, resp = pcall(function() return req({ Url = url, Method = "GET",
+                Headers = { ["User-Agent"] = "Roblox/WinInet", ["Content-Type"] = "application/json" } }) end)
             if ok and resp then
                 local body = resp.Body or resp.body
                 local code = resp.StatusCode or resp.Status or resp.status_code
@@ -3370,8 +3371,20 @@ local function doHop()
             end
         end
     end
-    -- v5.5: TIDAK fallback ke TS:Teleport biasa (itu yg bikin balik ke server sama).
-    print("[ZenxFarm] gagal nemu server lain — hop dibatalin (biar gak balik ke server sama)")
+    -- v19.8: server-list gak kebaca -> FALLBACK rejoin (TeleportService:Teleport).
+    -- biasanya dapet server lain; lebih baik daripada gak hop sama sekali.
+    print("[ZenxFarm] server-list gak kebaca ("..(Farm._hopLastErr or "?").."), fallback rejoin...")
+    local zt2 = (typeof(getgenv)=="function" and getgenv() or _G).ZenxTeleport
+    local ok2, err2 = pcall(function()
+        if zt2 then return zt2(function() TS:Teleport(placeId, plr) end)
+        else return TS:Teleport(placeId, plr) end
+    end)
+    if ok2 then
+        task.wait(3)
+        print("[ZenxFarm] fallback rejoin dikirim (nunggu pindah...)")
+        return true
+    end
+    print("[ZenxFarm] fallback rejoin GAGAL juga: "..tostring(err2))
     return false
 end
 hopBtn.MouseButton1Click:Connect(function()
