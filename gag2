@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v17.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v18.3  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v17.8"
+local VER       = "v18.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -313,6 +313,9 @@ local state = {
     allPetRare    = true,       -- beli semua rarity
     buyAllSeeds   = true,       -- borong semua seed
     buyDefaultsV1 = false,      -- v16.8: udah set default gear/seed otomatis sekali?
+    buyDefaultsV2 = false,      -- v18.0: default pet (bee/raccoon/dragonfly/unicorn) + auto-on seed/gear
+    buyDefaultsV3 = false,      -- v18.2: betulin pet default -> Bear (bukan Bee)
+    buyDefaultsV4 = false,      -- v18.3: default max harga pet 200M
     collectAll    = true,       -- collect semua buah
     collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
@@ -399,14 +402,14 @@ local state = {
     dgiftApproach   = true,       -- v15.2: samperin target dulu sebelum gift no-mailbox
     dgiftOnce       = false,      -- sekali kirim lalu OFF
 }
-local PET_TYPES = {"Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
+local PET_TYPES = {"Bear","Bee","BlackDragon","Bunny","Deer","Frog","GoldenDragonfly",
     "IceSerpent","Monkey","Owl","Raccoon","Robin","Unicorn"}
 local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Divine"}
 -- v5.9: daftar mutasi Grow a Garden (umum). kalau game nambah, tinggal tambah di sini.
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce"}
+local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -1669,6 +1672,59 @@ local function applyBuyDefaults()
     print("[ZenxFarm] default buy gear/seed di-set (gear:"..tostring(okG)..", seed:"..tostring(okS)..")")
 end
 applyBuyDefaults()
+
+-- v18.0: default pet pilihan (Bee, Raccoon, GoldenDragonfly, Unicorn) + auto-on seed & gear.
+local function applyBuyDefaultsV2()
+    if state.buyDefaultsV2 then return end
+    state.buyDefaultsV2 = true
+    -- pilih pet: bee / raccoon / dragonfly / unicorn (match nama asli, anti-typo)
+    pcall(function()
+        local pets = Farm.scanPetTypes and Farm.scanPetTypes() or PET_TYPES
+        for _, nm in ipairs(pets) do
+            local ln = nm:lower()
+            if ln:find("bee") or ln:find("raccoon") or ln:find("dragonfly") or ln:find("unicorn") then
+                state.selectedPetType[nm] = true
+            end
+        end
+        state.allPetType = false
+    end)
+    -- auto-on beli seed & gear
+    state.autoBuySeed = true
+    state.autoBuyGear = true
+    saveState()
+    print("[ZenxFarm] default V2: pet pilihan + auto buy seed/gear ON")
+end
+applyBuyDefaultsV2()
+
+-- v18.2: betulin pet default -> Bear (sebelumnya salah ke Bee). buang Bee, pastiin Bear.
+local function applyBuyDefaultsV3()
+    if state.buyDefaultsV3 then return end
+    state.buyDefaultsV3 = true
+    pcall(function()
+        state.selectedPetType["Bee"] = nil  -- buang Bee (dulu salah tafsir "beer")
+        local pets = Farm.scanPetTypes and Farm.scanPetTypes() or PET_TYPES
+        for _, nm in ipairs(pets) do
+            local ln = nm:lower()
+            if ln:find("bear") or ln:find("raccoon") or ln:find("dragonfly") or ln:find("unicorn") then
+                state.selectedPetType[nm] = true
+            end
+        end
+        state.allPetType = false
+    end)
+    saveState()
+    print("[ZenxFarm] default V3: pet Bear/Raccoon/Dragonfly/Unicorn")
+end
+applyBuyDefaultsV3()
+
+-- v18.3: default max harga pet = 200M (gak beli pet yg harganya di atas 200jt)
+local function applyBuyDefaultsV4()
+    if state.buyDefaultsV4 then return end
+    state.buyDefaultsV4 = true
+    state.petMaxPrice = 200000000
+    saveState()
+    print("[ZenxFarm] default V4: max harga pet 200M")
+end
+applyBuyDefaultsV4()
 
 Farm.buyPerGear = 1  -- v11.5: 1 fire per gear (dulu 2 -> burst gede). restock biasanya 1-2 stok aja.
 function Farm.buyGearOnce()
@@ -2975,14 +3031,38 @@ local function doHop()
     local currentJob = tostring(game.JobId)
     print("[ZenxFarm] hop... cari server lain")
 
+    -- ambil JSON: coba request executor dulu (andal buat API eksternal), fallback HttpGet
+    local function httpGetJson(url)
+        local req = (syn and syn.request) or (http and http.request) or http_request or request
+            or (fluxus and fluxus.request)
+        if req then
+            local ok, resp = pcall(function() return req({ Url = url, Method = "GET" }) end)
+            if ok and resp then
+                local body = resp.Body or resp.body
+                local code = resp.StatusCode or resp.Status or resp.status_code
+                if body and (not code or code == 200) then
+                    local ok2, dec = pcall(function() return HS:JSONDecode(body) end)
+                    if ok2 then return dec end
+                elseif code then
+                    Farm._hopLastErr = "HTTP "..tostring(code)
+                end
+            end
+        end
+        -- fallback HttpGet
+        local ok, dec = pcall(function() return HS:JSONDecode(game:HttpGet(url)) end)
+        if ok then return dec end
+        Farm._hopLastErr = Farm._hopLastErr or "HttpGet gagal"
+        return nil
+    end
+
     local function scanServers()
         local candidates = {}
         local cursor = nil
         for page = 1, 5 do
             local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Desc&limit=100"
             if cursor then url = url .. "&cursor=" .. cursor end
-            local ok, body = pcall(function() return HS:JSONDecode(game:HttpGet(url)) end)
-            if not ok or not body or not body.data then break end
+            local body = httpGetJson(url)
+            if not body or not body.data then break end
             for _, s in ipairs(body.data) do
                 local pl = s.playing or 0
                 local maxP = s.maxPlayers or 6
@@ -3000,9 +3080,10 @@ local function doHop()
     -- retry scan: API server-list sering rate-limit; coba sampai 4x dgn jeda
     local candidates = {}
     for attempt = 1, 4 do
+        Farm._hopLastErr = nil
         candidates = scanServers()
         if #candidates > 0 then break end
-        print("[ZenxFarm] scan kosong (rate-limit?), retry "..attempt.."/4...")
+        print("[ZenxFarm] scan kosong ("..(Farm._hopLastErr or "?").."), retry "..attempt.."/4...")
         task.wait(2)
     end
 
