@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v18.3  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v19.1  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v18.3"
+local VER       = "v19.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -316,6 +316,8 @@ local state = {
     buyDefaultsV2 = false,      -- v18.0: default pet (bee/raccoon/dragonfly/unicorn) + auto-on seed/gear
     buyDefaultsV3 = false,      -- v18.2: betulin pet default -> Bear (bukan Bee)
     buyDefaultsV4 = false,      -- v18.3: default max harga pet 200M
+    gfDefaultsV1  = false,      -- v19.0: gift fruit default semua buah + kirim terus
+    gfDefaultsV2  = false,      -- v19.1: batas sheckles 300M
     collectAll    = true,       -- collect semua buah
     collectMulti  = true,       -- v6.9: collect buah multi-harvest (numpuk di pohon)
     collectSingle = true,       -- v6.9: collect single-harvest (Bamboo/Mushroom/dll)
@@ -388,6 +390,12 @@ local state = {
     gfWeightF       = 0,         -- v17.8: threshold kg
     gfAuto          = false,     -- v17.8: auto kirim terus
     gfOnce          = true,      -- v17.8: sekali kirim lalu OFF (default aman)
+    gfSheckMode     = false,     -- v18.4: cuma gift kalau sheckles target < batas
+    gfSheckMax      = 300000000, -- v19.1: batas sheckles target (300M)
+    gfRelayUrl      = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxshk",  -- v18.8: relay default
+    gfRelayWrite    = false,     -- v18.5: akun ini PET (tulis sheckles ke relay)
+    gfAlert         = true,      -- v18.7: notif Discord pas sheckles < batas (sekali, anti-spam)
+    gfAlertHook     = "https://discordapp.com/api/webhooks/1517745541595791370/WLFb5xOdnkcQxUaJIsUGIZROWKjoY-daksFnqnia-p307Ez-50dttV2cKofcplc9AD3v",
     giftGears       = {},        -- v15.1: jenis GEAR yg dikirim via mailbox (ganti dari fruit)
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
     giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
@@ -409,7 +417,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted"}
-local SETBOOL = {"autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -438,6 +446,9 @@ local function saveState()
         out.petWebhook = state.petWebhook or ""   -- v16.7
         out.hopMinutes = state.hopMinutes or 30   -- v17.0
         out.gfWeightF = state.gfWeightF or 0      -- v17.8
+        out.gfSheckMax = state.gfSheckMax or 100000000  -- v18.4
+        out.gfRelayUrl = state.gfRelayUrl or ""   -- v18.5
+        out.gfAlertHook = state.gfAlertHook or "" -- v18.7
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -474,6 +485,9 @@ local function loadState()
                 if type(d.petWebhook) == "string" and d.petWebhook ~= "" then state.petWebhook = d.petWebhook end
                 if type(d.hopMinutes) == "number" then state.hopMinutes = d.hopMinutes end
                 if type(d.gfWeightF) == "number" then state.gfWeightF = d.gfWeightF end
+                if type(d.gfSheckMax) == "number" then state.gfSheckMax = d.gfSheckMax end
+                if type(d.gfRelayUrl) == "string" and d.gfRelayUrl ~= "" then state.gfRelayUrl = d.gfRelayUrl end
+                if type(d.gfAlertHook) == "string" and d.gfAlertHook ~= "" then state.gfAlertHook = d.gfAlertHook end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -1726,6 +1740,25 @@ local function applyBuyDefaultsV4()
 end
 applyBuyDefaultsV4()
 
+-- v19.0: gift fruit default -> semua buah + kirim terus (bukan sekali)
+local function applyGfDefaults()
+    if state.gfDefaultsV1 then return end
+    state.gfDefaultsV1 = true
+    state.gfAllFruit = true   -- kirim SEMUA jenis buah
+    state.gfOnce = false      -- kirim TERUS (gak berhenti sekali)
+    saveState()
+    print("[ZenxFarm] default gift fruit: semua buah + kirim terus")
+end
+applyGfDefaults()
+
+-- v19.1: batas sheckles gift -> 300M (sekali apply)
+if not state.gfDefaultsV2 then
+    state.gfDefaultsV2 = true
+    state.gfSheckMax = 300000000
+    saveState()
+    print("[ZenxFarm] default batas sheckles gift: 300M")
+end
+
 Farm.buyPerGear = 1  -- v11.5: 1 fire per gear (dulu 2 -> burst gede). restock biasanya 1-2 stok aja.
 function Farm.buyGearOnce()
     -- coba beberapa nama remote gear
@@ -2377,21 +2410,63 @@ end)
 -- terkonfirmasi via spy: SendBatch:Fire(userId, {{ItemKey=<fruitUUID>, Count=1, Category="HarvestedFruits"}, ...}, "")
 -- bisa kirim ke siapa aja (termasuk OFFLINE). fruit = Tool ber-atribut .Id (UUID) + .Fruit/.FruitName.
 Farm._gfStatus = nil
+-- HTTP relay (pakai request executor; buat baca/tulis sheckles lintas-server)
+function Farm.relayReq(opts)
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+        or (fluxus and fluxus.request)
+    if not req then return nil end
+    local ok, resp = pcall(function() return req(opts) end)
+    if ok then return resp end
+    return nil
+end
 function Farm.giftFruitOnce()
-    local target = state.gfTarget
-    if not target or target == "" then Farm._gfStatus = "notarget"; return end
     local sb = pkt("Mailbox", "SendBatch")
     if not sb or not sb.Fire then Farm._gfStatus = "nosend"; print("[ZenxFarm] SendBatch gak ada"); return end
-    -- resolve userId penerima (cache)
+
+    local target = state.gfTarget
+    local useRelay = state.gfSheckMode and state.gfRelayUrl and state.gfRelayUrl ~= ""
+
+    -- v18.6: mode relay (lintas-server) — target & sheckles dibaca dari relay (akun yg Buy Pet ON)
+    if useRelay then
+        local resp = Farm.relayReq({ Url = state.gfRelayUrl, Method = "GET" })
+        local body = resp and (resp.Body or resp.body)
+        local data
+        if body then local ok, d = pcall(function() return HS:JSONDecode(body) end); if ok then data = d end end
+        if type(data) ~= "table" or type(data.shk) ~= "number" or not data.nm then
+            Farm._gfStatus = "relayerr"; return
+        end
+        if data.t and (os.time() - data.t) > 300 then Farm._gfStatus = "stale"; return end
+        if data.shk >= (state.gfSheckMax or 100000000) then Farm._gfStatus = "cukup"; return end
+        target = data.nm   -- AUTO-DETECT penerima = akun yg nulis relay (akun Buy Pet)
+    else
+        if not target or target == "" then Farm._gfStatus = "notarget"; return end
+        -- mode cek sheckles same-server (tanpa relay)
+        if state.gfSheckMode then
+            local pObj, sh
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Name:lower() == target:lower() or (p.DisplayName and p.DisplayName:lower() == target:lower()) then
+                    pObj = p
+                    local ls = p:FindFirstChild("leaderstats")
+                    local sv = ls and ls:FindFirstChild("Sheckles")
+                    if sv then sh = sv.Value end
+                    break
+                end
+            end
+            if not pObj then Farm._gfStatus = "offline"; return end
+            if sh == nil then Farm._gfStatus = "noshk"; return end
+            if sh >= (state.gfSheckMax or 100000000) then Farm._gfStatus = "cukup"; return end
+        end
+    end
+
+    -- resolve userId penerima (cache by name)
     if not Farm._gfId or Farm._gfIdName ~= target then
         Farm._gfId = resolveTargetId(target)
         Farm._gfIdName = target
-        if not Farm._gfId then Farm._gfStatus = "notfound"; print("[ZenxFarm] gift fruit: user '"..target.."' gak ketemu"); return end
+        if not Farm._gfId then Farm._gfStatus = "notfound"; print("[ZenxFarm] gift fruit: user '"..tostring(target).."' gak ketemu"); return end
         print("[ZenxFarm] gift fruit target: "..target.." (id "..tostring(Farm._gfId)..")")
     end
     local uid = Farm._gfId
     if not uid then return end
-
     -- kumpulin fruit dari character + backpack, filter jenis + threshold kg. kirim per batch (max 8).
     local batch, total = {}, 0
     local function flush()
@@ -2399,7 +2474,7 @@ function Farm.giftFruitOnce()
             local items = batch; batch = {}
             pcall(function() sb:Fire(uid, items, "") end)
             total = total + #items
-            task.wait(0.25)
+            task.wait(0.5)   -- v19.0: jeda lebih biar batch berikutnya gak ke-rate-limit
         end
     end
     for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
@@ -2422,7 +2497,7 @@ function Farm.giftFruitOnce()
     if total > 0 then
         Farm._gfStatus = "ok"
         print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah")
-        if state.gfOnce then
+        if state.gfOnce and not state.gfSheckMode then
             state.gfAuto = false
             if Farm._applyGFRef then pcall(Farm._applyGFRef) end
             print("[ZenxFarm] gift fruit sekali kirim -> OFF")
@@ -2435,6 +2510,82 @@ staggerSpawn(function()
     while isCurrentGen() do
         task.wait(3)
         if isCurrentGen() and state.gfAuto then pcall(Farm.giftFruitOnce) end
+    end
+end)
+-- v18.5: WRITER relay — akun PET tulis sheckles-nya ke relay tiap 10s (biar akun farm bisa baca lintas-server)
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(10)
+        if isCurrentGen() and (state.gfRelayWrite or state.autoBuyPet) and state.gfRelayUrl and state.gfRelayUrl ~= "" then
+            pcall(function()
+                local shk = 0
+                local ls = player:FindFirstChild("leaderstats")
+                local sv = ls and ls:FindFirstChild("Sheckles")
+                if sv then shk = sv.Value end
+                local body = HS:JSONEncode({ shk = shk, nm = player.Name, t = os.time() })
+                Farm.relayReq({ Url = state.gfRelayUrl, Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" }, Body = body })
+                Farm._gfWroteAt = os.time()
+            end)
+        end
+    end
+end)
+-- v18.6: linkage — akun Buy Pet ON -> auto sell nyala; auto accept gift SELALU nyala di mana pun
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(2)
+        if state.autoBuyPet and not state.autoSell then
+            state.autoSell = true
+            if Farm._applySellRef then pcall(Farm._applySellRef) end
+            saveState()
+            print("[ZenxFarm] Buy Pet ON -> Auto Sell otomatis nyala")
+        end
+        if not state.autoAcceptGift then
+            state.autoAcceptGift = true
+            if Farm._applyAcceptRef then pcall(Farm._applyAcceptRef) end
+            saveState()
+        end
+    end
+end)
+-- v18.7: NOTIF webhook pas sheckles akun ini < batas (sekali tiap turun, anti-spam)
+Farm._lowAlerted = false
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(8)
+        if isCurrentGen() and state.gfAlert and state.gfAlertHook and state.gfAlertHook ~= "" then
+            local shk
+            pcall(function()
+                local ls = player:FindFirstChild("leaderstats")
+                local sv = ls and ls:FindFirstChild("Sheckles")
+                if sv then shk = sv.Value end
+            end)
+            if shk then
+                local thr = state.gfSheckMax or 100000000
+                if shk < thr then
+                    if not Farm._lowAlerted then
+                        Farm._lowAlerted = true
+                        pcall(function()
+                            local body = HS:JSONEncode({
+                                embeds = {{
+                                    title = "⚠️ Sheckles Rendah",
+                                    color = 15158332,
+                                    fields = {
+                                        { name = "Akun", value = player.Name, inline = true },
+                                        { name = "Sheckles", value = Farm.abbrev(shk), inline = true },
+                                        { name = "Batas", value = Farm.abbrev(thr), inline = true },
+                                    },
+                                }},
+                            })
+                            Farm.relayReq({ Url = state.gfAlertHook, Method = "POST",
+                                Headers = { ["Content-Type"] = "application/json" }, Body = body })
+                            print("[ZenxFarm] notif sheckles rendah terkirim ("..Farm.abbrev(shk)..")")
+                        end)
+                    end
+                else
+                    Farm._lowAlerted = false   -- re-arm pas sheckles balik di atas batas
+                end
+            end
+        end
     end
 end)
 
@@ -3701,6 +3852,7 @@ do
     -- v5.7: toggle mode "sell pas penuh" (OFF = sell rutin tiap 5 detik)
     applySellFull = mkBodyToggle(body, 84,  "Sell pas penuh", "sellWhenFull", "Sell When Full")
     applySell     = mkBodyToggle(body, 124, "Auto Sell", "autoSell", "Auto Sell")
+    Farm._applySellRef = applySell
     -- v10.9: filter berat sell (+N = di atas N kg, -N = di bawah, 0 = semua)
     lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,168)
     local swBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 165),
@@ -4173,6 +4325,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
+    Farm._applyAcceptRef = nil
     applyAcceptGift = function()
         if state.autoAcceptGift then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
@@ -4187,6 +4340,7 @@ do
         print("[ZenxFarm] Auto Accept Gift -> "..(state.autoAcceptGift and "ON" or "OFF"))
     end)
     applyAcceptGift()
+    Farm._applyAcceptRef = applyAcceptGift
 end
 
 -- ====== AUTO GIFT: Auto Gift Fruit (lewat mailbox) — v17.8 ======
@@ -4229,8 +4383,40 @@ do
         state.gfWeightF = n; fwBox.Text = tostring(n); saveState()
     end)
 
+    -- parser harga (100M / 1.5B)
+    local function parseN(txt)
+        txt = tostring(txt):gsub("%s",""):lower()
+        local num, suf = txt:match("^([%d%.]+)([kmb]?)$"); num = tonumber(num); if not num then return nil end
+        if suf=="k" then num=num*1e3 elseif suf=="m" then num=num*1e6 elseif suf=="b" then num=num*1e9 end
+        return math.floor(num)
+    end
+    local function fmtN(n) return (n and n>0) and Farm.abbrev(n) or "0" end
+
+    -- gift kalau sheckles target < batas
+    lbl(body, "Gift kalau sheckles <", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,124)
+    local smBox = mk("TextBox", { Size = UDim2.new(0.34, 0, 0, 28), Position = UDim2.new(0.66, 0, 0, 121),
+        BackgroundColor3 = C.input, Text = fmtN(state.gfSheckMax), PlaceholderText = "100M",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(smBox, 6); stroke(smBox, C.border, 1)
+    smBox.FocusLost:Connect(function()
+        local n = parseN(smBox.Text) or 100000000; state.gfSheckMax = n; smBox.Text = fmtN(n); saveState()
+    end)
+    mkBodyToggle(body, 160, "Cek sheckles target", "gfSheckMode", "Gift Fruit Cek Sheckles")
+
+    -- relay (lintas-server): URL + akun ini PET?
+    lbl(body, "Relay URL (lintas-server)", 12, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,200)
+    local rlBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 218),
+        BackgroundColor3 = C.input, Text = state.gfRelayUrl or "", PlaceholderText = "kosong=samaserver | isi=Pantry URL",
+        TextColor3 = C.text, Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(rlBox, 6); stroke(rlBox, C.border, 1)
+    rlBox.FocusLost:Connect(function()
+        state.gfRelayUrl = rlBox.Text; saveState()
+        print("[ZenxFarm] relay url -> "..(state.gfRelayUrl ~= "" and "diset" or "kosong"))
+    end)
+    mkBodyToggle(body, 252, "Akun ini PET (kirim sheckles)", "gfRelayWrite", "Relay Writer")
+
     -- tombol kirim sekarang (sekali jalan)
-    local sendBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 124),
+    local sendBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 292),
         BackgroundColor3 = C.green, Text = "KIRIM SEKARANG", TextColor3 = Color3.new(0,0,0), Font = FONT_B,
         TextSize = 13, AutoButtonColor = true, BorderSizePixel = 0, Parent = body })
     corner(sendBtn, 6)
@@ -4240,13 +4426,13 @@ do
     end)
 
     -- toggle sekali kirim + auto
-    mkBodyToggle(body, 168, "Sekali Kirim", "gfOnce", "Gift Fruit Sekali Kirim")
-    applyGiftFruit = mkBodyToggle(body, 208, "Auto Gift Fruit", "gfAuto", "Auto Gift Fruit")
+    mkBodyToggle(body, 336, "Sekali Kirim", "gfOnce", "Gift Fruit Sekali Kirim")
+    applyGiftFruit = mkBodyToggle(body, 376, "Auto Gift Fruit", "gfAuto", "Auto Gift Fruit")
     Farm._applyGFRef = applyGiftFruit
 
     -- status
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
-    statusL.Position = UDim2.new(0, 0, 0, 250); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
+    statusL.Position = UDim2.new(0, 0, 0, 418); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
     task.spawn(function()
         while statusL.Parent do
             local s = Farm._gfStatus
@@ -4255,6 +4441,11 @@ do
             elseif s == "notfound" then statusL.Text = "Belum (user gak ketemu)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             elseif s == "empty" then statusL.Text = "Belum (gak ada buah cocok)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             elseif s == "nosend" then statusL.Text = "Belum (SendBatch gak ada)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
+            elseif s == "cukup" then statusL.Text = "Skip (sheckles target msh cukup)"; statusL.TextColor3 = C.textDim
+            elseif s == "offline" then statusL.Text = "Skip (target gak di server ini)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
+            elseif s == "noshk" then statusL.Text = "Skip (gak bisa baca sheckles)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
+            elseif s == "stale" then statusL.Text = "Skip (data relay basi/akun pet off)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
+            elseif s == "relayerr" then statusL.Text = "Skip (relay gagal dibaca)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             else statusL.Text = "Belum"; statusL.TextColor3 = C.textMute end
             task.wait(0.5)
         end
@@ -4264,7 +4455,7 @@ do
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 372 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 508 or 56)
     end)
 end
 
@@ -4974,6 +5165,10 @@ do
 end
 
 -- ----- boot -----
+-- v18.6: auto accept gift selalu nyala; akun buy pet -> auto sell nyala
+state.autoAcceptGift = true
+if state.autoBuyPet then state.autoSell = true end
+
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
