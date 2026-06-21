@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v22.4  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v22.6  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v22.4"
+local VER       = "v22.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -360,6 +360,7 @@ local state = {
     selectedCollectMut = {},    -- v5.9: filter mutasi collect
     selectedSellMut    = {},    -- v5.9: filter mutasi sell
     collectMutAll   = true,     -- collect semua mutasi (default: gak filter mutasi)
+    collectNoMut    = false,    -- v22.6: ikut ambil buah TANPA mutasi (default off)
     sellMutAll      = true,     -- sell semua mutasi
     selectedPlant   = {},       -- plant seed
     allPlantSeed    = true,      -- tanam semua seed (allKey terpisah dari buy seed)
@@ -435,7 +436,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -948,8 +949,12 @@ local function getMutation(obj)
     return nil
 end
 -- cek apakah objek lolos filter mutasi. allKey true -> lolos semua.
-local function passMutation(obj, selSet, allKey)
-    if state[allKey] then return true end
+local function passMutation(obj, selSet, allKey, mutOnly)
+    if state[allKey] then
+        -- v22.5: kalau mutOnly -> "Semua mutasi" = cuma yg BERMUTASI (buah polos di-skip)
+        if mutOnly then return getMutation(obj) ~= nil end
+        return true
+    end
     -- ada minimal 1 mutasi terpilih cocok
     local m = getMutation(obj)
     if not m then return false end  -- filter mutasi aktif tapi objek gak punya mutasi -> skip
@@ -1404,7 +1409,9 @@ function Farm.collectOnce()
         if fruits and state.collectMulti then
             for _, fruit in ipairs(fruits:GetChildren()) do
                 local fruitUUID = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
-                local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll")
+                local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll", true)
+                -- v22.6: toggle "Tanpa Mutasi" ON -> ikut ambil buah polos
+                if not okMut and state.collectNoMut and getMutation(fruit) == nil then okMut = true end
                 local okW = passWeight(Farm.gardenKg(fruit, seedName), state.collectWeightF)  -- v10.9
                 -- v15.4: skip buah BASI (decay > batas) kalau collectFreshOnly ON.
                 local okFresh = true
@@ -4399,10 +4406,10 @@ end
 local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedList() end return Farm.seedList end
 
 -- ====== CARD 1: AUTO COLLECT ======
-local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost, applyFreshOnly
+local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost, applyFreshOnly, applyCollectNoMut
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(404)
+    setH(448)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
@@ -4437,6 +4444,8 @@ do
         if n then n = math.clamp(n, 0, 1) else n = 0.5 end
         state.collectFreshMax = n; fmBox.Text = tostring(n); saveState()
     end)
+    -- v22.6: ikut ambil buah TANPA mutasi (default off -> cuma yg bermutasi)
+    applyCollectNoMut = mkBodyToggle(body, 404, "Tanpa Mutasi (ikut ambil)", "collectNoMut", "Collect No Mutation")
 end
 
 -- ====== CARD 2: AUTO SELL ======
