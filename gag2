@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v21.8  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v22.2  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v21.8"
+local VER       = "v22.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -405,6 +405,10 @@ local state = {
     gfStorageTarget = "",        -- v21.7: akun simpanan (dipisah koma; dialihin kalau pet udah cukup)
     gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
     gfStorDefV1     = false,      -- v21.8: flag apply default akun simpanan
+    gfStorDefV2     = false,      -- v21.9: list simpanan diperluas 60-75
+    storageMode     = false,      -- v22.0: akun ini = PENYIMPANAN (cuma terima, gak ngegift kayak farm)
+    storageFull     = false,      -- v22.1: akun ini penuh -> farm skip (lewat relay)
+    storagePriority = false,      -- v22.2: "kirim semua kesini" (gak disave -> auto off pas rejoin)
     gfRelayUrl      = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxshk",  -- v18.8: relay default
     gfRelayWrite    = false,     -- v18.5: akun ini PET (tulis sheckles ke relay)
     gfAlert         = true,      -- v18.7: notif Discord pas sheckles < batas (sekali, anti-spam)
@@ -430,7 +434,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -1888,6 +1892,17 @@ if not state.gfStorDefV1 then
     print("[ZenxFarm] default akun simpanan: wildnx_61..65 (min 4M)")
 end
 
+-- v21.9: perluas list akun simpanan -> wildnx_60..75 (paksa overwrite sekali)
+if not state.gfStorDefV2 then
+    state.gfStorDefV2 = true
+    local t = {}
+    for i = 60, 75 do t[#t+1] = "wildnx_"..i end
+    state.gfStorageTarget = table.concat(t, ",")
+    state.gfStorRotIdx = 1
+    saveState()
+    print("[ZenxFarm] list akun simpanan diperluas: wildnx_60..75 (16 akun)")
+end
+
 -- v19.4: default gift pet -> Bear/Raccoon/GoldenDragonfly/Unicorn + auto ON
 if not state.gpDefaultsV1 then
     state.gpDefaultsV1 = true
@@ -2631,15 +2646,101 @@ function Farm.storageList()
     end
     return t
 end
+-- v22.1: registry "akun penuh" lewat Pantry (basket zenxfull). PUT = merge per-akun, gak ada race.
+-- v22.2: "kirim semua kesini" (priority drain) lewat Pantry basket zenxprio. gak persisten (TTL 90s).
+function Farm.priorityUrl()
+    local u = state.gfRelayUrl
+    if not u or u == "" then return nil end
+    return (u:gsub("/basket/[^/]+$", "/basket/zenxprio"))
+end
+function Farm.setPriority(on)
+    local url = Farm.priorityUrl()
+    if not url then return end
+    local payload = HS:JSONEncode({ nm = on and player.Name or "", t = os.time() })
+    pcall(function()
+        Farm.relayReq({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = payload })
+    end)
+end
+function Farm.getPriorityTarget()
+    local now = os.clock()
+    if Farm._prioCache ~= nil and (now - (Farm._prioCacheAt or 0)) < 6 then
+        return Farm._prioCache or nil
+    end
+    local res = nil
+    local url = Farm.priorityUrl()
+    if url then
+        local resp = Farm.relayReq({ Url = url, Method = "GET" })
+        local body = resp and (resp.Body or resp.body)
+        if body then
+            local ok, d = pcall(function() return HS:JSONDecode(body) end)
+            if ok and type(d) == "table" and type(d.nm) == "string" and d.nm ~= "" then
+                if not d.t or (os.time() - d.t) < 90 then res = d.nm end
+            end
+        end
+    end
+    Farm._prioCache = res or false; Farm._prioCacheAt = now
+    return res
+end
+function Farm.fullRegistryUrl()
+    local u = state.gfRelayUrl
+    if not u or u == "" then return nil end
+    return (u:gsub("/basket/[^/]+$", "/basket/zenxfull"))
+end
+-- akun penyimpanan: tandai penuh / gak penuh (value timestamp = penuh, 0 = gak)
+function Farm.setStorageFull(isFull)
+    local url = Farm.fullRegistryUrl()
+    if not url then return end
+    local payload = HS:JSONEncode({ [player.Name] = isFull and os.time() or 0 })
+    pcall(function()
+        Farm.relayReq({ Url = url, Method = "PUT", Headers = { ["Content-Type"] = "application/json" }, Body = payload })
+    end)
+end
+-- farm: baca daftar akun yg penuh (cache 8s biar gak spam request)
+function Farm.getFullRegistry()
+    local now = os.clock()
+    if Farm._fullCache and (now - (Farm._fullCacheAt or 0)) < 8 then return Farm._fullCache end
+    local set = {}
+    local url = Farm.fullRegistryUrl()
+    if url then
+        local resp = Farm.relayReq({ Url = url, Method = "GET" })
+        local body = resp and (resp.Body or resp.body)
+        if body then
+            local ok, d = pcall(function() return HS:JSONDecode(body) end)
+            if ok and type(d) == "table" then
+                for k, v in pairs(d) do if type(v) == "number" and v > 0 then set[k] = true end end
+            end
+        end
+    end
+    Farm._fullCache = set; Farm._fullCacheAt = now
+    return set
+end
+-- pilih akun simpanan berikutnya yg GAK penuh (rotasi). nil kalau semua penuh/kosong.
+function Farm.pickStorage()
+    local list = Farm.storageList()
+    if #list == 0 then return nil, "nostore" end
+    local full = Farm.getFullRegistry()
+    Farm._gfRotIdx = Farm._gfRotIdx or 1
+    local idx = Farm._gfRotIdx
+    for _ = 1, #list do
+        if idx > #list then idx = 1 end
+        if not full[list[idx]] then Farm._gfRotIdx = idx; return list[idx] end
+        idx = idx + 1
+    end
+    return nil, "allfull"
+end
 function Farm.giftFruitOnce()
     local sb = pkt("Mailbox", "SendBatch")
     if not sb or not sb.Fire then Farm._gfStatus = "nosend"; print("[ZenxFarm] SendBatch gak ada"); return end
 
     local target = state.gfTarget
     local useRelay = state.gfSheckMode and state.gfRelayUrl and state.gfRelayUrl ~= ""
+    Farm._gfPriority = false
 
-    -- v18.6: mode relay (lintas-server) — target & sheckles dibaca dari relay (akun yg Buy Pet ON)
-    if useRelay then
+    -- v22.2: cek "kirim semua kesini" dulu — kalau ada, SEMUA buah ke akun itu (skip pet & simpanan)
+    local prio = Farm.getPriorityTarget()
+    if prio and prio ~= player.Name then
+        target = prio; Farm._gfToStorage = false; Farm._gfPriority = true
+    elseif useRelay then
         local resp = Farm.relayReq({ Url = state.gfRelayUrl, Method = "GET" })
         local body = resp and (resp.Body or resp.body)
         local data
@@ -2649,20 +2750,17 @@ function Farm.giftFruitOnce()
         end
         if data.t and (os.time() - data.t) > 300 then Farm._gfStatus = "stale"; return end
         if data.shk >= (state.gfSheckMax or 100000000) then
-            -- v21.8: sheckles pet cukup -> alihin ke akun SIMPANAN (rotasi 61->65, cuma buah >= 4M)
-            local list = Farm.storageList()
-            if #list > 0 then
-                Farm._gfRotIdx = Farm._gfRotIdx or 1
-                if Farm._gfRotIdx > #list then Farm._gfRotIdx = 1 end
-                target = list[Farm._gfRotIdx]
-                Farm._gfToStorage = true
+            -- v22.1: sheckles pet cukup -> alihin ke SIMPANAN (rotasi, skip yg penuh, cuma buah >= 4M)
+            local tgt, err = Farm.pickStorage()
+            if tgt then
+                target = tgt; Farm._gfToStorage = true
             else
-                Farm._gfStatus = "cukup"; return
+                Farm._gfStatus = (err == "allfull") and "allfull" or "cukup"; return
             end
         else
             target = data.nm   -- AUTO-DETECT penerima = akun yg nulis relay (akun Buy Pet)
             Farm._gfToStorage = false
-            Farm._gfRotIdx = 1   -- kepotong buy-pet -> cycle baru, rotasi reset ke 61
+            Farm._gfRotIdx = 1   -- kepotong buy-pet -> cycle baru, rotasi reset ke awal
         end
     else
         if not target or target == "" then Farm._gfStatus = "notarget"; return end
@@ -2681,15 +2779,10 @@ function Farm.giftFruitOnce()
             if not pObj then Farm._gfStatus = "offline"; return end
             if sh == nil then Farm._gfStatus = "noshk"; return end
             if sh >= (state.gfSheckMax or 100000000) then
-                -- v21.8: cukup -> alihin ke simpanan (rotasi)
-                local list = Farm.storageList()
-                if #list > 0 then
-                    Farm._gfRotIdx = Farm._gfRotIdx or 1
-                    if Farm._gfRotIdx > #list then Farm._gfRotIdx = 1 end
-                    target = list[Farm._gfRotIdx]; Farm._gfToStorage = true
-                else
-                    Farm._gfStatus = "cukup"; return
-                end
+                -- v22.1: cukup -> alihin ke simpanan (rotasi, skip penuh)
+                local tgt, err = Farm.pickStorage()
+                if tgt then target = tgt; Farm._gfToStorage = true
+                else Farm._gfStatus = (err == "allfull") and "allfull" or "cukup"; return end
             else
                 Farm._gfToStorage = false; Farm._gfRotIdx = 1
             end
@@ -2721,7 +2814,7 @@ function Farm.giftFruitOnce()
                 local fid = t:GetAttribute("Id")
                 local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
                 if fid and fjenis then
-                    local jenisOk = state.gfAllFruit or state.gfFruits[fjenis]
+                    local jenisOk = Farm._gfPriority or state.gfAllFruit or state.gfFruits[fjenis]
                     local w = t:GetAttribute("Weight") or 0
                     local valOk = true
                     if Farm._gfToStorage then
@@ -2729,7 +2822,8 @@ function Farm.giftFruitOnce()
                         local pr = Farm.fruitPrice(t)
                         valOk = pr and pr >= (state.gfStorageMinVal or 4000000)
                     end
-                    if jenisOk and valOk and passWeight(w, state.gfWeightF) then
+                    local kgOk = Farm._gfPriority or passWeight(w, state.gfWeightF)
+                    if jenisOk and valOk and kgOk then
                         batch[#batch+1] = { ItemKey = tostring(fid), Count = 1, Category = "HarvestedFruits" }
                         if #batch >= 8 then flush() end
                     end
@@ -2740,7 +2834,7 @@ function Farm.giftFruitOnce()
     flush()
     if total > 0 then
         Farm._gfStatus = "ok"
-        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah"..(Farm._gfToStorage and " [SIMPANAN]" or ""))
+        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah"..(Farm._gfPriority and " [PRIORITY]" or Farm._gfToStorage and " [SIMPANAN]" or ""))
         -- v21.8: abis kirim ke simpanan -> maju ke akun simpanan berikutnya (rotasi)
         if Farm._gfToStorage then
             local list = Farm.storageList()
@@ -2820,6 +2914,35 @@ staggerSpawn(function()
         if isCurrentGen() and state.gpAuto then pcall(Farm.giftPetOnce) end
     end
 end)
+-- v22.1: re-assert status "full" akun penyimpanan ke relay (boot + tiap 90s) biar persisten
+staggerSpawn(function()
+    task.wait(3)
+    while isCurrentGen() do
+        if state.storageFull then pcall(function() Farm.setStorageFull(true) end) end
+        task.wait(90)
+    end
+end)
+-- v22.2: priority "kirim semua kesini" — boot bersihin kalau akun ini holder lama (gak persisten),
+-- terus re-assert tiap 30s selama ON.
+staggerSpawn(function()
+    task.wait(2)
+    -- boot: kalau relay masih nyimpen nama akun ini sbg priority (sisa sebelum rejoin) -> bersihin
+    pcall(function()
+        local url = Farm.priorityUrl()
+        if url then
+            local resp = Farm.relayReq({ Url = url, Method = "GET" })
+            local body = resp and (resp.Body or resp.body)
+            if body then
+                local ok, d = pcall(function() return HS:JSONDecode(body) end)
+                if ok and type(d) == "table" and d.nm == player.Name then Farm.setPriority(false) end
+            end
+        end
+    end)
+    while isCurrentGen() do
+        task.wait(30)
+        if state.storagePriority then pcall(function() Farm.setPriority(true) end) end
+    end
+end)
 -- v18.5: WRITER relay — akun PET tulis sheckles-nya ke relay tiap 10s (biar akun farm bisa baca lintas-server)
 staggerSpawn(function()
     while isCurrentGen() do
@@ -2848,6 +2971,13 @@ staggerSpawn(function()
             saveState()
             print("[ZenxFarm] Buy Pet ON -> Auto Sell otomatis nyala")
         end
+        -- v22.0: akun penyimpanan -> JANGAN auto-sell (simpen buahnya)
+        if state.storageMode and state.autoSell then
+            state.autoSell = false
+            if Farm._applySellRef then pcall(Farm._applySellRef) end
+            saveState()
+            print("[ZenxFarm] Penyimpanan ON -> Auto Sell dimatiin (buah disimpen)")
+        end
         -- akun buy-pet: pakai sell BIASA (interval), bukan sell-pas-penuh
         if state.autoBuyPet and state.sellWhenFull then
             state.sellWhenFull = false
@@ -2871,12 +3001,16 @@ staggerSpawn(function()
         -- v20.9: gift-fruit otomatis ikut status Buy Pet.
         --   FARM (buyPet OFF) -> cek sheckles + auto gift ON, akun-ini-pet OFF
         --   PET  (buyPet ON)  -> cek sheckles + auto gift OFF, akun-ini-pet ON (kirim sheckles)
-        local wantGift = not state.autoBuyPet
+        -- v22.0: 3 mode akun:
+        --   PET (buyPet ON)        -> tulis sheckles, terima, gak gift
+        --   SIMPANAN (storageMode) -> cuma terima, GAK gift (walau buyPet OFF)
+        --   FARM (dua-duanya OFF)  -> gift buah (cek sheckles + auto gift ON)
+        local wantGift = (not state.autoBuyPet) and (not state.storageMode)
         local chg = false
         if state.gfSheckMode ~= wantGift then state.gfSheckMode = wantGift; if Farm._applyGfSheck then pcall(Farm._applyGfSheck) end; chg = true end
         if state.gfAuto ~= wantGift then state.gfAuto = wantGift; if Farm._applyGfAuto then pcall(Farm._applyGfAuto) end; chg = true end
         if state.gfRelayWrite ~= state.autoBuyPet then state.gfRelayWrite = state.autoBuyPet; if Farm._applyGfWrite then pcall(Farm._applyGfWrite) end; chg = true end
-        if chg then saveState(); print("[ZenxFarm] gift-fruit sync (buyPet="..tostring(state.autoBuyPet)..")") end
+        if chg then saveState(); print("[ZenxFarm] mode sync (buyPet="..tostring(state.autoBuyPet)..", storage="..tostring(state.storageMode)..")") end
     end
 end)
 -- v18.7: NOTIF webhook pas sheckles akun ini < batas (sekali tiap turun, anti-spam)
@@ -4851,12 +4985,13 @@ do
     task.spawn(function()
         while statusL.Parent do
             local s = Farm._gfStatus
-            if s == "ok" then statusL.Text = Farm._gfToStorage and "Kekirim ke SIMPANAN ✓" or "Kekirim ✓"; statusL.TextColor3 = C.green
+            if s == "ok" then statusL.Text = Farm._gfPriority and "Kekirim PRIORITY ✓" or (Farm._gfToStorage and "Kekirim ke SIMPANAN ✓" or "Kekirim ✓"); statusL.TextColor3 = C.green
             elseif s == "notarget" then statusL.Text = "Belum (isi penerima)"; statusL.TextColor3 = C.textMute
             elseif s == "notfound" then statusL.Text = "Belum (user gak ketemu)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             elseif s == "empty" then statusL.Text = "Belum (gak ada buah cocok)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             elseif s == "nosend" then statusL.Text = "Belum (SendBatch gak ada)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             elseif s == "cukup" then statusL.Text = "Skip (pet cukup, simpanan kosong)"; statusL.TextColor3 = C.textDim
+            elseif s == "allfull" then statusL.Text = "Skip (semua simpanan PENUH)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
             elseif s == "offline" then statusL.Text = "Skip (target gak di server ini)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
             elseif s == "noshk" then statusL.Text = "Skip (gak bisa baca sheckles)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
             elseif s == "stale" then statusL.Text = "Skip (data relay basi/akun pet off)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
@@ -4936,7 +5071,105 @@ do
     end)
 end
 
--- ====== MISC: Auto AFK (toggle simpel) ======
+-- ====== AUTO GIFT: Akun Penyimpanan (mode terima-aja) — v22.0 ======
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 6, Parent = giftList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Akun Penyimpanan", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "akun ini cuma TERIMA, gak ikut ngegift", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    local function apply()
+        if state.storageMode then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.storageMode = not state.storageMode; saveState(); apply()
+        print("[ZenxFarm] Akun Penyimpanan -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
+    end)
+    apply()
+    Farm._applyStorageRef = apply
+    -- sync visual tiap detik (kalau diubah dari tempat lain)
+    task.spawn(function() while card.Parent do apply(); task.wait(1) end end)
+end
+
+-- ====== AUTO GIFT: Akun Ini Full (penyimpanan -> farm skip) — v22.1 ======
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 7, Parent = giftList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Akun Ini Full", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "ON = farm berhenti kirim ke akun ini", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    local function apply()
+        if state.storageFull then
+            sw.BackgroundColor3 = Color3.fromRGB(230,150,60); knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = Color3.fromRGB(230,150,60)
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.storageFull = not state.storageFull; saveState(); apply()
+        task.spawn(function() pcall(function() Farm.setStorageFull(state.storageFull) end) end)
+        print("[ZenxFarm] Akun Ini Full -> "..(state.storageFull and "ON (farm skip)" or "OFF (farm kirim lagi)"))
+    end)
+    apply()
+end
+
+-- ====== AUTO GIFT: Kirim Semua Kesini Dulu (priority drain) — v22.2 ======
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 8, Parent = giftList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Kirim Semua Kesini Dulu", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "semua farm kirim kesini (auto off pas rejoin)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    local function apply()
+        if state.storagePriority then
+            sw.BackgroundColor3 = Color3.fromRGB(90,150,255); knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = Color3.fromRGB(90,150,255)
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.storagePriority = not state.storagePriority; apply()
+        task.spawn(function() pcall(function() Farm.setPriority(state.storagePriority) end) end)
+        print("[ZenxFarm] Kirim Semua Kesini -> "..(state.storagePriority and "ON" or "OFF"))
+    end)
+    apply()
+    Farm._applyPrioRef = apply
+    task.spawn(function() while card.Parent do apply(); task.wait(1) end end)
+end
 local applyAfk
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
