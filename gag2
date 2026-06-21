@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v21.3  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v21.8  (kerangka UI — fungsi nyusul via debug)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
 -- MISC: coming soon
@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v21.3"
+local VER       = "v21.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -378,6 +378,7 @@ local state = {
     antiKepental    = false,    -- v10.1: default OFF (sering bikin kepental di private server). nyalain manual kalau mau proteksi di public.
     autoGrabSeed    = false,    -- auto ambil seed jatuh (event)
     espPrice        = false,    -- v15.4: ESP harga buah di kebun (label melayang)
+    espMut          = false,    -- v21.4: ESP mutasi buah di kebun (cuma buah bermutasi)
     espInvent       = false,    -- v15.6: ESP harga buah di grid inventory (harga aja)
     collectFreshOnly = false,   -- v15.4: skip collect buah yg udah basi (decay tinggi)
     collectFreshMax = 0.5,      -- v15.4: batas decay (0-1). buah > ini = basi -> skip collect
@@ -401,6 +402,9 @@ local state = {
     gfOnce          = true,      -- v17.8: sekali kirim lalu OFF (default aman)
     gfSheckMode     = false,     -- v18.4: cuma gift kalau sheckles target < batas
     gfSheckMax      = 300000000, -- v19.1: batas sheckles target (300M)
+    gfStorageTarget = "",        -- v21.7: akun simpanan (dipisah koma; dialihin kalau pet udah cukup)
+    gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
+    gfStorDefV1     = false,      -- v21.8: flag apply default akun simpanan
     gfRelayUrl      = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxshk",  -- v18.8: relay default
     gfRelayWrite    = false,     -- v18.5: akun ini PET (tulis sheckles ke relay)
     gfAlert         = true,      -- v18.7: notif Discord pas sheckles < batas (sekali, anti-spam)
@@ -426,7 +430,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoPlant","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -459,6 +463,8 @@ local function saveState()
         out.gfRelayUrl = state.gfRelayUrl or ""   -- v18.5
         out.gfAlertHook = state.gfAlertHook or "" -- v18.7
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
+        out.gfStorageTarget = state.gfStorageTarget or ""  -- v21.7
+        out.gfStorageMinVal = state.gfStorageMinVal or 4000000  -- v21.8
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -499,6 +505,8 @@ local function loadState()
                 if type(d.gfRelayUrl) == "string" and d.gfRelayUrl ~= "" then state.gfRelayUrl = d.gfRelayUrl end
                 if type(d.gfAlertHook) == "string" and d.gfAlertHook ~= "" then state.gfAlertHook = d.gfAlertHook end
                 if type(d.gpTarget) == "string" and d.gpTarget ~= "" then state.gpTarget = d.gpTarget end
+                if type(d.gfStorageTarget) == "string" then state.gfStorageTarget = d.gfStorageTarget end
+                if type(d.gfStorageMinVal) == "number" then state.gfStorageMinVal = d.gfStorageMinVal end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -972,10 +980,32 @@ Farm._priceCache = nil
 --   harga = SellValueData[jenis] × SizeMultiplier^2.5 × mutMult
 -- (akurat 1.0003 — Dragon's Breath sm=1.2379 -> 3400×1.2379^2.5 = 5794, asli 5796)
 Farm._sellBase = nil  -- SellValueData (base per jenis)
--- multiplier mutasi (PERLU KALIBRASI lanjutan; sementara estimasi umum GAG, NORMAL=1)
+-- multiplier mutasi (fallback estimasi; live dibaca dari MutationData.ReturnPriceMultiplier)
 Farm._mutMult = {
     Gold = 20, Rainbow = 50, Electric = 1,  -- Electric blm dikalibrasi pasti -> 1 dulu
 }
+-- v21.6: baca multiplier mutasi LIVE dari modul game (otomatis tau semua mutasi termasuk Aurora)
+Farm._mutData = nil
+function Farm.getMutMultLive(mut)
+    if Farm._mutData == nil then
+        Farm._mutData = false
+        pcall(function()
+            local md = RS:FindFirstChild("SharedModules") and RS.SharedModules:FindFirstChild("MutationData")
+            if md then
+                local ok, data = pcall(require, md)
+                if ok and type(data) == "table" then Farm._mutData = data end
+            end
+        end)
+    end
+    local d = Farm._mutData
+    if not d or not mut or type(d.ReturnPriceMultiplier) ~= "function" then return nil end
+    -- coba beberapa cara panggil (fungsi biasa / method / argumen list)
+    for _, args in ipairs({ {mut}, {d, mut}, {{mut}}, {d, {mut}} }) do
+        local ok, v = pcall(function() return d.ReturnPriceMultiplier(table.unpack(args)) end)
+        if ok and type(v) == "number" and v > 0 then return v end
+    end
+    return nil
+end
 function Farm.getSellBase()
     if Farm._sellBase == nil then
         Farm._sellBase = {}
@@ -1028,7 +1058,7 @@ function Farm.fruitPrice(fruit)
     local b = jenis and base[jenis]
     if not b then return nil end
     local price = b * (sm ^ 2.5)
-    if mut then price = price * (Farm._mutMult[mut] or 1) end
+    if mut then price = price * (Farm.getMutMultLive(mut) or Farm._mutMult[mut] or 1) end
     if type(decay) == "number" and decay > 0 then
         price = price * (1 - math.clamp(decay, 0, 1) * 0.8)
     end
@@ -1129,6 +1159,83 @@ function Farm.applyEspPrice()
                 if not alive[f] then if g then pcall(function() g:Destroy() end) end; Farm._espMap[f] = nil end
             end
             task.wait(20)  -- v15.9: refresh ESP garden tiap 20s
+        end
+        clearAll()
+    end)
+end
+
+-- v21.4: ESP MUTASI — nyorot CUMA buah bermutasi di garden (label nama mutasi, warna ungu).
+Farm._espMutGen = 0
+Farm._espMutMap = {}
+local function makeMutLabel()
+    local bg = Instance.new("BillboardGui")
+    bg.Name = "ZenxEspMut"
+    bg.Size = UDim2.new(0, 150, 0, 18)
+    bg.StudsOffset = Vector3.new(0, 2.4, 0)   -- DI ATAS buah (biar gak nabrak ESP harga yg di samping)
+    bg.AlwaysOnTop = true
+    bg.MaxDistance = 250
+    local lb = Instance.new("TextLabel")
+    lb.Name = "M"
+    lb.Size = UDim2.new(1,0,1,0)
+    lb.BackgroundTransparency = 1
+    lb.Font = Enum.Font.GothamBold
+    lb.TextSize = 14
+    lb.RichText = true
+    lb.TextStrokeTransparency = 0.35
+    lb.TextStrokeColor3 = Color3.fromRGB(0,0,0)
+    lb.Text = ""
+    lb.Parent = bg
+    return bg
+end
+function Farm.applyEspMut()
+    Farm._espMutGen = Farm._espMutGen + 1
+    local myGen = Farm._espMutGen
+    local function clearAll()
+        for f, g in pairs(Farm._espMutMap) do if g then pcall(function() g:Destroy() end) end end
+        Farm._espMutMap = {}
+    end
+    if not state.espMut then clearAll(); return end
+    task.spawn(function()
+        while state.espMut and Farm._espMutGen == myGen do
+            local gardens = workspace:FindFirstChild("Gardens")
+            local alive = {}
+            if gardens then
+                for _, plot in ipairs(gardens:GetChildren()) do
+                    local plants = plot:FindFirstChild("Plants")
+                    if plants then
+                        for _, plant in ipairs(plants:GetChildren()) do
+                            local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                            if ownerId == player.UserId then
+                                local fruits = plant:FindFirstChild("Fruits")
+                                if fruits then
+                                    for _, fruit in ipairs(fruits:GetChildren()) do
+                                        local mut = fruit:GetAttribute("Mutation")
+                                        -- CUMA buah yg bermutasi (bukan None/kosong)
+                                        if mut and mut ~= "" and mut ~= "None" then
+                                            local adornee = fruit:IsA("BasePart") and fruit
+                                                or (fruit:IsA("Model") and (fruit.PrimaryPart or fruit:FindFirstChildWhichIsA("BasePart")))
+                                            if adornee then
+                                                alive[fruit] = true
+                                                local g = Farm._espMutMap[fruit]
+                                                if not g or not g.Parent then
+                                                    g = makeMutLabel(); Farm._espMutMap[fruit] = g
+                                                end
+                                                g.Adornee = adornee
+                                                g.Parent = espHost()
+                                                g.M.Text = string.format('<font color="#C77DFF">✦ %s</font>', mut)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            for f, g in pairs(Farm._espMutMap) do
+                if not alive[f] then if g then pcall(function() g:Destroy() end) end; Farm._espMutMap[f] = nil end
+            end
+            task.wait(20)
         end
         clearAll()
     end)
@@ -1768,6 +1875,17 @@ if not state.gfDefaultsV2 then
     state.gfSheckMax = 300000000
     saveState()
     print("[ZenxFarm] default batas sheckles gift: 300M")
+end
+
+-- v21.8: default akun simpanan wildnx_61..65 + min 4M (sekali apply)
+if not state.gfStorDefV1 then
+    state.gfStorDefV1 = true
+    if not state.gfStorageTarget or state.gfStorageTarget == "" then
+        state.gfStorageTarget = "wildnx_61,wildnx_62,wildnx_63,wildnx_64,wildnx_65"
+    end
+    state.gfStorageMinVal = 4000000
+    saveState()
+    print("[ZenxFarm] default akun simpanan: wildnx_61..65 (min 4M)")
 end
 
 -- v19.4: default gift pet -> Bear/Raccoon/GoldenDragonfly/Unicorn + auto ON
@@ -2504,6 +2622,15 @@ function Farm.relayReq(opts)
     if ok then return resp end
     return nil
 end
+-- v21.8: daftar akun simpanan (dipisah koma) -> array
+function Farm.storageList()
+    local t = {}
+    for s in tostring(state.gfStorageTarget or ""):gmatch("[^,]+") do
+        s = s:gsub("^%s+", ""):gsub("%s+$", "")
+        if s ~= "" then t[#t+1] = s end
+    end
+    return t
+end
 function Farm.giftFruitOnce()
     local sb = pkt("Mailbox", "SendBatch")
     if not sb or not sb.Fire then Farm._gfStatus = "nosend"; print("[ZenxFarm] SendBatch gak ada"); return end
@@ -2521,8 +2648,22 @@ function Farm.giftFruitOnce()
             Farm._gfStatus = "relayerr"; return
         end
         if data.t and (os.time() - data.t) > 300 then Farm._gfStatus = "stale"; return end
-        if data.shk >= (state.gfSheckMax or 100000000) then Farm._gfStatus = "cukup"; return end
-        target = data.nm   -- AUTO-DETECT penerima = akun yg nulis relay (akun Buy Pet)
+        if data.shk >= (state.gfSheckMax or 100000000) then
+            -- v21.8: sheckles pet cukup -> alihin ke akun SIMPANAN (rotasi 61->65, cuma buah >= 4M)
+            local list = Farm.storageList()
+            if #list > 0 then
+                Farm._gfRotIdx = Farm._gfRotIdx or 1
+                if Farm._gfRotIdx > #list then Farm._gfRotIdx = 1 end
+                target = list[Farm._gfRotIdx]
+                Farm._gfToStorage = true
+            else
+                Farm._gfStatus = "cukup"; return
+            end
+        else
+            target = data.nm   -- AUTO-DETECT penerima = akun yg nulis relay (akun Buy Pet)
+            Farm._gfToStorage = false
+            Farm._gfRotIdx = 1   -- kepotong buy-pet -> cycle baru, rotasi reset ke 61
+        end
     else
         if not target or target == "" then Farm._gfStatus = "notarget"; return end
         -- mode cek sheckles same-server (tanpa relay)
@@ -2539,7 +2680,19 @@ function Farm.giftFruitOnce()
             end
             if not pObj then Farm._gfStatus = "offline"; return end
             if sh == nil then Farm._gfStatus = "noshk"; return end
-            if sh >= (state.gfSheckMax or 100000000) then Farm._gfStatus = "cukup"; return end
+            if sh >= (state.gfSheckMax or 100000000) then
+                -- v21.8: cukup -> alihin ke simpanan (rotasi)
+                local list = Farm.storageList()
+                if #list > 0 then
+                    Farm._gfRotIdx = Farm._gfRotIdx or 1
+                    if Farm._gfRotIdx > #list then Farm._gfRotIdx = 1 end
+                    target = list[Farm._gfRotIdx]; Farm._gfToStorage = true
+                else
+                    Farm._gfStatus = "cukup"; return
+                end
+            else
+                Farm._gfToStorage = false; Farm._gfRotIdx = 1
+            end
         end
     end
 
@@ -2570,7 +2723,13 @@ function Farm.giftFruitOnce()
                 if fid and fjenis then
                     local jenisOk = state.gfAllFruit or state.gfFruits[fjenis]
                     local w = t:GetAttribute("Weight") or 0
-                    if jenisOk and passWeight(w, state.gfWeightF) then
+                    local valOk = true
+                    if Farm._gfToStorage then
+                        -- ke simpanan: cuma buah bernilai >= batas (4M default)
+                        local pr = Farm.fruitPrice(t)
+                        valOk = pr and pr >= (state.gfStorageMinVal or 4000000)
+                    end
+                    if jenisOk and valOk and passWeight(w, state.gfWeightF) then
                         batch[#batch+1] = { ItemKey = tostring(fid), Count = 1, Category = "HarvestedFruits" }
                         if #batch >= 8 then flush() end
                     end
@@ -2581,7 +2740,12 @@ function Farm.giftFruitOnce()
     flush()
     if total > 0 then
         Farm._gfStatus = "ok"
-        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah")
+        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah"..(Farm._gfToStorage and " [SIMPANAN]" or ""))
+        -- v21.8: abis kirim ke simpanan -> maju ke akun simpanan berikutnya (rotasi)
+        if Farm._gfToStorage then
+            local list = Farm.storageList()
+            if #list > 0 then Farm._gfRotIdx = (Farm._gfRotIdx % #list) + 1 end
+        end
         if state.gfOnce and not state.gfSheckMode then
             state.gfAuto = false
             if Farm._applyGFRef then pcall(Farm._applyGFRef) end
@@ -3674,7 +3838,7 @@ local buyBtn, buyLbl, buyStrk = mkTabBtn(96, "buy", "AUTO BUY")
 local miscBtn, miscLbl, miscStrk = mkTabBtn(144, "misc", "MISC 1")
 local misc2Btn, misc2Lbl, misc2Strk = mkTabBtn(192, "misc2", "MISC 2")
 local kalkBtn, kalkLbl, kalkStrk = mkTabBtn(240, "kalk", "KALKULASI")
-local hopBtn2, hopLbl2, hopStrk2 = mkTabBtn(288, "hop", "AUTO HOP")
+local hopBtn2, hopLbl2, hopStrk2 = mkTabBtn(288, "hop", "TOTAL FRUIT")
 tabBtns.farm = { btn = farmBtn, lbl = farmLbl, strk = farmStrk }
 tabBtns.gift = { btn = giftBtn, lbl = giftLbl, strk = giftStrk }
 tabBtns.buy = { btn = buyBtn, lbl = buyLbl, strk = buyStrk }
@@ -4654,6 +4818,17 @@ do
     end)
     Farm._applyGfWrite = mkBodyToggle(body, 252, "Akun ini PET (kirim sheckles)", "gfRelayWrite", "Relay Writer")
 
+    -- v21.8: akun simpanan (rotasi, dipisah koma) — buah >= 4M dialihin ke sini kalau pet udah cukup
+    lbl(body, "Akun Simpanan (rotasi, pisah koma | buah >=4M)", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,446)
+    local stBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 464),
+        BackgroundColor3 = C.input, Text = state.gfStorageTarget or "", PlaceholderText = "wildnx_61,wildnx_62,wildnx_63...",
+        TextColor3 = C.text, Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(stBox, 6); stroke(stBox, C.border, 1)
+    stBox.FocusLost:Connect(function()
+        state.gfStorageTarget = stBox.Text; Farm._gfId = nil; Farm._gfIdName = nil; Farm._gfRotIdx = 1; saveState()
+        print("[ZenxFarm] akun simpanan -> "..(state.gfStorageTarget ~= "" and state.gfStorageTarget or "kosong"))
+    end)
+
     -- tombol kirim sekarang (sekali jalan)
     local sendBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 292),
         BackgroundColor3 = C.green, Text = "KIRIM SEKARANG", TextColor3 = Color3.new(0,0,0), Font = FONT_B,
@@ -4676,12 +4851,12 @@ do
     task.spawn(function()
         while statusL.Parent do
             local s = Farm._gfStatus
-            if s == "ok" then statusL.Text = "Kekirim ✓"; statusL.TextColor3 = C.green
+            if s == "ok" then statusL.Text = Farm._gfToStorage and "Kekirim ke SIMPANAN ✓" or "Kekirim ✓"; statusL.TextColor3 = C.green
             elseif s == "notarget" then statusL.Text = "Belum (isi penerima)"; statusL.TextColor3 = C.textMute
             elseif s == "notfound" then statusL.Text = "Belum (user gak ketemu)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             elseif s == "empty" then statusL.Text = "Belum (gak ada buah cocok)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
             elseif s == "nosend" then statusL.Text = "Belum (SendBatch gak ada)"; statusL.TextColor3 = Color3.fromRGB(230,90,90)
-            elseif s == "cukup" then statusL.Text = "Skip (sheckles target msh cukup)"; statusL.TextColor3 = C.textDim
+            elseif s == "cukup" then statusL.Text = "Skip (pet cukup, simpanan kosong)"; statusL.TextColor3 = C.textDim
             elseif s == "offline" then statusL.Text = "Skip (target gak di server ini)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
             elseif s == "noshk" then statusL.Text = "Skip (gak bisa baca sheckles)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
             elseif s == "stale" then statusL.Text = "Skip (data relay basi/akun pet off)"; statusL.TextColor3 = Color3.fromRGB(230,180,90)
@@ -4824,6 +4999,39 @@ do
         print("[ZenxFarm] ESP Harga -> "..(state.espPrice and "ON" or "OFF"))
     end)
     applyEspPriceUI()
+end
+
+-- ====== MISC: ESP Mutasi Garden (toggle) — v21.4 ======
+local applyEspMutUI
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "ESP Mutasi Garden", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "cuma nyorot buah bermutasi (nama mutasi)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyEspMutUI = function()
+        if state.espMut then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.espMut = not state.espMut; saveState(); applyEspMutUI()
+        pcall(Farm.applyEspMut)
+        print("[ZenxFarm] ESP Mutasi -> "..(state.espMut and "ON" or "OFF"))
+    end)
+    applyEspMutUI()
 end
 
 -- ====== MISC: ESP Harga Inventory (toggle) — v15.6 ======
@@ -5364,17 +5572,10 @@ do
     computeKalk()
 end
 
--- ====== panel AUTO HOP (hop server tiap X menit) — v17.0 ======
+-- ====== kartu AUTO HOP — v21.5 dipindah ke MISC 2 ======
 do
-    local hopPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
-    panels.hop = hopPanel
-    local hopList = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
-        ScrollBarThickness = 3, BorderSizePixel = 0, CanvasSize = UDim2.new(0,0,0,0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = hopPanel })
-    mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = hopList })
-
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 260), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 0, Parent = hopList })
+        BorderSizePixel = 0, LayoutOrder = 20, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Auto Hop Server", 15, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 12); nameL.Size = UDim2.new(1, -28, 0, 20)
@@ -5468,7 +5669,106 @@ do
     end)
 end
 
--- ----- boot -----
+-- ====== TOTAL FRUIT: kalkulasi buah di garden (mutasi + range kg) — v21.5 ======
+function Farm.calcGarden()
+    local res = { total = 0, noMut = 0, mutTotal = 0, muts = {}, ranges = {0,0,0,0,0,0} }
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return res end
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if ownerId == player.UserId then
+                    local fruits = plant:FindFirstChild("Fruits")
+                    if fruits then
+                        for _, fruit in ipairs(fruits:GetChildren()) do
+                            if fruit:IsA("BasePart") or fruit:IsA("Model") then
+                                res.total = res.total + 1
+                                local mut = fruit:GetAttribute("Mutation")
+                                if mut and mut ~= "" and mut ~= "None" then
+                                    res.mutTotal = res.mutTotal + 1
+                                    res.muts[mut] = (res.muts[mut] or 0) + 1
+                                else
+                                    res.noMut = res.noMut + 1
+                                end
+                                local kg = fruit:GetAttribute("Weight")
+                                    or (Farm.gardenKg and Farm.gardenKg(fruit, plant:GetAttribute("SeedName"))) or 0
+                                local idx
+                                if kg < 20 then idx = 1 elseif kg < 30 then idx = 2 elseif kg < 50 then idx = 3
+                                elseif kg < 70 then idx = 4 elseif kg < 100 then idx = 5 else idx = 6 end
+                                res.ranges[idx] = res.ranges[idx] + 1
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return res
+end
+
+do
+    local panel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
+    panels.hop = panel
+    local list = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1,
+        ScrollBarThickness = 3, BorderSizePixel = 0, CanvasSize = UDim2.new(0,0,0,0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = panel })
+    mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 60), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 0, Parent = list })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "ESP Buah Garden", 15, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 12); nameL.Size = UDim2.new(1, -120, 0, 20)
+    local refBtn = mk("TextButton", { Size = UDim2.new(0, 92, 0, 28), Position = UDim2.new(1, -106, 0, 10),
+        BackgroundColor3 = C.green, Text = "HITUNG ULANG", TextColor3 = Color3.new(0,0,0), Font = FONT_B,
+        TextSize = 11, BorderSizePixel = 0, Parent = card })
+    corner(refBtn, 6)
+    local out = mk("TextLabel", { Position = UDim2.new(0, 14, 0, 48), Size = UDim2.new(1, -28, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Text = "Tekan HITUNG ULANG...",
+        TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 13, RichText = true,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Parent = card })
+    local pad = mk("Frame", { Size = UDim2.new(1,0,0,14), BackgroundTransparency = 1, LayoutOrder = 1, Parent = list })
+
+    local MUTORD = MUTATIONS  -- urutan tampil mutasi
+    local function refresh()
+        local r = Farm.calcGarden()
+        local L = {}
+        L[#L+1] = string.format('<font color="#C77DFF"><b>Buah Bermutasi: %d</b></font>', r.mutTotal)
+        -- urutkan mutasi: yg ada aja, dari jumlah terbanyak
+        local arr = {}
+        for nm, c in pairs(r.muts) do arr[#arr+1] = { nm = nm, c = c } end
+        table.sort(arr, function(a,b) return a.c > b.c end)
+        for _, e in ipairs(arr) do
+            L[#L+1] = string.format('   %s = <b>%d</b>', e.nm, e.c)
+        end
+        if #arr == 0 then L[#L+1] = "   (gak ada buah mutasi)" end
+        L[#L+1] = ""
+        L[#L+1] = string.format('<font color="#9AA0AA">Tanpa mutasi = <b>%d</b></font>', r.noMut)
+        L[#L+1] = ""
+        L[#L+1] = '<font color="#78C8FF"><b>Range Berat:</b></font>'
+        local rngLbl = { "0-20 kg", "20-30 kg", "30-50 kg", "50-70 kg", "70-100 kg", "100kg+" }
+        for i = 1, 6 do
+            L[#L+1] = string.format('   %s = <b>%d</b>', rngLbl[i], r.ranges[i])
+        end
+        L[#L+1] = ""
+        L[#L+1] = string.format('<font color="#78E68C"><b>Total buah di garden = %d</b></font>', r.total)
+        out.Text = table.concat(L, "\n")
+    end
+    refBtn.MouseButton1Click:Connect(function()
+        refBtn.Text = "..."
+        task.spawn(function() pcall(refresh); task.wait(0.2); refBtn.Text = "HITUNG ULANG" end)
+    end)
+    -- auto refresh tiap 5s pas panel kebuka
+    task.spawn(function()
+        while panel.Parent do
+            if panel.Visible then pcall(refresh) end
+            task.wait(5)
+        end
+    end)
+    Farm._calcGardenRefresh = refresh
+end
 -- v18.6: auto accept gift selalu nyala; akun buy pet -> auto sell nyala
 state.autoAcceptGift = true
 if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; state.autoHop = true; if not state.hopMinutes or state.hopMinutes <= 0 then state.hopMinutes = 45 end if state.hopMinutes == 30 then state.hopMinutes = 45 end end
@@ -5486,6 +5786,7 @@ task.spawn(function()
     pcall(function() applyHideFruits() end)
     task.wait(0.5)
     pcall(function() if state.espPrice then Farm.applyEspPrice() end end)  -- v15.4
+    pcall(function() if state.espMut then Farm.applyEspMut() end end)  -- v21.4
     pcall(function() if state.espInvent then Farm.applyEspInvent() end end)  -- v15.6
 end)
 selectTab("farm")
