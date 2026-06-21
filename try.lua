@@ -1,8 +1,8 @@
 -- ============================================================
 -- ZENX AGE STATS v2.0
 -- Tab [STATS] / [GIFT]
--- STATS: per-type pet count (age 100 vs <100)
--- GIFT : auto-gift pet age 100 ke target player (recent targets saved)
+-- STATS: per-type pet count (age 500 vs <500)
+-- GIFT : auto-gift pet age 500 ke target player (recent targets saved)
 -- ============================================================
 
 local Players    = game:GetService("Players")
@@ -11,10 +11,11 @@ local RS         = game:GetService("ReplicatedStorage")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.19"
+local VER = "v2.20"
 local TARGETS_FILE = "ZenxAgeStats_targets.json"
 local SETTINGS_FILE = "ZenxAgeStats_settings.json"
 local MAX_RECENT = 8
+local AGE_MAX = 500   -- threshold umur pet (dulu 100 -> sekarang 500)
 
 -- ===== CLEANUP =====
 local function cleanup()
@@ -136,7 +137,7 @@ local function collectStats(container)
                 local pType = stripMutation(tostring(tool:GetAttribute("f") or "?"))
                 local level = getPetLevel(container, uuid)
                 if not byType[pType] then byType[pType] = {age100=0, less100=0} end
-                if level >= 100 then
+                if level >= AGE_MAX then
                     byType[pType].age100 = byType[pType].age100 + 1
                     age100 = age100 + 1
                 else
@@ -415,8 +416,8 @@ local function mkStat(parent, x, w, labelText, valColor)
     return v
 end
 local totalVal  = mkStat(header, 0,    0.33, "TOTAL",     C.Text)
-local age100Val = mkStat(header, 0.33, 0.33, "AGE 100",   C.Text)
-local lessVal   = mkStat(header, 0.66, 0.33, "AGE <100",  C.Text)
+local age100Val = mkStat(header, 0.33, 0.33, "AGE 500",   C.Text)
+local lessVal   = mkStat(header, 0.66, 0.33, "AGE <500",  C.Text)
 
 -- ============================================================
 -- TAB ROW [STATS] [GIFT]
@@ -495,8 +496,8 @@ local function mkColLbl(parent, x, w, text, color, align)
     return l
 end
 mkColLbl(colHeader, 0.03, 0.47, "PET (tap=multi)", C.Accent, Enum.TextXAlignment.Left)
-mkColLbl(colHeader, 0.50, 0.16, "AGE100",  C.Text)
-mkColLbl(colHeader, 0.66, 0.14, "<100",    C.Text)
+mkColLbl(colHeader, 0.50, 0.16, "AGE500",  C.Text)
+mkColLbl(colHeader, 0.66, 0.14, "<500",    C.Text)
 mkColLbl(colHeader, 0.80, 0.17, "TOTAL",   C.Text)
 
 local scroll = Instance.new("ScrollingFrame")
@@ -613,8 +614,8 @@ local ageBox = Instance.new("TextBox")
 ageBox.Size = UDim2.new(0.25, -2, 0, 30)
 ageBox.Position = UDim2.new(0.75, 2, 0, 58)
 ageBox.BackgroundColor3 = C.Card
-ageBox.Text = ""
-ageBox.PlaceholderText = "Age"
+ageBox.Text = "500"
+ageBox.PlaceholderText = "Age (500)"
 ageBox.PlaceholderColor3 = C.Dim
 ageBox.TextColor3 = C.Text
 ageBox.Font = Enum.Font.Gotham
@@ -711,7 +712,7 @@ local function updateHeader()
     totalVal.Text  = tostring(total)
     age100Val.Text = tostring(age100)
     lessVal.Text   = tostring(lessAge)
-    eligibleLbl.Text = "Pet eligible (age 100): "..age100
+    eligibleLbl.Text = "Pet eligible (age 500): "..age100
     local nF = petTypeCount()
     local scopeTag = (nF == 0) and "scope: backpack" or ("filter(gift): "..nF.." jenis")
     footer.Text = scopeTag.." • memData "..(cachedContainer and (cachedCount.." OK") or "FAIL FAIL").." • auto 2s"
