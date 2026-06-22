@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v23.3"
+local VER       = "v23.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -3016,9 +3016,10 @@ function Farm.pickFruitsForValue(targetVal, useMarket, allowPartial)
 end
 
 -- v22.9: pilih SATU buah paling pas buat sisa target (buat kirim satu-satu).
--- prioritas: nilai terbesar yang <= sisa; kalau semua > sisa, ambil terkecil (nutup, overshoot tipis).
-function Farm.pickOneForValue(remaining, useMarket)
-    local best, under
+-- v23.4: mode urutan: "besar" = buah nilai TERBESAR dulu, "kecil" = TERKECIL dulu,
+--        nil/default = best-fit (terbesar yg <= sisa, kalau ga ada ambil terkecil).
+function Farm.pickOneForValue(remaining, useMarket, mode, range)
+    local best, under, biggest   -- best=terkecil nilai, under=terbesar yg <=sisa, biggest=terbesar nilai
     for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
@@ -3029,9 +3030,11 @@ function Farm.pickOneForValue(remaining, useMarket)
                     local w = t:GetAttribute("Weight") or 0
                     if jenisOk and passWeight(w, state.gfWeightF) then
                         local pr = Farm.fruitPrice(t, not useMarket) or 0
-                        if pr > 0 then
+                        local inRange = (not range) or (pr >= range[1] and pr <= range[2])  -- v23.5
+                        if pr > 0 and inRange then
                             local e = { fid = tostring(fid), val = pr, jenis = fjenis, kg = w }
                             if not best or pr < best.val then best = e end
+                            if not biggest or pr > biggest.val then biggest = e end
                             if pr <= remaining and (not under or pr > under.val) then under = e end
                         end
                     end
@@ -3039,6 +3042,8 @@ function Farm.pickOneForValue(remaining, useMarket)
             end
         end
     end
+    if mode == "besar" then return biggest or best end
+    if mode == "kecil" then return best end
     return under or best
 end
 
@@ -4144,7 +4149,7 @@ local function showKalkuGift()
         if suf=="k" then num=num*1e3 elseif suf=="m" then num=num*1e6 elseif suf=="b" then num=num*1e9 end
         return math.floor(num)
     end
-    local pop = mk("Frame", { Name="ZenxKalkuGift", Size=UDim2.new(0,360,0,430),
+    local pop = mk("Frame", { Name="ZenxKalkuGift", Size=UDim2.new(0,360,0,468),
         Position=UDim2.new(0.5,-180,0.5,-215), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
     corner(pop,10); stroke(pop,C.border,1)
     local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
@@ -4207,15 +4212,48 @@ local function showKalkuGift()
         PlaceholderText="500M", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop })
     corner(tgtBox,6); stroke(tgtBox,C.border,1)
 
-    -- ===== toggle harga + reset =====
-    local mkBtn = mk("TextButton", { Size=UDim2.new(0.66,-16,0,28), Position=UDim2.new(0,14,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
+    -- ===== toggle harga + urut + reset =====
+    local pickMode = "besar"   -- v23.4: "besar" = kirim buah nilai terbesar dulu, "kecil" = terkecil dulu
+    local mkBtn = mk("TextButton", { Size=UDim2.new(0,140,0,28), Position=UDim2.new(0,14,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
     local function updMk() mkBtn.Text = "Harga: "..(marketOn and "PASAR" or "NORMAL ×1") end
     updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn = not marketOn; updMk() end)
-    local resetBtn = mk("TextButton", { Size=UDim2.new(0.34,2,0,28), Position=UDim2.new(0.66,2,0,122), BackgroundColor3=C.input, Text="Reset Hitungan", TextColor3=C.textDim, Font=FONT, TextSize=11, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
+    local urutBtn = mk("TextButton", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,160,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(urutBtn,6); stroke(urutBtn,C.border,1)
+    local function updUrut() urutBtn.Text = (pickMode=="besar") and "Besar dulu" or "Kecil dulu" end
+    updUrut(); urutBtn.MouseButton1Click:Connect(function() pickMode = (pickMode=="besar") and "kecil" or "besar"; updUrut() end)
+    local resetBtn = mk("TextButton", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,256,0,122), BackgroundColor3=C.input, Text="Reset", TextColor3=C.textDim, Font=FONT, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
     resetBtn.MouseButton1Click:Connect(function() sessionStart = os.time() end)
 
+    -- ===== filter RANGE nilai buah (v23.5): cuma kirim buah yg nilainya di rentang kepilih =====
+    local valRange = nil   -- nil = semua. {lo,hi} = batas nilai buah (pake harga sesuai toggle PASAR/NORMAL)
+    local rangeDefs = {
+        { t="Semua", r=nil },
+        { t="1-3M",  r={1e6, 3e6} },
+        { t="3-6M",  r={3e6, 6e6} },
+        { t="6-10M", r={6e6, 10e6} },
+        { t="10M+",  r={10e6, math.huge} },
+    }
+    local rangeBtns = {}
+    local function setRange(idx)
+        valRange = rangeDefs[idx].r
+        for i, b in ipairs(rangeBtns) do
+            if i == idx then b.BackgroundColor3 = C.green; b.TextColor3 = Color3.new(0,0,0)
+            else b.BackgroundColor3 = C.input; b.TextColor3 = C.textDim end
+        end
+    end
+    do
+        local xs = {14, 80, 146, 212, 278}
+        for i, d in ipairs(rangeDefs) do
+            local b = mk("TextButton", { Size=UDim2.new(0,62,0,26), Position=UDim2.new(0,xs[i],0,158),
+                BackgroundColor3=C.input, Text=d.t, TextColor3=C.textDim, Font=FONT, TextSize=11,
+                BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1)
+            b.MouseButton1Click:Connect(function() setRange(i) end)
+            rangeBtns[i] = b
+        end
+        setRange(1)   -- default Semua
+    end
+
     -- ===== tracker live: kurang berapa lagi =====
-    local trackL = mk("TextLabel", { Size=UDim2.new(1,-28,0,40), Position=UDim2.new(0,14,0,156), BackgroundColor3=C.input,
+    local trackL = mk("TextLabel", { Size=UDim2.new(1,-28,0,40), Position=UDim2.new(0,14,0,194), BackgroundColor3=C.input,
         Text="", TextColor3=C.text, Font=FONT_B, TextSize=13, BorderSizePixel=0, ZIndex=72,
         TextXAlignment=Enum.TextXAlignment.Center, Parent=pop }); corner(trackL,6)
 
@@ -4228,19 +4266,19 @@ local function showKalkuGift()
     end
 
     -- ===== tombol HITUNG / KIRIM 1 / AUTO =====
-    local calcBtn = mk("TextButton", { Size=UDim2.new(0.34,-6,0,30), Position=UDim2.new(0,14,0,204), BackgroundColor3=Color3.fromRGB(240,240,240), Text="HITUNG", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(calcBtn,6)
-    local sendBtn = mk("TextButton", { Size=UDim2.new(0.33,-6,0,30), Position=UDim2.new(0.34,2,0,204), BackgroundColor3=Color3.fromRGB(240,240,240), Text="KIRIM 1", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
-    local autoBtn = mk("TextButton", { Size=UDim2.new(0.33,-8,0,30), Position=UDim2.new(0.67,6,0,204), BackgroundColor3=C.input, Text="AUTO: OFF", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(autoBtn,6); stroke(autoBtn,C.border,1)
+    local calcBtn = mk("TextButton", { Size=UDim2.new(0.34,-6,0,30), Position=UDim2.new(0,14,0,242), BackgroundColor3=Color3.fromRGB(240,240,240), Text="HITUNG", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(calcBtn,6)
+    local sendBtn = mk("TextButton", { Size=UDim2.new(0.33,-6,0,30), Position=UDim2.new(0.34,2,0,242), BackgroundColor3=Color3.fromRGB(240,240,240), Text="KIRIM 1", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
+    local autoBtn = mk("TextButton", { Size=UDim2.new(0.33,-8,0,30), Position=UDim2.new(0.67,6,0,242), BackgroundColor3=C.input, Text="AUTO: OFF", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(autoBtn,6); stroke(autoBtn,C.border,1)
 
     -- ===== baris jeda auto =====
     local jLbl = lbl(pop, "Timeout nunggu 'Trade completed' (detik):", 11, C.textDim, Enum.TextXAlignment.Left)
-    jLbl.Position=UDim2.new(0,14,0,240); jLbl.Size=UDim2.new(1,-72,0,18); jLbl.ZIndex=72
-    local jBox = mk("TextBox", { Size=UDim2.new(0,48,0,22), Position=UDim2.new(1,-62,0,238), BackgroundColor3=C.input, Text="20", PlaceholderText="20", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(jBox,6); stroke(jBox,C.border,1)
+    jLbl.Position=UDim2.new(0,14,0,278); jLbl.Size=UDim2.new(1,-72,0,18); jLbl.ZIndex=72
+    local jBox = mk("TextBox", { Size=UDim2.new(0,48,0,22), Position=UDim2.new(1,-62,0,276), BackgroundColor3=C.input, Text="20", PlaceholderText="20", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(jBox,6); stroke(jBox,C.border,1)
 
     -- ===== output =====
-    local scout = mk("ScrollingFrame", { Size=UDim2.new(1,-28,1,-284), Position=UDim2.new(0,14,0,270), BackgroundColor3=C.input, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=71, Parent=pop }); corner(scout,8)
+    local scout = mk("ScrollingFrame", { Size=UDim2.new(1,-28,1,-322), Position=UDim2.new(0,14,0,308), BackgroundColor3=C.input, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=71, Parent=pop }); corner(scout,8)
     mk("UIPadding", { PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8), Parent=scout })
-    local out = mk("TextLabel", { Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Font=Enum.Font.Code, TextSize=12, TextColor3=C.text, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true, ZIndex=72, Text="KIRIM 1 = kirim 1 buah manual.\nAUTO = kirim 1 buah, auto-tunggu notif 'Trade completed', baru lanjut sampe target.", Parent=scout })
+    local out = mk("TextLabel", { Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Font=Enum.Font.Code, TextSize=12, TextColor3=C.text, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true, ZIndex=72, Text="KIRIM 1 = kirim 1 buah manual.\nAUTO = kirim 1 buah, tunggu buah pindah, lanjut sampe target.\nUrut: Besar dulu = kirim buah termahal duluan. Kecil dulu = termurah duluan.", Parent=scout })
 
     local function remainingNow()
         local tv = parseN(tgtBox.Text) or 500000000
@@ -4374,8 +4412,11 @@ local function showKalkuGift()
         if not recipient then return false, "pilih penerima dulu." end
         local rem, tv = remainingNow()
         if rem <= 0 then return false, "CUKUP ✓ udah nyampe target." end
-        local e = Farm.pickOneForValue(rem, marketOn)
-        if not e then return false, "ga ada buah buat dikirim." end
+        local e = Farm.pickOneForValue(rem, marketOn, pickMode, valRange)
+        if not e then
+            local rng = valRange and (" di range kepilih") or ""
+            return false, "ga ada buah buat dikirim"..rng.."."
+        end
         local uid = resolveTargetId(recipient)
         if not uid then return false, "penerima '"..tostring(recipient).."' ga ketemu." end
         local gs = pkt("Gifting", "Send")
