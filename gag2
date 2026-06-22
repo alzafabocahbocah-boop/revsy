@@ -381,6 +381,7 @@ local state = {
     espPrice        = false,    -- v15.4: ESP harga buah di kebun (label melayang)
     espMut          = false,    -- v21.4: ESP mutasi buah di kebun (cuma buah bermutasi)
     espInvent       = false,    -- v15.6: ESP harga buah di grid inventory (harga aja)
+    espInventStock  = false,    -- v22.9: ESP harga inventory + badge pengali pasar (price stock)
     collectFreshOnly = false,   -- v15.4: skip collect buah yg udah basi (decay tinggi)
     collectFreshMax = 0.5,      -- v15.4: batas decay (0-1). buah > ini = basi -> skip collect
     kalkFruits      = {},       -- v16.5: filter jenis buah di tab Kalkulasi (multi)
@@ -437,7 +438,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -1050,6 +1051,40 @@ function Farm.getFVC()
     end
     return Farm._fvc or nil
 end
+-- v22.9: PENGALI PASAR "Fruit Price Stock" — sumbernya GUI PlayerGui.FruitStockPrice.
+-- tiap kartu (Name="FruitCard") punya atribut SeedToolTip=nama buah + child Multiplier="Xn".
+-- FVC GAK ngitung ini, jadi harus dikali manual biar match sama penjual.
+-- di-cache 5 detik (panel refresh tiap bbrp menit, jadi gak perlu rebuild tiap buah).
+Farm._mktMap = nil
+Farm._mktAt = 0
+function Farm.buildMarketMap()
+    local map = {}
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    local sgui = pg and pg:FindFirstChild("FruitStockPrice")
+    if sgui then
+        for _, card in ipairs(sgui:GetDescendants()) do
+            if card:IsA("GuiObject") and card.Name == "FruitCard" then
+                local fruit = card:GetAttribute("SeedToolTip")
+                local ml = card:FindFirstChild("Multiplier", true)
+                if fruit and ml and ml:IsA("TextLabel") then
+                    local m = tostring(ml.Text):match("[xX]%s*([%d%.]+)")
+                    if m then map[fruit] = tonumber(m) end
+                end
+            end
+        end
+    end
+    return map
+end
+-- pengali pasar buat 1 jenis buah (default 1 kalau gak ada di panel / panel blm kebuka).
+function Farm.getMarketMult(jenis)
+    local now = os.clock()
+    if not Farm._mktMap or (now - Farm._mktAt) > 5 then
+        Farm._mktMap = Farm.buildMarketMap()
+        Farm._mktAt = now
+    end
+    return (jenis and Farm._mktMap[jenis]) or 1
+end
+
 -- harga jual 1 buah (Tool inventory ATAU model garden).
 function Farm.fruitPrice(fruit)
     local jenis = fruit:GetAttribute("Fruit") or fruit:GetAttribute("FruitName") or fruit:GetAttribute("CorePartName")
@@ -1058,11 +1093,12 @@ function Farm.fruitPrice(fruit)
     local mut = fruit:GetAttribute("Mutation")
     if mut == "" or mut == "None" then mut = nil end
     local decay = fruit:GetAttribute("DecayAlpha")
+    local mkt = Farm.getMarketMult(jenis)   -- v22.9: pengali Fruit Price Stock
     -- coba modul eksak dulu
     local fvc = Farm.getFVC()
     if fvc then
         local ok, v = pcall(fvc, jenis, sm, mut, fruit, decay)
-        if ok and type(v) == "number" then return v end
+        if ok and type(v) == "number" then return math.floor(v * mkt) end
     end
     -- fallback: rumus lama (base × sm^2.5 × mutMult × decay)
     local base = Farm.getSellBase()
@@ -1073,7 +1109,7 @@ function Farm.fruitPrice(fruit)
     if type(decay) == "number" and decay > 0 then
         price = price * (1 - math.clamp(decay, 0, 1) * 0.8)
     end
-    return math.floor(price)
+    return math.floor(price * mkt)
 end
 
 -- v15.4: singkat angka (5.24M, 1.99B)
@@ -1350,6 +1386,113 @@ function Farm.applyEspInvent()
                 end
             end
             task.wait(20)  -- v15.9: refresh ESP inventory tiap 20s
+        end
+        clearLabels()
+    end)
+end
+
+-- v22.9: ESP Harga Inventory + badge pengali pasar (price stock). BEDA toggle dari espInvent.
+-- format: "16.5M ×0.93" — ×mult ijo kalau >1 (harga naik), merah kalau <1 (turun).
+-- harga (best.p) udah termasuk pengali pasar karena fruitPrice udah dipatch.
+Farm._espInvStkGen = 0
+function Farm.applyEspInventStock()
+    Farm._espInvStkGen = Farm._espInvStkGen + 1
+    local myGen = Farm._espInvStkGen
+    local function findCells()
+        local pg = player:FindFirstChild("PlayerGui")
+        local bgui = pg and pg:FindFirstChild("BackpackGui")
+        local root = bgui or pg
+        if not root then return {} end
+        local cells, seen = {}, {}
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Name == "ToolName" then
+                local cell = d.Parent
+                while cell and cell ~= root
+                  and not (cell:IsA("TextButton") or cell:IsA("ImageButton")) do
+                    cell = cell.Parent
+                end
+                if cell and cell ~= root and not seen[cell]
+                  and cell:FindFirstChild("ToolCount", true) then
+                    seen[cell] = true
+                    cells[#cells+1] = cell
+                end
+            end
+        end
+        return cells
+    end
+    local function clearLabels()
+        for _, cell in ipairs(findCells()) do
+            local l = cell:FindFirstChild("ZenxInvPriceStk")
+            if l then l:Destroy() end
+        end
+    end
+    if not state.espInventStock then clearLabels(); return end
+    task.spawn(function()
+        while state.espInventStock and Farm._espInvStkGen == myGen do
+            local byName = {}
+            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+                if holder then
+                    for _, t in ipairs(holder:GetChildren()) do
+                        local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                        local w  = t:GetAttribute("Weight")
+                        if fj and type(w) == "number" then
+                            local pr = Farm.fruitPrice(t)
+                            if pr then
+                                byName[fj] = byName[fj] or {}
+                                table.insert(byName[fj], { w = w, p = pr, dec = t:GetAttribute("DecayAlpha") or 0 })
+                            end
+                        end
+                    end
+                end
+            end
+            for _, cell in ipairs(findCells()) do
+                local nameLbl = cell:FindFirstChild("ToolName", true)
+                local cntLbl  = cell:FindFirstChild("ToolCount", true)
+                local nm = nameLbl and nameLbl.Text
+                local cw = cntLbl and tonumber(tostring(cntLbl.Text):match("([%d%.]+)"))
+                local price, decay
+                if nm and cw and byName[nm] then
+                    local best, bestD
+                    for _, e in ipairs(byName[nm]) do
+                        local d = math.abs(e.w - cw)
+                        if not bestD or d < bestD then bestD = d; best = e end
+                    end
+                    if best and bestD and bestD < 0.5 then price = best.p; decay = best.dec end
+                end
+                local lbl0 = cell:FindFirstChild("ZenxInvPriceStk")
+                if price then
+                    if not lbl0 then
+                        lbl0 = Instance.new("TextLabel")
+                        lbl0.Name = "ZenxInvPriceStk"
+                        lbl0.Size = UDim2.new(1, 0, 0, 14)
+                        lbl0.Position = UDim2.new(0, 0, 0, 1)
+                        lbl0.BackgroundTransparency = 1
+                        lbl0.Font = Enum.Font.GothamBold
+                        lbl0.TextSize = 12
+                        lbl0.TextStrokeTransparency = 0.4
+                        lbl0.RichText = true
+                        lbl0.ZIndex = 20
+                        lbl0.Parent = cell
+                    end
+                    -- warna harga ikut freshness (putih/kuning/merah)
+                    local dec = decay or 0
+                    local col = Color3.fromRGB(245,245,245)
+                    if dec > 0.5 then col = Color3.fromRGB(235,90,90)
+                    elseif dec > 0.25 then col = Color3.fromRGB(245,210,70) end
+                    lbl0.TextColor3 = col
+                    -- badge pengali pasar
+                    local mult = Farm.getMarketMult(nm) or 1
+                    local mtxt = ""
+                    if math.abs(mult - 1) > 0.001 then
+                        local mc = mult > 1 and "5BE36A" or "E65B5B"  -- ijo naik / merah turun
+                        mtxt = string.format(' <font color="#%s">×%.2f</font>', mc, mult)
+                    end
+                    lbl0.Text = Farm.abbrev(price) .. mtxt
+                elseif lbl0 then
+                    lbl0:Destroy()
+                end
+            end
+            task.wait(10)  -- v22.9: refresh tiap 10s
         end
         clearLabels()
     end)
@@ -5425,7 +5568,7 @@ do
 end
 
 -- ====== MISC: ESP Harga Inventory (toggle) — v15.6 ======
-local applyEspInventUI
+local applyEspInventUI, applyEspInventStockUI
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
@@ -5450,11 +5593,55 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.espInvent = not state.espInvent; saveState(); applyEspInventUI()
+        state.espInvent = not state.espInvent
+        if state.espInvent and state.espInventStock then   -- v22.9: jangan dobel, matiin yg satunya
+            state.espInventStock = false
+            if applyEspInventStockUI then applyEspInventStockUI() end
+            pcall(Farm.applyEspInventStock)
+        end
+        saveState(); applyEspInventUI()
         pcall(Farm.applyEspInvent)
         print("[ZenxFarm] ESP Harga Inventory -> "..(state.espInvent and "ON" or "OFF"))
     end)
     applyEspInventUI()
+end
+
+-- ====== MISC: ESP Harga Inventory + Pasar (toggle) — v22.9 ======
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "ESP Inventory + Pasar", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "harga + pengali Fruit Price Stock (×0.93)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    applyEspInventStockUI = function()
+        if state.espInventStock then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.espInventStock = not state.espInventStock
+        if state.espInventStock and state.espInvent then   -- mutual-exclusive sama ESP lama
+            state.espInvent = false
+            if applyEspInventUI then applyEspInventUI() end
+            pcall(Farm.applyEspInvent)
+        end
+        saveState(); applyEspInventStockUI()
+        pcall(Farm.applyEspInventStock)
+        print("[ZenxFarm] ESP Inventory +Pasar -> "..(state.espInventStock and "ON" or "OFF"))
+    end)
+    applyEspInventStockUI()
 end
 
 -- ====== MISC: Anti-Lag (toggle) — v11.4 ======
@@ -6178,6 +6365,58 @@ task.spawn(function()
     pcall(function() if state.espPrice then Farm.applyEspPrice() end end)  -- v15.4
     pcall(function() if state.espMut then Farm.applyEspMut() end end)  -- v21.4
     pcall(function() if state.espInvent then Farm.applyEspInvent() end end)  -- v15.6
+    pcall(function() if state.espInventStock then Farm.applyEspInventStock() end end)  -- v22.9
 end)
 selectTab("farm")
 print("[ZenxFarm] "..VER.." loaded (kerangka UI — fungsi farm nyusul)")
+
+-- v22.9: HUD pengali pasar Dragon's Breath di POJOK KANAN BAWAH layar.
+-- nampilin "🐉 Dragon's Breath ×0.92" — ijo kalau >1, merah kalau <1, abu kalau =1/blm kebaca.
+-- refresh tiap 10 detik. mandiri (gak ngikut panel utama).
+do
+    local host = (gethui and gethui()) or game:GetService("CoreGui")
+    pcall(function() local old = host:FindFirstChild("ZenxDBStock"); if old then old:Destroy() end end)
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "ZenxDBStock"; sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.IgnoreGuiInset = true
+    sg.Parent = host
+
+    local frame = Instance.new("Frame")
+    frame.AnchorPoint = Vector2.new(1, 1)
+    frame.Position = UDim2.new(1, -12, 1, -12)   -- pojok kanan bawah
+    frame.Size = UDim2.new(0, 210, 0, 30)
+    frame.BackgroundColor3 = Color3.fromRGB(18, 19, 24)
+    frame.BackgroundTransparency = 0.15
+    frame.BorderSizePixel = 0
+    frame.Parent = sg
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = frame
+    local s = Instance.new("UIStroke"); s.Color = Color3.fromRGB(60, 62, 72); s.Thickness = 1; s.Parent = frame
+
+    local lbl0 = Instance.new("TextLabel")
+    lbl0.Size = UDim2.new(1, -16, 1, 0); lbl0.Position = UDim2.new(0, 8, 0, 0)
+    lbl0.BackgroundTransparency = 1
+    lbl0.Font = Enum.Font.GothamBold; lbl0.TextSize = 13
+    lbl0.TextXAlignment = Enum.TextXAlignment.Left
+    lbl0.RichText = true
+    lbl0.Text = "🐉 Dragon's Breath …"
+    lbl0.TextColor3 = Color3.fromRGB(235, 235, 235)
+    lbl0.Parent = frame
+
+    task.spawn(function()
+        while sg.Parent do
+            local m = Farm.getMarketMult("Dragon's Breath")
+            local col, sign
+            if not m or math.abs(m - 1) < 0.001 then
+                col = "#9AA0AA"; sign = ""        -- abu: normal / blm kebaca
+            elseif m > 1 then
+                col = "#5BE36A"; sign = "▲"       -- ijo naik
+            else
+                col = "#E65B5B"; sign = "▼"       -- merah turun
+            end
+            lbl0.Text = string.format('🐉 Dragon\'s Breath <font color="%s">×%.2f %s</font>',
+                col, m or 1, sign)
+            task.wait(10)
+        end
+    end)
+end
