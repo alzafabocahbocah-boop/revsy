@@ -3034,14 +3034,19 @@ function Farm.pickOneForValue(remaining, useMarket)
     return under or best
 end
 
--- v23.0: deteksi notif game "Trade completed!" dari PlayerGui (buat tau trade beneran kelar).
--- snapshot notif yg UDAH ada (biar yg lama ga kebaca ulang).
+-- v23.0: deteksi notif game "Trade completed!" dari PlayerGui + CoreGui (buat tau trade kelar).
+local function _guiRoots()
+    local roots = {}
+    local pg = player:FindFirstChild("PlayerGui"); if pg then roots[#roots+1] = pg end
+    pcall(function() roots[#roots+1] = game:GetService("CoreGui") end)
+    return roots
+end
+-- snapshot notif "trade complete" yg UDAH ada (biar yg lama ga kebaca ulang).
 function Farm.snapshotTradeNotifs()
     local set = {}
-    local pg = player:FindFirstChild("PlayerGui")
-    if pg then
+    for _, root in ipairs(_guiRoots()) do
         pcall(function()
-            for _, d in ipairs(pg:GetDescendants()) do
+            for _, d in ipairs(root:GetDescendants()) do
                 if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string"
                    and d.Text:lower():find("trade complete", 1, true) then
                     set[d] = true
@@ -3053,26 +3058,48 @@ function Farm.snapshotTradeNotifs()
 end
 -- nunggu notif "Trade completed" BARU (yg ga ada di ignoreSet). return true kalau kedeteksi sblm timeout.
 function Farm.waitTradeDone(timeout, ignoreSet)
-    local pg = player:FindFirstChild("PlayerGui")
-    if not pg then return false end
     ignoreSet = ignoreSet or {}
     timeout = timeout or 20
+    local roots = _guiRoots()
+    if #roots == 0 then return false end
     local t0 = os.clock()
     while (os.clock() - t0) < timeout do
         local hit = false
-        pcall(function()
-            for _, d in ipairs(pg:GetDescendants()) do
-                if (d:IsA("TextLabel") or d:IsA("TextButton")) and not ignoreSet[d]
-                   and type(d.Text) == "string" and d.Text:lower():find("trade complete", 1, true) then
-                    hit = true; break
+        for _, root in ipairs(roots) do
+            pcall(function()
+                for _, d in ipairs(root:GetDescendants()) do
+                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and not ignoreSet[d]
+                       and type(d.Text) == "string" and d.Text:lower():find("trade complete", 1, true) then
+                        hit = true; break
+                    end
                 end
-            end
-        end)
+            end)
+            if hit then break end
+        end
         if hit then return true end
-        task.wait(0.15)
+        task.wait(0.25)
     end
     return false
 end
+-- diagnosa: kumpulin teks label yg ngandung kata kunci gift/trade/sent/complete/accept.
+function Farm.dumpNotifCandidates()
+    local list, seen = {}, {}
+    for _, root in ipairs(_guiRoots()) do
+        pcall(function()
+            for _, d in ipairs(root:GetDescendants()) do
+                if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" and #d.Text > 0 then
+                    local low = d.Text:lower()
+                    if low:find("gift") or low:find("trade") or low:find("sent") or low:find("complete") or low:find("accept") then
+                        if not seen[d.Text] then seen[d.Text] = true; list[#list+1] = '"'..d.Text..'"' end
+                    end
+                end
+            end
+        end)
+    end
+    if #list == 0 then return "(ga ada label gift/trade/sent/complete keliatan)" end
+    return table.concat(list, "\n")
+end
+
 
 function Farm.giftFruitOnce()
     local sb = pkt("Mailbox", "SendBatch")
@@ -4200,6 +4227,81 @@ local function showKalkuGift()
         end
     end)
 
+    -- ===== watcher GIFT MANUAL (lewat UI game di luar script) -> tetep kecatat & counter naik =====
+    Farm._scriptSentIds = Farm._scriptSentIds or {}
+    task.spawn(function()
+        local valMap = {}
+        local function scanIds()
+            local cur = {}
+            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+                if holder then
+                    for _, t in ipairs(holder:GetChildren()) do
+                        local fid = t:GetAttribute("Id")
+                        local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                        if fid and fj then
+                            local id = tostring(fid); cur[id] = true
+                            if not valMap[id] then valMap[id] = { val = Farm.fruitPrice(t) or 0, jenis = fj, kg = t:GetAttribute("Weight") or 0 } end
+                        end
+                    end
+                end
+            end
+            return cur
+        end
+        -- ada notif gift? return nama penerima (dari "Gift sent to X"), true (cuma "trade complete"), atau nil
+        local function giftNotifWho()
+            for _, root in ipairs(_guiRoots()) do
+                local nm, hasComplete = nil, false
+                pcall(function()
+                    for _, d in ipairs(root:GetDescendants()) do
+                        if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
+                            local who = d.Text:match("[Gg]ift sent to%s+([%w_]+)")
+                            if who then nm = who end
+                            if d.Text:lower():find("trade complete", 1, true) then hasComplete = true end
+                        end
+                    end
+                end)
+                if nm then return nm end
+                if hasComplete then return true end
+            end
+            return nil
+        end
+        scanIds()  -- isi awal, biar buah yg udah ada ga dianggap baru ilang
+        while pop.Parent do
+            task.wait(1.5)
+            local cur = scanIds()
+            local gone = {}
+            for id, info in pairs(valMap) do
+                if not cur[id] then
+                    if Farm._scriptSentIds[id] then
+                        Farm._scriptSentIds[id] = nil          -- ini kiriman script, jgn hitung manual
+                    else
+                        gone[#gone+1] = info
+                    end
+                    valMap[id] = nil
+                end
+            end
+            if #gone > 0 then
+                local who = giftNotifWho()                     -- cuma catat kalau ADA notif gift (bukan dijual)
+                if who then
+                    local toName = (type(who) == "string" and who) or recipient
+                    if toName then
+                        local sum, items = 0, {}
+                        for _, info in ipairs(gone) do
+                            sum = sum + (info.val or 0)
+                            items[#items+1] = { j = info.jenis, kg = info.kg or 0, v = info.val or 0 }
+                        end
+                        if sum > 0 then
+                            pcall(function() Farm.gfHistAdd({ to = toName, n = #gone, val = sum,
+                                tgt = (parseN(tgtBox.Text) or 500000000), mkt = marketOn and 1 or 0, tag = "MANUAL", items = items }) end)
+                            local _, tvm, gm = remainingNow()
+                            out.Text = "[MANUAL] kecatat "..#gone.." buah = "..Farm.abbrev(sum).." ke "..toName.."\n"..Farm.abbrev(gm).." / "..Farm.abbrev(tvm)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
     local function doCalc()
         local rem = remainingNow()
         if rem <= 0 then out.Text = "udah cukup, ga perlu nambah."; return end
@@ -4224,8 +4326,14 @@ local function showKalkuGift()
 
     local autoRunning = false
 
-    -- kirim SATU buah ke arah sisa target. return ok, pesan
-    local function doSendOne()
+    local function recordOne(e, tv)
+        pcall(function() Farm.gfHistAdd({ to=recipient, n=1, val=e.val, tgt=tv, mkt=marketOn and 1 or 0, tag="KALKU",
+            items={{ j=e.jenis, kg=e.kg or 0, v=e.val }} }) end)
+    end
+
+    -- kirim SATU buah ke arah sisa target. record=true -> langsung catat history.
+    -- return ok, pesan, entry, tv
+    local function doSendOne(record)
         if not recipient then return false, "pilih penerima dulu." end
         local rem, tv = remainingNow()
         if rem <= 0 then return false, "CUKUP ✓ udah nyampe target." end
@@ -4238,19 +4346,18 @@ local function showKalkuGift()
         state.gfValueTarget = tv; saveState()
         local ok = pcall(function() sb:Fire(uid, {{ItemKey=e.fid, Count=1, Category="HarvestedFruits"}}, "") end)
         if not ok then return false, "gagal kirim." end
-        pcall(function() Farm.gfHistAdd({ to=recipient, n=1, val=e.val, tgt=tv, mkt=marketOn and 1 or 0, tag="KALKU",
-            items={{ j=e.jenis, kg=e.kg or 0, v=e.val }} }) end)
-        local _, _, g = remainingNow()
-        return true, string.format("terkirim %s  (%s %s)\n%s / %s  -  kurang %s",
-            Farm.abbrev(e.val), tostring(e.jenis), (e.kg and string.format("%.0fkg", e.kg) or "?"),
-            Farm.abbrev(g), Farm.abbrev(tv), Farm.abbrev(math.max(0, tv - g)))
+        Farm._scriptSentIds = Farm._scriptSentIds or {}; Farm._scriptSentIds[e.fid] = true  -- biar watcher manual skip ini
+        if record then recordOne(e, tv) end
+        return true, string.format("kirim %s  (%s %s)", Farm.abbrev(e.val), tostring(e.jenis),
+            (e.kg and string.format("%.0fkg", e.kg) or "?")), e, tv
     end
 
     sendBtn.MouseButton1Click:Connect(function()
         sendBtn.Text = "..."
         task.spawn(function()
-            local ok, msg = doSendOne()
-            out.Text = msg or ""
+            local ok, msg = doSendOne(true)   -- manual: catat langsung
+            local _, tv, g = remainingNow()
+            out.Text = (msg or "").."\n"..Farm.abbrev(g).." / "..Farm.abbrev(tv).."  -  kurang "..Farm.abbrev(math.max(0,tv-g))
             sendBtn.Text = "KIRIM 1"
         end)
     end)
@@ -4270,23 +4377,27 @@ local function showKalkuGift()
                     break
                 end
                 local before = Farm.snapshotTradeNotifs()
-                local ok, msg = doSendOne()
-                out.Text = (ok and "[AUTO] " or "[AUTO stop] ")..(msg or "")
+                local ok, msg, e, tv = doSendOne(false)   -- JANGAN catat dulu, nunggu complete
                 if not ok then
+                    local _, tvx, gx = remainingNow()
+                    out.Text = "[AUTO stop] "..(msg or "").."\nudah "..Farm.abbrev(gx).." / "..Farm.abbrev(tvx).."  -  kurang "..Farm.abbrev(math.max(0,tvx-gx)).."\n(kalau buah abis: farming dulu, terus AUTO lagi buat lanjut)"
                     autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
                     break
                 end
+                out.Text = "[AUTO] "..(msg or "").."\nnunggu 'Trade completed'..."
                 local timeout = tonumber(jBox.Text) or 20
                 if timeout < 3 then timeout = 3 end
                 autoBtn.Text = "AUTO: nunggu"
                 local done = Farm.waitTradeDone(timeout, before)
                 if not autoRunning or not pop.Parent then break end
                 if not done then
-                    out.Text = "[AUTO] ga kedeteksi 'Trade completed' dalam "..timeout.."s.\nAUTO berhenti biar ga spam — cek pembeli, lalu nyalain lagi.\n\n"..(msg or "")
+                    out.Text = "[AUTO] 'Trade completed' GA kedeteksi dalam "..timeout.."s. AUTO stop.\n\nKandidat teks notif yg keliatan sekarang:\n"..Farm.dumpNotifCandidates()
                     autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
                     break
                 end
-                out.Text = "[AUTO] trade complete ✓ lanjut...\n"..(msg or "")
+                if e then recordOne(e, tv) end   -- baru catat history SETELAH complete
+                local _, tv2, g = remainingNow()
+                out.Text = "[AUTO] complete ✓  "..Farm.abbrev(g).." / "..Farm.abbrev(tv2).."  -  kurang "..Farm.abbrev(math.max(0,tv2-g))
                 autoBtn.Text = "AUTO: STOP"
                 task.wait(0.5)
             end
