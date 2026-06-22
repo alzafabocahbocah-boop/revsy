@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v22.9"
+local VER       = "v23.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -384,6 +384,8 @@ local state = {
     espInventStock  = false,    -- v22.9: ESP harga inventory + badge pengali pasar (price stock)
     collectFreshOnly = false,   -- v15.4: skip collect buah yg udah basi (decay tinggi)
     collectFreshMax = 0.5,      -- v15.4: batas decay (0-1). buah > ini = basi -> skip collect
+    antiCollectHeavy = true,    -- v23.1: skip collect buah >=100kg. SENGAJA gak disave -> selalu ON pas rejoin/exe
+    antiCollectHeavyKg = 100,   -- v23.1: batas berat (kg) buat anti-collect
     kalkFruits      = {},       -- v16.5: filter jenis buah di tab Kalkulasi (multi)
     kalkFruitAll    = true,     -- v16.5: tampilin semua jenis (default)
     kalkMuts        = {},       -- v16.5: filter mutasi di tab Kalkulasi (multi)
@@ -1556,13 +1558,19 @@ function Farm.collectOnce()
                 -- v22.6: toggle "Tanpa Mutasi" ON -> ikut ambil buah polos
                 if not okMut and state.collectNoMut and getMutation(fruit) == nil then okMut = true end
                 local okW = passWeight(Farm.gardenKg(fruit, seedName), state.collectWeightF)  -- v10.9
+                -- v23.1: anti-collect buah berat (>=100kg) — kalau ON, buah segede itu di-skip
+                local okHeavy = true
+                if state.antiCollectHeavy then
+                    local kg = Farm.gardenKg(fruit, seedName)
+                    if kg and kg >= (state.antiCollectHeavyKg or 100) then okHeavy = false end
+                end
                 -- v15.4: skip buah BASI (decay > batas) kalau collectFreshOnly ON.
                 local okFresh = true
                 if state.collectFreshOnly then
                     local dec = fruit:GetAttribute("DecayAlpha")
                     if type(dec) == "number" and dec > (state.collectFreshMax or 0.5) then okFresh = false end
                 end
-                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh then
+                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
                     fired = fired + 1; fruitCount = fruitCount + 1
@@ -3081,6 +3089,31 @@ function Farm.waitTradeDone(timeout, ignoreSet)
     end
     return false
 end
+-- v23.2: cek buah (by attribute "Id") masih ada di inventory (Character + Backpack)?
+function Farm.fruitInInv(fid)
+    fid = tostring(fid)
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if tostring(t:GetAttribute("Id")) == fid then return true end
+            end
+        end
+    end
+    return false
+end
+-- v23.2: nunggu buah BENERAN pindah (hilang dari inventory). ini bukti nyata trade kelar,
+-- jauh lebih akurat drpd baca teks notif (yg sering false-positive dari notif lama).
+-- return true kalau buah udah hilang sblm timeout.
+function Farm.waitFruitGone(fid, timeout)
+    timeout = timeout or 20
+    if not fid then return false end
+    local t0 = os.clock()
+    while (os.clock() - t0) < timeout do
+        if not Farm.fruitInInv(fid) then return true end
+        task.wait(0.25)
+    end
+    return false
+end
 -- diagnosa: kumpulin teks label yg ngandung kata kunci gift/trade/sent/complete/accept.
 function Farm.dumpNotifCandidates()
     local list, seen = {}, {}
@@ -4363,9 +4396,23 @@ local function showKalkuGift()
     sendBtn.MouseButton1Click:Connect(function()
         sendBtn.Text = "..."
         task.spawn(function()
-            local ok, msg = doSendOne(true)   -- manual: catat langsung
-            local _, tv, g = remainingNow()
-            out.Text = (msg or "").."\n"..Farm.abbrev(g).." / "..Farm.abbrev(tv).."  -  kurang "..Farm.abbrev(math.max(0,tv-g))
+            -- v23.2: kirim TANPA catat dulu, tunggu buah beneran pindah, baru catat.
+            local ok, msg, e, tv = doSendOne(false)
+            if ok and e then
+                local timeout = tonumber(jBox.Text) or 20
+                if timeout < 3 then timeout = 3 end
+                out.Text = (msg or "").."\nnunggu buah pindah..."
+                local done = Farm.waitFruitGone(e.fid, timeout)
+                if done then
+                    recordOne(e, tv)
+                    msg = (msg or "").."  ✓ pindah"
+                else
+                    Farm._scriptSentIds[e.fid] = nil
+                    msg = (msg or "").."  (buah belum pindah, ga dicatat)"
+                end
+            end
+            local _, tv2, g = remainingNow()
+            out.Text = (msg or "").."\n"..Farm.abbrev(g).." / "..Farm.abbrev(tv2).."  -  kurang "..Farm.abbrev(math.max(0,tv2-g))
             sendBtn.Text = "KIRIM 1"
         end)
     end)
@@ -4384,26 +4431,29 @@ local function showKalkuGift()
                     autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
                     break
                 end
-                local before = Farm.snapshotTradeNotifs()
-                local ok, msg, e, tv = doSendOne(false)   -- JANGAN catat dulu, nunggu complete
+                local ok, msg, e, tv = doSendOne(false)   -- JANGAN catat dulu, nunggu buah beneran pindah
                 if not ok then
                     local _, tvx, gx = remainingNow()
                     out.Text = "[AUTO stop] "..(msg or "").."\nudah "..Farm.abbrev(gx).." / "..Farm.abbrev(tvx).."  -  kurang "..Farm.abbrev(math.max(0,tvx-gx)).."\n(kalau buah abis: farming dulu, terus AUTO lagi buat lanjut)"
                     autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
                     break
                 end
-                out.Text = "[AUTO] "..(msg or "").."\nnunggu 'Trade completed'..."
+                out.Text = "[AUTO] "..(msg or "").."\nnunggu buah pindah (trade kelar)..."
                 local timeout = tonumber(jBox.Text) or 20
                 if timeout < 3 then timeout = 3 end
                 autoBtn.Text = "AUTO: nunggu"
-                local done = Farm.waitTradeDone(timeout, before)
+                -- v23.2: TUNGGU BUAH BENERAN HILANG dari inventory = bukti trade beneran kelar.
+                -- (dulu baca teks "Trade completed" -> sering false-positive -> history numpuk duplikat.)
+                local done = e and Farm.waitFruitGone(e.fid, timeout)
                 if not autoRunning or not pop.Parent then break end
                 if not done then
-                    out.Text = "[AUTO] 'Trade completed' GA kedeteksi dalam "..timeout.."s. AUTO stop.\n\nKandidat teks notif yg keliatan sekarang:\n"..Farm.dumpNotifCandidates()
+                    -- buah masih ada = trade GA jadi (penerima belum accept / ga deket). JANGAN catat.
+                    Farm._scriptSentIds[e.fid] = nil   -- batalin tanda (biar bisa dikirim ulang nanti)
+                    out.Text = "[AUTO] buah belum pindah dalam "..timeout.."s (penerima belum accept?). AUTO stop.\nga ada yg dicatat — history cuma nambah kalau buah beneran pindah."
                     autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
                     break
                 end
-                if e then recordOne(e, tv) end   -- baru catat history SETELAH complete
+                if e then recordOne(e, tv) end   -- baru catat history SETELAH buah beneran pindah
                 local _, tv2, g = remainingNow()
                 out.Text = "[AUTO] complete ✓  "..Farm.abbrev(g).." / "..Farm.abbrev(tv2).."  -  kurang "..Farm.abbrev(math.max(0,tv2-g))
                 autoBtn.Text = "AUTO: STOP"
@@ -5082,7 +5132,7 @@ local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedLis
 local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost, applyFreshOnly, applyCollectNoMut
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
-    setH(448)
+    setH(488)
     mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
@@ -5119,6 +5169,8 @@ do
     end)
     -- v22.6: ikut ambil buah TANPA mutasi (default off -> cuma yg bermutasi)
     applyCollectNoMut = mkBodyToggle(body, 404, "Tanpa Mutasi (ikut ambil)", "collectNoMut", "Collect No Mutation")
+    -- v23.1: anti-collect buah berat (>=100kg). default ON, ga disave -> selalu ON pas rejoin/exe
+    mkBodyToggle(body, 444, "Anti Collect 100kg+", "antiCollectHeavy", "Anti Collect 100kg")
 end
 
 -- ====== CARD 2: AUTO SELL ======
