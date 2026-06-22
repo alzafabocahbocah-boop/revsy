@@ -404,6 +404,9 @@ local state = {
     gfOnce          = true,      -- v17.8: sekali kirim lalu OFF (default aman)
     gfSheckMode     = false,     -- v18.4: cuma gift kalau sheckles target < batas
     gfSheckMax      = 300000000, -- v19.1: batas sheckles target (300M)
+    gfValueMode     = false,     -- v22.9: mode Gift by Value — pilih buah totalnya >= target
+    gfValueTarget   = 500000000, -- v22.9: target nilai jual (500M default)
+    gfValueMarket   = true,      -- v22.9: target ikut harga pasar (true) atau normal ×1 (false)
     gfStorageTarget = "",        -- v21.7: akun simpanan (dipisah koma; dialihin kalau pet udah cukup)
     gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
     gfStorDefV1     = false,      -- v21.8: flag apply default akun simpanan
@@ -438,7 +441,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -468,6 +471,7 @@ local function saveState()
         out.hopMinutes = state.hopMinutes or 30   -- v17.0
         out.gfWeightF = state.gfWeightF or 0      -- v17.8
         out.gfSheckMax = state.gfSheckMax or 100000000  -- v18.4
+        out.gfValueTarget = state.gfValueTarget or 500000000  -- v22.9
         out.gfRelayUrl = state.gfRelayUrl or ""   -- v18.5
         out.gfAlertHook = state.gfAlertHook or "" -- v18.7
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
@@ -510,6 +514,7 @@ local function loadState()
                 if type(d.hopMinutes) == "number" then state.hopMinutes = d.hopMinutes end
                 if type(d.gfWeightF) == "number" then state.gfWeightF = d.gfWeightF end
                 if type(d.gfSheckMax) == "number" then state.gfSheckMax = d.gfSheckMax end
+                if type(d.gfValueTarget) == "number" then state.gfValueTarget = d.gfValueTarget end
                 if type(d.gfRelayUrl) == "string" and d.gfRelayUrl ~= "" then state.gfRelayUrl = d.gfRelayUrl end
                 if type(d.gfAlertHook) == "string" and d.gfAlertHook ~= "" then state.gfAlertHook = d.gfAlertHook end
                 if type(d.gpTarget) == "string" and d.gpTarget ~= "" then state.gpTarget = d.gpTarget end
@@ -1086,14 +1091,15 @@ function Farm.getMarketMult(jenis)
 end
 
 -- harga jual 1 buah (Tool inventory ATAU model garden).
-function Farm.fruitPrice(fruit)
+-- noMarket=true -> harga NORMAL (×1, abaikan pengali pasar).
+function Farm.fruitPrice(fruit, noMarket)
     local jenis = fruit:GetAttribute("Fruit") or fruit:GetAttribute("FruitName") or fruit:GetAttribute("CorePartName")
     local sm = fruit:GetAttribute("SizeMultiplier") or fruit:GetAttribute("SizeMulti")
     if not jenis or type(sm) ~= "number" then return nil end
     local mut = fruit:GetAttribute("Mutation")
     if mut == "" or mut == "None" then mut = nil end
     local decay = fruit:GetAttribute("DecayAlpha")
-    local mkt = Farm.getMarketMult(jenis)   -- v22.9: pengali Fruit Price Stock
+    local mkt = noMarket and 1 or Farm.getMarketMult(jenis)   -- v22.9: pengali Fruit Price Stock
     -- coba modul eksak dulu
     local fvc = Farm.getFVC()
     if fvc then
@@ -1480,14 +1486,7 @@ function Farm.applyEspInventStock()
                     if dec > 0.5 then col = Color3.fromRGB(235,90,90)
                     elseif dec > 0.25 then col = Color3.fromRGB(245,210,70) end
                     lbl0.TextColor3 = col
-                    -- badge pengali pasar
-                    local mult = Farm.getMarketMult(nm) or 1
-                    local mtxt = ""
-                    if math.abs(mult - 1) > 0.001 then
-                        local mc = mult > 1 and "5BE36A" or "E65B5B"  -- ijo naik / merah turun
-                        mtxt = string.format(' <font color="#%s">×%.2f</font>', mc, mult)
-                    end
-                    lbl0.Text = Farm.abbrev(price) .. mtxt
+                    lbl0.Text = Farm.abbrev(price)  -- v22.9: badge ×mult dihapus, cukup harga (harga udah x pasar)
                 elseif lbl0 then
                     lbl0:Destroy()
                 end
@@ -2943,6 +2942,68 @@ function Farm.notif(tag, target, count)
     end)
     if not okk then dprint("[notif] gagal render") end
 end
+-- v22.9: HISTORY GIFT — simpen tiap kiriman sukses (persist ke file biar lewat rejoin).
+local GFHIST_FILE = "zenx_gifthist.json"
+Farm._gfHistory = {}
+function Farm.gfHistLoad()
+    if type(readfile) ~= "function" then return end
+    local ok, raw = pcall(readfile, GFHIST_FILE)
+    if ok and raw and raw ~= "" then
+        local ok2, d = pcall(function() return HS:JSONDecode(raw) end)
+        if ok2 and type(d) == "table" then Farm._gfHistory = d end
+    end
+end
+function Farm.gfHistAdd(entry)
+    entry.t = os.time()
+    table.insert(Farm._gfHistory, 1, entry)        -- terbaru di atas
+    while #Farm._gfHistory > 60 do table.remove(Farm._gfHistory) end
+    if type(writefile) == "function" then
+        pcall(function() writefile(GFHIST_FILE, HS:JSONEncode(Farm._gfHistory)) end)
+    end
+end
+Farm.gfHistLoad()
+
+-- v22.9: pilih kombinasi buah yg TOTAL nilainya >= targetVal, overage sekecil mungkin.
+-- algoritma: ambil termahal dulu sampe nembus target (dijamin >= target, gak bakal lebih murah),
+-- terus buang buah redundan (yg nilainya <= overage) biar selisih makin tipis.
+-- return: list {fid,val}, totalNilai  ATAU  nil, totalSemua (kalau gak nyampe target).
+function Farm.pickFruitsForValue(targetVal, useMarket)
+    local elig = {}
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                local fid = t:GetAttribute("Id")
+                local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                if fid and fjenis then
+                    local jenisOk = state.gfAllFruit or state.gfFruits[fjenis]
+                    local w = t:GetAttribute("Weight") or 0
+                    if jenisOk and passWeight(w, state.gfWeightF) then
+                        local pr = Farm.fruitPrice(t, not useMarket) or 0   -- useMarket=false -> harga normal ×1
+                        if pr > 0 then elig[#elig+1] = { fid = tostring(fid), val = pr, jenis = fjenis } end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(elig, function(a, b) return a.val > b.val end)
+    local picked, sum = {}, 0
+    for _, e in ipairs(elig) do
+        if sum >= targetVal then break end
+        picked[#picked+1] = e; sum = sum + e.val
+    end
+    if sum < targetVal then return nil, sum end   -- total semua buah gak nyampe target -> jangan jual
+    -- buang buah redundan biar overage mengecil (tetap >= target)
+    while true do
+        local overage = sum - targetVal
+        local bestIdx, bestVal
+        for i, e in ipairs(picked) do
+            if e.val <= overage and (not bestVal or e.val > bestVal) then bestVal = e.val; bestIdx = i end
+        end
+        if bestIdx then sum = sum - picked[bestIdx].val; table.remove(picked, bestIdx) else break end
+    end
+    return picked, sum
+end
+
 function Farm.giftFruitOnce()
     local sb = pkt("Mailbox", "SendBatch")
     if not sb or not sb.Fire then Farm._gfStatus = "nosend"; print("[ZenxFarm] SendBatch gak ada"); return end
@@ -3025,6 +3086,25 @@ function Farm.giftFruitOnce()
             task.wait(0.3)   -- v21.1: dipercepat (dulu 0.5)
         end
     end
+    -- v22.9: mode Gift by Value — kirim kombinasi buah yg totalnya >= target (bukan semua).
+    -- cuma aktif buat gift manual biasa (bukan routing simpanan/priority).
+    local valueModeOn = state.gfValueMode and not Farm._gfToStorage and not Farm._gfPriority
+    local pickedSum
+    if valueModeOn then
+        local picked, sumv = Farm.pickFruitsForValue(state.gfValueTarget or 500000000, state.gfValueMarket)
+        if not picked then
+            Farm._gfStatus = "kurang"
+            print("[ZenxFarm] gift value: total buah cuma "..Farm.abbrev(sumv or 0)..
+                " < target "..Farm.abbrev(state.gfValueTarget or 500000000).." -> GAK dikirim (biar gak lebih murah)")
+            return
+        end
+        pickedSum = sumv
+        for _, e in ipairs(picked) do
+            batch[#batch+1] = { ItemKey = e.fid, Count = 1, Category = "HarvestedFruits" }
+            if #batch >= 8 then flush() end
+        end
+        flush()
+    else
     for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
@@ -3049,11 +3129,22 @@ function Farm.giftFruitOnce()
         end
     end
     flush()
+    end
     if total > 0 then
         Farm._gfStatus = "ok"
-        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah"..(Farm._gfPriority and " [PRIORITY]" or Farm._gfToStorage and " [SIMPANAN]" or ""))
+        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah"..
+            (valueModeOn and (" = "..Farm.abbrev(pickedSum or 0).." (target "..Farm.abbrev(state.gfValueTarget or 500000000)..")") or "")..
+            (Farm._gfPriority and " [PRIORITY]" or Farm._gfToStorage and " [SIMPANAN]" or ""))
         local _ntag = Farm._gfPriority and "PRIORITY" or (Farm._gfToStorage and "SIMPANAN" or "AKUN PET")
         pcall(function() Farm.notif(_ntag, target, total) end)
+        -- v22.9: catat ke history gift
+        pcall(function() Farm.gfHistAdd({
+            to = target, n = total,
+            val = valueModeOn and pickedSum or nil,
+            tgt = valueModeOn and (state.gfValueTarget or 500000000) or nil,
+            mkt = valueModeOn and (state.gfValueMarket and 1 or 0) or nil,
+            tag = _ntag,
+        }) end)
         -- v21.8: abis kirim ke simpanan -> maju ke akun simpanan berikutnya (rotasi)
         if Farm._gfToStorage then
             local list = Farm.storageList()
@@ -3887,7 +3978,7 @@ local verLbl = mk("TextLabel", {
 
 -- v22.9: tampilin Sheckles KITA di header (samping versi), refresh tiap 1 detik
 local sheckLbl = mk("TextLabel", {
-    Size = UDim2.new(0, 190, 1, 0), Position = UDim2.new(0, 210, 0, 0), BackgroundTransparency = 1,
+    Size = UDim2.new(0, 100, 1, 0), Position = UDim2.new(0, 210, 0, 0), BackgroundTransparency = 1,
     Text = "💰 …", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(255, 209, 92),
     TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar })
 task.spawn(function()
@@ -3909,6 +4000,89 @@ end
 local hopBtn   = titleBtn(-150, "HOP", Color3.fromRGB(60, 90, 120), 44)
 local minBtn   = titleBtn(-70, "—", C.card)
 local closeBtn = titleBtn(-36, "✕", C.red)
+
+-- v22.9: KALKU GIFT — popup khusus kalkulasi & kirim gift by value
+local function showKalkuGift()
+    local old = sg:FindFirstChild("ZenxKalkuGift"); if old then old:Destroy() end
+    local function parseN(txt)
+        txt = tostring(txt):gsub("%s",""):lower()
+        local num, suf = txt:match("^([%d%.]+)([kmb]?)$"); num = tonumber(num); if not num then return nil end
+        if suf=="k" then num=num*1e3 elseif suf=="m" then num=num*1e6 elseif suf=="b" then num=num*1e9 end
+        return math.floor(num)
+    end
+    local pop = mk("Frame", { Name="ZenxKalkuGift", Size=UDim2.new(0,360,0,470),
+        Position=UDim2.new(0.5,-180,0.5,-235), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
+    corner(pop,10); stroke(pop,C.border,1)
+    local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
+    local ht = lbl(hbar, "🧮 Kalku Gift", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-44,1,0); ht.ZIndex=72
+    local hcl = mk("TextButton", { Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-32,0,4), BackgroundColor3=C.red, Text="✕", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=hbar }); corner(hcl,6)
+    hcl.MouseButton1Click:Connect(function() pop:Destroy() end)
+    local function mkLabel(t,y) local l=lbl(pop,t,12,C.text,Enum.TextXAlignment.Left); l.Position=UDim2.new(0,14,0,y); l.Size=UDim2.new(0,116,0,24); l.ZIndex=72; return l end
+    local function mkInput(y, val, ph)
+        local b = mk("TextBox", { Size=UDim2.new(1,-146,0,28), Position=UDim2.new(0,132,0,y-2), BackgroundColor3=C.input, Text=val or "", PlaceholderText=ph, TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop })
+        corner(b,6); stroke(b,C.border,1); return b
+    end
+    mkLabel("Penerima", 48); local nameBox = mkInput(48, state.gfTarget, "username pembeli")
+    mkLabel("Target nilai", 84); local tgtBox = mkInput(84, (state.gfValueTarget and Farm.abbrev(state.gfValueTarget)) or "500M", "500M")
+    local marketOn = state.gfValueMarket
+    local mkBtn = mk("TextButton", { Size=UDim2.new(1,-28,0,28), Position=UDim2.new(0,14,0,120), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
+    local function updMk() mkBtn.Text = "Harga: "..(marketOn and "PASAR (Fruit Price Stock)" or "NORMAL ×1"); mkBtn.BackgroundColor3 = marketOn and Color3.fromRGB(40,80,50) or C.input end
+    updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn = not marketOn; updMk() end)
+    local calcBtn = mk("TextButton", { Size=UDim2.new(0.5,-18,0,30), Position=UDim2.new(0,14,0,156), BackgroundColor3=Color3.fromRGB(70,110,200), Text="🧮 HITUNG", TextColor3=Color3.new(1,1,1), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(calcBtn,6)
+    local sendBtn = mk("TextButton", { Size=UDim2.new(0.5,-18,0,30), Position=UDim2.new(0.5,4,0,156), BackgroundColor3=C.green, Text="📤 KIRIM", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
+    local sc = mk("ScrollingFrame", { Size=UDim2.new(1,-28,1,-204), Position=UDim2.new(0,14,0,196), BackgroundColor3=C.input, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=71, Parent=pop }); corner(sc,8)
+    mk("UIPadding", { PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8), Parent=sc })
+    local out = mk("TextLabel", { Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Font=Enum.Font.Code, TextSize=12, TextColor3=C.text, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true, ZIndex=72, Text="tekan HITUNG buat liat kombinasi buah.", Parent=sc })
+    local function doCalc()
+        local tv = parseN(tgtBox.Text) or 500000000
+        local picked, sumv = Farm.pickFruitsForValue(tv, marketOn)
+        if not picked then
+            out.Text = string.format("GAK CUKUP.\nTotal semua buah cuma %s\n< target %s.\n\n(turunin target / pilih jenis lain di panel Auto Gift)", Farm.abbrev(sumv or 0), Farm.abbrev(tv))
+            return
+        end
+        local byType = {}
+        for _, e in ipairs(picked) do byType[e.jenis] = (byType[e.jenis] or 0) + 1 end
+        local lines = {
+            string.format("%d buah dipilih", #picked),
+            string.format("Total  = %s  [%s]", Farm.abbrev(sumv), marketOn and "pasar" or "normal"),
+            string.format("Target = %s", Farm.abbrev(tv)),
+            string.format("Lebih  = %s", Farm.abbrev(sumv - tv)),
+            "", "Rincian:",
+        }
+        local arr = {}
+        for j,n in pairs(byType) do arr[#arr+1]={j=j,n=n} end
+        table.sort(arr, function(a,b) return a.n > b.n end)
+        for _,e in ipairs(arr) do lines[#lines+1] = string.format("  %s × %d", e.j, e.n) end
+        out.Text = table.concat(lines, "\n")
+    end
+    calcBtn.MouseButton1Click:Connect(doCalc)
+    sendBtn.MouseButton1Click:Connect(function()
+        local recipient = nameBox.Text
+        if not recipient or recipient == "" then out.Text = "isi penerima dulu."; return end
+        local tv = parseN(tgtBox.Text) or 500000000
+        sendBtn.Text = "ngirim..."
+        local prevMode, prevMarket = state.gfValueMode, state.gfValueMarket
+        state.gfTarget = recipient; state.gfValueTarget = tv; state.gfValueMode = true; state.gfValueMarket = marketOn
+        Farm._gfId = nil; Farm._gfIdName = nil; saveState()
+        task.spawn(function()
+            pcall(Farm.giftFruitOnce)
+            state.gfValueMode = prevMode; state.gfValueMarket = prevMarket
+            task.wait(0.3); sendBtn.Text = "📤 KIRIM"
+            local st = Farm._gfStatus
+            local msg = (st=="ok" and "✓ TERKIRIM!") or (st=="kurang" and "✗ buah ga nyampe target")
+                or (st=="notfound" and "✗ penerima ga ketemu") or (st=="notarget" and "✗ isi penerima")
+                or (st=="empty" and "✗ ga ada buah kekirim") or ("status: "..tostring(st))
+            out.Text = msg.."\n\n"..out.Text
+        end)
+    end)
+    local drag, ds, sp
+    hbar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=true; ds=i.Position; sp=pop.Position end end)
+    hbar.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; pop.Position=UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y) end end)
+end
+local kalkuBtn = titleBtn(-218, "🧮 GIFT", Color3.fromRGB(120, 80, 140), 62)
+kalkuBtn.MouseButton1Click:Connect(showKalkuGift)
+
 
 -- ===== HOP: cari server lain lalu pindah =====
 -- v5.5: FIX "balik ke server sama". penyebab dulu: kalau scan server gagal (API
@@ -5200,6 +5374,62 @@ do
         print("[ZenxFarm] akun simpanan -> "..(state.gfStorageTarget ~= "" and state.gfStorageTarget or "kosong"))
     end)
 
+    -- v22.9: Gift by Value — pilih buah totalnya >= target (buat jual senilai X)
+    lbl(body, "Target nilai jual (>=)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,504)
+    local tvBox = mk("TextBox", { Size = UDim2.new(0.34, 0, 0, 28), Position = UDim2.new(0.66, 0, 0, 501),
+        BackgroundColor3 = C.input, Text = fmtN(state.gfValueTarget), PlaceholderText = "500M",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(tvBox, 6); stroke(tvBox, C.border, 1)
+    tvBox.FocusLost:Connect(function()
+        local n = parseN(tvBox.Text) or 500000000; state.gfValueTarget = n; tvBox.Text = fmtN(n); saveState()
+        print("[ZenxFarm] gift target nilai -> "..fmtN(n))
+    end)
+    mkBodyToggle(body, 540, "Gift by Value (>= target)", "gfValueMode", "Gift By Value")
+    mkBodyToggle(body, 580, "Target ikut Harga Pasar (off=normal ×1)", "gfValueMarket", "Gift Value Market")
+
+    -- v22.9: tombol History Gift -> popup
+    local function showGiftHistory()
+        local old = sg:FindFirstChild("ZenxGiftHist"); if old then old:Destroy() end
+        local pop = mk("Frame", { Name = "ZenxGiftHist", Size = UDim2.new(0, 330, 0, 400),
+            Position = UDim2.new(0.5, -165, 0.5, -200), BackgroundColor3 = C.panel, BorderSizePixel = 0,
+            ZIndex = 60, Active = true, Parent = sg })
+        corner(pop, 10); stroke(pop, C.border, 1)
+        local hbar = mk("Frame", { Size = UDim2.new(1,0,0,34), BackgroundColor3 = C.card,
+            BorderSizePixel = 0, ZIndex = 61, Parent = pop }); corner(hbar, 10)
+        local ht = lbl(hbar, "📜 History Gift", 14, C.text, Enum.TextXAlignment.Left)
+        ht.Position = UDim2.new(0,12,0,0); ht.Size = UDim2.new(1,-44,1,0); ht.ZIndex = 62
+        local hcl = mk("TextButton", { Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-32,0,3),
+            BackgroundColor3 = Color3.fromRGB(180,60,60), Text = "X", TextColor3 = Color3.new(1,1,1),
+            Font = FONT_B, TextSize = 12, BorderSizePixel = 0, ZIndex = 62, Parent = hbar }); corner(hcl, 6)
+        hcl.MouseButton1Click:Connect(function() pop:Destroy() end)
+        local sc = mk("ScrollingFrame", { Size = UDim2.new(1,-16,1,-44), Position = UDim2.new(0,8,0,40),
+            BackgroundColor3 = C.input, BorderSizePixel = 0, ScrollBarThickness = 4, CanvasSize = UDim2.new(0,0,0,0),
+            AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 61, Parent = pop }); corner(sc, 8)
+        mk("UIPadding", { PaddingTop = UDim.new(0,6), PaddingBottom = UDim.new(0,6),
+            PaddingLeft = UDim.new(0,8), PaddingRight = UDim.new(0,8), Parent = sc })
+        local txt = mk("TextLabel", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1, Font = Enum.Font.Code, TextSize = 12, TextColor3 = C.text,
+            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+            TextWrapped = true, ZIndex = 62, Parent = sc })
+        local lines = {}
+        if #Farm._gfHistory == 0 then
+            lines[1] = "belum ada history gift."
+        else
+            for _, h in ipairs(Farm._gfHistory) do
+                local vtxt = h.val and (" = "..Farm.abbrev(h.val)) or ""
+                local mtxt = (h.mkt ~= nil) and (h.mkt == 1 and " [pasar]" or " [normal]") or ""
+                lines[#lines+1] = string.format("%s  -> %s\n   %d buah%s%s",
+                    os.date("%d/%m %H:%M", h.t or 0), tostring(h.to), h.n or 0, vtxt, mtxt)
+            end
+        end
+        txt.Text = table.concat(lines, "\n")
+    end
+    local histBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 620),
+        BackgroundColor3 = C.input, Text = "📜 History Gift", TextColor3 = C.text, Font = FONT_B,
+        TextSize = 12, BorderSizePixel = 0, Parent = body })
+    corner(histBtn, 6); stroke(histBtn, C.border, 1)
+    histBtn.MouseButton1Click:Connect(showGiftHistory)
+
     -- tombol kirim sekarang (sekali jalan)
     local sendBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 292),
         BackgroundColor3 = C.green, Text = "KIRIM SEKARANG", TextColor3 = Color3.new(0,0,0), Font = FONT_B,
@@ -5242,7 +5472,7 @@ do
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 508 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 666 or 56)
     end)
 end
 
