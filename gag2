@@ -2967,7 +2967,7 @@ Farm.gfHistLoad()
 -- algoritma: ambil termahal dulu sampe nembus target (dijamin >= target, gak bakal lebih murah),
 -- terus buang buah redundan (yg nilainya <= overage) biar selisih makin tipis.
 -- return: list {fid,val}, totalNilai  ATAU  nil, totalSemua (kalau gak nyampe target).
-function Farm.pickFruitsForValue(targetVal, useMarket)
+function Farm.pickFruitsForValue(targetVal, useMarket, allowPartial)
     local elig = {}
     for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
         if holder then
@@ -2979,7 +2979,7 @@ function Farm.pickFruitsForValue(targetVal, useMarket)
                     local w = t:GetAttribute("Weight") or 0
                     if jenisOk and passWeight(w, state.gfWeightF) then
                         local pr = Farm.fruitPrice(t, not useMarket) or 0   -- useMarket=false -> harga normal ×1
-                        if pr > 0 then elig[#elig+1] = { fid = tostring(fid), val = pr, jenis = fjenis } end
+                        if pr > 0 then elig[#elig+1] = { fid = tostring(fid), val = pr, jenis = fjenis, kg = w } end
                     end
                 end
             end
@@ -2991,7 +2991,10 @@ function Farm.pickFruitsForValue(targetVal, useMarket)
         if sum >= targetVal then break end
         picked[#picked+1] = e; sum = sum + e.val
     end
-    if sum < targetVal then return nil, sum end   -- total semua buah gak nyampe target -> jangan jual
+    if sum < targetVal then
+        if allowPartial then return picked, sum, false end   -- kirim semua yg ada (partial top-up)
+        return nil, sum, false                               -- strict: jangan jual lebih murah
+    end
     -- buang buah redundan biar overage mengecil (tetap >= target)
     while true do
         local overage = sum - targetVal
@@ -3001,7 +3004,74 @@ function Farm.pickFruitsForValue(targetVal, useMarket)
         end
         if bestIdx then sum = sum - picked[bestIdx].val; table.remove(picked, bestIdx) else break end
     end
-    return picked, sum
+    return picked, sum, true
+end
+
+-- v22.9: pilih SATU buah paling pas buat sisa target (buat kirim satu-satu).
+-- prioritas: nilai terbesar yang <= sisa; kalau semua > sisa, ambil terkecil (nutup, overshoot tipis).
+function Farm.pickOneForValue(remaining, useMarket)
+    local best, under
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                local fid = t:GetAttribute("Id")
+                local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                if fid and fjenis then
+                    local jenisOk = state.gfAllFruit or state.gfFruits[fjenis]
+                    local w = t:GetAttribute("Weight") or 0
+                    if jenisOk and passWeight(w, state.gfWeightF) then
+                        local pr = Farm.fruitPrice(t, not useMarket) or 0
+                        if pr > 0 then
+                            local e = { fid = tostring(fid), val = pr, jenis = fjenis, kg = w }
+                            if not best or pr < best.val then best = e end
+                            if pr <= remaining and (not under or pr > under.val) then under = e end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return under or best
+end
+
+-- v23.0: deteksi notif game "Trade completed!" dari PlayerGui (buat tau trade beneran kelar).
+-- snapshot notif yg UDAH ada (biar yg lama ga kebaca ulang).
+function Farm.snapshotTradeNotifs()
+    local set = {}
+    local pg = player:FindFirstChild("PlayerGui")
+    if pg then
+        pcall(function()
+            for _, d in ipairs(pg:GetDescendants()) do
+                if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string"
+                   and d.Text:lower():find("trade complete", 1, true) then
+                    set[d] = true
+                end
+            end
+        end)
+    end
+    return set
+end
+-- nunggu notif "Trade completed" BARU (yg ga ada di ignoreSet). return true kalau kedeteksi sblm timeout.
+function Farm.waitTradeDone(timeout, ignoreSet)
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    ignoreSet = ignoreSet or {}
+    timeout = timeout or 20
+    local t0 = os.clock()
+    while (os.clock() - t0) < timeout do
+        local hit = false
+        pcall(function()
+            for _, d in ipairs(pg:GetDescendants()) do
+                if (d:IsA("TextLabel") or d:IsA("TextButton")) and not ignoreSet[d]
+                   and type(d.Text) == "string" and d.Text:lower():find("trade complete", 1, true) then
+                    hit = true; break
+                end
+            end
+        end)
+        if hit then return true end
+        task.wait(0.15)
+    end
+    return false
 end
 
 function Farm.giftFruitOnce()
@@ -4010,43 +4080,138 @@ local function showKalkuGift()
         if suf=="k" then num=num*1e3 elseif suf=="m" then num=num*1e6 elseif suf=="b" then num=num*1e9 end
         return math.floor(num)
     end
-    local pop = mk("Frame", { Name="ZenxKalkuGift", Size=UDim2.new(0,360,0,470),
-        Position=UDim2.new(0.5,-180,0.5,-235), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
+    local pop = mk("Frame", { Name="ZenxKalkuGift", Size=UDim2.new(0,360,0,540),
+        Position=UDim2.new(0.5,-180,0.5,-270), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
     corner(pop,10); stroke(pop,C.border,1)
     local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
-    local ht = lbl(hbar, "🧮 Kalku Gift", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-44,1,0); ht.ZIndex=72
+    local ht = lbl(hbar, "Kalku Gift", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-44,1,0); ht.ZIndex=72
     local hcl = mk("TextButton", { Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-32,0,4), BackgroundColor3=C.red, Text="✕", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=hbar }); corner(hcl,6)
     hcl.MouseButton1Click:Connect(function() pop:Destroy() end)
+    local histb = mk("TextButton", { Size=UDim2.new(0,76,0,26), Position=UDim2.new(1,-114,0,5), BackgroundColor3=C.input, Text="History", TextColor3=C.text, Font=FONT_B, TextSize=11, BorderSizePixel=0, ZIndex=72, Parent=hbar }); corner(histb,6); stroke(histb,C.border,1)
+    histb.MouseButton1Click:Connect(function() if Farm.showGiftHistory then Farm.showGiftHistory() end end)
     local function mkLabel(t,y) local l=lbl(pop,t,12,C.text,Enum.TextXAlignment.Left); l.Position=UDim2.new(0,14,0,y); l.Size=UDim2.new(0,116,0,24); l.ZIndex=72; return l end
-    local function mkInput(y, val, ph)
-        local b = mk("TextBox", { Size=UDim2.new(1,-146,0,28), Position=UDim2.new(0,132,0,y-2), BackgroundColor3=C.input, Text=val or "", PlaceholderText=ph, TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop })
-        corner(b,6); stroke(b,C.border,1); return b
-    end
-    mkLabel("Penerima", 48); local nameBox = mkInput(48, state.gfTarget, "username pembeli")
-    mkLabel("Target nilai", 84); local tgtBox = mkInput(84, (state.gfValueTarget and Farm.abbrev(state.gfValueTarget)) or "500M", "500M")
+
+    -- ===== state lokal =====
     local marketOn = state.gfValueMarket
-    local mkBtn = mk("TextButton", { Size=UDim2.new(1,-28,0,28), Position=UDim2.new(0,14,0,120), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
-    local function updMk() mkBtn.Text = "Harga: "..(marketOn and "PASAR (Fruit Price Stock)" or "NORMAL ×1"); mkBtn.BackgroundColor3 = marketOn and Color3.fromRGB(40,80,50) or C.input end
-    updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn = not marketOn; updMk() end)
-    local calcBtn = mk("TextButton", { Size=UDim2.new(0.5,-18,0,30), Position=UDim2.new(0,14,0,156), BackgroundColor3=Color3.fromRGB(70,110,200), Text="🧮 HITUNG", TextColor3=Color3.new(1,1,1), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(calcBtn,6)
-    local sendBtn = mk("TextButton", { Size=UDim2.new(0.5,-18,0,30), Position=UDim2.new(0.5,4,0,156), BackgroundColor3=C.green, Text="📤 KIRIM", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
-    local sc = mk("ScrollingFrame", { Size=UDim2.new(1,-28,1,-204), Position=UDim2.new(0,14,0,196), BackgroundColor3=C.input, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=71, Parent=pop }); corner(sc,8)
-    mk("UIPadding", { PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8), Parent=sc })
-    local out = mk("TextLabel", { Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Font=Enum.Font.Code, TextSize=12, TextColor3=C.text, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true, ZIndex=72, Text="tekan HITUNG buat liat kombinasi buah.", Parent=sc })
-    local function doCalc()
-        local tv = parseN(tgtBox.Text) or 500000000
-        local picked, sumv = Farm.pickFruitsForValue(tv, marketOn)
-        if not picked then
-            out.Text = string.format("GAK CUKUP.\nTotal semua buah cuma %s\n< target %s.\n\n(turunin target / pilih jenis lain di panel Auto Gift)", Farm.abbrev(sumv or 0), Farm.abbrev(tv))
-            return
+    local recipient = nil                 -- penerima kepilih
+    local sessionStart = os.time()        -- mulai ngitung gifted dari sini
+
+    -- ===== penerima: PICKER pemain di server =====
+    mkLabel("Penerima", 48)
+    local recBtn = mk("TextButton", { Size=UDim2.new(1,-146,0,28), Position=UDim2.new(0,132,0,46),
+        BackgroundColor3=C.input, Text="pilih pemain ▾", TextColor3=C.textDim, Font=FONT, TextSize=12,
+        BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(recBtn,6); stroke(recBtn,C.border,1)
+    -- dropdown (disembunyiin dulu)
+    local dd = mk("ScrollingFrame", { Size=UDim2.new(1,-146,0,140), Position=UDim2.new(0,132,0,76),
+        BackgroundColor3=C.card, BorderSizePixel=0, ScrollBarThickness=4, Visible=false,
+        CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=85, Parent=pop }); corner(dd,6); stroke(dd,C.border,1)
+    mk("UIListLayout", { Padding=UDim.new(0,2), SortOrder=Enum.SortOrder.LayoutOrder, Parent=dd })
+    mk("UIPadding", { PaddingTop=UDim.new(0,3),PaddingBottom=UDim.new(0,3),PaddingLeft=UDim.new(0,3),PaddingRight=UDim.new(0,3), Parent=dd })
+    local function pickRecipient(nm)
+        recipient = nm; sessionStart = os.time()
+        recBtn.Text = nm.." ▾"; recBtn.TextColor3 = C.text
+        dd.Visible = false
+    end
+    local function buildDropdown()
+        for _, c in ipairs(dd:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        local names = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player then names[#names+1] = p.Name end
         end
+        table.sort(names)
+        if #names == 0 then
+            local e = lbl(dd, "(ga ada pemain lain)", 11, C.textMute, Enum.TextXAlignment.Left)
+            e.Size = UDim2.new(1,0,0,20); e.ZIndex = 86
+        else
+            for i, nm in ipairs(names) do
+                local b = mk("TextButton", { Size=UDim2.new(1,0,0,26), BackgroundColor3=C.input,
+                    Text="  "..nm, TextColor3=C.text, Font=FONT, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left,
+                    BorderSizePixel=0, LayoutOrder=i, ZIndex=86, Parent=dd }); corner(b,5)
+                b.MouseButton1Click:Connect(function() pickRecipient(nm) end)
+            end
+        end
+    end
+    recBtn.MouseButton1Click:Connect(function()
+        dd.Visible = not dd.Visible
+        if dd.Visible then buildDropdown() end
+    end)
+
+    -- ===== target nilai (tetep ketik) =====
+    mkLabel("Target nilai", 232)
+    local tgtBox = mk("TextBox", { Size=UDim2.new(1,-146,0,28), Position=UDim2.new(0,132,0,230),
+        BackgroundColor3=C.input, Text=(state.gfValueTarget and Farm.abbrev(state.gfValueTarget)) or "500M",
+        PlaceholderText="500M", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop })
+    corner(tgtBox,6); stroke(tgtBox,C.border,1)
+
+    -- ===== toggle harga + reset =====
+    local mkBtn = mk("TextButton", { Size=UDim2.new(0.66,-16,0,28), Position=UDim2.new(0,14,0,268), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
+    local function updMk() mkBtn.Text = "Harga: "..(marketOn and "PASAR" or "NORMAL ×1") end
+    updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn = not marketOn; updMk() end)
+    local resetBtn = mk("TextButton", { Size=UDim2.new(0.34,2,0,28), Position=UDim2.new(0.66,2,0,268), BackgroundColor3=C.input, Text="Reset Hitungan", TextColor3=C.textDim, Font=FONT, TextSize=11, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
+    resetBtn.MouseButton1Click:Connect(function() sessionStart = os.time() end)
+
+    -- ===== tracker live: kurang berapa lagi =====
+    local trackL = mk("TextLabel", { Size=UDim2.new(1,-28,0,40), Position=UDim2.new(0,14,0,302), BackgroundColor3=C.input,
+        Text="", TextColor3=C.text, Font=FONT_B, TextSize=13, BorderSizePixel=0, ZIndex=72,
+        TextXAlignment=Enum.TextXAlignment.Center, Parent=pop }); corner(trackL,6)
+
+    local function giftedTo(nm)
+        local s = 0
+        for _, h in ipairs(Farm._gfHistory) do
+            if h.to == nm and h.val and (h.t or 0) >= sessionStart then s = s + h.val end
+        end
+        return s
+    end
+
+    -- ===== tombol HITUNG / KIRIM 1 / AUTO =====
+    local calcBtn = mk("TextButton", { Size=UDim2.new(0.34,-6,0,30), Position=UDim2.new(0,14,0,350), BackgroundColor3=Color3.fromRGB(240,240,240), Text="HITUNG", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(calcBtn,6)
+    local sendBtn = mk("TextButton", { Size=UDim2.new(0.33,-6,0,30), Position=UDim2.new(0.34,2,0,350), BackgroundColor3=Color3.fromRGB(240,240,240), Text="KIRIM 1", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
+    local autoBtn = mk("TextButton", { Size=UDim2.new(0.33,-8,0,30), Position=UDim2.new(0.67,6,0,350), BackgroundColor3=C.input, Text="AUTO: OFF", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(autoBtn,6); stroke(autoBtn,C.border,1)
+
+    -- ===== baris jeda auto =====
+    local jLbl = lbl(pop, "Timeout nunggu 'Trade completed' (detik):", 11, C.textDim, Enum.TextXAlignment.Left)
+    jLbl.Position=UDim2.new(0,14,0,386); jLbl.Size=UDim2.new(1,-72,0,18); jLbl.ZIndex=72
+    local jBox = mk("TextBox", { Size=UDim2.new(0,48,0,22), Position=UDim2.new(1,-62,0,384), BackgroundColor3=C.input, Text="20", PlaceholderText="20", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(jBox,6); stroke(jBox,C.border,1)
+
+    -- ===== output =====
+    local scout = mk("ScrollingFrame", { Size=UDim2.new(1,-28,1,-422), Position=UDim2.new(0,14,0,416), BackgroundColor3=C.input, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=71, Parent=pop }); corner(scout,8)
+    mk("UIPadding", { PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8), Parent=scout })
+    local out = mk("TextLabel", { Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Font=Enum.Font.Code, TextSize=12, TextColor3=C.text, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true, ZIndex=72, Text="KIRIM 1 = kirim 1 buah manual.\nAUTO = kirim 1 buah, auto-tunggu notif 'Trade completed', baru lanjut sampe target.", Parent=scout })
+
+    local function remainingNow()
+        local tv = parseN(tgtBox.Text) or 500000000
+        local g = recipient and giftedTo(recipient) or 0
+        return math.max(0, tv - g), tv, g
+    end
+
+    -- ===== loop tracker real-time (tiap 1s) =====
+    task.spawn(function()
+        while pop.Parent do
+            local rem, tv, g = remainingNow()
+            if not recipient then
+                trackL.Text = "pilih pemain dulu"; trackL.TextColor3 = C.textDim
+            elseif rem <= 0 then
+                trackL.Text = "CUKUP ✓  ("..Farm.abbrev(g).." / "..Farm.abbrev(tv)..")"; trackL.TextColor3 = C.green
+            else
+                trackL.Text = "Terkirim "..Farm.abbrev(g).." / "..Farm.abbrev(tv).."\nKurang "..Farm.abbrev(rem).." lagi"
+                trackL.TextColor3 = Color3.new(1,1,1)
+            end
+            task.wait(1)
+        end
+    end)
+
+    local function doCalc()
+        local rem = remainingNow()
+        if rem <= 0 then out.Text = "udah cukup, ga perlu nambah."; return end
+        local picked, sumv, reached = Farm.pickFruitsForValue(rem, marketOn, true)
+        if not picked or #picked == 0 then out.Text = "ga ada buah buat dikirim."; return end
         local byType = {}
         for _, e in ipairs(picked) do byType[e.jenis] = (byType[e.jenis] or 0) + 1 end
         local lines = {
             string.format("%d buah dipilih", #picked),
-            string.format("Total  = %s  [%s]", Farm.abbrev(sumv), marketOn and "pasar" or "normal"),
-            string.format("Target = %s", Farm.abbrev(tv)),
-            string.format("Lebih  = %s", Farm.abbrev(sumv - tv)),
+            string.format("Nilai  = %s  [%s]", Farm.abbrev(sumv), marketOn and "pasar" or "normal"),
+            string.format("Kurang = %s", Farm.abbrev(rem)),
+            reached and ("Lebih  = "..Farm.abbrev(sumv - rem)) or "** PARTIAL: buah kurang, blm nyampe **",
             "", "Rincian:",
         }
         local arr = {}
@@ -4056,31 +4221,84 @@ local function showKalkuGift()
         out.Text = table.concat(lines, "\n")
     end
     calcBtn.MouseButton1Click:Connect(doCalc)
+
+    local autoRunning = false
+
+    -- kirim SATU buah ke arah sisa target. return ok, pesan
+    local function doSendOne()
+        if not recipient then return false, "pilih penerima dulu." end
+        local rem, tv = remainingNow()
+        if rem <= 0 then return false, "CUKUP ✓ udah nyampe target." end
+        local e = Farm.pickOneForValue(rem, marketOn)
+        if not e then return false, "ga ada buah buat dikirim." end
+        local uid = resolveTargetId(recipient)
+        if not uid then return false, "penerima '"..tostring(recipient).."' ga ketemu." end
+        local sb = pkt("Mailbox", "SendBatch")
+        if not sb or not sb.Fire then return false, "SendBatch ga ada." end
+        state.gfValueTarget = tv; saveState()
+        local ok = pcall(function() sb:Fire(uid, {{ItemKey=e.fid, Count=1, Category="HarvestedFruits"}}, "") end)
+        if not ok then return false, "gagal kirim." end
+        pcall(function() Farm.gfHistAdd({ to=recipient, n=1, val=e.val, tgt=tv, mkt=marketOn and 1 or 0, tag="KALKU",
+            items={{ j=e.jenis, kg=e.kg or 0, v=e.val }} }) end)
+        local _, _, g = remainingNow()
+        return true, string.format("terkirim %s  (%s %s)\n%s / %s  -  kurang %s",
+            Farm.abbrev(e.val), tostring(e.jenis), (e.kg and string.format("%.0fkg", e.kg) or "?"),
+            Farm.abbrev(g), Farm.abbrev(tv), Farm.abbrev(math.max(0, tv - g)))
+    end
+
     sendBtn.MouseButton1Click:Connect(function()
-        local recipient = nameBox.Text
-        if not recipient or recipient == "" then out.Text = "isi penerima dulu."; return end
-        local tv = parseN(tgtBox.Text) or 500000000
-        sendBtn.Text = "ngirim..."
-        local prevMode, prevMarket = state.gfValueMode, state.gfValueMarket
-        state.gfTarget = recipient; state.gfValueTarget = tv; state.gfValueMode = true; state.gfValueMarket = marketOn
-        Farm._gfId = nil; Farm._gfIdName = nil; saveState()
+        sendBtn.Text = "..."
         task.spawn(function()
-            pcall(Farm.giftFruitOnce)
-            state.gfValueMode = prevMode; state.gfValueMarket = prevMarket
-            task.wait(0.3); sendBtn.Text = "📤 KIRIM"
-            local st = Farm._gfStatus
-            local msg = (st=="ok" and "✓ TERKIRIM!") or (st=="kurang" and "✗ buah ga nyampe target")
-                or (st=="notfound" and "✗ penerima ga ketemu") or (st=="notarget" and "✗ isi penerima")
-                or (st=="empty" and "✗ ga ada buah kekirim") or ("status: "..tostring(st))
-            out.Text = msg.."\n\n"..out.Text
+            local ok, msg = doSendOne()
+            out.Text = msg or ""
+            sendBtn.Text = "KIRIM 1"
         end)
     end)
+
+    autoBtn.MouseButton1Click:Connect(function()
+        if autoRunning then
+            autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
+            return
+        end
+        if not recipient then out.Text = "pilih penerima dulu."; return end
+        autoRunning = true; autoBtn.Text = "AUTO: STOP"; autoBtn.BackgroundColor3 = C.red
+        task.spawn(function()
+            while autoRunning and pop.Parent do
+                if remainingNow() <= 0 then
+                    out.Text = "CUKUP ✓ target tercapai. AUTO berhenti."
+                    autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
+                    break
+                end
+                local before = Farm.snapshotTradeNotifs()
+                local ok, msg = doSendOne()
+                out.Text = (ok and "[AUTO] " or "[AUTO stop] ")..(msg or "")
+                if not ok then
+                    autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
+                    break
+                end
+                local timeout = tonumber(jBox.Text) or 20
+                if timeout < 3 then timeout = 3 end
+                autoBtn.Text = "AUTO: nunggu"
+                local done = Farm.waitTradeDone(timeout, before)
+                if not autoRunning or not pop.Parent then break end
+                if not done then
+                    out.Text = "[AUTO] ga kedeteksi 'Trade completed' dalam "..timeout.."s.\nAUTO berhenti biar ga spam — cek pembeli, lalu nyalain lagi.\n\n"..(msg or "")
+                    autoRunning = false; autoBtn.Text = "AUTO: OFF"; autoBtn.BackgroundColor3 = C.input
+                    break
+                end
+                out.Text = "[AUTO] trade complete ✓ lanjut...\n"..(msg or "")
+                autoBtn.Text = "AUTO: STOP"
+                task.wait(0.5)
+            end
+        end)
+    end)
+
     local drag, ds, sp
     hbar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=true; ds=i.Position; sp=pop.Position end end)
     hbar.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
     UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; pop.Position=UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y) end end)
 end
-local kalkuBtn = titleBtn(-218, "🧮 GIFT", Color3.fromRGB(120, 80, 140), 62)
+local kalkuBtn = titleBtn(-218, "GIFT", Color3.fromRGB(60, 90, 120), 62)
 kalkuBtn.MouseButton1Click:Connect(showKalkuGift)
 
 
@@ -5388,47 +5606,93 @@ do
     mkBodyToggle(body, 580, "Target ikut Harga Pasar (off=normal ×1)", "gfValueMarket", "Gift Value Market")
 
     -- v22.9: tombol History Gift -> popup
-    local function showGiftHistory()
+    function Farm.showGiftHistory()
         local old = sg:FindFirstChild("ZenxGiftHist"); if old then old:Destroy() end
-        local pop = mk("Frame", { Name = "ZenxGiftHist", Size = UDim2.new(0, 330, 0, 400),
-            Position = UDim2.new(0.5, -165, 0.5, -200), BackgroundColor3 = C.panel, BorderSizePixel = 0,
-            ZIndex = 60, Active = true, Parent = sg })
+        local pop = mk("Frame", { Name = "ZenxGiftHist", Size = UDim2.new(0, 366, 0, 420),
+            Position = UDim2.new(0.5, -183, 0.5, -210), BackgroundColor3 = C.panel, BorderSizePixel = 0,
+            ZIndex = 100, Active = true, Parent = sg })
         corner(pop, 10); stroke(pop, C.border, 1)
         local hbar = mk("Frame", { Size = UDim2.new(1,0,0,34), BackgroundColor3 = C.card,
-            BorderSizePixel = 0, ZIndex = 61, Parent = pop }); corner(hbar, 10)
-        local ht = lbl(hbar, "📜 History Gift", 14, C.text, Enum.TextXAlignment.Left)
-        ht.Position = UDim2.new(0,12,0,0); ht.Size = UDim2.new(1,-44,1,0); ht.ZIndex = 62
+            BorderSizePixel = 0, ZIndex = 101, Parent = pop }); corner(hbar, 10)
+        local ht = lbl(hbar, "History Gift", 14, C.text, Enum.TextXAlignment.Left)
+        ht.Position = UDim2.new(0,12,0,0); ht.Size = UDim2.new(1,-44,1,0); ht.ZIndex = 102
         local hcl = mk("TextButton", { Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-32,0,3),
             BackgroundColor3 = Color3.fromRGB(180,60,60), Text = "X", TextColor3 = Color3.new(1,1,1),
-            Font = FONT_B, TextSize = 12, BorderSizePixel = 0, ZIndex = 62, Parent = hbar }); corner(hcl, 6)
+            Font = FONT_B, TextSize = 12, BorderSizePixel = 0, ZIndex = 102, Parent = hbar }); corner(hcl, 6)
         hcl.MouseButton1Click:Connect(function() pop:Destroy() end)
         local sc = mk("ScrollingFrame", { Size = UDim2.new(1,-16,1,-44), Position = UDim2.new(0,8,0,40),
             BackgroundColor3 = C.input, BorderSizePixel = 0, ScrollBarThickness = 4, CanvasSize = UDim2.new(0,0,0,0),
-            AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 61, Parent = pop }); corner(sc, 8)
+            AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 101, Parent = pop }); corner(sc, 8)
+        local lay = mk("UIListLayout", { Padding = UDim.new(0,2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc })
         mk("UIPadding", { PaddingTop = UDim.new(0,6), PaddingBottom = UDim.new(0,6),
-            PaddingLeft = UDim.new(0,8), PaddingRight = UDim.new(0,8), Parent = sc })
-        local txt = mk("TextLabel", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
-            BackgroundTransparency = 1, Font = Enum.Font.Code, TextSize = 12, TextColor3 = C.text,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-            TextWrapped = true, ZIndex = 62, Parent = sc })
-        local lines = {}
-        if #Farm._gfHistory == 0 then
-            lines[1] = "belum ada history gift."
-        else
+            PaddingLeft = UDim.new(0,6), PaddingRight = UDim.new(0,6), Parent = sc })
+
+        local function kgfmt(k) k = k or 0; if k >= 10 then return string.format("%dkg", math.floor(k+0.5)) else return string.format("%.1fkg", k) end end
+        local ord = 0
+        local function newRow(h, bg)
+            ord = ord + 1
+            local r = mk("Frame", { Size = UDim2.new(1,0,0,h), BackgroundColor3 = bg or C.input,
+                BackgroundTransparency = bg and 0 or 1, BorderSizePixel = 0, LayoutOrder = ord, ZIndex = 101, Parent = sc })
+            if bg then corner(r, 5) end
+            return r
+        end
+        local function cell(parent, txt, xs, ws, col, align, bold)
+            local l = mk("TextLabel", { Size = UDim2.new(ws,-4,1,0), Position = UDim2.new(xs,2,0,0),
+                BackgroundTransparency = 1, Text = txt, TextColor3 = col or C.text, Font = bold and FONT_B or Enum.Font.Code,
+                TextSize = 12, TextXAlignment = align or Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+                ZIndex = 102, Parent = parent }); return l
+        end
+
+        local function refresh()
+            for _, c in ipairs(sc:GetChildren()) do
+                if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end
+            end
+            ord = 0
+            if #Farm._gfHistory == 0 then
+                local e = newRow(24); cell(e, "belum ada history gift.", 0, 1, C.textMute)
+                return
+            end
             for _, h in ipairs(Farm._gfHistory) do
-                local vtxt = h.val and (" = "..Farm.abbrev(h.val)) or ""
-                local mtxt = (h.mkt ~= nil) and (h.mkt == 1 and " [pasar]" or " [normal]") or ""
-                lines[#lines+1] = string.format("%s  -> %s\n   %d buah%s%s",
-                    os.date("%d/%m %H:%M", h.t or 0), tostring(h.to), h.n or 0, vtxt, mtxt)
+                local mtxt = (h.mkt ~= nil) and (h.mkt == 1 and "[pasar]" or "[normal]") or ""
+                -- header transaksi
+                local hd = newRow(26, C.card)
+                cell(hd, os.date("%d/%m %H:%M", h.t or 0).."  ->  "..tostring(h.to), 0, 0.62, C.text, Enum.TextXAlignment.Left, true)
+                cell(hd, (h.val and Farm.abbrev(h.val) or "")..(mtxt~="" and ("  "..mtxt) or ""), 0.62, 0.38, C.green, Enum.TextXAlignment.Right, true)
+                if h.items and #h.items > 0 then
+                    -- header kolom
+                    local ch = newRow(16)
+                    cell(ch, "Jenis", 0, 0.55, C.textMute)
+                    cell(ch, "Berat", 0.55, 0.23, C.textMute, Enum.TextXAlignment.Right)
+                    cell(ch, "Nilai", 0.78, 0.22, C.textMute, Enum.TextXAlignment.Right)
+                    local shown = 0
+                    for _, it in ipairs(h.items) do
+                        shown = shown + 1
+                        if shown > 25 then
+                            local more = newRow(18); cell(more, "... +"..(#h.items - 25).." buah lagi", 0, 1, C.textMute)
+                            break
+                        end
+                        local rr = newRow(20)
+                        cell(rr, tostring(it.j or "?"), 0, 0.55, C.text)
+                        cell(rr, kgfmt(it.kg), 0.55, 0.23, C.textDim, Enum.TextXAlignment.Right)
+                        cell(rr, Farm.abbrev(it.v or 0), 0.78, 0.22, C.text, Enum.TextXAlignment.Right)
+                    end
+                else
+                    -- format lama (ga ada rincian)
+                    local rr = newRow(18); cell(rr, (h.n or 0).." buah (tanpa rincian)", 0, 1, C.textDim)
+                end
+                newRow(6)  -- spacer
             end
         end
-        txt.Text = table.concat(lines, "\n")
+        refresh()
+        task.spawn(function()
+            while pop.Parent do refresh(); task.wait(2) end   -- real-time tiap 2s
+        end)
     end
     local histBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 620),
-        BackgroundColor3 = C.input, Text = "📜 History Gift", TextColor3 = C.text, Font = FONT_B,
+        BackgroundColor3 = C.input, Text = "History Gift", TextColor3 = C.text, Font = FONT_B,
         TextSize = 12, BorderSizePixel = 0, Parent = body })
     corner(histBtn, 6); stroke(histBtn, C.border, 1)
-    histBtn.MouseButton1Click:Connect(showGiftHistory)
+    histBtn.MouseButton1Click:Connect(Farm.showGiftHistory)
 
     -- tombol kirim sekarang (sekali jalan)
     local sendBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 292),
@@ -5472,7 +5736,7 @@ do
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
         arrow.Text = expanded and "▴" or "▾"
-        card.Size = UDim2.new(1, 0, 0, expanded and 666 or 56)
+        card.Size = UDim2.new(1, 0, 0, expanded and 720 or 56)
     end)
 end
 
