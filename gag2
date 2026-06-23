@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v24.3"
+local VER       = "v24.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1385,7 +1385,7 @@ function Farm.applyEspInvent()
                         local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
                         local w  = t:GetAttribute("Weight")
                         if fj and type(w) == "number" then
-                            local pr = Farm.fruitPrice(t)
+                            local pr = Farm.fruitPrice(t, true)  -- v24.4: ESP Inventory = harga NORMAL (x1)
                             if pr then
                                 byName[fj] = byName[fj] or {}
                                 table.insert(byName[fj], { w = w, p = pr, dec = t:GetAttribute("DecayAlpha") or 0 })
@@ -4267,8 +4267,8 @@ local function showKalkuGift()
         if suf=="k" then num=num*1e3 elseif suf=="m" then num=num*1e6 elseif suf=="b" then num=num*1e9 end
         return math.floor(num)
     end
-    local pop = mk("Frame", { Name="ZenxKalkuGift", Size=UDim2.new(0,360,0,468),
-        Position=UDim2.new(0.5,-180,0.5,-215), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
+    local pop = mk("Frame", { Name="ZenxKalkuGift", Size=UDim2.new(0,420,0,468),
+        Position=UDim2.new(0.5,-210,0.5,-215), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
     corner(pop,10); stroke(pop,C.border,1)
     local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
     local ht = lbl(hbar, "Kalku Gift", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-44,1,0); ht.ZIndex=72
@@ -4331,13 +4331,13 @@ local function showKalkuGift()
     corner(tgtBox,6); stroke(tgtBox,C.border,1)
 
     -- ===== toggle harga + AKUN PENYIMPANAN + reset =====
-    local mkBtn = mk("TextButton", { Size=UDim2.new(0,140,0,28), Position=UDim2.new(0,14,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
+    local mkBtn = mk("TextButton", { Size=UDim2.new(0,168,0,28), Position=UDim2.new(0,14,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
     local function updMk() mkBtn.Text = "Harga: "..(marketOn and "PASAR" or "NORMAL ×1") end
     updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn = not marketOn; updMk() end)
     -- v24.2: toggle Akun Penyimpanan (storageMode) — ON = akun ini cuma terima, GAK ikut auto-gift kayak farm
-    local storBtn = mk("TextButton", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,160,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.textDim, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(storBtn,6); stroke(storBtn,C.border,1)
+    local storBtn = mk("TextButton", { Size=UDim2.new(0,104,0,28), Position=UDim2.new(0,190,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.textDim, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(storBtn,6); stroke(storBtn,C.border,1)
     local function updStor()
-        if state.storageMode then storBtn.Text="Simpan: ON"; storBtn.BackgroundColor3=C.green; storBtn.TextColor3=Color3.new(0,0,0)
+        if state.storageMode then storBtn.Text="Simpan: ON"; storBtn.BackgroundColor3=Color3.fromRGB(240,240,240); storBtn.TextColor3=Color3.new(0,0,0)
         else storBtn.Text="Simpan: OFF"; storBtn.BackgroundColor3=C.input; storBtn.TextColor3=C.textDim end
     end
     updStor(); storBtn.MouseButton1Click:Connect(function()
@@ -4346,7 +4346,7 @@ local function showKalkuGift()
         print("[ZenxFarm] Akun Penyimpanan (dari Kalku) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
     end)
     task.spawn(function() while pop.Parent do updStor(); task.wait(1) end end)  -- sync kalau diubah dr tempat lain
-    local resetBtn = mk("TextButton", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,256,0,122), BackgroundColor3=C.input, Text="Reset", TextColor3=C.textDim, Font=FONT, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
+    local resetBtn = mk("TextButton", { Size=UDim2.new(0,104,0,28), Position=UDim2.new(0,302,0,122), BackgroundColor3=C.input, Text="Reset", TextColor3=C.textDim, Font=FONT, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
     resetBtn.MouseButton1Click:Connect(function() sessionStart = os.time() end)
 
     -- ===== filter RANGE nilai buah (v23.5): cuma kirim buah yg nilainya di rentang kepilih =====
@@ -4362,14 +4362,14 @@ local function showKalkuGift()
     local function setRange(idx)
         valRange = rangeDefs[idx].r
         for i, b in ipairs(rangeBtns) do
-            if i == idx then b.BackgroundColor3 = C.green; b.TextColor3 = Color3.new(0,0,0)
+            if i == idx then b.BackgroundColor3 = Color3.fromRGB(240,240,240); b.TextColor3 = Color3.new(0,0,0)
             else b.BackgroundColor3 = C.input; b.TextColor3 = C.textDim end
         end
     end
     do
-        local xs = {14, 80, 146, 212, 278}
+        local xs = {14, 93, 172, 251, 330}
         for i, d in ipairs(rangeDefs) do
-            local b = mk("TextButton", { Size=UDim2.new(0,62,0,26), Position=UDim2.new(0,xs[i],0,158),
+            local b = mk("TextButton", { Size=UDim2.new(0,73,0,26), Position=UDim2.new(0,xs[i],0,158),
                 BackgroundColor3=C.input, Text=d.t, TextColor3=C.textDim, Font=FONT, TextSize=11,
                 BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1)
             b.MouseButton1Click:Connect(function() setRange(i) end)
@@ -4377,9 +4377,14 @@ local function showKalkuGift()
         end
         setRange(1)   -- default Semua
     end
+    -- v24.5: garis pemisah antar bagian (desain rapi)
+    do
+        local function mkDiv(y) mk("Frame", { Size=UDim2.new(1,-28,0,1), Position=UDim2.new(0,14,0,y), BackgroundColor3=Color3.fromRGB(45,45,45), BorderSizePixel=0, ZIndex=71, Parent=pop }) end
+        mkDiv(115); mkDiv(190); mkDiv(228)
+    end
 
     -- ===== tracker live: kurang berapa lagi =====
-    local trackL = mk("TextLabel", { Size=UDim2.new(1,-28,0,40), Position=UDim2.new(0,14,0,194), BackgroundColor3=C.input,
+    local trackL = mk("TextLabel", { Size=UDim2.new(1,-28,0,30), Position=UDim2.new(0,14,0,196), BackgroundTransparency=1,
         Text="", TextColor3=C.text, Font=FONT_B, TextSize=13, BorderSizePixel=0, ZIndex=72,
         TextXAlignment=Enum.TextXAlignment.Center, Parent=pop }); corner(trackL,6)
 
@@ -4421,7 +4426,7 @@ local function showKalkuGift()
             elseif rem <= 0 then
                 trackL.Text = "CUKUP ✓  ("..Farm.abbrev(g).." / "..Farm.abbrev(tv)..")"; trackL.TextColor3 = C.green
             else
-                trackL.Text = "Terkirim "..Farm.abbrev(g).." / "..Farm.abbrev(tv).."\nKurang "..Farm.abbrev(rem).." lagi"
+                trackL.Text = "Terkirim "..Farm.abbrev(g).." / "..Farm.abbrev(tv).."   ·   kurang "..Farm.abbrev(rem)
                 trackL.TextColor3 = Color3.new(1,1,1)
             end
             task.wait(1)
@@ -6441,7 +6446,7 @@ do
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "ESP Harga Inventory", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
-    local descL = lbl(card, "harga di tiap buah grid inventory", 11, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "harga NORMAL ×1 (nilai dasar buah)", 11, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
     local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
@@ -6477,9 +6482,9 @@ do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
     corner(card, 8); stroke(card, C.border, 1)
-    local nameL = lbl(card, "ESP Inventory + Pasar", 14, C.text, Enum.TextXAlignment.Left)
+    local nameL = lbl(card, "ESP Harga Pasar", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
-    local descL = lbl(card, "harga + pengali Fruit Price Stock (×0.93)", 11, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "harga jual SEKARANG (× pengali pasar)", 11, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
     local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
