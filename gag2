@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v23.7"
+local VER       = "v24.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -414,6 +414,7 @@ local state = {
     gfValueMarket   = true,      -- v22.9: target ikut harga pasar (true) atau normal ×1 (false)
     gfStorageTarget = "",        -- v21.7: akun simpanan (dipisah koma; dialihin kalau pet udah cukup)
     gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
+    gfPrioMinVal    = 3000000,   -- v24.0: min nilai buah utk "Kirim Semua Kesini Dulu" (default 3M, bisa diatur)
     gfStorDefV1     = false,      -- v21.8: flag apply default akun simpanan
     gfStorDefV2     = false,      -- v21.9: list simpanan diperluas 60-75
     storageMode     = false,      -- v22.0: akun ini = PENYIMPANAN (cuma terima, gak ngegift kayak farm)
@@ -482,6 +483,7 @@ local function saveState()
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
         out.gfStorageTarget = state.gfStorageTarget or ""  -- v21.7
         out.gfStorageMinVal = state.gfStorageMinVal or 4000000  -- v21.8
+        out.gfPrioMinVal = state.gfPrioMinVal or 3000000  -- v24.0
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -525,6 +527,7 @@ local function loadState()
                 if type(d.gpTarget) == "string" and d.gpTarget ~= "" then state.gpTarget = d.gpTarget end
                 if type(d.gfStorageTarget) == "string" then state.gfStorageTarget = d.gfStorageTarget end
                 if type(d.gfStorageMinVal) == "number" then state.gfStorageMinVal = d.gfStorageMinVal end
+                if type(d.gfPrioMinVal) == "number" then state.gfPrioMinVal = d.gfPrioMinVal end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -1067,6 +1070,8 @@ end
 -- di-cache 5 detik (panel refresh tiap bbrp menit, jadi gak perlu rebuild tiap buah).
 Farm._mktMap = nil
 Farm._mktAt = 0
+Farm._mktCycle = nil
+local MKT_FILE = "zenx_mktcache.json"
 function Farm.buildMarketMap()
     local map = {}
     local pg = player:FindFirstChildOfClass("PlayerGui")
@@ -1085,14 +1090,47 @@ function Farm.buildMarketMap()
     end
     return map
 end
--- pengali pasar buat 1 jenis buah (default 1 kalau gak ada di panel / panel blm kebuka).
+-- v24.3: siklus restock skrg (UnixLastRestock dari StockValues, SELALU ke-replicate walau panel tutup)
+function Farm.stockRestock()
+    local sv = RS:FindFirstChild("StockValues")
+    local n = sv and sv:FindFirstChild("UnixLastRestock")
+    return n and n.Value or nil
+end
+function Farm.saveMktCache(cycle, map)
+    if type(writefile) ~= "function" then return end
+    pcall(function() writefile(MKT_FILE, HS:JSONEncode({ cycle = cycle, map = map })) end)
+end
+function Farm.loadMktCache(cycle)
+    if type(readfile) ~= "function" or type(isfile) ~= "function" or not isfile(MKT_FILE) then return nil end
+    local ok, d = pcall(function() return HS:JSONDecode(readfile(MKT_FILE)) end)
+    if ok and type(d) == "table" and type(d.map) == "table" then
+        if not cycle or d.cycle == cycle then return d.map end  -- cuma valid kalau siklus restock sama
+    end
+    return nil
+end
+-- pengali pasar buat 1 jenis buah. v24.3: CACHE pintar — sekali panel kebuka, nilainya
+-- dipake terus sepanjang siklus restock itu (5 menit) walau panel ditutup, + tahan rejoin.
+-- reset cuma pas restock baru. default 1 kalau belum pernah kebaca di siklus ini.
 function Farm.getMarketMult(jenis)
     local now = os.clock()
+    local cyc = Farm.stockRestock()
+    -- restock baru -> pengali lama udah basi -> reset
+    if cyc and Farm._mktCycle and cyc ~= Farm._mktCycle then Farm._mktMap = nil end
+    if cyc then Farm._mktCycle = cyc end
     if not Farm._mktMap or (now - Farm._mktAt) > 5 then
-        Farm._mktMap = Farm.buildMarketMap()
         Farm._mktAt = now
+        local fresh = Farm.buildMarketMap()
+        if next(fresh) ~= nil then
+            -- panel lagi ngasih data -> pake + simpen ke file (cap siklus)
+            Farm._mktMap = fresh
+            Farm.saveMktCache(cyc, fresh)
+        elseif not Farm._mktMap then
+            -- belum ada map (panel ketutup dr awal) -> coba load cache file (siklus sama)
+            Farm._mktMap = Farm.loadMktCache(cyc) or {}
+        end
+        -- kalau panel ketutup TAPI udah ada map di memori -> biarin (pakai yg lama, jangan dibuang)
     end
-    return (jenis and Farm._mktMap[jenis]) or 1
+    return (jenis and Farm._mktMap and Farm._mktMap[jenis]) or 1
 end
 
 -- harga jual 1 buah (Tool inventory ATAU model garden).
@@ -3302,9 +3340,9 @@ function Farm.giftFruitOnce()
                     local w = t:GetAttribute("Weight") or 0
                     local valOk = true
                     if Farm._gfPriority then
-                        -- v23.0: "Kirim Semua Kesini Dulu" -> cuma buah >= 3M, harga NORMAL (x1, ABAIKAN pasar)
+                        -- v24.0: "Kirim Semua Kesini Dulu" -> cuma buah >= gfPrioMinVal (default 3M), harga NORMAL (x1, ABAIKAN pasar)
                         local pr = Farm.fruitPrice(t, true)
-                        valOk = pr and pr >= 3000000
+                        valOk = pr and pr >= (state.gfPrioMinVal or 3000000)
                     elseif Farm._gfToStorage then
                         -- ke simpanan: cuma buah bernilai >= batas (4M default)
                         local pr = Farm.fruitPrice(t)
@@ -3439,9 +3477,37 @@ staggerSpawn(function()
             end
         end
     end)
+    -- v23.8: "last on wins" — akun yg nyalain TERAKHIR yg dapet priority.
+    -- tiap 8s: baca FRESH siapa pemegang slot. kalau bukan aku (ada yg nyalain lebih baru) -> matiin diri.
+    -- kalau masih aku / slot kosong -> assert ulang biar TTL fresh.
+    local function freshPrioHolder()   -- baca langsung tanpa cache (biar keputusan akurat)
+        local purl = Farm.priorityUrl()
+        if not purl then return nil end
+        local resp = Farm.relayReq({ Url = purl, Method = "GET" })
+        local body = resp and (resp.Body or resp.body)
+        if body then
+            local ok, d = pcall(function() return HS:JSONDecode(body) end)
+            if ok and type(d) == "table" and type(d.nm) == "string" and d.nm ~= "" then
+                if not d.t or (os.time() - d.t) < 90 then return d.nm end
+            end
+        end
+        return nil
+    end
     while isCurrentGen() do
-        task.wait(30)
-        if state.storagePriority then pcall(function() Farm.setPriority(true) end) end
+        task.wait(8)
+        if state.storagePriority then
+            local holder = freshPrioHolder()
+            if holder and holder ~= player.Name then
+                -- ada akun lain yg ngambil alih (nyalain lebih baru) -> matiin priority di akun ini
+                state.storagePriority = false
+                Farm._prioCache = false; Farm._prioCacheAt = os.clock()
+                if Farm._applyPrioRef then pcall(Farm._applyPrioRef) end
+                print("[ZenxFarm] priority diambil alih '"..holder.."' -> OFF di akun ini")
+            else
+                -- masih aku / slot kosong -> assert ulang (refresh TTL)
+                pcall(function() Farm.setPriority(true) end)
+            end
+        end
     end
 end)
 -- v18.5: WRITER relay — akun PET tulis sheckles-nya ke relay tiap 10s (biar akun farm bisa baca lintas-server)
@@ -4264,14 +4330,22 @@ local function showKalkuGift()
         PlaceholderText="500M", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop })
     corner(tgtBox,6); stroke(tgtBox,C.border,1)
 
-    -- ===== toggle harga + urut + reset =====
-    local pickMode = "besar"   -- v23.4: "besar" = kirim buah nilai terbesar dulu, "kecil" = terkecil dulu
+    -- ===== toggle harga + AKUN PENYIMPANAN + reset =====
     local mkBtn = mk("TextButton", { Size=UDim2.new(0,140,0,28), Position=UDim2.new(0,14,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
     local function updMk() mkBtn.Text = "Harga: "..(marketOn and "PASAR" or "NORMAL ×1") end
     updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn = not marketOn; updMk() end)
-    local urutBtn = mk("TextButton", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,160,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(urutBtn,6); stroke(urutBtn,C.border,1)
-    local function updUrut() urutBtn.Text = (pickMode=="besar") and "Besar dulu" or "Kecil dulu" end
-    updUrut(); urutBtn.MouseButton1Click:Connect(function() pickMode = (pickMode=="besar") and "kecil" or "besar"; updUrut() end)
+    -- v24.2: toggle Akun Penyimpanan (storageMode) — ON = akun ini cuma terima, GAK ikut auto-gift kayak farm
+    local storBtn = mk("TextButton", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,160,0,122), BackgroundColor3=C.input, Text="", TextColor3=C.textDim, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(storBtn,6); stroke(storBtn,C.border,1)
+    local function updStor()
+        if state.storageMode then storBtn.Text="Simpan: ON"; storBtn.BackgroundColor3=C.green; storBtn.TextColor3=Color3.new(0,0,0)
+        else storBtn.Text="Simpan: OFF"; storBtn.BackgroundColor3=C.input; storBtn.TextColor3=C.textDim end
+    end
+    updStor(); storBtn.MouseButton1Click:Connect(function()
+        state.storageMode = not state.storageMode; saveState(); updStor()
+        if Farm._applyStorageRef then pcall(Farm._applyStorageRef) end   -- sync toggle di panel AUTO GIFT
+        print("[ZenxFarm] Akun Penyimpanan (dari Kalku) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
+    end)
+    task.spawn(function() while pop.Parent do updStor(); task.wait(1) end end)  -- sync kalau diubah dr tempat lain
     local resetBtn = mk("TextButton", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,256,0,122), BackgroundColor3=C.input, Text="Reset", TextColor3=C.textDim, Font=FONT, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
     resetBtn.MouseButton1Click:Connect(function() sessionStart = os.time() end)
 
@@ -4330,7 +4404,7 @@ local function showKalkuGift()
     -- ===== output =====
     local scout = mk("ScrollingFrame", { Size=UDim2.new(1,-28,1,-322), Position=UDim2.new(0,14,0,308), BackgroundColor3=C.input, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=71, Parent=pop }); corner(scout,8)
     mk("UIPadding", { PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8), Parent=scout })
-    local out = mk("TextLabel", { Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Font=Enum.Font.Code, TextSize=12, TextColor3=C.text, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true, ZIndex=72, Text="KIRIM 1 = kirim 1 buah manual.\nAUTO = kirim 1 buah, tunggu buah pindah, lanjut sampe target.\nUrut: Besar dulu = kirim buah termahal duluan. Kecil dulu = termurah duluan.", Parent=scout })
+    local out = mk("TextLabel", { Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y, BackgroundTransparency=1, Font=Enum.Font.Code, TextSize=12, TextColor3=C.text, TextXAlignment=Enum.TextXAlignment.Left, TextYAlignment=Enum.TextYAlignment.Top, TextWrapped=true, ZIndex=72, Text="KIRIM 1 = kirim 1 buah manual.\nAUTO = kirim 1 buah, tunggu buah pindah, lanjut sampe target.\nFilter range = cuma kirim buah di rentang nilai kepilih.", Parent=scout })
 
     local function remainingNow()
         local tv = parseN(tgtBox.Text) or 500000000
@@ -4464,7 +4538,7 @@ local function showKalkuGift()
         if not recipient then return false, "pilih penerima dulu." end
         local rem, tv = remainingNow()
         if rem <= 0 then return false, "CUKUP ✓ udah nyampe target." end
-        local e = Farm.pickOneForValue(rem, marketOn, pickMode, valRange)
+        local e = Farm.pickOneForValue(rem, marketOn, nil, valRange)
         if not e then
             local rng = valRange and (" di range kepilih") or ""
             return false, "ga ada buah buat dikirim"..rng.."."
@@ -6155,19 +6229,32 @@ end
 
 -- ====== AUTO GIFT: Kirim Semua Kesini Dulu (priority drain) — v22.2 ======
 do
-    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 8, Parent = giftList })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Kirim Semua Kesini Dulu", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
-    local descL = lbl(card, "semua farm kirim kesini (auto off pas rejoin)", 11, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "yg nyalain TERAKHIR yg dapet (akun lain auto-off)", 11, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
-    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0, 14),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
     corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
+    -- v24.0: input min nilai buah (dalam juta) buat priority
+    local minLbl = lbl(card, "Kirim buah mulai dari (juta):", 12, C.textDim, Enum.TextXAlignment.Left)
+    minLbl.Position = UDim2.new(0, 14, 0, 60); minLbl.Size = UDim2.new(1, -100, 0, 22)
+    local minBox = mk("TextBox", { Size = UDim2.new(0, 70, 0, 26), Position = UDim2.new(1, -84, 0, 58),
+        BackgroundColor3 = C.input, Text = tostring((state.gfPrioMinVal or 3000000)/1000000),
+        PlaceholderText = "3", TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0,
+        ClearTextOnFocus = false, Parent = card }); corner(minBox, 6); stroke(minBox, C.border, 1)
+    minBox.FocusLost:Connect(function()
+        local n = tonumber(minBox.Text)
+        if n and n > 0 then state.gfPrioMinVal = math.floor(n * 1000000); saveState() end
+        minBox.Text = tostring((state.gfPrioMinVal or 3000000)/1000000)
+        print("[ZenxFarm] priority min nilai -> "..Farm.abbrev(state.gfPrioMinVal or 3000000))
+    end)
     local function apply()
         if state.storagePriority then
             sw.BackgroundColor3 = Color3.fromRGB(90,150,255); knob.BackgroundColor3 = Color3.new(1,1,1)
