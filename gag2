@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v23.5"
+local VER       = "v23.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -396,6 +396,9 @@ local state = {
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
     giftSeedQty     = 0,        -- v8.7: jumlah seed per kirim (0 = semua)
+    autoGiftSeedMoon = false,   -- v23.6: auto kirim seed Moonbloom ke wildnx_60 (mailbox, terpisah)
+    gsmTarget       = "wildnx_60", -- v23.6: penerima seed moonbloom
+    gsmSeed         = "Moonbloom",  -- v23.6: nama seed yg dikirim
     giftPets        = {},       -- jenis pet yg dikirim (by Tool name, mis "Owl"/"Big Owl")
     giftFruits      = {},        -- v11.3: jenis FRUIT yg dikirim
     gfTarget        = "",        -- v17.8: penerima gift fruit mailbox (gak disave)
@@ -443,7 +446,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","autoGiftSeedMoon"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -2674,9 +2677,51 @@ function Farm.giftOnce()
     end
 end
 
--- ===== v13.5: GIFT LANGSUNG (Gifting.Send) — TANPA mailbox, gak perlu di-claim =====
--- format terkonfirmasi via sniffer: Gifting.Send:Fire(userId, "HarvestedFruits", fruitId)
--- kirim FRUIT dari tas (filter jenis + berat). target & filter pakai state dgiftXXX.
+-- ===== v23.6: AUTO GIFT SEED MOONBLOOM -> wildnx_60 (lewat MAILBOX, terpisah dari gift biasa) =====
+-- cari Tool seed yg namanya ngandung state.gsmSeed (default "Moonbloom"), kirim semua via mailbox
+-- ke state.gsmTarget (default "wildnx_60"). mailbox bisa ke offline, ga perlu deket.
+function Farm.giftMoonbloomOnce()
+    local target = state.gsmTarget or "wildnx_60"
+    local seedMatch = tostring(state.gsmSeed or "Moonbloom"):lower()
+    local sb = pkt("Mailbox", "SendBatch")
+    if not sb or not sb.Fire then Farm._gsmStatus = "nosend"; return end
+    -- resolve userId (cache per target)
+    if Farm._gsmId == nil or Farm._gsmName ~= target then
+        Farm._gsmId = resolveTargetId(target)
+        Farm._gsmName = target
+    end
+    local uid = Farm._gsmId
+    if not uid then Farm._gsmStatus = "nouser"; return end
+    -- kumpulin seed moonbloom dari Character + Backpack
+    local items, total = {}, 0
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") and #items < 8 then
+                    local sn = t:GetAttribute("SeedTool") or t:GetAttribute("SeedName")
+                    if not sn and t.Name:match("Seed%s*$") then sn = t.Name:gsub("%s*Seed%s*$","") end
+                    if sn and tostring(sn):lower():find(seedMatch, 1, true) then
+                        local cnt = t:GetAttribute("Count") or 1
+                        if cnt > 0 then
+                            items[#items+1] = { ItemKey = sn, Count = cnt, Category = "Seeds" }
+                            total = total + cnt
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #items == 0 then Farm._gsmStatus = "empty"; return end
+    local ok = pcall(function() sb:Fire(uid, items, "") end)
+    if ok then
+        Farm._gsmStatus = "ok"
+        Farm._gsmSent = (Farm._gsmSent or 0) + total
+        print("[ZenxFarm] gift seed "..(state.gsmSeed or "Moonbloom").." -> "..target..": "..total.." biji")
+    else
+        Farm._gsmStatus = "fail"
+    end
+    return ok, total
+end
 -- v15.2: gift no-mailbox HARUS deket target. samperin dulu (teleport CFrame ke target).
 function Farm.approachPlayer(name)
     if not name or name == "" then return false, "no target" end
@@ -2773,6 +2818,13 @@ staggerSpawn(function()
     while isCurrentGen() do
         task.wait(3)
         if isCurrentGen() and state.autoGift then pcall(Farm.giftOnce) end
+    end
+end)
+-- v23.6: loop auto gift seed Moonbloom -> wildnx_60 (mailbox)
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(4)
+        if isCurrentGen() and state.autoGiftSeedMoon then pcall(Farm.giftMoonbloomOnce) end
     end
 end)
 -- v13.5: loop gift langsung (Gifting.Send)
@@ -5237,6 +5289,27 @@ do
         local n = tonumber(swBox.Text) or 0
         state.sellWeightF = n; swBox.Text = tostring(n); saveState()
         print("[ZenxFarm] filter sell: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
+    end)
+end
+
+-- ====== CARD 5: AUTO GIFT SEED MOONBLOOM -> wildnx_60 (mailbox, terpisah) ======
+do
+    local card, body, setH = mkFarmCard(5, "Auto Gift Seed", "kirim seed Moonbloom ke wildnx_60 (mailbox)")
+    setH(132)
+    local info = lbl(body, "Target: wildnx_60\nSeed: Moonbloom  •  via MAILBOX (bisa offline)", 12, C.textDim, Enum.TextXAlignment.Left)
+    info.Position = UDim2.new(0,0,0,2); info.Size = UDim2.new(1,0,0,40); info.TextWrapped = true; info.TextYAlignment = Enum.TextYAlignment.Top
+    mkBodyToggle(body, 52, "Auto Gift Seed", "autoGiftSeedMoon", "Auto Gift Seed Moonbloom")
+    local stat = lbl(body, "", 12, C.green, Enum.TextXAlignment.Left)
+    stat.Position = UDim2.new(0,0,0,98); stat.Size = UDim2.new(1,0,0,28); stat.TextWrapped = true; stat.TextYAlignment = Enum.TextYAlignment.Top
+    task.spawn(function()
+        local map = { ok="✓ terkirim", empty="ga ada Moonbloom di tas", nouser="wildnx_60 ga ketemu", nosend="mailbox ga ada", fail="gagal kirim" }
+        while card.Parent do
+            local s = Farm._gsmStatus
+            local sent = Farm._gsmSent or 0
+            local txt = state.autoGiftSeedMoon and (map[s] or "nunggu Moonbloom...") or "OFF"
+            stat.Text = "Status: "..txt.."   |   total kekirim: "..sent
+            task.wait(1)
+        end
     end)
 end
 
