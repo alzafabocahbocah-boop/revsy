@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.18"
+local VERSION = "v27.20"
 
 -- ============ THEME ============
 local C = {
@@ -1140,21 +1140,59 @@ do
         TradeSys.respondRE = te:FindFirstChild("RespondRequest")
     end
 end
--- auto-accept trade dari sisi kita (tekan Accept + auto-YES popup unfair)
+-- auto-accept trade dari sisi kita (tekan Accept LALU Confirm + auto-YES popup unfair)
+-- v27.19: tombol trade sekarang "Confirm" (dulu "Accept") & bisa ImageButton (teks di child label).
+local function fireBtn(btn)
+    if not btn then return end
+    if firesignal then pcall(function() firesignal(btn.Activated) end) end
+    if getconnections then
+        for _, c in ipairs(getconnections(btn.Activated)) do pcall(function() c:Fire() end) end
+    end
+end
+-- ambil teks tombol: dari .Text (TextButton) ATAU child TextLabel (ImageButton)
+local function btnTextOf(btn)
+    local t = ""
+    if btn:IsA("TextButton") then t = tostring(btn.Text or "") end
+    if t == "" then
+        for _, d in ipairs(btn:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text and d.Text ~= "" then t = t.." "..d.Text end
+        end
+    end
+    return t:lower()
+end
 local function clickBtnByText(root, texts)
     if not root then return false end
     local hit = false
     pcall(function()
         for _, d in ipairs(root:GetDescendants()) do
-            if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
-                local txt = (d:IsA("TextButton") and d.Text or ""):lower()
+            if d:IsA("GuiButton") and d.Visible then
+                local txt = btnTextOf(d)
                 for _, want in ipairs(texts) do
-                    if txt == want or txt:find(want, 1, true) then
-                        if firesignal then pcall(function() firesignal(d.Activated) end) end
-                        if getconnections then
-                            for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end
+                    if txt == want or txt:find(want, 1, true) then fireBtn(d); hit = true end
+                end
+            end
+        end
+    end)
+    return hit
+end
+-- v27.20: cari instance bernama "Accept" DAN "Confirm" di LiveTrade (2 tahap), klik dua-duanya.
+local function clickTradeConfirm()
+    local pg = player:FindFirstChild("PlayerGui"); if not pg then return false end
+    local tui = pg:FindFirstChild("TradingUI")
+    local lt = tui and tui:FindFirstChild("LiveTrade")
+    if not (lt and lt.Visible) then return false end
+    local hit = false
+    pcall(function()
+        for _, want in ipairs({"Accept", "Confirm"}) do
+            for _, d in ipairs(lt:GetDescendants()) do
+                if d.Name == want and d.Visible then
+                    if d:IsA("GuiButton") then
+                        fireBtn(d); hit = true
+                    else
+                        -- instance-nya frame -> cari tombol di dalemnya
+                        for _, b in ipairs(d:GetDescendants()) do
+                            if b:IsA("GuiButton") and b.Visible then fireBtn(b); hit = true; break end
                         end
-                        hit = true
                     end
                 end
             end
@@ -1166,20 +1204,8 @@ local function autoAcceptTrade()
     pcall(function()
         local pg = player:FindFirstChild("PlayerGui")
         if not pg then return end
-        local tui = pg:FindFirstChild("TradingUI")
-        local lt = tui and tui:FindFirstChild("LiveTrade")
-        if lt and lt.Visible then
-            local opts = lt:FindFirstChild("Options")
-            local acc = opts and opts:FindFirstChild("Accept")
-            if acc then
-                if firesignal then pcall(function() firesignal(acc.Activated) end) end
-                if getconnections then
-                    for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end
-                end
-            end
-        end
-        -- auto-YES popup "Unfair Trade" (cari tombol YES/Confirm di seluruh PlayerGui)
-        clickBtnByText(pg, {"yes", "confirm", "continue", "lanjut"})
+        clickTradeConfirm()                                  -- Accept & Confirm (2 tahap)
+        clickBtnByText(pg, {"yes", "confirm", "continue", "lanjut"})  -- popup "Unfair Trade"
         -- backup remote
         local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
         te = te and te:FindFirstChild("TradeEvents")
@@ -1253,10 +1279,16 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         added = added + 1
         task.wait(0.12)
     end
-    -- auto-accept (spam 4x cepat)
-    for i = 1, 4 do
+    -- v27.19: auto-accept 2 TAHAP (Accept lalu Confirm) — loop sampe trade kelar / timeout 6s
+    local t0 = tick()
+    while tick() - t0 < 6 do
+        if stopCheck and stopCheck() then break end
         autoAcceptTrade()
-        task.wait(0.3)
+        local pg = player:FindFirstChild("PlayerGui")
+        local tui = pg and pg:FindFirstChild("TradingUI")
+        local lt = tui and tui:FindFirstChild("LiveTrade")
+        if not (lt and lt.Visible) then break end   -- window ilang = trade selesai
+        task.wait(0.35)
     end
     return added
 end
