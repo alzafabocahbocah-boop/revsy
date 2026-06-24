@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v24.5"
+local VER       = "v24.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -4282,6 +4282,7 @@ local function showKalkuGift()
     local marketOn = true   -- v23.3: default SELALU harga PASAR pas popup dibuka (bisa toggle ke NORMAL ×1)
     local recipient = nil                 -- penerima kepilih
     local sessionStart = os.time()        -- mulai ngitung gifted dari sini
+    local sessionGifted = 0               -- v24.6: total nilai kekirim sesi ini (ANTI-trim history) — cuma naik
 
     -- ===== penerima: PICKER pemain di server =====
     mkLabel("Penerima", 48)
@@ -4295,7 +4296,7 @@ local function showKalkuGift()
     mk("UIListLayout", { Padding=UDim.new(0,2), SortOrder=Enum.SortOrder.LayoutOrder, Parent=dd })
     mk("UIPadding", { PaddingTop=UDim.new(0,3),PaddingBottom=UDim.new(0,3),PaddingLeft=UDim.new(0,3),PaddingRight=UDim.new(0,3), Parent=dd })
     local function pickRecipient(nm)
-        recipient = nm; sessionStart = os.time()
+        recipient = nm; sessionStart = os.time(); sessionGifted = 0
         recBtn.Text = nm.." ▾"; recBtn.TextColor3 = C.text
         dd.Visible = false
     end
@@ -4347,7 +4348,7 @@ local function showKalkuGift()
     end)
     task.spawn(function() while pop.Parent do updStor(); task.wait(1) end end)  -- sync kalau diubah dr tempat lain
     local resetBtn = mk("TextButton", { Size=UDim2.new(0,104,0,28), Position=UDim2.new(0,302,0,122), BackgroundColor3=C.input, Text="Reset", TextColor3=C.textDim, Font=FONT, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
-    resetBtn.MouseButton1Click:Connect(function() sessionStart = os.time() end)
+    resetBtn.MouseButton1Click:Connect(function() sessionStart = os.time(); sessionGifted = 0 end)
 
     -- ===== filter RANGE nilai buah (v23.5): cuma kirim buah yg nilainya di rentang kepilih =====
     local valRange = nil   -- nil = semua. {lo,hi} = batas nilai buah (pake harga sesuai toggle PASAR/NORMAL)
@@ -4413,7 +4414,7 @@ local function showKalkuGift()
 
     local function remainingNow()
         local tv = parseN(tgtBox.Text) or 500000000
-        local g = recipient and giftedTo(recipient) or 0
+        local g = recipient and sessionGifted or 0   -- v24.6: counter sesi (ga kena trim history 60)
         return math.max(0, tv - g), tv, g
     end
 
@@ -4497,6 +4498,7 @@ local function showKalkuGift()
                             items[#items+1] = { j = info.jenis, kg = info.kg or 0, v = info.val or 0 }
                         end
                         if sum > 0 then
+                            if toName == recipient then sessionGifted = sessionGifted + sum end  -- v24.6: counter sesi naik
                             pcall(function() Farm.gfHistAdd({ to = toName, n = #gone, val = sum,
                                 tgt = (parseN(tgtBox.Text) or 500000000), mkt = marketOn and 1 or 0, tag = "MANUAL", items = items }) end)
                             local _, tvm, gm = remainingNow()
@@ -4533,6 +4535,7 @@ local function showKalkuGift()
     local autoRunning = false
 
     local function recordOne(e, tv)
+        sessionGifted = sessionGifted + (e.val or 0)   -- v24.6: counter sesi naik (anti-trim)
         pcall(function() Farm.gfHistAdd({ to=recipient, n=1, val=e.val, tgt=tv, mkt=marketOn and 1 or 0, tag="KALKU",
             items={{ j=e.jenis, kg=e.kg or 0, v=e.val }} }) end)
     end
