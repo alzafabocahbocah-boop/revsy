@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v24.6"
+local VER       = "v24.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1753,6 +1753,36 @@ local function getFruitHolders()
         if bp then holders[#holders+1] = bp end
     end
     return holders
+end
+
+-- ===== v24.7: FAVORITE buah — packet Backpack.SetFruitFavorite:Fire(id, bool) =====
+function Farm.setFruitFav(id, b)
+    local p = pkt("Backpack", "SetFruitFavorite")
+    if not (p and p.Fire) or not id then return false end
+    pcall(function() p:Fire(tostring(id), b and true or false) end)
+    return true
+end
+-- fav/unfav SEMUA buah di inventory (set favorit = b). return jumlah buah yg diproses.
+function Farm.favAllFruits(b)
+    local p = pkt("Backpack", "SetFruitFavorite")
+    if not (p and p.Fire) then print("[ZenxFarm] SetFruitFavorite packet gak ada"); return 0 end
+    local n = 0
+    for _, holder in ipairs(getFruitHolders()) do
+        for _, o in ipairs(holder:GetChildren()) do
+            local id = o:GetAttribute("Id")
+            if id then
+                pcall(function() p:Fire(tostring(id), b and true or false) end)
+                n = n + 1
+                if n % 8 == 0 then task.wait() end
+            end
+        end
+    end
+    print("[ZenxFarm] "..(b and "FAV" or "UNFAV").." semua buah -> "..n)
+    return n
+end
+-- unfav SEMUA buah di inventory (set favorit=false). return jumlah buah yg diproses.
+function Farm.unfavAllFruits()
+    return Farm.favAllFruits(false)
 end
 
 -- v5.7: deteksi isi & kapasitas inventory (buat mode "sell pas penuh").
@@ -6374,6 +6404,36 @@ do
         print("[ZenxFarm] ESP Harga -> "..(state.espPrice and "ON" or "OFF"))
     end)
     applyEspPriceUI()
+end
+
+-- ====== MISC: Favorit Buah — FAV ALL / UNFAV ALL (v24.8, sekali pencet) ======
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 1, Parent = miscList })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Favorit Buah", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -190, 0, 18)
+    local descL = lbl(card, "fav / unfav semua buah (sekali pencet)", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -190, 0, 14)
+    -- tombol sekali-pencet (bukan toggle). busy bareng biar ga tabrakan.
+    local busy = false
+    local function mkBtn(text, xoff, fav)
+        local btn = mk("TextButton", { Size = UDim2.new(0, 84, 0, 30), Position = UDim2.new(1, xoff, 0.5, -15),
+            BackgroundColor3 = C.input, Text = text, TextColor3 = C.text, Font = FONT_B, TextSize = 12,
+            BorderSizePixel = 0, Parent = card }); corner(btn, 6); stroke(btn, C.border, 1)
+        btn.MouseButton1Click:Connect(function()
+            if busy then return end
+            busy = true; local old = btn.Text; btn.Text = "..."
+            task.spawn(function()
+                local n = Farm.favAllFruits(fav)
+                btn.Text = n.." ok"
+                task.wait(1.6); btn.Text = old; busy = false
+            end)
+        end)
+        return btn
+    end
+    mkBtn("FAV ALL", -176, true)
+    mkBtn("UNFAV ALL", -88, false)
 end
 
 -- ====== MISC: Notif Kirim Buah (toggle) — v22.3 ======
