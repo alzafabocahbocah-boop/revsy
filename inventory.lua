@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v5.35 (fix interval 0 - rejoin instan loop)"
+local SCRIPT_VERSION = "v6.5 (auto batas: MaxPetsInInventory via relay)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -639,6 +639,10 @@ local detailUnread = {Text="", TextColor3=C.Gray}
 
 div(content, 4)
 
+-- v6.0: REJOIN dimatiin — UI-nya dibangun ke frame tersembunyi (semua ref logic lama tetep valid, tapi ga keliatan & ga jalan)
+local _realContent = content
+local _rejoinHide = mk("Frame", { Size = UDim2.new(0,10,0,10), Visible = false, Name = "RejoinHidden", Parent = sg })
+content = _rejoinHide
 local rejoinHeader = lbl(content, "REJOIN", 9, C.Teal) rejoinHeader.Size=UDim2.new(1,0,0,14) rejoinHeader.LayoutOrder=5
 local rnBtn = btn(content, "Rejoin Now", 10, C.TDim, C.Teal)
 rnBtn.Size = UDim2.new(1,0,0,24) rnBtn.LayoutOrder=6 stroke(rnBtn, C.Teal, 1.5)
@@ -796,6 +800,295 @@ local rawLbl = lbl(content, "", 8, C.Gray, Enum.TextXAlignment.Center)
 rawLbl.Size = UDim2.new(1,0,0,16) rawLbl.LayoutOrder=12
 rawLbl.BackgroundTransparency = 1
 rawLbl.TextSize = 9
+content = _realContent  -- v6.0: balik ke content asli. mulai sini = section GIFT (ganti rejoin)
+
+-- ===================== GIFT (v6.0) =====================
+-- remote gift (port dari try.lua): PetGiftingService + module PGS
+local giftRE, PGS = nil, nil
+pcall(function()
+    local ge = RS:FindFirstChild("GameEvents")
+    if ge then giftRE = ge:FindFirstChild("PetGiftingService") end
+    if not giftRE then giftRE = RS:FindFirstChild("PetGiftingService", true) end
+end)
+pcall(function()
+    local mods = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
+    local gm = mods and mods:FindFirstChild("PetGiftingInputService")
+    if gm then local ok, mod = pcall(require, gm); if ok then PGS = mod end end
+end)
+local function findPlayerByName(name)
+    if not name or name == "" then return nil end
+    local low = name:lower()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and (p.Name:lower() == low or p.DisplayName:lower() == low) then return p end
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and (p.Name:lower():find(low,1,true) or p.DisplayName:lower():find(low,1,true)) then return p end
+    end
+    return nil
+end
+local function giftPetToPlayer(targetPlayer, petTool)
+    if not targetPlayer or not petTool then return false end
+    local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    pcall(function() hum:EquipTool(petTool) end)
+    task.wait(0.12)
+    if PGS and PGS.GivePet then
+        pcall(function() PGS.GivePet(targetPlayer) end)
+        task.wait(0.18)
+        if not petTool.Parent then return true end
+    end
+    if giftRE then
+        local u = tostring(petTool:GetAttribute("PET_UUID"))
+        if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
+        pcall(function() giftRE:FireServer("GivePet", targetPlayer, u) end)
+        task.wait(0.18)
+        if not petTool.Parent then return true end
+    end
+    return false
+end
+
+-- ===== RELAY (port dari gag2: Pantry getpantry.cloud) =====
+-- tiap akun PUT key=nama sendiri (PUT=merge, anti-race), akun lain GET baca semua.
+-- akun TARGET nyalain "Lapor ke relay" -> tiap 10s kirim jumlah pet-nya.
+-- akun PENGIRIM baca count target -> kalau >= batas -> target penuh -> jeda.
+local PANTRY_BASE = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/"
+local relayUrl = savedState.relayUrl or (PANTRY_BASE.."zenxpetcount")
+local function relayReq(opts)
+    local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    if not req then return nil end
+    local ok, resp = pcall(function() return req(opts) end)
+    if ok then return resp end
+    return nil
+end
+local function myPetCount()
+    local n = 0
+    for _, holder in ipairs({player.Character, player:FindFirstChildOfClass("Backpack")}) do
+        if holder then for _, t in ipairs(holder:GetChildren()) do
+            if t:IsA("Tool") and isPet(t) then n = n + 1 end
+        end end
+    end
+    return n
+end
+-- batas inventory (port dari hact3): scan getgc cari MaxPetsInInventory (ambil terbesar), cache 30s.
+-- otomatis ikut upgrade akun. fallback attribute MaxPets.
+local _maxPetsCache, _maxPetsAt = nil, 0
+local function getMaxPets()
+    if _maxPetsCache and (tick() - _maxPetsAt) < 30 then return _maxPetsCache end
+    local best = nil
+    pcall(function()
+        if getgc then
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local mp = rawget(obj, "MaxPetsInInventory")
+                    if type(mp) == "number" and mp > 0 and (not best or mp > best) then best = mp end
+                end
+            end
+        end
+    end)
+    if not best then
+        pcall(function()
+            local m = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+            if type(m) == "number" and m > 0 then best = m end
+        end)
+    end
+    _maxPetsCache = best; _maxPetsAt = tick()
+    return best
+end
+local function relayReport()  -- akun target: lapor count + batas sendiri (PUT merge)
+    if relayUrl == "" then return end
+    local payload = HttpService:JSONEncode({ [player.Name] = { c = myPetCount(), m = getMaxPets() or 0, t = os.time() } })
+    pcall(function() relayReq({ Url=relayUrl, Method="PUT", Headers={["Content-Type"]="application/json"}, Body=payload }) end)
+end
+local _relayCache, _relayCacheAt = nil, 0
+local function relayGetAll()  -- GET semua (cache 8s biar ga spam)
+    if relayUrl == "" then return nil end
+    local now = os.clock()
+    if _relayCache and (now - _relayCacheAt) < 8 then return _relayCache end
+    local resp = relayReq({ Url=relayUrl, Method="GET" })
+    local body = resp and (resp.Body or resp.body)
+    local d = nil
+    if body then local ok, parsed = pcall(function() return HttpService:JSONDecode(body) end); if ok then d = parsed end end
+    _relayCache = d or false; _relayCacheAt = now
+    return d
+end
+local function relayTargetData(name)  -- return count, max target dari relay (nil kalau ga ada / basi)
+    if not name or name == "" then return nil, nil end
+    local d = relayGetAll()
+    if type(d) ~= "table" then return nil, nil end
+    local e = d[name]
+    if type(e) == "table" and type(e.c) == "number" then
+        if not e.t or (os.time() - e.t) < 60 then  -- fresh < 60s
+            return e.c, (type(e.m) == "number" and e.m > 0 and e.m or nil)
+        end
+    end
+    return nil, nil
+end
+
+div(content, 4.5)
+local giftHeader = lbl(content, "GIFT", 9, C.Teal) giftHeader.Size=UDim2.new(1,0,0,14) giftHeader.LayoutOrder=5
+
+-- target: ketik username (ke-save, kayak rejoin) + tombol pilih dari server
+local giftTarget = savedState.giftTarget or ""
+local tgtRow = mk("Frame", { Size=UDim2.new(1,0,0,24), BackgroundColor3=C.Card, BorderSizePixel=0, LayoutOrder=6, Parent=content })
+corner(tgtRow, 6) stroke(tgtRow, C.Teal, 1.2)
+local tgtBox = mk("TextBox", {
+    Size=UDim2.new(1,-66,1,-6), Position=UDim2.new(0,6,0,3),
+    BackgroundColor3=C.Panel, Text=giftTarget, PlaceholderText="ketik username target",
+    TextColor3=C.White, PlaceholderColor3=C.Dim, Font=Enum.Font.GothamBold, TextSize=10,
+    TextXAlignment=Enum.TextXAlignment.Left, ClearTextOnFocus=false, Parent=tgtRow
+})
+corner(tgtBox, 5) stroke(tgtBox, C.Dim, 1)
+tgtBox:GetPropertyChangedSignal("Text"):Connect(function()
+    giftTarget = tgtBox.Text; savedState.giftTarget = giftTarget; saveState(savedState)
+end)
+local pickBtn = btn(tgtRow, "Pilih", 9, C.Panel, C.Teal)
+pickBtn.Size = UDim2.new(0,56,1,-6) pickBtn.Position = UDim2.new(1,-60,0,3) stroke(pickBtn, C.Teal, 1)
+local listFrame = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundColor3=C.Panel, BorderSizePixel=0, LayoutOrder=6.5, Visible=false, Parent=content })
+corner(listFrame, 6) mk("UIListLayout", { Padding=UDim.new(0,2), Parent=listFrame })
+local function refreshList()
+    for _,c in ipairs(listFrame:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+    local h = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then
+            local pb = btn(listFrame, p.Name, 9, C.Card, C.White)
+            pb.Size = UDim2.new(1,0,0,20) pb.LayoutOrder = h
+            pb.MouseButton1Click:Connect(function()
+                giftTarget = p.Name; savedState.giftTarget = giftTarget; saveState(savedState)
+                tgtBox.Text = giftTarget
+                listFrame.Visible = false; listFrame.Size = UDim2.new(1,0,0,0)
+            end)
+            h = h + 1
+        end
+    end
+    listFrame.Size = UDim2.new(1,0,0, math.max(1,h)*22)
+end
+pickBtn.MouseButton1Click:Connect(function()
+    if listFrame.Visible then listFrame.Visible=false; listFrame.Size=UDim2.new(1,0,0,0)
+    else refreshList(); listFrame.Visible=true end
+end)
+
+-- metode: Direct (on/off) + Trade Tiket (on/off, step 2)
+local giftDirect = savedState.giftDirect ~= false   -- default ON
+local _, dirTog, dirTS, dirRS = togRow(content, "Metode Tanpa Tiket", "gift langsung satu-satu", 7)
+local function setDir(v) dirTog.Text=v and "ON" or "OFF"; dirTog.BackgroundColor3=v and C.TDim or C.Panel; dirTog.TextColor3=v and C.Teal or C.Gray; dirTS.Color=v and C.Teal or C.Dim; dirRS.Color=v and C.Teal or C.Dim end
+setDir(giftDirect)
+dirTog.MouseButton1Click:Connect(function() giftDirect=not giftDirect; savedState.giftDirect=giftDirect; saveState(savedState); setDir(giftDirect) end)
+local giftTicket = savedState.giftTicket or false    -- default OFF (step 2)
+local _, tikTog, tikTS, tikRS = togRow(content, "Metode Pakai Tiket", "borongan (segera, step 2)", 7.5)
+local function setTik(v) tikTog.Text=v and "ON" or "OFF"; tikTog.BackgroundColor3=v and C.TDim or C.Panel; tikTog.TextColor3=v and C.Teal or C.Gray; tikTS.Color=v and C.Teal or C.Dim; tikRS.Color=v and C.Teal or C.Dim end
+setTik(giftTicket)
+tikTog.MouseButton1Click:Connect(function() giftTicket=not giftTicket; savedState.giftTicket=giftTicket; saveState(savedState); setTik(giftTicket) end)
+
+-- filter: base weight min-max + gate jumlah
+local giftKgMin = tonumber(savedState.giftKgMin) or 3
+cfgRow(content, "Base weight min (kg)", 8, giftKgMin, function(v) giftKgMin = math.max(0, v); savedState.giftKgMin=giftKgMin; saveState(savedState) end)
+local giftKgMax = tonumber(savedState.giftKgMax) or 4
+cfgRow(content, "Base weight max (kg)", 8.2, giftKgMax, function(v) giftKgMax = math.max(0, v); savedState.giftKgMax=giftKgMax; saveState(savedState) end)
+local giftGateN = tonumber(savedState.giftGateN) or 20
+cfgRow(content, "Gate: kumpul brp pet", 8.5, giftGateN, function(v) giftGateN = math.max(1, math.floor(v)); savedState.giftGateN=giftGateN; saveState(savedState) end)
+
+-- RELAY: batas penuh target (0 = auto dari relay) + toggle lapor (akun target nyalain)
+local giftTargetMax = tonumber(savedState.giftTargetMax) or 0  -- 0 = pakai batas auto dari relay
+cfgRow(content, "Batas manual (0=auto relay)", 8.6, giftTargetMax, function(v) giftTargetMax = math.max(0, math.floor(v)); savedState.giftTargetMax=giftTargetMax; saveState(savedState) end)
+local relayWrite = savedState.relayWrite or false  -- default OFF (cuma akun target yg ON)
+local _, rwTog, rwTS, rwRS = togRow(content, "Lapor pet ke relay", "nyalain di AKUN TARGET", 8.7)
+local function setRw(v) rwTog.Text=v and "ON" or "OFF"; rwTog.BackgroundColor3=v and C.TDim or C.Panel; rwTog.TextColor3=v and C.Teal or C.Gray; rwTS.Color=v and C.Teal or C.Dim; rwRS.Color=v and C.Teal or C.Dim end
+setRw(relayWrite)
+rwTog.MouseButton1Click:Connect(function() relayWrite=not relayWrite; savedState.relayWrite=relayWrite; saveState(savedState); setRw(relayWrite); if relayWrite then relayReport() end end)
+-- writer loop: akun target lapor count tiap 10s
+task.spawn(function()
+    while true do
+        if relayWrite then pcall(relayReport) end
+        task.wait(10)
+    end
+end)
+
+-- pet yg cocok: base weight (age-1) di rentang giftKgMin..giftKgMax
+local function matchingPets()
+    local list = {}
+    local APS = getgenv and getgenv().ZenxInvAPS
+    for _, holder in ipairs({player.Character, player:FindFirstChildOfClass("Backpack")}) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") and isPet(t) then
+                    local uuid = t:GetAttribute("PET_UUID")
+                    local bw = uuid and APS and APS.getBaseKg(uuid)
+                    if bw and bw >= giftKgMin and bw <= giftKgMax then list[#list+1] = t end
+                end
+            end
+        end
+    end
+    return list
+end
+
+-- auto gift: DEFAULT ON (always on, langsung jalan pas load) + status
+local giftRunning = true
+local _, agTog, agTS, agRS = togRow(content, "Auto Gift", "always on (jalan kalau pet >= gate)", 9)
+local function setAg(v) agTog.Text=v and "ON" or "OFF"; agTog.BackgroundColor3=v and C.TDim or C.Panel; agTog.TextColor3=v and C.Teal or C.Gray; agTS.Color=v and C.Teal or C.Dim; agRS.Color=v and C.Teal or C.Dim end
+local giftStatus = lbl(content, "Gift: ON", 9, C.Teal, Enum.TextXAlignment.Center)
+giftStatus.Size=UDim2.new(1,0,0,30) giftStatus.LayoutOrder=10 giftStatus.BackgroundColor3=C.Panel giftStatus.BackgroundTransparency=0 giftStatus.TextWrapped=true
+corner(giftStatus, 6) stroke(giftStatus, C.Dim, 1.1)
+local giftLoopActive = false
+local giftPauseUntil = 0
+local function runGiftLoop()
+    if giftLoopActive then return end
+    giftLoopActive = true
+    task.spawn(function()
+        while giftRunning do
+            if tick() < giftPauseUntil then
+                local left = math.ceil(giftPauseUntil - tick())
+                giftStatus.Text="Target penuh/max — jeda "..left.."s"; giftStatus.TextColor3=C.Gold
+                task.wait(1)
+            else
+                local target = findPlayerByName(giftTarget)
+                local pets = matchingPets()
+                local relayN, relayMax = relayTargetData(giftTarget)  -- count & batas target dari relay
+                local cap = (giftTargetMax > 0 and giftTargetMax) or relayMax  -- manual override > auto relay
+                if cap and relayN and relayN >= cap then
+                    -- target udah penuh (count >= batas) -> jeda 60s, ga perlu nyoba gift
+                    giftPauseUntil = tick() + 60
+                    giftStatus.Text="Target PENUH "..relayN.."/"..cap.." (relay) — jeda 60s"; giftStatus.TextColor3=C.Red
+                elseif not target then
+                    giftStatus.Text="Target ga ketemu: "..(giftTarget~="" and giftTarget or "(blm diisi)"); giftStatus.TextColor3=C.Red
+                    task.wait(3)
+                elseif #pets < giftGateN then
+                    local rtxt = relayN and (" | target "..relayN..(cap and ("/"..cap) or "")) or ""
+                    giftStatus.Text="Nunggu: "..#pets.."/"..giftGateN.." pet "..giftKgMin.."-"..giftKgMax.."kg"..rtxt; giftStatus.TextColor3=C.Gold
+                    task.wait(3)
+                else
+                    giftStatus.Text="Gift "..#pets.." pet ke "..target.Name.."..."; giftStatus.TextColor3=C.Teal
+                    local sent, failStreak = 0, 0
+                    for _, pt in ipairs(pets) do
+                        if not giftRunning then break end
+                        local ok = giftDirect and giftPetToPlayer(target, pt)
+                        if ok then sent = sent + 1; failStreak = 0
+                        else failStreak = failStreak + 1; if failStreak >= 3 then break end end  -- 3 gagal beruntun = target penuh
+                        task.wait(0.2)
+                    end
+                    if sent == 0 and failStreak >= 3 then
+                        -- target kemungkinan PENUH/MAX -> jeda 60 detik (anti spam)
+                        giftPauseUntil = tick() + 60
+                        giftStatus.Text="Target PENUH/max — auto gift jeda 60s"; giftStatus.TextColor3=C.Red
+                        print("[ZenxInv] target penuh (gift gagal beruntun) -> jeda 60s")
+                    else
+                        giftStatus.Text="Kekirim "..sent.." pet (sisa cek lagi)"; giftStatus.TextColor3=C.Green
+                        task.wait(3)
+                    end
+                end
+            end
+        end
+        giftStatus.Text="Gift: OFF"; giftStatus.TextColor3=C.Gray
+        giftLoopActive = false
+    end)
+end
+setAg(giftRunning)
+agTog.MouseButton1Click:Connect(function()
+    giftRunning = not giftRunning; setAg(giftRunning)
+    if giftRunning then runGiftLoop()
+    else giftStatus.Text="Gift: OFF"; giftStatus.TextColor3=C.Gray end
+end)
+if giftRunning then runGiftLoop() end   -- always on: langsung jalan pas load
+-- ===================== /GIFT =====================
 local function fmtAge(sec)
     sec = math.floor(sec)
     local h = math.floor(sec / 3600)
@@ -1326,6 +1619,12 @@ setExpanded(false)
 expBtn.MouseButton1Click:Connect(function() setExpanded(not expanded) end)
 
 -- v5.37: resume Auto Rejoin KALO user emang nyalain (interval countdown dulu, gak instan).
+-- v6.0: REJOIN DIMATIIN TOTAL — paksa semua flag teleport OFF biar ga pernah auto-rejoin/bounce
+savedState.autoRejoin = false
+savedState.bouncePending = false
+savedState.bounceTime = nil
+pcall(function() saveState(savedState) end)
+
 -- Loop instan dulu dari path bounce/same-server (udah difix v5.34-36), BUKAN dari sini.
 -- startAR count down mins*60 detik dulu sebelum teleport, jadi aman gak langsung rejoin.
 if savedState.autoRejoin == true then
