@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.289"
-local VERSION_DATE = "v8.289: diagnostik webhook (status code di tombol Test)."
+local VERSION = "8.291"
+local VERSION_DATE = "v8.291: status di card (http name + webhook code) — console ke-spam."
 
 warn("============================================")
-warn("  ZENX MARKET LOADING — VERSI 8.289")
+warn("  ZENX MARKET LOADING — VERSI 8.291")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -11932,10 +11932,21 @@ end)
 -- tiap akun yg pakai sc lapor jumlah Trade Token-nya ke relay (Pantry).
 -- salah satu akun (terkoordinasi, anti-spam) ngirim TOTAL semua akun ke webhook DC.
 task.spawn(function()
+    warn("[ZenxToken] modul token relay + webhook LOADING...")
     -- relay pantry (sama kayak gag2/inventory, basket beda biar ga tabrakan)
     local TOKEN_URL = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxtoken"
+    local lastStat = "siap"  -- status terakhir, tampil di card (console ke-spam)
+    local function setStat(s) lastStat = tostring(s) end
     local function getHttp()
         return (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    end
+    local function httpName()
+        if syn and syn.request then return "syn.request"
+        elseif http and http.request then return "http.request"
+        elseif http_request then return "http_request"
+        elseif request then return "request"
+        elseif fluxus and fluxus.request then return "fluxus.request"
+        else return "NONE" end
     end
     local function req(o)
         local r = getHttp()
@@ -11983,11 +11994,14 @@ task.spawn(function()
     end
     -- POST ke webhook, return ok, kodeStatus/err (buat diagnostik)
     local function postRaw(url, payloadTbl)
-        if not getHttp() then return false, "no-http" end
-        local resp = req({ Url=url, Method="POST", Headers=JSONH, Body=HttpService:JSONEncode(payloadTbl) })
-        if not resp then return false, "req-fail" end
+        if not getHttp() then setStat("executor GA SUPPORT http!"); return false, "no-http" end
+        local resp = req({ Url=url, Method="POST",
+            Headers={ ["Content-Type"]="application/json", ["User-Agent"]="ZenxToken/1.0 (Roblox)" },
+            Body=HttpService:JSONEncode(payloadTbl) })
+        if not resp then setStat("webhook: req-fail"); return false, "req-fail" end
         local code = statusOf(resp)
         local ok = (type(code) == "number" and code >= 200 and code < 300)
+        setStat("webhook -> "..tostring(code or "?")..(ok and " OK" or " GAGAL"))
         return ok, tostring(code or "?")
     end
     -- kirim total ke webhook DC (embed) -- total di ATAS & BAWAH
@@ -12008,7 +12022,8 @@ task.spawn(function()
     if type(settings.tokenWebhook) == "string" and settings.tokenWebhook:find("discordapp.com", 1, true) then
         settings.tokenWebhook = settings.tokenWebhook:gsub("discordapp%.com", "discord.com"); save()
     end
-    local card = makeCollapsibleCard(miscPanel, "Token Relay + Webhook DC", false)
+    if settings.tokenRelay == nil then settings.tokenRelay = true; save() end  -- default ON
+    local card = makeCollapsibleCard(miscPanel, "Token Relay + Webhook DC", true)  -- kebuka default
     local hookBox = addInputRow(card, "Webhook DC", settings.tokenWebhook or "", "paste url webhook")
     hookBox:GetPropertyChangedSignal("Text"):Connect(function() settings.tokenWebhook = hookBox.Text; save() end)
     local intBox = addInputRow(card, "Kirim tiap (menit)", tostring(settings.tokenInterval or 10), "10")
@@ -12016,8 +12031,11 @@ task.spawn(function()
         local n = tonumber(intBox.Text); if n and n > 0 then settings.tokenInterval = math.floor(n); save() end
     end)
     addReadOnlyRow(card, "Token akun ini", function() return getTokens() or "?" end)
-    local relTog = addToggleRow(card, "Relay + Webhook ON", settings.tokenRelay or false)
+    addReadOnlyRow(card, "Status", function() return lastStat end)
+    setStat(getHttp() and ("http: "..httpName()) or "executor GA SUPPORT http!")
+    local relTog = addToggleRow(card, "Relay + Webhook ON", settings.tokenRelay ~= false)
     relTog.onChange(function(v) settings.tokenRelay = v; save() end)
+    warn("[ZenxToken] modul SIAP — http="..httpName())
 
     -- ===== KUMPULIN TOTAL (refresh-round, akurat) =====
     -- poster kirim _refresh(id unik) -> semua akun lapor token terkini + echo id-nya ->
@@ -12026,9 +12044,10 @@ task.spawn(function()
         local refreshId = tostring(os.time()).."-"..tostring(math.random(1000, 9999))
         local tk = getTokens()
         putKV({ [player.Name] = { tok = tk or 0, t = os.time(), r = refreshId }, _refresh = refreshId })
+        setStat("ngumpulin... tunggu "..waitSecs.."s")
         task.wait(waitSecs)  -- tunggu semua akun lapor ulang (lambat tapi pasti fresh)
         local d = getAll()
-        if type(d) ~= "table" then return nil end
+        if type(d) ~= "table" then setStat("relay GET error"); return nil end
         local total, n, lines = 0, 0, {}
         for k, e in pairs(d) do
             if k:sub(1,1) ~= "_" and type(e) == "table" and type(e.tok) == "number" and e.r == refreshId then
@@ -12036,6 +12055,7 @@ task.spawn(function()
             end
         end
         table.sort(lines)
+        setStat("kekumpul "..n.." akun, total "..fmtK(total))
         return total, n, lines
     end
 
