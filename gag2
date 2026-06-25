@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v24.8"
+local VER       = "v24.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -4265,7 +4265,7 @@ local verLbl = mk("TextLabel", {
 
 -- v22.9: tampilin Sheckles KITA di header (samping versi), refresh tiap 1 detik
 local sheckLbl = mk("TextLabel", {
-    Size = UDim2.new(0, 100, 1, 0), Position = UDim2.new(0, 210, 0, 0), BackgroundTransparency = 1,
+    Size = UDim2.new(0, 66, 1, 0), Position = UDim2.new(0, 210, 0, 0), BackgroundTransparency = 1,
     Text = "💰 …", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(255, 209, 92),
     TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar })
 task.spawn(function()
@@ -4672,6 +4672,147 @@ local function showKalkuGift()
     hbar.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
     UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; pop.Position=UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y) end end)
 end
+-- ===== v24.9: MAIL GIFT (mailbox) — kirim buah by jenis + range nilai per-buah, sampai target total =====
+Farm._mailRanges = {
+    { t="Semua", lo=0,   hi=math.huge },
+    { t="1-2M",  lo=1e6, hi=2e6  },
+    { t="3-5M",  lo=3e6, hi=5e6  },
+    { t="5-8M",  lo=5e6, hi=8e6  },
+    { t="8-10M", lo=8e6, hi=10e6 },
+}
+-- kirim buah via MAILBOX (SendBatch). filter jenis + range nilai/buah, kumpulin kombinasi sampai >= target.
+function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, targetTotal, useMarket)
+    local sb = pkt("Mailbox", "SendBatch")
+    if not sb or not sb.Fire then return false, "Mailbox SendBatch gak ada" end
+    if not target or target == "" then return false, "target kosong" end
+    local uid = resolveTargetId(target)
+    if not uid then return false, "target '"..tostring(target).."' gak ketemu" end
+    local ff = tostring(fruitFilter or ""):lower():gsub("^%s+",""):gsub("%s+$","")
+    local allFruit = (ff == "" or ff == "semua" or ff == "all")
+    local elig = {}
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                local fid = t:GetAttribute("Id")
+                local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                if fid and fj then
+                    local jenisOk = allFruit or (tostring(fj):lower():find(ff, 1, true) ~= nil)
+                    if jenisOk then
+                        local pr = Farm.fruitPrice(t, not useMarket) or 0
+                        if pr >= rngLo and pr <= rngHi then
+                            elig[#elig+1] = { fid = tostring(fid), val = pr }
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #elig == 0 then return false, "ga ada buah cocok (cek jenis & range)" end
+    table.sort(elig, function(a, b) return a.val > b.val end)   -- nilai terbesar dulu
+    local picked, sum = {}, 0
+    for _, e in ipairs(elig) do
+        if sum >= targetTotal then break end
+        picked[#picked+1] = e; sum = sum + e.val
+    end
+    local batch, total = {}, 0
+    local function flush()
+        if #batch > 0 then
+            local items = batch; batch = {}
+            pcall(function() sb:Fire(uid, items, "") end)
+            total = total + #items; task.wait(0.3)
+        end
+    end
+    Farm._scriptSentIds = Farm._scriptSentIds or {}
+    for _, e in ipairs(picked) do
+        Farm._scriptSentIds[e.fid] = true
+        batch[#batch+1] = { ItemKey = e.fid, Count = 1, Category = "HarvestedFruits" }
+        if #batch >= 8 then flush() end
+    end
+    flush()
+    return true, total, sum, (sum >= targetTotal)
+end
+
+local function showMailGift()
+    local old = sg:FindFirstChild("ZenxMailGift"); if old then old:Destroy() end
+    local function parseN(txt)
+        txt = tostring(txt):gsub("%s",""):lower()
+        local num, suf = txt:match("^([%d%.]+)([kmb]?)$"); num = tonumber(num); if not num then return nil end
+        if suf=="k" then num=num*1e3 elseif suf=="m" then num=num*1e6 elseif suf=="b" then num=num*1e9 end
+        return math.floor(num)
+    end
+    local pop = mk("Frame", { Name="ZenxMailGift", Size=UDim2.new(0,420,0,326),
+        Position=UDim2.new(0.5,-210,0.5,-163), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
+    corner(pop,10); stroke(pop,C.border,1)
+    local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
+    local ht = lbl(hbar, "MAIL — Kirim Buah (mailbox)", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-44,1,0); ht.ZIndex=72
+    local hcl = mk("TextButton", { Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-32,0,4), BackgroundColor3=C.red, Text="✕", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=hbar }); corner(hcl,6)
+    hcl.MouseButton1Click:Connect(function() pop:Destroy() end)
+    local function mkLabel(t,y) local l=lbl(pop,t,12,C.text,Enum.TextXAlignment.Left); l.Position=UDim2.new(0,14,0,y); l.Size=UDim2.new(0,108,0,24); l.ZIndex=72; return l end
+    local function mkBox(y,def,ph) local b=mk("TextBox",{ Size=UDim2.new(1,-138,0,28), Position=UDim2.new(0,124,0,y-2), BackgroundColor3=C.input, Text=def or "", PlaceholderText=ph or "", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1); return b end
+
+    mkLabel("Penerima",48);      local recBox = mkBox(48, state.mailTarget or "", "ketik nama akun")
+    mkLabel("Jenis buah",84);    local frBox  = mkBox(84, state.mailFruit or "", "Semua / nama buah")
+    mkLabel("Target total",120); local tgtBox = mkBox(120, state.mailTotalM or "3M", "3M")
+
+    local marketOn = (state.mailMarket ~= false)
+    local mkBtn = mk("TextButton", { Size=UDim2.new(0,180,0,26), Position=UDim2.new(0,14,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
+    local function updMk() mkBtn.Text="Harga: "..(marketOn and "PASAR" or "NORMAL x1") end
+    updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn=not marketOn; updMk() end)
+
+    mkLabel("Range/buah",190)
+    local rangeIdx = state.mailRangeIdx or 2
+    local rangeBtns = {}
+    local function setRange(idx)
+        rangeIdx = idx
+        for i,b in ipairs(rangeBtns) do
+            if i==idx then b.BackgroundColor3=Color3.fromRGB(240,240,240); b.TextColor3=Color3.new(0,0,0)
+            else b.BackgroundColor3=C.input; b.TextColor3=C.textDim end
+        end
+    end
+    do
+        local xs={14,93,172,251,330}
+        for i,d in ipairs(Farm._mailRanges) do
+            local b=mk("TextButton",{ Size=UDim2.new(0,73,0,26), Position=UDim2.new(0,xs[i],0,216),
+                BackgroundColor3=C.input, Text=d.t, TextColor3=C.textDim, Font=FONT, TextSize=11, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1)
+            b.MouseButton1Click:Connect(function() setRange(i) end)
+            rangeBtns[i]=b
+        end
+        setRange(rangeIdx)
+    end
+
+    local out = lbl(pop, "isi penerima, jenis buah, target & range -> KIRIM (lewat mailbox, bisa offline)", 11, C.textDim, Enum.TextXAlignment.Left)
+    out.Position=UDim2.new(0,14,0,288); out.Size=UDim2.new(1,-28,0,32); out.ZIndex=72; out.TextWrapped=true
+    local sendBtn = mk("TextButton", { Size=UDim2.new(1,-28,0,30), Position=UDim2.new(0,14,0,252), BackgroundColor3=Color3.fromRGB(240,240,240), Text="KIRIM", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=13, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
+    local busy=false
+    sendBtn.MouseButton1Click:Connect(function()
+        if busy then return end
+        local target = recBox.Text:gsub("^%s+",""):gsub("%s+$","")
+        local fruit  = frBox.Text
+        local tot    = parseN(tgtBox.Text)
+        if target=="" then out.Text="isi nama penerima dulu"; out.TextColor3=C.red; return end
+        if not tot then out.Text="target total ga valid (contoh: 3M)"; out.TextColor3=C.red; return end
+        state.mailTarget=target; state.mailFruit=fruit; state.mailTotalM=tgtBox.Text; state.mailRangeIdx=rangeIdx; state.mailMarket=marketOn
+        local rng = Farm._mailRanges[rangeIdx]
+        busy=true; sendBtn.Text="ngirim..."; out.Text="ngumpulin & kirim..."; out.TextColor3=C.textDim
+        task.spawn(function()
+            local ok,a,b,reached = Farm.mailGiftSend(target, fruit, rng.lo, rng.hi, tot, marketOn)
+            if ok then
+                out.Text = "terkirim "..a.." buah = "..Farm.abbrev(b).." ke "..target..(reached and "  (target tercapai)" or "  (kurang dari target, semua yg cocok dikirim)")
+                out.TextColor3 = C.green
+            else
+                out.Text = "gagal: "..tostring(a); out.TextColor3 = C.red
+            end
+            sendBtn.Text="KIRIM"; busy=false
+        end)
+    end)
+
+    local drag,ds,sp
+    hbar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=true; ds=i.Position; sp=pop.Position end end)
+    hbar.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; pop.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y) end end)
+end
+local mailBtn  = titleBtn(-276, "MAIL", Color3.fromRGB(50, 110, 110), 54)
+mailBtn.MouseButton1Click:Connect(showMailGift)
 local kalkuBtn = titleBtn(-218, "GIFT", Color3.fromRGB(60, 90, 120), 62)
 kalkuBtn.MouseButton1Click:Connect(showKalkuGift)
 
