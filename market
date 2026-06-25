@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.288"
-local VERSION_DATE = "v8.288: webhook default keisi otomatis."
+local VERSION = "8.289"
+local VERSION_DATE = "v8.289: diagnostik webhook (status code di tombol Test)."
 
 warn("============================================")
-warn("  ZENX MARKET LOADING — VERSI 8.288")
+warn("  ZENX MARKET LOADING — VERSI 8.289")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -11934,11 +11934,18 @@ end)
 task.spawn(function()
     -- relay pantry (sama kayak gag2/inventory, basket beda biar ga tabrakan)
     local TOKEN_URL = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxtoken"
+    local function getHttp()
+        return (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    end
     local function req(o)
-        local r = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+        local r = getHttp()
         if not r then return nil end
         local ok, res = pcall(function() return r(o) end)
         return ok and res or nil
+    end
+    local function statusOf(resp)
+        if not resp then return nil end
+        return resp.StatusCode or resp.status_code or resp.Status or resp.status
     end
     local JSONH = { ["Content-Type"] = "application/json" }
     local function putKV(t) pcall(function() req({ Url=TOKEN_URL, Method="PUT", Headers=JSONH, Body=HttpService:JSONEncode(t) }) end) end
@@ -11974,24 +11981,33 @@ task.spawn(function()
         end
         return tostring(math.floor(n))
     end
+    -- POST ke webhook, return ok, kodeStatus/err (buat diagnostik)
+    local function postRaw(url, payloadTbl)
+        if not getHttp() then return false, "no-http" end
+        local resp = req({ Url=url, Method="POST", Headers=JSONH, Body=HttpService:JSONEncode(payloadTbl) })
+        if not resp then return false, "req-fail" end
+        local code = statusOf(resp)
+        local ok = (type(code) == "number" and code >= 200 and code < 300)
+        return ok, tostring(code or "?")
+    end
     -- kirim total ke webhook DC (embed) -- total di ATAS & BAWAH
     local function postWebhook(url, total, accCount, lines)
         local tot = fmtK(total)
         local desc = "**TOTAL TOKEN: "..tot.."**\n\n"..table.concat(lines, "\n").."\n\n**TOTAL TOKEN: "..tot.."**"
         if #desc > 4000 then desc = desc:sub(1, 4000).."\n..." end
-        local payload = HttpService:JSONEncode({
-            username = "Zenx Token",
-            embeds = {{ title = accCount.." akun", description = desc, color = 3447003 }},
-        })
-        pcall(function() req({ Url=url, Method="POST", Headers=JSONH, Body=payload }) end)
+        return postRaw(url, { username = "Zenx Token", embeds = {{ title = accCount.." akun", description = desc, color = 3447003 }} })
     end
 
     -- ===== UI (Misc tab) =====
     local settings = (BH and BH.marketState and BH.marketState.settings) or {}
     local function save() if BH and BH.marketState then pcall(function() BH.saveMarketState(BH.marketState) end) end end
     -- default webhook (dipakai kalau belum diisi manual)
-    local DEFAULT_WEBHOOK = "https://discordapp.com/api/webhooks/1519745824593285170/xxebbiKJAublOWmj5rvjMKDvOv8H1O2ALda0yoA8nE7R6vfNdcgJEOKGhzfrIRLocN5h"
+    local DEFAULT_WEBHOOK = "https://discord.com/api/webhooks/1519745824593285170/xxebbiKJAublOWmj5rvjMKDvOv8H1O2ALda0yoA8nE7R6vfNdcgJEOKGhzfrIRLocN5h"
     if (settings.tokenWebhook or "") == "" then settings.tokenWebhook = DEFAULT_WEBHOOK; save() end
+    -- migrasi: discordapp.com -> discord.com (lebih kompatibel sama executor)
+    if type(settings.tokenWebhook) == "string" and settings.tokenWebhook:find("discordapp.com", 1, true) then
+        settings.tokenWebhook = settings.tokenWebhook:gsub("discordapp%.com", "discord.com"); save()
+    end
     local card = makeCollapsibleCard(miscPanel, "Token Relay + Webhook DC", false)
     local hookBox = addInputRow(card, "Webhook DC", settings.tokenWebhook or "", "paste url webhook")
     hookBox:GetPropertyChangedSignal("Text"):Connect(function() settings.tokenWebhook = hookBox.Text; save() end)
@@ -12023,16 +12039,30 @@ task.spawn(function()
         return total, n, lines
     end
 
-    -- post manual (test)
+    -- post manual (test) -- ping webhook dulu (status langsung), baru kirim total
     local testBtn = addButtonRow(card, "Test kirim total sekarang")
     testBtn.MouseButton1Click:Connect(function()
-        if (settings.tokenWebhook or "") == "" then testBtn.Text = "webhook kosong!"; task.delay(2, function() testBtn.Text="Test kirim total sekarang" end); return end
-        testBtn.Text = "ngumpulin... (±40s)"
+        local wh = settings.tokenWebhook or ""
+        if wh == "" then testBtn.Text = "webhook kosong!"; task.delay(2.5, function() testBtn.Text="Test kirim total sekarang" end); return end
+        testBtn.Text = "tes webhook..."
         task.spawn(function()
+            -- 1) ping cepat: cek webhook + executor http
+            local ok, code = postRaw(wh, { content = "ZENX token: test ping (cek webhook ok)" })
+            if not ok then
+                testBtn.Text = (code == "no-http") and "GAGAL: executor ga support http"
+                    or ("webhook GAGAL ("..code..")")
+                task.wait(5); testBtn.Text = "Test kirim total sekarang"; return
+            end
+            -- 2) webhook ok -> kumpulin total (refresh-round)
+            testBtn.Text = "webhook OK ("..code..") ngumpulin ±40s"
             local total, n, lines = collectTotal(40)
-            if total then postWebhook(settings.tokenWebhook, total, n, lines); testBtn.Text = "terkirim! total "..fmtK(total).." ("..n.." akun)"
-            else testBtn.Text = "gagal (relay error)" end
-            task.wait(3); testBtn.Text = "Test kirim total sekarang"
+            if total then
+                local ok2 = postWebhook(wh, total, n, lines)
+                testBtn.Text = ok2 and ("terkirim! "..fmtK(total).." ("..n.." akun)") or "total gagal kirim"
+            else
+                testBtn.Text = "webhook ok, tp RELAY error"
+            end
+            task.wait(5); testBtn.Text = "Test kirim total sekarang"
         end)
     end)
 
