@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v24.9"
+local VER       = "v25.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -4696,7 +4696,7 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, targetTotal, useMa
                 local fid = t:GetAttribute("Id")
                 local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
                 if fid and fj then
-                    local jenisOk = allFruit or (tostring(fj):lower():find(ff, 1, true) ~= nil)
+                    local jenisOk = allFruit or (tostring(fj):lower() == ff)
                     if jenisOk then
                         local pr = Farm.fruitPrice(t, not useMarket) or 0
                         if pr >= rngLo and pr <= rngHi then
@@ -4751,10 +4751,55 @@ local function showMailGift()
     local function mkBox(y,def,ph) local b=mk("TextBox",{ Size=UDim2.new(1,-138,0,28), Position=UDim2.new(0,124,0,y-2), BackgroundColor3=C.input, Text=def or "", PlaceholderText=ph or "", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1); return b end
 
     mkLabel("Penerima",48);      local recBox = mkBox(48, state.mailTarget or "", "ketik nama akun")
-    mkLabel("Jenis buah",84);    local frBox  = mkBox(84, state.mailFruit or "", "Semua / nama buah")
+    -- marketOn dideklarasi DULU biar bisa dipake picker buah (harga ikut toggle)
+    local marketOn = (state.mailMarket ~= false)
+
+    -- ===== Jenis buah: PICKER dari inventory (nama + jumlah + harga total) =====
+    mkLabel("Jenis buah",84)
+    local selFruit = state.mailFruit or ""   -- "" = Semua
+    local frBtn = mk("TextButton", { Size=UDim2.new(1,-138,0,28), Position=UDim2.new(0,124,0,82),
+        BackgroundColor3=C.input, Text=(selFruit=="" and "Semua  ▾" or (selFruit.."  ▾")), TextColor3=C.text,
+        Font=FONT, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(frBtn,6); stroke(frBtn,C.border,1)
+    local frDD = mk("ScrollingFrame", { Size=UDim2.new(1,-138,0,156), Position=UDim2.new(0,124,0,112),
+        BackgroundColor3=C.card, BorderSizePixel=0, ScrollBarThickness=4, Visible=false,
+        CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=90, Parent=pop }); corner(frDD,6); stroke(frDD,C.border,1)
+    mk("UIListLayout", { Padding=UDim.new(0,2), SortOrder=Enum.SortOrder.LayoutOrder, Parent=frDD })
+    mk("UIPadding", { PaddingTop=UDim.new(0,3),PaddingBottom=UDim.new(0,3),PaddingLeft=UDim.new(0,3),PaddingRight=UDim.new(0,3), Parent=frDD })
+    local function pickFruit(nm, label) selFruit=nm; frBtn.Text=(nm=="" and "Semua  ▾" or (label or nm).."  ▾"); frDD.Visible=false end
+    local function buildFruitDD()
+        for _,c in ipairs(frDD:GetChildren()) do if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end end
+        local agg = {}
+        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                    local fid = t:GetAttribute("Id")
+                    if fj and fid then
+                        local a = agg[fj]; if not a then a={n=0,v=0}; agg[fj]=a end
+                        a.n = a.n + 1; a.v = a.v + (Farm.fruitPrice(t, not marketOn) or 0)
+                    end
+                end
+            end
+        end
+        local arr, totN, totV = {}, 0, 0
+        for nm,a in pairs(agg) do arr[#arr+1]={nm=nm,n=a.n,v=a.v}; totN=totN+a.n; totV=totV+a.v end
+        table.sort(arr, function(x,y) return x.v > y.v end)
+        local function addRow(text, nm, label, order)
+            local b = mk("TextButton", { Size=UDim2.new(1,0,0,30), BackgroundColor3=C.input, Text="  "..text,
+                TextColor3=C.text, Font=FONT, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left, BorderSizePixel=0, LayoutOrder=order, ZIndex=91, Parent=frDD }); corner(b,5)
+            b.MouseButton1Click:Connect(function() pickFruit(nm, label) end)
+        end
+        addRow("Semua  ("..totN.." buah · "..Farm.abbrev(totV)..")", "", "Semua", 0)
+        if #arr==0 then
+            local e=lbl(frDD,"  (inventory kosong)",11,C.textMute,Enum.TextXAlignment.Left); e.Size=UDim2.new(1,0,0,22); e.ZIndex=91
+        else
+            for i,e in ipairs(arr) do addRow(e.nm.."  ("..e.n.." buah · "..Farm.abbrev(e.v)..")", e.nm, e.nm, i) end
+        end
+    end
+    frBtn.MouseButton1Click:Connect(function() frDD.Visible=not frDD.Visible; if frDD.Visible then buildFruitDD() end end)
+
     mkLabel("Target total",120); local tgtBox = mkBox(120, state.mailTotalM or "3M", "3M")
 
-    local marketOn = (state.mailMarket ~= false)
     local mkBtn = mk("TextButton", { Size=UDim2.new(0,180,0,26), Position=UDim2.new(0,14,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
     local function updMk() mkBtn.Text="Harga: "..(marketOn and "PASAR" or "NORMAL x1") end
     updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn=not marketOn; updMk() end)
@@ -4787,7 +4832,7 @@ local function showMailGift()
     sendBtn.MouseButton1Click:Connect(function()
         if busy then return end
         local target = recBox.Text:gsub("^%s+",""):gsub("%s+$","")
-        local fruit  = frBox.Text
+        local fruit  = selFruit
         local tot    = parseN(tgtBox.Text)
         if target=="" then out.Text="isi nama penerima dulu"; out.TextColor3=C.red; return end
         if not tot then out.Text="target total ga valid (contoh: 3M)"; out.TextColor3=C.red; return end
