@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v6.0 (rejoin OFF, GIFT direct + filter base-weight + gate)"
+local SCRIPT_VERSION = "v6.3 (deteksi target penuh -> jeda 60s)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -850,10 +850,22 @@ end
 div(content, 4.5)
 local giftHeader = lbl(content, "GIFT", 9, C.Teal) giftHeader.Size=UDim2.new(1,0,0,14) giftHeader.LayoutOrder=5
 
--- target picker (saveable)
+-- target: ketik username (ke-save, kayak rejoin) + tombol pilih dari server
 local giftTarget = savedState.giftTarget or ""
-local pickBtn = btn(content, "Target: "..(giftTarget ~= "" and giftTarget or "(pilih player)"), 10, C.Card, C.White)
-pickBtn.Size = UDim2.new(1,0,0,24) pickBtn.LayoutOrder = 6 stroke(pickBtn, C.Teal, 1.2)
+local tgtRow = mk("Frame", { Size=UDim2.new(1,0,0,24), BackgroundColor3=C.Card, BorderSizePixel=0, LayoutOrder=6, Parent=content })
+corner(tgtRow, 6) stroke(tgtRow, C.Teal, 1.2)
+local tgtBox = mk("TextBox", {
+    Size=UDim2.new(1,-66,1,-6), Position=UDim2.new(0,6,0,3),
+    BackgroundColor3=C.Panel, Text=giftTarget, PlaceholderText="ketik username target",
+    TextColor3=C.White, PlaceholderColor3=C.Dim, Font=Enum.Font.GothamBold, TextSize=10,
+    TextXAlignment=Enum.TextXAlignment.Left, ClearTextOnFocus=false, Parent=tgtRow
+})
+corner(tgtBox, 5) stroke(tgtBox, C.Dim, 1)
+tgtBox:GetPropertyChangedSignal("Text"):Connect(function()
+    giftTarget = tgtBox.Text; savedState.giftTarget = giftTarget; saveState(savedState)
+end)
+local pickBtn = btn(tgtRow, "Pilih", 9, C.Panel, C.Teal)
+pickBtn.Size = UDim2.new(0,56,1,-6) pickBtn.Position = UDim2.new(1,-60,0,3) stroke(pickBtn, C.Teal, 1)
 local listFrame = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundColor3=C.Panel, BorderSizePixel=0, LayoutOrder=6.5, Visible=false, Parent=content })
 corner(listFrame, 6) mk("UIListLayout", { Padding=UDim.new(0,2), Parent=listFrame })
 local function refreshList()
@@ -865,7 +877,7 @@ local function refreshList()
             pb.Size = UDim2.new(1,0,0,20) pb.LayoutOrder = h
             pb.MouseButton1Click:Connect(function()
                 giftTarget = p.Name; savedState.giftTarget = giftTarget; saveState(savedState)
-                pickBtn.Text = "Target: "..giftTarget
+                tgtBox.Text = giftTarget
                 listFrame.Visible = false; listFrame.Size = UDim2.new(1,0,0,0)
             end)
             h = h + 1
@@ -880,23 +892,25 @@ end)
 
 -- metode: Direct (on/off) + Trade Tiket (on/off, step 2)
 local giftDirect = savedState.giftDirect ~= false   -- default ON
-local _, dirTog, dirTS, dirRS = togRow(content, "Metode: Direct", "gift langsung satu-satu", 7)
+local _, dirTog, dirTS, dirRS = togRow(content, "Metode Tanpa Tiket", "gift langsung satu-satu", 7)
 local function setDir(v) dirTog.Text=v and "ON" or "OFF"; dirTog.BackgroundColor3=v and C.TDim or C.Panel; dirTog.TextColor3=v and C.Teal or C.Gray; dirTS.Color=v and C.Teal or C.Dim; dirRS.Color=v and C.Teal or C.Dim end
 setDir(giftDirect)
 dirTog.MouseButton1Click:Connect(function() giftDirect=not giftDirect; savedState.giftDirect=giftDirect; saveState(savedState); setDir(giftDirect) end)
 local giftTicket = savedState.giftTicket or false    -- default OFF (step 2)
-local _, tikTog, tikTS, tikRS = togRow(content, "Metode: Trade Tiket", "borongan (segera, step 2)", 7.5)
+local _, tikTog, tikTS, tikRS = togRow(content, "Metode Pakai Tiket", "borongan (segera, step 2)", 7.5)
 local function setTik(v) tikTog.Text=v and "ON" or "OFF"; tikTog.BackgroundColor3=v and C.TDim or C.Panel; tikTog.TextColor3=v and C.Teal or C.Gray; tikTS.Color=v and C.Teal or C.Dim; tikRS.Color=v and C.Teal or C.Dim end
 setTik(giftTicket)
 tikTog.MouseButton1Click:Connect(function() giftTicket=not giftTicket; savedState.giftTicket=giftTicket; saveState(savedState); setTik(giftTicket) end)
 
--- filter: base weight min + gate jumlah
-local giftKgMin = tonumber(savedState.giftKgMin) or 38
+-- filter: base weight min-max + gate jumlah
+local giftKgMin = tonumber(savedState.giftKgMin) or 3
 cfgRow(content, "Base weight min (kg)", 8, giftKgMin, function(v) giftKgMin = math.max(0, v); savedState.giftKgMin=giftKgMin; saveState(savedState) end)
+local giftKgMax = tonumber(savedState.giftKgMax) or 4
+cfgRow(content, "Base weight max (kg)", 8.2, giftKgMax, function(v) giftKgMax = math.max(0, v); savedState.giftKgMax=giftKgMax; saveState(savedState) end)
 local giftGateN = tonumber(savedState.giftGateN) or 20
 cfgRow(content, "Gate: kumpul brp pet", 8.5, giftGateN, function(v) giftGateN = math.max(1, math.floor(v)); savedState.giftGateN=giftGateN; saveState(savedState) end)
 
--- pet yg cocok: base weight (age-1) >= giftKgMin
+-- pet yg cocok: base weight (age-1) di rentang giftKgMin..giftKgMax
 local function matchingPets()
     local list = {}
     local APS = getgenv and getgenv().ZenxInvAPS
@@ -906,7 +920,7 @@ local function matchingPets()
                 if t:IsA("Tool") and isPet(t) then
                     local uuid = t:GetAttribute("PET_UUID")
                     local bw = uuid and APS and APS.getBaseKg(uuid)
-                    if bw and bw >= giftKgMin then list[#list+1] = t end
+                    if bw and bw >= giftKgMin and bw <= giftKgMax then list[#list+1] = t end
                 end
             end
         end
@@ -914,40 +928,66 @@ local function matchingPets()
     return list
 end
 
--- auto gift toggle + status
-local giftRunning = false
-local _, agTog, agTS, agRS = togRow(content, "Auto Gift", "jalan kalau pet >= gate", 9)
+-- auto gift: DEFAULT ON (always on, langsung jalan pas load) + status
+local giftRunning = true
+local _, agTog, agTS, agRS = togRow(content, "Auto Gift", "always on (jalan kalau pet >= gate)", 9)
 local function setAg(v) agTog.Text=v and "ON" or "OFF"; agTog.BackgroundColor3=v and C.TDim or C.Panel; agTog.TextColor3=v and C.Teal or C.Gray; agTS.Color=v and C.Teal or C.Dim; agRS.Color=v and C.Teal or C.Dim end
-setAg(false)
-local giftStatus = lbl(content, "Gift: OFF", 9, C.Gray, Enum.TextXAlignment.Center)
+local giftStatus = lbl(content, "Gift: ON", 9, C.Teal, Enum.TextXAlignment.Center)
 giftStatus.Size=UDim2.new(1,0,0,30) giftStatus.LayoutOrder=10 giftStatus.BackgroundColor3=C.Panel giftStatus.BackgroundTransparency=0 giftStatus.TextWrapped=true
 corner(giftStatus, 6) stroke(giftStatus, C.Dim, 1.1)
-agTog.MouseButton1Click:Connect(function()
-    giftRunning = not giftRunning; setAg(giftRunning)
-    if not giftRunning then giftStatus.Text="Gift: OFF"; giftStatus.TextColor3=C.Gray; return end
+local giftLoopActive = false
+local giftPauseUntil = 0
+local function runGiftLoop()
+    if giftLoopActive then return end
+    giftLoopActive = true
     task.spawn(function()
         while giftRunning do
-            local target = findPlayerByName(giftTarget)
-            local pets = matchingPets()
-            if not target then
-                giftStatus.Text="Target ga ketemu: "..(giftTarget~="" and giftTarget or "(blm pilih)"); giftStatus.TextColor3=C.Red
-            elseif #pets < giftGateN then
-                giftStatus.Text="Nunggu: "..#pets.."/"..giftGateN.." pet >= "..giftKgMin.."kg (base)"; giftStatus.TextColor3=C.Gold
+            if tick() < giftPauseUntil then
+                local left = math.ceil(giftPauseUntil - tick())
+                giftStatus.Text="Target penuh/max — jeda "..left.."s"; giftStatus.TextColor3=C.Gold
+                task.wait(1)
             else
-                giftStatus.Text="Gift "..#pets.." pet ke "..target.Name.."..."; giftStatus.TextColor3=C.Teal
-                local sent = 0
-                for _, pt in ipairs(pets) do
-                    if not giftRunning then break end
-                    if giftDirect then if giftPetToPlayer(target, pt) then sent = sent + 1 end end
-                    task.wait(0.2)
+                local target = findPlayerByName(giftTarget)
+                local pets = matchingPets()
+                if not target then
+                    giftStatus.Text="Target ga ketemu: "..(giftTarget~="" and giftTarget or "(blm diisi)"); giftStatus.TextColor3=C.Red
+                    task.wait(3)
+                elseif #pets < giftGateN then
+                    giftStatus.Text="Nunggu: "..#pets.."/"..giftGateN.." pet "..giftKgMin.."-"..giftKgMax.."kg (base)"; giftStatus.TextColor3=C.Gold
+                    task.wait(3)
+                else
+                    giftStatus.Text="Gift "..#pets.." pet ke "..target.Name.."..."; giftStatus.TextColor3=C.Teal
+                    local sent, failStreak = 0, 0
+                    for _, pt in ipairs(pets) do
+                        if not giftRunning then break end
+                        local ok = giftDirect and giftPetToPlayer(target, pt)
+                        if ok then sent = sent + 1; failStreak = 0
+                        else failStreak = failStreak + 1; if failStreak >= 3 then break end end  -- 3 gagal beruntun = target penuh
+                        task.wait(0.2)
+                    end
+                    if sent == 0 and failStreak >= 3 then
+                        -- target kemungkinan PENUH/MAX -> jeda 60 detik (anti spam)
+                        giftPauseUntil = tick() + 60
+                        giftStatus.Text="Target PENUH/max — auto gift jeda 60s"; giftStatus.TextColor3=C.Red
+                        print("[ZenxInv] target penuh (gift gagal beruntun) -> jeda 60s")
+                    else
+                        giftStatus.Text="Kekirim "..sent.." pet (sisa cek lagi)"; giftStatus.TextColor3=C.Green
+                        task.wait(3)
+                    end
                 end
-                giftStatus.Text="Kekirim "..sent.." pet (sisa cek lagi)"; giftStatus.TextColor3=C.Green
             end
-            task.wait(3)
         end
         giftStatus.Text="Gift: OFF"; giftStatus.TextColor3=C.Gray
+        giftLoopActive = false
     end)
+end
+setAg(giftRunning)
+agTog.MouseButton1Click:Connect(function()
+    giftRunning = not giftRunning; setAg(giftRunning)
+    if giftRunning then runGiftLoop()
+    else giftStatus.Text="Gift: OFF"; giftStatus.TextColor3=C.Gray end
 end)
+if giftRunning then runGiftLoop() end   -- always on: langsung jalan pas load
 -- ===================== /GIFT =====================
 local function fmtAge(sec)
     sec = math.floor(sec)
