@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.294"
-local VERSION_DATE = "v8.294: auto-ping bawa nomor versi (cek cache)"
+local VERSION = "8.295"
+local VERSION_DATE = "v8.295: token relay standalone embedded (GUI sendiri)"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING — VERSI 8.294")
+warn("  ZENX MARKET LOADING — VERSI 8.295")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -11928,201 +11928,192 @@ task.spawn(function()
     end
 end)
 
--- ===================== TOKEN RELAY + WEBHOOK (v8.285) =====================
--- tiap akun yg pakai sc lapor jumlah Trade Token-nya ke relay (Pantry).
--- salah satu akun (terkoordinasi, anti-spam) ngirim TOTAL semua akun ke webhook DC.
+
+-- ===================== TOKEN RELAY + WEBHOOK (standalone, v8.295) =====================
+-- kode token relay yg udah kebukti jalan (GUI sendiri, ga gantung UI market)
 task.spawn(function()
-    warn("[ZenxToken] modul token relay + webhook LOADING...")
-    -- relay pantry (sama kayak gag2/inventory, basket beda biar ga tabrakan)
-    local TOKEN_URL = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxtoken"
-    local lastStat = "siap"  -- status terakhir, tampil di card (console ke-spam)
-    local function setStat(s) lastStat = tostring(s) end
-    local function getHttp()
-        return (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    local VERSION = "1.6"
+    local Players = game:GetService("Players")
+    local HttpService = game:GetService("HttpService")
+    local player = Players.LocalPlayer
+    local pg = player:WaitForChild("PlayerGui")
+    
+    local WEBHOOK  = "https://discord.com/api/webhooks/1519745824593285170/xxebbiKJAublOWmj5rvjMKDvOv8H1O2ALda0yoA8nE7R6vfNdcgJEOKGhzfrIRLocN5h"
+    local PANTRY   = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxtoken"
+    local INTERVAL = 10 * 60   -- kirim total tiap 10 menit
+    local RELAY_ON = true      -- default nyala
+    
+    -- ===== http =====
+    local function getHttp() return (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request) end
+    local function statusOf(r) return r and (r.StatusCode or r.status_code or r.Status or r.status) end
+    local function req(o) local r=getHttp(); if not r then return nil end local ok,res=pcall(function() return r(o) end); return ok and res or nil end
+    local JSONH = { ["Content-Type"]="application/json" }
+    local function putKV(t)
+        local resp = req({ Url=PANTRY, Method="PUT", Headers=JSONH, Body=HttpService:JSONEncode(t) })
+        return statusOf(resp)
     end
-    local function httpName()
-        if syn and syn.request then return "syn.request"
-        elseif http and http.request then return "http.request"
-        elseif http_request then return "http_request"
-        elseif request then return "request"
-        elseif fluxus and fluxus.request then return "fluxus.request"
-        else return "NONE" end
+    local function postReplace(t)  -- bikin/timpa basket (buat create awal)
+        local resp = req({ Url=PANTRY, Method="POST", Headers=JSONH, Body=HttpService:JSONEncode(t) })
+        return statusOf(resp)
     end
-    local function req(o)
-        local r = getHttp()
-        if not r then return nil end
-        local ok, res = pcall(function() return r(o) end)
-        return ok and res or nil
-    end
-    local function statusOf(resp)
-        if not resp then return nil end
-        return resp.StatusCode or resp.status_code or resp.Status or resp.status
-    end
-    local JSONH = { ["Content-Type"] = "application/json" }
-    local function putKV(t) pcall(function() req({ Url=TOKEN_URL, Method="PUT", Headers=JSONH, Body=HttpService:JSONEncode(t) }) end) end
     local function getAll()
-        local resp = req({ Url=TOKEN_URL, Method="GET" })
-        local body = resp and (resp.Body or resp.body)
-        if body then local ok, d = pcall(function() return HttpService:JSONDecode(body) end); if ok then return d end end
-        return nil
+        local resp=req({ Url=PANTRY, Method="GET" }); local body=resp and (resp.Body or resp.body or resp.Content)
+        if body then local ok,d=pcall(function() return HttpService:JSONDecode(body) end); if ok then return d, body end end
+        return nil, (body or "no-body")
     end
-    -- baca Trade Token akun ini (dari TradeTokenCurrency_UI ... val)
+    local lastStat = "siap"
+    local function setStat(s) lastStat = tostring(s) end
+    
+    -- ===== baca Trade Token (cari di banyak tempat) =====
     local function getTokens()
-        local pgui = player:FindFirstChildOfClass("PlayerGui")
-        if not pgui then return nil end
-        local ui = pgui:FindFirstChild("TradeTokenCurrency_UI")
-        if not ui then
-            for _, g in ipairs(pgui:GetChildren()) do if g.Name:find("TradeToken", 1, true) then ui = g; break end end
+        -- kumpulin kandidat UI: TradeTokenCurrency_UI, atau nama mengandung "token"+"currency", atau "tradetoken"
+        local cands = {}
+        local main = pg:FindFirstChild("TradeTokenCurrency_UI")
+        if main then cands[#cands+1] = main end
+        for _, g in ipairs(pg:GetChildren()) do
+            local nm = g.Name:lower()
+            if g ~= main and (nm:find("tradetoken") or (nm:find("token") and nm:find("currency"))) then cands[#cands+1] = g end
         end
-        if not ui then return nil end
-        local v = ui:FindFirstChild("val", true)
-        if v and v:IsA("ValueBase") then local n = tonumber(v.Value); if n then return math.floor(n) end end
-        for _, d in ipairs(ui:GetDescendants()) do
-            if d:IsA("TextLabel") then local n = tonumber((tostring(d.Text):gsub("[^%d]", ""))); if n and n > 0 then return n end end
+        -- 1) NumberValue bernama "val" (sumber paling akurat, angka mentah)
+        for _, c in ipairs(cands) do
+            local v = c:FindFirstChild("val", true)
+            if v and v:IsA("ValueBase") then local n = tonumber(v.Value); if n then return math.floor(n) end end
         end
-        return nil
-    end
-    -- format angka -> "60k" / "59.5k"
-    local function fmtK(n)
-        n = tonumber(n) or 0
-        if n >= 1000 then
-            local k = n / 1000
-            if math.abs(k - math.floor(k + 0.5)) < 0.05 then return string.format("%dk", math.floor(k + 0.5)) end
-            return string.format("%.1fk", k)
-        end
-        return tostring(math.floor(n))
-    end
-    -- POST webhook: coba LANGSUNG dulu, kalau gagal (Delta dll blokir discord.com) -> lewat PROXY
-    local function postRaw(url, payloadTbl)
-        if not getHttp() then setStat("executor GA SUPPORT http!"); return false, "no-http" end
-        local body = HttpService:JSONEncode(payloadTbl)
-        local hdr = { ["Content-Type"]="application/json" }
-        local function try(u)
-            local resp = req({ Url=u, Method="POST", Headers=hdr, Body=body })
-            local code = statusOf(resp)
-            return code, (type(code)=="number" and code>=200 and code<300)
-        end
-        -- 1) langsung ke discord
-        local code, ok = try(url)
-        if ok then setStat("webhook "..code.." OK (direct)"); return true, tostring(code) end
-        -- 2) gagal/blocked -> proxy (webhook.lewisakura.moe nerusin ke discord)
-        local purl = url:gsub("discordapp%.com", "discord.com"):gsub("discord%.com", "webhook.lewisakura.moe")
-        if purl ~= url then
-            local code2, ok2 = try(purl)
-            if ok2 then setStat("webhook "..code2.." OK (proxy)"); return true, tostring(code2) end
-            setStat("GAGAL: direct "..tostring(code).." / proxy "..tostring(code2))
-            return false, "direct "..tostring(code).."/proxy "..tostring(code2)
-        end
-        setStat("webhook GAGAL "..tostring(code))
-        return false, tostring(code or "?")
-    end
-    -- kirim total ke webhook DC (embed) -- total di ATAS & BAWAH
-    local function postWebhook(url, total, accCount, lines)
-        local tot = fmtK(total)
-        local desc = "**TOTAL TOKEN: "..tot.."**\n\n"..table.concat(lines, "\n").."\n\n**TOTAL TOKEN: "..tot.."**"
-        if #desc > 4000 then desc = desc:sub(1, 4000).."\n..." end
-        return postRaw(url, { username = "Zenx Token", embeds = {{ title = accCount.." akun", description = desc, color = 3447003 }} })
-    end
-
-    -- ===== SETTINGS =====
-    local settings = (BH and BH.marketState and BH.marketState.settings) or {}
-    local function save() if BH and BH.marketState then pcall(function() BH.saveMarketState(BH.marketState) end) end end
-    local DEFAULT_WEBHOOK = "https://discord.com/api/webhooks/1519745824593285170/xxebbiKJAublOWmj5rvjMKDvOv8H1O2ALda0yoA8nE7R6vfNdcgJEOKGhzfrIRLocN5h"
-    if (settings.tokenWebhook or "") == "" then settings.tokenWebhook = DEFAULT_WEBHOOK; save() end
-    if type(settings.tokenWebhook) == "string" and settings.tokenWebhook:find("discordapp.com", 1, true) then
-        settings.tokenWebhook = settings.tokenWebhook:gsub("discordapp%.com", "discord.com"); save()
-    end
-    if settings.tokenRelay == nil then settings.tokenRelay = true; save() end  -- default ON
-
-    -- ===== KUMPULIN TOTAL (refresh-round, akurat) =====
-    local function collectTotal(waitSecs)
-        local refreshId = tostring(os.time()).."-"..tostring(math.random(1000, 9999))
-        local tk = getTokens()
-        putKV({ [player.Name] = { tok = tk or 0, t = os.time(), r = refreshId }, _refresh = refreshId })
-        setStat("ngumpulin... tunggu "..waitSecs.."s")
-        task.wait(waitSecs)
-        local d = getAll()
-        if type(d) ~= "table" then setStat("relay GET error"); return nil end
-        local total, n, lines = 0, 0, {}
-        for k, e in pairs(d) do
-            if k:sub(1,1) ~= "_" and type(e) == "table" and type(e.tok) == "number" and e.r == refreshId then
-                total = total + e.tok; n = n + 1; lines[#lines+1] = k.." "..fmtK(e.tok).." token"
+        -- 2) NumberValue descendant dgn nilai terbesar (token count biasanya paling gede)
+        local best
+        for _, c in ipairs(cands) do
+            for _, d in ipairs(c:GetDescendants()) do
+                if d:IsA("ValueBase") then local n = tonumber(d.Value); if n and n >= 0 and (not best or n > best) then best = n end end
             end
         end
-        table.sort(lines)
-        setStat("kekumpul "..n.." akun, total "..fmtK(total))
-        return total, n, lines
+        if best then return math.floor(best) end
+        -- 3) terakhir: parse angka dari TextLabel (kurang akurat kalau ditampilin "60K")
+        for _, c in ipairs(cands) do
+            for _, d in ipairs(c:GetDescendants()) do
+                if d:IsA("TextLabel") then local n = tonumber((tostring(d.Text):gsub("[^%d]",""))); if n and n > 0 then return n end end
+            end
+        end
+        return nil
     end
-
-    -- ===== AUTO-PING sekali pas load (diagnostik, jalan walau UI gagal) =====
-    setStat(getHttp() and ("http: "..httpName()) or "executor GA SUPPORT http!")
-    task.delay(8, function()
-        local wh = settings.tokenWebhook or DEFAULT_WEBHOOK
-        if wh == "" then return end
-        local tk = getTokens()
-        local ok, code = postRaw(wh, { username = "Zenx Token",
-            content = "ZENX online (market v"..tostring(VERSION).."): "..player.Name.." — token: "..tostring(tk or "?") })
-        warn("[ZenxToken] AUTO-PING webhook -> "..tostring(code).." ("..(ok and "OK" or "GAGAL")..")")
-    end)
-
-    -- ===== UI (Misc tab) — dibungkus pcall biar error UI ga matiin loop =====
-    pcall(function()
-        local card = makeCollapsibleCard(miscPanel, "Token Relay + Webhook DC", true)
-        local hookBox = addInputRow(card, "Webhook DC", settings.tokenWebhook or "", "paste url webhook")
-        hookBox:GetPropertyChangedSignal("Text"):Connect(function() settings.tokenWebhook = hookBox.Text; save() end)
-        local intBox = addInputRow(card, "Kirim tiap (menit)", tostring(settings.tokenInterval or 10), "10")
-        intBox:GetPropertyChangedSignal("Text"):Connect(function()
-            local n = tonumber(intBox.Text); if n and n > 0 then settings.tokenInterval = math.floor(n); save() end
+    local function fmtK(n)
+        n=tonumber(n) or 0
+        if n>=1000 then local k=n/1000; if math.abs(k-math.floor(k+0.5))<0.05 then return string.format("%dk",math.floor(k+0.5)) end return string.format("%.1fk",k) end
+        return tostring(math.floor(n))
+    end
+    
+    -- ===== webhook: direct lalu proxy =====
+    local function postRaw(payloadTbl)
+        if not getHttp() then setStat("executor ga support http!"); return false,"no-http" end
+        local body=HttpService:JSONEncode(payloadTbl)
+        local function try(u) local r=req({ Url=u, Method="POST", Headers=JSONH, Body=body }); local c=statusOf(r); return c,(type(c)=="number" and c>=200 and c<300) end
+        local function tryRetry(u)  -- handle 429 rate limit: retry sekali abis 5s
+            local c,ok=try(u)
+            if c==429 then setStat("rate-limit, tunggu 5s..."); task.wait(5); c,ok=try(u) end
+            return c,ok
+        end
+        local c,ok = tryRetry(WEBHOOK)
+        if ok then setStat("webhook "..c.." OK (direct)"); return true,tostring(c) end
+        local purl = WEBHOOK:gsub("discord%.com","webhook.lewisakura.moe")
+        local c2,ok2 = tryRetry(purl)
+        if ok2 then setStat("webhook "..c2.." OK (proxy)"); return true,tostring(c2) end
+        setStat("GAGAL direct="..tostring(c).." proxy="..tostring(c2)); return false,"direct"..tostring(c).."/proxy"..tostring(c2)
+    end
+    local function postTotal(total, n, lines, dbg)
+        local tot=fmtK(total)
+        local desc="**TOTAL TOKEN: "..tot.."**\n\n"..table.concat(lines,"\n").."\n\n**TOTAL TOKEN: "..tot.."**"
+        if #desc>4000 then desc=desc:sub(1,4000).."\n..." end
+        return postRaw({ username="Zenx Token", embeds={{ title=n.." akun", description=desc, color=3447003 }} })
+    end
+    
+    -- ===== kumpulin total (refresh-round, akurat) + auto-create basket =====
+    local function collectTotal(waitSecs)
+        local rid = tostring(os.time()).."-"..tostring(math.random(1000,9999))
+        local mine = { tok=getTokens() or 0, t=os.time(), r=rid }
+        local putcode = putKV({ [player.Name]=mine, _refresh=rid })
+        local d0 = getAll()
+        if type(d0) ~= "table" or d0[player.Name] == nil then
+            local base = (type(d0)=="table") and d0 or {}
+            base[player.Name] = mine; base._refresh = rid
+            postReplace(base)
+            task.wait(1)
+            putcode = putKV({ [player.Name]=mine, _refresh=rid })
+        end
+        setStat("ngumpulin... "..waitSecs.."s"); task.wait(waitSecs)
+        local d, rawbody = getAll()
+        if type(d)~="table" then setStat("relay GET error"); return nil, nil, nil, "GET error" end
+        local total,n,lines=0,0,{}
+        for k,e in pairs(d) do
+            if k:sub(1,1)~="_" and type(e)=="table" and type(e.tok)=="number" and e.r==rid then
+                total=total+e.tok; n=n+1; lines[#lines+1]=k.." "..fmtK(e.tok).." token"
+            end
+        end
+        table.sort(lines); setStat("kekumpul "..n.." akun = "..fmtK(total))
+        return total,n,lines,("rawkeys="..n)
+    end
+    
+    -- ===== GUI kecil =====
+    local sg=Instance.new("ScreenGui"); sg.Name="ZenxTokenRelay"; sg.ResetOnSpawn=false
+    pcall(function() sg.Parent=(gethui and gethui()) or pg end); if not sg.Parent then sg.Parent=pg end
+    local f=Instance.new("Frame",sg); f.Size=UDim2.new(0,320,0,176); f.Position=UDim2.new(0,20,0,120)
+    f.BackgroundColor3=Color3.fromRGB(18,18,18); f.Active=true; f.Draggable=true; Instance.new("UICorner",f)
+    local function mklbl(y,txt,col) local l=Instance.new("TextLabel",f); l.Size=UDim2.new(1,-16,0,20); l.Position=UDim2.new(0,8,0,y)
+        l.BackgroundTransparency=1; l.TextColor3=col or Color3.new(1,1,1); l.Font=Enum.Font.Code; l.TextSize=12
+        l.TextXAlignment=Enum.TextXAlignment.Left; l.Text=txt; return l end
+    mklbl(6,"ZENX TOKEN RELAY v"..VERSION, Color3.fromRGB(120,200,255))
+    local lTok=mklbl(28,"token: ...")
+    local lStat=mklbl(50,"status: ...", Color3.fromRGB(180,180,180)); lStat.Size=UDim2.new(1,-16,0,34); lStat.TextWrapped=true
+    local relBtn=Instance.new("TextButton",f); relBtn.Size=UDim2.new(0.5,-12,0,30); relBtn.Position=UDim2.new(0,8,0,92)
+    relBtn.TextColor3=Color3.new(1,1,1); relBtn.Font=Enum.Font.GothamBold; relBtn.TextSize=12; Instance.new("UICorner",relBtn)
+    local testBtn=Instance.new("TextButton",f); testBtn.Size=UDim2.new(0.5,-12,0,30); testBtn.Position=UDim2.new(0.5,4,0,92)
+    testBtn.BackgroundColor3=Color3.fromRGB(60,120,200); testBtn.TextColor3=Color3.new(1,1,1); testBtn.Text="TEST KIRIM"
+    testBtn.Font=Enum.Font.GothamBold; testBtn.TextSize=12; Instance.new("UICorner",testBtn)
+    local closeBtn=Instance.new("TextButton",f); closeBtn.Size=UDim2.new(1,-16,0,26); closeBtn.Position=UDim2.new(0,8,0,128)
+    closeBtn.BackgroundColor3=Color3.fromRGB(45,45,45); closeBtn.TextColor3=Color3.fromRGB(200,200,200); closeBtn.Text="sembunyiin window"
+    closeBtn.Font=Enum.Font.Gotham; closeBtn.TextSize=11; Instance.new("UICorner",closeBtn)
+    closeBtn.MouseButton1Click:Connect(function() f.Visible=false end)
+    local function setRelBtn() relBtn.Text=RELAY_ON and "RELAY: ON" or "RELAY: OFF"; relBtn.BackgroundColor3=RELAY_ON and Color3.fromRGB(60,150,90) or Color3.fromRGB(150,60,60) end
+    setRelBtn()
+    relBtn.MouseButton1Click:Connect(function() RELAY_ON=not RELAY_ON; setRelBtn() end)
+    local testing = false
+    testBtn.MouseButton1Click:Connect(function()
+        if testing then return end   -- anti-dobel: kalau lagi jalan, abaikan
+        testing = true
+        testBtn.Text="ngumpulin ±45s..."
+        task.spawn(function()
+            local total,n,lines,dbg=collectTotal(40)
+            if total then
+                local ok2=postTotal(total,n,lines,dbg)
+                testBtn.Text = ok2 and ("terkirim! "..fmtK(total).." ("..n.." akun)") or "total gagal kirim (429?)"
+            else
+                testBtn.Text="relay error: "..tostring(dbg)
+            end
+            task.wait(5); testBtn.Text="TEST KIRIM"; testing=false
         end)
-        addReadOnlyRow(card, "Token akun ini", function() return getTokens() or "?" end)
-        addReadOnlyRow(card, "Status", function() return lastStat end)
-        local relTog = addToggleRow(card, "Relay + Webhook ON", settings.tokenRelay ~= false)
-        relTog.onChange(function(v) settings.tokenRelay = v; save() end)
-        local testBtn = addButtonRow(card, "Test kirim total sekarang")
-        testBtn.MouseButton1Click:Connect(function()
-            local wh = settings.tokenWebhook or ""
-            if wh == "" then testBtn.Text = "webhook kosong!"; task.delay(2.5, function() testBtn.Text="Test kirim total sekarang" end); return end
-            testBtn.Text = "tes webhook..."
-            task.spawn(function()
-                local ok, code = postRaw(wh, { content = "ZENX token: test ping" })
-                if not ok then
-                    testBtn.Text = (code == "no-http") and "executor ga support http" or ("webhook GAGAL ("..code..")")
-                    task.wait(5); testBtn.Text = "Test kirim total sekarang"; return
-                end
-                testBtn.Text = "webhook OK ("..code..") ngumpulin ±40s"
-                local total, n, lines = collectTotal(40)
-                if total then
-                    local ok2 = postWebhook(wh, total, n, lines)
-                    testBtn.Text = ok2 and ("terkirim! "..fmtK(total).." ("..n.." akun)") or "total gagal kirim"
-                else testBtn.Text = "webhook ok, tp RELAY error" end
-                task.wait(5); testBtn.Text = "Test kirim total sekarang"
-            end)
-        end)
     end)
-    warn("[ZenxToken] modul SIAP — http="..httpName())
-
-    -- ===== LOOP utama =====
-    local myNonce = tostring(math.random(1, 1000000000)).."-"..tostring(os.time())
-    local lastRefreshSeen = ""
-    task.wait(math.random(0, 4))
+    task.spawn(function() while f.Parent do lTok.Text="token: "..tostring(getTokens() or "?"); lStat.Text="status: "..lastStat; task.wait(1) end end)
+    
+    -- ===== load (tanpa auto-ping webhook, biar ga spam/429) =====
+    warn("[ZenxTokenRelay] LOADING v"..VERSION.." http="..tostring(getHttp()~=nil))
+    
+    -- ===== loop utama =====
+    local myNonce=tostring(math.random(1,1000000000)).."-"..tostring(os.time())
+    local lastRefresh=""
+    task.wait(math.random(0,4))
     while true do
-        if (settings.tokenRelay) and (settings.tokenWebhook or "") ~= "" then
-            local d = getAll()
-            if type(d) == "table" then
-                if d._refresh and d._refresh ~= lastRefreshSeen then
-                    lastRefreshSeen = d._refresh
-                    local tk2 = getTokens()
-                    putKV({ [player.Name] = { tok = tk2 or 0, t = os.time(), r = d._refresh } })
+        if RELAY_ON then
+            local d=getAll()
+            if type(d)=="table" then
+                if d._refresh and d._refresh~=lastRefresh then
+                    lastRefresh=d._refresh
+                    putKV({ [player.Name]={ tok=getTokens() or 0, t=os.time(), r=d._refresh } })
                 end
-                local interval = (tonumber(settings.tokenInterval) or 10) * 60
-                local last = (type(d._lastPost) == "number") and d._lastPost or 0
-                if (os.time() - last) >= interval then
-                    putKV({ _lastPost = os.time(), _poster = myNonce })
-                    task.wait(3)
-                    local d2 = getAll()
-                    if type(d2) == "table" and d2._poster == myNonce then
-                        local total, n, lines = collectTotal(50)
-                        if total then postWebhook(settings.tokenWebhook, total, n, lines) end
+                local last=(type(d._lastPost)=="number") and d._lastPost or 0
+                if (os.time()-last)>=INTERVAL then
+                    putKV({ _lastPost=os.time(), _poster=myNonce }); task.wait(3)
+                    local d2=getAll()
+                    if type(d2)=="table" and d2._poster==myNonce then
+                        local total,n,lines,dbg=collectTotal(50)
+                        if total then postTotal(total,n,lines,dbg) end
                     end
                 end
             end
