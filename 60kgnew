@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v6.3 (deteksi target penuh -> jeda 60s)"
+local SCRIPT_VERSION = "v6.5 (auto batas: MaxPetsInInventory via relay)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -847,6 +847,83 @@ local function giftPetToPlayer(targetPlayer, petTool)
     return false
 end
 
+-- ===== RELAY (port dari gag2: Pantry getpantry.cloud) =====
+-- tiap akun PUT key=nama sendiri (PUT=merge, anti-race), akun lain GET baca semua.
+-- akun TARGET nyalain "Lapor ke relay" -> tiap 10s kirim jumlah pet-nya.
+-- akun PENGIRIM baca count target -> kalau >= batas -> target penuh -> jeda.
+local PANTRY_BASE = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/"
+local relayUrl = savedState.relayUrl or (PANTRY_BASE.."zenxpetcount")
+local function relayReq(opts)
+    local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    if not req then return nil end
+    local ok, resp = pcall(function() return req(opts) end)
+    if ok then return resp end
+    return nil
+end
+local function myPetCount()
+    local n = 0
+    for _, holder in ipairs({player.Character, player:FindFirstChildOfClass("Backpack")}) do
+        if holder then for _, t in ipairs(holder:GetChildren()) do
+            if t:IsA("Tool") and isPet(t) then n = n + 1 end
+        end end
+    end
+    return n
+end
+-- batas inventory (port dari hact3): scan getgc cari MaxPetsInInventory (ambil terbesar), cache 30s.
+-- otomatis ikut upgrade akun. fallback attribute MaxPets.
+local _maxPetsCache, _maxPetsAt = nil, 0
+local function getMaxPets()
+    if _maxPetsCache and (tick() - _maxPetsAt) < 30 then return _maxPetsCache end
+    local best = nil
+    pcall(function()
+        if getgc then
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local mp = rawget(obj, "MaxPetsInInventory")
+                    if type(mp) == "number" and mp > 0 and (not best or mp > best) then best = mp end
+                end
+            end
+        end
+    end)
+    if not best then
+        pcall(function()
+            local m = player:GetAttribute("MaxPets") or player:GetAttribute("MaxPetsInInventory")
+            if type(m) == "number" and m > 0 then best = m end
+        end)
+    end
+    _maxPetsCache = best; _maxPetsAt = tick()
+    return best
+end
+local function relayReport()  -- akun target: lapor count + batas sendiri (PUT merge)
+    if relayUrl == "" then return end
+    local payload = HttpService:JSONEncode({ [player.Name] = { c = myPetCount(), m = getMaxPets() or 0, t = os.time() } })
+    pcall(function() relayReq({ Url=relayUrl, Method="PUT", Headers={["Content-Type"]="application/json"}, Body=payload }) end)
+end
+local _relayCache, _relayCacheAt = nil, 0
+local function relayGetAll()  -- GET semua (cache 8s biar ga spam)
+    if relayUrl == "" then return nil end
+    local now = os.clock()
+    if _relayCache and (now - _relayCacheAt) < 8 then return _relayCache end
+    local resp = relayReq({ Url=relayUrl, Method="GET" })
+    local body = resp and (resp.Body or resp.body)
+    local d = nil
+    if body then local ok, parsed = pcall(function() return HttpService:JSONDecode(body) end); if ok then d = parsed end end
+    _relayCache = d or false; _relayCacheAt = now
+    return d
+end
+local function relayTargetData(name)  -- return count, max target dari relay (nil kalau ga ada / basi)
+    if not name or name == "" then return nil, nil end
+    local d = relayGetAll()
+    if type(d) ~= "table" then return nil, nil end
+    local e = d[name]
+    if type(e) == "table" and type(e.c) == "number" then
+        if not e.t or (os.time() - e.t) < 60 then  -- fresh < 60s
+            return e.c, (type(e.m) == "number" and e.m > 0 and e.m or nil)
+        end
+    end
+    return nil, nil
+end
+
 div(content, 4.5)
 local giftHeader = lbl(content, "GIFT", 9, C.Teal) giftHeader.Size=UDim2.new(1,0,0,14) giftHeader.LayoutOrder=5
 
@@ -910,6 +987,22 @@ cfgRow(content, "Base weight max (kg)", 8.2, giftKgMax, function(v) giftKgMax = 
 local giftGateN = tonumber(savedState.giftGateN) or 20
 cfgRow(content, "Gate: kumpul brp pet", 8.5, giftGateN, function(v) giftGateN = math.max(1, math.floor(v)); savedState.giftGateN=giftGateN; saveState(savedState) end)
 
+-- RELAY: batas penuh target (0 = auto dari relay) + toggle lapor (akun target nyalain)
+local giftTargetMax = tonumber(savedState.giftTargetMax) or 0  -- 0 = pakai batas auto dari relay
+cfgRow(content, "Batas manual (0=auto relay)", 8.6, giftTargetMax, function(v) giftTargetMax = math.max(0, math.floor(v)); savedState.giftTargetMax=giftTargetMax; saveState(savedState) end)
+local relayWrite = savedState.relayWrite or false  -- default OFF (cuma akun target yg ON)
+local _, rwTog, rwTS, rwRS = togRow(content, "Lapor pet ke relay", "nyalain di AKUN TARGET", 8.7)
+local function setRw(v) rwTog.Text=v and "ON" or "OFF"; rwTog.BackgroundColor3=v and C.TDim or C.Panel; rwTog.TextColor3=v and C.Teal or C.Gray; rwTS.Color=v and C.Teal or C.Dim; rwRS.Color=v and C.Teal or C.Dim end
+setRw(relayWrite)
+rwTog.MouseButton1Click:Connect(function() relayWrite=not relayWrite; savedState.relayWrite=relayWrite; saveState(savedState); setRw(relayWrite); if relayWrite then relayReport() end end)
+-- writer loop: akun target lapor count tiap 10s
+task.spawn(function()
+    while true do
+        if relayWrite then pcall(relayReport) end
+        task.wait(10)
+    end
+end)
+
 -- pet yg cocok: base weight (age-1) di rentang giftKgMin..giftKgMax
 local function matchingPets()
     local list = {}
@@ -949,11 +1042,18 @@ local function runGiftLoop()
             else
                 local target = findPlayerByName(giftTarget)
                 local pets = matchingPets()
-                if not target then
+                local relayN, relayMax = relayTargetData(giftTarget)  -- count & batas target dari relay
+                local cap = (giftTargetMax > 0 and giftTargetMax) or relayMax  -- manual override > auto relay
+                if cap and relayN and relayN >= cap then
+                    -- target udah penuh (count >= batas) -> jeda 60s, ga perlu nyoba gift
+                    giftPauseUntil = tick() + 60
+                    giftStatus.Text="Target PENUH "..relayN.."/"..cap.." (relay) — jeda 60s"; giftStatus.TextColor3=C.Red
+                elseif not target then
                     giftStatus.Text="Target ga ketemu: "..(giftTarget~="" and giftTarget or "(blm diisi)"); giftStatus.TextColor3=C.Red
                     task.wait(3)
                 elseif #pets < giftGateN then
-                    giftStatus.Text="Nunggu: "..#pets.."/"..giftGateN.." pet "..giftKgMin.."-"..giftKgMax.."kg (base)"; giftStatus.TextColor3=C.Gold
+                    local rtxt = relayN and (" | target "..relayN..(cap and ("/"..cap) or "")) or ""
+                    giftStatus.Text="Nunggu: "..#pets.."/"..giftGateN.." pet "..giftKgMin.."-"..giftKgMax.."kg"..rtxt; giftStatus.TextColor3=C.Gold
                     task.wait(3)
                 else
                     giftStatus.Text="Gift "..#pets.." pet ke "..target.Name.."..."; giftStatus.TextColor3=C.Teal
