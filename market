@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.284"
-local VERSION_DATE = "v8.284: pause listing 5s (reset ulang tiap ubah rule)."
+local VERSION = "8.288"
+local VERSION_DATE = "v8.288: webhook default keisi otomatis."
 
 warn("============================================")
-warn("  ZENX MARKET LOADING — VERSI 8.284")
+warn("  ZENX MARKET LOADING — VERSI 8.288")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -11925,5 +11925,149 @@ task.spawn(function()
     while true do
         task.wait(5)
         pcall(function() re:FireServer(ticketName) end)
+    end
+end)
+
+-- ===================== TOKEN RELAY + WEBHOOK (v8.285) =====================
+-- tiap akun yg pakai sc lapor jumlah Trade Token-nya ke relay (Pantry).
+-- salah satu akun (terkoordinasi, anti-spam) ngirim TOTAL semua akun ke webhook DC.
+task.spawn(function()
+    -- relay pantry (sama kayak gag2/inventory, basket beda biar ga tabrakan)
+    local TOKEN_URL = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxtoken"
+    local function req(o)
+        local r = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+        if not r then return nil end
+        local ok, res = pcall(function() return r(o) end)
+        return ok and res or nil
+    end
+    local JSONH = { ["Content-Type"] = "application/json" }
+    local function putKV(t) pcall(function() req({ Url=TOKEN_URL, Method="PUT", Headers=JSONH, Body=HttpService:JSONEncode(t) }) end) end
+    local function getAll()
+        local resp = req({ Url=TOKEN_URL, Method="GET" })
+        local body = resp and (resp.Body or resp.body)
+        if body then local ok, d = pcall(function() return HttpService:JSONDecode(body) end); if ok then return d end end
+        return nil
+    end
+    -- baca Trade Token akun ini (dari TradeTokenCurrency_UI ... val)
+    local function getTokens()
+        local pgui = player:FindFirstChildOfClass("PlayerGui")
+        if not pgui then return nil end
+        local ui = pgui:FindFirstChild("TradeTokenCurrency_UI")
+        if not ui then
+            for _, g in ipairs(pgui:GetChildren()) do if g.Name:find("TradeToken", 1, true) then ui = g; break end end
+        end
+        if not ui then return nil end
+        local v = ui:FindFirstChild("val", true)
+        if v and v:IsA("ValueBase") then local n = tonumber(v.Value); if n then return math.floor(n) end end
+        for _, d in ipairs(ui:GetDescendants()) do
+            if d:IsA("TextLabel") then local n = tonumber((tostring(d.Text):gsub("[^%d]", ""))); if n and n > 0 then return n end end
+        end
+        return nil
+    end
+    -- format angka -> "60k" / "59.5k"
+    local function fmtK(n)
+        n = tonumber(n) or 0
+        if n >= 1000 then
+            local k = n / 1000
+            if math.abs(k - math.floor(k + 0.5)) < 0.05 then return string.format("%dk", math.floor(k + 0.5)) end
+            return string.format("%.1fk", k)
+        end
+        return tostring(math.floor(n))
+    end
+    -- kirim total ke webhook DC (embed) -- total di ATAS & BAWAH
+    local function postWebhook(url, total, accCount, lines)
+        local tot = fmtK(total)
+        local desc = "**TOTAL TOKEN: "..tot.."**\n\n"..table.concat(lines, "\n").."\n\n**TOTAL TOKEN: "..tot.."**"
+        if #desc > 4000 then desc = desc:sub(1, 4000).."\n..." end
+        local payload = HttpService:JSONEncode({
+            username = "Zenx Token",
+            embeds = {{ title = accCount.." akun", description = desc, color = 3447003 }},
+        })
+        pcall(function() req({ Url=url, Method="POST", Headers=JSONH, Body=payload }) end)
+    end
+
+    -- ===== UI (Misc tab) =====
+    local settings = (BH and BH.marketState and BH.marketState.settings) or {}
+    local function save() if BH and BH.marketState then pcall(function() BH.saveMarketState(BH.marketState) end) end end
+    -- default webhook (dipakai kalau belum diisi manual)
+    local DEFAULT_WEBHOOK = "https://discordapp.com/api/webhooks/1519745824593285170/xxebbiKJAublOWmj5rvjMKDvOv8H1O2ALda0yoA8nE7R6vfNdcgJEOKGhzfrIRLocN5h"
+    if (settings.tokenWebhook or "") == "" then settings.tokenWebhook = DEFAULT_WEBHOOK; save() end
+    local card = makeCollapsibleCard(miscPanel, "Token Relay + Webhook DC", false)
+    local hookBox = addInputRow(card, "Webhook DC", settings.tokenWebhook or "", "paste url webhook")
+    hookBox:GetPropertyChangedSignal("Text"):Connect(function() settings.tokenWebhook = hookBox.Text; save() end)
+    local intBox = addInputRow(card, "Kirim tiap (menit)", tostring(settings.tokenInterval or 10), "10")
+    intBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local n = tonumber(intBox.Text); if n and n > 0 then settings.tokenInterval = math.floor(n); save() end
+    end)
+    addReadOnlyRow(card, "Token akun ini", function() return getTokens() or "?" end)
+    local relTog = addToggleRow(card, "Relay + Webhook ON", settings.tokenRelay or false)
+    relTog.onChange(function(v) settings.tokenRelay = v; save() end)
+
+    -- ===== KUMPULIN TOTAL (refresh-round, akurat) =====
+    -- poster kirim _refresh(id unik) -> semua akun lapor token terkini + echo id-nya ->
+    -- tunggu semua lapor -> jumlahin CUMA yg echo id sama (r==id). beda jam antar PC aman.
+    local function collectTotal(waitSecs)
+        local refreshId = tostring(os.time()).."-"..tostring(math.random(1000, 9999))
+        local tk = getTokens()
+        putKV({ [player.Name] = { tok = tk or 0, t = os.time(), r = refreshId }, _refresh = refreshId })
+        task.wait(waitSecs)  -- tunggu semua akun lapor ulang (lambat tapi pasti fresh)
+        local d = getAll()
+        if type(d) ~= "table" then return nil end
+        local total, n, lines = 0, 0, {}
+        for k, e in pairs(d) do
+            if k:sub(1,1) ~= "_" and type(e) == "table" and type(e.tok) == "number" and e.r == refreshId then
+                total = total + e.tok; n = n + 1; lines[#lines+1] = k.." "..fmtK(e.tok).." token"
+            end
+        end
+        table.sort(lines)
+        return total, n, lines
+    end
+
+    -- post manual (test)
+    local testBtn = addButtonRow(card, "Test kirim total sekarang")
+    testBtn.MouseButton1Click:Connect(function()
+        if (settings.tokenWebhook or "") == "" then testBtn.Text = "webhook kosong!"; task.delay(2, function() testBtn.Text="Test kirim total sekarang" end); return end
+        testBtn.Text = "ngumpulin... (±40s)"
+        task.spawn(function()
+            local total, n, lines = collectTotal(40)
+            if total then postWebhook(settings.tokenWebhook, total, n, lines); testBtn.Text = "terkirim! total "..fmtK(total).." ("..n.." akun)"
+            else testBtn.Text = "gagal (relay error)" end
+            task.wait(3); testBtn.Text = "Test kirim total sekarang"
+        end)
+    end)
+
+    -- ===== LOOP utama =====
+    local myNonce = tostring(math.random(1, 1000000000)).."-"..tostring(os.time())
+    local lastRefreshSeen = ""
+    task.wait(math.random(0, 4))  -- stagger antar akun
+    while true do
+        if (settings.tokenRelay) and (settings.tokenWebhook or "") ~= "" then
+            local d = getAll()
+            if type(d) == "table" then
+                -- 1) react ke refresh-round: lapor token terkini + echo id
+                if d._refresh and d._refresh ~= lastRefreshSeen then
+                    lastRefreshSeen = d._refresh
+                    local tk2 = getTokens()
+                    putKV({ [player.Name] = { tok = tk2 or 0, t = os.time(), r = d._refresh } })
+                end
+                -- 2) koordinasi: cuma 1 akun yg posting per interval (anti spam DC)
+                local interval = (tonumber(settings.tokenInterval) or 10) * 60
+                local last = (type(d._lastPost) == "number") and d._lastPost or 0
+                if (os.time() - last) >= interval then
+                    putKV({ _lastPost = os.time(), _poster = myNonce })  -- klaim
+                    task.wait(3)
+                    local d2 = getAll()
+                    if type(d2) == "table" and d2._poster == myNonce then
+                        -- menang klaim -> jalankan refresh-round + post (tunggu 50s)
+                        local total, n, lines = collectTotal(50)
+                        if total then
+                            postWebhook(settings.tokenWebhook, total, n, lines)
+                            print("[ZenxToken] webhook terkirim — total "..total.." dari "..n.." akun")
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(30)
     end
 end)
