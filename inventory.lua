@@ -1,7 +1,7 @@
 -- ============= ZENX INVENTORY VIEWER v3.0 =============
 -- Weight categories (Large/Huge/Titanic/Godly/Colossal) sesuai game.guide
 -- Formula: weight = baseKG * (age + 10) / 11
-local SCRIPT_VERSION = "v6.5 (auto batas: MaxPetsInInventory via relay)"
+local SCRIPT_VERSION = "v6.7 (relay + jeda 60s dibuang, gift terus)"
 print("==== [ZenxInv] LOAD ("..SCRIPT_VERSION..") ====")
 
 local Players = game:GetService("Players")
@@ -987,21 +987,8 @@ cfgRow(content, "Base weight max (kg)", 8.2, giftKgMax, function(v) giftKgMax = 
 local giftGateN = tonumber(savedState.giftGateN) or 20
 cfgRow(content, "Gate: kumpul brp pet", 8.5, giftGateN, function(v) giftGateN = math.max(1, math.floor(v)); savedState.giftGateN=giftGateN; saveState(savedState) end)
 
--- RELAY: batas penuh target (0 = auto dari relay) + toggle lapor (akun target nyalain)
-local giftTargetMax = tonumber(savedState.giftTargetMax) or 0  -- 0 = pakai batas auto dari relay
-cfgRow(content, "Batas manual (0=auto relay)", 8.6, giftTargetMax, function(v) giftTargetMax = math.max(0, math.floor(v)); savedState.giftTargetMax=giftTargetMax; saveState(savedState) end)
-local relayWrite = savedState.relayWrite or false  -- default OFF (cuma akun target yg ON)
-local _, rwTog, rwTS, rwRS = togRow(content, "Lapor pet ke relay", "nyalain di AKUN TARGET", 8.7)
-local function setRw(v) rwTog.Text=v and "ON" or "OFF"; rwTog.BackgroundColor3=v and C.TDim or C.Panel; rwTog.TextColor3=v and C.Teal or C.Gray; rwTS.Color=v and C.Teal or C.Dim; rwRS.Color=v and C.Teal or C.Dim end
-setRw(relayWrite)
-rwTog.MouseButton1Click:Connect(function() relayWrite=not relayWrite; savedState.relayWrite=relayWrite; saveState(savedState); setRw(relayWrite); if relayWrite then relayReport() end end)
--- writer loop: akun target lapor count tiap 10s
-task.spawn(function()
-    while true do
-        if relayWrite then pcall(relayReport) end
-        task.wait(10)
-    end
-end)
+-- (v6.6) fitur "Lapor pet ke relay" + "Batas manual via relay" DIBUANG (bikin bug/lag).
+
 
 -- pet yg cocok: base weight (age-1) di rentang giftKgMin..giftKgMax
 local function matchingPets()
@@ -1029,31 +1016,19 @@ local giftStatus = lbl(content, "Gift: ON", 9, C.Teal, Enum.TextXAlignment.Cente
 giftStatus.Size=UDim2.new(1,0,0,30) giftStatus.LayoutOrder=10 giftStatus.BackgroundColor3=C.Panel giftStatus.BackgroundTransparency=0 giftStatus.TextWrapped=true
 corner(giftStatus, 6) stroke(giftStatus, C.Dim, 1.1)
 local giftLoopActive = false
-local giftPauseUntil = 0
 local function runGiftLoop()
     if giftLoopActive then return end
     giftLoopActive = true
     task.spawn(function()
         while giftRunning do
-            if tick() < giftPauseUntil then
-                local left = math.ceil(giftPauseUntil - tick())
-                giftStatus.Text="Target penuh/max — jeda "..left.."s"; giftStatus.TextColor3=C.Gold
-                task.wait(1)
-            else
+            do
                 local target = findPlayerByName(giftTarget)
                 local pets = matchingPets()
-                local relayN, relayMax = relayTargetData(giftTarget)  -- count & batas target dari relay
-                local cap = (giftTargetMax > 0 and giftTargetMax) or relayMax  -- manual override > auto relay
-                if cap and relayN and relayN >= cap then
-                    -- target udah penuh (count >= batas) -> jeda 60s, ga perlu nyoba gift
-                    giftPauseUntil = tick() + 60
-                    giftStatus.Text="Target PENUH "..relayN.."/"..cap.." (relay) — jeda 60s"; giftStatus.TextColor3=C.Red
-                elseif not target then
+                if not target then
                     giftStatus.Text="Target ga ketemu: "..(giftTarget~="" and giftTarget or "(blm diisi)"); giftStatus.TextColor3=C.Red
                     task.wait(3)
                 elseif #pets < giftGateN then
-                    local rtxt = relayN and (" | target "..relayN..(cap and ("/"..cap) or "")) or ""
-                    giftStatus.Text="Nunggu: "..#pets.."/"..giftGateN.." pet "..giftKgMin.."-"..giftKgMax.."kg"..rtxt; giftStatus.TextColor3=C.Gold
+                    giftStatus.Text="Nunggu: "..#pets.."/"..giftGateN.." pet "..giftKgMin.."-"..giftKgMax.."kg"; giftStatus.TextColor3=C.Gold
                     task.wait(3)
                 else
                     giftStatus.Text="Gift "..#pets.." pet ke "..target.Name.."..."; giftStatus.TextColor3=C.Teal
@@ -1065,15 +1040,8 @@ local function runGiftLoop()
                         else failStreak = failStreak + 1; if failStreak >= 3 then break end end  -- 3 gagal beruntun = target penuh
                         task.wait(0.2)
                     end
-                    if sent == 0 and failStreak >= 3 then
-                        -- target kemungkinan PENUH/MAX -> jeda 60 detik (anti spam)
-                        giftPauseUntil = tick() + 60
-                        giftStatus.Text="Target PENUH/max — auto gift jeda 60s"; giftStatus.TextColor3=C.Red
-                        print("[ZenxInv] target penuh (gift gagal beruntun) -> jeda 60s")
-                    else
-                        giftStatus.Text="Kekirim "..sent.." pet (sisa cek lagi)"; giftStatus.TextColor3=C.Green
-                        task.wait(3)
-                    end
+                    giftStatus.Text="Kekirim "..sent.." pet (cek lagi)"; giftStatus.TextColor3=C.Green
+                    task.wait(3)
                 end
             end
         end
