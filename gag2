@@ -339,6 +339,9 @@ local state = {
     collectValueMax  = 0,       -- batas value collect (juta). 3 = 3.000.000. 0 = off
     sellValueMode    = false,   -- ON -> sell cuma buah value <= sellValueMax (buang murah)
     sellValueMax     = 0,       -- batas value sell (juta). 2 = 2.000.000. 0 = off
+    -- v25.1: collect buah POLOS (no mutasi) khusus, default di bawah 35kg
+    collectNoMutMode = false,   -- ON -> ikut collect buah TANPA mutasi (filter berat sendiri)
+    collectNoMutKg   = -35,     -- +N=di atas, -N=di bawah, 0=semua. default -35 (di bawah 35kg)
     debugLog      = false,      -- v7.7: print detail tiap siklus (default OFF, cegah console flood -> lag)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
     autoSprinkler = false,      -- v8.0: auto taro sprinkler di garden
@@ -495,6 +498,8 @@ local function saveState()
         out.collectValueMax  = state.collectValueMax or 0
         out.sellValueMode    = state.sellValueMode or false
         out.sellValueMax     = state.sellValueMax or 0
+        out.collectNoMutMode = state.collectNoMutMode or false  -- v25.1
+        out.collectNoMutKg   = state.collectNoMutKg or -35
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
         for _, k in ipairs(SETBOOL) do out[k] = state[k] end
         for k in pairs(SETMAP) do
@@ -543,6 +548,8 @@ local function loadState()
                 if type(d.collectValueMax)  == "number"  then state.collectValueMax  = d.collectValueMax end
                 if type(d.sellValueMode)    == "boolean" then state.sellValueMode    = d.sellValueMode end
                 if type(d.sellValueMax)     == "number"  then state.sellValueMax     = d.sellValueMax end
+                if type(d.collectNoMutMode) == "boolean" then state.collectNoMutMode = d.collectNoMutMode end  -- v25.1
+                if type(d.collectNoMutKg)   == "number"  then state.collectNoMutKg   = d.collectNoMutKg end
                 -- v8.2: koordinat sprinkler
                 if type(d.sprCoords) == "table" then
                     state.sprCoords = {}
@@ -1634,7 +1641,14 @@ function Farm.collectOnce()
                         if pr > (state.collectValueMax * 1e6) then okValue = false end
                     end
                 end
-                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy and okValue then
+                -- v25.1: jalur COLLECT BUAH POLOS (no mutasi). filter berat sendiri (default <35kg).
+                local plainOk = false
+                if state.collectNoMutMode and getMutation(fruit) == nil then
+                    local kg = Farm.gardenKg(fruit, seedName)
+                    plainOk = passWeight(kg, state.collectNoMutKg or -35) and okFresh and okHeavy
+                end
+                local mutOk = okMut and okW and okFresh and okHeavy and okValue
+                if fruitUUID and #tostring(fruitUUID) >= 30 and (mutOk or plainOk) then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
                     fired = fired + 1; fruitCount = fruitCount + 1
@@ -5612,6 +5626,26 @@ do
         state.collectValueMax = n; cvBox.Text = tostring(n); saveState()
         print("[ZenxFarm] collect value: "..(n==0 and "off" or ("<= "..n.."jt (mutasi only)")))
     end)
+end
+
+-- ====== CARD 1b: AUTO COLLECT NO MUTATION ======
+-- v25.1: collect khusus buah POLOS (tanpa mutasi), filter berat sendiri (default <35kg)
+do
+    local card, body, setH = mkFarmCard(1, "Auto Collect No Mutation", "ambil buah polos (no mutasi) - default <35kg")
+    setH(128)
+    mkBodyToggle(body, 4, "Auto Collect Polos", "collectNoMutMode", "Collect No-Mutation")
+    lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
+    local nmBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 45),
+        BackgroundColor3 = C.input, Text = tostring(state.collectNoMutKg or -35), PlaceholderText = "-35 = <35kg",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(nmBox, 6); stroke(nmBox, C.border, 1)
+    nmBox.FocusLost:Connect(function()
+        local n = tonumber(nmBox.Text) or -35
+        state.collectNoMutKg = n; nmBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] collect polos: "..(n==0 and "semua berat" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
+    end)
+    local note = lbl(body, "Jalan bareng Auto Collect (Multi Harvest ON).", 11, C.textMute, Enum.TextXAlignment.Left)
+    note.Position = UDim2.new(0,0,0,90); note.Size = UDim2.new(1,0,0,28); note.TextWrapped = true
 end
 
 -- ====== CARD 2: AUTO SELL ======
