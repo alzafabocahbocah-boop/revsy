@@ -334,6 +334,11 @@ local state = {
     collectMostFirst = false,   -- v9.5: collect per jenis, dari total buah terbanyak dulu
     collectWeightF  = 0,        -- v10.9: filter berat collect (0=off, +N=di atas N kg, -N=di bawah N kg)
     sellWeightF     = 0,        -- v10.9: filter berat sell (0=off, +N=di atas, -N=di bawah)
+    -- v25.0: filter VALUE (harga). value dalam JUTA (M). 0 = off.
+    collectValueMode = false,   -- ON -> collect cuma buah BERMUTASI & value <= collectValueMax
+    collectValueMax  = 0,       -- batas value collect (juta). 3 = 3.000.000. 0 = off
+    sellValueMode    = false,   -- ON -> sell cuma buah value <= sellValueMax (buang murah)
+    sellValueMax     = 0,       -- batas value sell (juta). 2 = 2.000.000. 0 = off
     debugLog      = false,      -- v7.7: print detail tiap siklus (default OFF, cegah console flood -> lag)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
     autoSprinkler = false,      -- v8.0: auto taro sprinkler di garden
@@ -486,6 +491,10 @@ local function saveState()
         out.gfPrioMinVal = state.gfPrioMinVal or 3000000  -- v24.0
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
+        out.collectValueMode = state.collectValueMode or false  -- v25.0
+        out.collectValueMax  = state.collectValueMax or 0
+        out.sellValueMode    = state.sellValueMode or false
+        out.sellValueMax     = state.sellValueMax or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
         for _, k in ipairs(SETBOOL) do out[k] = state[k] end
         for k in pairs(SETMAP) do
@@ -530,6 +539,10 @@ local function loadState()
                 if type(d.gfPrioMinVal) == "number" then state.gfPrioMinVal = d.gfPrioMinVal end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
+                if type(d.collectValueMode) == "boolean" then state.collectValueMode = d.collectValueMode end  -- v25.0
+                if type(d.collectValueMax)  == "number"  then state.collectValueMax  = d.collectValueMax end
+                if type(d.sellValueMode)    == "boolean" then state.sellValueMode    = d.sellValueMode end
+                if type(d.sellValueMax)     == "number"  then state.sellValueMax     = d.sellValueMax end
                 -- v8.2: koordinat sprinkler
                 if type(d.sprCoords) == "table" then
                     state.sprCoords = {}
@@ -1611,7 +1624,17 @@ function Farm.collectOnce()
                     local dec = fruit:GetAttribute("DecayAlpha")
                     if type(dec) == "number" and dec > (state.collectFreshMax or 0.5) then okFresh = false end
                 end
-                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy then
+                -- v25.0: filter VALUE collect. ON -> wajib BERMUTASI & value <= batas (juta).
+                local okValue = true
+                if state.collectValueMode and (state.collectValueMax or 0) > 0 then
+                    if getMutation(fruit) == nil then
+                        okValue = false   -- harus bermutasi
+                    else
+                        local pr = Farm.fruitPrice(fruit, true) or 0   -- harga normal (x1)
+                        if pr > (state.collectValueMax * 1e6) then okValue = false end
+                    end
+                end
+                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy and okValue then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
                     fired = fired + 1; fruitCount = fruitCount + 1
@@ -1620,6 +1643,11 @@ function Farm.collectOnce()
             end
         end
         if fruitCount == 0 and state.collectSingle then
+            -- v25.0: kalau filter value/mutasi ON, single harvest di-skip
+            -- (single gak punya objek buah utk dicek mutasi & harga)
+            if state.collectValueMode and (state.collectValueMax or 0) > 0 then
+                return
+            end
             if plant:GetAttribute("PlantGrowthReady") == true then
                 local pid = tostring(plantId)
                 pcall(function() p:Fire(pid, pid) end)
@@ -1830,8 +1858,10 @@ local function getInvMax()
 end
 function Farm.sellOnce()
     Farm.updateBaseW()  -- v10.8: kalibrasi base weight dari buah di tas
+    -- v25.0: kalau filter VALUE sell ON -> gak bisa SellAll (harus cek harga per buah)
+    local valueOn = state.sellValueMode and (state.sellValueMax or 0) > 0
     -- v10.9: kalau filter berat aktif, SellAll gak bisa (jual semua sekaligus) -> pakai per-fruit
-    if state.sellAll and state.sellWeightF == 0 then
+    if state.sellAll and state.sellWeightF == 0 and not valueOn then
         local p = pkt("NPCS", "SellAll")
         if not p or not p.Fire then print("[ZenxFarm] SellAll packet gak ada"); return end
         -- v10.8: jumlahin berat semua buah di inventory SEBELUM dijual
@@ -1863,7 +1893,13 @@ function Farm.sellOnce()
                 local okW = passWeight(w, state.sellWeightF)  -- v10.9 filter berat
                 -- sellAll=true -> semua jenis lolos; else cuma jenis terpilih
                 local okType = state.sellAll or state.selectedSell[jenis]
-                if okType and okMut and okW then
+                -- v25.0: filter VALUE sell. ON -> cuma jual buah value <= batas (buang murah)
+                local okValue = true
+                if valueOn then
+                    local pr = Farm.fruitPrice(o, true) or 0   -- harga normal (x1)
+                    if pr > (state.sellValueMax * 1e6) then okValue = false end
+                end
+                if okType and okMut and okW and okValue then
                     if type(w) == "number" then Farm._sellKg = Farm._sellKg + w end  -- v10.8
                     pcall(function() p:Fire(tostring(id)) end)
                     sold = sold + 1
@@ -5562,6 +5598,20 @@ do
     applyCollectNoMut = mkBodyToggle(body, 404, "Tanpa Mutasi (ikut ambil)", "collectNoMut", "Collect No Mutation")
     -- v23.1: anti-collect buah berat (>=100kg). default ON, ga disave -> selalu ON pas rejoin/exe
     mkBodyToggle(body, 444, "Anti Collect 100kg+", "antiCollectHeavy", "Anti Collect 100kg")
+    -- v25.0: filter VALUE collect (cuma buah BERMUTASI & value <= batas juta)
+    setH(560)
+    mkBodyToggle(body, 484, "Filter Value (mutasi only)", "collectValueMode", "Collect by Value")
+    lbl(body, "Batas value (juta)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,528)
+    local cvBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 525),
+        BackgroundColor3 = C.input, Text = tostring(state.collectValueMax or 0), PlaceholderText = "3 = 3jt",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(cvBox, 6); stroke(cvBox, C.border, 1)
+    cvBox.FocusLost:Connect(function()
+        local n = tonumber(cvBox.Text) or 0
+        if n < 0 then n = -n end
+        state.collectValueMax = n; cvBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] collect value: "..(n==0 and "off" or ("<= "..n.."jt (mutasi only)")))
+    end)
 end
 
 -- ====== CARD 2: AUTO SELL ======
@@ -5587,6 +5637,20 @@ do
         local n = tonumber(swBox.Text) or 0
         state.sellWeightF = n; swBox.Text = tostring(n); saveState()
         print("[ZenxFarm] filter sell: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
+    end)
+    -- v25.0: filter VALUE sell (jual buah value <= batas juta -> buang murah)
+    setH(282)
+    mkBodyToggle(body, 204, "Filter Value (buang murah)", "sellValueMode", "Sell by Value")
+    lbl(body, "Batas value (juta)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,248)
+    local svBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 245),
+        BackgroundColor3 = C.input, Text = tostring(state.sellValueMax or 0), PlaceholderText = "2 = 2jt",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(svBox, 6); stroke(svBox, C.border, 1)
+    svBox.FocusLost:Connect(function()
+        local n = tonumber(svBox.Text) or 0
+        if n < 0 then n = -n end
+        state.sellValueMax = n; svBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] sell value: "..(n==0 and "off" or ("jual <= "..n.."jt")))
     end)
 end
 
