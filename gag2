@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v25.8"
+local VER       = "v26.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -448,7 +448,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
@@ -2074,7 +2074,7 @@ local function applyBuyDefaultsV3()
         local pets = Farm.scanPetTypes and Farm.scanPetTypes() or PET_TYPES
         for _, nm in ipairs(pets) do
             local ln = nm:lower()
-            if ln:find("bear") or ln:find("raccoon") or ln:find("dragonfly") or ln:find("unicorn") then
+            if ln:find("bear") or ln:find("raccoon") or ln:find("dragonfly") or ln:find("unicorn") or ln:find("turtle") then
                 state.selectedPetType[nm] = true
             end
         end
@@ -2094,6 +2094,19 @@ local function applyBuyDefaultsV4()
     print("[ZenxFarm] default V4: max harga pet 200M")
 end
 applyBuyDefaultsV4()
+
+-- v25.9: tambahin Turtle ke auto-buy pet (sekali jalan, buat save yg udah ada)
+if not state.petAddTurtle then
+    state.petAddTurtle = true
+    pcall(function()
+        local pets = Farm.scanPetTypes and Farm.scanPetTypes() or PET_TYPES
+        for _, nm in ipairs(pets) do
+            if nm:lower():find("turtle") then state.selectedPetType[nm] = true end
+        end
+    end)
+    saveState()
+    print("[ZenxFarm] Turtle ditambahin ke auto-buy pet")
+end
 
 -- v25.8: tambahin Venom Spitter ke auto-buy seed (sekali jalan, buat save yg udah ada)
 if not state.seedAddVenom then
@@ -2787,7 +2800,7 @@ end
 -- ke state.gsmTarget (default "wildnx_60"). mailbox bisa ke offline, ga perlu deket.
 function Farm.giftMoonbloomOnce()
     local target = state.gsmTarget or "wildnx_60"
-    local seedMatch = tostring(state.gsmSeed or "Moonbloom"):lower()
+    local matches = {"moon", "breath", "venom"}   -- v26.0: Moonbloom / Dragon's Breath / Venom Spitter
     local sb = pkt("Mailbox", "SendBatch")
     if not sb or not sb.Fire then Farm._gsmStatus = "nosend"; return end
     -- resolve userId (cache per target)
@@ -2797,7 +2810,8 @@ function Farm.giftMoonbloomOnce()
     end
     local uid = Farm._gsmId
     if not uid then Farm._gsmStatus = "nouser"; return end
-    -- kumpulin seed moonbloom dari Character + Backpack
+    if uid == player.UserId then Farm._gsmStatus = "self"; return end   -- jgn kirim ke diri sendiri
+    -- kumpulin seed (moonbloom/dragon's breath/venom spitter) dari Character + Backpack
     local items, total = {}, 0
     for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
         if holder then
@@ -2805,11 +2819,16 @@ function Farm.giftMoonbloomOnce()
                 if t:IsA("Tool") and #items < 8 then
                     local sn = t:GetAttribute("SeedTool") or t:GetAttribute("SeedName")
                     if not sn and t.Name:match("Seed%s*$") then sn = t.Name:gsub("%s*Seed%s*$","") end
-                    if sn and tostring(sn):lower():find(seedMatch, 1, true) then
-                        local cnt = t:GetAttribute("Count") or 1
-                        if cnt > 0 then
-                            items[#items+1] = { ItemKey = sn, Count = cnt, Category = "Seeds" }
-                            total = total + cnt
+                    if sn then
+                        local snl = tostring(sn):lower()
+                        local match = false
+                        for _, m in ipairs(matches) do if snl:find(m, 1, true) then match = true; break end end
+                        if match then
+                            local cnt = t:GetAttribute("Count") or 1
+                            if cnt > 0 then
+                                items[#items+1] = { ItemKey = sn, Count = cnt, Category = "Seeds" }
+                                total = total + cnt
+                            end
                         end
                     end
                 end
@@ -2821,7 +2840,7 @@ function Farm.giftMoonbloomOnce()
     if ok then
         Farm._gsmStatus = "ok"
         Farm._gsmSent = (Farm._gsmSent or 0) + total
-        print("[ZenxFarm] gift seed "..(state.gsmSeed or "Moonbloom").." -> "..target..": "..total.." biji")
+        print("[ZenxFarm] gift seed -> "..target..": "..total.." biji")
     else
         Farm._gsmStatus = "fail"
     end
@@ -2925,11 +2944,12 @@ staggerSpawn(function()
         if isCurrentGen() and state.autoGift then pcall(Farm.giftOnce) end
     end
 end)
--- v23.6: loop auto gift seed Moonbloom -> wildnx_60 (mailbox)
+-- v23.6: loop auto gift seed -> wildnx_60 (mailbox). v26.0: kirim Moonbloom+Dragon's Breath+Venom Spitter,
+-- dan HANYA jalan di akun yg Auto Buy Pet ON (sesuai permintaan).
 staggerSpawn(function()
     while isCurrentGen() do
         task.wait(4)
-        if isCurrentGen() and state.autoGiftSeedMoon then pcall(Farm.giftMoonbloomOnce) end
+        if isCurrentGen() and state.autoGiftSeedMoon and state.autoBuyPet then pcall(Farm.giftMoonbloomOnce) end
     end
 end)
 -- v13.5: loop gift langsung (Gifting.Send)
@@ -5647,21 +5667,24 @@ do
     end)
 end
 
--- ====== CARD 5: AUTO GIFT SEED MOONBLOOM -> wildnx_60 (mailbox, terpisah) ======
+-- ====== CARD 5: AUTO GIFT SEED -> wildnx_60 (mailbox, terpisah) ======
 do
-    local card, body, setH = mkFarmCard(5, "Auto Gift Seed", "kirim seed Moonbloom ke wildnx_60 (mailbox)")
+    local card, body, setH = mkFarmCard(5, "Auto Gift Seed", "kirim Moonbloom/Dragon's Breath/Venom Spitter ke wildnx_60")
     setH(132)
-    local info = lbl(body, "Target: wildnx_60\nSeed: Moonbloom  •  via MAILBOX (bisa offline)", 12, C.textDim, Enum.TextXAlignment.Left)
-    info.Position = UDim2.new(0,0,0,2); info.Size = UDim2.new(1,0,0,40); info.TextWrapped = true; info.TextYAlignment = Enum.TextYAlignment.Top
-    mkBodyToggle(body, 52, "Auto Gift Seed", "autoGiftSeedMoon", "Auto Gift Seed Moonbloom")
+    local info = lbl(body, "Target: wildnx_60  •  via MAILBOX (bisa offline)\nSeed: Moonbloom, Dragon's Breath, Venom Spitter\nHANYA jalan kalau Auto Buy Pet ON", 12, C.textDim, Enum.TextXAlignment.Left)
+    info.Position = UDim2.new(0,0,0,2); info.Size = UDim2.new(1,0,0,52); info.TextWrapped = true; info.TextYAlignment = Enum.TextYAlignment.Top
+    mkBodyToggle(body, 60, "Auto Gift Seed", "autoGiftSeedMoon", "Auto Gift Seed")
     local stat = lbl(body, "", 12, C.green, Enum.TextXAlignment.Left)
-    stat.Position = UDim2.new(0,0,0,98); stat.Size = UDim2.new(1,0,0,28); stat.TextWrapped = true; stat.TextYAlignment = Enum.TextYAlignment.Top
+    stat.Position = UDim2.new(0,0,0,100); stat.Size = UDim2.new(1,0,0,28); stat.TextWrapped = true; stat.TextYAlignment = Enum.TextYAlignment.Top
     task.spawn(function()
-        local map = { ok="✓ terkirim", empty="ga ada Moonbloom di tas", nouser="wildnx_60 ga ketemu", nosend="mailbox ga ada", fail="gagal kirim" }
+        local map = { ok="✓ terkirim", empty="ga ada seednya di tas", nouser="wildnx_60 ga ketemu", nosend="mailbox ga ada", self="ini akun wildnx_60 (skip)", fail="gagal kirim" }
         while card.Parent do
             local s = Farm._gsmStatus
             local sent = Farm._gsmSent or 0
-            local txt = state.autoGiftSeedMoon and (map[s] or "nunggu Moonbloom...") or "OFF"
+            local txt
+            if not state.autoGiftSeedMoon then txt = "OFF (toggle mati)"
+            elseif not state.autoBuyPet then txt = "nunggu Auto Buy Pet ON"
+            else txt = map[s] or "nunggu seed..." end
             stat.Text = "Status: "..txt.."   |   total kekirim: "..sent
             task.wait(1)
         end
