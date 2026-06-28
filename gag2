@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v27.4"
+local VER       = "v27.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -398,7 +398,7 @@ local state = {
     autoHop         = false,    -- v17.0: auto hop server tiap X menit
     hopMinutes      = 30,       -- v17.0: interval auto hop (menit)
     autoWeatherHop  = false,    -- v26.8: rejoin pas weather buruk (semua kecuali yg ditandai bagus)
-    weatherHopDelay = 120,      -- v26.8: tunggu X detik sblm hop pas weather buruk
+    weatherHopDelay = 120,      -- v27.8: durasi FREEZE (preparing) sblm teleport beneran
     allGoodWeather  = false,    -- v26.8: semua weather dianggap bagus (ga pernah hop)
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
@@ -483,7 +483,7 @@ local function saveState()
         out.petMinPrice = state.petMinPrice or 0  -- v25.2
         out.petWebhook = state.petWebhook or ""   -- v16.7
         out.hopMinutes = state.hopMinutes or 30   -- v17.0
-        out.weatherHopDelay = state.weatherHopDelay or 120  -- v26.8
+        out.weatherHopDelay = state.weatherHopDelay or 120  -- v27.8
         out.gfWeightF = state.gfWeightF or 0      -- v17.8
         out.gfSheckMax = state.gfSheckMax or 100000000  -- v18.4
         out.gfValueTarget = state.gfValueTarget or 500000000  -- v22.9
@@ -3738,13 +3738,12 @@ staggerSpawn(function()
             if Farm._applyAcceptRef then pcall(Farm._applyAcceptRef) end
             saveState()
         end
-        -- v20.1: akun buy-pet -> auto hop nyala (interval 30 menit)
-        if state.autoBuyPet and not state.autoHop then
-            state.autoHop = true
-            state.hopMinutes = 45
+        -- v27.5: akun buy-pet -> Auto Hop Server MATI (jangan pindah server, biar buy pet ga keganggu)
+        if state.autoBuyPet and state.autoHop then
+            state.autoHop = false
             if Farm._applyHopRef then pcall(Farm._applyHopRef) end
             saveState()
-            print("[ZenxFarm] Buy Pet ON -> Auto Hop nyala (45 menit)")
+            print("[ZenxFarm] Buy Pet ON -> Auto Hop dimatiin")
         end
         -- v20.9: gift-fruit otomatis ikut status Buy Pet.
         --   FARM (buyPet OFF) -> cek sheckles + auto gift ON, akun-ini-pet OFF
@@ -5160,6 +5159,69 @@ local function doHop()
     print("[ZenxFarm] fallback rejoin GAGAL juga: "..tostring(err2))
     return false
 end
+
+-- v27.6: REJOIN SIMPEL (persis cara sc lain): Teleport(placeId, player) — Roblox pilih server sendiri.
+-- skip nyari server-list (yg lambat/rate-limit). pakai izin ZenxTeleport biar ga ke-block hook kita.
+function Farm.simpleRejoin()
+    local TS = game:GetService("TeleportService")
+    local plr = Players.LocalPlayer
+    local zt = (typeof(getgenv) == "function" and getgenv() or _G).ZenxTeleport
+    local ok, err = pcall(function()
+        if zt then return zt(function() TS:Teleport(game.PlaceId, plr) end)
+        else return TS:Teleport(game.PlaceId, plr) end
+    end)
+    if ok then print("[ZenxFarm] simple rejoin dikirim (Teleport placeId)")
+    else print("[ZenxFarm] simple rejoin GAGAL: "..tostring(err)) end
+    return ok
+end
+
+-- v27.8: FREEZE "preparing to move" (kayak sc lain) — kunci gerak + overlay loading,
+-- ditahan selama setting, baru teleport beneran. Farm._weatherHopAt dipakai buat countdown overlay.
+Farm._weatherFreezeGui = nil
+function Farm.weatherFreeze(on, wname)
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if on then
+        pcall(function() if hrp then hrp.Anchored = true end end)
+        if not Farm._weatherFreezeGui then
+            local host = (gethui and gethui()) or game:GetService("CoreGui")
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "ZenxWeatherFreeze"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true
+            sg.DisplayOrder = 99999; sg.Parent = host
+            local bg = Instance.new("Frame", sg)
+            bg.Size = UDim2.fromScale(1, 1); bg.BackgroundColor3 = Color3.fromRGB(8, 8, 12)
+            bg.BackgroundTransparency = 0.2; bg.BorderSizePixel = 0; bg.Active = true
+            local modal = Instance.new("TextButton", bg)   -- nyerap input biar ga bisa gerak
+            modal.Size = UDim2.fromScale(1, 1); modal.BackgroundTransparency = 1; modal.Text = ""
+            modal.Modal = true; modal.AutoButtonColor = false
+            local txt = Instance.new("TextLabel", bg)
+            txt.Size = UDim2.fromScale(1, 1); txt.BackgroundTransparency = 1
+            txt.Font = Enum.Font.GothamBold; txt.TextSize = 22; txt.TextColor3 = Color3.fromRGB(255, 210, 90)
+            txt.TextWrapped = true; txt.Text = "..."; txt.Name = "T"
+            Farm._weatherFreezeGui = sg
+            task.spawn(function()
+                while Farm._weatherFreezeGui == sg and sg.Parent do
+                    local wn = Farm._weatherFreezeName or wname or "?"
+                    if Farm._weatherHopState == "hopping" then
+                        txt.Text = "⚠ Cuaca buruk ("..tostring(wn)..")\n\nlagi pindah server..."
+                    else
+                        local rem = Farm._weatherHopAt and math.max(0, math.ceil(Farm._weatherHopAt - os.clock())) or 0
+                        txt.Text = "⚠ Cuaca buruk ("..tostring(wn)..")\n\npindah server dalam "..rem.."s..."
+                    end
+                    -- jaga2: re-anchor kalau karakter sempet ke-respawn
+                    local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
+                    if h and not h.Anchored then pcall(function() h.Anchored = true end) end
+                    task.wait(0.3)
+                end
+            end)
+        end
+        Farm._weatherFreezeName = wname
+    else
+        pcall(function() if hrp then hrp.Anchored = false end end)
+        Farm._weatherFreezeName = nil
+        if Farm._weatherFreezeGui then pcall(function() Farm._weatherFreezeGui:Destroy() end); Farm._weatherFreezeGui = nil end
+    end
+end
 hopBtn.MouseButton1Click:Connect(function()
     hopBtn.Text = "..."; task.spawn(doHop)
 end)
@@ -5169,7 +5231,7 @@ Farm._hopNextAt = nil
 staggerSpawn(function()
     print("[ZenxFarm] loop auto-hop AKTIF")
     while isCurrentGen() do
-        if not state.autoHop then
+        if not state.autoHop or state.autoBuyPet then   -- v27.5: buy-pet aktif -> jangan hop sama sekali
             Farm._hopNextAt = nil
             task.wait(2)
         else
@@ -5248,33 +5310,33 @@ staggerSpawn(function()
         if state.autoWeatherHop then
             local bad, w = Farm.isBadWeatherNow()
             if bad then
-                if not pendingFrom then
-                    pendingFrom = os.clock()
-                    Farm._weatherHopAt = pendingFrom + (tonumber(state.weatherHopDelay) or 120)
-                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> hop dlm "..(state.weatherHopDelay or 120).."s")
-                else
-                    local delay = math.max(0, tonumber(state.weatherHopDelay) or 120)
-                    if (os.clock() - pendingFrom) >= delay then
-                        if select(1, Farm.isBadWeatherNow()) then   -- recheck: masih buruk?
-                            -- v27.2: rejoin game ini lama (10-15s) & kadang gagal -> ULANGI proses pindah
-                            -- terus-terusan sampe BENERAN pindah (atau weather udah bagus / toggle off).
-                            Farm._weatherHopState = "hopping"
-                            print("[ZenxFarm] weather hop: mulai proses pindah (diulang sampe sukses)")
-                            local tries = 0
-                            while isCurrentGen() and state.autoWeatherHop and select(1, Farm.isBadWeatherNow()) do
-                                tries = tries + 1
-                                print("[ZenxFarm] weather hop: percobaan pindah #"..tries)
-                                pcall(doHop)        -- tiap percobaan ~10-15s; kalau sukses, script ke-kill di sini
-                                task.wait(8)        -- jeda kecil antar percobaan (anti rate-limit)
-                            end
-                            Farm._weatherHopState = nil
-                            pendingFrom = nil; Farm._weatherHopAt = nil
-                        else
-                            pendingFrom = nil; Farm._weatherHopAt = nil   -- udah ga buruk, batal
-                        end
+                local firstDetect = (pendingFrom == nil)
+                pendingFrom = pendingFrom or os.clock()
+                local delay = math.max(0, tonumber(state.weatherHopDelay) or 120)
+                Farm._weatherHopAt = pendingFrom + delay
+                -- v27.8: FREEZE seketika (preparing to move), tahan selama 'delay', baru teleport.
+                if Farm._weatherHopState ~= "hopping" then Farm._weatherHopState = "freeze" end
+                Farm.weatherFreeze(true, w)
+                if firstDetect then print("[ZenxFarm] weather buruk '"..tostring(w).."' -> FREEZE "..delay.."s lalu rejoin") end
+                if (os.clock() - pendingFrom) >= delay then
+                    -- delay abis, masih buruk -> teleport beneran
+                    Farm._weatherHopState = "hopping"
+                    print("[ZenxFarm] weather freeze abis -> rejoin (Teleport placeId)")
+                    local tries = 0
+                    while isCurrentGen() and state.autoWeatherHop and select(1, Farm.isBadWeatherNow()) do
+                        tries = tries + 1
+                        print("[ZenxFarm] weather hop: rejoin #"..tries)
+                        Farm.simpleRejoin()  -- sukses -> script ke-kill di sini (masih freeze pas pindah)
+                        task.wait(12)
                     end
+                    Farm._weatherHopState = nil
+                    Farm.weatherFreeze(false)
+                    pendingFrom = nil; Farm._weatherHopAt = nil
                 end
             else
+                -- cuaca udah bagus -> batal & unfreeze
+                if pendingFrom then Farm.weatherFreeze(false) end
+                Farm._weatherHopState = nil
                 pendingFrom = nil; Farm._weatherHopAt = nil
             end
         else
@@ -7610,6 +7672,12 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
+        if not state.autoHop and state.autoBuyPet then
+            -- v27.5: ga boleh nyalain hop kalau buy pet aktif
+            print("[ZenxFarm] Auto Hop ga bisa nyala: Buy Pet lagi aktif")
+            applyHop()
+            return
+        end
         state.autoHop = not state.autoHop; saveState(); applyHop()
         print("[ZenxFarm] Auto Hop -> "..(state.autoHop and ("ON (tiap "..(state.hopMinutes or 30).." menit)") or "OFF"))
     end)
@@ -7631,7 +7699,11 @@ do
     task.spawn(function()
         while sg and sg.Parent do
             applyHop()   -- v20.2: sync visual toggle (kalau diubah linkage/auto)
-            if state.autoHop and Farm._hopNextAt then
+            if state.autoBuyPet then
+                cdL.Text = "Hop berikutnya: — (OFF, buy pet aktif)"
+                cdL.TextColor3 = C.textMute
+                barFill.Size = UDim2.new(0, 0, 1, 0)
+            elseif state.autoHop and Farm._hopNextAt then
                 local rem = math.max(0, Farm._hopNextAt - os.clock())
                 local m = math.floor(rem / 60); local s = math.floor(rem % 60)
                 cdL.Text = string.format("Hop berikutnya: %dm %02ds", m, s)
@@ -7659,7 +7731,7 @@ do
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Auto Rejoin Weather", 15, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 12); nameL.Size = UDim2.new(1, -28, 0, 20)
-    local descL = lbl(card, "weather buruk -> ulang rejoin sampe pindah (rejoin game lama ~10-15s)", 12, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "weather buruk -> freeze (preparing) X detik -> baru teleport (kayak sc lain)", 12, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 34); descL.Size = UDim2.new(1, -28, 0, 16)
     local body = mk("Frame", { Size = UDim2.new(1, -28, 1, -64), Position = UDim2.new(0, 14, 0, 58),
         BackgroundTransparency = 1, Parent = card })
@@ -7667,8 +7739,8 @@ do
     -- picker weather BAGUS (sisanya = trigger hop)
     mkTypeRow(body, 4, "Weather bagus", Farm.weatherList, state.goodWeathers, "allGoodWeather", "Semua weather bagus")
 
-    -- delay sebelum hop (detik)
-    lbl(body, "Jeda awal (detik)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
+    -- durasi FREEZE (preparing to move) sebelum teleport beneran
+    lbl(body, "Freeze sblm pindah (detik)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
     local dBox = mk("TextBox", { Size = UDim2.new(0.35, 0, 0, 30), Position = UDim2.new(0.65, 0, 0, 44),
         BackgroundColor3 = C.input, Text = tostring(state.weatherHopDelay or 120), PlaceholderText = "120",
         TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
@@ -7676,7 +7748,7 @@ do
     dBox.FocusLost:Connect(function()
         local n = math.max(0, math.floor(tonumber(dBox.Text) or 120))
         state.weatherHopDelay = n; dBox.Text = tostring(n); saveState()
-        print("[ZenxFarm] weather hop delay: "..n.."s")
+        print("[ZenxFarm] weather freeze: "..n.."s")
     end)
 
     -- toggle ON/OFF (manual)
@@ -7713,10 +7785,10 @@ do
             local txt, col = "", C.textDim
             if not state.autoWeatherHop then txt = "OFF"
             elseif Farm._weatherHopState == "hopping" then
-                txt = "BURUK ("..tostring(w)..") -> lagi pindah server (ngulang sampe sukses)..."; col = C.red
-            elseif Farm._weatherHopAt then
+                txt = "BURUK ("..tostring(w)..") -> lagi pindah server..."; col = C.red
+            elseif Farm._weatherHopState == "freeze" and Farm._weatherHopAt then
                 local rem = math.max(0, math.floor(Farm._weatherHopAt - os.clock()))
-                txt = "BURUK ("..tostring(w)..") -> mulai pindah "..rem.."s lagi"; col = C.red
+                txt = "BURUK ("..tostring(w)..") -> FREEZE, pindah "..rem.."s lagi"; col = C.red
             elseif bad then txt = "weather buruk kedeteksi..."
             else txt = "cuaca: "..tostring(w or "-").." (aman)" end
             stL.Text = "Status: "..txt; stL.TextColor3 = col
