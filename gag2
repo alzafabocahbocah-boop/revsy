@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v27.0"
+local VER       = "v27.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -853,10 +853,14 @@ function Farm.hidePlantParts(plant, hide)
                     end
                 end
                 if not inFruit then
-                    if d:IsA("BasePart") then
-                        d.Transparency = hide and 1 or 0
+                    if hide then
+                        -- simpan transparency ASLI sekali (biar rainbow/gold ga rusak pas dibalikin)
+                        if d:GetAttribute("ZenxOrigT") == nil then d:SetAttribute("ZenxOrigT", d.Transparency) end
+                        d.Transparency = 1
                     else
-                        d.Transparency = hide and 1 or 0
+                        local o = d:GetAttribute("ZenxOrigT")
+                        d.Transparency = (type(o) == "number") and o or 0
+                        d:SetAttribute("ZenxOrigT", nil)
                     end
                 end
             end
@@ -901,13 +905,22 @@ end
 Farm._hideFruitsOn = false
 Farm._hideFruitsConn = nil
 function Farm.hideFruitParts(fruit, hide)
-    local tval = hide and (state.hideFruitFaint and 0.7 or 1) or 0
+    local hideT = state.hideFruitFaint and 0.7 or 1
+    local function setT(d)
+        if hide then
+            if d:GetAttribute("ZenxOrigT") == nil then d:SetAttribute("ZenxOrigT", d.Transparency) end
+            d.Transparency = hideT
+        else
+            local o = d:GetAttribute("ZenxOrigT")
+            d.Transparency = (type(o) == "number") and o or 0
+            d:SetAttribute("ZenxOrigT", nil)
+        end
+    end
     pcall(function()
         for _, d in ipairs(fruit:GetDescendants()) do
-            if d:IsA("BasePart") then d.Transparency = tval
-            elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = tval end
+            if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture") then setT(d) end
         end
-        if fruit:IsA("BasePart") then fruit.Transparency = tval end
+        if fruit:IsA("BasePart") then setT(fruit) end
     end)
 end
 function Farm.setHideFruits(on)
