@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v26.8"
+local VER       = "v27.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -4518,33 +4518,38 @@ local function showKalkuGift()
     local resetBtn = mk("TextButton", { Size=UDim2.new(0,104,0,28), Position=UDim2.new(0,302,0,122), BackgroundColor3=C.input, Text="Reset", TextColor3=C.textDim, Font=FONT, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
     resetBtn.MouseButton1Click:Connect(function() sessionStart = os.time(); sessionGifted = 0 end)
 
-    -- ===== filter RANGE nilai buah (v23.5): cuma kirim buah yg nilainya di rentang kepilih =====
+    -- ===== filter RANGE nilai buah (v26.9): MIN-MAX custom (satuan JUTA/M). kosong = tanpa batas =====
     local valRange = nil   -- nil = semua. {lo,hi} = batas nilai buah (pake harga sesuai toggle PASAR/NORMAL)
-    local rangeDefs = {
-        { t="Semua", r=nil },
-        { t="1-3M",  r={1e6, 3e6} },
-        { t="3-6M",  r={3e6, 6e6} },
-        { t="6-10M", r={6e6, 10e6} },
-        { t="10M+",  r={10e6, math.huge} },
-    }
-    local rangeBtns = {}
-    local function setRange(idx)
-        valRange = rangeDefs[idx].r
-        for i, b in ipairs(rangeBtns) do
-            if i == idx then b.BackgroundColor3 = Color3.fromRGB(240,240,240); b.TextColor3 = Color3.new(0,0,0)
-            else b.BackgroundColor3 = C.input; b.TextColor3 = C.textDim end
-        end
+    local kgMinBox, kgMaxBox
+    local function parseVal(txt, default)
+        txt = tostring(txt):gsub("%s", ""):lower()
+        if txt == "" then return default end
+        if txt:match("[kmb]$") then return parseN(txt) or default end
+        local n = tonumber(txt); if not n then return default end
+        return math.floor(n * 1e6)   -- angka polos = juta
+    end
+    local function refreshRange()
+        local lo = parseVal(kgMinBox.Text, 0)
+        local hi = parseVal(kgMaxBox.Text, math.huge)
+        if lo > hi then lo, hi = hi, lo end
+        valRange = (lo <= 0 and hi == math.huge) and nil or { lo, hi }
     end
     do
-        local xs = {14, 93, 172, 251, 330}
-        for i, d in ipairs(rangeDefs) do
-            local b = mk("TextButton", { Size=UDim2.new(0,73,0,26), Position=UDim2.new(0,xs[i],0,158),
-                BackgroundColor3=C.input, Text=d.t, TextColor3=C.textDim, Font=FONT, TextSize=11,
-                BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1)
-            b.MouseButton1Click:Connect(function() setRange(i) end)
-            rangeBtns[i] = b
-        end
-        setRange(1)   -- default Semua
+        local rLbl = lbl(pop, "Range (M):", 12, C.textDim, Enum.TextXAlignment.Left)
+        rLbl.Position=UDim2.new(0,14,0,160); rLbl.Size=UDim2.new(0,64,0,24); rLbl.ZIndex=72
+        kgMinBox = mk("TextBox", { Size=UDim2.new(0,76,0,28), Position=UDim2.new(0,82,0,156),
+            BackgroundColor3=C.input, Text="", PlaceholderText="min", TextColor3=C.text, Font=FONT, TextSize=12,
+            BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(kgMinBox,6); stroke(kgMinBox,C.border,1)
+        local kgDash = lbl(pop, "–", 14, C.textDim, Enum.TextXAlignment.Center)
+        kgDash.Position=UDim2.new(0,162,0,156); kgDash.Size=UDim2.new(0,16,0,28); kgDash.ZIndex=72
+        kgMaxBox = mk("TextBox", { Size=UDim2.new(0,76,0,28), Position=UDim2.new(0,182,0,156),
+            BackgroundColor3=C.input, Text="", PlaceholderText="max", TextColor3=C.text, Font=FONT, TextSize=12,
+            BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(kgMaxBox,6); stroke(kgMaxBox,C.border,1)
+        local kgHint = lbl(pop, "kosong=bebas\ncth 3–8 = 3M–8M", 9, C.textMute, Enum.TextXAlignment.Left)
+        kgHint.Position=UDim2.new(0,266,0,154); kgHint.Size=UDim2.new(0,140,0,32); kgHint.ZIndex=72; kgHint.TextYAlignment=Enum.TextYAlignment.Center
+        kgMinBox.FocusLost:Connect(refreshRange)
+        kgMaxBox.FocusLost:Connect(refreshRange)
+        refreshRange()
     end
     -- v24.5: garis pemisah antar bagian (desain rapi)
     do
@@ -4880,8 +4885,8 @@ local function showMailGift()
         if suf=="k" then num=num*1e3 elseif suf=="m" then num=num*1e6 elseif suf=="b" then num=num*1e9 end
         return math.floor(num)
     end
-    local pop = mk("Frame", { Name="ZenxMailGift", Size=UDim2.new(0,420,0,366),
-        Position=UDim2.new(0.5,-210,0.5,-183), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
+    local pop = mk("Frame", { Name="ZenxMailGift", Size=UDim2.new(0,420,0,336),
+        Position=UDim2.new(0.5,-210,0.5,-168), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
     corner(pop,10); stroke(pop,C.border,1)
     local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
     local ht = lbl(hbar, "MAIL — Kirim Buah (mailbox)", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-44,1,0); ht.ZIndex=72
@@ -4944,39 +4949,29 @@ local function showMailGift()
     local function updMk() mkBtn.Text="Harga: "..(marketOn and "PASAR" or "NORMAL x1") end
     updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn=not marketOn; updMk() end)
 
-    mkLabel("Range/buah",190)
-    local rangeIdx = state.mailRangeIdx or 2
-    local rangeBtns = {}
-    local function setRange(idx)
-        rangeIdx = idx
-        for i,b in ipairs(rangeBtns) do
-            if i==idx then b.BackgroundColor3=Color3.fromRGB(240,240,240); b.TextColor3=Color3.new(0,0,0)
-            else b.BackgroundColor3=C.input; b.TextColor3=C.textDim end
-        end
+    -- v26.9: range nilai/buah CUSTOM (min-max, satuan JUTA/M). kosong = tanpa batas.
+    mkLabel("Range (juta)", 190)
+    local function parseVal(txt, default)
+        txt = tostring(txt):gsub("%s", ""):lower()
+        if txt == "" then return default end
+        if txt:match("[kmb]$") then return parseN(txt) or default end
+        local n = tonumber(txt); if not n then return default end
+        return math.floor(n * 1e6)   -- angka polos = juta
     end
-    do
-        local xs={14,93,172,251,330}
-        for i,d in ipairs(Farm._mailRanges) do
-            local b=mk("TextButton",{ Size=UDim2.new(0,73,0,26), Position=UDim2.new(0,xs[i],0,216),
-                BackgroundColor3=C.input, Text=d.t, TextColor3=C.textDim, Font=FONT, TextSize=11, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1)
-            b.MouseButton1Click:Connect(function() setRange(i) end)
-            rangeBtns[i]=b
-        end
-        setRange(rangeIdx)
-    end
-
-    -- v26.4: value custom per buah (override preset). isi "8m" = 8M ke atas, "-8m" = di bawah 8M. kosong = pakai preset.
-    local rvLbl = lbl(pop, "atau value/buah:", 11, C.textDim, Enum.TextXAlignment.Left)
-    rvLbl.Position=UDim2.new(0,14,0,248); rvLbl.Size=UDim2.new(0,108,0,24); rvLbl.ZIndex=72
-    local rngBox = mk("TextBox", { Size=UDim2.new(0,150,0,26), Position=UDim2.new(0,124,0,247),
-        BackgroundColor3=C.input, Text=state.mailRangeVal or "", PlaceholderText="8m  /  -8m", TextColor3=C.text,
-        Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(rngBox,6); stroke(rngBox,C.border,1)
-    local rvHint = lbl(pop, "8m=≥8M • -8m=<8M", 10, C.textMute, Enum.TextXAlignment.Left)
-    rvHint.Position=UDim2.new(0,280,0,248); rvHint.Size=UDim2.new(0,128,0,24); rvHint.ZIndex=72
+    local minBox = mk("TextBox", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,124,0,188),
+        BackgroundColor3=C.input, Text=state.mailMinV or "", PlaceholderText="min", TextColor3=C.text,
+        Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(minBox,6); stroke(minBox,C.border,1)
+    local dashL = lbl(pop, "–", 14, C.textDim, Enum.TextXAlignment.Center)
+    dashL.Position=UDim2.new(0,218,0,188); dashL.Size=UDim2.new(0,18,0,28); dashL.ZIndex=72
+    local maxBox = mk("TextBox", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,238,0,188),
+        BackgroundColor3=C.input, Text=state.mailMaxV or "", PlaceholderText="max", TextColor3=C.text,
+        Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(maxBox,6); stroke(maxBox,C.border,1)
+    local rvHint = lbl(pop, "kosong = tanpa batas.  cth: min 3, max 8 = buah 3M–8M", 10, C.textMute, Enum.TextXAlignment.Left)
+    rvHint.Position=UDim2.new(0,14,0,222); rvHint.Size=UDim2.new(1,-28,0,16); rvHint.ZIndex=72
 
     local out = lbl(pop, "isi penerima, jenis buah, target & range -> KIRIM (auto sampai target, lewat mailbox)", 11, C.textDim, Enum.TextXAlignment.Left)
-    out.Position=UDim2.new(0,14,0,326); out.Size=UDim2.new(1,-28,0,32); out.ZIndex=72; out.TextWrapped=true
-    local sendBtn = mk("TextButton", { Size=UDim2.new(1,-28,0,30), Position=UDim2.new(0,14,0,288), BackgroundColor3=Color3.fromRGB(240,240,240), Text="KIRIM (auto)", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=13, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
+    out.Position=UDim2.new(0,14,0,292); out.Size=UDim2.new(1,-28,0,32); out.ZIndex=72; out.TextWrapped=true
+    local sendBtn = mk("TextButton", { Size=UDim2.new(1,-28,0,30), Position=UDim2.new(0,14,0,254), BackgroundColor3=Color3.fromRGB(240,240,240), Text="KIRIM (auto)", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=13, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
     local running = false
     local function stopRun() running=false; sendBtn.Text="KIRIM (auto)"; sendBtn.BackgroundColor3=Color3.fromRGB(240,240,240) end
     sendBtn.MouseButton1Click:Connect(function()
@@ -4986,19 +4981,11 @@ local function showMailGift()
         local tot    = parseN(tgtBox.Text)
         if target=="" then out.Text="isi nama penerima dulu"; out.TextColor3=C.red; return end
         if not tot then out.Text="target total ga valid (contoh: 500M)"; out.TextColor3=C.red; return end
-        state.mailTarget=target; state.mailFruit=fruit; state.mailTotalM=tgtBox.Text; state.mailRangeIdx=rangeIdx; state.mailMarket=marketOn
-        state.mailRangeVal = rngBox.Text
-        local rng = Farm._mailRanges[rangeIdx]
-        local loV, hiV = rng.lo, rng.hi   -- default dari preset
-        local cTxt = tostring(rngBox.Text):gsub("%s","")
-        if cTxt ~= "" then
-            local neg = cTxt:sub(1,1) == "-"
-            local mag = parseN(neg and cTxt:sub(2) or cTxt)
-            if mag then
-                if neg then loV, hiV = 0, mag          -- -8m => di bawah 8M
-                else loV, hiV = mag, math.huge end     -- 8m  => 8M ke atas
-            end
-        end
+        state.mailTarget=target; state.mailFruit=fruit; state.mailTotalM=tgtBox.Text; state.mailMarket=marketOn
+        state.mailMinV = minBox.Text; state.mailMaxV = maxBox.Text
+        local loV = parseVal(minBox.Text, 0)
+        local hiV = parseVal(maxBox.Text, math.huge)
+        if loV > hiV then loV, hiV = hiV, loV end   -- jaga2 kalau kebalik
         Farm._mailSent = {}            -- reset penanda tiap mulai sesi baru
         local sessionSent = 0
         running = true
@@ -7895,9 +7882,8 @@ do
 end
 
 
--- v26.6: HUD TOTAL BUAH INVENTORY — nempel di pojok kanan-atas UI inventory game pas kebuka.
+-- v27.0: HUD TOTAL VALUE INVENTORY — badge gold di pojok kanan-atas window inventory pas kebuka.
 do
-    local pgui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui")
     local host = (gethui and gethui()) or game:GetService("CoreGui")
     pcall(function() local old = host:FindFirstChild("ZenxInvTotal"); if old then old:Destroy() end end)
     local sgui = Instance.new("ScreenGui")
@@ -7905,15 +7891,18 @@ do
     sgui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; sgui.DisplayOrder = 999
     sgui.Parent = host
     local box = Instance.new("Frame", sgui)
-    box.Size = UDim2.new(0, 220, 0, 38); box.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
-    box.BackgroundTransparency = 0.05; box.BorderSizePixel = 0; box.Visible = false
+    box.Size = UDim2.new(0, 0, 0, 34); box.AutomaticSize = Enum.AutomaticSize.X
+    box.BackgroundColor3 = Color3.fromRGB(28, 24, 10); box.BorderSizePixel = 0; box.Visible = false
     Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
-    local strk = Instance.new("UIStroke", box); strk.Color = Color3.fromRGB(60, 200, 120); strk.Thickness = 1
+    local strk = Instance.new("UIStroke", box); strk.Color = Color3.fromRGB(240, 200, 70); strk.Thickness = 1.5
     local lab = Instance.new("TextLabel", box)
-    lab.Size = UDim2.new(1, -16, 1, 0); lab.Position = UDim2.new(0, 8, 0, 0); lab.BackgroundTransparency = 1
-    lab.Font = Enum.Font.GothamBold; lab.TextSize = 13; lab.TextColor3 = Color3.fromRGB(120, 240, 160)
-    lab.TextXAlignment = Enum.TextXAlignment.Left; lab.TextYAlignment = Enum.TextYAlignment.Center
+    lab.Size = UDim2.new(0, 0, 1, 0); lab.AutomaticSize = Enum.AutomaticSize.X
+    lab.Position = UDim2.new(0, 0, 0, 0); lab.BackgroundTransparency = 1
+    lab.Font = Enum.Font.GothamBold; lab.TextSize = 14; lab.TextColor3 = Color3.fromRGB(255, 215, 80)
+    lab.TextXAlignment = Enum.TextXAlignment.Center; lab.TextYAlignment = Enum.TextYAlignment.Center
     lab.RichText = true; lab.Text = ""
+    local pad = Instance.new("UIPadding", lab)
+    pad.PaddingLeft = UDim.new(0, 14); pad.PaddingRight = UDim.new(0, 14)
 
     local function calcInvTotal()
         local n, val = 0, 0
@@ -7923,7 +7912,7 @@ do
                     if t:IsA("Tool") then
                         local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
                         local fid = t:GetAttribute("Id")
-                        if fj and fid then n = n + 1; val = val + (Farm.fruitPrice(t, true) or 0) end  -- true = harga NORMAL (bukan pasar)
+                        if fj and fid then n = n + 1; val = val + (Farm.fruitPrice(t, true) or 0) end  -- harga NORMAL
                     end
                 end
             end
@@ -7931,26 +7920,32 @@ do
         return n, val
     end
 
-    -- cari window inventory game (judul "Inventory") -> ambil frame paling gede sbg patokan
+    -- bener2 keliatan? (diri + semua ancestor Visible, ScreenGui Enabled)
+    local function isShown(g)
+        local node = g
+        while node and node:IsA("GuiObject") do
+            if not node.Visible then return false end
+            node = node.Parent
+        end
+        if node and node:IsA("ScreenGui") then return node.Enabled end
+        return true
+    end
+
+    -- window inventory = frame GEDE & keliatan di BackpackGui yg punya sel (ToolName). hotbar ke-skip krn kecil.
     local function findInvWindow()
-        for _, sg2 in ipairs(pgui:GetChildren()) do
-            if sg2:IsA("ScreenGui") and sg2.Enabled then
-                for _, d in ipairs(sg2:GetDescendants()) do
-                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text == "Inventory" then
-                        local node, best = d.Parent, nil
-                        while node and node ~= sg2 do
-                            if node:IsA("GuiObject") then
-                                local area = node.AbsoluteSize.X * node.AbsoluteSize.Y
-                                if not best or area > (best.AbsoluteSize.X * best.AbsoluteSize.Y) then best = node end
-                            end
-                            node = node.Parent
-                        end
-                        if best and best.Visible and best.AbsoluteSize.X > 200 then return best end
-                    end
-                end
+        local pg = player:FindFirstChild("PlayerGui")
+        local bgui = pg and pg:FindFirstChild("BackpackGui")
+        if not bgui then return nil end
+        local best
+        for _, d in ipairs(bgui:GetDescendants()) do
+            if d:IsA("GuiObject") and d.Visible
+               and d.AbsoluteSize.X > 300 and d.AbsoluteSize.Y > 200
+               and d:FindFirstChild("ToolName", true) and isShown(d) then
+                local area = d.AbsoluteSize.X * d.AbsoluteSize.Y
+                if not best or area > (best.AbsoluteSize.X * best.AbsoluteSize.Y) then best = d end
             end
         end
-        return nil
+        return best
     end
 
     task.spawn(function()
@@ -7959,9 +7954,9 @@ do
             pcall(function() win = findInvWindow() end)
             if win then
                 local n, val = calcInvTotal()
-                lab.Text = string.format('TOTAL: %d buah  ·  <font color="#FFD24D">%s</font>', n, Farm.abbrev(val))
+                lab.Text = string.format('💰 %s  ·  %d buah', Farm.abbrev(val), n)
                 local ax, ay, aw = win.AbsolutePosition.X, win.AbsolutePosition.Y, win.AbsoluteSize.X
-                box.Position = UDim2.fromOffset(ax + aw - box.AbsoluteSize.X, ay - box.AbsoluteSize.Y - 4)
+                box.Position = UDim2.fromOffset(ax + aw - box.AbsoluteSize.X, ay - box.AbsoluteSize.Y - 6)
                 box.Visible = true
             else
                 box.Visible = false
