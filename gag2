@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v27.1"
+local VER       = "v27.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5255,11 +5255,20 @@ staggerSpawn(function()
                 else
                     local delay = math.max(0, tonumber(state.weatherHopDelay) or 120)
                     if (os.clock() - pendingFrom) >= delay then
-                        if Farm.isBadWeatherNow() then   -- recheck: masih buruk?
-                            print("[ZenxFarm] weather hop: delay abis, masih buruk -> doHop")
+                        if select(1, Farm.isBadWeatherNow()) then   -- recheck: masih buruk?
+                            -- v27.2: rejoin game ini lama (10-15s) & kadang gagal -> ULANGI proses pindah
+                            -- terus-terusan sampe BENERAN pindah (atau weather udah bagus / toggle off).
+                            Farm._weatherHopState = "hopping"
+                            print("[ZenxFarm] weather hop: mulai proses pindah (diulang sampe sukses)")
+                            local tries = 0
+                            while isCurrentGen() and state.autoWeatherHop and select(1, Farm.isBadWeatherNow()) do
+                                tries = tries + 1
+                                print("[ZenxFarm] weather hop: percobaan pindah #"..tries)
+                                pcall(doHop)        -- tiap percobaan ~10-15s; kalau sukses, script ke-kill di sini
+                                task.wait(8)        -- jeda kecil antar percobaan (anti rate-limit)
+                            end
+                            Farm._weatherHopState = nil
                             pendingFrom = nil; Farm._weatherHopAt = nil
-                            task.spawn(doHop)
-                            task.wait(20)
                         else
                             pendingFrom = nil; Farm._weatherHopAt = nil   -- udah ga buruk, batal
                         end
@@ -7650,7 +7659,7 @@ do
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Auto Rejoin Weather", 15, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 12); nameL.Size = UDim2.new(1, -28, 0, 20)
-    local descL = lbl(card, "rejoin pas weather buruk (semua KECUALI yg ditandai bagus)", 12, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "weather buruk -> ulang rejoin sampe pindah (rejoin game lama ~10-15s)", 12, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 34); descL.Size = UDim2.new(1, -28, 0, 16)
     local body = mk("Frame", { Size = UDim2.new(1, -28, 1, -64), Position = UDim2.new(0, 14, 0, 58),
         BackgroundTransparency = 1, Parent = card })
@@ -7659,7 +7668,7 @@ do
     mkTypeRow(body, 4, "Weather bagus", Farm.weatherList, state.goodWeathers, "allGoodWeather", "Semua weather bagus")
 
     -- delay sebelum hop (detik)
-    lbl(body, "Delay hop (detik)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
+    lbl(body, "Jeda awal (detik)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
     local dBox = mk("TextBox", { Size = UDim2.new(0.35, 0, 0, 30), Position = UDim2.new(0.65, 0, 0, 44),
         BackgroundColor3 = C.input, Text = tostring(state.weatherHopDelay or 120), PlaceholderText = "120",
         TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
@@ -7703,9 +7712,11 @@ do
             local bad = select(1, Farm.isBadWeatherNow())
             local txt, col = "", C.textDim
             if not state.autoWeatherHop then txt = "OFF"
+            elseif Farm._weatherHopState == "hopping" then
+                txt = "BURUK ("..tostring(w)..") -> lagi pindah server (ngulang sampe sukses)..."; col = C.red
             elseif Farm._weatherHopAt then
                 local rem = math.max(0, math.floor(Farm._weatherHopAt - os.clock()))
-                txt = "BURUK ("..tostring(w)..") -> hop "..rem.."s lagi"; col = C.red
+                txt = "BURUK ("..tostring(w)..") -> mulai pindah "..rem.."s lagi"; col = C.red
             elseif bad then txt = "weather buruk kedeteksi..."
             else txt = "cuaca: "..tostring(w or "-").." (aman)" end
             stL.Text = "Status: "..txt; stL.TextColor3 = col
@@ -7917,15 +7928,18 @@ do
     local pad = Instance.new("UIPadding", lab)
     pad.PaddingLeft = UDim.new(0, 14); pad.PaddingRight = UDim.new(0, 14)
 
+    -- v27.4: PERSIS kayak tab KALKULASI (computeKalk) tanpa filter -> baca semua buah
+    -- di Character+Backpack (Fruit/FruitName + Id), jumlahin fruitPrice (harga pasar).
     local function calcInvTotal()
         local n, val = 0, 0
         for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
             if holder then
                 for _, t in ipairs(holder:GetChildren()) do
-                    if t:IsA("Tool") then
-                        local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
-                        local fid = t:GetAttribute("Id")
-                        if fj and fid then n = n + 1; val = val + (Farm.fruitPrice(t, true) or 0) end  -- harga NORMAL
+                    local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                    local fid = t:GetAttribute("Id")
+                    if fj and fid then
+                        n = n + 1
+                        val = val + (Farm.fruitPrice(t) or 0)   -- sama kayak KALKULASI (harga pasar)
                     end
                 end
             end
