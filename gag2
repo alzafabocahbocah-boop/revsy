@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v31.4"
+local VER       = "v31.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -498,7 +498,9 @@ local function saveState()
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
         out.af2WCTrigger = state.af2WCTrigger or 50
         out.af2BigCap = state.af2BigCap or 500
-        out.af2SavedPos = state.af2SavedPos or {}  -- v31.1: {plotId, x, y, z}[]
+        out.af2SavedPos = state.af2SavedPos or {}
+        out.af2SprTool = state.af2SprTool or ""   -- v31.5: nama sprinkler dipilih
+        out.af2WCTool  = state.af2WCTool  or ""   -- v31.5: nama WC dipilih
         out.af2TriggerCount = state.af2TriggerCount or 50      -- v28.9: trigger WC kalau buah kecil ≤ N
         out.af2StopValue    = state.af2StopValue or 500000000  -- v28.9: stop kalau buah gede ≥ 500M
         out.gfWeightF = state.gfWeightF or 0      -- v17.8
@@ -553,6 +555,8 @@ local function loadState()
                 if type(d.af2WCTrigger) == "number" then state.af2WCTrigger = d.af2WCTrigger end
                 if type(d.af2BigCap) == "number" then state.af2BigCap = d.af2BigCap end
                 if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
+                if type(d.af2SprTool) == "string" then state.af2SprTool = d.af2SprTool end
+                if type(d.af2WCTool)  == "string" then state.af2WCTool  = d.af2WCTool  end
                 if type(d.af2TriggerCount) == "number" then state.af2TriggerCount = d.af2TriggerCount end
                 if type(d.af2StopValue) == "number" then state.af2StopValue = d.af2StopValue end
                 if type(d.gfWeightF) == "number" then state.gfWeightF = d.gfWeightF end
@@ -6110,7 +6114,7 @@ end
 -- CARD AF2-1 + AF2-2: SUPER SPRINKLER + SUPER WC
 do
     local card, body, setH = mkFarmCard(10, "Auto Super Sprinkler & WC", "boost kg · percepat tumbuh · auto-detect posisi", buyList)
-    setH(336)
+    setH(368)
     local info = lbl(body, "Scan garden → simpan posisi plot → pakai buat place sprinkler.", 11, C.textDim, Enum.TextXAlignment.Left)
     info.Position = UDim2.new(0,0,0,4); info.Size = UDim2.new(1,0,0,16); info.TextWrapped = true
     -- savedPos info + tombol Scan
@@ -6172,9 +6176,54 @@ do
         scanBtn.Text = #result > 0 and ("✓ "..#result.." plot") or "❌ kosong"
         task.wait(2); scanBtn.Text = "📍 Scan"
     end)
+    -- helper: scan backpack untuk tool jenis tertentu
+    local function scanTools(keyword)
+        local list = {}; local seen = {}
+        for _, h in ipairs({player.Character, player:FindFirstChildOfClass("Backpack")}) do
+            if h then for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find(keyword,1,true) and not seen[t.Name] then
+                    seen[t.Name]=true; list[#list+1]=t.Name
+                end
+            end end
+        end
+        return list
+    end
+    -- picker sprinkler
+    local sprRow = mk("Frame",{Size=UDim2.new(1,0,0,26),Position=UDim2.new(0,0,0,42),BackgroundTransparency=1,Parent=body})
+    lbl(sprRow,"Jenis Sprinkler",12,C.textDim,Enum.TextXAlignment.Left).Size=UDim2.new(0.42,0,1,0)
+    local sprSel = lbl(sprRow,state.af2SprTool~="" and state.af2SprTool or "auto",11,C.text,Enum.TextXAlignment.Right)
+    sprSel.Size=UDim2.new(0.42,0,1,0); sprSel.Position=UDim2.new(0.42,0,0,0)
+    local sprBtn=mk("TextButton",{Size=UDim2.new(0.14,0,0,22),Position=UDim2.new(0.86,0,0,2),BackgroundColor3=C.input,TextColor3=C.textDim,Text="pilih",Font=FONT,TextSize=10,BorderSizePixel=0,Parent=sprRow}); corner(sprBtn,5)
+    sprBtn.MouseButton1Click:Connect(function()
+        local list = scanTools("sprinkler")
+        if #list==0 then sprSel.Text="(kosong)"; return end
+        -- cycle
+        local cur = state.af2SprTool
+        local idx = 0
+        for i,v in ipairs(list) do if v==cur then idx=i; break end end
+        idx = (idx % (#list+1))
+        state.af2SprTool = idx==0 and "" or list[idx+1] or list[1]
+        sprSel.Text = state.af2SprTool~="" and state.af2SprTool or "auto"; saveState()
+    end)
+    -- picker WC
+    local wcRow = mk("Frame",{Size=UDim2.new(1,0,0,26),Position=UDim2.new(0,0,0,70),BackgroundTransparency=1,Parent=body})
+    lbl(wcRow,"Jenis Watering Can",12,C.textDim,Enum.TextXAlignment.Left).Size=UDim2.new(0.42,0,1,0)
+    local wcSel = lbl(wcRow,state.af2WCTool~="" and state.af2WCTool or "auto",11,C.text,Enum.TextXAlignment.Right)
+    wcSel.Size=UDim2.new(0.42,0,1,0); wcSel.Position=UDim2.new(0.42,0,0,0)
+    local wcBtn=mk("TextButton",{Size=UDim2.new(0.14,0,0,22),Position=UDim2.new(0.86,0,0,2),BackgroundColor3=C.input,TextColor3=C.textDim,Text="pilih",Font=FONT,TextSize=10,BorderSizePixel=0,Parent=wcRow}); corner(wcBtn,5)
+    wcBtn.MouseButton1Click:Connect(function()
+        local list = scanTools("watering")
+        if #list==0 then wcSel.Text="(kosong)"; return end
+        local cur = state.af2WCTool
+        local idx = 0
+        for i,v in ipairs(list) do if v==cur then idx=i; break end end
+        idx = (idx % (#list+1))
+        state.af2WCTool = idx==0 and "" or list[idx+1] or list[1]
+        wcSel.Text = state.af2WCTool~="" and state.af2WCTool or "auto"; saveState()
+    end)
     -- trigger WC
-    lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,86)
-    local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,83),
+    lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,104)
+    local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,101),
         BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 50), PlaceholderText = "50",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(wcTBox, 6); stroke(wcTBox, C.border, 1)
@@ -6183,8 +6232,8 @@ do
         state.af2WCTrigger = n; wcTBox.Text = tostring(n); saveState()
     end)
     -- batas buah besar
-    lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,118)
-    local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,115),
+    lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,136)
+    local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,133),
         BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 500), PlaceholderText = "500",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(bigBox, 6); stroke(bigBox, C.border, 1)
@@ -6193,11 +6242,11 @@ do
         state.af2BigCap = n; bigBox.Text = tostring(n); saveState()
     end)
     -- toggles
-    mkBodyToggle(body, 158, "Auto Super Sprinkler", "autoSuperSprinkler", "Auto Super Sprinkler")
-    mkBodyToggle(body, 198, "Auto Super Watering Can", "autoSuperWC", "Auto Super WC")
+    mkBodyToggle(body, 176, "Auto Super Sprinkler", "autoSuperSprinkler", "Auto Super Sprinkler")
+    mkBodyToggle(body, 216, "Auto Super Watering Can", "autoSuperWC", "Auto Super WC")
     -- status live
     local stL = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
-    stL.Position = UDim2.new(0,0,0,238); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
+    stL.Position = UDim2.new(0,0,0,256); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
     task.spawn(function()
         task.wait(2)
         while card.Parent do stL.Text = Farm._af2Status or ""; task.wait(1) end
@@ -6427,18 +6476,18 @@ function Farm.af2PlaceSuperSprinkler()
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not char then return false end
-    -- cari sprinkler terbaik di backpack
+    -- cari sprinkler sesuai pilihan user (state.af2SprTool) atau auto
     local tool = nil
-    for _, kw in ipairs({"super sprinkler","legendary sprinkler","sprinkler"}) do
-        for _, h in ipairs({char, player:FindFirstChildOfClass("Backpack")}) do
-            if h then for _, t in ipairs(h:GetChildren()) do
-                if t:IsA("Tool") and t.Name:lower():find(kw,1,true) then tool=t; break end
-            end end
-            if tool then break end
-        end
+    local wantName = state.af2SprTool and state.af2SprTool ~= "" and state.af2SprTool:lower() or nil
+    for _, h in ipairs({char, player:FindFirstChildOfClass("Backpack")}) do
+        if h then for _, t in ipairs(h:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("sprinkler",1,true) then
+                if not wantName or t.Name:lower():find(wantName,1,true) then tool=t; break end
+            end
+        end end
         if tool then break end
     end
-    if not tool then print("[AF2] Sprinkler ga ada di backpack"); return false end
+    if not tool then print("[AF2] Sprinkler ga ada di backpack (pilihan: "..(state.af2SprTool or "auto")..")"); return false end
     -- pakai af2SavedPos (hasil scan) atau fallback PlotSizeReference
     local positions = {}
     if state.af2SavedPos and #state.af2SavedPos > 0 then
@@ -6480,15 +6529,18 @@ function Farm.af2PlaceWateringCan()
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not char or not hum then return false end
-    -- cari WC
+    -- cari WC sesuai pilihan user (state.af2WCTool) atau auto
     local tool
+    local wantWC = state.af2WCTool and state.af2WCTool ~= "" and state.af2WCTool:lower() or nil
     for _, h in ipairs({char, player:FindFirstChildOfClass("Backpack")}) do
         if h then for _, t in ipairs(h:GetChildren()) do
-            if t:IsA("Tool") and t.Name:lower():find("watering") then tool=t; break end
+            if t:IsA("Tool") and t.Name:lower():find("watering",1,true) then
+                if not wantWC or t.Name:lower():find(wantWC,1,true) then tool=t; break end
+            end
         end end
         if tool then break end
     end
-    if not tool then print("[AF2] WC: ga ada Watering Can di backpack"); return false end
+    if not tool then print("[AF2] WC: ga ada di backpack (pilihan: "..(state.af2WCTool or "auto")..")"); return false end
     if tool.Parent ~= char then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
     print("[AF2] WC equip: "..tool.Name)
     -- cari ClickDetector di pohon milik player
