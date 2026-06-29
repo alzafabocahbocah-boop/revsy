@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v30.5"
+local VER       = "v30.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6372,12 +6372,13 @@ end
 
 -- place sprinkler terbaik yang tersedia (Super/Legendary/apapun)
 function Farm.af2PlaceSuperSprinkler()
+    print("[AF2-DBG] af2PlaceSuperSprinkler dipanggil")
     local p = pkt("Place", "PlaceSprinkler")
+    print("[AF2-DBG] remote: "..tostring(p~=nil))
     if not p or not p.Fire then print("[AF2] PlaceSprinkler remote gak ada"); return false end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not char then return false end
-    -- cari sprinkler terbaik: prioritas Super > Legendary > apapun
+    if not char then print("[AF2-DBG] no char"); return false end
     local tool = nil
     local priority = {"super sprinkler", "legendary sprinkler", "sprinkler"}
     for _, kw in ipairs(priority) do
@@ -6389,24 +6390,26 @@ function Farm.af2PlaceSuperSprinkler()
         end
         if tool then break end
     end
-    if not tool then print("[AF2] Sprinkler ga ada di backpack (Super/Legendary/dll)"); return false end
-    print("[AF2] pakai sprinkler: '"..tool.Name.."'")
-    -- pilih plot
+    print("[AF2-DBG] tool: "..tostring(tool and tool.Name or "nil"))
+    if not tool then print("[AF2] Sprinkler ga ada di backpack"); return false end
     local sf = nil
     if not state.af2AllPlots then
         local any=false; for _ in pairs(state.af2SelectedPlots or {}) do any=true; break end
         if any then sf = state.af2SelectedPlots end
     end
     local positions = Farm.af2GetPlantPositions(sf)
-    if #positions == 0 then print("[AF2] Sprinkler: ga ada plot terdeteksi"); return false end
-    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
+    print("[AF2-DBG] posisi: "..#positions)
+    if #positions == 0 then print("[AF2] Sprinkler: ga ada plot"); return false end
+    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
+    print("[AF2-DBG] tool.Parent setelah equip: "..tostring(tool.Parent and tool.Parent.Name or "nil"))
     local placed = 0
     for _, e in ipairs(positions) do
-        local ok = pcall(function() p:Fire(e.pos, tool.Name, tool, 1) end)
+        local ok, err = pcall(function() p:Fire(e.pos, tool.Name, tool, 1) end)
+        print("[AF2-DBG] fire: ok="..tostring(ok).." err="..tostring(err))
         if ok then placed = placed + 1 end
-        task.wait(0.15)
+        task.wait(0.3)
     end
-    print(string.format("[AF2] Sprinkler placed %d titik (tool=%s)", placed, tool.Name))
+    print(string.format("[AF2] placed %d titik tool=%s", placed, tool.Name))
     return placed > 0
 end
 
