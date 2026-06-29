@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v29.5"
+local VER       = "v29.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6258,91 +6258,61 @@ function Farm.af2CountBigFruits(threshKg)
     return count
 end
 
--- list plot di garden (scan Plot object langsung, bukan dari tanaman)
--- label = "SeedName (PlotId)" kalau ada tanaman, "Plot1" kalau kosong
+-- list plot milik player di garden
+-- label = "SeedName - PlotX" kalau ada tanaman, "PlotX (kosong)" kalau kosong
 function Farm.af2PlotList()
     local list = {}
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
-        local myUid = tostring(player.UserId)
+        local myUid = player.UserId  -- number
         for _, plot in ipairs(gardens:GetChildren()) do
-            -- filter: cuma plot milik player (cek UserId di plot atau tanaman pertama)
-            local isOwn = false
-            pcall(function()
-                local uid = plot:GetAttribute("UserId") or plot:GetAttribute("OwnerId")
-                if uid and tostring(uid) == myUid then isOwn = true; return end
-                -- fallback: cek tanaman pertama
-                local plants = plot:FindFirstChild("Plants")
-                if plants then
-                    for _, plant in ipairs(plants:GetChildren()) do
-                        local puid = plant:GetAttribute("UserId")
-                        if puid then isOwn = (tostring(puid) == myUid); return end
+            local ownerUid = plot:GetAttribute("OwnerUserId")
+            if ownerUid == myUid then
+                -- ambil seed name dari tanaman pertama (kalau ada)
+                local seedName = nil
+                pcall(function()
+                    local plants = plot:FindFirstChild("Plants")
+                    if plants then
+                        for _, plant in ipairs(plants:GetChildren()) do
+                            seedName = plant:GetAttribute("SeedName"); break
+                        end
                     end
-                end
-                -- fallback 2: cek nama plot (misal Plot1_<userId>)
-                if plot.Name:find(myUid) then isOwn = true end
-            end)
-            -- kalau ga bisa verify owner, tetap tampilkan (bisa jadi server baru)
-            -- tapi skip kalau ada uid yang jelas bukan punya kita
-            local seedName = nil
-            pcall(function()
-                local plants = plot:FindFirstChild("Plants")
-                if plants then
-                    for _, plant in ipairs(plants:GetChildren()) do
-                        seedName = plant:GetAttribute("SeedName"); break
-                    end
-                end
-            end)
-            local label = (seedName and (seedName.." - "..plot.Name)) or ("(kosong) - "..plot.Name)
-            list[#list+1] = label
+                end)
+                local label = seedName and (seedName.." - "..plot.Name) or (plot.Name.." (kosong)")
+                list[#list+1] = label
+            end
         end
     end)
     return list
 end
 
--- label → posisi plot (dari Plot object langsung atau dari tanaman)
+-- label → posisi plot (dari SpawnPoint Part, selalu ada walau garden kosong)
 function Farm.af2LabelToPos(label)
-    local plotName = label:match(" %- (.+)$") or label   -- "SeedName - PlotX" → "PlotX"
+    local plotName = label:match(" %- (.+)$") or label:match("^(.+) %(kosong%)$") or label
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return nil end
     local plot = gardens:FindFirstChild(plotName)
-    if not plot then
-        -- coba cari plot yang name-nya mengandung label
-        for _, p in ipairs(gardens:GetChildren()) do
-            if p.Name == plotName or p.Name:find(plotName, 1, true) then plot = p; break end
-        end
-    end
     if not plot then return nil end
     local pos
-    -- coba dari tanaman dulu
+    -- SpawnPoint selalu ada (walau kosong)
     pcall(function()
+        local sp = plot:FindFirstChild("SpawnPoint")
+        if sp and sp:IsA("BasePart") then pos = sp.Position; return end
+        -- fallback: PlotSizeReference
+        local ref = plot:FindFirstChild("PlotSizeReference")
+        if ref and ref:IsA("BasePart") then pos = ref.Position; return end
+        -- fallback: tanaman pertama
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
-                if plant:IsA("Model") and plant.PrimaryPart then
-                    pos = plant.PrimaryPart.Position; return
-                end
+                if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position; return end
                 for _, p in ipairs(plant:GetDescendants()) do
                     if p:IsA("BasePart") then pos = p.Position; return end
                 end
             end
         end
     end)
-    -- fallback: posisi Plot object itu sendiri
-    if not pos then
-        pcall(function()
-            if plot:IsA("Model") and plot.PrimaryPart then
-                pos = plot.PrimaryPart.Position
-            elseif plot:IsA("BasePart") then
-                pos = plot.Position
-            else
-                for _, p in ipairs(plot:GetDescendants()) do
-                    if p:IsA("BasePart") then pos = p.Position; break end
-                end
-            end
-        end)
-    end
     return pos
 end
 
