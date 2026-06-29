@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v30.9"
+local VER       = "v31.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6372,39 +6372,59 @@ function Farm.af2IsSprinklerActive()
     return found
 end
 
--- place sprinkler pakai koordinat tersimpan dari card Auto Sprinkler (state.sprCoords)
+-- place sprinkler: auto-detect posisi dari PlotSizeReference plot milik player
 function Farm.af2PlaceSuperSprinkler()
     local p = pkt("Place", "PlaceSprinkler")
     if not p or not p.Fire then print("[AF2] PlaceSprinkler remote gak ada"); return false end
-    if not state.sprCoords or #state.sprCoords == 0 then
-        print("[AF2] Sprinkler: belum ada koordinat — simpan dulu via card Auto Sprinkler (Save Position ON, place manual)")
-        return false
-    end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not char then return false end
     -- cari sprinkler terbaik di backpack
     local tool = nil
-    local priority = {"super sprinkler", "legendary sprinkler", "sprinkler"}
-    for _, kw in ipairs(priority) do
-        for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+    for _, kw in ipairs({"super sprinkler","legendary sprinkler","sprinkler"}) do
+        for _, h in ipairs({char, player:FindFirstChildOfClass("Backpack")}) do
             if h then for _, t in ipairs(h:GetChildren()) do
-                if t:IsA("Tool") and t.Name:lower():find(kw, 1, true) then tool=t; break end
+                if t:IsA("Tool") and t.Name:lower():find(kw,1,true) then tool=t; break end
             end end
             if tool then break end
         end
         if tool then break end
     end
     if not tool then print("[AF2] Sprinkler ga ada di backpack"); return false end
+    -- auto-detect posisi dari PlotSizeReference plot milik player
+    local positions = {}
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local myUid = player.UserId
+        for _, plot in ipairs(gardens:GetChildren()) do
+            if plot:GetAttribute("OwnerUserId") == myUid then
+                -- ambil posisi: prioritas PlotSizeReference (tengah plot, paling valid)
+                local ref = plot:FindFirstChild("PlotSizeReference")
+                if ref and ref:IsA("BasePart") then
+                    positions[#positions+1] = ref.Position
+                    print("[AF2] posisi dari PlotSizeReference "..plot.Name..": "..tostring(ref.Position))
+                end
+            end
+        end
+    end)
+    -- fallback: pakai state.sprCoords kalau ada
+    if #positions == 0 and state.sprCoords and #state.sprCoords > 0 then
+        for _, c in ipairs(state.sprCoords) do
+            positions[#positions+1] = Vector3.new(c.x, c.y, c.z)
+        end
+        print("[AF2] fallback ke sprCoords tersimpan ("..#positions.." titik)")
+    end
+    if #positions == 0 then print("[AF2] Sprinkler: ga ada posisi"); return false end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.2) end
     local placed = 0
-    for _, c in ipairs(state.sprCoords) do
-        local ok, err = pcall(function() p:Fire(Vector3.new(c.x, c.y, c.z), tool.Name, tool, 1) end)
-        print(string.format("[AF2] place sprinkler pos=(%.1f,%.1f,%.1f) ok=%s", c.x, c.y, c.z, tostring(ok)))
+    for _, pos in ipairs(positions) do
+        local ok, err = pcall(function() p:Fire(pos, tool.Name, tool, 1) end)
+        print(string.format("[AF2] place sprinkler pos=(%.1f,%.1f,%.1f) ok=%s err=%s", pos.X, pos.Y, pos.Z, tostring(ok), tostring(err)))
         if ok then placed = placed + 1 end
         task.wait(0.2)
     end
-    print(string.format("[AF2] placed %d/%d sprinkler (tool=%s)", placed, #state.sprCoords, tool.Name))
+    print(string.format("[AF2] Sprinkler: %d/%d placed (tool=%s)", placed, #positions, tool.Name))
     return placed > 0
 end
 
