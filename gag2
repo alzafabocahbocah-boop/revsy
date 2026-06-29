@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v29.7"
+local VER       = "v29.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6379,15 +6379,9 @@ end
 
 -- place Super Watering Can di posisi tanaman (remote Place.PlaceWateringCan, sama pola sprinkler)
 function Farm.af2PlaceWateringCan()
-    local p = pkt("Place", "PlaceWateringCan")
-    if not p or not p.Fire then
-        -- fallback: coba PlaceSprinkler (kalau remote sama)
-        p = pkt("Place", "PlaceSprinkler")
-        if not p or not p.Fire then print("[AF2] WC remote ga ketemu (PlaceWateringCan / PlaceSprinkler)"); return false end
-    end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not char then return false end
+    if not char or not hum then return false end
     local tool
     for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
         if h then for _, t in ipairs(h:GetChildren()) do
@@ -6398,19 +6392,31 @@ function Farm.af2PlaceWateringCan()
     if not tool then print("[AF2] Super Watering Can ga ada di backpack"); return false end
     local sf = nil
     if not state.af2AllPlots then
-        local any = false
-        for _ in pairs(state.af2SelectedPlots or {}) do any=true; break end
+        local any=false; for _ in pairs(state.af2SelectedPlots or {}) do any=true; break end
         if any then sf = state.af2SelectedPlots end
     end
     local positions = Farm.af2GetPlantPositions(sf)
-    if #positions == 0 then print("[AF2] WC: ga ada tanaman di garden"); return false end
-    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
+    if #positions == 0 then print("[AF2] WC: ga ada plot terdeteksi"); return false end
+    -- equip dulu
+    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
+    -- coba remote PlaceWateringCan / PlaceItem dulu
+    local p = pkt("Place", "PlaceWateringCan") or pkt("Place", "PlaceItem") or pkt("Use", "WateringCan")
     local placed = 0
     for _, e in ipairs(positions) do
-        pcall(function() p:Fire(e.pos, tool.Name, tool, 1) end)
+        local ok = false
+        -- metode 1: fire remote Place
+        if p and p.Fire then
+            ok = pcall(function() p:Fire(e.pos, tool.Name, tool, 1) end)
+        end
+        -- metode 2: fallback fire tool.Activated (simulasi klik)
+        if not ok then
+            pcall(function()
+                tool.Activated:Fire()
+            end)
+        end
         placed = placed + 1; task.wait(0.15)
     end
-    print(string.format("[AF2] Super WC placed %d titik", placed))
+    print(string.format("[AF2] Super WC: %d titik (remote=%s)", placed, tostring(p ~= nil)))
     return placed > 0
 end
 
