@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v30.2"
+local VER       = "v30.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6452,7 +6452,7 @@ function Farm.af2PlaceWateringCan()
 end
 
 Farm._af2Status = "OFF"
-Farm._af2SprLastPlace = 0
+Farm._af2SprLastPlace = nil   -- nil = belum pernah place, langsung fire pertama kali
 Farm._af2WCLastPlace = 0
 local AF2_SPR_DURATION = 120
 
@@ -6480,11 +6480,11 @@ staggerSpawn(function()
                 return
             end
 
-            -- SUPER SPRINKLER: place tiap 2 menit (DIDAHULUKAN — biar buah gede dulu)
+            -- SUPER SPRINKLER: place langsung pertama kali, lalu tiap 2 menit
             if state.autoSuperSprinkler then
-                local sprElapsed = now - Farm._af2SprLastPlace
+                local sprElapsed = Farm._af2SprLastPlace and (now - Farm._af2SprLastPlace) or AF2_SPR_DURATION
                 if sprElapsed >= AF2_SPR_DURATION then
-                    print(string.format("[AF2] Sprinkler: %.0fs -> place", sprElapsed))
+                    print(string.format("[AF2] Sprinkler: place (elapsed=%.0fs)", sprElapsed))
                     local ok = Farm.af2PlaceSuperSprinkler()
                     if ok then Farm._af2SprLastPlace = now end
                 end
@@ -6505,7 +6505,7 @@ staggerSpawn(function()
                 end
             end
 
-            local remSpr = math.max(0, math.floor(AF2_SPR_DURATION - (now - Farm._af2SprLastPlace)))
+            local remSpr = Farm._af2SprLastPlace and math.max(0, math.floor(AF2_SPR_DURATION - (now - Farm._af2SprLastPlace))) or 0
             local sprActive = Farm.af2IsSprinklerActive()
             local wcStatus = smallCount <= wcTrigger and (sprActive and "place" or "nunggu spr") or "nunggu buah"
             Farm._af2Status = string.format(
