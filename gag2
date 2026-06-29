@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v30.7"
+local VER       = "v30.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6290,7 +6290,7 @@ function Farm.af2PlotList()
     return list
 end
 
--- label → posisi plot (dari SpawnPoint Part, selalu ada walau garden kosong)
+-- label → posisi plot (prioritas dari tanaman dulu — posisi valid di area tanam)
 function Farm.af2LabelToPos(label)
     local plotName = label:match(" %- (.+)$") or label:match("^(.+) %(kosong%)$") or label
     local gardens = workspace:FindFirstChild("Gardens")
@@ -6298,22 +6298,30 @@ function Farm.af2LabelToPos(label)
     local plot = gardens:FindFirstChild(plotName)
     if not plot then return nil end
     local pos
-    -- SpawnPoint selalu ada (walau kosong)
     pcall(function()
-        local sp = plot:FindFirstChild("SpawnPoint")
-        if sp and sp:IsA("BasePart") then pos = sp.Position; return end
-        -- fallback: PlotSizeReference
-        local ref = plot:FindFirstChild("PlotSizeReference")
-        if ref and ref:IsA("BasePart") then pos = ref.Position; return end
-        -- fallback: tanaman pertama
+        -- 1) posisi dari tanaman (paling valid, di area tanam)
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
-                if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position; return end
+                if plant:IsA("Model") and plant.PrimaryPart then
+                    pos = plant.PrimaryPart.Position; return
+                end
                 for _, p in ipairs(plant:GetDescendants()) do
-                    if p:IsA("BasePart") then pos = p.Position; return end
+                    if p:IsA("BasePart") and not p.Name:lower():find("fruit") then
+                        pos = p.Position; return
+                    end
                 end
             end
+        end
+        -- 2) PlotSizeReference (tengah plot)
+        if not pos then
+            local ref = plot:FindFirstChild("PlotSizeReference")
+            if ref and ref:IsA("BasePart") then pos = ref.Position; return end
+        end
+        -- 3) SpawnPoint (fallback terakhir)
+        if not pos then
+            local sp = plot:FindFirstChild("SpawnPoint")
+            if sp and sp:IsA("BasePart") then pos = sp.Position end
         end
     end)
     return pos
@@ -6339,7 +6347,7 @@ function Farm.af2GetPlantPositions(seedFilter)
     return positions
 end
 
--- cek apakah Super Sprinkler sudah aktif di garden player
+-- cek apakah sprinkler milik player masih aktif di garden
 function Farm.af2IsSprinklerActive()
     local found = false
     pcall(function()
@@ -6350,18 +6358,12 @@ function Farm.af2IsSprinklerActive()
             if plot:GetAttribute("OwnerUserId") == myUid then
                 local sprs = plot:FindFirstChild("Sprinklers")
                 if sprs then
-                    local n = #sprs:GetChildren()
-                    if n > 0 then
-                        -- ada sprinkler apapun di garden = aktif
-                        found = true
-                        -- log nama sprinkler yang ke-detect (sekali)
-                        if not Farm._af2SprLogDone then
-                            Farm._af2SprLogDone = true
-                            for _, s in ipairs(sprs:GetChildren()) do
-                                print("[AF2] sprinkler di garden: '"..s.Name.."' ("..s.ClassName..")")
-                            end
-                        end
-                        return
+                    for _, s in ipairs(sprs:GetChildren()) do
+                        -- nama format: {UserId}_{SprinklerId}, cek UserId attr
+                        local uid = s:GetAttribute("UserId")
+                        if uid == myUid then found = true; return end
+                        -- fallback: cek nama mengandung UserId
+                        if tostring(s.Name):sub(1, #tostring(myUid)) == tostring(myUid) then found = true; return end
                     end
                 end
             end
@@ -6370,15 +6372,18 @@ function Farm.af2IsSprinklerActive()
     return found
 end
 
--- place sprinkler terbaik yang tersedia (Super/Legendary/apapun)
+-- place sprinkler pakai koordinat tersimpan dari card Auto Sprinkler (state.sprCoords)
 function Farm.af2PlaceSuperSprinkler()
-    print("[AF2-DBG] af2PlaceSuperSprinkler dipanggil")
     local p = pkt("Place", "PlaceSprinkler")
-    print("[AF2-DBG] remote: "..tostring(p~=nil))
     if not p or not p.Fire then print("[AF2] PlaceSprinkler remote gak ada"); return false end
+    if not state.sprCoords or #state.sprCoords == 0 then
+        print("[AF2] Sprinkler: belum ada koordinat — simpan dulu via card Auto Sprinkler (Save Position ON, place manual)")
+        return false
+    end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not char then print("[AF2-DBG] no char"); return false end
+    if not char then return false end
+    -- cari sprinkler terbaik di backpack
     local tool = nil
     local priority = {"super sprinkler", "legendary sprinkler", "sprinkler"}
     for _, kw in ipairs(priority) do
@@ -6390,26 +6395,16 @@ function Farm.af2PlaceSuperSprinkler()
         end
         if tool then break end
     end
-    print("[AF2-DBG] tool: "..tostring(tool and tool.Name or "nil"))
     if not tool then print("[AF2] Sprinkler ga ada di backpack"); return false end
-    local sf = nil
-    if not state.af2AllPlots then
-        local any=false; for _ in pairs(state.af2SelectedPlots or {}) do any=true; break end
-        if any then sf = state.af2SelectedPlots end
-    end
-    local positions = Farm.af2GetPlantPositions(sf)
-    print("[AF2-DBG] posisi: "..#positions)
-    if #positions == 0 then print("[AF2] Sprinkler: ga ada plot"); return false end
-    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
-    print("[AF2-DBG] tool.Parent setelah equip: "..tostring(tool.Parent and tool.Parent.Name or "nil"))
+    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.2) end
     local placed = 0
-    for _, e in ipairs(positions) do
-        local ok, err = pcall(function() p:Fire(e.pos, tool.Name, tool, 1) end)
-        print("[AF2-DBG] fire: ok="..tostring(ok).." err="..tostring(err))
+    for _, c in ipairs(state.sprCoords) do
+        local ok, err = pcall(function() p:Fire(Vector3.new(c.x, c.y, c.z), tool.Name, tool, 1) end)
+        print(string.format("[AF2] place sprinkler pos=(%.1f,%.1f,%.1f) ok=%s", c.x, c.y, c.z, tostring(ok)))
         if ok then placed = placed + 1 end
-        task.wait(0.3)
+        task.wait(0.2)
     end
-    print(string.format("[AF2] placed %d titik tool=%s", placed, tool.Name))
+    print(string.format("[AF2] placed %d/%d sprinkler (tool=%s)", placed, #state.sprCoords, tool.Name))
     return placed > 0
 end
 
@@ -6468,10 +6463,6 @@ staggerSpawn(function()
             if not (state.autoSuperSprinkler or state.autoSuperWC) then
                 Farm._af2Status = "OFF"; return
             end
-            -- debug state tiap loop
-            print(string.format("[AF2] spr=%s wc=%s elapsed=%.0fs",
-                tostring(state.autoSuperSprinkler), tostring(state.autoSuperWC),
-                Farm._af2SprLastPlace and (now - Farm._af2SprLastPlace) or -1))
             local threshKg  = math.abs(state.c2WeightF or 50)
             local wcTrigger = state.af2WCTrigger or 50    -- place WC kalau small ≤ ini
             local bigCap    = state.af2BigCap or 500      -- stop kalau big ≥ ini
