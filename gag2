@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v31.0"
+local VER       = "v31.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -364,6 +364,7 @@ local state = {
     selectedCollect2 = {},      -- v28.7: collect2
     selectedSell2    = {},      -- v28.7: sell2
     af2SelectedPlots = {},      -- v29.2: plot picker buat WC + Sprinkler AF2
+    af2SavedPos = {},           -- v31.1: posisi tersimpan {plotId, x, y, z}
     selectedCollectMut = {},    -- v5.9: filter mutasi collect
     selectedSellMut    = {},    -- v5.9: filter mutasi sell
     collectMutAll   = true,     -- collect semua mutasi (default: gak filter mutasi)
@@ -495,8 +496,9 @@ local function saveState()
         out.weatherHopDelay = state.weatherHopDelay or 60   -- v28.1
         out.c2WeightF = state.c2WeightF or -50   -- v28.7: collect2 filter kg
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
-        out.af2WCTrigger = state.af2WCTrigger or 50   -- v28.9: trigger place WC (sisa buah kecil)
-        out.af2BigCap = state.af2BigCap or 500        -- v28.9: batas buah besar sebelum stop
+        out.af2WCTrigger = state.af2WCTrigger or 50
+        out.af2BigCap = state.af2BigCap or 500
+        out.af2SavedPos = state.af2SavedPos or {}  -- v31.1: {plotId, x, y, z}[]
         out.af2TriggerCount = state.af2TriggerCount or 50      -- v28.9: trigger WC kalau buah kecil ≤ N
         out.af2StopValue    = state.af2StopValue or 500000000  -- v28.9: stop kalau buah gede ≥ 500M
         out.gfWeightF = state.gfWeightF or 0      -- v17.8
@@ -550,6 +552,7 @@ local function loadState()
                 if type(d.s2WeightF) == "number" then state.s2WeightF = d.s2WeightF end
                 if type(d.af2WCTrigger) == "number" then state.af2WCTrigger = d.af2WCTrigger end
                 if type(d.af2BigCap) == "number" then state.af2BigCap = d.af2BigCap end
+                if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
                 if type(d.af2TriggerCount) == "number" then state.af2TriggerCount = d.af2TriggerCount end
                 if type(d.af2StopValue) == "number" then state.af2StopValue = d.af2StopValue end
                 if type(d.gfWeightF) == "number" then state.gfWeightF = d.gfWeightF end
@@ -6104,29 +6107,74 @@ end
 
 -- ====== AUTO FARM 2: card di buyList ======
 
--- CARD AF2-1 + AF2-2: SUPER SPRINKLER + SUPER WC (digabung, seed picker shared)
+-- CARD AF2-1 + AF2-2: SUPER SPRINKLER + SUPER WC
 do
     local card, body, setH = mkFarmCard(10, "Auto Super Sprinkler & WC", "boost kg · percepat tumbuh · auto-detect posisi", buyList)
-    setH(300)
-    local info = lbl(body, "Place di posisi plot yang dipilih. Update tiap 3s.", 11, C.textDim, Enum.TextXAlignment.Left)
+    setH(336)
+    local info = lbl(body, "Scan garden → simpan posisi plot → pakai buat place sprinkler.", 11, C.textDim, Enum.TextXAlignment.Left)
     info.Position = UDim2.new(0,0,0,4); info.Size = UDim2.new(1,0,0,16); info.TextWrapped = true
-    -- live list plot terdeteksi
-    local plotInfo = lbl(body, "...", 10, C.textMute, Enum.TextXAlignment.Left)
-    plotInfo.Position = UDim2.new(0,0,0,22); plotInfo.Size = UDim2.new(1,0,0,12)
-    task.spawn(function()
-        task.wait(2)  -- tunggu semua fungsi Farm.af2* selesai didefinisikan
-        while card.Parent do
-            local pl = pcall(Farm.af2PlotList) and Farm.af2PlotList() or {}
-            plotInfo.Text = #pl > 0 and table.concat(pl, "  |  ") or "(belum ada plot terdeteksi)"
-            task.wait(3)
-        end
+    -- savedPos info + tombol Scan
+    local posInfo = lbl(body, "Belum di-scan", 10, C.textMute, Enum.TextXAlignment.Left)
+    posInfo.Position = UDim2.new(0,0,0,22); posInfo.Size = UDim2.new(0.65,0,0,14)
+    local function refreshPosInfo()
+        local sp = state.af2SavedPos or {}
+        if #sp > 0 then
+            local parts = {}
+            for _, e in ipairs(sp) do parts[#parts+1] = e.plotId end
+            posInfo.Text = "Tersimpan: "..table.concat(parts, ", "); posInfo.TextColor3 = C.green
+        else posInfo.Text = "Belum di-scan"; posInfo.TextColor3 = C.textMute end
+    end
+    refreshPosInfo()
+    local scanBtn = mk("TextButton", { Size = UDim2.new(0.33,0,0,22), Position = UDim2.new(0.67,0,0,20),
+        BackgroundColor3 = C.accent, TextColor3 = Color3.new(1,1,1), Text = "📍 Scan",
+        Font = FONT_B, TextSize = 11, BorderSizePixel = 0, AutoButtonColor = false, Parent = body })
+    corner(scanBtn, 6)
+    scanBtn.MouseButton1Click:Connect(function()
+        scanBtn.Text = "..."; task.wait(0.1)
+        local result = {}
+        pcall(function()
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            local myUid = player.UserId
+            for _, plot in ipairs(gardens:GetChildren()) do
+                if plot:GetAttribute("OwnerUserId") == myUid then
+                    -- ambil posisi dari tanaman pertama (paling akurat)
+                    local pos = nil
+                    local plants = plot:FindFirstChild("Plants")
+                    if plants then
+                        for _, plant in ipairs(plants:GetChildren()) do
+                            pcall(function()
+                                local pivot = plant:GetPivot()
+                                pos = pivot.Position
+                            end)
+                            if pos then break end
+                            for _, p in ipairs(plant:GetDescendants()) do
+                                if p:IsA("BasePart") and not p.Name:lower():find("fruit") then
+                                    pos = p.Position; break
+                                end
+                            end
+                            if pos then break end
+                        end
+                    end
+                    -- fallback: PlotSizeReference
+                    if not pos then
+                        local ref = plot:FindFirstChild("PlotSizeReference")
+                        if ref and ref:IsA("BasePart") then pos = ref.Position end
+                    end
+                    if pos then
+                        result[#result+1] = {plotId=plot.Name, x=pos.X, y=pos.Y, z=pos.Z}
+                        print(string.format("[AF2] scan: %s → (%.1f, %.1f, %.1f)", plot.Name, pos.X, pos.Y, pos.Z))
+                    end
+                end
+            end
+        end)
+        state.af2SavedPos = result; saveState(); refreshPosInfo()
+        scanBtn.Text = #result > 0 and ("✓ "..#result.." plot") or "❌ kosong"
+        task.wait(2); scanBtn.Text = "📍 Scan"
     end)
-    -- plot picker
-    -- wrap lambda biar Farm.af2PlotList di-eval saat dropdown dibuka (bukan saat card dibuat)
-    mkTypeRow(body, 38, "Plot target", function() return Farm.af2PlotList() end, state.af2SelectedPlots, "af2AllPlots", "Semua plot")
     -- trigger WC
-    lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,80)
-    local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,77),
+    lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,86)
+    local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,83),
         BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 50), PlaceholderText = "50",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(wcTBox, 6); stroke(wcTBox, C.border, 1)
@@ -6135,8 +6183,8 @@ do
         state.af2WCTrigger = n; wcTBox.Text = tostring(n); saveState()
     end)
     -- batas buah besar
-    lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,112)
-    local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,109),
+    lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,118)
+    local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,115),
         BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 500), PlaceholderText = "500",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(bigBox, 6); stroke(bigBox, C.border, 1)
@@ -6145,11 +6193,11 @@ do
         state.af2BigCap = n; bigBox.Text = tostring(n); saveState()
     end)
     -- toggles
-    mkBodyToggle(body, 148, "Auto Super Sprinkler", "autoSuperSprinkler", "Auto Super Sprinkler")
-    mkBodyToggle(body, 188, "Auto Super Watering Can", "autoSuperWC", "Auto Super WC")
+    mkBodyToggle(body, 158, "Auto Super Sprinkler", "autoSuperSprinkler", "Auto Super Sprinkler")
+    mkBodyToggle(body, 198, "Auto Super Watering Can", "autoSuperWC", "Auto Super WC")
     -- status live
     local stL = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
-    stL.Position = UDim2.new(0,0,0,228); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
+    stL.Position = UDim2.new(0,0,0,238); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
     task.spawn(function()
         task.wait(2)
         while card.Parent do stL.Text = Farm._af2Status or ""; task.wait(1) end
@@ -6391,29 +6439,28 @@ function Farm.af2PlaceSuperSprinkler()
         if tool then break end
     end
     if not tool then print("[AF2] Sprinkler ga ada di backpack"); return false end
-    -- auto-detect posisi dari PlotSizeReference plot milik player
+    -- pakai af2SavedPos (hasil scan) atau fallback PlotSizeReference
     local positions = {}
-    pcall(function()
-        local gardens = workspace:FindFirstChild("Gardens")
-        if not gardens then return end
-        local myUid = player.UserId
-        for _, plot in ipairs(gardens:GetChildren()) do
-            if plot:GetAttribute("OwnerUserId") == myUid then
-                -- ambil posisi: prioritas PlotSizeReference (tengah plot, paling valid)
-                local ref = plot:FindFirstChild("PlotSizeReference")
-                if ref and ref:IsA("BasePart") then
-                    positions[#positions+1] = ref.Position
-                    print("[AF2] posisi dari PlotSizeReference "..plot.Name..": "..tostring(ref.Position))
+    if state.af2SavedPos and #state.af2SavedPos > 0 then
+        for _, e in ipairs(state.af2SavedPos) do
+            positions[#positions+1] = Vector3.new(e.x, e.y, e.z)
+            print(string.format("[AF2] pakai savedPos %s: (%.1f,%.1f,%.1f)", e.plotId, e.x, e.y, e.z))
+        end
+    else
+        -- fallback: PlotSizeReference
+        pcall(function()
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            for _, plot in ipairs(gardens:GetChildren()) do
+                if plot:GetAttribute("OwnerUserId") == player.UserId then
+                    local ref = plot:FindFirstChild("PlotSizeReference")
+                    if ref and ref:IsA("BasePart") then
+                        positions[#positions+1] = ref.Position
+                        print("[AF2] fallback PlotSizeReference "..plot.Name..": "..tostring(ref.Position))
+                    end
                 end
             end
-        end
-    end)
-    -- fallback: pakai state.sprCoords kalau ada
-    if #positions == 0 and state.sprCoords and #state.sprCoords > 0 then
-        for _, c in ipairs(state.sprCoords) do
-            positions[#positions+1] = Vector3.new(c.x, c.y, c.z)
-        end
-        print("[AF2] fallback ke sprCoords tersimpan ("..#positions.." titik)")
+        end)
     end
     if #positions == 0 then print("[AF2] Sprinkler: ga ada posisi"); return false end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.2) end
