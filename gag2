@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v30.0"
+local VER       = "v30.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6337,7 +6337,7 @@ function Farm.af2GetPlantPositions(seedFilter)
     return positions
 end
 
--- cek apakah Super Sprinkler sudah aktif di garden player (ada di Sprinklers folder plot)
+-- cek apakah Super Sprinkler sudah aktif di garden player
 function Farm.af2IsSprinklerActive()
     local found = false
     pcall(function()
@@ -6348,10 +6348,18 @@ function Farm.af2IsSprinklerActive()
             if plot:GetAttribute("OwnerUserId") == myUid then
                 local sprs = plot:FindFirstChild("Sprinklers")
                 if sprs then
-                    for _, s in ipairs(sprs:GetChildren()) do
-                        if s.Name:lower():find("super") and s.Name:lower():find("sprinkler") then
-                            found = true; return
+                    local n = #sprs:GetChildren()
+                    if n > 0 then
+                        -- ada sprinkler apapun di garden = aktif
+                        found = true
+                        -- log nama sprinkler yang ke-detect (sekali)
+                        if not Farm._af2SprLogDone then
+                            Farm._af2SprLogDone = true
+                            for _, s in ipairs(sprs:GetChildren()) do
+                                print("[AF2] sprinkler di garden: '"..s.Name.."' ("..s.ClassName..")")
+                            end
                         end
+                        return
                     end
                 end
             end
@@ -6454,6 +6462,12 @@ staggerSpawn(function()
             task.wait(3)
             if not (state.autoSuperSprinkler or state.autoSuperWC) then
                 Farm._af2Status = "OFF"; return
+            end
+            -- debug state sekali (buat cek kenapa sprinkler ga jalan)
+            if not Farm._af2StateLogged then
+                Farm._af2StateLogged = true
+                print(string.format("[AF2] state: autoSuperSprinkler=%s autoSuperWC=%s sprLastPlace=%.0f",
+                    tostring(state.autoSuperSprinkler), tostring(state.autoSuperWC), Farm._af2SprLastPlace or 0))
             end
             local threshKg  = math.abs(state.c2WeightF or 50)
             local wcTrigger = state.af2WCTrigger or 50    -- place WC kalau small ≤ ini
