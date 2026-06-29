@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v29.3"
+local VER       = "v29.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6107,11 +6107,21 @@ end
 -- CARD AF2-1 + AF2-2: SUPER SPRINKLER + SUPER WC (digabung, seed picker shared)
 do
     local card, body, setH = mkFarmCard(10, "Auto Super Sprinkler & WC", "boost kg · percepat tumbuh · auto-detect posisi", buyList)
-    setH(280)
-    local info = lbl(body, "Auto-detect posisi dari tanaman di garden. Pilih seed yang mau di-place.", 11, C.textDim, Enum.TextXAlignment.Left)
-    info.Position = UDim2.new(0,0,0,4); info.Size = UDim2.new(1,0,0,28); info.TextWrapped = true
-    -- seed picker
-    mkTypeRow(body, 36, "Plot target", Farm.af2PlotList, state.af2SelectedPlots, "af2AllPlots", "Semua plot")
+    setH(300)
+    local info = lbl(body, "Place di posisi plot yang dipilih. Update tiap 3s.", 11, C.textDim, Enum.TextXAlignment.Left)
+    info.Position = UDim2.new(0,0,0,4); info.Size = UDim2.new(1,0,0,16); info.TextWrapped = true
+    -- live list plot terdeteksi
+    local plotInfo = lbl(body, "...", 10, C.textMute, Enum.TextXAlignment.Left)
+    plotInfo.Position = UDim2.new(0,0,0,22); plotInfo.Size = UDim2.new(1,0,0,12)
+    task.spawn(function()
+        while card.Parent do
+            local pl = Farm.af2PlotList()
+            plotInfo.Text = #pl > 0 and table.concat(pl, "  |  ") or "(belum ada plot terdeteksi)"
+            task.wait(3)
+        end
+    end)
+    -- plot picker
+    mkTypeRow(body, 38, "Plot target", Farm.af2PlotList, state.af2SelectedPlots, "af2AllPlots", "Semua plot")
     -- trigger WC
     lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,80)
     local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,77),
@@ -6248,7 +6258,8 @@ function Farm.af2CountBigFruits(threshKg)
     return count
 end
 
--- list plot aktif di garden: label = "SeedName (PlotId)" buat picker UI
+-- list plot di garden (scan Plot object langsung, bukan dari tanaman)
+-- label = "SeedName (PlotId)" kalau ada tanaman, "Plot1" kalau kosong
 function Farm.af2PlotList()
     local list = {}
     pcall(function()
@@ -6256,47 +6267,81 @@ function Farm.af2PlotList()
         if not gardens then return end
         local myUid = tostring(player.UserId)
         for _, plot in ipairs(gardens:GetChildren()) do
-            local plants = plot:FindFirstChild("Plants")
-            if plants and #plants:GetChildren() > 0 then
-                -- ambil seed name dari tanaman pertama milik player
-                for _, plant in ipairs(plants:GetChildren()) do
-                    local uid = plant:GetAttribute("UserId")
-                    if uid and tostring(uid) ~= myUid then break end
-                    local sn = plant:GetAttribute("SeedName")
-                    if sn then
-                        list[#list+1] = sn.." ("..plot.Name..")"
-                        break
+            -- filter: cuma plot milik player (cek UserId di plot atau tanaman pertama)
+            local isOwn = false
+            pcall(function()
+                local uid = plot:GetAttribute("UserId") or plot:GetAttribute("OwnerId")
+                if uid and tostring(uid) == myUid then isOwn = true; return end
+                -- fallback: cek tanaman pertama
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        local puid = plant:GetAttribute("UserId")
+                        if puid then isOwn = (tostring(puid) == myUid); return end
                     end
                 end
-            end
+                -- fallback 2: cek nama plot (misal Plot1_<userId>)
+                if plot.Name:find(myUid) then isOwn = true end
+            end)
+            -- kalau ga bisa verify owner, tetap tampilkan (bisa jadi server baru)
+            -- tapi skip kalau ada uid yang jelas bukan punya kita
+            local seedName = nil
+            pcall(function()
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        seedName = plant:GetAttribute("SeedName"); break
+                    end
+                end
+            end)
+            local label = (seedName and (seedName.." - "..plot.Name)) or ("(kosong) - "..plot.Name)
+            list[#list+1] = label
         end
     end)
     return list
 end
 
--- label → posisi plot (buat place)
+-- label → posisi plot (dari Plot object langsung atau dari tanaman)
 function Farm.af2LabelToPos(label)
-    local plotName = label:match("%((.-)%)$")
-    if not plotName then return nil end
+    local plotName = label:match(" %- (.+)$") or label   -- "SeedName - PlotX" → "PlotX"
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return nil end
     local plot = gardens:FindFirstChild(plotName)
+    if not plot then
+        -- coba cari plot yang name-nya mengandung label
+        for _, p in ipairs(gardens:GetChildren()) do
+            if p.Name == plotName or p.Name:find(plotName, 1, true) then plot = p; break end
+        end
+    end
     if not plot then return nil end
-    local plants = plot:FindFirstChild("Plants")
-    if not plants then return nil end
     local pos
-    for _, plant in ipairs(plants:GetChildren()) do
-        pcall(function()
-            if plant:IsA("Model") and plant.PrimaryPart then
-                pos = plant.PrimaryPart.Position
-            else
+    -- coba dari tanaman dulu
+    pcall(function()
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if plant:IsA("Model") and plant.PrimaryPart then
+                    pos = plant.PrimaryPart.Position; return
+                end
                 for _, p in ipairs(plant:GetDescendants()) do
+                    if p:IsA("BasePart") then pos = p.Position; return end
+                end
+            end
+        end
+    end)
+    -- fallback: posisi Plot object itu sendiri
+    if not pos then
+        pcall(function()
+            if plot:IsA("Model") and plot.PrimaryPart then
+                pos = plot.PrimaryPart.Position
+            elseif plot:IsA("BasePart") then
+                pos = plot.Position
+            else
+                for _, p in ipairs(plot:GetDescendants()) do
                     if p:IsA("BasePart") then pos = p.Position; break end
                 end
             end
-            if not pos and plant:IsA("BasePart") then pos = plant.Position end
         end)
-        if pos then break end
     end
     return pos
 end
