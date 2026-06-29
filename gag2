@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v31.2"
+local VER       = "v31.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6480,7 +6480,7 @@ function Farm.af2PlaceWateringCan()
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not char or not hum then return false end
-    -- cari WC (super atau biasa)
+    -- cari WC
     local tool
     for _, h in ipairs({char, player:FindFirstChildOfClass("Backpack")}) do
         if h then for _, t in ipairs(h:GetChildren()) do
@@ -6491,36 +6491,51 @@ function Farm.af2PlaceWateringCan()
     if not tool then print("[AF2] WC: ga ada Watering Can di backpack"); return false end
     if tool.Parent ~= char then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
     print("[AF2] WC equip: "..tool.Name)
-    -- scan pohon di garden milik player
-    local plants = {}
+    -- cari ClickDetector di pohon milik player
+    local cds = {}
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
         for _, plot in ipairs(gardens:GetChildren()) do
             if plot:GetAttribute("OwnerUserId") == player.UserId then
-                local plantsF = plot:FindFirstChild("Plants")
-                if plantsF then
-                    for _, plant in ipairs(plantsF:GetChildren()) do
-                        plants[#plants+1] = plant
-                    end
+                for _, d in ipairs(plot:GetDescendants()) do
+                    if d:IsA("ClickDetector") then cds[#cds+1] = d end
                 end
             end
         end
     end)
-    if #plants == 0 then print("[AF2] WC: ga ada pohon di garden"); return false end
-    -- fire Activated per pohon (replikasi ke server via Roblox engine)
-    local fireSignal = rawget(getfenv and getfenv() or getgenv(),"firesignal")
+    print("[AF2] WC: "..#cds.." ClickDetector di plot")
     local fired = 0
-    for _, plant in ipairs(plants) do
+    -- coba fireclickdetector (Delta executor)
+    local fcd = fireclickdetector or (syn and syn.click_detector) or nil
+    if #cds > 0 and fcd then
+        for _, cd in ipairs(cds) do
+            pcall(function() fcd(cd, 0, player) end)
+            fired = fired + 1; task.wait(0.05)
+        end
+        print("[AF2] WC: fired "..fired.." ClickDetector (fireclickdetector)")
+    else
+        -- fallback: firesignal Activated
+        local fsg = firesignal or nil
+        local plants = {}
         pcall(function()
-            local pivot = plant:GetPivot()
-            if pivot then hum:MoveTo(pivot.Position); task.wait(0.05) end
-            if fireSignal then fireSignal(tool.Activated)
-            else tool.Activated:Fire() end
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            for _, plot in ipairs(gardens:GetChildren()) do
+                if plot:GetAttribute("OwnerUserId") == player.UserId then
+                    local plantsF = plot:FindFirstChild("Plants")
+                    if plantsF then for _, p in ipairs(plantsF:GetChildren()) do plants[#plants+1]=p end end
+                end
+            end
         end)
-        fired = fired + 1; task.wait(0.1)
+        for _, plant in ipairs(plants) do
+            pcall(function()
+                if fsg then fsg(tool.Activated) else tool.Activated:Fire() end
+            end)
+            fired = fired + 1; task.wait(0.05)
+        end
+        print("[AF2] WC fallback: fired "..fired.." Activated (firesignal="..(fsg and "true" or "false")..")")
     end
-    print(string.format("[AF2] WC fired %d pohon (firesignal=%s)", fired, tostring(fireSignal~=nil)))
     return fired > 0
 end
 
@@ -6528,6 +6543,34 @@ Farm._af2Status = "OFF"
 Farm._af2SprLastPlace = nil   -- nil = belum pernah place, langsung fire pertama kali
 Farm._af2WCLastPlace = 0
 local AF2_SPR_DURATION = 120
+
+-- v31.3: monitor Sprinklers folder — pas sprinkler milik player hilang → reset timer biar re-place
+task.spawn(function()
+    task.wait(3)
+    while isCurrentGen() do
+        pcall(function()
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            for _, plot in ipairs(gardens:GetChildren()) do
+                if plot:GetAttribute("OwnerUserId") == player.UserId then
+                    local sprs = plot:FindFirstChild("Sprinklers")
+                    if sprs and not Farm._af2SprMonitored then
+                        Farm._af2SprMonitored = true
+                        sprs.ChildRemoved:Connect(function(child)
+                            local uid = child:GetAttribute("UserId")
+                            if uid == player.UserId then
+                                print("[AF2] Sprinkler habis: '"..child.Name.."' → re-place segera")
+                                Farm._af2SprLastPlace = nil  -- reset → loop langsung re-place
+                            end
+                        end)
+                        print("[AF2] monitor Sprinklers folder aktif")
+                    end
+                end
+            end
+        end)
+        task.wait(5)
+    end
+end)
 
 staggerSpawn(function()
     while isCurrentGen() do
