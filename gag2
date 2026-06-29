@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v28.2"
+local VER       = "v29.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -361,6 +361,9 @@ local state = {
     goodWeathers    = {},       -- v26.8: weather yg dianggap BAGUS (sisanya bikin auto-rejoin)
     selectedCollect = {},       -- collect buah
     selectedSell    = {},       -- sell buah
+    selectedCollect2 = {},      -- v28.7: collect2
+    selectedSell2    = {},      -- v28.7: sell2
+    af2SelectedPlots = {},      -- v29.2: plot picker buat WC + Sprinkler AF2
     selectedCollectMut = {},    -- v5.9: filter mutasi collect
     selectedSellMut    = {},    -- v5.9: filter mutasi sell
     collectMutAll   = true,     -- collect semua mutasi (default: gak filter mutasi)
@@ -454,13 +457,19 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather"}
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+    -- v28.7: AUTO FARM 2
+    "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
+    -- v29.1: AF2 seed filter
+    "af2AllPlots"}
 -- v13.7: autoCollect + autoSell + autoShovel SENGAJA gak disave -> SELALU OFF tiap load/rejoin
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
 -- mulai kosong (biar gak kebablasan gali "Semua"). toggle autoShovel kesave seperti biasa.
 local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
+                 selectedCollect2="selectedCollect2", selectedSell2="selectedSell2",
+                 af2SelectedPlots="af2SelectedPlots",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
                  selectedGear="selectedGear",
                  selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
@@ -484,6 +493,12 @@ local function saveState()
         out.petWebhook = state.petWebhook or ""   -- v16.7
         out.hopMinutes = state.hopMinutes or 30   -- v17.0
         out.weatherHopDelay = state.weatherHopDelay or 60   -- v28.1
+        out.c2WeightF = state.c2WeightF or -50   -- v28.7: collect2 filter kg
+        out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
+        out.af2WCTrigger = state.af2WCTrigger or 50   -- v28.9: trigger place WC (sisa buah kecil)
+        out.af2BigCap = state.af2BigCap or 500        -- v28.9: batas buah besar sebelum stop
+        out.af2TriggerCount = state.af2TriggerCount or 50      -- v28.9: trigger WC kalau buah kecil ≤ N
+        out.af2StopValue    = state.af2StopValue or 500000000  -- v28.9: stop kalau buah gede ≥ 500M
         out.gfWeightF = state.gfWeightF or 0      -- v17.8
         out.gfSheckMax = state.gfSheckMax or 100000000  -- v18.4
         out.gfValueTarget = state.gfValueTarget or 500000000  -- v22.9
@@ -531,6 +546,12 @@ local function loadState()
                 if type(d.petWebhook) == "string" and d.petWebhook ~= "" then state.petWebhook = d.petWebhook end
                 if type(d.hopMinutes) == "number" then state.hopMinutes = d.hopMinutes end
                 if type(d.weatherHopDelay) == "number" then state.weatherHopDelay = d.weatherHopDelay end
+                if type(d.c2WeightF) == "number" then state.c2WeightF = d.c2WeightF end
+                if type(d.s2WeightF) == "number" then state.s2WeightF = d.s2WeightF end
+                if type(d.af2WCTrigger) == "number" then state.af2WCTrigger = d.af2WCTrigger end
+                if type(d.af2BigCap) == "number" then state.af2BigCap = d.af2BigCap end
+                if type(d.af2TriggerCount) == "number" then state.af2TriggerCount = d.af2TriggerCount end
+                if type(d.af2StopValue) == "number" then state.af2StopValue = d.af2StopValue end
                 if type(d.gfWeightF) == "number" then state.gfWeightF = d.gfWeightF end
                 if type(d.gfSheckMax) == "number" then state.gfSheckMax = d.gfSheckMax end
                 if type(d.gfValueTarget) == "number" then state.gfValueTarget = d.gfValueTarget end
@@ -2364,6 +2385,15 @@ staggerSpawn(function()
             task.wait(0.1)  -- v8.5: collect tiap 0.1s (dulu 0.2s)
             gDbg.ZenxCollectBeat = (gDbg.ZenxCollectBeat or 0) + 1  -- detak: loop hidup
             if isCurrentGen() and state.autoCollect then Farm.collectOnce() end
+            -- v28.7: Auto Collect 2 (setting terpisah: c2All, c2NoMut, c2WeightF)
+            if isCurrentGen() and state.autoCollect2 then
+                local sv = { collectAll=state.collectAll, collectMutAll=state.collectMutAll, collectNoMut=state.collectNoMut,
+                    collectWeightF=state.collectWeightF, collectMulti=state.collectMulti, collectSingle=state.collectSingle }
+                state.collectAll = state.c2All; state.collectMutAll = false; state.collectNoMut = state.c2NoMut
+                state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
+                pcall(Farm.collectOnce)
+                for k,v in pairs(sv) do state[k] = v end
+            end
         end)
     end
     print("[ZenxFarm] loop collect berhenti (generasi berubah / execute ulang)")
@@ -2391,6 +2421,29 @@ staggerSpawn(function()
                         Farm._sellTick = 0
                         Farm.sellOnce()
                         Farm._focusDone = {}; Farm._focusType = nil  -- v9.7: ronde baru stlh sell
+                    end
+                end
+            end
+            -- v28.7: Auto Sell 2 (terpisah: s2All, s2WhenFull, s2WeightF)
+            if isCurrentGen() and state.autoSell2 then
+                if state.s2WhenFull then
+                    local cur = getInvCount(); local mx = getInvMax()
+                    if cur >= mx then
+                        local sv2 = { sellAll=state.sellAll, sellMutAll=state.sellMutAll, sellWeightF=state.sellWeightF }
+                        state.sellAll = state.s2All; state.sellMutAll = true; state.sellWeightF = state.s2WeightF or 0
+                        pcall(Farm.sellOnce)
+                        for k,v in pairs(sv2) do state[k] = v end
+                        Farm._focusDone = {}; Farm._focusType = nil
+                    end
+                else
+                    Farm._sell2Tick = (Farm._sell2Tick or 0) + 1
+                    if Farm._sell2Tick >= 5 then
+                        Farm._sell2Tick = 0
+                        local sv2 = { sellAll=state.sellAll, sellMutAll=state.sellMutAll, sellWeightF=state.sellWeightF }
+                        state.sellAll = state.s2All; state.sellMutAll = true; state.sellWeightF = state.s2WeightF or 0
+                        pcall(Farm.sellOnce)
+                        for k,v in pairs(sv2) do state[k] = v end
+                        Farm._focusDone = {}; Farm._focusType = nil
                     end
                 end
             end
@@ -4854,9 +4907,12 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
                 if fid and fj and not Farm._mailSent[tostring(fid)] then   -- skip yg udah dikirim
                     local jenisOk = allFruit or (tostring(fj):lower() == ff)
                     if jenisOk then
-                        local pr = Farm.fruitPrice(t, not useMarket) or 0
-                        if pr >= rngLo and pr <= rngHi then
-                            elig[#elig+1] = { fid = tostring(fid), val = pr }
+                        -- v28.6: filter range pakai NORMAL price (biar match sama tampilan ESP inventory).
+                        -- market price (useMarket) cuma buat ngumpulin sum akumulasi ke target.
+                        local prNorm = Farm.fruitPrice(t, true) or 0   -- NORMAL selalu buat filter
+                        local prSend = useMarket and (Farm.fruitPrice(t, false) or 0) or prNorm
+                        if prNorm >= rngLo and prNorm <= rngHi then
+                            elig[#elig+1] = { fid = tostring(fid), val = prSend }
                         end
                     end
                 end
@@ -4997,33 +5053,38 @@ local function showMailGift()
         state.mailMinV = minBox.Text; state.mailMaxV = maxBox.Text
         local loV = parseVal(minBox.Text, 0)
         local hiV = parseVal(maxBox.Text, math.huge)
-        if loV > hiV then loV, hiV = hiV, loV end   -- jaga2 kalau kebalik
-        Farm._mailSent = {}            -- reset penanda tiap mulai sesi baru
+        if loV > hiV then loV, hiV = hiV, loV end
+        Farm._mailSent = {}
         local sessionSent = 0
         running = true
         sendBtn.Text="STOP (auto jalan)"; sendBtn.BackgroundColor3=Color3.fromRGB(220,150,60)
         task.spawn(function()
-            local idleTries = 0
             while running and pop.Parent do
-                local remaining = tot - sessionSent
-                if remaining <= 0 then
-                    out.Text = "SELESAI ✓  terkirim "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot).." ke "..target
-                    out.TextColor3 = C.green; stopRun(); break
-                end
-                local ok, cnt, sum = Farm.mailGiftSend(target, fruit, loV, hiV, remaining, marketOn)
-                if ok and (sum or 0) > 0 then
-                    sessionSent = sessionSent + sum; idleTries = 0
-                    out.Text = "AUTO: "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot).."   kurang "..Farm.abbrev(math.max(0,tot-sessionSent))
-                    out.TextColor3 = Color3.new(1,1,1)
-                else
-                    -- ga ada buah cocok skrg (mis. target gak ketemu, atau nunggu panen). stop kalau error fatal.
-                    if cnt and (tostring(cnt):find("ketemu") or tostring(cnt):find("kosong") or tostring(cnt):find("Mailbox")) then
-                        out.Text = "stop: "..tostring(cnt); out.TextColor3 = C.red; stopRun(); break
+                -- v28.5: wrap pcall biar coroutine ga mati diam2 (resolveTargetId bisa throw)
+                local ok2, err2 = pcall(function()
+                    local remaining = tot - sessionSent
+                    if remaining <= 0 then
+                        out.Text = "SELESAI ✓  terkirim "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot).." ke "..target
+                        out.TextColor3 = C.green; stopRun(); return
                     end
-                    idleTries = idleTries + 1
-                    out.Text = "nunggu buah baru...  "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot); out.TextColor3 = C.textDim
+                    local ok, cnt, sum = Farm.mailGiftSend(target, fruit, loV, hiV, remaining, marketOn)
+                    if ok and (sum or 0) > 0 then
+                        sessionSent = sessionSent + sum
+                        out.Text = "AUTO: "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot).."   kurang "..Farm.abbrev(math.max(0,tot-sessionSent))
+                        out.TextColor3 = Color3.new(1,1,1)
+                    else
+                        if cnt and (tostring(cnt):find("ketemu") or tostring(cnt):find("kosong") or tostring(cnt):find("Mailbox")) then
+                            out.Text = "stop: "..tostring(cnt); out.TextColor3 = C.red; stopRun(); return
+                        end
+                        out.Text = "nunggu buah baru...  "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot); out.TextColor3 = C.textDim
+                    end
+                end)
+                if not ok2 then
+                    -- error (mis. resolveTargetId gagal) -> jangan mati, coba lagi nanti
+                    out.Text = "error sementara, coba lagi..."; out.TextColor3 = C.textMute
                 end
-                task.wait(2.5)   -- jeda biar inventory update + nunggu panen baru
+                -- v28.5: delay 11s (mailbox cooldown ~10s). biar batch ga ke-reject server
+                task.wait(11)
             end
         end)
     end)
@@ -5262,24 +5323,13 @@ staggerSpawn(function()
         if state.autoWeatherHop then
             local bad, w = Farm.isBadWeatherNow()
             if bad then
-                -- v28.1: SPAM Teleport tiap 1s -> tiap re-fire nge-restart proses teleport
-                -- (teleport butuh 2-5s buat kelar), jadi player NYANGKUT di freeze native Roblox.
-                -- abis 'hold' detik -> STOP spam -> teleport terakhir kelar -> pindah beneran.
-                local hold = math.max(3, tonumber(state.weatherHopDelay) or 60)
-                Farm._weatherHopAt = os.clock() + hold
-                Farm._weatherHopState = "freeze"
-                print("[ZenxFarm] weather buruk '"..tostring(w).."' -> spam teleport (freeze) "..hold.."s")
-                local startT = os.clock()
-                while isCurrentGen() and state.autoWeatherHop and select(1, Farm.isBadWeatherNow()) and (os.clock() - startT) < hold do
-                    Farm.simpleRejoin(true)   -- re-fire (quiet) rapet: restart teleport terus -> nahan freeze
-                    task.wait(0.2)
-                end
-                -- durasi abis & masih buruk -> lepas: fire terakhir, biarin kelar -> pindah
-                if isCurrentGen() and state.autoWeatherHop and select(1, Farm.isBadWeatherNow()) then
-                    Farm._weatherHopState = "hopping"
-                    print("[ZenxFarm] freeze "..hold.."s abis -> lepas, pindah server")
-                    Farm.simpleRejoin()   -- ga di-restart lagi -> teleport kelar -> script ke-kill
-                    task.wait(10)
+                -- v28.4: weather buruk -> LANGSUNG teleport (player seketika ilang dari server).
+                -- diulang tiap 12s kalau ga jadi. Lama "in-transit" ditentuin Roblox (ga bisa di-pause).
+                Farm._weatherHopState = "hopping"
+                print("[ZenxFarm] weather buruk '"..tostring(w).."' -> LANGSUNG teleport (tinggalin server)")
+                while isCurrentGen() and state.autoWeatherHop and select(1, Farm.isBadWeatherNow()) do
+                    Farm.simpleRejoin()   -- Teleport seketika -> ilang dari server -> nyampe server baru
+                    task.wait(12)
                 end
                 Farm._weatherHopState = nil
                 pendingFrom = nil; Farm._weatherHopAt = nil
@@ -5424,7 +5474,7 @@ end
 
 local farmBtn, farmLbl, farmStrk = mkTabBtn(0, "farm", "AUTO FARM")
 local giftBtn, giftLbl, giftStrk = mkTabBtn(48, "gift", "AUTO GIFT")
-local buyBtn, buyLbl, buyStrk = mkTabBtn(96, "buy", "AUTO BUY")
+local buyBtn, buyLbl, buyStrk = mkTabBtn(96, "buy", "AUTO FARM 2")
 local miscBtn, miscLbl, miscStrk = mkTabBtn(144, "misc", "MISC 1")
 local misc2Btn, misc2Lbl, misc2Strk = mkTabBtn(192, "misc2", "MISC 2")
 local kalkBtn, kalkLbl, kalkStrk = mkTabBtn(240, "kalk", "KALKULASI")
@@ -5886,7 +5936,7 @@ end
 -- ====== CARD 3: AUTO BUY SEED ======
 local applyBuySeed
 do
-    local card, body, setH = mkFarmCard(1, "Auto Buy Seed", "beli seed otomatis (tap utk atur)", buyList)
+    local card, body, setH = mkFarmCard(1, "Auto Buy Seed", "beli seed otomatis (tap utk atur)", misc2List)
     setH(154)
     mkTypeRow(body, 4, "Jenis Seed", fruitList, state.selectedSeeds, "buyAllSeeds", "Semua seed")
     applyBuySeed = mkBodyToggle(body, 44, "Auto Buy", "autoBuySeed", "Auto Buy Seed")
@@ -5947,7 +5997,7 @@ end
 -- ====== CARD 5: AUTO BUY PET (pet liar + buy-back + webhook) ======
 local applyBuyPet
 do
-    local card, body, setH = mkFarmCard(3, "Auto Buy Pet", "tame pet liar + ambil balik (tap utk atur)", buyList)
+    local card, body, setH = mkFarmCard(3, "Auto Buy Pet", "tame pet liar + ambil balik (tap utk atur)", misc2List)
     setH(352)
     local petTypeList = function() return Farm.scanPetTypes() end
     local petRareList = function() return PET_RARITIES end
@@ -6045,12 +6095,369 @@ end
 -- ====== CARD 7: AUTO BUY GEAR (v7.1) ======
 local applyBuyGear
 do
-    local card, body, setH = mkFarmCard(2, "Auto Buy Gear", "beli gear/alat otomatis (tap utk atur)", buyList)
+    local card, body, setH = mkFarmCard(2, "Auto Buy Gear", "beli gear/alat otomatis (tap utk atur)", misc2List)
     setH(96)
     local gearListFn = function() if not Farm.gearList then Farm.gearList = loadGearList() end return Farm.gearList end
     mkTypeRow(body, 4, "Jenis Gear", gearListFn, state.selectedGear, "buyAllGears", "Semua gear")
     applyBuyGear = mkBodyToggle(body, 44, "Auto Buy", "autoBuyGear", "Auto Buy Gear")
 end
+
+-- ====== AUTO FARM 2: card di buyList ======
+
+-- CARD AF2-1 + AF2-2: SUPER SPRINKLER + SUPER WC (digabung, seed picker shared)
+do
+    local card, body, setH = mkFarmCard(10, "Auto Super Sprinkler & WC", "boost kg · percepat tumbuh · auto-detect posisi", buyList)
+    setH(280)
+    local info = lbl(body, "Auto-detect posisi dari tanaman di garden. Pilih seed yang mau di-place.", 11, C.textDim, Enum.TextXAlignment.Left)
+    info.Position = UDim2.new(0,0,0,4); info.Size = UDim2.new(1,0,0,28); info.TextWrapped = true
+    -- seed picker
+    mkTypeRow(body, 36, "Plot target", Farm.af2PlotList, state.af2SelectedPlots, "af2AllPlots", "Semua plot")
+    -- trigger WC
+    lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,80)
+    local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,77),
+        BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 50), PlaceholderText = "50",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(wcTBox, 6); stroke(wcTBox, C.border, 1)
+    wcTBox.FocusLost:Connect(function()
+        local n = math.max(0, math.floor(tonumber(wcTBox.Text) or 50))
+        state.af2WCTrigger = n; wcTBox.Text = tostring(n); saveState()
+    end)
+    -- batas buah besar
+    lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,112)
+    local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,109),
+        BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 500), PlaceholderText = "500",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(bigBox, 6); stroke(bigBox, C.border, 1)
+    bigBox.FocusLost:Connect(function()
+        local n = math.max(1, math.floor(tonumber(bigBox.Text) or 500))
+        state.af2BigCap = n; bigBox.Text = tostring(n); saveState()
+    end)
+    -- toggles
+    mkBodyToggle(body, 148, "Auto Super Sprinkler", "autoSuperSprinkler", "Auto Super Sprinkler")
+    mkBodyToggle(body, 188, "Auto Super Watering Can", "autoSuperWC", "Auto Super WC")
+    -- status live
+    local stL = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
+    stL.Position = UDim2.new(0,0,0,228); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
+    task.spawn(function()
+        while card.Parent do stL.Text = Farm._af2Status or ""; task.wait(1) end
+    end)
+end
+
+-- CARD AF2-3: AUTO COLLECT 2 (terpisah dari AUTO FARM, default: semua buah, tanpa mutasi, -50kg)
+local applyCollect2
+do
+    local card, body, setH = mkFarmCard(12, "Auto Collect 2", "semua buah · tanpa mutasi · filter -50kg", buyList)
+    setH(202)
+    mkTypeRow(body, 4, "Jenis Buah", fruitList, state.selectedCollect2, "c2All", "Semua buah")
+    applyCollect2 = mkBodyToggle(body, 44, "Tanpa Mutasi", "c2NoMut", "Collect2 No Mutation")
+    lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
+    local c2wBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 85),
+        BackgroundColor3 = C.input, Text = tostring(state.c2WeightF or -50), PlaceholderText = "-50",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(c2wBox, 6); stroke(c2wBox, C.border, 1)
+    c2wBox.FocusLost:Connect(function()
+        local n = tonumber(c2wBox.Text) or -50
+        state.c2WeightF = n; c2wBox.Text = tostring(n); saveState()
+        print("[ZenxFarm] collect2 filter kg: "..(n==0 and "semua" or (n>0 and "di atas "..n.."kg" or "di bawah "..(-n).."kg")))
+    end)
+    -- default c2NoMut = true (tanpa mutasi)
+    if state.c2NoMut == nil then state.c2NoMut = true; saveState() end
+    if state.c2All == nil then state.c2All = true; saveState() end
+    mkBodyToggle(body, 124, "Auto Collect 2", "autoCollect2", "Auto Collect 2")
+    -- status live
+    local st2 = lbl(body, "", 11, C.textDim, Enum.TextXAlignment.Left)
+    st2.Position = UDim2.new(0,0,0,166); st2.Size = UDim2.new(1,0,0,28); st2.TextWrapped = true
+    task.spawn(function()
+        while card.Parent do
+            st2.Text = state.autoCollect2 and "● collect2 jalan" or "OFF"
+            st2.TextColor3 = state.autoCollect2 and C.green or C.textDim
+            task.wait(1)
+        end
+    end)
+end
+
+-- CARD AF2-4: AUTO SELL 2 (terpisah, default: semua, backpack penuh, kg=0)
+local applySell2
+do
+    local card, body, setH = mkFarmCard(13, "Auto Sell 2", "sell all · backpack penuh · kg=0", buyList)
+    setH(162)
+    mkTypeRow(body, 4, "Jenis Buah", fruitList, state.selectedSell2, "s2All", "Semua buah")
+    mkBodyToggle(body, 44, "Sell pas penuh", "s2WhenFull", "Sell2 When Full")
+    lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
+    local s2wBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 85),
+        BackgroundColor3 = C.input, Text = tostring(state.s2WeightF or 0), PlaceholderText = "0=semua",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(s2wBox, 6); stroke(s2wBox, C.border, 1)
+    s2wBox.FocusLost:Connect(function()
+        local n = tonumber(s2wBox.Text) or 0
+        state.s2WeightF = n; s2wBox.Text = tostring(n); saveState()
+    end)
+    -- default s2All = true, s2WhenFull = true
+    if state.s2All == nil then state.s2All = true; saveState() end
+    if state.s2WhenFull == nil then state.s2WhenFull = true; saveState() end
+    applySell2 = mkBodyToggle(body, 124, "Auto Sell 2", "autoSell2", "Auto Sell 2")
+end
+
+-- ====== AUTO FARM 2: logic loop ======
+-- Super WC   : place pas buah < threshKg di garden tinggal ≤ 50 (hampir abis dicolect)
+-- Super Sprinkler: place tiap 2 menit (independen, ikut durasinya)
+-- Collect2 + Sell2: jalan di loop sendiri (terpisah)
+
+function Farm.af2CountSmallFruits(threshKg)
+    threshKg = threshKg or math.abs(state.c2WeightF or 50)
+    local count = 0
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        for _, garden in ipairs(gardens:GetChildren()) do
+            for _, plant in ipairs(garden:GetChildren()) do
+                local seedName = plant:GetAttribute("SeedName") or plant.Name
+                local fruits = plant:FindFirstChild("Fruits")
+                if fruits then
+                    for _, fruit in ipairs(fruits:GetChildren()) do
+                        local kg = Farm.gardenKg(fruit, seedName) or 0
+                        if kg > 0 and kg < threshKg then count = count + 1 end
+                    end
+                end
+            end
+        end
+    end)
+    return count
+end
+
+-- v28.9: hitung buah BESAR (≥ threshKg) di garden — buat cek batas stop
+function Farm.af2CountBigFruits(threshKg)
+    threshKg = threshKg or math.abs(state.c2WeightF or 50)
+    local count = 0
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        for _, garden in ipairs(gardens:GetChildren()) do
+            for _, plant in ipairs(garden:GetChildren()) do
+                local seedName = plant:GetAttribute("SeedName") or plant.Name
+                local fruits = plant:FindFirstChild("Fruits")
+                if fruits then
+                    for _, fruit in ipairs(fruits:GetChildren()) do
+                        local kg = Farm.gardenKg(fruit, seedName) or 0
+                        if kg >= threshKg then count = count + 1 end
+                    end
+                end
+            end
+        end
+    end)
+    return count
+end
+
+-- list plot aktif di garden: label = "SeedName (PlotId)" buat picker UI
+function Farm.af2PlotList()
+    local list = {}
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local myUid = tostring(player.UserId)
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants and #plants:GetChildren() > 0 then
+                -- ambil seed name dari tanaman pertama milik player
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local uid = plant:GetAttribute("UserId")
+                    if uid and tostring(uid) ~= myUid then break end
+                    local sn = plant:GetAttribute("SeedName")
+                    if sn then
+                        list[#list+1] = sn.." ("..plot.Name..")"
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    return list
+end
+
+-- label → posisi plot (buat place)
+function Farm.af2LabelToPos(label)
+    local plotName = label:match("%((.-)%)$")
+    if not plotName then return nil end
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return nil end
+    local plot = gardens:FindFirstChild(plotName)
+    if not plot then return nil end
+    local plants = plot:FindFirstChild("Plants")
+    if not plants then return nil end
+    local pos
+    for _, plant in ipairs(plants:GetChildren()) do
+        pcall(function()
+            if plant:IsA("Model") and plant.PrimaryPart then
+                pos = plant.PrimaryPart.Position
+            else
+                for _, p in ipairs(plant:GetDescendants()) do
+                    if p:IsA("BasePart") then pos = p.Position; break end
+                end
+            end
+            if not pos and plant:IsA("BasePart") then pos = plant.Position end
+        end)
+        if pos then break end
+    end
+    return pos
+end
+
+-- auto-detect posisi garden: 1 posisi per PLOT (bukan per tanaman) + filter UserId milik player
+function Farm.af2GetPlantPositions(seedFilter)
+    -- v29.2: pakai plot picker (af2SelectedPlots) kalau ada, ignore seedFilter
+    local plotList = Farm.af2PlotList()
+    local useAll = state.af2AllPlots
+    if not useAll then
+        local any = false
+        for _ in pairs(state.af2SelectedPlots or {}) do any=true; break end
+        if not any then useAll = true end
+    end
+    local positions = {}
+    for _, label in ipairs(plotList) do
+        if useAll or state.af2SelectedPlots[label] then
+            local pos = Farm.af2LabelToPos(label)
+            if pos then positions[#positions+1] = {pos=pos, label=label} end
+        end
+    end
+    return positions
+end
+
+-- place Super Sprinkler di posisi tanaman yang ada di garden
+function Farm.af2PlaceSuperSprinkler()
+    local p = pkt("Place", "PlaceSprinkler")
+    if not p or not p.Fire then print("[AF2] PlaceSprinkler remote gak ada"); return false end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not char then return false end
+    -- cari tool Super Sprinkler
+    local tool = Farm.findSprinklerTool("Super Sprinkler")
+    if not tool then
+        -- coba nama lain
+        for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+            if h then for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("super") and t.Name:lower():find("sprinkler") then tool = t; break end
+            end end
+            if tool then break end
+        end
+    end
+    if not tool then print("[AF2] Super Sprinkler ga ada di backpack"); return false end
+    -- pilih seed filter dari state.af2SelectedPlots (nil = semua)
+    local sf = nil
+    if not state.af2AllPlots then
+        local any = false
+        for _ in pairs(state.af2SelectedPlots or {}) do any=true; break end
+        if any then sf = state.af2SelectedPlots end
+    end
+    local positions = Farm.af2GetPlantPositions(sf)
+    if #positions == 0 then print("[AF2] Sprinkler: ga ada tanaman di garden"); return false end
+    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
+    local placed = 0
+    for _, e in ipairs(positions) do
+        Farm._sprAutoPlacing = true
+        pcall(function() p:Fire(e.pos, tool.Name, tool, 1) end)
+        Farm._sprAutoPlacing = false
+        placed = placed + 1; task.wait(0.15)
+    end
+    print(string.format("[AF2] Super Sprinkler placed %d titik", placed))
+    return placed > 0
+end
+
+-- place Super Watering Can di posisi tanaman (remote Place.PlaceWateringCan, sama pola sprinkler)
+function Farm.af2PlaceWateringCan()
+    local p = pkt("Place", "PlaceWateringCan")
+    if not p or not p.Fire then
+        -- fallback: coba PlaceSprinkler (kalau remote sama)
+        p = pkt("Place", "PlaceSprinkler")
+        if not p or not p.Fire then print("[AF2] WC remote ga ketemu (PlaceWateringCan / PlaceSprinkler)"); return false end
+    end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not char then return false end
+    local tool
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then for _, t in ipairs(h:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("watering") and t.Name:lower():find("super") then tool=t; break end
+        end end
+        if tool then break end
+    end
+    if not tool then print("[AF2] Super Watering Can ga ada di backpack"); return false end
+    local sf = nil
+    if not state.af2AllPlots then
+        local any = false
+        for _ in pairs(state.af2SelectedPlots or {}) do any=true; break end
+        if any then sf = state.af2SelectedPlots end
+    end
+    local positions = Farm.af2GetPlantPositions(sf)
+    if #positions == 0 then print("[AF2] WC: ga ada tanaman di garden"); return false end
+    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
+    local placed = 0
+    for _, e in ipairs(positions) do
+        pcall(function() p:Fire(e.pos, tool.Name, tool, 1) end)
+        placed = placed + 1; task.wait(0.15)
+    end
+    print(string.format("[AF2] Super WC placed %d titik", placed))
+    return placed > 0
+end
+
+Farm._af2Status = "OFF"
+Farm._af2SprLastPlace = 0
+Farm._af2WCLastPlace = 0
+local AF2_SPR_DURATION = 120
+
+staggerSpawn(function()
+    while isCurrentGen() do
+        pcall(function()
+            task.wait(3)
+            if not (state.autoSuperSprinkler or state.autoSuperWC) then
+                Farm._af2Status = "OFF"; return
+            end
+            local threshKg  = math.abs(state.c2WeightF or 50)
+            local wcTrigger = state.af2WCTrigger or 50    -- place WC kalau small ≤ ini
+            local bigCap    = state.af2BigCap or 500      -- stop kalau big ≥ ini
+            local smallCount = Farm.af2CountSmallFruits(threshKg)
+            local bigCount   = Farm.af2CountBigFruits(threshKg)
+            local now = os.clock()
+
+            -- STOP kalau buah besar sudah mencapai batas
+            if bigCount >= bigCap then
+                Farm._af2Status = string.format("STOP — buah ≥%dkg udah %d (batas %d)", threshKg, bigCount, bigCap)
+                return
+            end
+
+            -- SUPER WC: place kalau buah kecil tinggal ≤ wcTrigger
+            if state.autoSuperWC then
+                if smallCount <= wcTrigger then
+                    print(string.format("[AF2] WC: buah <%dkg tinggal %d (≤%d) -> place WC", threshKg, smallCount, wcTrigger))
+                    Farm.af2PlaceWateringCan()
+                    Farm._af2WCLastPlace = now
+                end
+            end
+
+            -- SUPER SPRINKLER: place tiap 2 menit
+            if state.autoSuperSprinkler then
+                local sprElapsed = now - Farm._af2SprLastPlace
+                if sprElapsed >= AF2_SPR_DURATION then
+                    print(string.format("[AF2] Sprinkler: %.0fs -> place", sprElapsed))
+                    local ok = Farm.af2PlaceSuperSprinkler()
+                    if ok then Farm._af2SprLastPlace = now end
+                end
+            end
+
+            local remSpr = math.max(0, math.floor(AF2_SPR_DURATION - (now - Farm._af2SprLastPlace)))
+            Farm._af2Status = string.format(
+                "kecil: %d | besar: %d/%d | WC: %s | Spr: %ds",
+                smallCount, bigCount, bigCap,
+                smallCount <= wcTrigger and "place" or "nunggu",
+                remSpr)
+        end)
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if not isCurrentGen() then break end
+        task.wait(1)
+    end
+end)
 
 -- ====== CARD 8: AUTO SPRINKLER (v8.8 — rekam + multi-select posisi) ======
 local applySprinkler, applySprSave
@@ -7680,7 +8087,7 @@ do
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Auto Rejoin Weather", 15, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 12); nameL.Size = UDim2.new(1, -28, 0, 20)
-    local descL = lbl(card, "weather buruk -> spam teleport (freeze native) X detik -> baru pindah", 12, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "weather buruk -> langsung teleport (ilang dari server, pindah)", 12, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 34); descL.Size = UDim2.new(1, -28, 0, 16)
     local body = mk("Frame", { Size = UDim2.new(1, -28, 1, -64), Position = UDim2.new(0, 14, 0, 58),
         BackgroundTransparency = 1, Parent = card })
@@ -7689,7 +8096,7 @@ do
     mkTypeRow(body, 4, "Weather bagus", Farm.weatherList, state.goodWeathers, "allGoodWeather", "Semua weather bagus")
 
     -- lama freeze (detik) = lama spam teleport sblm bener2 pindah
-    lbl(body, "Lama freeze (detik)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
+    lbl(body, "Tunggu sblm pindah (detik)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,48)
     local dBox = mk("TextBox", { Size = UDim2.new(0.35, 0, 0, 30), Position = UDim2.new(0.65, 0, 0, 44),
         BackgroundColor3 = C.input, Text = tostring(state.weatherHopDelay or 60), PlaceholderText = "60",
         TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
@@ -7733,11 +8140,8 @@ do
             local bad = select(1, Farm.isBadWeatherNow())
             local txt, col = "", C.textDim
             if not state.autoWeatherHop then txt = "OFF"
-            elseif Farm._weatherHopState == "freeze" and Farm._weatherHopAt then
-                local rem = math.max(0, math.floor(Farm._weatherHopAt - os.clock()))
-                txt = "BURUK ("..tostring(w)..") -> freeze (spam tp) "..rem.."s lagi"; col = C.red
             elseif Farm._weatherHopState == "hopping" then
-                txt = "BURUK ("..tostring(w)..") -> lepas, pindah server..."; col = C.red
+                txt = "BURUK ("..tostring(w)..") -> teleport (ilang dari server)..."; col = C.red
             elseif bad then txt = "weather buruk kedeteksi..."
             else txt = "cuaca: "..tostring(w or "-").." (aman)" end
             stL.Text = "Status: "..txt; stL.TextColor3 = col
