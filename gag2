@@ -11,7 +11,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v29.8"
+local VER       = "v30.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6337,7 +6337,30 @@ function Farm.af2GetPlantPositions(seedFilter)
     return positions
 end
 
--- place Super Sprinkler di posisi tanaman yang ada di garden
+-- cek apakah Super Sprinkler sudah aktif di garden player (ada di Sprinklers folder plot)
+function Farm.af2IsSprinklerActive()
+    local found = false
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local myUid = player.UserId
+        for _, plot in ipairs(gardens:GetChildren()) do
+            if plot:GetAttribute("OwnerUserId") == myUid then
+                local sprs = plot:FindFirstChild("Sprinklers")
+                if sprs then
+                    for _, s in ipairs(sprs:GetChildren()) do
+                        if s.Name:lower():find("super") and s.Name:lower():find("sprinkler") then
+                            found = true; return
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return found
+end
+
+-- place Super Sprinkler di posisi plot yang dipilih
 function Farm.af2PlaceSuperSprinkler()
     local p = pkt("Place", "PlaceSprinkler")
     if not p or not p.Fire then print("[AF2] PlaceSprinkler remote gak ada"); return false end
@@ -6445,16 +6468,7 @@ staggerSpawn(function()
                 return
             end
 
-            -- SUPER WC: place kalau buah kecil tinggal ≤ wcTrigger
-            if state.autoSuperWC then
-                if smallCount <= wcTrigger then
-                    print(string.format("[AF2] WC: buah <%dkg tinggal %d (≤%d) -> place WC", threshKg, smallCount, wcTrigger))
-                    Farm.af2PlaceWateringCan()
-                    Farm._af2WCLastPlace = now
-                end
-            end
-
-            -- SUPER SPRINKLER: place tiap 2 menit
+            -- SUPER SPRINKLER: place tiap 2 menit (DIDAHULUKAN — biar buah gede dulu)
             if state.autoSuperSprinkler then
                 local sprElapsed = now - Farm._af2SprLastPlace
                 if sprElapsed >= AF2_SPR_DURATION then
@@ -6464,12 +6478,27 @@ staggerSpawn(function()
                 end
             end
 
+            -- SUPER WC: place kalau buah kecil ≤ wcTrigger DAN Sprinkler udah aktif di garden
+            -- (sprinkler harus ada dulu biar buah yang tumbuh besar, bukan kecil-kecil)
+            if state.autoSuperWC then
+                if smallCount <= wcTrigger then
+                    local sprActive = Farm.af2IsSprinklerActive()
+                    if sprActive then
+                        print(string.format("[AF2] WC: %d buah + sprinkler aktif -> place WC", smallCount))
+                        Farm.af2PlaceWateringCan()
+                        Farm._af2WCLastPlace = now
+                    else
+                        print("[AF2] WC: nunggu Super Sprinkler dulu di garden")
+                    end
+                end
+            end
+
             local remSpr = math.max(0, math.floor(AF2_SPR_DURATION - (now - Farm._af2SprLastPlace)))
+            local sprActive = Farm.af2IsSprinklerActive()
+            local wcStatus = smallCount <= wcTrigger and (sprActive and "place" or "nunggu spr") or "nunggu buah"
             Farm._af2Status = string.format(
                 "kecil: %d | besar: %d/%d | WC: %s | Spr: %ds",
-                smallCount, bigCount, bigCap,
-                smallCount <= wcTrigger and "place" or "nunggu",
-                remSpr)
+                smallCount, bigCount, bigCap, wcStatus, remSpr)
         end)
     end
 end)
