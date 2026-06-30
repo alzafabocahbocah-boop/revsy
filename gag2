@@ -1,8 +1,14 @@
 -- ============================================================
--- ZENX FARM  v22.7  (kerangka UI — fungsi nyusul via debug)
+-- ZENX FARM  v32.1
 -- GAG 2. Sidebar: AUTO FARM / MISC
--- AUTO FARM: Auto Collect / Auto Sell / Auto Buy Seed (toggle ON/OFF)
--- MISC: coming soon
+-- ------------------------------------------------------------
+-- Perubahan v32.0 (dari v31.5):
+--   * Panel MAIL: toggle "Simpan" (storageMode) ditambah
+--   * Panel MAIL: gift fruit per-amplop 8 -> 20 buah
+--   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
+--   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
+--   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
+--   * Auto Accept Gift jadi toggle jujur (ga dipaksa nyala; bisa dimatiin & nempel)
 -- ============================================================
 
 local Players   = game:GetService("Players")
@@ -11,7 +17,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v31.5"
+local VER       = "v32.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -4962,18 +4968,26 @@ local function showMailGift()
         Position=UDim2.new(0.5,-210,0.5,-168), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
     corner(pop,10); stroke(pop,C.border,1)
     local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
-    local ht = lbl(hbar, "MAIL — Kirim Buah (mailbox)", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-170,1,0); ht.ZIndex=72
+    local ht = lbl(hbar, "MAIL — Kirim Buah (mailbox)", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-185,1,0); ht.ZIndex=72
     local hcl = mk("TextButton", { Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-32,0,4), BackgroundColor3=C.red, Text="✕", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=hbar }); corner(hcl,6)
     hcl.MouseButton1Click:Connect(function() pop:Destroy() end)
-    -- v32.0: saldo Sheckles di header (sebelah kiri tombol close), refresh tiap 2s
-    local shLbl = lbl(hbar, "💰 ...", 12, C.green, Enum.TextXAlignment.Right)
-    shLbl.Position = UDim2.new(1,-150,0,0); shLbl.Size = UDim2.new(0,112,1,0); shLbl.ZIndex = 72
+    -- v32.1: total nilai buah di inventory (Character+Backpack) di header, sebelah kiri close. refresh 2s
+    -- hitung sama kayak panel KALKULASI: jumlah semua tool buah pakai Farm.fruitPrice (harga pasar)
+    local shLbl = lbl(hbar, "🍎 ...", 12, C.green, Enum.TextXAlignment.Right)
+    shLbl.Position = UDim2.new(1,-168,0,0); shLbl.Size = UDim2.new(0,130,1,0); shLbl.ZIndex = 72
     task.spawn(function()
         while pop.Parent do
-            local lp = game:GetService("Players").LocalPlayer
-            local ls = lp and lp:FindFirstChild("leaderstats")
-            local sv = ls and ls:FindFirstChild("Sheckles")
-            shLbl.Text = (sv and "💰 "..Farm.abbrev(sv.Value)) or "💰 ?"
+            local totN, totV = 0, 0
+            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+                if holder then
+                    for _, t in ipairs(holder:GetChildren()) do
+                        if (t:GetAttribute("Fruit") or t:GetAttribute("FruitName")) and t:GetAttribute("Id") then
+                            totN = totN + 1; totV = totV + (Farm.fruitPrice(t) or 0)
+                        end
+                    end
+                end
+            end
+            shLbl.Text = string.format("🍎 %s (%d)", Farm.abbrev(totV), totN)
             task.wait(2)
         end
     end)
