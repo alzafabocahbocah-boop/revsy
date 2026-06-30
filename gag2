@@ -1,14 +1,15 @@
 -- ============================================================
--- ZENX FARM  v32.1
+-- ZENX FARM  v32.4
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
 --   * Panel MAIL: toggle "Simpan" (storageMode) ditambah
---   * Panel MAIL: gift fruit per-amplop 8 -> 20 buah
+--   * Panel MAIL: gift fruit 1 batch/kirim (max 20) + verifikasi buah beneran ilang (anti counter palsu)
+--   * Panel MAIL: countdown real-time sebelum kirim berikutnya
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
---   * Auto Accept Gift jadi toggle jujur (ga dipaksa nyala; bisa dimatiin & nempel)
+--   * Auto Accept Gift: toggle jujur + bisa dimatiin langsung dari panel MAIL
 -- ============================================================
 
 local Players   = game:GetService("Players")
@@ -17,7 +18,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v32.1"
+local VER       = "v32.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -4932,28 +4933,40 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     end
     if #elig == 0 then return false, "ga ada buah cocok" end
     table.sort(elig, function(a, b) return a.val > b.val end)   -- nilai terbesar dulu
+    -- v32.3: SATU batch per panggilan (max 20 buah), DIVERIFIKASI.
+    -- dulu: nembak banyak batch beruntun (0.3s) -> ketolak cooldown mailbox -> buah gak kekirim,
+    -- tapi value tetep keitung (counter "terkirim" naik padahal buah masih di tas, SELESAI palsu).
+    -- sekarang: cuma hitung buah yg BENERAN ilang dari tas. loop luar udah jeda 11s (= cooldown mailbox).
     local picked, sum = {}, 0
     for _, e in ipairs(elig) do
-        if sum >= cap then break end
+        if sum >= cap or #picked >= 20 then break end   -- max 20 buah / panggilan (1 batch)
         picked[#picked+1] = e; sum = sum + e.val
     end
-    local batch, total = {}, 0
-    local function flush()
-        if #batch > 0 then
-            local items = batch; batch = {}
-            pcall(function() sb:Fire(uid, items, "") end)
-            total = total + #items; task.wait(0.3)
+    local items = {}
+    for _, e in ipairs(picked) do items[#items+1] = { ItemKey = e.fid, Count = 1, Category = "HarvestedFruits" } end
+    pcall(function() sb:Fire(uid, items, "") end)
+    task.wait(1)   -- tunggu inventory ke-update (replikasi) sebelum verifikasi
+    local function fidInBag(fid)
+        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    if tostring(t:GetAttribute("Id") or "") == fid then return true end
+                end
+            end
         end
+        return false
     end
     Farm._scriptSentIds = Farm._scriptSentIds or {}
+    local sentN, sentVal = 0, 0
     for _, e in ipairs(picked) do
-        Farm._scriptSentIds[e.fid] = true
-        Farm._mailSent[e.fid] = true
-        batch[#batch+1] = { ItemKey = e.fid, Count = 1, Category = "HarvestedFruits" }
-        if #batch >= 20 then flush() end   -- v31.7: MAIL gift fruit chunk 8 -> 20 (kurang dari 20 = kirim apa adanya)
+        if not fidInBag(e.fid) then   -- beneran ilang -> kekirim
+            Farm._mailSent[e.fid] = true; Farm._scriptSentIds[e.fid] = true
+            sentN = sentN + 1; sentVal = sentVal + e.val
+        end
+        -- masih di tas -> JANGAN ditandai sent, biar dicoba lagi panggilan berikutnya
     end
-    flush()
-    return true, total, sum
+    if sentN == 0 then return false, "kirim gagal, coba lagi (cooldown?)" end
+    return true, sentN, sentVal
 end
 
 local function showMailGift()
@@ -5044,13 +5057,13 @@ local function showMailGift()
 
     mkLabel("Target (juta)",120); local tgtBox = mkBox(120, state.mailTotalM or "3M", "cth 1500 = 1.5B")
 
-    local mkBtn = mk("TextButton", { Size=UDim2.new(0,180,0,26), Position=UDim2.new(0,14,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
+    local mkBtn = mk("TextButton", { Size=UDim2.new(0,124,0,26), Position=UDim2.new(0,14,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
     local function updMk() mkBtn.Text="Harga: "..(marketOn and "PASAR" or "NORMAL x1") end
     updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn=not marketOn; updMk() end)
 
     -- v31.6: toggle Akun Penyimpanan (storageMode) — sama kayak di Kalku Gift.
     -- ON = akun ini cuma TERIMA gift, gak ikut auto-gift kayak farm.
-    local storBtn = mk("TextButton", { Size=UDim2.new(0,150,0,26), Position=UDim2.new(0,204,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.textDim, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(storBtn,6); stroke(storBtn,C.border,1)
+    local storBtn = mk("TextButton", { Size=UDim2.new(0,124,0,26), Position=UDim2.new(0,148,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.textDim, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(storBtn,6); stroke(storBtn,C.border,1)
     local function updStor()
         if state.storageMode then storBtn.Text="Simpan: ON"; storBtn.BackgroundColor3=Color3.fromRGB(240,240,240); storBtn.TextColor3=Color3.new(0,0,0)
         else storBtn.Text="Simpan: OFF"; storBtn.BackgroundColor3=C.input; storBtn.TextColor3=C.textDim end
@@ -5061,6 +5074,19 @@ local function showMailGift()
         print("[ZenxFarm] Akun Penyimpanan (dari MAIL) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
     end)
     task.spawn(function() while pop.Parent do updStor(); task.wait(1) end end)  -- sync kalau diubah dr tempat lain
+
+    -- v32.2: toggle Auto Accept Gift di panel MAIL (biar bisa matiin langsung dari sini), tombol ke-3 sebaris
+    local accBtn = mk("TextButton", { Size=UDim2.new(0,124,0,26), Position=UDim2.new(0,282,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.textDim, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(accBtn,6); stroke(accBtn,C.border,1)
+    local function updAcc()
+        if state.autoAcceptGift then accBtn.Text="Accept: ON"; accBtn.BackgroundColor3=Color3.fromRGB(240,240,240); accBtn.TextColor3=Color3.new(0,0,0)
+        else accBtn.Text="Accept: OFF"; accBtn.BackgroundColor3=C.input; accBtn.TextColor3=C.textDim end
+    end
+    updAcc(); accBtn.MouseButton1Click:Connect(function()
+        state.autoAcceptGift = not state.autoAcceptGift; saveState(); updAcc()
+        if Farm._applyAcceptRef then pcall(Farm._applyAcceptRef) end   -- sync visual kartu Auto Accept Gift
+        print("[ZenxFarm] Auto Accept Gift (dari MAIL) -> "..(state.autoAcceptGift and "ON" or "OFF"))
+    end)
+    task.spawn(function() while pop.Parent do updAcc(); task.wait(1) end end)  -- sync kalau diubah dr kartu
 
     -- v26.9: range nilai/buah CUSTOM (min-max, satuan JUTA/M). kosong = tanpa batas.
     mkLabel("Range (juta)", 190)
@@ -5128,8 +5154,16 @@ local function showMailGift()
                     -- error (mis. resolveTargetId gagal) -> jangan mati, coba lagi nanti
                     out.Text = "error sementara, coba lagi..."; out.TextColor3 = C.textMute
                 end
-                -- v28.5: delay 11s (mailbox cooldown ~10s). biar batch ga ke-reject server
-                task.wait(11)
+                -- v32.4: countdown sebelum kirim lagi (real-time, 1s/detik), nempel di status.
+                -- total spasi antar-Fire tetap ~11s (1s verifikasi di mailGiftSend + 10s ini) = aman cooldown.
+                if running and pop.Parent then
+                    local base = out.Text
+                    for n = 10, 1, -1 do
+                        if not (running and pop.Parent) then break end
+                        out.Text = base .. "   •  kirim lagi "..n.."s"
+                        task.wait(1)
+                    end
+                end
             end
         end)
     end)
