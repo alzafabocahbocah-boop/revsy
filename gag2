@@ -2790,14 +2790,16 @@ end)
 -- inventory = Tool di Backpack. seed: attr SeedTool+Count, MainCategory=Seed.
 --             pet: attr Pet (jenis) + PetId (UUID) + PetSize.
 -- gift item: seed {ItemKey=nama, Count=n, Category="Seeds"}, pet {ItemKey=PetId, Count=1, Category="Pets"}
+local _uidCache = {}   -- v31.8: cache userId by name (userId<->username permanen, aman di-cache)
 local function resolveTargetId(name)
+    if _uidCache[name] then return _uidCache[name] end   -- udah pernah resolve -> pakai cache (ga nembak API lagi)
     local lp = pkt("Mailbox", "LookupPlayer")
     if not lp then return nil end
     -- LookupPlayer biasanya Response/Invoke. coba ambil userId via API roblox dulu (lebih andal)
     local ok, id = pcall(function()
         return game:GetService("Players"):GetUserIdFromNameAsync(name)
     end)
-    if ok and id then return id end
+    if ok and id then _uidCache[name] = id; return id end   -- cuma cache yg SUKSES (gagal -> retry lain kali)
     return nil
 end
 -- ===== AUTO STEAL: curi buah garden orang lain =====
@@ -4946,7 +4948,7 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
         Farm._scriptSentIds[e.fid] = true
         Farm._mailSent[e.fid] = true
         batch[#batch+1] = { ItemKey = e.fid, Count = 1, Category = "HarvestedFruits" }
-        if #batch >= 8 then flush() end
+        if #batch >= 20 then flush() end   -- v31.7: MAIL gift fruit chunk 8 -> 20 (kurang dari 20 = kirim apa adanya)
     end
     flush()
     return true, total, sum
@@ -5023,6 +5025,20 @@ local function showMailGift()
     local mkBtn = mk("TextButton", { Size=UDim2.new(0,180,0,26), Position=UDim2.new(0,14,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
     local function updMk() mkBtn.Text="Harga: "..(marketOn and "PASAR" or "NORMAL x1") end
     updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn=not marketOn; updMk() end)
+
+    -- v31.6: toggle Akun Penyimpanan (storageMode) — sama kayak di Kalku Gift.
+    -- ON = akun ini cuma TERIMA gift, gak ikut auto-gift kayak farm.
+    local storBtn = mk("TextButton", { Size=UDim2.new(0,150,0,26), Position=UDim2.new(0,204,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.textDim, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(storBtn,6); stroke(storBtn,C.border,1)
+    local function updStor()
+        if state.storageMode then storBtn.Text="Simpan: ON"; storBtn.BackgroundColor3=Color3.fromRGB(240,240,240); storBtn.TextColor3=Color3.new(0,0,0)
+        else storBtn.Text="Simpan: OFF"; storBtn.BackgroundColor3=C.input; storBtn.TextColor3=C.textDim end
+    end
+    updStor(); storBtn.MouseButton1Click:Connect(function()
+        state.storageMode = not state.storageMode; saveState(); updStor()
+        if Farm._applyStorageRef then pcall(Farm._applyStorageRef) end   -- sync toggle di panel AUTO GIFT + Kalku Gift
+        print("[ZenxFarm] Akun Penyimpanan (dari MAIL) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
+    end)
+    task.spawn(function() while pop.Parent do updStor(); task.wait(1) end end)  -- sync kalau diubah dr tempat lain
 
     -- v26.9: range nilai/buah CUSTOM (min-max, satuan JUTA/M). kosong = tanpa batas.
     mkLabel("Range (juta)", 190)
