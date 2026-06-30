@@ -375,7 +375,7 @@ local state = {
     selectedPetType = {},       -- jenis pet (PetName)
     selectedPetRare = {},       -- rarity pet
     autoGift        = false,
-    autoAcceptGift  = false,    -- v8.9: auto claim gift masuk dari mailbox
+    autoAcceptGift  = true,     -- v8.9: auto claim gift mailbox. v32.0: default ON (fresh), tapi bisa dimatiin & nempel
     autoAfk         = false,
     antiLag         = false,    -- v11.4: matiin efek visual berat (max enteng)
     hidePlants      = false,    -- v11.7: sembunyiin visual tanaman (buah tetep keliatan)
@@ -3795,11 +3795,7 @@ staggerSpawn(function()
             saveState()
             print("[ZenxFarm] Buy Pet ON -> Sell pas penuh dimatiin (pakai sell biasa)")
         end
-        if not state.autoAcceptGift then
-            state.autoAcceptGift = true
-            if Farm._applyAcceptRef then pcall(Farm._applyAcceptRef) end
-            saveState()
-        end
+        -- v32.0: auto-accept gift TIDAK lagi dipaksa nyala — hormati toggle user (kalau dimatiin, tetap mati)
         -- v27.5: akun buy-pet -> Auto Hop Server MATI (jangan pindah server, biar buy pet ga keganggu)
         if state.autoBuyPet and state.autoHop then
             state.autoHop = false
@@ -4966,9 +4962,21 @@ local function showMailGift()
         Position=UDim2.new(0.5,-210,0.5,-168), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=70, Active=true, Parent=sg })
     corner(pop,10); stroke(pop,C.border,1)
     local hbar = mk("Frame", { Size=UDim2.new(1,0,0,36), BackgroundColor3=C.card, BorderSizePixel=0, ZIndex=71, Parent=pop }); corner(hbar,10)
-    local ht = lbl(hbar, "MAIL — Kirim Buah (mailbox)", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-44,1,0); ht.ZIndex=72
+    local ht = lbl(hbar, "MAIL — Kirim Buah (mailbox)", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,12,0,0); ht.Size=UDim2.new(1,-170,1,0); ht.ZIndex=72
     local hcl = mk("TextButton", { Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-32,0,4), BackgroundColor3=C.red, Text="✕", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=hbar }); corner(hcl,6)
     hcl.MouseButton1Click:Connect(function() pop:Destroy() end)
+    -- v32.0: saldo Sheckles di header (sebelah kiri tombol close), refresh tiap 2s
+    local shLbl = lbl(hbar, "💰 ...", 12, C.green, Enum.TextXAlignment.Right)
+    shLbl.Position = UDim2.new(1,-150,0,0); shLbl.Size = UDim2.new(0,112,1,0); shLbl.ZIndex = 72
+    task.spawn(function()
+        while pop.Parent do
+            local lp = game:GetService("Players").LocalPlayer
+            local ls = lp and lp:FindFirstChild("leaderstats")
+            local sv = ls and ls:FindFirstChild("Sheckles")
+            shLbl.Text = (sv and "💰 "..Farm.abbrev(sv.Value)) or "💰 ?"
+            task.wait(2)
+        end
+    end)
     local function mkLabel(t,y) local l=lbl(pop,t,12,C.text,Enum.TextXAlignment.Left); l.Position=UDim2.new(0,14,0,y); l.Size=UDim2.new(0,108,0,24); l.ZIndex=72; return l end
     local function mkBox(y,def,ph) local b=mk("TextBox",{ Size=UDim2.new(1,-138,0,28), Position=UDim2.new(0,124,0,y-2), BackgroundColor3=C.input, Text=def or "", PlaceholderText=ph or "", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1); return b end
 
@@ -8499,8 +8507,7 @@ do
     end)
     Farm._calcGardenRefresh = refresh
 end
--- v18.6: auto accept gift selalu nyala; akun buy pet -> auto sell nyala
-state.autoAcceptGift = true
+-- v18.6: akun buy pet -> auto sell nyala. v32.0: auto-accept gift hormati state tersimpan (ga dipaksa true)
 if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; state.autoHop = true; if not state.hopMinutes or state.hopMinutes <= 0 then state.hopMinutes = 45 end if state.hopMinutes == 30 then state.hopMinutes = 45 end end
 
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyGiftPet(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
