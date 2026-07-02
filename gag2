@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v34.8
+-- ZENX FARM  v34.9
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -28,6 +28,7 @@
 --   * Hitung buah plot & counter AF2: cuma tanaman MILIK SENDIRI (prefix userId) — angka konsisten
 --   * Picker Collect/Collect2 di-rename "Jenis Pohon" (list-nya emang seed/pohon, bukan buah tas)
 --   * Collect 2 (AF2): mode "Semua Mutasi KECUALI [daftar]" — default Bloodlit/Aurora/Starstruck, bisa diatur
+--   * Collect 2 (AF2): toggle "Collect GOLD kg berapapun" — Gold nembus filter kg & anti-heavy
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -51,7 +52,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v34.8"
+local VER       = "v34.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -408,6 +409,8 @@ local state = {
     selectedCollectMut = {},    -- v5.9: filter mutasi collect
     collectMutExcept   = false, -- v34.7: var kerja internal (di-set dari c2MutExcept pas siklus Collect 2)
     c2MutExcept        = false, -- v34.8: AF2 Collect 2 — mode KECUALI: collect SEMUA mutasi kecuali daftar
+    collectGoldAnyKg   = false, -- v34.9: var kerja internal (dari c2GoldAnyKg pas siklus Collect 2)
+    c2GoldAnyKg        = false, -- v34.9: AF2 Collect 2 — GOLD ke-collect kg BERAPAPUN (nembus filter kg)
     selectedCollectMutEx = { Bloodlit=true, Aurora=true, Starstruck=true },  -- v34.7: daftar kecuali (bisa diatur)
     selectedSellMut    = {},    -- v5.9: filter mutasi sell
     collectMutAll   = true,     -- collect semua mutasi (default: gak filter mutasi)
@@ -504,7 +507,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -1823,6 +1826,11 @@ function Farm.collectOnce()
                     local dec = fruit:GetAttribute("DecayAlpha")
                     if type(dec) == "number" and dec > (state.collectFreshMax or 0.5) then okFresh = false end
                 end
+                -- v34.9: GOLD kg berapapun — mutasi Gold nembus filter mutasi + kg + anti-heavy
+                -- (aturan Fresh Only tetep berlaku). aktif cuma pas siklus Collect 2 dgn toggle ON.
+                if state.collectGoldAnyKg and getMutation(fruit) == "Gold" then
+                    okMut = true; okW = true; okHeavy = true
+                end
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
@@ -2556,9 +2564,10 @@ staggerSpawn(function()
             if isCurrentGen() and state.autoCollect2 then
                 local sv = { collectAll=state.collectAll, collectMutAll=state.collectMutAll, collectNoMut=state.collectNoMut,
                     collectWeightF=state.collectWeightF, collectMulti=state.collectMulti, collectSingle=state.collectSingle,
-                    collectMutExcept=state.collectMutExcept }   -- v34.7: ikut disimpen
+                    collectMutExcept=state.collectMutExcept, collectGoldAnyKg=state.collectGoldAnyKg }   -- v34.7/34.9
                 state.collectAll = state.c2All; state.collectMutAll = false; state.collectNoMut = state.c2NoMut
                 state.collectMutExcept = state.c2MutExcept   -- v34.8: mode KECUALI milik AF2 Collect 2
+                state.collectGoldAnyKg = state.c2GoldAnyKg   -- v34.9: Gold kg berapapun milik AF2 Collect 2
                 state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
                 pcall(Farm.collectOnce)
                 for k,v in pairs(sv) do state[k] = v end
@@ -6666,7 +6675,9 @@ do
             task.wait(2)
         end
     end)
-    setH(322)
+    -- v34.9: GOLD ke-collect kg BERAPAPUN — nembus filter kg & anti-heavy (khusus Collect 2)
+    mkBodyToggle(body, 320, "Collect GOLD kg berapapun", "c2GoldAnyKg", "Collect2 Gold Any Kg")
+    setH(362)
 end
 
 -- CARD AF2-4: AUTO SELL 2 (terpisah, default: semua, backpack penuh, kg=0)
