@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v33.5
+-- ZENX FARM  v33.6
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -17,6 +17,7 @@
 --   * AF2: lokasi plot diperjelas — nama tanaman + JUMLAH BUAH + jarak, TAP -> tiang cahaya di TITIK seed
 --   * AF2 scan: Y dipatok ke TANAH (raycast), X/Z tetep ikut seed — seed melayang gak masalah
 --   * FIX picker Jenis Sprinkler & WC — dulu nyangkut di "auto", sekarang cycle bener
+--   * Picker nampilin JUMLAH: "Super Watering Can ×5", auto-refresh 5s, "(habis)" kalau abis
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -29,7 +30,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v33.5"
+local VER       = "v33.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6455,17 +6456,28 @@ do
         scanBtn.Text = #result > 0 and ("✓ "..#result.." plot") or "❌ kosong"
         task.wait(2); scanBtn.Text = "📍 Scan"
     end)
-    -- helper: scan backpack untuk tool jenis tertentu
+    -- helper: scan backpack untuk tool jenis tertentu. v33.6: sekalian ambil JUMLAH (attr Count)
     local function scanTools(keyword)
-        local list = {}; local seen = {}
-        for _, h in ipairs({player.Character, player:FindFirstChildOfClass("Backpack")}) do
-            if h then for _, t in ipairs(h:GetChildren()) do
-                if t:IsA("Tool") and t.Name:lower():find(keyword,1,true) and not seen[t.Name] then
-                    seen[t.Name]=true; list[#list+1]=t.Name
+        local list = {}; local seen = {}; local counts = {}
+        local holders = {}
+        if player.Character then holders[#holders+1] = player.Character end
+        local bp = player:FindFirstChildOfClass("Backpack")
+        if bp then holders[#holders+1] = bp end
+        for _, h in ipairs(holders) do
+            for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find(keyword,1,true) then
+                    counts[t.Name] = (counts[t.Name] or 0) + (t:GetAttribute("Count") or 1)
+                    if not seen[t.Name] then seen[t.Name]=true; list[#list+1]=t.Name end
                 end
-            end end
+            end
         end
-        return list
+        return list, counts
+    end
+    -- v33.6: format tampilan — gak dipilih = "auto", dipilih = "Nama ×N"
+    local function fmtTool(name, counts)
+        if not name or name == "" then return "auto" end
+        local n = counts and counts[name]
+        return name..(n and (" ×"..n) or " (habis)")
     end
     -- picker sprinkler
     local sprRow = mk("Frame",{Size=UDim2.new(1,0,0,26),Position=UDim2.new(0,0,0,42),BackgroundTransparency=1,Parent=body})
@@ -6474,7 +6486,7 @@ do
     sprSel.Size=UDim2.new(0.42,0,1,0); sprSel.Position=UDim2.new(0.42,0,0,0)
     local sprBtn=mk("TextButton",{Size=UDim2.new(0.14,0,0,22),Position=UDim2.new(0.86,0,0,2),BackgroundColor3=C.input,TextColor3=C.textDim,Text="pilih",Font=FONT,TextSize=10,BorderSizePixel=0,Parent=sprRow}); corner(sprBtn,5)
     sprBtn.MouseButton1Click:Connect(function()
-        local list = scanTools("sprinkler")
+        local list, counts = scanTools("sprinkler")
         if #list==0 then sprSel.Text="(kosong)"; return end
         -- v33.5: FIX cycle — dulu dari "auto" nyangkut selamanya (idx=0 -> 0). sekarang:
         -- opsi = {auto, ...semua tool}, maju satu dgn wrap: auto -> A -> B -> C -> auto
@@ -6485,7 +6497,7 @@ do
         for i, v in ipairs(opts) do if v == cur then idx = i; break end end
         idx = idx % #opts + 1
         state.af2SprTool = opts[idx]
-        sprSel.Text = state.af2SprTool~="" and state.af2SprTool or "auto"; saveState()
+        sprSel.Text = fmtTool(state.af2SprTool, counts); saveState()   -- v33.6: "Nama ×N"
     end)
     -- picker WC
     local wcRow = mk("Frame",{Size=UDim2.new(1,0,0,26),Position=UDim2.new(0,0,0,70),BackgroundTransparency=1,Parent=body})
@@ -6494,7 +6506,7 @@ do
     wcSel.Size=UDim2.new(0.42,0,1,0); wcSel.Position=UDim2.new(0.42,0,0,0)
     local wcBtn=mk("TextButton",{Size=UDim2.new(0.14,0,0,22),Position=UDim2.new(0.86,0,0,2),BackgroundColor3=C.input,TextColor3=C.textDim,Text="pilih",Font=FONT,TextSize=10,BorderSizePixel=0,Parent=wcRow}); corner(wcBtn,5)
     wcBtn.MouseButton1Click:Connect(function()
-        local list = scanTools("watering")
+        local list, counts = scanTools("watering")
         if #list==0 then wcSel.Text="(kosong)"; return end
         -- v33.5: FIX cycle (sama kayak sprinkler): auto -> A -> B -> ... -> auto
         local opts = {""}
@@ -6504,7 +6516,21 @@ do
         for i, v in ipairs(opts) do if v == cur then idx = i; break end end
         idx = idx % #opts + 1
         state.af2WCTool = opts[idx]
-        wcSel.Text = state.af2WCTool~="" and state.af2WCTool or "auto"; saveState()
+        wcSel.Text = fmtTool(state.af2WCTool, counts); saveState()   -- v33.6: "Nama ×N"
+    end)
+    -- v33.6: refresh jumlah tiap 5s — angka ×N ikut turun pas sprinkler/WC kepakai
+    task.spawn(function()
+        while card.Parent do
+            pcall(function()
+                if state.af2SprTool and state.af2SprTool ~= "" then
+                    local _, c = scanTools("sprinkler"); sprSel.Text = fmtTool(state.af2SprTool, c)
+                else sprSel.Text = "auto" end
+                if state.af2WCTool and state.af2WCTool ~= "" then
+                    local _, c = scanTools("watering"); wcSel.Text = fmtTool(state.af2WCTool, c)
+                else wcSel.Text = "auto" end
+            end)
+            task.wait(5)
+        end
     end)
     -- trigger WC
     lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,104)
