@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v34.2
+-- ZENX FARM  v34.7
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -23,6 +23,11 @@
 --   * Auto Sell (FARM 1): toggle "Tanpa Mutasi (ikut jual)" — cermin punya Auto Collect
 --   * WC: KUNCI ke remote asli hasil spy — WateringCan.UseWateringCan(pos, nama, tool)
 --   * FIX counter kecil/besar AF2 — salah tingkat folder (skip Plants), dari dulu selalu 0
+--   * AF2: auto-LEPAS tool (UnequipTools) habis place sprinkler/WC — anti kepencet
+--   * AF2: sprinkler ilang dari garden -> DETEKSI langsung & re-place, ga nunggu timer 2 menit
+--   * Hitung buah plot & counter AF2: cuma tanaman MILIK SENDIRI (prefix userId) — angka konsisten
+--   * Picker Collect/Collect2 di-rename "Jenis Pohon" (list-nya emang seed/pohon, bukan buah tas)
+--   * Collect: mode "Semua Mutasi KECUALI [daftar]" — default Bloodlit/Aurora/Starstruck, bisa diatur
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -46,7 +51,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v34.2"
+local VER       = "v34.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -401,6 +406,8 @@ local state = {
     af2SelectedPlots = {},      -- v29.2: plot picker buat WC + Sprinkler AF2
     af2SavedPos = {},           -- v31.1: posisi tersimpan {plotId, x, y, z}
     selectedCollectMut = {},    -- v5.9: filter mutasi collect
+    collectMutExcept   = false, -- v34.7: mode KECUALI — collect SEMUA mutasi kecuali daftar di bawah
+    selectedCollectMutEx = { Bloodlit=true, Aurora=true, Starstruck=true },  -- v34.7: daftar kecuali (bisa diatur)
     selectedSellMut    = {},    -- v5.9: filter mutasi sell
     collectMutAll   = true,     -- collect semua mutasi (default: gak filter mutasi)
     collectNoMut    = false,    -- v22.6: ikut ambil buah TANPA mutasi (default off)
@@ -496,7 +503,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","collectMutExcept","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -510,6 +517,7 @@ local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect
                  selectedCollect2="selectedCollect2", selectedSell2="selectedSell2",
                  af2SelectedPlots="af2SelectedPlots",
                  selectedCollectMut="selectedCollectMut", selectedSellMut="selectedSellMut",
+                 selectedCollectMutEx="selectedCollectMutEx",
                  selectedGear="selectedGear",
                  selectedSprSeed="selectedSprSeed", selectedSprType="selectedSprType",
                  selectedSprPos="selectedSprPos",
@@ -1795,6 +1803,12 @@ function Farm.collectOnce()
                 local okMut = passMutation(fruit, state.selectedCollectMut, "collectMutAll", true)
                 -- v22.6: toggle "Tanpa Mutasi" ON -> ikut ambil buah polos
                 if not okMut and state.collectNoMut and getMutation(fruit) == nil then okMut = true end
+                -- v34.7: mode KECUALI ON -> buah BERMUTASI dinilai ulang: SEMUA mutasi ke-collect
+                -- KECUALI yg ada di daftar kecuali. buah polos tetep ikut aturan "Tanpa Mutasi".
+                if state.collectMutExcept then
+                    local m = getMutation(fruit)
+                    if m ~= nil then okMut = not ((state.selectedCollectMutEx or {})[m]) end
+                end
                 local okW = passWeight(Farm.gardenKg(fruit, seedName), state.collectWeightF)  -- v10.9
                 -- v23.1: anti-collect buah berat (>=100kg) — kalau ON, buah segede itu di-skip
                 local okHeavy = true
@@ -2540,8 +2554,10 @@ staggerSpawn(function()
             -- v28.7: Auto Collect 2 (setting terpisah: c2All, c2NoMut, c2WeightF)
             if isCurrentGen() and state.autoCollect2 then
                 local sv = { collectAll=state.collectAll, collectMutAll=state.collectMutAll, collectNoMut=state.collectNoMut,
-                    collectWeightF=state.collectWeightF, collectMulti=state.collectMulti, collectSingle=state.collectSingle }
+                    collectWeightF=state.collectWeightF, collectMulti=state.collectMulti, collectSingle=state.collectSingle,
+                    collectMutExcept=state.collectMutExcept }   -- v34.7: ikut disimpen
                 state.collectAll = state.c2All; state.collectMutAll = false; state.collectNoMut = state.c2NoMut
+                state.collectMutExcept = false   -- v34.7: mode KECUALI ga berlaku buat Collect 2
                 state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
                 pcall(Farm.collectOnce)
                 for k,v in pairs(sv) do state[k] = v end
@@ -6072,7 +6088,7 @@ local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, appl
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
     setH(488)
-    mkTypeRow(body, 4,  "Jenis Buah", fruitList, state.selectedCollect, "collectAll", "Semua buah")
+    mkTypeRow(body, 4,  "Jenis Pohon", fruitList, state.selectedCollect, "collectAll", "Semua buah")
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
     -- v6.9: pisah multi & single harvest
@@ -6110,6 +6126,32 @@ do
     applyCollectNoMut = mkBodyToggle(body, 404, "Tanpa Mutasi (ikut ambil)", "collectNoMut", "Collect No Mutation")
     -- v23.1: anti-collect buah berat (>=100kg). default ON, ga disave -> selalu ON pas rejoin/exe
     mkBodyToggle(body, 444, "Anti Collect 100kg+", "antiCollectHeavy", "Anti Collect 100kg")
+    -- v34.7: mode KECUALI — collect SEMUA mutasi kecuali daftar terpilih (daftar bisa diatur)
+    mkBodyToggle(body, 484, "Semua Mutasi KECUALI", "collectMutExcept", "Collect Mutasi KECUALI")
+    mkTypeRow(body, 524, "Daftar Kecuali", function() return MUTATIONS end, state.selectedCollectMutEx, "_exNever", "pilih kecuali...")
+    local exInfo = lbl(body, "", 11, C.textMute, Enum.TextXAlignment.Left)
+    exInfo.Position = UDim2.new(0,0,0,564); exInfo.Size = UDim2.new(1,0,0,30)
+    exInfo.TextWrapped = true; exInfo.TextYAlignment = Enum.TextYAlignment.Top
+    task.spawn(function()
+        while card.Parent do
+            pcall(function()
+                if state.collectMutExcept then
+                    local names = {}
+                    for m in pairs(state.selectedCollectMutEx or {}) do names[#names+1] = m end
+                    table.sort(names)
+                    exInfo.Text = #names > 0
+                        and ("Kecuali: "..table.concat(names, ", ").."  — mutasi LAIN bakal ke-collect")
+                        or  "Daftar kecuali kosong — SEMUA mutasi ke-collect"
+                    exInfo.TextColor3 = C.green
+                else
+                    exInfo.Text = "OFF — filter Mutasi biasa yang jalan"
+                    exInfo.TextColor3 = C.textMute
+                end
+            end)
+            task.wait(2)
+        end
+    end)
+    setH(600)
 end
 
 -- ====== CARD 2: AUTO SELL ======
@@ -6349,7 +6391,9 @@ do
         BackgroundTransparency = 1, Text = "Belum di-scan", TextColor3 = C.textMute, Font = FONT, TextSize = 10,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
         BorderSizePixel = 0, AutoButtonColor = false, Parent = body })
-    -- v33.2: sekalian hitung JUMLAH BUAH di plot (semua tanaman di plot itu)
+    -- v33.2: sekalian hitung JUMLAH BUAH di plot. v34.5: CUMA tanaman MILIK SENDIRI
+    -- (nama tanaman format "<userId>_<uuid>" — kriteria sama persis countMyGardenFruits,
+    -- biar angkanya cocok sama picker jenis buah)
     local function plotInfoOf(plotId)
         local seed, nFruit = nil, 0
         pcall(function()
@@ -6357,10 +6401,14 @@ do
             local plot = g and g:FindFirstChild(plotId)
             local plants = plot and plot:FindFirstChild("Plants")
             if not plants then return end
-            for i, plant in ipairs(plants:GetChildren()) do
-                if i == 1 then seed = plant:GetAttribute("SeedName") or plant.Name end
-                local fr = plant:FindFirstChild("Fruits")
-                if fr then nFruit = nFruit + #fr:GetChildren() end
+            local MY = player.UserId
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if (not ownerId or ownerId == MY) then
+                    if not seed then seed = plant:GetAttribute("SeedName") or plant.Name end
+                    local fr = plant:FindFirstChild("Fruits")
+                    if fr then nFruit = nFruit + #fr:GetChildren() end
+                end
             end
         end)
         return seed, nFruit
@@ -6591,7 +6639,7 @@ local applyCollect2
 do
     local card, body, setH = mkFarmCard(12, "Auto Collect 2", "semua buah · tanpa mutasi · filter -50kg", buyList)
     setH(202)
-    mkTypeRow(body, 4, "Jenis Buah", fruitList, state.selectedCollect2, "c2All", "Semua buah")
+    mkTypeRow(body, 4, "Jenis Pohon", fruitList, state.selectedCollect2, "c2All", "Semua buah")
     applyCollect2 = mkBodyToggle(body, 44, "Tanpa Mutasi", "c2NoMut", "Collect2 No Mutation")
     lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
     local c2wBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 85),
@@ -6657,6 +6705,8 @@ function Farm.af2CountSmallFruits(threshKg)
             local plantsF = plot:FindFirstChild("Plants")   -- v34.2: FIX — tanaman ada DI DALAM folder Plants
             if plantsF then
             for _, plant in ipairs(plantsF:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))   -- v34.5: cuma tanaman MILIK SENDIRI
+                if (not ownerId or ownerId == player.UserId) then
                 local seedName = plant:GetAttribute("SeedName") or plant.Name
                 local fruits = plant:FindFirstChild("Fruits")
                 if fruits then
@@ -6664,6 +6714,7 @@ function Farm.af2CountSmallFruits(threshKg)
                         local kg = Farm.gardenKg(fruit, seedName) or 0
                         if kg > 0 and kg < threshKg then count = count + 1 end
                     end
+                end
                 end
             end
             end
@@ -6685,6 +6736,8 @@ function Farm.af2CountBigFruits(threshKg)
             local plantsF = plot:FindFirstChild("Plants")   -- v34.2: FIX — tanaman ada DI DALAM folder Plants
             if plantsF then
             for _, plant in ipairs(plantsF:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))   -- v34.5: cuma tanaman MILIK SENDIRI
+                if (not ownerId or ownerId == player.UserId) then
                 local seedName = plant:GetAttribute("SeedName") or plant.Name
                 local fruits = plant:FindFirstChild("Fruits")
                 if fruits then
@@ -6692,6 +6745,7 @@ function Farm.af2CountBigFruits(threshKg)
                         local kg = Farm.gardenKg(fruit, seedName) or 0
                         if kg >= threshKg then count = count + 1 end
                     end
+                end
                 end
             end
             end
@@ -6864,6 +6918,8 @@ function Farm.af2PlaceSuperSprinkler()
         task.wait(0.2)
     end
     print(string.format("[AF2] Sprinkler: %d/%d placed (tool=%s)", placed, #positions, tool.Name))
+    -- v34.3: LEPAS tool habis place — biar ga kepencet/ke-place lagi gak sengaja
+    if hum then task.wait(0.1); pcall(function() hum:UnequipTools() end) end
     return placed > 0
 end
 
@@ -6943,6 +6999,8 @@ function Farm.af2PlaceWateringCan()
         pcall(function() hrp.CFrame = origCF end)
     end
     print(string.format("[AF2] WC: %d fire di %d titik (tool=%s)", placed, #positions, tool.Name))
+    -- v34.3: LEPAS tool habis pakai — biar ga kepencet/kesiram lagi gak sengaja (WC consumable!)
+    task.wait(0.1); pcall(function() hum:UnequipTools() end)
     return placed > 0
 end
 
@@ -7002,6 +7060,13 @@ staggerSpawn(function()
             -- SUPER SPRINKLER: place langsung pertama kali, lalu tiap 2 menit
             if state.autoSuperSprinkler then
                 local sprElapsed = Farm._af2SprLastPlace and (now - Farm._af2SprLastPlace) or AF2_SPR_DURATION
+                -- v34.4: DETEKSI LANGSUNG tiap siklus — pakai detektor yg sama dgn gerbang WC.
+                -- sprinkler GA ADA di garden (abis/expired/place gagal) + place terakhir >10s (grace
+                -- biar server sempet spawn) -> JANGAN nunggu timer 2 menit, langsung re-place.
+                if sprElapsed >= 10 and sprElapsed < AF2_SPR_DURATION and not Farm.af2IsSprinklerActive() then
+                    print(string.format("[AF2] Sprinkler GA KEDETEKSI di garden (elapsed=%.0fs) -> re-place sekarang", sprElapsed))
+                    sprElapsed = AF2_SPR_DURATION
+                end
                 if sprElapsed >= AF2_SPR_DURATION then
                     print(string.format("[AF2] Sprinkler: place (elapsed=%.0fs)", sprElapsed))
                     local ok = Farm.af2PlaceSuperSprinkler()
@@ -7028,8 +7093,9 @@ staggerSpawn(function()
             local sprActive = Farm.af2IsSprinklerActive()
             local wcStatus = smallCount <= wcTrigger and (sprActive and "place" or "nunggu spr") or "nunggu buah"
             Farm._af2Status = string.format(
-                "kecil: %d | besar: %d/%d | WC: %s | Spr: %ds",
-                smallCount, bigCount, bigCap, wcStatus, remSpr)
+                "kecil: %d | besar: %d/%d | WC: %s | Spr: %s",
+                smallCount, bigCount, bigCap, wcStatus,
+                sprActive and ("ADA · "..remSpr.."s") or "GA ADA → re-place")   -- v34.4
         end)
     end
 end)
