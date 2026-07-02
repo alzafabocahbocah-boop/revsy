@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v35.0
+-- ZENX FARM  v35.1
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -30,6 +30,7 @@
 --   * Collect 2 (AF2): mode "Semua Mutasi KECUALI [daftar]" — default Bloodlit/Aurora/Starstruck, bisa diatur
 --   * Collect 2 (AF2): toggle "Collect GOLD kg berapapun" — Gold nembus filter kg & anti-heavy
 --   * Weather FREEZE (hasil spy): Kick lokal = keluar server seketika -> tunggu N detik (setting) -> rejoin
+--   * FIX: Day/Night/Moon/Sunset dll = NETRAL (dulu kebaca weather buruk -> kick terus); hop auto-OFF tiap start; delay 15s
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -53,7 +54,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v35.0"
+local VER       = "v35.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -452,7 +453,7 @@ local state = {
     autoHop         = false,    -- v17.0: auto hop server tiap X menit
     hopMinutes      = 30,       -- v17.0: interval auto hop (menit)
     autoWeatherHop  = false,    -- v26.8: rejoin pas weather buruk (semua kecuali yg ditandai bagus)
-    weatherHopDelay = 60,       -- v28.1: lama spam teleport (freeze native) sblm bener2 pindah
+    weatherHopDelay = 15,       -- v35.0: lama FREEZE (Kick lokal) sblm rejoin. v35.1: default dipendekin 60->15
     allGoodWeather  = false,    -- v26.8: semua weather dianggap bagus (ga pernah hop)
     giftTarget      = "",       -- nama penerima
     giftSeeds       = {},       -- jenis seed yg dikirim
@@ -5561,7 +5562,11 @@ function Farm.weatherList()
 end
 
 -- cek apakah weather skrg "buruk" (ada event & BUKAN yg ditandai bagus). neutral/cerah = bukan buruk.
-local WEATHER_NEUTRAL = { none=true, normal=true, standard=true, clear=true, sunny=true, default=true, [""]=true }
+-- v35.1: ActiveWeather di game ini TERMASUK siklus siang-malam (bukti log spy: Day/Sunset/Moon)!
+-- semua state siklus harian = NETRAL, jangan pernah dianggap weather buruk.
+local WEATHER_NEUTRAL = { none=true, normal=true, standard=true, clear=true, sunny=true, default=true, [""]=true,
+    day=true, night=true, moon=true, sunset=true, sunrise=true, dawn=true, dusk=true,
+    morning=true, noon=true, evening=true, midnight=true }
 function Farm.isBadWeatherNow()
     local w = workspace:GetAttribute("ActiveWeather")
     local wl = tostring(w or ""):lower()
@@ -8984,6 +8989,11 @@ do
     Farm._calcGardenRefresh = refresh
 end
 -- v18.6: akun buy pet -> auto sell nyala. v32.0: auto-accept gift hormati state tersimpan (ga dipaksa true)
+-- v35.1: SAFETY — Auto Rejoin Weather di-OFF-in tiap start (sempet salah deteksi: siklus siang-malam
+-- kebaca weather buruk -> kick terus, ga bisa masuk). Nyalain manual lagi dari card weather kalau mau.
+-- Freeze delay juga dipendekin ke 15s biar tes siklusnya cepet.
+state.autoWeatherHop = false
+state.weatherHopDelay = 15
 -- v33.0: Sembunyiin Buah Gede SELALU ON tiap script start (permintaan user) — buah >= hideBigKg (default 100)
 -- ilang total + prompt Harvest-nya mati. toggle di MISC tetep bisa matiin SEMENTARA (sesi ini doang),
 -- launch berikutnya nyala lagi.
