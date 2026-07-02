@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v35.1
+-- ZENX FARM  v35.2
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -31,6 +31,7 @@
 --   * Collect 2 (AF2): toggle "Collect GOLD kg berapapun" — Gold nembus filter kg & anti-heavy
 --   * Weather FREEZE (hasil spy): Kick lokal = keluar server seketika -> tunggu N detik (setting) -> rejoin
 --   * FIX: Day/Night/Moon/Sunset dll = NETRAL (dulu kebaca weather buruk -> kick terus); hop auto-OFF tiap start; delay 15s
+--   * AF2: auto-TP ke SAMPING titik seed sblm place sprinkler/WC (remote ada batas jarak), lalu balik
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -54,7 +55,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v35.1"
+local VER       = "v35.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6902,6 +6903,17 @@ function Farm.af2IsSprinklerActive()
 end
 
 -- place sprinkler: auto-detect posisi dari PlotSizeReference plot milik player
+-- v35.2: TP ke SAMPING titik seed sebelum place/siram — remote place/water punya batas jarak
+-- server-side, kejauhan = fire ketolak diam-diam. offset 5 stud DI SAMPING (bukan pas di titik)
+-- biar ga nyangkut di badan tanaman; ngadep ke arah seed.
+function Farm.af2GotoNear(pos)
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(5, 3, 0), pos + Vector3.new(0, 3, 0)) end)
+    task.wait(0.25)
+    return true
+end
 function Farm.af2PlaceSuperSprinkler()
     local p = pkt("Place", "PlaceSprinkler")
     if not p or not p.Fire then print("[AF2] PlaceSprinkler remote gak ada"); return false end
@@ -6946,12 +6958,16 @@ function Farm.af2PlaceSuperSprinkler()
     if #positions == 0 then print("[AF2] Sprinkler: ga ada posisi"); return false end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.2) end
     local placed = 0
+    local hrp0 = char:FindFirstChild("HumanoidRootPart")
+    local origCF = hrp0 and hrp0.CFrame   -- v35.2: inget posisi semula
     for _, pos in ipairs(positions) do
+        Farm.af2GotoNear(pos)   -- v35.2: TP ke samping seed dulu (remote place ada batas jarak)
         local ok, err = pcall(function() p:Fire(pos, tool.Name, tool, 1) end)
         print(string.format("[AF2] place sprinkler pos=(%.1f,%.1f,%.1f) ok=%s err=%s", pos.X, pos.Y, pos.Z, tostring(ok), tostring(err)))
         if ok then placed = placed + 1 end
         task.wait(0.2)
     end
+    if origCF then pcall(function() local h = char:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = origCF end end) end
     print(string.format("[AF2] Sprinkler: %d/%d placed (tool=%s)", placed, #positions, tool.Name))
     -- v34.3: LEPAS tool habis place — biar ga kepencet/ke-place lagi gak sengaja
     if hum then task.wait(0.1); pcall(function() hum:UnequipTools() end) end
@@ -7008,13 +7024,17 @@ function Farm.af2PlaceWateringCan()
     local placed = 0
     if rem then
         print("[AF2] WC: pakai remote "..remName)
+        local hrpW = char:FindFirstChild("HumanoidRootPart")
+        local origW = hrpW and hrpW.CFrame   -- v35.2
         for _, pos in ipairs(positions) do
+            Farm.af2GotoNear(pos)   -- v35.2: TP ke samping seed (remote siram ada batas jarak — kejauhan gagal)
             -- signature persis hasil spy: (pos, nama, instance tool). 1x per titik (WC consumable ×N)
             local ok, err = pcall(function() rem:Fire(pos, tool.Name, tool) end)
             print(string.format("[AF2] use WC pos=(%.1f,%.1f,%.1f) ok=%s err=%s", pos.X, pos.Y, pos.Z, tostring(ok), tostring(err)))
             if ok then placed = placed + 1 end
             task.wait(0.3)
         end
+        if origW then pcall(function() local h = char:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = origW end end) end
     else
         -- fallback terakhir: berdiri di titik seed + tool:Activate() (API resmi, niru pencet layar)
         print("[AF2] WC: remote place GA KETEMU -> fallback Activate (cek log [debug] di atas)")
