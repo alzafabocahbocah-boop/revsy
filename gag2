@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v33.9
+-- ZENX FARM  v34.1
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -21,6 +21,7 @@
 --   * ROMBAK auto WC: berdiri di titik seed + tool:Activate() resmi (dulu fireclickdetector/fired palsu)
 --   * AUDIT: fix 20 lokasi scan inventory yg keskip Backpack pas Character nil (respawn)
 --   * Auto Sell (FARM 1): toggle "Tanpa Mutasi (ikut jual)" — cermin punya Auto Collect
+--   * WC: KUNCI ke remote asli hasil spy — WateringCan.UseWateringCan(pos, nama, tool)
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -44,7 +45,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v33.9"
+local VER       = "v34.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6864,7 +6865,7 @@ function Farm.af2PlaceWateringCan()
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not char or not hum or not hrp then return false end
+    if not char or not hum then return false end
     -- cari WC sesuai pilihan user (state.af2WCTool) atau auto
     local tool
     local wantWC = state.af2WCTool and state.af2WCTool ~= "" and state.af2WCTool:lower() or nil
@@ -6877,35 +6878,65 @@ function Farm.af2PlaceWateringCan()
         if tool then break end
     end
     if not tool then print("[AF2] WC: ga ada di backpack (pilihan: "..(state.af2WCTool or "auto")..")"); return false end
-    if tool.Parent ~= char then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
-    if tool.Parent ~= char then print("[AF2] WC: gagal equip "..tool.Name); return false end
-    print("[AF2] WC equip: "..tool.Name)
-    -- v33.7: ROMBAK cara pakai. dulu: fireclickdetector semua ClickDetector (WC bukan ClickDetector!)
-    -- + fallback Activated:Fire() yg MUSTAHIL jalan tapi tetep dihitung sukses (palsu).
-    -- sekarang: berdiri di TITIK SEED (af2SavedPos hasil scan) -> tool:Activate() (API resmi,
-    -- persis kayak orang mencet layar, replikasi ke server, ga butuh fungsi executor).
-    local targets = {}
-    for _, e in ipairs(state.af2SavedPos or {}) do targets[#targets+1] = Vector3.new(e.x, e.y, e.z) end
-    if #targets == 0 then
-        for _, pp in ipairs(Farm.af2GetPlantPositions()) do targets[#targets+1] = pp.pos end
-    end
-    if #targets == 0 then print("[AF2] WC: ga ada posisi target — pencet 📍 Scan dulu"); return false end
-    local fired = 0
-    local origCF = hrp.CFrame
-    for _, pos in ipairs(targets) do
+    -- v34.1 HASIL SPY (bukti log user): remote asli = WateringCan.UseWateringCan
+    --   :Fire( Vector3 posisi, string namaTool, Instance tool yg di-equip )
+    -- BUKAN Place.PlaceWateringCan kayak dugaan komentar author. discovery tetep ada sbg cadangan.
+    local rem = pkt("WateringCan", "UseWateringCan")
+    local remName = "WateringCan.UseWateringCan"
+    if not rem then
+        -- scan NET nyari remote yg namanya ngandung "water" — hasilnya di-print sbg BUKTI debug
         pcall(function()
-            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))   -- berdiri di titik seed
-            task.wait(0.25)
-            for _ = 1, 3 do   -- siram beberapa kali biar kena
-                local ok = pcall(function() tool:Activate() end)
-                if ok then fired = fired + 1 end
-                task.wait(0.2)
+            for gk, g in pairs(NET or {}) do
+                if type(g) == "table" then
+                    for k, v in pairs(g) do
+                        if tostring(k):lower():find("water") then
+                            print("[AF2][debug] kandidat remote: "..tostring(gk).."."..tostring(k))
+                            if not rem then
+                                local okF = pcall(function() return v.Fire ~= nil end)
+                                if okF and v.Fire then rem = v; remName = tostring(gk).."."..tostring(k) end
+                            end
+                        end
+                    end
+                end
             end
         end)
     end
-    pcall(function() hrp.CFrame = origCF end)   -- balik ke posisi semula
-    print("[AF2] WC: Activate "..fired.."x di "..#targets.." titik (tool="..tool.Name..")")
-    return fired > 0
+    -- posisi target = titik seed hasil scan (Y udah dipatok tanah — sama kayak fire manual di spy)
+    local positions = {}
+    for _, e in ipairs(state.af2SavedPos or {}) do positions[#positions+1] = Vector3.new(e.x, e.y, e.z) end
+    if #positions == 0 then print("[AF2] WC: ga ada posisi target — pencet 📍 Scan dulu"); return false end
+    if tool.Parent ~= char then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
+    if tool.Parent ~= char then print("[AF2] WC: gagal equip "..tool.Name); return false end
+    local placed = 0
+    if rem then
+        print("[AF2] WC: pakai remote "..remName)
+        for _, pos in ipairs(positions) do
+            -- signature persis hasil spy: (pos, nama, instance tool). 1x per titik (WC consumable ×N)
+            local ok, err = pcall(function() rem:Fire(pos, tool.Name, tool) end)
+            print(string.format("[AF2] use WC pos=(%.1f,%.1f,%.1f) ok=%s err=%s", pos.X, pos.Y, pos.Z, tostring(ok), tostring(err)))
+            if ok then placed = placed + 1 end
+            task.wait(0.3)
+        end
+    else
+        -- fallback terakhir: berdiri di titik seed + tool:Activate() (API resmi, niru pencet layar)
+        print("[AF2] WC: remote place GA KETEMU -> fallback Activate (cek log [debug] di atas)")
+        if not hrp then return false end
+        local origCF = hrp.CFrame
+        for _, pos in ipairs(positions) do
+            pcall(function()
+                hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+                task.wait(0.25)
+                for _ = 1, 3 do
+                    local ok = pcall(function() tool:Activate() end)
+                    if ok then placed = placed + 1 end
+                    task.wait(0.2)
+                end
+            end)
+        end
+        pcall(function() hrp.CFrame = origCF end)
+    end
+    print(string.format("[AF2] WC: %d fire di %d titik (tool=%s)", placed, #positions, tool.Name))
+    return placed > 0
 end
 
 Farm._af2Status = "OFF"
