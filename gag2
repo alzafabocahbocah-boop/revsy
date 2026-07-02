@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v33.6
+-- ZENX FARM  v33.9
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -18,6 +18,9 @@
 --   * AF2 scan: Y dipatok ke TANAH (raycast), X/Z tetep ikut seed — seed melayang gak masalah
 --   * FIX picker Jenis Sprinkler & WC — dulu nyangkut di "auto", sekarang cycle bener
 --   * Picker nampilin JUMLAH: "Super Watering Can ×5", auto-refresh 5s, "(habis)" kalau abis
+--   * ROMBAK auto WC: berdiri di titik seed + tool:Activate() resmi (dulu fireclickdetector/fired palsu)
+--   * AUDIT: fix 20 lokasi scan inventory yg keskip Backpack pas Character nil (respawn)
+--   * Auto Sell (FARM 1): toggle "Tanpa Mutasi (ikut jual)" — cermin punya Auto Collect
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -30,7 +33,18 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v33.6"
+-- v33.8: holder inventory yg AMAN. dulu pola {player.Character, Backpack} dipakai di 20 tempat —
+-- kalau Character nil (respawn/mati), ipairs berhenti di elemen 1 dan BACKPACK IKUT KESKIP
+-- (inventory kebaca kosong palsu; paling bahaya: verifikasi gift MAIL salah nandain "terkirim").
+local function invHolders()
+    local t = {}
+    local c = player.Character
+    if c then t[#t+1] = c end
+    local b = player:FindFirstChildOfClass("Backpack")
+    if b then t[#t+1] = b end
+    return t
+end
+local VER       = "v33.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -389,6 +403,7 @@ local state = {
     collectMutAll   = true,     -- collect semua mutasi (default: gak filter mutasi)
     collectNoMut    = false,    -- v22.6: ikut ambil buah TANPA mutasi (default off)
     sellMutAll      = true,     -- sell semua mutasi
+    sellNoMut       = false,    -- v33.9: ikut JUAL buah TANPA mutasi walau filter mutasi aktif (cermin collectNoMut)
     selectedPlant   = {},       -- plant seed
     allPlantSeed    = true,      -- tanam semua seed (allKey terpisah dari buy seed)
     selectedPetType = {},       -- jenis pet (PetName)
@@ -479,7 +494,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -680,7 +695,7 @@ Farm._collectKg = 0
 Farm._sellKg = 0
 function Farm.updateBaseW()
     local changed = false
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") then
@@ -737,7 +752,7 @@ Farm._loadBaseW()
 -- v12.9: hitung SEED di tas per jenis (buat ditampilin di picker Jenis Seed Auto Gift)
 function Farm.countSeedsInBag()
     local counts = {}
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") then
@@ -759,7 +774,7 @@ end
 -- inventory bukan Tool tapi tetep punya atribut buah (biar kebaca semua, bukan cuma hotbar).
 function Farm.countFruitsInBag()
     local counts = {}
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 local fid = t:GetAttribute("Id")
@@ -795,7 +810,7 @@ local function isGearTool(t)
 end
 function Farm.countGearInBag()
     local counts = {}
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if isGearTool(t) then
@@ -1559,7 +1574,7 @@ function Farm.applyEspInvent()
         while state.espInvent and Farm._espInvGen == myGen do
             -- lookup buah di tas: nama -> list {w, price}
             local byName = {}
-            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            for _, holder in ipairs(invHolders()) do
                 if holder then
                     for _, t in ipairs(holder:GetChildren()) do
                         local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
@@ -1659,7 +1674,7 @@ function Farm.applyEspInventStock()
     task.spawn(function()
         while state.espInventStock and Farm._espInvStkGen == myGen do
             local byName = {}
-            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            for _, holder in ipairs(invHolders()) do
                 if holder then
                     for _, t in ipairs(holder:GetChildren()) do
                         local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
@@ -2039,6 +2054,8 @@ function Farm.sellOnce()
             if id then
                 local jenis = fruitObjType(o.Name)
                 local okMut = passMutation(o, state.selectedSellMut, "sellMutAll")
+                -- v33.9: toggle "Tanpa Mutasi" ON -> buah polos ikut kejual walau ga kepilih di filter mutasi
+                if not okMut and state.sellNoMut and getMutation(o) == nil then okMut = true end
                 local w = o:GetAttribute("Weight") or 0
                 local okW = passWeight(w, state.sellWeightF)  -- v10.9 filter berat
                 -- sellAll=true -> semua jenis lolos; else cuma jenis terpilih
@@ -3080,7 +3097,7 @@ function Farm.giftMoonbloomOnce()
     if uid == player.UserId then Farm._gsmStatus = "self"; return end   -- jgn kirim ke diri sendiri
     -- kumpulin seed (moonbloom/dragon's breath/venom spitter) + gear (super watering/sprinkler)
     local items, total = {}, 0
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") and #items < 8 then
@@ -3172,7 +3189,7 @@ function Farm.directGiftOnce()
     --   "uuid" -> kirim buah satuan yg dipilih (by Id), abaikan jenis & threshold
     --   "type" -> kirim semua buah jenis terpilih yg lolos threshold kg
     local useIds = (state.dgiftMode == "uuid")
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if not state.autoDirectGift and not state.dgiftOnce then break end
@@ -3436,7 +3453,7 @@ Farm.gfHistLoad()
 -- return: list {fid,val}, totalNilai  ATAU  nil, totalSemua (kalau gak nyampe target).
 function Farm.pickFruitsForValue(targetVal, useMarket, allowPartial)
     local elig = {}
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 local fid = t:GetAttribute("Id")
@@ -3479,7 +3496,7 @@ end
 --        nil/default = best-fit (terbesar yg <= sisa, kalau ga ada ambil terkecil).
 function Farm.pickOneForValue(remaining, useMarket, mode, range)
     local best, under, biggest   -- best=terkecil nilai, under=terbesar yg <=sisa, biggest=terbesar nilai
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 local fid = t:GetAttribute("Id")
@@ -3556,7 +3573,7 @@ end
 -- v23.2: cek buah (by attribute "Id") masih ada di inventory (Character + Backpack)?
 function Farm.fruitInInv(fid)
     fid = tostring(fid)
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if tostring(t:GetAttribute("Id")) == fid then return true end
@@ -3699,7 +3716,7 @@ function Farm.giftFruitOnce()
         end
         flush()
     else
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 local fid = t:GetAttribute("Id")
@@ -4809,7 +4826,7 @@ local function showKalkuGift()
         local valMap = {}
         local function scanIds()
             local cur = {}
-            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            for _, holder in ipairs(invHolders()) do
                 if holder then
                     for _, t in ipairs(holder:GetChildren()) do
                         local fid = t:GetAttribute("Id")
@@ -5031,7 +5048,7 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     Farm._mailSentVal = Farm._mailSentVal or {}
     -- cek fid masih ada di tas (Character + Backpack)
     local function fidInBag(fid)
-        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        for _, holder in ipairs(invHolders()) do
             if holder then
                 for _, t in ipairs(holder:GetChildren()) do
                     if tostring(t:GetAttribute("Id") or "") == fid then return true end
@@ -5049,7 +5066,7 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     local ff = tostring(fruitFilter or ""):lower():gsub("^%s+",""):gsub("%s+$","")
     local allFruit = (ff == "" or ff == "semua" or ff == "all")
     local elig = {}
-    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+    for _, holder in ipairs(invHolders()) do
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 local fid = t:GetAttribute("Id")
@@ -5116,7 +5133,7 @@ local function showMailGift()
     task.spawn(function()
         while pop.Parent do
             local totN, totV = 0, 0
-            for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            for _, holder in ipairs(invHolders()) do
                 if holder then
                     for _, t in ipairs(holder:GetChildren()) do
                         if (t:GetAttribute("Fruit") or t:GetAttribute("FruitName")) and t:GetAttribute("Id") then
@@ -5151,7 +5168,7 @@ local function showMailGift()
     local function buildFruitDD()
         for _,c in ipairs(frDD:GetChildren()) do if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end end
         local agg = {}
-        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        for _, holder in ipairs(invHolders()) do
             if holder then
                 for _, t in ipairs(holder:GetChildren()) do
                     local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
@@ -5839,7 +5856,7 @@ local function openFruitPicker(selSet, onChange)
         q = (q or ""):lower()
         -- kumpulin fruit di tas
         local list = {}
-        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        for _, holder in ipairs(invHolders()) do
             if holder then
                 for _, t in ipairs(holder:GetChildren()) do
                     if t:IsA("Tool") then
@@ -6117,6 +6134,9 @@ do
         state.sellWeightF = n; swBox.Text = tostring(n); saveState()
         print("[ZenxFarm] filter sell: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
     end)
+    -- v33.9: toggle Tanpa Mutasi (cermin punya Auto Collect) — buah polos ikut kejual
+    mkBodyToggle(body, 204, "Tanpa Mutasi (ikut jual)", "sellNoMut", "Sell No Mutation")
+    setH(244)
 end
 
 -- ====== CARD 5: AUTO GIFT SEED -> wildnx_60 (mailbox, terpisah) ======
@@ -6843,7 +6863,8 @@ end
 function Farm.af2PlaceWateringCan()
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not char or not hum then return false end
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not char or not hum or not hrp then return false end
     -- cari WC sesuai pilihan user (state.af2WCTool) atau auto
     local tool
     local wantWC = state.af2WCTool and state.af2WCTool ~= "" and state.af2WCTool:lower() or nil
@@ -6857,52 +6878,33 @@ function Farm.af2PlaceWateringCan()
     end
     if not tool then print("[AF2] WC: ga ada di backpack (pilihan: "..(state.af2WCTool or "auto")..")"); return false end
     if tool.Parent ~= char then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
+    if tool.Parent ~= char then print("[AF2] WC: gagal equip "..tool.Name); return false end
     print("[AF2] WC equip: "..tool.Name)
-    -- cari ClickDetector di pohon milik player
-    local cds = {}
-    pcall(function()
-        local gardens = workspace:FindFirstChild("Gardens")
-        if not gardens then return end
-        for _, plot in ipairs(gardens:GetChildren()) do
-            if plot:GetAttribute("OwnerUserId") == player.UserId then
-                for _, d in ipairs(plot:GetDescendants()) do
-                    if d:IsA("ClickDetector") then cds[#cds+1] = d end
-                end
-            end
-        end
-    end)
-    print("[AF2] WC: "..#cds.." ClickDetector di plot")
+    -- v33.7: ROMBAK cara pakai. dulu: fireclickdetector semua ClickDetector (WC bukan ClickDetector!)
+    -- + fallback Activated:Fire() yg MUSTAHIL jalan tapi tetep dihitung sukses (palsu).
+    -- sekarang: berdiri di TITIK SEED (af2SavedPos hasil scan) -> tool:Activate() (API resmi,
+    -- persis kayak orang mencet layar, replikasi ke server, ga butuh fungsi executor).
+    local targets = {}
+    for _, e in ipairs(state.af2SavedPos or {}) do targets[#targets+1] = Vector3.new(e.x, e.y, e.z) end
+    if #targets == 0 then
+        for _, pp in ipairs(Farm.af2GetPlantPositions()) do targets[#targets+1] = pp.pos end
+    end
+    if #targets == 0 then print("[AF2] WC: ga ada posisi target — pencet 📍 Scan dulu"); return false end
     local fired = 0
-    -- coba fireclickdetector (Delta executor)
-    local fcd = fireclickdetector or (syn and syn.click_detector) or nil
-    if #cds > 0 and fcd then
-        for _, cd in ipairs(cds) do
-            pcall(function() fcd(cd, 0, player) end)
-            fired = fired + 1; task.wait(0.05)
-        end
-        print("[AF2] WC: fired "..fired.." ClickDetector (fireclickdetector)")
-    else
-        -- fallback: firesignal Activated
-        local fsg = firesignal or nil
-        local plants = {}
+    local origCF = hrp.CFrame
+    for _, pos in ipairs(targets) do
         pcall(function()
-            local gardens = workspace:FindFirstChild("Gardens")
-            if not gardens then return end
-            for _, plot in ipairs(gardens:GetChildren()) do
-                if plot:GetAttribute("OwnerUserId") == player.UserId then
-                    local plantsF = plot:FindFirstChild("Plants")
-                    if plantsF then for _, p in ipairs(plantsF:GetChildren()) do plants[#plants+1]=p end end
-                end
+            hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))   -- berdiri di titik seed
+            task.wait(0.25)
+            for _ = 1, 3 do   -- siram beberapa kali biar kena
+                local ok = pcall(function() tool:Activate() end)
+                if ok then fired = fired + 1 end
+                task.wait(0.2)
             end
         end)
-        for _, plant in ipairs(plants) do
-            pcall(function()
-                if fsg then fsg(tool.Activated) else tool.Activated:Fire() end
-            end)
-            fired = fired + 1; task.wait(0.05)
-        end
-        print("[AF2] WC fallback: fired "..fired.." Activated (firesignal="..(fsg and "true" or "false")..")")
     end
+    pcall(function() hrp.CFrame = origCF end)   -- balik ke posisi semula
+    print("[AF2] WC: Activate "..fired.."x di "..#targets.." titik (tool="..tool.Name..")")
     return fired > 0
 end
 
@@ -8512,7 +8514,7 @@ do
         end
         local list = {}      -- {jenis, kg, mut, price}
         local totalN, totalVal = 0, 0
-        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        for _, holder in ipairs(invHolders()) do
             if holder then
                 for _, t in ipairs(holder:GetChildren()) do
                     local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
@@ -8953,7 +8955,7 @@ do
     -- di Character+Backpack (Fruit/FruitName + Id), jumlahin fruitPrice (harga pasar).
     local function calcInvTotal()
         local n, val = 0, 0
-        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        for _, holder in ipairs(invHolders()) do
             if holder then
                 for _, t in ipairs(holder:GetChildren()) do
                     local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
