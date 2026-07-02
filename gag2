@@ -1,11 +1,19 @@
 -- ============================================================
--- ZENX FARM  v32.4
+-- ZENX FARM  v33.0
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
 --   * Panel MAIL: toggle "Simpan" (storageMode) ditambah
 --   * Panel MAIL: gift fruit 1 batch/kirim (max 20) + verifikasi buah beneran ilang (anti counter palsu)
 --   * Panel MAIL: countdown real-time sebelum kirim berikutnya
+--   * Panel MAIL: reconcile bounce — buah balik ke tas (mailbox penuh) dikirim ulang, counter jujur
+--   * Panel MAIL: status nampilin jumlah buah kekirim
+--   * AF2: counter buah cuma hitung kebun sendiri (dulu ikut kebun orang -> WC/STOP ngaco)
+--   * AF2: WC dikasih cooldown 30s (dulu spam tiap 3s)
+--   * Anti-lag: kualitas grafis dibalikin pas OFF (dulu nyangkut low-poly permanen)
+--   * MISC: card baru "Sembunyiin Buah Gede" — buah >= N kg (default 100) ilang total
+--   * Buah gede yg disembunyiin: prompt Harvest & ClickDetector ikut mati (gak bisa kepencet)
+--   * Sembunyiin Buah Gede SELALU ON tiap script start (toggle cuma matiin sementara sesi ini)
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -18,7 +26,7 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
-local VER       = "v32.4"
+local VER       = "v33.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -388,6 +396,8 @@ local state = {
     hidePlants      = false,    -- v11.7: sembunyiin visual tanaman (buah tetep keliatan)
     hideFruits      = false,    -- v11.8: sembunyiin buah juga
     hideFruitFaint  = true,     -- v11.8: true=sisain samar (transparan 0.7), false=ilang total
+    hideBigFruits   = true,     -- v32.8: sembunyiin TOTAL buah >= hideBigKg. v33.0: default & force ON tiap start
+    hideBigKg       = 100,      -- v32.8: ambang berat (kg)
     autoSteal       = false,
     stealTeleport   = true,     -- teleport ke buah dulu (matikan kalau mau diam di tempat)
     antiBot         = false,    -- auto hop kalau ada player bot (Sheckles berubah 10s berturut)
@@ -465,7 +475,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora"}
-local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+local SETBOOL = {"autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","sellMutAll","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -504,6 +514,7 @@ local function saveState()
         out.c2WeightF = state.c2WeightF or -50   -- v28.7: collect2 filter kg
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
         out.af2WCTrigger = state.af2WCTrigger or 50
+        out.hideBigKg = state.hideBigKg or 100   -- v32.8
         out.af2BigCap = state.af2BigCap or 500
         out.af2SavedPos = state.af2SavedPos or {}
         out.af2SprTool = state.af2SprTool or ""   -- v31.5: nama sprinkler dipilih
@@ -560,6 +571,7 @@ local function loadState()
                 if type(d.c2WeightF) == "number" then state.c2WeightF = d.c2WeightF end
                 if type(d.s2WeightF) == "number" then state.s2WeightF = d.s2WeightF end
                 if type(d.af2WCTrigger) == "number" then state.af2WCTrigger = d.af2WCTrigger end
+                if type(d.hideBigKg) == "number" then state.hideBigKg = d.hideBigKg end   -- v32.8
                 if type(d.af2BigCap) == "number" then state.af2BigCap = d.af2BigCap end
                 if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
                 if type(d.af2SprTool) == "string" then state.af2SprTool = d.af2SprTool end
@@ -824,12 +836,17 @@ function Farm.setAntiLag(on)
     if on then
         Farm._antiLagOn = true
         pcall(function()
-            -- kualitas grafis minimum
+            -- v32.7: simpen kualitas ASLI sekali (biar bisa dibalikin pas OFF)
+            if Farm._origQuality == nil then Farm._origQuality = settings().Rendering.QualityLevel end
+            -- kualitas grafis minimum (INI yg bikin bentuk buah jadi low-poly: mesh LOD level 1)
             settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
         end)
         pcall(function()
             local sg = game:GetService("UserGameSettings") or UserSettings():GetService("UserGameSettings")
-            if sg then sg.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1 end
+            if sg then
+                if Farm._origSavedQuality == nil then Farm._origSavedQuality = sg.SavedQualityLevel end   -- v32.7
+                sg.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+            end
         end)
         -- lighting: matiin efek berat
         pcall(function()
@@ -859,6 +876,15 @@ function Farm.setAntiLag(on)
     else
         Farm._antiLagOn = false
         if Farm._antiLagConn then Farm._antiLagConn:Disconnect(); Farm._antiLagConn = nil end
+        -- v32.7: balikin kualitas grafis (dulu GAK dibalikin -> buah nyangkut low-poly permanen,
+        -- SavedQualityLevel itu setting akun yg ke-save, rejoin pun gak balik)
+        pcall(function()
+            settings().Rendering.QualityLevel = Farm._origQuality or Enum.QualityLevel.Automatic
+        end)
+        pcall(function()
+            local sg = game:GetService("UserGameSettings") or UserSettings():GetService("UserGameSettings")
+            if sg then sg.SavedQualityLevel = Farm._origSavedQuality or Enum.SavedQualitySetting.Automatic end
+        end)
         pcall(function()
             Light.GlobalShadows = true
             for _, e in ipairs(Light:GetChildren()) do
@@ -991,6 +1017,95 @@ function Farm.setHideFruits(on)
     else
         if Farm._hideFruitsConn then Farm._hideFruitsConn:Disconnect(); Farm._hideFruitsConn = nil end
         print("[ZenxFarm] sembunyiin buah OFF")
+    end
+end
+
+-- v32.8: SEMBUNYIIN BUAH GEDE — buah >= N kg (default 100) dihilangin TOTAL (transparan 1).
+-- beda dari v11.8: yg ilang CUMA buah berat (mesh paling gede = beban render terbesar), sisanya tetep keliatan.
+-- pakai attr sendiri (ZenxOrigTB) biar ga tabrakan sama fitur Sembunyiin Buah biasa.
+Farm._hideBigOn = false
+function Farm.hideBigFruitParts(fruit, hide)
+    local function setT(d)
+        if hide then
+            if d:GetAttribute("ZenxOrigTB") == nil then d:SetAttribute("ZenxOrigTB", d.Transparency) end
+            d.Transparency = 1
+        else
+            local o = d:GetAttribute("ZenxOrigTB")
+            if type(o) == "number" then d.Transparency = o end
+            d:SetAttribute("ZenxOrigTB", nil)
+        end
+    end
+    -- v32.9: prompt Harvest (ProximityPrompt) & ClickDetector ikut dimatiin biar buah yg ilang
+    -- BENERAN gak bisa ke-harvest/kepencet manual. dibalikin persis pas unhide.
+    local function setInteract(d)
+        if d:IsA("ProximityPrompt") then
+            if hide then
+                if d:GetAttribute("ZenxOrigPE") == nil then d:SetAttribute("ZenxOrigPE", d.Enabled) end
+                d.Enabled = false
+            else
+                local o = d:GetAttribute("ZenxOrigPE")
+                if o ~= nil then d.Enabled = (o == true) end
+                d:SetAttribute("ZenxOrigPE", nil)
+            end
+        elseif d:IsA("ClickDetector") then
+            if hide then
+                if d:GetAttribute("ZenxOrigCD") == nil then d:SetAttribute("ZenxOrigCD", d.MaxActivationDistance) end
+                d.MaxActivationDistance = 0
+            else
+                local o = d:GetAttribute("ZenxOrigCD")
+                if type(o) == "number" then d.MaxActivationDistance = o end
+                d:SetAttribute("ZenxOrigCD", nil)
+            end
+        end
+    end
+    pcall(function()
+        for _, d in ipairs(fruit:GetDescendants()) do
+            if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture") then setT(d)
+            else setInteract(d) end
+        end
+        if fruit:IsA("BasePart") then setT(fruit) end
+    end)
+end
+function Farm.scanHideBigFruits(on)
+    local gardens = workspace:FindFirstChild("Gardens"); if not gardens then return end
+    local thr = tonumber(state.hideBigKg) or 100
+    local cnt = 0
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local seedName = plant:GetAttribute("SeedName") or plant.Name
+                local fr = plant:FindFirstChild("Fruits")
+                if fr then
+                    for _, fruit in ipairs(fr:GetChildren()) do
+                        if on then
+                            local kg = Farm.gardenKg(fruit, seedName) or 0
+                            -- >= thr: ilangin. < thr: balikin kalau sempet ke-hide (mis. threshold dinaikin)
+                            Farm.hideBigFruitParts(fruit, kg >= thr)
+                        else
+                            Farm.hideBigFruitParts(fruit, false)   -- restore (cuma yg bertanda ZenxOrigTB)
+                        end
+                        cnt = cnt + 1
+                        if cnt % 30 == 0 then task.wait() end  -- napas biar ga freeze
+                    end
+                end
+            end
+        end
+    end
+end
+function Farm.setHideBigFruits(on)
+    Farm._hideBigOn = on
+    if on then
+        task.spawn(function()
+            while Farm._hideBigOn and isCurrentGen() do
+                pcall(function() Farm.scanHideBigFruits(true) end)
+                task.wait(8)   -- rescan: buah yg BARU nyampe berat ikut ilang (buah kan tumbuh)
+            end
+        end)
+        print("[ZenxFarm] sembunyiin buah gede ON (>= "..tostring(state.hideBigKg or 100).."kg ilang total)")
+    else
+        task.spawn(function() pcall(function() Farm.scanHideBigFruits(false) end) end)
+        print("[ZenxFarm] sembunyiin buah gede OFF (buah balik keliatan)")
     end
 end
 
@@ -4902,12 +5017,31 @@ Farm._mailRanges = {
 }
 -- kirim buah via MAILBOX (SendBatch). filter jenis + range nilai/buah, kumpulin kombinasi sampai >= target.
 Farm._mailSent = Farm._mailSent or {}   -- fid yg udah dikirim sesi ini (biar ga dobel/ulang)
+Farm._mailSentVal = Farm._mailSentVal or {}   -- v32.5: fid -> value yg keitung terkirim (buat reconcile bounce)
 function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     local sb = pkt("Mailbox", "SendBatch")
     if not sb or not sb.Fire then return false, "Mailbox SendBatch gak ada" end
     if not target or target == "" then return false, "target kosong" end
     local uid = resolveTargetId(target)
     if not uid then return false, "target '"..tostring(target).."' gak ketemu" end
+    Farm._mailSentVal = Farm._mailSentVal or {}
+    -- cek fid masih ada di tas (Character + Backpack)
+    local function fidInBag(fid)
+        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    if tostring(t:GetAttribute("Id") or "") == fid then return true end
+                end
+            end
+        end
+        return false
+    end
+    -- v32.5: REKONSILIASI bounce — buah yg ditandai 'terkirim' tapi BALIK ke tas (mailbox penerima penuh)
+    -- di-unmark biar dikirim ulang, & value-nya dikeluarin dari total (counter jujur, ga nyangkut).
+    for fid in pairs(Farm._mailSent) do
+        if fidInBag(fid) then Farm._mailSent[fid] = nil; Farm._mailSentVal[fid] = nil end
+    end
+    local function cumVal() local s, n = 0, 0; for _, v in pairs(Farm._mailSentVal) do s = s + v; n = n + 1 end; return s, n end
     local ff = tostring(fruitFilter or ""):lower():gsub("^%s+",""):gsub("%s+$","")
     local allFruit = (ff == "" or ff == "semua" or ff == "all")
     local elig = {}
@@ -4931,12 +5065,9 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
             end
         end
     end
-    if #elig == 0 then return false, "ga ada buah cocok" end
+    if #elig == 0 then return false, "ga ada buah cocok", cumVal() end
     table.sort(elig, function(a, b) return a.val > b.val end)   -- nilai terbesar dulu
-    -- v32.3: SATU batch per panggilan (max 20 buah), DIVERIFIKASI.
-    -- dulu: nembak banyak batch beruntun (0.3s) -> ketolak cooldown mailbox -> buah gak kekirim,
-    -- tapi value tetep keitung (counter "terkirim" naik padahal buah masih di tas, SELESAI palsu).
-    -- sekarang: cuma hitung buah yg BENERAN ilang dari tas. loop luar udah jeda 11s (= cooldown mailbox).
+    -- v32.3/32.5: SATU batch per panggilan (max 20 buah), DIVERIFIKASI + reconcile bounce di atas.
     local picked, sum = {}, 0
     for _, e in ipairs(elig) do
         if sum >= cap or #picked >= 20 then break end   -- max 20 buah / panggilan (1 batch)
@@ -4946,27 +5077,17 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     for _, e in ipairs(picked) do items[#items+1] = { ItemKey = e.fid, Count = 1, Category = "HarvestedFruits" } end
     pcall(function() sb:Fire(uid, items, "") end)
     task.wait(1)   -- tunggu inventory ke-update (replikasi) sebelum verifikasi
-    local function fidInBag(fid)
-        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
-            if holder then
-                for _, t in ipairs(holder:GetChildren()) do
-                    if tostring(t:GetAttribute("Id") or "") == fid then return true end
-                end
-            end
-        end
-        return false
-    end
     Farm._scriptSentIds = Farm._scriptSentIds or {}
-    local sentN, sentVal = 0, 0
+    local sentN = 0
     for _, e in ipairs(picked) do
         if not fidInBag(e.fid) then   -- beneran ilang -> kekirim
-            Farm._mailSent[e.fid] = true; Farm._scriptSentIds[e.fid] = true
-            sentN = sentN + 1; sentVal = sentVal + e.val
+            Farm._mailSent[e.fid] = true; Farm._mailSentVal[e.fid] = e.val; Farm._scriptSentIds[e.fid] = true
+            sentN = sentN + 1
         end
         -- masih di tas -> JANGAN ditandai sent, biar dicoba lagi panggilan berikutnya
     end
-    if sentN == 0 then return false, "kirim gagal, coba lagi (cooldown?)" end
-    return true, sentN, sentVal
+    if sentN == 0 then return false, "kirim gagal, coba lagi (cooldown?)", cumVal() end
+    return true, sentN, cumVal()
 end
 
 local function showMailGift()
@@ -5126,6 +5247,7 @@ local function showMailGift()
         local hiV = parseVal(maxBox.Text, math.huge)
         if loV > hiV then loV, hiV = hiV, loV end
         Farm._mailSent = {}
+        Farm._mailSentVal = {}   -- v32.5: reset total terkirim tiap sesi baru
         local sessionSent = 0
         running = true
         sendBtn.Text="STOP (auto jalan)"; sendBtn.BackgroundColor3=Color3.fromRGB(220,150,60)
@@ -5138,16 +5260,21 @@ local function showMailGift()
                         out.Text = "SELESAI ✓  terkirim "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot).." ke "..target
                         out.TextColor3 = C.green; stopRun(); return
                     end
-                    local ok, cnt, sum = Farm.mailGiftSend(target, fruit, loV, hiV, remaining, marketOn)
-                    if ok and (sum or 0) > 0 then
-                        sessionSent = sessionSent + sum
-                        out.Text = "AUTO: "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot).."   kurang "..Farm.abbrev(math.max(0,tot-sessionSent))
+                    local ok, cnt, cumv, cumn = Farm.mailGiftSend(target, fruit, loV, hiV, remaining, marketOn)
+                    if type(cumv) == "number" then sessionSent = cumv end   -- v32.5: total terkirim JUJUR (turun kalau ada bounce)
+                    local nInfo = (type(cumn) == "number") and (" ("..cumn.." buah)") or ""   -- v32.6: jumlah buah kekirim
+                    if sessionSent >= tot then
+                        out.Text = "SELESAI ✓  terkirim "..Farm.abbrev(sessionSent)..nInfo.." / "..Farm.abbrev(tot).." ke "..target
+                        out.TextColor3 = C.green; stopRun(); return
+                    end
+                    if ok and (cnt or 0) > 0 then
+                        out.Text = "AUTO: "..Farm.abbrev(sessionSent)..nInfo.." / "..Farm.abbrev(tot).."   kurang "..Farm.abbrev(math.max(0,tot-sessionSent))
                         out.TextColor3 = Color3.new(1,1,1)
                     else
                         if cnt and (tostring(cnt):find("ketemu") or tostring(cnt):find("kosong") or tostring(cnt):find("Mailbox")) then
                             out.Text = "stop: "..tostring(cnt); out.TextColor3 = C.red; stopRun(); return
                         end
-                        out.Text = "nunggu buah baru...  "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot); out.TextColor3 = C.textDim
+                        out.Text = "nunggu buah baru...  "..Farm.abbrev(sessionSent)..nInfo.." / "..Farm.abbrev(tot); out.TextColor3 = C.textDim
                     end
                 end)
                 if not ok2 then
@@ -6392,6 +6519,7 @@ function Farm.af2CountSmallFruits(threshKg)
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
         for _, garden in ipairs(gardens:GetChildren()) do
+            if garden:GetAttribute("OwnerUserId") == player.UserId then   -- v32.7: cuma kebun milik sendiri
             for _, plant in ipairs(garden:GetChildren()) do
                 local seedName = plant:GetAttribute("SeedName") or plant.Name
                 local fruits = plant:FindFirstChild("Fruits")
@@ -6401,6 +6529,7 @@ function Farm.af2CountSmallFruits(threshKg)
                         if kg > 0 and kg < threshKg then count = count + 1 end
                     end
                 end
+            end
             end
         end
     end)
@@ -6415,6 +6544,7 @@ function Farm.af2CountBigFruits(threshKg)
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
         for _, garden in ipairs(gardens:GetChildren()) do
+            if garden:GetAttribute("OwnerUserId") == player.UserId then   -- v32.7: cuma kebun milik sendiri
             for _, plant in ipairs(garden:GetChildren()) do
                 local seedName = plant:GetAttribute("SeedName") or plant.Name
                 local fruits = plant:FindFirstChild("Fruits")
@@ -6424,6 +6554,7 @@ function Farm.af2CountBigFruits(threshKg)
                         if kg >= threshKg then count = count + 1 end
                     end
                 end
+            end
             end
         end
     end)
@@ -6729,7 +6860,7 @@ staggerSpawn(function()
             -- SUPER WC: place kalau buah kecil ≤ wcTrigger DAN Sprinkler udah aktif di garden
             -- (sprinkler harus ada dulu biar buah yang tumbuh besar, bukan kecil-kecil)
             if state.autoSuperWC then
-                if smallCount <= wcTrigger then
+                if smallCount <= wcTrigger and (now - (Farm._af2WCLastPlace or 0)) >= 30 then   -- v32.7: cooldown WC 30s (anti spam remote)
                     local sprActive = Farm.af2IsSprinklerActive()
                     if sprActive then
                         print(string.format("[AF2] WC: %d buah + sprinkler aktif -> place WC", smallCount))
@@ -7881,6 +8012,54 @@ do
     applyHideFruits()
 end
 
+-- ====== MISC: Sembunyiin Buah GEDE (>= N kg, ilang total) — v32.8 ======
+local applyHideBig
+do
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 9, Parent = misc2List })
+    corner(card, 8); stroke(card, C.border, 1)
+    local nameL = lbl(card, "Sembunyiin Buah Gede", 14, C.text, Enum.TextXAlignment.Left)
+    nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
+    local descL = lbl(card, "buah berat ilang TOTAL, yg kecil tetep keliatan", 11, C.textMute, Enum.TextXAlignment.Left)
+    descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
+    local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0, 16),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
+    corner(sw, 13); local swStroke = stroke(sw, C.border, 1)
+    local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
+    corner(knob, 10)
+    -- baris ambang kg
+    local kgL = lbl(card, "Ilangin buah ≥ (kg):", 12, C.text, Enum.TextXAlignment.Left)
+    kgL.Position = UDim2.new(0, 14, 0, 58); kgL.Size = UDim2.new(0, 150, 0, 24)
+    local kgBox = mk("TextBox", { Size = UDim2.new(0, 80, 0, 24), Position = UDim2.new(1, -94, 0, 58),
+        BackgroundColor3 = C.input, Text = tostring(state.hideBigKg or 100), PlaceholderText = "100",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = card })
+    corner(kgBox, 6); stroke(kgBox, C.border, 1)
+    kgBox.FocusLost:Connect(function()
+        local n = tonumber(kgBox.Text) or 100
+        if n < 1 then n = 1 end
+        state.hideBigKg = n; kgBox.Text = tostring(n); saveState()
+        -- terapkan ulang kalau lagi ON (threshold berubah -> yg di bawah ambang balik keliatan)
+        if state.hideBigFruits then task.spawn(function() pcall(function() Farm.scanHideBigFruits(true) end) end) end
+        print("[ZenxFarm] ambang buah gede -> "..n.."kg")
+    end)
+    applyHideBig = function()
+        if state.hideBigFruits then
+            sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
+            knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
+        else
+            sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
+            knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
+        end
+        task.spawn(function() pcall(function() Farm.setHideBigFruits(state.hideBigFruits) end) end)
+    end
+    sw.MouseButton1Click:Connect(function()
+        state.hideBigFruits = not state.hideBigFruits; saveState(); applyHideBig()
+        print("[ZenxFarm] Sembunyiin Buah Gede -> "..(state.hideBigFruits and "ON" or "OFF"))
+    end)
+    applyHideBig()
+end
+
 -- ====== MISC: Auto Steal (toggle simpel) ======
 local applySteal
 do
@@ -8556,6 +8735,11 @@ do
     Farm._calcGardenRefresh = refresh
 end
 -- v18.6: akun buy pet -> auto sell nyala. v32.0: auto-accept gift hormati state tersimpan (ga dipaksa true)
+-- v33.0: Sembunyiin Buah Gede SELALU ON tiap script start (permintaan user) — buah >= hideBigKg (default 100)
+-- ilang total + prompt Harvest-nya mati. toggle di MISC tetep bisa matiin SEMENTARA (sesi ini doang),
+-- launch berikutnya nyala lagi.
+state.hideBigFruits = true
+if not state.hideBigKg or state.hideBigKg < 1 then state.hideBigKg = 100 end
 if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; state.autoHop = true; if not state.hopMinutes or state.hopMinutes <= 0 then state.hopMinutes = 45 end if state.hopMinutes == 30 then state.hopMinutes = 45 end end
 
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyGiftPet(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
@@ -8568,6 +8752,8 @@ task.spawn(function()
     pcall(function() applyHidePlants() end)
     task.wait(0.5)
     pcall(function() applyHideFruits() end)
+    task.wait(0.5)
+    pcall(function() applyHideBig() end)   -- v33.0: Sembunyiin Buah Gede selalu ON (di-force di atas)
     task.wait(0.5)
     pcall(function() if state.espPrice then Farm.applyEspPrice() end end)  -- v15.4
     pcall(function() if state.espMut then Farm.applyEspMut() end end)  -- v21.4
