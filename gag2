@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v35.2
+-- ZENX FARM  v35.4
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -32,6 +32,8 @@
 --   * Weather FREEZE (hasil spy): Kick lokal = keluar server seketika -> tunggu N detik (setting) -> rejoin
 --   * FIX: Day/Night/Moon/Sunset dll = NETRAL (dulu kebaca weather buruk -> kick terus); hop auto-OFF tiap start; delay 15s
 --   * AF2: auto-TP ke SAMPING titik seed sblm place sprinkler/WC (remote ada batas jarak), lalu balik
+--   * Weather picker: ikut scan modul Lunar/Moon/Event/Phase + auto-daftarin event baru yg muncul live
+--   * Deteksi buruk cek DUA kanal (hasil bongkar data): ActiveWeather + ActivePhase (fase bulan!)
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -55,7 +57,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v35.2"
+local VER       = "v35.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5557,6 +5559,33 @@ function Farm.weatherList()
             end
         end
     end)
+    -- v35.3: game ini punya event NON-weather juga (fase bulan merah/besar/gold dll) —
+    -- ikut scan modul lain di SharedModules yg namanya nyerempet Lunar/Moon/Event/Phase,
+    -- ekstraksi pola sama kayak WeatherData.
+    pcall(function()
+        local RS = game:GetService("ReplicatedStorage")
+        local sm = RS:FindFirstChild("SharedModules")
+        if not sm then return end
+        local have = {}
+        for _, n in ipairs(list) do have[n] = true end
+        for _, child in ipairs(sm:GetChildren()) do
+            local ln = child.Name:lower()
+            if child:IsA("ModuleScript") and child.Name ~= "WeatherData"
+               and (ln:find("lunar") or ln:find("moon") or ln:find("event") or ln:find("phase")) then
+                local ok2, mod2 = pcall(require, child)
+                if ok2 and type(mod2) == "table" then
+                    local src2 = mod2
+                    if type(mod2.Weathers) == "table" then src2 = mod2.Weathers
+                    elseif type(mod2.Data) == "table" then src2 = mod2.Data
+                    elseif type(mod2.Phases) == "table" then src2 = mod2.Phases end
+                    for k, v in pairs(src2) do
+                        local nm = (type(k) == "string" and not tonumber(k) and k) or (type(v) == "table" and (v.Name or v.WeatherName or v.PhaseName))
+                        if type(nm) == "string" and not have[nm] then have[nm] = true; list[#list+1] = nm end
+                    end
+                end
+            end
+        end
+    end)
     table.sort(list)
     Farm._weatherListCache = list
     return list
@@ -5569,12 +5598,33 @@ local WEATHER_NEUTRAL = { none=true, normal=true, standard=true, clear=true, sun
     day=true, night=true, moon=true, sunset=true, sunrise=true, dawn=true, dusk=true,
     morning=true, noon=true, evening=true, midnight=true }
 function Farm.isBadWeatherNow()
-    local w = workspace:GetAttribute("ActiveWeather")
-    local wl = tostring(w or ""):lower()
-    if w == nil or WEATHER_NEUTRAL[wl] then return false, w end
-    if state.allGoodWeather then return false, w end
-    if state.goodWeathers and state.goodWeathers[tostring(w)] then return false, w end
-    return true, w
+    -- v35.4 (HASIL BONGKAR DATA): game punya DUA kanal terpisah —
+    --   ActiveWeather = weather (Rain/Lightning/Rainbow/Snowfall/Starfall/Aurora/Sunburst)
+    --   ActivePhase   = FASE (siklus harian + fase bulan merah/besar/gold)
+    -- dua-duanya dicek. nilai non-netral yg belum ditandai bagus = BURUK.
+    -- nama fase ga perlu diketahui di muka: nilai baru otomatis didaftarin ke picker.
+    local cands = {}
+    local aw = workspace:GetAttribute("ActiveWeather"); if aw ~= nil then cands[#cands+1] = aw end
+    local ap = workspace:GetAttribute("ActivePhase");   if ap ~= nil then cands[#cands+1] = ap end
+    for _, w in ipairs(cands) do
+        local wl = tostring(w):lower()
+        if not WEATHER_NEUTRAL[wl] then
+            -- v35.3: BELAJAR SENDIRI — nilai baru (weather ataupun fase) didaftarin ke picker
+            pcall(function()
+                local ws = tostring(w)
+                local lc = Farm._weatherListCache
+                if lc then
+                    for _, n in ipairs(lc) do if n == ws then return end end
+                    lc[#lc+1] = ws; table.sort(lc)
+                    print("[ZenxFarm] event baru kedeteksi & didaftarin ke picker: "..ws)
+                end
+            end)
+            if not state.allGoodWeather and not (state.goodWeathers and state.goodWeathers[tostring(w)]) then
+                return true, w
+            end
+        end
+    end
+    return false, aw
 end
 
 -- v26.8: loop AUTO REJOIN saat weather buruk — tunggu weatherHopDelay detik dulu, baru hop.
@@ -8844,7 +8894,7 @@ do
         BackgroundTransparency = 1, Parent = card })
 
     -- picker weather BAGUS (sisanya = trigger hop)
-    mkTypeRow(body, 4, "Weather bagus", Farm.weatherList, state.goodWeathers, "allGoodWeather", "Semua weather bagus")
+    mkTypeRow(body, 4, "Weather/Fase bagus", Farm.weatherList, state.goodWeathers, "allGoodWeather", "Semua weather bagus")
 
     -- v35.0: lama FREEZE (detik) — Kick lokal (keluar server seketika) lalu rejoin setelah N detik.
     -- 0 = tanpa freeze, langsung teleport pindah server (mode lama).
