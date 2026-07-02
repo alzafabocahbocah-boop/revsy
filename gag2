@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v35.4
+-- ZENX FARM  v35.5
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -34,6 +34,7 @@
 --   * AF2: auto-TP ke SAMPING titik seed sblm place sprinkler/WC (remote ada batas jarak), lalu balik
 --   * Weather picker: ikut scan modul Lunar/Moon/Event/Phase + auto-daftarin event baru yg muncul live
 --   * Deteksi buruk cek DUA kanal (hasil bongkar data): ActiveWeather + ActivePhase (fase bulan!)
+--   * Info plot: hitung PER seed — "Dragon.s Breath ×199 +107 lain" (dulu total plot nempel 1 nama)
 --   * Panel MAIL: Target pakai satuan JUTA ("1500" = 1.5B, ga ketipu huruf m)
 --   * Panel MAIL: total nilai buah inventory tampil di header (sebelah close)
 --   * FIX: resolveTargetId di-cache -> loop kirim ga berhenti sendiri (rate-limit)
@@ -57,7 +58,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v35.4"
+local VER       = "v35.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6448,27 +6449,36 @@ do
         BackgroundTransparency = 1, Text = "Belum di-scan", TextColor3 = C.textMute, Font = FONT, TextSize = 10,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
         BorderSizePixel = 0, AutoButtonColor = false, Parent = body })
-    -- v33.2: sekalian hitung JUMLAH BUAH di plot. v34.5: CUMA tanaman MILIK SENDIRI
-    -- (nama tanaman format "<userId>_<uuid>" — kriteria sama persis countMyGardenFruits,
-    -- biar angkanya cocok sama picker jenis buah)
+    -- v33.2/34.5/35.5: info plot. v35.5 FIX: dulu total SEMUA buah di plot ditempel ke nama
+    -- seed pertama (misleading: "Dragon's Breath ×306" padahal DB cuma 199, sisanya tanaman lain).
+    -- sekarang: hitung PER seed (kriteria persis countMyGardenFruits), tampilkan seed DOMINAN
+    -- dgn angka miliknya sendiri + "+N lain" kalau ada jenis lain.
     local function plotInfoOf(plotId)
-        local seed, nFruit = nil, 0
+        local seed, nFruit, nOther = nil, 0, 0
         pcall(function()
             local g = workspace:FindFirstChild("Gardens")
             local plot = g and g:FindFirstChild(plotId)
             local plants = plot and plot:FindFirstChild("Plants")
             if not plants then return end
             local MY = player.UserId
+            local per = {}
             for _, plant in ipairs(plants:GetChildren()) do
                 local ownerId = tonumber(plant.Name:match("^(%d+)_"))
                 if (not ownerId or ownerId == MY) then
-                    if not seed then seed = plant:GetAttribute("SeedName") or plant.Name end
+                    local sn = plant:GetAttribute("SeedName") or "?"
                     local fr = plant:FindFirstChild("Fruits")
-                    if fr then nFruit = nFruit + #fr:GetChildren() end
+                    local nf = fr and #fr:GetChildren() or 0
+                    if nf > 0 then per[sn] = (per[sn] or 0) + nf end
                 end
             end
+            local total = 0
+            for sn, c in pairs(per) do
+                total = total + c
+                if c > nFruit then seed = sn; nFruit = c end   -- seed dominan
+            end
+            nOther = total - nFruit
         end)
-        return seed, nFruit
+        return seed, nFruit, nOther
     end
     local function refreshPosInfo()
         local sp = state.af2SavedPos or {}
@@ -6477,8 +6487,10 @@ do
         local parts = {}
         for _, e in ipairs(sp) do
             local seg = e.plotId
-            local seed, nFruit = plotInfoOf(e.plotId)
-            if seed then seg = seg.." ("..tostring(seed).." ×"..nFruit..")" end   -- v33.2: nama + jumlah buah
+            local seed, nFruit, nOther = plotInfoOf(e.plotId)
+            if seed then
+                seg = seg.." ("..tostring(seed).." ×"..nFruit..((nOther or 0) > 0 and (" +"..nOther.." lain") or "")..")"   -- v35.5
+            end
             if hrp then seg = seg.." · "..math.floor((hrp.Position - Vector3.new(e.x, e.y, e.z)).Magnitude).."m" end
             parts[#parts+1] = seg
         end
@@ -6515,8 +6527,8 @@ do
                 tl.Size = UDim2.new(1,0,1,0); tl.BackgroundTransparency = 0.35
                 tl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
                 tl.TextColor3 = Color3.fromRGB(140, 255, 170); tl.Font = FONT_B; tl.TextSize = 16
-                local seed2, nF2 = plotInfoOf(e.plotId)   -- v33.2
-                tl.Text = "📍 "..e.plotId.." DISINI"..(seed2 and ("\n"..tostring(seed2).." ×"..nF2) or "")
+                local seed2, nF2, nO2 = plotInfoOf(e.plotId)   -- v35.5
+                tl.Text = "📍 "..e.plotId.." DISINI"..(seed2 and ("\n"..tostring(seed2).." ×"..nF2..((nO2 or 0) > 0 and (" +"..nO2.." lain") or "")) or "")
                 tl.TextWrapped = true; tl.Parent = bb
                 task.delay(6, function() pcall(function() anchor:Destroy() end) end)
             end)
