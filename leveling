@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.23"
+local SCRIPT_VERSION="v13.24"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1472,49 +1472,9 @@ invShowBtn.MouseButton1Click:Connect(function() switchSection(2) end)
 local isAR, arTask = false, nil   -- v13.21: dipakai startAR/stopAR (didefinisikan di bawah) + panel ini
 local arTog2,arTogStroke2,arStroke2,cdLbl2
 local buildRejoinPanel, setArTog
--- v13.21: PANEL REJOIN (isi tab sidebar "Rejoin"). dibangun sekali (guard _built).
-buildRejoinPanel = function()
-    if rejoinGroup:GetAttribute("_built") then return end
-    rejoinGroup:SetAttribute("_built", true)
-    local pad = mk("Frame",{Size=UDim2.new(1,-10,1,-8),Position=UDim2.new(0,5,0,4),BackgroundTransparency=1,Parent=rejoinGroup})
-    mk("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6),Parent=pad})
-    local function row(lo) local r=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=lo,Parent=pad}) corner(r,6) stroke(r,C.Dim,1.1) return r end
-    local function numRow(txt,lo,val,onCh)
-        local r=row(lo)
-        lbl(r,txt,12,C.Gray).Size=UDim2.new(0.62,0,1,0)
-        local box=mk("TextBox",{Size=UDim2.new(0,60,0,22),Position=UDim2.new(1,-66,0.5,-11),BackgroundColor3=C.Panel,Text=tostring(val),TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=r})
-        corner(box,5) stroke(box,C.Dim,1)
-        box:GetPropertyChangedSignal("Text"):Connect(function() local v=tonumber(box.Text) if v then onCh(v) save() end end)
-    end
+-- v13.24: definisi panel Rejoin DIPINDAH ke bawah (setelah local config & save) —
+-- lihat komentar di lokasi barunya soal scoping leksikal.
 
-    lbl(pad,"REJOIN",12,C.Teal).Size=UDim2.new(1,0,0,16)
-    -- Rejoin Now (ke server SAMA)
-    local rnBtn=btn(pad,"Rejoin Now (server sama)",12,C.TDim,C.Teal)
-    rnBtn.Size=UDim2.new(1,0,0,28) rnBtn.LayoutOrder=1 stroke(rnBtn,C.Teal,1.5)
-    rnBtn.MouseButton1Click:Connect(function()
-        rnBtn.Text="Rejoining..." local jid=game.JobId task.wait(0.3)
-        pcall(function() TS:TeleportToPlaceInstance(game.PlaceId,jid,player) end)
-    end)
-    numRow("Interval (menit)",2,config.rejoinMinutes,function(v) config.rejoinMinutes=math.max(1,math.min(120,v)) d.config.rejoinMinutes=config.rejoinMinutes end)
-    numRow("Freeze kick (detik, 0=off)",3,(config.freezeSec or 0),function(v) config.freezeSec=math.max(0,math.min(600,math.floor(v))) d.config.freezeSec=config.freezeSec end)
-
-    -- toggle Auto Rejoin
-    local tr=row(4)
-    lbl(tr,"Auto Rejoin",13,C.White).Size=UDim2.new(0.6,0,1,0)
-    arTog2=btn(tr,"OFF",13,C.Panel,C.Gray) arTog2.Size=UDim2.new(0,56,0,24) arTog2.Position=UDim2.new(1,-64,0.5,-12) arTog2.Font=Enum.Font.GothamBold
-    arTogStroke2=stroke(arTog2,C.Dim,1.2) arStroke2=arTogStroke2
-    cdLbl2=lbl(pad,"Auto Rejoin: OFF",11,C.Gray,Enum.TextXAlignment.Center)
-    cdLbl2.Size=UDim2.new(1,0,0,22) cdLbl2.LayoutOrder=5 cdLbl2.BackgroundColor3=C.Panel corner(cdLbl2,6) stroke(cdLbl2,C.Dim,1.1)
-    setArTog=function(val) arTog2.Text=val and "ON" or "OFF" arTog2.BackgroundColor3=val and C.TDim or C.Panel arTog2.TextColor3=val and C.Teal or C.Gray arTogStroke2.Color=val and C.Teal or C.Dim end
-    -- v13.22: connect toggle TIDAK di sini — startAR/stopAR baru ada jauh di bawah (closure
-    -- di titik ini nangkep global nil). koneksi asli di bawah definisi startAR tetap dipakai.
-    -- sync tampilan toggle juga TIDAK di sini — autoRejoin dideklarasi di bawah eager build;
-    -- dipanggil setelah deklarasinya (lihat setArTog(autoRejoin) dekat 'local autoRejoin').
-    local note=lbl(pad,"Freeze>0: kick dulu, diem N detik, balik ke server SAMA.",10,C.Dim)
-    note.Size=UDim2.new(1,0,0,26) note.LayoutOrder=6 note.TextWrapped=true
-end
--- v13.22b: eager build TIDAK di sini — panel baca config.rejoinMinutes saat dibangun,
--- padahal 'local config' baru dideklarasi di bawah (1592). dipanggil setelah config ada.
 miscBtn.MouseButton1Click:Connect(function() switchSection(3) end)
 giftBtn.MouseButton1Click:Connect(function() switchSection(4) end)  -- v12.77
 
@@ -1595,9 +1555,7 @@ local fromAge=d.fromAge or 1
 local maxPetTarget=d.maxPetTarget or 1
 local autoStartEnabled=d.autoStartEnabled or false
 local autoRejoin=d.autoRejoin or false
-buildRejoinPanel()   -- v13.22b: EAGER build di sini — config & autoRejoin udah ada, dan ini
-                     -- tetap SEBELUM connect arTog2 (2977) & autostart, jadi ga ada nil-index.
-if setArTog then setArTog(autoRejoin) end
+-- v13.24: eager build panel Rejoin dipindah ke bawah save() (scoping leksikal)
 local autoAccGift=d.autoAccGift or false
 local autoAccTrade=d.autoAccTrade or false
 local autoSendGift=d.autoSendGift or false
@@ -1660,6 +1618,55 @@ local function save()
     d.teamPetUUIDs=teamPetUUIDs d.teamPetInfoCache=teamPetInfoCache
     saveToFile(d)
 end
+
+-- v13.24: PANEL REJOIN — definisinya WAJIB di bawah 'local config' (1592) dan
+-- 'local function save' (1650). scoping Lua itu LEKSIKAL: closure nangkep nama
+-- berdasarkan posisi DEFINISI, bukan posisi panggilan. definisi lama (1476)
+-- mendahului keduanya -> 'config' & 'save' kebaca GLOBAL nil -> crash baris 1498
+-- walau panggilannya udah dipindah. (dua kali kejadian, pelajaran mahal.)
+-- v13.21: PANEL REJOIN (isi tab sidebar "Rejoin"). dibangun sekali (guard _built).
+buildRejoinPanel = function()
+    if rejoinGroup:GetAttribute("_built") then return end
+    rejoinGroup:SetAttribute("_built", true)
+    local pad = mk("Frame",{Size=UDim2.new(1,-10,1,-8),Position=UDim2.new(0,5,0,4),BackgroundTransparency=1,Parent=rejoinGroup})
+    mk("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6),Parent=pad})
+    local function row(lo) local r=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=lo,Parent=pad}) corner(r,6) stroke(r,C.Dim,1.1) return r end
+    local function numRow(txt,lo,val,onCh)
+        local r=row(lo)
+        lbl(r,txt,12,C.Gray).Size=UDim2.new(0.62,0,1,0)
+        local box=mk("TextBox",{Size=UDim2.new(0,60,0,22),Position=UDim2.new(1,-66,0.5,-11),BackgroundColor3=C.Panel,Text=tostring(val),TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=r})
+        corner(box,5) stroke(box,C.Dim,1)
+        box:GetPropertyChangedSignal("Text"):Connect(function() local v=tonumber(box.Text) if v then onCh(v) save() end end)
+    end
+
+    lbl(pad,"REJOIN",12,C.Teal).Size=UDim2.new(1,0,0,16)
+    -- Rejoin Now (ke server SAMA)
+    local rnBtn=btn(pad,"Rejoin Now (server sama)",12,C.TDim,C.Teal)
+    rnBtn.Size=UDim2.new(1,0,0,28) rnBtn.LayoutOrder=1 stroke(rnBtn,C.Teal,1.5)
+    rnBtn.MouseButton1Click:Connect(function()
+        rnBtn.Text="Rejoining..." local jid=game.JobId task.wait(0.3)
+        pcall(function() TS:TeleportToPlaceInstance(game.PlaceId,jid,player) end)
+    end)
+    numRow("Interval (menit)",2,config.rejoinMinutes,function(v) config.rejoinMinutes=math.max(1,math.min(120,v)) d.config.rejoinMinutes=config.rejoinMinutes end)
+    numRow("Freeze kick (detik, 0=off)",3,(config.freezeSec or 0),function(v) config.freezeSec=math.max(0,math.min(600,math.floor(v))) d.config.freezeSec=config.freezeSec end)
+
+    -- toggle Auto Rejoin
+    local tr=row(4)
+    lbl(tr,"Auto Rejoin",13,C.White).Size=UDim2.new(0.6,0,1,0)
+    arTog2=btn(tr,"OFF",13,C.Panel,C.Gray) arTog2.Size=UDim2.new(0,56,0,24) arTog2.Position=UDim2.new(1,-64,0.5,-12) arTog2.Font=Enum.Font.GothamBold
+    arTogStroke2=stroke(arTog2,C.Dim,1.2) arStroke2=arTogStroke2
+    cdLbl2=lbl(pad,"Auto Rejoin: OFF",11,C.Gray,Enum.TextXAlignment.Center)
+    cdLbl2.Size=UDim2.new(1,0,0,22) cdLbl2.LayoutOrder=5 cdLbl2.BackgroundColor3=C.Panel corner(cdLbl2,6) stroke(cdLbl2,C.Dim,1.1)
+    setArTog=function(val) arTog2.Text=val and "ON" or "OFF" arTog2.BackgroundColor3=val and C.TDim or C.Panel arTog2.TextColor3=val and C.Teal or C.Gray arTogStroke2.Color=val and C.Teal or C.Dim end
+    -- v13.22: connect toggle TIDAK di sini — startAR/stopAR baru ada jauh di bawah (closure
+    -- di titik ini nangkep global nil). koneksi asli di bawah definisi startAR tetap dipakai.
+    -- sync tampilan toggle juga TIDAK di sini — autoRejoin dideklarasi di bawah eager build;
+    -- dipanggil setelah deklarasinya (lihat setArTog(autoRejoin) dekat 'local autoRejoin').
+    local note=lbl(pad,"Freeze>0: kick dulu, diem N detik, balik ke server SAMA.",10,C.Dim)
+    note.Size=UDim2.new(1,0,0,26) note.LayoutOrder=6 note.TextWrapped=true
+end
+buildRejoinPanel()   -- eager: tab keisi + arTog2/cdLbl2 siap buat connect & autostart di bawah
+if setArTog then setArTog(autoRejoin) end
 
 local function teamCount() local n=0 for _ in pairs(teamPetUUIDs) do n=n+1 end return n end
 local function selCount() local n=0 for _ in pairs(targetPetTypes) do n=n+1 end return n end
