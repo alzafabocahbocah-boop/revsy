@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.15"
+local SCRIPT_VERSION="v13.21"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -224,7 +224,7 @@ if not getgenv().ZenxData then
     getgenv().ZenxData=loaded or {
         config={equipInterval=5,rejoinMinutes=30},
         targetPetTypes={},
-        fromAge=1,toAge=100,maxPetTarget=1,
+        fromAge=1,toAge=500,maxPetTarget=1,   -- v13.16: max age game sekarang 500
         autoStartEnabled=false,autoRejoin=false,
         autoAccGift=false,autoAccTrade=false,
         protectFavorites=true, -- v13.06: safety - skip favorit di Auto Gift/Trade/Unfav
@@ -239,7 +239,8 @@ dbg("Step 3 OK: data loaded | protectFav="..tostring(d.protectFavorites))
 
 -- v11.6: toAge declared EARLY (sebelum donesLbl spawn + _doBuildInvShow function)
 -- biar ke-capture sebagai upvalue, bukan global nil
-local toAge=d.toAge or 100
+local toAge=d.toAge or 500
+if toAge==100 then toAge=500 d.toAge=500 end   -- v13.16: migrasi default lama 100 -> 500
 
 -- v11.5: declare toAge SEBELUM function definitions yg pakai (donesLbl, _doBuildInvShow)
 -- biar ke-capture sebagai upvalue/local, bukan global nil
@@ -331,7 +332,7 @@ local function getAge(item)
     }) do
         local f=item.Name:match(pat) if f then return tonumber(f) end
     end
-    if item.Name:match("%[Age%s*MAX%]") or item.Name:match("%[MAX%]") then return 100 end
+    if item.Name:match("%[Age%s*MAX%]") or item.Name:match("%[MAX%]") then return 500 end   -- v13.16: MAX=500
     return nil
 end
 local function getPetName(item) return item.Name:match("^(.-)%s*%[") or item.Name end
@@ -487,10 +488,10 @@ local function getPlacedPetAge(placedModel)
                                 if not age then age=tonumber(txt:match("[Ll][Vv]l?%.?[^%d]*(%d+)")) end
                                 if not age then
                                     local n,total=txt:match("(%d+)%s*/%s*(%d+)")
-                                    if n and total and tonumber(total)==100 then age=tonumber(n) end
+                                    if n and total and (tonumber(total)==100 or tonumber(total)==500) then age=tonumber(n) end
                                 end
                             end
-                            if not age and txt:lower():match("max") and (d.Name=="PET_AGE" or lname:find("age",1,true)) then age=100 end
+                            if not age and txt:lower():match("max") and (d.Name=="PET_AGE" or lname:find("age",1,true)) then age=500 end
                             if age and age>=0 and age<=200 then table.insert(ages,age) end
                         end
                     end
@@ -1036,7 +1037,7 @@ local getAgeFromUI = (function()
                         if d.Name=="PET_AGE" or lname:find("age",1,true) or lname:find("lvl",1,true) or lname:find("level",1,true) then
                             -- Label namanya age-related -> ambil angka pertama
                             age=tonumber(txt:match("(%d+)"))
-                            if not age and txt:lower():match("max") then age=100 end
+                            if not age and txt:lower():match("max") then age=500 end
                         else
                             -- Label name biasa -> cari pattern "Age N", "Lv N", "Level N", atau "N/100"
                             age=tonumber(txt:match("[Aa][Gg][Ee][^%d]*(%d+)"))
@@ -1044,9 +1045,9 @@ local getAgeFromUI = (function()
                             -- Pattern "N/100" (biasa di progress label)
                             if not age then
                                 local n,total=txt:match("(%d+)%s*/%s*(%d+)")
-                                if n and total and tonumber(total)==100 then age=tonumber(n) end
+                                if n and total and (tonumber(total)==100 or tonumber(total)==500) then age=tonumber(n) end
                             end
-                            if not age and (lname=="agelabel" or lname=="age") and txt:lower():match("max") then age=100 end
+                            if not age and (lname=="agelabel" or lname=="age") and txt:lower():match("max") then age=500 end
                         end
                         if age and age>0 and age<=200 then
                             local p=d.Parent local depth=0
@@ -1154,9 +1155,9 @@ function getAgeFromKG(item)
             end
             if maxKG and maxKG > 0 then
                 local raw = math.floor(kg*110/maxKG - 10)
-                if raw >= 1 and raw <= 100 then
+                if raw >= 1 and raw <= 500 then   -- v13.16: max age 500
                     kgAge = raw
-                elseif raw > 100 then
+                elseif raw > 500 then
                     -- v13.09: JANGAN cap ke 100! mutasi bikin kg overshoot -> pet MUDA kebaca age 100
                     -- -> dicap completed -> gak pernah di-level. overshoot = umur GAK DIKETAHUI (nil),
                     -- biar sumber lain (APS/UI) yang nentuin. getQueue strict udah skip nil dgn aman.
@@ -1247,7 +1248,7 @@ local function makeSidebarBtn(name, idx)
     return b
 end
 local upLvlBtn = makeSidebarBtn("UP LVL", 1)
-local invShowBtn = makeSidebarBtn("Inventory Show", 2)
+local invShowBtn = makeSidebarBtn("Rejoin", 2)   -- v13.21: Inventory Show -> Rejoin
 local miscBtn = makeSidebarBtn("Misc", 3)
 local giftBtn = makeSidebarBtn("Auto Gift", 4)  -- v12.77: pindah dari tab ke sidebar
 
@@ -1302,6 +1303,9 @@ end
 
 -- v10.9: Inventory Show section - listing semua pet di backpack
 local invShowGroup = mk("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,Parent=content})
+
+-- v13.21: REJOIN section (sidebar 2, gantiin Inventory Show)
+local rejoinGroup = mk("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,Parent=content})
 
 -- v12.22: MISC section - Auto Buy/Feed/Collect (sidebar 3)
 local miscGroup = mk("Frame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Visible=false,Parent=content})
@@ -1440,6 +1444,7 @@ local function switchSection(idx)
     runBtn.Visible = false
     stopBtn.Visible = false
     invShowGroup.Visible = false
+    rejoinGroup.Visible = false
     miscGroup.Visible = false
 
     if idx == 1 then
@@ -1450,10 +1455,9 @@ local function switchSection(idx)
         stopBtn.Visible = true
         switchTab(currentTab)
     elseif idx == 2 then
-        -- Inventory Show
-        invShowGroup.Visible = true
-        invHeaderLbl.TextColor3 = C.Teal
-        buildInvShow()
+        -- v13.21: Rejoin (gantiin Inventory Show)
+        rejoinGroup.Visible = true
+        if buildRejoinPanel then buildRejoinPanel() end
     elseif idx == 3 then
         -- Misc
         miscGroup.Visible = true
@@ -1465,6 +1469,49 @@ end
 
 upLvlBtn.MouseButton1Click:Connect(function() switchSection(1) end)
 invShowBtn.MouseButton1Click:Connect(function() switchSection(2) end)
+
+local isAR, arTask = false, nil   -- v13.21: dipakai startAR/stopAR (didefinisikan di bawah) + panel ini
+local arTog2,arTogStroke2,arStroke2,cdLbl2
+local buildRejoinPanel, setArTog
+-- v13.21: PANEL REJOIN (isi tab sidebar "Rejoin"). dibangun sekali (guard _built).
+buildRejoinPanel = function()
+    if rejoinGroup:GetAttribute("_built") then return end
+    rejoinGroup:SetAttribute("_built", true)
+    local pad = mk("Frame",{Size=UDim2.new(1,-10,1,-8),Position=UDim2.new(0,5,0,4),BackgroundTransparency=1,Parent=rejoinGroup})
+    mk("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6),Parent=pad})
+    local function row(lo) local r=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=lo,Parent=pad}) corner(r,6) stroke(r,C.Dim,1.1) return r end
+    local function numRow(txt,lo,val,onCh)
+        local r=row(lo)
+        lbl(r,txt,12,C.Gray).Size=UDim2.new(0.62,0,1,0)
+        local box=mk("TextBox",{Size=UDim2.new(0,60,0,22),Position=UDim2.new(1,-66,0.5,-11),BackgroundColor3=C.Panel,Text=tostring(val),TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=13,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=r})
+        corner(box,5) stroke(box,C.Dim,1)
+        box:GetPropertyChangedSignal("Text"):Connect(function() local v=tonumber(box.Text) if v then onCh(v) save() end end)
+    end
+
+    lbl(pad,"REJOIN",12,C.Teal).Size=UDim2.new(1,0,0,16)
+    -- Rejoin Now (ke server SAMA)
+    local rnBtn=btn(pad,"Rejoin Now (server sama)",12,C.TDim,C.Teal)
+    rnBtn.Size=UDim2.new(1,0,0,28) rnBtn.LayoutOrder=1 stroke(rnBtn,C.Teal,1.5)
+    rnBtn.MouseButton1Click:Connect(function()
+        rnBtn.Text="Rejoining..." local jid=game.JobId task.wait(0.3)
+        pcall(function() TS:TeleportToPlaceInstance(game.PlaceId,jid,player) end)
+    end)
+    numRow("Interval (menit)",2,config.rejoinMinutes,function(v) config.rejoinMinutes=math.max(1,math.min(120,v)) d.config.rejoinMinutes=config.rejoinMinutes end)
+    numRow("Freeze kick (detik, 0=off)",3,(config.freezeSec or 0),function(v) config.freezeSec=math.max(0,math.min(600,math.floor(v))) d.config.freezeSec=config.freezeSec end)
+
+    -- toggle Auto Rejoin
+    local tr=row(4)
+    lbl(tr,"Auto Rejoin",13,C.White).Size=UDim2.new(0.6,0,1,0)
+    arTog2=btn(tr,"OFF",13,C.Panel,C.Gray) arTog2.Size=UDim2.new(0,56,0,24) arTog2.Position=UDim2.new(1,-64,0.5,-12) arTog2.Font=Enum.Font.GothamBold
+    arTogStroke2=stroke(arTog2,C.Dim,1.2) arStroke2=arTogStroke2
+    cdLbl2=lbl(pad,"Auto Rejoin: OFF",11,C.Gray,Enum.TextXAlignment.Center)
+    cdLbl2.Size=UDim2.new(1,0,0,22) cdLbl2.LayoutOrder=5 cdLbl2.BackgroundColor3=C.Panel corner(cdLbl2,6) stroke(cdLbl2,C.Dim,1.1)
+    setArTog=function(val) arTog2.Text=val and "ON" or "OFF" arTog2.BackgroundColor3=val and C.TDim or C.Panel arTog2.TextColor3=val and C.Teal or C.Gray arTogStroke2.Color=val and C.Teal or C.Dim end
+    arTog2.MouseButton1Click:Connect(function() if isAR then stopAR() else startAR() end end)
+    setArTog(autoRejoin)
+    local note=lbl(pad,"Freeze>0: kick dulu, diem N detik, balik ke server SAMA.",10,C.Dim)
+    note.Size=UDim2.new(1,0,0,26) note.LayoutOrder=6 note.TextWrapped=true
+end
 miscBtn.MouseButton1Click:Connect(function() switchSection(3) end)
 giftBtn.MouseButton1Click:Connect(function() switchSection(4) end)  -- v12.77
 
@@ -1551,12 +1598,15 @@ local autoSendGift=d.autoSendGift or false
 local autoSendTrade=d.autoSendTrade or false
 local sendInterval=d.sendInterval or 30
 local giftSlots=d.giftSlots or {
-    {target="",petTypes={},mutationFilter="",kg="",age="",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false},
-    {target="",petTypes={},mutationFilter="",kg="",age="",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false},
-    {target="",petTypes={},mutationFilter="",kg="",age="",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false},
+    {target="",petTypes={},mutationFilter="",kg="38",age="500",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false},   -- v13.16: default kg 38 / age 500
+    {target="",petTypes={},mutationFilter="",kg="38",age="500",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false},   -- v13.16: default kg 38 / age 500
+    {target="",petTypes={},mutationFilter="",kg="38",age="500",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false},   -- v13.16: default kg 38 / age 500
 }
 for i=1,3 do
-    if not giftSlots[i] then giftSlots[i]={target="",petTypes={},mutationFilter="",kg="",age="",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false} end
+    if not giftSlots[i] then giftSlots[i]={target="",petTypes={},mutationFilter="",kg="38",age="500",includeFav=false,autoSendGift=false,autoSendTrade=false,autoUnfav=false} end
+    -- v13.16: migrasi slot lama yg masih kosong -> default baru
+    if giftSlots[i].kg=="" then giftSlots[i].kg="38" end
+    if giftSlots[i].age=="" then giftSlots[i].age="500" end
     giftSlots[i].petTypes=giftSlots[i].petTypes or {}
     giftSlots[i].target=giftSlots[i].target or ""
     giftSlots[i].kg=giftSlots[i].kg or ""
@@ -1576,8 +1626,9 @@ local antiAfk=(d.antiAfk~=false)
 local showAllPets=d.showAllPets or false
 local isRunning=false
 local mainTask=nil local monitorTask=nil
-local isAR=false local arTask=nil
-local arTog2,arTogStroke2,arStroke2,cdLbl2
+isAR=false arTask=nil
+-- v13.21: arTog2/cdLbl2/buildRejoinPanel/setArTog di-forward-declare LEBIH ATAS (sebelum
+-- buildRejoinPanel didefinisikan) — dipindah biar assignment ngisi var yg sama, bukan bikin local baru.
 local currentLevelingUUIDs={}
 local completedPets={}
 
@@ -1692,11 +1743,11 @@ task.spawn(function()
                                     pcall(function() txt = ageLbl.Text end)
                                     local age = tonumber((txt or ""):match("(%d+)"))
                                     -- v13.00: MAX/maxed fallback
-                                    if not age and (txt:lower():find("max") or txt:lower():find("level")) then age = 100 end
+                                    if not age and (txt:lower():find("max") or txt:lower():find("level")) then age = 500 end
                                     -- LEVEL_MAXED_TEXT child = age 100
                                     if not age then
                                         local maxLbl = d:FindFirstChild("LEVEL_MAXED_TEXT", true)
-                                        if maxLbl and maxLbl.Visible then age = 100 end
+                                        if maxLbl and maxLbl.Visible then age = 500 end
                                     end
                                     if age and age >= toAge then
                                         done = done + 1
@@ -2096,7 +2147,7 @@ local function buildTargetList()
         box:GetPropertyChangedSignal("Text"):Connect(function() local v=tonumber(box.Text) if v then onChange(v) save() end end)
     end
     numRow("Dari Age:",3,fromAge,function(v) fromAge=math.max(1,math.min(99,v)) d.fromAge=fromAge end)
-    numRow("Sampai Age:",4,toAge,function(v) toAge=math.max(1,math.min(100,v)) d.toAge=toAge end)
+    numRow("Sampai Age:",4,toAge,function(v) toAge=math.max(1,math.min(500,v)) d.toAge=toAge end)   -- v13.16
 
     local pcRow=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=5,Parent=areas[2]})
     corner(pcRow,6) stroke(pcRow,C.Dim,1.1)
@@ -2362,24 +2413,8 @@ local function buildOtherSetting()
     asTog.MouseButton1Click:Connect(function() autoStartEnabled=not autoStartEnabled setAsTog(autoStartEnabled) save() end)
 
     div(areas[4],2)
-    local t2=lbl(areas[4],"REJOIN",11,C.Teal) t2.Size=UDim2.new(1,0,0,14) t2.LayoutOrder=3
-    local rnBtn=btn(areas[4],"Rejoin Now",12,C.TDim,C.Teal)
-    rnBtn.Size=UDim2.new(1,0,0,24) rnBtn.LayoutOrder=4 stroke(rnBtn,C.Teal,1.5)
-    rnBtn.MouseButton1Click:Connect(function() rnBtn.Text="Rejoining..." task.wait(0.5) TS:Teleport(game.PlaceId,player) end)
-    cfgRow("Interval (menit)",5,config.rejoinMinutes,function(v)
-        config.rejoinMinutes=math.max(1,math.min(120,v)) d.config.rejoinMinutes=config.rejoinMinutes save()
-    end)
-
-    local _row
-    _row,arTog2,arTogStroke2,arStroke2=togRow(areas[4],"Auto Rejoin","Rejoin otomatis sesuai interval",6)
-    cdLbl2=lbl(areas[4],"Auto Rejoin: OFF",11,C.Gray,Enum.TextXAlignment.Center)
-    cdLbl2.Size=UDim2.new(1,0,0,20) cdLbl2.LayoutOrder=7 cdLbl2.BackgroundColor3=C.Panel cdLbl2.BackgroundTransparency=0
-    corner(cdLbl2,6) stroke(cdLbl2,C.Dim,1.1)
-
-    local function setArTog(val)
-        arTog2.Text=val and "ON" or "OFF" arTog2.BackgroundColor3=val and C.TDim or C.Panel arTog2.TextColor3=val and C.Teal or C.Gray arTogStroke2.Color=val and C.Teal or C.Dim arStroke2.Color=val and C.Teal or C.Dim
-    end
-    setArTog(autoRejoin)
+    -- v13.21: blok REJOIN dipindah ke tab sidebar "Rejoin" (rejoinGroup). di sini disisain
+    -- ANTI-AFK aja. definisi arTog2/cdLbl2 dll dibuat di buildRejoinPanel di bawah.
 
     div(areas[4],8)
     local t3=lbl(areas[4],"ANTI-AFK",11,C.Teal) t3.Size=UDim2.new(1,0,0,14) t3.LayoutOrder=9
@@ -2805,7 +2840,7 @@ local function buildAutoGift()
         local kgRow=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=8,Parent=parent})
         corner(kgRow,6) stroke(kgRow,C.Dim,1.1)
         lbl(kgRow,"KG: -N=bawah, N=atas",11,C.Gray).Size=UDim2.new(0.7,0,1,0)
-        local kgBox=mk("TextBox",{Size=UDim2.new(0,60,0,20),Position=UDim2.new(1,-66,0.5,-10),BackgroundColor3=C.Panel,Text=slot.kg,PlaceholderText="-60",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=14,TextScaled=false,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=kgRow})
+        local kgBox=mk("TextBox",{Size=UDim2.new(0,60,0,20),Position=UDim2.new(1,-66,0.5,-10),BackgroundColor3=C.Panel,Text=slot.kg,PlaceholderText="38",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=14,TextScaled=false,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=kgRow})
         corner(kgBox,5) stroke(kgBox,C.Dim,1)
         kgBox:GetPropertyChangedSignal("Text"):Connect(function()
             slot.kg=kgBox.Text
@@ -2817,7 +2852,7 @@ local function buildAutoGift()
         local ageRow=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=7,Parent=parent})
         corner(ageRow,6) stroke(ageRow,C.Dim,1.1)
         lbl(ageRow,"Age: -N=bawah, N=atas",11,C.Gray).Size=UDim2.new(0.7,0,1,0)
-        local ageBox=mk("TextBox",{Size=UDim2.new(0,60,0,20),Position=UDim2.new(1,-66,0.5,-10),BackgroundColor3=C.Panel,Text=slot.age,PlaceholderText="-100",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=14,TextScaled=false,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=ageRow})
+        local ageBox=mk("TextBox",{Size=UDim2.new(0,60,0,20),Position=UDim2.new(1,-66,0.5,-10),BackgroundColor3=C.Panel,Text=slot.age,PlaceholderText="500",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=14,TextScaled=false,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=ageRow})
         corner(ageBox,5) stroke(ageBox,C.Dim,1)
         ageBox:GetPropertyChangedSignal("Text"):Connect(function()
             slot.age=ageBox.Text
@@ -2906,9 +2941,34 @@ local function startAR()
                 task.wait(1)
             end
             if isAR then
-                cdLbl2.Text="Rejoining..."
-                task.wait(0.5)
-                TS:Teleport(game.PlaceId,player)
+                local fz = tonumber(config.freezeSec) or 0
+                if fz > 0 then
+                    -- v13.19: Kick lokal = putus server seketika (server drop kita ~0.3s,
+                    -- terbukti di timeline spy gag2). script executor TETEP HIDUP setelah
+                    -- kick -> tunggu fz detik -> Teleport rejoin, retry tiap 10s kalau gagal.
+                    local jobId = game.JobId   -- v13.20: simpen SEBELUM kick — balik ke server SAMA
+                    cdLbl2.Text = "FREEZE "..fz.."s -> rejoin server SAMA..."
+                    pcall(function() player:Kick("ZenxFreezeRejoin") end)
+                    task.wait(fz)
+                    -- v13.20: TeleportToPlaceInstance = balik ke INSTANCE yg sama.
+                    -- Teleport(placeId) doang = server ACAK (ini yg salah di gag2 kemarin).
+                    -- 6x coba server sama, abis itu fallback acak (server penuh/ilang).
+                    local tries = 0
+                    while isAR do
+                        tries = tries + 1
+                        if jobId and jobId ~= "" and tries <= 6 then
+                            pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, player) end)
+                        else
+                            pcall(function() TS:Teleport(game.PlaceId, player) end)
+                        end
+                        task.wait(10)
+                    end
+                    return
+                else
+                    cdLbl2.Text="Rejoining..."
+                    task.wait(0.5)
+                    TS:Teleport(game.PlaceId,player)
+                end
             end
         end
     end)
@@ -3179,6 +3239,7 @@ local M78 = {
     autoBuyEgg = d.autoBuyEgg or false,
     autoBuySeed = d.autoBuySeed or false,
     autoBuyGear = d.autoBuyGear or false,
+    buyFilter = d.buyFilter or "",   -- v13.17: filter item buy (koma), kosong = semua
     autoFeedPet = d.autoFeedPet or false,
     autoCollect = d.autoCollect or false,
     -- v12.79m: Auto Boost - keep Pet Toy equipped untuk passive XP boost
@@ -3608,6 +3669,17 @@ do
     miscTogRow("Auto Buy Egg", "Beli egg otomatis di toko", 1, "autoBuyEgg")
     miscTogRow("Auto Buy Seed", "Beli seed otomatis di Sam", 2, "autoBuySeed")
     miscTogRow("Auto Buy Gear", "Beli gear (sprinkler, water can, dll)", 3, "autoBuyGear")
+    -- v13.17: filter item buy (biar ga BORONG semua daftar — sheckles aman)
+    local bfRow = mk("Frame",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=3,Parent=miscScroll})
+    corner(bfRow,7) stroke(bfRow,C.Dim,1.1)
+    local bfL = lbl(bfRow,"Filter buy (koma, kosong=semua)",11,C.Gray)
+    bfL.Size=UDim2.new(0.52,0,1,0) bfL.Position=UDim2.new(0,12,0,0)
+    local bfBox=mk("TextBox",{Size=UDim2.new(0.42,0,0,22),Position=UDim2.new(0.56,0,0.5,-11),BackgroundColor3=C.Panel,Text=M78.buyFilter,PlaceholderText="Carrot, Sprinkler, Bug Egg",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=bfRow})
+    corner(bfBox,5) stroke(bfBox,C.Dim,1)
+    bfBox.FocusLost:Connect(function()
+        M78.buyFilter=bfBox.Text d.buyFilter=bfBox.Text save()
+        dbg("[misc78] filter buy -> '"..bfBox.Text.."'")
+    end)
     miscTogRow("Auto Feed Pet", "Feed pet kalo hunger di bawah threshold", 4, "autoFeedPet")
 
     local thRow = mk("Frame",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=5,Parent=miscScroll})
@@ -3782,16 +3854,32 @@ do
 end
 
 -- ---- Loops ----
--- Buy Seed
+-- v13.17: filter item buy — nama dipisah koma, cocok sebagian, huruf bebas. kosong = semua.
+M78.buyMatch = function(name)
+    local f = M78.buyFilter or ""
+    if f == "" then return true end
+    local ln = tostring(name):lower()
+    for part in f:gmatch("[^,]+") do
+        part = part:gsub("^%s+",""):gsub("%s+$","")
+        if #part > 0 and ln:find(part:lower(), 1, true) then return true end
+    end
+    return false
+end
+-- Buy Seed — v13.17 FIX (hasil pelajarin sc hact3 yg kebukti jalan): argumen remote
+-- BuySeedStock = NAMA DOANG. dulu FireServer("Shop", nama) -> server nolak diam2 = ga pernah beli.
 task.spawn(function()
     while not scriptShutdown do
         if M78.autoBuySeed and M78.buySeedRE then
+            local n = 0
             for _, name in ipairs(M78.SEEDS) do
-                pcall(function() M78.buySeedRE:FireServer("Shop", name) end)
-                M78.buySeedFired = M78.buySeedFired + 1
-                task.wait(0.04)  -- v12.79: throttle untuk hindari spam flag (~25 req/s)
+                if M78.buyMatch(name) then
+                    pcall(function() M78.buySeedRE:FireServer(name) end)
+                    M78.buySeedFired = M78.buySeedFired + 1
+                    n = n + 1
+                    task.wait(0.1)  -- v13.17: throttle ala hact3
+                end
             end
-            M78.setStatus("Buy seed: total "..M78.buySeedFired, C.Teal)
+            M78.setStatus("Buy seed: "..n.." item/siklus, total "..M78.buySeedFired, C.Teal)
         end
         task.wait(M78.miscBuyInterval)
     end
@@ -3801,12 +3889,16 @@ end)
 task.spawn(function()
     while not scriptShutdown do
         if M78.autoBuyGear and M78.buyGearRE then
+            local n = 0
             for _, name in ipairs(M78.GEARS) do
-                pcall(function() M78.buyGearRE:FireServer(name) end)
-                M78.buyGearFired = M78.buyGearFired + 1
-                task.wait(0.04)  -- v12.79: throttle untuk hindari spam flag
+                if M78.buyMatch(name) then   -- v13.17: cuma item yg lolos filter
+                    pcall(function() M78.buyGearRE:FireServer(name) end)
+                    M78.buyGearFired = M78.buyGearFired + 1
+                    n = n + 1
+                    task.wait(0.1)
+                end
             end
-            M78.setStatus("Buy gear: total "..M78.buyGearFired, C.Teal)
+            M78.setStatus("Buy gear: "..n.." item/siklus, total "..M78.buyGearFired, C.Teal)
         end
         task.wait(M78.miscBuyInterval)
     end
@@ -3816,12 +3908,18 @@ end)
 task.spawn(function()
     while not scriptShutdown do
         if M78.autoBuyEgg and M78.buyEggRE then
+            -- v13.17: fallback "Shop" dibuang — pcall(FireServer) ga mungkin gagal, jadi
+            -- fallback itu kode mati. argumen bener (ala hact3 BuyPetEgg) = nama doang.
+            local n = 0
             for _, name in ipairs(M78.EGGS) do
-                local ok = pcall(function() M78.buyEggRE:FireServer(name) end)
-                if not ok then pcall(function() M78.buyEggRE:FireServer("Shop", name) end) end
-                M78.buyEggFired = M78.buyEggFired + 1
+                if M78.buyMatch(name) then
+                    pcall(function() M78.buyEggRE:FireServer(name) end)
+                    M78.buyEggFired = M78.buyEggFired + 1
+                    n = n + 1
+                    task.wait(0.1)
+                end
             end
-            M78.setStatus("Buy egg: total "..M78.buyEggFired, C.Teal)
+            M78.setStatus("Buy egg: "..n.." item/siklus, total "..M78.buyEggFired, C.Teal)
         end
         task.wait(M78.miscBuyInterval)
     end
@@ -3840,10 +3938,23 @@ M78.feedAllPets = function()
             break
         end
         M78.lastFood = food.Name:sub(1, 18)
+        -- v13.18 FIX SUKSES PALSU: makanan WAJIB dipegang dulu — server makein yg di TANGAN.
+        -- dulu ga pernah di-equip -> fire ketolak diam-diam, counter naik doang.
+        local ch = player.Character
+        local hu = ch and ch:FindFirstChildOfClass("Humanoid")
+        if hu and food.Parent ~= ch then
+            pcall(function() hu:EquipTool(food) end)
+            task.wait(0.15)
+        end
         pcall(function() M78.feedRE:FireServer("Feed", "{"..uuid.."}") end)
         count = count + 1
         M78.feedTotalFed = M78.feedTotalFed + 1
         task.wait(0.05)
+    end
+    -- v13.18: lepas makanan habis siklus (anti kepencet, pola sama kayak toy/WC)
+    do
+        local hu2 = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if hu2 then pcall(function() hu2:UnequipTools() end) end
     end
     M78.feedTotalPets = count
     return count
@@ -4097,10 +4208,11 @@ task.spawn(function()
                         M78.setStatus("Boost: no size selected", C.Gold)
                         task.wait(2)
                     else
-                        -- Ensure Action ready
-                        local action = M78.getBoostAction()
-                        if not action then
-                            M78.setStatus("Boost: extracting action...", C.Gold)
+                        -- v13.18 (HASIL PELAJARIN hact3): fire LANGSUNG PetBoostService
+                        -- "ApplyBoost" — ga perlu hijack UI (getBoostAction) yg rapuh &
+                        -- sering stuck "extracting action". remote udah di-resolve dr dulu!
+                        if not M78.petBoostRE then
+                            M78.setStatus("Boost: remote PetBoostService gak ketemu", C.Gold)
                             task.wait(2)
                         else
                             local cycleResults = {}
@@ -4146,9 +4258,8 @@ task.spawn(function()
                                             end
                                             if not matched then continue end
                                         end
-                                        pcall(function() M78.PAS.SetTarget(p.part) end)
-                                        task.wait(0.05)
-                                        pcall(function() return action.Activate(p.part) end)
+                                        local uu = tostring(p.uuid):gsub("[{}]","")   -- v13.18
+                                        pcall(function() M78.petBoostRE:FireServer("ApplyBoost", "{"..uu.."}") end)
                                         task.wait(0.12)
                                         local cur = toy:GetAttribute("e") or before
                                         if cur < before then
@@ -4156,7 +4267,6 @@ task.spawn(function()
                                             before = cur
                                         end
                                     end
-                                    pcall(function() M78.PAS.Close() end)
                                     cycleResults[#cycleResults + 1] = size..":"..applied.."/"..#pets
                                 end
                                 task.wait(0.3)
