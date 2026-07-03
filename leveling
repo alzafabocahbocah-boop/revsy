@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.27"
+local SCRIPT_VERSION="v13.31"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -92,6 +92,35 @@ if not petLeadRE then
 end
 if not equipRE then equipRE = petLeadRE end
 dbg("Step 2 OK: remotes ("..tostring(equipRE.Name)..", "..tostring(petLeadRE.Name)..", CD="..(getCooldownRF and "OK" or "no")..")")
+
+-- v13.30 (HASIL DEBUG spy): game PUSH cooldown lewat EVENT PetCooldownsUpdated, bukan cuma
+-- RemoteFunction GetPetCooldown (yg lama, bisa balik data BASI -> swap kepagian -> skill ILANG).
+-- kita listen event-nya & cache: arg1=uuid, arg2=table. table KOSONG {} = cooldown HABIS (siap),
+-- table BERISI = masih cooldown. plus request refresh sekali biar server mulai ngirim.
+local cdEventCache = {}     -- [uuidTanpaBrace] = { ready=bool, at=tick() }
+do
+    local ge = RS:FindFirstChild("GameEvents")
+    local pcu = ge and ge:FindFirstChild("PetCooldownsUpdated")
+    local req = ge and ge:FindFirstChild("RequestPetCooldowns")
+    if pcu and pcu:IsA("RemoteEvent") then
+        pcu.OnClientEvent:Connect(function(uuid, data)
+            local key = tostring(uuid):gsub("[{}]","")
+            local ready = (type(data) ~= "table") or (next(data) == nil)  -- {} = siap
+            cdEventCache[key] = { ready = ready, at = tick() }
+        end)
+        dbg("Step 2c: listener PetCooldownsUpdated PASANG (sumber cooldown UTAMA)")
+    else
+        dbg("Step 2c: PetCooldownsUpdated GAK ADA -> fallback ke GetPetCooldown lama")
+    end
+    if req and req:IsA("RemoteEvent") then pcall(function() req:FireServer() end) end
+end
+local function cdReadyFromEvent(uuid)
+    local key = tostring(uuid):gsub("[{}]","")
+    local e = cdEventCache[key]
+    if not e then return nil end                 -- belum ada data event
+    if tick() - e.at > 8 then return nil end     -- data basi >8s, jangan dipercaya
+    return e.ready
+end
 
 -- ============= APS (ActivePetsService) API - v13.08 =============
 -- v13.08: dibungkus do/end + getgenv() biar gak nambah outer-scope locals (limit 200 Luau)
@@ -240,7 +269,13 @@ dbg("Step 3 OK: data loaded | protectFav="..tostring(d.protectFavorites))
 -- v11.6: toAge declared EARLY (sebelum donesLbl spawn + _doBuildInvShow function)
 -- biar ke-capture sebagai upvalue, bukan global nil
 local toAge=d.toAge or 500
-if toAge==100 then toAge=500 d.toAge=500 end   -- v13.16: migrasi default lama 100 -> 500
+-- v13.29: migrasi SEKALI pakai flag — save lama (target age 100) dinaikin ke 500. setelah
+-- flag keset, kalau user sengaja set 100 lagi ga bakal dipaksa (dulu tiap load 100->500).
+if not d._age500migrated then
+    if toAge==100 then toAge=500 d.toAge=500 end
+    d._age500migrated=true
+    pcall(function() saveToFile(d) end)   -- v13.29: permanenin migrasi seketika
+end
 
 -- v11.5: declare toAge SEBELUM function definitions yg pakai (donesLbl, _doBuildInvShow)
 -- biar ke-capture sebagai upvalue/local, bukan global nil
@@ -249,7 +284,7 @@ if not d.swapPerPetVersion or d.swapPerPetVersion < 9 then
     d.swapPerPet = d.swapPerPet or {}
     if d.swapPerPet then
         for uuid,cfg in pairs(d.swapPerPet) do
-            d.swapPerPet[uuid]={enabled=cfg.enabled==true}
+            d.swapPerPet[uuid]={enabled=cfg.enabled==true, pickup=tonumber(cfg.pickup), equipd=tonumber(cfg.equipd)}   -- v13.31: simpan delay
         end
     end
     d.swapConfig = nil
@@ -373,8 +408,14 @@ end
 -- ===== SWAP MECHANIC (FRIEND-7 PERSIS) =====
 local function swapPet(uuid)
     local u=fmtUUID(uuid)
+    -- v13.31 (niru UI sc gacor): dua timing per pet — Pickup (jeda stlh unequip) & Equip
+    -- (jeda stlh pickup, sblm equip). diatur di kotak per-baris tab Swap Skill, ke-save.
+    local ps = swapPerPet[tostring(uuid)] or {}
+    local pk = tonumber(ps.pickup); if pk == nil then pk = 0.6 end   -- default 0.6 (angka sc gacor)
+    local eq = tonumber(ps.equipd); if eq == nil then eq = 0 end
     pcall(function() equipRE:FireServer("UnequipPet",u) end)
-    task.wait(0.01) -- v12.79c: revert dari 0 (server butuh ordering)
+    if pk > 0 then task.wait(pk) else task.wait(0.01) end   -- server butuh ordering minimal
+    if eq > 0 then task.wait(eq) end
     pcall(function() equipRE:FireServer("EquipPet",u,nil) end)
 end
 
@@ -2313,16 +2354,32 @@ buildSwapList=function()
         local uuid=r.uuid
         if not swapPerPet[uuid] then swapPerPet[uuid]={enabled=false} end
         local ps=swapPerPet[uuid]
+        local cu1=uuid   -- v13.31: dipindah ke atas (dipakai delayBox di bawah)
 
         local row=mk("Frame",{Size=UDim2.new(1,0,0,32),BackgroundColor3=ps.enabled and C.TDim or C.Card,BorderSizePixel=0,LayoutOrder=layoutOrder,Parent=parent})
         corner(row,5) if ps.enabled then stroke(row,C.Teal,1.2) end
         local infoTxt=r.info
         if r.isFav then infoTxt=string.char(0xE2,0x99,0xA5).." "..infoTxt end
-        local pl=lbl(row,infoTxt,12,ps.enabled and C.White or C.Gray) pl.Size=UDim2.new(0.69,0,1,0) pl.Position=UDim2.new(0,8,0,0)
+        local pl=lbl(row,infoTxt,12,ps.enabled and C.White or C.Gray) pl.Size=UDim2.new(0.50,0,1,0) pl.Position=UDim2.new(0,8,0,0)
 
-        local cu1=uuid
+        -- v13.31: dua kotak delay per pet (niru NODE HUB): Pickup + Equip. default 0.6 / 0.
+        local function delayBox(xScale, val, key, ph)
+            local b=mk("TextBox",{Size=UDim2.new(0,32,0,20),Position=UDim2.new(xScale,0,0.5,-10),BackgroundColor3=C.Panel,Text=(val~=nil and tostring(val) or ""),PlaceholderText=ph,PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=row})
+            corner(b,4) stroke(b,C.Dim,1)
+            b.FocusLost:Connect(function()
+                local p=swapPerPet[cu1] if not p then return end
+                local n=tonumber(b.Text)
+                p[key]=n   -- nil kalau kosong -> pakai default di swapPet
+                b.Text=(n~=nil and tostring(n) or "")
+                save()
+            end)
+            return b
+        end
+        delayBox(0.52, ps.pickup, "pickup", "0.6")   -- Pickup
+        delayBox(0.62, ps.equipd, "equipd", "0")     -- Equip
+
         local selTog=btn(row,ps.enabled and "ON" or "OFF",12,ps.enabled and C.TDim or C.Panel,ps.enabled and C.Teal or C.Gray)
-        selTog.Size=UDim2.new(0.26,0,0,22) selTog.Position=UDim2.new(0.72,2,0.5,-11)
+        selTog.Size=UDim2.new(0.22,0,0,22) selTog.Position=UDim2.new(0.76,2,0.5,-11)
         local selStroke=stroke(selTog,ps.enabled and C.Teal or C.Dim,1.1)
         selTog.MouseButton1Click:Connect(function()
             local p=swapPerPet[cu1] if not p then return end
@@ -2942,6 +2999,31 @@ local function stopAR()
     if cdLbl2 then cdLbl2.Text="Auto Rejoin: OFF" end
 end
 
+
+-- v13.28: SEMBUNYIIN dialog "Koneksi Terputus" / error prompt (kosmetik, ala sc lain).
+-- proses rejoin di belakang JALAN TERUS; cuma GUI merah-nya yg dibikin transparan
+-- biar layar bersih pas retry. jalan sbg loop sampai berhasil pindah.
+local function ZenxHideDcPrompt()
+    task.spawn(function()
+        local cg = game:GetService("CoreGui")
+        local guiSvc = game:GetService("GuiService")
+        for _ = 1, 300 do   -- ~150 detik, cukup buat nutup semua percobaan
+            pcall(function()
+                for _, g in ipairs(cg:GetChildren()) do
+                    local n = tostring(g.Name):lower()
+                    if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                        if g:IsA("ScreenGui") then g.Enabled = false end
+                        pcall(function() g.Parent = nil end)
+                    end
+                end
+                -- tombol "Leave/Keluar" kadang di GuiService prompt
+                pcall(function() guiSvc:ClearError() end)
+            end)
+            task.wait(0.5)
+        end
+    end)
+end
+
 local function startAR()
     isAR=true autoRejoin=true save()
     arTog2.Text="ON" arTog2.BackgroundColor3=C.TDim arTog2.TextColor3=C.Teal arTogStroke2.Color=C.Teal arStroke2.Color=C.Teal
@@ -2972,6 +3054,7 @@ local function startAR()
                         end)
                     end)
                     cdLbl2.Text = "FREEZE "..fz.."s -> rejoin server SAMA..."
+                    ZenxHideDcPrompt()   -- v13.28: sembunyiin dialog DC selama retry
                     pcall(function() player:Kick("ZenxFreezeRejoin") end)
                     if fz < 45 then fz = 45 end   -- v13.26: ghost slot bekas kita butuh ~30-60s buat bebas
                     task.wait(fz)
@@ -4688,31 +4771,35 @@ startGlobalPoller=function()
                     if not nextCheckAt[uuid] or now >= nextCheckAt[uuid] then
                         checkingPet[uuid] = true
                         task.spawn(function()
-                            local t = getPetTime(uuid)
+                            -- v13.30: SUMBER UTAMA = event PetCooldownsUpdated (push server, akurat).
+                            -- fallback ke RemoteFunction lama cuma kalau event belum ada datanya.
+                            local evReady = cdReadyFromEvent(uuid)
+                            local t
+                            if evReady == true then t = 0
+                            elseif evReady == false then t = 1.0   -- masih cooldown, cek lagi nanti
+                            else t = getPetTime(uuid) end          -- event blm ada -> RF lama
                             if t == nil then
-                                -- Pet belum di-track (mungkin baru di-equip); cek lagi 0.3s
                                 nextCheckAt[uuid] = tick() + 0.3
                             elseif t <= 0 then
                                 local last = lastSwap[uuid] or 0
-                                if tick() - last >= 0.25 then
+                                -- v13.30: JEDA MINIMUM antar swap 0.6s — sc gacor terbukti nunggu
+                                -- 0.7-4s (spy). dulu 0.25s = kegesa-gesa -> skill ke-reset/ILANG.
+                                if tick() - last >= 0.6 then
                                     local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
                                     local nm = (info and info.name) or "?"
                                     if cycles <= 20 then
-                                        dbg(string.format("[swap] %s Time=%.1f -> SWAP", nm:sub(1,12), t))
+                                        dbg(string.format("[swap] %s ready(ev=%s) -> SWAP", nm:sub(1,12), tostring(evReady)))
                                     end
                                     swapPet(uuid)
                                     lastSwap[uuid] = tick()
                                 end
-                                nextCheckAt[uuid] = tick() + 0.018 -- v12.79d: 20->18ms (tiny bump)
+                                nextCheckAt[uuid] = tick() + 0.2   -- v13.30: 18ms->200ms, ga perlu rapid
                             elseif t > 2 then
-                                -- v12.79b: t*0.6 max 2 -> t*0.5 max 1.5 (lebih sering re-evaluate)
                                 nextCheckAt[uuid] = tick() + math.min(t * 0.5, 1.5)
                             elseif t > 0.5 then
-                                -- v12.79d: 50->40ms (tiny bump)
-                                nextCheckAt[uuid] = tick() + 0.04
+                                nextCheckAt[uuid] = tick() + 0.2   -- v13.30: 40ms->200ms
                             else
-                                -- v12.79d: 20->18ms near-zero (tiny bump)
-                                nextCheckAt[uuid] = tick() + 0.018
+                                nextCheckAt[uuid] = tick() + 0.15  -- v13.30: 18ms->150ms
                             end
                             checkingPet[uuid] = nil
                         end)
