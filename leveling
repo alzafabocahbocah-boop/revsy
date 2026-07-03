@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.32"
+local SCRIPT_VERSION="v13.34"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -406,13 +406,13 @@ local function unequipPet(uuid)
 end
 
 -- ===== SWAP MECHANIC (FRIEND-7 PERSIS) =====
-local function swapPet(uuid)
+local function swapPet(uuid, pickupDelay, equipDelay)
     local u=fmtUUID(uuid)
-    -- v13.31 (niru UI sc gacor): dua timing per pet — Pickup (jeda stlh unequip) & Equip
-    -- (jeda stlh pickup, sblm equip). diatur di kotak per-baris tab Swap Skill, ke-save.
-    local ps = swapPerPet[tostring(uuid)] or {}
-    local pk = tonumber(ps.pickup); if pk == nil then pk = 0.6 end   -- default 0.6 (angka sc gacor)
-    local eq = tonumber(ps.equipd); if eq == nil then eq = 0 end
+    -- v13.34 FIX: delay diterima via PARAMETER dari poller. dulu swapPet baca swapPerPet
+    -- langsung, padahal 'local swapPerPet' dideklarasi JAUH di bawah (1605) -> di scope sini
+    -- kebaca GLOBAL nil -> crash "index nil" tiap swap (poller jalan tapi swap ga pernah tembus).
+    local pk = tonumber(pickupDelay); if pk == nil then pk = 0.6 end   -- default 0.6 (angka sc gacor)
+    local eq = tonumber(equipDelay); if eq == nil then eq = 0 end
     pcall(function() equipRE:FireServer("UnequipPet",u) end)
     if pk > 0 then task.wait(pk) else task.wait(0.01) end   -- server butuh ordering minimal
     if eq > 0 then task.wait(eq) end
@@ -4758,7 +4758,19 @@ local nextCheckAt = {}  -- per-uuid: tick() kapan boleh check lagi
 
 startGlobalPoller=function()
     if pollerTask then return end
-    if not pollerShouldRun() then return end
+    if not pollerShouldRun() then dbg("[poller] GA START — ga ada pet swap yg ON") return end
+    -- v13.33: diagnostik — cek equipRE & getPetTime beneran ada + sample 1 pet
+    do
+        local nOn=0 for _,c in pairs(swapPerPet) do if c.enabled then nOn=nOn+1 end end
+        dbg("[poller] START dgn "..nOn.." pet ON | equipRE="..tostring(equipRE and equipRE.Name or "NIL").." | RF="..(getCooldownRF and "ada" or "NIL"))
+        for uuid,c in pairs(swapPerPet) do
+            if c.enabled then
+                local t=getPetTime(uuid)
+                dbg("[poller] sample "..tostring(uuid):sub(1,10).." getPetTime="..tostring(t).." (nil=pet ga ke-track server)")
+                break
+            end
+        end
+    end
     pollerTask=task.spawn(function()
         dbg("[poller] global poller START (adaptive parallel)")
         local cycles=0
@@ -4787,7 +4799,7 @@ startGlobalPoller=function()
                                     if cycles <= 20 then
                                         dbg(string.format("[swap] %s Time=%.1f -> SWAP", nm:sub(1,12), t))
                                     end
-                                    swapPet(uuid)
+                                    swapPet(uuid, (swapPerPet[uuid] or {}).pickup, (swapPerPet[uuid] or {}).equipd)   -- v13.34
                                     lastSwap[uuid] = tick()
                                 end
                                 nextCheckAt[uuid] = tick() + 0.2
