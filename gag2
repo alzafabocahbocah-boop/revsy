@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v35.8
+-- ZENX FARM  v35.9
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v35.8"
+local VER       = "v35.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5487,6 +5487,20 @@ end
 
 -- v27.6: REJOIN SIMPEL (persis cara sc lain): Teleport(placeId, player) — Roblox pilih server sendiri.
 -- skip nyari server-list (yg lambat/rate-limit). pakai izin ZenxTeleport biar ga ke-block hook kita.
+-- v35.9: rejoin ke SERVER YANG SAMA — TeleportToPlaceInstance + JobId yg disimpen SEBELUM
+-- kick. Teleport(placeId) doang = matchmaking ke server ACAK (keluhan user: habis freeze
+-- malah nyasar hop, kebun/setup ketinggalan).
+function Farm.rejoinSameServer(jobId, quiet)
+    local TS = game:GetService("TeleportService")
+    local plr = Players.LocalPlayer
+    local zt = (typeof(getgenv) == "function" and getgenv() or _G).ZenxTeleport
+    local ok, err = pcall(function()
+        if zt then return zt(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
+        else return TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end
+    end)
+    if not quiet then print("[ZenxFarm] rejoin server SAMA dikirim="..tostring(ok)..(err and (" err="..tostring(err)) or "")) end
+    return ok
+end
 function Farm.simpleRejoin(quiet)
     local TS = game:GetService("TeleportService")
     local plr = Players.LocalPlayer
@@ -5665,12 +5679,20 @@ staggerSpawn(function()
                     -- server, buah aman, layar freeze di frame terakhir) -> script executor tetep
                     -- hidup -> tunggu N detik (setting) -> TeleportService rejoin ke server baru.
                     Farm._weatherHopState = "freeze"
-                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> FREEZE "..fz.."s (Kick lokal = keluar server) lalu rejoin")
+                    local jobId = game.JobId   -- v35.9: SIMPEN sebelum kick — kunci balik ke server SAMA
+                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> FREEZE "..fz.."s lalu REJOIN SERVER SAMA (job="..tostring(jobId):sub(1,8).."...)")
                     pcall(function() player:Kick("ZenxWeatherFreeze") end)
                     task.wait(fz)
-                    -- rejoin; ulang tiap 10s kalau teleport gagal. sukses = pindah server (script mati sendiri)
+                    -- v35.9: 6x percobaan ke server SAMA (10s antar coba), abis itu fallback acak
+                    local tries = 0
                     while isCurrentGen() do
-                        Farm.simpleRejoin(true)
+                        tries = tries + 1
+                        if jobId and jobId ~= "" and tries <= 6 then
+                            Farm.rejoinSameServer(jobId, false)
+                        else
+                            if tries == 7 then print("[ZenxFarm] server sama ga bisa dimasukin (penuh/ilang) -> fallback server acak") end
+                            Farm.simpleRejoin(true)
+                        end
                         task.wait(10)
                     end
                 else
