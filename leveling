@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.34"
+local SCRIPT_VERSION="v13.35"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -411,10 +411,12 @@ local function swapPet(uuid, pickupDelay, equipDelay)
     -- v13.34 FIX: delay diterima via PARAMETER dari poller. dulu swapPet baca swapPerPet
     -- langsung, padahal 'local swapPerPet' dideklarasi JAUH di bawah (1605) -> di scope sini
     -- kebaca GLOBAL nil -> crash "index nil" tiap swap (poller jalan tapi swap ga pernah tembus).
-    local pk = tonumber(pickupDelay); if pk == nil then pk = 0.6 end   -- default 0.6 (angka sc gacor)
+    -- v13.35 (HASIL SPY sc gacor): jeda unequip->equip cuma 25-60ms, BUKAN 0.6s.
+    -- default pickup 0.03s (30ms). eq 0. delay gede = skill ilang; sc gacor justru CEPET.
+    local pk = tonumber(pickupDelay); if pk == nil then pk = 0.03 end
     local eq = tonumber(equipDelay); if eq == nil then eq = 0 end
     pcall(function() equipRE:FireServer("UnequipPet",u) end)
-    if pk > 0 then task.wait(pk) else task.wait(0.01) end   -- server butuh ordering minimal
+    if pk > 0 then task.wait(pk) else task.wait(0.01) end
     if eq > 0 then task.wait(eq) end
     pcall(function() equipRE:FireServer("EquipPet",u,nil) end)
 end
@@ -4793,7 +4795,7 @@ startGlobalPoller=function()
                                 nextCheckAt[uuid] = tick() + 0.3
                             elseif t <= 0 then
                                 local last = lastSwap[uuid] or 0
-                                if tick() - last >= 0.6 then   -- v13.30: jeda min 0.6s (anti kegesa)
+                                if tick() - last >= 0.1 then   -- v13.35: sc gacor ritme cepet (scan 0.1)
                                     local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
                                     local nm = (info and info.name) or "?"
                                     if cycles <= 20 then
