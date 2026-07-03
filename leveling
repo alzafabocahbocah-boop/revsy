@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.24"
+local SCRIPT_VERSION="v13.27"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1256,7 +1256,7 @@ local content=mk("Frame",{Size=UDim2.new(1,-(SIDEBAR_W+15),1,-34),Position=UDim2
 local tabBar=mk("Frame",{Size=UDim2.new(1,-10,0,26),Position=UDim2.new(0,5,0,4),BackgroundTransparency=1,Parent=content})
 mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,2),Parent=tabBar})
 
-local tabNames={"Tim Leveling","Pet ke 100","Swap Skill","Other Setting"}  -- v12.77: Auto Gift dipindah ke sidebar
+local tabNames={"Tim Leveling","Pet ke 500","Swap Skill","Other Setting"}  -- v13.25: rename (max age 500)
 local tabBtns={}
 
 local function makeScroll(yPos,height)
@@ -2159,7 +2159,7 @@ local function buildTargetList()
         corner(box,5) stroke(box,C.Dim,1)
         box:GetPropertyChangedSignal("Text"):Connect(function() local v=tonumber(box.Text) if v then onChange(v) save() end end)
     end
-    numRow("Dari Age:",3,fromAge,function(v) fromAge=math.max(1,math.min(99,v)) d.fromAge=fromAge end)
+    numRow("Dari Age:",3,fromAge,function(v) fromAge=math.max(1,math.min(499,v)) d.fromAge=fromAge end)   -- v13.25: max age 500
     numRow("Sampai Age:",4,toAge,function(v) toAge=math.max(1,math.min(500,v)) d.toAge=toAge end)   -- v13.16
 
     local pcRow=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=5,Parent=areas[2]})
@@ -2960,8 +2960,20 @@ local function startAR()
                     -- terbukti di timeline spy gag2). script executor TETEP HIDUP setelah
                     -- kick -> tunggu fz detik -> Teleport rejoin, retry tiap 10s kalau gagal.
                     local jobId = game.JobId   -- v13.20: simpen SEBELUM kick — balik ke server SAMA
+                    -- v13.27: PRIVATE SERVER dideteksi -> JANGAN PERNAH fallback ke acak
+                    -- (acak = kelempar ke PUBLIC, keluar dari private!). 772 di private =
+                    -- cooldown/ghost-slot pasca kick, sembuh sendiri dgn retry ke server sama.
+                    local isPriv = (game.PrivateServerId or "") ~= ""
+                    local sameFail = 0
+                    pcall(function()
+                        TS.TeleportInitFailed:Connect(function()
+                            sameFail = sameFail + 1
+                            if sameFail >= 2 and not isPriv then jobId = nil end   -- public doang yg boleh nyerah
+                        end)
+                    end)
                     cdLbl2.Text = "FREEZE "..fz.."s -> rejoin server SAMA..."
                     pcall(function() player:Kick("ZenxFreezeRejoin") end)
+                    if fz < 45 then fz = 45 end   -- v13.26: ghost slot bekas kita butuh ~30-60s buat bebas
                     task.wait(fz)
                     -- v13.20: TeleportToPlaceInstance = balik ke INSTANCE yg sama.
                     -- Teleport(placeId) doang = server ACAK (ini yg salah di gag2 kemarin).
@@ -2969,12 +2981,13 @@ local function startAR()
                     local tries = 0
                     while isAR do
                         tries = tries + 1
-                        if jobId and jobId ~= "" and tries <= 6 then
+                        if jobId and jobId ~= "" and (isPriv or tries <= 4) then
+                            -- private: retry server sama TERUS (ga ada batas — dia ga mungkin "penuh" lama)
                             pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, player) end)
                         else
-                            pcall(function() TS:Teleport(game.PlaceId, player) end)
+                            pcall(function() TS:Teleport(game.PlaceId, player) end)   -- fallback acak (PUBLIC doang)
                         end
-                        task.wait(10)
+                        task.wait(12)
                     end
                     return
                 else
