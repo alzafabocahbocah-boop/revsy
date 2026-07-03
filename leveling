@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.31"
+local SCRIPT_VERSION="v13.32"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -4771,33 +4771,30 @@ startGlobalPoller=function()
                     if not nextCheckAt[uuid] or now >= nextCheckAt[uuid] then
                         checkingPet[uuid] = true
                         task.spawn(function()
-                            -- v13.30: SUMBER UTAMA = event PetCooldownsUpdated (push server, akurat).
-                            -- fallback ke RemoteFunction lama cuma kalau event belum ada datanya.
-                            local evReady = cdReadyFromEvent(uuid)
-                            local t
-                            if evReady == true then t = 0
-                            elseif evReady == false then t = 1.0   -- masih cooldown, cek lagi nanti
-                            else t = getPetTime(uuid) end          -- event blm ada -> RF lama
+                            -- v13.32: BALIK ke RemoteFunction lama sbg sumber timing (kebukti jalan
+                            -- bertahun2). event PetCooldownsUpdated ternyata BANJIR "belum siap" ->
+                            -- kalau dipakai jadi sumber utama, swap MANDEK (nyaris ga pernah t<=0).
+                            -- rahasia sc gacor bukan di baca cooldown, tapi di DELAY pickup (0.6s)
+                            -- yg nahan skill — itu udah kita punya di swapPet (v13.31).
+                            local t = getPetTime(uuid)
                             if t == nil then
                                 nextCheckAt[uuid] = tick() + 0.3
                             elseif t <= 0 then
                                 local last = lastSwap[uuid] or 0
-                                -- v13.30: JEDA MINIMUM antar swap 0.6s — sc gacor terbukti nunggu
-                                -- 0.7-4s (spy). dulu 0.25s = kegesa-gesa -> skill ke-reset/ILANG.
-                                if tick() - last >= 0.6 then
+                                if tick() - last >= 0.6 then   -- v13.30: jeda min 0.6s (anti kegesa)
                                     local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
                                     local nm = (info and info.name) or "?"
                                     if cycles <= 20 then
-                                        dbg(string.format("[swap] %s ready(ev=%s) -> SWAP", nm:sub(1,12), tostring(evReady)))
+                                        dbg(string.format("[swap] %s Time=%.1f -> SWAP", nm:sub(1,12), t))
                                     end
                                     swapPet(uuid)
                                     lastSwap[uuid] = tick()
                                 end
-                                nextCheckAt[uuid] = tick() + 0.2   -- v13.30: 18ms->200ms, ga perlu rapid
+                                nextCheckAt[uuid] = tick() + 0.2
                             elseif t > 2 then
                                 nextCheckAt[uuid] = tick() + math.min(t * 0.5, 1.5)
                             elseif t > 0.5 then
-                                nextCheckAt[uuid] = tick() + 0.2   -- v13.30: 40ms->200ms
+                                nextCheckAt[uuid] = tick() + 0.2
                             else
                                 nextCheckAt[uuid] = tick() + 0.15  -- v13.30: 18ms->150ms
                             end
