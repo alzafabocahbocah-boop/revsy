@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.09"
+local SCRIPT_VERSION="v13.10"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1744,37 +1744,9 @@ buildTimList=function()
     end
     buildMaxKGCache()
 
-    local cfgCard=mk("Frame",{Size=UDim2.new(1,0,0,52),BackgroundColor3=C.Panel,BorderSizePixel=0,LayoutOrder=0,Parent=areas[1]})
-    corner(cfgCard,7) stroke(cfgCard,C.Teal,1.2)
-    mk("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,3),Parent=cfgCard})
-    mk("UIPadding",{PaddingTop=UDim.new(0,5),PaddingLeft=UDim.new(0,5),PaddingRight=UDim.new(0,5),PaddingBottom=UDim.new(0,5),Parent=cfgCard})
-    lbl(cfgCard,"Setting Leveling",11,C.Teal).Size=UDim2.new(1,0,0,13)
-    local eqRow=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundColor3=C.Card,BorderSizePixel=0,Parent=cfgCard})
-    corner(eqRow,5) stroke(eqRow,C.Dim,1)
-    lbl(eqRow,"Equip Interval (dtk)",11,C.Gray).Size=UDim2.new(0.6,0,1,0)
-    local eqBox=mk("TextBox",{Size=UDim2.new(0,50,0,20),Position=UDim2.new(1,-56,0.5,-10),BackgroundColor3=C.Panel,Text=tostring(config.equipInterval),TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=14,TextScaled=false,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=eqRow})
-    corner(eqBox,5) stroke(eqBox,C.Dim,1)
-    eqBox:GetPropertyChangedSignal("Text"):Connect(function()
-        local v=tonumber(eqBox.Text) if v then config.equipInterval=math.max(1,v) save() end
-    end)
-
-    local saRow=mk("Frame",{Size=UDim2.new(1,0,0,28),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=1,Parent=areas[1]})
-    corner(saRow,6) stroke(saRow,C.Dim,1.1)
-    lbl(saRow,"Tampilkan semua pet",11,C.Gray).Size=UDim2.new(0.55,0,0,14)
-    local saTxt=lbl(saRow,"(bypass filter love)",9,C.Dim) saTxt.Size=UDim2.new(0.55,0,0,11) saTxt.Position=UDim2.new(0,8,0,16)
-    local saTog=btn(saRow,showAllPets and "ON" or "OFF",9,showAllPets and C.TDim or C.Panel,showAllPets and C.Teal or C.Gray)
-    saTog.Size=UDim2.new(0,44,0,20) saTog.Position=UDim2.new(1,-50,0.5,-10)
-    local saTogStroke=stroke(saTog,showAllPets and C.Teal or C.Dim,1.1)
-    saTog.MouseButton1Click:Connect(function()
-        showAllPets=not showAllPets save()
-        saTog.Text=showAllPets and "ON" or "OFF"
-        saTog.BackgroundColor3=showAllPets and C.TDim or C.Panel
-        saTog.TextColor3=showAllPets and C.Teal or C.Gray
-        saTogStroke.Color=showAllPets and C.Teal or C.Dim
-        buildTimList()
-    end)
-
-    div(areas[1],1)
+    -- v13.10: card "Setting Leveling" (Equip Interval) + toggle "Tampilkan semua pet" DIHAPUS dari
+    -- tab ini (permintaan user, biar bersih). equipInterval emang setting MATI (ga ada logika yg baca);
+    -- showAllPets tetep hidup di logika (ngikut nilai tersimpan), toggle kembar di tab Swap Skill masih ada.
 
     local pickerOpen=false
     local pickRow=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=2,Parent=areas[1]})
@@ -1848,7 +1820,9 @@ buildTimList=function()
 
     buildPickerContent=function(filter)
         filter=filter or ""
-        for _,c in pairs(petPickScroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
+        -- v13.10 FIX: dulu cuma Frame yg dihapus -> label pesan merah ("Tidak ada pet love yg cocok",
+        -- TextLabel) GAK PERNAH kehapus, numpuk tiap ketikan search & nimbun hasil asli.
+        for _,c in pairs(petPickScroll:GetChildren()) do if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end end
         local bp=player:FindFirstChild("Backpack")
         local n=0 local shown={} local favCount=0
         if bp then
@@ -1899,6 +1873,68 @@ buildTimList=function()
                 end
             end
         end
+        -- v13.10: PET DI GARDEN ikut kebaca — dulu cuma Backpack yg di-scan, jadi pet fav yg
+        -- lagi ke-place ga bisa dipilih tim (dan pesan "Belum ada pet di-love" nyala palsu).
+        -- scan workspace.PetsPhysical.PetMover (nama anak = {uuid}); kepemilikan/fav/nama/umur
+        -- via ZenxAPS (API cuma balikin data buat pet MILIK SENDIRI, jadi aman dari pet orang).
+        pcall(function()
+            local API = getgenv().ZenxAPS
+            if not API then return end
+            local pp = workspace:FindFirstChild("PetsPhysical")
+            local pm = pp and pp:FindFirstChild("PetMover")
+            if not pm then return end
+            for _, m in ipairs(pm:GetChildren()) do
+                local uuidStr = m.Name:gsub("[{}]", "")
+                if uuidStr ~= "" and not shown[uuidStr] then
+                    local age = API.getAge(uuidStr)   -- non-nil = pet milik sendiri
+                    if age ~= nil then
+                        local fav = false
+                        pcall(function() fav = API.isFav(uuidStr) end)
+                        if showAllPets or fav then
+                            favCount = favCount + 1
+                            local name = nil
+                            pcall(function() name = API.getPetType(uuidStr) end)
+                            name = name or getPetNameFromUI(uuidStr) or m.Name
+                            local show = filter == "" or tostring(name):lower():find(filter:lower(), 1, true)
+                            if show then
+                                shown[uuidStr] = true; n = n + 1
+                                local info = tostring(name).." | Age "..tostring(age).." (di garden)"
+                                teamPetInfoCache[uuidStr] = { name = tostring(name), info = info }
+                                local inTeam = teamPetUUIDs[uuidStr] == true
+                                local row = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = inTeam and C.TDim or C.Card, BorderSizePixel = 0, LayoutOrder = n, Parent = petPickScroll })
+                                corner(row, 5) if inTeam then stroke(row, C.Teal, 1.1) end
+                                local nameLbl = lbl(row, info, 12, inTeam and C.Teal or C.White)
+                                nameLbl.Size = UDim2.new(0.72, 0, 1, 0) nameLbl.Position = UDim2.new(0, 8, 0, 0)
+                                local togBtn = btn(row, inTeam and "ON" or "OFF", 12, inTeam and C.TDim or C.Panel, inTeam and C.Teal or C.Gray)
+                                togBtn.Size = UDim2.new(0, 52, 0, 24) togBtn.Position = UDim2.new(1, -56, 0.5, -12)
+                                local togStroke = stroke(togBtn, inTeam and C.Teal or C.Dim, 1.1)
+                                local cu = uuidStr
+                                togBtn.MouseButton1Click:Connect(function()
+                                    if teamPetUUIDs[cu] then teamPetUUIDs[cu] = nil else teamPetUUIDs[cu] = true end
+                                    local nowIn = teamPetUUIDs[cu] == true
+                                    row.BackgroundColor3 = nowIn and C.TDim or C.Card
+                                    local rs = row:FindFirstChildWhichIsA("UIStroke")
+                                    if nowIn then if rs then rs.Color = C.Teal else stroke(row, C.Teal, 1.1) end
+                                    else if rs then rs:Destroy() end end
+                                    nameLbl.TextColor3 = nowIn and C.Teal or C.White
+                                    togBtn.Text = nowIn and "ON" or "OFF"
+                                    togBtn.BackgroundColor3 = nowIn and C.TDim or C.Panel
+                                    togBtn.TextColor3 = nowIn and C.Teal or C.Gray
+                                    togStroke.Color = nowIn and C.Teal or C.Dim
+                                    pickLbl.Text = "Pilih Pet Tim  ("..teamCount().." dipilih)"
+                                    updatePreview()
+                                    syncSwapTab()
+                                    save()
+                                    if nowIn then if startTeamKeeper then startTeamKeeper() end else
+                                        if teamKeeperShouldRun and not teamKeeperShouldRun() then if stopTeamKeeper then stopTeamKeeper() end end
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
         for uuid,_ in pairs(teamPetUUIDs) do
             if not shown[uuid] and teamPetInfoCache[uuid] then
                 local name=teamPetInfoCache[uuid].name
