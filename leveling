@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.10"
+local SCRIPT_VERSION="v13.12"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -149,6 +149,7 @@ do
 
     -- Expose globally via getgenv() so we don't consume outer-scope local slots
     getgenv().ZenxAPS = {
+        all = function() return getAllPetsDataAPS() end,   -- v13.12: SEMUA pet milik sendiri (kunci ber-{})
         getAge = function(uuid)
             local info = getPetDataAPS(uuid)
             if info and info.PetData and info.PetData.Level then return info.PetData.Level end
@@ -254,12 +255,15 @@ if not d.swapPerPetVersion or d.swapPerPetVersion < 9 then
     d.swapPerPetVersion = 9
 end
 
+-- v13.11: TEMA HITAM ELEGAN + PUTIH (mockup approved). aksen teal -> PUTIH; latar digelapin
+-- 3 tingkat (#0A/#14/#1C); sinyal merah/hijau/emas DIKALEMKAN biar tetep monokrom elegan.
 local C={
-    BG=Color3.fromRGB(15,15,15),Panel=Color3.fromRGB(21,21,21),Card=Color3.fromRGB(25,25,25),
-    White=Color3.fromRGB(225,225,225),Gray=Color3.fromRGB(120,120,120),Dim=Color3.fromRGB(55,55,55),
-    Green=Color3.fromRGB(70,190,90),Red=Color3.fromRGB(200,60,60),RDim=Color3.fromRGB(35,10,10),
-    Gold=Color3.fromRGB(220,160,0),Blue=Color3.fromRGB(80,150,255),
-    Teal=Color3.fromRGB(40,200,160),TDim=Color3.fromRGB(8,30,24),
+    BG=Color3.fromRGB(10,10,10),Panel=Color3.fromRGB(20,20,20),Card=Color3.fromRGB(28,28,28),
+    White=Color3.fromRGB(237,237,237),Gray=Color3.fromRGB(138,138,138),Dim=Color3.fromRGB(58,58,58),
+    Green=Color3.fromRGB(127,191,142),Red=Color3.fromRGB(217,140,140),RDim=Color3.fromRGB(42,20,20),
+    Gold=Color3.fromRGB(214,181,110),Blue=Color3.fromRGB(140,170,214),
+    Teal=Color3.fromRGB(245,245,245),TDim=Color3.fromRGB(42,42,42),
+    Ink=Color3.fromRGB(10,10,10),   -- teks hitam di atas elemen aksen putih (inverted)
 }
 
 local function mk(cls,props)
@@ -1289,7 +1293,7 @@ local function switchTab(idx)
     currentTab = idx
     for i,b in ipairs(tabBtns) do
         local s=b:FindFirstChildWhichIsA("UIStroke")
-        if i==idx then b.TextColor3=C.Teal b.BackgroundColor3=C.TDim if s then s.Color=C.Teal end areas[i].Visible=true
+        if i==idx then b.TextColor3=C.Ink b.BackgroundColor3=C.Teal if s then s.Color=C.Teal end areas[i].Visible=true   -- v13.11: inverted
         else b.TextColor3=C.Gray b.BackgroundColor3=C.Card if s then s.Color=C.Dim end areas[i].Visible=false end
     end
 end
@@ -1424,7 +1428,7 @@ local function switchSection(idx)
     currentSection = idx
     for i, b in ipairs(sectionBtns) do
         local s = b:FindFirstChildWhichIsA("UIStroke")
-        if i == idx then b.TextColor3=C.Teal b.BackgroundColor3=C.TDim if s then s.Color=C.Teal end
+        if i == idx then b.TextColor3=C.Ink b.BackgroundColor3=C.Teal if s then s.Color=C.Teal end   -- v13.11: inverted
         else b.TextColor3=C.Gray b.BackgroundColor3=C.Card if s then s.Color=C.Dim end end
     end
     -- Hide everything first
@@ -1824,7 +1828,7 @@ buildTimList=function()
         -- TextLabel) GAK PERNAH kehapus, numpuk tiap ketikan search & nimbun hasil asli.
         for _,c in pairs(petPickScroll:GetChildren()) do if c:IsA("Frame") or c:IsA("TextLabel") then c:Destroy() end end
         local bp=player:FindFirstChild("Backpack")
-        local n=0 local shown={} local favCount=0
+        local n=0 local shown={} local favCount=0 local inBackpack={}   -- v13.12
         if bp then
             for _,item in pairs(bp:GetChildren()) do
                 if isPet(item) and (showAllPets or isFavorite(item)) then
@@ -1832,6 +1836,7 @@ buildTimList=function()
                     local uuid=getPetUUID(item)
                     if uuid then
                         local uuidStr=tostring(uuid)
+                        inBackpack[uuidStr]=true   -- v13.12: penanda "bukan pet garden"
                         local name=getPetName(item)
                         local show=filter=="" or name:lower():find(filter:lower(),1,true)
                         if show then
@@ -1873,63 +1878,65 @@ buildTimList=function()
                 end
             end
         end
-        -- v13.10: PET DI GARDEN ikut kebaca — dulu cuma Backpack yg di-scan, jadi pet fav yg
-        -- lagi ke-place ga bisa dipilih tim (dan pesan "Belum ada pet di-love" nyala palsu).
-        -- scan workspace.PetsPhysical.PetMover (nama anak = {uuid}); kepemilikan/fav/nama/umur
-        -- via ZenxAPS (API cuma balikin data buat pet MILIK SENDIRI, jadi aman dari pet orang).
+        -- v13.12 (HASIL DEBUG): PetMover TERNYATA cuma isi Weld, BUKAN model pet — asumsi
+        -- v13.10 salah total. cara yg BENER: datastore APS = daftar LENGKAP semua pet milik
+        -- sendiri (kunci ber-{}, format sama persis PET_UUID backpack). pet garden/placed =
+        -- entri datastore yg GAK ADA di backpack/character. tanpa nebak struktur workspace.
         pcall(function()
             local API = getgenv().ZenxAPS
-            if not API then return end
-            local pp = workspace:FindFirstChild("PetsPhysical")
-            local pm = pp and pp:FindFirstChild("PetMover")
-            if not pm then return end
-            for _, m in ipairs(pm:GetChildren()) do
-                local uuidStr = m.Name:gsub("[{}]", "")
-                if uuidStr ~= "" and not shown[uuidStr] then
-                    local age = API.getAge(uuidStr)   -- non-nil = pet milik sendiri
-                    if age ~= nil then
-                        local fav = false
-                        pcall(function() fav = API.isFav(uuidStr) end)
-                        if showAllPets or fav then
-                            favCount = favCount + 1
-                            local name = nil
-                            pcall(function() name = API.getPetType(uuidStr) end)
-                            name = name or getPetNameFromUI(uuidStr) or m.Name
-                            local show = filter == "" or tostring(name):lower():find(filter:lower(), 1, true)
-                            if show then
-                                shown[uuidStr] = true; n = n + 1
-                                local info = tostring(name).." | Age "..tostring(age).." (di garden)"
-                                teamPetInfoCache[uuidStr] = { name = tostring(name), info = info }
-                                local inTeam = teamPetUUIDs[uuidStr] == true
-                                local row = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = inTeam and C.TDim or C.Card, BorderSizePixel = 0, LayoutOrder = n, Parent = petPickScroll })
-                                corner(row, 5) if inTeam then stroke(row, C.Teal, 1.1) end
-                                local nameLbl = lbl(row, info, 12, inTeam and C.Teal or C.White)
-                                nameLbl.Size = UDim2.new(0.72, 0, 1, 0) nameLbl.Position = UDim2.new(0, 8, 0, 0)
-                                local togBtn = btn(row, inTeam and "ON" or "OFF", 12, inTeam and C.TDim or C.Panel, inTeam and C.Teal or C.Gray)
-                                togBtn.Size = UDim2.new(0, 52, 0, 24) togBtn.Position = UDim2.new(1, -56, 0.5, -12)
-                                local togStroke = stroke(togBtn, inTeam and C.Teal or C.Dim, 1.1)
-                                local cu = uuidStr
-                                togBtn.MouseButton1Click:Connect(function()
-                                    if teamPetUUIDs[cu] then teamPetUUIDs[cu] = nil else teamPetUUIDs[cu] = true end
-                                    local nowIn = teamPetUUIDs[cu] == true
-                                    row.BackgroundColor3 = nowIn and C.TDim or C.Card
-                                    local rs = row:FindFirstChildWhichIsA("UIStroke")
-                                    if nowIn then if rs then rs.Color = C.Teal else stroke(row, C.Teal, 1.1) end
-                                    else if rs then rs:Destroy() end end
-                                    nameLbl.TextColor3 = nowIn and C.Teal or C.White
-                                    togBtn.Text = nowIn and "ON" or "OFF"
-                                    togBtn.BackgroundColor3 = nowIn and C.TDim or C.Panel
-                                    togBtn.TextColor3 = nowIn and C.Teal or C.Gray
-                                    togStroke.Color = nowIn and C.Teal or C.Dim
-                                    pickLbl.Text = "Pilih Pet Tim  ("..teamCount().." dipilih)"
-                                    updatePreview()
-                                    syncSwapTab()
-                                    save()
-                                    if nowIn then if startTeamKeeper then startTeamKeeper() end else
-                                        if teamKeeperShouldRun and not teamKeeperShouldRun() then if stopTeamKeeper then stopTeamKeeper() end end
-                                    end
-                                end)
-                            end
+            if not API or not API.all then return end
+            local char = player.Character
+            if char then
+                for _, t in ipairs(char:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u = t:GetAttribute("PET_UUID")
+                        if u then inBackpack[tostring(u)] = true end
+                    end
+                end
+            end
+            for uuidStr, entry in pairs(API.all() or {}) do
+                uuidStr = tostring(uuidStr)
+                local pd = entry and entry.PetData
+                if pd and not inBackpack[uuidStr] and not shown[uuidStr] then
+                    local age = pd.Level
+                    local fav = pd.IsFavorite == true
+                    if showAllPets or fav then
+                        favCount = favCount + 1
+                        local name = entry.PetType or getPetNameFromUI(uuidStr) or "?"
+                        local show = filter == "" or tostring(name):lower():find(filter:lower(), 1, true)
+                        if show then
+                            shown[uuidStr] = true; n = n + 1
+                            local info = tostring(name).." | Age "..tostring(age or "?").." (di garden)"
+                            teamPetInfoCache[uuidStr] = { name = tostring(name), info = info }
+                            local inTeam = teamPetUUIDs[uuidStr] == true
+                            local row = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = inTeam and C.TDim or C.Card, BorderSizePixel = 0, LayoutOrder = n, Parent = petPickScroll })
+                            corner(row, 5) if inTeam then stroke(row, C.Teal, 1.1) end
+                            local nameLbl = lbl(row, info, 12, inTeam and C.Teal or C.White)
+                            nameLbl.Size = UDim2.new(0.72, 0, 1, 0) nameLbl.Position = UDim2.new(0, 8, 0, 0)
+                            local togBtn = btn(row, inTeam and "ON" or "OFF", 12, inTeam and C.TDim or C.Panel, inTeam and C.Teal or C.Gray)
+                            togBtn.Size = UDim2.new(0, 52, 0, 24) togBtn.Position = UDim2.new(1, -56, 0.5, -12)
+                            local togStroke = stroke(togBtn, inTeam and C.Teal or C.Dim, 1.1)
+                            local cu = uuidStr
+                            togBtn.MouseButton1Click:Connect(function()
+                                if teamPetUUIDs[cu] then teamPetUUIDs[cu] = nil else teamPetUUIDs[cu] = true end
+                                local nowIn = teamPetUUIDs[cu] == true
+                                row.BackgroundColor3 = nowIn and C.TDim or C.Card
+                                local rs = row:FindFirstChildWhichIsA("UIStroke")
+                                if nowIn then if rs then rs.Color = C.Teal else stroke(row, C.Teal, 1.1) end
+                                else if rs then rs:Destroy() end end
+                                nameLbl.TextColor3 = nowIn and C.Teal or C.White
+                                togBtn.Text = nowIn and "ON" or "OFF"
+                                togBtn.BackgroundColor3 = nowIn and C.TDim or C.Panel
+                                togBtn.TextColor3 = nowIn and C.Teal or C.Gray
+                                togStroke.Color = nowIn and C.Teal or C.Dim
+                                pickLbl.Text = "Pilih Pet Tim  ("..teamCount().." dipilih)"
+                                updatePreview()
+                                syncSwapTab()
+                                save()
+                                if nowIn then if startTeamKeeper then startTeamKeeper() end else
+                                    if teamKeeperShouldRun and not teamKeeperShouldRun() then if stopTeamKeeper then stopTeamKeeper() end end
+                                end
+                            end)
                         end
                     end
                 end
@@ -4361,12 +4368,13 @@ end)
 -- LOGIC UTAMA
 -- ============================================
 local function setRunning(state)
+    -- v13.11: running = putih INVERTED (jangkar visual), stop = merah kalem
     if state then
-        runBtn.BackgroundColor3=Color3.fromRGB(30,30,30) runBtn.TextColor3=C.Teal runStroke.Color=C.Teal
+        runBtn.BackgroundColor3=C.Teal runBtn.TextColor3=C.Ink runStroke.Color=C.Teal
         stopBtn.BackgroundColor3=C.Panel stopBtn.TextColor3=C.Gray stopStroke.Color=C.Dim
     else
         runBtn.BackgroundColor3=C.Panel runBtn.TextColor3=C.Gray runStroke.Color=C.Dim
-        stopBtn.BackgroundColor3=Color3.fromRGB(30,30,30) stopBtn.TextColor3=C.White stopStroke.Color=C.Dim
+        stopBtn.BackgroundColor3=C.RDim stopBtn.TextColor3=C.Red stopStroke.Color=C.Red
     end
 end
 
