@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.35"
+local SCRIPT_VERSION="v13.36"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -411,10 +411,11 @@ local function swapPet(uuid, pickupDelay, equipDelay)
     -- v13.34 FIX: delay diterima via PARAMETER dari poller. dulu swapPet baca swapPerPet
     -- langsung, padahal 'local swapPerPet' dideklarasi JAUH di bawah (1605) -> di scope sini
     -- kebaca GLOBAL nil -> crash "index nil" tiap swap (poller jalan tapi swap ga pernah tembus).
-    -- v13.35 (HASIL SPY sc gacor): jeda unequip->equip cuma 25-60ms, BUKAN 0.6s.
-    -- default pickup 0.03s (30ms). eq 0. delay gede = skill ilang; sc gacor justru CEPET.
-    local pk = tonumber(pickupDelay); if pk == nil then pk = 0.03 end
+    -- v13.36: default 0.15s — 0.03 KECEPETAN (skill blm keluar udah diambil), 0.6 kelambatan.
+    -- 0.15 = pet sempet trigger skill dulu. kotak Pickup/Equip override per pet (ke-save).
+    local pk = tonumber(pickupDelay); if pk == nil then pk = 0.15 end
     local eq = tonumber(equipDelay); if eq == nil then eq = 0 end
+    if _G.ZenxSwapDbg then dbg(string.format("[swapPet] %s pickup=%.2f equip=%.2f", tostring(uuid):sub(1,8), pk, eq)) end
     pcall(function() equipRE:FireServer("UnequipPet",u) end)
     if pk > 0 then task.wait(pk) else task.wait(0.01) end
     if eq > 0 then task.wait(eq) end
@@ -2374,11 +2375,12 @@ buildSwapList=function()
                 p[key]=n   -- nil kalau kosong -> pakai default di swapPet
                 b.Text=(n~=nil and tostring(n) or "")
                 save()
+                dbg("[delay] "..tostring(cu1):sub(1,8).." "..key.."="..tostring(n).." (kesimpen)")
             end)
             return b
         end
-        delayBox(0.52, ps.pickup, "pickup", "0.6")   -- Pickup
-        delayBox(0.62, ps.equipd, "equipd", "0")     -- Equip
+        delayBox(0.52, ps.pickup, "pickup", "0.15")   -- Pickup (default 0.15)
+        delayBox(0.62, ps.equipd, "equipd", "0")      -- Equip
 
         local selTog=btn(row,ps.enabled and "ON" or "OFF",12,ps.enabled and C.TDim or C.Panel,ps.enabled and C.Teal or C.Gray)
         selTog.Size=UDim2.new(0.22,0,0,22) selTog.Position=UDim2.new(0.76,2,0.5,-11)
