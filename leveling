@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.50"
+local SCRIPT_VERSION="v13.51"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1639,7 +1639,18 @@ local currentLevelingUUIDs={}
 local completedPets={}
 
 local swapPerPet=d.swapPerPet or {}
-if d.swapGap==nil then d.swapGap=3.5 end   -- v13.50: swapGap PINDAH ke d (diet limit-200 Luau; jangan nambah local chunk utama lagi!)
+if d.swapGap==nil then d.swapGap=3.5 end   -- v13.50: swapGap PINDAH ke d (diet limit-200 Luau)
+-- v13.51: MIGRASI Pickup era lama. makna Pickup udah ganti jadi DURASI-AKTIF (detik);
+-- nilai <1s (0.05/0.3 dsb, sisa era "jeda colek") bikin swap machine-gun & override default.
+-- dibersihin -> pet itu balik ikut kotak "Durasi aktif default".
+do
+    local n=0
+    for _,cfg in pairs(d.swapPerPet or {}) do
+        local p=tonumber(cfg.pickup)
+        if p and p < 1 then cfg.pickup=nil n=n+1 end
+    end
+    if n>0 then pcall(function() saveToFile(d) end) end
+end
 local swapPetInfoCache=d.swapPetInfoCache or {}
 local showAllPetsSwap=d.showAllPetsSwap or false
 local pollerTask=nil
@@ -4813,6 +4824,7 @@ startGlobalPoller=function()
                             -- AKTIF sebelum di-swap. default 3.5s (rata pet biasa); pet efek lama
                             -- isi 6+ di kotak Pickup-nya.
                             local activeDur = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(d.swapGap) or 3.5
+                            if activeDur < 1 then activeDur = tonumber(d.swapGap) or 3.5 end   -- v13.51: <1s = sisa era lama, tolak
                             if not equipAt2[uuid] then equipAt2[uuid] = tick() end  -- mulai hitung sejak aktif
                             local activeFor = tick() - equipAt2[uuid]
                             if activeFor >= activeDur then
