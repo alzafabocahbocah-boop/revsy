@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.54"
+local SCRIPT_VERSION="v13.56"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -4827,6 +4827,49 @@ startGlobalPoller=function()
         local animConn = workspace.DescendantAdded:Connect(function(dd)
             task.defer(function() pcall(regAnimator, dd) end)   -- defer: tunggu ancestor kepasang
         end)
+        -- v13.55 AUTO-REPOSISI (HASIL UJI spy pos-fix: PivotTo client DIAKUI server,
+        -- nol snap-back, reduksi masuk 1.6-2.2s di pet yg dipindah). pet respawn APES
+        -- (>45 stud dari pet terdekat = di luar radius reduce Peacock dkk) -> langsung
+        -- ditarik ke samping pet terdekat. matiin: getgenv().ZenxNoPosFix = true.
+        local petModels = {}
+        local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1)=="{" end
+        local function posOf(m) local ok,p=pcall(function() return m:GetPivot().Position end) if ok then return p end return nil end
+        pcall(function() for _,dd in ipairs(workspace:GetDescendants()) do if isPetModel(dd) then petModels[dd]=true end end end)
+        local remConn = workspace.DescendantRemoving:Connect(function(dd) if petModels[dd] then petModels[dd]=nil end end)
+        local posConn = workspace.DescendantAdded:Connect(function(dd)
+            task.defer(function()
+                if not (pcall(function() return isPetModel(dd) end) and isPetModel(dd)) then return end
+                if petModels[dd] then return end
+                petModels[dd]=true
+                if getgenv().ZenxNoPosFix then return end
+                if not swapPerPet[tostring(dd.Name)] then return end   -- cuma pet swap kita
+                task.wait(0.25)   -- biar model settle dulu
+                if not dd.Parent then return end
+                local p=posOf(dd) if not p then return end
+                -- v13.56: hitung pet terdekat (buat deteksi APES) + TITIK TENGAH kluster
+                -- (target pindah). request user: taruh di tengah, jangan nempel pet lain --
+                -- tengah = kecakup radius reduce dari segala arah.
+                local best=nil
+                local sum=Vector3.new(0,0,0)
+                local cnt=0
+                for m in pairs(petModels) do
+                    if m~=dd and m.Parent then
+                        local q=posOf(m)
+                        if q then
+                            local dist=(q-p).Magnitude
+                            if not best or dist<best then best=dist end
+                            sum=sum+q cnt=cnt+1
+                        end
+                    end
+                end
+                if best and best>45 and cnt>0 then
+                    local center=sum/cnt
+                    local okM=pcall(function() dd:PivotTo(CFrame.new(center+Vector3.new(0,0,2))) end)
+                    dbg(string.format("[posfix] %s respawn %.0f stud (APES) -> ditarik ke TENGAH kluster (%d pet)%s",
+                        tostring(dd.Name):sub(2,9), best, cnt, okM and "" or " (GAGAL)"))
+                end
+            end)
+        end)
         -- loop pantau animasi (0.15s), hidup selama poller hidup
         task.spawn(function()
             while pollerTask do
@@ -4861,6 +4904,8 @@ startGlobalPoller=function()
                 task.wait(0.15)
             end
             pcall(function() animConn:Disconnect() end)
+            pcall(function() posConn:Disconnect() end)
+            pcall(function() remConn:Disconnect() end)
         end)
         local cycles=0
         while pollerShouldRun() do
