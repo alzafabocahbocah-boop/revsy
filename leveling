@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.52"
+local SCRIPT_VERSION="v13.53"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -4802,6 +4802,63 @@ startGlobalPoller=function()
     end
     pollerTask=task.spawn(function()
         dbg("[poller] global poller START (adaptive parallel)")
+        -- v13.53 MONITOR ANIMASI SKILL (hasil spy Jalur 2): track animasi non-Idle/Walk
+        -- yg mulai di model pet = SKILL BENERAN KELUAR. swap dijadwal = mulai + Length
+        -- + buffer. semua state LOKAL FUNGSI ini (bukan chunk utama - jaga limit-200).
+        local animByUuid = {}     -- [uuidBraced] = Animator
+        local prevTracks = {}     -- [uuidBraced] = { [trackName]=true }
+        local skillDoneAt = {}    -- [uuidBraced] = tick() kapan boleh swap (animasi kelar+buffer)
+        local BASE_ANIM = { Idle=true, Walk=true, WalkAnim=true, Animation=true, Animation1=true, Animation2=true }
+        local function uuidOfAnimator(a)
+            local p=a.Parent local depth=0
+            while p and p~=workspace and depth<12 do
+                local n=tostring(p.Name)
+                if n:sub(1,1)=="{" and swapPerPet[n] then return n end
+                p=p.Parent depth=depth+1
+            end
+            return nil
+        end
+        local function regAnimator(a)
+            if not a:IsA("Animator") then return end
+            local uu=uuidOfAnimator(a)
+            if uu then animByUuid[uu]=a end
+        end
+        pcall(function() for _,dd in ipairs(workspace:GetDescendants()) do regAnimator(dd) end end)
+        local animConn = workspace.DescendantAdded:Connect(function(dd)
+            task.defer(function() pcall(regAnimator, dd) end)   -- defer: tunggu ancestor kepasang
+        end)
+        -- loop pantau animasi (0.15s), hidup selama poller hidup
+        task.spawn(function()
+            while pollerTask do
+                for uu,a in pairs(animByUuid) do
+                    if not a.Parent then animByUuid[uu]=nil prevTracks[uu]=nil
+                    else
+                        local ok,tracks=pcall(function() return a:GetPlayingAnimationTracks() end)
+                        if ok and tracks then
+                            local nowSet={}
+                            for _,tr in ipairs(tracks) do
+                                local nm="?" pcall(function() nm=(tr.Name~="" and tr.Name) or (tr.Animation and tr.Animation.Name) or "?" end)
+                                nm=tostring(nm) nowSet[nm]=tr
+                            end
+                            local prev=prevTracks[uu] or {}
+                            for nm,tr in pairs(nowSet) do
+                                if not prev[nm] and not BASE_ANIM[nm] then
+                                    local len=2 pcall(function() if tr.Length and tr.Length>0 then len=tr.Length end end)
+                                    local buf=tonumber(d.swapAnimBuf) or 1
+                                    skillDoneAt[uu]=tick()+len+buf
+                                    dbg(string.format("[anim] %s skill '%s' KELUAR (len=%.1fs) -> swap dlm %.1fs", uu:sub(2,9), nm, len, len+buf))
+                                end
+                                prev[nm]=true
+                            end
+                            for nm in pairs(prev) do if not nowSet[nm] then prev[nm]=nil end end
+                            prevTracks[uu]=prev
+                        end
+                    end
+                end
+                task.wait(0.15)
+            end
+            pcall(function() animConn:Disconnect() end)
+        end)
         local cycles=0
         while pollerShouldRun() do
             cycles=cycles+1
@@ -4823,12 +4880,28 @@ startGlobalPoller=function()
                             -- sama CD yg banjir "ready". jadi "Pickup" = berapa detik pet dibiarin
                             -- AKTIF sebelum di-swap. default 3.5s (rata pet biasa); pet efek lama
                             -- isi 6+ di kotak Pickup-nya.
-                            -- v13.52 MODEL FINAL (nutup lubang "belum ngeskill udah diambil"):
-                            -- skill BARU keluar pas CD ready, BUKAN pas equip. urutan bener:
-                            -- equip -> TUNGGU CD ready (skill keluar) -> biarkan efek jalan
-                            -- <durasi Pickup> detik -> swap -> CD mulai lagi -> ulang.
-                            -- equipAt2 = penanda MOMEN SKILL MULAI (CD pertama kebaca ready).
-                            local activeDur = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(d.swapGap) or 3.5
+                            -- v13.53 PRIORITAS BARU: kalau kotak Pickup KOSONG dan animasi skill
+                            -- kedeteksi (monitor di atas), swap dijadwal dari ANIMASI (paling akurat:
+                            -- skill beneran keluar + panjang aslinya + buffer). kalau Pickup keisi
+                            -- atau animasi ga kedeteksi -> fallback model v13.52 (CD ready + durasi).
+                            local rawPickup = tonumber((swapPerPet[uuid] or {}).pickup)
+                            if rawPickup == nil and skillDoneAt[uuid] then
+                                if tick() >= skillDoneAt[uuid] then
+                                    local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
+                                    dbg(string.format("[swap] %s | animasi skill KELAR -> SWAP", ((info and info.name) or "?"):sub(1,10)))
+                                    swapPet(uuid, 0.05, (swapPerPet[uuid] or {}).equipd)
+                                    lastSwap[uuid] = tick()
+                                    skillDoneAt[uuid] = nil
+                                    equipAt2[uuid] = nil
+                                    nextCheckAt[uuid] = tick() + 0.5
+                                else
+                                    nextCheckAt[uuid] = tick() + 0.2
+                                end
+                                checkingPet[uuid] = nil
+                                return
+                            end
+                            -- fallback: model v13.52 (CD ready dulu -> durasi efek -> swap)
+                            local activeDur = rawPickup or tonumber(d.swapGap) or 3.5
                             if activeDur < 1 then activeDur = tonumber(d.swapGap) or 3.5 end
                             local t = getPetTime(uuid)
                             if t == nil then
