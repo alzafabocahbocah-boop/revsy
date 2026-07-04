@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.41"
+local SCRIPT_VERSION="v13.42"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -4731,9 +4731,15 @@ local function startSwapKeeper()
         while swapKeeperShouldRun() do
             for uuid,cfg in pairs(swapPerPet) do
                 if cfg.enabled and not currentLevelingUUIDs[uuid] then
-                    if not isPetEquippedInUI(uuid) then
+                    -- v13.42 FIX: JANGAN re-equip kalau poller BARU aja swap pet ini. keeper dulu
+                    -- nyerbu re-equip tiap 0.5s -> narik pet terus -> skill ga sempet keluar,
+                    -- Pickup gap poller jadi percuma. kasih napas: skip kalau jeda dari swap
+                    -- terakhir < gap pet itu (pet emang lagi "aktif ngeluarin skill", wajar ga di UI).
+                    local gap = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 0.7
+                    local sinceSwap = tick() - (lastSwap[uuid] or 0)
+                    if sinceSwap >= gap + 0.5 and not isPetEquippedInUI(uuid) then
                         local uuidStr=tostring(uuid)
-                        dbg("[swapKeeper] swap "..uuidStr:sub(1,8).." gak di UI, re-equip")
+                        dbg("[swapKeeper] swap "..uuidStr:sub(1,8).." bener2 ilang (jeda "..string.format("%.1f",sinceSwap).."s), re-equip")
                         pcall(function() equipPet(uuid) end)
                         task.wait(0.1)
                     end
