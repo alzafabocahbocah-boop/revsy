@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v35.9
+-- ZENX FARM  v36.4
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v35.9"
+local VER       = "v36.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -704,6 +704,7 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- FUNGSI FARM (placeholder — diisi nanti via debug)
 -- ============================================================
 local Farm = {}
+pcall(function() getgenv().ZenxFarm = Farm end)   -- v36.4: expose buat tes console (mis. ZenxFarm.dropOneFruit())
 -- v13.4: kg buah garden = SizeMulti × rasio[jenis]. rasio KONSTAN per jenis.
 -- buah garden CUMA punya SizeMulti (gak nyimpen kg langsung — udah dibuktiin via debug),
 -- jadi kg HARUS dihitung. rasio di-hardcode (dari kalibrasi) + auto-update dari tas + DISIMPAN
@@ -2008,6 +2009,56 @@ function Farm.favAllFruits(b)
     end
     print("[ZenxFarm] "..(b and "FAV" or "UNFAV").." semua buah -> "..n)
     return n
+end
+
+-- ===== v36.4: DROP buah ke tanah (buat diambil orang). format ASLI hasil capture:
+-- DroppedItem.RequestDrop:Fire("HarvestedFruits", UUID)  -- UUID TANPA kurung kurawal!
+function Farm.dropFruit(id)
+    local p = pkt("DroppedItem", "RequestDrop")
+    if not (p and p.Fire) or not id then return false end
+    pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
+    return true
+end
+-- drop SEMUA buah di inventory (kecuali yg favorit, biar ga ke-drop ga sengaja).
+-- return jumlah buah yg di-drop.
+function Farm.dropAllFruits(skipFav)
+    local p = pkt("DroppedItem", "RequestDrop")
+    if not (p and p.Fire) then print("[ZenxFarm] RequestDrop packet gak ada"); return 0 end
+    local n = 0
+    for _, holder in ipairs(getFruitHolders()) do
+        for _, o in ipairs(holder:GetChildren()) do
+            local id = o:GetAttribute("Id")
+            if id then
+                -- skip favorit kalau diminta (favorit ditandai attr .Favorite / .Favorited)
+                local fav = o:GetAttribute("Favorite") or o:GetAttribute("Favorited")
+                if not (skipFav and fav) then
+                    pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
+                    n = n + 1
+                    if n % 6 == 0 then task.wait(0.1) end   -- throttle: server ga nge-drop packet
+                end
+            end
+        end
+    end
+    print("[ZenxFarm] DROP "..n.." buah ke tanah"..(skipFav and " (favorit di-skip)" or ""))
+    return n
+end
+-- v36.4: tes cepet drop 1 buah (ambil buah pertama di tas). buat uji dari console:
+--   getgenv().ZenxFarm.dropOneFruit()   ATAU panggil dari tombol nanti.
+function Farm.dropOneFruit()
+    local p = pkt("DroppedItem", "RequestDrop")
+    if not (p and p.Fire) then print("[ZenxFarm] RequestDrop packet gak ada"); return false end
+    for _, holder in ipairs(getFruitHolders()) do
+        for _, o in ipairs(holder:GetChildren()) do
+            local id = o:GetAttribute("Id")
+            if id then
+                pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
+                print("[ZenxFarm] drop 1 buah: "..tostring(o.Name).." id="..tostring(id):sub(1,8))
+                return true
+            end
+        end
+    end
+    print("[ZenxFarm] ga ada buah di tas")
+    return false
 end
 -- unfav SEMUA buah di inventory (set favorit=false). return jumlah buah yg diproses.
 function Farm.unfavAllFruits()
@@ -5679,18 +5730,56 @@ staggerSpawn(function()
                     -- server, buah aman, layar freeze di frame terakhir) -> script executor tetep
                     -- hidup -> tunggu N detik (setting) -> TeleportService rejoin ke server baru.
                     Farm._weatherHopState = "freeze"
+                    
+-- v36.2: SEMBUNYIIN dialog "Koneksi Terputus" / error prompt (kosmetik, ala sc lain).
+-- proses rejoin di belakang JALAN TERUS; cuma GUI merah-nya yg dibikin transparan
+-- biar layar bersih pas retry. jalan sbg loop sampai berhasil pindah.
+function Farm.hideDcPrompt()
+    task.spawn(function()
+        local cg = game:GetService("CoreGui")
+        local guiSvc = game:GetService("GuiService")
+        for _ = 1, 300 do   -- ~150 detik, cukup buat nutup semua percobaan
+            pcall(function()
+                for _, g in ipairs(cg:GetChildren()) do
+                    local n = tostring(g.Name):lower()
+                    if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                        if g:IsA("ScreenGui") then g.Enabled = false end
+                        pcall(function() g.Parent = nil end)
+                    end
+                end
+                -- tombol "Leave/Keluar" kadang di GuiService prompt
+                pcall(function() guiSvc:ClearError() end)
+            end)
+            task.wait(0.5)
+        end
+    end)
+end
+
                     local jobId = game.JobId   -- v35.9: SIMPEN sebelum kick — kunci balik ke server SAMA
+                    -- v36.0: kode 772 = server penuh (ghost slot bekas kita / keisi orang).
+                    -- 2x gagal ke server sama -> nyerah, fallback acak. freeze minimal 45s
+                    -- biar ghost slot sempet bebas sebelum percobaan pertama.
+                    local isPriv = (game.PrivateServerId or "") ~= ""   -- v36.1: private = jangan nyerah ke acak
+                    local sameFail = 0
+                    pcall(function()
+                        game:GetService("TeleportService").TeleportInitFailed:Connect(function()
+                            sameFail = sameFail + 1
+                            if sameFail >= 2 and not isPriv then jobId = nil end
+                        end)
+                    end)
+                    if fz < 45 then fz = 45 end
                     print("[ZenxFarm] weather buruk '"..tostring(w).."' -> FREEZE "..fz.."s lalu REJOIN SERVER SAMA (job="..tostring(jobId):sub(1,8).."...)")
+                    Farm.hideDcPrompt()   -- v36.2: sembunyiin dialog DC selama retry
                     pcall(function() player:Kick("ZenxWeatherFreeze") end)
                     task.wait(fz)
                     -- v35.9: 6x percobaan ke server SAMA (10s antar coba), abis itu fallback acak
                     local tries = 0
                     while isCurrentGen() do
                         tries = tries + 1
-                        if jobId and jobId ~= "" and tries <= 6 then
-                            Farm.rejoinSameServer(jobId, false)
+                        if jobId and jobId ~= "" and (isPriv or tries <= 4) then
+                            Farm.rejoinSameServer(jobId, false)   -- v36.1: private = retry terus, ga ada fallback
                         else
-                            if tries == 7 then print("[ZenxFarm] server sama ga bisa dimasukin (penuh/ilang) -> fallback server acak") end
+                            if tries == 5 then print("[ZenxFarm] server sama ga bisa dimasukin -> fallback server acak (public)") end
                             Farm.simpleRejoin(true)
                         end
                         task.wait(10)
@@ -6498,7 +6587,7 @@ do
     -- sekarang: hitung PER seed (kriteria persis countMyGardenFruits), tampilkan seed DOMINAN
     -- dgn angka miliknya sendiri + "+N lain" kalau ada jenis lain.
     local function plotInfoOf(plotId)
-        local seed, nFruit, nOther = nil, 0, 0
+        local seed, nSeed, nOther = nil, 0, 0
         pcall(function()
             local g = workspace:FindFirstChild("Gardens")
             local plot = g and g:FindFirstChild(plotId)
@@ -6509,20 +6598,19 @@ do
             for _, plant in ipairs(plants:GetChildren()) do
                 local ownerId = tonumber(plant.Name:match("^(%d+)_"))
                 if (not ownerId or ownerId == MY) then
+                    -- v36.3: hitung TANAMAN (seed yg ditanam), BUKAN buah. tiap plant = 1 seed.
                     local sn = plant:GetAttribute("SeedName") or "?"
-                    local fr = plant:FindFirstChild("Fruits")
-                    local nf = fr and #fr:GetChildren() or 0
-                    if nf > 0 then per[sn] = (per[sn] or 0) + nf end
+                    per[sn] = (per[sn] or 0) + 1
                 end
             end
             local total = 0
             for sn, c in pairs(per) do
                 total = total + c
-                if c > nFruit then seed = sn; nFruit = c end   -- seed dominan
+                if c > nSeed then seed = sn; nSeed = c end   -- seed dominan (jumlah tanaman terbanyak)
             end
-            nOther = total - nFruit
+            nOther = total - nSeed
         end)
-        return seed, nFruit, nOther
+        return seed, nSeed, nOther
     end
     local function refreshPosInfo()
         local sp = state.af2SavedPos or {}
@@ -6533,7 +6621,7 @@ do
             local seg = e.plotId
             local seed, nFruit, nOther = plotInfoOf(e.plotId)
             if seed then
-                seg = seg.." ("..tostring(seed).." ×"..nFruit..((nOther or 0) > 0 and (" +"..nOther.." lain") or "")..")"   -- v35.5
+                seg = seg.." ("..tostring(seed).." x"..nFruit.." seed"..((nOther or 0) > 0 and (" +"..nOther.." lain") or "")..")"   -- v36.3: seed, bukan buah
             end
             if hrp then seg = seg.." · "..math.floor((hrp.Position - Vector3.new(e.x, e.y, e.z)).Magnitude).."m" end
             parts[#parts+1] = seg
@@ -6572,7 +6660,7 @@ do
                 tl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
                 tl.TextColor3 = Color3.fromRGB(140, 255, 170); tl.Font = FONT_B; tl.TextSize = 16
                 local seed2, nF2, nO2 = plotInfoOf(e.plotId)   -- v35.5
-                tl.Text = "📍 "..e.plotId.." DISINI"..(seed2 and ("\n"..tostring(seed2).." ×"..nF2..((nO2 or 0) > 0 and (" +"..nO2.." lain") or "")) or "")
+                tl.Text = "DISINI: "..e.plotId..(seed2 and ("\n"..tostring(seed2).." x"..nF2.." seed"..((nO2 or 0) > 0 and (" +"..nO2.." lain") or "")) or "")
                 tl.TextWrapped = true; tl.Parent = bb
                 task.delay(6, function() pcall(function() anchor:Destroy() end) end)
             end)
