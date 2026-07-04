@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.42"
+local SCRIPT_VERSION="v13.44"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -4706,6 +4706,17 @@ startTeamKeeper=function()
                         equipPet(uuid)
                         task.wait(0.1)
                     end
+                -- v13.43: kalau pet ini JUGA lagi di-swap, JANGAN diganggu selama masih dlm window
+                -- Pickup-nya. dulu teamKeeper nyerbu re-equip pet swap tiap 0.5s -> narik pet ->
+                -- skill ga sempet keluar (Pickup 2s percuma). ini pelaku "masih cepet" yg asli.
+                elseif isPetInSwap(uuid) then
+                    local gap = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 0.7
+                    local sinceSwap = tick() - (lastSwap[uuid] or 0)
+                    if sinceSwap >= gap + 0.5 and not isPetEquippedInUI(uuid) then
+                        dbg("[teamKeeper] swap-pet "..tostring(uuid):sub(1,8).." bener2 ilang, re-equip")
+                        equipPet(uuid)
+                        task.wait(0.1)
+                    end
                 end
             end
             task.wait(0.5)
@@ -4815,23 +4826,27 @@ startGlobalPoller=function()
                                 nextCheckAt[uuid] = tick() + 0.3
                             elseif t <= 0 then
                                 local last = lastSwap[uuid] or 0
-                                -- v13.39: RITME SWAP ULANG per pet ~0.7s (log spy sc gacor: 682-793ms).
-                                -- v13.40 (BENERIN MAKNA): "Pickup" = berapa lama pet dibiarkan
-                                -- AKTIF di lapangan (ngeluarin skill) sebelum diambil lagi. jadi
-                                -- gap antar swap-ulang per pet = Pickup pet itu (fallback swapGap global).
-                                local petGap = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 0.7
+                                -- v13.44 (INSIGHT user): swap CUMA pas cooldown skill READY (t<=0).
+                                -- ini yg bikin jeda-aktual ngikut CD pet (misal 15s) — MEMANG BENAR,
+                                -- bukan bug. skill cuma bisa keluar tiap CD, swap lebih cepet = sia2.
+                                -- "Pickup" = jeda EKSTRA sesudah CD ready sblm swap (0 = langsung).
+                                local petGap = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 0
                                 if tick() - last >= petGap then
                                     local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
                                     local nm = (info and info.name) or "?"
-                                    -- v13.41: log JEDA AKTUAL (bukti Pickup kepakai apa nggak)
                                     local actualGap = tick() - last
-                                    local pkRaw = (swapPerPet[uuid] or {}).pickup
-                                    dbg(string.format("[swap] %s | Pickup-diset=%s | gap-dipakai=%.2fs | jeda-aktual=%.2fs -> SWAP",
-                                        nm:sub(1,10), tostring(pkRaw), petGap, actualGap))
+                                    dbg(string.format("[swap] %s | CD-ready | jeda-dari-swap-lalu=%.1fs (=CD pet) -> SWAP", nm:sub(1,10), actualGap))
                                     swapPet(uuid, 0.05, (swapPerPet[uuid] or {}).equipd)
                                     lastSwap[uuid] = tick()
                                 end
                                 nextCheckAt[uuid] = tick() + 0.1
+                            elseif t > 2 then
+                                -- v13.44: CD masih jauh — log sekali biar user tau pet lagi cooldown
+                                if cycles % 200 == 0 then
+                                    local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
+                                    dbg(string.format("[swap] %s masih CD %.0fs (nunggu ready)", ((info and info.name) or "?"):sub(1,10), t))
+                                end
+                                nextCheckAt[uuid] = tick() + math.min(t * 0.5, 1.5)
                             elseif t > 2 then
                                 nextCheckAt[uuid] = tick() + math.min(t * 0.5, 1.5)
                             elseif t > 0.5 then
