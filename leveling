@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.49"
+local SCRIPT_VERSION="v13.50"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1639,7 +1639,7 @@ local currentLevelingUUIDs={}
 local completedPets={}
 
 local swapPerPet=d.swapPerPet or {}
-local swapGap=d.swapGap or 3.5   -- v13.47: DURASI-AKTIF default (detik). pet dibiarin aktif sekian lama lalu swap. hasil spy: pet biasa ~3.3s
+if d.swapGap==nil then d.swapGap=3.5 end   -- v13.50: swapGap PINDAH ke d (diet limit-200 Luau; jangan nambah local chunk utama lagi!)
 local swapPetInfoCache=d.swapPetInfoCache or {}
 local showAllPetsSwap=d.showAllPetsSwap or false
 local pollerTask=nil
@@ -1657,7 +1657,7 @@ local function save()
     d.giftSlots=giftSlots
     d.giftTargetHistory=giftTargetHistory
     d.antiAfk=antiAfk d.showAllPets=showAllPets d.showAllPetsSwap=showAllPetsSwap
-    d.swapPerPet=swapPerPet d.swapPetInfoCache=swapPetInfoCache d.swapGap=swapGap
+    d.swapPerPet=swapPerPet d.swapPetInfoCache=swapPetInfoCache
     d.teamPetUUIDs=teamPetUUIDs d.teamPetInfoCache=teamPetInfoCache
     saveToFile(d)
 end
@@ -2294,12 +2294,12 @@ buildSwapList=function()
     local gapRow=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=1,Parent=areas[3]})
     corner(gapRow,6) stroke(gapRow,C.Dim,1.1)
     lbl(gapRow,"Durasi aktif default (dtk)",11,C.Gray).Size=UDim2.new(0.62,0,1,0)
-    local gapBox=mk("TextBox",{Size=UDim2.new(0,50,0,20),Position=UDim2.new(1,-56,0.5,-10),BackgroundColor3=C.Panel,Text=tostring(swapGap),PlaceholderText="0.7",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=gapRow})
+    local gapBox=mk("TextBox",{Size=UDim2.new(0,50,0,20),Position=UDim2.new(1,-56,0.5,-10),BackgroundColor3=C.Panel,Text=tostring(d.swapGap),PlaceholderText="3.5",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=gapRow})
     corner(gapBox,5) stroke(gapBox,C.Dim,1)
     gapBox.FocusLost:Connect(function()
         local v=tonumber(gapBox.Text)
-        if v then swapGap=math.max(0.1,math.min(5,v)) d.swapGap=swapGap save() dbg("[swapGap] ritme -> "..swapGap.."s") end
-        gapBox.Text=tostring(swapGap)
+        if v then d.swapGap=math.max(0.1,math.min(30,v)) save() dbg("[swapGap] durasi aktif default -> "..d.swapGap.."s") end
+        gapBox.Text=tostring(d.swapGap)
     end)
 
     local saRow=mk("Frame",{Size=UDim2.new(1,0,0,28),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=2,Parent=areas[3]})
@@ -4772,7 +4772,6 @@ end
 -- Jadi pet yg cooldown masih lama (5s) gak invoke server tiap 25ms; cuma rapid polling pas mendekati 0
 local checkingPet = {}
 local nextCheckAt = {}  -- per-uuid: tick() kapan boleh check lagi
-local readyAt = {}       -- v13.46: per-uuid: kapan CD pertama ke-detect ready (buat jeda Pickup)
 local equipAt2 = {}      -- v13.47: per-uuid: kapan pet mulai aktif (buat durasi-aktif)
 
 startGlobalPoller=function()
@@ -4813,7 +4812,7 @@ startGlobalPoller=function()
                             -- sama CD yg banjir "ready". jadi "Pickup" = berapa detik pet dibiarin
                             -- AKTIF sebelum di-swap. default 3.5s (rata pet biasa); pet efek lama
                             -- isi 6+ di kotak Pickup-nya.
-                            local activeDur = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 3.5
+                            local activeDur = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(d.swapGap) or 3.5
                             if not equipAt2[uuid] then equipAt2[uuid] = tick() end  -- mulai hitung sejak aktif
                             local activeFor = tick() - equipAt2[uuid]
                             if activeFor >= activeDur then
@@ -4852,7 +4851,7 @@ startGlobalPoller=function()
         end
         pollerTask=nil
         checkingPet={}
-        nextCheckAt={} readyAt={} equipAt2={}
+        nextCheckAt={} equipAt2={}
         dbg("[poller] global poller STOP")
     end)
 end
@@ -4864,7 +4863,7 @@ local function stopAllSwaps()
     end
     lastSwap={}
     checkingPet={}
-    nextCheckAt={} readyAt={} equipAt2={}
+    nextCheckAt={} equipAt2={}
 end
 
 local function startSwapForPet(uuid)
