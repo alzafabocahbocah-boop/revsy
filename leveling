@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.53"
+local SCRIPT_VERSION="v13.54"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1640,16 +1640,16 @@ local completedPets={}
 
 local swapPerPet=d.swapPerPet or {}
 if d.swapGap==nil then d.swapGap=3.5 end   -- v13.50: swapGap PINDAH ke d (diet limit-200 Luau)
--- v13.51: MIGRASI Pickup era lama. makna Pickup udah ganti jadi DURASI-AKTIF (detik);
--- nilai <1s (0.05/0.3 dsb, sisa era "jeda colek") bikin swap machine-gun & override default.
--- dibersihin -> pet itu balik ikut kotak "Durasi aktif default".
-do
-    local n=0
+-- v13.54: makna Pickup FINAL = "berapa detik SETELAH SKILL KELUAR baru pet diambil".
+-- nilai kecil (0.5-1.5) SAH sekarang (grab pas spread pertama, ala sc gacor).
+-- migrasi era colek (<0.2) cuma SEKALI pakai flag, biar setelan baru user ga kehapus.
+if not d._pickupMigrated2 then
     for _,cfg in pairs(d.swapPerPet or {}) do
         local p=tonumber(cfg.pickup)
-        if p and p < 1 then cfg.pickup=nil n=n+1 end
+        if p and p < 0.2 then cfg.pickup=nil end
     end
-    if n>0 then pcall(function() saveToFile(d) end) end
+    d._pickupMigrated2=true
+    pcall(function() saveToFile(d) end)
 end
 local swapPetInfoCache=d.swapPetInfoCache or {}
 local showAllPetsSwap=d.showAllPetsSwap or false
@@ -4844,9 +4844,12 @@ startGlobalPoller=function()
                             for nm,tr in pairs(nowSet) do
                                 if not prev[nm] and not BASE_ANIM[nm] then
                                     local len=2 pcall(function() if tr.Length and tr.Length>0 then len=tr.Length end end)
-                                    local buf=tonumber(d.swapAnimBuf) or 1
-                                    skillDoneAt[uu]=tick()+len+buf
-                                    dbg(string.format("[anim] %s skill '%s' KELUAR (len=%.1fs) -> swap dlm %.1fs", uu:sub(2,9), nm, len, len+buf))
+                                    -- v13.54: Pickup pet = detik setelah skill keluar (grab spread awal).
+                                    -- kosong = full animasi + buffer (aman).
+                                    local pk=tonumber(swapPerPet[uu] and swapPerPet[uu].pickup)
+                                    local wait_s = pk or (len + (tonumber(d.swapAnimBuf) or 1))
+                                    skillDoneAt[uu]=tick()+wait_s
+                                    dbg(string.format("[anim] %s skill '%s' KELUAR (len=%.1fs) -> swap dlm %.1fs%s", uu:sub(2,9), nm, len, wait_s, pk and " (Pickup)" or " (auto)"))
                                 end
                                 prev[nm]=true
                             end
@@ -4885,7 +4888,7 @@ startGlobalPoller=function()
                             -- skill beneran keluar + panjang aslinya + buffer). kalau Pickup keisi
                             -- atau animasi ga kedeteksi -> fallback model v13.52 (CD ready + durasi).
                             local rawPickup = tonumber((swapPerPet[uuid] or {}).pickup)
-                            if rawPickup == nil and skillDoneAt[uuid] then
+                            if skillDoneAt[uuid] then   -- v13.54: anim mode selalu prioritas (jadwalnya udah pakai Pickup)
                                 if tick() >= skillDoneAt[uuid] then
                                     local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
                                     dbg(string.format("[swap] %s | animasi skill KELAR -> SWAP", ((info and info.name) or "?"):sub(1,10)))
@@ -4902,7 +4905,7 @@ startGlobalPoller=function()
                             end
                             -- fallback: model v13.52 (CD ready dulu -> durasi efek -> swap)
                             local activeDur = rawPickup or tonumber(d.swapGap) or 3.5
-                            if activeDur < 1 then activeDur = tonumber(d.swapGap) or 3.5 end
+                            if activeDur < 0.2 then activeDur = tonumber(d.swapGap) or 3.5 end   -- v13.54: floor 0.2
                             local t = getPetTime(uuid)
                             if t == nil then
                                 nextCheckAt[uuid] = tick() + 0.5
