@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.44"
+local SCRIPT_VERSION="v13.48"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1639,7 +1639,7 @@ local currentLevelingUUIDs={}
 local completedPets={}
 
 local swapPerPet=d.swapPerPet or {}
-local swapGap=d.swapGap or 0.7   -- v13.39: ritme swap ulang per pet (detik). dari log spy sc gacor ~0.7s
+local swapGap=d.swapGap or 3.5   -- v13.47: DURASI-AKTIF default (detik). pet dibiarin aktif sekian lama lalu swap. hasil spy: pet biasa ~3.3s
 local swapPetInfoCache=d.swapPetInfoCache or {}
 local showAllPetsSwap=d.showAllPetsSwap or false
 local pollerTask=nil
@@ -2286,14 +2286,14 @@ buildSwapList=function()
     mk("UIPadding",{PaddingTop=UDim.new(0,5),PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8),PaddingBottom=UDim.new(0,5),Parent=infoCard})
     mk("UIListLayout",{SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2),Parent=infoCard})
     lbl(infoCard,"Swap Mechanic: friend-7",12,C.Teal).Size=UDim2.new(1,0,0,14)
-    local descLbl=lbl(infoCard,"Toggle ON utk swap. Pet HARUS udah di garden (place manual/via tim).",10,C.Gray)
-    descLbl.Size=UDim2.new(1,0,0,22) descLbl.TextWrapped=true
+    local descLbl=lbl(infoCard,"Kotak Pickup = brp detik pet dibiarin AKTIF sblm swap. Efek cepet ~1.7, sedang ~3.5, lama (Dilo dll) ~6.",10,C.Gray)
+    descLbl.Size=UDim2.new(1,0,0,30) descLbl.TextWrapped=true
 
     -- v13.39: kotak RITME SWAP ULANG (swapGap) — INI yg nahan skill nyala (hasil analisis log
     -- spy sc gacor: tiap pet di-swap ulang ~0.7s). kecil=lebih gacor tp berat, gede=santai.
     local gapRow=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundColor3=C.Card,BorderSizePixel=0,LayoutOrder=1,Parent=areas[3]})
     corner(gapRow,6) stroke(gapRow,C.Dim,1.1)
-    lbl(gapRow,"Default jeda skill (detik)",11,C.Gray).Size=UDim2.new(0.62,0,1,0)
+    lbl(gapRow,"Durasi aktif default (dtk)",11,C.Gray).Size=UDim2.new(0.62,0,1,0)
     local gapBox=mk("TextBox",{Size=UDim2.new(0,50,0,20),Position=UDim2.new(1,-56,0.5,-10),BackgroundColor3=C.Panel,Text=tostring(swapGap),PlaceholderText="0.7",PlaceholderColor3=C.Dim,TextColor3=C.White,Font=Enum.Font.GothamBold,TextSize=12,TextXAlignment=Enum.TextXAlignment.Center,ClearTextOnFocus=false,Parent=gapRow})
     corner(gapBox,5) stroke(gapBox,C.Dim,1)
     gapBox.FocusLost:Connect(function()
@@ -2391,7 +2391,7 @@ buildSwapList=function()
             end)
             return b
         end
-        delayBox(0.52, ps.pickup, "pickup", "auto")  -- Pickup = detik pet aktif ngeluarin skill sblm diambil
+        delayBox(0.52, ps.pickup, "pickup", "3.5")  -- v13.47: detik pet dibiarin AKTIF sblm swap (efek lama isi 6+)
         delayBox(0.62, ps.equipd, "equipd", "0")      -- Equip
 
         local selTog=btn(row,ps.enabled and "ON" or "OFF",12,ps.enabled and C.TDim or C.Panel,ps.enabled and C.Teal or C.Gray)
@@ -4699,21 +4699,16 @@ startTeamKeeper=function()
         dbg("[teamKeeper] START (handle TIM only via ActivePetUI)")
         while teamKeeperShouldRun() do
             for uuid,_ in pairs(teamPetUUIDs) do
-                if not isPetInSwap(uuid) and not currentLevelingUUIDs[uuid] then
+                -- v13.45: pet yg swap-ON = URUSAN POLLER SEPENUHNYA. keeper SKIP TOTAL —
+                -- jangan cek UI, jangan re-equip. dulu keeper ngira pet "ilang" pas sekejap
+                -- di-swap (unequip 0.05s) -> re-equip -> tabrakan sama poller -> game error
+                -- (CreatePetWithScale / WaitForChild infinite yield) + skill keganggu.
+                if isPetInSwap(uuid) then
+                    -- skip, poller handle
+                elseif not currentLevelingUUIDs[uuid] then
                     if not isPetEquippedInUI(uuid) then
                         local uuidStr=tostring(uuid)
                         dbg("[teamKeeper] tim "..uuidStr:sub(1,8).." gak di UI, re-equip")
-                        equipPet(uuid)
-                        task.wait(0.1)
-                    end
-                -- v13.43: kalau pet ini JUGA lagi di-swap, JANGAN diganggu selama masih dlm window
-                -- Pickup-nya. dulu teamKeeper nyerbu re-equip pet swap tiap 0.5s -> narik pet ->
-                -- skill ga sempet keluar (Pickup 2s percuma). ini pelaku "masih cepet" yg asli.
-                elseif isPetInSwap(uuid) then
-                    local gap = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 0.7
-                    local sinceSwap = tick() - (lastSwap[uuid] or 0)
-                    if sinceSwap >= gap + 0.5 and not isPetEquippedInUI(uuid) then
-                        dbg("[teamKeeper] swap-pet "..tostring(uuid):sub(1,8).." bener2 ilang, re-equip")
                         equipPet(uuid)
                         task.wait(0.1)
                     end
@@ -4740,23 +4735,12 @@ local function startSwapKeeper()
     swapKeeperTask=task.spawn(function()
         dbg("[swapKeeper] START (re-equip swap pet yg ke-pickup)")
         while swapKeeperShouldRun() do
-            for uuid,cfg in pairs(swapPerPet) do
-                if cfg.enabled and not currentLevelingUUIDs[uuid] then
-                    -- v13.42 FIX: JANGAN re-equip kalau poller BARU aja swap pet ini. keeper dulu
-                    -- nyerbu re-equip tiap 0.5s -> narik pet terus -> skill ga sempet keluar,
-                    -- Pickup gap poller jadi percuma. kasih napas: skip kalau jeda dari swap
-                    -- terakhir < gap pet itu (pet emang lagi "aktif ngeluarin skill", wajar ga di UI).
-                    local gap = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 0.7
-                    local sinceSwap = tick() - (lastSwap[uuid] or 0)
-                    if sinceSwap >= gap + 0.5 and not isPetEquippedInUI(uuid) then
-                        local uuidStr=tostring(uuid)
-                        dbg("[swapKeeper] swap "..uuidStr:sub(1,8).." bener2 ilang (jeda "..string.format("%.1f",sinceSwap).."s), re-equip")
-                        pcall(function() equipPet(uuid) end)
-                        task.wait(0.1)
-                    end
-                end
-            end
-            task.wait(0.5)
+            -- v13.45: swapKeeper DINONAKTIFKAN — poller (v13.30+) udah unequip->equip sendiri
+            -- tiap swap, jadi pet SELALU balik ke-equip dalam 0.05s. keeper ini cuma bikin
+            -- tabrakan: dia cek UI pas pet sekejap "di tangan" -> ngira ilang -> re-equip paksa
+            -- -> game error + skill keganggu. biarin poller yg pegang penuh.
+            task.wait(2)
+            -- (loop dipertahankan biar shouldRun tetap ke-cek, tapi ga ada aksi re-equip)
         end
         dbg("[swapKeeper] STOP")
         swapKeeperTask=nil
@@ -4788,6 +4772,8 @@ end
 -- Jadi pet yg cooldown masih lama (5s) gak invoke server tiap 25ms; cuma rapid polling pas mendekati 0
 local checkingPet = {}
 local nextCheckAt = {}  -- per-uuid: tick() kapan boleh check lagi
+local readyAt = {}       -- v13.46: per-uuid: kapan CD pertama ke-detect ready (buat jeda Pickup)
+local equipAt2 = {}      -- v13.47: per-uuid: kapan pet mulai aktif (buat durasi-aktif)
 
 startGlobalPoller=function()
     if pollerTask then return end
@@ -4821,38 +4807,26 @@ startGlobalPoller=function()
                             -- kalau dipakai jadi sumber utama, swap MANDEK (nyaris ga pernah t<=0).
                             -- rahasia sc gacor bukan di baca cooldown, tapi di DELAY pickup (0.6s)
                             -- yg nahan skill — itu udah kita punya di swapPet (v13.31).
-                            local t = getPetTime(uuid)
-                            if t == nil then
+                            -- v13.47 (HASIL SPY PASIF sc gacor — bukti telak): patokan swap BUKAN
+                            -- cooldown, tapi DURASI-AKTIF per pet. sc gacor biarin pet aktif N detik
+                            -- (efek-cepet ~3.3s, efek-lama spt Dilophosaurus ~6.2s) lalu swap, CUEK
+                            -- sama CD yg banjir "ready". jadi "Pickup" = berapa detik pet dibiarin
+                            -- AKTIF sebelum di-swap. default 3.5s (rata pet biasa); pet efek lama
+                            -- isi 6+ di kotak Pickup-nya.
+                            local activeDur = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 3.5
+                            if not equipAt2[uuid] then equipAt2[uuid] = tick() end  -- mulai hitung sejak aktif
+                            local activeFor = tick() - equipAt2[uuid]
+                            if activeFor >= activeDur then
+                                local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
+                                local nm = (info and info.name) or "?"
+                                dbg(string.format("[swap] %s | aktif %.1fs (target %.1fs) -> SWAP", nm:sub(1,10), activeFor, activeDur))
+                                swapPet(uuid, 0.05, (swapPerPet[uuid] or {}).equipd)
+                                lastSwap[uuid] = tick()
+                                equipAt2[uuid] = tick()   -- reset: pet baru aktif lagi setelah re-equip
                                 nextCheckAt[uuid] = tick() + 0.3
-                            elseif t <= 0 then
-                                local last = lastSwap[uuid] or 0
-                                -- v13.44 (INSIGHT user): swap CUMA pas cooldown skill READY (t<=0).
-                                -- ini yg bikin jeda-aktual ngikut CD pet (misal 15s) — MEMANG BENAR,
-                                -- bukan bug. skill cuma bisa keluar tiap CD, swap lebih cepet = sia2.
-                                -- "Pickup" = jeda EKSTRA sesudah CD ready sblm swap (0 = langsung).
-                                local petGap = tonumber((swapPerPet[uuid] or {}).pickup) or tonumber(swapGap) or 0
-                                if tick() - last >= petGap then
-                                    local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
-                                    local nm = (info and info.name) or "?"
-                                    local actualGap = tick() - last
-                                    dbg(string.format("[swap] %s | CD-ready | jeda-dari-swap-lalu=%.1fs (=CD pet) -> SWAP", nm:sub(1,10), actualGap))
-                                    swapPet(uuid, 0.05, (swapPerPet[uuid] or {}).equipd)
-                                    lastSwap[uuid] = tick()
-                                end
-                                nextCheckAt[uuid] = tick() + 0.1
-                            elseif t > 2 then
-                                -- v13.44: CD masih jauh — log sekali biar user tau pet lagi cooldown
-                                if cycles % 200 == 0 then
-                                    local info = swapPetInfoCache[uuid] or teamPetInfoCache[uuid]
-                                    dbg(string.format("[swap] %s masih CD %.0fs (nunggu ready)", ((info and info.name) or "?"):sub(1,10), t))
-                                end
-                                nextCheckAt[uuid] = tick() + math.min(t * 0.5, 1.5)
-                            elseif t > 2 then
-                                nextCheckAt[uuid] = tick() + math.min(t * 0.5, 1.5)
-                            elseif t > 0.5 then
-                                nextCheckAt[uuid] = tick() + 0.2
                             else
-                                nextCheckAt[uuid] = tick() + 0.15  -- v13.30: 18ms->150ms
+                                -- belum cukup lama aktif — cek lagi bentar (skip baca CD, ga relevan)
+                                nextCheckAt[uuid] = tick() + math.min(0.3, activeDur - activeFor)
                             end
                             checkingPet[uuid] = nil
                         end)
@@ -4878,7 +4852,7 @@ startGlobalPoller=function()
         end
         pollerTask=nil
         checkingPet={}
-        nextCheckAt={}
+        nextCheckAt={} readyAt={} equipAt2={}
         dbg("[poller] global poller STOP")
     end)
 end
@@ -4890,7 +4864,7 @@ local function stopAllSwaps()
     end
     lastSwap={}
     checkingPet={}
-    nextCheckAt={}
+    nextCheckAt={} readyAt={} equipAt2={}
 end
 
 local function startSwapForPet(uuid)
