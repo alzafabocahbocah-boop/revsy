@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v38.2
+-- ZENX FARM  v38.3
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v38.2"
+local VER       = "v38.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2206,7 +2206,8 @@ function Farm.startDropLoop()
                     end
                 end
 
-                -- 2) DROP semua Tool beruntun (equip + fire, ga nunggu konfirmasi per buah)
+                -- 2) DROP semua Tool beruntun. v38.3: counter naik CUMA kalau buah beneran
+                -- ilang (ke-drop), bukan pas fire. dulu bug: fire = +1 padahal buah masih dipegang.
                 for _, e in ipairs(tools) do
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
@@ -2214,9 +2215,18 @@ function Farm.startDropLoop()
                         pcall(function() hum:EquipTool(e.obj) end)
                     end
                     pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
-                    state.dropDone = (state.dropDone or 0) + 1
-                    pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
-                    task.wait()   -- 1 frame antar drop (ga nunggu drop kelar)
+                    -- verifikasi: tunggu buah beneran ilang dari tas (parent nil = ke-drop).
+                    -- poll per-frame, timeout pendek. cuma hitung kalau beneran ilang.
+                    local t0 = os.clock()
+                    local gone = false
+                    repeat
+                        task.wait()
+                        if e.obj.Parent == nil then gone = true break end
+                    until (os.clock() - t0) > 0.4
+                    if gone then
+                        state.dropDone = (state.dropDone or 0) + 1
+                        pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
+                    end
                 end
                 task.wait(0.1)   -- jeda kecil sebelum scan batch berikutnya
             end
