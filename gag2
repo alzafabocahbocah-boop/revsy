@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v36.9
+-- ZENX FARM  v37.0
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v36.9"
+local VER       = "v37.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -69,31 +69,64 @@ local SAVE_FILE_OLD = "ZenxFarm_settings.json"  -- file lama (sebelum per-user) 
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL - daftarin queue_on_teleport sebelum apapun.
 -- biar pas teleport (HOP/anti-bot/rejoin), queue keburu kedaftar walau script blm kelar.
--- v36.9: payload pakai RETRY - HttpGet kadang timeout/kepotong pas rejoin (file ~500KB),
--- coba sampai 4x + jeda biar "kadang gagal load" berkurang.
+-- v37.0: ANTI HTTP 429. dulu retry 4x cepet -> GitHub rate-limit (429). sekarang:
+--   1) coba baca CACHE LOKAL dulu (nol request GitHub).
+--   2) kalau ga ada cache, HttpGet 1x. sukses -> simpen ke cache buat next time.
+--   3) kalau 429/gagal, tunggu LAMA (8s) baru coba sekali lagi.
 do
     local SCRIPT_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/gag2"
     local payload = [[
 local URL = "]]..SCRIPT_URL..[["
-local src
-for i = 1, 4 do
-    local ok, res = pcall(function() return game:HttpGet(URL) end)
-    if ok and type(res) == "string" and #res > 50000 then src = res break end
-    task.wait(1.5)
-end
-if src then
-    local fn = loadstring(src)
-    if fn then fn() else
-        task.wait(2)
-        local ok2, res2 = pcall(function() return game:HttpGet(URL) end)
-        if ok2 and type(res2) == "string" then local f2 = loadstring(res2) if f2 then f2() end end
+local CACHE = "ZenxFarm_cache.lua"
+local CACHE_AGE = "ZenxFarm_cache_time.txt"
+local function tryRun(src)
+    if type(src) == "string" and #src > 50000 then
+        local fn = loadstring(src)
+        if fn then fn() return true end
     end
+    return false
+end
+-- cache valid kalau ada DAN belum lewat 15 menit (biar update GitHub kebaca berkala)
+local cacheOk = false
+if isfile and readfile and isfile(CACHE) then
+    local fresh = true
+    if isfile(CACHE_AGE) then
+        local ok, t = pcall(readfile, CACHE_AGE)
+        if ok and tonumber(t) then
+            if (os.time() - tonumber(t)) > 900 then fresh = false end  -- 15 menit
+        end
+    end
+    if fresh then
+        local ok, c = pcall(readfile, CACHE)
+        if ok and tryRun(c) then cacheOk = true end
+    end
+end
+if cacheOk then return end
+-- HttpGet 1x, simpen cache + timestamp kalau sukses
+local ok, res = pcall(function() return game:HttpGet(URL) end)
+if ok and type(res) == "string" and #res > 50000 then
+    if writefile then
+        pcall(function() writefile(CACHE, res) end)
+        pcall(function() writefile(CACHE_AGE, tostring(os.time())) end)
+    end
+    if tryRun(res) then return end
+end
+-- gagal/429 -> pakai cache lama (walau expired) sbg fallback, ATAU tunggu lama coba lagi
+if isfile and isfile(CACHE) then
+    local ok2, c2 = pcall(readfile, CACHE)
+    if ok2 and tryRun(c2) then return end
+end
+task.wait(8)
+local ok3, res3 = pcall(function() return game:HttpGet(URL) end)
+if ok3 and type(res3) == "string" and #res3 > 50000 then
+    if writefile then pcall(function() writefile(CACHE, res3) end); pcall(function() writefile(CACHE_AGE, tostring(os.time())) end) end
+    tryRun(res3)
 end
 ]]
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or queueonteleport
     if q then
         pcall(function() q(payload) end)
-        print("[ZenxFarm] auto re-exec aktif (queue_on_teleport +retry)")
+        print("[ZenxFarm] auto re-exec aktif (cache lokal +anti-429)")
     else
         print("[ZenxFarm] executor gak support queue_on_teleport")
     end
