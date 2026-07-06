@@ -16,11 +16,11 @@ do
     end
 end
 
-local VERSION = "8.310"
+local VERSION = "8.311"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.310")
+warn("  ZENX MARKET LOADING - VERSI 8.311")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -1171,22 +1171,24 @@ do
         for k in pairs(BH.marketState) do BH.marketState[k] = nil end
         for k, v in pairs(st) do BH.marketState[k] = v end
         if type(BH.marketState.listingRules) ~= "table" then BH.marketState.listingRules = {} end
+        local nRules = #BH.marketState.listingRules
         -- v8.308: pakai BH.listingRules (di-expose dari tab Listing yg didefinisikan belakangan).
-        -- applyState ada di title bar (lebih awal) jadi local listingRules blm ada di scope ini.
         local lr = BH.listingRules
+        local synced = false
         if lr then
             for i = #lr, 1, -1 do lr[i] = nil end
             for i, r in ipairs(BH.marketState.listingRules) do lr[i] = r end
             BH.marketState.listingRules = lr
+            synced = true
         end
         BH.saveMarketState(BH.marketState)
-        -- v8.310: refresh UI. rebuildRulesUI nge-rebuild tab Listing + List Harga dari listingRules.
+        -- v8.311: refresh UI + return status buat ditampilin di popup (biar keliatan tanpa console).
+        local rebuiltOk = false
         if BH.rebuildRulesUI then
-            local ok = pcall(BH.rebuildRulesUI)
-            print("[ZenxMarket] applyState: "..(#(lr or {})).." rule -> rebuild "..(ok and "OK" or "GAGAL"))
-        else
-            print("[ZenxMarket] applyState: rebuildRulesUI NIL (tab Listing blm kebangun?) - RELOAD sc")
+            rebuiltOk = pcall(BH.rebuildRulesUI)
         end
+        print("[ZenxMarket] applyState: "..nRules.." rule | sync="..tostring(synced).." | rebuild="..tostring(rebuiltOk))
+        return nRules, synced, rebuiltOk
     end
 
     -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
@@ -1284,10 +1286,19 @@ do
     yesBtn.MouseButton1Click:Connect(function()
         if pendingIdx and templates[pendingIdx] then
             local t = templates[pendingIdx]
-            applyState(fixRules(t.state or {}))
+            local nRules, synced, rebuiltOk = applyState(fixRules(t.state or {}))
             BH.marketState.settingName = t.name
             BH.saveMarketState(BH.marketState)
-            setStatus("template '" .. tostring(t.name) .. "' dipakai. RELOAD sc biar semua tab kebaca.", C.accent)
+            -- v8.311: status detail biar keliatan template kebaca/enggak tanpa buka console
+            local msg = "'"..tostring(t.name).."': "..tostring(nRules or 0).." rule"
+            if (nRules or 0) == 0 then
+                msg = msg .. " (KOSONG! template ga ada rules)"
+            elseif not synced or not rebuiltOk then
+                msg = msg .. " ke-load tapi UI ga refresh - RELOAD sc"
+            else
+                msg = msg .. " dipakai. cek List Harga."
+            end
+            setStatus(msg, (nRules or 0) > 0 and C.accent or C.danger)
             confirm.Visible = false; overlay.Visible = false
             if rebuildList then rebuildList() end
         end
