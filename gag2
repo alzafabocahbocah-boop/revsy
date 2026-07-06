@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v38.1
+-- ZENX FARM  v38.2
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v38.1"
+local VER       = "v38.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2152,62 +2152,73 @@ function Farm.startDropLoop()
             end
             local minVal = (tonumber(state.dropMinM) or 0) * 1e6
             local maxVal = (tonumber(state.dropMaxM) or 999999) * 1e6
-            local tool, id = Farm.pickFruitInRange(minVal, maxVal)
-            if tool and id then
-                local char = player.Character
-                local hum = char and char:FindFirstChildOfClass("Humanoid")
-                local isTool = tool:IsA("Tool")
-                -- v37.4: kalau Tool -> equip dulu (WAJIB dipegang buat drop). kalau non-Tool
-                -- (buah inventory penuh) -> fire drop langsung (ga bisa di-equip).
-                local canFire = false
-                if hum then
-                    if tool.Parent == char then
-                        canFire = true   -- udah kepegang
-                    else
-                        -- v38.1 GAS POL: promote (kalau non-Tool) -> equip -> LANGSUNG fire,
-                        -- tanpa nunggu konfirmasi equip (server proses berurutan). lebih ngebut.
-                        if not isTool then
-                            local pp = pkt("Backpack", "PromoteFruit")
-                            if pp and pp.Fire then
-                                pcall(function() pp:Fire(tostring(id)) end)
-                                -- tunggu buah jadi Tool (ini WAJIB - drop butuh objek Tool-nya).
-                                -- poll per-frame, timeout pendek.
-                                local t0 = os.clock()
-                                local newTool
-                                local bp = player:FindFirstChildOfClass("Backpack")
-                                repeat
-                                    task.wait()
-                                    for _, cont in ipairs({char, bp}) do
-                                        if cont then
-                                            for _, o in ipairs(cont:GetChildren()) do
-                                                if o:IsA("Tool") and tostring(o:GetAttribute("Id")) == tostring(id) then newTool = o break end
-                                            end
-                                        end
-                                        if newTool then break end
-                                    end
-                                until newTool or (os.clock() - t0) > 0.4
-                                if newTool then tool = newTool; isTool = true end
-                            end
-                        end
-                        -- equip TANPA nunggu verifikasi - fire equip lalu lanjut
-                        if tool:IsA("Tool") then
-                            pcall(function() hum:EquipTool(tool) end)
-                            canFire = true   -- ga nunggu tool.Parent==char, langsung fire
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+            -- v38.2: kumpulin SEMUA buah in-range dulu (Tool + non-Tool).
+            local tools, configs = {}, {}   -- tools=udah Tool siap drop; configs={id} perlu promote
+            for _, holder in ipairs(getFruitHolders()) do
+                for _, o in ipairs(holder:GetChildren()) do
+                    local id = o:GetAttribute("Id")
+                    local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
+                    if id and fj then
+                        local pr = Farm.fruitPrice(o) or 0
+                        if pr >= minVal and pr <= maxVal then
+                            if o:IsA("Tool") then tools[#tools+1] = {obj=o, id=id}
+                            else configs[#configs+1] = tostring(id) end
                         end
                     end
                 end
-                if not canFire then
-                    task.wait()
-                else
-                    -- fire drop beruntun (server proses equip lalu drop berurutan)
-                    pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
+            end
+
+            if #tools == 0 and #configs == 0 then
+                task.wait(1)   -- ga ada buah cocok
+            else
+                -- 1) PROMOTE semua buah inventory sekaligus (beruntun, ga nunggu satu2)
+                if #configs > 0 then
+                    local pp = pkt("Backpack", "PromoteFruit")
+                    if pp and pp.Fire then
+                        for _, uuid in ipairs(configs) do
+                            if not state.dropAuto then break end
+                            pcall(function() pp:Fire(uuid) end)
+                            task.wait()   -- 1 frame antar promote
+                        end
+                        -- kasih waktu server proses promote batch (buah jadi Tool)
+                        task.wait(0.3)
+                        -- kumpulin ulang Tool yg baru muncul dari promote
+                        for _, holder in ipairs(getFruitHolders()) do
+                            for _, o in ipairs(holder:GetChildren()) do
+                                if o:IsA("Tool") then
+                                    local id = o:GetAttribute("Id")
+                                    local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
+                                    if id and fj then
+                                        local pr = Farm.fruitPrice(o) or 0
+                                        if pr >= minVal and pr <= maxVal then
+                                            -- cek belum ada di tools
+                                            local dup = false
+                                            for _, e in ipairs(tools) do if e.obj == o then dup = true break end end
+                                            if not dup then tools[#tools+1] = {obj=o, id=id} end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- 2) DROP semua Tool beruntun (equip + fire, ga nunggu konfirmasi per buah)
+                for _, e in ipairs(tools) do
+                    if not state.dropAuto then break end
+                    if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
+                    if hum and e.obj:IsA("Tool") then
+                        pcall(function() hum:EquipTool(e.obj) end)
+                    end
+                    pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
                     state.dropDone = (state.dropDone or 0) + 1
                     pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
-                    task.wait()
+                    task.wait()   -- 1 frame antar drop (ga nunggu drop kelar)
                 end
-            else
-                -- ga ada buah cocok: nunggu, cycle jalan terus
-                task.wait(1)
+                task.wait(0.1)   -- jeda kecil sebelum scan batch berikutnya
             end
         end
         -- pastikan tool dilepas pas berhenti
