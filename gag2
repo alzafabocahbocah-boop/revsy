@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v37.7
+-- ZENX FARM  v37.8
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v37.7"
+local VER       = "v37.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2164,23 +2164,46 @@ function Farm.startDropLoop()
                     if tool.Parent == char then
                         equipped = true
                     else
-                        -- v37.7: coba equip (Tool ATAU non-Tool yg bisa di-equip). retry 5x + jeda cukup.
-                        for _try = 1, 5 do
-                            pcall(function() hum:UnequipTools() end)
-                            task.wait(0.08)
-                            pcall(function() hum:EquipTool(tool) end)
-                            local t0 = os.clock()
-                            repeat task.wait(0.05) until tool.Parent == char or (os.clock() - t0) > 0.4
-                            if tool.Parent == char then equipped = true; break end
+                        -- v37.8: buah inventory penuh = Configuration (bukan Tool, ga bisa EquipTool).
+                        -- solusi (dari debug): Backpack.PromoteFruit(uuid) -> pindah ke hotbar jadi Tool dulu.
+                        if not isTool then
+                            local pp = pkt("Backpack", "PromoteFruit")
+                            if pp and pp.Fire then
+                                pcall(function() pp:Fire(tostring(id)) end)
+                                -- tunggu buah jadi Tool di Backpack/Character (maks ~0.6s)
+                                local t0 = os.clock()
+                                local newTool
+                                repeat
+                                    task.wait(0.05)
+                                    for _, cont in ipairs({char, player:FindFirstChildOfClass("Backpack")}) do
+                                        if cont then
+                                            for _, o in ipairs(cont:GetChildren()) do
+                                                if o:IsA("Tool") and tostring(o:GetAttribute("Id")) == tostring(id) then newTool = o break end
+                                            end
+                                        end
+                                        if newTool then break end
+                                    end
+                                until newTool or (os.clock() - t0) > 0.6
+                                if newTool then tool = newTool; isTool = true end
+                            end
+                        end
+                        -- sekarang equip (kalau udah Tool)
+                        if tool:IsA("Tool") then
+                            for _try = 1, 5 do
+                                pcall(function() hum:UnequipTools() end)
+                                task.wait(0.08)
+                                pcall(function() hum:EquipTool(tool) end)
+                                local t0 = os.clock()
+                                repeat task.wait(0.05) until tool.Parent == char or (os.clock() - t0) > 0.4
+                                if tool.Parent == char then equipped = true; break end
+                            end
                         end
                     end
                 end
                 if not equipped then
-                    -- gagal pegang (Tool maupun non-Tool) -> skip, jangan fire (server nolak).
-                    print("[ZenxFarm] drop: gagal pegang '"..tostring(tool.Name).."' (Tool="..tostring(isTool)..") - skip")
+                    print("[ZenxFarm] drop: gagal pegang '"..tostring(tool.Name).."' (Tool="..tostring(tool:IsA("Tool"))..") - skip")
                     task.wait(0.1)
                 else
-                    -- kepegang -> jeda dikit biar server register -> fire drop
                     task.wait(0.1)
                     pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
                     state.dropDone = (state.dropDone or 0) + 1
