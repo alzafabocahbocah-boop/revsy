@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v38.0
+-- ZENX FARM  v38.1
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v38.0"
+local VER       = "v38.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2159,21 +2159,24 @@ function Farm.startDropLoop()
                 local isTool = tool:IsA("Tool")
                 -- v37.4: kalau Tool -> equip dulu (WAJIB dipegang buat drop). kalau non-Tool
                 -- (buah inventory penuh) -> fire drop langsung (ga bisa di-equip).
-                local equipped = false
+                local canFire = false
                 if hum then
                     if tool.Parent == char then
-                        equipped = true
+                        canFire = true   -- udah kepegang
                     else
-                        -- v38.0 NGEBUT: poll super rapat, jeda minimum.
+                        -- v38.1 GAS POL: promote (kalau non-Tool) -> equip -> LANGSUNG fire,
+                        -- tanpa nunggu konfirmasi equip (server proses berurutan). lebih ngebut.
                         if not isTool then
                             local pp = pkt("Backpack", "PromoteFruit")
                             if pp and pp.Fire then
                                 pcall(function() pp:Fire(tostring(id)) end)
+                                -- tunggu buah jadi Tool (ini WAJIB - drop butuh objek Tool-nya).
+                                -- poll per-frame, timeout pendek.
                                 local t0 = os.clock()
                                 local newTool
                                 local bp = player:FindFirstChildOfClass("Backpack")
                                 repeat
-                                    task.wait()   -- 1 frame (secepat mungkin)
+                                    task.wait()
                                     for _, cont in ipairs({char, bp}) do
                                         if cont then
                                             for _, o in ipairs(cont:GetChildren()) do
@@ -2182,25 +2185,21 @@ function Farm.startDropLoop()
                                         end
                                         if newTool then break end
                                     end
-                                until newTool or (os.clock() - t0) > 0.5
+                                until newTool or (os.clock() - t0) > 0.4
                                 if newTool then tool = newTool; isTool = true end
                             end
                         end
+                        -- equip TANPA nunggu verifikasi - fire equip lalu lanjut
                         if tool:IsA("Tool") then
-                            for _try = 1, 4 do
-                                pcall(function() hum:EquipTool(tool) end)
-                                local t0 = os.clock()
-                                repeat task.wait() until tool.Parent == char or (os.clock() - t0) > 0.3
-                                if tool.Parent == char then equipped = true; break end
-                            end
+                            pcall(function() hum:EquipTool(tool) end)
+                            canFire = true   -- ga nunggu tool.Parent==char, langsung fire
                         end
                     end
                 end
-                if not equipped then
-                    print("[ZenxFarm] drop: gagal pegang '"..tostring(tool.Name).."' - skip")
+                if not canFire then
                     task.wait()
                 else
-                    -- kepegang -> fire drop langsung, jeda 1 frame aja
+                    -- fire drop beruntun (server proses equip lalu drop berurutan)
                     pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
                     state.dropDone = (state.dropDone or 0) + 1
                     pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
