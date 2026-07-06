@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v37.8
+-- ZENX FARM  v38.0
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v37.8"
+local VER       = "v38.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2164,18 +2164,17 @@ function Farm.startDropLoop()
                     if tool.Parent == char then
                         equipped = true
                     else
-                        -- v37.8: buah inventory penuh = Configuration (bukan Tool, ga bisa EquipTool).
-                        -- solusi (dari debug): Backpack.PromoteFruit(uuid) -> pindah ke hotbar jadi Tool dulu.
+                        -- v38.0 NGEBUT: poll super rapat, jeda minimum.
                         if not isTool then
                             local pp = pkt("Backpack", "PromoteFruit")
                             if pp and pp.Fire then
                                 pcall(function() pp:Fire(tostring(id)) end)
-                                -- tunggu buah jadi Tool di Backpack/Character (maks ~0.6s)
                                 local t0 = os.clock()
                                 local newTool
+                                local bp = player:FindFirstChildOfClass("Backpack")
                                 repeat
-                                    task.wait(0.05)
-                                    for _, cont in ipairs({char, player:FindFirstChildOfClass("Backpack")}) do
+                                    task.wait()   -- 1 frame (secepat mungkin)
+                                    for _, cont in ipairs({char, bp}) do
                                         if cont then
                                             for _, o in ipairs(cont:GetChildren()) do
                                                 if o:IsA("Tool") and tostring(o:GetAttribute("Id")) == tostring(id) then newTool = o break end
@@ -2183,34 +2182,29 @@ function Farm.startDropLoop()
                                         end
                                         if newTool then break end
                                     end
-                                until newTool or (os.clock() - t0) > 0.6
+                                until newTool or (os.clock() - t0) > 0.5
                                 if newTool then tool = newTool; isTool = true end
                             end
                         end
-                        -- sekarang equip (kalau udah Tool)
                         if tool:IsA("Tool") then
-                            for _try = 1, 5 do
-                                pcall(function() hum:UnequipTools() end)
-                                task.wait(0.08)
+                            for _try = 1, 4 do
                                 pcall(function() hum:EquipTool(tool) end)
                                 local t0 = os.clock()
-                                repeat task.wait(0.05) until tool.Parent == char or (os.clock() - t0) > 0.4
+                                repeat task.wait() until tool.Parent == char or (os.clock() - t0) > 0.3
                                 if tool.Parent == char then equipped = true; break end
                             end
                         end
                     end
                 end
                 if not equipped then
-                    print("[ZenxFarm] drop: gagal pegang '"..tostring(tool.Name).."' (Tool="..tostring(tool:IsA("Tool"))..") - skip")
-                    task.wait(0.1)
+                    print("[ZenxFarm] drop: gagal pegang '"..tostring(tool.Name).."' - skip")
+                    task.wait()
                 else
-                    task.wait(0.1)
+                    -- kepegang -> fire drop langsung, jeda 1 frame aja
                     pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
                     state.dropDone = (state.dropDone or 0) + 1
                     pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
-                    task.wait(0.15)
-                    if hum then pcall(function() hum:UnequipTools() end) end
-                    task.wait(0.05)
+                    task.wait()
                 end
             else
                 -- ga ada buah cocok: nunggu, cycle jalan terus
@@ -2316,13 +2310,13 @@ function Farm.startCollectLoop()
                                 if dist > 15 then
                                     -- TP deket buah (2 stud di atas + samping dikit biar ga nabrak)
                                     pcall(function() hrp.CFrame = target.CFrame + Vector3.new(0, 3, 0) end)
-                                    task.wait(0.15)   -- kasih waktu prompt aktif di jarak baru
+                                    task.wait(0.06)   -- v38.0: kasih waktu prompt aktif (dipercepat)
                                 end
                             end
                             Farm.collectGroundFruit(model)
                             state.collectDone = (state.collectDone or 0) + 1
                             pcall(function() if Farm._syncCollectToggle then Farm._syncCollectToggle() end end)
-                            task.wait(0.2)   -- jeda antar collect
+                            task.wait(0.08)   -- v38.0: jeda antar collect (dipercepat)
                         end
                     end
                 end
