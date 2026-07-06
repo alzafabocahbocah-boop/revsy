@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.299"
-local VERSION_DATE = "v8.299: SAVE/SALIN FILE title bar (save ALL template)"
+local VERSION = "8.302"
+local VERSION_DATE = "v8.302: egg source per-rule snipe (override global)"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.297")
+warn("  ZENX MARKET LOADING - VERSI 8.302")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -1073,10 +1073,17 @@ zBtn.MouseButton1Click:Connect(function()
     zBtn.Visible = false
 end)
 
+-- Separator
+local sep = Instance.new("Frame")
+sep.Size = UDim2.new(1, -32, 0, 1) sep.Position = UDim2.new(0, 16, 0, 44)
+sep.BackgroundColor3 = C.accent sep.BorderSizePixel = 0 sep.BackgroundTransparency = 0.7
+sep.Parent = main
+
 -- ============================================================
--- v8.298: SAVE FILE / SALIN FILE di title bar (kiri tombol close).
--- Save ALL: SELURUH BH.marketState (rules + semua toggle/input/settings)
--- -> base64. do-block: NOL local chunk utama (limit-200 Luau!). ASCII only.
+-- v8.301: TEMPLATE MANAGER (SALIN TEMPLATE) di title bar.
+-- List template lokal (nama + x hapus), pilih -> popup konfirmasi ->
+-- apply. Bisa simpan baru dari setting skrg + import/export kode.
+-- SEMUA di do-block: NOL local chunk utama (limit-200 Luau!). ASCII only.
 -- ============================================================
 do
     local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -1105,50 +1112,80 @@ do
             return string.char(c)
         end))
     end
-
-    -- helper: sanitize math.huge -> nil (JSON ga support Infinity), rekursif
     local function sanitize(v)
         if type(v) ~= "table" then
             if v == math.huge or v == -math.huge then return nil end
             return v
         end
         local out = {}
-        for k, vv in pairs(v) do
-            local cv = sanitize(vv)
-            if cv ~= nil then out[k] = cv end
-        end
+        for k, vv in pairs(v) do local cv = sanitize(vv); if cv ~= nil then out[k] = cv end end
         return out
     end
 
-    -- 2 tombol di title bar, kiri closeBtn (closeBtn di x=-42, w=32).
-    -- SALIN FILE (paling kiri) + SAVE FILE. masing2 w=64.
-    local salinBtn = Instance.new("TextButton")
-    salinBtn.Size = UDim2.new(0, 62, 0, 24) salinBtn.Position = UDim2.new(1, -182, 0.5, -12)
-    salinBtn.BackgroundColor3 = C.card salinBtn.AutoButtonColor = false
-    salinBtn.Text = "SALIN FILE" salinBtn.TextColor3 = C.text
-    salinBtn.Font = FB salinBtn.TextSize = 9 salinBtn.Parent = titleBar
-    Instance.new("UICorner", salinBtn).CornerRadius = UDim.new(0, 5)
-    do local s = Instance.new("UIStroke", salinBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+    -- ===== penyimpanan template lokal (file terpisah dari state) =====
+    local TPL_FILE = "ZenxMarket_templates.json"
+    local templates = {}   -- array of { name=, state= }
+    local function loadTemplates()
+        if isfile and readfile and isfile(TPL_FILE) then
+            local ok, data = pcall(function() return HttpService:JSONDecode(readfile(TPL_FILE)) end)
+            if ok and type(data) == "table" then templates = data end
+        end
+    end
+    local function saveTemplates()
+        if writefile then pcall(function() writefile(TPL_FILE, HttpService:JSONEncode(templates)) end) end
+    end
+    loadTemplates()
 
-    local saveBtn = Instance.new("TextButton")
-    saveBtn.Size = UDim2.new(0, 62, 0, 24) saveBtn.Position = UDim2.new(1, -116, 0.5, -12)
-    saveBtn.BackgroundColor3 = C.card saveBtn.AutoButtonColor = false
-    saveBtn.Text = "SAVE FILE" saveBtn.TextColor3 = C.text
-    saveBtn.Font = FB saveBtn.TextSize = 9 saveBtn.Parent = titleBar
-    Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 5)
-    do local s = Instance.new("UIStroke", saveBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+    -- restore math.huge di rules setelah decode
+    local function fixRules(st)
+        if type(st) == "table" and type(st.listingRules) == "table" then
+            for _, r in ipairs(st.listingRules) do
+                if type(r) == "table" then
+                    r.max = r.max or math.huge
+                    r.maxListings = r.maxListings or math.huge
+                    r.min = r.min or 0
+                    r.price = r.price or 100
+                end
+            end
+        end
+        return st
+    end
 
-    -- popup panel (kode + nama + import), muncul di tengah pas save/salin diklik
+    -- apply state ke marketState aktif (tanpa ganti referensi)
+    local function applyState(st)
+        st = fixRules(st)
+        for k in pairs(BH.marketState) do BH.marketState[k] = nil end
+        for k, v in pairs(st) do BH.marketState[k] = v end
+        -- sinkron rules UI (listingRules global)
+        for i = #listingRules, 1, -1 do listingRules[i] = nil end
+        if type(BH.marketState.listingRules) == "table" then
+            for i, r in ipairs(BH.marketState.listingRules) do listingRules[i] = r end
+        end
+        BH.marketState.listingRules = listingRules
+        BH.saveMarketState(BH.marketState)
+        if rebuildRulesUI then pcall(rebuildRulesUI) end
+    end
+
+    -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
+    local tplBtn = Instance.new("TextButton")
+    tplBtn.Size = UDim2.new(0, 96, 0, 24) tplBtn.Position = UDim2.new(1, -150, 0.5, -12)
+    tplBtn.BackgroundColor3 = C.card tplBtn.AutoButtonColor = false
+    tplBtn.Text = "SALIN TEMPLATE" tplBtn.TextColor3 = C.text
+    tplBtn.Font = FB tplBtn.TextSize = 9 tplBtn.Parent = titleBar
+    Instance.new("UICorner", tplBtn).CornerRadius = UDim.new(0, 5)
+    do local s = Instance.new("UIStroke", tplBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+
+    -- ===== popup manager =====
     local pop = Instance.new("Frame")
-    pop.Size = UDim2.new(0, 360, 0, 232) pop.Position = UDim2.new(0.5, -180, 0.5, -116)
+    pop.Size = UDim2.new(0, 380, 0, 400) pop.Position = UDim2.new(0.5, -190, 0.5, -200)
     pop.BackgroundColor3 = C.bg pop.BorderSizePixel = 0 pop.Visible = false
     pop.ZIndex = 200 pop.Parent = main
     Instance.new("UICorner", pop).CornerRadius = UDim.new(0, 10)
     do local s = Instance.new("UIStroke", pop); s.Color = C.accent; s.Thickness = 1.5; s.Transparency = 0.3 end
 
     local popTitle = Instance.new("TextLabel")
-    popTitle.Size = UDim2.new(1, -40, 0, 30) popTitle.Position = UDim2.new(0, 14, 0, 8)
-    popTitle.BackgroundTransparency = 1 popTitle.Text = "SAVE / SALIN TEMPLATE"
+    popTitle.Size = UDim2.new(1, -40, 0, 28) popTitle.Position = UDim2.new(0, 14, 0, 8)
+    popTitle.BackgroundTransparency = 1 popTitle.Text = "SALIN TEMPLATE"
     popTitle.TextColor3 = C.accent popTitle.Font = FB popTitle.TextSize = 14
     popTitle.TextXAlignment = Enum.TextXAlignment.Left popTitle.ZIndex = 201 popTitle.Parent = pop
 
@@ -1159,126 +1196,214 @@ do
     Instance.new("UICorner", popClose).CornerRadius = UDim.new(0, 6)
     popClose.MouseButton1Click:Connect(function() pop.Visible = false end)
 
+    -- list template (scroll)
+    local listSF = Instance.new("ScrollingFrame")
+    listSF.Size = UDim2.new(1, -28, 0, 176) listSF.Position = UDim2.new(0, 14, 0, 42)
+    listSF.BackgroundColor3 = C.card listSF.BorderSizePixel = 0
+    listSF.ScrollBarThickness = 4 listSF.CanvasSize = UDim2.new(0, 0, 0, 0)
+    listSF.AutomaticCanvasSize = Enum.AutomaticSize.Y listSF.ZIndex = 201 listSF.Parent = pop
+    Instance.new("UICorner", listSF).CornerRadius = UDim.new(0, 8)
+    local listLay = Instance.new("UIListLayout")
+    listLay.Padding = UDim.new(0, 4) listLay.SortOrder = Enum.SortOrder.LayoutOrder listLay.Parent = listSF
+    Instance.new("UIPadding", listSF).PaddingTop = UDim.new(0, 6)
+
+    local statusLbl = Instance.new("TextLabel")
+    statusLbl.Size = UDim2.new(1, -28, 0, 30) statusLbl.Position = UDim2.new(0, 14, 0, 364)
+    statusLbl.BackgroundTransparency = 1 statusLbl.Text = ""
+    statusLbl.TextColor3 = C.textDim statusLbl.Font = FM statusLbl.TextSize = 11
+    statusLbl.TextXAlignment = Enum.TextXAlignment.Left statusLbl.TextYAlignment = Enum.TextYAlignment.Top
+    statusLbl.TextWrapped = true statusLbl.ZIndex = 201 statusLbl.Parent = pop
+    local function setStatus(txt, col)
+        statusLbl.Text = txt statusLbl.TextColor3 = col or C.textDim
+    end
+
+    -- konfirmasi mini (di dalam pop): "Anda yakin pakai template ini?"
+    local confirm = Instance.new("Frame")
+    confirm.Size = UDim2.new(1, -28, 0, 90) confirm.Position = UDim2.new(0, 14, 0, 250)
+    confirm.BackgroundColor3 = C.card confirm.BorderSizePixel = 0 confirm.Visible = false
+    confirm.ZIndex = 202 confirm.Parent = pop
+    Instance.new("UICorner", confirm).CornerRadius = UDim.new(0, 8)
+    do local s = Instance.new("UIStroke", confirm); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.4 end
+    local confirmLbl = Instance.new("TextLabel")
+    confirmLbl.Size = UDim2.new(1, -20, 0, 40) confirmLbl.Position = UDim2.new(0, 10, 0, 8)
+    confirmLbl.BackgroundTransparency = 1 confirmLbl.Text = "Anda yakin menggunakan template ini?"
+    confirmLbl.TextColor3 = C.text confirmLbl.Font = FM confirmLbl.TextSize = 12
+    confirmLbl.TextWrapped = true confirmLbl.TextXAlignment = Enum.TextXAlignment.Left
+    confirmLbl.ZIndex = 203 confirmLbl.Parent = confirm
+    local yesBtn = Instance.new("TextButton")
+    yesBtn.Size = UDim2.new(0, 90, 0, 28) yesBtn.Position = UDim2.new(0, 10, 0, 52)
+    yesBtn.BackgroundColor3 = C.accent yesBtn.Text = "YA, PAKAI" yesBtn.TextColor3 = Color3.new(0,0,0)
+    yesBtn.Font = FB yesBtn.TextSize = 11 yesBtn.ZIndex = 203 yesBtn.Parent = confirm
+    Instance.new("UICorner", yesBtn).CornerRadius = UDim.new(0, 6)
+    local noBtn = Instance.new("TextButton")
+    noBtn.Size = UDim2.new(0, 70, 0, 28) noBtn.Position = UDim2.new(0, 108, 0, 52)
+    noBtn.BackgroundColor3 = C.card noBtn.Text = "batal" noBtn.TextColor3 = C.textDim
+    noBtn.Font = FB noBtn.TextSize = 11 noBtn.ZIndex = 203 noBtn.Parent = confirm
+    Instance.new("UICorner", noBtn).CornerRadius = UDim.new(0, 6)
+
+    local pendingIdx = nil
+    local rebuildList  -- fwd decl
+
+    yesBtn.MouseButton1Click:Connect(function()
+        if pendingIdx and templates[pendingIdx] then
+            local t = templates[pendingIdx]
+            applyState(fixRules(t.state or {}))
+            BH.marketState.settingName = t.name
+            BH.saveMarketState(BH.marketState)
+            setStatus("template '" .. tostring(t.name) .. "' dipakai. RELOAD sc biar semua tab kebaca.", C.accent)
+            confirm.Visible = false
+            if rebuildList then rebuildList() end
+        end
+    end)
+    noBtn.MouseButton1Click:Connect(function() confirm.Visible = false; pendingIdx = nil end)
+
+    rebuildList = function()
+        for _, c in ipairs(listSF:GetChildren()) do
+            if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
+        end
+        if #templates == 0 then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1, -12, 0, 40) empty.BackgroundTransparency = 1
+            empty.Text = "belum ada template. simpan setting skrg atau import kode."
+            empty.TextColor3 = C.textDim empty.Font = FM empty.TextSize = 11
+            empty.TextWrapped = true empty.ZIndex = 202 empty.Parent = listSF
+            return
+        end
+        local activeName = BH.marketState.settingName
+        for i, t in ipairs(templates) do
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(1, -12, 0, 32) row.BackgroundColor3 = C.input
+            row.BorderSizePixel = 0 row.LayoutOrder = i row.ZIndex = 202 row.Parent = listSF
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+            local isActive = (activeName and t.name == activeName)
+            if isActive then
+                local s = Instance.new("UIStroke", row); s.Color = C.accent; s.Thickness = 2
+                row.BackgroundColor3 = C.card
+            end
+            -- nama (klik = pilih)
+            local pick = Instance.new("TextButton")
+            pick.Size = UDim2.new(1, -40, 1, 0) pick.Position = UDim2.new(0, 0, 0, 0)
+            pick.BackgroundTransparency = 1 pick.Text = "  " .. tostring(t.name)
+            pick.TextColor3 = isActive and C.accent or C.text
+            pick.Font = isActive and FB or FM pick.TextSize = 12
+            pick.TextXAlignment = Enum.TextXAlignment.Left pick.ZIndex = 203 pick.Parent = row
+            pick.MouseButton1Click:Connect(function()
+                pendingIdx = i
+                confirmLbl.Text = "Anda yakin menggunakan template '" .. tostring(t.name) .. "'?"
+                confirm.Visible = true
+            end)
+            -- tombol x (hapus)
+            local xb = Instance.new("TextButton")
+            xb.Size = UDim2.new(0, 28, 0, 24) xb.Position = UDim2.new(1, -32, 0.5, -12)
+            xb.BackgroundColor3 = C.bg xb.Text = "x" xb.TextColor3 = C.danger
+            xb.Font = FB xb.TextSize = 13 xb.ZIndex = 203 xb.Parent = row
+            Instance.new("UICorner", xb).CornerRadius = UDim.new(0, 5)
+            xb.MouseButton1Click:Connect(function()
+                table.remove(templates, i)
+                saveTemplates()
+                rebuildList()
+                setStatus("template '" .. tostring(t.name) .. "' dihapus.", C.danger)
+            end)
+        end
+    end
+    rebuildList()
+
+    -- ===== baris bawah: nama + SIMPAN BARU + IMPORT + EXPORT =====
     local nameBox = Instance.new("TextBox")
-    nameBox.Size = UDim2.new(1, -28, 0, 28) nameBox.Position = UDim2.new(0, 14, 0, 44)
+    nameBox.Size = UDim2.new(0, 150, 0, 26) nameBox.Position = UDim2.new(0, 14, 0, 224)
     nameBox.BackgroundColor3 = C.input nameBox.TextColor3 = C.text
-    nameBox.Font = FM nameBox.TextSize = 12 nameBox.PlaceholderText = "nama template (misal: akun-jual-1)"
-    nameBox.Text = tostring(BH.marketState.settingName or "") nameBox.ClearTextOnFocus = false
-    nameBox.BorderSizePixel = 0 nameBox.ZIndex = 201 nameBox.Parent = pop
+    nameBox.Font = FM nameBox.TextSize = 11 nameBox.PlaceholderText = "nama template baru"
+    nameBox.Text = "" nameBox.ClearTextOnFocus = false nameBox.BorderSizePixel = 0
+    nameBox.ZIndex = 201 nameBox.Parent = pop
     Instance.new("UICorner", nameBox).CornerRadius = UDim.new(0, 6)
 
+    local saveNewBtn = Instance.new("TextButton")
+    saveNewBtn.Size = UDim2.new(0, 92, 0, 26) saveNewBtn.Position = UDim2.new(0, 170, 0, 224)
+    saveNewBtn.BackgroundColor3 = C.card saveNewBtn.Text = "SIMPAN BARU" saveNewBtn.TextColor3 = C.text
+    saveNewBtn.Font = FB saveNewBtn.TextSize = 10 saveNewBtn.ZIndex = 201 saveNewBtn.Parent = pop
+    Instance.new("UICorner", saveNewBtn).CornerRadius = UDim.new(0, 6)
+    do local s = Instance.new("UIStroke", saveNewBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+    saveNewBtn.MouseButton1Click:Connect(function()
+        local nm = nameBox.Text
+        if not nm or nm:gsub("%s", "") == "" then setStatus("isi nama template dulu", C.danger); return end
+        -- simpan snapshot marketState skrg
+        table.insert(templates, { name = nm, state = sanitize(BH.marketState) })
+        saveTemplates()
+        BH.marketState.settingName = nm
+        BH.saveMarketState(BH.marketState)
+        nameBox.Text = ""
+        rebuildList()
+        setStatus("template '" .. nm .. "' disimpan dari setting sekarang.", C.accent)
+    end)
+
+    local expBtn = Instance.new("TextButton")
+    expBtn.Size = UDim2.new(0, 88, 0, 26) expBtn.Position = UDim2.new(0, 268, 0, 224)
+    expBtn.BackgroundColor3 = C.card expBtn.Text = "EXPORT AKTIF" expBtn.TextColor3 = C.text
+    expBtn.Font = FB expBtn.TextSize = 9 expBtn.ZIndex = 201 expBtn.Parent = pop
+    Instance.new("UICorner", expBtn).CornerRadius = UDim.new(0, 6)
+    do local s = Instance.new("UIStroke", expBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+
+    -- kotak kode (export tampil / import paste)
     local codeBox = Instance.new("TextBox")
-    codeBox.Size = UDim2.new(1, -28, 0, 74) codeBox.Position = UDim2.new(0, 14, 0, 78)
+    codeBox.Size = UDim2.new(1, -28, 0, 46) codeBox.Position = UDim2.new(0, 14, 0, 300)
     codeBox.BackgroundColor3 = C.input codeBox.TextColor3 = C.text
     codeBox.Font = Enum.Font.Code codeBox.TextSize = 10
     codeBox.TextXAlignment = Enum.TextXAlignment.Left codeBox.TextYAlignment = Enum.TextYAlignment.Top
     codeBox.TextWrapped = true codeBox.MultiLine = true codeBox.ClearTextOnFocus = false
-    codeBox.PlaceholderText = "kode muncul di sini pas SAVE, atau paste kode lalu IMPORT"
+    codeBox.PlaceholderText = "kode export muncul di sini (auto-copy), atau paste kode lalu IMPORT KODE"
     codeBox.Text = "" codeBox.BorderSizePixel = 0 codeBox.ZIndex = 201 codeBox.Parent = pop
     Instance.new("UICorner", codeBox).CornerRadius = UDim.new(0, 6)
 
-    local importBtn = Instance.new("TextButton")
-    importBtn.Size = UDim2.new(0, 100, 0, 28) importBtn.Position = UDim2.new(0, 14, 0, 160)
-    importBtn.BackgroundColor3 = C.card importBtn.Text = "IMPORT (paste)" importBtn.TextColor3 = C.text
-    importBtn.Font = FB importBtn.TextSize = 11 importBtn.ZIndex = 201 importBtn.Parent = pop
-    Instance.new("UICorner", importBtn).CornerRadius = UDim.new(0, 6)
-    do local s = Instance.new("UIStroke", importBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+    local impCodeBtn = Instance.new("TextButton")
+    impCodeBtn.Size = UDim2.new(0, 110, 0, 24) impCodeBtn.Position = UDim2.new(1, -124, 0, 300)
+    impCodeBtn.BackgroundColor3 = C.card impCodeBtn.Text = "IMPORT KODE" impCodeBtn.TextColor3 = C.accent
+    impCodeBtn.Font = FB impCodeBtn.TextSize = 10 impCodeBtn.ZIndex = 202 impCodeBtn.Parent = pop
+    Instance.new("UICorner", impCodeBtn).CornerRadius = UDim.new(0, 6)
+    do local s = Instance.new("UIStroke", impCodeBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
 
-    local popStatus = Instance.new("TextLabel")
-    popStatus.Size = UDim2.new(1, -28, 0, 34) popStatus.Position = UDim2.new(0, 14, 0, 194)
-    popStatus.BackgroundTransparency = 1 popStatus.Text = ""
-    popStatus.TextColor3 = C.textDim popStatus.Font = FM popStatus.TextSize = 11
-    popStatus.TextXAlignment = Enum.TextXAlignment.Left popStatus.TextYAlignment = Enum.TextYAlignment.Top
-    popStatus.TextWrapped = true popStatus.ZIndex = 201 popStatus.Parent = pop
-    local function setStatus(txt, col)
-        popStatus.Text = txt
-        popStatus.TextColor3 = col or C.textDim
-    end
-
-    -- build kode dari SELURUH marketState (save all)
-    local function buildCode()
-        local nm = nameBox.Text
-        if not nm or nm:gsub("%s", "") == "" then nm = "tanpa-nama" end
-        BH.marketState.settingName = nm
+    -- EXPORT AKTIF: template aktif (marketState skrg) -> kode + copy
+    expBtn.MouseButton1Click:Connect(function()
+        local nm = BH.marketState.settingName or "tanpa-nama"
         local payload = { v = 2, name = nm, marketState = sanitize(BH.marketState) }
         local ok, json = pcall(function() return HttpService:JSONEncode(payload) end)
-        if not ok then return nil end
-        return "ZENX2:" .. b64enc(json), nm
-    end
-
-    -- SAVE FILE: build kode -> tampil di codeBox + simpan state + buka popup
-    saveBtn.MouseButton1Click:Connect(function()
-        pop.Visible = true
-        local code, nm = buildCode()
-        if not code then setStatus("save gagal (encode)", C.danger); return end
+        if not ok then setStatus("export gagal", C.danger); return end
+        local code = "ZENX2:" .. b64enc(json)
         codeBox.Text = code
-        BH.saveMarketState(BH.marketState)
-        local nRules = BH.marketState.listingRules and #BH.marketState.listingRules or 0
-        setStatus("'" .. nm .. "' ke-save. " .. nRules .. " rule + semua setting. pencet SALIN FILE buat copy.", C.accent)
-    end)
-
-    -- SALIN FILE: pastikan kode ada -> copy clipboard
-    salinBtn.MouseButton1Click:Connect(function()
-        pop.Visible = true
-        if codeBox.Text == "" then
-            local code = buildCode()
-            if code then codeBox.Text = code end
-        end
-        if codeBox.Text == "" then setStatus("belum ada kode (pencet SAVE FILE dulu)", C.danger); return end
         local copied = false
-        if setclipboard then copied = pcall(function() setclipboard(codeBox.Text) end)
-        elseif toclipboard then copied = pcall(function() toclipboard(codeBox.Text) end) end
-        setStatus(copied and "kode ke-copy ke clipboard! paste di akun lain -> IMPORT." or "clipboard ga didukung, copy manual dari kotak.", copied and C.accent or C.danger)
+        if setclipboard then copied = pcall(function() setclipboard(code) end)
+        elseif toclipboard then copied = pcall(function() toclipboard(code) end) end
+        setStatus("export '" .. nm .. "'" .. (copied and " ke-copy!" or " (copy manual)"), C.accent)
     end)
 
-    -- IMPORT: paste kode -> decode -> REPLACE seluruh marketState
-    importBtn.MouseButton1Click:Connect(function()
+    -- IMPORT KODE: paste -> decode -> simpan sbg template baru di list
+    impCodeBtn.MouseButton1Click:Connect(function()
         local code = codeBox.Text
-        if not code or code == "" then setStatus("paste kode dulu di kotak", C.danger); return end
+        if not code or code == "" then setStatus("paste kode dulu", C.danger); return end
         code = code:gsub("%s", "")
         local ver = code:sub(1, 6)
         if ver == "ZENX2:" or ver == "ZENX1:" then code = code:sub(7) end
         local ok, json = pcall(function() return b64dec(code) end)
         if not ok or not json or json == "" then setStatus("kode invalid (decode gagal)", C.danger); return end
         local ok2, data = pcall(function() return HttpService:JSONDecode(json) end)
-        if not ok2 or type(data) ~= "table" then setStatus("kode invalid (bukan template ZENX)", C.danger); return end
-        -- v2 = full marketState; v1 = cuma listingRules (kompat lama)
-        local newState = nil
-        if data.marketState and type(data.marketState) == "table" then
-            newState = data.marketState
-        elseif data.listingRules and type(data.listingRules) == "table" then
-            newState = { listingRules = data.listingRules, settings = data.settings or {} }
-        end
-        if not newState then setStatus("kode invalid (ga ada data)", C.danger); return end
-        -- restore math.huge di rules (min/max/maxListings yg ilang = huge)
-        if type(newState.listingRules) == "table" then
-            for _, r in ipairs(newState.listingRules) do
-                if type(r) == "table" then
-                    r.max = r.max or math.huge
-                    r.maxListings = r.maxListings or math.huge
-                    r.min = r.min or 0
-                    r.price = r.price or 100
-                end
-            end
-        end
-        newState.settingName = data.name or newState.settingName
-        -- REPLACE seluruh marketState (tanpa ganti referensi BH.marketState)
-        for k in pairs(BH.marketState) do BH.marketState[k] = nil end
-        for k, v in pairs(newState) do BH.marketState[k] = v end
-        BH.saveMarketState(BH.marketState)
-        nameBox.Text = tostring(BH.marketState.settingName or "")
-        local nRules = BH.marketState.listingRules and #BH.marketState.listingRules or 0
-        setStatus("IMPORT '" .. tostring(BH.marketState.settingName or "?") .. "' ok: " .. nRules .. " rule + setting. RELOAD sc (jalanin ulang) biar semua tab kebaca.", C.accent)
-        if rebuildRulesUI then pcall(rebuildRulesUI) end
+        if not ok2 or type(data) ~= "table" then setStatus("kode invalid", C.danger); return end
+        local st = nil
+        if data.marketState and type(data.marketState) == "table" then st = data.marketState
+        elseif data.listingRules then st = { listingRules = data.listingRules, settings = data.settings or {} } end
+        if not st then setStatus("kode invalid (ga ada data)", C.danger); return end
+        local nm = data.name or ("import-" .. (#templates + 1))
+        table.insert(templates, { name = nm, state = sanitize(st) })
+        saveTemplates()
+        codeBox.Text = ""
+        rebuildList()
+        setStatus("kode di-import jadi template '" .. tostring(nm) .. "'. pilih di list buat pakai.", C.accent)
+    end)
+
+    tplBtn.MouseButton1Click:Connect(function()
+        pop.Visible = not pop.Visible
+        if pop.Visible then confirm.Visible = false; rebuildList() end
     end)
 end
 
-
--- Separator
-local sep = Instance.new("Frame")
-sep.Size = UDim2.new(1, -32, 0, 1) sep.Position = UDim2.new(0, 16, 0, 44)
-sep.BackgroundColor3 = C.accent sep.BorderSizePixel = 0 sep.BackgroundTransparency = 0.7
-sep.Parent = main
 
 -- ===== SIDEBAR =====
 local sidebar = Instance.new("Frame")
@@ -4326,7 +4451,7 @@ do
             Instance.new("UICorner", row).CornerRadius = UDim.new(0, 5)
 
             local info = Instance.new("TextLabel")
-            info.Size = UDim2.new(1, -60, 1, 0) info.Position = UDim2.new(0, 8, 0, 0)
+            info.Size = UDim2.new(1, -110, 1, 0) info.Position = UDim2.new(0, 8, 0, 0)
             info.BackgroundTransparency = 1
             local mutStr = (r.mutation and r.mutation ~= "") and (" ["..r.mutation.."]") or ""
             local kgStr = ""
@@ -4340,6 +4465,43 @@ do
             info.TextXAlignment = Enum.TextXAlignment.Left
             info.TextTruncate = Enum.TextTruncate.AtEnd
             info.Parent = row
+
+            -- v8.302: tombol egg PER-RULE (override global). siklus: ikut > prem > biasa > semua > ikut
+            local eggRuleBtn = Instance.new("TextButton")
+            eggRuleBtn.Size = UDim2.new(0, 46, 0, 22)
+            eggRuleBtn.Position = UDim2.new(1, -104, 0.5, -11)
+            eggRuleBtn.BackgroundColor3 = C.card
+            eggRuleBtn.TextColor3 = C.text eggRuleBtn.Font = FM eggRuleBtn.TextSize = 9
+            eggRuleBtn.BorderSizePixel = 0 eggRuleBtn.Parent = row
+            Instance.new("UICorner", eggRuleBtn).CornerRadius = UDim.new(0, 4)
+            local function eggRuleLabel()
+                local rs = BH.autoSnipe.rules[idx] and BH.autoSnipe.rules[idx].eggSource
+                if rs == "prem" then return "prem" end
+                if rs == "biasa" then return "biasa" end
+                if rs == "all" then return "semua" end
+                return "ikut"
+            end
+            local function eggRuleColor()
+                local rs = BH.autoSnipe.rules[idx] and BH.autoSnipe.rules[idx].eggSource
+                eggRuleBtn.TextColor3 = rs and C.accent or C.textDim
+            end
+            eggRuleBtn.Text = eggRuleLabel()
+            eggRuleColor()
+            eggRuleBtn.MouseButton1Click:Connect(function()
+                if not BH.autoSnipe.rules[idx] then return end
+                local rs = BH.autoSnipe.rules[idx].eggSource
+                if rs == nil then rs = "prem"
+                elseif rs == "prem" then rs = "biasa"
+                elseif rs == "biasa" then rs = "all"
+                else rs = nil end
+                BH.autoSnipe.rules[idx].eggSource = rs
+                eggRuleBtn.Text = eggRuleLabel()
+                eggRuleColor()
+                if BH.marketState then
+                    BH.marketState.autoSnipeRules = BH.autoSnipe.rules
+                    pcall(function() BH.saveMarketState(BH.marketState) end)
+                end
+            end)
 
             -- v8.127: EDIT button
             local editBtn = Instance.new("TextButton")
@@ -9483,8 +9645,8 @@ do
             end
             -- maxPrice: wajib
             if not p.price or p.price > rule.maxPrice then return false end
-            -- v8.258: filter asal egg (prem vs biasa). BH.autoSnipe.eggSource: all/prem/biasa
-            local es = BH.autoSnipe.eggSource or "all"
+            -- v8.302: filter asal egg PER-RULE. rule.eggSource override; nil = ikut global.
+            local es = rule.eggSource or BH.autoSnipe.eggSource or "all"
             if es == "prem" and not p.isPrem then return false end
             if es == "biasa" and p.isPrem then return false end
             return true
