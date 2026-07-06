@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v37.0
+-- ZENX FARM  v37.1
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v37.0"
+local VER       = "v37.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -536,6 +536,11 @@ local state = {
     dropMaxM        = 999999,     -- v36.5: range value max (dalam juta M)
     dropTarget      = 200,        -- v36.5: target total buah yg mau di-drop
     dropDone        = 0,          -- v36.5: counter buah yg udah ke-drop (sesi ini)
+    collectAuto     = false,      -- v37.1: auto collect buah tanah on/off
+    collectFilter   = false,      -- v37.1: pakai filter value? (false = collect semua)
+    collectMinM     = 0,          -- v37.1: range value min (juta M)
+    collectMaxM     = 999999,     -- v37.1: range value max (juta M)
+    collectDone     = 0,          -- v37.1: counter buah ke-collect (sesi ini)
     gfValueMarket   = true,      -- v22.9: target ikut harga pasar (true) atau normal x1 (false)
     gfStorageTarget = "",        -- v21.7: akun simpanan (dipisah koma; dialihin kalau pet udah cukup)
     gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
@@ -572,7 +577,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora","Ignited"}
-local SETBOOL = {"dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+local SETBOOL = {"collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -761,6 +766,8 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- ============================================================
 local Farm = {}
 pcall(function() getgenv().ZenxFarm = Farm end)   -- v36.4: expose buat tes console (mis. ZenxFarm.dropOneFruit())
+-- v37.1: expose helper UI + state ke Farm._ui biar buildCollectPanel (fungsi terpisah) bisa akses
+Farm._ui = { mk = mk, corner = corner, stroke = stroke, lbl = lbl, C = C, FONT_B = FONT_B, state = state, saveState = saveState }
 -- v13.4: kg buah garden = SizeMulti x rasio[jenis]. rasio KONSTAN per jenis.
 -- buah garden CUMA punya SizeMulti (gak nyimpen kg langsung - udah dibuktiin via debug),
 -- jadi kg HARUS dihitung. rasio di-hardcode (dari kalibrasi) + auto-update dari tas + DISIMPAN
@@ -2195,6 +2202,175 @@ function Farm.startDropLoop()
         print("[ZenxFarm] DROP FRUIT auto: OFF (total drop sesi: "..tostring(state.dropDone)..")")
     end)
 end
+
+-- ===== v37.1: AUTO COLLECT buah yg di-drop di tanah (Workspace.DroppedItems) =====
+-- tiap buah = Model "DroppedItem_<uuid>" + ProximityPrompt (PickupPrompt).
+-- collect = fireproximityprompt(prompt) (KEBUKTI works). filter value opsional.
+-- value dihitung dari FruitData JSON (SizeMultiplier) + ObjectText (nama+mutasi).
+
+-- hitung value 1 buah tanah dari attribute-nya. return angka atau nil.
+function Farm.groundFruitValue(model)
+    local okName, objText = pcall(function()
+        for _, pp in ipairs(model:GetDescendants()) do
+            if pp:IsA("ProximityPrompt") then return pp.ObjectText end
+        end
+    end)
+    -- ObjectText contoh: "Dragon's Breath [Bloodlit] [32.93kg]"
+    local jenis, mut
+    if okName and type(objText) == "string" then
+        jenis = objText:match("^([^%[]+)")            -- teks sebelum '['
+        if jenis then jenis = jenis:gsub("%s+$", "") end
+        mut = objText:match("%[([%a%s]+)%]")           -- kurung pertama = mutasi (huruf)
+        if mut then mut = mut:gsub("%s+$", "") end
+    end
+    -- SizeMultiplier dari FruitData JSON
+    local sm
+    local fd = model:GetAttribute("FruitData")
+    if type(fd) == "string" then
+        local ok, dec = pcall(function() return game:GetService("HttpService"):JSONDecode(fd) end)
+        if ok and type(dec) == "table" then
+            sm = dec.SizeMultiplier or dec.Size or dec.Weight
+        end
+    end
+    if not sm then sm = model:GetAttribute("SizeMultiplier") end
+    if not jenis or type(sm) ~= "number" then return nil end
+    -- bikin objek dummy ber-attribute biar bisa pakai Farm.fruitPrice
+    local dummy = Instance.new("Part")
+    dummy:SetAttribute("Fruit", jenis)
+    dummy:SetAttribute("SizeMultiplier", sm)
+    if mut and mut ~= "None" then dummy:SetAttribute("Mutation", mut) end
+    local val = Farm.fruitPrice(dummy)
+    dummy:Destroy()
+    return val, jenis, sm, mut
+end
+
+-- collect 1 buah (fire prompt). return true kalau di-fire.
+function Farm.collectGroundFruit(model)
+    for _, pp in ipairs(model:GetDescendants()) do
+        if pp:IsA("ProximityPrompt") then
+            pcall(function() fireproximityprompt(pp) end)
+            return true
+        end
+    end
+    return false
+end
+
+-- LOOP auto collect. jalan sampai state.collectAuto=false.
+-- tiap cycle: scan DroppedItems -> filter value in-range -> fire prompt.
+function Farm.startCollectLoop()
+    task.spawn(function()
+        if type(fireproximityprompt) ~= "function" then
+            print("[ZenxFarm] executor gak punya fireproximityprompt - auto collect ga bisa")
+            state.collectAuto = false
+            pcall(function() if Farm._syncCollectToggle then Farm._syncCollectToggle() end end)
+            return
+        end
+        print("[ZenxFarm] AUTO COLLECT: ON")
+        while state.collectAuto do
+            local di = workspace:FindFirstChild("DroppedItems")
+            if di then
+                local minVal = (tonumber(state.collectMinM) or 0) * 1e6
+                local maxVal = (tonumber(state.collectMaxM) or 999999) * 1e6
+                for _, model in ipairs(di:GetChildren()) do
+                    if not state.collectAuto then break end
+                    if model:IsA("Model") and model.Name:find("DroppedItem") then
+                        local ok = true
+                        -- filter value kalau diaktifin
+                        if state.collectFilter then
+                            local val = Farm.groundFruitValue(model)
+                            ok = val and val >= minVal and val <= maxVal
+                        end
+                        if ok then
+                            Farm.collectGroundFruit(model)
+                            state.collectDone = (state.collectDone or 0) + 1
+                            pcall(function() if Farm._syncCollectToggle then Farm._syncCollectToggle() end end)
+                            task.wait(0.25)   -- jeda antar collect (HoldDuration 1s, tapi fire instan)
+                        end
+                    end
+                end
+            end
+            task.wait(0.5)   -- scan ulang tiap 0.5s
+        end
+        print("[ZenxFarm] AUTO COLLECT: OFF (total collect sesi: "..tostring(state.collectDone or 0)..")")
+    end)
+end
+
+-- v37.1: build panel Auto Collect (fungsi terpisah biar local ga masuk main chunk / limit-200)
+function Farm.buildCollectPanel(dList)
+    local mk, corner, stroke, lbl, C, FONT_B, state, saveState =
+        Farm._ui.mk, Farm._ui.corner, Farm._ui.stroke, Farm._ui.lbl, Farm._ui.C, Farm._ui.FONT_B, Farm._ui.state, Farm._ui.saveState
+    local ch = mk("Frame", { Size = UDim2.new(1,0,0,50), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 10, Parent = dList })
+    corner(ch, 8); stroke(ch, C.accent or C.border, 1)
+    do local a = lbl(ch, "Auto Collect Buah Tanah", 14, C.text, Enum.TextXAlignment.Left)
+       a.Position = UDim2.new(0,14,0,8); a.Size = UDim2.new(1,-28,0,18)
+       local b = lbl(ch, "pungut buah yg di-drop orang di tanah (via prompt)", 11, C.textMute, Enum.TextXAlignment.Left)
+       b.Position = UDim2.new(0,14,0,28); b.Size = UDim2.new(1,-28,0,14) end
+
+    -- toggle filter value on/off
+    local fcard = mk("Frame", { Size = UDim2.new(1,0,0,50), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 11, Parent = dList })
+    corner(fcard, 8); stroke(fcard, C.border, 1)
+    do local a = lbl(fcard, "Pakai filter value", 13, C.text, Enum.TextXAlignment.Left)
+       a.Position = UDim2.new(0,14,0,9); a.Size = UDim2.new(1,-80,0,18)
+       local b = lbl(fcard, "OFF = collect semua buah", 11, C.textMute, Enum.TextXAlignment.Left)
+       b.Position = UDim2.new(0,14,0,30); b.Size = UDim2.new(1,-80,0,14) end
+    local fsw = mk("TextButton", { Size = UDim2.new(0,52,0,26), Position = UDim2.new(1,-64,0.5,-13),
+        BackgroundColor3 = C.input, Text = "OFF", TextColor3 = C.textMute, Font = FONT_B, TextSize = 12,
+        BorderSizePixel = 0, Parent = fcard }); corner(fsw, 13); stroke(fsw, C.border, 1)
+    local function syncF()
+        fsw.Text = state.collectFilter and "ON" or "OFF"
+        fsw.BackgroundColor3 = state.collectFilter and C.green or C.input
+        fsw.TextColor3 = state.collectFilter and Color3.fromRGB(20,20,20) or C.textMute
+    end
+    fsw.MouseButton1Click:Connect(function() state.collectFilter = not state.collectFilter; syncF(); saveState() end)
+    syncF()
+
+    -- range value collect (kepakai kalau filter ON)
+    local function numCardC(order, title, getv, setv)
+        local card = mk("Frame", { Size = UDim2.new(1,0,0,50), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = order, Parent = dList })
+        corner(card, 8); stroke(card, C.border, 1)
+        do local nameL = lbl(card, title, 13, C.text, Enum.TextXAlignment.Left)
+           nameL.Position = UDim2.new(0,14,0,8); nameL.Size = UDim2.new(1,-120,0,18) end
+        local box = mk("TextBox", { Size = UDim2.new(0,92,0,28), Position = UDim2.new(1,-104,0.5,-14),
+            BackgroundColor3 = C.input, Text = tostring(getv()), TextColor3 = C.text, Font = FONT_B, TextSize = 13,
+            TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false, BorderSizePixel = 0, Parent = card })
+        corner(box, 6); stroke(box, C.border, 1)
+        box.FocusLost:Connect(function()
+            local v = tonumber(box.Text)
+            if v then setv(v); saveState() end
+            box.Text = tostring(getv())
+        end)
+    end
+    numCardC(12, "Collect Min value (M)", function() return state.collectMinM or 0 end, function(v) state.collectMinM = math.max(0, v) end)
+    numCardC(13, "Collect Max value (M)", function() return state.collectMaxM or 999999 end, function(v) state.collectMaxM = math.max(0, v) end)
+
+    -- toggle auto collect + progress
+    local ctcard = mk("Frame", { Size = UDim2.new(1,0,0,64), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 14, Parent = dList })
+    corner(ctcard, 8); stroke(ctcard, C.border, 1)
+    do local a = lbl(ctcard, "Auto Collect", 14, C.text, Enum.TextXAlignment.Left)
+       a.Position = UDim2.new(0,14,0,9); a.Size = UDim2.new(1,-80,0,18) end
+    local cprogL = lbl(ctcard, "0 di-collect", 11, C.textMute, Enum.TextXAlignment.Left)
+    cprogL.Position = UDim2.new(0,14,0,32); cprogL.Size = UDim2.new(1,-80,0,14)
+    local csw = mk("TextButton", { Size = UDim2.new(0,52,0,26), Position = UDim2.new(1,-64,0.5,-13),
+        BackgroundColor3 = C.input, Text = "OFF", TextColor3 = C.textMute, Font = FONT_B, TextSize = 12,
+        BorderSizePixel = 0, Parent = ctcard }); corner(csw, 13); stroke(csw, C.border, 1)
+    local function syncC()
+        csw.Text = state.collectAuto and "ON" or "OFF"
+        csw.BackgroundColor3 = state.collectAuto and C.green or C.input
+        csw.TextColor3 = state.collectAuto and Color3.fromRGB(20,20,20) or C.textMute
+        cprogL.Text = tostring(state.collectDone or 0).." di-collect"
+    end
+    Farm._syncCollectToggle = syncC
+    csw.MouseButton1Click:Connect(function()
+        state.collectAuto = not state.collectAuto
+        if state.collectAuto then
+            state.collectDone = 0
+            Farm.startCollectLoop()
+        end
+        syncC(); saveState()
+    end)
+    syncC()
+end
+
 
 -- unfav SEMUA buah di inventory (set favorit=false). return jumlah buah yg diproses.
 function Farm.unfavAllFruits()
@@ -9028,6 +9204,8 @@ do
             syncUI(); saveState()
         end)
         syncUI()
+
+        Farm.buildCollectPanel(dList)   -- v37.1: panel collect (fungsi terpisah, jaga limit-200)
     end
     -- ============ AKHIR panel Drop Fruit ============
 
