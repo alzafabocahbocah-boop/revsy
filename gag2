@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v37.2
+-- ZENX FARM  v37.6
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v37.2"
+local VER       = "v37.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -529,8 +529,8 @@ local state = {
     dropTarget      = 200,        -- v36.5: target total buah yg mau di-drop
     dropDone        = 0,          -- v36.5: counter buah yg udah ke-drop (sesi ini)
     collectAuto     = false,      -- v37.1: auto collect buah tanah on/off
-    collectFilter   = false,      -- v37.1: pakai filter value? (false = collect semua)
-    collectMinM     = 0,          -- v37.1: range value min (juta M)
+    collectFilter   = true,       -- v37.3: filter value default ON (min 5M)
+    collectMinM     = 5,          -- v37.3: default min value 5 juta (M)
     collectMaxM     = 999999,     -- v37.1: range value max (juta M)
     collectDone     = 0,          -- v37.1: counter buah ke-collect (sesi ini)
     gfValueMarket   = true,      -- v22.9: target ikut harga pasar (true) atau normal x1 (false)
@@ -2121,8 +2121,10 @@ function Farm.pickFruitInRange(minVal, maxVal)
     for _, holder in ipairs(getFruitHolders()) do
         for _, o in ipairs(holder:GetChildren()) do
             local id = o:GetAttribute("Id")
-            -- v36.7: cuma Tool yg bisa di-equip (drop butuh dipegang). objek non-Tool di-skip.
-            if id and o:IsA("Tool") then
+            local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
+            -- v37.4: baca SEMUA buah (id + fruit attr), ga cuma Tool/hotbar.
+            -- buah inventory penuh di GAG kadang non-Tool -> dulu ke-skip. sekarang kebaca.
+            if id and fj then
                 local pr = Farm.fruitPrice(o) or 0
                 if pr >= minVal and pr <= maxVal then
                     return o, id, pr
@@ -2154,34 +2156,35 @@ function Farm.startDropLoop()
             if tool and id then
                 local char = player.Character
                 local hum = char and char:FindFirstChildOfClass("Humanoid")
-                -- v36.7 FIX: WAJIB pegang dulu (server nolak drop buah yg cuma di backpack).
-                -- dulu equip kadang gagal diam2: objek bukan Tool, atau EquipTool ga nyantol.
-                -- sekarang: pastiin Tool, equip, VERIFIKASI ke-pegang (tool.Parent==char), retry.
+                local isTool = tool:IsA("Tool")
+                -- v37.4: kalau Tool -> equip dulu (WAJIB dipegang buat drop). kalau non-Tool
+                -- (buah inventory penuh) -> fire drop langsung (ga bisa di-equip).
                 local equipped = false
-                if hum and tool:IsA("Tool") then
+                if hum and isTool then
                     if tool.Parent == char then
-                        equipped = true   -- udah dipegang
+                        equipped = true
                     else
                         for _try = 1, 3 do
-                            pcall(function() hum:UnequipTools() end)   -- lepas dulu tool lain
-                            task.wait(0.1)
+                            pcall(function() hum:UnequipTools() end)
+                            task.wait(0.05)
                             pcall(function() hum:EquipTool(tool) end)
-                            task.wait(0.2)
+                            task.wait(0.1)
                             if tool.Parent == char then equipped = true; break end
                         end
                     end
                 end
-                if not equipped then
-                    -- gagal pegang -> skip buah ini, jangan fire (percuma, server nolak)
-                    print("[ZenxFarm] drop: gagal pegang '"..tostring(tool.Name).."' (Tool="..tostring(tool:IsA("Tool"))..") - skip")
-                    task.wait(0.3)
+                if isTool and not equipped then
+                    -- Tool tapi gagal pegang -> skip (percuma fire)
+                    print("[ZenxFarm] drop: gagal pegang '"..tostring(tool.Name).."' - skip")
+                    task.wait(0.1)
                 else
+                    -- Tool ke-equip ATAU non-Tool (inventory penuh) -> fire drop
                     pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
                     state.dropDone = (state.dropDone or 0) + 1
                     pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
-                    task.wait(0.35)
-                    if hum then pcall(function() hum:UnequipTools() end) end
-                    task.wait(0.15)
+                    task.wait(0.12)
+                    if hum and isTool then pcall(function() hum:UnequipTools() end) end
+                    task.wait(0.05)
                 end
             else
                 -- ga ada buah cocok: nunggu, cycle jalan terus
@@ -2273,10 +2276,27 @@ function Farm.startCollectLoop()
                             ok = val and val >= minVal and val <= maxVal
                         end
                         if ok then
+                            -- v37.6: TP ke buah kalau JAUH (prompt butuh deket). deket = skip TP.
+                            local char = player.Character
+                            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                            local target
+                            pcall(function()
+                                local pp = model:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                if pp and pp.Parent and pp.Parent:IsA("BasePart") then target = pp.Parent
+                                else target = model:FindFirstChildWhichIsA("BasePart", true) end
+                            end)
+                            if hrp and target then
+                                local dist = (hrp.Position - target.Position).Magnitude
+                                if dist > 15 then
+                                    -- TP deket buah (2 stud di atas + samping dikit biar ga nabrak)
+                                    pcall(function() hrp.CFrame = target.CFrame + Vector3.new(0, 3, 0) end)
+                                    task.wait(0.15)   -- kasih waktu prompt aktif di jarak baru
+                                end
+                            end
                             Farm.collectGroundFruit(model)
                             state.collectDone = (state.collectDone or 0) + 1
                             pcall(function() if Farm._syncCollectToggle then Farm._syncCollectToggle() end end)
-                            task.wait(0.25)   -- jeda antar collect (HoldDuration 1s, tapi fire instan)
+                            task.wait(0.2)   -- jeda antar collect
                         end
                     end
                 end
@@ -2361,6 +2381,21 @@ function Farm.buildCollectPanel(dList)
         syncC(); saveState()
     end)
     syncC()
+
+    -- v37.3: AUTO-ON collect khusus akun yg username diawali "fifi" (fifinx, fifibuah, dll)
+    do
+        local uname = ""
+        pcall(function() uname = game:GetService("Players").LocalPlayer.Name end)
+        if uname:lower():sub(1, 4) == "fifi" then
+            if not state.collectAuto then
+                state.collectAuto = true
+                state.collectDone = 0
+                Farm.startCollectLoop()
+                syncC(); saveState()
+                print("[ZenxFarm] AUTO COLLECT auto-ON (akun fifi: "..uname..")")
+            end
+        end
+    end
 end
 
 
