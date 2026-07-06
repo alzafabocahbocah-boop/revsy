@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.304"
+local VERSION = "8.307"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.304")
+warn("  ZENX MARKET LOADING - VERSI 8.307")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -1219,27 +1219,40 @@ do
 
     -- konfirmasi mini (di dalam pop): "Anda yakin pakai template ini?"
     -- v8.303: ZIndex TINGGI (300+) + posisi nutup penuh biar tombol ga ke-block elemen lain
-    local confirm = Instance.new("Frame")
-    confirm.Size = UDim2.new(1, -28, 0, 96) confirm.Position = UDim2.new(0, 14, 0, 210)
-    confirm.BackgroundColor3 = C.card confirm.BorderSizePixel = 0 confirm.Visible = false
-    confirm.ZIndex = 310 confirm.Active = true confirm.Parent = pop
-    Instance.new("UICorner", confirm).CornerRadius = UDim.new(0, 8)
-    do local s = Instance.new("UIStroke", confirm); s.Color = C.accent; s.Thickness = 2; s.Transparency = 0.2 end
+    -- v8.305: overlay penuh nutup popup pas konfirmasi muncul (block touch elemen lain,
+    -- termasuk TextBox editable yg nangkep input walau ZIndex rendah)
+    local overlay = Instance.new("TextButton")
+    overlay.Size = UDim2.new(1, 0, 1, 0) overlay.Position = UDim2.new(0, 0, 0, 0)
+    overlay.BackgroundColor3 = Color3.new(0, 0, 0) overlay.BackgroundTransparency = 0.5
+    overlay.Text = "" overlay.AutoButtonColor = false overlay.BorderSizePixel = 0
+    overlay.Visible = false overlay.ZIndex = 350 overlay.Active = true overlay.Parent = pop
+    overlay.MouseButton1Click:Connect(function() end)  -- serap klik, jangan tembus
+    Instance.new("UICorner", overlay).CornerRadius = UDim.new(0, 10)
+
+    -- kotak konfirmasi di TENGAH overlay (bukan numpuk list)
+    local confirm = overlay   -- alias biar handler lama (confirm.Visible) tetep jalan
+    local confBox = Instance.new("Frame")
+    confBox.Size = UDim2.new(0, 300, 0, 130) confBox.Position = UDim2.new(0.5, -150, 0.5, -65)
+    confBox.BackgroundColor3 = C.bg confBox.BorderSizePixel = 0
+    confBox.ZIndex = 351 confBox.Parent = overlay
+    Instance.new("UICorner", confBox).CornerRadius = UDim.new(0, 10)
+    do local s = Instance.new("UIStroke", confBox); s.Color = C.accent; s.Thickness = 2; s.Transparency = 0.2 end
     local confirmLbl = Instance.new("TextLabel")
-    confirmLbl.Size = UDim2.new(1, -20, 0, 40) confirmLbl.Position = UDim2.new(0, 10, 0, 8)
-    confirmLbl.BackgroundTransparency = 1 confirmLbl.Text = "Anda yakin menggunakan template ini?"
-    confirmLbl.TextColor3 = C.text confirmLbl.Font = FM confirmLbl.TextSize = 12
+    confirmLbl.Size = UDim2.new(1, -24, 0, 56) confirmLbl.Position = UDim2.new(0, 12, 0, 12)
+    confirmLbl.BackgroundTransparency = 1 confirmLbl.Text = "JAMAL KAMU BENERAN SUKA SAMA AGUS?"
+    confirmLbl.TextColor3 = C.text confirmLbl.Font = FM confirmLbl.TextSize = 13
     confirmLbl.TextWrapped = true confirmLbl.TextXAlignment = Enum.TextXAlignment.Left
-    confirmLbl.ZIndex = 311 confirmLbl.Parent = confirm
+    confirmLbl.TextYAlignment = Enum.TextYAlignment.Top
+    confirmLbl.ZIndex = 352 confirmLbl.Parent = confBox
     local yesBtn = Instance.new("TextButton")
-    yesBtn.Size = UDim2.new(0, 90, 0, 30) yesBtn.Position = UDim2.new(0, 10, 0, 54)
-    yesBtn.BackgroundColor3 = C.accent yesBtn.Text = "YA, PAKAI" yesBtn.TextColor3 = Color3.new(0,0,0)
-    yesBtn.Font = FB yesBtn.TextSize = 11 yesBtn.ZIndex = 311 yesBtn.Parent = confirm
+    yesBtn.Size = UDim2.new(0, 130, 0, 38) yesBtn.Position = UDim2.new(0, 12, 1, -50)
+    yesBtn.BackgroundColor3 = C.accent yesBtn.Text = "YA AKU SUKA AGUS" yesBtn.TextColor3 = Color3.new(0,0,0)
+    yesBtn.Font = FB yesBtn.TextSize = 10 yesBtn.TextWrapped = true yesBtn.ZIndex = 352 yesBtn.Parent = confBox
     Instance.new("UICorner", yesBtn).CornerRadius = UDim.new(0, 6)
     local noBtn = Instance.new("TextButton")
-    noBtn.Size = UDim2.new(0, 70, 0, 30) noBtn.Position = UDim2.new(0, 108, 0, 54)
-    noBtn.BackgroundColor3 = C.input noBtn.Text = "batal" noBtn.TextColor3 = C.textDim
-    noBtn.Font = FB noBtn.TextSize = 11 noBtn.ZIndex = 311 noBtn.Parent = confirm
+    noBtn.Size = UDim2.new(0, 130, 0, 38) noBtn.Position = UDim2.new(1, -142, 1, -50)
+    noBtn.BackgroundColor3 = C.input noBtn.Text = "AKU TIDAK SUKA AGUS" noBtn.TextColor3 = C.textDim
+    noBtn.Font = FB noBtn.TextSize = 10 noBtn.TextWrapped = true noBtn.ZIndex = 352 noBtn.Parent = confBox
     Instance.new("UICorner", noBtn).CornerRadius = UDim.new(0, 6)
 
     local pendingIdx = nil
@@ -1252,11 +1265,11 @@ do
             BH.marketState.settingName = t.name
             BH.saveMarketState(BH.marketState)
             setStatus("template '" .. tostring(t.name) .. "' dipakai. RELOAD sc biar semua tab kebaca.", C.accent)
-            confirm.Visible = false
+            confirm.Visible = false; overlay.Visible = false
             if rebuildList then rebuildList() end
         end
     end)
-    noBtn.MouseButton1Click:Connect(function() confirm.Visible = false; pendingIdx = nil end)
+    noBtn.MouseButton1Click:Connect(function() confirm.Visible = false; overlay.Visible = false; pendingIdx = nil end)
 
     rebuildList = function()
         for _, c in ipairs(listSF:GetChildren()) do
@@ -1290,8 +1303,8 @@ do
             pick.TextXAlignment = Enum.TextXAlignment.Left pick.ZIndex = 203 pick.Parent = row
             pick.MouseButton1Click:Connect(function()
                 pendingIdx = i
-                confirmLbl.Text = "Anda yakin menggunakan template '" .. tostring(t.name) .. "'?"
-                confirm.Visible = true
+                confirmLbl.Text = "JAMAL KAMU BENERAN SUKA SAMA AGUS?"
+                overlay.Visible = true; confirm.Visible = true
             end)
             -- tombol x (hapus)
             local xb = Instance.new("TextButton")
@@ -1424,7 +1437,7 @@ do
 
     tplBtn.MouseButton1Click:Connect(function()
         pop.Visible = not pop.Visible
-        if pop.Visible then confirm.Visible = false; rebuildList() end
+        if pop.Visible then confirm.Visible = false; overlay.Visible = false; rebuildList() end
     end)
 end
 
