@@ -2,11 +2,11 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.307"
+local VERSION = "8.308"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.307")
+warn("  ZENX MARKET LOADING - VERSI 8.308")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -1156,14 +1156,17 @@ do
         st = fixRules(st)
         for k in pairs(BH.marketState) do BH.marketState[k] = nil end
         for k, v in pairs(st) do BH.marketState[k] = v end
-        -- sinkron rules UI (listingRules global)
-        for i = #listingRules, 1, -1 do listingRules[i] = nil end
-        if type(BH.marketState.listingRules) == "table" then
-            for i, r in ipairs(BH.marketState.listingRules) do listingRules[i] = r end
+        if type(BH.marketState.listingRules) ~= "table" then BH.marketState.listingRules = {} end
+        -- v8.308: pakai BH.listingRules (di-expose dari tab Listing yg didefinisikan belakangan).
+        -- applyState ada di title bar (lebih awal) jadi local listingRules blm ada di scope ini.
+        local lr = BH.listingRules
+        if lr then
+            for i = #lr, 1, -1 do lr[i] = nil end
+            for i, r in ipairs(BH.marketState.listingRules) do lr[i] = r end
+            BH.marketState.listingRules = lr
         end
-        BH.marketState.listingRules = listingRules
         BH.saveMarketState(BH.marketState)
-        if rebuildRulesUI then pcall(rebuildRulesUI) end
+        if BH.rebuildRulesUI then pcall(BH.rebuildRulesUI) end
     end
 
     -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
@@ -2070,6 +2073,7 @@ end)
 -- ============================================================
 local selectedType = nil  -- nil = all pet types (used by modal picker + add rule)
 local listingRules = {}
+BH.listingRules = listingRules  -- v8.308: expose biar applyState (title bar, didefinisikan lebih awal) bisa sync
 local rebuildRulesUI  -- forward declare so buildRuleRow can call it
 
 local function buildRuleRow(parent, r, idx, big)
@@ -2241,6 +2245,7 @@ function rebuildRulesUI()
         priceScroll.CanvasSize = UDim2.new(0, 0, 0, priceLayout.AbsoluteContentSize.Y + 16)
     end
 end
+BH.rebuildRulesUI = rebuildRulesUI  -- v8.308: expose biar applyState (title bar) bisa refresh UI
 
 -- v8.130: refresh count badges WITHOUT destroy/rebuild (anti keyboard close)
 BH.refreshPriceCounts = function()
