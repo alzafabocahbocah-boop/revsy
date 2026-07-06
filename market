@@ -16,11 +16,11 @@ do
     end
 end
 
-local VERSION = "8.311"
+local VERSION = "8.312"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.311")
+warn("  ZENX MARKET LOADING - VERSI 8.312")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -1432,18 +1432,32 @@ do
     Instance.new("UICorner", impCodeBtn).CornerRadius = UDim.new(0, 6)
     do local s = Instance.new("UIStroke", impCodeBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
 
-    -- EXPORT AKTIF: template aktif (marketState skrg) -> kode + copy
+    -- EXPORT AKTIF: v8.312 - export RINGKAS. cuma listingRules (yg dibutuh pindah
+    -- antar-akun), format kompak array (bukan JSON verbose) -> kode jauh lebih PENDEK,
+    -- ga gampang kepotong pas transfer antar-HP.
     expBtn.MouseButton1Click:Connect(function()
         local nm = BH.marketState.settingName or "tanpa-nama"
-        local payload = { v = 2, name = nm, marketState = sanitize(BH.marketState) }
-        local ok, json = pcall(function() return HttpService:JSONEncode(payload) end)
-        if not ok then setStatus("export gagal", C.danger); return end
-        local code = "ZENX2:" .. b64enc(json)
+        local rules = BH.marketState.listingRules or {}
+        -- format kompak: tiap rule jadi 1 baris "type|min|max|price|maxListings|eggSource"
+        -- pisah antar-rule pakai ";". jauh lebih pendek dari JSON.
+        local parts = {}
+        for _, r in ipairs(rules) do
+            local mx = r.max
+            if mx == math.huge then mx = "" end
+            local ml = r.maxListings
+            if ml == math.huge then ml = "" end
+            parts[#parts+1] = table.concat({
+                tostring(r.type or ""), tostring(r.min or ""), tostring(mx or ""),
+                tostring(r.price or ""), tostring(ml or ""), tostring(r.eggSource or "")
+            }, "|")
+        end
+        local raw = "R1:" .. nm .. "~" .. table.concat(parts, ";")
+        local code = "ZENX3:" .. b64enc(raw)
         codeBox.Text = code
         local copied = false
         if setclipboard then copied = pcall(function() setclipboard(code) end)
         elseif toclipboard then copied = pcall(function() toclipboard(code) end) end
-        setStatus("export '" .. nm .. "'" .. (copied and " ke-copy!" or " (copy manual)"), C.accent)
+        setStatus("export '" .. nm .. "' (" .. #rules .. " rule, kode pendek)" .. (copied and " ke-copy!" or " (copy manual)"), C.accent)
     end)
 
     -- IMPORT KODE: paste (dari impBox) -> decode -> simpan sbg template baru di list
@@ -1452,6 +1466,40 @@ do
         if not code or code == "" then setStatus("paste kode dulu di kotak import", C.danger); return end
         code = code:gsub("%s", "")
         local ver = code:sub(1, 6)
+        -- v8.312: format ZENX3 (ringkas). decode -> parse "R1:nama~type|min|max|price|ml|egg;..."
+        if ver == "ZENX3:" then
+            local raw = nil
+            local okd = pcall(function() raw = b64dec(code:sub(7)) end)
+            if not okd or not raw or not raw:find("^R1:") then setStatus("kode ZENX3 invalid", C.danger); return end
+            raw = raw:sub(4)   -- buang "R1:"
+            local nm, body = raw:match("^(.-)~(.*)$")
+            if not nm then nm = "import"; body = raw end
+            local rules = {}
+            for chunk in tostring(body):gmatch("[^;]+") do
+                local f = {}
+                for v in (chunk .. "|"):gmatch("(.-)|") do f[#f+1] = v end
+                if #f >= 4 then
+                    local mx = tonumber(f[3]); if not mx or f[3] == "" then mx = math.huge end
+                    local ml = tonumber(f[5]); if not ml or f[5] == "" then ml = math.huge end
+                    rules[#rules+1] = {
+                        type = (f[1] ~= "" and f[1]) or nil,
+                        min = tonumber(f[2]) or 0,
+                        max = mx,
+                        price = tonumber(f[4]) or 0,
+                        maxListings = ml,
+                        eggSource = (f[6] and f[6] ~= "" and f[6]) or nil,
+                    }
+                end
+            end
+            if #rules == 0 then setStatus("kode ZENX3: 0 rule (kosong?)", C.danger); return end
+            table.insert(templates, { name = nm, state = sanitize({ listingRules = rules }) })
+            saveTemplates()
+            impBox.Text = ""
+            rebuildList()
+            setStatus("import '" .. tostring(nm) .. "' (" .. #rules .. " rule). pilih di list buat pakai.", C.accent)
+            return
+        end
+        -- format lama ZENX2/ZENX1 (JSON)
         if ver == "ZENX2:" or ver == "ZENX1:" then code = code:sub(7) end
         local ok, json = pcall(function() return b64dec(code) end)
         if not ok or not json or json == "" then setStatus("kode invalid (decode gagal)", C.danger); return end
