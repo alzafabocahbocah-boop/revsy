@@ -16,11 +16,11 @@ do
     end
 end
 
-local VERSION = "8.312"
+local VERSION = "8.315"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.312")
+warn("  ZENX MARKET LOADING - VERSI 8.315")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -175,6 +175,19 @@ do
     BH.marketState = BH.loadMarketState()
     BH.myBoothUuid = BH.marketState.myBoothUuid
     if BH.myBoothUuid then L("[State] cached myBoothUuid: "..BH.myBoothUuid:sub(1,16).."...") end
+    -- v8.314: DEFAULT AUTO-ON buat fitur Misc (cuma kalau belum pernah diset user).
+    -- auto-start, auto-claim booth, auto-rejoin, auto-switch depan = default ON.
+    -- rejoin interval default 25 menit.
+    do
+        BH.marketState.settings = BH.marketState.settings or {}
+        local S = BH.marketState.settings
+        if BH.marketState.autoStart == nil then BH.marketState.autoStart = true end
+        if S.autoRejoinEnabled == nil then S.autoRejoinEnabled = true end
+        if S.autoSwitchFront == nil then S.autoSwitchFront = true end
+        if S.rejoinIntervalMin == nil then S.rejoinIntervalMin = "25" end
+        if BH.marketState.autoClaim == nil then BH.marketState.autoClaim = true end
+        pcall(function() BH.saveMarketState(BH.marketState) end)
+    end
     -- v8.70: load anti-afk pref dari state (default true kalo gak ada)
     if BH.marketState.antiAfkEnabled ~= nil then
         antiAfkEnabled = BH.marketState.antiAfkEnabled
@@ -1457,13 +1470,13 @@ do
         local copied = false
         if setclipboard then copied = pcall(function() setclipboard(code) end)
         elseif toclipboard then copied = pcall(function() toclipboard(code) end) end
-        setStatus("export '" .. nm .. "' (" .. #rules .. " rule, kode pendek)" .. (copied and " ke-copy!" or " (copy manual)"), C.accent)
+        setStatus("export '" .. nm .. "' (" .. #rules .. " rule, " .. #code .. " char)" .. (copied and " ke-copy!" or " (copy manual dari kotak)"), C.accent)
     end)
 
     -- IMPORT KODE: paste (dari impBox) -> decode -> simpan sbg template baru di list
     impCodeBtn.MouseButton1Click:Connect(function()
         local code = impBox.Text
-        if not code or code == "" then setStatus("paste kode dulu di kotak import", C.danger); return end
+        if not code or code:gsub("%s","") == "" then setStatus("paste kode dulu di kotak import", C.danger); return end
         code = code:gsub("%s", "")
         local ver = code:sub(1, 6)
         -- v8.312: format ZENX3 (ringkas). decode -> parse "R1:nama~type|min|max|price|ml|egg;..."
