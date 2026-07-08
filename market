@@ -16,11 +16,11 @@ do
     end
 end
 
-local VERSION = "8.317"
+local VERSION = "8.319"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.317")
+warn("  ZENX MARKET LOADING - VERSI 8.319")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -184,7 +184,10 @@ do
         if BH.marketState.autoStart == nil then BH.marketState.autoStart = true end
         if S.autoRejoinEnabled == nil then S.autoRejoinEnabled = true end
         if S.autoSwitchFront == nil then S.autoSwitchFront = true end
-        if S.rejoinIntervalMin == nil then S.rejoinIntervalMin = "25" end
+        -- v8.319: PAKSA rejoin interval 18 menit SELALU tiap load (abaikan setting manual).
+        -- semua akun 18m, cegah kick idle 20m. auto-rejoin dipaksa ON.
+        S.rejoinIntervalMin = "18"
+        S.autoRejoinEnabled = true
         if BH.marketState.autoClaim == nil then BH.marketState.autoClaim = true end
         -- v8.317: PAKSA semua akun (termasuk yg udah punya rules lama) pakai default rules ini.
         -- pakai penanda versi: kalau defaultRulesVer != target, timpa SEKALI lalu tandai.
@@ -2687,7 +2690,12 @@ BH.autoSwitchFrontToggle = addToggleRow(rejBody, "Auto-Switch ke booth DEPAN kal
 local rejoinBtn = addButtonRow(rejBody, "🔀 HOP NOW", C.accent)
 
 -- v8.127: bind rejoin settings to persist
-BH.bindInput(intervalBox, "rejoinIntervalMin")
+-- v8.319: interval PAKSA 18m - kotak read-only, selalu 18 (abaikan input manual).
+pcall(function()
+    intervalBox.Text = "18"
+    intervalBox.TextEditable = false
+    BH.setSetting("rejoinIntervalMin", "18")
+end)
 BH.bindInput(listingBox, "rejoinAfterListings")
 BH.bindToggle(autoRejoinToggle, "autoRejoinEnabled")
 BH.bindToggle(BH.autoRejoinLowPopToggle, "autoRejoinLowPop")
@@ -7503,6 +7511,8 @@ task.spawn(function()
             -- skip — garden anchor, gak ikut hop walaupun toggle ON
         elseif autoRejoinToggle.get() then
             local intervalMin = tonumber(intervalBox.Text) or 0
+            -- v8.318: PAKSA max 18 menit (cegah kick idle 20m) walau user set lebih tinggi
+            if intervalMin <= 0 or intervalMin > 18 then intervalMin = 18 end
             if intervalMin > 0 then
                 local elapsedMin = (workspace.DistributedGameTime or 0) / 60
                 if elapsedMin >= intervalMin then
