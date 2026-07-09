@@ -3,24 +3,65 @@
 -- Market sub-tabs: Listing | Rejoin | Misc
 
 -- v8.309: AUTO RE-EXEC di PALING AWAL - daftarin queue_on_teleport sebelum apapun.
--- biar pas teleport (HOP/rejoin/anti-bot), queue keburu kedaftar walau script blm kelar.
+-- v8.321: ANTI HTTP 429. cache lokal + guard: kalau kena 429, JANGAN spam retry.
+--   maks 1 HttpGet per re-exec. gagal -> pakai cache lama -> berhenti.
 do
     local SCRIPT_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/market"
-    local payload = 'loadstring(game:HttpGet("'..SCRIPT_URL..'"))()'
+    local payload = [[
+local URL = "]]..SCRIPT_URL..[["
+local CACHE = "ZenxMarket_cache.lua"
+local CACHE_AGE = "ZenxMarket_cache_time.txt"
+if getgenv().__ZenxMarketExecuting then return end
+getgenv().__ZenxMarketExecuting = true
+local function tryRun(src)
+    if type(src) == "string" and #src > 50000 then
+        local fn = loadstring(src)
+        if fn then fn() return true end
+    end
+    return false
+end
+-- 1) cache lokal dulu (nol request GitHub). fresh (<20 mnt) -> pakai langsung.
+if isfile and readfile and isfile(CACHE) then
+    local fresh = true
+    if isfile(CACHE_AGE) then
+        local ok, t = pcall(readfile, CACHE_AGE)
+        if ok and tonumber(t) and (os.time() - tonumber(t)) > 1200 then fresh = false end
+    end
+    if fresh then
+        local ok, c = pcall(readfile, CACHE)
+        if ok and tryRun(c) then getgenv().__ZenxMarketExecuting = nil return end
+    end
+end
+-- 2) HttpGet 1x (ga ada retry -> ga spam 429). sukses -> cache + jalan.
+local ok, res = pcall(function() return game:HttpGet(URL) end)
+if ok and type(res) == "string" and #res > 50000 then
+    if writefile then
+        pcall(function() writefile(CACHE, res) end)
+        pcall(function() writefile(CACHE_AGE, tostring(os.time())) end)
+    end
+    if tryRun(res) then getgenv().__ZenxMarketExecuting = nil return end
+end
+-- 3) gagal (429) -> pakai CACHE LAMA (walau expired) sbg penyelamat. LALU BERHENTI.
+if isfile and isfile(CACHE) then
+    local ok2, c2 = pcall(readfile, CACHE)
+    if ok2 then tryRun(c2) end
+end
+getgenv().__ZenxMarketExecuting = nil
+]]
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or queueonteleport
     if q then
         pcall(function() q(payload) end)
-        warn("[ZenxMarket] auto re-exec aktif (queue_on_teleport)")
+        warn("[ZenxMarket] auto re-exec aktif (cache +anti-429)")
     else
         warn("[ZenxMarket] executor gak support queue_on_teleport")
     end
 end
 
-local VERSION = "8.319"
+local VERSION = "8.321"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.319")
+warn("  ZENX MARKET LOADING - VERSI 8.321")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -78,7 +119,7 @@ do
     -- PROAKTIF — periodic loop every 2 min (lebih agresif dari 5 min)
     task.spawn(function()
         local tickCount = 0
-        while task.wait(120) do  -- 2 menit
+        while task.wait(90) do  -- v8.320: 1.5 menit (lebih sering, cegah 278)
             if antiAfkEnabled then
                 tickCount = tickCount + 1
                 local methods_tried = {}
@@ -116,14 +157,22 @@ do
                     table.insert(methods_tried, ok and "CAM✓" or "CAM✗")
                 end
 
-                -- Method 4: Character humanoid jump (subtle — only every 5 ticks = 10min)
-                if tickCount % 5 == 0 then
-                    local char = player.Character
-                    local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        local ok = pcall(function() hum.Jump = true end)
-                        table.insert(methods_tried, ok and "JUMP✓" or "JUMP✗")
-                    end
+                -- Method 4: v8.320 - GERAK KARAKTER BENERAN tiap tick (2min), bukan tiap 10min.
+                -- server GAG ngukur idle dari gerakan karakter, bukan input mouse. jadi jump +
+                -- step kecil tiap 2 menit biar posisi berubah -> server anggap AKTIF (cegah 278).
+                local char = player.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hum and hrp then
+                    local ok = pcall(function()
+                        hum.Jump = true
+                        -- step kecil: geser dikit lalu balik (posisi berubah = aktivitas)
+                        local cf = hrp.CFrame
+                        hrp.CFrame = cf * CFrame.new(0, 0, -0.5)
+                        task.wait(0.1)
+                        hrp.CFrame = cf
+                    end)
+                    table.insert(methods_tried, ok and "MOVE✓" or "MOVE✗")
                 end
 
                 L("[anti-afk] tick#"..tickCount.." | "..table.concat(methods_tried, " ")
@@ -226,10 +275,10 @@ do
         end
         pcall(function() BH.saveMarketState(BH.marketState) end)
     end
-    -- v8.70: load anti-afk pref dari state (default true kalo gak ada)
-    if BH.marketState.antiAfkEnabled ~= nil then
-        antiAfkEnabled = BH.marketState.antiAfkEnabled
-    end
+    -- v8.320: PAKSA anti-afk ON selalu (cegah kick idle 278). abaikan state lama
+    -- yg mungkin ke-set false. anti-afk kritis biar akun ga ke-kick.
+    antiAfkEnabled = true
+    BH.marketState.antiAfkEnabled = true
 
     -- v8.127: centralized settings save — semua input/toggle bisa persist
     BH.marketState.settings = BH.marketState.settings or {}
