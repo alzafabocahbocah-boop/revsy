@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v41.0
+-- ZENX FARM  v41.1
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v41.0"
+local VER       = "v41.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5394,6 +5394,31 @@ Farm.buildScreenOverlay = function()
         end)
         return n
     end
+    -- v41.1: total value garden (buah sendiri) pakai harga NORMAL x1
+    local function gardenValueNormal()
+        local total = 0
+        pcall(function()
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            for _, plot in ipairs(gardens:GetChildren()) do
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
+                            local fruits = plant:FindFirstChild("Fruits")
+                            if fruits then
+                                for _, fruit in ipairs(fruits:GetChildren()) do
+                                    local v = Farm.fruitPrice and Farm.fruitPrice(fruit, true)  -- true = NORMAL x1
+                                    if type(v) == "number" then total = total + v end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        return total
+    end
     local function makeOverlay()
         local host2 = (gethui and gethui()) or game:GetService("CoreGui")
         pcall(function() local o = host2:FindFirstChild("ZenxOverlay"); if o then o:Destroy() end end)
@@ -5428,7 +5453,7 @@ Farm.buildScreenOverlay = function()
         local vPohon = row(6,  "pohon")
         local vKecil = row(36, "kecil")
         local vBesar = row(66, "besar")
-        local vGift  = row(96, "limit gift")
+        local vGift  = row(96, "value")
         xb.MouseButton1Click:Connect(function()
             og:Destroy()
             task.delay(30, function() Farm.buildScreenOverlay() end)   -- muncul lagi 30s
@@ -5444,7 +5469,7 @@ Farm.buildScreenOverlay = function()
                     local bc = (Farm.af2CountBigFruits and Farm.af2CountBigFruits(thr)) or Farm._af2BigCount or 0
                     vKecil.Text = tostring(sc)
                     vBesar.Text = tostring(bc).."/"..tostring(state.af2BigCap or 1000)
-                    vGift.Text = tostring(Farm._giftLeft or "-")   -- nanti disambung pas debug kelar
+                    vGift.Text = Farm.abbrev(gardenValueNormal())   -- v41.1: total value garden (normal)
                 end)
                 task.wait(1)
             end
