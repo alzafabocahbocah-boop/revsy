@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v39.3
+-- ZENX FARM  v40.6
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v39.3"
+local VER       = "v40.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -433,6 +433,10 @@ local state = {
     sellWeightF     = 0,        -- v10.9: filter berat sell (0=off, +N=di atas, -N=di bawah)
     debugLog      = false,      -- v7.7: print detail tiap siklus (default OFF, cegah console flood -> lag)
     autoShovel    = false,      -- v6.9: auto gali tanaman (shovel)
+    autoTrowel    = false,      -- v40.1: auto trowel (pindah pohon ke tengah plot)
+    trowelAll     = false,      -- v40.1: semua jenis pohon buat trowel
+    selectedTrowel = {},        -- v40.1: jenis pohon dipilih buat trowel
+    trowelPlot    = nil,        -- v40.1: plot tujuan (nama plot)
     autoSprinkler = false,      -- v8.0: auto taro sprinkler di garden
     sprClusterMode = false,     -- v8.1: false=deket jenis seed, true=di seed terbanyak
     selectedSprSeed = {},       -- v8.1: jenis seed yg dikasih sprinkler (multi)
@@ -458,6 +462,7 @@ local state = {
     selectedCollect2 = {},      -- v28.7: collect2
     selectedSell2    = {},      -- v28.7: sell2
     af2SelectedPlots = {},      -- v29.2: plot picker buat WC + Sprinkler AF2
+    af2AllPlots     = true,     -- v39.8: default pakai SEMUA plot (sampai user pilih spesifik)
     af2SavedPos = {},           -- v31.1: posisi tersimpan {plotId, x, y, z}
     selectedCollectMut = {},    -- v5.9: filter mutasi collect
     collectMutExcept   = false, -- v34.7: var kerja internal (di-set dari c2MutExcept pas siklus Collect 2)
@@ -472,6 +477,7 @@ local state = {
     collectNoMut    = false,    -- v22.6: ikut ambil buah TANPA mutasi (default off)
     sellMutAll      = true,     -- sell semua mutasi
     sellNoMut       = false,    -- v33.9: ikut JUAL buah TANPA mutasi walau filter mutasi aktif (cermin collectNoMut)
+    sellNonMutOnly  = false,    -- v39.9: toggle mandiri - jual SEMUA buah non-mutasi per-buah (ga perlu autoSell)
     selectedPlant   = {},       -- plant seed
     allPlantSeed    = true,      -- tanam semua seed (allKey terpisah dari buy seed)
     selectedPetType = {},       -- jenis pet (PetName)
@@ -537,7 +543,7 @@ local state = {
     collectMinM     = 5,          -- v37.3: default min value 5 juta (M)
     collectMaxM     = 999999,     -- v37.1: range value max (juta M)
     collectDone     = 0,          -- v37.1: counter buah ke-collect (sesi ini)
-    gfValueMarket   = true,      -- v22.9: target ikut harga pasar (true) atau normal x1 (false)
+    gfValueMarket   = false,     -- v40.2: default NORMAL x1 (dulu true=pasar). target ikut harga normal.
     gfStorageTarget = "",        -- v21.7: akun simpanan (dipisah koma; dialihin kalau pet udah cukup)
     gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
     gfPrioMinVal    = 3000000,   -- v24.0: min nilai buah utk "Kirim Semua Kesini Dulu" (default 3M, bisa diatur)
@@ -573,7 +579,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora","Ignited"}
-local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -633,6 +639,14 @@ local function saveState()
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
+        -- v40.3: setting popup MAIL kirim buah (biar gak balik default pas tutup/rejoin).
+        -- mailTarget SENGAJA gak disave antar-rejoin (kayak giftTarget, anti salah kirim),
+        -- tapi tetep kesimpen di state selama sesi (buka-tutup popup aman).
+        out.mailFruit = state.mailFruit or ""
+        out.mailTotalM = state.mailTotalM or "3M"
+        out.mailMarket = state.mailMarket
+        out.mailMinV = state.mailMinV or ""
+        out.mailMaxV = state.mailMaxV or ""
         for _, k in ipairs(SETBOOL) do out[k] = state[k] end
         for k in pairs(SETMAP) do
             local arr = {}; for n in pairs(state[k]) do arr[#arr+1] = n end
@@ -1121,12 +1135,16 @@ function Farm.setHideFruits(on)
             local plants = plot:FindFirstChild("Plants")
             if plants then
                 for _, plant in ipairs(plants:GetChildren()) do
-                    local fr = plant:FindFirstChild("Fruits")
-                    if fr then
-                        for _, fruit in ipairs(fr:GetChildren()) do
-                            Farm.hideFruitParts(fruit, on)
-                            cnt = cnt + 1
-                            if cnt % 30 == 0 then task.wait() end  -- napas tiap 30 buah
+                    -- v39.5: CUMA kebun sendiri (prefix userId). dulu ke-detect kebun orang.
+                    local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                    if ownerId == player.UserId then
+                        local fr = plant:FindFirstChild("Fruits")
+                        if fr then
+                            for _, fruit in ipairs(fr:GetChildren()) do
+                                Farm.hideFruitParts(fruit, on)
+                                cnt = cnt + 1
+                                if cnt % 30 == 0 then task.wait() end  -- napas tiap 30 buah
+                            end
                         end
                     end
                 end
@@ -1202,19 +1220,22 @@ function Farm.scanHideBigFruits(on)
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
-                local seedName = plant:GetAttribute("SeedName") or plant.Name
-                local fr = plant:FindFirstChild("Fruits")
-                if fr then
-                    for _, fruit in ipairs(fr:GetChildren()) do
-                        if on then
-                            local kg = Farm.gardenKg(fruit, seedName) or 0
-                            -- >= thr: ilangin. < thr: balikin kalau sempet ke-hide (mis. threshold dinaikin)
-                            Farm.hideBigFruitParts(fruit, kg >= thr)
-                        else
-                            Farm.hideBigFruitParts(fruit, false)   -- restore (cuma yg bertanda ZenxOrigTB)
+                -- v39.5: CUMA kebun sendiri (prefix userId di nama plant). dulu ke-detect kebun orang.
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if ownerId == player.UserId then
+                    local seedName = plant:GetAttribute("SeedName") or plant.Name
+                    local fr = plant:FindFirstChild("Fruits")
+                    if fr then
+                        for _, fruit in ipairs(fr:GetChildren()) do
+                            if on then
+                                local kg = Farm.gardenKg(fruit, seedName) or 0
+                                Farm.hideBigFruitParts(fruit, kg >= thr)
+                            else
+                                Farm.hideBigFruitParts(fruit, false)
+                            end
+                            cnt = cnt + 1
+                            if cnt % 30 == 0 then task.wait() end
                         end
-                        cnt = cnt + 1
-                        if cnt % 30 == 0 then task.wait() end  -- napas biar ga freeze
                     end
                 end
             end
@@ -2577,6 +2598,40 @@ function Farm.sellOnce()
     end
 end
 
+-- v39.9: JUAL SEMUA BUAH NON-MUTASI (per-buah). toggle mandiri, ga perlu autoSell.
+-- loop: scan buah, yg getMutation==nil -> SellFruit:Fire(id) satu-satu.
+function Farm.startSellNonMutLoop()
+    if Farm._sellNonMutOn then return end
+    Farm._sellNonMutOn = true
+    task.spawn(function()
+        local myGen = Farm._espGen  -- ikut generasi biar mati pas gen ganti
+        while state.sellNonMutOnly and isCurrentGen() do
+            local p = pkt("NPCS", "SellFruit")
+            if p and p.Fire then
+                for _, holder in ipairs(getFruitHolders()) do
+                    if not state.sellNonMutOnly then break end
+                    for _, o in ipairs(holder:GetChildren()) do
+                        if not state.sellNonMutOnly then break end
+                        local id = o:GetAttribute("Id")
+                        -- cuma buah non-mutasi (getMutation nil)
+                        if id and getMutation(o) == nil then
+                            local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
+                            if fj then   -- pastiin ini buah (bukan tool lain)
+                                pcall(function() p:Fire(tostring(id)) end)
+                                task.wait(0.08)   -- jual per-buah, jeda kecil
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(1)   -- ulang scan (buah baru non-mutasi ikut kejual)
+        end
+        Farm._sellNonMutOn = false
+        print("[ZenxFarm] sell non-mutasi loop: OFF")
+    end)
+    print("[ZenxFarm] sell non-mutasi loop: ON (jual semua buah polos per-buah)")
+end
+
 -- ===== BUY SEED: borong SEMUA seed (SeedData) - server auto-tolak yg habis =====
 -- gak perlu baca stock / buka SeedShop. fire tiap nama seed; yg ada stock kebeli,
 -- yg habis ditolak server. seed baru pas restock otomatis kebeli.
@@ -2880,6 +2935,14 @@ local function applyGfDefaults()
     print("[ZenxFarm] default gift fruit: semua buah + kirim terus")
 end
 applyGfDefaults()
+
+-- v40.2: PAKSA default harga gift buah ke NORMAL (x1) sekali. dulu default PASAR.
+if not state.gfNormalPriceV1 then
+    state.gfNormalPriceV1 = true
+    state.gfValueMarket = false   -- harga NORMAL x1
+    saveState()
+    print("[ZenxFarm] default harga gift: NORMAL (x1)")
+end
 
 -- v19.1: batas sheckles gift -> 300M (sekali apply)
 if not state.gfDefaultsV2 then
@@ -4945,6 +5008,112 @@ function Farm.shovelFruitOnce()
     end
     if removed > 0 then dprint(string.format("[ZenxFarm] shovelFruit: %d buah <%.2fkg dibuang", removed, thr)) end
 end
+
+-- v40.1: AUTO TROWEL - pindahin pohon jenis terpilih ke TENGAH plot (numpuk 1 titik).
+-- remote (dari debug): Trowel.MovePlant. balasan Garden.PlantMoved (userId, uuid, Vector3, rotasi).
+-- fire format: MovePlant(uuid, posisiVector3, rotasi).
+-- tengah plot = PlotSizeReference. jenis seed auto-detect dari kebun.
+Farm.trowelSeedList = function()
+    local set = {}
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
+                        local sn = plant:GetAttribute("SeedName")
+                        if sn then set[sn] = true end
+                    end
+                end
+            end
+        end
+    end)
+    local list = {}
+    for k in pairs(set) do list[#list+1] = k end
+    table.sort(list)
+    return list
+end
+
+-- ambil posisi tengah plot yg dipilih (label = nama plot). pakai af2PlotList/LabelToPos
+-- yg udah ada, tapi buat trowel tengah plot pakai PlotSizeReference lgsg.
+Farm.trowelPlotCenter = function()
+    -- return {label=Vector3} plot milik sendiri (tengah = PlotSizeReference)
+    local out = {}
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        for _, plot in ipairs(gardens:GetChildren()) do
+            -- plot punya tanaman sendiri?
+            local plants = plot:FindFirstChild("Plants")
+            local mine = false
+            if plants then
+                for _, pl in ipairs(plants:GetChildren()) do
+                    if tonumber(pl.Name:match("^(%d+)_")) == player.UserId then mine = true; break end
+                end
+            end
+            if mine then
+                local ref = plot:FindFirstChild("PlotSizeReference")
+                if ref and ref:IsA("BasePart") then
+                    out[plot.Name] = ref.Position
+                end
+            end
+        end
+    end)
+    return out
+end
+
+Farm.trowelOnce = function()
+    local p = pkt("Trowel", "MovePlant")
+    if not p or not p.Fire then print("[ZenxFarm] trowel: remote Trowel.MovePlant gak ada"); return end
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return end
+    -- tentuin posisi tujuan: tengah plot terpilih
+    local centers = Farm.trowelPlotCenter()
+    local target = nil
+    -- kalau ada plot dipilih (state.trowelPlot), pakai itu. else plot pertama.
+    if state.trowelPlot and centers[state.trowelPlot] then
+        target = centers[state.trowelPlot]
+    else
+        for _, pos in pairs(centers) do target = pos; break end
+    end
+    if not target then print("[ZenxFarm] trowel: ga ada plot tujuan"); return end
+    -- equip trowel tool
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local tool
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then for _, t in ipairs(h:GetChildren()) do
+            if t:IsA("Tool") and t.Name:lower():find("trowel") then tool = t; break end
+        end end
+        if tool then break end
+    end
+    if tool and tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
+    -- pindahin semua pohon jenis terpilih ke target (numpuk 1 titik)
+    local moved = 0
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if not state.autoTrowel then break end
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if ownerId == player.UserId then
+                    local sn = plant:GetAttribute("SeedName") or "?"
+                    local okType = state.trowelAll or (state.selectedTrowel and state.selectedTrowel[sn] == true)
+                    if okType then
+                        -- uuid = bagian nama setelah "userId_"
+                        local uuid = plant.Name:match("^%d+_(.+)$") or plant.Name
+                        pcall(function() p:Fire(uuid, target, 0) end)
+                        moved = moved + 1
+                        task.wait(0.1)   -- jeda antar-pindah
+                    end
+                end
+            end
+        end
+    end
+    if moved > 0 then print("[ZenxFarm] trowel: "..moved.." pohon dipindah ke tengah plot") end
+end
 staggerSpawn(function()
     while isCurrentGen() do
         pcall(function()
@@ -5191,6 +5360,90 @@ Farm.buildFarm2Btn = function()
     syncFarm2()
 end
 Farm.buildFarm2Btn()
+
+-- v40.0: OVERLAY LAYAR - counter melayang di pojok kanan atas (di luar GUI script).
+-- baris: pohon (Dragon's Breath), kecil, besar, limit gift. teks putih, bg hitam,
+-- ada X buat hapus -> muncul lagi 30 detik setelah tiap kali dihapus.
+Farm.buildScreenOverlay = function()
+    -- hitung tanaman Dragon's Breath di kebun sendiri
+    local function countDragon()
+        local n = 0
+        pcall(function()
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            for _, plot in ipairs(gardens:GetChildren()) do
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
+                            local sn = plant:GetAttribute("SeedName") or ""
+                            if sn:lower():find("dragon", 1, true) then n = n + 1 end
+                        end
+                    end
+                end
+            end
+        end)
+        return n
+    end
+    local function makeOverlay()
+        local host2 = (gethui and gethui()) or game:GetService("CoreGui")
+        pcall(function() local o = host2:FindFirstChild("ZenxOverlay"); if o then o:Destroy() end end)
+        local og = Instance.new("ScreenGui")
+        og.Name = "ZenxOverlay"; og.ResetOnSpawn = false; og.IgnoreGuiInset = true
+        pcall(function() og.Parent = host2 end)
+        if not og.Parent then og.Parent = player:WaitForChild("PlayerGui") end
+        local box = Instance.new("Frame")
+        box.Size = UDim2.new(0, 160, 0, 104)
+        box.Position = UDim2.new(1, -172, 0, 12)   -- pojok kanan atas
+        box.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        box.BackgroundTransparency = 0.15
+        box.BorderSizePixel = 0; box.Active = true; box.Parent = og
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+        local xb = Instance.new("TextButton")
+        xb.Size = UDim2.new(0, 18, 0, 18); xb.Position = UDim2.new(1, -20, 0, 3)
+        xb.BackgroundTransparency = 1; xb.Text = "x"; xb.TextColor3 = Color3.fromRGB(255,255,255)
+        xb.Font = Enum.Font.GothamBold; xb.TextSize = 14; xb.Parent = box
+        local function row(y, label)
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(0.5, -8, 0, 22); l.Position = UDim2.new(0, 10, 0, y)
+            l.BackgroundTransparency = 1; l.Text = label; l.TextColor3 = Color3.fromRGB(255,255,255)
+            l.Font = Enum.Font.Gotham; l.TextSize = 12; l.TextXAlignment = Enum.TextXAlignment.Left
+            l.Parent = box
+            local v = Instance.new("TextLabel")
+            v.Size = UDim2.new(0.5, -10, 0, 22); v.Position = UDim2.new(0.5, 0, 0, y)
+            v.BackgroundTransparency = 1; v.Text = "-"; v.TextColor3 = Color3.fromRGB(255,255,255)
+            v.Font = Enum.Font.GothamBold; v.TextSize = 12; v.TextXAlignment = Enum.TextXAlignment.Right
+            v.Parent = box
+            return v
+        end
+        local vPohon = row(4,  "pohon")
+        local vKecil = row(26, "kecil")
+        local vBesar = row(48, "besar")
+        local vGift  = row(70, "limit gift")
+        xb.MouseButton1Click:Connect(function()
+            og:Destroy()
+            task.delay(30, function() Farm.buildScreenOverlay() end)   -- muncul lagi 30s
+        end)
+        -- update loop
+        task.spawn(function()
+            while og.Parent do
+                pcall(function()
+                    vPohon.Text = tostring(countDragon())
+                    -- hitung kecil/besar langsung (biar update walau AF2 off)
+                    local thr = math.abs(state.c2WeightF or 50)
+                    local sc = (Farm.af2CountSmallFruits and Farm.af2CountSmallFruits(thr)) or Farm._af2SmallCount or 0
+                    local bc = (Farm.af2CountBigFruits and Farm.af2CountBigFruits(thr)) or Farm._af2BigCount or 0
+                    vKecil.Text = tostring(sc)
+                    vBesar.Text = tostring(bc).."/"..tostring(state.af2BigCap or 1000)
+                    vGift.Text = tostring(Farm._giftLeft or "-")   -- nanti disambung pas debug kelar
+                end)
+                task.wait(1)
+            end
+        end)
+    end
+    makeOverlay()
+end
+Farm.buildScreenOverlay()
 
 local function titleBtn(x, txt, col, w)
     local b = mk("TextButton", {
@@ -5603,6 +5856,52 @@ Farm._mailRanges = {
 -- kirim buah via MAILBOX (SendBatch). filter jenis + range nilai/buah, kumpulin kombinasi sampai >= target.
 Farm._mailSent = Farm._mailSent or {}   -- fid yg udah dikirim sesi ini (biar ga dobel/ulang)
 Farm._mailSentVal = Farm._mailSentVal or {}   -- v32.5: fid -> value yg keitung terkirim (buat reconcile bounce)
+
+-- v40.5: HISTORY GIFT. 1 entry per PENERIMA, nilai + jumlah buah diakumulasi tiap cycle.
+-- kesave ke file (tetap ada walau rejoin). ada tombol RESET.
+-- dibungkus Farm.* biar ga nambah local ke main chunk (Luau limit 200).
+Farm._giftHist = Farm._giftHist or {}   -- { {name=, val=, count=, time=} , ... }
+Farm._giftHistFile = "ZenxFarm_gifthist.json"
+Farm.loadGiftHist = function()
+    pcall(function()
+        if isfile and readfile and isfile(Farm._giftHistFile) then
+            local raw = readfile(Farm._giftHistFile)
+            local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+            if ok and type(data) == "table" then Farm._giftHist = data end
+        end
+    end)
+end
+Farm.loadGiftHist()
+Farm.saveGiftHist = function()
+    pcall(function()
+        if not writefile then return end
+        local raw = game:GetService("HttpService"):JSONEncode(Farm._giftHist)
+        writefile(Farm._giftHistFile, raw)
+    end)
+end
+-- tambah/akumulasi ke entry penerima yg sama. addVal & addCount = tambahan cycle ini.
+function Farm.addGiftHist(name, addVal, addCount)
+    if not name or name == "" then return end
+    if not addVal or addVal <= 0 then return end
+    local now = os.time()
+    local found = nil
+    for _, e in ipairs(Farm._giftHist) do
+        if e.name == name then found = e; break end
+    end
+    if found then
+        found.val = (found.val or 0) + addVal
+        found.count = (found.count or 0) + (addCount or 0)
+        found.time = now
+    else
+        table.insert(Farm._giftHist, 1, { name=name, val=addVal, count=(addCount or 0), time=now })
+    end
+    Farm.saveGiftHist()
+end
+function Farm.resetGiftHist()
+    Farm._giftHist = {}
+    Farm.saveGiftHist()
+end
+
 function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     local sb = pkt("Mailbox", "SendBatch")
     if not sb or not sb.Fire then return false, "Mailbox SendBatch gak ada" end
@@ -5675,6 +5974,69 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     return true, sentN, cumVal()
 end
 
+-- v40.5: GUI HISTORY GIFT - lebar, list entry (waktu+penerima+buah+nilai), tombol reset+close.
+function Farm.showGiftHistory()
+    local host2 = (gethui and gethui()) or game:GetService("CoreGui")
+    pcall(function() local o = host2:FindFirstChild("ZenxGiftHist"); if o then o:Destroy() end end)
+    local hg = Instance.new("ScreenGui")
+    hg.Name = "ZenxGiftHist"; hg.ResetOnSpawn = false; hg.IgnoreGuiInset = true; hg.DisplayOrder = 100
+    pcall(function() hg.Parent = host2 end)
+    if not hg.Parent then hg.Parent = player:WaitForChild("PlayerGui") end
+    local pop = mk("Frame", { Size=UDim2.new(0,460,0,420), Position=UDim2.new(0.5,-230,0.5,-210),
+        BackgroundColor3=C.bg, BorderSizePixel=0, Active=true, Parent=hg }); corner(pop,10); stroke(pop,C.border,1)
+    local hbar = mk("Frame", { Size=UDim2.new(1,0,0,38), BackgroundColor3=C.card, BorderSizePixel=0, Parent=pop }); corner(hbar,10)
+    local ht = lbl(hbar, "HISTORY GIFT", 14, C.text, Enum.TextXAlignment.Left); ht.Position=UDim2.new(0,14,0,0); ht.Size=UDim2.new(1,-160,1,0)
+    local hcl = mk("TextButton", { Size=UDim2.new(0,28,0,28), Position=UDim2.new(1,-34,0,5), BackgroundColor3=C.red, Text="x", TextColor3=C.text, Font=FONT_B, TextSize=13, BorderSizePixel=0, Parent=hbar }); corner(hcl,6)
+    hcl.MouseButton1Click:Connect(function() hg:Destroy() end)
+    local resetBtn = mk("TextButton", { Size=UDim2.new(0,60,0,24), Position=UDim2.new(1,-100,0,7), BackgroundColor3=Color3.fromRGB(120,50,50), Text="RESET", TextColor3=C.text, Font=FONT_B, TextSize=11, BorderSizePixel=0, Parent=hbar }); corner(resetBtn,5)
+    -- list scroll
+    local list = mk("ScrollingFrame", { Size=UDim2.new(1,-16,1,-52), Position=UDim2.new(0,8,0,44),
+        BackgroundColor3=C.card, BorderSizePixel=0, ScrollBarThickness=5, CanvasSize=UDim2.new(0,0,0,0),
+        AutomaticCanvasSize=Enum.AutomaticSize.Y, Parent=pop }); corner(list,8)
+    mk("UIListLayout", { Padding=UDim.new(0,4), SortOrder=Enum.SortOrder.LayoutOrder, Parent=list })
+    mk("UIPadding", { PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6), Parent=list })
+    local function fmtTime(t)
+        if not t then return "-" end
+        local ok, s = pcall(function() return os.date("%d/%m %H:%M", t) end)
+        return ok and s or "-"
+    end
+    local function refresh()
+        for _, c in ipairs(list:GetChildren()) do
+            if c:IsA("Frame") then c:Destroy() end
+        end
+        local hist = Farm._giftHist or {}
+        if #hist == 0 then
+            local empty = mk("Frame", { Size=UDim2.new(1,0,0,40), BackgroundTransparency=1, LayoutOrder=1, Parent=list })
+            lbl(empty, "belum ada history gift", 12, C.textDim, Enum.TextXAlignment.Center).Size = UDim2.new(1,0,1,0)
+            return
+        end
+        for i, e in ipairs(hist) do
+            local row = mk("Frame", { Size=UDim2.new(1,0,0,44), BackgroundColor3=C.input, BorderSizePixel=0, LayoutOrder=i, Parent=list }); corner(row,6)
+            local nm = lbl(row, e.name or "?", 13, C.text, Enum.TextXAlignment.Left)
+            nm.Position=UDim2.new(0,10,0,4); nm.Size=UDim2.new(0.5,0,0,20)
+            local tm = lbl(row, fmtTime(e.time), 10, C.textDim, Enum.TextXAlignment.Left)
+            tm.Position=UDim2.new(0,10,0,24); tm.Size=UDim2.new(0.5,0,0,16)
+            local val = lbl(row, Farm.abbrev(e.val or 0), 14, C.green, Enum.TextXAlignment.Right)
+            val.Position=UDim2.new(0.5,-10,0,4); val.Size=UDim2.new(0.5,0,0,20)
+            local cnt = lbl(row, (e.count or 0).." buah", 10, C.textDim, Enum.TextXAlignment.Right)
+            cnt.Position=UDim2.new(0.5,-10,0,24); cnt.Size=UDim2.new(0.5,0,0,16)
+        end
+    end
+    resetBtn.MouseButton1Click:Connect(function()
+        Farm.resetGiftHist(); refresh()
+    end)
+    refresh()
+    -- auto-refresh tiap 2s (biar keliatan update pas gift jalan)
+    task.spawn(function()
+        while hg.Parent do refresh(); task.wait(2) end
+    end)
+    -- drag
+    local drag,ds,sp
+    hbar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=true; ds=i.Position; sp=pop.Position end end)
+    hbar.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then drag=false end end)
+    UIS.InputChanged:Connect(function(i) if drag and (i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch) then local d=i.Position-ds; pop.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y) end end)
+end
+
 local function showMailGift()
     local old = sg:FindFirstChild("ZenxMailGift"); if old then old:Destroy() end
     local function parseN(txt)
@@ -5694,6 +6056,11 @@ local function showMailGift()
     -- hitung sama kayak panel KALKULASI: jumlah semua tool buah pakai Farm.fruitPrice (harga pasar)
     local shLbl = lbl(hbar, "[buah] ...", 12, C.green, Enum.TextXAlignment.Right)
     shLbl.Position = UDim2.new(1,-168,0,0); shLbl.Size = UDim2.new(0,130,1,0); shLbl.ZIndex = 72
+    -- v40.5: tombol HISTORY di header (kiri shLbl)
+    local histBtn = mk("TextButton", { Size=UDim2.new(0,66,0,22), Position=UDim2.new(0.5,-33,0.5,-11),
+        BackgroundColor3=Color3.fromRGB(60,90,120), Text="History", TextColor3=C.text, Font=FONT_B, TextSize=11,
+        BorderSizePixel=0, ZIndex=73, Parent=hbar }); corner(histBtn,6)
+    histBtn.MouseButton1Click:Connect(function() Farm.showGiftHistory() end)
     task.spawn(function()
         while pop.Parent do
             local totN, totV = 0, 0
@@ -5714,8 +6081,9 @@ local function showMailGift()
     local function mkBox(y,def,ph) local b=mk("TextBox",{ Size=UDim2.new(1,-138,0,28), Position=UDim2.new(0,124,0,y-2), BackgroundColor3=C.input, Text=def or "", PlaceholderText=ph or "", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1); return b end
 
     mkLabel("Penerima",48);      local recBox = mkBox(48, state.mailTarget or "", "ketik nama akun")
+    recBox.FocusLost:Connect(function() state.mailTarget = recBox.Text; saveState() end)  -- v40.3: save penerima
     -- marketOn dideklarasi DULU biar bisa dipake picker buah (harga ikut toggle)
-    local marketOn = (state.mailMarket ~= false)
+    local marketOn = (state.mailMarket == true)   -- v40.3: default NORMAL (dulu default PASAR)
 
     -- ===== Jenis buah: PICKER dari inventory (nama + jumlah + harga total) =====
     mkLabel("Jenis buah",84)
@@ -5728,7 +6096,7 @@ local function showMailGift()
         CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=90, Parent=pop }); corner(frDD,6); stroke(frDD,C.border,1)
     mk("UIListLayout", { Padding=UDim.new(0,2), SortOrder=Enum.SortOrder.LayoutOrder, Parent=frDD })
     mk("UIPadding", { PaddingTop=UDim.new(0,3),PaddingBottom=UDim.new(0,3),PaddingLeft=UDim.new(0,3),PaddingRight=UDim.new(0,3), Parent=frDD })
-    local function pickFruit(nm, label) selFruit=nm; frBtn.Text=(nm=="" and "Semua  v" or (label or nm).."  v"); frDD.Visible=false end
+    local function pickFruit(nm, label) selFruit=nm; state.mailFruit=nm; saveState(); frBtn.Text=(nm=="" and "Semua  v" or (label or nm).."  v"); frDD.Visible=false end
     local function buildFruitDD()
         for _,c in ipairs(frDD:GetChildren()) do if c:IsA("TextButton") or c:IsA("TextLabel") then c:Destroy() end end
         local agg = {}
@@ -5762,10 +6130,11 @@ local function showMailGift()
     frBtn.MouseButton1Click:Connect(function() frDD.Visible=not frDD.Visible; if frDD.Visible then buildFruitDD() end end)
 
     mkLabel("Target (juta)",120); local tgtBox = mkBox(120, state.mailTotalM or "3M", "cth 1500 = 1.5B")
+    tgtBox.FocusLost:Connect(function() state.mailTotalM = tgtBox.Text; saveState() end)  -- v40.3: save target
 
     local mkBtn = mk("TextButton", { Size=UDim2.new(0,124,0,26), Position=UDim2.new(0,14,0,154), BackgroundColor3=C.input, Text="", TextColor3=C.text, Font=FONT_B, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(mkBtn,6); stroke(mkBtn,C.border,1)
     local function updMk() mkBtn.Text="Harga: "..(marketOn and "PASAR" or "NORMAL x1") end
-    updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn=not marketOn; updMk() end)
+    updMk(); mkBtn.MouseButton1Click:Connect(function() marketOn=not marketOn; state.mailMarket=marketOn; saveState(); updMk() end)
 
     -- v31.6: toggle Akun Penyimpanan (storageMode) - sama kayak di Kalku Gift.
     -- ON = akun ini cuma TERIMA gift, gak ikut auto-gift kayak farm.
@@ -5806,21 +6175,42 @@ local function showMailGift()
     local minBox = mk("TextBox", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,124,0,188),
         BackgroundColor3=C.input, Text=state.mailMinV or "", PlaceholderText="min", TextColor3=C.text,
         Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(minBox,6); stroke(minBox,C.border,1)
+    minBox.FocusLost:Connect(function() state.mailMinV = minBox.Text; saveState() end)  -- v40.3: save min
     local dashL = lbl(pop, "-", 14, C.textDim, Enum.TextXAlignment.Center)
     dashL.Position=UDim2.new(0,218,0,188); dashL.Size=UDim2.new(0,18,0,28); dashL.ZIndex=72
     local maxBox = mk("TextBox", { Size=UDim2.new(0,90,0,28), Position=UDim2.new(0,238,0,188),
         BackgroundColor3=C.input, Text=state.mailMaxV or "", PlaceholderText="max", TextColor3=C.text,
         Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(maxBox,6); stroke(maxBox,C.border,1)
+    maxBox.FocusLost:Connect(function() state.mailMaxV = maxBox.Text; saveState() end)  -- v40.3: save max
     local rvHint = lbl(pop, "kosong = tanpa batas.  cth: min 3, max 8 = buah 3M-8M", 10, C.textMute, Enum.TextXAlignment.Left)
     rvHint.Position=UDim2.new(0,14,0,222); rvHint.Size=UDim2.new(1,-28,0,16); rvHint.ZIndex=72
 
     local out = lbl(pop, "isi penerima, jenis buah, target & range -> KIRIM (auto sampai target, lewat mailbox)", 11, C.textDim, Enum.TextXAlignment.Left)
     out.Position=UDim2.new(0,14,0,292); out.Size=UDim2.new(1,-28,0,32); out.ZIndex=72; out.TextWrapped=true
     local sendBtn = mk("TextButton", { Size=UDim2.new(1,-28,0,30), Position=UDim2.new(0,14,0,254), BackgroundColor3=Color3.fromRGB(240,240,240), Text="KIRIM (auto)", TextColor3=Color3.new(0,0,0), Font=FONT_B, TextSize=13, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(sendBtn,6)
-    local running = false
-    local function stopRun() running=false; sendBtn.Text="KIRIM (auto)"; sendBtn.BackgroundColor3=Color3.fromRGB(240,240,240) end
+    -- v40.4: state loop DIPINDAH ke global (Farm._mail*) biar loop TERUS jalan walau popup ditutup.
+    local function stopRun() Farm._mailRunning=false; sendBtn.Text="KIRIM (auto)"; sendBtn.BackgroundColor3=Color3.fromRGB(240,240,240) end
+    -- restore tampilan tombol kalau loop lagi jalan pas popup dibuka
+    if Farm._mailRunning then sendBtn.Text="STOP (auto jalan)"; sendBtn.BackgroundColor3=Color3.fromRGB(220,150,60) end
+    -- loop status live -> update tombol + out text pas popup kebuka
+    task.spawn(function()
+        while pop.Parent do
+            if Farm._mailRunning then
+                sendBtn.Text="STOP (auto jalan)"; sendBtn.BackgroundColor3=Color3.fromRGB(220,150,60)
+                if Farm._mailStatus then out.Text = Farm._mailStatus; out.TextColor3 = Farm._mailStatusCol or C.textDim end
+            end
+            -- v40.6: target selesai -> kosongin kotak Penerima (ketik ulang lagi)
+            if Farm._mailClearRecv then
+                Farm._mailClearRecv = false
+                recBox.Text = ""
+                sendBtn.Text="KIRIM (auto)"; sendBtn.BackgroundColor3=Color3.fromRGB(240,240,240)
+                if Farm._mailStatus then out.Text = Farm._mailStatus; out.TextColor3 = Farm._mailStatusCol or C.green end
+            end
+            task.wait(0.5)
+        end
+    end)
     sendBtn.MouseButton1Click:Connect(function()
-        if running then stopRun(); return end   -- pencet lagi = STOP
+        if Farm._mailRunning then stopRun(); return end   -- pencet lagi = STOP
         local target = recBox.Text:gsub("^%s+",""):gsub("%s+$","")
         local fruit  = selFruit
         local tot    = parseVal(tgtBox.Text, nil)   -- v31.9: angka polos = JUTA (samain sama Range). "1500" & "1500m" sama2 = 1.5B
@@ -5833,50 +6223,60 @@ local function showMailGift()
         if loV > hiV then loV, hiV = hiV, loV end
         Farm._mailSent = {}
         Farm._mailSentVal = {}   -- v32.5: reset total terkirim tiap sesi baru
-        local sessionSent = 0
-        running = true
+        Farm._mailSessionSent = 0
+        Farm._mailPrevCumV = 0   -- v40.5: reset tracker delta history
+        Farm._mailPrevCumN = 0
+        Farm._mailRunning = true
         sendBtn.Text="STOP (auto jalan)"; sendBtn.BackgroundColor3=Color3.fromRGB(220,150,60)
+        -- loop GLOBAL (ga cek pop.Parent) - terus jalan walau popup ditutup
         task.spawn(function()
-            while running and pop.Parent do
-                -- v28.5: wrap pcall biar coroutine ga mati diam2 (resolveTargetId bisa throw)
+            while Farm._mailRunning do
                 local ok2, err2 = pcall(function()
-                    local remaining = tot - sessionSent
+                    local remaining = tot - Farm._mailSessionSent
                     if remaining <= 0 then
-                        out.Text = "SELESAI v  terkirim "..Farm.abbrev(sessionSent).." / "..Farm.abbrev(tot).." ke "..target
-                        out.TextColor3 = C.green; stopRun(); return
+                        Farm._mailStatus = "SELESAI  terkirim "..Farm.abbrev(Farm._mailSessionSent).." / "..Farm.abbrev(tot).." ke "..target
+                        Farm._mailStatusCol = C.green; Farm._mailRunning=false; Farm._mailClearRecv=true; state.mailTarget=""; return
                     end
                     local ok, cnt, cumv, cumn = Farm.mailGiftSend(target, fruit, loV, hiV, remaining, marketOn)
-                    if type(cumv) == "number" then sessionSent = cumv end   -- v32.5: total terkirim JUJUR (turun kalau ada bounce)
-                    local nInfo = (type(cumn) == "number") and (" ("..cumn.." buah)") or ""   -- v32.6: jumlah buah kekirim
-                    if sessionSent >= tot then
-                        out.Text = "SELESAI v  terkirim "..Farm.abbrev(sessionSent)..nInfo.." / "..Farm.abbrev(tot).." ke "..target
-                        out.TextColor3 = C.green; stopRun(); return
+                    if type(cumv) == "number" then
+                        -- v40.5: catat history - delta nilai/buah cycle ini (akumulasi per penerima)
+                        local prevV = Farm._mailPrevCumV or 0
+                        local prevN = Farm._mailPrevCumN or 0
+                        local dV = cumv - prevV
+                        local dN = (type(cumn)=="number") and (cumn - prevN) or 0
+                        if dV > 0 then pcall(function() Farm.addGiftHist(target, dV, dN) end) end
+                        Farm._mailPrevCumV = cumv
+                        Farm._mailPrevCumN = cumn or prevN
+                        Farm._mailSessionSent = cumv
+                    end
+                    local nInfo = (type(cumn) == "number") and (" ("..cumn.." buah)") or ""
+                    if Farm._mailSessionSent >= tot then
+                        Farm._mailStatus = "SELESAI  terkirim "..Farm.abbrev(Farm._mailSessionSent)..nInfo.." / "..Farm.abbrev(tot).." ke "..target
+                        Farm._mailStatusCol = C.green; Farm._mailRunning=false; Farm._mailClearRecv=true; state.mailTarget=""; return
                     end
                     if ok and (cnt or 0) > 0 then
-                        out.Text = "AUTO: "..Farm.abbrev(sessionSent)..nInfo.." / "..Farm.abbrev(tot).."   kurang "..Farm.abbrev(math.max(0,tot-sessionSent))
-                        out.TextColor3 = Color3.new(1,1,1)
+                        Farm._mailStatus = "AUTO: "..Farm.abbrev(Farm._mailSessionSent)..nInfo.." / "..Farm.abbrev(tot).."   kurang "..Farm.abbrev(math.max(0,tot-Farm._mailSessionSent))
+                        Farm._mailStatusCol = Color3.new(1,1,1)
                     else
                         if cnt and (tostring(cnt):find("ketemu") or tostring(cnt):find("kosong") or tostring(cnt):find("Mailbox")) then
-                            out.Text = "stop: "..tostring(cnt); out.TextColor3 = C.red; stopRun(); return
+                            Farm._mailStatus = "stop: "..tostring(cnt); Farm._mailStatusCol = C.red; Farm._mailRunning=false; return
                         end
-                        out.Text = "nunggu buah baru...  "..Farm.abbrev(sessionSent)..nInfo.." / "..Farm.abbrev(tot); out.TextColor3 = C.textDim
+                        Farm._mailStatus = "nunggu buah baru...  "..Farm.abbrev(Farm._mailSessionSent)..nInfo.." / "..Farm.abbrev(tot); Farm._mailStatusCol = C.textDim
                     end
                 end)
                 if not ok2 then
-                    -- error (mis. resolveTargetId gagal) -> jangan mati, coba lagi nanti
-                    out.Text = "error sementara, coba lagi..."; out.TextColor3 = C.textMute
+                    Farm._mailStatus = "error sementara, coba lagi..."; Farm._mailStatusCol = C.textMute
                 end
-                -- v32.4: countdown sebelum kirim lagi (real-time, 1s/detik), nempel di status.
-                -- total spasi antar-Fire tetap ~11s (1s verifikasi di mailGiftSend + 10s ini) = aman cooldown.
-                if running and pop.Parent then
-                    local base = out.Text
+                -- countdown antar kirim (~11s total cooldown)
+                if Farm._mailRunning then
                     for n = 10, 1, -1 do
-                        if not (running and pop.Parent) then break end
-                        out.Text = base .. "   -  kirim lagi "..n.."s"
+                        if not Farm._mailRunning then break end
                         task.wait(1)
                     end
                 end
             end
+            -- loop kelar: reset tombol kalau popup masih ada
+            if pop and pop.Parent then pcall(stopRun) end
         end)
     end)
 
@@ -6847,7 +7247,18 @@ do
     end)
     -- v33.9: toggle Tanpa Mutasi (cermin punya Auto Collect) - buah polos ikut kejual
     mkBodyToggle(body, 204, "Tanpa Mutasi (ikut jual)", "sellNoMut", "Sell No Mutation")
-    setH(244)
+    -- v39.9: toggle MANDIRI - jual SEMUA buah non-mutasi per-buah (ga perlu Auto Sell ON)
+    local applySellNonMut = mkBodyToggle(body, 244, "Selalu Jual Non-Mutasi", "sellNonMutOnly", "Sell Non-Mut Only")
+    -- nyalain loop pas toggle ON
+    task.spawn(function()
+        while card.Parent do
+            if state.sellNonMutOnly and not Farm._sellNonMutOn then
+                Farm.startSellNonMutLoop()
+            end
+            task.wait(1)
+        end
+    end)
+    setH(284)
 end
 
 -- ====== CARD 5: AUTO GIFT SEED -> wildnx_60 (mailbox, terpisah) ======
@@ -7033,6 +7444,43 @@ do
     mkBodyToggle(body, 84, "Auto Shovel Fruit", "shovelFruit", "Auto Shovel Fruit")
 end
 
+-- ====== CARD: AUTO TROWEL (v40.1) - pindah pohon ke tengah plot ======
+do
+    local card, body, setH = mkFarmCard(101, "Auto Trowel", "pindah pohon jenis terpilih ke tengah plot (numpuk)")
+    setH(210)
+    local trowelListFn = function() return Farm.trowelSeedList() end
+    mkTypeRow(body, 4, "Jenis Pohon", trowelListFn, state.selectedTrowel, "trowelAll", "Semua pohon")
+    -- pilih plot tujuan (single-pick via tombol cycle)
+    local plotRow = mk("Frame",{Size=UDim2.new(1,0,0,26),Position=UDim2.new(0,0,0,44),BackgroundTransparency=1,Parent=body})
+    lbl(plotRow,"Plot Tujuan",12,C.textDim,Enum.TextXAlignment.Left).Size=UDim2.new(0.42,0,1,0)
+    local plotSel = lbl(plotRow, state.trowelPlot or "auto", 11, C.text, Enum.TextXAlignment.Right)
+    plotSel.Size=UDim2.new(0.42,0,1,0); plotSel.Position=UDim2.new(0.42,0,0,0)
+    local plotBtn = mk("TextButton",{Size=UDim2.new(0.14,0,0,22),Position=UDim2.new(0.86,0,0,2),BackgroundColor3=C.input,TextColor3=C.textDim,Text="pilih",Font=FONT,TextSize=10,BorderSizePixel=0,Parent=plotRow}); corner(plotBtn,5)
+    plotBtn.MouseButton1Click:Connect(function()
+        local centers = Farm.trowelPlotCenter()
+        local names = {"auto"}
+        for k in pairs(centers) do names[#names+1] = k end
+        local cur = state.trowelPlot or "auto"
+        local idx = 1
+        for i, n in ipairs(names) do if n == cur then idx = i; break end end
+        idx = (idx % #names) + 1
+        state.trowelPlot = (names[idx] == "auto") and nil or names[idx]
+        plotSel.Text = names[idx]; saveState()
+    end)
+    -- tombol PINDAH SEKARANG
+    local goBtn = mk("TextButton",{Size=UDim2.new(1,0,0,32),Position=UDim2.new(0,0,0,84),BackgroundColor3=Color3.fromRGB(46,120,80),Text="PINDAH SEKARANG",TextColor3=Color3.fromRGB(235,255,240),Font=FONT_B,TextSize=13,BorderSizePixel=0,Parent=body}); corner(goBtn,6)
+    goBtn.MouseButton1Click:Connect(function()
+        goBtn.Text = "memindahkan..."
+        state.autoTrowel = true
+        task.spawn(function()
+            pcall(function() Farm.trowelOnce() end)
+            state.autoTrowel = false
+            goBtn.Text = "PINDAH SEKARANG"
+        end)
+    end)
+    lbl(body, "pilih jenis + plot, lalu PINDAH. pohon numpuk di tengah plot.", 10, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,124)
+end
+
 -- ====== CARD 7: AUTO BUY GEAR (v7.1) ======
 local applyBuyGear
 do
@@ -7048,7 +7496,7 @@ end
 -- CARD AF2-1 + AF2-2: SUPER SPRINKLER + SUPER WC
 do
     local card, body, setH = mkFarmCard(10, "Auto Super Sprinkler & WC", "boost kg . percepat tumbuh . auto-detect posisi", buyList)
-    setH(368)
+    setH(420)
     local info = lbl(body, "Scan garden -> simpan posisi plot -> pakai buat place sprinkler.", 11, C.textDim, Enum.TextXAlignment.Left)
     info.Position = UDim2.new(0,0,0,4); info.Size = UDim2.new(1,0,0,16); info.TextWrapped = true
     -- v33.1: ROMBAK pemilihan lokasi - biar tau "Plot1" itu YANG MANA di garden:
@@ -7155,23 +7603,27 @@ do
             if not gardens then return end
             local myUid = player.UserId
             for _, plot in ipairs(gardens:GetChildren()) do
-                if plot:GetAttribute("OwnerUserId") == myUid then
-                    -- ambil posisi dari tanaman pertama (paling akurat)
+                do
+                    -- v39.7: ambil posisi dari tanaman MILIK SENDIRI (prefix userId), bukan
+                    -- tanaman pertama sembarang. dulu: plot campur -> ke-scan kebun orang.
                     local pos = nil
                     local plants = plot:FindFirstChild("Plants")
                     if plants then
                         for _, plant in ipairs(plants:GetChildren()) do
-                            pcall(function()
-                                local pivot = plant:GetPivot()
-                                pos = pivot.Position
-                            end)
-                            if pos then break end
-                            for _, p in ipairs(plant:GetDescendants()) do
-                                if p:IsA("BasePart") and not p.Name:lower():find("fruit") then
-                                    pos = p.Position; break
+                            local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                            if ownerId == myUid then
+                                pcall(function()
+                                    local pivot = plant:GetPivot()
+                                    pos = pivot.Position
+                                end)
+                                if pos then break end
+                                for _, p in ipairs(plant:GetDescendants()) do
+                                    if p:IsA("BasePart") and not p.Name:lower():find("fruit") then
+                                        pos = p.Position; break
+                                    end
                                 end
+                                if pos then break end
                             end
-                            if pos then break end
                         end
                     end
                     -- fallback: PlotSizeReference
@@ -7180,18 +7632,34 @@ do
                         if ref and ref:IsA("BasePart") then pos = ref.Position end
                     end
                     if pos then
-                        -- v33.4: seed kadang MELAYANG dikit dari tanah -> Y dipatok ke TANAH.
-                        -- X/Z tetep persis titik seed; raycast ke bawah (skip tanaman & karakter)
-                        -- buat nemuin permukaan tanah. tiang penanda & place sprinkler jadi nempel tanah.
+                        -- v39.4: seed kadang MELAYANG dari tanah -> Y dipatok ke TANAH via raycast.
+                        -- FIX: raycast mulai jauh lebih tinggi (+50) + jangkauan panjang (-200) biar
+                        -- ga gagal pas seed nancep dalam / posisi awal di bawah permukaan.
+                        -- kalau raycast tetep gagal, Y dipaksa turun (fallback) biar ga melayang.
                         pcall(function()
                             local rp = RaycastParams.new()
                             rp.FilterType = Enum.RaycastFilterType.Exclude
                             local ex = {}
                             if player.Character then ex[#ex+1] = player.Character end
-                            if plants then ex[#ex+1] = plants end   -- semua tanaman (termasuk buah) di-skip
+                            if plants then ex[#ex+1] = plants end   -- tanaman di-skip
+                            -- skip juga sprinkler yg udah ke-place (biar ga raycast ke sprinkler lain)
+                            local sf = workspace:FindFirstChild("Sprinklers") or workspace:FindFirstChild("Farm")
+                            if sf then ex[#ex+1] = sf end
                             rp.FilterDescendantsInstances = ex
-                            local hit = workspace:Raycast(Vector3.new(pos.X, pos.Y + 6, pos.Z), Vector3.new(0, -80, 0), rp)
-                            if hit then pos = Vector3.new(pos.X, hit.Position.Y, pos.Z) end
+                            -- mulai TINGGI (+50), tembak jauh ke bawah (-200)
+                            local hit = workspace:Raycast(Vector3.new(pos.X, pos.Y + 50, pos.Z), Vector3.new(0, -200, 0), rp)
+                            if hit then
+                                pos = Vector3.new(pos.X, hit.Position.Y, pos.Z)
+                            else
+                                -- raycast gagal: coba sekali lagi TANPA exclude tanaman (siapa tau tanah anak plant)
+                                local rp2 = RaycastParams.new()
+                                rp2.FilterType = Enum.RaycastFilterType.Exclude
+                                local ex2 = {}
+                                if player.Character then ex2[#ex2+1] = player.Character end
+                                rp2.FilterDescendantsInstances = ex2
+                                local hit2 = workspace:Raycast(Vector3.new(pos.X, pos.Y + 50, pos.Z), Vector3.new(0, -200, 0), rp2)
+                                if hit2 then pos = Vector3.new(pos.X, hit2.Position.Y, pos.Z) end
+                            end
                         end)
                         result[#result+1] = {plotId=plot.Name, x=pos.X, y=pos.Y, z=pos.Z}
                         print(string.format("[AF2] scan: %s -> (%.1f, %.1f, %.1f) [Y=tanah]", plot.Name, pos.X, pos.Y, pos.Z))
@@ -7302,9 +7770,12 @@ do
     -- toggles
     mkBodyToggle(body, 176, "Auto Super Sprinkler", "autoSuperSprinkler", "Auto Super Sprinkler")
     mkBodyToggle(body, 216, "Auto Super Watering Can", "autoSuperWC", "Auto Super WC")
+    -- v39.8: PICKER PLOT - pilih plot mana yg disiram/dikasih sprinkler (checkbox multi-select)
+    mkTypeRow(body, 256, "Pilih Plot", function() return Farm.af2PlotList() end,
+        state.af2SelectedPlots, "af2AllPlots", "Semua plot")
     -- status live
     local stL = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
-    stL.Position = UDim2.new(0,0,0,256); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
+    stL.Position = UDim2.new(0,0,0,300); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
     task.spawn(function()
         task.wait(2)
         while card.Parent do stL.Text = Farm._af2Status or ""; task.wait(1) end
@@ -7409,12 +7880,13 @@ function Farm.af2CountSmallFruits(threshKg)
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
         for _, plot in ipairs(gardens:GetChildren()) do
-            if plot:GetAttribute("OwnerUserId") == player.UserId then   -- v32.7: cuma kebun milik sendiri
-            local plantsF = plot:FindFirstChild("Plants")   -- v34.2: FIX - tanaman ada DI DALAM folder Plants
+            local plantsF = plot:FindFirstChild("Plants")
             if plantsF then
             for _, plant in ipairs(plantsF:GetChildren()) do
-                local ownerId = tonumber(plant.Name:match("^(%d+)_"))   -- v34.5: cuma tanaman MILIK SENDIRI
-                if (not ownerId or ownerId == player.UserId) then
+                -- v39.6: filter KETAT - cuma plant dgn prefix userId SENDIRI. plot bisa campur
+                -- (beberapa owner 1 plot), jadi filter per-PLANT lebih akurat drpd per-plot.
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if ownerId == player.UserId then
                 local seedName = plant:GetAttribute("SeedName") or plant.Name
                 local fruits = plant:FindFirstChild("Fruits")
                 if fruits then
@@ -7424,7 +7896,6 @@ function Farm.af2CountSmallFruits(threshKg)
                     end
                 end
                 end
-            end
             end
             end
         end
@@ -7440,12 +7911,12 @@ function Farm.af2CountBigFruits(threshKg)
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
         for _, plot in ipairs(gardens:GetChildren()) do
-            if plot:GetAttribute("OwnerUserId") == player.UserId then   -- v32.7: cuma kebun milik sendiri
-            local plantsF = plot:FindFirstChild("Plants")   -- v34.2: FIX - tanaman ada DI DALAM folder Plants
+            local plantsF = plot:FindFirstChild("Plants")
             if plantsF then
             for _, plant in ipairs(plantsF:GetChildren()) do
-                local ownerId = tonumber(plant.Name:match("^(%d+)_"))   -- v34.5: cuma tanaman MILIK SENDIRI
-                if (not ownerId or ownerId == player.UserId) then
+                -- v39.6: filter KETAT per-plant (prefix userId sendiri)
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if ownerId == player.UserId then
                 local seedName = plant:GetAttribute("SeedName") or plant.Name
                 local fruits = plant:FindFirstChild("Fruits")
                 if fruits then
@@ -7455,7 +7926,6 @@ function Farm.af2CountBigFruits(threshKg)
                     end
                 end
                 end
-            end
             end
             end
         end
@@ -7472,18 +7942,23 @@ function Farm.af2PlotList()
         if not gardens then return end
         local myUid = player.UserId  -- number
         for _, plot in ipairs(gardens:GetChildren()) do
-            local ownerUid = plot:GetAttribute("OwnerUserId")
-            if ownerUid == myUid then
-                -- ambil seed name dari tanaman pertama (kalau ada)
-                local seedName = nil
-                pcall(function()
-                    local plants = plot:FindFirstChild("Plants")
-                    if plants then
-                        for _, plant in ipairs(plants:GetChildren()) do
-                            seedName = plant:GetAttribute("SeedName"); break
+            -- v39.8: filter per-PLANT (prefix userId). plot bisa campur, jadi cek tanaman
+            -- milik sendiri di dalamnya - bukan attribute plot (yg sering salah).
+            local seedName = nil
+            local hasMine = false
+            pcall(function()
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        if tonumber(plant.Name:match("^(%d+)_")) == myUid then
+                            hasMine = true
+                            seedName = plant:GetAttribute("SeedName")
+                            break
                         end
                     end
-                end)
+                end
+            end)
+            if hasMine then
                 local label = seedName and (seedName.." - "..plot.Name) or (plot.Name.." (kosong)")
                 list[#list+1] = label
             end
@@ -7501,16 +7976,18 @@ function Farm.af2LabelToPos(label)
     if not plot then return nil end
     local pos
     pcall(function()
-        -- 1) posisi dari tanaman (paling valid, di area tanam)
+        -- 1) posisi dari tanaman MILIK SENDIRI (v39.8: prefix userId, bukan tanaman pertama)
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
-                if plant:IsA("Model") and plant.PrimaryPart then
-                    pos = plant.PrimaryPart.Position; return
-                end
-                for _, p in ipairs(plant:GetDescendants()) do
-                    if p:IsA("BasePart") and not p.Name:lower():find("fruit") then
-                        pos = p.Position; return
+                if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
+                    if plant:IsA("Model") and plant.PrimaryPart then
+                        pos = plant.PrimaryPart.Position; return
+                    end
+                    for _, p in ipairs(plant:GetDescendants()) do
+                        if p:IsA("BasePart") and not p.Name:lower():find("fruit") then
+                            pos = p.Position; return
+                        end
                     end
                 end
             end
@@ -7604,28 +8081,23 @@ function Farm.af2PlaceSuperSprinkler()
         if tool then break end
     end
     if not tool then print("[AF2] Sprinkler ga ada di backpack (pilihan: "..(state.af2SprTool or "auto")..")"); return false end
-    -- pakai af2SavedPos (hasil scan) atau fallback PlotSizeReference
+    -- v39.8: posisi dari PICKER PLOT (af2SelectedPlots). tiap plot terpilih -> 1 posisi.
     local positions = {}
-    if state.af2SavedPos and #state.af2SavedPos > 0 then
-        for _, e in ipairs(state.af2SavedPos) do
-            positions[#positions+1] = Vector3.new(e.x, e.y, e.z)
-            print(string.format("[AF2] pakai savedPos %s: (%.1f,%.1f,%.1f)", e.plotId, e.x, e.y, e.z))
-        end
-    else
-        -- fallback: PlotSizeReference
+    local picks = Farm.af2GetPlantPositions()
+    for _, e in ipairs(picks) do
+        local p0 = e.pos
+        local py = p0.Y
+        -- patok Y ke tanah (raycast dari atas)
         pcall(function()
-            local gardens = workspace:FindFirstChild("Gardens")
-            if not gardens then return end
-            for _, plot in ipairs(gardens:GetChildren()) do
-                if plot:GetAttribute("OwnerUserId") == player.UserId then
-                    local ref = plot:FindFirstChild("PlotSizeReference")
-                    if ref and ref:IsA("BasePart") then
-                        positions[#positions+1] = ref.Position
-                        print("[AF2] fallback PlotSizeReference "..plot.Name..": "..tostring(ref.Position))
-                    end
-                end
-            end
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = {}
+            if player.Character then ex[#ex+1] = player.Character end
+            local hit = workspace:Raycast(Vector3.new(p0.X, p0.Y + 50, p0.Z), Vector3.new(0, -200, 0), rp)
+            if hit then py = hit.Position.Y end
         end)
+        positions[#positions+1] = Vector3.new(p0.X, py, p0.Z)
+        print(string.format("[AF2] plot '%s': (%.1f,%.1f,%.1f)", tostring(e.label), p0.X, py, p0.Z))
     end
     if #positions == 0 then print("[AF2] Sprinkler: ga ada posisi"); return false end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.2) end
@@ -7690,7 +8162,8 @@ function Farm.af2PlaceWateringCan()
     end
     -- posisi target = titik seed hasil scan (Y udah dipatok tanah - sama kayak fire manual di spy)
     local positions = {}
-    for _, e in ipairs(state.af2SavedPos or {}) do positions[#positions+1] = Vector3.new(e.x, e.y, e.z) end
+    -- v39.8: posisi dari PICKER PLOT (sama kayak sprinkler)
+    for _, e in ipairs(Farm.af2GetPlantPositions()) do positions[#positions+1] = e.pos end
     if #positions == 0 then print("[AF2] WC: ga ada posisi target - pencet [pin] Scan dulu"); return false end
     if tool.Parent ~= char then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
     if tool.Parent ~= char then print("[AF2] WC: gagal equip "..tool.Name); return false end
@@ -7779,6 +8252,8 @@ staggerSpawn(function()
             local bigCap    = state.af2BigCap or 500      -- stop kalau big >= ini
             local smallCount = Farm.af2CountSmallFruits(threshKg)
             local bigCount   = Farm.af2CountBigFruits(threshKg)
+            Farm._af2SmallCount = smallCount   -- v40.0: buat overlay layar
+            Farm._af2BigCount = bigCount
             local now = os.clock()
 
             -- STOP kalau buah besar sudah mencapai batas
