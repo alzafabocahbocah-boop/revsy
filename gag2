@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v40.6
+-- ZENX FARM  v40.8
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v40.6"
+local VER       = "v40.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5039,24 +5039,33 @@ end
 -- ambil posisi tengah plot yg dipilih (label = nama plot). pakai af2PlotList/LabelToPos
 -- yg udah ada, tapi buat trowel tengah plot pakai PlotSizeReference lgsg.
 Farm.trowelPlotCenter = function()
-    -- return {label=Vector3} plot milik sendiri (tengah = PlotSizeReference)
+    -- v40.7: tengah plot = RATA-RATA posisi tanaman sendiri (Y valid = tanah).
+    -- dulu pakai PlotSizeReference -> Y salah/melayang -> server nolak MovePlant.
     local out = {}
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
         for _, plot in ipairs(gardens:GetChildren()) do
-            -- plot punya tanaman sendiri?
             local plants = plot:FindFirstChild("Plants")
-            local mine = false
             if plants then
+                local sx, sy, sz, cnt = 0, 0, 0, 0
                 for _, pl in ipairs(plants:GetChildren()) do
-                    if tonumber(pl.Name:match("^(%d+)_")) == player.UserId then mine = true; break end
+                    if tonumber(pl.Name:match("^(%d+)_")) == player.UserId then
+                        local pos = nil
+                        pcall(function()
+                            if pl:IsA("Model") and pl.PrimaryPart then pos = pl.PrimaryPart.Position
+                            else pos = pl:GetPivot().Position end
+                        end)
+                        if not pos then
+                            for _, p in ipairs(pl:GetDescendants()) do
+                                if p:IsA("BasePart") and not p.Name:lower():find("fruit") then pos = p.Position; break end
+                            end
+                        end
+                        if pos then sx=sx+pos.X; sy=sy+pos.Y; sz=sz+pos.Z; cnt=cnt+1 end
+                    end
                 end
-            end
-            if mine then
-                local ref = plot:FindFirstChild("PlotSizeReference")
-                if ref and ref:IsA("BasePart") then
-                    out[plot.Name] = ref.Position
+                if cnt > 0 then
+                    out[plot.Name] = Vector3.new(sx/cnt, sy/cnt, sz/cnt)
                 end
             end
         end
@@ -5104,7 +5113,7 @@ Farm.trowelOnce = function()
                     if okType then
                         -- uuid = bagian nama setelah "userId_"
                         local uuid = plant.Name:match("^%d+_(.+)$") or plant.Name
-                        pcall(function() p:Fire(uuid, target, 0) end)
+                        pcall(function() p:Fire(uuid, target, 90) end)
                         moved = moved + 1
                         task.wait(0.1)   -- jeda antar-pindah
                     end
@@ -8745,8 +8754,8 @@ do
     mkBodyToggle(body, 540, "Gift by Value (>= target)", "gfValueMode", "Gift By Value")
     mkBodyToggle(body, 580, "Target ikut Harga Pasar (off=normal x1)", "gfValueMarket", "Gift Value Market")
 
-    -- v22.9: tombol History Gift -> popup
-    function Farm.showGiftHistory()
+    -- v40.8: fungsi history LAMA di-rename (ga dipakai) - biar ga nimpa Farm.showGiftHistory baru (v40.5)
+    function Farm.showGiftHistoryOld()
         local old = sg:FindFirstChild("ZenxGiftHist"); if old then old:Destroy() end
         local pop = mk("Frame", { Name = "ZenxGiftHist", Size = UDim2.new(0, 366, 0, 420),
             Position = UDim2.new(0.5, -183, 0.5, -210), BackgroundColor3 = C.panel, BorderSizePixel = 0,
