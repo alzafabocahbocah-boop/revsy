@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v40.8
+-- ZENX FARM  v40.9
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v40.8"
+local VER       = "v40.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -8096,13 +8096,20 @@ function Farm.af2PlaceSuperSprinkler()
     for _, e in ipairs(picks) do
         local p0 = e.pos
         local py = p0.Y
-        -- patok Y ke tanah (raycast dari atas)
+        -- v40.9: patok Y ke TANAH - exclude pohon/tanaman + sprinkler biar raycast ga kena pohon
+        -- (pohon kadang tinggi -> place ikut pohon -> melayang). exclude semua kecuali tanah.
         pcall(function()
             local rp = RaycastParams.new()
             rp.FilterType = Enum.RaycastFilterType.Exclude
             local ex = {}
             if player.Character then ex[#ex+1] = player.Character end
-            local hit = workspace:Raycast(Vector3.new(p0.X, p0.Y + 50, p0.Z), Vector3.new(0, -200, 0), rp)
+            -- exclude folder tanaman + sprinkler biar ga jadi patokan Y
+            local gardens = workspace:FindFirstChild("Gardens")
+            if gardens then ex[#ex+1] = gardens end
+            local sp = workspace:FindFirstChild("Sprinklers")
+            if sp then ex[#ex+1] = sp end
+            rp.FilterDescendantsInstances = ex
+            local hit = workspace:Raycast(Vector3.new(p0.X, p0.Y + 50, p0.Z), Vector3.new(0, -300, 0), rp)
             if hit then py = hit.Position.Y end
         end)
         positions[#positions+1] = Vector3.new(p0.X, py, p0.Z)
@@ -8172,7 +8179,25 @@ function Farm.af2PlaceWateringCan()
     -- posisi target = titik seed hasil scan (Y udah dipatok tanah - sama kayak fire manual di spy)
     local positions = {}
     -- v39.8: posisi dari PICKER PLOT (sama kayak sprinkler)
-    for _, e in ipairs(Farm.af2GetPlantPositions()) do positions[#positions+1] = e.pos end
+    -- v40.9: raycast Y ke TANAH (exclude pohon) biar siram di tanah, ga ikut tinggi pohon
+    for _, e in ipairs(Farm.af2GetPlantPositions()) do
+        local p0 = e.pos
+        local py = p0.Y
+        pcall(function()
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            local ex = {}
+            if player.Character then ex[#ex+1] = player.Character end
+            local gardens = workspace:FindFirstChild("Gardens")
+            if gardens then ex[#ex+1] = gardens end
+            local sp = workspace:FindFirstChild("Sprinklers")
+            if sp then ex[#ex+1] = sp end
+            rp.FilterDescendantsInstances = ex
+            local hit = workspace:Raycast(Vector3.new(p0.X, p0.Y + 50, p0.Z), Vector3.new(0, -300, 0), rp)
+            if hit then py = hit.Position.Y end
+        end)
+        positions[#positions+1] = Vector3.new(p0.X, py, p0.Z)
+    end
     if #positions == 0 then print("[AF2] WC: ga ada posisi target - pencet [pin] Scan dulu"); return false end
     if tool.Parent ~= char then pcall(function() hum:EquipTool(tool) end); task.wait(0.3) end
     if tool.Parent ~= char then print("[AF2] WC: gagal equip "..tool.Name); return false end
