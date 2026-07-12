@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.20
+-- ZENX FARM  v44.21
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.20"
+local VER       = "v44.21"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -652,6 +652,7 @@ local function saveState()
         out.mailMarket = state.mailMarket
         out.mailMinV = state.mailMinV or ""
         out.mailMaxV = state.mailMaxV or ""
+        out.mailMinCount = state.mailMinCount or ""
         for _, k in ipairs(SETBOOL) do out[k] = state[k] end
         for k in pairs(SETMAP) do
             local arr = {}; for n in pairs(state[k]) do arr[#arr+1] = n end
@@ -748,6 +749,8 @@ state.weatherHopDelay = 120
 
 -- v44.15: default Range MIN value gift mail = 20M (paksa tiap load) - cuma kirim buah >=20M
 state.mailMinV = "20"
+-- v44.21: default min JUMLAH buah (yg penuhin value) sblm kirim = 20 (tunggu kumpul dulu)
+state.mailMinCount = state.mailMinCount or "20"
 
 -- (auto-skip intro udah dihandle di blok awal - spam sampai bener-bener masuk)
 
@@ -6789,6 +6792,13 @@ local function showMailGift()
         BackgroundColor3=C.input, Text=state.mailMaxV or "", PlaceholderText="max", TextColor3=C.text,
         Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(maxBox,6); stroke(maxBox,C.border,1)
     maxBox.FocusLost:Connect(function() state.mailMaxV = maxBox.Text; saveState() end)  -- v40.3: save max
+    -- v44.21: field "min buah" - tunggu kumpul N buah (yg penuhin value) baru kirim
+    local mcLabel = lbl(pop, "min buah:", 11, C.textDim, Enum.TextXAlignment.Left)
+    mcLabel.Position=UDim2.new(0,336,0,188); mcLabel.Size=UDim2.new(0,54,0,28); mcLabel.ZIndex=72
+    local mcBox = mk("TextBox", { Size=UDim2.new(0,50,0,28), Position=UDim2.new(0,392,0,188),
+        BackgroundColor3=C.input, Text=state.mailMinCount or "20", PlaceholderText="20", TextColor3=C.text,
+        Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(mcBox,6); stroke(mcBox,C.border,1)
+    mcBox.FocusLost:Connect(function() state.mailMinCount = mcBox.Text; saveState() end)
     local rvHint = lbl(pop, "kosong = tanpa batas.  cth: min 3, max 8 = buah 3M-8M", 10, C.textMute, Enum.TextXAlignment.Left)
     rvHint.Position=UDim2.new(0,14,0,222); rvHint.Size=UDim2.new(1,-28,0,16); rvHint.ZIndex=72
 
@@ -6828,6 +6838,8 @@ local function showMailGift()
         local loV = parseVal(minBox.Text, 0)
         local hiV = parseVal(maxBox.Text, math.huge)
         if loV > hiV then loV, hiV = hiV, loV end
+        state.mailMinCount = mcBox.Text
+        local minCount = math.floor(tonumber(mcBox.Text) or 0)   -- v44.21: min jumlah buah sblm kirim
         Farm._mailSent = {}
         Farm._mailSentVal = {}   -- v32.5: reset total terkirim tiap sesi baru
         Farm._mailSessionSent = 0
@@ -6843,6 +6855,31 @@ local function showMailGift()
                     if remaining <= 0 then
                         Farm._mailStatus = "SELESAI  terkirim "..Farm.abbrev(Farm._mailSessionSent).." / "..Farm.abbrev(tot).." ke "..target
                         Farm._mailStatusCol = C.green; Farm._mailRunning=false; Farm._mailClearRecv=true; state.mailTarget=""; return
+                    end
+                    -- v44.21: kalau min buah di-set, TUNGGU sampai kumpul N buah (yg penuhin value) baru kirim
+                    if minCount > 0 then
+                        local nBuah = 0
+                        pcall(function()
+                            for _, holder in ipairs(invHolders()) do
+                                if holder then
+                                    for _, t in ipairs(holder:GetChildren()) do
+                                        local fid = t:GetAttribute("Id")
+                                        local fjenis = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                                        if fid and fjenis then
+                                            local pr = Farm.fruitPrice and Farm.fruitPrice(t, true)
+                                            if type(pr) == "number" and pr >= loV and pr <= hiV then
+                                                nBuah = nBuah + 1
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        if nBuah < minCount then
+                            Farm._mailStatus = "nunggu kumpul buah... ("..nBuah.."/"..minCount..")  terkirim "..Farm.abbrev(Farm._mailSessionSent)
+                            Farm._mailStatusCol = C.textDim
+                            return   -- skip kirim, tunggu buah cukup
+                        end
                     end
                     local ok, cnt, cumv, cumn = Farm.mailGiftSend(target, fruit, loV, hiV, remaining, marketOn)
                     if type(cumv) == "number" then
