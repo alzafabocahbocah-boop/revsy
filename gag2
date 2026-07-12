@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.0
+-- ZENX FARM  v44.3
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.0"
+local VER       = "v44.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -394,6 +394,8 @@ local state = {
     farm2On       = false,      -- v39.1: tombol FARM 2 (koordinasi Farm1/Farm2)
     autoSell      = false,
     autoBuySeed   = false,
+    autoBuyCrate  = false,      -- v44.1: auto beli peti/crate dari CrateShop
+    buyAllCrates  = false,      -- borong semua peti
     autoBuyGear   = false,      -- v7.1: auto beli gear/alat
     buyAllGears   = true,       -- v7.1: borong semua gear
     selectedGear  = {},         -- v7.1: gear yg dipilih (kalau buyAllGears off)
@@ -456,6 +458,7 @@ local state = {
     plantLocation = "self",     -- "self" (lokasi kamu) atau "random"
     plantSpread   = 0,          -- v12.6: radius sebar tanam (stud). 0 = pas di posisi kamu
     selectedSeeds   = {},       -- buy seed
+    selectedCrates  = {},       -- v44.1: buy crate/peti
     goodWeathers    = {},       -- v26.8: weather yg dianggap BAGUS (sisanya bikin auto-rejoin)
     selectedCollect = {},       -- collect buah
     selectedSell    = {},       -- sell buah
@@ -580,7 +583,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora","Ignited"}
-local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop",
+local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyCrate","buyAllCrates","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -589,7 +592,7 @@ local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","au
 -- (nyalain manual tiap masuk, biar gak langsung jalan tanpa sadar)
 -- v11.2: cuma JENIS shovel (shovelAll + selectedShovel) yg gak kesave -> tiap load jenis
 -- mulai kosong (biar gak kebablasan gali "Semua"). toggle autoShovel kesave seperti biasa.
-local SETMAP  = {selectedSeeds="selectedSeeds", selectedCollect="selectedCollect",
+local SETMAP  = {selectedSeeds="selectedSeeds", selectedCrates="selectedCrates", selectedCollect="selectedCollect",
                  selectedSell="selectedSell", selectedPlant="selectedPlant",
                  selectedCollect2="selectedCollect2", selectedSell2="selectedSell2",
                  af2SelectedPlots="af2SelectedPlots",
@@ -727,6 +730,12 @@ end
 -- v4.4: load state DI SINI (sebelum UI dibangun) - biar textbox/picker langsung
 -- nampilin nilai tersimpan. dulu loadState di akhir -> UI udah terlanjur kosong.
 loadState()
+
+-- v44.2: PAKSA auto buy peti BANGKU (Bench Crate) ON tiap load - konsisten semua akun.
+state.autoBuyCrate = true
+state.buyAllCrates = false
+state.selectedCrates = state.selectedCrates or {}
+state.selectedCrates["Bench Crate"] = true
 
 -- (auto-skip intro udah dihandle di blok awal - spam sampai bener-bener masuk)
 
@@ -2805,7 +2814,51 @@ function Farm.buySeedOnce()
     if fired > 0 then dprint("[ZenxFarm] buy seed: "..fired.." fire (cuma yg ada stok)") end
 end
 
--- v7.1: AUTO BUY GEAR - beli alat/gear dari gear shop.
+-- v44.1: AUTO BUY CRATE/PETI - beli peti dari CrateShop (remote CrateShop.PurchaseCrate).
+-- list crate dari StockValues.CrateShop.Items (24 jenis peti). pola sama kayak buySeedOnce.
+function Farm.crateList()
+    local list = {}
+    pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        local shop = sv and sv:FindFirstChild("CrateShop")
+        local items = shop and shop:FindFirstChild("Items")
+        if items then
+            for _, c in ipairs(items:GetChildren()) do
+                if c:IsA("ValueBase") then list[#list+1] = c.Name end
+            end
+            table.sort(list)
+        end
+    end)
+    return list
+end
+function Farm.buyCrateOnce()
+    local p = pkt("CrateShop", "PurchaseCrate")
+    if not p or not p.Fire then print("[ZenxFarm] PurchaseCrate packet gak ada"); return end
+    local list = Farm.crateList()
+    -- filter cuma yg dipilih (kalau bukan borong semua)
+    if not state.buyAllCrates then
+        local sel = {}
+        for _, name in ipairs(list) do if state.selectedCrates[name] then sel[#sel+1] = name end end
+        list = sel
+    end
+    if #list == 0 then return end
+    local fired = 0
+    for _, name in ipairs(list) do
+        if not state.autoBuyCrate then break end
+        local stok = Farm.getStock("CrateShop", name)
+        if stok and stok > 0 then
+            if stok > 20 then stok = 20 end   -- safety
+            for _ = 1, stok do
+                if not state.autoBuyCrate then break end
+                pcall(function() p:Fire(name) end)
+                fired = fired + 1
+                if fired % 5 == 0 then task.wait() end
+            end
+        end
+    end
+    if fired > 0 then dprint("[ZenxFarm] buy crate: "..fired.." fire (cuma yg ada stok)") end
+end
+
 -- v7.4: list gear sekarang dari SUMBER ASLI game (lengkap):
 --   1) StockValues.GearShop.Items (stok toko yg lagi ada)
 --   2) parse Workspace.RemoteDeveloperProducts (semua entri "Gear:")
@@ -3224,6 +3277,7 @@ staggerSpawn(function()
     while isCurrentGen() do
         task.wait(3)  -- v4.4: 1s kebanyakan packet (264/detik) bikin lag; 3s lebih enteng
         if isCurrentGen() and state.autoBuySeed then pcall(Farm.buySeedOnce) end
+        if isCurrentGen() and state.autoBuyCrate then pcall(Farm.buyCrateOnce) end
     end
 end)
 -- ===== AUTO PLANT - format hasil sniff: PlantSeed:Fire(position, seedName, seedTool) =====
@@ -7049,7 +7103,7 @@ end
                     if fz < 45 then fz = 45 end
                     print("[ZenxFarm] weather buruk '"..tostring(w).."' -> FREEZE "..fz.."s lalu REJOIN SERVER SAMA (job="..tostring(jobId):sub(1,8).."...)")
                     Farm.hideDcPrompt()   -- v36.2: sembunyiin dialog DC selama retry
-                    pcall(function() player:Kick("ZenxWeatherFreeze") end)
+                    pcall(function() player:Kick("tunggu sebentar jamal midas sedang berkeliaran") end)
                     task.wait(fz)
                     -- v35.9: 6x percobaan ke server SAMA (10s antar coba), abis itu fallback acak
                     local tries = 0
@@ -7937,6 +7991,15 @@ do
     local gearListFn = function() if not Farm.gearList then Farm.gearList = loadGearList() end return Farm.gearList end
     mkTypeRow(body, 4, "Jenis Gear", gearListFn, state.selectedGear, "buyAllGears", "Semua gear")
     applyBuyGear = mkBodyToggle(body, 44, "Auto Buy", "autoBuyGear", "Auto Buy Gear")
+end
+
+-- v44.1: card AUTO BUY PETI/CRATE
+do
+    local card, body, setH = mkFarmCard(3, "Auto Buy Peti", "beli peti/crate otomatis (tap utk atur)", misc2List)
+    setH(96)
+    local crateListFn = function() return Farm.crateList() end
+    mkTypeRow(body, 4, "Jenis Peti", crateListFn, state.selectedCrates, "buyAllCrates", "Semua peti")
+    mkBodyToggle(body, 44, "Auto Buy", "autoBuyCrate", "Auto Buy Peti")
 end
 
 -- ====== AUTO FARM 2: card di buyList ======
