@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v43.1
+-- ZENX FARM  v43.4
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v43.1"
+local VER       = "v43.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -513,6 +513,7 @@ local state = {
     autoHop         = false,    -- v17.0: auto hop server tiap X menit
     hopMinutes      = 30,       -- v17.0: interval auto hop (menit)
     autoWeatherHop  = false,    -- v26.8: rejoin pas weather buruk (semua kecuali yg ditandai bagus)
+    autoBloodHop    = false,    -- v43.4: di PS -> 2 menit sblm Bloodmoon hop ke public, kick pas selesai
     weatherHopDelay = 15,       -- v35.0: lama FREEZE (Kick lokal) sblm rejoin. v35.1: default dipendekin 60->15
     allGoodWeather  = false,    -- v26.8: semua weather dianggap bagus (ga pernah hop)
     giftTarget      = "",       -- nama penerima
@@ -579,7 +580,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora","Ignited"}
-local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather",
+local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -3965,6 +3966,94 @@ function Farm.getFullRegistry()
     Farm._fullCache = set; Farm._fullCacheAt = now
     return set
 end
+-- v43.2: MOON RELAY lewat Pantry (basket zenxmoon). akun yg WeatherUI-nya keisi (pakai
+-- PandoryHub / punya data) PUSH countdown moon; akun lain PULL. biar semua akun tau
+-- countdown Bloodmoon walau cuma 1 akun yg punya sumber datanya.
+-- v43.3: parse teks countdown "2h 55m 28s" / "56m 14s" / "44s" -> total detik
+function Farm.parseMoonTime(txt)
+    if not txt or txt == "" or txt == "-" then return nil end
+    local total = 0
+    local h = tostring(txt):match("(%d+)%s*h")
+    local m = tostring(txt):match("(%d+)%s*m")
+    local s = tostring(txt):match("(%d+)%s*s")
+    if h then total = total + tonumber(h) * 3600 end
+    if m then total = total + tonumber(m) * 60 end
+    if s then total = total + tonumber(s) end
+    if total <= 0 then return nil end
+    return total
+end
+-- v43.3: format detik -> "2h 55m 28s" / "56m 14s" / "44s"
+function Farm.fmtMoonTime(sec)
+    if not sec or sec <= 0 then return "now" end
+    local h = math.floor(sec / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    local s = math.floor(sec % 60)
+    if h > 0 then return string.format("%dh %dm %ds", h, m, s)
+    elseif m > 0 then return string.format("%dm %ds", m, s)
+    else return string.format("%ds", s) end
+end
+function Farm.moonRelayUrl()
+    local u = state.gfRelayUrl
+    if not u or u == "" then return nil end
+    return (u:gsub("/basket/[^/]+$", "/basket/zenxmoon"))
+end
+-- baca countdown moon dari WeatherUI game. return tabel {Bloodmoon=, Goldmoon=, ...} atau nil kalau kosong.
+function Farm.readMoonUI()
+    local out = {}
+    local any = false
+    pcall(function()
+        local pg = player:FindFirstChild("PlayerGui")
+        local wui = pg and pg:FindFirstChild("WeatherUI")
+        local frame = wui and wui:FindFirstChild("Frame")
+        if not frame then return end
+        local map = { Bloodmoon="PW_Bloodmoon", Goldmoon="PW_Goldmoon",
+            Rainbow="PW_RainbowMoon", Mega="PW_MegaMoon", Moon="PW_Moon" }
+        for key, pwName in pairs(map) do
+            local pw = frame:FindFirstChild(pwName)
+            local timeLbl = pw and pw:FindFirstChild("Time")
+            if timeLbl and timeLbl:IsA("TextLabel") then
+                local t = tostring(timeLbl.Text):gsub("^in%s+", "")
+                if t ~= "" and t ~= "-" then out[key] = t; any = true end
+            end
+        end
+    end)
+    if any then return out end
+    return nil
+end
+-- PUSH: kirim countdown moon + waktu ke relay (cuma kalau WeatherUI keisi)
+function Farm.pushMoon()
+    local url = Farm.moonRelayUrl()
+    if not url then return end
+    local data = Farm.readMoonUI()
+    if not data then return end   -- WeatherUI kosong -> ga usah push
+    data._t = os.time()
+    local payload = HS:JSONEncode(data)
+    pcall(function()
+        Farm.relayReq({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = payload })
+    end)
+end
+-- PULL: ambil countdown moon dari relay (cache 8s). return tabel atau nil.
+function Farm.pullMoon()
+    local now = os.clock()
+    if Farm._moonCache ~= nil and (now - (Farm._moonCacheAt or 0)) < 8 then
+        return Farm._moonCache or nil
+    end
+    local res = nil
+    local url = Farm.moonRelayUrl()
+    if url then
+        local resp = Farm.relayReq({ Url = url, Method = "GET" })
+        local body = resp and (resp.Body or resp.body)
+        if body then
+            local ok, d = pcall(function() return HS:JSONDecode(body) end)
+            if ok and type(d) == "table" then
+                -- data valid kalau ada minimal 1 moon + ga terlalu basi (< 5 menit)
+                if not d._t or (os.time() - d._t) < 300 then res = d end
+            end
+        end
+    end
+    Farm._moonCache = res or false; Farm._moonCacheAt = now
+    return res
+end
 -- pilih akun simpanan berikutnya yg GAK penuh (rotasi). nil kalau semua penuh/kosong.
 function Farm.pickStorage()
     local list = Farm.storageList()
@@ -5604,8 +5693,8 @@ Farm.buildScreenOverlay = function()
         -- disembunyiin di mode moon (moon cuma 5). teks moon label lebih kecil biar muat.
         local counterRows = { {lPohon,vPohon}, {lKecil,vKecil}, {lBesar,vBesar}, {lGift,vGift}, {lTotal,vTotal}, {lSprWC,vSprWC} }
         local moonList = {
-            {"Bloodmoon", "PW_Bloodmoon"}, {"Goldmoon", "PW_Goldmoon"},
-            {"Rainbow", "PW_RainbowMoon"}, {"Mega", "PW_MegaMoon"}, {"Moon", "PW_Moon"},
+            {"Bloodmoon", "PW_Bloodmoon", "Bloodmoon"}, {"Goldmoon", "PW_Goldmoon", "Goldmoon"},
+            {"Rainbow", "PW_RainbowMoon", "Rainbow"}, {"Mega", "PW_MegaMoon", "Mega"}, {"Moon", "PW_Moon", "Moon"},
         }
         local overlayMode = "counter"   -- atau "moon"
         local function applyModeLabels()
@@ -5651,9 +5740,52 @@ Farm.buildScreenOverlay = function()
                         local ns, nw = countSprWC()
                         vSprWC.Text = ns.." / "..nw
                     else
-                        -- mode moon: baca countdown dari WeatherUI
+                        -- v43.3: AMBIL SEKALI, countdown LOKAL, refetch pas ada moon habis (hemat request).
+                        -- akun sumber (WeatherUI keisi) push tiap ~5s. akun lain pull sekali -> itung sendiri.
+                        local snap = Farm._moonSnap
+                        local nowc = os.clock()
+                        -- perlu ambil data baru? (belum ada / ada moon yg habis / snapshot basi > 5 menit)
+                        local needFetch = false
+                        if not snap then needFetch = true
+                        else
+                            local elapsed = nowc - snap.at
+                            -- cek ada moon yg udah habis (sisa <= 0) -> jadwal berubah, refetch
+                            for i = 1, 5 do
+                                local base = snap.sec[i]
+                                if base and (base - elapsed) <= 0 then needFetch = true; break end
+                            end
+                            if elapsed > 300 then needFetch = true end   -- 5 menit refresh paksa
+                        end
+                        if needFetch then
+                            Farm._moonCache = nil   -- v43.3: paksa pull fresh (bukan cache)
+                            -- sumber data: WeatherUI lokal kalau ada, kalau ga pull relay
+                            local data = (Farm.readMoonUI and Farm.readMoonUI()) or (Farm.pullMoon and Farm.pullMoon())
+                            local secs = {}
+                            if data then
+                                for i = 1, 5 do
+                                    secs[i] = Farm.parseMoonTime(data[moonList[i][3]])
+                                end
+                            end
+                            Farm._moonSnap = { sec = secs, at = nowc }
+                            snap = Farm._moonSnap
+                        end
+                        -- akun sumber: push ke relay tiap 5s (biar akun lain kebagian)
+                        if Farm.readMoonUI and Farm.readMoonUI() then
+                            if (nowc - (Farm._moonPushAt or 0)) > 5 then
+                                Farm._moonPushAt = nowc
+                                pcall(function() Farm.pushMoon() end)
+                            end
+                        end
+                        -- tampilin countdown lokal (snapshot - elapsed)
+                        local elapsed = nowc - snap.at
                         for i = 1, 5 do
-                            counterRows[i][2].Text = readMoon(moonList[i][2])
+                            local base = snap.sec[i]
+                            if base then
+                                local left = base - elapsed
+                                counterRows[i][2].Text = (left > 0) and Farm.fmtMoonTime(left) or "now"
+                            else
+                                counterRows[i][2].Text = "-"
+                            end
                         end
                     end
                 end)
@@ -6899,6 +7031,52 @@ end
             Farm._weatherHopState = nil
             pendingFrom = nil; Farm._weatherHopAt = nil
         end
+    end
+end)
+
+-- ===== v43.4: AUTO BLOOD HOP - di PS, 2 menit sblm Bloodmoon hop ke PUBLIC =====
+-- alasan: Bloodlit di PS (sepi) cuma kena dikit; di public (rame) kena lebih banyak.
+-- cuma jalan kalau lagi di PRIVATE server. udah di public -> jangan hop.
+-- pas Bloodmoon SELESAI -> kick (user masukin ke PS sendiri).
+-- countdown Bloodmoon dibaca dari relay Pantry (Farm.pullMoon) atau WeatherUI lokal.
+staggerSpawn(function()
+    local BLOOD_LEAD = 120   -- detik: hop 2 menit sblm bloodmoon
+    while isCurrentGen() do
+        pcall(function()
+            if not state.autoBloodHop then Farm._bloodHopSnap = nil; return end
+            local isPriv = (game.PrivateServerId or "") ~= ""
+            -- FASE 1: lagi di PS + bloodmoon deket -> hop ke public
+            if isPriv then
+                -- ambil countdown bloodmoon (relay dulu, fallback WeatherUI lokal)
+                local data = (Farm.pullMoon and Farm.pullMoon()) or (Farm.readMoonUI and Farm.readMoonUI())
+                local bloodTxt = data and data.Bloodmoon
+                local bloodSec = Farm.parseMoonTime and Farm.parseMoonTime(bloodTxt)
+                if bloodSec and bloodSec <= BLOOD_LEAD and bloodSec > 0 then
+                    print("[ZenxFarm] BLOOD HOP: Bloodmoon "..bloodSec.."s lagi (di PS) -> hop ke PUBLIC")
+                    Farm._bloodHopWaitEnd = true   -- tandai: nunggu bloodmoon selesai buat kick
+                    pcall(function() Farm.simpleRejoin(true) end)   -- ke public acak
+                    task.wait(12)
+                    return
+                end
+            else
+                -- FASE 2: udah di PUBLIC. kalau tadi hop buat bloodmoon, tunggu bloodmoon SELESAI -> kick.
+                if Farm._bloodHopWaitEnd then
+                    -- bloodmoon lagi aktif?
+                    local ph = tostring(workspace:GetAttribute("ActivePhase") or ""):lower()
+                    local aw = tostring(workspace:GetAttribute("ActiveWeather") or ""):lower()
+                    local bloodNow = ph:find("blood") or aw:find("blood")
+                    if bloodNow then
+                        Farm._bloodSeenActive = true   -- pernah keliatan aktif
+                    elseif Farm._bloodSeenActive then
+                        -- bloodmoon udah SELESAI (tadi aktif, sekarang engga) -> kick
+                        print("[ZenxFarm] BLOOD HOP: Bloodmoon selesai -> KICK (masukin ke PS sendiri)")
+                        Farm._bloodHopWaitEnd = false; Farm._bloodSeenActive = false
+                        pcall(function() player:Kick("ZenxBloodDone - masukin ke PS lagi") end)
+                    end
+                end
+            end
+        end)
+        task.wait(3)
     end
 end)
 
@@ -10322,7 +10500,7 @@ end
 
 -- ====== kartu AUTO REJOIN WEATHER - v26.8 (MISC 2) ======
 do
-    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 212), BackgroundColor3 = C.card,
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 290), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 21, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Auto Rejoin Weather", 15, C.text, Enum.TextXAlignment.Left)
@@ -10389,6 +10567,30 @@ do
             task.wait(1)
         end
     end)
+    -- v43.4: toggle AUTO BLOOD HOP (di PS -> hop public sblm Bloodmoon)
+    lbl(body, "Blood Hop (PS -> public sblm Bloodmoon)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,170)
+    local bhDesc = lbl(body, "di private server: 2mnt sblm Bloodmoon hop ke public, kick pas selesai", 10, C.textDim, Enum.TextXAlignment.Left)
+    bhDesc.Position = UDim2.new(0,0,0,192); bhDesc.Size = UDim2.new(1,-60,0,28); bhDesc.TextWrapped = true
+    local bhSw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -52, 0, 172),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
+    corner(bhSw, 13); local bhStroke = stroke(bhSw, C.border, 1)
+    local bhKnob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = bhSw })
+    corner(bhKnob, 10)
+    local function applyBH()
+        if state.autoBloodHop then
+            bhSw.BackgroundColor3 = C.green; bhKnob.BackgroundColor3 = Color3.new(1,1,1)
+            bhKnob.Position = UDim2.new(1, -23, 0.5, -10); bhStroke.Color = C.green
+        else
+            bhSw.BackgroundColor3 = C.input; bhKnob.BackgroundColor3 = C.textDim
+            bhKnob.Position = UDim2.new(0, 3, 0.5, -10); bhStroke.Color = C.border
+        end
+    end
+    bhSw.MouseButton1Click:Connect(function()
+        state.autoBloodHop = not state.autoBloodHop; saveState(); applyBH()
+        print("[ZenxFarm] Blood Hop -> "..(state.autoBloodHop and "ON" or "OFF"))
+    end)
+    applyBH()
 end
 
 -- ====== kartu NO-CLIP - v38.9 (MISC 2) ======
