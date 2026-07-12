@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v43.6
+-- ZENX FARM  v44.0
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v43.6"
+local VER       = "v44.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -3992,7 +3992,52 @@ function Farm.fmtMoonTime(sec)
     elseif m > 0 then return string.format("%dm %ds", m, s)
     else return string.format("%ds", s) end
 end
-function Farm.moonRelayUrl()
+-- v44.0: FETCH countdown moon dari API gag2.gg (publik, ga butuh auth).
+-- return {Bloodmoon=detik, Goldmoon=detik, Rainbow=, Mega=, Moon=} = detik sampai moon TERDEKAT
+-- tiap jenis. cache 30s biar ga spam. boundary = Unix timestamp kapan moon muncul.
+Farm._moonAPIUrl = "https://api.gag2.gg/api/live/weather"
+function Farm.fetchMoonAPI()
+    local now = os.clock()
+    -- cache 30s
+    if Farm._moonAPICache ~= nil and (now - (Farm._moonAPIAt or 0)) < 30 then
+        return Farm._moonAPICache or nil
+    end
+    local res = nil
+    pcall(function()
+        local resp = Farm.relayReq({ Url = Farm._moonAPIUrl, Method = "GET" })
+        local body = resp and (resp.Body or resp.body)
+        if not body then return end
+        local ok, data = pcall(function() return HS:JSONDecode(body) end)
+        if not ok or type(data) ~= "table" then return end
+        local w = data.weather
+        if not w or type(w.upcomingMoons) ~= "table" then return end
+        local nowTime = os.time()
+        -- ambil moon TERDEKAT (boundary terkecil yg masih di masa depan) tiap jenis
+        local nearest = {}   -- key -> detik
+        local map = {
+            ["bloodmoon"]="Bloodmoon", ["blood moon"]="Bloodmoon",
+            ["goldmoon"]="Goldmoon", ["gold moon"]="Goldmoon",
+            ["rainbow moon"]="Rainbow", ["rainbow_moon"]="Rainbow",
+            ["mega moon"]="Mega", ["mega_moon"]="Mega",
+            ["moon"]="Moon",
+        }
+        for _, mn in ipairs(w.upcomingMoons) do
+            local nm = tostring(mn.name or ""):lower()
+            local key = map[nm]
+            local bnd = tonumber(mn.boundary)
+            if key and bnd then
+                local left = bnd - nowTime
+                if left > 0 and (not nearest[key] or left < nearest[key]) then
+                    nearest[key] = left
+                end
+            end
+        end
+        if next(nearest) then res = nearest end
+    end)
+    Farm._moonAPICache = res or false; Farm._moonAPIAt = now
+    return res
+end
+function Farm.moonRelayUrl_OLD()
     local u = state.gfRelayUrl
     if not u or u == "" then return nil end
     return (u:gsub("/basket/[^/]+$", "/basket/zenxmoon"))
@@ -5756,24 +5801,16 @@ Farm.buildScreenOverlay = function()
                             if elapsed > 300 then needFetch = true end   -- 5 menit refresh paksa
                         end
                         if needFetch then
-                            Farm._moonCache = nil   -- v43.3: paksa pull fresh (bukan cache)
-                            -- sumber data: WeatherUI lokal kalau ada, kalau ga pull relay
-                            local data = (Farm.readMoonUI and Farm.readMoonUI()) or (Farm.pullMoon and Farm.pullMoon())
+                            -- v44.0: ambil dari API gag2.gg (detik sampai tiap moon terdekat)
+                            local data = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
                             local secs = {}
                             if data then
                                 for i = 1, 5 do
-                                    secs[i] = Farm.parseMoonTime(data[moonList[i][3]])
+                                    secs[i] = data[moonList[i][3]]   -- udah detik
                                 end
                             end
                             Farm._moonSnap = { sec = secs, at = nowc }
                             snap = Farm._moonSnap
-                        end
-                        -- akun sumber: push ke relay tiap 5s (biar akun lain kebagian)
-                        if Farm.readMoonUI and Farm.readMoonUI() then
-                            if (nowc - (Farm._moonPushAt or 0)) > 5 then
-                                Farm._moonPushAt = nowc
-                                pcall(function() Farm.pushMoon() end)
-                            end
                         end
                         -- tampilin countdown lokal (snapshot - elapsed)
                         local elapsed = nowc - snap.at
@@ -5796,28 +5833,19 @@ Farm.buildScreenOverlay = function()
 end
 Farm.buildScreenOverlay()
 
--- v43.6: LOOP PUSH MOON background. akun sumber (WeatherUI keisi) push countdown ke relay
--- TERUS (tiap 10s) walau overlay lagi mode counter / ketutup. biar relay selalu keisi.
+-- v44.0: debug sekali - cek API moon gag2.gg kebaca/nggak
 task.spawn(function()
-    while true do
-        pcall(function()
-            local data = Farm.readMoonUI and Farm.readMoonUI()
-            if data then
-                Farm.pushMoon()
-                if not Farm._moonPushDebugged then
-                    Farm._moonPushDebugged = true
-                    print("[ZenxFarm] MOON PUSH: akun ini SUMBER (WeatherUI keisi) -> push relay. Bloodmoon="..tostring(data.Bloodmoon))
-                end
-            else
-                if not Farm._moonPullDebugged then
-                    Farm._moonPullDebugged = true
-                    local pd = Farm.pullMoon and Farm.pullMoon()
-                    print("[ZenxFarm] MOON PULL: akun PENERIMA -> ambil relay. dapet="..(pd and ("ADA Bloodmoon="..tostring(pd.Bloodmoon)) or "KOSONG (blm ada sumber push)"))
-                end
-            end
-        end)
-        task.wait(10)
-    end
+    task.wait(5)
+    pcall(function()
+        local data = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
+        if data and data.Bloodmoon then
+            print("[ZenxFarm] MOON API OK: Bloodmoon "..Farm.fmtMoonTime(data.Bloodmoon).." lagi (dari gag2.gg)")
+        elseif data then
+            print("[ZenxFarm] MOON API OK tapi Bloodmoon ga ada di upcoming (moon lain ada)")
+        else
+            print("[ZenxFarm] MOON API GAGAL - cek koneksi / executor support HttpGet")
+        end
+    end)
 end)
 
 local function titleBtn(x, txt, col, w)
@@ -7070,10 +7098,9 @@ staggerSpawn(function()
             local isPriv = (game.PrivateServerId or "") ~= ""
             -- FASE 1: lagi di PS + bloodmoon deket -> hop ke public
             if isPriv then
-                -- ambil countdown bloodmoon (relay dulu, fallback WeatherUI lokal)
-                local data = (Farm.pullMoon and Farm.pullMoon()) or (Farm.readMoonUI and Farm.readMoonUI())
-                local bloodTxt = data and data.Bloodmoon
-                local bloodSec = Farm.parseMoonTime and Farm.parseMoonTime(bloodTxt)
+                -- v44.0: countdown bloodmoon dari API gag2.gg (detik langsung)
+                local data = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
+                local bloodSec = data and data.Bloodmoon
                 if bloodSec and bloodSec <= BLOOD_LEAD and bloodSec > 0 then
                     print("[ZenxFarm] BLOOD HOP: Bloodmoon "..bloodSec.."s lagi (di PS) -> hop ke PUBLIC")
                     Farm._bloodHopWaitEnd = true   -- tandai: nunggu bloodmoon selesai buat kick
