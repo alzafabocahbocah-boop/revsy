@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v41.4
+-- ZENX FARM  v42.2
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v41.4"
+local VER       = "v42.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2213,17 +2213,51 @@ function Farm.startDropLoop()
             local char = player.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
 
-            -- v38.2: kumpulin SEMUA buah in-range dulu (Tool + non-Tool).
+            -- v42.0: buah value-nya belum kebaca (SizeMultiplier belum sync) di-PROMOTE dulu,
+            -- baru cek filter. dulu: value nil -> pr=0 -> ke-skip filter min (drop ga konsisten).
             local tools, configs = {}, {}   -- tools=udah Tool siap drop; configs={id} perlu promote
+            local needPromote = {}          -- buah non-Tool yg value belum kebaca -> promote dulu
             for _, holder in ipairs(getFruitHolders()) do
                 for _, o in ipairs(holder:GetChildren()) do
                     local id = o:GetAttribute("Id")
                     local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
                     if id and fj then
-                        local pr = Farm.fruitPrice(o) or 0
-                        if pr >= minVal and pr <= maxVal then
+                        local pr = Farm.fruitPrice(o)
+                        if pr == nil then
+                            -- value belum kebaca -> promote dulu (kalau non-Tool), cek ulang nanti
+                            if not o:IsA("Tool") then needPromote[#needPromote+1] = tostring(id) end
+                        elseif pr >= minVal and pr <= maxVal then
                             if o:IsA("Tool") then tools[#tools+1] = {obj=o, id=id}
                             else configs[#configs+1] = tostring(id) end
+                        end
+                    end
+                end
+            end
+            -- promote buah yg value belum kebaca, biar atribut lengkap
+            if #needPromote > 0 then
+                local pp = pkt("Backpack", "PromoteFruit")
+                if pp and pp.Fire then
+                    for _, uuid in ipairs(needPromote) do
+                        if not state.dropAuto then break end
+                        pcall(function() pp:Fire(uuid) end)
+                        task.wait()
+                    end
+                    task.wait(0.3)   -- kasih waktu server sync atribut
+                    -- scan ulang buah yg baru ke-promote, cek value lagi
+                    for _, holder in ipairs(getFruitHolders()) do
+                        for _, o in ipairs(holder:GetChildren()) do
+                            if o:IsA("Tool") then
+                                local id = o:GetAttribute("Id")
+                                local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
+                                if id and fj then
+                                    local pr = Farm.fruitPrice(o) or 0
+                                    if pr >= minVal and pr <= maxVal then
+                                        local dup = false
+                                        for _, e in ipairs(tools) do if e.obj == o then dup = true break end end
+                                        if not dup then tools[#tools+1] = {obj=o, id=id} end
+                                    end
+                                end
+                            end
                         end
                     end
                 end
@@ -2287,6 +2321,12 @@ function Farm.startDropLoop()
                     end
                 end
                 task.wait(0.1)   -- jeda kecil sebelum scan batch berikutnya
+                -- v41.8: UNEQUIP buah dari tangan setelah drop. kalau tangan megang buah,
+                -- proximity prompt collect (harvest pohon) ke-block -> collect berhenti.
+                pcall(function()
+                    local h = char and char:FindFirstChildOfClass("Humanoid")
+                    if h then h:UnequipTools() end
+                end)
             end
         end
         -- pastikan tool dilepas pas berhenti
@@ -3098,6 +3138,15 @@ staggerSpawn(function()
         pcall(function()
             task.wait(0.1)  -- v8.5: collect tiap 0.1s (dulu 0.2s)
             gDbg.ZenxCollectBeat = (gDbg.ZenxCollectBeat or 0) + 1  -- detak: loop hidup
+            -- v41.9: AUTO-RECOVER - tiap 10s reset flag focus biar collect ga nyangkut
+            -- (pas inventory full, buah ke-mark 'done' tapi ga ke-collect; abis kosong
+            --  tetap ke-skip. reset berkala bikin collect re-scan semua buah lagi).
+            Farm._recoverTick = (Farm._recoverTick or 0) + 1
+            if Farm._recoverTick >= 100 then   -- 100 x 0.1s = 10s
+                Farm._recoverTick = 0
+                Farm._focusDone = {}
+                Farm._focusType = nil
+            end
             if isCurrentGen() and state.autoCollect then Farm.collectOnce() end
             -- v28.7: Auto Collect 2 (setting terpisah: c2All, c2NoMut, c2WeightF)
             if isCurrentGen() and state.autoCollect2 then
@@ -5299,23 +5348,29 @@ local verLbl = mk("TextLabel", {
 -- v39.1: tombol FARM 2 (ganti tampilan Sheckles). koordinasi Farm1 <-> Farm2.
 -- dibungkus fungsi biar local ga nambah ke main chunk (Luau limit 200).
 Farm.buildFarm2Btn = function()
+    -- v41.6: dua tombol (-50kg & -60kg). cara kerja SAMA, beda cuma c2WeightF.
     local farm2Btn = mk("TextButton", {
-        Size = UDim2.new(0, 62, 0, 22), Position = UDim2.new(0, 210, 0.5, -11),
-        BackgroundColor3 = C.card, Text = "FARM 2", Font = FONT_B, TextSize = 12,
+        Size = UDim2.new(0, 58, 0, 22), Position = UDim2.new(0, 210, 0.5, -11),
+        BackgroundColor3 = C.card, Text = "-50kg", Font = FONT_B, TextSize = 11,
         TextColor3 = C.textDim, BorderSizePixel = 0, AutoButtonColor = false, Parent = titleBar })
     corner(farm2Btn, 6)
+    local farm2Btn70 = mk("TextButton", {
+        Size = UDim2.new(0, 58, 0, 22), Position = UDim2.new(0, 272, 0.5, -11),
+        BackgroundColor3 = C.card, Text = "-60kg", Font = FONT_B, TextSize = 11,
+        TextColor3 = C.textDim, BorderSizePixel = 0, AutoButtonColor = false, Parent = titleBar })
+    corner(farm2Btn70, 6)
+    -- sync warna: tombol yg aktif (sesuai c2WeightF) hijau
     local function syncFarm2()
-        if state.farm2On then
-            farm2Btn.BackgroundColor3 = Color3.fromRGB(46, 160, 80)
-            farm2Btn.TextColor3 = Color3.fromRGB(240, 255, 240)
-        else
-            farm2Btn.BackgroundColor3 = C.card
-            farm2Btn.TextColor3 = C.textDim
-        end
+        local on50 = state.farm2On and (state.c2WeightF == -50)
+        local on70 = state.farm2On and (state.c2WeightF == -60)
+        if on50 then farm2Btn.BackgroundColor3 = Color3.fromRGB(46,160,80); farm2Btn.TextColor3 = Color3.fromRGB(240,255,240)
+        else farm2Btn.BackgroundColor3 = C.card; farm2Btn.TextColor3 = C.textDim end
+        if on70 then farm2Btn70.BackgroundColor3 = Color3.fromRGB(46,160,80); farm2Btn70.TextColor3 = Color3.fromRGB(240,255,240)
+        else farm2Btn70.BackgroundColor3 = C.card; farm2Btn70.TextColor3 = C.textDim end
     end
-    farm2Btn.MouseButton1Click:Connect(function()
-        state.farm2On = not state.farm2On
-        if state.farm2On then
+    -- preset bersama. weightF = -50 atau -60. turnOn=true nyalain Farm2, false matiin.
+    local function applyFarm2(turnOn, weightF)
+        if turnOn then
             -- FARM 2 ON: SEMUA toggle collect+sell Farm 1 OFF
             state.autoCollect = false
             state.collectMulti = false
@@ -5327,26 +5382,22 @@ Farm.buildFarm2Btn = function()
             state.antiCollectHeavy = false
             state.autoSell = false
             state.sellWhenFull = false
-            state.sellNonMutOnly = false                -- v41.4: FARM 2 ON -> matiin selalu jual non-mutasi
-            Farm._sellNonMutOn = false                  -- stop loop jual non-mutasi
-            -- sprinkler + watering can
+            state.sellNonMutOnly = false
+            Farm._sellNonMutOn = false
             state.autoSuperSprinkler = true
             state.autoSuperWC = true
-            -- Auto Collect 2 preset
-            state.c2All = true                          -- jenis pohon semua
-            state.c2NoMut = true                        -- tanpa mutasi ON
-            state.c2WeightF = -50                       -- filter kg -50
-            state.c2MutExcept = true                    -- semua mutasi kecuali ON
-            state.selectedCollectMutEx = {}             -- daftar kecuali KOSONG
-            state.c2GoldAnyKg = true                    -- gold kg berapapun
-            state.c2ElecRainAnyKg = true                -- electric/rainbow kg berapapun
-            state.autoCollect2 = true                   -- auto collect 2 ON
-            -- Auto Sell 2 preset
-            state.s2All = true                          -- jenis buah all
-            state.s2WhenFull = true                     -- sell pas penuh ON
-            state.s2WeightF = 0                         -- filter kg 0
-            state.autoSell2 = true                      -- auto sell 2 ON
-            -- loop collect2/sell2/super jalan otomatis dari cek state (ga perlu start manual)
+            state.c2All = true
+            state.c2NoMut = true
+            state.c2WeightF = weightF                    -- v41.6: -50 atau -60
+            state.c2MutExcept = true
+            state.selectedCollectMutEx = {}
+            state.c2GoldAnyKg = true
+            state.c2ElecRainAnyKg = true
+            state.autoCollect2 = true
+            state.s2All = true
+            state.s2WhenFull = true
+            state.s2WeightF = 0
+            state.autoSell2 = true
         else
             state.autoSprinkler = false
             state.autoSuperSprinkler = false
@@ -5361,12 +5412,29 @@ Farm.buildFarm2Btn = function()
             state.antiCollectHeavy = false
             state.collectWeightF = 50
             state.autoCollect = true
-            state.sellNonMutOnly = true                 -- v41.3: FARM OFF -> selalu jual non-mutasi ON
-            pcall(function() Farm.startCollectLoop() end)
-            pcall(function() Farm.startSellNonMutLoop() end)   -- nyalain loop jual non-mutasi
+            state.sellNonMutOnly = true
+            -- v41.8: JANGAN panggil startCollectLoop (itu buat buah TANAH/collectAuto).
+            -- harvest pohon (autoCollect) otomatis jalan dari loop utama, ga perlu start manual.
+            pcall(function() Farm.startSellNonMutLoop() end)
         end
         pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
         syncFarm2(); saveState()
+    end
+    -- tombol -50: toggle. kalau lagi ON di -50 -> matiin. kalau OFF/beda -> nyalain -50.
+    farm2Btn.MouseButton1Click:Connect(function()
+        if state.farm2On and state.c2WeightF == -50 then
+            state.farm2On = false; applyFarm2(false, -50)
+        else
+            state.farm2On = true; applyFarm2(true, -50)
+        end
+    end)
+    -- tombol -60: sama, tapi weightF -60
+    farm2Btn70.MouseButton1Click:Connect(function()
+        if state.farm2On and state.c2WeightF == -60 then
+            state.farm2On = false; applyFarm2(false, -60)
+        else
+            state.farm2On = true; applyFarm2(true, -60)
+        end
     end)
     syncFarm2()
 end
@@ -5421,6 +5489,51 @@ Farm.buildScreenOverlay = function()
         end)
         return total
     end
+    -- v42.1: total buah di kebun sendiri (jumlah semua fruit)
+    local function countTotalFruit()
+        local n = 0
+        pcall(function()
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            for _, plot in ipairs(gardens:GetChildren()) do
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
+                            local fruits = plant:FindFirstChild("Fruits")
+                            if fruits then n = n + #fruits:GetChildren() end
+                        end
+                    end
+                end
+            end
+        end)
+        return n
+    end
+    -- v42.2: hitung sprinkler + watering can (yg ke-place di kebun sendiri)
+    local function countSprWC()
+        local nSpr, nWC = 0, 0
+        pcall(function()
+            local gardens = workspace:FindFirstChild("Gardens")
+            if not gardens then return end
+            local myUid = player.UserId
+            for _, plot in ipairs(gardens:GetChildren()) do
+                local sprs = plot:FindFirstChild("Sprinklers")
+                if sprs then
+                    for _, s in ipairs(sprs:GetChildren()) do
+                        -- cuma punya sendiri (UserId attr atau prefix nama)
+                        local uid = s:GetAttribute("UserId")
+                        local mine = (uid == myUid) or (tostring(s.Name):sub(1, #tostring(myUid)) == tostring(myUid))
+                        if mine then
+                            local nm = tostring(s:GetAttribute("Name") or s.Name):lower()
+                            if nm:find("watering") or nm:find("can") then nWC = nWC + 1
+                            else nSpr = nSpr + 1 end
+                        end
+                    end
+                end
+            end
+        end)
+        return nSpr, nWC
+    end
     local function makeOverlay()
         local host2 = (gethui and gethui()) or game:GetService("CoreGui")
         pcall(function() local o = host2:FindFirstChild("ZenxOverlay"); if o then o:Destroy() end end)
@@ -5429,7 +5542,7 @@ Farm.buildScreenOverlay = function()
         pcall(function() og.Parent = host2 end)
         if not og.Parent then og.Parent = player:WaitForChild("PlayerGui") end
         local box = Instance.new("Frame")
-        box.Size = UDim2.new(0, 172, 0, 128)
+        box.Size = UDim2.new(0, 172, 0, 188)
         box.Position = UDim2.new(1, -184, 0, 12)   -- pojok kanan atas
         box.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         box.BackgroundTransparency = 0.15
@@ -5456,6 +5569,8 @@ Farm.buildScreenOverlay = function()
         local vKecil = row(36, "kecil")
         local vBesar = row(66, "besar")
         local vGift  = row(96, "value")
+        local vTotal = row(126, "total buah")
+        local vSprWC = row(156, "spr/wc")
         xb.MouseButton1Click:Connect(function()
             og:Destroy()
             task.delay(30, function() Farm.buildScreenOverlay() end)   -- muncul lagi 30s
@@ -5472,6 +5587,9 @@ Farm.buildScreenOverlay = function()
                     vKecil.Text = tostring(sc)
                     vBesar.Text = tostring(bc).."/"..tostring(state.af2BigCap or 1000)
                     vGift.Text = Farm.abbrev(gardenValueNormal())   -- v41.1: total value garden (normal)
+                    vTotal.Text = tostring(countTotalFruit())   -- v42.1: total buah
+                    local ns, nw = countSprWC()   -- v42.2: sprinkler / wc
+                    vSprWC.Text = ns.." / "..nw
                 end)
                 task.wait(1)
             end
