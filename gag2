@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v43.4
+-- ZENX FARM  v43.5
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v43.4"
+local VER       = "v43.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5598,24 +5598,23 @@ Farm.buildScreenOverlay = function()
         end)
         return n
     end
-    -- v42.2: hitung sprinkler + watering can (yg ke-place di kebun sendiri)
+    -- v43.5: hitung stok Super Sprinkler + Super Watering Can di INVENTORY (pakai .Count).
+    -- (dulu baca yg ke-place di kebun -> user mau stok di tas).
     local function countSprWC()
         local nSpr, nWC = 0, 0
         pcall(function()
-            local gardens = workspace:FindFirstChild("Gardens")
-            if not gardens then return end
-            local myUid = player.UserId
-            for _, plot in ipairs(gardens:GetChildren()) do
-                local sprs = plot:FindFirstChild("Sprinklers")
-                if sprs then
-                    for _, s in ipairs(sprs:GetChildren()) do
-                        -- cuma punya sendiri (UserId attr atau prefix nama)
-                        local uid = s:GetAttribute("UserId")
-                        local mine = (uid == myUid) or (tostring(s.Name):sub(1, #tostring(myUid)) == tostring(myUid))
-                        if mine then
-                            local nm = tostring(s:GetAttribute("Name") or s.Name):lower()
-                            if nm:find("watering") or nm:find("can") then nWC = nWC + 1
-                            else nSpr = nSpr + 1 end
+            for _, holder in ipairs(invHolders()) do
+                if holder then
+                    for _, t in ipairs(holder:GetChildren()) do
+                        if t:IsA("Tool") then
+                            local nm = tostring(t.Name):lower()
+                            -- cuma yg SUPER
+                            if nm:find("super") then
+                                local cnt = t:GetAttribute("Count")
+                                cnt = (type(cnt) == "number") and cnt or 1
+                                if nm:find("watering") or nm:find("can") then nWC = nWC + cnt
+                                elseif nm:find("sprinkler") then nSpr = nSpr + cnt end
+                            end
                         end
                     end
                 end
