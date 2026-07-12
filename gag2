@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.3
+-- ZENX FARM  v44.4
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.3"
+local VER       = "v44.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -3943,6 +3943,21 @@ function Farm.relayReq(opts)
     if ok then return resp end
     return nil
 end
+-- v44.4: SEARCH username Roblox (buat autocomplete penerima gift). return array {name, id} atau nil.
+function Farm.searchUsername(keyword)
+    if not keyword or keyword == "" then return nil end
+    local url = "https://users.roblox.com/v1/users/search?keyword=" .. keyword .. "&limit=25"
+    local resp = Farm.relayReq({ Url = url, Method = "GET" })
+    local body = resp and (resp.Body or resp.body)
+    if not body then return nil end
+    local ok, data = pcall(function() return HS:JSONDecode(body) end)
+    if not ok or type(data) ~= "table" or type(data.data) ~= "table" then return nil end
+    local out = {}
+    for _, u in ipairs(data.data) do
+        if u.name then out[#out+1] = { name = u.name, id = u.id, display = u.displayName } end
+    end
+    return out
+end
 -- v21.8: daftar akun simpanan (dipisah koma) -> array
 function Farm.storageList()
     local t = {}
@@ -6539,6 +6554,57 @@ local function showMailGift()
 
     mkLabel("Penerima",48);      local recBox = mkBox(48, state.mailTarget or "", "ketik nama akun")
     recBox.FocusLost:Connect(function() state.mailTarget = recBox.Text; saveState() end)  -- v40.3: save penerima
+    -- v44.4: tombol CARI username Roblox (autocomplete). ketik "wild" -> cari -> picker nama.
+    recBox.Size = UDim2.new(1, -186, 0, 28)   -- kecilin biar muat tombol cari
+    local findBtn = mk("TextButton", { Size = UDim2.new(0, 42, 0, 28), Position = UDim2.new(1, -180, 0, 46),
+        BackgroundColor3 = Color3.fromRGB(60,90,120), Text = "cari", TextColor3 = C.text, Font = FONT_B,
+        TextSize = 11, BorderSizePixel = 0, ZIndex = 73, Parent = pop }); corner(findBtn, 6)
+    -- panel hasil (muncul di bawah recBox pas ada hasil)
+    local resultFrame = mk("Frame", { Size = UDim2.new(1, -138, 0, 0), Position = UDim2.new(0, 124, 0, 78),
+        BackgroundColor3 = C.bg, BorderSizePixel = 0, Visible = false, ZIndex = 90, Parent = pop })
+    corner(resultFrame, 6); stroke(resultFrame, C.border, 1)
+    local resultList = mk("ScrollingFrame", { Size = UDim2.new(1, -4, 1, -4), Position = UDim2.new(0, 2, 0, 2),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ZIndex = 91,
+        CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = resultFrame })
+    mk("UIListLayout", { Padding = UDim.new(0,2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = resultList })
+    local function closeResults()
+        resultFrame.Visible = false; resultFrame.Size = UDim2.new(1,-138,0,0)
+        for _, c in ipairs(resultList:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+    end
+    local function showResults(list)
+        for _, c in ipairs(resultList:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        if not list or #list == 0 then
+            local none = mk("TextButton", { Size = UDim2.new(1,0,0,26), BackgroundColor3 = C.input,
+                Text = "  (ga ada hasil)", TextColor3 = C.textDim, Font = FONT, TextSize = 11,
+                TextXAlignment = Enum.TextXAlignment.Left, BorderSizePixel = 0, ZIndex = 92, Parent = resultList })
+            resultFrame.Visible = true; resultFrame.Size = UDim2.new(1,-138,0,30)
+            return
+        end
+        local n = math.min(#list, 8)   -- max 8 hasil
+        for i = 1, n do
+            local u = list[i]
+            local b = mk("TextButton", { Size = UDim2.new(1,0,0,26), BackgroundColor3 = C.input,
+                Text = "  "..u.name, TextColor3 = C.text, Font = FONT, TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Left, BorderSizePixel = 0, ZIndex = 92, LayoutOrder = i, Parent = resultList })
+            corner(b, 4)
+            b.MouseButton1Click:Connect(function()
+                recBox.Text = u.name; state.mailTarget = u.name; saveState()
+                closeResults()
+            end)
+        end
+        resultFrame.Visible = true
+        resultFrame.Size = UDim2.new(1,-138,0, math.min(n,8)*28 + 4)
+    end
+    findBtn.MouseButton1Click:Connect(function()
+        local kw = recBox.Text:gsub("^%s+",""):gsub("%s+$","")
+        if kw == "" then return end
+        findBtn.Text = "..."
+        task.spawn(function()
+            local list = Farm.searchUsername(kw)
+            findBtn.Text = "cari"
+            showResults(list)
+        end)
+    end)
     -- marketOn dideklarasi DULU biar bisa dipake picker buah (harga ikut toggle)
     local marketOn = (state.mailMarket == true)   -- v40.3: default NORMAL (dulu default PASAR)
 
