@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.13
+-- ZENX FARM  v44.20
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.13"
+local VER       = "v44.20"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -517,6 +517,7 @@ local state = {
     hopMinutes      = 30,       -- v17.0: interval auto hop (menit)
     autoWeatherHop  = false,    -- v26.8: rejoin pas weather buruk (semua kecuali yg ditandai bagus)
     autoBloodHop    = false,    -- v43.4: di PS -> 2 menit sblm Bloodmoon hop ke public, kick pas selesai
+    imInPrivate     = false,    -- v44.18: TANDAI MANUAL di private server. weather buruk -> tunggu (ga rejoin, biar ga kelempar public)
     weatherHopDelay = 15,       -- v35.0: lama FREEZE (Kick lokal) sblm rejoin. v35.1: default dipendekin 60->15
     allGoodWeather  = false,    -- v26.8: semua weather dianggap bagus (ga pernah hop)
     giftTarget      = "",       -- nama penerima
@@ -583,7 +584,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora","Ignited"}
-local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyCrate","buyAllCrates","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop",
+local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyCrate","buyAllCrates","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop","imInPrivate",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -744,6 +745,9 @@ for _, w in ipairs({ "Aurora", "Bloodmoon", "Starfall", "Sunburst" }) do
 end
 -- freeze default 120s (paksa tiap load - konsisten semua akun)
 state.weatherHopDelay = 120
+
+-- v44.15: default Range MIN value gift mail = 20M (paksa tiap load) - cuma kirim buah >=20M
+state.mailMinV = "20"
 
 -- (auto-skip intro udah dihandle di blok awal - spam sampai bener-bener masuk)
 
@@ -3208,6 +3212,41 @@ staggerSpawn(function()
                 Farm._recoverTick = 0
                 Farm._focusDone = {}
                 Farm._focusType = nil
+            end
+            -- v44.17: WATCHDOG collect Farm 1 - kalau ada buah matang TAPI jumlahnya ga
+            -- turun dalam 15s (collect nyangkut), RESET PENUH (kayak toggle Farm 2 on-off manual).
+            if state.autoCollect then
+                Farm._wdTick = (Farm._wdTick or 0) + 1
+                if Farm._wdTick >= 150 then   -- 15s
+                    Farm._wdTick = 0
+                    -- hitung total buah matang di kebun sendiri
+                    local totalBuah = 0
+                    pcall(function()
+                        local gardens = workspace:FindFirstChild("Gardens")
+                        if gardens then
+                            for _, plot in ipairs(gardens:GetChildren()) do
+                                local plants = plot:FindFirstChild("Plants")
+                                if plants then
+                                    for _, plant in ipairs(plants:GetChildren()) do
+                                        local fr = plant:FindFirstChild("Fruits")
+                                        if fr then totalBuah = totalBuah + #fr:GetChildren() end
+                                        if plant:GetAttribute("PlantGrowthReady") == true then totalBuah = totalBuah + 1 end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    local prev = Farm._wdPrevBuah
+                    Farm._wdPrevBuah = totalBuah
+                    -- ada buah (>0) TAPI jumlahnya SAMA/naik dari 15s lalu = collect ga jalan -> reset
+                    if prev ~= nil and totalBuah > 0 and totalBuah >= prev then
+                        Farm._focusDone = {}; Farm._focusType = nil
+                        Farm._collectCalib = nil
+                        dprint("[ZenxFarm] WATCHDOG: collect nyangkut ("..totalBuah.." buah, 15s ga turun) -> reset")
+                    end
+                end
+            else
+                Farm._wdTick = 0; Farm._wdPrevBuah = nil
             end
             if isCurrentGen() and state.autoCollect then Farm.collectOnce() end
             -- v28.7: Auto Collect 2 (setting terpisah: c2All, c2NoMut, c2WeightF)
@@ -7230,14 +7269,16 @@ end
                     Farm.hideDcPrompt()   -- v36.2: sembunyiin dialog DC selama retry
                     pcall(function() player:Kick("tunggu sebentar jamal midas sedang berkeliaran") end)
                     task.wait(fz)
-                    -- v35.9: 6x percobaan ke server SAMA (10s antar coba), abis itu fallback acak
+                    -- v44.19: kalau ditandai di PS (manual), retry server sama TERUS (ga fallback
+                    -- ke public - biar ga kelempar keluar PS). kalau public, 12x lalu fallback.
+                    local diPS = state.imInPrivate == true
                     local tries = 0
                     while isCurrentGen() do
                         tries = tries + 1
-                        if jobId and jobId ~= "" and (isPriv or tries <= 4) then
-                            Farm.rejoinSameServer(jobId, false)   -- v36.1: private = retry terus, ga ada fallback
+                        if jobId and jobId ~= "" and (diPS or tries <= 12) then
+                            Farm.rejoinSameServer(jobId, false)   -- server sama (PS: retry terus)
                         else
-                            if tries == 5 then print("[ZenxFarm] server sama ga bisa dimasukin -> fallback server acak (public)") end
+                            if tries == 13 then print("[ZenxFarm] server sama ga bisa 12x -> fallback public") end
                             Farm.simpleRejoin(true)
                         end
                         task.wait(10)
@@ -7270,38 +7311,45 @@ end)
 -- pas Bloodmoon SELESAI -> kick (user masukin ke PS sendiri).
 -- countdown Bloodmoon dibaca dari relay Pantry (Farm.pullMoon) atau WeatherUI lokal.
 staggerSpawn(function()
-    local BLOOD_LEAD = 120   -- detik: hop 2 menit sblm bloodmoon
+    local BLOOD_LEAD = 180   -- v44.20: hop 3 menit sblm bloodmoon
     while isCurrentGen() do
         pcall(function()
             if not state.autoBloodHop then Farm._bloodHopSnap = nil; return end
-            local isPriv = (game.PrivateServerId or "") ~= ""
-            -- FASE 1: lagi di PS + bloodmoon deket -> hop ke public
-            if isPriv then
-                -- v44.0: countdown bloodmoon dari API gag2.gg (detik langsung)
+            -- v44.20: syarat hop = server cuma 1 player (lo sendiri/sepi). ga pakai deteksi PS.
+            local nPlayers = #game:GetService("Players"):GetPlayers()
+            local sendirian = nPlayers <= 1
+            -- debug sekali per 30s
+            if (os.clock() - (Farm._bloodDbgAt or 0)) > 30 then
+                Farm._bloodDbgAt = os.clock()
+                local d = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
+                local bs = d and d.Bloodmoon
+                print("[ZenxFarm] BLOOD HOP cek: player="..nPlayers.." sendirian="..tostring(sendirian).." Bloodmoon="..tostring(bs).."s lead="..BLOOD_LEAD.." waitEnd="..tostring(Farm._bloodHopWaitEnd))
+            end
+            -- FASE 1: sendirian + bloodmoon deket + belum hop -> hop ke PUBLIC
+            if sendirian and not Farm._bloodHopWaitEnd then
                 local data = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
                 local bloodSec = data and data.Bloodmoon
                 if bloodSec and bloodSec <= BLOOD_LEAD and bloodSec > 0 then
-                    print("[ZenxFarm] BLOOD HOP: Bloodmoon "..bloodSec.."s lagi (di PS) -> hop ke PUBLIC")
+                    print("[ZenxFarm] BLOOD HOP: sendirian + Bloodmoon "..bloodSec.."s lagi -> hop ke PUBLIC")
                     Farm._bloodHopWaitEnd = true   -- tandai: nunggu bloodmoon selesai buat kick
+                    Farm._bloodSeenActive = false
                     pcall(function() Farm.simpleRejoin(true) end)   -- ke public acak
                     task.wait(12)
                     return
                 end
-            else
-                -- FASE 2: udah di PUBLIC. kalau tadi hop buat bloodmoon, tunggu bloodmoon SELESAI -> kick.
-                if Farm._bloodHopWaitEnd then
-                    -- bloodmoon lagi aktif?
-                    local ph = tostring(workspace:GetAttribute("ActivePhase") or ""):lower()
-                    local aw = tostring(workspace:GetAttribute("ActiveWeather") or ""):lower()
-                    local bloodNow = ph:find("blood") or aw:find("blood")
-                    if bloodNow then
-                        Farm._bloodSeenActive = true   -- pernah keliatan aktif
-                    elseif Farm._bloodSeenActive then
-                        -- bloodmoon udah SELESAI (tadi aktif, sekarang engga) -> kick
-                        print("[ZenxFarm] BLOOD HOP: Bloodmoon selesai -> KICK (masukin ke PS sendiri)")
-                        Farm._bloodHopWaitEnd = false; Farm._bloodSeenActive = false
-                        pcall(function() player:Kick("ZenxBloodDone - masukin ke PS lagi") end)
-                    end
+            end
+            -- FASE 2: udah hop (waitEnd) -> tunggu bloodmoon BENER2 selesai -> kick
+            if Farm._bloodHopWaitEnd then
+                local ph = tostring(workspace:GetAttribute("ActivePhase") or ""):lower()
+                local aw = tostring(workspace:GetAttribute("ActiveWeather") or ""):lower()
+                local bloodNow = ph:find("blood") or aw:find("blood")
+                if bloodNow then
+                    Farm._bloodSeenActive = true   -- bloodmoon lagi aktif (kejadian)
+                elseif Farm._bloodSeenActive then
+                    -- tadi aktif, sekarang engga = bloodmoon SELESAI -> kick
+                    print("[ZenxFarm] BLOOD HOP: Bloodmoon selesai -> KICK (masukin ke PS lagi)")
+                    Farm._bloodHopWaitEnd = false; Farm._bloodSeenActive = false
+                    pcall(function() player:Kick("bloodlit selesai - masukin ke server sendiri lagi") end)
                 end
             end
         end)
@@ -10738,7 +10786,7 @@ end
 
 -- ====== kartu AUTO REJOIN WEATHER - v26.8 (MISC 2) ======
 do
-    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 290), BackgroundColor3 = C.card,
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 360), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 21, Parent = misc2List })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Auto Rejoin Weather", 15, C.text, Enum.TextXAlignment.Left)
@@ -10829,6 +10877,32 @@ do
         print("[ZenxFarm] Blood Hop -> "..(state.autoBloodHop and "ON" or "OFF"))
     end)
     applyBH()
+    -- v44.19: toggle "Di Private Server" (manual). kurangi local (limit-200): reuse nama.
+    lbl(body, "Di Private Server (manual)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,230)
+    do
+        local d2 = lbl(body, "nyalain kalau main di PS (VIP/private). buat blood hop + rejoin", 10, C.textDim, Enum.TextXAlignment.Left)
+        d2.Position = UDim2.new(0,0,0,252); d2.Size = UDim2.new(1,-60,0,28); d2.TextWrapped = true
+    end
+    Farm._ipSw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -52, 0, 232),
+        BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = body })
+    corner(Farm._ipSw, 13); Farm._ipStroke = stroke(Farm._ipSw, C.border, 1)
+    Farm._ipKnob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
+        BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = Farm._ipSw })
+    corner(Farm._ipKnob, 10)
+    function Farm._applyIP()
+        if state.imInPrivate then
+            Farm._ipSw.BackgroundColor3 = C.green; Farm._ipKnob.BackgroundColor3 = Color3.new(1,1,1)
+            Farm._ipKnob.Position = UDim2.new(1, -23, 0.5, -10); Farm._ipStroke.Color = C.green
+        else
+            Farm._ipSw.BackgroundColor3 = C.input; Farm._ipKnob.BackgroundColor3 = C.textDim
+            Farm._ipKnob.Position = UDim2.new(0, 3, 0.5, -10); Farm._ipStroke.Color = C.border
+        end
+    end
+    Farm._ipSw.MouseButton1Click:Connect(function()
+        state.imInPrivate = not state.imInPrivate; saveState(); Farm._applyIP()
+        print("[ZenxFarm] Di Private Server -> "..(state.imInPrivate and "ON" or "OFF"))
+    end)
+    Farm._applyIP()
 end
 
 -- ====== kartu NO-CLIP - v38.9 (MISC 2) ======
