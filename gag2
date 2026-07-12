@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v43.5
+-- ZENX FARM  v43.6
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v43.5"
+local VER       = "v43.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5795,6 +5795,30 @@ Farm.buildScreenOverlay = function()
     makeOverlay()
 end
 Farm.buildScreenOverlay()
+
+-- v43.6: LOOP PUSH MOON background. akun sumber (WeatherUI keisi) push countdown ke relay
+-- TERUS (tiap 10s) walau overlay lagi mode counter / ketutup. biar relay selalu keisi.
+task.spawn(function()
+    while true do
+        pcall(function()
+            local data = Farm.readMoonUI and Farm.readMoonUI()
+            if data then
+                Farm.pushMoon()
+                if not Farm._moonPushDebugged then
+                    Farm._moonPushDebugged = true
+                    print("[ZenxFarm] MOON PUSH: akun ini SUMBER (WeatherUI keisi) -> push relay. Bloodmoon="..tostring(data.Bloodmoon))
+                end
+            else
+                if not Farm._moonPullDebugged then
+                    Farm._moonPullDebugged = true
+                    local pd = Farm.pullMoon and Farm.pullMoon()
+                    print("[ZenxFarm] MOON PULL: akun PENERIMA -> ambil relay. dapet="..(pd and ("ADA Bloodmoon="..tostring(pd.Bloodmoon)) or "KOSONG (blm ada sumber push)"))
+                end
+            end
+        end)
+        task.wait(10)
+    end
+end)
 
 local function titleBtn(x, txt, col, w)
     local b = mk("TextButton", {
