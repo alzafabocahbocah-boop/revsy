@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v42.2
+-- ZENX FARM  v43.1
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v42.2"
+local VER       = "v43.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5341,8 +5341,8 @@ local titleLbl = mk("TextLabel", {
     Text = "ZENX FARM", Font = FONT_B, TextSize = 15, TextColor3 = C.text,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar })
 local verLbl = mk("TextLabel", {
-    Size = UDim2.new(0, 80, 1, 0), Position = UDim2.new(0, 168, 0, 0), BackgroundTransparency = 1,
-    Text = VER, Font = FONT, TextSize = 12, TextColor3 = C.textDim,
+    Size = UDim2.new(0, 40, 1, 0), Position = UDim2.new(0, 120, 0, 0), BackgroundTransparency = 1,
+    Text = VER, Font = FONT, TextSize = 11, TextColor3 = C.textDim,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar })
 
 -- v39.1: tombol FARM 2 (ganti tampilan Sheckles). koordinasi Farm1 <-> Farm2.
@@ -5350,12 +5350,12 @@ local verLbl = mk("TextLabel", {
 Farm.buildFarm2Btn = function()
     -- v41.6: dua tombol (-50kg & -60kg). cara kerja SAMA, beda cuma c2WeightF.
     local farm2Btn = mk("TextButton", {
-        Size = UDim2.new(0, 58, 0, 22), Position = UDim2.new(0, 210, 0.5, -11),
+        Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 165, 0.5, -11),
         BackgroundColor3 = C.card, Text = "-50kg", Font = FONT_B, TextSize = 11,
         TextColor3 = C.textDim, BorderSizePixel = 0, AutoButtonColor = false, Parent = titleBar })
     corner(farm2Btn, 6)
     local farm2Btn70 = mk("TextButton", {
-        Size = UDim2.new(0, 58, 0, 22), Position = UDim2.new(0, 272, 0.5, -11),
+        Size = UDim2.new(0, 52, 0, 22), Position = UDim2.new(0, 220, 0.5, -11),
         BackgroundColor3 = C.card, Text = "-60kg", Font = FONT_B, TextSize = 11,
         TextColor3 = C.textDim, BorderSizePixel = 0, AutoButtonColor = false, Parent = titleBar })
     corner(farm2Btn70, 6)
@@ -5534,11 +5534,31 @@ Farm.buildScreenOverlay = function()
         end)
         return nSpr, nWC
     end
+    -- v43.0: baca countdown moon dari WeatherUI game (PW_xxx.Time.Text).
+    -- game sendiri nampilin prediksi: PW_Bloodmoon/PW_Goldmoon/PW_RainbowMoon/PW_MegaMoon/PW_Moon.
+    local function readMoon(pwName)
+        local txt = "-"
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            local wui = pg and pg:FindFirstChild("WeatherUI")
+            local frame = wui and wui:FindFirstChild("Frame")
+            local pw = frame and frame:FindFirstChild(pwName)
+            local timeLbl = pw and pw:FindFirstChild("Time")
+            if timeLbl and timeLbl:IsA("TextLabel") then
+                local t = tostring(timeLbl.Text)
+                -- buang "in " di depan biar ringkas
+                t = t:gsub("^in%s+", "")
+                if t ~= "" then txt = t end
+            end
+        end)
+        return txt
+    end
     local function makeOverlay()
         local host2 = (gethui and gethui()) or game:GetService("CoreGui")
         pcall(function() local o = host2:FindFirstChild("ZenxOverlay"); if o then o:Destroy() end end)
         local og = Instance.new("ScreenGui")
         og.Name = "ZenxOverlay"; og.ResetOnSpawn = false; og.IgnoreGuiInset = true
+        og.DisplayOrder = 9999   -- v43.0: paling depan, jangan ketutup teks lain
         pcall(function() og.Parent = host2 end)
         if not og.Parent then og.Parent = player:WaitForChild("PlayerGui") end
         local box = Instance.new("Frame")
@@ -5546,31 +5566,71 @@ Farm.buildScreenOverlay = function()
         box.Position = UDim2.new(1, -184, 0, 12)   -- pojok kanan atas
         box.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         box.BackgroundTransparency = 0.15
-        box.BorderSizePixel = 0; box.Active = true; box.Parent = og
+        box.BorderSizePixel = 0; box.Active = true; box.ZIndex = 500; box.Parent = og
         Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
         local xb = Instance.new("TextButton")
         xb.Size = UDim2.new(0, 18, 0, 18); xb.Position = UDim2.new(1, -20, 0, 3)
         xb.BackgroundTransparency = 1; xb.Text = "x"; xb.TextColor3 = Color3.fromRGB(255,255,255)
-        xb.Font = Enum.Font.GothamBold; xb.TextSize = 14; xb.Parent = box
+        xb.Font = Enum.Font.GothamBold; xb.TextSize = 14; xb.ZIndex = 502; xb.Parent = box
+        -- v43.0: tombol toggle "moon" di pojok kanan (ganti mode counter <-> moon)
+        local moonBtn = Instance.new("TextButton")
+        moonBtn.Size = UDim2.new(0, 42, 0, 16); moonBtn.Position = UDim2.new(1, -66, 1, -20)
+        moonBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 90); moonBtn.BackgroundTransparency = 0.2
+        moonBtn.Text = "moon"; moonBtn.TextColor3 = Color3.fromRGB(200, 200, 255)
+        moonBtn.Font = Enum.Font.GothamBold; moonBtn.TextSize = 10; moonBtn.BorderSizePixel = 0
+        moonBtn.ZIndex = 502; moonBtn.Parent = box
+        Instance.new("UICorner", moonBtn).CornerRadius = UDim.new(0, 4)
         local function row(y, label)
             local l = Instance.new("TextLabel")
             l.Size = UDim2.new(0.42, -8, 0, 28); l.Position = UDim2.new(0, 10, 0, y)
             l.BackgroundTransparency = 1; l.Text = label; l.TextColor3 = Color3.fromRGB(200,200,200)
             l.Font = Enum.Font.Gotham; l.TextSize = 12; l.TextXAlignment = Enum.TextXAlignment.Left
-            l.TextYAlignment = Enum.TextYAlignment.Center; l.Parent = box
+            l.TextYAlignment = Enum.TextYAlignment.Center; l.ZIndex = 501; l.Parent = box
             local v = Instance.new("TextLabel")
             v.Size = UDim2.new(0.58, -10, 0, 28); v.Position = UDim2.new(0.42, 0, 0, y)
             v.BackgroundTransparency = 1; v.Text = "-"; v.TextColor3 = Color3.fromRGB(255,255,255)
             v.Font = Enum.Font.GothamBold; v.TextSize = 18; v.TextXAlignment = Enum.TextXAlignment.Right
-            v.TextYAlignment = Enum.TextYAlignment.Center; v.Parent = box
-            return v
+            v.TextYAlignment = Enum.TextYAlignment.Center; v.ZIndex = 501; v.Parent = box
+            return l, v
         end
-        local vPohon = row(6,  "pohon")
-        local vKecil = row(36, "kecil")
-        local vBesar = row(66, "besar")
-        local vGift  = row(96, "value")
-        local vTotal = row(126, "total buah")
-        local vSprWC = row(156, "spr/wc")
+        -- mode counter (default)
+        local lPohon, vPohon = row(6,  "pohon")
+        local lKecil, vKecil = row(36, "kecil")
+        local lBesar, vBesar = row(66, "besar")
+        local lGift,  vGift  = row(96, "value")
+        local lTotal, vTotal = row(126, "total buah")
+        local lSprWC, vSprWC = row(156, "spr/wc")
+        -- mode moon: label diganti nama moon, value diisi countdown. baris ke-6 (spr/wc)
+        -- disembunyiin di mode moon (moon cuma 5). teks moon label lebih kecil biar muat.
+        local counterRows = { {lPohon,vPohon}, {lKecil,vKecil}, {lBesar,vBesar}, {lGift,vGift}, {lTotal,vTotal}, {lSprWC,vSprWC} }
+        local moonList = {
+            {"Bloodmoon", "PW_Bloodmoon"}, {"Goldmoon", "PW_Goldmoon"},
+            {"Rainbow", "PW_RainbowMoon"}, {"Mega", "PW_MegaMoon"}, {"Moon", "PW_Moon"},
+        }
+        local overlayMode = "counter"   -- atau "moon"
+        local function applyModeLabels()
+            if overlayMode == "counter" then
+                lPohon.Text = "pohon"; lKecil.Text = "kecil"; lBesar.Text = "besar"
+                lGift.Text = "value"; lTotal.Text = "total buah"; lSprWC.Text = "spr/wc"
+                for _, r in ipairs(counterRows) do r[1].Visible = true; r[2].Visible = true end
+                for _, r in ipairs(counterRows) do r[1].TextSize = 12; r[2].TextSize = 18 end
+                moonBtn.Text = "moon"; moonBtn.BackgroundColor3 = Color3.fromRGB(60,60,90)
+            else
+                -- mode moon: 5 baris moon, baris ke-6 disembunyiin
+                for i = 1, 5 do
+                    counterRows[i][1].Text = moonList[i][1]
+                    counterRows[i][1].TextSize = 12
+                    counterRows[i][2].TextSize = 13   -- countdown lebih kecil (teks panjang)
+                    counterRows[i][1].Visible = true; counterRows[i][2].Visible = true
+                end
+                counterRows[6][1].Visible = false; counterRows[6][2].Visible = false
+                moonBtn.Text = "stat"; moonBtn.BackgroundColor3 = Color3.fromRGB(90,60,60)
+            end
+        end
+        moonBtn.MouseButton1Click:Connect(function()
+            overlayMode = (overlayMode == "counter") and "moon" or "counter"
+            applyModeLabels()
+        end)
         xb.MouseButton1Click:Connect(function()
             og:Destroy()
             task.delay(30, function() Farm.buildScreenOverlay() end)   -- muncul lagi 30s
@@ -5579,17 +5639,23 @@ Farm.buildScreenOverlay = function()
         task.spawn(function()
             while og.Parent do
                 pcall(function()
-                    vPohon.Text = tostring(countDragon())
-                    -- hitung kecil/besar langsung (biar update walau AF2 off)
-                    local thr = math.abs(state.c2WeightF or 50)
-                    local sc = (Farm.af2CountSmallFruits and Farm.af2CountSmallFruits(thr)) or Farm._af2SmallCount or 0
-                    local bc = (Farm.af2CountBigFruits and Farm.af2CountBigFruits(thr)) or Farm._af2BigCount or 0
-                    vKecil.Text = tostring(sc)
-                    vBesar.Text = tostring(bc).."/"..tostring(state.af2BigCap or 1000)
-                    vGift.Text = Farm.abbrev(gardenValueNormal())   -- v41.1: total value garden (normal)
-                    vTotal.Text = tostring(countTotalFruit())   -- v42.1: total buah
-                    local ns, nw = countSprWC()   -- v42.2: sprinkler / wc
-                    vSprWC.Text = ns.." / "..nw
+                    if overlayMode == "counter" then
+                        vPohon.Text = tostring(countDragon())
+                        local thr = math.abs(state.c2WeightF or 50)
+                        local sc = (Farm.af2CountSmallFruits and Farm.af2CountSmallFruits(thr)) or Farm._af2SmallCount or 0
+                        local bc = (Farm.af2CountBigFruits and Farm.af2CountBigFruits(thr)) or Farm._af2BigCount or 0
+                        vKecil.Text = tostring(sc)
+                        vBesar.Text = tostring(bc).."/"..tostring(state.af2BigCap or 1000)
+                        vGift.Text = Farm.abbrev(gardenValueNormal())
+                        vTotal.Text = tostring(countTotalFruit())
+                        local ns, nw = countSprWC()
+                        vSprWC.Text = ns.." / "..nw
+                    else
+                        -- mode moon: baca countdown dari WeatherUI
+                        for i = 1, 5 do
+                            counterRows[i][2].Text = readMoon(moonList[i][2])
+                        end
+                    end
                 end)
                 task.wait(1)
             end
