@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.39
+-- ZENX FARM  v44.40
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.39"
+local VER       = "v44.40"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2265,12 +2265,11 @@ function Farm.startDropLoop()
                 end
             end
             -- v44.36: DROP CEPAT - kalau ada Tool yg UDAH siap, DROP DULUAN (ga nunggu promote).
+            -- v44.40: tanpa equip (biar posisi buah di hotbar ga berubah2).
             if #tools > 0 then
-                local hum0 = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
                 for _, e in ipairs(tools) do
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
-                    if hum0 and e.obj:IsA("Tool") then pcall(function() hum0:EquipTool(e.obj) end) end
                     pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
                     task.wait(0.05)
                     if e.obj.Parent == nil then
@@ -2278,7 +2277,6 @@ function Farm.startDropLoop()
                         pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                     end
                 end
-                pcall(function() if hum0 then hum0:UnequipTools() end end)
                 tools = {}   -- udah ke-drop, kosongin biar ga double
             end
             -- promote buah yg value belum kebaca (BATCH tanpa nunggu tiap frame)
@@ -2342,26 +2340,18 @@ function Farm.startDropLoop()
                     end
                 end
 
-                -- v44.39: DROP 1-PER-1 SEKUENSIAL. equip 1 buah -> drop -> pindah buah berikut.
-                -- (drop butuh buah di TANGAN; equip semua barengan kacau. verifikasi ringan.)
+                -- v44.40: DROP TANPA EQUIP - fire RequestDrop langsung (drop jalan tanpa equip,
+                -- kebukti di dropFruit/drop-tanah). equip bikin posisi buah di hotbar berubah2.
                 for _, e in ipairs(tools) do
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
-                    if hum and e.obj:IsA("Tool") then
-                        pcall(function() hum:EquipTool(e.obj) end)
-                    end
                     pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
-                    task.wait(0.05)   -- jeda kecil biar server proses (bukan 0.4s poll)
+                    task.wait(0.05)   -- jeda kecil biar server proses
                     if e.obj.Parent == nil then
                         state.dropDone = (state.dropDone or 0) + 1
                         pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                     end
                 end
-                -- unequip di akhir batch (biar collect ga ke-block)
-                pcall(function()
-                    local h = char and char:FindFirstChildOfClass("Humanoid")
-                    if h then h:UnequipTools() end
-                end)
             end
         end
         -- pastikan tool dilepas pas berhenti
