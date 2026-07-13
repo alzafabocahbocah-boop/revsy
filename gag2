@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.42
+-- ZENX FARM  v44.49
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.42"
+local VER       = "v44.49"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2227,11 +2227,14 @@ end
 -- tiap cycle: cari buah in-range -> equip (WAJIB dipegang) -> RequestDrop -> unequip.
 -- ga ada buah cocok -> nunggu (cycle ga mati). counter dropDone nyampe target -> auto OFF.
 function Farm.startDropLoop()
+    -- v44.45: guard anti-dobel. tiap start naikin gen; loop lama (gen beda) mati sendiri.
+    Farm._dropGen = (Farm._dropGen or 0) + 1
+    local myGen = Farm._dropGen
     task.spawn(function()
         local p = pkt("DroppedItem", "RequestDrop")
         if not (p and p.Fire) then print("[ZenxFarm] RequestDrop packet gak ada"); state.dropAuto=false; return end
         print("[ZenxFarm] DROP FRUIT auto: ON (target "..tostring(state.dropTarget)..")")
-        while state.dropAuto do
+        while state.dropAuto and myGen == Farm._dropGen do
             -- target tercapai -> mati sendiri
             if (state.dropDone or 0) >= (state.dropTarget or 0) then
                 print("[ZenxFarm] DROP FRUIT: target "..tostring(state.dropTarget).." tercapai -> OFF")
@@ -2272,13 +2275,10 @@ function Farm.startDropLoop()
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
                     if hum0 and e.obj:IsA("Tool") then pcall(function() hum0:EquipTool(e.obj) end) end
                     pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
-                    task.wait(0.05)
-                    if e.obj.Parent == nil then
-                        state.dropDone = (state.dropDone or 0) + 1
-                        pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
-                    end
+                    state.dropDone = (state.dropDone or 0) + 1   -- v44.48: hitung dari fire
+                    task.wait(0.5)   -- v44.49: jeda 0.5s per buah
                 end
-                pcall(function() if hum0 then hum0:UnequipTools() end end)
+                pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                 tools = {}   -- udah ke-drop, kosongin biar ga double
             end
             -- promote buah yg value belum kebaca (BATCH tanpa nunggu tiap frame)
@@ -2311,7 +2311,7 @@ function Farm.startDropLoop()
             end
 
             if #tools == 0 and #configs == 0 then
-                task.wait(1)   -- ga ada buah cocok
+                task.wait(0.3)   -- v44.46: ga ada buah - scan lagi cepat (dulu 1s)
             else
                 -- v44.36: promote configs BATCH (ga nunggu tiap frame) + delay lebih cepat.
                 -- tools yg UDAH siap bakal di-drop di bawah (ga nunggu promote kelar dulu).
@@ -2342,8 +2342,8 @@ function Farm.startDropLoop()
                     end
                 end
 
-                -- v44.42: DROP dgn equip (ternyata perlu equip biar buah ke-drop).
-                -- 1-per-1: equip 1 -> drop -> pindah. jeda kecil (bukan poll 0.4s lambat).
+                -- v44.48: FIRE BERUNTUN CEPAT - equip -> fire -> langsung pindah (ga nunggu buah
+                -- hilang). counter dihitung dari jumlah fire. ilangin nyendat + sibuk gonta-ganti.
                 for _, e in ipairs(tools) do
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
@@ -2351,12 +2351,10 @@ function Farm.startDropLoop()
                         pcall(function() hum:EquipTool(e.obj) end)
                     end
                     pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
-                    task.wait(0.05)
-                    if e.obj.Parent == nil then
-                        state.dropDone = (state.dropDone or 0) + 1
-                        pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
-                    end
+                    state.dropDone = (state.dropDone or 0) + 1
+                    task.wait(0.5)   -- v44.49: jeda 0.5s per buah (biar sempet ke-drop sblm pindah)
                 end
+                pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                 pcall(function()
                     local h = char and char:FindFirstChildOfClass("Humanoid")
                     if h then h:UnequipTools() end
@@ -5621,7 +5619,7 @@ end)
 -- ============================================================
 local sg = mk("ScreenGui", { Name = "ZenxFarm", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
 
-local W, H = 560, 360
+local W, H = 620, 360
 local TITLE_H = 40
 
 -- v4.8: posisi awal GUI di POJOK KIRI BAWAH (margin 20px), biar gak nutupin tengah layar.
@@ -5650,6 +5648,43 @@ local verLbl = mk("TextLabel", {
 
 -- v39.1: tombol FARM 2 (ganti tampilan Sheckles). koordinasi Farm1 <-> Farm2.
 -- dibungkus fungsi biar local ga nambah ke main chunk (Luau limit 200).
+-- v44.44: ALL OFF - matiin SEMUA fitur farm sekaligus (collect/sell/farm2/buy/gift/dll)
+function Farm.allOff()
+    state.autoCollect = false
+    state.autoSell = false
+    state.sellWhenFull = false
+    state.sellNonMutOnly = false
+    Farm._sellNonMutOn = false
+    state.collectAuto = false
+    state.dropAuto = false
+    Farm._dropGen = (Farm._dropGen or 0) + 1   -- v44.45: matiin loop drop yg jalan
+    state.farm2On = false
+    state.autoCollect2 = false
+    state.autoSell2 = false
+    state.autoSprinkler = false
+    state.autoSuperSprinkler = false
+    state.autoSuperWC = false
+    state.autoBuySeed = false
+    state.autoBuyCrate = false
+    state.autoBuyGear = false
+    state.autoBuyPet = false
+    state.autoGift = false
+    state.autoGiftFruit = false
+    state.autoGiftPet = false
+    state.gfAuto = false
+    state.autoWeatherHop = false
+    state.autoBloodHop = false
+    state.autoPlant = false
+    state.autoSteal = false
+    state.autoGrabSeed = false
+    state.autoShovel = false
+    state.shovelFruit = false
+    saveState()
+    pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
+    pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
+    pcall(function() if Farm._syncFarm2 then Farm._syncFarm2() end end)
+    print("[ZenxFarm] ALL OFF - semua fitur farm dimatiin")
+end
 Farm.buildFarm2Btn = function()
     -- v41.6: dua tombol (-50kg & -60kg). cara kerja SAMA, beda cuma c2WeightF.
     local farm2Btn = mk("TextButton", {
@@ -5662,6 +5697,15 @@ Farm.buildFarm2Btn = function()
         BackgroundColor3 = C.card, Text = "-60kg", Font = FONT_B, TextSize = 11,
         TextColor3 = C.textDim, BorderSizePixel = 0, AutoButtonColor = false, Parent = titleBar })
     corner(farm2Btn70, 6)
+    -- v44.44: tombol ALL OFF - matiin SEMUA fitur farm sekaligus
+    local allOffBtn = mk("TextButton", {
+        Size = UDim2.new(0, 56, 0, 22), Position = UDim2.new(0, 275, 0.5, -11),
+        BackgroundColor3 = Color3.fromRGB(80, 40, 40), Text = "ALL OFF", Font = FONT_B, TextSize = 10,
+        TextColor3 = Color3.fromRGB(230, 170, 170), BorderSizePixel = 0, AutoButtonColor = true, Parent = titleBar })
+    corner(allOffBtn, 6)
+    allOffBtn.MouseButton1Click:Connect(function()
+        Farm.allOff()
+    end)
     -- sync warna: tombol yg aktif (sesuai c2WeightF) hijau
     local function syncFarm2()
         local on50 = state.farm2On and (state.c2WeightF == -50)
@@ -5702,6 +5746,9 @@ Farm.buildFarm2Btn = function()
             state.s2WeightF = 0
             state.autoSell2 = true
             state.autoWeatherHop = true    -- v44.34: weather kick ikut Farm 2 (ON)
+            state.dropAuto = false          -- v44.45: Farm 2 nyala -> drop MATI
+            Farm._dropGen = (Farm._dropGen or 0) + 1   -- matiin loop drop yg lagi jalan
+            pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
         else
             state.autoSprinkler = false
             state.autoSuperSprinkler = false
@@ -5742,6 +5789,7 @@ Farm.buildFarm2Btn = function()
         end
     end)
     syncFarm2()
+    Farm._syncFarm2 = syncFarm2   -- v44.44: expose buat allOff
 end
 Farm.buildFarm2Btn()
 
