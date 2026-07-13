@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.40
+-- ZENX FARM  v44.42
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.40"
+local VER       = "v44.42"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2265,11 +2265,12 @@ function Farm.startDropLoop()
                 end
             end
             -- v44.36: DROP CEPAT - kalau ada Tool yg UDAH siap, DROP DULUAN (ga nunggu promote).
-            -- v44.40: tanpa equip (biar posisi buah di hotbar ga berubah2).
             if #tools > 0 then
+                local hum0 = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
                 for _, e in ipairs(tools) do
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
+                    if hum0 and e.obj:IsA("Tool") then pcall(function() hum0:EquipTool(e.obj) end) end
                     pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
                     task.wait(0.05)
                     if e.obj.Parent == nil then
@@ -2277,6 +2278,7 @@ function Farm.startDropLoop()
                         pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                     end
                 end
+                pcall(function() if hum0 then hum0:UnequipTools() end end)
                 tools = {}   -- udah ke-drop, kosongin biar ga double
             end
             -- promote buah yg value belum kebaca (BATCH tanpa nunggu tiap frame)
@@ -2340,18 +2342,25 @@ function Farm.startDropLoop()
                     end
                 end
 
-                -- v44.40: DROP TANPA EQUIP - fire RequestDrop langsung (drop jalan tanpa equip,
-                -- kebukti di dropFruit/drop-tanah). equip bikin posisi buah di hotbar berubah2.
+                -- v44.42: DROP dgn equip (ternyata perlu equip biar buah ke-drop).
+                -- 1-per-1: equip 1 -> drop -> pindah. jeda kecil (bukan poll 0.4s lambat).
                 for _, e in ipairs(tools) do
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
+                    if hum and e.obj:IsA("Tool") then
+                        pcall(function() hum:EquipTool(e.obj) end)
+                    end
                     pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
-                    task.wait(0.05)   -- jeda kecil biar server proses
+                    task.wait(0.05)
                     if e.obj.Parent == nil then
                         state.dropDone = (state.dropDone or 0) + 1
                         pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                     end
                 end
+                pcall(function()
+                    local h = char and char:FindFirstChildOfClass("Humanoid")
+                    if h then h:UnequipTools() end
+                end)
             end
         end
         -- pastikan tool dilepas pas berhenti
@@ -6576,7 +6585,9 @@ function Farm.showGiftHistory()
             return
         end
         for i, e in ipairs(hist) do
-            local row = mk("Frame", { Size=UDim2.new(1,0,0,44), BackgroundColor3=C.input, BorderSizePixel=0, LayoutOrder=i, Parent=list }); corner(row,6)
+            -- v44.41: row = TextButton, klik -> username masuk ke kotak Penerima
+            local row = mk("TextButton", { Size=UDim2.new(1,0,0,44), BackgroundColor3=C.input,
+                BorderSizePixel=0, LayoutOrder=i, Text="", AutoButtonColor=true, Parent=list }); corner(row,6)
             local nm = lbl(row, e.name or "?", 13, C.text, Enum.TextXAlignment.Left)
             nm.Position=UDim2.new(0,10,0,4); nm.Size=UDim2.new(0.5,0,0,20)
             local tm = lbl(row, fmtTime(e.time), 10, C.textDim, Enum.TextXAlignment.Left)
@@ -6585,6 +6596,20 @@ function Farm.showGiftHistory()
             val.Position=UDim2.new(0.5,-10,0,4); val.Size=UDim2.new(0.5,0,0,20)
             local cnt = lbl(row, (e.count or 0).." buah", 10, C.textDim, Enum.TextXAlignment.Right)
             cnt.Position=UDim2.new(0.5,-10,0,24); cnt.Size=UDim2.new(0.5,0,0,16)
+            -- klik row -> set username ke kotak Penerima (biar gampang kirim ulang)
+            row.MouseButton1Click:Connect(function()
+                if e.name and e.name ~= "" then
+                    state.mailTarget = e.name; saveState()
+                    if Farm._mailRecBox and Farm._mailRecBox.Parent then
+                        Farm._mailRecBox.Text = e.name
+                        Farm._mailRecBox.TextColor3 = C.green   -- tandai kepilih (hijau)
+                    end
+                    -- feedback: row nyala sebentar
+                    local orig = row.BackgroundColor3
+                    row.BackgroundColor3 = C.green
+                    task.delay(0.3, function() if row and row.Parent then row.BackgroundColor3 = orig end end)
+                end
+            end)
         end
     end
     -- v44.22: reset perlu KONFIRMASI 2x (biar ga kepencet ilang tiap 100 akun)
@@ -6664,6 +6689,7 @@ local function showMailGift()
     local function mkBox(y,def,ph) local b=mk("TextBox",{ Size=UDim2.new(1,-138,0,28), Position=UDim2.new(0,124,0,y-2), BackgroundColor3=C.input, Text=def or "", PlaceholderText=ph or "", TextColor3=C.text, Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(b,6); stroke(b,C.border,1); return b end
 
     mkLabel("Penerima",48);      local recBox = mkBox(48, state.mailTarget or "", "ketik nama akun + Enter")
+    Farm._mailRecBox = recBox   -- v44.41: expose recBox biar history bisa set username pas diklik
     -- v44.10: tombol cari DIHAPUS - cukup Enter buat cari. recBox full lebar.
     -- findBtn dummy (tak terlihat) biar kode search yg ngeset .Text ga error.
     local findBtn = { Text = "" }
