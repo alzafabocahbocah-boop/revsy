@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.52
+-- ZENX FARM  v44.53
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.52"
+local VER       = "v44.53"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2292,9 +2292,13 @@ function Farm.startDropLoop()
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
                     if hum0 and e.obj:IsA("Tool") then pcall(function() hum0:EquipTool(e.obj) end) end
-                    pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
-                    state.dropDone = (state.dropDone or 0) + 1   -- v44.48: hitung dari fire
-                    task.wait(0.9)   -- v44.50: jeda 0.9s per buah
+                    task.wait(0.15)   -- v44.53: equip nempel dulu
+                    for _ = 1, 5 do   -- spam fire drop 5x
+                        pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
+                        task.wait(0.03)
+                    end
+                    task.wait(0.2)
+                    state.dropDone = (state.dropDone or 0) + 1
                 end
                 pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                 tools = {}   -- udah ke-drop, kosongin biar ga double
@@ -2364,17 +2368,23 @@ function Farm.startDropLoop()
                     end
                 end
 
-                -- v44.48: FIRE BERUNTUN CEPAT - equip -> fire -> langsung pindah (ga nunggu buah
-                -- hilang). counter dihitung dari jumlah fire. ilangin nyendat + sibuk gonta-ganti.
+                -- v44.53: EQUIP pelan + SPAM fire drop. equip 1 buah -> tunggu equip nempel ->
+                -- SPAM fire drop bbrp kali -> jeda -> pindah buah berikut. fix: dulu equip cepet
+                -- tapi fire kurang -> ganti2 tanpa drop.
                 for _, e in ipairs(tools) do
                     if not state.dropAuto then break end
                     if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
                     if hum and e.obj:IsA("Tool") then
                         pcall(function() hum:EquipTool(e.obj) end)
                     end
-                    pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
+                    task.wait(0.15)   -- tunggu equip nempel dulu (equip dilemotkan)
+                    -- SPAM fire drop 5x (dipercepat, biar pasti ke-drop)
+                    for _ = 1, 5 do
+                        pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
+                        task.wait(0.03)
+                    end
+                    task.wait(0.2)   -- jeda sebelum pindah buah berikut
                     state.dropDone = (state.dropDone or 0) + 1
-                    task.wait(0.9)   -- v44.50: jeda 0.9s per buah
                 end
                 pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                 pcall(function()
