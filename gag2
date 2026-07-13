@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.30
+-- ZENX FARM  v44.32
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.30"
+local VER       = "v44.32"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -7294,34 +7294,26 @@ function Farm.isBadWeatherNow()
     pcall(function()
         local wv = game:GetService("ReplicatedStorage"):FindFirstChild("WeatherValues")
         if wv then
-            for _, wname in ipairs({ "Rain","Lightning","Rainbow","Snowfall","Starfall","Aurora","Sunburst" }) do
+            for _, wname in ipairs({ "Rain","Lightning","Rainbow","Snowfall","Starfall","Aurora","Sunburst",
+                                     "Goldmoon","RainbowMoon","Bloodmoon","Mega","Moon" }) do
                 if wv:GetAttribute(wname .. "_Playing") == true then
                     cands[#cands+1] = wname
                 end
             end
         end
     end)
-    -- v35.8: pencocokan tanda "bagus" KEBAL EJAAN - attribute bisa "Blood Moon"/"BloodMoon"/
-    -- "Bloodmoon", picker nyimpen salah satunya; huruf besar/kecil & spasi/simbol diabaikan.
+    -- v44.32: DAFTAR WEATHER BURUK (whitelist) - CUMA 4 ini yg dianggap buruk (kick).
+    -- sisanya (Rain/Snowfall/Starfall/Aurora/Sunburst/Bloodmoon/Mega/dll) AMAN semua.
     local function norm(s) return tostring(s):lower():gsub("[^%w]", "") end
-    local goodNorm = {}
-    if state.goodWeathers then for n in pairs(state.goodWeathers) do goodNorm[norm(n)] = true end end
+    local BAD = {
+        goldmoon = true, gold = true,
+        lightning = true,
+        rainbow = true,
+        rainbowmoon = true,
+    }
     for _, w in ipairs(cands) do
-        local wl = tostring(w):lower()
-        if not WEATHER_NEUTRAL[wl] then
-            -- v35.3: BELAJAR SENDIRI - nilai baru (weather ataupun fase) didaftarin ke picker
-            pcall(function()
-                local ws = tostring(w)
-                local lc = Farm._weatherListCache
-                if lc then
-                    for _, n in ipairs(lc) do if norm(n) == norm(ws) then return end end
-                    lc[#lc+1] = ws; table.sort(lc)
-                    print("[ZenxFarm] event baru kedeteksi & didaftarin ke picker: "..ws)
-                end
-            end)
-            if not state.allGoodWeather and not goodNorm[norm(w)] then
-                return true, w
-            end
+        if BAD[norm(w)] then
+            return true, w
         end
     end
     return false, aw
@@ -7335,92 +7327,15 @@ staggerSpawn(function()
         if state.autoWeatherHop then
             local bad, w = Farm.isBadWeatherNow()
             if bad then
-                -- v44.24: PETIR (Lightning) -> KICK aja, JANGAN rejoin (efek petir lama, ga jelas berapa).
-                -- user masukin manual. selain petir -> rejoin server sama.
-                if tostring(w):lower():find("lightning") then
-                    print("[ZenxFarm] PETIR/ELECTRIC kedeteksi -> KICK SECEPATNYA (ga rejoin, masukin manual)")
-                    Farm._weatherHopState = nil
-                    pcall(function() player:Kick("petir - masukin lagi manual ya") end)
-                    -- ga ada delay: keluar secepat mungkin
-                else
-                local fz = tonumber(state.weatherHopDelay) or 0
-                if fz > 0 then
-                    -- v35.0 (HASIL SPY sc lain): FREEZE MODE.
-                    -- timeline bukti: Kick lokal -> 0.3s kemudian replicator putus (BENERAN keluar
-                    -- server, buah aman, layar freeze di frame terakhir) -> script executor tetep
-                    -- hidup -> tunggu N detik (setting) -> TeleportService rejoin ke server baru.
-                    Farm._weatherHopState = "freeze"
-                    
--- v36.2: SEMBUNYIIN dialog "Koneksi Terputus" / error prompt (kosmetik, ala sc lain).
--- proses rejoin di belakang JALAN TERUS; cuma GUI merah-nya yg dibikin transparan
--- biar layar bersih pas retry. jalan sbg loop sampai berhasil pindah.
-function Farm.hideDcPrompt()
-    task.spawn(function()
-        local cg = game:GetService("CoreGui")
-        local guiSvc = game:GetService("GuiService")
-        for _ = 1, 300 do   -- ~150 detik, cukup buat nutup semua percobaan
-            pcall(function()
-                for _, g in ipairs(cg:GetChildren()) do
-                    local n = tostring(g.Name):lower()
-                    if n:find("error") or n:find("prompt") or n:find("disconnect") then
-                        if g:IsA("ScreenGui") then g.Enabled = false end
-                        pcall(function() g.Parent = nil end)
-                    end
-                end
-                -- tombol "Leave/Keluar" kadang di GuiService prompt
-                pcall(function() guiSvc:ClearError() end)
-            end)
-            task.wait(0.5)
-        end
-    end)
-end
-
-                    local jobId = game.JobId   -- v35.9: SIMPEN sebelum kick - kunci balik ke server SAMA
-                    if not jobId or jobId == "" then jobId = Farm._bootJobId end   -- v44.26: fallback JobId awal
-                    -- v36.0: kode 772 = server penuh (ghost slot bekas kita / keisi orang).
-                    -- 2x gagal ke server sama -> nyerah, fallback acak. freeze minimal 45s
-                    -- biar ghost slot sempet bebas sebelum percobaan pertama.
-                    local isPriv = (game.PrivateServerId or "") ~= ""   -- v36.1: private = jangan nyerah ke acak
-                    local sameFail = 0
-                    pcall(function()
-                        game:GetService("TeleportService").TeleportInitFailed:Connect(function()
-                            sameFail = sameFail + 1
-                            if sameFail >= 2 and not isPriv then jobId = nil end
-                        end)
-                    end)
-                    if fz < 45 then fz = 45 end
-                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> LANGSUNG KICK + rejoin server sama")
-                    -- v44.29: LANGSUNG kick (ga pakai countdown - biar ga keburu kena efek weather)
-                    Farm.hideDcPrompt()   -- v36.2: sembunyiin dialog DC selama retry
-                    pcall(function() player:Kick("tunggu sebentar jamal midas sedang berkeliaran") end)
-                    task.wait(fz)   -- freeze/tunggu ghost slot bebas, baru rejoin
-                    -- v44.23: weather buruk SELALU balik ke server SAMA (private). retry TERUS,
-                    -- GA PERNAH ke public (akun-akun main di PS).
-                    local tries = 0
-                    while isCurrentGen() do
-                        tries = tries + 1
-                        if jobId and jobId ~= "" then
-                            Farm.rejoinSameServer(jobId, false)   -- server sama, retry terus
-                        else
-                            -- jobId kosong (jarang) -> tunggu + coba ambil jobId lagi (JANGAN ke public)
-                            print("[ZenxFarm] jobId kosong, tunggu + retry (ga ke public)")
-                            task.wait(3)
-                            jobId = tostring(game.JobId or "")
-                        end
-                        task.wait(10)
-                    end
-                else
-                    -- fz = 0 -> mode lama v28.4: LANGSUNG teleport pindah server
-                    Farm._weatherHopState = "hopping"
-                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> LANGSUNG teleport (tinggalin server)")
-                    while isCurrentGen() and state.autoWeatherHop and select(1, Farm.isBadWeatherNow()) do
-                        Farm.simpleRejoin()   -- Teleport seketika -> ilang dari server -> nyampe server baru
-                        task.wait(12)
-                    end
-                    Farm._weatherHopState = nil
-                    pendingFrom = nil; Farm._weatherHopAt = nil
-                end
-                end   -- v44.24: tutup else (bukan petir)
+                -- v44.31: SEMENTARA - SEMUA weather buruk (termasuk petir) -> KICK doang, GA rejoin.
+                -- alasan: TeleportToPlaceInstance ke private server DIBLOK Roblox ("cant join private
+                -- instance through specific join"). balik ke PS butuh accessCode yg ga kebaca client.
+                -- nunggu weather lewat = kena mutasi jelek. jadi kick aja, user masukin manual.
+                -- (nanti spy cara dapet accessCode PS buat rejoin otomatis.)
+                print("[ZenxFarm] weather buruk '"..tostring(w).."' -> KICK (ga rejoin, masukin manual)")
+                Farm._weatherHopState = nil
+                pcall(function() player:Kick("cuaca buruk ("..tostring(w)..") - masukin lagi manual ya") end)
+                task.wait(5)   -- jeda kecil biar ga spam kick
             else
                 Farm._weatherHopState = nil
                 pendingFrom = nil; Farm._weatherHopAt = nil
