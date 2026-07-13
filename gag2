@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.27
+-- ZENX FARM  v44.30
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.27"
+local VER       = "v44.30"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -3245,11 +3245,23 @@ staggerSpawn(function()
                     end)
                     local prev = Farm._wdPrevBuah
                     Farm._wdPrevBuah = totalBuah
-                    -- ada buah (>0) TAPI jumlahnya SAMA/naik dari 15s lalu = collect ga jalan -> reset
+                    -- ada buah (>0) TAPI jumlahnya SAMA/naik dari 15s lalu = collect ga jalan -> RESET PENUH
                     if prev ~= nil and totalBuah > 0 and totalBuah >= prev then
+                        -- v44.30: reset PENUH persis kayak toggle Farm 2 off (yg bikin collect bangun manual).
                         Farm._focusDone = {}; Farm._focusType = nil
                         Farm._collectCalib = nil
-                        dprint("[ZenxFarm] WATCHDOG: collect nyangkut ("..totalBuah.." buah, 15s ga turun) -> reset")
+                        Farm._wdPrevBuah = nil   -- reset tracker biar ga langsung re-trigger
+                        -- set ulang state collect ke kondisi bersih (sama kayak applyFarm2(false))
+                        state.collectAll = true
+                        state.collectMutAll = false
+                        state.collectMulti = true
+                        state.collectNoMut = false
+                        state.antiCollectHeavy = false
+                        state.autoCollect = true
+                        -- restart loop-loop terkait (yg applyFarm2 panggil)
+                        pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
+                        pcall(function() if Farm.startSellNonMutLoop and state.sellNonMutOnly then Farm.startSellNonMutLoop() end end)
+                        dprint("[ZenxFarm] WATCHDOG: collect nyangkut ("..totalBuah.." buah, 15s ga turun) -> RESET PENUH (kayak toggle farm2)")
                     end
                 end
             else
@@ -7377,17 +7389,11 @@ end
                         end)
                     end)
                     if fz < 45 then fz = 45 end
-                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> peringatan + countdown "..fz.."s lalu REJOIN SERVER SAMA")
-                    -- v44.25: PERINGATAN + COUNTDOWN sebelum rejoin (tampil di layar, waktu jalan mundur)
-                    Farm.showWeatherCountdown(tostring(w), fz)
-                    for i = fz, 1, -1 do
-                        if not (isCurrentGen() and state.autoWeatherHop) then break end
-                        Farm.updateWeatherCountdown(i)
-                        task.wait(1)
-                    end
-                    Farm.hideWeatherCountdown()
+                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> LANGSUNG KICK + rejoin server sama")
+                    -- v44.29: LANGSUNG kick (ga pakai countdown - biar ga keburu kena efek weather)
                     Farm.hideDcPrompt()   -- v36.2: sembunyiin dialog DC selama retry
                     pcall(function() player:Kick("tunggu sebentar jamal midas sedang berkeliaran") end)
+                    task.wait(fz)   -- freeze/tunggu ghost slot bebas, baru rejoin
                     -- v44.23: weather buruk SELALU balik ke server SAMA (private). retry TERUS,
                     -- GA PERNAH ke public (akun-akun main di PS).
                     local tries = 0
