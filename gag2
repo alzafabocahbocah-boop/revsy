@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.24
+-- ZENX FARM  v44.25
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.24"
+local VER       = "v44.25"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -7220,6 +7220,50 @@ end
 local WEATHER_NEUTRAL = { none=true, normal=true, standard=true, clear=true, sunny=true, default=true, [""]=true,
     day=true, night=true, moon=true, sunset=true, sunrise=true, dawn=true, dusk=true,
     morning=true, noon=true, evening=true, midnight=true }
+-- v44.25: overlay PERINGATAN + COUNTDOWN sebelum rejoin weather buruk.
+function Farm.showWeatherCountdown(wname, total)
+    pcall(function()
+        local host2 = (gethui and gethui()) or game:GetService("CoreGui")
+        local o = host2:FindFirstChild("ZenxWxCd")
+        if o then o:Destroy() end
+        local g = Instance.new("ScreenGui")
+        g.Name = "ZenxWxCd"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true; g.DisplayOrder = 99999
+        pcall(function() g.Parent = host2 end)
+        if not g.Parent then g.Parent = player:WaitForChild("PlayerGui") end
+        local box = Instance.new("Frame")
+        box.Size = UDim2.new(0, 340, 0, 90); box.Position = UDim2.new(0.5, -170, 0.12, 0)
+        box.BackgroundColor3 = Color3.fromRGB(20, 20, 20); box.BackgroundTransparency = 0.05
+        box.BorderSizePixel = 0; box.ZIndex = 999; box.Parent = g
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
+        local st = Instance.new("UIStroke", box); st.Color = Color3.fromRGB(200, 120, 60); st.Thickness = 2
+        local t1 = Instance.new("TextLabel")
+        t1.Size = UDim2.new(1, -20, 0, 32); t1.Position = UDim2.new(0, 10, 0, 10)
+        t1.BackgroundTransparency = 1; t1.Text = "cuaca buruk: " .. tostring(wname)
+        t1.TextColor3 = Color3.fromRGB(255, 180, 90); t1.Font = Enum.Font.GothamBold; t1.TextSize = 16
+        t1.TextXAlignment = Enum.TextXAlignment.Center; t1.ZIndex = 1000; t1.Parent = box
+        local t2 = Instance.new("TextLabel")
+        t2.Name = "CdText"; t2.Size = UDim2.new(1, -20, 0, 32); t2.Position = UDim2.new(0, 10, 0, 46)
+        t2.BackgroundTransparency = 1; t2.Text = "anda akan kembali ke server dalam " .. total .. "s"
+        t2.TextColor3 = Color3.fromRGB(240, 240, 240); t2.Font = Enum.Font.Gotham; t2.TextSize = 14
+        t2.TextXAlignment = Enum.TextXAlignment.Center; t2.ZIndex = 1000; t2.Parent = box
+        Farm._wxCdLabel = t2
+    end)
+end
+function Farm.updateWeatherCountdown(sisa)
+    pcall(function()
+        if Farm._wxCdLabel and Farm._wxCdLabel.Parent then
+            Farm._wxCdLabel.Text = "anda akan kembali ke server dalam " .. sisa .. "s"
+        end
+    end)
+end
+function Farm.hideWeatherCountdown()
+    pcall(function()
+        local host2 = (gethui and gethui()) or game:GetService("CoreGui")
+        local o = host2:FindFirstChild("ZenxWxCd")
+        if o then o:Destroy() end
+        Farm._wxCdLabel = nil
+    end)
+end
 function Farm.isBadWeatherNow()
     -- v35.4 (HASIL BONGKAR DATA): game punya DUA kanal terpisah -
     --   ActiveWeather = weather (Rain/Lightning/Rainbow/Snowfall/Starfall/Aurora/Sunburst)
@@ -7280,11 +7324,10 @@ staggerSpawn(function()
                 -- v44.24: PETIR (Lightning) -> KICK aja, JANGAN rejoin (efek petir lama, ga jelas berapa).
                 -- user masukin manual. selain petir -> rejoin server sama.
                 if tostring(w):lower():find("lightning") then
-                    print("[ZenxFarm] PETIR kedeteksi -> KICK (ga rejoin, masukin manual)")
+                    print("[ZenxFarm] PETIR/ELECTRIC kedeteksi -> KICK SECEPATNYA (ga rejoin, masukin manual)")
                     Farm._weatherHopState = nil
                     pcall(function() player:Kick("petir - masukin lagi manual ya") end)
-                    task.wait(30)   -- jeda biar ga spam kick
-                    -- ga lanjut ke rejoin; balik ke atas loop (tapi udah ke-kick)
+                    -- ga ada delay: keluar secepat mungkin
                 else
                 local fz = tonumber(state.weatherHopDelay) or 0
                 if fz > 0 then
@@ -7331,10 +7374,17 @@ end
                         end)
                     end)
                     if fz < 45 then fz = 45 end
-                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> FREEZE "..fz.."s lalu REJOIN SERVER SAMA (job="..tostring(jobId):sub(1,8).."...)")
+                    print("[ZenxFarm] weather buruk '"..tostring(w).."' -> peringatan + countdown "..fz.."s lalu REJOIN SERVER SAMA")
+                    -- v44.25: PERINGATAN + COUNTDOWN sebelum rejoin (tampil di layar, waktu jalan mundur)
+                    Farm.showWeatherCountdown(tostring(w), fz)
+                    for i = fz, 1, -1 do
+                        if not (isCurrentGen() and state.autoWeatherHop) then break end
+                        Farm.updateWeatherCountdown(i)
+                        task.wait(1)
+                    end
+                    Farm.hideWeatherCountdown()
                     Farm.hideDcPrompt()   -- v36.2: sembunyiin dialog DC selama retry
                     pcall(function() player:Kick("tunggu sebentar jamal midas sedang berkeliaran") end)
-                    task.wait(fz)
                     -- v44.23: weather buruk SELALU balik ke server SAMA (private). retry TERUS,
                     -- GA PERNAH ke public (akun-akun main di PS).
                     local tries = 0
