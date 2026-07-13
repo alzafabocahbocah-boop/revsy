@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.50
+-- ZENX FARM  v44.52
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.50"
+local VER       = "v44.52"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2247,10 +2247,27 @@ function Farm.startDropLoop()
             local char = player.Character
             local hum = char and char:FindFirstChildOfClass("Humanoid")
 
+            -- v44.52: kalau filter value NOL (min 0 + max tanpa batas) -> SISTEM A: drop SEMUA
+            -- buah langsung tanpa hitung value/promote (cepat, ga "mikir" di awal).
+            local noFilter = (minVal <= 0) and (maxVal >= 999999 * 1e6)
+            local tools, configs = {}, {}
+            local needPromote = {}
+            if noFilter then
+                -- ambil SEMUA Tool buah langsung (skip hitung value + promote)
+                for _, holder in ipairs(getFruitHolders()) do
+                    for _, o in ipairs(holder:GetChildren()) do
+                        local id = o:GetAttribute("Id")
+                        local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
+                        if id and fj and o:IsA("Tool") then
+                            tools[#tools+1] = {obj=o, id=id}
+                        elseif id and fj then
+                            configs[#configs+1] = tostring(id)   -- non-Tool: promote dulu (ringan)
+                        end
+                    end
+                end
+            else
             -- v42.0: buah value-nya belum kebaca (SizeMultiplier belum sync) di-PROMOTE dulu,
             -- baru cek filter. dulu: value nil -> pr=0 -> ke-skip filter min (drop ga konsisten).
-            local tools, configs = {}, {}   -- tools=udah Tool siap drop; configs={id} perlu promote
-            local needPromote = {}          -- buah non-Tool yg value belum kebaca -> promote dulu
             for _, holder in ipairs(getFruitHolders()) do
                 for _, o in ipairs(holder:GetChildren()) do
                     local id = o:GetAttribute("Id")
@@ -2266,6 +2283,7 @@ function Farm.startDropLoop()
                         end
                     end
                 end
+            end
             end
             -- v44.36: DROP CEPAT - kalau ada Tool yg UDAH siap, DROP DULUAN (ga nunggu promote).
             if #tools > 0 then
@@ -2329,8 +2347,12 @@ function Farm.startDropLoop()
                                     local id = o:GetAttribute("Id")
                                     local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
                                     if id and fj then
-                                        local pr = Farm.fruitPrice(o) or 0
-                                        if pr >= minVal and pr <= maxVal then
+                                        local okv = noFilter   -- v44.52: noFilter -> ambil tanpa hitung value
+                                        if not okv then
+                                            local pr = Farm.fruitPrice(o) or 0
+                                            okv = (pr >= minVal and pr <= maxVal)
+                                        end
+                                        if okv then
                                             local dup = false
                                             for _, e in ipairs(tools) do if e.obj == o then dup = true break end end
                                             if not dup then tools[#tools+1] = {obj=o, id=id} end
@@ -6492,6 +6514,30 @@ Farm.loadGiftHist = function()
             if ok and type(data) == "table" then Farm._giftHist = data end
         end
     end)
+    -- v44.51: MERGE duplikat lama (nama sama numpuk) jadi 1 entry
+    pcall(function()
+        local merged = {}
+        local byName = {}
+        for _, e in ipairs(Farm._giftHist or {}) do
+            local nm = tostring(e.name or ""):gsub("^%s+",""):gsub("%s+$","")
+            if nm ~= "" then
+                local key = nm:lower()
+                if byName[key] then
+                    local m = byName[key]
+                    m.val = (m.val or 0) + (e.val or 0)
+                    m.count = (m.count or 0) + (e.count or 0)
+                    if (e.time or 0) > (m.time or 0) then m.time = e.time end
+                else
+                    local entry = { name=nm, val=e.val or 0, count=e.count or 0, time=e.time or 0 }
+                    byName[key] = entry
+                    merged[#merged+1] = entry
+                end
+            end
+        end
+        -- urut terbaru dulu
+        table.sort(merged, function(a,b) return (a.time or 0) > (b.time or 0) end)
+        Farm._giftHist = merged
+    end)
 end
 Farm.loadGiftHist()
 Farm.saveGiftHist = function()
@@ -6505,10 +6551,14 @@ end
 function Farm.addGiftHist(name, addVal, addCount)
     if not name or name == "" then return end
     if not addVal or addVal <= 0 then return end
+    -- v44.51: trim spasi biar nama sama ga numpuk (dulu "x" vs "x " dianggap beda)
+    name = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then return end
     local now = os.time()
     local found = nil
+    local nlow = name:lower()
     for _, e in ipairs(Farm._giftHist) do
-        if e.name == name then found = e; break end
+        if tostring(e.name):lower():gsub("^%s+",""):gsub("%s+$","") == nlow then found = e; break end
     end
     if found then
         found.val = (found.val or 0) + addVal
