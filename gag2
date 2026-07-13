@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.34
+-- ZENX FARM  v44.36
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.34"
+local VER       = "v44.36"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2262,16 +2262,32 @@ function Farm.startDropLoop()
                     end
                 end
             end
-            -- promote buah yg value belum kebaca, biar atribut lengkap
+            -- v44.36: DROP CEPAT - kalau ada Tool yg UDAH siap, DROP DULUAN (ga nunggu promote).
+            -- ini ngilangin delay 10-20s di awal (dulu promote semua dulu baru drop).
+            if #tools > 0 then
+                for _, e in ipairs(tools) do
+                    if not state.dropAuto then break end
+                    if (state.dropDone or 0) >= (state.dropTarget or 0) then break end
+                    local hum0 = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                    if hum0 and e.obj:IsA("Tool") then pcall(function() hum0:EquipTool(e.obj) end) end
+                    pcall(function() p:Fire("HarvestedFruits", tostring(e.id)) end)
+                    local t0 = os.clock(); local gone = false
+                    repeat task.wait() until (not e.obj.Parent) or (os.clock() - t0 > 0.4)
+                    if not e.obj.Parent then
+                        gone = true; state.dropDone = (state.dropDone or 0) + 1
+                    end
+                end
+                tools = {}   -- udah ke-drop, kosongin biar ga double
+            end
+            -- promote buah yg value belum kebaca (BATCH tanpa nunggu tiap frame)
             if #needPromote > 0 then
                 local pp = pkt("Backpack", "PromoteFruit")
                 if pp and pp.Fire then
                     for _, uuid in ipairs(needPromote) do
                         if not state.dropAuto then break end
                         pcall(function() pp:Fire(uuid) end)
-                        task.wait()
                     end
-                    task.wait(0.3)   -- kasih waktu server sync atribut
+                    task.wait(0.1)   -- v44.36: sync lebih cepat (dulu 0.3)
                     -- scan ulang buah yg baru ke-promote, cek value lagi
                     for _, holder in ipairs(getFruitHolders()) do
                         for _, o in ipairs(holder:GetChildren()) do
@@ -2295,18 +2311,16 @@ function Farm.startDropLoop()
             if #tools == 0 and #configs == 0 then
                 task.wait(1)   -- ga ada buah cocok
             else
-                -- 1) PROMOTE semua buah inventory sekaligus (beruntun, ga nunggu satu2)
+                -- v44.36: promote configs BATCH (ga nunggu tiap frame) + delay lebih cepat.
+                -- tools yg UDAH siap bakal di-drop di bawah (ga nunggu promote kelar dulu).
                 if #configs > 0 then
                     local pp = pkt("Backpack", "PromoteFruit")
                     if pp and pp.Fire then
                         for _, uuid in ipairs(configs) do
                             if not state.dropAuto then break end
                             pcall(function() pp:Fire(uuid) end)
-                            task.wait()   -- 1 frame antar promote
                         end
-                        -- kasih waktu server proses promote batch (buah jadi Tool)
-                        task.wait(0.3)
-                        -- kumpulin ulang Tool yg baru muncul dari promote
+                        task.wait(0.1)   -- v44.36: sync lebih cepat (dulu 0.3 + wait tiap frame)
                         for _, holder in ipairs(getFruitHolders()) do
                             for _, o in ipairs(holder:GetChildren()) do
                                 if o:IsA("Tool") then
@@ -2315,7 +2329,6 @@ function Farm.startDropLoop()
                                     if id and fj then
                                         local pr = Farm.fruitPrice(o) or 0
                                         if pr >= minVal and pr <= maxVal then
-                                            -- cek belum ada di tools
                                             local dup = false
                                             for _, e in ipairs(tools) do if e.obj == o then dup = true break end end
                                             if not dup then tools[#tools+1] = {obj=o, id=id} end
@@ -2675,6 +2688,10 @@ function Farm.startSellNonMutLoop()
     task.spawn(function()
         local myGen = Farm._espGen  -- ikut generasi biar mati pas gen ganti
         while state.sellNonMutOnly and isCurrentGen() do
+            -- v44.35: kalau collect lagi recover (watchdog), pause sell biar ga rebutan buah
+            if Farm._sellPause and os.clock() < Farm._sellPause then
+                task.wait(0.5)
+            else
             local p = pkt("NPCS", "SellFruit")
             local adaNonMut = false   -- v44.33: cuma fire kalau ADA buah non-mutasi
             if p and p.Fire then
@@ -2695,9 +2712,9 @@ function Farm.startSellNonMutLoop()
                     end
                 end
             end
-            -- v44.33: kalau ADA buah non-mut, scan lagi cepat (masih ada yg mau dijual).
-            -- kalau NGGAK ADA, tidur lebih lama (2.5s) biar ga spam + ga bentrok collect.
+            -- v44.33: kalau ADA buah non-mut, scan lagi cepat. kalau NGGAK ADA, tidur lebih lama.
             if adaNonMut then task.wait(0.5) else task.wait(2.5) end
+            end
         end
         Farm._sellNonMutOn = false
         print("[ZenxFarm] sell non-mutasi loop: OFF")
@@ -3215,20 +3232,17 @@ staggerSpawn(function()
         pcall(function()
             task.wait(0.1)  -- v8.5: collect tiap 0.1s (dulu 0.2s)
             gDbg.ZenxCollectBeat = (gDbg.ZenxCollectBeat or 0) + 1  -- detak: loop hidup
-            -- v41.9: AUTO-RECOVER - tiap 10s reset flag focus biar collect ga nyangkut
-            -- (pas inventory full, buah ke-mark 'done' tapi ga ke-collect; abis kosong
-            --  tetap ke-skip. reset berkala bikin collect re-scan semua buah lagi).
+            -- v41.9: AUTO-RECOVER - reset flag focus tiap 5s (dulu 10s) biar collect ga nyangkut
             Farm._recoverTick = (Farm._recoverTick or 0) + 1
-            if Farm._recoverTick >= 100 then   -- 100 x 0.1s = 10s
+            if Farm._recoverTick >= 50 then   -- v44.35: 50 x 0.1s = 5s (dulu 10s)
                 Farm._recoverTick = 0
                 Farm._focusDone = {}
                 Farm._focusType = nil
             end
-            -- v44.17: WATCHDOG collect Farm 1 - kalau ada buah matang TAPI jumlahnya ga
-            -- turun dalam 15s (collect nyangkut), RESET PENUH (kayak toggle Farm 2 on-off manual).
+            -- v44.35: WATCHDOG BRUTAL - cek tiap 8s (dulu 15s). ada buah TAPI ga turun -> RESET PENUH.
             if state.autoCollect then
                 Farm._wdTick = (Farm._wdTick or 0) + 1
-                if Farm._wdTick >= 150 then   -- 15s
+                if Farm._wdTick >= 80 then   -- v44.35: 8s (dulu 15s)
                     Farm._wdTick = 0
                     -- hitung total buah matang di kebun sendiri
                     local totalBuah = 0
@@ -3249,23 +3263,29 @@ staggerSpawn(function()
                     end)
                     local prev = Farm._wdPrevBuah
                     Farm._wdPrevBuah = totalBuah
-                    -- ada buah (>0) TAPI jumlahnya SAMA/naik dari 15s lalu = collect ga jalan -> RESET PENUH
+                    -- ada buah (>0) TAPI jumlahnya SAMA/naik dari 8s lalu = collect ga jalan -> RESET BRUTAL
                     if prev ~= nil and totalBuah > 0 and totalBuah >= prev then
-                        -- v44.30: reset PENUH persis kayak toggle Farm 2 off (yg bikin collect bangun manual).
+                        -- v44.35: RESET BRUTAL - reset SEMUA state collect + pause sell + restart loop
                         Farm._focusDone = {}; Farm._focusType = nil
                         Farm._collectCalib = nil
-                        Farm._wdPrevBuah = nil   -- reset tracker biar ga langsung re-trigger
+                        Farm._wdPrevBuah = nil
+                        Farm._wdStuckCount = (Farm._wdStuckCount or 0) + 1
                         -- set ulang state collect ke kondisi bersih (sama kayak applyFarm2(false))
                         state.collectAll = true
                         state.collectMutAll = false
                         state.collectMulti = true
+                        state.collectSingle = true
                         state.collectNoMut = false
                         state.antiCollectHeavy = false
+                        state.collectExpensiveFirst = false
+                        state.collectMostFirst = false
                         state.autoCollect = true
-                        -- restart loop-loop terkait (yg applyFarm2 panggil)
+                        -- v44.35: PAUSE sell non-mutasi sebentar biar collect ga rebutan (anti-bentrok)
+                        Farm._sellPause = os.clock() + 3   -- sell non-mut skip 3 detik
                         pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
-                        pcall(function() if Farm.startSellNonMutLoop and state.sellNonMutOnly then Farm.startSellNonMutLoop() end end)
-                        dprint("[ZenxFarm] WATCHDOG: collect nyangkut ("..totalBuah.." buah, 15s ga turun) -> RESET PENUH (kayak toggle farm2)")
+                        dprint("[ZenxFarm] WATCHDOG BRUTAL: collect nyangkut ("..totalBuah.." buah) -> RESET (ke-"..Farm._wdStuckCount..")")
+                    else
+                        Farm._wdStuckCount = 0
                     end
                 end
             else
