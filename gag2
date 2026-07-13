@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.32
+-- ZENX FARM  v44.34
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.32"
+local VER       = "v44.34"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -751,8 +751,8 @@ state.weatherHopDelay = 120
 state.mailMinV = "20"
 -- v44.21: default min JUMLAH buah (yg penuhin value) sblm kirim = 20 (tunggu kumpul dulu)
 state.mailMinCount = state.mailMinCount or "20"
--- v44.24: auto rejoin weather default ON tiap load
-state.autoWeatherHop = true
+-- v44.34: weather kick IKUT Farm 2 - ON kalau Farm 2 lagi nyala, OFF kalau nggak.
+state.autoWeatherHop = (state.farm2On == true)
 
 -- (auto-skip intro udah dihandle di blok awal - spam sampai bener-bener masuk)
 
@@ -2676,6 +2676,7 @@ function Farm.startSellNonMutLoop()
         local myGen = Farm._espGen  -- ikut generasi biar mati pas gen ganti
         while state.sellNonMutOnly and isCurrentGen() do
             local p = pkt("NPCS", "SellFruit")
+            local adaNonMut = false   -- v44.33: cuma fire kalau ADA buah non-mutasi
             if p and p.Fire then
                 for _, holder in ipairs(getFruitHolders()) do
                     if not state.sellNonMutOnly then break end
@@ -2686,19 +2687,22 @@ function Farm.startSellNonMutLoop()
                         if id and getMutation(o) == nil then
                             local fj = o:GetAttribute("Fruit") or o:GetAttribute("FruitName")
                             if fj then   -- pastiin ini buah (bukan tool lain)
+                                adaNonMut = true
                                 pcall(function() p:Fire(tostring(id)) end)
-                                task.wait(0.08)   -- jual per-buah, jeda kecil
+                                task.wait(0.1)   -- jual per-buah, jeda kecil
                             end
                         end
                     end
                 end
             end
-            task.wait(1)   -- ulang scan (buah baru non-mutasi ikut kejual)
+            -- v44.33: kalau ADA buah non-mut, scan lagi cepat (masih ada yg mau dijual).
+            -- kalau NGGAK ADA, tidur lebih lama (2.5s) biar ga spam + ga bentrok collect.
+            if adaNonMut then task.wait(0.5) else task.wait(2.5) end
         end
         Farm._sellNonMutOn = false
         print("[ZenxFarm] sell non-mutasi loop: OFF")
     end)
-    print("[ZenxFarm] sell non-mutasi loop: ON (jual semua buah polos per-buah)")
+    print("[ZenxFarm] sell non-mutasi loop: ON (jual buah polos kalau ada)")
 end
 
 -- ===== BUY SEED: borong SEMUA seed (SeedData) - server auto-tolak yg habis =====
@@ -5685,12 +5689,14 @@ Farm.buildFarm2Btn = function()
             state.s2WhenFull = true
             state.s2WeightF = 0
             state.autoSell2 = true
+            state.autoWeatherHop = true    -- v44.34: weather kick ikut Farm 2 (ON)
         else
             state.autoSprinkler = false
             state.autoSuperSprinkler = false
             state.autoSuperWC = false
             state.autoCollect2 = false
             state.autoSell2 = false
+            state.autoWeatherHop = false    -- v44.34: weather kick ikut Farm 2 (OFF)
             state.collectAll = true
             state.collectMutAll = false
             state.selectedCollectMut = { Bloodlit = true }
