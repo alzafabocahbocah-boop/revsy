@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.23
+-- ZENX FARM  v44.24
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
@@ -61,7 +61,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.23"
+local VER       = "v44.24"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -751,6 +751,8 @@ state.weatherHopDelay = 120
 state.mailMinV = "20"
 -- v44.21: default min JUMLAH buah (yg penuhin value) sblm kirim = 20 (tunggu kumpul dulu)
 state.mailMinCount = state.mailMinCount or "20"
+-- v44.24: auto rejoin weather default ON tiap load
+state.autoWeatherHop = true
 
 -- (auto-skip intro udah dihandle di blok awal - spam sampai bener-bener masuk)
 
@@ -7275,6 +7277,15 @@ staggerSpawn(function()
         if state.autoWeatherHop then
             local bad, w = Farm.isBadWeatherNow()
             if bad then
+                -- v44.24: PETIR (Lightning) -> KICK aja, JANGAN rejoin (efek petir lama, ga jelas berapa).
+                -- user masukin manual. selain petir -> rejoin server sama.
+                if tostring(w):lower():find("lightning") then
+                    print("[ZenxFarm] PETIR kedeteksi -> KICK (ga rejoin, masukin manual)")
+                    Farm._weatherHopState = nil
+                    pcall(function() player:Kick("petir - masukin lagi manual ya") end)
+                    task.wait(30)   -- jeda biar ga spam kick
+                    -- ga lanjut ke rejoin; balik ke atas loop (tapi udah ke-kick)
+                else
                 local fz = tonumber(state.weatherHopDelay) or 0
                 if fz > 0 then
                     -- v35.0 (HASIL SPY sc lain): FREEZE MODE.
@@ -7350,6 +7361,7 @@ end
                     Farm._weatherHopState = nil
                     pendingFrom = nil; Farm._weatherHopAt = nil
                 end
+                end   -- v44.24: tutup else (bukan petir)
             else
                 Farm._weatherHopState = nil
                 pendingFrom = nil; Farm._weatherHopAt = nil
