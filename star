@@ -2416,6 +2416,11 @@ function Farm.collectOnce()
                 -- STAR FARM: gate Glow - kalau buah ini Glow TAPI Glow di kebun belum >= glowCollectMin, TAHAN (jangan collect)
                 local okGlowGate = true
                 if state.sfGlowGate and getMutation(fruit) == "Glow" and _glowGardenN < _glowMin then okGlowGate = false end
+                -- STAR FARM: Collect Glow KECIL (<glowKgMin) - override gate, Glow kecil SELALU diambil (yg gede numpuk)
+                if state.sfGlowCollectSmall and getMutation(fruit) == "Glow" then
+                    local gkg = Farm.gardenKg(fruit, seedName)
+                    if gkg and gkg < (state.glowKgMin or 50) then okGlowGate = true; okMut = true; okW = true end
+                end
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy and okGlowGate then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
@@ -6216,6 +6221,12 @@ Farm.buildFarm2Btn = function()
             state.c2GoldAnyKg = true
             state.c2ElecRainAnyKg = true
             state.c2AllMutAnyKg = true    -- v44.56: auto ON pas Farm 2 (-50/-60) dipilih
+            -- STAR FARM: fitur Glow auto-ON pas pencet tombol Farm 2 (60/50)
+            state.sfGlowGate = true
+            state.sfGlowFav = true
+            state.sfGlowAntiSell = true
+            state.sfGlowCollectSmall = true
+            state.sfGlowGift = true
             state.autoCollect2 = true
             state.s2All = true
             state.s2WhenFull = true
@@ -9250,6 +9261,17 @@ do
     end)
 end
 
+-- CARD AF2-6: GLOW SETTINGS (STAR FARM) - toggle khusus buah Glow
+do
+    local card, body, setH = mkFarmCard(15, "Glow Settings", "opsi buah Glow (auto-ON pas pencet Farm 2)", buyList)
+    setH(220)
+    mkBodyToggle(body, 4,   "Collect Glow <50kg",   "sfGlowCollectSmall", "Collect Glow kecil")
+    mkBodyToggle(body, 44,  "Anti-Sell Glow 50kg+", "sfGlowAntiSell",     "Anti-Sell Glow")
+    mkBodyToggle(body, 84,  "Fav Glow 50kg+",       "sfGlowFav",          "Fav Glow")
+    mkBodyToggle(body, 124, "Gate collect Glow >=60","sfGlowGate",         "Gate Glow 60")
+    mkBodyToggle(body, 164, "Gift Glow (mail) ON",  "sfGlowGift",         "Gift Glow")
+end
+
 -- ====== AUTO FARM 2: logic loop ======
 -- Super WC   : place pas buah < threshKg di garden tinggal <= 50 (hampir abis dicolect)
 -- Super Sprinkler: place tiap 2 menit (independen, ikut durasinya)
@@ -11876,6 +11898,7 @@ if state.glowKgMin == nil then state.glowKgMin = 50 end                         
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
 state.sfGlowAntiSell = true     -- anti-sell Glow >= glowKgMin
+state.sfGlowCollectSmall = true -- collect Glow kecil (< glowKgMin)
 -- Gift Mail Glow: kirim tepat 20 Glow >= glowKgMin per batch (target persisten)
 state.sfGlowGift = true
 if state.sfGlowGiftBatch == nil then state.sfGlowGiftBatch = 20 end
