@@ -1,6 +1,29 @@
 -- ============================================================
--- ZENX FARM  v44.69
+-- ZENX FARM  v44.72
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.72 (dari v44.71) - ANTI-LEG TOTAL mode DESTROY:
+--   * Crop bukan cuma disembunyiin, tapi DI-DESTROY (mesh/part/efek dihapus
+--     dari memori). Alasan: hide cuma mangkas GPU; 31rb+ instance masih
+--     diproses CPU tiap frame (animasi/physics/replikasi/scan) -> masih agak
+--     leg. Destroy = instance ilang total -> CPU lega.
+--   * DISISAIN buat collect: Model tanaman + folder Fruits + Model buah +
+--     ATRIBUT (PlantId/FruitId/Mutation/SizeMulti/CorePartName/SeedName).
+--     collect baca kg/mutasi/nama dari atribut, gak butuh mesh -> tetep jalan.
+--   * IRREVERSIBLE: matiin ANTI-LEG TOTAL gak balikin visual - harus REJOIN.
+-- ------------------------------------------------------------
+-- Perubahan v44.71 (dari v44.70):
+--   * FIX: seed selain Hypno Bloom masih leg. Sebabnya sebagian jenis tanaman
+--     punya animasi tumbuh yg NULIS ULANG Transparency -> hide ketimpa balik.
+--     Sekarang pakai LocalTransparencyModifier (sisi-klien, gak bisa ditimpa
+--     animasi/script game) -> SEMUA jenis seed bener2 ilang.
+-- ------------------------------------------------------------
+-- Perubahan v44.70 (dari v44.69):
+--   * ANTI-LEG TOTAL: prompt "Panen" + label ngambang (Star Fruit/Glow) ikut
+--     dimatiin -> buah BENER2 ilang (dulu mesh transparan tapi prompt/label
+--     masih nampak -> keliatan "buah masih ada").
+--   * Farm 2: jarak berdiri naruh Sprinkler/WC 10 -> 15 stud (AF2_PLACE_OFFSET).
+--     Kalau place jadi GAGAL (kejauhan), turunin lagi di baris itu.
 -- ------------------------------------------------------------
 -- Perubahan v44.69 (dari v44.68):
 --   * Farm 2: jarak berdiri pas naruh Super Sprinkler/WC dinaikin 5 -> 10 stud
@@ -152,7 +175,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.69"
+local VER       = "v44.72"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1155,22 +1178,26 @@ local function alegNameHas(nm, list)
     return false
 end
 -- v44.67: hide/unhide isi 1 tanaman (badan + buah sekalian, karena Fruits ada DI DALAM plant).
-local function alegHideOne(d, hide)
-    pcall(function()
-        if d:IsA("BasePart") then d.Transparency = hide and 1 or 0; d.CastShadow = not hide
-        elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = hide and 1 or 0
-        elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
-             or d:IsA("Light") or d:IsA("Highlight") then d.Enabled = not hide end
-    end)
+-- v44.72: MODE DESTROY - hapus mesh/part/efek biar bener2 ilang dari MEMORI (bukan cuma disembunyiin).
+-- hide (transparency) cuma mangkas GPU; instance-nya masih diproses CPU tiap frame (animasi/physics/
+-- replikasi/scan) -> masih leg. destroy = instance ilang total -> CPU lega.
+-- YG DISISAIN (buat collect tetep jalan): Model tanaman + folder Fruits + Model buah + ATRIBUTNYA
+-- (PlantId/FruitId/Mutation/SizeMulti/CorePartName/SeedName). collect baca kg/mutasi/nama dari atribut,
+-- gak butuh mesh sama sekali. IRREVERSIBLE - buat balik visual harus REJOIN.
+local function alegIsVisual(d)
+    return d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture") or d:IsA("SpecialMesh")
+        or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") or d:IsA("Light")
+        or d:IsA("Highlight") or d:IsA("SurfaceGui") or d:IsA("BillboardGui")
+        or d:IsA("ProximityPrompt") or d:IsA("Sparkles") or d:IsA("Smoke") or d:IsA("Fire")
 end
-function Farm.applyPlantsHide(root, hide)
-    for _, d in ipairs(root:GetDescendants()) do alegHideOne(d, hide) end
-    alegHideOne(root, hide)
+-- hapus semua visual 1 tanaman, SISAIN Model/Folder + atribut
+function Farm.destroyPlantVisuals(root)
+    for _, d in ipairs(root:GetDescendants()) do
+        if alegIsVisual(d) then pcall(function() d:Destroy() end) end
+    end
 end
--- v44.67: hide/unhide SEMUA tanaman di semua plot (batched biar gak freeze).
--- INI biang leg: dari debug, folder Plants = 31rb+ MeshPart (Hypno Bloom = banyak anther/leaf/petal).
--- pager/alas plot/tanah TETEP keliatan (kita cuma sentuh folder Plants). sama kayak sc lain.
-function Farm.hideAllPlantsNow(hide)
+-- destroy visual SEMUA tanaman di semua plot (batched biar gak freeze). pager/tanah TETEP (kita cuma folder Plants).
+function Farm.destroyAllPlantsNow()
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
     local cnt = 0
@@ -1178,19 +1205,18 @@ function Farm.hideAllPlantsNow(hide)
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
-                Farm.applyPlantsHide(plant, hide)
+                Farm.destroyPlantVisuals(plant)
                 cnt = cnt + 1
                 if cnt % 25 == 0 then task.wait() end   -- napas tiap 25 tanaman
             end
         end
     end
 end
--- dipakai DescendantAdded: tanaman/buah baru yg tumbuh langsung di-hide + matiin cahaya/label objek lain.
--- CATATAN: di LUAR folder Plants, part (pager/tanah) TIDAK di-transparan - cuma cahaya/label/partikel yg mati.
+-- dipakai DescendantAdded: mesh/buah baru yg tumbuh langsung DI-DESTROY (Model/Folder/atribut disisain).
 function Farm.applyAntiLegMaxToObj(d)
     pcall(function()
         if d:FindFirstAncestor("Plants") then
-            alegHideOne(d, true)
+            if alegIsVisual(d) then d:Destroy() end   -- Model/Folder gak kena -> atribut collect aman
             return
         end
         if d:IsA("Light") then d.Enabled = false
@@ -1228,7 +1254,7 @@ function Farm.setAntiLegMax(on)
         -- DIULANG karena pas force-on-at-start/rejoin, tanaman sering belum ke-load pas sweep pertama.
         local function alegSweep()
             if not Farm._antiLegMaxOn then return end
-            pcall(function() Farm.hideAllPlantsNow(true) end)   -- HIDE CROP (biang leg: 31rb+ mesh) - batched
+            pcall(function() Farm.destroyAllPlantsNow() end)   -- v44.72: DESTROY crop (biang leg) - ilang dari memori, batched
             pcall(function()   -- rumput/dekorasi terrain dimatiin (tanah gede)
                 local ter = workspace:FindFirstChildOfClass("Terrain")
                 if ter then ter.Decoration = false end
@@ -1251,8 +1277,8 @@ function Farm.setAntiLegMax(on)
         Farm._overlayPaused = false
         if Farm._antiLegMaxConn then Farm._antiLegMaxConn:Disconnect(); Farm._antiLegMaxConn = nil end
         if not Farm._antiLegMaxEverOn then return end   -- belum pernah nyala -> gak ada yg perlu di-restore (hemat pas start)
-        pcall(function() Farm.hideAllPlantsNow(false) end)   -- v44.67: balikin crop (badan tanaman + buah)
-        pcall(function() Farm.hideShopsNow(true) end)        -- balikin toko
+        -- v44.72: crop di-DESTROY (bukan hide) -> GAK bisa dibalikin tanpa REJOIN. OFF cuma stop destroy yg baru.
+        pcall(function() Farm.hideShopsNow(true) end)        -- balikin toko (ini masih hide, bisa balik)
         pcall(function()   -- balikin dekorasi terrain
             local ter = workspace:FindFirstChildOfClass("Terrain")
             if ter then ter.Decoration = true end
@@ -9212,7 +9238,7 @@ end
 -- biar ga nyangkut di badan tanaman; ngadep ke arah seed.
 -- v44.69: jarak berdiri dari seed pas Farm 2 naruh Sprinkler/WC (dulu 5). makin gede makin jauh.
 -- CATATAN: remote place ada BATAS jarak - kalau kejauhan, place GAGAL. turunin lagi kalau ga ke-place.
-local AF2_PLACE_OFFSET = 10
+local AF2_PLACE_OFFSET = 15
 function Farm.af2GotoNear(pos)
     local char = player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
