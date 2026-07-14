@@ -2581,7 +2581,10 @@ function Farm.collectOnce()
         if focus and byType[focus] then
             dprint("[StarFarm] collect fokus: "..focus.." ("..byType[focus].fruits.." buah)")
             for _, t in ipairs(byType[focus].list) do
-                if not state.autoCollect then break end
+                -- v2.4 FIX: dulu cuma cek state.autoCollect -> di STAR FARM autoCollect (Farm 1)
+                -- dipaksa OFF, jadi loop ini BREAK di buah pertama -> Collect 2 GAK MANEN APAPUN
+                -- pas mode "Terbanyak Dulu" nyala. sekarang cek autoCollect2 juga.
+                if not (state.autoCollect or state.autoCollect2) then break end
                 processPlant(t[1], t[2], t[3])
             end
             Farm._focusDone[focus] = true
@@ -3849,12 +3852,16 @@ staggerSpawn(function()
                     collectWeightF=state.collectWeightF, collectMulti=state.collectMulti, collectSingle=state.collectSingle,
                     collectMutExcept=state.collectMutExcept, collectGoldAnyKg=state.collectGoldAnyKg,
                     collectElecRainAnyKg=state.collectElecRainAnyKg, collectAllMutAnyKg=state.collectAllMutAnyKg,
+                    collectMostFirst=state.collectMostFirst, collectExpensiveFirst=state.collectExpensiveFirst,
                     selectedCollect=state.selectedCollect }   -- v34.7/34.9/38.7/44.55 (+v44.60: simpen list Farm 1)
                 state.collectAll = state.c2All; state.collectMutAll = false; state.collectNoMut = state.c2NoMut
                 state.collectMutExcept = state.c2MutExcept   -- v34.8: mode KECUALI milik AF2 Collect 2
                 state.collectGoldAnyKg = state.c2GoldAnyKg   -- v34.9: Gold kg berapapun milik AF2 Collect 2
                 state.collectElecRainAnyKg = state.c2ElecRainAnyKg   -- v38.7: Electric/Rainbow kg berapapun
                 state.collectAllMutAnyKg = state.c2AllMutAnyKg   -- v2.3: SEMUA mutasi kg berapapun kecuali Glow
+                -- v2.4: Collect 2 PAKSA jalur cepat - mode "Terbanyak/Termahal Dulu" itu punya Farm 1.
+                -- (kalau kebawa, Collect 2 masuk jalur fokus & cuma manen 1 jenis per siklus)
+                state.collectMostFirst = false; state.collectExpensiveFirst = false
                 state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
                 state.selectedCollect = state.selectedCollect2 or {}   -- v44.60: picker "Jenis Pohon" Farm 2 akhirnya kepakai (dulu keabaikan, jatuh ke list Farm 1)
                 pcall(Farm.collectOnce)
