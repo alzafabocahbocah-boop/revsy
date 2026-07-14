@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v2.5  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v2.6  (standalone, basis ZENX v44.79) - GAG 2
+-- v2.6: counter kecil/besar + collect cuma buah MATANG (Age>=MaxAge). buah mentah gak kehitung/kefire
 -- v2.5: FIX PERFORMA - single-harvest gak nembak tanaman yg buahnya di-skip filter (siklus 9.8s -> cepet)
 -- v2.4: FIX collectOnce break pas autoCollect OFF (Collect 2 gak manen); Collect 2 paksa jalur cepat
 -- v2.3: "Semua Mutasi kg berapapun" kecuali GLOW (dulu Bloodlit) + Glow kecil nembus anti-heavy
@@ -230,7 +231,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v2.5"
+local VER       = "STAR v2.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1029,6 +1030,17 @@ function Farm.updateBaseW()
     end
     if changed and Farm._saveBaseW then pcall(Farm._saveBaseW) end  -- simpan rasio baru ke settings
 end
+-- v2.6: buah cuma BISA DIPANEN kalau MATANG (Age >= MaxAge). buah mentah gak bisa dipanen sama
+-- sekali (server nolak) - jadi jangan dihitung di counter "kecil"/"besar" & jangan di-fire.
+-- bukti: Hypno Bloom Age=8/8 -> prompt Panen ADA (76kg); Age=4.2/8 -> prompt GAK ADA (12kg).
+-- kalau atribut Age/MaxAge gak ada (seed lain), anggap MATANG (biar gak nge-block seed lain).
+function Farm.isFruitRipe(f)
+    local age = f:GetAttribute("Age")
+    local mx  = f:GetAttribute("MaxAge")
+    if type(age) ~= "number" or type(mx) ~= "number" or mx <= 0 then return true end
+    return age >= mx
+end
+
 function Farm.gardenKg(fruit, seedName)
     local w = fruit:GetAttribute("Weight")
     if type(w) == "number" then return w end
@@ -2514,7 +2526,8 @@ function Farm.collectOnce()
                     -- v2.3: + okHeavy (dulu kelewat -> Glow kecil bisa ketahan anti-heavy)
                     if gkg and gkg < (state.glowKgMin or 50) then okGlowGate = true; okMut = true; okW = true; okHeavy = true end
                 end
-                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy and okGlowGate then
+                if fruitUUID and #tostring(fruitUUID) >= 30 and Farm.isFruitRipe(fruit)
+                   and okMut and okW and okFresh and okHeavy and okGlowGate then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + (Farm.gardenKg(fruit, seedName) or 0)  -- v10.8 (v1.2: or 0 - buah kg nil gak bikin ERROR -> collect gak crash)
                     fired = fired + 1; fruitCount = fruitCount + 1
@@ -9469,7 +9482,9 @@ function Farm.af2CountSmallFruits(threshKg)
                         -- v1.1: cuma buah ASLI (punya FruitId UUID valid). skip Model HANTU (sisa kepanen)
                         -- biar counter kecil gak palsu -> Super WC gak keblokir "kecil 204 hantu"
                         local fid = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
-                        if fid and #tostring(fid) >= 30 then
+                        -- v2.6: + cuma buah MATANG (Age>=MaxAge). buah mentah gak bisa dipanen ->
+                        -- jangan dihitung "kecil" (dulu kehitung -> angka nyesatin & WC keblokir)
+                        if fid and #tostring(fid) >= 30 and Farm.isFruitRipe(fruit) then
                             local kg = Farm.gardenKg(fruit, seedName) or 0
                             if kg > 0 and kg < threshKg then count = count + 1 end
                         end
@@ -9503,7 +9518,7 @@ function Farm.af2CountBigFruits(threshKg)
                 if fruits then
                     for _, fruit in ipairs(fruits:GetChildren()) do
                         local fid = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
-                        if fid and #tostring(fid) >= 30 then
+                        if fid and #tostring(fid) >= 30 and Farm.isFruitRipe(fruit) then   -- v2.6: cuma buah MATANG
                             local kg = Farm.gardenKg(fruit, seedName) or 0
                             if kg >= threshKg then count = count + 1 end
                         end
