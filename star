@@ -1,5 +1,12 @@
 -- ============================================================
--- STAR FARM  v1.0  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v2.5  (standalone, basis ZENX v44.79) - GAG 2
+-- v2.5: FIX PERFORMA - single-harvest gak nembak tanaman yg buahnya di-skip filter (siklus 9.8s -> cepet)
+-- v2.4: FIX collectOnce break pas autoCollect OFF (Collect 2 gak manen); Collect 2 paksa jalur cepat
+-- v2.3: "Semua Mutasi kg berapapun" kecuali GLOW (dulu Bloodlit) + Glow kecil nembus anti-heavy
+-- v2.2: cabut auto-colek teleport (salah diagnosa)
+-- v2.1: auto-kalibrasi rasio kg dari prompt Panen (seed baru otomatis) + kunci rasio terkonfirmasi
+-- v2.0: rasio Hypno Bloom/Star Fruit = 9.000 (kg/SizeMulti, terkonfirmasi)
+-- v1.8: FIX kalibrasi baca SizeMulti (dulu SizeMultiplier -> _baseW kosong -> gardenKg nil -> collect mati)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v44.79 (dari v44.78):
@@ -223,7 +230,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v1.0"
+local VER       = "STAR v2.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2515,7 +2522,13 @@ function Farm.collectOnce()
                 end
             end
         end
-        if fruitCount == 0 and state.collectSingle then
+        -- v2.5 FIX PERFORMA: dulu single-harvest ke-fire tiap tanaman yg fruitCount==0 - padahal
+        -- fruitCount==0 sering karena buahnya SENGAJA di-skip filter (mis. buah gede >50kg).
+        -- akibatnya ~175 tanaman nembak remote sia-sia + task.wait() -> 1 siklus collect 9.8 DETIK
+        -- -> cuma manen 25 buah/10s -> kalah cepet sama buah tumbuh -> "kecil" gak turun.
+        -- sekarang: single cuma buat tanaman yg BENERAN gak punya Model buah sama sekali.
+        local nFruitModels = fruits and #fruits:GetChildren() or 0
+        if fruitCount == 0 and nFruitModels == 0 and state.collectSingle then
             if plant:GetAttribute("PlantGrowthReady") == true then
                 local pid = tostring(plantId)
                 pcall(function() p:Fire(pid, pid) end)
