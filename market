@@ -57,7 +57,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.326"
+local VERSION = "8.327"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -256,14 +256,15 @@ do
     do
         BH.marketState.settings = BH.marketState.settings or {}
         local S = BH.marketState.settings
-        if BH.marketState.autoStart == nil then BH.marketState.autoStart = true end
-        if S.autoRejoinEnabled == nil then S.autoRejoinEnabled = true end
+        -- v8.320: PAKSA auto-start + auto-claim + auto-clean SELALU ON tiap load (ga bisa dimatiin).
+        BH.marketState.autoStart = true
+        S.autoRejoinEnabled = true
         if S.autoSwitchFront == nil then S.autoSwitchFront = true end
         -- v8.319: PAKSA rejoin interval 18 menit SELALU tiap load (abaikan setting manual).
-        -- semua akun 18m, cegah kick idle 20m. auto-rejoin dipaksa ON.
         S.rejoinIntervalMin = "18"
         S.autoRejoinEnabled = true
-        if BH.marketState.autoClaim == nil then BH.marketState.autoClaim = true end
+        BH.marketState.autoClaim = true
+        BH.marketState.autoCleanNonMatch = true
         -- v8.317: PAKSA semua akun (termasuk yg udah punya rules lama) pakai default rules ini.
         -- pakai penanda versi: kalau defaultRulesVer != target, timpa SEKALI lalu tandai.
         -- jadi ketimpa cuma sekali (pas update), abis itu user bebas edit tanpa ketimpa lagi.
@@ -7537,6 +7538,21 @@ task.spawn(function()
         waited = waited + 3
     end
     L("⚠ [Auto-Start] timeout (rules tetep kosong selama 60s)")
+end)
+
+-- v8.320: WATCHDOG auto-start - kalau autoStart ON tapi isRunning mati (tiba2 stop),
+-- START lagi otomatis. cek tiap 20s. fix: auto-start one-shot ga restart pas mati di tengah.
+task.spawn(function()
+    task.wait(30)   -- kasih waktu init + auto-start pertama
+    while gui and gui.Parent do
+        pcall(function()
+            if BH.autoStart and not isRunning and #listingRules > 0 and BH.onStartClick then
+                L("🚀 [Auto-Start WATCHDOG] mati padahal ON -> START lagi")
+                pcall(BH.onStartClick)
+            end
+        end)
+        task.wait(20)
+    end
 end)
 
 -- ===== REJOIN (HOP NOW) =====
