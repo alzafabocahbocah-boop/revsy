@@ -9141,21 +9141,21 @@ do
     -- trigger WC
     lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,104)
     local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,101),
-        BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 0), PlaceholderText = "50",
+        BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 0), PlaceholderText = "0",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(wcTBox, 6); stroke(wcTBox, C.border, 1)
     wcTBox.FocusLost:Connect(function()
-        local n = math.max(0, math.floor(tonumber(wcTBox.Text) or 50))
+        local n = math.max(0, math.floor(tonumber(wcTBox.Text) or 0))
         state.af2WCTrigger = n; wcTBox.Text = tostring(n); saveState()
     end)
     -- batas buah besar
     lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,136)
     local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,133),
-        BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 100), PlaceholderText = "500",
+        BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 100), PlaceholderText = "100",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(bigBox, 6); stroke(bigBox, C.border, 1)
     bigBox.FocusLost:Connect(function()
-        local n = math.max(1, math.floor(tonumber(bigBox.Text) or 500))
+        local n = math.max(1, math.floor(tonumber(bigBox.Text) or 100))
         state.af2BigCap = n; bigBox.Text = tostring(n); saveState()
     end)
     -- toggles
