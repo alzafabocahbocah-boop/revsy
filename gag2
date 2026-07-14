@@ -1,6 +1,15 @@
 -- ============================================================
--- ZENX FARM  v44.72
+-- ZENX FARM  v44.73
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.73 (dari v44.72) - DESTROY diperbaiki (sisain akar):
+--   * v44.72 kebablasan: destroy SEMUA part -> af2LabelToPos (posisi buat
+--     sprinkler/WC) & collect ikut rusak krn butuh part tanaman.
+--   * Sekarang: AKAR (part paling bawah) DISISAIN & keliatan (buat posisi +
+--     penanda), BUAH disisain tapi disembunyiin (collect butuh Model+atribut),
+--     DAUN/KELOPAK/ANTHER (bulk 31rb mesh) di-destroy. Leg turun, fungsi balik.
+--   * Hook cuma nyembunyiin instan (biar akar gak keburu ilang pas churn),
+--     destroy daun nyusul di loop bersih2 berkala (tiap 8s).
 -- ------------------------------------------------------------
 -- Perubahan v44.72 (dari v44.71) - ANTI-LEG TOTAL mode DESTROY:
 --   * Crop bukan cuma disembunyiin, tapi DI-DESTROY (mesh/part/efek dihapus
@@ -175,7 +184,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.72"
+local VER       = "v44.73"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1190,13 +1199,43 @@ local function alegIsVisual(d)
         or d:IsA("Highlight") or d:IsA("SurfaceGui") or d:IsA("BillboardGui")
         or d:IsA("ProximityPrompt") or d:IsA("Sparkles") or d:IsA("Smoke") or d:IsA("Fire")
 end
--- hapus semua visual 1 tanaman, SISAIN Model/Folder + atribut
-function Farm.destroyPlantVisuals(root)
-    for _, d in ipairs(root:GetDescendants()) do
-        if alegIsVisual(d) then pcall(function() d:Destroy() end) end
+-- sembunyiin 1 objek (LTM = gak ketimpa animasi game)
+local function alegHide(d)
+    pcall(function()
+        if d:IsA("BasePart") then d.LocalTransparencyModifier = 1; d.Transparency = 1; d.CastShadow = false
+        elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = 1
+        elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") or d:IsA("Light")
+             or d:IsA("Highlight") or d:IsA("ProximityPrompt") or d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+            d.Enabled = false
+        end
+    end)
+end
+-- v44.73: proses 1 tanaman:
+--   AKAR (part paling bawah / PrimaryPart) -> DISISAIN & DIKELIATAN (buat af2LabelToPos + penanda posisi)
+--   BUAH (folder Fruits)                   -> DISISAIN tapi disembunyiin (collect butuh Model+atribut)
+--   DAUN/KELOPAK/ANTHER (sisanya)          -> DI-DESTROY (ini bulk 31rb mesh = biang leg)
+function Farm.destroyPlantVisuals(plant)
+    -- tentuin part AKAR yg disisain
+    local rootP = plant.PrimaryPart
+    if not rootP then
+        for _, d in ipairs(plant:GetDescendants()) do
+            if d:IsA("BasePart") and not d:FindFirstAncestor("Fruits") then
+                if not rootP or d.Position.Y < rootP.Position.Y then rootP = d end
+            end
+        end
+    end
+    if rootP then pcall(function() rootP.LocalTransparencyModifier = 0; rootP.Transparency = 0; rootP.CastShadow = false end) end
+    for _, d in ipairs(plant:GetDescendants()) do
+        if d == rootP then
+            -- akar: biarin keliatan
+        elseif d:FindFirstAncestor("Fruits") then
+            alegHide(d)              -- buah: sisain (collect) tapi ilang dari layar
+        elseif alegIsVisual(d) then
+            pcall(function() d:Destroy() end)   -- daun/kelopak: hapus dari memori
+        end
     end
 end
--- destroy visual SEMUA tanaman di semua plot (batched biar gak freeze). pager/tanah TETEP (kita cuma folder Plants).
+-- destroy visual SEMUA tanaman (batched). pager/tanah TETEP (kita cuma folder Plants).
 function Farm.destroyAllPlantsNow()
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
@@ -1212,11 +1251,12 @@ function Farm.destroyAllPlantsNow()
         end
     end
 end
--- dipakai DescendantAdded: mesh/buah baru yg tumbuh langsung DI-DESTROY (Model/Folder/atribut disisain).
+-- dipakai DescendantAdded: mesh baru yg tumbuh langsung DISEMBUNYIIN (LTM) biar gak ngeflash;
+-- destroy foliage-nya nyusul di sweep berkala. (gak langsung destroy di sini biar akar/anchor gak keburu ilang pas churn)
 function Farm.applyAntiLegMaxToObj(d)
     pcall(function()
         if d:FindFirstAncestor("Plants") then
-            if alegIsVisual(d) then d:Destroy() end   -- Model/Folder gak kena -> atribut collect aman
+            alegHide(d)
             return
         end
         if d:IsA("Light") then d.Enabled = false
@@ -1263,8 +1303,20 @@ function Farm.setAntiLegMax(on)
         end
         Farm._antiLegSweep = alegSweep
         alegSweep()
-        for _, dly in ipairs({1, 3, 6, 10, 15}) do
+        -- v44.73: sweep awal cepat + loop bersih2 BERKALA (tiap 8s). tanaman baru numbuh terus
+        -- (dipercepat sprinkler/WC) -> daun baru muncul -> perlu di-destroy ulang. berhenti pas OFF.
+        for _, dly in ipairs({1, 3, 6, 10}) do
             task.delay(dly, function() if Farm._antiLegMaxOn then alegSweep() end end)
+        end
+        if not Farm._antiLegLoopOn then
+            Farm._antiLegLoopOn = true
+            task.spawn(function()
+                while Farm._antiLegMaxOn do
+                    task.wait(8)
+                    if Farm._antiLegMaxOn then pcall(alegSweep) end
+                end
+                Farm._antiLegLoopOn = false
+            end)
         end
         if not Farm._antiLegMaxConn then
             Farm._antiLegMaxConn = workspace.DescendantAdded:Connect(function(d)
