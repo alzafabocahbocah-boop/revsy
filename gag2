@@ -1,6 +1,25 @@
 -- ============================================================
--- ZENX FARM  v44.59
+-- ZENX FARM  v44.61
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.61 (dari v44.60) - ANTI-LEG pas tanaman banyak:
+--   * Panel counter pojok kanan atas: dulu nyusurin kebun 6x TIAP DETIK
+--     (pohon/kecil/besar/value/total masing2 loop sendiri). Sekarang DIGABUNG
+--     jadi 1x keliling per update. Beban turun ~6x di panel ini.
+--   * Refresh panel 1s -> 2s (counter gak perlu se-realtime itu).
+--   * Loop collect 0.1s -> 0.2s. Tiap siklus collect nyusurin SELURUH kebun;
+--     0.1s = 10x/detik (20x kalau Farm 2 nyala) -> boros pas buah ratusan.
+--     0.2s masih sangat kenceng, buah gak regrow secepat itu. (bisa dinaikin
+--     lagi ke 0.3/0.5 di loop collect kalau masih berat.)
+-- ------------------------------------------------------------
+-- Perubahan v44.60 (dari v44.59):
+--   * FIX counter "kecil"/"besar" overlay mentok 0 buat jenis yg blm kekalibrasi
+--     (Hypno Bloom, Star Fruit, dll): af2CountSmall/BigFruits panggil updateBaseW()
+--     dulu -> gardenKg gak balik nil lagi. Ini juga benerin Collect 2 yg nge-skip
+--     jenis non-Dragon karena filter kg (-50) nolak buah ber-kg nil.
+--   * updateBaseW() dikasih throttle 3s biar aman dipanggil sering (gak bikin lag).
+--   * FIX picker "Jenis Pohon" Farm 2 (selectedCollect2) yg dari dulu DEAD - Collect 2
+--     sekarang baca list Farm 2, bukan nyasar ke list Farm 1 (selectedCollect).
 -- ------------------------------------------------------------
 -- Perubahan v32.0 (dari v31.5):
 --   * Panel MAIL: toggle "Simpan" (storageMode) ditambah
@@ -824,6 +843,10 @@ Farm._baseW = {
 Farm._collectKg = 0
 Farm._sellKg = 0
 function Farm.updateBaseW()
+    -- v44.60: throttle - aman dipanggil sering (skip kalau baru update < 3 detik lalu)
+    local _nowBW = os.clock()
+    if Farm._lastBaseWUpdate and (_nowBW - Farm._lastBaseWUpdate) < 3 then return end
+    Farm._lastBaseWUpdate = _nowBW
     local changed = false
     for _, holder in ipairs(invHolders()) do
         if holder then
@@ -3261,7 +3284,7 @@ staggerSpawn(function()
     end
     while isCurrentGen() do
         pcall(function()
-            task.wait(0.1)  -- v8.5: collect tiap 0.1s (dulu 0.2s)
+            task.wait(0.2)  -- v44.61: collect tiap 0.2s (dulu 0.1s) - tiap siklus nyusurin SELURUH kebun, 0.1s = 10x/detik terlalu boros pas tanaman banyak. buah gak tumbuh secepat itu, 0.2s masih sangat kenceng. NAIKIN ke 0.3/0.5 kalau masih leg parah.
             gDbg.ZenxCollectBeat = (gDbg.ZenxCollectBeat or 0) + 1  -- detak: loop hidup
             -- v41.9: AUTO-RECOVER - reset flag focus tiap 5s (dulu 10s) biar collect ga nyangkut
             Farm._recoverTick = (Farm._recoverTick or 0) + 1
@@ -3328,13 +3351,15 @@ staggerSpawn(function()
                 local sv = { collectAll=state.collectAll, collectMutAll=state.collectMutAll, collectNoMut=state.collectNoMut,
                     collectWeightF=state.collectWeightF, collectMulti=state.collectMulti, collectSingle=state.collectSingle,
                     collectMutExcept=state.collectMutExcept, collectGoldAnyKg=state.collectGoldAnyKg,
-                    collectElecRainAnyKg=state.collectElecRainAnyKg, collectAllMutAnyKg=state.collectAllMutAnyKg }   -- v34.7/34.9/38.7/44.55
+                    collectElecRainAnyKg=state.collectElecRainAnyKg, collectAllMutAnyKg=state.collectAllMutAnyKg,
+                    selectedCollect=state.selectedCollect }   -- v34.7/34.9/38.7/44.55 (+v44.60: simpen list Farm 1)
                 state.collectAll = state.c2All; state.collectMutAll = false; state.collectNoMut = state.c2NoMut
                 state.collectMutExcept = state.c2MutExcept   -- v34.8: mode KECUALI milik AF2 Collect 2
                 state.collectGoldAnyKg = state.c2GoldAnyKg   -- v34.9: Gold kg berapapun milik AF2 Collect 2
                 state.collectElecRainAnyKg = state.c2ElecRainAnyKg   -- v38.7: Electric/Rainbow kg berapapun
                 state.collectAllMutAnyKg = state.c2AllMutAnyKg   -- v44.55: SEMUA mutasi kg berapapun kecuali Bloodlit
                 state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
+                state.selectedCollect = state.selectedCollect2 or {}   -- v44.60: picker "Jenis Pohon" Farm 2 akhirnya kepakai (dulu keabaikan, jatuh ke list Farm 1)
                 pcall(Farm.collectOnce)
                 for k,v in pairs(sv) do state[k] = v end
             end
@@ -6038,14 +6063,43 @@ Farm.buildScreenOverlay = function()
             while og.Parent do
                 pcall(function()
                     if overlayMode == "counter" then
-                        vPohon.Text = tostring(countDragon())
+                        -- v44.61: SATU kali keliling kebun buat SEMUA counter (dulu 6x scan terpisah tiap detik
+                        -- -> berat pas tanaman banyak). pohon/kecil/besar/value/total dihitung sekalian di 1 loop.
+                        pcall(Farm.updateBaseW)   -- kalibrasi rasio kg (throttled 3s, murah)
                         local thr = math.abs(state.c2WeightF or 50)
-                        local sc = (Farm.af2CountSmallFruits and Farm.af2CountSmallFruits(thr)) or Farm._af2SmallCount or 0
-                        local bc = (Farm.af2CountBigFruits and Farm.af2CountBigFruits(thr)) or Farm._af2BigCount or 0
-                        vKecil.Text = tostring(sc)
-                        vBesar.Text = tostring(bc).."/"..tostring(state.af2BigCap or 1000)
-                        vGift.Text = Farm.abbrev(gardenValueNormal())
-                        vTotal.Text = tostring(countTotalFruit())
+                        local dragonN, smallN, bigN, totalN, valN = 0, 0, 0, 0, 0
+                        local gardens = workspace:FindFirstChild("Gardens")
+                        if gardens then
+                            local myUid = player.UserId
+                            for _, plot in ipairs(gardens:GetChildren()) do
+                                local plantsF = plot:FindFirstChild("Plants")
+                                if plantsF then
+                                    for _, plant in ipairs(plantsF:GetChildren()) do
+                                        if tonumber(plant.Name:match("^(%d+)_")) == myUid then
+                                            local sn = plant:GetAttribute("SeedName") or plant.Name
+                                            if tostring(sn):lower():find("dragon", 1, true) then dragonN = dragonN + 1 end
+                                            local fruits = plant:FindFirstChild("Fruits")
+                                            if fruits then
+                                                for _, fruit in ipairs(fruits:GetChildren()) do
+                                                    totalN = totalN + 1
+                                                    local kg = Farm.gardenKg(fruit, sn) or 0
+                                                    if kg > 0 and kg < thr then smallN = smallN + 1
+                                                    elseif kg >= thr then bigN = bigN + 1 end
+                                                    local v = Farm.fruitPrice and Farm.fruitPrice(fruit, true)
+                                                    if type(v) == "number" then valN = valN + v end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        Farm._af2SmallCount = smallN; Farm._af2BigCount = bigN   -- share ke loop lain
+                        vPohon.Text = tostring(dragonN)
+                        vKecil.Text = tostring(smallN)
+                        vBesar.Text = tostring(bigN).."/"..tostring(state.af2BigCap or 1000)
+                        vGift.Text = Farm.abbrev(valN)
+                        vTotal.Text = tostring(totalN)
                         local ns, nw = countSprWC()
                         vSprWC.Text = ns.." / "..nw
                     else
@@ -6090,7 +6144,7 @@ Farm.buildScreenOverlay = function()
                         end
                     end
                 end)
-                task.wait(1)
+                task.wait(2)   -- v44.61: panel display refresh 2s (dulu 1s) - counter gak perlu se-realtime itu, ngurangin beban
             end
         end)
     end
@@ -8762,6 +8816,7 @@ end
 
 function Farm.af2CountSmallFruits(threshKg)
     threshKg = threshKg or math.abs(state.c2WeightF or 50)
+    pcall(Farm.updateBaseW)   -- v44.60: kalibrasi rasio kg dari buah di tas dulu (biar gardenKg gak balik nil -> counter gak mentok 0)
     local count = 0
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
@@ -8793,6 +8848,7 @@ end
 -- v28.9: hitung buah BESAR (>= threshKg) di garden - buat cek batas stop
 function Farm.af2CountBigFruits(threshKg)
     threshKg = threshKg or math.abs(state.c2WeightF or 50)
+    pcall(Farm.updateBaseW)   -- v44.60: kalibrasi rasio kg dari buah di tas dulu (biar gardenKg gak balik nil -> counter gak mentok 0)
     local count = 0
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
