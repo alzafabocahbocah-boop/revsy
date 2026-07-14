@@ -9385,8 +9385,13 @@ function Farm.af2CountSmallFruits(threshKg)
                 local fruits = plant:FindFirstChild("Fruits")
                 if fruits then
                     for _, fruit in ipairs(fruits:GetChildren()) do
-                        local kg = Farm.gardenKg(fruit, seedName) or 0
-                        if kg > 0 and kg < threshKg then count = count + 1 end
+                        -- v1.1: cuma buah ASLI (punya FruitId UUID valid). skip Model HANTU (sisa kepanen)
+                        -- biar counter kecil gak palsu -> Super WC gak keblokir "kecil 204 hantu"
+                        local fid = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
+                        if fid and #tostring(fid) >= 30 then
+                            local kg = Farm.gardenKg(fruit, seedName) or 0
+                            if kg > 0 and kg < threshKg then count = count + 1 end
+                        end
                     end
                 end
                 end
@@ -9416,8 +9421,11 @@ function Farm.af2CountBigFruits(threshKg)
                 local fruits = plant:FindFirstChild("Fruits")
                 if fruits then
                     for _, fruit in ipairs(fruits:GetChildren()) do
-                        local kg = Farm.gardenKg(fruit, seedName) or 0
-                        if kg >= threshKg then count = count + 1 end
+                        local fid = fruit:GetAttribute("FruitId") or fruit.Name:match("_([%x%-]+)$")
+                        if fid and #tostring(fid) >= 30 then
+                            local kg = Farm.gardenKg(fruit, seedName) or 0
+                            if kg >= threshKg then count = count + 1 end
+                        end
                     end
                 end
                 end
@@ -9555,10 +9563,13 @@ end
 -- v44.69: jarak berdiri dari seed pas Farm 2 naruh Sprinkler/WC (dulu 5). makin gede makin jauh.
 -- CATATAN: remote place ada BATAS jarak - kalau kejauhan, place GAGAL. turunin lagi kalau ga ke-place.
 local AF2_PLACE_OFFSET = 20
-function Farm.af2GotoNear(pos)
+function Farm.af2GotoNear(pos, range)
     local char = player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
+    range = range or 25
+    -- v1.2: kalau udah cukup deket, JANGAN teleport (dulu selalu TP walau udah deket)
+    if (hrp.Position - pos).Magnitude <= range then return true end
     pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(AF2_PLACE_OFFSET, 8, 0), pos + Vector3.new(0, 3, 0)) end)  -- v1.1: lebih tinggi (8) biar di atas buah, jauh (offset) biar gak numpuk tanaman lain
     task.wait(0.25)
     return true
@@ -9612,7 +9623,7 @@ function Farm.af2PlaceSuperSprinkler()
     local hrp0 = char:FindFirstChild("HumanoidRootPart")
     local origCF = hrp0 and hrp0.CFrame   -- v35.2: inget posisi semula
     for _, pos in ipairs(positions) do
-        Farm.af2GotoNear(pos)   -- v35.2: TP ke samping seed dulu (remote place ada batas jarak)
+        Farm.af2GotoNear(pos, 40)   -- v1.2: sprinkler toleransi jarak longgar (40) - gak perlu deket, gak selalu TP
         local ok, err = pcall(function() p:Fire(pos, tool.Name, tool, 1) end)
         print(string.format("[AF2] place sprinkler pos=(%.1f,%.1f,%.1f) ok=%s err=%s", pos.X, pos.Y, pos.Z, tostring(ok), tostring(err)))
         if ok then placed = placed + 1 end
