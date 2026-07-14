@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v2.6  (standalone, basis ZENX v44.79) - GAG 2
--- v2.6: counter kecil/besar + collect cuma buah MATANG (Age>=MaxAge). buah mentah gak kehitung/kefire
+-- STAR FARM  v3.0  (standalone, basis ZENX v44.79) - GAG 2
+-- v3.0: counter kecil/besar + collect cuma buah MATANG (Age>=MaxAge). buah mentah gak kehitung/kefire
 -- v2.5: FIX PERFORMA - single-harvest gak nembak tanaman yg buahnya di-skip filter (siklus 9.8s -> cepet)
 -- v2.4: FIX collectOnce break pas autoCollect OFF (Collect 2 gak manen); Collect 2 paksa jalur cepat
 -- v2.3: "Semua Mutasi kg berapapun" kecuali GLOW (dulu Bloodlit) + Glow kecil nembus anti-heavy
@@ -231,7 +231,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v2.6"
+local VER       = "STAR v3.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
