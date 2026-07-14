@@ -1,6 +1,15 @@
 -- ============================================================
--- ZENX FARM  v44.73
+-- ZENX FARM  v44.74
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.74 (dari v44.73) - BUAH jangan disentuh (fix collect):
+--   * v44.72/73 nyentuh buah (destroy/hide) -> game DESPAWN Model buah ->
+--     atribut ilang -> collect mati (+ error TopText). Sekarang BUAH dibiarin
+--     UTUH 100% (nggak destroy/hide) -> atribut aman -> collect jalan lagi.
+--   * Yg di-destroy CUMA badan tanaman (daun/kelopak/anther), akar disisain.
+--   * KONSEKUENSI: buah tetep keliatan & tetep dirender (buah = banyak mesh
+--     juga) -> FPS gain lebih kecil drpd kalau buah ikut diilangin. Tapi
+--     collect PASTI jalan. (nanti bisa dicari cara ngeringanin buah yg AMAN.)
 -- ------------------------------------------------------------
 -- Perubahan v44.73 (dari v44.72) - DESTROY diperbaiki (sisain akar):
 --   * v44.72 kebablasan: destroy SEMUA part -> af2LabelToPos (posisi buat
@@ -184,7 +193,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.73"
+local VER       = "v44.74"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1215,7 +1224,7 @@ end
 --   BUAH (folder Fruits)                   -> DISISAIN tapi disembunyiin (collect butuh Model+atribut)
 --   DAUN/KELOPAK/ANTHER (sisanya)          -> DI-DESTROY (ini bulk 31rb mesh = biang leg)
 function Farm.destroyPlantVisuals(plant)
-    -- tentuin part AKAR yg disisain
+    -- tentuin part AKAR yg disisain & dikeliatan
     local rootP = plant.PrimaryPart
     if not rootP then
         for _, d in ipairs(plant:GetDescendants()) do
@@ -1226,12 +1235,12 @@ function Farm.destroyPlantVisuals(plant)
     end
     if rootP then pcall(function() rootP.LocalTransparencyModifier = 0; rootP.Transparency = 0; rootP.CastShadow = false end) end
     for _, d in ipairs(plant:GetDescendants()) do
-        if d == rootP then
+        if d:FindFirstAncestor("Fruits") then
+            -- v44.74: BUAH JANGAN DISENTUH SAMA SEKALI (destroy/hide bikin game despawn Model -> atribut ilang -> collect mati)
+        elseif d == rootP then
             -- akar: biarin keliatan
-        elseif d:FindFirstAncestor("Fruits") then
-            alegHide(d)              -- buah: sisain (collect) tapi ilang dari layar
         elseif alegIsVisual(d) then
-            pcall(function() d:Destroy() end)   -- daun/kelopak: hapus dari memori
+            pcall(function() d:Destroy() end)   -- daun/kelopak/anther (badan tanaman, BUKAN buah)
         end
     end
 end
@@ -1255,8 +1264,9 @@ end
 -- destroy foliage-nya nyusul di sweep berkala. (gak langsung destroy di sini biar akar/anchor gak keburu ilang pas churn)
 function Farm.applyAntiLegMaxToObj(d)
     pcall(function()
+        if d:FindFirstAncestor("Fruits") then return end   -- v44.74: BUAH jangan disentuh (collect butuh atributnya)
         if d:FindFirstAncestor("Plants") then
-            alegHide(d)
+            alegHide(d)   -- badan tanaman: sembunyiin instan; destroy-nya nyusul di sweep berkala
             return
         end
         if d:IsA("Light") then d.Enabled = false
