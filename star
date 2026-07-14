@@ -9849,7 +9849,30 @@ task.spawn(function()
     end
 end)
 
--- ====== CARD 8: AUTO SPRINKLER (v8.8 - rekam + multi-select posisi) ======
+-- ====== v1.4: AUTO-SYNC BUAH (fix destroy bikin buah baru gak ke-stream) ======
+-- StreamingEnabled: buah jauh dari karakter GAK dikirim ke klien. anti-leg destroy + AFK jauh ->
+-- buah baru gak ke-stream -> collect gak liat (sampai WC teleport ke kebun & nge-sync).
+-- RequestStreamAroundAsync maksa server stream buah di sekitar plot -> buah baru ke-load ->
+-- collect bisa, TANPA teleport / nyiram / numbuhin buah.
+task.spawn(function()
+    task.wait(4)
+    while isCurrentGen() do
+        pcall(function()
+            local picks = (Farm.af2GetPlantPositions and Farm.af2GetPlantPositions()) or {}
+            for _, e in ipairs(picks) do
+                if e and e.pos then pcall(function() player:RequestStreamAroundAsync(e.pos) end) end
+            end
+            -- fallback: kalau gak ada posisi plot, sync di sekitar karakter
+            if #picks == 0 then
+                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if hrp then pcall(function() player:RequestStreamAroundAsync(hrp.Position) end) end
+            end
+        end)
+        task.wait(5)
+    end
+end)
+
+
 local applySprinkler, applySprSave
 do
     local card, body, setH = mkFarmCard(7, "Auto Sprinkler", "place manual -> pilih posisi")
