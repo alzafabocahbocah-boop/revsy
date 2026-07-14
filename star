@@ -2406,7 +2406,12 @@ function Farm.collectOnce()
                     local m = getMutation(fruit)
                     if m ~= nil then okMut = not ((state.selectedCollectMutEx or {})[m]) end
                 end
-                local okW = passWeight(Farm.gardenKg(fruit, seedName), state.collectWeightF)  -- v10.9
+                local _gkg = Farm.gardenKg(fruit, seedName)
+                local okW = passWeight(_gkg, state.collectWeightF)  -- v10.9
+                -- v1.2 FIX: buah baru lahir kg-nya sering NIL (SizeMulti blm replikasi ke klien) -> filter -N
+                -- nolak -> buah kecil ke-skip sampai Super WC maksa update. Sekarang: filter -N (collect
+                -- kecil) + kg NIL = anggap buah baru/kecil -> TETEP collect (gak nunggu WC lagi).
+                if not okW and _gkg == nil and (state.collectWeightF or 0) < 0 then okW = true end
                 -- v23.1: anti-collect buah berat (>=100kg) - kalau ON, buah segede itu di-skip
                 local okHeavy = true
                 if state.antiCollectHeavy then
