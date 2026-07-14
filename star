@@ -2489,10 +2489,12 @@ function Farm.collectOnce()
                         okMut = true; okW = true; okHeavy = true
                     end
                 end
-                -- v44.55: SEMUA MUTASI kg berapapun KECUALI Bloodlit - nembus filter kg+heavy.
+                -- v2.3 (STAR): SEMUA MUTASI kg berapapun KECUALI GLOW - nembus filter kg+heavy.
+                -- Glow SENGAJA dikecualiin: dia diatur sendiri lewat Glow Settings (gate/fav/gift),
+                -- jadi jangan nembus filter di sini. (dulu: kecuali Bloodlit)
                 if state.collectAllMutAnyKg then
                     local mut = getMutation(fruit)
-                    if mut ~= nil and mut ~= "Bloodlit" then
+                    if mut ~= nil and mut ~= "Glow" then
                         okMut = true; okW = true; okHeavy = true
                     end
                 end
@@ -2502,7 +2504,8 @@ function Farm.collectOnce()
                 -- STAR FARM: Collect Glow KECIL (<glowKgMin) - override gate, Glow kecil SELALU diambil (yg gede numpuk)
                 if state.sfGlowCollectSmall and getMutation(fruit) == "Glow" then
                     local gkg = Farm.gardenKg(fruit, seedName)
-                    if gkg and gkg < (state.glowKgMin or 50) then okGlowGate = true; okMut = true; okW = true end
+                    -- v2.3: + okHeavy (dulu kelewat -> Glow kecil bisa ketahan anti-heavy)
+                    if gkg and gkg < (state.glowKgMin or 50) then okGlowGate = true; okMut = true; okW = true; okHeavy = true end
                 end
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy and okGlowGate then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
@@ -3851,7 +3854,7 @@ staggerSpawn(function()
                 state.collectMutExcept = state.c2MutExcept   -- v34.8: mode KECUALI milik AF2 Collect 2
                 state.collectGoldAnyKg = state.c2GoldAnyKg   -- v34.9: Gold kg berapapun milik AF2 Collect 2
                 state.collectElecRainAnyKg = state.c2ElecRainAnyKg   -- v38.7: Electric/Rainbow kg berapapun
-                state.collectAllMutAnyKg = state.c2AllMutAnyKg   -- v44.55: SEMUA mutasi kg berapapun kecuali Bloodlit
+                state.collectAllMutAnyKg = state.c2AllMutAnyKg   -- v2.3: SEMUA mutasi kg berapapun kecuali Glow
                 state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
                 state.selectedCollect = state.selectedCollect2 or {}   -- v44.60: picker "Jenis Pohon" Farm 2 akhirnya kepakai (dulu keabaikan, jatuh ke list Farm 1)
                 pcall(Farm.collectOnce)
@@ -9288,8 +9291,8 @@ do
     mkBodyToggle(body, 320, "Collect GOLD kg berapapun", "c2GoldAnyKg", "Collect2 Gold Any Kg")
     -- v38.7: ELECTRIC/RAINBOW ke-collect kg BERAPAPUN - sama kayak Gold
     mkBodyToggle(body, 362, "Collect ELECTRIC/RAINBOW kg berapapun", "c2ElecRainAnyKg", "Collect2 Elec/Rain Any Kg")
-    -- v44.55: SEMUA MUTASI ke-collect kg BERAPAPUN kecuali Bloodlit
-    mkBodyToggle(body, 404, "Collect SEMUA MUTASI kg berapapun (kecuali Bloodlit)", "c2AllMutAnyKg", "Collect2 All Mut Any Kg")
+    -- v2.3: SEMUA MUTASI ke-collect kg BERAPAPUN kecuali Glow
+    mkBodyToggle(body, 404, "Collect SEMUA MUTASI kg berapapun (kecuali Glow)", "c2AllMutAnyKg", "Collect2 All Mut Any Kg")
     setH(446)
 end
 
