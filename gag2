@@ -1,6 +1,20 @@
 -- ============================================================
--- ZENX FARM  v44.67
+-- ZENX FARM  v44.69
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.69 (dari v44.68):
+--   * Farm 2: jarak berdiri pas naruh Super Sprinkler/WC dinaikin 5 -> 10 stud
+--     (AF2_PLACE_OFFSET). Kalau place jadi GAGAL (kejauhan dari batas remote),
+--     turunin angkanya lagi.
+-- ------------------------------------------------------------
+-- Perubahan v44.68 (dari v44.67):
+--   * Panel counter kanan atas GAK di-pause lagi pas ANTI-LEG TOTAL nyala
+--     (dulu nampil "off" semua). Scan udah murah (cuma hide Plants), jadi
+--     angka pohon/kecil/besar/value/total tetep jalan.
+--   * NO-CLIP diperkuat: CanCollide dipaksa false TIAP frame (dulu di-skip
+--     kalau udah false -> kadang ke-reset game & nyangkut) + re-apply INSTAN
+--     pas karakter respawn (dulu sempet nyangkut sebentar).
+--   * VER (label versi di GUI) sekarang ikut ke-update tiap rilis.
 -- ------------------------------------------------------------
 -- Perubahan v44.67 (dari v44.66) - ANTI-LEG TOTAL dirombak pakai DATA debug:
 --   * Dari dump: biang leg = folder Plants (31rb+ MeshPart; Hypno Bloom =
@@ -138,7 +152,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.67"
+local VER       = "v44.69"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1209,7 +1223,7 @@ function Farm.setAntiLegMax(on)
         Farm._antiLegMaxOn = true
         Farm._antiLegMaxEverOn = true
         pcall(function() Farm.setAntiLag(true) end)   -- basis rendering-kill (TANPA ubah state.antiLag user)
-        Farm._overlayPaused = true                    -- panel counter berhenti nyusurin kebun
+        Farm._overlayPaused = false                   -- v44.68: panel counter TETEP jalan (scan udah murah - cuma hide Plants)
         -- v44.67: sweep TARGETED - cuma folder Plants (crop) yg di-hide, bukan 46rb descendant.
         -- DIULANG karena pas force-on-at-start/rejoin, tanaman sering belum ke-load pas sweep pertama.
         local function alegSweep()
@@ -1261,15 +1275,24 @@ function Farm.applyNoclip(on)
                 local char = player.Character
                 if not char then return end
                 for _, p in ipairs(char:GetDescendants()) do
-                    if p:IsA("BasePart") and p.CanCollide then
-                        p.CanCollide = false
-                    end
+                    if p:IsA("BasePart") then p.CanCollide = false end   -- v44.68: PAKSA tiap frame (dulu di-skip kalau udah false -> kadang ke-reset game & nyangkut)
+                end
+            end)
+        end
+        -- v44.68: re-apply INSTAN pas respawn (dulu nunggu frame berikutnya -> sempet nyangkut sebentar)
+        if not Farm._noclipCharConn then
+            Farm._noclipCharConn = player.CharacterAdded:Connect(function(char)
+                task.wait(0.15)
+                if not state.noclip then return end
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then pcall(function() p.CanCollide = false end) end
                 end
             end)
         end
         print("[ZenxFarm] NO-CLIP ON (karakter nembus objek)")
     else
         if Farm._noclipConn then Farm._noclipConn:Disconnect(); Farm._noclipConn = nil end
+        if Farm._noclipCharConn then Farm._noclipCharConn:Disconnect(); Farm._noclipCharConn = nil end
         print("[ZenxFarm] NO-CLIP OFF")
     end
 end
@@ -9187,11 +9210,14 @@ end
 -- v35.2: TP ke SAMPING titik seed sebelum place/siram - remote place/water punya batas jarak
 -- server-side, kejauhan = fire ketolak diam-diam. offset 5 stud DI SAMPING (bukan pas di titik)
 -- biar ga nyangkut di badan tanaman; ngadep ke arah seed.
+-- v44.69: jarak berdiri dari seed pas Farm 2 naruh Sprinkler/WC (dulu 5). makin gede makin jauh.
+-- CATATAN: remote place ada BATAS jarak - kalau kejauhan, place GAGAL. turunin lagi kalau ga ke-place.
+local AF2_PLACE_OFFSET = 10
 function Farm.af2GotoNear(pos)
     local char = player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(5, 3, 0), pos + Vector3.new(0, 3, 0)) end)
+    pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(AF2_PLACE_OFFSET, 3, 0), pos + Vector3.new(0, 3, 0)) end)
     task.wait(0.25)
     return true
 end
