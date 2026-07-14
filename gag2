@@ -1,6 +1,17 @@
 -- ============================================================
--- ZENX FARM  v44.74
+-- ZENX FARM  v44.76
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.76 (dari v44.74/75) - CACHE BUAH + destroy balik:
+--   * Destroy tanaman bikin Model buah despawn -> collect gak nemu. SOLUSI:
+--     tiap buah muncul, plantId+fruitUUID direkam ke Farm._fruitCache SEBELUM
+--     sempet ilang. Collect 2 nembak CollectFruit dari cache -> server masih
+--     punya buahnya -> harvest tetep jalan walau Model klien udah ilang.
+--   * Badan tanaman di-destroy lagi (enteng), buah ke-collect via cache.
+--   * CATATAN: mode ini "sikat semua" (gak pake filter berat, krn kg gak bisa
+--     dibaca dari Model yg udah ilang). Cache expire 300s.
+--   * EKSPERIMEN: kalau server nolak fire dari cache (harvest gagal), berarti
+--     buah baru mati di server juga -> balik ke pendekatan lain.
 -- ------------------------------------------------------------
 -- Perubahan v44.74 (dari v44.73) - BUAH jangan disentuh (fix collect):
 --   * v44.72/73 nyentuh buah (destroy/hide) -> game DESPAWN Model buah ->
@@ -193,7 +204,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.74"
+local VER       = "v44.76"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1188,6 +1199,8 @@ end
 Farm._antiLegMaxOn = false
 Farm._antiLegMaxConn = nil
 Farm._antiLegMaxEverOn = false
+-- v44.76: dengan CACHE BUAH aktif, badan tanaman boleh di-destroy lagi (collect nembak dari cache).
+Farm._alegTouchPlants = true
 -- v44.67: kata kunci TOKO/market (disembunyiin). AuctionStand ketangkep "auction".
 local ALEG_SHOP_WORDS = {"shop","toko","market","pasar","stall","kios","merchant","lelang","auction","vendor"}
 local function alegNameHas(nm, list)
@@ -1244,6 +1257,57 @@ function Farm.destroyPlantVisuals(plant)
         end
     end
 end
+-- ===== v44.76: CACHE BUAH =====
+-- tiap buah muncul, rekam plantId+fruitUUID ke tabel kita SEBELUM game/destroy sempet ngerusak.
+-- collect nembak dari cache -> server masih punya buahnya walau Model klien udah despawn.
+Farm._fruitCache = {}          -- uuid -> { plantId=, at= }
+Farm._fruitCacheConn = nil
+local function cacheFruitModel(m)
+    pcall(function()
+        if not (m:IsA("Model") and m.Parent and m.Parent.Name == "Fruits") then return end
+        local plant = m.Parent.Parent
+        if not plant then return end
+        if tonumber(tostring(plant.Name):match("^(%d+)_")) ~= player.UserId then return end
+        local fid = m:GetAttribute("FruitId")
+        local pid = m:GetAttribute("PlantId") or plant:GetAttribute("PlantId")
+        if fid and pid and #tostring(fid) >= 30 then
+            Farm._fruitCache[tostring(fid)] = { plantId = tostring(pid), at = os.clock() }
+        end
+    end)
+end
+function Farm.startFruitCache()
+    if Farm._fruitCacheConn then return end
+    -- rekam buah yg udah ada
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if g then for _, plot in ipairs(g:GetChildren()) do
+            local pl = plot:FindFirstChild("Plants")
+            if pl then for _, plant in ipairs(pl:GetChildren()) do
+                local fr = plant:FindFirstChild("Fruits")
+                if fr then for _, fruit in ipairs(fr:GetChildren()) do cacheFruitModel(fruit) end end
+            end end
+        end end
+    end)
+    -- listener buah baru (rekam SEBELUM sempet despawn)
+    Farm._fruitCacheConn = workspace.DescendantAdded:Connect(function(d) cacheFruitModel(d) end)
+    print("[ZenxFarm] cache buah AKTIF ("..(function() local n=0 for _ in pairs(Farm._fruitCache) do n=n+1 end return n end)().." buah kerekam)")
+end
+-- fire CollectFruit buat tiap uuid di cache. expire 300s (buah kepanen/ilang lama dibuang).
+-- v44.76: SIKAT SEMUA - gak pake filter berat, karena Model buah udah gak ada buat dibaca kg-nya.
+function Farm.collectCacheOnce()
+    local p = pkt("Garden", "CollectFruit")
+    if not p or not p.Fire then return end
+    local now = os.clock()
+    for uuid, e in pairs(Farm._fruitCache) do
+        if now - (e.at or 0) > 300 then
+            Farm._fruitCache[uuid] = nil
+        else
+            pcall(function() p:Fire(e.plantId, uuid) end)
+            task.wait()
+        end
+    end
+end
+
 -- destroy visual SEMUA tanaman (batched). pager/tanah TETEP (kita cuma folder Plants).
 function Farm.destroyAllPlantsNow()
     local gardens = workspace:FindFirstChild("Gardens")
@@ -1264,9 +1328,11 @@ end
 -- destroy foliage-nya nyusul di sweep berkala. (gak langsung destroy di sini biar akar/anchor gak keburu ilang pas churn)
 function Farm.applyAntiLegMaxToObj(d)
     pcall(function()
-        if d:FindFirstAncestor("Fruits") then return end   -- v44.74: BUAH jangan disentuh (collect butuh atributnya)
+        -- v44.75 TES ISOLASI: kalau _alegTouchPlants OFF, JANGAN sentuh isi Plants sama sekali (tanaman+buah aman)
         if d:FindFirstAncestor("Plants") then
-            alegHide(d)   -- badan tanaman: sembunyiin instan; destroy-nya nyusul di sweep berkala
+            if not Farm._alegTouchPlants then return end
+            if d:FindFirstAncestor("Fruits") then return end   -- buah tetep jangan disentuh
+            alegHide(d)   -- badan tanaman: sembunyiin (destroy nyusul di sweep)
             return
         end
         if d:IsA("Light") then d.Enabled = false
@@ -1298,13 +1364,16 @@ function Farm.setAntiLegMax(on)
     if on then
         Farm._antiLegMaxOn = true
         Farm._antiLegMaxEverOn = true
+        pcall(function() Farm.startFruitCache() end)   -- v44.76: rekam buah SEBELUM destroy (biar collect tetep bisa nembak dari cache)
         pcall(function() Farm.setAntiLag(true) end)   -- basis rendering-kill (TANPA ubah state.antiLag user)
         Farm._overlayPaused = false                   -- v44.68: panel counter TETEP jalan (scan udah murah - cuma hide Plants)
         -- v44.67: sweep TARGETED - cuma folder Plants (crop) yg di-hide, bukan 46rb descendant.
         -- DIULANG karena pas force-on-at-start/rejoin, tanaman sering belum ke-load pas sweep pertama.
         local function alegSweep()
             if not Farm._antiLegMaxOn then return end
-            pcall(function() Farm.destroyAllPlantsNow() end)   -- v44.72: DESTROY crop (biang leg) - ilang dari memori, batched
+            -- v44.75 TES ISOLASI: JANGAN sentuh tanaman/buah dulu (buktiin destroy tanaman = biang collect mati).
+            -- kalau collect balik normal, nanti plant-lightening di-reaktif dgn cara aman.
+            if Farm._alegTouchPlants then pcall(function() Farm.destroyAllPlantsNow() end) end
             pcall(function()   -- rumput/dekorasi terrain dimatiin (tanah gede)
                 local ter = workspace:FindFirstChildOfClass("Terrain")
                 if ter then ter.Decoration = false end
@@ -3653,6 +3722,9 @@ staggerSpawn(function()
                 state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
                 state.selectedCollect = state.selectedCollect2 or {}   -- v44.60: picker "Jenis Pohon" Farm 2 akhirnya kepakai (dulu keabaikan, jatuh ke list Farm 1)
                 pcall(Farm.collectOnce)
+                -- v44.76: pas ANTI-LEG TOTAL (buah didestroy), Model buah gak ada -> collectOnce gak nemu.
+                -- collect DARI CACHE (uuid yg udah kerekam pas buah muncul). server masih punya buahnya.
+                if Farm._antiLegMaxOn and Farm._fruitCacheConn then pcall(Farm.collectCacheOnce) end
                 for k,v in pairs(sv) do state[k] = v end
             end
         end)
