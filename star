@@ -987,6 +987,10 @@ Farm._baseW = {
     ["Strawberry"] = 1.000,
     ["Blueberry"]  = 1.150,
     ["Tomato"]     = 0.900,
+    -- v2.0: rasio KONFIRMASI dari data buah yg SAMA (star_ratio): kg/SizeMulti = 9.000 (bulat, LINEAR).
+    -- contoh: SizeMulti 7.95994 x 9 = 71.64kg (pas). game nampilin "Star Fruit", CorePartName="Hypno Bloom".
+    ["Hypno Bloom"] = 9.000,
+    ["Star Fruit"]  = 9.000,
 }
 Farm._collectKg = 0
 Farm._sellKg = 0
@@ -1001,7 +1005,7 @@ function Farm.updateBaseW()
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") then
                     local w = t:GetAttribute("Weight")
-                    local sm = t:GetAttribute("SizeMultiplier")
+                    local sm = t:GetAttribute("SizeMulti") or t:GetAttribute("SizeMultiplier")  -- v1.8 FIX: game pakai SizeMulti (bukan SizeMultiplier) -> dulu kalibrasi GAGAL -> _baseW kosong -> gardenKg nil -> collect mati
                     if type(w) == "number" and type(sm) == "number" and sm > 0 then
                         local ratio = w / sm
                         -- simpan ke SEMUA nama yg mungkin dipakai garden (Fruit/FruitName/SeedName/CorePartName)
@@ -1036,19 +1040,68 @@ function Farm._saveBaseW()
         if writefile then writefile(BASEW_FILE, HS:JSONEncode(Farm._baseW)) end
     end)
 end
+-- v2.1: jenis yg rasio-nya UDAH KONFIRMASI - JANGAN ditimpa file save / auto-cal (biar gak rusak)
+Farm._baseWLocked = { ["Hypno Bloom"]=true, ["Star Fruit"]=true, ["Dragon's Breath"]=true,
+    ["Strawberry"]=true, ["Blueberry"]=true, ["Tomato"]=true }
 function Farm._loadBaseW()
     pcall(function()
         if isfile and readfile and isfile(BASEW_FILE) then
             local d = HS:JSONDecode(readfile(BASEW_FILE))
             if type(d) == "table" then
                 for k, v in pairs(d) do
-                    if type(v) == "number" then Farm._baseW[k] = v end  -- merge (hardcode + tersimpan)
+                    -- merge, TAPI jangan timpa yg udah dikunci (Hypno Bloom/Dragon's Breath dll)
+                    if type(v) == "number" and not Farm._baseWLocked[k] then Farm._baseW[k] = v end
                 end
             end
         end
     end)
 end
 Farm._loadBaseW()
+
+-- v2.1: AUTO-KALIBRASI dari PROMPT PANEN - seed BARU apapun otomatis dapet rasio kg-nya.
+-- baca teks kg di prompt buah ("... 71.64 kilogram") + SizeMulti -> rasio = kg/SizeMulti -> simpen.
+-- CUMA isi jenis yg BELUM ada di _baseW (gak nimpa hardcode). sekali kebaca, kesimpen permanen.
+local function autoCalScanFruit(f)
+    pcall(function()
+        local core = f:GetAttribute("CorePartName") or f:GetAttribute("SeedName")
+        if not core or Farm._baseW[core] or Farm._baseWLocked[core] then return end   -- udah ada/dikunci -> skip
+        local sm = f:GetAttribute("SizeMulti") or f:GetAttribute("SizeMultiplier")
+        if type(sm) ~= "number" or sm <= 0 then return end
+        -- cari teks kg (prompt Panen / label)
+        local kg
+        for _, d in ipairs(f:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                local t = (d.ObjectText or "").." "..(d.ActionText or "")
+                local n = t:match("([%d%.]+)%s*[kK]ilogram") or t:match("([%d%.]+)%s*kg")
+                if n then kg = tonumber(n); break end
+            elseif d:IsA("TextLabel") then
+                local n = (d.Text or ""):match("([%d%.]+)%s*[kK]ilogram") or (d.Text or ""):match("([%d%.]+)%s*kg")
+                if n then kg = tonumber(n); break end
+            end
+        end
+        if kg and kg > 0 then
+            Farm._baseW[core] = kg / sm
+            if Farm._saveBaseW then pcall(Farm._saveBaseW) end
+            print(string.format("[StarFarm] auto-kalibrasi '%s': rasio %.3f (dari prompt %.2fkg / sm %.4f)", core, kg/sm, kg, sm))
+        end
+    end)
+end
+task.spawn(function()
+    task.wait(6)
+    while isCurrentGen() do
+        pcall(function()
+            local g = workspace:FindFirstChild("Gardens")
+            if g then for _, plot in ipairs(g:GetChildren()) do
+                local pls = plot:FindFirstChild("Plants")
+                if pls then for _, plant in ipairs(pls:GetChildren()) do
+                    local fr = plant:FindFirstChild("Fruits")
+                    if fr then for _, f in ipairs(fr:GetChildren()) do autoCalScanFruit(f) end end
+                end end
+            end end
+        end)
+        task.wait(8)
+    end
+end)
 
 -- v12.9: hitung SEED di tas per jenis (buat ditampilin di picker Jenis Seed Auto Gift)
 function Farm.countSeedsInBag()
@@ -9850,41 +9903,8 @@ task.spawn(function()
     end
 end)
 
--- ====== v1.7: AUTO-COLEK TANAMAN (niru WC tanpa numbuhin) ======
--- Temuan: WC bikin Model buah baru MUNCUL di klien (buah alami gak ke-render sampai dicolek WC).
--- Colekan-nya = karakter teleport PERSIS ke titik tanaman -> klien maksa render/terima buah di situ.
--- Jadi: tiap ~10s, teleport KILAT keliling ke tiap plot (instan, balik ke posisi semula) TANPA
--- fire WC -> buah baru ke-render & kepanen, TANPA numbuhin buah. Bisa dimatiin:
---   getgenv().StarFarm._syncPatrolOn = false
-Farm._syncPatrolOn = true
-task.spawn(function()
-    task.wait(5)
-    while isCurrentGen() do
-        pcall(function()
-            if not Farm._syncPatrolOn then return end
-            local picks = (Farm.af2GetPlantPositions and Farm.af2GetPlantPositions()) or {}
-            if #picks == 0 then return end
-            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
-            local origCF = hrp.CFrame
-            -- COLEK: teleport kilat ke tiap titik plot (persis di tanaman) biar buah ke-render
-            for _, e in ipairs(picks) do
-                if not Farm._syncPatrolOn then break end
-                if e and e.pos then
-                    pcall(function() hrp.CFrame = CFrame.new(e.pos + Vector3.new(0, 4, 0)) end)
-                    pcall(function() player:RequestStreamAroundAsync(e.pos) end)
-                    task.wait(0.15)   -- jeda kecil biar klien sempet terima Model buah
-                end
-            end
-            -- balik ke posisi semula
-            pcall(function()
-                local h2 = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                if h2 then h2.CFrame = origCF end
-            end)
-        end)
-        task.wait(10)
-    end
-end)
+-- (v1.7 AUTO-COLEK TELEPORT DICABUT v2.2: salah diagnosa - masalah aslinya kg-nil/kalibrasi,
+--  bukan streaming. teleport ke tanaman gak perlu -> bikin karakter loncat2 aja.)
 
 
 local applySprinkler, applySprSave
