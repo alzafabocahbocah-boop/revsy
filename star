@@ -1,5 +1,5 @@
 -- ============================================================
--- STAR FARM  v1.0  (standalone, basis Zenx Farm v44.79)
+-- STAR FARM  v1.0  (standalone, basis ZENX v44.79) - GAG 2
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v44.79 (dari v44.78):
@@ -236,11 +236,11 @@ do
     local SCRIPT_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/gag2"
     local payload = [[
 local URL = "]]..SCRIPT_URL..[["
-local CACHE = "ZenxFarm_cache.lua"
-local CACHE_AGE = "ZenxFarm_cache_time.txt"
+local CACHE = "StarFarm_cache.lua"
+local CACHE_AGE = "StarFarm_cache_time.txt"
 -- guard: cegah re-exec dobel dalam 1 sesi (kadang queue + manual jalan barengan -> spam)
-if getgenv().__ZenxFarmExecuting then return end
-getgenv().__ZenxFarmExecuting = true
+if getgenv().__StarFarmExecuting then return end
+getgenv().__StarFarmExecuting = true
 local function tryRun(src)
     if type(src) == "string" and #src > 50000 then
         local fn = loadstring(src)
@@ -257,7 +257,7 @@ if isfile and readfile and isfile(CACHE) then
     end
     if fresh then
         local ok, c = pcall(readfile, CACHE)
-        if ok and tryRun(c) then getgenv().__ZenxFarmExecuting = nil return end
+        if ok and tryRun(c) then getgenv().__StarFarmExecuting = nil return end
     end
 end
 -- 2) HttpGet CUMA 1x (ga ada retry -> ga spam 429). sukses -> cache + jalan.
@@ -267,7 +267,7 @@ if ok and type(res) == "string" and #res > 50000 then
         pcall(function() writefile(CACHE, res) end)
         pcall(function() writefile(CACHE_AGE, tostring(os.time())) end)
     end
-    if tryRun(res) then getgenv().__ZenxFarmExecuting = nil return end
+    if tryRun(res) then getgenv().__StarFarmExecuting = nil return end
 end
 -- 3) gagal (429/timeout) -> pakai CACHE LAMA (walau expired) sbg penyelamat. LALU BERHENTI.
 --    ga ada retry HttpGet lagi -> ga nambah beban 429.
@@ -275,14 +275,14 @@ if isfile and isfile(CACHE) then
     local ok2, c2 = pcall(readfile, CACHE)
     if ok2 then tryRun(c2) end
 end
-getgenv().__ZenxFarmExecuting = nil
+getgenv().__StarFarmExecuting = nil
 ]]
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or queueonteleport
     if q then
         pcall(function() q(payload) end)
-        print("[ZenxFarm] auto re-exec aktif (cache +anti-spam-429)")
+        print("[StarFarm] auto re-exec aktif (cache +anti-spam-429)")
     else
-        print("[ZenxFarm] executor gak support queue_on_teleport")
+        print("[StarFarm] executor gak support queue_on_teleport")
     end
 end
 
@@ -325,13 +325,13 @@ do
                or method == "TeleportToPrivateServer") then
                 if shouldBlock() then
                     blocked = blocked + 1
-                    warn("[ZenxFarm] teleport DIBLOK (kepental dicegah) #"..blocked.." method="..method)
+                    warn("[StarFarm] teleport DIBLOK (kepental dicegah) #"..blocked.." method="..method)
                     return  -- gak diteruskan -> teleport gak jalan
                 end
             end
             return old(self, ...)
         end)
-        print("[ZenxFarm] anti-kepental hook terpasang (status: "..(genvTP.ZenxAntiKepental and "ON-ngeblok" or "OFF-bebas")..")")
+        print("[StarFarm] anti-kepental hook terpasang (status: "..(genvTP.ZenxAntiKepental and "ON-ngeblok" or "OFF-bebas")..")")
     else
         -- fallback: replace fungsi TeleportService langsung (kalau executor support)
         pcall(function()
@@ -339,13 +339,13 @@ do
             TS.Teleport = function(self, ...)
                 if shouldBlock() then
                     blocked = blocked + 1
-                    warn("[ZenxFarm] teleport DIBLOK (fallback) #"..blocked)
+                    warn("[StarFarm] teleport DIBLOK (fallback) #"..blocked)
                     return
                 end
                 return origTP(self, ...)
             end
         end)
-        print("[ZenxFarm] anti-kepental aktif (fallback replace)")
+        print("[StarFarm] anti-kepental aktif (fallback replace)")
     end
 end
 
@@ -428,7 +428,7 @@ task.spawn(function()
     task.wait(1)  -- jeda awal kecil: kasih game waktu mulai load (jangan nembak dari frame 0)
     for _ = 1, 200 do  -- max ~60 detik (spam tiap 0.3s)
         if reallyIn() then
-            print("[ZenxFarm] auto-skip: berhasil masuk!")
+            print("[StarFarm] auto-skip: berhasil masuk!")
             break
         end
         -- tahan input selama data masih loading (anti kick 267)
@@ -501,7 +501,7 @@ task.spawn(function()
                     end
                     -- 2) sembunyiin overlay-nya
                     pcall(function() g.Enabled = false end)
-                    print("[ZenxFarm] loading screen disembunyiin: "..g.Name)
+                    print("[StarFarm] loading screen disembunyiin: "..g.Name)
                 end
             end
         end
@@ -788,9 +788,9 @@ local function saveState()
         out.weatherHopDelay = state.weatherHopDelay or 60   -- v28.1
         out.c2WeightF = state.c2WeightF or -50   -- v28.7: collect2 filter kg
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
-        out.af2WCTrigger = state.af2WCTrigger or 50
+        out.af2WCTrigger = state.af2WCTrigger or 0
         out.hideBigKg = state.hideBigKg or 100   -- v32.8
-        out.af2BigCap = state.af2BigCap or 500
+        out.af2BigCap = state.af2BigCap or 100
         out.af2SavedPos = state.af2SavedPos or {}
         out.af2SprTool = state.af2SprTool or ""   -- v31.5: nama sprinkler dipilih
         out.af2WCTool  = state.af2WCTool  or ""   -- v31.5: nama WC dipilih
@@ -803,6 +803,7 @@ local function saveState()
         out.gfAlertHook = state.gfAlertHook or "" -- v18.7
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
         out.buyGoodMinRarity = state.buyGoodMinRarity or "Mythic"  -- v26.3
+        out.sfGlowGiftTarget = state.sfGlowGiftTarget or ""   -- STAR FARM: target gift Glow (PERSISTEN)
         out.gfStorageTarget = state.gfStorageTarget or ""  -- v21.7
         out.gfStorageMinVal = state.gfStorageMinVal or 4000000  -- v21.8
         out.gfPrioMinVal = state.gfPrioMinVal or 3000000  -- v24.0
@@ -869,6 +870,7 @@ local function loadState()
                 if type(d.gfAlertHook) == "string" and d.gfAlertHook ~= "" then state.gfAlertHook = d.gfAlertHook end
                 if type(d.gpTarget) == "string" and d.gpTarget ~= "" then state.gpTarget = d.gpTarget end
                 if type(d.buyGoodMinRarity) == "string" and d.buyGoodMinRarity ~= "" then state.buyGoodMinRarity = d.buyGoodMinRarity end
+                if type(d.sfGlowGiftTarget) == "string" then state.sfGlowGiftTarget = d.sfGlowGiftTarget end   -- STAR FARM: target gift Glow persisten
                 if type(d.gfStorageTarget) == "string" then state.gfStorageTarget = d.gfStorageTarget end
                 if type(d.gfStorageMinVal) == "number" then state.gfStorageMinVal = d.gfStorageMinVal end
                 if type(d.gfPrioMinVal) == "number" then state.gfPrioMinVal = d.gfPrioMinVal end
@@ -928,7 +930,7 @@ state.autoWeatherHop = (state.farm2On == true)
 for _, where in ipairs({ CoreGui, player:FindFirstChildOfClass("PlayerGui") }) do
     if where then
         for _, g in ipairs(where:GetChildren()) do
-            if g.Name == "ZenxFarm" then pcall(function() g:Destroy() end) end
+            if g.Name == "StarFarm" then pcall(function() g:Destroy() end) end
         end
     end
 end
@@ -937,9 +939,9 @@ end
 -- tiap execute naikin generasi. loop lama cek: kalau bukan generasi terbaru, berhenti.
 -- ini cegah double-collect/double-sell pas re-execute tanpa rejoin.
 local genv = (typeof(getgenv) == "function") and getgenv() or _G
-genv.ZenxFarmGen = (genv.ZenxFarmGen or 0) + 1
-local MY_GEN = genv.ZenxFarmGen
-local function isCurrentGen() return genv.ZenxFarmGen == MY_GEN end
+genv.StarFarmGen = (genv.StarFarmGen or 0) + 1
+local MY_GEN = genv.StarFarmGen
+local function isCurrentGen() return genv.StarFarmGen == MY_GEN end
 
 -- v12.1: STAGGER START - daripada semua loop task.spawn serempak (bikin lag awal 1-2s),
 -- daftarin ke antrian, dispatcher ngeluarin satu-satu tiap 0.4s. ~20 loop kesebar ~8 detik.
@@ -969,8 +971,7 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- FUNGSI FARM (placeholder - diisi nanti via debug)
 -- ============================================================
 local Farm = {}
-pcall(function() getgenv().ZenxFarm = Farm end)   -- v36.4: expose buat tes console (mis. ZenxFarm.dropOneFruit())
-pcall(function() getgenv().StarFarm = Farm end)   -- STAR FARM: alias handle
+pcall(function() getgenv().StarFarm = Farm end)   -- v36.4: expose buat tes console (mis. StarFarm.dropOneFruit())
 -- v44.26: CATAT JobId di AWAL (pas masuk server) - kunci balik ke server SAMA pas weather buruk.
 Farm._bootJobId = tostring(game.JobId or "")
 -- v37.1: expose helper UI + state ke Farm._ui biar buildCollectPanel (fungsi terpisah) bisa akses
@@ -1027,7 +1028,7 @@ function Farm.gardenKg(fruit, seedName)
     return sm * base
 end
 -- v13.4: simpan/load rasio kg ke file (per-user) biar permanen - gak butuh contoh lagi.
-local BASEW_FILE = "ZenxFarm_kgratio_" .. tostring(player and player.UserId or "guest") .. ".json"
+local BASEW_FILE = "StarFarm_kgratio_" .. tostring(player and player.UserId or "guest") .. ".json"
 function Farm._saveBaseW()
     pcall(function()
         if writefile then writefile(BASEW_FILE, HS:JSONEncode(Farm._baseW)) end
@@ -1189,7 +1190,7 @@ function Farm.setAntiLag(on)
                 if Farm._antiLagOn then Farm.applyAntiLagToObj(d) end
             end)
         end
-        print("[ZenxFarm] anti-lag ON (efek visual dimatiin, max enteng)")
+        print("[StarFarm] anti-lag ON (efek visual dimatiin, max enteng)")
     else
         Farm._antiLagOn = false
         if Farm._antiLagConn then Farm._antiLagConn:Disconnect(); Farm._antiLagConn = nil end
@@ -1208,7 +1209,7 @@ function Farm.setAntiLag(on)
                 if e:IsA("PostEffect") or e:IsA("Sky") then pcall(function() e.Enabled = true end) end
             end
         end)
-        print("[ZenxFarm] anti-lag OFF (efek balik normal, perlu rejoin biar full balik)")
+        print("[StarFarm] anti-lag OFF (efek balik normal, perlu rejoin biar full balik)")
     end
 end
 
@@ -1305,7 +1306,7 @@ function Farm.startFruitCache()
     end)
     -- listener buah baru (rekam SEBELUM sempet despawn)
     Farm._fruitCacheConn = workspace.DescendantAdded:Connect(function(d) cacheFruitModel(d) end)
-    print("[ZenxFarm] cache buah AKTIF ("..(function() local n=0 for _ in pairs(Farm._fruitCache) do n=n+1 end return n end)().." buah kerekam)")
+    print("[StarFarm] cache buah AKTIF ("..(function() local n=0 for _ in pairs(Farm._fruitCache) do n=n+1 end return n end)().." buah kerekam)")
 end
 -- fire CollectFruit buat tiap uuid di cache. expire 300s (buah kepanen/ilang lama dibuang).
 -- v44.76: SIKAT SEMUA - gak pake filter berat, karena Model buah udah gak ada buat dibaca kg-nya.
@@ -1416,7 +1417,7 @@ function Farm.setAntiLegMax(on)
                 if Farm._antiLegMaxOn then Farm.applyAntiLegMaxToObj(d) end
             end)
         end
-        print("[ZenxFarm] ANTI-LEG TOTAL ON - mesh/cahaya/label mati, panel pause, collect 0.5s")
+        print("[StarFarm] ANTI-LEG TOTAL ON - mesh/cahaya/label mati, panel pause, collect 0.5s")
     else
         Farm._antiLegMaxOn = false
         Farm._overlayPaused = false
@@ -1429,7 +1430,7 @@ function Farm.setAntiLegMax(on)
             if ter then ter.Decoration = true end
         end)
         pcall(function() Farm.setAntiLag(state.antiLag) end)   -- balik ke setelan Anti-Lag punya user sendiri
-        print("[ZenxFarm] ANTI-LEG TOTAL OFF (restore best-effort; rejoin buat full balik)")
+        print("[StarFarm] ANTI-LEG TOTAL OFF (restore best-effort; rejoin buat full balik)")
     end
 end
 
@@ -1460,11 +1461,11 @@ function Farm.applyNoclip(on)
                 end
             end)
         end
-        print("[ZenxFarm] NO-CLIP ON (karakter nembus objek)")
+        print("[StarFarm] NO-CLIP ON (karakter nembus objek)")
     else
         if Farm._noclipConn then Farm._noclipConn:Disconnect(); Farm._noclipConn = nil end
         if Farm._noclipCharConn then Farm._noclipCharConn:Disconnect(); Farm._noclipCharConn = nil end
-        print("[ZenxFarm] NO-CLIP OFF")
+        print("[StarFarm] NO-CLIP OFF")
     end
 end
 
@@ -1528,10 +1529,10 @@ function Farm.setHidePlants(on)
                 end
             end)
         end
-        print("[ZenxFarm] sembunyiin pohon ON (buah tetep keliatan)")
+        print("[StarFarm] sembunyiin pohon ON (buah tetep keliatan)")
     else
         if Farm._hidePlantsConn then Farm._hidePlantsConn:Disconnect(); Farm._hidePlantsConn = nil end
-        print("[ZenxFarm] sembunyiin pohon OFF")
+        print("[StarFarm] sembunyiin pohon OFF")
     end
 end
 
@@ -1590,10 +1591,10 @@ function Farm.setHideFruits(on)
                 end
             end)
         end
-        print("[ZenxFarm] sembunyiin buah ON ("..(state.hideFruitFaint and "samar" or "ilang total")..")")
+        print("[StarFarm] sembunyiin buah ON ("..(state.hideFruitFaint and "samar" or "ilang total")..")")
     else
         if Farm._hideFruitsConn then Farm._hideFruitsConn:Disconnect(); Farm._hideFruitsConn = nil end
-        print("[ZenxFarm] sembunyiin buah OFF")
+        print("[StarFarm] sembunyiin buah OFF")
     end
 end
 
@@ -1682,10 +1683,10 @@ function Farm.setHideBigFruits(on)
                 task.wait(8)   -- rescan: buah yg BARU nyampe berat ikut ilang (buah kan tumbuh)
             end
         end)
-        print("[ZenxFarm] sembunyiin buah gede ON (>= "..tostring(state.hideBigKg or 100).."kg ilang total)")
+        print("[StarFarm] sembunyiin buah gede ON (>= "..tostring(state.hideBigKg or 100).."kg ilang total)")
     else
         task.spawn(function() pcall(function() Farm.scanHideBigFruits(false) end) end)
-        print("[ZenxFarm] sembunyiin buah gede OFF (buah balik keliatan)")
+        print("[StarFarm] sembunyiin buah gede OFF (buah balik keliatan)")
     end
 end
 
@@ -2322,14 +2323,34 @@ end
 
 function Farm.collectOnce()
     local p = pkt("Garden", "CollectFruit")
-    if not p or not p.Fire then print("[ZenxFarm] CollectFruit packet gak ada"); return end
+    if not p or not p.Fire then print("[StarFarm] CollectFruit packet gak ada"); return end
     local gardens = workspace:FindFirstChild("Gardens")
-    if not gardens then print("[ZenxFarm] Gardens gak ada"); return end
+    if not gardens then print("[StarFarm] Gardens gak ada"); return end
 
     local _t0 = tick()  -- v6.8: timing - ukur durasi 1 siklus collect
     local fired, skipped = 0, 0
     local typesFired = {}
     if state.collectWeightF ~= 0 then Farm.updateBaseW() end  -- v10.9: kalibrasi kalau filter berat aktif
+
+    -- STAR FARM: gate Glow - hitung jumlah buah Glow di kebun sendiri. kalau < glowCollectMin, Glow DITAHAN (numpuk dulu).
+    local _glowGardenN = 999999
+    if state.sfGlowGate then
+        _glowGardenN = 0
+        pcall(function()
+            for _, plot in ipairs(gardens:GetChildren()) do
+                local pls = plot:FindFirstChild("Plants")
+                if pls then for _, plant in ipairs(pls:GetChildren()) do
+                    if tonumber(tostring(plant.Name):match("^(%d+)_")) == player.UserId then
+                        local fr = plant:FindFirstChild("Fruits")
+                        if fr then for _, f in ipairs(fr:GetChildren()) do
+                            if getMutation(f) == "Glow" then _glowGardenN = _glowGardenN + 1 end
+                        end end
+                    end
+                end end
+            end
+        end)
+    end
+    local _glowMin = state.glowCollectMin or 60
 
     -- v10.6 FIX: kalau collectAll=false TAPI gak ada jenis yg dipilih, anggap SEMUA.
     -- (dulu bisa kejadian collectAll jadi false tapi selectedCollect kosong -> okType
@@ -2392,7 +2413,10 @@ function Farm.collectOnce()
                         okMut = true; okW = true; okHeavy = true
                     end
                 end
-                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy then
+                -- STAR FARM: gate Glow - kalau buah ini Glow TAPI Glow di kebun belum >= glowCollectMin, TAHAN (jangan collect)
+                local okGlowGate = true
+                if state.sfGlowGate and getMutation(fruit) == "Glow" and _glowGardenN < _glowMin then okGlowGate = false end
+                if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy and okGlowGate then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
                     fired = fired + 1; fruitCount = fruitCount + 1
@@ -2464,7 +2488,7 @@ function Farm.collectOnce()
         end
         -- collect jenis fokus SEKALI LEWAT, lalu tandai selesai (lepas, gak ngejar regrowth)
         if focus and byType[focus] then
-            dprint("[ZenxFarm] collect fokus: "..focus.." ("..byType[focus].fruits.." buah)")
+            dprint("[StarFarm] collect fokus: "..focus.." ("..byType[focus].fruits.." buah)")
             for _, t in ipairs(byType[focus].list) do
                 if not state.autoCollect then break end
                 processPlant(t[1], t[2], t[3])
@@ -2512,7 +2536,7 @@ function Farm.collectOnce()
         for nm, c in pairs(typesFired) do tlist[#tlist+1] = nm.."("..c..")" end
         -- v6.8: tambah DURASI siklus - biar ketahuan collect makan waktu berapa detik
         local _dur = tick() - _t0
-        dprint(string.format("[ZenxFarm] collect fired=%d skipped=%d durasi=%.2fs | jenis: %s",
+        dprint(string.format("[StarFarm] collect fired=%d skipped=%d durasi=%.2fs | jenis: %s",
             fired, skipped, _dur, (#tlist>0 and table.concat(tlist,", ") or "-")))
     end
 end
@@ -2546,7 +2570,7 @@ end
 -- fav/unfav SEMUA buah di inventory (set favorit = b). return jumlah buah yg diproses.
 function Farm.favAllFruits(b)
     local p = pkt("Backpack", "SetFruitFavorite")
-    if not (p and p.Fire) then print("[ZenxFarm] SetFruitFavorite packet gak ada"); return 0 end
+    if not (p and p.Fire) then print("[StarFarm] SetFruitFavorite packet gak ada"); return 0 end
     local n = 0
     for _, holder in ipairs(getFruitHolders()) do
         for _, o in ipairs(holder:GetChildren()) do
@@ -2558,7 +2582,7 @@ function Farm.favAllFruits(b)
             end
         end
     end
-    print("[ZenxFarm] "..(b and "FAV" or "UNFAV").." semua buah -> "..n)
+    print("[StarFarm] "..(b and "FAV" or "UNFAV").." semua buah -> "..n)
     return n
 end
 
@@ -2574,7 +2598,7 @@ end
 -- return jumlah buah yg di-drop.
 function Farm.dropAllFruits(skipFav)
     local p = pkt("DroppedItem", "RequestDrop")
-    if not (p and p.Fire) then print("[ZenxFarm] RequestDrop packet gak ada"); return 0 end
+    if not (p and p.Fire) then print("[StarFarm] RequestDrop packet gak ada"); return 0 end
     local n = 0
     for _, holder in ipairs(getFruitHolders()) do
         for _, o in ipairs(holder:GetChildren()) do
@@ -2590,25 +2614,25 @@ function Farm.dropAllFruits(skipFav)
             end
         end
     end
-    print("[ZenxFarm] DROP "..n.." buah ke tanah"..(skipFav and " (favorit di-skip)" or ""))
+    print("[StarFarm] DROP "..n.." buah ke tanah"..(skipFav and " (favorit di-skip)" or ""))
     return n
 end
 -- v36.4: tes cepet drop 1 buah (ambil buah pertama di tas). buat uji dari console:
---   getgenv().ZenxFarm.dropOneFruit()   ATAU panggil dari tombol nanti.
+--   getgenv().StarFarm.dropOneFruit()   ATAU panggil dari tombol nanti.
 function Farm.dropOneFruit()
     local p = pkt("DroppedItem", "RequestDrop")
-    if not (p and p.Fire) then print("[ZenxFarm] RequestDrop packet gak ada"); return false end
+    if not (p and p.Fire) then print("[StarFarm] RequestDrop packet gak ada"); return false end
     for _, holder in ipairs(getFruitHolders()) do
         for _, o in ipairs(holder:GetChildren()) do
             local id = o:GetAttribute("Id")
             if id then
                 pcall(function() p:Fire("HarvestedFruits", tostring(id)) end)
-                print("[ZenxFarm] drop 1 buah: "..tostring(o.Name).." id="..tostring(id):sub(1,8))
+                print("[StarFarm] drop 1 buah: "..tostring(o.Name).." id="..tostring(id):sub(1,8))
                 return true
             end
         end
     end
-    print("[ZenxFarm] ga ada buah di tas")
+    print("[StarFarm] ga ada buah di tas")
     return false
 end
 
@@ -2639,12 +2663,12 @@ function Farm.startDropLoop()
     local myGen = Farm._dropGen
     task.spawn(function()
         local p = pkt("DroppedItem", "RequestDrop")
-        if not (p and p.Fire) then print("[ZenxFarm] RequestDrop packet gak ada"); state.dropAuto=false; return end
-        print("[ZenxFarm] DROP FRUIT auto: ON (target "..tostring(state.dropTarget)..")")
+        if not (p and p.Fire) then print("[StarFarm] RequestDrop packet gak ada"); state.dropAuto=false; return end
+        print("[StarFarm] DROP FRUIT auto: ON (target "..tostring(state.dropTarget)..")")
         while state.dropAuto and myGen == Farm._dropGen do
             -- target tercapai -> mati sendiri
             if (state.dropDone or 0) >= (state.dropTarget or 0) then
-                print("[ZenxFarm] DROP FRUIT: target "..tostring(state.dropTarget).." tercapai -> OFF")
+                print("[StarFarm] DROP FRUIT: target "..tostring(state.dropTarget).." tercapai -> OFF")
                 state.dropAuto = false
                 pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
                 break
@@ -2803,7 +2827,7 @@ function Farm.startDropLoop()
         -- pastikan tool dilepas pas berhenti
         local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
         if hum then pcall(function() hum:UnequipTools() end) end
-        print("[ZenxFarm] DROP FRUIT auto: OFF (total drop sesi: "..tostring(state.dropDone)..")")
+        print("[StarFarm] DROP FRUIT auto: OFF (total drop sesi: "..tostring(state.dropDone)..")")
     end)
 end
 
@@ -2864,12 +2888,12 @@ end
 function Farm.startCollectLoop()
     task.spawn(function()
         if type(fireproximityprompt) ~= "function" then
-            print("[ZenxFarm] executor gak punya fireproximityprompt - auto collect ga bisa")
+            print("[StarFarm] executor gak punya fireproximityprompt - auto collect ga bisa")
             state.collectAuto = false
             pcall(function() if Farm._syncCollectToggle then Farm._syncCollectToggle() end end)
             return
         end
-        print("[ZenxFarm] AUTO COLLECT: ON")
+        print("[StarFarm] AUTO COLLECT: ON")
         while state.collectAuto do
             local di = workspace:FindFirstChild("DroppedItems")
             if di then
@@ -2912,7 +2936,7 @@ function Farm.startCollectLoop()
             end
             task.wait(0.5)   -- scan ulang tiap 0.5s
         end
-        print("[ZenxFarm] AUTO COLLECT: OFF (total collect sesi: "..tostring(state.collectDone or 0)..")")
+        print("[StarFarm] AUTO COLLECT: OFF (total collect sesi: "..tostring(state.collectDone or 0)..")")
     end)
 end
 
@@ -3001,7 +3025,7 @@ function Farm.buildCollectPanel(dList)
                 state.collectDone = 0
                 Farm.startCollectLoop()
                 syncC(); saveState()
-                print("[ZenxFarm] AUTO COLLECT auto-ON (akun fifi: "..uname..")")
+                print("[StarFarm] AUTO COLLECT auto-ON (akun fifi: "..uname..")")
             end
         end
     end
@@ -3061,7 +3085,7 @@ function Farm.sellOnce()
     -- v10.9: kalau filter berat aktif, SellAll gak bisa (jual semua sekaligus) -> pakai per-fruit
     if state.sellAll and state.sellWeightF == 0 then
         local p = pkt("NPCS", "SellAll")
-        if not p or not p.Fire then print("[ZenxFarm] SellAll packet gak ada"); return end
+        if not p or not p.Fire then print("[StarFarm] SellAll packet gak ada"); return end
         -- v10.8: jumlahin berat semua buah di inventory SEBELUM dijual
         local kg = 0
         for _, holder in ipairs(getFruitHolders()) do
@@ -3074,12 +3098,12 @@ function Farm.sellOnce()
         end
         Farm._sellKg = Farm._sellKg + kg
         pcall(function() p:Fire() end)
-        print(string.format("[ZenxFarm] SellAll fired (%.2f kg)", kg))
+        print(string.format("[StarFarm] SellAll fired (%.2f kg)", kg))
         return
     end
     -- per-jenis (atau semua jenis kalau sellAll + filter berat aktif)
     local p = pkt("NPCS", "SellFruit")
-    if not p or not p.Fire then print("[ZenxFarm] SellFruit packet gak ada"); return end
+    if not p or not p.Fire then print("[StarFarm] SellFruit packet gak ada"); return end
     local sold, types = 0, {}
     for _, holder in ipairs(getFruitHolders()) do
         for _, o in ipairs(holder:GetChildren()) do
@@ -3093,6 +3117,8 @@ function Farm.sellOnce()
                 local okW = passWeight(w, state.sellWeightF)  -- v10.9 filter berat
                 -- sellAll=true -> semua jenis lolos; else cuma jenis terpilih
                 local okType = state.sellAll or state.selectedSell[jenis]
+                -- STAR FARM: anti-sell buah Glow >= glowKgMin (dilindungi, jangan dijual)
+                if state.sfGlowAntiSell and getMutation(o) == "Glow" and (w or 0) >= (state.glowKgMin or 50) then okType = false end
                 if okType and okMut and okW then
                     if type(w) == "number" then Farm._sellKg = Farm._sellKg + w end  -- v10.8
                     pcall(function() p:Fire(tostring(id)) end)
@@ -3105,7 +3131,7 @@ function Farm.sellOnce()
     end
     if sold > 0 then
         local tl = {}; for n, c in pairs(types) do tl[#tl+1] = n.."("..c..")" end
-        dprint("[ZenxFarm] sell per-jenis: "..table.concat(tl, ", "))
+        dprint("[StarFarm] sell per-jenis: "..table.concat(tl, ", "))
     end
 end
 
@@ -3146,9 +3172,9 @@ function Farm.startSellNonMutLoop()
             end
         end
         Farm._sellNonMutOn = false
-        print("[ZenxFarm] sell non-mutasi loop: OFF")
+        print("[StarFarm] sell non-mutasi loop: OFF")
     end)
-    print("[ZenxFarm] sell non-mutasi loop: ON (jual buah polos kalau ada)")
+    print("[StarFarm] sell non-mutasi loop: ON (jual buah polos kalau ada)")
 end
 
 -- ===== BUY SEED: borong SEMUA seed (SeedData) - server auto-tolak yg habis =====
@@ -3217,10 +3243,7 @@ function Farm.seedRarity(name)
 end
 function Farm.seedRarityRank(name)
     local r = Farm.seedRarity(name)
-    if not r then return 0 end
-    -- STAR FARM: rarity dikenal -> rank normal. rarity BARU/gak dikenal (tier baru) -> anggap di ATAS Mythic
-    -- (rank 99) biar seed event baru langsung kebeli tanpa perlu daftarin tier-nya.
-    return RARITY_RANK[r] or 99
+    return (r and RARITY_RANK[r]) or 0
 end
 
 -- v11.6: baca STOK dari server (StockValues.<Shop>.Items.<name> = NumberValue stok).
@@ -3246,8 +3269,8 @@ end
 Farm.buyPerSeed = 4   -- tiap seed di-fire berapa kali per siklus (kurangi biar gak lag)
 function Farm.buySeedOnce()
     local p = pkt("SeedShop", "PurchaseSeed")
-    if not p or not p.Fire then print("[ZenxFarm] PurchaseSeed packet gak ada"); return end
-    if not Farm.seedList then Farm.seedList = loadSeedList(); print("[ZenxFarm] seed list: "..#Farm.seedList.." seed") end
+    if not p or not p.Fire then print("[StarFarm] PurchaseSeed packet gak ada"); return end
+    if not Farm.seedList then Farm.seedList = loadSeedList(); print("[StarFarm] seed list: "..#Farm.seedList.." seed") end
     local list = Farm.seedList
     -- kalau bukan "borong semua", filter cuma yg dipilih
     if not state.buyAllSeeds then
@@ -3259,7 +3282,12 @@ function Farm.buySeedOnce()
             local seen = {}
             for _, n in ipairs(sel) do seen[n] = true end
             for _, n in ipairs(Farm.seedList) do
-                if not seen[n] and Farm.seedRarityRank(n) >= minRank then sel[#sel+1] = n; seen[n] = true end
+                -- STAR FARM: beli kalau rank >= ambang (Mythic+), ATAU rarity BELUM DIKENAL
+                -- (seed baru/tier baru = selalu bagus -> langsung samber, gak ke-skip gara2 rank 0)
+                local rar = Farm.seedRarity(n)
+                local rank = (rar and RARITY_RANK[rar]) or 0
+                local unknown = (rar == nil) or (rar ~= nil and RARITY_RANK[rar] == nil)  -- rarity ada tapi gak ada di tabel = tier baru
+                if not seen[n] and (rank >= minRank or unknown) then sel[#sel+1] = n; seen[n] = true end
             end
         end
         list = sel
@@ -3283,7 +3311,7 @@ function Farm.buySeedOnce()
             end
         end
     end
-    if fired > 0 then dprint("[ZenxFarm] buy seed: "..fired.." fire (cuma yg ada stok)") end
+    if fired > 0 then dprint("[StarFarm] buy seed: "..fired.." fire (cuma yg ada stok)") end
 end
 
 -- v44.1: AUTO BUY CRATE/PETI - beli peti dari CrateShop (remote CrateShop.PurchaseCrate).
@@ -3305,7 +3333,7 @@ function Farm.crateList()
 end
 function Farm.buyCrateOnce()
     local p = pkt("CrateShop", "PurchaseCrate")
-    if not p or not p.Fire then print("[ZenxFarm] PurchaseCrate packet gak ada"); return end
+    if not p or not p.Fire then print("[StarFarm] PurchaseCrate packet gak ada"); return end
     local list = Farm.crateList()
     -- filter cuma yg dipilih (kalau bukan borong semua)
     if not state.buyAllCrates then
@@ -3328,7 +3356,7 @@ function Farm.buyCrateOnce()
             end
         end
     end
-    if fired > 0 then dprint("[ZenxFarm] buy crate: "..fired.." fire (cuma yg ada stok)") end
+    if fired > 0 then dprint("[StarFarm] buy crate: "..fired.." fire (cuma yg ada stok)") end
 end
 
 -- v7.4: list gear sekarang dari SUMBER ASLI game (lengkap):
@@ -3397,7 +3425,7 @@ local function applyBuyDefaults()
         state.buyAllSeeds = false
     end)
     saveState()
-    print("[ZenxFarm] default buy gear/seed di-set (gear:"..tostring(okG)..", seed:"..tostring(okS)..")")
+    print("[StarFarm] default buy gear/seed di-set (gear:"..tostring(okG)..", seed:"..tostring(okS)..")")
 end
 applyBuyDefaults()
 
@@ -3420,7 +3448,7 @@ local function applyBuyDefaultsV2()
     state.autoBuySeed = true
     state.autoBuyGear = true
     saveState()
-    print("[ZenxFarm] default V2: pet pilihan + auto buy seed/gear ON")
+    print("[StarFarm] default V2: pet pilihan + auto buy seed/gear ON")
 end
 applyBuyDefaultsV2()
 
@@ -3440,7 +3468,7 @@ local function applyBuyDefaultsV3()
         state.allPetType = false
     end)
     saveState()
-    print("[ZenxFarm] default V3: pet Bear/Raccoon/Dragonfly/Unicorn")
+    print("[StarFarm] default V3: pet Bear/Raccoon/Dragonfly/Unicorn")
 end
 applyBuyDefaultsV3()
 
@@ -3450,7 +3478,7 @@ local function applyBuyDefaultsV4()
     state.buyDefaultsV4 = true
     state.petMaxPrice = 200000000
     saveState()
-    print("[ZenxFarm] default V4: max harga pet 200M")
+    print("[StarFarm] default V4: max harga pet 200M")
 end
 applyBuyDefaultsV4()
 
@@ -3464,7 +3492,7 @@ if not state.petAddTurtle then
         end
     end)
     saveState()
-    print("[ZenxFarm] Turtle ditambahin ke auto-buy pet")
+    print("[StarFarm] Turtle ditambahin ke auto-buy pet")
 end
 
 -- v26.2: tambahin Hypno Bloom ke auto-buy seed (sekali jalan, buat save yg udah ada)
@@ -3476,7 +3504,7 @@ if not state.seedAddHypno then
         end
     end)
     saveState()
-    print("[ZenxFarm] Hypno Bloom ditambahin ke auto-buy seed")
+    print("[StarFarm] Hypno Bloom ditambahin ke auto-buy seed")
 end
 
 -- v25.8: tambahin Venom Spitter ke auto-buy seed (sekali jalan, buat save yg udah ada)
@@ -3488,7 +3516,7 @@ if not state.seedAddVenom then
         end
     end)
     saveState()
-    print("[ZenxFarm] Venom Spitter ditambahin ke auto-buy seed")
+    print("[StarFarm] Venom Spitter ditambahin ke auto-buy seed")
 end
 
 -- v19.0: gift fruit default -> semua buah + kirim terus (bukan sekali)
@@ -3498,7 +3526,7 @@ local function applyGfDefaults()
     state.gfAllFruit = true   -- kirim SEMUA jenis buah
     state.gfOnce = false      -- kirim TERUS (gak berhenti sekali)
     saveState()
-    print("[ZenxFarm] default gift fruit: semua buah + kirim terus")
+    print("[StarFarm] default gift fruit: semua buah + kirim terus")
 end
 applyGfDefaults()
 
@@ -3507,7 +3535,7 @@ if not state.gfNormalPriceV1 then
     state.gfNormalPriceV1 = true
     state.gfValueMarket = false   -- harga NORMAL x1
     saveState()
-    print("[ZenxFarm] default harga gift: NORMAL (x1)")
+    print("[StarFarm] default harga gift: NORMAL (x1)")
 end
 
 -- v19.1: batas sheckles gift -> 300M (sekali apply)
@@ -3515,7 +3543,7 @@ if not state.gfDefaultsV2 then
     state.gfDefaultsV2 = true
     state.gfSheckMax = 300000000
     saveState()
-    print("[ZenxFarm] default batas sheckles gift: 300M")
+    print("[StarFarm] default batas sheckles gift: 300M")
 end
 
 -- v21.8: default akun simpanan wildnx_61..65 + min 4M (sekali apply)
@@ -3526,7 +3554,7 @@ if not state.gfStorDefV1 then
     end
     state.gfStorageMinVal = 4000000
     saveState()
-    print("[ZenxFarm] default akun simpanan: wildnx_61..65 (min 4M)")
+    print("[StarFarm] default akun simpanan: wildnx_61..65 (min 4M)")
 end
 
 -- v21.9: perluas list akun simpanan -> wildnx_60..75 (paksa overwrite sekali)
@@ -3537,7 +3565,7 @@ if not state.gfStorDefV2 then
     state.gfStorageTarget = table.concat(t, ",")
     state.gfStorRotIdx = 1
     saveState()
-    print("[ZenxFarm] list akun simpanan diperluas: wildnx_60..75 (16 akun)")
+    print("[StarFarm] list akun simpanan diperluas: wildnx_60..75 (16 akun)")
 end
 
 -- v19.4: default gift pet -> Bear/Raccoon/GoldenDragonfly/Unicorn + auto ON
@@ -3555,13 +3583,13 @@ if not state.gpDefaultsV1 then
     state.gpAllPet = false
     state.gpAuto = true
     saveState()
-    print("[ZenxFarm] default gift pet: Bear/Raccoon/Dragonfly/Unicorn + auto ON")
+    print("[StarFarm] default gift pet: Bear/Raccoon/Dragonfly/Unicorn + auto ON")
 end
 
 -- v19.7: ganti target gift pet -> wildnx_60 (sekali apply)
 if state.gpTarget == "wildnx_90" or state.gpTarget == "wildnx_57" or state.gpTarget == "wildnx_58" then
     state.gpTarget = "wildnx_60"; Farm._gpId = nil; Farm._gpIdName = nil; saveState()
-    print("[ZenxFarm] target gift pet -> wildnx_60")
+    print("[StarFarm] target gift pet -> wildnx_60")
 end
 
 Farm.buyPerGear = 1  -- v11.5: 1 fire per gear (dulu 2 -> burst gede). restock biasanya 1-2 stok aja.
@@ -3571,10 +3599,10 @@ function Farm.buyGearOnce()
           or pkt("Gear", "Purchase") or pkt("Gear", "PurchaseGear")
           or pkt("SeedShop", "PurchaseGear") or pkt("Shop", "PurchaseGear")
     if not p or not p.Fire then
-        print("[ZenxFarm] buy gear: remote belum ketemu - perlu sniff (jalanin debug gear)")
+        print("[StarFarm] buy gear: remote belum ketemu - perlu sniff (jalanin debug gear)")
         return
     end
-    if not Farm.gearList then Farm.gearList = loadGearList(); print("[ZenxFarm] gear list: "..#Farm.gearList.." gear") end
+    if not Farm.gearList then Farm.gearList = loadGearList(); print("[StarFarm] gear list: "..#Farm.gearList.." gear") end
     local list = Farm.gearList
     if not state.buyAllGears then
         local sel = {}
@@ -3597,7 +3625,7 @@ function Farm.buyGearOnce()
             end
         end
     end
-    if fired > 0 then dprint("[ZenxFarm] buy gear: "..fired.." fire (cuma yg ada stok)") end
+    if fired > 0 then dprint("[StarFarm] buy gear: "..fired.." fire (cuma yg ada stok)") end
 end
 -- v10.2: buy gear CUMA pas shop baru restock. FIX bug: dulu kalau UnixNextRestock
 -- gak kebaca (nil), kondisi "restock==nil" selalu true -> spam 14 fire/3s -> server
@@ -3647,7 +3675,7 @@ staggerSpawn(function()
     -- v10.5: heartbeat + expose state buat diagnosa (cek loop hidup & state asli)
     local gDbg = (typeof(getgenv) == "function") and getgenv() or _G
     gDbg.ZenxState = state
-    gDbg.ZenxFarm = Farm
+    gDbg.StarFarm = Farm
     gDbg.ZenxCollectBeat = 0
     -- v12.2: kalau filter kg aktif, TUNGGU ~5s + kalibrasi baseW dulu pas awal exe.
     -- (filter kg butuh _baseW dari buah di tas; kalau collect langsung jalan, kg belum
@@ -3658,7 +3686,7 @@ staggerSpawn(function()
             pcall(function() Farm.updateBaseW() end)
             task.wait(1)
         end
-        dprint("[ZenxFarm] collect: kalibrasi awal selesai, filter kg siap")
+        dprint("[StarFarm] collect: kalibrasi awal selesai, filter kg siap")
     end
     while isCurrentGen() do
         pcall(function()
@@ -3715,7 +3743,7 @@ staggerSpawn(function()
                         -- v44.35: PAUSE sell non-mutasi sebentar biar collect ga rebutan (anti-bentrok)
                         Farm._sellPause = os.clock() + 3   -- sell non-mut skip 3 detik
                         pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
-                        dprint("[ZenxFarm] WATCHDOG BRUTAL: collect nyangkut ("..totalBuah.." buah) -> RESET (ke-"..Farm._wdStuckCount..")")
+                        dprint("[StarFarm] WATCHDOG BRUTAL: collect nyangkut ("..totalBuah.." buah) -> RESET (ke-"..Farm._wdStuckCount..")")
                     else
                         Farm._wdStuckCount = 0
                     end
@@ -3743,7 +3771,7 @@ staggerSpawn(function()
             end
         end)
     end
-    print("[ZenxFarm] loop collect berhenti (generasi berubah / execute ulang)")
+    print("[StarFarm] loop collect berhenti (generasi berubah / execute ulang)")
 end)
 staggerSpawn(function()
     while isCurrentGen() do
@@ -3757,7 +3785,7 @@ staggerSpawn(function()
                     local cur = getInvCount()
                     local mx  = getInvMax()
                     if cur >= mx then
-                        print(string.format("[ZenxFarm] backpack penuh (%d/%d) -> sell", cur, mx))
+                        print(string.format("[StarFarm] backpack penuh (%d/%d) -> sell", cur, mx))
                         Farm.sellOnce()
                         Farm._focusDone = {}; Farm._focusType = nil  -- v9.7: stlh sell, ronde baru
                     end
@@ -3798,7 +3826,7 @@ staggerSpawn(function()
             end
         end)
     end
-    print("[ZenxFarm] loop sell berhenti (generasi berubah)")
+    print("[StarFarm] loop sell berhenti (generasi berubah)")
 end)
 staggerSpawn(function()
     while isCurrentGen() do
@@ -3814,7 +3842,7 @@ end)
 --         "random" = acak di area kebun (pakai bounding box plot kamu).
 function Farm.plantOnce()
     local p = pkt("Plant", "PlantSeed")
-    if not p or not p.Fire then print("[ZenxFarm] PlantSeed packet gak ada"); return end
+    if not p or not p.Fire then print("[StarFarm] PlantSeed packet gak ada"); return end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -3864,7 +3892,7 @@ function Farm.plantOnce()
         pcall(function() p:Fire(pos, s.name, s.tool) end)
         planted = planted + 1
     end
-    if planted > 0 then dprint("[ZenxFarm] plant: "..planted.." seed (loc="..tostring(state.plantLocation)..")") end
+    if planted > 0 then dprint("[StarFarm] plant: "..planted.." seed (loc="..tostring(state.plantLocation)..")") end
 end
 staggerSpawn(function()
     while isCurrentGen() do
@@ -4067,7 +4095,7 @@ function Farm.buyPetOnce()
                             end
                         end)
                         task.wait(0.2)  -- v17.7: settle dulu biar posisi nempel ke-register server SEBELUM fire
-                        dprint("[ZenxFarm] coba beli "..tostring(petName).." | st="..st.." dist="..tostring(o.Parent and math.floor((hrp.Position-o.Position).Magnitude) or "-"))
+                        dprint("[StarFarm] coba beli "..tostring(petName).." | st="..st.." dist="..tostring(o.Parent and math.floor((hrp.Position-o.Position).Magnitude) or "-"))
                         for i = 1, 6 do
                             if not o.Parent then got = true; break end
                             pcall(function() p:Fire(o) end)
@@ -4076,7 +4104,7 @@ function Farm.buyPetOnce()
                         end
                         stuck = false
                         pcall(function() hb:Disconnect() end)
-                        dprint("[ZenxFarm] hasil "..tostring(petName).." -> "..(got and "OK" or "gagal").." | owner="..tostring(o.Parent and o:GetAttribute("OwnerUserId") or "gone"))
+                        dprint("[StarFarm] hasil "..tostring(petName).." -> "..(got and "OK" or "gagal").." | owner="..tostring(o.Parent and o:GetAttribute("OwnerUserId") or "gone"))
                     else
                         for _ = 1, 3 do
                             pcall(function() p:Fire(o) end)
@@ -4090,7 +4118,7 @@ function Farm.buyPetOnce()
                         Farm._petCount[uuid] = cnt + 1
                         Farm._petFail[uuid] = 0
                         Farm._petInfo[uuid] = { name = petName, price = pr }  -- simpan buat notif nanti
-                        print("[ZenxFarm] "..(cnt==0 and "beli" or "ambil balik").." pet: "..tostring(petName).." ("..st..")")
+                        print("[StarFarm] "..(cnt==0 and "beli" or "ambil balik").." pet: "..tostring(petName).." ("..st..")")
                     else
                         Farm._petFail[uuid] = (Farm._petFail[uuid] or 0) + 1
                         if Farm._petFail[uuid] >= PET_MAX_FAIL then Farm._petClaimed[uuid] = st end
@@ -4113,7 +4141,7 @@ function Farm.buyPetOnce()
             -- pet ilang dari wild. kalau terakhir punya kita = masuk garden kita
             if Farm._petLastOwner[uuid] == player.UserId then
                 local info = Farm._petInfo[uuid] or {}
-                print("[ZenxFarm] pet MASUK GARDEN: "..tostring(info.name)..(info.tier and info.tier~="Normal" and (" ["..info.tier.."]") or "")..(info.rb and " [RAINBOW]" or ""))
+                print("[StarFarm] pet MASUK GARDEN: "..tostring(info.name)..(info.tier and info.tier~="Normal" and (" ["..info.tier.."]") or "")..(info.rb and " [RAINBOW]" or ""))
                 pcall(function() Farm.sendPetWebhook(info.name, info.price, info.tier, info.rb) end)
             end
             Farm._petClaimed[uuid]=nil; Farm._petAttempt[uuid]=nil; Farm._petFail[uuid]=nil
@@ -4192,14 +4220,14 @@ function Farm.stealOnce()
             end
         end
     end
-    if stolen > 0 then print("[ZenxFarm] steal: "..stolen.." buah") end
+    if stolen > 0 then print("[StarFarm] steal: "..stolen.." buah") end
 end
 
 function Farm.giftOnce()
     local target = state.giftTarget
     if not target or target == "" then return end
     local sb = pkt("Mailbox", "SendBatch")
-    if not sb or not sb.Fire then print("[ZenxFarm] SendBatch gak ada"); return end
+    if not sb or not sb.Fire then print("[StarFarm] SendBatch gak ada"); return end
     local plr = Players.LocalPlayer
     local bp = plr and plr:FindFirstChildOfClass("Backpack")
     if not bp then return end
@@ -4208,8 +4236,8 @@ function Farm.giftOnce()
     if not Farm._giftId or Farm._giftIdName ~= target then
         Farm._giftId = resolveTargetId(target)
         Farm._giftIdName = target
-        if not Farm._giftId then print("[ZenxFarm] gift: user '"..target.."' gak ketemu"); return end
-        print("[ZenxFarm] gift target: "..target.." (id "..tostring(Farm._giftId)..")")
+        if not Farm._giftId then print("[StarFarm] gift: user '"..target.."' gak ketemu"); return end
+        print("[StarFarm] gift target: "..target.." (id "..tostring(Farm._giftId)..")")
     end
     local uid = Farm._giftId
     if not uid then return end
@@ -4245,7 +4273,7 @@ function Farm.giftOnce()
                     -- DEBUG sekali: dump atribut gear pertama biar bisa konfirmasi
                     if not Farm._gearGiftDebugged then
                         Farm._gearGiftDebugged = true
-                        print("[ZenxFarm] DEBUG gear gift (mailbox) - tool '"..t.Name.."':")
+                        print("[StarFarm] DEBUG gear gift (mailbox) - tool '"..t.Name.."':")
                         for k, v in pairs(t:GetAttributes()) do
                             print("    ."..tostring(k).." = "..tostring(v))
                         end
@@ -4263,16 +4291,16 @@ function Farm.giftOnce()
     local ok = pcall(function() sb:Fire(uid, items, "") end)
     if ok then
         Farm._giftStatus = "ok"
-        print("[ZenxFarm] gift terkirim ke "..target..": "..#items.." item")
+        print("[StarFarm] gift terkirim ke "..target..": "..#items.." item")
     else
         Farm._giftStatus = "fail"
-        print("[ZenxFarm] gift GAGAL ke "..target)
+        print("[StarFarm] gift GAGAL ke "..target)
     end
     -- v12.7: mode "sekali kirim" -> auto matiin Auto Gift setelah 1x kirim berhasil
     if ok and state.giftOnce then
         state.autoGift = false
         if Farm._applyGiftRef then pcall(Farm._applyGiftRef) end
-        print("[ZenxFarm] sekali kirim selesai -> Auto Gift OFF")
+        print("[StarFarm] sekali kirim selesai -> Auto Gift OFF")
     end
 end
 
@@ -4337,7 +4365,7 @@ function Farm.giftMoonbloomOnce()
     if ok then
         Farm._gsmStatus = "ok"
         Farm._gsmSent = (Farm._gsmSent or 0) + total
-        print("[ZenxFarm] gift seed -> "..target..": "..total.." biji")
+        print("[StarFarm] gift seed -> "..target..": "..total.." biji")
     else
         Farm._gsmStatus = "fail"
     end
@@ -4366,11 +4394,11 @@ end
 Farm._dgiftStatus = nil
 function Farm.directGiftOnce()
     local gs = pkt("Gifting", "Send")
-    if not gs or not gs.Fire then Farm._dgiftStatus = "fail"; print("[ZenxFarm] Gifting.Send gak ada"); return end
+    if not gs or not gs.Fire then Farm._dgiftStatus = "fail"; print("[StarFarm] Gifting.Send gak ada"); return end
     local target = state.dgiftTarget
     if not target or target == "" then Farm._dgiftStatus = "notarget"; return end
     local uid = resolveTargetId(target)
-    if not uid then Farm._dgiftStatus = "notfound"; print("[ZenxFarm] user '"..target.."' gak ketemu"); return end
+    if not uid then Farm._dgiftStatus = "notfound"; print("[StarFarm] user '"..target.."' gak ketemu"); return end
 
     -- v15.2: samperin target dulu (gift no-mailbox butuh deket)
     if state.dgiftApproach then
@@ -4378,7 +4406,7 @@ function Farm.directGiftOnce()
         if okA then
             task.wait(0.35)  -- kasih waktu posisi keupdate
         else
-            print("[ZenxFarm] samperin gagal: "..tostring(errA).." - tetep coba kirim")
+            print("[StarFarm] samperin gagal: "..tostring(errA).." - tetep coba kirim")
         end
     end
 
@@ -4418,7 +4446,7 @@ function Farm.directGiftOnce()
     end
     if sent > 0 then
         Farm._dgiftStatus = "ok"
-        print("[ZenxFarm] gift langsung ke "..target..": "..sent.." buah")
+        print("[StarFarm] gift langsung ke "..target..": "..sent.." buah")
     else
         Farm._dgiftStatus = "empty"
     end
@@ -4426,7 +4454,7 @@ function Farm.directGiftOnce()
     if sent > 0 and state.dgiftOnce then
         state.autoDirectGift = false
         if Farm._applyDGiftRef then pcall(Farm._applyDGiftRef) end
-        print("[ZenxFarm] gift langsung sekali kirim -> OFF")
+        print("[StarFarm] gift langsung sekali kirim -> OFF")
     end
 end
 staggerSpawn(function()
@@ -4981,7 +5009,7 @@ end
 
 function Farm.giftFruitOnce()
     local sb = pkt("Mailbox", "SendBatch")
-    if not sb or not sb.Fire then Farm._gfStatus = "nosend"; print("[ZenxFarm] SendBatch gak ada"); return end
+    if not sb or not sb.Fire then Farm._gfStatus = "nosend"; print("[StarFarm] SendBatch gak ada"); return end
 
     local target = state.gfTarget
     local useRelay = state.gfSheckMode and state.gfRelayUrl and state.gfRelayUrl ~= ""
@@ -5046,8 +5074,8 @@ function Farm.giftFruitOnce()
     if not Farm._gfId or Farm._gfIdName ~= target then
         Farm._gfId = resolveTargetId(target)
         Farm._gfIdName = target
-        if not Farm._gfId then Farm._gfStatus = "notfound"; print("[ZenxFarm] gift fruit: user '"..tostring(target).."' gak ketemu"); return end
-        print("[ZenxFarm] gift fruit target: "..target.." (id "..tostring(Farm._gfId)..")")
+        if not Farm._gfId then Farm._gfStatus = "notfound"; print("[StarFarm] gift fruit: user '"..tostring(target).."' gak ketemu"); return end
+        print("[StarFarm] gift fruit target: "..target.." (id "..tostring(Farm._gfId)..")")
     end
     local uid = Farm._gfId
     if not uid then return end
@@ -5069,7 +5097,7 @@ function Farm.giftFruitOnce()
         local picked, sumv = Farm.pickFruitsForValue(state.gfValueTarget or 500000000, state.gfValueMarket)
         if not picked then
             Farm._gfStatus = "kurang"
-            print("[ZenxFarm] gift value: total buah cuma "..Farm.abbrev(sumv or 0)..
+            print("[StarFarm] gift value: total buah cuma "..Farm.abbrev(sumv or 0)..
                 " < target "..Farm.abbrev(state.gfValueTarget or 500000000).." -> GAK dikirim (biar gak lebih murah)")
             return
         end
@@ -5111,7 +5139,7 @@ function Farm.giftFruitOnce()
     end
     if total > 0 then
         Farm._gfStatus = "ok"
-        print("[ZenxFarm] gift fruit ke "..target..": "..total.." buah"..
+        print("[StarFarm] gift fruit ke "..target..": "..total.." buah"..
             (valueModeOn and (" = "..Farm.abbrev(pickedSum or 0).." (target "..Farm.abbrev(state.gfValueTarget or 500000000)..")") or "")..
             (Farm._gfPriority and " [PRIORITY]" or Farm._gfToStorage and " [SIMPANAN]" or ""))
         local _ntag = Farm._gfPriority and "PRIORITY" or (Farm._gfToStorage and "SIMPANAN" or "AKUN PET")
@@ -5132,7 +5160,7 @@ function Farm.giftFruitOnce()
         if state.gfOnce and not state.gfSheckMode then
             state.gfAuto = false
             if Farm._applyGFRef then pcall(Farm._applyGFRef) end
-            print("[ZenxFarm] gift fruit sekali kirim -> OFF")
+            print("[StarFarm] gift fruit sekali kirim -> OFF")
         end
     else
         Farm._gfStatus = "empty"
@@ -5157,8 +5185,8 @@ function Farm.giftPetOnce()
     if not sb or not sb.Fire then Farm._gpStatus = "nosend"; return end
     if not Farm._gpId or Farm._gpIdName ~= target then
         Farm._gpId = resolveTargetId(target); Farm._gpIdName = target
-        if not Farm._gpId then Farm._gpStatus = "notfound"; print("[ZenxFarm] gift pet: user '"..tostring(target).."' gak ketemu"); return end
-        print("[ZenxFarm] gift pet target: "..target.." (id "..tostring(Farm._gpId)..")")
+        if not Farm._gpId then Farm._gpStatus = "notfound"; print("[StarFarm] gift pet: user '"..tostring(target).."' gak ketemu"); return end
+        print("[StarFarm] gift pet target: "..target.." (id "..tostring(Farm._gpId)..")")
     end
     local uid = Farm._gpId
     if not uid then return end
@@ -5184,7 +5212,7 @@ function Farm.giftPetOnce()
                         local pn = petName
                         local okType = state.gpAllPet or state.gpPets[pn]
                         if okType then
-                            dprint("[ZenxFarm] gift pet calon: "..tostring(pn).." id="..tostring(petId))
+                            dprint("[StarFarm] gift pet calon: "..tostring(pn).." id="..tostring(petId))
                             batch[#batch+1] = { ItemKey = tostring(petId), Count = 1, Category = "Pets" }
                             if #batch >= 8 then flush() end
                         end
@@ -5194,7 +5222,7 @@ function Farm.giftPetOnce()
         end
     end
     flush()
-    if total > 0 then Farm._gpStatus = "ok"; print("[ZenxFarm] gift pet ke "..target..": "..total.." pet")
+    if total > 0 then Farm._gpStatus = "ok"; print("[StarFarm] gift pet ke "..target..": "..total.." pet")
     else Farm._gpStatus = "empty" end
 end
 staggerSpawn(function()
@@ -5252,7 +5280,7 @@ staggerSpawn(function()
                 state.storagePriority = false
                 Farm._prioCache = false; Farm._prioCacheAt = os.clock()
                 if Farm._applyPrioRef then pcall(Farm._applyPrioRef) end
-                print("[ZenxFarm] priority diambil alih '"..holder.."' -> OFF di akun ini")
+                print("[StarFarm] priority diambil alih '"..holder.."' -> OFF di akun ini")
             else
                 -- masih aku / slot kosong -> assert ulang (refresh TTL)
                 pcall(function() Farm.setPriority(true) end)
@@ -5286,21 +5314,21 @@ staggerSpawn(function()
             state.autoSell = true
             if Farm._applySellRef then pcall(Farm._applySellRef) end
             saveState()
-            print("[ZenxFarm] Buy Pet ON -> Auto Sell otomatis nyala")
+            print("[StarFarm] Buy Pet ON -> Auto Sell otomatis nyala")
         end
         -- v22.0: akun penyimpanan -> JANGAN auto-sell (simpen buahnya)
         if state.storageMode and state.autoSell then
             state.autoSell = false
             if Farm._applySellRef then pcall(Farm._applySellRef) end
             saveState()
-            print("[ZenxFarm] Penyimpanan ON -> Auto Sell dimatiin (buah disimpen)")
+            print("[StarFarm] Penyimpanan ON -> Auto Sell dimatiin (buah disimpen)")
         end
         -- akun buy-pet: pakai sell BIASA (interval), bukan sell-pas-penuh
         if state.autoBuyPet and state.sellWhenFull then
             state.sellWhenFull = false
             if Farm._applySellFullRef then pcall(Farm._applySellFullRef) end
             saveState()
-            print("[ZenxFarm] Buy Pet ON -> Sell pas penuh dimatiin (pakai sell biasa)")
+            print("[StarFarm] Buy Pet ON -> Sell pas penuh dimatiin (pakai sell biasa)")
         end
         -- v32.0: auto-accept gift TIDAK lagi dipaksa nyala - hormati toggle user (kalau dimatiin, tetap mati)
         -- v27.5: akun buy-pet -> Auto Hop Server MATI (jangan pindah server, biar buy pet ga keganggu)
@@ -5308,7 +5336,7 @@ staggerSpawn(function()
             state.autoHop = false
             if Farm._applyHopRef then pcall(Farm._applyHopRef) end
             saveState()
-            print("[ZenxFarm] Buy Pet ON -> Auto Hop dimatiin")
+            print("[StarFarm] Buy Pet ON -> Auto Hop dimatiin")
         end
         -- v20.9: gift-fruit otomatis ikut status Buy Pet.
         --   FARM (buyPet OFF) -> cek sheckles + auto gift ON, akun-ini-pet OFF
@@ -5322,7 +5350,7 @@ staggerSpawn(function()
         if state.gfSheckMode ~= wantGift then state.gfSheckMode = wantGift; if Farm._applyGfSheck then pcall(Farm._applyGfSheck) end; chg = true end
         if state.gfAuto ~= wantGift then state.gfAuto = wantGift; if Farm._applyGfAuto then pcall(Farm._applyGfAuto) end; chg = true end
         if state.gfRelayWrite ~= state.autoBuyPet then state.gfRelayWrite = state.autoBuyPet; if Farm._applyGfWrite then pcall(Farm._applyGfWrite) end; chg = true end
-        if chg then saveState(); print("[ZenxFarm] mode sync (buyPet="..tostring(state.autoBuyPet)..", storage="..tostring(state.storageMode)..")") end
+        if chg then saveState(); print("[StarFarm] mode sync (buyPet="..tostring(state.autoBuyPet)..", storage="..tostring(state.storageMode)..")") end
     end
 end)
 -- v18.7: NOTIF webhook pas sheckles akun ini < batas (sekali tiap turun, anti-spam)
@@ -5356,7 +5384,7 @@ staggerSpawn(function()
                             })
                             Farm.relayReq({ Url = state.gfAlertHook, Method = "POST",
                                 Headers = { ["Content-Type"] = "application/json" }, Body = body })
-                            print("[ZenxFarm] notif sheckles rendah terkirim ("..Farm.abbrev(shk)..")")
+                            print("[StarFarm] notif sheckles rendah terkirim ("..Farm.abbrev(shk)..")")
                         end)
                     end
                 else
@@ -5416,7 +5444,7 @@ function Farm.acceptGiftOnce()
             task.wait(0.1)
         end
     end
-    if claimed > 0 then dprint("[ZenxFarm] accept gift: "..claimed.." gift di-claim") end
+    if claimed > 0 then dprint("[StarFarm] accept gift: "..claimed.." gift di-claim") end
 end
 -- v21.3: buka mailbox tiap 15 detik, TAPI cuma kalau sheckles akun ini < batas (300M default).
 -- (kondisi: akun pet lagi nunggu kiriman buah -> inbox kudu di-refresh biar auto-claim jalan)
@@ -5433,7 +5461,7 @@ staggerSpawn(function()
             local batas = state.gfSheckMax or 300000000
             if shk and shk < batas then
                 pcall(Farm.openMailbox)
-                dprint("[ZenxFarm] buka mailbox (sheckles "..Farm.abbrev(shk).." < "..Farm.abbrev(batas)..")")
+                dprint("[StarFarm] buka mailbox (sheckles "..Farm.abbrev(shk).." < "..Farm.abbrev(batas)..")")
             end
         end
     end
@@ -5462,7 +5490,7 @@ do
                         task.wait(0.2)
                         pcall(function() rs:Fire(fromPlayer, true) end)  -- true = terima
                         Farm._acceptStatus = "terima gift langsung dari "..(typeof(fromPlayer)=="Instance" and fromPlayer.Name or tostring(fromPlayer))
-                        dprint("[ZenxFarm] auto-terima gift langsung: "..tostring(itemDesc))
+                        dprint("[StarFarm] auto-terima gift langsung: "..tostring(itemDesc))
                     end
                 end)
             end)
@@ -5687,7 +5715,7 @@ function Farm.shovelOnce()
     -- tanaman TERAKHIR dari suatu jenis. dulu sc nyangkut spam UUID yg sama (ditolak terus).
     -- solusi: SISAIN min 1 per jenis + jangan gali tanaman terakhir tiap jenis.
     local p = pkt("Shovel", "UseShovel")
-    if not p or not p.Fire then print("[ZenxFarm] shovel: remote Shovel.UseShovel gak ada"); return end
+    if not p or not p.Fire then print("[StarFarm] shovel: remote Shovel.UseShovel gak ada"); return end
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
     local char = player.Character
@@ -5699,7 +5727,7 @@ function Farm.shovelOnce()
         end end
         if shovelTool then break end
     end
-    if not shovelTool then dprint("[ZenxFarm] shovel: tool Shovel gak ada di backpack"); return end
+    if not shovelTool then dprint("[StarFarm] shovel: tool Shovel gak ada di backpack"); return end
     if shovelTool.Parent ~= char and hum then pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.1) end
 
     local MY = player.UserId
@@ -5742,7 +5770,7 @@ function Farm.shovelOnce()
             end
         end
     end
-    if removed > 0 then dprint("[ZenxFarm] shovel: "..removed.." tanaman digali (sisain 1/jenis)") end
+    if removed > 0 then dprint("[StarFarm] shovel: "..removed.." tanaman digali (sisain 1/jenis)") end
 end
 
 -- v11.2: AUTO SHOVEL FRUIT - buang BUAH satuan (jelek/kecil) dari pohon.
@@ -5763,12 +5791,12 @@ function Farm.shovelFruitOnce()
         end end
         if shovelTool then break end
     end
-    if not shovelTool then dprint("[ZenxFarm] shovelFruit: tool Shovel gak ada"); return end
+    if not shovelTool then dprint("[StarFarm] shovelFruit: tool Shovel gak ada"); return end
     if shovelTool.Parent ~= char and hum then pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.1) end
 
     Farm.updateBaseW()  -- kalibrasi kg dulu
     local thr = state.shovelFruitKg or 0  -- ambang kg: buang buah DI BAWAH ini
-    if thr <= 0 then dprint("[ZenxFarm] shovelFruit: ambang kg 0 -> gak ada yg dibuang"); return end
+    if thr <= 0 then dprint("[StarFarm] shovelFruit: ambang kg 0 -> gak ada yg dibuang"); return end
     local MY = player.UserId
     local removed = 0
     for _, plot in ipairs(gardens:GetChildren()) do
@@ -5801,7 +5829,7 @@ function Farm.shovelFruitOnce()
             end
         end
     end
-    if removed > 0 then dprint(string.format("[ZenxFarm] shovelFruit: %d buah <%.2fkg dibuang", removed, thr)) end
+    if removed > 0 then dprint(string.format("[StarFarm] shovelFruit: %d buah <%.2fkg dibuang", removed, thr)) end
 end
 
 -- v40.1: AUTO TROWEL - pindahin pohon jenis terpilih ke TENGAH plot (numpuk 1 titik).
@@ -5870,7 +5898,7 @@ end
 
 Farm.trowelOnce = function()
     local p = pkt("Trowel", "MovePlant")
-    if not p or not p.Fire then print("[ZenxFarm] trowel: remote Trowel.MovePlant gak ada"); return end
+    if not p or not p.Fire then print("[StarFarm] trowel: remote Trowel.MovePlant gak ada"); return end
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return end
     -- tentuin posisi tujuan: tengah plot terpilih
@@ -5882,7 +5910,7 @@ Farm.trowelOnce = function()
     else
         for _, pos in pairs(centers) do target = pos; break end
     end
-    if not target then print("[ZenxFarm] trowel: ga ada plot tujuan"); return end
+    if not target then print("[StarFarm] trowel: ga ada plot tujuan"); return end
     -- equip trowel tool
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -5916,7 +5944,7 @@ Farm.trowelOnce = function()
             end
         end
     end
-    if moved > 0 then print("[ZenxFarm] trowel: "..moved.." pohon dipindah ke tengah plot") end
+    if moved > 0 then print("[StarFarm] trowel: "..moved.." pohon dipindah ke tengah plot") end
 end
 staggerSpawn(function()
     while isCurrentGen() do
@@ -5978,7 +6006,7 @@ do
                     state.sprCoords[#state.sprCoords+1] = c
                     state.selectedSprPos[Farm.sprLabel(c)] = true  -- auto-pilih yg baru direkam
                     saveState()
-                    print("[ZenxFarm] sprinkler DIREKAM: "..Farm.sprLabel(c))
+                    print("[StarFarm] sprinkler DIREKAM: "..Farm.sprLabel(c))
                     if Farm._sprOnRecord then pcall(Farm._sprOnRecord) end
                 end
             end
@@ -6006,7 +6034,7 @@ end
 function Farm.placeSprinklerOnce()
     local p = pkt("Place", "PlaceSprinkler")
     if not p or not p.Fire then return end
-    if #state.sprCoords == 0 then dprint("[ZenxFarm] sprinkler: belum ada posisi (place manual + Save Position dulu)"); return end
+    if #state.sprCoords == 0 then dprint("[StarFarm] sprinkler: belum ada posisi (place manual + Save Position dulu)"); return end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not char then return end
@@ -6027,16 +6055,16 @@ function Farm.placeSprinklerOnce()
                     Farm._sprAutoPlacing = false
                     Farm._sprPlacedAt[label] = tick()
                     placed = placed + 1
-                    dprint("[ZenxFarm] sprinkler place: "..label.." ("..tool.Name..")")
+                    dprint("[StarFarm] sprinkler place: "..label.." ("..tool.Name..")")
                     task.wait(0.2)
                 else
-                    dprint("[ZenxFarm] sprinkler: stok habis")
+                    dprint("[StarFarm] sprinkler: stok habis")
                     break
                 end
             end
         end
     end
-    if placed > 0 then dprint("[ZenxFarm] sprinkler: place "..placed.." titik") end
+    if placed > 0 then dprint("[StarFarm] sprinkler: place "..placed.." titik") end
 end
 staggerSpawn(function()
     while isCurrentGen() do
@@ -6064,7 +6092,7 @@ end)
 -- ============================================================
 -- UI
 -- ============================================================
-local sg = mk("ScreenGui", { Name = "ZenxFarm", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
+local sg = mk("ScreenGui", { Name = "StarFarm", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
 
 local W, H = 620, 360
 local TITLE_H = 40
@@ -6130,7 +6158,7 @@ function Farm.allOff()
     pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
     pcall(function() if Farm._syncDropToggle then Farm._syncDropToggle() end end)
     pcall(function() if Farm._syncFarm2 then Farm._syncFarm2() end end)
-    print("[ZenxFarm] ALL OFF - semua fitur farm dimatiin")
+    print("[StarFarm] ALL OFF - semua fitur farm dimatiin")
 end
 Farm.buildFarm2Btn = function()
     -- v41.6: dua tombol (-50kg & -60kg). cara kerja SAMA, beda cuma c2WeightF.
@@ -6542,11 +6570,11 @@ task.spawn(function()
     pcall(function()
         local data = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
         if data and data.Bloodmoon then
-            print("[ZenxFarm] MOON API OK: Bloodmoon "..Farm.fmtMoonTime(data.Bloodmoon).." lagi (dari gag2.gg)")
+            print("[StarFarm] MOON API OK: Bloodmoon "..Farm.fmtMoonTime(data.Bloodmoon).." lagi (dari gag2.gg)")
         elseif data then
-            print("[ZenxFarm] MOON API OK tapi Bloodmoon ga ada di upcoming (moon lain ada)")
+            print("[StarFarm] MOON API OK tapi Bloodmoon ga ada di upcoming (moon lain ada)")
         else
-            print("[ZenxFarm] MOON API GAGAL - cek koneksi / executor support HttpGet")
+            print("[StarFarm] MOON API GAGAL - cek koneksi / executor support HttpGet")
         end
     end)
 end)
@@ -6648,7 +6676,7 @@ local function showKalkuGift()
     updStor(); storBtn.MouseButton1Click:Connect(function()
         state.storageMode = not state.storageMode; saveState(); updStor()
         if Farm._applyStorageRef then pcall(Farm._applyStorageRef) end   -- sync toggle di panel AUTO GIFT
-        print("[ZenxFarm] Akun Penyimpanan (dari Kalku) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
+        print("[StarFarm] Akun Penyimpanan (dari Kalku) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
     end)
     task.spawn(function() while pop.Parent do updStor(); task.wait(1) end end)  -- sync kalau diubah dr tempat lain
     local resetBtn = mk("TextButton", { Size=UDim2.new(0,104,0,28), Position=UDim2.new(0,302,0,122), BackgroundColor3=C.input, Text="Reset", TextColor3=C.textDim, Font=FONT, TextSize=12, BorderSizePixel=0, ZIndex=72, Parent=pop }); corner(resetBtn,6); stroke(resetBtn,C.border,1)
@@ -6967,7 +6995,7 @@ Farm._mailSentVal = Farm._mailSentVal or {}   -- v32.5: fid -> value yg keitung 
 -- kesave ke file (tetap ada walau rejoin). ada tombol RESET.
 -- dibungkus Farm.* biar ga nambah local ke main chunk (Luau limit 200).
 Farm._giftHist = Farm._giftHist or {}   -- { {name=, val=, count=, time=} , ... }
-Farm._giftHistFile = "ZenxFarm_gifthist.json"
+Farm._giftHistFile = "StarFarm_gifthist.json"
 Farm.loadGiftHist = function()
     pcall(function()
         if isfile and readfile and isfile(Farm._giftHistFile) then
@@ -7387,7 +7415,7 @@ local function showMailGift()
     updStor(); storBtn.MouseButton1Click:Connect(function()
         state.storageMode = not state.storageMode; saveState(); updStor()
         if Farm._applyStorageRef then pcall(Farm._applyStorageRef) end   -- sync toggle di panel AUTO GIFT + Kalku Gift
-        print("[ZenxFarm] Akun Penyimpanan (dari MAIL) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
+        print("[StarFarm] Akun Penyimpanan (dari MAIL) -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
     end)
     task.spawn(function() while pop.Parent do updStor(); task.wait(1) end end)  -- sync kalau diubah dr tempat lain
 
@@ -7400,7 +7428,7 @@ local function showMailGift()
     updAcc(); accBtn.MouseButton1Click:Connect(function()
         state.autoAcceptGift = not state.autoAcceptGift; saveState(); updAcc()
         if Farm._applyAcceptRef then pcall(Farm._applyAcceptRef) end   -- sync visual kartu Auto Accept Gift
-        print("[ZenxFarm] Auto Accept Gift (dari MAIL) -> "..(state.autoAcceptGift and "ON" or "OFF"))
+        print("[StarFarm] Auto Accept Gift (dari MAIL) -> "..(state.autoAcceptGift and "ON" or "OFF"))
     end)
     task.spawn(function() while pop.Parent do updAcc(); task.wait(1) end end)  -- sync kalau diubah dr kartu
 
@@ -7576,7 +7604,7 @@ local function doHop()
     local plr = Players.LocalPlayer
     local placeId = game.PlaceId
     local currentJob = tostring(game.JobId)
-    print("[ZenxFarm] hop... cari server lain")
+    print("[StarFarm] hop... cari server lain")
 
     -- ambil JSON: coba request executor dulu (andal buat API eksternal), fallback HttpGet
     local function httpGetJson(url)
@@ -7631,7 +7659,7 @@ local function doHop()
         Farm._hopLastErr = nil
         candidates = scanServers()
         if #candidates > 0 then break end
-        print("[ZenxFarm] scan kosong ("..(Farm._hopLastErr or "?").."), retry "..attempt.."/4...")
+        print("[StarFarm] scan kosong ("..(Farm._hopLastErr or "?").."), retry "..attempt.."/4...")
         task.wait(2)
     end
 
@@ -7650,7 +7678,7 @@ local function doHop()
         local tries = math.min(#candidates, 5)
         for i = 1, tries do
             local pick = candidates[i]
-            print(string.format("[ZenxFarm] coba %d/%d -> server %s (%d/%d)",
+            print(string.format("[StarFarm] coba %d/%d -> server %s (%d/%d)",
                 i, tries, tostring(pick.id):sub(1,8), pick.playing or 0, pick.maxPlayers or 0))
             -- v6.6: pakai izin teleport kita (zenxTeleport) biar gak keblok anti-kepental
             local zt = (typeof(getgenv)=="function" and getgenv() or _G).ZenxTeleport
@@ -7663,16 +7691,16 @@ local function doHop()
             end)
             if ok then
                 task.wait(3)  -- kasih waktu teleport mulai; kalau beneran jalan, script bakal di-kill
-                print("[ZenxFarm] teleport ke "..tostring(pick.id):sub(1,8).." dikirim (nunggu pindah...)")
+                print("[StarFarm] teleport ke "..tostring(pick.id):sub(1,8).." dikirim (nunggu pindah...)")
                 return true
             else
-                print("[ZenxFarm] GAGAL teleport ke server itu: "..tostring(err).." -> coba lain")
+                print("[StarFarm] GAGAL teleport ke server itu: "..tostring(err).." -> coba lain")
             end
         end
     end
     -- v19.8: server-list gak kebaca -> FALLBACK rejoin (TeleportService:Teleport).
     -- biasanya dapet server lain; lebih baik daripada gak hop sama sekali.
-    print("[ZenxFarm] server-list gak kebaca ("..(Farm._hopLastErr or "?").."), fallback rejoin...")
+    print("[StarFarm] server-list gak kebaca ("..(Farm._hopLastErr or "?").."), fallback rejoin...")
     local zt2 = (typeof(getgenv)=="function" and getgenv() or _G).ZenxTeleport
     local ok2, err2 = pcall(function()
         if zt2 then return zt2(function() TS:Teleport(placeId, plr) end)
@@ -7680,10 +7708,10 @@ local function doHop()
     end)
     if ok2 then
         task.wait(3)
-        print("[ZenxFarm] fallback rejoin dikirim (nunggu pindah...)")
+        print("[StarFarm] fallback rejoin dikirim (nunggu pindah...)")
         return true
     end
-    print("[ZenxFarm] fallback rejoin GAGAL juga: "..tostring(err2))
+    print("[StarFarm] fallback rejoin GAGAL juga: "..tostring(err2))
     return false
 end
 
@@ -7700,7 +7728,7 @@ function Farm.rejoinSameServer(jobId, quiet)
         if zt then return zt(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
         else return TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end
     end)
-    if not quiet then print("[ZenxFarm] rejoin server SAMA dikirim="..tostring(ok)..(err and (" err="..tostring(err)) or "")) end
+    if not quiet then print("[StarFarm] rejoin server SAMA dikirim="..tostring(ok)..(err and (" err="..tostring(err)) or "")) end
     return ok
 end
 function Farm.simpleRejoin(quiet)
@@ -7711,8 +7739,8 @@ function Farm.simpleRejoin(quiet)
         if zt then return zt(function() TS:Teleport(game.PlaceId, plr) end)
         else return TS:Teleport(game.PlaceId, plr) end
     end)
-    if ok then if not quiet then print("[ZenxFarm] simple rejoin dikirim (Teleport placeId)") end
-    else print("[ZenxFarm] simple rejoin GAGAL: "..tostring(err)) end
+    if ok then if not quiet then print("[StarFarm] simple rejoin dikirim (Teleport placeId)") end
+    else print("[StarFarm] simple rejoin GAGAL: "..tostring(err)) end
     return ok
 end
 hopBtn.MouseButton1Click:Connect(function()
@@ -7722,7 +7750,7 @@ end)
 -- v20.0: AUTO HOP tiap X menit (pakai doHop yg sama). _hopNextAt buat countdown UI.
 Farm._hopNextAt = nil
 staggerSpawn(function()
-    print("[ZenxFarm] loop auto-hop AKTIF")
+    print("[StarFarm] loop auto-hop AKTIF")
     while isCurrentGen() do
         if not state.autoHop or state.autoBuyPet then   -- v27.5: buy-pet aktif -> jangan hop sama sekali
             Farm._hopNextAt = nil
@@ -7732,7 +7760,7 @@ staggerSpawn(function()
             local target = mins * 60
             local startT = os.clock()
             Farm._hopNextAt = startT + target
-            print("[ZenxFarm] auto hop: mulai nunggu "..mins.." menit ("..target.."s)...")
+            print("[StarFarm] auto hop: mulai nunggu "..mins.." menit ("..target.."s)...")
             local soloHop = false
             while isCurrentGen() and state.autoHop and (os.clock() - startT) < target do
                 task.wait(1)
@@ -7740,22 +7768,22 @@ staggerSpawn(function()
                 -- dulu 20s -> hop kespam tiap 20s pas server sepi -> nabrak session-lock -> error 267.
                 -- 2 menit ngasih waktu data ke-save & lock lepas sebelum hop berikutnya.
                 if state.autoBuyPet and (os.clock() - startT) > 120 and #Players:GetPlayers() <= 1 then
-                    print("[ZenxFarm] auto hop: SENDIRIAN di server -> hop sekarang (skip interval)")
+                    print("[StarFarm] auto hop: SENDIRIAN di server -> hop sekarang (skip interval)")
                     soloHop = true
                     break
                 end
             end
             if isCurrentGen() and state.autoHop then
                 Farm._hopNextAt = nil
-                if not soloHop then print("[ZenxFarm] auto hop: WAKTU TIBA -> panggil doHop") end
+                if not soloHop then print("[StarFarm] auto hop: WAKTU TIBA -> panggil doHop") end
                 task.spawn(doHop)
                 task.wait(20)
             else
-                print("[ZenxFarm] auto hop: batal (toggle="..tostring(state.autoHop)..", gen="..tostring(isCurrentGen())..")")
+                print("[StarFarm] auto hop: batal (toggle="..tostring(state.autoHop)..", gen="..tostring(isCurrentGen())..")")
             end
         end
     end
-    print("[ZenxFarm] loop auto-hop BERHENTI (gen berubah)")
+    print("[StarFarm] loop auto-hop BERHENTI (gen berubah)")
 end)
 
 -- v26.8: daftar weather auto-load dari SharedModules.WeatherData (buat picker "weather bagus")
@@ -7929,7 +7957,7 @@ staggerSpawn(function()
                 -- instance through specific join"). balik ke PS butuh accessCode yg ga kebaca client.
                 -- nunggu weather lewat = kena mutasi jelek. jadi kick aja, user masukin manual.
                 -- (nanti spy cara dapet accessCode PS buat rejoin otomatis.)
-                print("[ZenxFarm] weather buruk '"..tostring(w).."' -> KICK (ga rejoin, masukin manual)")
+                print("[StarFarm] weather buruk '"..tostring(w).."' -> KICK (ga rejoin, masukin manual)")
                 Farm._weatherHopState = nil
                 pcall(function() player:Kick("cuaca buruk ("..tostring(w)..") - masukin lagi manual ya") end)
                 task.wait(5)   -- jeda kecil biar ga spam kick
@@ -7962,14 +7990,14 @@ staggerSpawn(function()
                 Farm._bloodDbgAt = os.clock()
                 local d = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
                 local bs = d and d.Bloodmoon
-                print("[ZenxFarm] BLOOD HOP cek: player="..nPlayers.." sendirian="..tostring(sendirian).." Bloodmoon="..tostring(bs).."s lead="..BLOOD_LEAD.." waitEnd="..tostring(Farm._bloodHopWaitEnd))
+                print("[StarFarm] BLOOD HOP cek: player="..nPlayers.." sendirian="..tostring(sendirian).." Bloodmoon="..tostring(bs).."s lead="..BLOOD_LEAD.." waitEnd="..tostring(Farm._bloodHopWaitEnd))
             end
             -- FASE 1: sendirian + bloodmoon deket + belum hop -> hop ke PUBLIC
             if sendirian and not Farm._bloodHopWaitEnd then
                 local data = Farm.fetchMoonAPI and Farm.fetchMoonAPI()
                 local bloodSec = data and data.Bloodmoon
                 if bloodSec and bloodSec <= BLOOD_LEAD and bloodSec > 0 then
-                    print("[ZenxFarm] BLOOD HOP: sendirian + Bloodmoon "..bloodSec.."s lagi -> hop ke PUBLIC")
+                    print("[StarFarm] BLOOD HOP: sendirian + Bloodmoon "..bloodSec.."s lagi -> hop ke PUBLIC")
                     Farm._bloodHopWaitEnd = true   -- tandai: nunggu bloodmoon selesai buat kick
                     Farm._bloodSeenActive = false
                     pcall(function() Farm.simpleRejoin(true) end)   -- ke public acak
@@ -7986,7 +8014,7 @@ staggerSpawn(function()
                     Farm._bloodSeenActive = true   -- bloodmoon lagi aktif (kejadian)
                 elseif Farm._bloodSeenActive then
                     -- tadi aktif, sekarang engga = bloodmoon SELESAI -> kick
-                    print("[ZenxFarm] BLOOD HOP: Bloodmoon selesai -> KICK (masukin ke PS lagi)")
+                    print("[StarFarm] BLOOD HOP: Bloodmoon selesai -> KICK (masukin ke PS lagi)")
                     Farm._bloodHopWaitEnd = false; Farm._bloodSeenActive = false
                     pcall(function() player:Kick("bloodlit selesai - masukin ke server sendiri lagi") end)
                 end
@@ -8049,7 +8077,7 @@ do
                         local nm = uid
                         local pp = Players:GetPlayerByUserId(uid)
                         if pp then nm = pp.Name end
-                        print("[ZenxFarm] BOT terdeteksi: "..nm.." (Sheckles berubah "..cnt.."x/2s, 2 window) -> HOP")
+                        print("[StarFarm] BOT terdeteksi: "..nm.." (Sheckles berubah "..cnt.."x/2s, 2 window) -> HOP")
                         -- v5.5: hop dulu; cuma matiin Anti-Bot kalau hop BERHASIL.
                         -- kalau hop gagal (gak nemu server lain), biarin Anti-Bot tetap ON
                         -- biar nyoba lagi nanti - daripada mati percuma tanpa pindah.
@@ -8415,7 +8443,7 @@ local function openTypePicker(titleTxt, listFn, selSet, allKey, onChange, countF
                     saveState(); updAll(); rebuild(search.Text); onChange()
                     -- log biar keliatan pilihan kesimpan
                     local cur = {}; for nm in pairs(selSet) do cur[#cur+1] = nm end
-                    print("[ZenxFarm] pilihan tersimpan: "..(#cur>0 and table.concat(cur,", ") or "(kosong)"))
+                    print("[StarFarm] pilihan tersimpan: "..(#cur>0 and table.concat(cur,", ") or "(kosong)"))
                 end)
             end
         end
@@ -8481,7 +8509,7 @@ local function mkBodyToggle(body, y, labelTxt, key, extraLabel)
     end
     sw.MouseButton1Click:Connect(function()
         state[key] = not state[key]; saveState(); apply()
-        print("[ZenxFarm] "..(extraLabel or key).." -> "..(state[key] and "ON" or "OFF"))
+        print("[StarFarm] "..(extraLabel or key).." -> "..(state[key] and "ON" or "OFF"))
     end)
     apply()
     return apply
@@ -8515,7 +8543,7 @@ do
     cwBox.FocusLost:Connect(function()
         local n = tonumber(cwBox.Text) or 0
         state.collectWeightF = n; cwBox.Text = tostring(n); saveState()
-        print("[ZenxFarm] filter collect: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
+        print("[StarFarm] filter collect: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
     end)
     -- v15.4: skip buah basi (gabung di sini, bukan kartu sendiri)
     applyFreshOnly = mkBodyToggle(body, 324, "Fresh Only (skip basi)", "collectFreshOnly", "Collect Fresh Only")
@@ -8557,7 +8585,7 @@ do
     swBox.FocusLost:Connect(function()
         local n = tonumber(swBox.Text) or 0
         state.sellWeightF = n; swBox.Text = tostring(n); saveState()
-        print("[ZenxFarm] filter sell: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
+        print("[StarFarm] filter sell: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
     end)
     -- v33.9: toggle Tanpa Mutasi (cermin punya Auto Collect) - buah polos ikut kejual
     mkBodyToggle(body, 204, "Tanpa Mutasi (ikut jual)", "sellNoMut", "Sell No Mutation")
@@ -8622,7 +8650,7 @@ do
         idx = (idx % #RARITY_ORDER) + 1
         state.buyGoodMinRarity = RARITY_ORDER[idx]
         saveState(); refreshRR()
-        print("[ZenxFarm] ambang seed bagus: "..state.buyGoodMinRarity.." ke atas")
+        print("[StarFarm] ambang seed bagus: "..state.buyGoodMinRarity.." ke atas")
     end)
 end
 
@@ -8655,7 +8683,7 @@ do
         local n = tonumber(spreadBox.Text) or 0
         if n < 0 then n = 0 end
         state.plantSpread = n; spreadBox.Text = tostring(n); saveState()
-        print("[ZenxFarm] sebar tanam: "..(n == 0 and "tepat di posisi" or (n.." stud")))
+        print("[StarFarm] sebar tanam: "..(n == 0 and "tepat di posisi" or (n.." stud")))
     end)
     applyPlant = mkBodyToggle(body, 116, "Auto Plant", "autoPlant", "Auto Plant Seed")
 end
@@ -8701,12 +8729,12 @@ do
     mnBox.FocusLost:Connect(function()
         local n = parsePrice(mnBox.Text); if not n or n < 0 then n = 0 end
         state.petMinPrice = n; mnBox.Text = fmtMinPrice(); saveState()
-        print("[ZenxFarm] min harga pet -> "..(n > 0 and Farm.abbrev(n) or "bebas"))
+        print("[StarFarm] min harga pet -> "..(n > 0 and Farm.abbrev(n) or "bebas"))
     end)
     mpBox.FocusLost:Connect(function()
         local n = parsePrice(mpBox.Text); if not n or n < 0 then n = 0 end
         state.petMaxPrice = n; mpBox.Text = fmtMaxPrice(); saveState()
-        print("[ZenxFarm] max harga pet -> "..(n > 0 and Farm.abbrev(n) or "bebas"))
+        print("[StarFarm] max harga pet -> "..(n > 0 and Farm.abbrev(n) or "bebas"))
     end)
     -- webhook URL
     lbl(body, "Webhook (notif beli)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,160)
@@ -8716,7 +8744,7 @@ do
     corner(whBox, 6); stroke(whBox, C.border, 1)
     whBox.FocusLost:Connect(function()
         state.petWebhook = whBox.Text; saveState()
-        print("[ZenxFarm] webhook pet -> "..(state.petWebhook ~= "" and "diset" or "kosong"))
+        print("[StarFarm] webhook pet -> "..(state.petWebhook ~= "" and "diset" or "kosong"))
     end)
     -- v25.5: toggle Big/Mega/Rainbow DIBUANG - beli pet cukup by NAMA (Big/Mega/Rainbow namanya sama).
     applyBuyPet = mkBodyToggle(body, 216, "Auto Buy Pet", "autoBuyPet", "Auto Buy Pet")
@@ -8753,7 +8781,7 @@ do
         local n = tonumber(kgBox.Text) or 0
         if n < 0 then n = 0 end
         state.shovelFruitKg = n; kgBox.Text = tostring(n)
-        print("[ZenxFarm] shovel fruit: buang buah < "..n.."kg")
+        print("[StarFarm] shovel fruit: buang buah < "..n.."kg")
     end)
     mkBodyToggle(body, 84, "Auto Shovel Fruit", "shovelFruit", "Auto Shovel Fruit")
 end
@@ -9073,7 +9101,7 @@ do
     -- trigger WC
     lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,104)
     local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,101),
-        BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 50), PlaceholderText = "50",
+        BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 0), PlaceholderText = "50",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(wcTBox, 6); stroke(wcTBox, C.border, 1)
     wcTBox.FocusLost:Connect(function()
@@ -9083,7 +9111,7 @@ do
     -- batas buah besar
     lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,136)
     local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,133),
-        BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 500), PlaceholderText = "500",
+        BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 100), PlaceholderText = "500",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(bigBox, 6); stroke(bigBox, C.border, 1)
     bigBox.FocusLost:Connect(function()
@@ -9120,7 +9148,7 @@ do
     c2wBox.FocusLost:Connect(function()
         local n = tonumber(c2wBox.Text) or -50
         state.c2WeightF = n; c2wBox.Text = tostring(n); saveState()
-        print("[ZenxFarm] collect2 filter kg: "..(n==0 and "semua" or (n>0 and "di atas "..n.."kg" or "di bawah "..(-n).."kg")))
+        print("[StarFarm] collect2 filter kg: "..(n==0 and "semua" or (n>0 and "di atas "..n.."kg" or "di bawah "..(-n).."kg")))
     end)
     -- default c2NoMut = true (tanpa mutasi)
     if state.c2NoMut == nil then state.c2NoMut = true; saveState() end
@@ -9191,6 +9219,35 @@ do
     if state.s2All == nil then state.s2All = true; saveState() end
     if state.s2WhenFull == nil then state.s2WhenFull = true; saveState() end
     applySell2 = mkBodyToggle(body, 124, "Auto Sell 2", "autoSell2", "Auto Sell 2")
+end
+
+-- CARD AF2-5: GIFT GLOW (STAR FARM) - target user PERSISTEN + status live
+do
+    local card, body, setH = mkFarmCard(14, "Gift Glow (Mail)", "auto: 20 Glow >=50kg/batch . target disave", buyList)
+    setH(150)
+    lbl(body, "Target user (username)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,4)
+    local tgtBox = mk("TextBox", { Size = UDim2.new(1,0,0,30), Position = UDim2.new(0,0,0,28),
+        BackgroundColor3 = C.input, Text = tostring(state.sfGlowGiftTarget or ""), PlaceholderText = "username penerima",
+        TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(tgtBox, 6); stroke(tgtBox, C.border, 1)
+    tgtBox.FocusLost:Connect(function()
+        state.sfGlowGiftTarget = (tgtBox.Text or ""):gsub("%s+", "")
+        tgtBox.Text = state.sfGlowGiftTarget
+        saveState()
+        print("[StarFarm] target gift Glow: "..(state.sfGlowGiftTarget ~= "" and state.sfGlowGiftTarget or "(kosong)"))
+    end)
+    local gInfo = lbl(body, "", 11, C.textMute, Enum.TextXAlignment.Left)
+    gInfo.Position = UDim2.new(0,0,0,66); gInfo.Size = UDim2.new(1,0,0,72); gInfo.TextWrapped = true; gInfo.TextYAlignment = Enum.TextYAlignment.Top
+    task.spawn(function()
+        while card.Parent do
+            pcall(function()
+                gInfo.Text = string.format("Glow >=%dkg di tas: %s  |  kirim tiap >=%s  |  %s",
+                    state.glowKgMin or 50, tostring(Farm._sfGlowInBag or 0),
+                    tostring(state.sfGlowGiftBatch or 20), Farm._sfGiftStatus or "nunggu buah...")
+            end)
+            task.wait(1)
+        end
+    end)
 end
 
 -- ====== AUTO FARM 2: logic loop ======
@@ -9605,8 +9662,8 @@ staggerSpawn(function()
                 Farm._af2Status = "OFF"; return
             end
             local threshKg  = math.abs(state.c2WeightF or 50)
-            local wcTrigger = state.af2WCTrigger or 50    -- place WC kalau small <= ini
-            local bigCap    = state.af2BigCap or 500      -- stop kalau big >= ini
+            local wcTrigger = state.af2WCTrigger or 0    -- place WC kalau small <= ini
+            local bigCap    = state.af2BigCap or 100      -- stop kalau big >= ini
             local smallCount = Farm.af2CountSmallFruits(threshKg)
             local bigCount   = Farm.af2CountBigFruits(threshKg)
             Farm._af2SmallCount = smallCount   -- v40.0: buat overlay layar
@@ -9708,7 +9765,7 @@ do
         end
         sw.MouseButton1Click:Connect(function()
             Farm.sprRecording = not Farm.sprRecording; upd(); updInfo()
-            print("[ZenxFarm] Save Position -> "..(Farm.sprRecording and "ON (place sprinkler manual)" or "OFF"))
+            print("[StarFarm] Save Position -> "..(Farm.sprRecording and "ON (place sprinkler manual)" or "OFF"))
         end)
         upd()
         return upd
@@ -9725,7 +9782,7 @@ do
         state.sprCoords = {}; Farm._sprPlacedAt = {}
         for k in pairs(state.selectedSprPos) do state.selectedSprPos[k] = nil end
         saveState(); updInfo()
-        print("[ZenxFarm] sprinkler: posisi dihapus")
+        print("[StarFarm] sprinkler: posisi dihapus")
     end)
 
     applySprinkler = mkBodyToggle(body, 132, "Auto Sprinkler", "autoSprinkler", "Auto Sprinkler")
@@ -9791,7 +9848,7 @@ do
         state.giftTarget = nameBox.Text
         Farm._giftId = nil  -- reset cache id biar resolve ulang
         saveState()
-        print("[ZenxFarm] gift penerima: "..nameBox.Text)
+        print("[StarFarm] gift penerima: "..nameBox.Text)
     end)
 
     -- v8.7: jumlah seed per kirim (0 = semua)
@@ -9807,7 +9864,7 @@ do
         state.giftSeedQty = n
         qtyBox.Text = tostring(n)
         saveState()
-        print("[ZenxFarm] gift jumlah seed: "..(n == 0 and "semua" or tostring(n)))
+        print("[StarFarm] gift jumlah seed: "..(n == 0 and "semua" or tostring(n)))
     end)
 
     mkTypeRow(body, 84,  "Jenis Seed", seedListFn, state.giftSeeds, "_giftAllSeed_NEVER", "pilih seed...", function() return Farm.countSeedsInBag() end)
@@ -10000,7 +10057,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.autoAcceptGift = not state.autoAcceptGift; saveState(); applyAcceptGift()
-        print("[ZenxFarm] Auto Accept Gift -> "..(state.autoAcceptGift and "ON" or "OFF"))
+        print("[StarFarm] Auto Accept Gift -> "..(state.autoAcceptGift and "ON" or "OFF"))
     end)
     applyAcceptGift()
     Farm._applyAcceptRef = applyAcceptGift
@@ -10074,7 +10131,7 @@ do
     corner(rlBox, 6); stroke(rlBox, C.border, 1)
     rlBox.FocusLost:Connect(function()
         state.gfRelayUrl = rlBox.Text; saveState()
-        print("[ZenxFarm] relay url -> "..(state.gfRelayUrl ~= "" and "diset" or "kosong"))
+        print("[StarFarm] relay url -> "..(state.gfRelayUrl ~= "" and "diset" or "kosong"))
     end)
     Farm._applyGfWrite = mkBodyToggle(body, 252, "Akun ini PET (kirim sheckles)", "gfRelayWrite", "Relay Writer")
 
@@ -10086,7 +10143,7 @@ do
     corner(stBox, 6); stroke(stBox, C.border, 1)
     stBox.FocusLost:Connect(function()
         state.gfStorageTarget = stBox.Text; Farm._gfId = nil; Farm._gfIdName = nil; Farm._gfRotIdx = 1; saveState()
-        print("[ZenxFarm] akun simpanan -> "..(state.gfStorageTarget ~= "" and state.gfStorageTarget or "kosong"))
+        print("[StarFarm] akun simpanan -> "..(state.gfStorageTarget ~= "" and state.gfStorageTarget or "kosong"))
     end)
 
     -- v22.9: Gift by Value - pilih buah totalnya >= target (buat jual senilai X)
@@ -10097,7 +10154,7 @@ do
     corner(tvBox, 6); stroke(tvBox, C.border, 1)
     tvBox.FocusLost:Connect(function()
         local n = parseN(tvBox.Text) or 500000000; state.gfValueTarget = n; tvBox.Text = fmtN(n); saveState()
-        print("[ZenxFarm] gift target nilai -> "..fmtN(n))
+        print("[StarFarm] gift target nilai -> "..fmtN(n))
     end)
     mkBodyToggle(body, 540, "Gift by Value (>= target)", "gfValueMode", "Gift By Value")
     mkBodyToggle(body, 580, "Target ikut Harga Pasar (off=normal x1)", "gfValueMarket", "Gift Value Market")
@@ -10325,7 +10382,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.storageMode = not state.storageMode; saveState(); apply()
-        print("[ZenxFarm] Akun Penyimpanan -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
+        print("[StarFarm] Akun Penyimpanan -> "..(state.storageMode and "ON (cuma terima)" or "OFF"))
     end)
     apply()
     Farm._applyStorageRef = apply
@@ -10360,7 +10417,7 @@ do
     sw.MouseButton1Click:Connect(function()
         state.storageFull = not state.storageFull; saveState(); apply()
         task.spawn(function() pcall(function() Farm.setStorageFull(state.storageFull) end) end)
-        print("[ZenxFarm] Akun Ini Full -> "..(state.storageFull and "ON (farm skip)" or "OFF (farm kirim lagi)"))
+        print("[StarFarm] Akun Ini Full -> "..(state.storageFull and "ON (farm skip)" or "OFF (farm kirim lagi)"))
     end)
     apply()
 end
@@ -10391,7 +10448,7 @@ do
         local n = tonumber(minBox.Text)
         if n and n > 0 then state.gfPrioMinVal = math.floor(n * 1000000); saveState() end
         minBox.Text = tostring((state.gfPrioMinVal or 3000000)/1000000)
-        print("[ZenxFarm] priority min nilai -> "..Farm.abbrev(state.gfPrioMinVal or 3000000))
+        print("[StarFarm] priority min nilai -> "..Farm.abbrev(state.gfPrioMinVal or 3000000))
     end)
     local function apply()
         if state.storagePriority then
@@ -10405,7 +10462,7 @@ do
     sw.MouseButton1Click:Connect(function()
         state.storagePriority = not state.storagePriority; apply()
         task.spawn(function() pcall(function() Farm.setPriority(state.storagePriority) end) end)
-        print("[ZenxFarm] Kirim Semua Kesini -> "..(state.storagePriority and "ON" or "OFF"))
+        print("[StarFarm] Kirim Semua Kesini -> "..(state.storagePriority and "ON" or "OFF"))
     end)
     apply()
     Farm._applyPrioRef = apply
@@ -10438,7 +10495,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.gfStorageOn = not state.gfStorageOn; saveState(); apply()
-        print("[ZenxFarm] Gift ke Simpanan -> "..(state.gfStorageOn and "ON" or "OFF (tahan)"))
+        print("[StarFarm] Gift ke Simpanan -> "..(state.gfStorageOn and "ON" or "OFF (tahan)"))
     end)
     apply()
 end
@@ -10468,7 +10525,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.autoAfk = not state.autoAfk; saveState(); applyAfk()
-        print("[ZenxFarm] Auto AFK -> "..(state.autoAfk and "ON" or "OFF"))
+        print("[StarFarm] Auto AFK -> "..(state.autoAfk and "ON" or "OFF"))
     end)
     applyAfk()
 end
@@ -10501,7 +10558,7 @@ do
     sw.MouseButton1Click:Connect(function()
         state.espPrice = not state.espPrice; saveState(); applyEspPriceUI()
         pcall(Farm.applyEspPrice)
-        print("[ZenxFarm] ESP Harga -> "..(state.espPrice and "ON" or "OFF"))
+        print("[StarFarm] ESP Harga -> "..(state.espPrice and "ON" or "OFF"))
     end)
     applyEspPriceUI()
 end
@@ -10587,7 +10644,7 @@ do
     sw.MouseButton1Click:Connect(function()
         state.notifOn = not state.notifOn; saveState(); apply()
         if state.notifOn then pcall(function() Farm.notif("CONTOH", "wildnx_67", 12) end) end
-        print("[ZenxFarm] Notif Kirim -> "..(state.notifOn and "ON" or "OFF"))
+        print("[StarFarm] Notif Kirim -> "..(state.notifOn and "ON" or "OFF"))
     end)
     apply()
 end
@@ -10620,7 +10677,7 @@ do
     sw.MouseButton1Click:Connect(function()
         state.espMut = not state.espMut; saveState(); applyEspMutUI()
         pcall(Farm.applyEspMut)
-        print("[ZenxFarm] ESP Mutasi -> "..(state.espMut and "ON" or "OFF"))
+        print("[StarFarm] ESP Mutasi -> "..(state.espMut and "ON" or "OFF"))
     end)
     applyEspMutUI()
 end
@@ -10659,7 +10716,7 @@ do
         end
         saveState(); applyEspInventUI()
         pcall(Farm.applyEspInvent)
-        print("[ZenxFarm] ESP Harga Inventory -> "..(state.espInvent and "ON" or "OFF"))
+        print("[StarFarm] ESP Harga Inventory -> "..(state.espInvent and "ON" or "OFF"))
     end)
     applyEspInventUI()
 end
@@ -10697,7 +10754,7 @@ do
         end
         saveState(); applyEspInventStockUI()
         pcall(Farm.applyEspInventStock)
-        print("[ZenxFarm] ESP Inventory +Pasar -> "..(state.espInventStock and "ON" or "OFF"))
+        print("[StarFarm] ESP Inventory +Pasar -> "..(state.espInventStock and "ON" or "OFF"))
     end)
     applyEspInventStockUI()
 end
@@ -10730,7 +10787,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.antiLag = not state.antiLag; saveState(); applyAntiLag()
-        print("[ZenxFarm] Anti-Lag -> "..(state.antiLag and "ON" or "OFF"))
+        print("[StarFarm] Anti-Lag -> "..(state.antiLag and "ON" or "OFF"))
     end)
     applyAntiLag()
 end
@@ -10764,7 +10821,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.antiLegMax = not state.antiLegMax; saveState(); applyAntiLegMax()
-        print("[ZenxFarm] ANTI-LEG TOTAL -> "..(state.antiLegMax and "ON" or "OFF"))
+        print("[StarFarm] ANTI-LEG TOTAL -> "..(state.antiLegMax and "ON" or "OFF"))
     end)
     -- v44.64: ANTI-LEG TOTAL default ON tiap start (permintaan user). matiin manual = sementara sesi ini, launch berikutnya nyala lagi.
     state.antiLegMax = true
@@ -10799,7 +10856,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.hidePlants = not state.hidePlants; saveState(); applyHidePlants()
-        print("[ZenxFarm] Sembunyiin Pohon -> "..(state.hidePlants and "ON" or "OFF"))
+        print("[StarFarm] Sembunyiin Pohon -> "..(state.hidePlants and "ON" or "OFF"))
     end)
     applyHidePlants()
 end
@@ -10841,13 +10898,13 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.hideFruits = not state.hideFruits; saveState(); applyHideFruits()
-        print("[ZenxFarm] Sembunyiin Buah -> "..(state.hideFruits and "ON" or "OFF"))
+        print("[StarFarm] Sembunyiin Buah -> "..(state.hideFruits and "ON" or "OFF"))
     end)
     modeBtn.MouseButton1Click:Connect(function()
         state.hideFruitFaint = not state.hideFruitFaint; saveState(); refreshMode()
         -- terapkan ulang kalau lagi ON
         if state.hideFruits then task.spawn(function() pcall(function() Farm.setHideFruits(true) end) end) end
-        print("[ZenxFarm] mode buah -> "..(state.hideFruitFaint and "samar" or "ilang total"))
+        print("[StarFarm] mode buah -> "..(state.hideFruitFaint and "samar" or "ilang total"))
     end)
     applyHideFruits()
 end
@@ -10881,7 +10938,7 @@ do
         state.hideBigKg = n; kgBox.Text = tostring(n); saveState()
         -- terapkan ulang kalau lagi ON (threshold berubah -> yg di bawah ambang balik keliatan)
         if state.hideBigFruits then task.spawn(function() pcall(function() Farm.scanHideBigFruits(true) end) end) end
-        print("[ZenxFarm] ambang buah gede -> "..n.."kg")
+        print("[StarFarm] ambang buah gede -> "..n.."kg")
     end)
     applyHideBig = function()
         if state.hideBigFruits then
@@ -10895,7 +10952,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.hideBigFruits = not state.hideBigFruits; saveState(); applyHideBig()
-        print("[ZenxFarm] Sembunyiin Buah Gede -> "..(state.hideBigFruits and "ON" or "OFF"))
+        print("[StarFarm] Sembunyiin Buah Gede -> "..(state.hideBigFruits and "ON" or "OFF"))
     end)
     applyHideBig()
 end
@@ -10952,7 +11009,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.antiBot = not state.antiBot; saveState(); applyAntiBot()
-        print("[ZenxFarm] Anti-Bot -> "..(state.antiBot and "ON" or "OFF"))
+        print("[StarFarm] Anti-Bot -> "..(state.antiBot and "ON" or "OFF"))
     end)
     applyAntiBot()
 end
@@ -10989,7 +11046,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.antiKepental = not state.antiKepental; saveState(); applyAntiKepental()
-        print("[ZenxFarm] Anti Kepental -> "..(state.antiKepental and "ON" or "OFF (teleport bebas)"))
+        print("[StarFarm] Anti Kepental -> "..(state.antiKepental and "ON" or "OFF (teleport bebas)"))
     end)
     applyAntiKepental()
 end
@@ -11021,7 +11078,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.autoGrabSeed = not state.autoGrabSeed; saveState(); applyGrabSeed()
-        print("[ZenxFarm] Auto Grab Seed -> "..(state.autoGrabSeed and "ON" or "OFF"))
+        print("[StarFarm] Auto Grab Seed -> "..(state.autoGrabSeed and "ON" or "OFF"))
     end)
     applyGrabSeed()
 end
@@ -11059,7 +11116,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.debugLog = not state.debugLog; saveState(); applyDbg()
-        print("[ZenxFarm] Debug Log -> "..(state.debugLog and "ON" or "OFF"))
+        print("[StarFarm] Debug Log -> "..(state.debugLog and "ON" or "OFF"))
     end)
     applyDbg()
 end
@@ -11158,7 +11215,7 @@ closeBtn.MouseButton1Click:Connect(function()
     -- v7.5: CLOSE = stop SEMUA kegiatan sc, bukan cuma sembunyiin UI.
     -- 1) matikan generation guard -> semua loop (collect/sell/plant/shovel/dll) berhenti
     --    karena semuanya cek isCurrentGen(). naikkan gen biar MY_GEN gak lagi current.
-    genv.ZenxFarmGen = (genv.ZenxFarmGen or 0) + 1
+    genv.StarFarmGen = (genv.StarFarmGen or 0) + 1
     -- 2) matikan semua toggle state (jaga2 kalau ada yg baca state langsung)
     for _, k in ipairs(SETBOOL) do state[k] = false end
     -- 3) matikan flag teleport biar gak nyangkut
@@ -11166,7 +11223,7 @@ closeBtn.MouseButton1Click:Connect(function()
         local g = (typeof(getgenv)=="function" and getgenv() or _G)
         g.ZenxAllowTP = false
     end)
-    print("[ZenxFarm] CLOSED - semua kegiatan sc dihentikan")
+    print("[StarFarm] CLOSED - semua kegiatan sc dihentikan")
     -- 4) baru hapus UI
     sg:Destroy()
 end)
@@ -11418,12 +11475,12 @@ do
     sw.MouseButton1Click:Connect(function()
         if not state.autoHop and state.autoBuyPet then
             -- v27.5: ga boleh nyalain hop kalau buy pet aktif
-            print("[ZenxFarm] Auto Hop ga bisa nyala: Buy Pet lagi aktif")
+            print("[StarFarm] Auto Hop ga bisa nyala: Buy Pet lagi aktif")
             applyHop()
             return
         end
         state.autoHop = not state.autoHop; saveState(); applyHop()
-        print("[ZenxFarm] Auto Hop -> "..(state.autoHop and ("ON (tiap "..(state.hopMinutes or 30).." menit)") or "OFF"))
+        print("[StarFarm] Auto Hop -> "..(state.autoHop and ("ON (tiap "..(state.hopMinutes or 30).." menit)") or "OFF"))
     end)
     applyHop()
     Farm._applyHopRef = applyHop
@@ -11493,7 +11550,7 @@ do
     dBox.FocusLost:Connect(function()
         local n = math.max(0, math.floor(tonumber(dBox.Text) or 60))
         state.weatherHopDelay = n; dBox.Text = tostring(n); saveState()
-        print("[ZenxFarm] freeze weather: "..(n == 0 and "OFF (langsung pindah)" or (n.."s (Kick lokal lalu rejoin)")))
+        print("[StarFarm] freeze weather: "..(n == 0 and "OFF (langsung pindah)" or (n.."s (Kick lokal lalu rejoin)")))
     end)
 
     -- toggle ON/OFF (manual)
@@ -11515,7 +11572,7 @@ do
     end
     sw.MouseButton1Click:Connect(function()
         state.autoWeatherHop = not state.autoWeatherHop; saveState(); applyWH()
-        print("[ZenxFarm] Auto Rejoin Weather -> "..(state.autoWeatherHop and "ON" or "OFF"))
+        print("[StarFarm] Auto Rejoin Weather -> "..(state.autoWeatherHop and "ON" or "OFF"))
     end)
     applyWH()
 
@@ -11558,7 +11615,7 @@ do
     end
     bhSw.MouseButton1Click:Connect(function()
         state.autoBloodHop = not state.autoBloodHop; saveState(); applyBH()
-        print("[ZenxFarm] Blood Hop -> "..(state.autoBloodHop and "ON" or "OFF"))
+        print("[StarFarm] Blood Hop -> "..(state.autoBloodHop and "ON" or "OFF"))
     end)
     applyBH()
     -- v44.19: toggle "Di Private Server" (manual). kurangi local (limit-200): reuse nama.
@@ -11584,7 +11641,7 @@ do
     end
     Farm._ipSw.MouseButton1Click:Connect(function()
         state.imInPrivate = not state.imInPrivate; saveState(); Farm._applyIP()
-        print("[ZenxFarm] Di Private Server -> "..(state.imInPrivate and "ON" or "OFF"))
+        print("[StarFarm] Di Private Server -> "..(state.imInPrivate and "ON" or "OFF"))
     end)
     Farm._applyIP()
 end
@@ -11743,17 +11800,88 @@ if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; stat
 state.autoHop = false
 -- v44.6: autoWeatherHop TIDAK dipaksa - ikut state tersimpan (kalau di-ON manual, tetap ON pas rejoin)
 
--- ===== STAR FARM: paksa tiap start =====
--- default Farm 2: batas buah besar 100, trigger WC pas kecil = 0 (siram cuma pas kecil habis)
-state.af2BigCap = 100
-state.af2WCTrigger = 0
--- Auto Buy Seed: Mythic ke ATAS + seed baru apapun (rarity gak dikenal dianggap tinggi) - SELALU ON
+-- ============================================================
+-- STAR FARM: loop Glow (auto-fav >= glowKgMin + gift 20 per batch)
+-- ============================================================
+function Farm.starGlowTick()
+    local kgMin = state.glowKgMin or 50
+    -- kumpulin buah Glow >= kgMin di TAS
+    local glowList = {}
+    for _, holder in ipairs(invHolders()) do
+        if holder then
+            for _, o in ipairs(holder:GetChildren()) do
+                local id = o:GetAttribute("Id")
+                local w  = o:GetAttribute("Weight") or 0
+                if id and getMutation(o) == "Glow" and w >= kgMin then
+                    glowList[#glowList+1] = { id = tostring(id), fav = (o:GetAttribute("Favorite") or o:GetAttribute("Favorited")) and true or false }
+                end
+            end
+        end
+    end
+    Farm._sfGlowInBag = #glowList
+    -- 1) AUTO-FAV Glow >= kgMin yg belum kefav
+    if state.sfGlowFav then
+        for _, g in ipairs(glowList) do
+            if not g.fav then pcall(function() Farm.setFruitFav(g.id, true) end); task.wait() end
+        end
+    end
+    -- 2) GIFT: kalau Glow >= kgMin di tas udah >= batch, kirim TEPAT batch ke target (unfav dulu yg dikirim)
+    local batch  = state.sfGlowGiftBatch or 20
+    local target = state.sfGlowGiftTarget or ""
+    if state.sfGlowGift and target ~= "" and #glowList >= batch then
+        local uid = resolveTargetId(target)
+        if not uid then Farm._sfGiftStatus = "target '"..target.."' gak ketemu"; return end
+        if uid == player.UserId then Farm._sfGiftStatus = "target = diri sendiri"; return end
+        local sb = pkt("Mailbox", "SendBatch")
+        if not (sb and sb.Fire) then Farm._sfGiftStatus = "SendBatch gak ada"; return end
+        local items = {}
+        for i = 1, batch do
+            local g = glowList[i]
+            pcall(function() Farm.setFruitFav(g.id, false) end)   -- UNFAV yg mau dikirim (buah kefav gak bisa di-gift)
+            items[#items+1] = { ItemKey = g.id, Count = 1, Category = "HarvestedFruits" }
+            if i % 8 == 0 then task.wait() end
+        end
+        local ok = pcall(function() sb:Fire(uid, items, "") end)
+        if ok then
+            Farm._sfGiftStatus = "OK kirim "..batch.." -> "..target
+            print("[StarFarm] GIFT Glow: "..batch.." buah -> "..target)
+        else
+            -- gagal: fav lagi biar aman (sisanya tetep kelindungi)
+            for i = 1, batch do pcall(function() Farm.setFruitFav(glowList[i].id, true) end) end
+            Farm._sfGiftStatus = "GAGAL kirim -> re-fav"
+            print("[StarFarm] GIFT Glow GAGAL -> re-fav")
+        end
+    end
+end
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(5)
+        if state.sfGlowFav or state.sfGlowGift then pcall(Farm.starGlowTick) end
+    end
+end)
+
+-- ============================================================
+-- STAR FARM: paksaan startup (permintaan user)
+-- ============================================================
+-- Farm 1 auto collect/sell DIBUANG -> paksa OFF tiap start
+state.autoCollect = false
+state.autoSell = false
+-- Auto Buy Seed: Mythic ke ATAS + seed baru apapun, SELALU ON
 state.autoBuySeed = true
 state.buyGoodSeeds = true
 state.buyGoodMinRarity = "Mythic"
--- Farm 1 collect/sell DIBUANG di Star Farm - paksa OFF (Farm 2 yang dipakai)
-state.autoCollect = false
-state.autoSell = false
+-- Fitur Glow (SELALU ON):
+if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollectMin = 60 end   -- collect Glow cuma kalau di kebun >= ini
+if state.glowKgMin == nil then state.glowKgMin = 50 end                                          -- ambang kg buat fav/anti-sell/gift Glow
+state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
+state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
+state.sfGlowAntiSell = true     -- anti-sell Glow >= glowKgMin
+-- Gift Mail Glow: kirim tepat 20 Glow >= glowKgMin per batch (target persisten)
+state.sfGlowGift = true
+if state.sfGlowGiftBatch == nil then state.sfGlowGiftBatch = 20 end
+-- sfGlowGiftTarget: penerima, PERSISTEN (disave) - diisi lewat panel
+if type(state.sfGlowGiftTarget) ~= "string" then state.sfGlowGiftTarget = "" end
+print("[StarFarm] STAR FARM start - buySeed(Mythic+) ON, Farm1 auto OFF, fitur Glow ON (min collect="..tostring(state.glowCollectMin)..", kg>="..tostring(state.glowKgMin)..")")
 
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyGiftPet(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 -- v39.1: refresh toggle yg dipengaruhi tombol FARM 2 (collect+sell Farm1, sprinkler/wc/collect2/sell2 Farm2)
@@ -11789,7 +11917,7 @@ task.spawn(function()
     pcall(function() if state.espInventStock then Farm.applyEspInventStock() end end)  -- v22.9
 end)
 selectTab("farm")
-print("[ZenxFarm] "..VER.." loaded (kerangka UI - fungsi farm nyusul)")
+print("[StarFarm] "..VER.." loaded (kerangka UI - fungsi farm nyusul)")
 
 -- v22.9: HUD pengali pasar Dragon's Breath di POJOK KANAN BAWAH layar.
 -- nampilin "[naga] Dragon's Breath x0.92" - ijo kalau >1, merah kalau <1, abu kalau =1/blm kebaca.
