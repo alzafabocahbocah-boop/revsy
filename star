@@ -910,7 +910,7 @@ state.selectedCrates["Bench Crate"] = true
 
 -- v44.5: weather bagus default (Aurora/Bloodmoon/Starfall/Sunburst) - paksa tiap load biar ga reset.
 state.goodWeathers = state.goodWeathers or {}
-for _, w in ipairs({ "Aurora", "Bloodmoon", "Starfall", "Sunburst" }) do
+for _, w in ipairs({ "Aurora", "Bloodmoon", "Starfall", "Sunburst", "Rainbow", "RainbowMoon", "Rainbowmoon", "RainbowStorm" }) do
     state.goodWeathers[w] = true
 end
 -- freeze default 120s (paksa tiap load - konsisten semua akun)
@@ -7969,8 +7969,7 @@ function Farm.isBadWeatherNow()
     local BAD = {
         goldmoon = true, gold = true,
         lightning = true,
-        rainbow = true,
-        rainbowmoon = true,
+        -- v1.2: Rainbow & RainbowMoon DIKELUARIN dari BAD (permintaan user - itu cuaca bagus, jgn di-hop)
     }
     for _, w in ipairs(cands) do
         if BAD[norm(w)] then
