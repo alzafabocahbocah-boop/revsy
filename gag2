@@ -1,6 +1,17 @@
 -- ============================================================
--- ZENX FARM  v44.65
+-- ZENX FARM  v44.66
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.66 (dari v44.65) - ANTI-LEG TOTAL dibikin BENERAN total:
+--   * SEMUA isi workspace.Gardens disembunyiin: pager, alas plot, tanaman,
+--     buah - garden ORANG LAIN ilang total, kebun SENDIRI nyisa tanahnya doang
+--     (part tanah by-nama tetep keliatan). dulu cuma buah/tanaman yg keiluang,
+--     pager & garden lain masih nampak.
+--   * TOKO/market (by nama model) ikut disembunyiin.
+--   * Sweep DIULANG (1/3/6/10/15 detik) + reset cache kepemilikan tiap kali,
+--     karena pas force-on-at-start/rejoin map sering belum ke-load -> dulu
+--     banyak part kelewat (itu sebabnya di layar masih rame).
+--   * OFF = balikin semua (best-effort; rejoin buat presisi).
 -- ------------------------------------------------------------
 -- Perubahan v44.65 (dari v44.64):
 --   * Default mutasi Auto Collect Farm 1 (pas Farm 2 dimatiin) sekarang
@@ -1111,31 +1122,92 @@ end
 Farm._antiLegMaxOn = false
 Farm._antiLegMaxConn = nil
 Farm._antiLegMaxEverOn = false
-function Farm.applyAntiLegMaxToObj(d)
-    pcall(function()
-        -- v44.63: HILANGIN TOTAL semua isi folder Plants/Fruits (punya sendiri + GARDEN ORANG LAIN).
-        -- crop glowing di mana-mana = biang render terbesar. ini yg bikin "garden lain ilang" +
-        -- "all buah/pohon ilang total". collect tetep jalan (baca atribut, bukan visual).
-        if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture") then
-            if d:FindFirstAncestor("Fruits") or d:FindFirstAncestor("Plants") then
-                d.Transparency = 1
-                if d:IsA("BasePart") then d.CastShadow = false end
-                return
+-- v44.66: kata kunci nama part TANAH (kebun sendiri: tanah disisain, sisanya ilang)
+local ALEG_GROUND_WORDS = {"dirt","soil","ground","grass","farm","plot","base","floor","tanah","land","platform"}
+-- v44.66: kata kunci TOKO/market (disembunyiin)
+local ALEG_SHOP_WORDS = {"shop","toko","market","pasar","stall","stand","kios","merchant","lelang","auction","vendor"}
+local function alegNameHas(nm, list)
+    nm = tostring(nm):lower()
+    for _, w in ipairs(list) do if nm:find(w, 1, true) then return true end end
+    return false
+end
+-- cache kepemilikan plot (biar gak ngitung ulang tiap part)
+Farm._plotMineCache = setmetatable({}, { __mode = "k" })
+function Farm.plotIsMine(plot)
+    local c = Farm._plotMineCache[plot]
+    if c ~= nil then return c end
+    local mine = false
+    if plot:GetAttribute("OwnerUserId") == player.UserId then
+        mine = true
+    else
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, pl in ipairs(plants:GetChildren()) do
+                if tonumber(tostring(pl.Name):match("^(%d+)_")) == player.UserId then mine = true; break end
             end
         end
+    end
+    Farm._plotMineCache[plot] = mine
+    return mine
+end
+function Farm.applyAntiLegMaxToObj(d)
+    pcall(function()
+        -- v44.66: apa pun DI DALAM workspace.Gardens -> HILANGIN (pagar, plants, fruits, dekorasi, garden orang).
+        -- garden ORANG: semua ilang. garden SENDIRI: tanah disisain, sisanya ilang. ini yg bikin
+        -- "garden lain beneran ilang + kebun sendiri tinggal tanahnya".
+        local g = d:FindFirstAncestor("Gardens")
+        if g then
+            if d:IsA("BasePart") then
+                local plot = d                                    -- cari plot (anak langsung dari Gardens)
+                while plot.Parent and plot.Parent ~= g do plot = plot.Parent end
+                local keepGround = Farm.plotIsMine(plot) and alegNameHas(d.Name, ALEG_GROUND_WORDS)
+                if keepGround then
+                    d.CastShadow = false                          -- tanah kebun sendiri: tetep keliatan
+                else
+                    d.Transparency = 1; d.CastShadow = false      -- selain tanah: ilang total
+                end
+            elseif d:IsA("Decal") or d:IsA("Texture") then
+                d.Transparency = 1
+            elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") or d:IsA("Light") or d:IsA("Highlight") then
+                d.Enabled = false
+            else
+                Farm.applyAntiLagToObj(d)
+            end
+            return
+        end
+        -- di LUAR Gardens: optimasi biasa (mesh/cahaya/label/partikel)
         if d:IsA("MeshPart") then
-            d.RenderFidelity = Enum.RenderFidelity.Performance   -- mesh gak usah detail (paling ngefek pas ratusan buah)
+            d.RenderFidelity = Enum.RenderFidelity.Performance
             d.CastShadow = false
         elseif d:IsA("BasePart") then
             d.CastShadow = false
-        elseif d:IsA("Light") then           -- PointLight/SpotLight/SurfaceLight (buah glowing)
+        elseif d:IsA("Light") then
             d.Enabled = false
-        elseif d:IsA("Highlight") then       -- outline mutasi
+        elseif d:IsA("Highlight") then
             d.Enabled = false
-        elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then   -- label berat/mutasi/nama yg ngambang
+        elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
             d.Enabled = false
         else
-            Farm.applyAntiLagToObj(d)        -- partikel/trail/beam/smoke/fire/dll (reuse dari antiLag)
+            Farm.applyAntiLagToObj(d)
+        end
+    end)
+end
+-- v44.66: sembunyiin/balikin TOKO/market by nama model (best-effort). unhide=true buat balikin.
+function Farm.hideShopsNow(unhide)
+    local vis = unhide and 0 or 1
+    local en  = (unhide == true)
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        for _, top in ipairs(workspace:GetChildren()) do
+            if top ~= gardens and alegNameHas(top.Name, ALEG_SHOP_WORDS) then
+                for _, d in ipairs(top:GetDescendants()) do
+                    pcall(function()
+                        if d:IsA("BasePart") then d.Transparency = vis; d.CastShadow = en
+                        elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = vis
+                        elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") or d:IsA("Light") then d.Enabled = en end
+                    end)
+                end
+            end
         end
     end)
 end
@@ -1145,13 +1217,26 @@ function Farm.setAntiLegMax(on)
         Farm._antiLegMaxEverOn = true
         pcall(function() Farm.setAntiLag(true) end)   -- basis rendering-kill (TANPA ubah state.antiLag user)
         Farm._overlayPaused = true                    -- panel counter berhenti nyusurin kebun
-        pcall(function()
-            for _, d in ipairs(workspace:GetDescendants()) do Farm.applyAntiLegMaxToObj(d) end
-        end)
-        pcall(function()   -- v44.63: rumput/dekorasi terrain (tanah gede) dimatiin
-            local ter = workspace:FindFirstChildOfClass("Terrain")
-            if ter then ter.Decoration = false end
-        end)
+        -- v44.66b: sweep dibungkus + DIULANG. pas force-on-at-start / abis rejoin, map (Gardens/pager/
+        -- garden orang) sering belum ke-load pas sweep pertama -> banyak kelewat. retry + reset cache
+        -- kepemilikan tiap kali biar plot yg telat muncul + ownership-nya kebaca bener.
+        local function alegSweep()
+            if not Farm._antiLegMaxOn then return end
+            Farm._plotMineCache = setmetatable({}, { __mode = "k" })   -- reset (plot bisa telat load)
+            pcall(function()
+                for _, d in ipairs(workspace:GetDescendants()) do Farm.applyAntiLegMaxToObj(d) end
+            end)
+            pcall(function()   -- rumput/dekorasi terrain (tanah gede) dimatiin
+                local ter = workspace:FindFirstChildOfClass("Terrain")
+                if ter then ter.Decoration = false end
+            end)
+            pcall(function() Farm.hideShopsNow(false) end)   -- sembunyiin toko/market
+        end
+        Farm._antiLegSweep = alegSweep
+        alegSweep()
+        for _, dly in ipairs({1, 3, 6, 10, 15}) do
+            task.delay(dly, function() if Farm._antiLegMaxOn then alegSweep() end end)
+        end
         if not Farm._antiLegMaxConn then
             Farm._antiLegMaxConn = workspace.DescendantAdded:Connect(function(d)
                 if Farm._antiLegMaxOn then Farm.applyAntiLegMaxToObj(d) end
@@ -1166,10 +1251,10 @@ function Farm.setAntiLegMax(on)
         pcall(function()
             for _, d in ipairs(workspace:GetDescendants()) do
                 pcall(function()
-                    if (d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture"))
-                       and (d:FindFirstAncestor("Fruits") or d:FindFirstAncestor("Plants")) then
-                        d.Transparency = 0   -- unhide crop (best-effort; rejoin buat presisi)
-                        if d:IsA("BasePart") then d.CastShadow = true end
+                    if d:FindFirstAncestor("Gardens") then
+                        if d:IsA("BasePart") then d.Transparency = 0; d.CastShadow = true
+                        elseif d:IsA("Decal") or d:IsA("Texture") then d.Transparency = 0
+                        elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") or d:IsA("Light") or d:IsA("Highlight") then d.Enabled = true end
                     elseif d:IsA("MeshPart") then d.RenderFidelity = Enum.RenderFidelity.Automatic; d.CastShadow = true
                     elseif d:IsA("BasePart") then d.CastShadow = true
                     elseif d:IsA("Light") then d.Enabled = true
@@ -1178,6 +1263,7 @@ function Farm.setAntiLegMax(on)
                 end)
             end
         end)
+        pcall(function() Farm.hideShopsNow(true) end)   -- v44.66: balikin toko
         pcall(function()   -- v44.63: balikin dekorasi terrain
             local ter = workspace:FindFirstChildOfClass("Terrain")
             if ter then ter.Decoration = true end
