@@ -3837,7 +3837,8 @@ staggerSpawn(function()
             -- v28.7: Auto Sell 2 (terpisah: s2All, s2WhenFull, s2WeightF)
             -- v44.59: DELAY 5 detik sblm sell mulai (biar ada waktu batalin kalau salah pencet Farm 2)
             if isCurrentGen() and state.autoSell2
-               and (not Farm._sell2StartAt or os.clock() >= Farm._sell2StartAt) then
+               and (not Farm._sell2StartAt or os.clock() >= Farm._sell2StartAt)
+               and (not Farm._sellPause or os.clock() >= Farm._sellPause) then   -- v1.6: pause Sell 2 pas gate Glow kebuka / Glow di tas belum kefav-kekirim
                 if state.s2WhenFull then
                     local cur = getInvCount(); local mx = getInvMax()
                     if cur >= mx then
@@ -9849,26 +9850,39 @@ task.spawn(function()
     end
 end)
 
--- ====== v1.4: AUTO-SYNC BUAH (fix destroy bikin buah baru gak ke-stream) ======
--- StreamingEnabled: buah jauh dari karakter GAK dikirim ke klien. anti-leg destroy + AFK jauh ->
--- buah baru gak ke-stream -> collect gak liat (sampai WC teleport ke kebun & nge-sync).
--- RequestStreamAroundAsync maksa server stream buah di sekitar plot -> buah baru ke-load ->
--- collect bisa, TANPA teleport / nyiram / numbuhin buah.
+-- ====== v1.7: AUTO-COLEK TANAMAN (niru WC tanpa numbuhin) ======
+-- Temuan: WC bikin Model buah baru MUNCUL di klien (buah alami gak ke-render sampai dicolek WC).
+-- Colekan-nya = karakter teleport PERSIS ke titik tanaman -> klien maksa render/terima buah di situ.
+-- Jadi: tiap ~10s, teleport KILAT keliling ke tiap plot (instan, balik ke posisi semula) TANPA
+-- fire WC -> buah baru ke-render & kepanen, TANPA numbuhin buah. Bisa dimatiin:
+--   getgenv().StarFarm._syncPatrolOn = false
+Farm._syncPatrolOn = true
 task.spawn(function()
-    task.wait(4)
+    task.wait(5)
     while isCurrentGen() do
         pcall(function()
+            if not Farm._syncPatrolOn then return end
             local picks = (Farm.af2GetPlantPositions and Farm.af2GetPlantPositions()) or {}
+            if #picks == 0 then return end
+            local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local origCF = hrp.CFrame
+            -- COLEK: teleport kilat ke tiap titik plot (persis di tanaman) biar buah ke-render
             for _, e in ipairs(picks) do
-                if e and e.pos then pcall(function() player:RequestStreamAroundAsync(e.pos) end) end
+                if not Farm._syncPatrolOn then break end
+                if e and e.pos then
+                    pcall(function() hrp.CFrame = CFrame.new(e.pos + Vector3.new(0, 4, 0)) end)
+                    pcall(function() player:RequestStreamAroundAsync(e.pos) end)
+                    task.wait(0.15)   -- jeda kecil biar klien sempet terima Model buah
+                end
             end
-            -- fallback: kalau gak ada posisi plot, sync di sekitar karakter
-            if #picks == 0 then
-                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then pcall(function() player:RequestStreamAroundAsync(hrp.Position) end) end
-            end
+            -- balik ke posisi semula
+            pcall(function()
+                local h2 = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if h2 then h2.CFrame = origCF end
+            end)
         end)
-        task.wait(5)
+        task.wait(10)
     end
 end)
 
@@ -11965,6 +11979,18 @@ function Farm.starGlowTick()
         end
     end
     Farm._sfGlowInBag = #glowList
+    -- v1.6: pas GATE GLOW KEBUKA (lagi manen Glow borongan) ATAU masih ada Glow di tas yg belum
+    -- kefav / nunggu dikirim -> PAUSE Sell 2 dulu, biar buah Glow gak keburu kejual sebelum
+    -- di-fav/dikirim. (sell resume sendiri pas gate nutup & tas Glow udah beres)
+    do
+        local gateOpen = (Farm._glowGardenLast or 0) >= (state.glowCollectMin or 60)
+        local pendingFav = false
+        for _, g in ipairs(glowList) do if not g.fav then pendingFav = true; break end end
+        local pendingGift = state.sfGlowGift and (state.sfGlowGiftTarget or "") ~= "" and #glowList >= (state.sfGlowGiftBatch or 20)
+        if gateOpen or pendingFav or pendingGift then
+            Farm._sellPause = os.clock() + 8   -- tahan Sell 2 ~8 detik (di-refresh tiap 5s selama masih ada Glow pending)
+        end
+    end
     -- 1) AUTO-FAV Glow >= kgMin yg belum kefav
     if state.sfGlowFav then
         for _, g in ipairs(glowList) do
