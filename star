@@ -804,6 +804,7 @@ local function saveState()
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
         out.buyGoodMinRarity = state.buyGoodMinRarity or "Mythic"  -- v26.3
         out.sfGlowGiftTarget = state.sfGlowGiftTarget or ""   -- STAR FARM: target gift Glow (PERSISTEN)
+        out.glowCollectMin = state.glowCollectMin or 60   -- STAR FARM: ambang gate Glow (persisten)
         out.gfStorageTarget = state.gfStorageTarget or ""  -- v21.7
         out.gfStorageMinVal = state.gfStorageMinVal or 4000000  -- v21.8
         out.gfPrioMinVal = state.gfPrioMinVal or 3000000  -- v24.0
@@ -871,6 +872,7 @@ local function loadState()
                 if type(d.gpTarget) == "string" and d.gpTarget ~= "" then state.gpTarget = d.gpTarget end
                 if type(d.buyGoodMinRarity) == "string" and d.buyGoodMinRarity ~= "" then state.buyGoodMinRarity = d.buyGoodMinRarity end
                 if type(d.sfGlowGiftTarget) == "string" then state.sfGlowGiftTarget = d.sfGlowGiftTarget end   -- STAR FARM: target gift Glow persisten
+                if type(d.glowCollectMin) == "number" and d.glowCollectMin >= 1 then state.glowCollectMin = math.floor(d.glowCollectMin) end
                 if type(d.gfStorageTarget) == "string" then state.gfStorageTarget = d.gfStorageTarget end
                 if type(d.gfStorageMinVal) == "number" then state.gfStorageMinVal = d.gfStorageMinVal end
                 if type(d.gfPrioMinVal) == "number" then state.gfPrioMinVal = d.gfPrioMinVal end
@@ -1462,6 +1464,29 @@ function Farm.applyNoclip(on)
             end)
         end
         print("[StarFarm] NO-CLIP ON (karakter nembus objek)")
+        -- v1.1: matiin CanCollide di BUAH juga (biar karakter gak nabrak buah pas naruh WC/jalan)
+        if not Farm._noclipFruitLoop then
+            Farm._noclipFruitLoop = true
+            task.spawn(function()
+                while true do
+                    task.wait(1.5)
+                    if state.noclip then
+                        pcall(function()
+                            local g = workspace:FindFirstChild("Gardens")
+                            if g then for _, plot in ipairs(g:GetChildren()) do
+                                local pls = plot:FindFirstChild("Plants")
+                                if pls then for _, plant in ipairs(pls:GetChildren()) do
+                                    local fr = plant:FindFirstChild("Fruits")
+                                    if fr then for _, d in ipairs(fr:GetDescendants()) do
+                                        if d:IsA("BasePart") and d.CanCollide then d.CanCollide = false end
+                                    end end
+                                end end
+                            end end
+                        end)
+                    end
+                end
+            end)
+        end
     else
         if Farm._noclipConn then Farm._noclipConn:Disconnect(); Farm._noclipConn = nil end
         if Farm._noclipCharConn then Farm._noclipCharConn:Disconnect(); Farm._noclipCharConn = nil end
@@ -2351,7 +2376,7 @@ function Farm.collectOnce()
         end)
     end
     local _glowMin = state.glowCollectMin or 60
-
+    if state.sfGlowGate then Farm._glowGardenLast = _glowGardenN end   -- expose buat UI progres
     -- v10.6 FIX: kalau collectAll=false TAPI gak ada jenis yg dipilih, anggap SEMUA.
     -- (dulu bisa kejadian collectAll jadi false tapi selectedCollect kosong -> okType
     --  false buat semua -> collect DIAM TOTAL walau toggle nyala. ini jaring pengaman.)
@@ -9261,15 +9286,79 @@ do
     end)
 end
 
--- CARD AF2-6: GLOW SETTINGS (STAR FARM) - toggle khusus buah Glow
+-- CARD AF2-6: GLOW SETTINGS (STAR FARM) - toggle khusus buah Glow + status ASLI per fitur
 do
-    local card, body, setH = mkFarmCard(15, "Glow Settings", "opsi buah Glow (auto-ON pas pencet Farm 2)", buyList)
-    setH(220)
-    mkBodyToggle(body, 4,   "Collect Glow <50kg",   "sfGlowCollectSmall", "Collect Glow kecil")
-    mkBodyToggle(body, 44,  "Anti-Sell Glow 50kg+", "sfGlowAntiSell",     "Anti-Sell Glow")
-    mkBodyToggle(body, 84,  "Fav Glow 50kg+",       "sfGlowFav",          "Fav Glow")
-    mkBodyToggle(body, 124, "Gate collect Glow >=60","sfGlowGate",         "Gate Glow 60")
-    mkBodyToggle(body, 164, "Gift Glow (mail) ON",  "sfGlowGift",         "Gift Glow")
+    local card, body, setH = mkFarmCard(15, "Glow Settings", "status di bawah = KEADAAN ASLI (bukan tombol)", buyList)
+    setH(296)
+    local function statRow(y, labelTxt, key, extra)
+        mkBodyToggle(body, y, labelTxt, key, extra)
+        local st = lbl(body, "", 10, C.textMute, Enum.TextXAlignment.Left)
+        st.Position = UDim2.new(0,0,0,y+27); st.Size = UDim2.new(1,-60,0,13)
+        task.spawn(function()
+            while card.Parent do
+                local on = state[key] and true or false
+                st.Text = on and "* jalan (ON)" or "off"
+                st.TextColor3 = on and C.green or C.textMute
+                task.wait(1)
+            end
+        end)
+    end
+    statRow(4,   "Collect Glow <50kg",    "sfGlowCollectSmall", "Collect Glow kecil")
+    statRow(52,  "Anti-Sell Glow 50kg+",  "sfGlowAntiSell",     "Anti-Sell Glow")
+    statRow(100, "Fav Glow 50kg+",        "sfGlowFav",          "Fav Glow")
+    statRow(148, "Gate collect Glow >=60","sfGlowGate",         "Gate Glow 60")
+    statRow(196, "Gift Glow (mail) ON",   "sfGlowGift",         "Gift Glow")
+    -- input ambang gate (default 60) - berapa Glow numpuk sebelum dipanen
+    lbl(body, "Ambang gate (jml Glow)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,248)
+    local gmBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,245),
+        BackgroundColor3 = C.input, Text = tostring(state.glowCollectMin or 60), PlaceholderText = "60",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(gmBox, 6); stroke(gmBox, C.border, 1)
+    gmBox.FocusLost:Connect(function()
+        local n = math.max(1, math.floor(tonumber(gmBox.Text) or 60))
+        state.glowCollectMin = n; gmBox.Text = tostring(n); saveState()
+        print("[StarFarm] ambang gate Glow: "..n)
+    end)
+    -- input ambang gate Glow (default 60) + progres live
+    lbl(body, "Ambang gate Glow (numpuk sampai)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,244)
+    local gmBox = mk("TextBox", { Size = UDim2.new(0.32,0,0,26), Position = UDim2.new(0.68,0,0,241),
+        BackgroundColor3 = C.input, Text = tostring(state.glowCollectMin or 60), PlaceholderText = "60",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(gmBox, 6); stroke(gmBox, C.border, 1)
+    gmBox.FocusLost:Connect(function()
+        local n = math.max(1, math.floor(tonumber(gmBox.Text) or 60))
+        state.glowCollectMin = n; gmBox.Text = tostring(n); saveState()
+        print("[StarFarm] ambang gate Glow: "..n)
+    end)
+    local gProg = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
+    gProg.Position = UDim2.new(0,0,0,272); gProg.Size = UDim2.new(1,0,0,14)
+    task.spawn(function()
+        while card.Parent do
+            pcall(function()
+                local n = Farm._glowGardenLast or 0
+                local min = state.glowCollectMin or 60
+                if state.sfGlowGate then
+                    gProg.Text = "Glow di kebun: "..n.."/"..min..(n >= min and "  -> KEBUKA (dipanen)" or "  (numpuk...)")
+                    gProg.TextColor3 = (n >= min) and C.green or C.textDim
+                else
+                    gProg.Text = "gate OFF - Glow dipanen normal"
+                    gProg.TextColor3 = C.textMute
+                end
+            end)
+            task.wait(1)
+        end
+    end)
+    -- input ambang gate Glow (default 60) - berapa Glow numpuk dulu sebelum dipanen
+    lbl(body, "Ambang gate Glow", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,248)
+    local gateBox = mk("TextBox", { Size = UDim2.new(0.32,0,0,26), Position = UDim2.new(0.68,0,0,245),
+        BackgroundColor3 = C.input, Text = tostring(state.glowCollectMin or 60), PlaceholderText = "60",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(gateBox, 6); stroke(gateBox, C.border, 1)
+    gateBox.FocusLost:Connect(function()
+        local n = math.max(1, math.floor(tonumber(gateBox.Text) or 60))
+        state.glowCollectMin = n; gateBox.Text = tostring(n); saveState()
+        print("[StarFarm] ambang gate Glow: "..n)
+    end)
 end
 
 -- ====== AUTO FARM 2: logic loop ======
@@ -9465,12 +9554,12 @@ end
 -- biar ga nyangkut di badan tanaman; ngadep ke arah seed.
 -- v44.69: jarak berdiri dari seed pas Farm 2 naruh Sprinkler/WC (dulu 5). makin gede makin jauh.
 -- CATATAN: remote place ada BATAS jarak - kalau kejauhan, place GAGAL. turunin lagi kalau ga ke-place.
-local AF2_PLACE_OFFSET = 15
+local AF2_PLACE_OFFSET = 20
 function Farm.af2GotoNear(pos)
     local char = player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(AF2_PLACE_OFFSET, 3, 0), pos + Vector3.new(0, 3, 0)) end)
+    pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(AF2_PLACE_OFFSET, 8, 0), pos + Vector3.new(0, 3, 0)) end)  -- v1.1: lebih tinggi (8) biar di atas buah, jauh (offset) biar gak numpuk tanaman lain
     task.wait(0.25)
     return true
 end
