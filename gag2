@@ -1,6 +1,14 @@
 -- ============================================================
--- ZENX FARM  v44.76
+-- ZENX FARM  v44.77
 -- GAG 2. Sidebar: AUTO FARM / MISC
+-- ------------------------------------------------------------
+-- Perubahan v44.77 (dari v44.76) - DESTROY PRESISI (dari debug anchor):
+--   * Debug nunjukin buah nempel ke folder Fruits/FruitSpawnLocations + part
+--     Base (anchor), BUKAN ke daun. Jadi sekarang destroy CUMA Model/Folder
+--     daun/badan tanaman (bisa 85+ part), SISAIN Fruits + FruitSpawnLocations
+--     + Base + PrimaryPart. Buah tetep lahir & kedetect -> collect NORMAL
+--     (tanpa cache). Daun berat ilang -> enteng.
+--   * Cache buah (v44.76) dimatiin - gak perlu lagi krn Fruits disisain.
 -- ------------------------------------------------------------
 -- Perubahan v44.76 (dari v44.74/75) - CACHE BUAH + destroy balik:
 --   * Destroy tanaman bikin Model buah despawn -> collect gak nemu. SOLUSI:
@@ -204,7 +212,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.76"
+local VER       = "v44.77"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1236,24 +1244,19 @@ end
 --   AKAR (part paling bawah / PrimaryPart) -> DISISAIN & DIKELIATAN (buat af2LabelToPos + penanda posisi)
 --   BUAH (folder Fruits)                   -> DISISAIN tapi disembunyiin (collect butuh Model+atribut)
 --   DAUN/KELOPAK/ANTHER (sisanya)          -> DI-DESTROY (ini bulk 31rb mesh = biang leg)
+-- v44.77: DESTROY PRESISI berdasarkan hasil debug anchor:
+--   anak langsung plant yg WAJIB disisain (biar buah tetep lahir & kedetect):
+--     Fruits (buah), FruitSpawnLocations (titik lahir), Base (Anchored/anchor), PrimaryPart.
+--   yg AMAN di-destroy: Model/Folder daun/badan tanaman (bisa 85+ BasePart -> INI biang leg).
+local ALEG_KEEP_CHILD = { Fruits=true, FruitSpawnLocations=true, Base=true }
 function Farm.destroyPlantVisuals(plant)
-    -- tentuin part AKAR yg disisain & dikeliatan
-    local rootP = plant.PrimaryPart
-    if not rootP then
-        for _, d in ipairs(plant:GetDescendants()) do
-            if d:IsA("BasePart") and not d:FindFirstAncestor("Fruits") then
-                if not rootP or d.Position.Y < rootP.Position.Y then rootP = d end
-            end
-        end
-    end
-    if rootP then pcall(function() rootP.LocalTransparencyModifier = 0; rootP.Transparency = 0; rootP.CastShadow = false end) end
-    for _, d in ipairs(plant:GetDescendants()) do
-        if d:FindFirstAncestor("Fruits") then
-            -- v44.74: BUAH JANGAN DISENTUH SAMA SEKALI (destroy/hide bikin game despawn Model -> atribut ilang -> collect mati)
-        elseif d == rootP then
-            -- akar: biarin keliatan
-        elseif alegIsVisual(d) then
-            pcall(function() d:Destroy() end)   -- daun/kelopak/anther (badan tanaman, BUKAN buah)
+    local prim = plant.PrimaryPart
+    for _, child in ipairs(plant:GetChildren()) do
+        local keep = ALEG_KEEP_CHILD[child.Name]
+            or child == prim
+            or (child:IsA("Folder") and child:FindFirstChild("Fruits"))   -- jaga2: folder yg NGANDUNG Fruits
+        if not keep and (child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder")) then
+            pcall(function() child:Destroy() end)   -- daun/badan tanaman (berat) -> hapus
         end
     end
 end
@@ -1364,7 +1367,6 @@ function Farm.setAntiLegMax(on)
     if on then
         Farm._antiLegMaxOn = true
         Farm._antiLegMaxEverOn = true
-        pcall(function() Farm.startFruitCache() end)   -- v44.76: rekam buah SEBELUM destroy (biar collect tetep bisa nembak dari cache)
         pcall(function() Farm.setAntiLag(true) end)   -- basis rendering-kill (TANPA ubah state.antiLag user)
         Farm._overlayPaused = false                   -- v44.68: panel counter TETEP jalan (scan udah murah - cuma hide Plants)
         -- v44.67: sweep TARGETED - cuma folder Plants (crop) yg di-hide, bukan 46rb descendant.
@@ -3722,9 +3724,6 @@ staggerSpawn(function()
                 state.collectWeightF = state.c2WeightF or -50; state.collectMulti = true; state.collectSingle = true
                 state.selectedCollect = state.selectedCollect2 or {}   -- v44.60: picker "Jenis Pohon" Farm 2 akhirnya kepakai (dulu keabaikan, jatuh ke list Farm 1)
                 pcall(Farm.collectOnce)
-                -- v44.76: pas ANTI-LEG TOTAL (buah didestroy), Model buah gak ada -> collectOnce gak nemu.
-                -- collect DARI CACHE (uuid yg udah kerekam pas buah muncul). server masih punya buahnya.
-                if Farm._antiLegMaxOn and Farm._fruitCacheConn then pcall(Farm.collectCacheOnce) end
                 for k,v in pairs(sv) do state[k] = v end
             end
         end)
