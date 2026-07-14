@@ -1,5 +1,5 @@
 -- ============================================================
--- ZENX FARM  v44.79
+-- STAR FARM  v1.0  (standalone, basis Zenx Farm v44.79)
 -- GAG 2. Sidebar: AUTO FARM / MISC
 -- ------------------------------------------------------------
 -- Perubahan v44.79 (dari v44.78):
@@ -223,11 +223,11 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "v44.79"
+local VER       = "STAR v1.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
-local SAVE_FILE = "ZenxFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
-local SAVE_FILE_OLD = "ZenxFarm_settings.json"  -- file lama (sebelum per-user) buat migrasi
+local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
+local SAVE_FILE_OLD = "StarFarm_settings.json"  -- file lama (sebelum per-user) buat migrasi
 
 -- v4.4: AUTO RE-EXEC di PALING AWAL - daftarin queue_on_teleport sebelum apapun.
 -- v37.2: ANTI-SPAM 429 TOTAL. cache lokal + guard: kalau kena 429, JANGAN spam retry.
@@ -970,6 +970,7 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- ============================================================
 local Farm = {}
 pcall(function() getgenv().ZenxFarm = Farm end)   -- v36.4: expose buat tes console (mis. ZenxFarm.dropOneFruit())
+pcall(function() getgenv().StarFarm = Farm end)   -- STAR FARM: alias handle
 -- v44.26: CATAT JobId di AWAL (pas masuk server) - kunci balik ke server SAMA pas weather buruk.
 Farm._bootJobId = tostring(game.JobId or "")
 -- v37.1: expose helper UI + state ke Farm._ui biar buildCollectPanel (fungsi terpisah) bisa akses
@@ -3216,7 +3217,10 @@ function Farm.seedRarity(name)
 end
 function Farm.seedRarityRank(name)
     local r = Farm.seedRarity(name)
-    return (r and RARITY_RANK[r]) or 0
+    if not r then return 0 end
+    -- STAR FARM: rarity dikenal -> rank normal. rarity BARU/gak dikenal (tier baru) -> anggap di ATAS Mythic
+    -- (rank 99) biar seed event baru langsung kebeli tanpa perlu daftarin tier-nya.
+    return RARITY_RANK[r] or 99
 end
 
 -- v11.6: baca STOK dari server (StockValues.<Shop>.Items.<name> = NumberValue stok).
@@ -6082,7 +6086,7 @@ local logo = mk("TextLabel", {
     Text = "[bibit]", Font = FONT_B, TextSize = 18, TextColor3 = C.green, Parent = titleBar })
 local titleLbl = mk("TextLabel", {
     Size = UDim2.new(0, 200, 1, 0), Position = UDim2.new(0, 42, 0, 0), BackgroundTransparency = 1,
-    Text = "ZENX FARM", Font = FONT_B, TextSize = 15, TextColor3 = C.text,
+    Text = "STAR FARM", Font = FONT_B, TextSize = 15, TextColor3 = C.text,
     TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar })
 local verLbl = mk("TextLabel", {
     Size = UDim2.new(0, 40, 1, 0), Position = UDim2.new(0, 120, 0, 0), BackgroundTransparency = 1,
@@ -11738,6 +11742,18 @@ if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; stat
 -- kalau nanti butuh auto-buy-pet lagi, nyalain manual + hop-nya balikin.
 state.autoHop = false
 -- v44.6: autoWeatherHop TIDAK dipaksa - ikut state tersimpan (kalau di-ON manual, tetap ON pas rejoin)
+
+-- ===== STAR FARM: paksa tiap start =====
+-- default Farm 2: batas buah besar 100, trigger WC pas kecil = 0 (siram cuma pas kecil habis)
+state.af2BigCap = 100
+state.af2WCTrigger = 0
+-- Auto Buy Seed: Mythic ke ATAS + seed baru apapun (rarity gak dikenal dianggap tinggi) - SELALU ON
+state.autoBuySeed = true
+state.buyGoodSeeds = true
+state.buyGoodMinRarity = "Mythic"
+-- Farm 1 collect/sell DIBUANG di Star Farm - paksa OFF (Farm 2 yang dipakai)
+state.autoCollect = false
+state.autoSell = false
 
 applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyGiftPet(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
 -- v39.1: refresh toggle yg dipengaruhi tombol FARM 2 (collect+sell Farm1, sprinkler/wc/collect2/sell2 Farm2)
