@@ -2453,7 +2453,7 @@ function Farm.collectOnce()
                 end
                 if fruitUUID and #tostring(fruitUUID) >= 30 and okMut and okW and okFresh and okHeavy and okGlowGate then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
-                    Farm._collectKg = Farm._collectKg + Farm.gardenKg(fruit, seedName)  -- v10.8
+                    Farm._collectKg = Farm._collectKg + (Farm.gardenKg(fruit, seedName) or 0)  -- v10.8 (v1.2: or 0 - buah kg nil gak bikin ERROR -> collect gak crash)
                     fired = fired + 1; fruitCount = fruitCount + 1
                     task.wait()  -- jeda konsisten tiap fire (pola temen yg gacor)
                 end
@@ -9796,14 +9796,12 @@ staggerSpawn(function()
             Farm._af2BigCount = bigCount
             local now = os.clock()
 
-            -- STOP kalau buah besar sudah mencapai batas
-            if bigCount >= bigCap then
-                Farm._af2Status = string.format("STOP - buah >=%dkg udah %d (batas %d)", threshKg, bigCount, bigCap)
-                return
-            end
+            -- v1.3: pas buah besar nyampe cap -> STOP sprinkler DAN WC (jangan maksa tumbuh, besar dikunci
+            -- ~cap). collect (loop TERPISAH) tetep jalan -> buah kecil yg tumbuh ALAMI tetep kepanen.
+            local overCap = bigCount >= bigCap
 
-            -- SUPER SPRINKLER: place langsung pertama kali, lalu tiap 2 menit
-            if state.autoSuperSprinkler then
+            -- SUPER SPRINKLER: place langsung pertama kali, lalu tiap 2 menit. (SKIP kalau udah cap)
+            if state.autoSuperSprinkler and not overCap then
                 local sprElapsed = Farm._af2SprLastPlace and (now - Farm._af2SprLastPlace) or AF2_SPR_DURATION
                 -- v34.4: DETEKSI LANGSUNG tiap siklus - pakai detektor yg sama dgn gerbang WC.
                 -- sprinkler GA ADA di garden (abis/expired/place gagal) + place terakhir >10s (grace
@@ -9819,9 +9817,8 @@ staggerSpawn(function()
                 end
             end
 
-            -- SUPER WC: place kalau buah kecil <= wcTrigger DAN Sprinkler udah aktif di garden
-            -- (sprinkler harus ada dulu biar buah yang tumbuh besar, bukan kecil-kecil)
-            if state.autoSuperWC then
+            -- SUPER WC: place kalau buah kecil <= wcTrigger DAN Sprinkler udah aktif. (SKIP kalau udah cap)
+            if state.autoSuperWC and not overCap then
                 if smallCount <= wcTrigger and (now - (Farm._af2WCLastPlace or 0)) >= 30 then   -- v32.7: cooldown WC 30s (anti spam remote)
                     local sprActive = Farm.af2IsSprinklerActive()
                     if sprActive then
@@ -9838,8 +9835,8 @@ staggerSpawn(function()
             local sprActive = Farm.af2IsSprinklerActive()
             local wcStatus = smallCount <= wcTrigger and (sprActive and "place" or "nunggu spr") or "nunggu buah"
             Farm._af2Status = string.format(
-                "kecil: %d | besar: %d/%d | WC: %s | Spr: %s",
-                smallCount, bigCount, bigCap, wcStatus,
+                "kecil: %d | besar: %d/%d%s | WC: %s | Spr: %s",
+                smallCount, bigCount, bigCap, (overCap and " [CAP-collect kecil jalan]" or ""), wcStatus,
                 sprActive and ("ADA . "..remSpr.."s") or "GA ADA -> re-place")   -- v34.4
         end)
     end
@@ -11996,6 +11993,9 @@ state.autoSell = false
 state.autoBuySeed = true
 state.buyGoodSeeds = true
 state.buyGoodMinRarity = "Mythic"
+-- STAR FARM: default pilihan jenis Sprinkler/WC Farm 2 = Super (kalau belum dipilih manual)
+if not state.af2SprTool or state.af2SprTool == "" then state.af2SprTool = "Super Sprinkler" end
+if not state.af2WCTool  or state.af2WCTool  == "" then state.af2WCTool  = "Super Watering Can" end
 -- Fitur Glow (SELALU ON):
 if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollectMin = 60 end   -- collect Glow cuma kalau di kebun >= ini
 if state.glowKgMin == nil then state.glowKgMin = 50 end                                          -- ambang kg buat fav/anti-sell/gift Glow
