@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v7.7  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v8.0  (standalone, basis ZENX v44.79) - GAG 2
+-- v8.0: webhook status (Akun/Glow/Super/Super WC) - kepicu: Glow 60+ numpuk, Super habis, atau WC habis
+-- v7.8: panel: pohon/kecil/besar/value/GLOW/spr-wc. "total buah" & "mail" dibuang
 -- v7.7: rejoin delay per cuaca (Gold 2 menit, Electric 6 menit) + buang TeleportToPlaceInstance (diblok)
 -- v7.6: cuaca buruk -> KICK + AUTO-REJOIN ke server SAMA (kick lokal = sc tetep hidup). delay 120s
 -- v7.5: gak fav buah yg mau dikirim (percuma+lambat) + teks mail auto-refresh via Mailbox.Updated
@@ -277,7 +279,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v7.7"
+local VER       = "STAR v8.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -785,6 +787,8 @@ local state = {
     gfRelayWrite    = false,     -- v18.5: akun ini PET (tulis sheckles ke relay)
     gfAlert         = true,      -- v18.7: notif Discord pas sheckles < batas (sekali, anti-spam)
     gfAlertHook     = "https://discordapp.com/api/webhooks/1517745541595791370/WLFb5xOdnkcQxUaJIsUGIZROWKjoY-daksFnqnia-p307Ez-50dttV2cKofcplc9AD3v",
+    toolHabisHook   = "",        -- v7.9: webhook notif status (kosong = pakai gfAlertHook)
+    glowNotifMin    = 60,        -- v8.0: notif kalau Glow di kebun >= ini
     giftGears       = {},        -- v15.1: jenis GEAR yg dikirim via mailbox (ganti dari fruit)
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
     giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
@@ -864,6 +868,8 @@ local function saveState()
         out.sfGlowGiftTarget = state.sfGlowGiftTarget or ""   -- STAR FARM: target gift Glow (PERSISTEN)
         out.glowCollectMin = state.glowCollectMin or 60   -- STAR FARM: ambang gate Glow (persisten)
         out.weatherRejoinSec = state.weatherRejoinSec or 120  -- v7.6: delay rejoin cuaca buruk
+        out.toolHabisHook = state.toolHabisHook or ""     -- v7.9: webhook tool habis
+        out.glowNotifMin = state.glowNotifMin or 60       -- v8.0: ambang notif Glow
         out.weatherDelaySec = state.weatherDelaySec        -- v7.7: delay per jenis cuaca
         out.gfStorageTarget = state.gfStorageTarget or ""  -- v21.7
         out.gfStorageMinVal = state.gfStorageMinVal or 4000000  -- v21.8
@@ -941,6 +947,8 @@ local function loadState()
                 if type(d.prioMailMax) == "number" then state.prioMailMax = d.prioMailMax end
                 if type(d.weatherRejoinSec) == "number" then state.weatherRejoinSec = d.weatherRejoinSec end
                 if type(d.weatherDelaySec) == "table" then state.weatherDelaySec = d.weatherDelaySec end
+                if type(d.toolHabisHook) == "string" then state.toolHabisHook = d.toolHabisHook end
+                if type(d.glowNotifMin) == "number" then state.glowNotifMin = d.glowNotifMin end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -6917,7 +6925,7 @@ Farm.buildScreenOverlay = function()
         pcall(function() og.Parent = host2 end)
         if not og.Parent then og.Parent = player:WaitForChild("PlayerGui") end
         local box = Instance.new("Frame")
-        box.Size = UDim2.new(0, 172, 0, 218)   -- v7.1: +30 buat baris "mail"
+        box.Size = UDim2.new(0, 172, 0, 188)   -- v7.8: balik 6 baris (mail dibuang)
         box.Position = UDim2.new(1, -184, 0, 12)   -- pojok kanan atas
         box.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         box.BackgroundTransparency = 0.15
@@ -6949,17 +6957,17 @@ Farm.buildScreenOverlay = function()
             return l, v
         end
         -- mode counter (default)
+        -- v7.8 (permintaan user): pohon / kecil / besar / value / GLOW / spr-wc.
+        -- "total buah" & "mail" DIBUANG.
         local lPohon, vPohon = row(6,  "pohon")
         local lKecil, vKecil = row(36, "kecil")
         local lBesar, vBesar = row(66, "besar")
         local lGift,  vGift  = row(96, "value")
-        local lTotal, vTotal = row(126, "total buah")
+        local lTotal, vTotal = row(126, "glow")     -- v7.8: dulu "total buah"
         local lSprWC, vSprWC = row(156, "spr/wc")
-        -- v7.1: baris MAIL - jumlah gift nyangkut di mailbox (kebaca tanpa buka mailbox)
-        local lMail,  vMail  = row(186, "mail")
         -- mode moon: label diganti nama moon, value diisi countdown. baris ke-6 (spr/wc)
         -- disembunyiin di mode moon (moon cuma 5). teks moon label lebih kecil biar muat.
-        local counterRows = { {lPohon,vPohon}, {lKecil,vKecil}, {lBesar,vBesar}, {lGift,vGift}, {lTotal,vTotal}, {lSprWC,vSprWC}, {lMail,vMail} }   -- v7.1: + baris mail
+        local counterRows = { {lPohon,vPohon}, {lKecil,vKecil}, {lBesar,vBesar}, {lGift,vGift}, {lTotal,vTotal}, {lSprWC,vSprWC} }
         local moonList = {
             {"Bloodmoon", "PW_Bloodmoon", "Bloodmoon"}, {"Goldmoon", "PW_Goldmoon", "Goldmoon"},
             {"Rainbow", "PW_RainbowMoon", "Rainbow"}, {"Mega", "PW_MegaMoon", "Mega"}, {"Moon", "PW_Moon", "Moon"},
@@ -6981,7 +6989,6 @@ Farm.buildScreenOverlay = function()
                     counterRows[i][1].Visible = true; counterRows[i][2].Visible = true
                 end
                 counterRows[6][1].Visible = false; counterRows[6][2].Visible = false
-                counterRows[7][1].Visible = false; counterRows[7][2].Visible = false   -- v7.1: mail ikut disembunyiin di mode moon
                 moonBtn.Text = "stat"; moonBtn.BackgroundColor3 = Color3.fromRGB(90,60,60)
             end
         end
@@ -7048,15 +7055,22 @@ Farm.buildScreenOverlay = function()
                         vKecil.Text = tostring(smallN)
                         vBesar.Text = tostring(bigN).."/"..tostring(state.af2BigCap or 1000)
                         vGift.Text = Farm.abbrev(valN)
-                        vTotal.Text = tostring(totalN)
+                        -- v7.8: baris GLOW - jumlah Glow di KEBUN / ambang gate. ijo = gate kebuka
+                        -- (Glow lagi dipanen & dikirim). ini yg paling perlu dipantau, bukan total buah.
+                        do
+                            local gn  = Farm._glowGardenLast or 0
+                            local gmn = state.glowCollectMin or 60
+                            vTotal.Text = tostring(gn).."/"..tostring(gmn)
+                            if state.sfGlowGate then
+                                local buka = (gn >= gmn) and Farm._glowAdaYgMinta
+                                vTotal.TextColor3 = buka and Color3.fromRGB(120,255,160)
+                                    or (Farm._glowAdaYgMinta and Color3.fromRGB(255,255,255) or Color3.fromRGB(150,150,150))
+                            else
+                                vTotal.TextColor3 = Color3.fromRGB(255,255,255)
+                            end
+                        end
                         local ns, nw = countSprWC()
                         vSprWC.Text = ns.." / "..nw
-                        -- v7.1: jumlah gift nyangkut di mailbox (gak perlu buka mailbox)
-                        do
-                            local nm = Farm.mailCount()
-                            vMail.Text = tostring(nm)
-                            vMail.TextColor3 = (nm > 0) and Color3.fromRGB(120,255,160) or Color3.fromRGB(255,255,255)
-                        end
                     else
                         -- v43.3: AMBIL SEKALI, countdown LOKAL, refetch pas ada moon habis (hemat request).
                         -- akun sumber (WeatherUI keisi) push tiap ~5s. akun lain pull sekali -> itung sendiri.
@@ -8474,6 +8488,98 @@ function Farm.weatherDelay(w)
     else d = t.lain or state.weatherRejoinSec or 120 end
     return math.max(45, tonumber(d) or 120)
 end
+
+-- v8.0: WEBHOOK NOTIF STATUS. isi: Akun / Glow / Super Sprinkler / Super WC.
+-- KEPICU kalau SALAH SATU kejadian:
+--   (1) Glow di kebun >= glowNotifMin (default 60)
+--   (2) Super Sprinkler HABIS (0)
+--   (3) Super WC HABIS (0)
+-- anti-spam: tiap kondisi cuma sekali per kejadian. begitu kondisinya normal lagi -> reset,
+-- jadi kalau kejadian lagi nanti, notif lagi.
+Farm._notifGlowSent = false
+Farm._notifSprSent  = false
+Farm._notifWCSent   = false
+function Farm.sendStatusWebhook(alasan, glowN, nSpr, nWC)
+    local url = state.toolHabisHook or state.gfAlertHook
+    if not url or url == "" then return end
+    local req = execRequest()
+    if not req then return end
+    local body = HS:JSONEncode({
+        embeds = {{
+            title = "[!] " .. alasan,
+            color = 15158332,   -- merah
+            fields = {
+                { name = "Akun",            value = player.Name,   inline = false },
+                { name = "Glow",            value = tostring(glowN), inline = true },
+                { name = "Super Sprinkler", value = tostring(nSpr),  inline = true },
+                { name = "Super WC",        value = tostring(nWC),   inline = true },
+            },
+            footer = { text = "STAR FARM " .. tostring(VER) },
+        }},
+    })
+    pcall(function()
+        req({ Url = url, Method = "POST",
+              Headers = { ["Content-Type"] = "application/json" }, Body = body })
+    end)
+    print("[StarFarm] webhook: " .. alasan .. " -> terkirim (glow=" .. glowN .. " spr=" .. nSpr .. " wc=" .. nWC .. ")")
+end
+
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(20)
+        if state.farm2On then
+            pcall(function()
+                -- stok Super Sprinkler & Super WC
+                local nSpr, nWC = 0, 0
+                for _, holder in ipairs(invHolders()) do
+                    if holder then
+                        for _, t in ipairs(holder:GetChildren()) do
+                            if t:IsA("Tool") then
+                                local nm = tostring(t.Name):lower()
+                                if nm:find("super") then
+                                    local cnt = t:GetAttribute("Count")
+                                    cnt = (type(cnt) == "number") and cnt or 1
+                                    if nm:find("watering") or nm:find("can") then nWC = nWC + cnt
+                                    elseif nm:find("sprinkler") then nSpr = nSpr + cnt end
+                                end
+                            end
+                        end
+                    end
+                end
+                local glowN = Farm._glowGardenLast or 0
+                local glowMin = state.glowNotifMin or 60
+
+                -- (1) Glow numpuk >= ambang
+                if glowN >= glowMin then
+                    if not Farm._notifGlowSent then
+                        Farm._notifGlowSent = true
+                        Farm.sendStatusWebhook("GLOW " .. glowN .. "+ NUMPUK di kebun", glowN, nSpr, nWC)
+                    end
+                else
+                    Farm._notifGlowSent = false
+                end
+                -- (2) Super Sprinkler habis
+                if state.autoSuperSprinkler then
+                    if nSpr <= 0 then
+                        if not Farm._notifSprSent then
+                            Farm._notifSprSent = true
+                            Farm.sendStatusWebhook("SUPER SPRINKLER HABIS", glowN, nSpr, nWC)
+                        end
+                    else Farm._notifSprSent = false end
+                end
+                -- (3) Super WC habis
+                if state.autoSuperWC then
+                    if nWC <= 0 then
+                        if not Farm._notifWCSent then
+                            Farm._notifWCSent = true
+                            Farm.sendStatusWebhook("SUPER WC HABIS", glowN, nSpr, nWC)
+                        end
+                    else Farm._notifWCSent = false end
+                end
+            end)
+        end
+    end
+end)
 
 function Farm.isBadWeatherNow()
     -- v35.4 (HASIL BONGKAR DATA): game punya DUA kanal terpisah -
