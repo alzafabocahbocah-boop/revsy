@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v3.1  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v3.3  (standalone, basis ZENX v44.79) - GAG 2
+-- v3.3: expose getMutation + diagnostik bawaan (_diagKecil) - lapor kenapa buah kecil gak kepanen
+-- v3.2: CABUT pause-sell gate Glow (bikin TAS PENUH -> collect gagal -> macet). anti-sell udah cukup
 -- v3.1: overlay panel (kecil/besar) ikut cuma hitung buah MATANG (dulu punya hitungan sendiri)
 -- v3.0: counter kecil/besar + collect cuma buah MATANG (Age>=MaxAge). buah mentah gak kehitung/kefire
 -- v2.5: FIX PERFORMA - single-harvest gak nembak tanaman yg buahnya di-skip filter (siklus 9.8s -> cepet)
@@ -232,7 +234,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v3.1"
+local VER       = "STAR v3.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1818,6 +1820,68 @@ local function getMutation(obj)
     end
     return nil
 end
+Farm.getMutation = getMutation   -- v3.3: expose biar debug/diagnostik bisa manggil
+
+-- v3.3: DIAGNOSTIK BAWAAN - nyalain lewat: getgenv().StarFarm._diagKecil = true
+-- tiap 10s lapor: buah kecil MATANG ada berapa, dan ketahan di mana (gate/mutasi/kg/heavy).
+task.spawn(function()
+    while true do
+        task.wait(10)
+        if Farm._diagKecil then
+            pcall(function()
+                local thr = math.abs(state.c2WeightF or 50)
+                local glowMin = state.glowCollectMin or 60
+                local G = workspace:FindFirstChild("Gardens")
+                if not G then return end
+                local glowN = 0
+                for _, pl in ipairs(G:GetChildren()) do
+                    local pf = pl:FindFirstChild("Plants")
+                    if pf then for _, p in ipairs(pf:GetChildren()) do
+                        if tonumber(tostring(p.Name):match("^(%d+)_")) == player.UserId then
+                            local fr = p:FindFirstChild("Fruits")
+                            if fr then for _, f in ipairs(fr:GetChildren()) do
+                                if getMutation(f) == "Glow" then glowN = glowN + 1 end
+                            end end
+                        end
+                    end end
+                end
+                local n, gate, lolos = 0, 0, 0
+                local contoh = {}
+                for _, pl in ipairs(G:GetChildren()) do
+                    local pf = pl:FindFirstChild("Plants")
+                    if pf then for _, p in ipairs(pf:GetChildren()) do
+                        if tonumber(tostring(p.Name):match("^(%d+)_")) == player.UserId then
+                            local sn = p:GetAttribute("SeedName")
+                            local fr = p:FindFirstChild("Fruits")
+                            if fr then for _, f in ipairs(fr:GetChildren()) do
+                                if Farm.isFruitRipe(f) then
+                                    local kg = Farm.gardenKg(f, sn) or 0
+                                    if kg > 0 and kg < thr then
+                                        n = n + 1
+                                        local m = getMutation(f)
+                                        local tahan = nil
+                                        if state.sfGlowGate and m == "Glow" and glowN < glowMin then
+                                            if not (state.sfGlowCollectSmall and kg < (state.glowKgMin or 50)) then
+                                                tahan = "GATE-GLOW"; gate = gate + 1
+                                            end
+                                        end
+                                        if not tahan then lolos = lolos + 1 end
+                                        if #contoh < 5 then
+                                            contoh[#contoh+1] = string.format("mut=%s kg=%.1f%s", tostring(m), kg, tahan and (" ["..tahan.."]") or "")
+                                        end
+                                    end
+                                end
+                            end end
+                        end
+                    end end
+                end
+                print(string.format("[DIAG] kecil MATANG=%d | ketahan gate=%d | mestinya kepanen=%d | Glow=%d/%d | tasPenuh=%s",
+                    n, gate, lolos, glowN, glowMin, tostring(Farm._bagFull)))
+                for _, c in ipairs(contoh) do print("[DIAG]   "..c) end
+            end)
+        end
+    end
+end)
 -- cek apakah objek lolos filter mutasi. allKey true -> lolos semua.
 local function passMutation(obj, selSet, allKey, mutOnly)
     if state[allKey] then
@@ -3928,7 +3992,7 @@ staggerSpawn(function()
             -- v44.59: DELAY 5 detik sblm sell mulai (biar ada waktu batalin kalau salah pencet Farm 2)
             if isCurrentGen() and state.autoSell2
                and (not Farm._sell2StartAt or os.clock() >= Farm._sell2StartAt)
-               and (not Farm._sellPause or os.clock() >= Farm._sellPause) then   -- v1.6: pause Sell 2 pas gate Glow kebuka / Glow di tas belum kefav-kekirim
+               and (not Farm._sellPause or os.clock() >= Farm._sellPause) then   -- v3.2: hormatin _sellPause (skrg cuma dari watchdog +3s, BUKAN gate Glow lagi)
                 if state.s2WhenFull then
                     local cur = getInvCount(); local mx = getInvMax()
                     if cur >= mx then
@@ -12046,15 +12110,11 @@ function Farm.starGlowTick()
     -- v1.6: pas GATE GLOW KEBUKA (lagi manen Glow borongan) ATAU masih ada Glow di tas yg belum
     -- kefav / nunggu dikirim -> PAUSE Sell 2 dulu, biar buah Glow gak keburu kejual sebelum
     -- di-fav/dikirim. (sell resume sendiri pas gate nutup & tas Glow udah beres)
-    do
-        local gateOpen = (Farm._glowGardenLast or 0) >= (state.glowCollectMin or 60)
-        local pendingFav = false
-        for _, g in ipairs(glowList) do if not g.fav then pendingFav = true; break end end
-        local pendingGift = state.sfGlowGift and (state.sfGlowGiftTarget or "") ~= "" and #glowList >= (state.sfGlowGiftBatch or 20)
-        if gateOpen or pendingFav or pendingGift then
-            Farm._sellPause = os.clock() + 8   -- tahan Sell 2 ~8 detik (di-refresh tiap 5s selama masih ada Glow pending)
-        end
-    end
+    -- v3.2: PAUSE SELL DICABUT. dulu (v1.6) Sell 2 di-pause pas gate Glow kebuka / Glow belum kefav
+    -- -> gate ON terus = sell ke-pause TERUS -> TAS PENUH ("Inventaris Anda penuh") -> buah gak bisa
+    -- masuk -> collect gagal -> "kecil" gak turun -> WC gak trigger -> MACET TOTAL.
+    -- pause ini emang gak perlu: Anti-Sell Glow 50kg+ (line ~3242) udah nolak jual Glow >=50kg
+    -- tanpa peduli udah kefav apa belum. jadi Glow tetep aman walau sell jalan terus.
     -- 1) AUTO-FAV Glow >= kgMin yg belum kefav
     if state.sfGlowFav then
         for _, g in ipairs(glowList) do
