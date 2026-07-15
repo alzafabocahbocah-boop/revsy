@@ -1,5 +1,10 @@
 -- ============================================================
--- STAR FARM  v8.5  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v9.2  (standalone, basis ZENX v44.79) - GAG 2
+-- v9.2: SEMUA urusan Glow (fav/unfav/gift) cuma jalan kalau Farm 2 nyala. Farm 2 mati = gak disentuh
+-- v9.0: FIX gift Glow cuma nyampe 8-12 - TUNGGU unfav keproses server dulu, baru kirim 20
+-- v8.9: hitung mundur "WC tunggu" muncul di panel kanan atas (baris spr/wc)
+-- v8.8: WC nunggu 10s dulu setelah buah kecil <= trigger (dulu nyentuh 30 langsung nyiram)
+-- v8.7: card MAIL - opsi "stop buah": udah kirim N buah (mis. 500) -> loop berhenti
 -- v8.5: cooldown Super WC 30s -> 12s
 -- v8.2: PAKSA semua akun: gate Glow=20, trigger WC=30, batas buah besar=100 (nimpa setelan lama)
 -- v8.1: trigger Super WC default 30 (sisa buah kecil <= 30). dulu 0 = WC gak pernah jalan
@@ -282,7 +287,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v8.5"
+local VER       = "STAR v9.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -795,6 +800,8 @@ local state = {
     af2WCTrigger    = 30,        -- v8.1: trigger Super WC - place kalau sisa buah kecil <= ini
     af2BigCap       = 100,       -- v8.2: batas buah besar (sprinkler/WC stop di sini)
     af2WCCooldown   = 12,        -- v8.5: jeda antar place Super WC (detik). 30=kelamaan, 2=kecepetan
+    mailTargetCount = 0,         -- v8.7: berhenti kalau udah kirim N buah total (0 = tanpa batas)
+    af2WCDelay      = 10,        -- v8.8: tunggu N detik setelah buah kecil <= trigger, baru nyiram
     giftGears       = {},        -- v15.1: jenis GEAR yg dikirim via mailbox (ganti dari fruit)
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
     giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
@@ -857,6 +864,8 @@ local function saveState()
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
         out.af2WCTrigger = state.af2WCTrigger or 30   -- v8.1: default 30
         out.af2WCCooldown = state.af2WCCooldown or 12     -- v8.5: cooldown WC
+        out.mailTargetCount = state.mailTargetCount or 0  -- v8.7: stop di N buah
+        out.af2WCDelay = state.af2WCDelay or 10           -- v8.8: jeda tunggu WC
         out.hideBigKg = state.hideBigKg or 100   -- v32.8
         out.af2SavePos = state.af2SavePos   -- v4.1: titik simpan sprinkler/WC (dari karakter)
         out.af2BigCap = state.af2BigCap or 100
@@ -935,6 +944,8 @@ local function loadState()
                 if type(d.af2SavePos) == "table" and type(d.af2SavePos.x) == "number" then state.af2SavePos = d.af2SavePos end
                 if type(d.af2BigCap) == "number" then state.af2BigCap = d.af2BigCap end
                 if type(d.af2WCCooldown) == "number" then state.af2WCCooldown = d.af2WCCooldown end
+                if type(d.mailTargetCount) == "number" then state.mailTargetCount = d.mailTargetCount end
+                if type(d.af2WCDelay) == "number" then state.af2WCDelay = d.af2WCDelay end
                 if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
                 if type(d.af2SprTool) == "string" then state.af2SprTool = d.af2SprTool end
                 if type(d.af2WCTool)  == "string" then state.af2WCTool  = d.af2WCTool  end
@@ -7078,7 +7089,20 @@ Farm.buildScreenOverlay = function()
                             end
                         end
                         local ns, nw = countSprWC()
-                        vSprWC.Text = ns.." / "..nw
+                        -- v8.9: + hitung mundur "WC tunggu" di panel kanan atas (permintaan user).
+                        -- ijo = lagi nunggu 10s sebelum nyiram. angka utama tetep stok spr/wc.
+                        local wcSisa = nil
+                        if Farm._af2WCSince then
+                            local d = (tonumber(state.af2WCDelay) or 10) - (os.clock() - Farm._af2WCSince)
+                            if d > 0 then wcSisa = math.ceil(d) end
+                        end
+                        if wcSisa then
+                            vSprWC.Text = ns.." / "..nw.."  "..wcSisa.."s"
+                            vSprWC.TextColor3 = Color3.fromRGB(120,255,160)
+                        else
+                            vSprWC.Text = ns.." / "..nw
+                            vSprWC.TextColor3 = Color3.fromRGB(255,255,255)
+                        end
                     else
                         -- v43.3: AMBIL SEKALI, countdown LOKAL, refetch pas ada moon habis (hemat request).
                         -- akun sumber (WeatherUI keisi) push tiap ~5s. akun lain pull sekali -> itung sendiri.
@@ -7680,8 +7704,9 @@ function Farm.mailGiftSend(target, fruitFilter, rngLo, rngHi, cap, useMarket)
     table.sort(elig, function(a, b) return a.val > b.val end)   -- nilai terbesar dulu
     -- v32.3/32.5: SATU batch per panggilan (max 20 buah), DIVERIFIKASI + reconcile bounce di atas.
     local picked, sum = {}, 0
+    local maxBuah = 20   -- max buah per panggilan (1 batch)
     for _, e in ipairs(elig) do
-        if sum >= cap or #picked >= 20 then break end   -- max 20 buah / panggilan (1 batch)
+        if sum >= cap or #picked >= maxBuah then break end   -- batas buah / panggilan (1 batch)
         picked[#picked+1] = e; sum = sum + e.val
     end
     local items = {}
@@ -8023,8 +8048,21 @@ local function showMailGift()
         BackgroundColor3=C.input, Text=state.mailMinCount or "20", PlaceholderText="20", TextColor3=C.text,
         Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(mcBox,6); stroke(mcBox,C.border,1)
     mcBox.FocusLost:Connect(function() state.mailMinCount = mcBox.Text; saveState() end)
+    -- v8.7: field "stop buah" - kalau udah ngirim N buah TOTAL, loop BERHENTI (mis. 500).
+    -- 0 / kosong = tanpa batas (berhenti pas target NILAI kecapai, kayak biasa).
+    local bcLabel = lbl(pop, "stop buah:", 11, C.textDim, Enum.TextXAlignment.Left)
+    bcLabel.Position=UDim2.new(0,336,0,222); bcLabel.Size=UDim2.new(0,54,0,24); bcLabel.ZIndex=72
+    local bcBox = mk("TextBox", { Size=UDim2.new(0,50,0,24), Position=UDim2.new(0,392,0,222),
+        BackgroundColor3=C.input, Text=tostring(state.mailTargetCount or 0), PlaceholderText="0", TextColor3=C.text,
+        Font=FONT, TextSize=12, BorderSizePixel=0, ClearTextOnFocus=false, ZIndex=72, Parent=pop }); corner(bcBox,6); stroke(bcBox,C.border,1)
+    bcBox.FocusLost:Connect(function()
+        local n = math.floor(tonumber(bcBox.Text) or 0)
+        if n < 0 then n = 0 end
+        state.mailTargetCount = n; bcBox.Text = tostring(n); saveState()
+        print("[StarFarm] mail: berhenti kalau udah kirim "..(n > 0 and (n.." buah") or "(tanpa batas buah)"))
+    end)
     local rvHint = lbl(pop, "kosong = tanpa batas.  cth: min 3, max 8 = buah 3M-8M", 10, C.textMute, Enum.TextXAlignment.Left)
-    rvHint.Position=UDim2.new(0,14,0,222); rvHint.Size=UDim2.new(1,-28,0,16); rvHint.ZIndex=72
+    rvHint.Position=UDim2.new(0,14,0,224); rvHint.Size=UDim2.new(0,318,0,16); rvHint.ZIndex=72   -- v8.6: dipendekin, kanan dipake "jml buah"
 
     local out = lbl(pop, "isi penerima, jenis buah, target & range -> KIRIM (auto sampai target, lewat mailbox)", 11, C.textDim, Enum.TextXAlignment.Left)
     out.Position=UDim2.new(0,14,0,292); out.Size=UDim2.new(1,-28,0,32); out.ZIndex=72; out.TextWrapped=true
@@ -8118,6 +8156,15 @@ local function showMailGift()
                         Farm._mailSessionSent = cumv
                     end
                     local nInfo = (type(cumn) == "number") and (" ("..cumn.." buah)") or ""
+                    -- v8.7: BERHENTI kalau udah kirim N buah TOTAL (mis. 500). dicek DULUAN sebelum
+                    -- target nilai - jadi mana yg kecapai duluan, itu yg nyetop.
+                    local tgtN = tonumber(state.mailTargetCount) or 0
+                    if tgtN > 0 and type(cumn) == "number" and cumn >= tgtN then
+                        Farm._mailStatus = "SELESAI  udah kirim "..cumn.." buah (target "..tgtN..") ke "..target
+                        Farm._mailStatusCol = C.green; Farm._mailRunning=false; Farm._mailClearRecv=true; state.mailTarget=""
+                        print("[StarFarm] mail: STOP - udah kirim "..cumn.." buah (target "..tgtN..")")
+                        return
+                    end
                     if Farm._mailSessionSent >= tot then
                         Farm._mailStatus = "SELESAI  terkirim "..Farm.abbrev(Farm._mailSessionSent)..nInfo.." / "..Farm.abbrev(tot).." ke "..target
                         Farm._mailStatusCol = C.green; Farm._mailRunning=false; Farm._mailClearRecv=true; state.mailTarget=""; return
@@ -10588,16 +10635,30 @@ staggerSpawn(function()
 
             -- SUPER WC: place kalau buah kecil <= wcTrigger DAN Sprinkler udah aktif. (SKIP kalau udah cap)
             if state.autoSuperWC and not overCap then
-                -- v8.5: cooldown 30s -> 12s (permintaan user - WC kerasa LEMOT nunggu trigger).
-                -- v32.7 dulu naikin ke 30s buat "anti spam remote", tapi 30 detik kelamaan:
-                -- buah kecil udah <= trigger, WC baru jalan setengah menit kemudian.
+                -- v8.5: cooldown 30s -> 12s (jeda ANTAR siraman).
                 local wcCd = tonumber(state.af2WCCooldown) or 12
-                if smallCount <= wcTrigger and (now - (Farm._af2WCLastPlace or 0)) >= wcCd then
+                -- v8.8: TUNGGU DULU sebelum siraman pertama. dulu begitu buah kecil nyentuh <=30,
+                -- BELUM ADA 1 DETIK udah langsung nyiram. sekarang: pas syarat kena, catat waktunya,
+                -- diem dulu wcTunggu detik. kalau selama nunggu buahnya naik lagi di atas trigger
+                -- (kepanen/tumbuh), hitungan DIBATALIN - jadi gak nyiram percuma.
+                local wcTunggu = tonumber(state.af2WCDelay) or 10
+                if smallCount <= wcTrigger then
+                    if not Farm._af2WCSince then
+                        Farm._af2WCSince = now
+                        print(string.format("[AF2] WC: buah kecil %d <= %d -> tunggu %ds dulu...", smallCount, wcTrigger, wcTunggu))
+                    end
+                else
+                    Farm._af2WCSince = nil   -- naik lagi di atas trigger -> batal
+                end
+                local nunggu = Farm._af2WCSince and (now - Farm._af2WCSince) or 0
+                if smallCount <= wcTrigger and nunggu >= wcTunggu
+                   and (now - (Farm._af2WCLastPlace or 0)) >= wcCd then
                     local sprActive = Farm.af2IsSprinklerActive()
                     if sprActive then
                         print(string.format("[AF2] WC: %d buah + sprinkler aktif -> place WC", smallCount))
                         Farm.af2PlaceWateringCan()
                         Farm._af2WCLastPlace = now
+                        Farm._af2WCSince = nil   -- v8.8: reset - siklus berikut nunggu lagi dari awal
                     else
                         print("[AF2] WC: nunggu Super Sprinkler dulu di garden")
                     end
@@ -10606,7 +10667,11 @@ staggerSpawn(function()
 
             local remSpr = Farm._af2SprLastPlace and math.max(0, math.floor(AF2_SPR_DURATION - (now - Farm._af2SprLastPlace))) or 0
             local sprActive = Farm.af2IsSprinklerActive()
-            local wcStatus = smallCount <= wcTrigger and (sprActive and "place" or "nunggu spr") or "nunggu buah"
+            local _wcSince = Farm._af2WCSince and math.max(0, math.floor((tonumber(state.af2WCDelay) or 10) - (now - Farm._af2WCSince))) or nil
+            local wcStatus = smallCount <= wcTrigger
+                and ((_wcSince and _wcSince > 0) and ("tunggu ".._wcSince.."s")
+                     or (sprActive and "place" or "nunggu spr"))
+                or "nunggu buah"
             Farm._af2Status = string.format(
                 "kecil: %d | besar: %d/%d%s | WC: %s | Spr: %s",
                 smallCount, bigCount, bigCap, (overCap and " [CAP-collect kecil jalan]" or ""), wcStatus,
@@ -12764,6 +12829,13 @@ function Farm.starGlowTick()
     -- masuk -> collect gagal -> "kecil" gak turun -> WC gak trigger -> MACET TOTAL.
     -- pause ini emang gak perlu: Anti-Sell Glow 50kg+ (line ~3242) udah nolak jual Glow >=50kg
     -- tanpa peduli udah kefav apa belum. jadi Glow tetep aman walau sell jalan terus.
+    -- v9.2: SEMUA urusan Glow (FAV, UNFAV, GIFT) CUMA JALAN KALAU FARM 2 NYALA.
+    -- Farm 2 mati = sc gak nyentuh Glow sama sekali (gak nge-fav, gak nge-unfav, gak ngirim) -
+    -- biar user bebas ngatur sendiri pas lagi manual.
+    if not state.farm2On then
+        Farm._sfGiftStatus = "Farm 2 OFF - fav/unfav/gift Glow berhenti semua"
+        return
+    end
     -- v7.5: cek DULU apakah tick ini bakal NGIRIM. kalau iya, buah yg mau dikirim JANGAN di-fav -
     -- percuma & lambat (di-fav terus langsung di-unfav lagi 2 baris di bawah). tetep aman krn
     -- anti-sell (v5.6) ngelindungin Glow tanpa peduli fav.
@@ -12807,9 +12879,8 @@ function Farm.starGlowTick()
         Farm._sfGiftStatus = "gak ada yg minta - Glow ditahan di tas (kefav)"
         return
     end
-    if state.sfGlowGift and target ~= "" and #glowList >= batch then
-        local uid = resolveTargetId(target)
-        if not uid then Farm._sfGiftStatus = "target '"..target.."' gak ketemu"; return end
+    if bakalKirim then
+        local uid = resolveTargetId(target)        if not uid then Farm._sfGiftStatus = "target '"..target.."' gak ketemu"; return end
         if uid == player.UserId then Farm._sfGiftStatus = "target = diri sendiri"; return end
         local sb = pkt("Mailbox", "SendBatch")
         if not (sb and sb.Fire) then Farm._sfGiftStatus = "SendBatch gak ada"; return end
@@ -12820,20 +12891,55 @@ function Farm.starGlowTick()
         -- NYANGKUT true SELAMANYA -> sell mati total -> TAS PENUH -> collect gagal -> MACET
         -- (persis bencana v3.2). sekarang kunci OTOMATIS LEPAS max 15 detik, apapun yg kejadian.
         Farm._giftBusy = true
-        Farm._giftBusyUntil = os.clock() + 15
+        Farm._giftBusyUntil = os.clock() + 20
+        -- v9.0 FIX (bukti user): lewat card MAIL, kirim 20 sekaligus BERHASIL - jadi server GAK
+        -- mbatesin 8. bedanya: MAIL gak nge-unfav apa2, sedangkan gift Glow UNFAV tepat sebelum
+        -- kirim. buah yg masih KEFAV = DITOLAK server -> nyampe cuma 8-12 (acak, tergantung
+        -- unfav mana yg sempet keproses). jadi masalahnya BUKAN jumlah, tapi TIMING unfav.
+        -- sekarang: unfav SEMUA -> TUNGGU sampai server beneran nurunin flag-nya (dicek dari
+        -- atribut Favorite, timeout 4s) -> baru kirim 20 sekaligus.
         local items = {}
+        local perluCek = {}
         for i = 1, batch do
             local g = glowList[i]
-            -- v7.5: cuma unfav yg BENERAN kefav. yg belum kefav (krn di-skip di langkah 1)
-            -- gak usah dikirimin remote -> lebih cepet & gak spam server.
-            if g.fav then pcall(function() Farm.setFruitFav(g.id, false) end) end
+            if g.fav then
+                pcall(function() Farm.setFruitFav(g.id, false) end)
+                perluCek[#perluCek+1] = g.id
+            end
             items[#items+1] = { ItemKey = g.id, Count = 1, Category = "HarvestedFruits" }
-            if i % 8 == 0 then task.wait() end
         end
+        -- tunggu konfirmasi unfav dari server (yg bikin 8-12 kemarin)
+        if #perluCek > 0 then
+            local t0 = os.clock()
+            while os.clock() - t0 < 4 do
+                local masihFav = 0
+                pcall(function()
+                    local set = {}
+                    for _, id in ipairs(perluCek) do set[id] = true end
+                    for _, holder in ipairs(invHolders()) do
+                        if holder then
+                            for _, o in ipairs(holder:GetChildren()) do
+                                local id = o:GetAttribute("Id")
+                                if id and set[tostring(id)] then
+                                    if (o:GetAttribute("Favorite") or o:GetAttribute("Favorited")) then
+                                        masihFav = masihFav + 1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+                if masihFav == 0 then break end
+                Farm._giftBusyUntil = os.clock() + 20   -- perpanjang kunci selama nunggu
+                task.wait(0.2)
+            end
+            print(string.format("[StarFarm] unfav %d Glow -> keproses dalam %.1fs", #perluCek, os.clock() - t0))
+        end
+        local terkirim = batch
         local ok = pcall(function() sb:Fire(uid, items, "") end)
         if ok then
-            Farm._sfGiftStatus = "OK kirim "..batch.." -> "..target
-            print("[StarFarm] GIFT Glow: "..batch.." buah -> "..target)
+            Farm._sfGiftStatus = "OK kirim "..terkirim.." -> "..target
+            print("[StarFarm] GIFT Glow: "..terkirim.." buah -> "..target)
         else
             -- gagal: fav lagi biar aman (sisanya tetep kelindungi)
             for i = 1, batch do pcall(function() Farm.setFruitFav(glowList[i].id, true) end) end
@@ -12905,6 +13011,7 @@ state.glowCollectMin = 20
 state.af2WCTrigger   = 30
 state.af2BigCap      = 100
 state.af2WCCooldown  = 12    -- v8.5: jeda WC 12 detik (dulu 30 - kerasa lemot)
+state.af2WCDelay     = 10    -- v8.8: tunggu 10 detik setelah buah kecil <= trigger, baru nyiram
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
 -- v7.4: FARM 2 NEMPEL. state.farm2On emang udah disimpen, TAPI applyFarm2 cuma kepanggil pas
