@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v6.4  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v6.6  (standalone, basis ZENX v44.79) - GAG 2
+-- v6.6: shovel balik ke SEMUA buah <ambang (mentah ikut) - permintaan user. tetep ikut Farm 2
+-- v6.5: shovel ikut Farm 2 (gak maksa ON) + CUMA sekop buah MATANG-kecil (dulu buah tumbuh ikut kesekop)
 -- v6.4: ambang Glow 50kg -> 30kg (anti-sell/fav/gift). Glow 30kg+ dilindungi & dikirim
 -- v6.3: CABUT gfAuto dari Farm 2 (v5.8 bikin Aurora/Frozen ikut kekirim). yg dikirim CUMA Glow 50kg+
 -- v6.2: gift batal (penerima matiin) -> Glow yg terlanjur ke-unfav LANGSUNG di-fav lagi
@@ -265,7 +267,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v6.4"
+local VER       = "STAR v6.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -6189,7 +6191,10 @@ function Farm.shovelFruitOnce()
                         for _, fruit in ipairs(fruits:GetChildren()) do
                             if not state.shovelFruit then break end
                             local kg = Farm.gardenKg(fruit, seedName) or 0   -- v4.8: or 0 - kg nil bikin ERROR (compare nil) -> loop mati
-                            -- buang kalau buah DI BAWAH ambang (kecil/jelek)
+                            -- v6.6: cek MATANG dicabut (permintaan user) - sekop SEMUA buah di bawah
+                            -- ambang, mentah sekalipun. konsekuensi yg udah diketahui: buah baru kan
+                            -- lahirnya kecil -> ikut kesekop -> tanaman numbuhin lagi -> muter terus
+                            -- (counter "dibuang" bakal gede banget). ini disengaja.
                             if kg > 0 and kg < thr then
                                 local fruitName = fruit.Name  -- format <plantId>_<fruitUUID>
                                 if #fruitName >= 30 then
@@ -6626,6 +6631,7 @@ Farm.buildFarm2Btn = function()
             state.autoCollect2 = false
             state.autoSell2 = false
             state.autoWeatherHop = false    -- v44.34: weather kick ikut Farm 2 (OFF)
+            state.shovelFruit = false       -- v6.5: shovel buah ikut Farm 2 (OFF)
             state.collectAll = true
             state.collectMutAll = false
             state.selectedCollectMut = { Bloodlit = true, Glow = true }   -- v44.65: default Farm 1 collect = Bloodlit + Glow
@@ -9781,7 +9787,7 @@ end
 do
     local card, body, setH = mkFarmCard(16, "Auto Shovel Fruit", "buang buah kecil -> slot kosong -> tumbuh baru", buyList)
     setH(150)
-    local info = lbl(body, "Buah DI BAWAH ambang kg dibuang pakai Sekop (semua jenis, semua mutasi).", 11, C.textDim, Enum.TextXAlignment.Left)
+    local info = lbl(body, "Semua buah di bawah ambang kg dibuang pakai Sekop (mentah sekalipun, semua jenis & mutasi).", 11, C.textDim, Enum.TextXAlignment.Left)
     info.Position = UDim2.new(0,0,0,2); info.Size = UDim2.new(1,0,0,26); info.TextWrapped = true
     mkBodyToggle(body, 32, "Auto Shovel Fruit", "shovelFruit", "Auto Shovel Fruit")
     -- input ambang kg
@@ -12546,12 +12552,11 @@ if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollec
 state.glowKgMin = 30
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
--- v4.8: SHOVEL BUAH <50kg, SEMUA jenis - auto ON (permintaan user).
--- format terkonfirmasi via sniff: UseShovel(plant.Name, fruit.Name, "Shovel", tool)
--- ambang bisa diubah di card "Auto Shovel Fruit" (MISC) atau: getgenv().StarFarm._ui.state.shovelFruitKg = 60
-state.shovelFruit    = true
+-- v6.5: shovel buah GAK dipaksa ON lagi tiap start (v4.8 dulu maksa -> jalan terus walau Farm 2
+-- OFF & gak ada buah kecil). sekarang IKUT FARM 2: nyala pas pencet -50/-60, mati pas ALL OFF.
+-- ambangnya tetep disiapin 50 kalau belum pernah diisi.
+if not state.shovelFruitKg or state.shovelFruitKg <= 0 then state.shovelFruitKg = 50 end
 state.shovelFruitAll = true     -- semua jenis pohon
-state.shovelFruitKg  = 50       -- buang buah DI BAWAH 50kg
 -- v4.0: sembunyiin VISUAL BUAH - ilang TOTAL (bukan samar). buah tetep kedetect & kepanen
 -- (cuma visual yg ilang, Model + atribut utuh). permintaan user.
 state.hideFruits = true
