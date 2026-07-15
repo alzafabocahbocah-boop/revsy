@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v4.3  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v4.5  (standalone, basis ZENX v44.79) - GAG 2
+-- v4.5: balik ke Age>=MaxAge (prompt ternyata tergantung JARAK) + matiin auto-cal prompt (gak ada teks kg)
+-- v4.4: panel overlay ikut generasi + hapus panel lama (dulu panel basi nunjukin angka lama)
 -- v4.3: DIAG tampilin FruitId/PlantId per buah (collect skip diam2 kalau salah satunya gak ada)
 -- v4.2: MATANG = ada prompt Panen (bukan Age>=MaxAge). buah Age-mentok tanpa prompt ditolak server
 -- v4.1: tombol SIMPAN POSISI sprinkler/WC dari karakter (persisten) + override picker plot
@@ -244,7 +246,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v4.3"
+local VER       = "STAR v4.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1050,19 +1052,15 @@ end
 -- bukti: Hypno Bloom Age=8/8 -> prompt Panen ADA (76kg); Age=4.2/8 -> prompt GAK ADA (12kg).
 -- kalau atribut Age/MaxAge gak ada (seed lain), anggap MATANG (biar gak nge-block seed lain).
 function Farm.isFruitRipe(f)
-    -- v4.2: PENANDA MATANG = ADA PROMPT PANEN. ini penanda game sendiri & paling akurat.
-    -- BUKTI: buah 35-42kg 'Age' udah mentok TAPI gak ada prompt -> server NOLAK collect (kefire
-    -- 33x/siklus tapi gak ilang). buah 74-82kg ada prompt -> kepanen. jadi Age >= MaxAge SALAH
-    -- dipakai jadi penanda matang (dulu v3.0-v3.9). anti-leg cuma DISABLE prompt, objeknya ada.
-    local ok, punya = pcall(function()
-        return f:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
-    end)
-    if ok then return punya end
-    -- cadangan (cek prompt gagal): pakai Age
+    -- v4.5: BALIK ke Age >= MaxAge. BUKTI dari dump garden: prompt Panen NGGAK konsisten -
+    -- buah SizeMulti 9.05 (gede) prompt=false, tapi SizeMulti 1.37 (kecil) prompt=true.
+    -- artinya prompt itu tergantung JARAK karakter (cuma nongol di buah deket), BUKAN penanda
+    -- matang. jadi v4.2 (prompt-based) SALAH -> cuma ngitung buah yg deket.
+    -- Age/MaxAge stabil & ada di semua buah -> ini yg dipakai.
     local age = f:GetAttribute("Age")
     local mx  = f:GetAttribute("MaxAge")
     if type(age) == "number" and type(mx) == "number" and mx > 0 then return age >= mx end
-    return true
+    return true   -- gak punya Age (jenis lain) -> anggap matang biar gak nge-block
 end
 
 function Farm.gardenKg(fruit, seedName)
@@ -1104,31 +1102,12 @@ Farm._loadBaseW()
 -- v2.1: AUTO-KALIBRASI dari PROMPT PANEN - seed BARU apapun otomatis dapet rasio kg-nya.
 -- baca teks kg di prompt buah ("... 71.64 kilogram") + SizeMulti -> rasio = kg/SizeMulti -> simpen.
 -- CUMA isi jenis yg BELUM ada di _baseW (gak nimpa hardcode). sekali kebaca, kesimpen permanen.
-local function autoCalScanFruit(f)
-    pcall(function()
-        local core = f:GetAttribute("CorePartName") or f:GetAttribute("SeedName")
-        if not core or Farm._baseW[core] or Farm._baseWLocked[core] then return end   -- udah ada/dikunci -> skip
-        local sm = f:GetAttribute("SizeMulti") or f:GetAttribute("SizeMultiplier")
-        if type(sm) ~= "number" or sm <= 0 then return end
-        -- cari teks kg (prompt Panen / label)
-        local kg
-        for _, d in ipairs(f:GetDescendants()) do
-            if d:IsA("ProximityPrompt") then
-                local t = (d.ObjectText or "").." "..(d.ActionText or "")
-                local n = t:match("([%d%.]+)%s*[kK]ilogram") or t:match("([%d%.]+)%s*kg")
-                if n then kg = tonumber(n); break end
-            elseif d:IsA("TextLabel") then
-                local n = (d.Text or ""):match("([%d%.]+)%s*[kK]ilogram") or (d.Text or ""):match("([%d%.]+)%s*kg")
-                if n then kg = tonumber(n); break end
-            end
-        end
-        if kg and kg > 0 then
-            Farm._baseW[core] = kg / sm
-            if Farm._saveBaseW then pcall(Farm._saveBaseW) end
-            print(string.format("[StarFarm] auto-kalibrasi '%s': rasio %.3f (dari prompt %.2fkg / sm %.4f)", core, kg/sm, kg, sm))
-        end
-    end)
-end
+-- v4.5: AUTO-KALIBRASI DARI PROMPT DIMATIIN - percuma. BUKTI dump garden: prompt Panen di buah
+-- kebun GAK ada teks "N kilogram" (kgPrompt=nil di semua buah), jadi gak ada yg bisa dibaca.
+-- Yang JALAN: kalibrasi dari buah di TAS (Farm.updateBaseW) - tool di tas punya atribut Weight
+-- + SizeMulti, rasio = Weight/SizeMulti. Jadi buat seed BARU (mis. Moon Bloom): panen 1 buah
+-- manual -> masuk tas -> rasio otomatis keisi & kesimpen permanen.
+local function autoCalScanFruit(f) end   -- (dinonaktifkan)
 task.spawn(function()
     task.wait(6)
     while isCurrentGen() do
@@ -6671,6 +6650,14 @@ Farm.buildScreenOverlay = function()
     local function makeOverlay()
         local host2 = (gethui and gethui()) or game:GetService("CoreGui")
         pcall(function() local o = host2:FindFirstChild("ZenxOverlay"); if o then o:Destroy() end end)
+        -- v4.4: hapus overlay LAMA dulu (sisa execute sebelumnya) biar gak numpuk 2 panel & angka basi
+        pcall(function()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            local ch = pg and pg:FindFirstChild("ZenxOverlay")
+            while ch do ch:Destroy(); ch = pg:FindFirstChild("ZenxOverlay") end
+            local ch2 = game:GetService("CoreGui"):FindFirstChild("ZenxOverlay")
+            while ch2 do ch2:Destroy(); ch2 = game:GetService("CoreGui"):FindFirstChild("ZenxOverlay") end
+        end)
         local og = Instance.new("ScreenGui")
         og.Name = "ZenxOverlay"; og.ResetOnSpawn = false; og.IgnoreGuiInset = true
         og.DisplayOrder = 9999   -- v43.0: paling depan, jangan ketutup teks lain
@@ -6752,7 +6739,10 @@ Farm.buildScreenOverlay = function()
         end)
         -- update loop
         task.spawn(function()
-            while og.Parent do
+            -- v4.4 FIX: loop IKUT GENERASI. dulu cuma `while og.Parent` -> pas execute ulang, panel
+            -- LAMA tetep jalan pakai logika LAMA & nimpa tampilan -> angka "kecil" ngaco/basi
+            -- (mis. panel bilang kecil=120 padahal instance baru ngitung 1).
+            while og.Parent and isCurrentGen() do
                 pcall(function()
                     -- v44.62: pas ANTI-LEG TOTAL nyala, panel berhenti nyusurin kebun (biang scan konstan)
                     if Farm._overlayPaused and overlayMode == "counter" then
