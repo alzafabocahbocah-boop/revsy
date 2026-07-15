@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v8.4  (standalone, basis ZENX v44.79) - GAG 2
--- v8.4: cooldown Super WC 30s -> 8s (dulu kelamaan nunggu trigger)
+-- STAR FARM  v8.5  (standalone, basis ZENX v44.79) - GAG 2
+-- v8.5: cooldown Super WC 30s -> 12s
 -- v8.2: PAKSA semua akun: gate Glow=20, trigger WC=30, batas buah besar=100 (nimpa setelan lama)
 -- v8.1: trigger Super WC default 30 (sisa buah kecil <= 30). dulu 0 = WC gak pernah jalan
 -- v8.0: webhook status (Akun/Glow/Super/Super WC) - kepicu: Glow 60+ numpuk, Super habis, atau WC habis
@@ -282,7 +282,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v8.4"
+local VER       = "STAR v8.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -794,7 +794,7 @@ local state = {
     glowNotifMin    = 60,        -- v8.0: notif kalau Glow di kebun >= ini
     af2WCTrigger    = 30,        -- v8.1: trigger Super WC - place kalau sisa buah kecil <= ini
     af2BigCap       = 100,       -- v8.2: batas buah besar (sprinkler/WC stop di sini)
-    af2WCCooldown   = 8,         -- v8.4: jeda antar place Super WC (detik). dulu 30 = kelamaan, 2 = kecepetan
+    af2WCCooldown   = 12,        -- v8.5: jeda antar place Super WC (detik). 30=kelamaan, 2=kecepetan
     giftGears       = {},        -- v15.1: jenis GEAR yg dikirim via mailbox (ganti dari fruit)
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
     giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
@@ -856,7 +856,7 @@ local function saveState()
         out.c2WeightF = state.c2WeightF or -50   -- v28.7: collect2 filter kg
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
         out.af2WCTrigger = state.af2WCTrigger or 30   -- v8.1: default 30
-        out.af2WCCooldown = state.af2WCCooldown or 8      -- v8.4: cooldown WC
+        out.af2WCCooldown = state.af2WCCooldown or 12     -- v8.5: cooldown WC
         out.hideBigKg = state.hideBigKg or 100   -- v32.8
         out.af2SavePos = state.af2SavePos   -- v4.1: titik simpan sprinkler/WC (dari karakter)
         out.af2BigCap = state.af2BigCap or 100
@@ -10588,10 +10588,10 @@ staggerSpawn(function()
 
             -- SUPER WC: place kalau buah kecil <= wcTrigger DAN Sprinkler udah aktif. (SKIP kalau udah cap)
             if state.autoSuperWC and not overCap then
-                -- v8.4: cooldown 30s -> 8s (permintaan user - WC kerasa LEMOT nunggu trigger).
+                -- v8.5: cooldown 30s -> 12s (permintaan user - WC kerasa LEMOT nunggu trigger).
                 -- v32.7 dulu naikin ke 30s buat "anti spam remote", tapi 30 detik kelamaan:
                 -- buah kecil udah <= trigger, WC baru jalan setengah menit kemudian.
-                local wcCd = tonumber(state.af2WCCooldown) or 8
+                local wcCd = tonumber(state.af2WCCooldown) or 12
                 if smallCount <= wcTrigger and (now - (Farm._af2WCLastPlace or 0)) >= wcCd then
                     local sprActive = Farm.af2IsSprinklerActive()
                     if sprActive then
@@ -12904,7 +12904,7 @@ state.glowKgMin = 30
 state.glowCollectMin = 20
 state.af2WCTrigger   = 30
 state.af2BigCap      = 100
-state.af2WCCooldown  = 8     -- v8.4: jeda WC 8 detik (dulu 30 - kerasa lemot)
+state.af2WCCooldown  = 12    -- v8.5: jeda WC 12 detik (dulu 30 - kerasa lemot)
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
 -- v7.4: FARM 2 NEMPEL. state.farm2On emang udah disimpen, TAPI applyFarm2 cuma kepanggil pas
