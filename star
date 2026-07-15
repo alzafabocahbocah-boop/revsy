@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v4.2  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v4.3  (standalone, basis ZENX v44.79) - GAG 2
+-- v4.3: DIAG tampilin FruitId/PlantId per buah (collect skip diam2 kalau salah satunya gak ada)
 -- v4.2: MATANG = ada prompt Panen (bukan Age>=MaxAge). buah Age-mentok tanpa prompt ditolak server
 -- v4.1: tombol SIMPAN POSISI sprinkler/WC dari karakter (persisten) + override picker plot
 -- v4.0: sembunyiin visual buah ILANG TOTAL auto-ON (buah tetep kedetect & kepanen)
@@ -243,7 +244,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v4.2"
+local VER       = "STAR v4.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1891,7 +1892,13 @@ task.spawn(function()
                                         if not tahan then lolos = lolos + 1 end
                                         if #contoh < 5 then
                                             local pr = f:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
-                                            contoh[#contoh+1] = string.format("mut=%s kg=%.1f prompt=%s%s", tostring(m), kg, tostring(pr), tahan and (" ["..tahan.."]") or "")
+                                            -- v4.3: cek fid/pid - collect SKIP DIAM2 kalau salah satu gak ada
+                                            local fid = f:GetAttribute("FruitId") or f.Name:match("_([%x%-]+)$")
+                                            local pid = p:GetAttribute("PlantId")
+                                            contoh[#contoh+1] = string.format("mut=%s kg=%.1f prompt=%s fid=%s(%d) pid=%s%s",
+                                                tostring(m), kg, tostring(pr),
+                                                (fid and "ada" or "GAK"), (fid and #tostring(fid) or 0),
+                                                (pid and "ada" or "GAK"), tahan and (" ["..tahan.."]") or "")
                                         end
                                     end
                                 end
