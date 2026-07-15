@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v4.1  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v4.2  (standalone, basis ZENX v44.79) - GAG 2
+-- v4.2: MATANG = ada prompt Panen (bukan Age>=MaxAge). buah Age-mentok tanpa prompt ditolak server
 -- v4.1: tombol SIMPAN POSISI sprinkler/WC dari karakter (persisten) + override picker plot
 -- v4.0: sembunyiin visual buah ILANG TOTAL auto-ON (buah tetep kedetect & kepanen)
 -- v3.9: deteksi matang pakai prompt Panen kalau Age gak ada (dulu dianggap matang -> kefire terus ditolak)
@@ -242,7 +243,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v4.1"
+local VER       = "STAR v4.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1048,18 +1049,18 @@ end
 -- bukti: Hypno Bloom Age=8/8 -> prompt Panen ADA (76kg); Age=4.2/8 -> prompt GAK ADA (12kg).
 -- kalau atribut Age/MaxAge gak ada (seed lain), anggap MATANG (biar gak nge-block seed lain).
 function Farm.isFruitRipe(f)
-    local age = f:GetAttribute("Age")
-    local mx  = f:GetAttribute("MaxAge")
-    if type(age) == "number" and type(mx) == "number" and mx > 0 then
-        return age >= mx
-    end
-    -- v3.9: gak ada Age/MaxAge -> pakai PROMPT PANEN sbg penanda matang (itu yg game sendiri pakai).
-    -- anti-leg cuma nge-DISABLE prompt (Enabled=false), objeknya MASIH ADA -> tetep kebaca.
-    -- (dulu fallback-nya "anggap matang" -> buah mentah kefire terus & ditolak server)
+    -- v4.2: PENANDA MATANG = ADA PROMPT PANEN. ini penanda game sendiri & paling akurat.
+    -- BUKTI: buah 35-42kg 'Age' udah mentok TAPI gak ada prompt -> server NOLAK collect (kefire
+    -- 33x/siklus tapi gak ilang). buah 74-82kg ada prompt -> kepanen. jadi Age >= MaxAge SALAH
+    -- dipakai jadi penanda matang (dulu v3.0-v3.9). anti-leg cuma DISABLE prompt, objeknya ada.
     local ok, punya = pcall(function()
         return f:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
     end)
     if ok then return punya end
+    -- cadangan (cek prompt gagal): pakai Age
+    local age = f:GetAttribute("Age")
+    local mx  = f:GetAttribute("MaxAge")
+    if type(age) == "number" and type(mx) == "number" and mx > 0 then return age >= mx end
     return true
 end
 
@@ -1889,7 +1890,8 @@ task.spawn(function()
                                         end
                                         if not tahan then lolos = lolos + 1 end
                                         if #contoh < 5 then
-                                            contoh[#contoh+1] = string.format("mut=%s kg=%.1f%s", tostring(m), kg, tahan and (" ["..tahan.."]") or "")
+                                            local pr = f:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
+                                            contoh[#contoh+1] = string.format("mut=%s kg=%.1f prompt=%s%s", tostring(m), kg, tostring(pr), tahan and (" ["..tahan.."]") or "")
                                         end
                                     end
                                 end
