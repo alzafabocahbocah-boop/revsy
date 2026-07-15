@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v5.9  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v6.0  (standalone, basis ZENX v44.79) - GAG 2
+-- v6.0: Glow cuma dipanen kalau ADA YG MINTA (priority) + numpuk >= ambang. gak ada = numpuk di kebun
 -- v5.9: Glow 50kg+ dikirim ke akun yg MINTA (priority) + gift biasa gak ikut ngirim Glow (anti-bentrok)
 -- v5.8: Farm 2 nyalain Auto Gift Fruit + buah layak-kirim gak dijual pas priority "kirim kesini" aktif
 -- v5.7: kunci gift dikasih BATAS WAKTU 15s (dulu bisa nyangkut selamanya -> sell mati -> tas penuh)
@@ -259,7 +260,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v5.9"
+local VER       = "STAR v6.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -2578,6 +2579,16 @@ function Farm.collectOnce()
     end
     local _glowMin = state.glowCollectMin or 60
     if state.sfGlowGate then Farm._glowGardenLast = _glowGardenN end   -- expose buat UI progres
+    -- v6.0: ADA YANG MINTA? ("Kirim Semua Kesini Dulu" / priority nyala di akun lain).
+    -- Glow cuma dipanen kalau ADA yg minta. gak ada yg minta -> biarin numpuk di KEBUN
+    -- (lebih aman kesimpen di pohon daripada numpuk di tas & rawan kejual/kepenuhan).
+    -- dihitung SEKALI per siklus (getPriorityTarget ada cache 6s, jadi murah).
+    local _adaYgMinta = false
+    pcall(function()
+        local prio = Farm.getPriorityTarget()
+        if prio and prio ~= player.Name then _adaYgMinta = true end
+    end)
+    Farm._glowAdaYgMinta = _adaYgMinta   -- buat status di UI
     -- v10.6 FIX: kalau collectAll=false TAPI gak ada jenis yg dipilih, anggap SEMUA.
     -- (dulu bisa kejadian collectAll jadi false tapi selectedCollect kosong -> okType
     --  false buat semua -> collect DIAM TOTAL walau toggle nyala. ini jaring pengaman.)
@@ -2646,15 +2657,18 @@ function Farm.collectOnce()
                         okMut = true; okW = true; okHeavy = true
                     end
                 end
-                -- STAR FARM: gate Glow - kalau buah ini Glow TAPI Glow di kebun belum >= glowCollectMin, TAHAN (jangan collect)
+                -- STAR FARM: gate Glow - Glow cuma dipanen kalau (1) numpuk >= ambang DAN (2) ADA YG MINTA.
                 local okGlowGate = true
                 local _isGlow = (getMutation(fruit) == "Glow")
-                if state.sfGlowGate and _isGlow and _glowGardenN < _glowMin then okGlowGate = false end
-                -- v5.5 FIX: gate KEBUKA (Glow udah numpuk >= ambang) -> Glow NEMBUS filter kg + anti-heavy.
+                -- v6.0: + syarat "ada yg minta". gak ada yg minta -> Glow GAK DIPANEN sama sekali,
+                -- biarin numpuk di kebun (nunggu akun simpanan nyalain "Kirim Semua Kesini Dulu").
+                local _gateBuka = (_glowGardenN >= _glowMin) and _adaYgMinta
+                if state.sfGlowGate and _isGlow and not _gateBuka then okGlowGate = false end
+                -- v5.5 FIX: gate KEBUKA -> Glow NEMBUS filter kg + anti-heavy.
                 -- BUG dulu: gate cuma nge-set okGlowGate, tapi Glow gede (>=50kg) tetep ketahan filter
                 -- "-50kg" (okW=false) -> gate kebuka tapi Glow GAK PERNAH KEPANEN. inti gate kan emang
                 -- "numpuk dulu sampai N, baru panen SEMUA" - jadi pas kebuka ya harus nembus filter berat.
-                if state.sfGlowGate and _isGlow and _glowGardenN >= _glowMin then
+                if state.sfGlowGate and _isGlow and _gateBuka then
                     okMut = true; okW = true; okHeavy = true
                 end
                 -- STAR FARM: Collect Glow KECIL (<glowKgMin) - override gate, Glow kecil SELALU diambil (yg gede numpuk)
@@ -9735,8 +9749,17 @@ do
                 local n = Farm._glowGardenLast or 0
                 local min = state.glowCollectMin or 60
                 if state.sfGlowGate then
-                    gProg.Text = "Glow di kebun: "..n.."/"..min..(n >= min and "  -> KEBUKA (dipanen)" or "  (numpuk...)")
-                    gProg.TextColor3 = (n >= min) and C.green or C.textDim
+                    local minta = Farm._glowAdaYgMinta
+                    if not minta then
+                        gProg.Text = "Glow kebun: "..n.."/"..min.."  - GAK ADA YG MINTA -> Glow gak dipanen (numpuk)"
+                        gProg.TextColor3 = C.textMute
+                    elseif n >= min then
+                        gProg.Text = "Glow kebun: "..n.."/"..min.."  -> KEBUKA + ada yg minta = DIPANEN & DIKIRIM"
+                        gProg.TextColor3 = C.green
+                    else
+                        gProg.Text = "Glow kebun: "..n.."/"..min.."  (ada yg minta, nunggu numpuk...)"
+                        gProg.TextColor3 = C.textDim
+                    end
                 else
                     gProg.Text = "gate OFF - Glow dipanen normal"
                     gProg.TextColor3 = C.textMute
