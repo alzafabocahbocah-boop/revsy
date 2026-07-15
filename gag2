@@ -1,5 +1,12 @@
 -- ============================================================
--- STAR FARM  v6.6  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v7.4  (standalone, basis ZENX v44.79) - GAG 2
+-- v7.4: Farm 2 (-50/-60) NEMPEL - tersimpan ON = auto nyala lagi pas rejoin/re-exe, OFF ya OFF
+-- v7.3: mailCount cuma hitung gift yg MASIH bisa di-claim (bekas gift yg udah di-claim gak kehitung)
+-- v7.2: target notif mail di card "Kirim Semua Kesini" - kecapai = OFF sendiri + teks jumlah notif
+-- v7.1: baris "mail" di panel (jumlah gift, tanpa buka mailbox) + auto-claim cuma buka kalau ADA gift
+-- v7.0: deteksi mailbox kebuka diperbaiki (MailboxUI bukan ScreenGui) + auto-claim lapor ke console
+-- v6.9: FIX "kepental" - paksa-buka mailbox tiap 15s nge-KLIK tombol toggle -> nutup UI user. skrg di-skip kalau lagi kebuka
+-- v6.8: cabut lagi tahan-teleport v6.7 (bukan itu penyebab kepental)
 -- v6.6: shovel balik ke SEMUA buah <ambang (mentah ikut) - permintaan user. tetep ikut Farm 2
 -- v6.5: shovel ikut Farm 2 (gak maksa ON) + CUMA sekop buah MATANG-kecil (dulu buah tumbuh ikut kesekop)
 -- v6.4: ambang Glow 50kg -> 30kg (anti-sell/fav/gift). Glow 30kg+ dilindungi & dikirim
@@ -267,7 +274,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v6.6"
+local VER       = "STAR v7.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -761,6 +768,7 @@ local state = {
     gfStorageTarget = "",        -- v21.7: akun simpanan (dipisah koma; dialihin kalau pet udah cukup)
     gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
     gfPrioMinVal    = 3000000,   -- v24.0: min nilai buah utk "Kirim Semua Kesini Dulu" (default 3M, bisa diatur)
+    prioMailMax     = 20,        -- v7.2: target notif mail - kalau kecapai, priority OFF sendiri
     gfStorDefV1     = false,      -- v21.8: flag apply default akun simpanan
     gfStorDefV2     = false,      -- v21.9: list simpanan diperluas 60-75
     storageMode     = false,      -- v22.0: akun ini = PENYIMPANAN (cuma terima, gak ngegift kayak farm)
@@ -853,6 +861,7 @@ local function saveState()
         out.gfStorageTarget = state.gfStorageTarget or ""  -- v21.7
         out.gfStorageMinVal = state.gfStorageMinVal or 4000000  -- v21.8
         out.gfPrioMinVal = state.gfPrioMinVal or 3000000  -- v24.0
+        out.prioMailMax = state.prioMailMax or 20         -- v7.2: target notif mail (persisten)
         out.collectWeightF = state.collectWeightF or 0  -- v10.9
         out.sellWeightF = state.sellWeightF or 0
         out.sprCoords = state.sprCoords or {}  -- v8.2: list koordinat sprinkler {x,y,z,name}
@@ -922,6 +931,7 @@ local function loadState()
                 if type(d.gfStorageTarget) == "string" then state.gfStorageTarget = d.gfStorageTarget end
                 if type(d.gfStorageMinVal) == "number" then state.gfStorageMinVal = d.gfStorageMinVal end
                 if type(d.gfPrioMinVal) == "number" then state.gfPrioMinVal = d.gfPrioMinVal end
+                if type(d.prioMailMax) == "number" then state.prioMailMax = d.prioMailMax end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -5652,6 +5662,18 @@ staggerSpawn(function()
     while isCurrentGen() do
         task.wait(8)
         if state.storagePriority then
+            -- v7.2: STOP OTOMATIS kalau notif mail udah nyampe target. akun penyimpanan berhenti
+            -- minta kiriman sendiri -> farm balik jual normal. gak perlu dimatiin manual.
+            local nMail = Farm.mailCount()
+            local maxMail = state.prioMailMax or 20
+            if nMail >= maxMail then
+                state.storagePriority = false; saveState()
+                pcall(function() Farm.setPriority(false) end)
+                if Farm._applyPrioRef then pcall(Farm._applyPrioRef) end
+                print(string.format("[StarFarm] mail %d/%d -> TARGET TERCAPAI, 'Kirim Semua Kesini' OFF sendiri", nMail, maxMail))
+            end
+        end
+        if state.storagePriority then
             local holder = freshPrioHolder()
             if holder and holder ~= player.Name then
                 -- ada akun lain yg ngambil alih (nyalain lebih baru) -> matiin priority di akun ini
@@ -5778,7 +5800,62 @@ end)
 -- daftar gift masuk: PlayerGui.MailboxUI.Frame.RecieveFrame.Gift_<id>
 -- nama frame "Gift_4:xxx" -> buang "Gift_" -> dapet id buat Claim.
 -- v21.2: buka mailbox biar UI kebangun (akun baru: auto-claim gak jalan sampai mailbox dibuka sekali).
+-- v7.1: HITUNG GIFT DI MAILBOX TANPA BUKA. terbukti via tes: RecieveFrame tetep keisi Gift_xxx
+-- walau MailboxUI.Enabled = false. jadi bisa dipakai buat (a) angka di panel, (b) auto-claim
+-- cuma buka mailbox KALAU ADA gift -> gak buka tiap 15 detik -> gak bikin user "kepental".
+function Farm.mailCount()
+    local n = 0
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        local mb = pg and pg:FindFirstChild("MailboxUI")
+        local frame = mb and mb:FindFirstChild("Frame")
+        local recv = frame and frame:FindFirstChild("RecieveFrame")
+        if not recv then return end
+        for _, g in ipairs(recv:GetChildren()) do
+            if tostring(g.Name):match("^Gift_") and g:IsA("GuiObject") and g.Visible then
+                -- v7.3: cuma hitung yg MASIH BISA DI-CLAIM. gift yg udah di-claim sering nyisain
+                -- "bekas" (frame-nya masih ada tapi tombol Claim-nya ilang/mati) -> kalau ikut
+                -- kehitung, target notif kecapai PALSU & auto-stop salah nyala.
+                local bisaClaim = false
+                for _, d in ipairs(g:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton"))
+                       and tostring(d.Name):lower():find("claim") then
+                        if d.Visible and d.Active ~= false then bisaClaim = true; break end
+                    end
+                end
+                -- kalau game-nya emang gak pakai tombol bernama "claim", jangan sampai 0 terus:
+                -- anggep bisa di-claim (fallback) selama frame-nya keliatan.
+                if bisaClaim or not g:FindFirstChild("Claim", true) then n = n + 1 end
+            end
+        end
+    end)
+    Farm._mailN = n
+    return n
+end
+
 function Farm.openMailbox()
+    -- v6.9 FIX: kalau mailbox UDAH KEBUKA, JANGAN diapa-apain. tombol mail itu TOGGLE - diklik
+    -- pas lagi kebuka malah NUTUP. loop 15 detik di bawah manggil fungsi ini terus, jadi pas user
+    -- lagi buka & scroll manual -> ke-klik -> ketutup/reset = "KEPENTAL". ini penyebabnya.
+    do
+        local pg0 = Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("PlayerGui")
+        local mb0 = pg0 and pg0:FindFirstChild("MailboxUI")
+        if mb0 then
+            local kebuka = false
+            pcall(function()
+                -- v6.9b: MailboxUI TERNYATA BUKAN ScreenGui (dump: Enabled=?), jadi cek:
+                -- (1) ScreenGui INDUKnya nyala, (2) Frame-nya Visible. dua2nya harus true.
+                local sg = mb0:IsA("ScreenGui") and mb0 or mb0:FindFirstAncestorOfClass("ScreenGui")
+                if sg and sg.Enabled == false then return end
+                local f = mb0:FindFirstChild("Frame")
+                if f and f:IsA("GuiObject") and f.Visible then kebuka = true end
+            end)
+            if kebuka then
+                Farm._mailSkip = (Farm._mailSkip or 0) + 1
+                return   -- lagi kebuka (kemungkinan user yg buka) -> biarin
+            end
+        end
+    end
     -- 1) fire remote (beberapa kemungkinan nama)
     for _, nm in ipairs({ "OpenInbox", "Open", "List", "GetInbox", "Inbox" }) do
         local op = pkt("Mailbox", nm)
@@ -5804,7 +5881,10 @@ function Farm.openMailbox()
 end
 function Farm.acceptGiftOnce()
     local cl = pkt("Mailbox", "Claim")
-    if not cl or not cl.Fire then return end
+    if not cl or not cl.Fire then
+        if not Farm._warnClaim then Farm._warnClaim = true; print("[StarFarm] auto-claim: packet Mailbox.Claim GAK ADA") end
+        return
+    end
     local plr = Players.LocalPlayer
     local pg = plr and plr:FindFirstChild("PlayerGui")
     local mb = pg and pg:FindFirstChild("MailboxUI")
@@ -5822,7 +5902,7 @@ function Farm.acceptGiftOnce()
             task.wait(0.1)
         end
     end
-    if claimed > 0 then dprint("[StarFarm] accept gift: "..claimed.." gift di-claim") end
+    if claimed > 0 then print("[StarFarm] accept gift: "..claimed.." gift di-claim") end
 end
 -- v21.3: buka mailbox tiap 15 detik, TAPI cuma kalau sheckles akun ini < batas (300M default).
 -- (kondisi: akun pet lagi nunggu kiriman buah -> inbox kudu di-refresh biar auto-claim jalan)
@@ -5838,8 +5918,14 @@ staggerSpawn(function()
             end)
             local batas = state.gfSheckMax or 300000000
             if shk and shk < batas then
-                pcall(Farm.openMailbox)
-                dprint("[StarFarm] buka mailbox (sheckles "..Farm.abbrev(shk).." < "..Farm.abbrev(batas)..")")
+                -- v7.1: cuma buka mailbox KALAU MASIH ADA GIFT yg belum di-claim. dulu dibuka
+                -- TIAP 15 DETIK tanpa syarat -> tombol mail ke-klik (toggle) -> UI user ketutup
+                -- = "KEPENTAL". sekarang: gak ada gift -> gak ngapa-ngapain sama sekali.
+                local n = Farm.mailCount()
+                if n > 0 then
+                    pcall(Farm.openMailbox)
+                    dprint("[StarFarm] buka mailbox: ada "..n.." gift (sheckles "..Farm.abbrev(shk).." < "..Farm.abbrev(batas)..")")
+                end
             end
         end
     end
@@ -6666,6 +6752,7 @@ Farm.buildFarm2Btn = function()
     end)
     syncFarm2()
     Farm._syncFarm2 = syncFarm2   -- v44.44: expose buat allOff
+    Farm._applyFarm2 = applyFarm2 -- v7.4: expose buat PASANG ULANG pas start (farm2On kesimpen)
 end
 Farm.buildFarm2Btn()
 
@@ -6798,7 +6885,7 @@ Farm.buildScreenOverlay = function()
         pcall(function() og.Parent = host2 end)
         if not og.Parent then og.Parent = player:WaitForChild("PlayerGui") end
         local box = Instance.new("Frame")
-        box.Size = UDim2.new(0, 172, 0, 188)
+        box.Size = UDim2.new(0, 172, 0, 218)   -- v7.1: +30 buat baris "mail"
         box.Position = UDim2.new(1, -184, 0, 12)   -- pojok kanan atas
         box.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         box.BackgroundTransparency = 0.15
@@ -6836,9 +6923,11 @@ Farm.buildScreenOverlay = function()
         local lGift,  vGift  = row(96, "value")
         local lTotal, vTotal = row(126, "total buah")
         local lSprWC, vSprWC = row(156, "spr/wc")
+        -- v7.1: baris MAIL - jumlah gift nyangkut di mailbox (kebaca tanpa buka mailbox)
+        local lMail,  vMail  = row(186, "mail")
         -- mode moon: label diganti nama moon, value diisi countdown. baris ke-6 (spr/wc)
         -- disembunyiin di mode moon (moon cuma 5). teks moon label lebih kecil biar muat.
-        local counterRows = { {lPohon,vPohon}, {lKecil,vKecil}, {lBesar,vBesar}, {lGift,vGift}, {lTotal,vTotal}, {lSprWC,vSprWC} }
+        local counterRows = { {lPohon,vPohon}, {lKecil,vKecil}, {lBesar,vBesar}, {lGift,vGift}, {lTotal,vTotal}, {lSprWC,vSprWC}, {lMail,vMail} }   -- v7.1: + baris mail
         local moonList = {
             {"Bloodmoon", "PW_Bloodmoon", "Bloodmoon"}, {"Goldmoon", "PW_Goldmoon", "Goldmoon"},
             {"Rainbow", "PW_RainbowMoon", "Rainbow"}, {"Mega", "PW_MegaMoon", "Mega"}, {"Moon", "PW_Moon", "Moon"},
@@ -6852,7 +6941,7 @@ Farm.buildScreenOverlay = function()
                 for _, r in ipairs(counterRows) do r[1].TextSize = 12; r[2].TextSize = 18 end
                 moonBtn.Text = "moon"; moonBtn.BackgroundColor3 = Color3.fromRGB(60,60,90)
             else
-                -- mode moon: 5 baris moon, baris ke-6 disembunyiin
+                -- mode moon: 5 baris moon, baris 6-7 (spr/wc + mail) disembunyiin
                 for i = 1, 5 do
                     counterRows[i][1].Text = moonList[i][1]
                     counterRows[i][1].TextSize = 12
@@ -6860,6 +6949,7 @@ Farm.buildScreenOverlay = function()
                     counterRows[i][1].Visible = true; counterRows[i][2].Visible = true
                 end
                 counterRows[6][1].Visible = false; counterRows[6][2].Visible = false
+                counterRows[7][1].Visible = false; counterRows[7][2].Visible = false   -- v7.1: mail ikut disembunyiin di mode moon
                 moonBtn.Text = "stat"; moonBtn.BackgroundColor3 = Color3.fromRGB(90,60,60)
             end
         end
@@ -6929,6 +7019,12 @@ Farm.buildScreenOverlay = function()
                         vTotal.Text = tostring(totalN)
                         local ns, nw = countSprWC()
                         vSprWC.Text = ns.." / "..nw
+                        -- v7.1: jumlah gift nyangkut di mailbox (gak perlu buka mailbox)
+                        do
+                            local nm = Farm.mailCount()
+                            vMail.Text = tostring(nm)
+                            vMail.TextColor3 = (nm > 0) and Color3.fromRGB(120,255,160) or Color3.fromRGB(255,255,255)
+                        end
                     else
                         -- v43.3: AMBIL SEKALI, countdown LOKAL, refetch pas ada moon habis (hemat request).
                         -- akun sumber (WeatherUI keisi) push tiap ~5s. akun lain pull sekali -> itung sendiri.
@@ -11021,7 +11117,7 @@ end
 
 -- ====== AUTO GIFT: Kirim Semua Kesini Dulu (priority drain) - v22.2 ======
 do
-    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card,
+    local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 142), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 8, Parent = giftList })
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Kirim Semua Kesini Dulu", 14, C.text, Enum.TextXAlignment.Left)
@@ -11047,6 +11143,23 @@ do
         minBox.Text = tostring((state.gfPrioMinVal or 3000000)/1000000)
         print("[StarFarm] priority min nilai -> "..Farm.abbrev(state.gfPrioMinVal or 3000000))
     end)
+    -- v7.2: TARGET NOTIF MAIL - kalau gift di mailbox udah nyampe target, priority MATI SENDIRI
+    -- (akun ini berhenti minta kiriman). biar gak kebanjiran / mailbox penuh.
+    lbl(card, "Stop kalau mail >=", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0, 14, 0, 90)
+    local mailBox = mk("TextBox", { Size = UDim2.new(0, 70, 0, 26), Position = UDim2.new(1, -84, 0, 88),
+        BackgroundColor3 = C.input, Text = tostring(state.prioMailMax or 20),
+        PlaceholderText = "20", TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0,
+        ClearTextOnFocus = false, Parent = card }); corner(mailBox, 6); stroke(mailBox, C.border, 1)
+    mailBox.FocusLost:Connect(function()
+        local n = tonumber(mailBox.Text)
+        if n and n > 0 then state.prioMailMax = math.floor(n); saveState() end
+        mailBox.Text = tostring(state.prioMailMax or 20)
+        print("[StarFarm] target notif mail -> "..tostring(state.prioMailMax or 20))
+    end)
+    -- teks status: jumlah notif sekarang / target
+    local mailSt = lbl(card, "", 11, C.textDim, Enum.TextXAlignment.Left)
+    mailSt.Position = UDim2.new(0, 14, 0, 118); mailSt.Size = UDim2.new(1, -20, 0, 16); mailSt.TextWrapped = true
+
     local function apply()
         if state.storagePriority then
             sw.BackgroundColor3 = Color3.fromRGB(90,150,255); knob.BackgroundColor3 = Color3.new(1,1,1)
@@ -11057,13 +11170,34 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.storagePriority = not state.storagePriority; apply()
+        state.storagePriority = not state.storagePriority; saveState(); apply()
         task.spawn(function() pcall(function() Farm.setPriority(state.storagePriority) end) end)
         print("[StarFarm] Kirim Semua Kesini -> "..(state.storagePriority and "ON" or "OFF"))
     end)
     apply()
     Farm._applyPrioRef = apply
-    task.spawn(function() while card.Parent do apply(); task.wait(1) end end)
+    task.spawn(function()
+        while card.Parent and isCurrentGen() do
+            apply()
+            pcall(function()
+                local n   = Farm.mailCount()
+                local max = state.prioMailMax or 20
+                if state.storagePriority then
+                    if n >= max then
+                        mailSt.Text = "mail: "..n.."/"..max.."  -> TARGET TERCAPAI, berhenti minta"
+                        mailSt.TextColor3 = Color3.fromRGB(230,150,60)
+                    else
+                        mailSt.Text = "mail: "..n.."/"..max.."  (lagi minta kiriman...)"
+                        mailSt.TextColor3 = C.green
+                    end
+                else
+                    mailSt.Text = "mail: "..n.."/"..max.."  (OFF - gak minta)"
+                    mailSt.TextColor3 = C.textMute
+                end
+            end)
+            task.wait(1)
+        end
+    end)
 end
 
 -- ====== AUTO GIFT: Gift ke Simpanan (routing farm) - v22.7 ======
@@ -12552,6 +12686,18 @@ if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollec
 state.glowKgMin = 30
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
+-- v7.4: FARM 2 NEMPEL. state.farm2On emang udah disimpen, TAPI applyFarm2 cuma kepanggil pas
+-- TOMBOL dipencet - jadi abis rejoin/re-exec setelannya gak dipasang ulang (shovel mati, dll).
+-- sekarang: kalau tersimpan ON -> pasang ulang preset-nya (pakai kg terakhir: -50/-60).
+-- kalau tersimpan OFF -> ya OFF, gak diapa-apain.
+task.spawn(function()
+    task.wait(2)   -- tunggu GUI + settings ke-load
+    if state.farm2On and Farm._applyFarm2 then
+        local kg = state.c2WeightF or -50
+        pcall(function() Farm._applyFarm2(true, kg) end)
+        print("[StarFarm] Farm 2 tersimpan ON -> dipasang ulang ("..tostring(kg).."kg)")
+    end
+end)
 -- v6.5: shovel buah GAK dipaksa ON lagi tiap start (v4.8 dulu maksa -> jalan terus walau Farm 2
 -- OFF & gak ada buah kecil). sekarang IKUT FARM 2: nyala pas pencet -50/-60, mati pas ALL OFF.
 -- ambangnya tetep disiapin 50 kalau belum pernah diisi.
