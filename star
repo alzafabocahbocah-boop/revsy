@@ -1,5 +1,8 @@
 -- ============================================================
--- STAR FARM  v8.0  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v8.3  (standalone, basis ZENX v44.79) - GAG 2
+-- v8.3: cooldown Super WC 30s -> 2s (dulu kelamaan: buah kecil udah <= trigger, WC baru jalan 30s kemudian)
+-- v8.2: PAKSA semua akun: gate Glow=20, trigger WC=30, batas buah besar=100 (nimpa setelan lama)
+-- v8.1: trigger Super WC default 30 (sisa buah kecil <= 30). dulu 0 = WC gak pernah jalan
 -- v8.0: webhook status (Akun/Glow/Super/Super WC) - kepicu: Glow 60+ numpuk, Super habis, atau WC habis
 -- v7.8: panel: pohon/kecil/besar/value/GLOW/spr-wc. "total buah" & "mail" dibuang
 -- v7.7: rejoin delay per cuaca (Gold 2 menit, Electric 6 menit) + buang TeleportToPlaceInstance (diblok)
@@ -279,7 +282,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v8.0"
+local VER       = "STAR v8.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -789,6 +792,9 @@ local state = {
     gfAlertHook     = "https://discordapp.com/api/webhooks/1517745541595791370/WLFb5xOdnkcQxUaJIsUGIZROWKjoY-daksFnqnia-p307Ez-50dttV2cKofcplc9AD3v",
     toolHabisHook   = "",        -- v7.9: webhook notif status (kosong = pakai gfAlertHook)
     glowNotifMin    = 60,        -- v8.0: notif kalau Glow di kebun >= ini
+    af2WCTrigger    = 30,        -- v8.1: trigger Super WC - place kalau sisa buah kecil <= ini
+    af2BigCap       = 100,       -- v8.2: batas buah besar (sprinkler/WC stop di sini)
+    af2WCCooldown   = 2,         -- v8.3: jeda antar place Super WC (detik). dulu 30 = kelamaan
     giftGears       = {},        -- v15.1: jenis GEAR yg dikirim via mailbox (ganti dari fruit)
     giftFruitWeightF = 0,        -- v11.3: filter berat fruit (0=semua, +N=di atas, -N=di bawah). KHUSUS fruit.
     giftOnce        = false,      -- v12.7: kirim 1x lalu auto-OFF (bukan terus-terusan)
@@ -849,7 +855,8 @@ local function saveState()
         out.weatherHopDelay = state.weatherHopDelay or 60   -- v28.1
         out.c2WeightF = state.c2WeightF or -50   -- v28.7: collect2 filter kg
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
-        out.af2WCTrigger = state.af2WCTrigger or 0
+        out.af2WCTrigger = state.af2WCTrigger or 30   -- v8.1: default 30
+        out.af2WCCooldown = state.af2WCCooldown or 2      -- v8.3: cooldown WC
         out.hideBigKg = state.hideBigKg or 100   -- v32.8
         out.af2SavePos = state.af2SavePos   -- v4.1: titik simpan sprinkler/WC (dari karakter)
         out.af2BigCap = state.af2BigCap or 100
@@ -866,7 +873,7 @@ local function saveState()
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
         out.buyGoodMinRarity = state.buyGoodMinRarity or "Mythic"  -- v26.3
         out.sfGlowGiftTarget = state.sfGlowGiftTarget or ""   -- STAR FARM: target gift Glow (PERSISTEN)
-        out.glowCollectMin = state.glowCollectMin or 60   -- STAR FARM: ambang gate Glow (persisten)
+        out.glowCollectMin = state.glowCollectMin or 20   -- STAR FARM: ambang gate Glow (persisten)
         out.weatherRejoinSec = state.weatherRejoinSec or 120  -- v7.6: delay rejoin cuaca buruk
         out.toolHabisHook = state.toolHabisHook or ""     -- v7.9: webhook tool habis
         out.glowNotifMin = state.glowNotifMin or 60       -- v8.0: ambang notif Glow
@@ -927,6 +934,7 @@ local function loadState()
                 if type(d.hideBigKg) == "number" then state.hideBigKg = d.hideBigKg end   -- v32.8
                 if type(d.af2SavePos) == "table" and type(d.af2SavePos.x) == "number" then state.af2SavePos = d.af2SavePos end
                 if type(d.af2BigCap) == "number" then state.af2BigCap = d.af2BigCap end
+                if type(d.af2WCCooldown) == "number" then state.af2WCCooldown = d.af2WCCooldown end
                 if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
                 if type(d.af2SprTool) == "string" then state.af2SprTool = d.af2SprTool end
                 if type(d.af2WCTool)  == "string" then state.af2WCTool  = d.af2WCTool  end
@@ -1885,7 +1893,7 @@ task.spawn(function()
         if Farm._diagKecil then
             pcall(function()
                 local thr = math.abs(state.c2WeightF or 50)
-                local glowMin = state.glowCollectMin or 60
+                local glowMin = state.glowCollectMin or 20
                 local G = workspace:FindFirstChild("Gardens")
                 if not G then return end
                 local glowN = 0
@@ -2611,7 +2619,7 @@ function Farm.collectOnce()
             end
         end)
     end
-    local _glowMin = state.glowCollectMin or 60
+    local _glowMin = state.glowCollectMin or 20
     if state.sfGlowGate then Farm._glowGardenLast = _glowGardenN end   -- expose buat UI progres
     -- v6.0: ADA YANG MINTA? ("Kirim Semua Kesini Dulu" / priority nyala di akun lain).
     -- Glow cuma dipanen kalau ADA yg minta. gak ada yg minta -> biarin numpuk di KEBUN
@@ -7053,13 +7061,13 @@ Farm.buildScreenOverlay = function()
                         Farm._af2SmallCount = smallN; Farm._af2BigCount = bigN   -- share ke loop lain
                         vPohon.Text = tostring(dragonN)
                         vKecil.Text = tostring(smallN)
-                        vBesar.Text = tostring(bigN).."/"..tostring(state.af2BigCap or 1000)
+                        vBesar.Text = tostring(bigN).."/"..tostring(state.af2BigCap or 100)
                         vGift.Text = Farm.abbrev(valN)
                         -- v7.8: baris GLOW - jumlah Glow di KEBUN / ambang gate. ijo = gate kebuka
                         -- (Glow lagi dipanen & dikirim). ini yg paling perlu dipantau, bukan total buah.
                         do
                             local gn  = Farm._glowGardenLast or 0
-                            local gmn = state.glowCollectMin or 60
+                            local gmn = state.glowCollectMin or 20
                             vTotal.Text = tostring(gn).."/"..tostring(gmn)
                             if state.sfGlowGate then
                                 local buka = (gn >= gmn) and Farm._glowAdaYgMinta
@@ -9819,7 +9827,7 @@ do
     -- trigger WC
     lbl(body, "Trigger WC (sisa buah kecil)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,104)
     local wcTBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,101),
-        BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 0), PlaceholderText = "0",
+        BackgroundColor3 = C.input, Text = tostring(state.af2WCTrigger or 30), PlaceholderText = "30",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(wcTBox, 6); stroke(wcTBox, C.border, 1)
     wcTBox.FocusLost:Connect(function()
@@ -10038,7 +10046,7 @@ do
         while card.Parent do
             pcall(function()
                 local n = Farm._glowGardenLast or 0
-                local min = state.glowCollectMin or 60
+                local min = state.glowCollectMin or 20
                 if state.sfGlowGate then
                     local minta = Farm._glowAdaYgMinta
                     if not minta then
@@ -10062,7 +10070,7 @@ do
     -- input ambang gate Glow (default 60) - berapa Glow numpuk dulu sebelum dipanen
     lbl(body, "Ambang gate Glow", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,248)
     local gateBox = mk("TextBox", { Size = UDim2.new(0.32,0,0,26), Position = UDim2.new(0.68,0,0,245),
-        BackgroundColor3 = C.input, Text = tostring(state.glowCollectMin or 60), PlaceholderText = "60",
+        BackgroundColor3 = C.input, Text = tostring(state.glowCollectMin or 20), PlaceholderText = "60",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(gateBox, 6); stroke(gateBox, C.border, 1)
     gateBox.FocusLost:Connect(function()
@@ -10549,7 +10557,7 @@ staggerSpawn(function()
                 Farm._af2Status = "OFF"; return
             end
             local threshKg  = math.abs(state.c2WeightF or 50)
-            local wcTrigger = state.af2WCTrigger or 0    -- place WC kalau small <= ini
+            local wcTrigger = state.af2WCTrigger or 30   -- v8.1: default 30 (dulu 0). place WC kalau small <= ini
             local bigCap    = state.af2BigCap or 100      -- stop kalau big >= ini
             local smallCount = Farm.af2CountSmallFruits(threshKg)
             local bigCount   = Farm.af2CountBigFruits(threshKg)
@@ -10580,7 +10588,11 @@ staggerSpawn(function()
 
             -- SUPER WC: place kalau buah kecil <= wcTrigger DAN Sprinkler udah aktif. (SKIP kalau udah cap)
             if state.autoSuperWC and not overCap then
-                if smallCount <= wcTrigger and (now - (Farm._af2WCLastPlace or 0)) >= 30 then   -- v32.7: cooldown WC 30s (anti spam remote)
+                -- v8.3: cooldown 30s -> 2s (permintaan user - WC kerasa LEMOT nunggu trigger).
+                -- v32.7 dulu naikin ke 30s buat "anti spam remote", tapi 30 detik kelamaan:
+                -- buah kecil udah <= trigger, WC baru jalan setengah menit kemudian.
+                local wcCd = tonumber(state.af2WCCooldown) or 2
+                if smallCount <= wcTrigger and (now - (Farm._af2WCLastPlace or 0)) >= wcCd then
                     local sprActive = Farm.af2IsSprinklerActive()
                     if sprActive then
                         print(string.format("[AF2] WC: %d buah + sprinkler aktif -> place WC", smallCount))
@@ -12884,6 +12896,15 @@ if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollec
 -- dipakai buat: anti-sell, auto-fav, gift batch, & batas "Glow kecil" yg boleh dipanen bebas.
 -- DIPAKSA tiap start biar setting lama (50) ikut keupdate.
 state.glowKgMin = 30
+-- v8.2: SETELAN WAJIB - DIPAKSA tiap start, nimpa setelan lama akun manapun (permintaan user).
+--   ambang gate Glow  = 20   (Glow numpuk 20 di kebun -> gate kebuka)
+--   trigger Super WC  = 30   (sisa buah kecil <= 30 -> place WC. default lama 0 = gak pernah jalan)
+--   batas buah besar  = 100  (besar >= 100 -> sprinkler/WC stop)
+-- kalau mau beda, ubah lewat kotak di GUI SETELAH sc jalan (perubahan tetep kesimpen).
+state.glowCollectMin = 20
+state.af2WCTrigger   = 30
+state.af2BigCap      = 100
+state.af2WCCooldown  = 2     -- v8.3: jeda WC 2 detik (dulu 30 - kerasa lemot)
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
 -- v7.4: FARM 2 NEMPEL. state.farm2On emang udah disimpen, TAPI applyFarm2 cuma kepanggil pas
