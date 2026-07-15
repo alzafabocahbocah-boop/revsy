@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v7.4  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v7.5  (standalone, basis ZENX v44.79) - GAG 2
+-- v7.5: gak fav buah yg mau dikirim (percuma+lambat) + teks mail auto-refresh via Mailbox.Updated
 -- v7.4: Farm 2 (-50/-60) NEMPEL - tersimpan ON = auto nyala lagi pas rejoin/re-exe, OFF ya OFF
 -- v7.3: mailCount cuma hitung gift yg MASIH bisa di-claim (bekas gift yg udah di-claim gak kehitung)
 -- v7.2: target notif mail di card "Kirim Semua Kesini" - kecapai = OFF sendiri + teks jumlah notif
@@ -274,7 +275,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v7.4"
+local VER       = "STAR v7.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5832,6 +5833,29 @@ function Farm.mailCount()
     Farm._mailN = n
     return n
 end
+
+-- v7.5: REFRESH OTOMATIS. isi RecieveFrame cuma dibangun/diperbarui pas mailbox DIBUKA - makanya
+-- teks "mail: x/y" dulu cuma berubah abis kita buka email manual. sekarang: dengerin packet
+-- Mailbox.Updated (server nembak ini pas ada gift baru/berubah) -> tandain "perlu refresh" ->
+-- loop di bawah buka mailbox SEKALI buat nyegerin, itupun cuma kalau user gak lagi buka.
+Farm._mailDirty = true   -- pas start, sekali dulu biar angkanya keisi
+task.spawn(function()
+    pcall(function()
+        local up = pkt("Mailbox", "Updated")
+        if up and up.OnClientEvent then
+            up.OnClientEvent:Connect(function()
+                Farm._mailDirty = true
+            end)
+        end
+    end)
+    while isCurrentGen() do
+        task.wait(3)
+        if Farm._mailDirty then
+            Farm._mailDirty = false
+            pcall(Farm.openMailbox)   -- openMailbox otomatis skip kalau user lagi buka
+        end
+    end
+end)
 
 function Farm.openMailbox()
     -- v6.9 FIX: kalau mailbox UDAH KEBUKA, JANGAN diapa-apain. tombol mail itu TOGGLE - diklik
@@ -12558,17 +12582,10 @@ function Farm.starGlowTick()
     -- masuk -> collect gagal -> "kecil" gak turun -> WC gak trigger -> MACET TOTAL.
     -- pause ini emang gak perlu: Anti-Sell Glow 50kg+ (line ~3242) udah nolak jual Glow >=50kg
     -- tanpa peduli udah kefav apa belum. jadi Glow tetep aman walau sell jalan terus.
-    -- 1) AUTO-FAV Glow >= kgMin yg belum kefav
-    if state.sfGlowFav then
-        for _, g in ipairs(glowList) do
-            if not g.fav then pcall(function() Farm.setFruitFav(g.id, true) end); task.wait() end
-        end
-    end
-    -- 2) GIFT: kalau Glow >= kgMin di tas udah >= batch, kirim TEPAT batch ke target (unfav dulu yg dikirim)
+    -- v7.5: cek DULU apakah tick ini bakal NGIRIM. kalau iya, buah yg mau dikirim JANGAN di-fav -
+    -- percuma & lambat (di-fav terus langsung di-unfav lagi 2 baris di bawah). tetep aman krn
+    -- anti-sell (v5.6) ngelindungin Glow tanpa peduli fav.
     local batch  = state.sfGlowGiftBatch or 20
-    -- v5.9: TARGET = akun yg lagi MINTA ("Kirim Semua Kesini Dulu" / priority). kalau gak ada yg
-    -- minta, pakai target manual di kotak "target gift". jadi Glow 50kg+ otomatis ngalir ke akun
-    -- penyimpanan yg lagi nyalain toggle itu, tanpa perlu ngetik username tiap ganti akun.
     local target = state.sfGlowGiftTarget or ""
     pcall(function()
         local prio = Farm.getPriorityTarget()
@@ -12579,6 +12596,17 @@ function Farm.starGlowTick()
             Farm._sfGiftVia = "manual"
         end
     end)
+    local bakalKirim = state.sfGlowGift and target ~= "" and #glowList >= batch
+    -- 1) AUTO-FAV Glow >= kgMin yg belum kefav (SKIP yg mau dikirim tick ini)
+    if state.sfGlowFav then
+        for i, g in ipairs(glowList) do
+            local mauDikirim = bakalKirim and i <= batch
+            if not g.fav and not mauDikirim then
+                pcall(function() Farm.setFruitFav(g.id, true) end); task.wait()
+            end
+        end
+    end
+    -- 2) GIFT: kalau Glow >= kgMin di tas udah >= batch, kirim TEPAT batch ke target
     -- v6.2: PENGAMAN - gak ada yg minta (akun penerima matiin toggle / offline) TAPI ada Glow di tas
     -- yg ke-unfav (sisa proses kirim yg batal/gagal) -> FAV ULANG SEKARANG JUGA, jangan nunggu
     -- siklus berikutnya. Glow ke-unfav = rawan (walau anti-sell udah jaga, fav = lapis kedua).
@@ -12614,7 +12642,9 @@ function Farm.starGlowTick()
         local items = {}
         for i = 1, batch do
             local g = glowList[i]
-            pcall(function() Farm.setFruitFav(g.id, false) end)   -- UNFAV yg mau dikirim (buah kefav gak bisa di-gift)
+            -- v7.5: cuma unfav yg BENERAN kefav. yg belum kefav (krn di-skip di langkah 1)
+            -- gak usah dikirimin remote -> lebih cepet & gak spam server.
+            if g.fav then pcall(function() Farm.setFruitFav(g.id, false) end) end
             items[#items+1] = { ItemKey = g.id, Count = 1, Category = "HarvestedFruits" }
             if i % 8 == 0 then task.wait() end
         end
