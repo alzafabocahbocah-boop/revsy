@@ -1,5 +1,8 @@
 -- ============================================================
--- STAR FARM  v4.5  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v4.9  (standalone, basis ZENX v44.79) - GAG 2
+-- v4.9: card "Auto Shovel Fruit" di Farm 2 (toggle + ambang kg + status live), auto-ON
+-- v4.8: SHOVEL BUAH <50kg semua jenis auto-ON (format terkonfirmasi via sniff) + fix nil-kg crash
+-- v4.7: balik destroy tanaman ON (v4.6 false alarm - masalahnya cuma Super WC salah naruh)
 -- v4.5: balik ke Age>=MaxAge (prompt ternyata tergantung JARAK) + matiin auto-cal prompt (gak ada teks kg)
 -- v4.4: panel overlay ikut generasi + hapus panel lama (dulu panel basi nunjukin angka lama)
 -- v4.3: DIAG tampilin FruitId/PlantId per buah (collect skip diam2 kalau salah satunya gak ada)
@@ -246,7 +249,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v4.5"
+local VER       = "STAR v4.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1298,6 +1301,10 @@ Farm._antiLegMaxOn = false
 Farm._antiLegMaxConn = nil
 Farm._antiLegMaxEverOn = false
 -- v44.76: dengan CACHE BUAH aktif, badan tanaman boleh di-destroy lagi (collect nembak dari cache).
+-- v4.7: BALIK ke destroy tanaman ON (enteng). v4.6 sempet dimatiin krn dikira destroy bikin buah
+-- gak sampe ke klien - ternyata FALSE ALARM: itu cuma gara2 Super WC salah naruh. destroy AMAN.
+-- kalau nanti buah "ilang" dari klien lagi (panel 0 tapi abis rejoin muncul), coba matiin ini:
+--   getgenv().StarFarm._alegTouchPlants = false
 Farm._alegTouchPlants = true
 -- v44.67: kata kunci TOKO/market (disembunyiin). AuctionStand ketangkep "auction".
 local ALEG_SHOP_WORDS = {"shop","toko","market","pasar","stall","kios","merchant","lelang","auction","vendor"}
@@ -6071,7 +6078,7 @@ function Farm.shovelFruitOnce()
                     if fruits then
                         for _, fruit in ipairs(fruits:GetChildren()) do
                             if not state.shovelFruit then break end
-                            local kg = Farm.gardenKg(fruit, seedName)
+                            local kg = Farm.gardenKg(fruit, seedName) or 0   -- v4.8: or 0 - kg nil bikin ERROR (compare nil) -> loop mati
                             -- buang kalau buah DI BAWAH ambang (kecil/jelek)
                             if kg > 0 and kg < thr then
                                 local fruitName = fruit.Name  -- format <plantId>_<fruitUUID>
@@ -6088,7 +6095,10 @@ function Farm.shovelFruitOnce()
             end
         end
     end
-    if removed > 0 then dprint(string.format("[StarFarm] shovelFruit: %d buah <%.2fkg dibuang", removed, thr)) end
+    if removed > 0 then
+        Farm._svFruitTotal = (Farm._svFruitTotal or 0) + removed   -- v4.9: buat status di card
+        dprint(string.format("[StarFarm] shovelFruit: %d buah <%.2fkg dibuang", removed, thr))
+    end
 end
 
 -- v40.1: AUTO TROWEL - pindahin pohon jenis terpilih ke TENGAH plot (numpuk 1 titik).
@@ -6477,6 +6487,10 @@ Farm.buildFarm2Btn = function()
             state.c2AllMutAnyKg = true    -- v44.56: auto ON pas Farm 2 (-50/-60) dipilih
             -- STAR FARM: fitur Glow auto-ON pas pencet tombol Farm 2 (60/50)
             state.sfGlowGate = true
+            -- v4.9: shovel buah kecil ikut nyala pas preset Farm 2 dipencet
+            state.shovelFruit = true
+            state.shovelFruitAll = true
+            if (state.shovelFruitKg or 0) <= 0 then state.shovelFruitKg = 50 end
             state.sfGlowFav = true
             state.sfGlowAntiSell = true
             state.sfGlowCollectSmall = true
@@ -9645,6 +9659,47 @@ do
     end)
 end
 
+-- CARD AF2-7: AUTO SHOVEL FRUIT (STAR FARM v4.9) - buang buah kecil biar slot kosong
+-- format terkonfirmasi via sniff remote: UseShovel(plant.Name, fruit.Name, "Shovel", tool)
+do
+    local card, body, setH = mkFarmCard(16, "Auto Shovel Fruit", "buang buah kecil -> slot kosong -> tumbuh baru", buyList)
+    setH(150)
+    local info = lbl(body, "Buah DI BAWAH ambang kg dibuang pakai Sekop (semua jenis, semua mutasi).", 11, C.textDim, Enum.TextXAlignment.Left)
+    info.Position = UDim2.new(0,0,0,2); info.Size = UDim2.new(1,0,0,26); info.TextWrapped = true
+    mkBodyToggle(body, 32, "Auto Shovel Fruit", "shovelFruit", "Auto Shovel Fruit")
+    -- input ambang kg
+    lbl(body, "Buang buah di bawah (kg)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,76)
+    local svBox = mk("TextBox", { Size = UDim2.new(0.32,0,0,26), Position = UDim2.new(0.68,0,0,73),
+        BackgroundColor3 = C.input, Text = tostring(state.shovelFruitKg or 50), PlaceholderText = "50",
+        TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(svBox, 6); stroke(svBox, C.border, 1)
+    svBox.FocusLost:Connect(function()
+        local n = math.max(0, math.floor(tonumber(svBox.Text) or 50))
+        state.shovelFruitKg = n; svBox.Text = tostring(n); saveState()
+        print("[StarFarm] shovel fruit: buang buah <"..n.."kg")
+    end)
+    -- status live (baca keadaan ASLI)
+    local svSt = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
+    svSt.Position = UDim2.new(0,0,0,106); svSt.Size = UDim2.new(1,0,0,28); svSt.TextWrapped = true
+    task.spawn(function()
+        while card.Parent and isCurrentGen() do
+            pcall(function()
+                if state.shovelFruit and (state.shovelFruitKg or 0) > 0 then
+                    svSt.Text = "* jalan (ON) - buang buah <"..tostring(state.shovelFruitKg).."kg | dibuang: "..tostring(Farm._svFruitTotal or 0).." buah"
+                    svSt.TextColor3 = C.green
+                elseif state.shovelFruit then
+                    svSt.Text = "ON tapi ambang 0 -> gak ada yg dibuang (isi angka di atas)"
+                    svSt.TextColor3 = C.textMute
+                else
+                    svSt.Text = "off"
+                    svSt.TextColor3 = C.textMute
+                end
+            end)
+            task.wait(1)
+        end
+    end)
+end
+
 -- ====== AUTO FARM 2: logic loop ======
 -- Super WC   : place pas buah < threshKg di garden tinggal <= 50 (hampir abis dicolect)
 -- Super Sprinkler: place tiap 2 menit (independen, ikut durasinya)
@@ -12311,6 +12366,12 @@ if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollec
 if state.glowKgMin == nil then state.glowKgMin = 50 end                                          -- ambang kg buat fav/anti-sell/gift Glow
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
+-- v4.8: SHOVEL BUAH <50kg, SEMUA jenis - auto ON (permintaan user).
+-- format terkonfirmasi via sniff: UseShovel(plant.Name, fruit.Name, "Shovel", tool)
+-- ambang bisa diubah di card "Auto Shovel Fruit" (MISC) atau: getgenv().StarFarm._ui.state.shovelFruitKg = 60
+state.shovelFruit    = true
+state.shovelFruitAll = true     -- semua jenis pohon
+state.shovelFruitKg  = 50       -- buang buah DI BAWAH 50kg
 -- v4.0: sembunyiin VISUAL BUAH - ilang TOTAL (bukan samar). buah tetep kedetect & kepanen
 -- (cuma visual yg ilang, Model + atribut utuh). permintaan user.
 state.hideFruits = true
