@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v3.3  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v3.4  (standalone, basis ZENX v44.79) - GAG 2
+-- v3.4: diagnostik + collectBeat/fired/toggle (tau collectOnce jalan & nembak berapa)
 -- v3.3: expose getMutation + diagnostik bawaan (_diagKecil) - lapor kenapa buah kecil gak kepanen
 -- v3.2: CABUT pause-sell gate Glow (bikin TAS PENUH -> collect gagal -> macet). anti-sell udah cukup
 -- v3.1: overlay panel (kecil/besar) ikut cuma hitung buah MATANG (dulu punya hitungan sendiri)
@@ -234,7 +235,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v3.3"
+local VER       = "STAR v3.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1875,8 +1876,14 @@ task.spawn(function()
                         end
                     end end
                 end
+                local b1 = Farm._collectBeat or 0
                 print(string.format("[DIAG] kecil MATANG=%d | ketahan gate=%d | mestinya kepanen=%d | Glow=%d/%d | tasPenuh=%s",
                     n, gate, lolos, glowN, glowMin, tostring(Farm._bagFull)))
+                print(string.format("[DIAG] collectBeat=%s (naik=jalan) | fired terakhir=%s | durasi=%.2fs",
+                    tostring(b1), tostring(Farm._lastFired), Farm._lastDur or 0))
+                print(string.format("[DIAG] autoCollect2=%s collectMulti=%s c2NoMut=%s c2All=%s c2WeightF=%s antiHeavy=%s",
+                    tostring(state.autoCollect2), tostring(state.collectMulti), tostring(state.c2NoMut),
+                    tostring(state.c2All), tostring(state.c2WeightF), tostring(state.antiCollectHeavy)))
                 for _, c in ipairs(contoh) do print("[DIAG]   "..c) end
             end)
         end
@@ -2724,6 +2731,10 @@ function Farm.collectOnce()
         dprint(string.format("[StarFarm] collect fired=%d skipped=%d durasi=%.2fs | jenis: %s",
             fired, skipped, _dur, (#tlist>0 and table.concat(tlist,", ") or "-")))
     end
+    -- v3.3: rekam buat diagnostik (_diagKecil) - tau collectOnce beneran jalan & nembak berapa
+    Farm._collectBeat = (Farm._collectBeat or 0) + 1
+    Farm._lastFired = fired
+    Farm._lastDur = _dur
 end
 
 -- ===== SELL: SellAll (semua) / SellFruit per-jenis =====
