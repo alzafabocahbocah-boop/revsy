@@ -1,5 +1,9 @@
 -- ============================================================
--- STAR FARM  v6.1  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v6.4  (standalone, basis ZENX v44.79) - GAG 2
+-- v6.4: ambang Glow 50kg -> 30kg (anti-sell/fav/gift). Glow 30kg+ dilindungi & dikirim
+-- v6.3: CABUT gfAuto dari Farm 2 (v5.8 bikin Aurora/Frozen ikut kekirim). yg dikirim CUMA Glow 50kg+
+-- v6.2: gift batal (penerima matiin) -> Glow yg terlanjur ke-unfav LANGSUNG di-fav lagi
+-- v6.2: penerima matiin toggle -> Glow yg terlanjur ke-unfav di-FAV ULANG saat itu juga
 -- v6.1: toggle "Kirim Semua Kesini Dulu" DISIMPEN (auto nyala lagi abis rejoin, gak usah pencet ulang)
 -- v6.0: Glow cuma dipanen kalau ADA YG MINTA (priority) + numpuk >= ambang. gak ada = numpuk di kebun
 -- v5.9: Glow 50kg+ dikirim ke akun yg MINTA (priority) + gift biasa gak ikut ngirim Glow (anti-bentrok)
@@ -261,7 +265,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v6.1"
+local VER       = "STAR v6.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1883,7 +1887,7 @@ task.spawn(function()
                                         local m = getMutation(f)
                                         local tahan = nil
                                         if state.sfGlowGate and m == "Glow" and glowN < glowMin then
-                                            if not (state.sfGlowCollectSmall and kg < (state.glowKgMin or 50)) then
+                                            if not (state.sfGlowCollectSmall and kg < (state.glowKgMin or 30)) then
                                                 tahan = "GATE-GLOW"; gate = gate + 1
                                             end
                                         end
@@ -2676,7 +2680,7 @@ function Farm.collectOnce()
                 if state.sfGlowCollectSmall and getMutation(fruit) == "Glow" then
                     local gkg = Farm.gardenKg(fruit, seedName)
                     -- v2.3: + okHeavy (dulu kelewat -> Glow kecil bisa ketahan anti-heavy)
-                    if gkg and gkg < (state.glowKgMin or 50) then okGlowGate = true; okMut = true; okW = true; okHeavy = true end
+                    if gkg and gkg < (state.glowKgMin or 30) then okGlowGate = true; okMut = true; okW = true; okHeavy = true end
                 end
                 -- v5.3: catat ALASAN buah gak kefire (dari kode ASLI, bukan tiruan DIAG).
                 -- biar ketauan kenapa selalu nyisain beberapa buah kecil matang.
@@ -3399,7 +3403,7 @@ function Farm.sellOnce()
                 for _, o in ipairs(holder:GetChildren()) do
                     if o:GetAttribute("Id") and getMutation(o) == "Glow" then
                         local w = o:GetAttribute("Weight")
-                        if type(w) == "number" and w >= (state.glowKgMin or 50) then
+                        if type(w) == "number" and w >= (state.glowKgMin or 30) then
                             _adaGlowDilindungi = true; return
                         end
                     end
@@ -3407,24 +3411,13 @@ function Farm.sellOnce()
             end
         end)
     end
-    -- v5.8: "KIRIM SEMUA KESINI DULU" - kalau ada akun lain yg lagi minta kiriman (priority),
-    -- buah yg MEMENUHI SYARAT KIRIM (nilai >= gfPrioMinVal, default 3M) JANGAN DIJUAL - biarin
-    -- Auto Gift Fruit yg ngirim ke akun itu. buah murah tetep dijual normal.
-    -- (tanpa ini: Sell 2 nyikat duluan tiap detik -> gak ada yg kekirim)
-    local _prioAktif = false
-    if state.gfAuto then
-        pcall(function()
-            local prio = Farm.getPriorityTarget()
-            if prio and prio ~= player.Name then _prioAktif = true end
-        end)
-    end
-    if _prioAktif then
-        dprint("[StarFarm] priority 'kirim kesini' AKTIF -> buah >= "..tostring(state.gfPrioMinVal or 3000000).." gak dijual (dikirim)")
-    end
+    -- v6.3: cek priority "kirim kesini" DICABUT dari sell. dulu (v5.8) buah >= 3M ditahan biar
+    -- dikirim - tapi sekarang yg dikirim CUMA Glow 50kg+ (udah dilindungi anti-sell sendiri),
+    -- jadi buah lain BOLEH dijual normal. (v5.8 bikin Aurora/Frozen ikut kekirim + tas numpuk)
     if _adaGlowDilindungi then
-        dprint("[StarFarm] ada Glow 50kg+ di tas -> SellAll di-SKIP, jual per-buah biar Glow aman")
+        dprint("[StarFarm] ada Glow dilindungi di tas -> SellAll di-SKIP, jual per-buah biar Glow aman")
     end
-    if state.sellAll and state.sellWeightF == 0 and not _adaGlowDilindungi and not _prioAktif then
+    if state.sellAll and state.sellWeightF == 0 and not _adaGlowDilindungi then
         local p = pkt("NPCS", "SellAll")
         if not p or not p.Fire then print("[StarFarm] SellAll packet gak ada"); return end
         -- v3.6 FIX: SellAll = 1 remote yg jual SELURUH tas -> filter "Anti-Sell Glow" (yg kerjanya
@@ -3438,7 +3431,7 @@ function Farm.sellOnce()
                     if id and getMutation(o) == "Glow" then
                         local w = o:GetAttribute("Weight")
                         local favNow = o:GetAttribute("Favorite") or o:GetAttribute("Favorited")
-                        if type(w) == "number" and w >= (state.glowKgMin or 50) and not favNow then
+                        if type(w) == "number" and w >= (state.glowKgMin or 30) and not favNow then
                             pcall(function() Farm.setFruitFav(id, true) end)
                             nFav = nFav + 1
                             task.wait()
@@ -3483,13 +3476,7 @@ function Farm.sellOnce()
                 -- sellAll=true -> semua jenis lolos; else cuma jenis terpilih
                 local okType = state.sellAll or state.selectedSell[jenis]
                 -- STAR FARM: anti-sell buah Glow >= glowKgMin (dilindungi, jangan dijual)
-                if state.sfGlowAntiSell and getMutation(o) == "Glow" and (w or 0) >= (state.glowKgMin or 50) then okType = false end
-                -- v5.8: priority "kirim kesini dulu" aktif -> buah yg layak kirim (>= gfPrioMinVal)
-                -- JANGAN dijual, biarin Auto Gift Fruit yg ngirim. buah murah tetep dijual.
-                if _prioAktif then
-                    local pr = Farm.fruitPrice(o, true)
-                    if pr and pr >= (state.gfPrioMinVal or 3000000) then okType = false end
-                end
+                if state.sfGlowAntiSell and getMutation(o) == "Glow" and (w or 0) >= (state.glowKgMin or 30) then okType = false end
                 if okType and okMut and okW then
                     if type(w) == "number" then Farm._sellKg = Farm._sellKg + w end  -- v10.8
                     pcall(function() p:Fire(tostring(id)) end)
@@ -5495,7 +5482,7 @@ function Farm.giftFruitOnce()
                     -- v5.9: JANGAN ikut ngirim Glow >= glowKgMin di sini. Glow diurus jalur KHUSUS
                     -- (starGlowTick: numpuk 20 -> unfav -> SendBatch). kalau dikirim dari sini,
                     -- buahnya masih KEFAV -> gift PASTI GAGAL + bentrok sama batch Glow.
-                    if state.sfGlowAntiSell and getMutation(t) == "Glow" and w >= (state.glowKgMin or 50) then
+                    if state.sfGlowAntiSell and getMutation(t) == "Glow" and w >= (state.glowKgMin or 30) then
                         jenisOk = false
                     end
                     local valOk = true
@@ -6610,10 +6597,10 @@ Farm.buildFarm2Btn = function()
             state.c2AllMutAnyKg = true    -- v44.56: auto ON pas Farm 2 (-50/-60) dipilih
             -- STAR FARM: fitur Glow auto-ON pas pencet tombol Farm 2 (60/50)
             state.sfGlowGate = true
-            -- v5.8: Farm 2 nyalain AUTO GIFT FRUIT. gunanya: kalau ada akun yg nyalain
-            -- "Kirim Semua Kesini Dulu" (priority), buah dari akun ini OTOMATIS dikirim ke situ.
-            -- kalau gak ada priority & relay kosong -> gift diem sendiri (gak ganggu).
-            state.gfAuto = true
+            -- v6.3: gfAuto SENGAJA GAK dinyalain di sini. v5.8 dulu nyalain -> Auto Gift Fruit
+            -- ngirim SEMUA buah >= 3M (Aurora/Frozen/Star Fruit ikut kekirim) - BUKAN itu maunya.
+            -- yang boleh dikirim CUMA Glow 50kg+ lewat jalur khusus (starGlowTick).
+            -- kalau emang mau kirim semua buah bernilai, nyalain manual di tab AUTO GIFT.
             -- v4.9: shovel buah kecil ikut nyala pas preset Farm 2 dipencet
             state.shovelFruit = true
             state.shovelFruitAll = true
@@ -9717,7 +9704,7 @@ do
         while card.Parent do
             pcall(function()
                 gInfo.Text = string.format("Glow >=%dkg di tas: %s  |  kirim tiap >=%s  |  %s",
-                    state.glowKgMin or 50, tostring(Farm._sfGlowInBag or 0),
+                    state.glowKgMin or 30, tostring(Farm._sfGlowInBag or 0),
                     tostring(state.sfGlowGiftBatch or 20), Farm._sfGiftStatus or "nunggu buah...")
             end)
             task.wait(1)
@@ -9742,9 +9729,9 @@ do
             end
         end)
     end
-    statRow(4,   "Collect Glow <50kg",    "sfGlowCollectSmall", "Collect Glow kecil")
-    statRow(52,  "Anti-Sell Glow 50kg+",  "sfGlowAntiSell",     "Anti-Sell Glow")
-    statRow(100, "Fav Glow 50kg+",        "sfGlowFav",          "Fav Glow")
+    statRow(4,   "Collect Glow <"..(state.glowKgMin or 30).."kg", "sfGlowCollectSmall", "Collect Glow kecil")
+    statRow(52,  "Anti-Sell Glow "..(state.glowKgMin or 30).."kg+", "sfGlowAntiSell",     "Anti-Sell Glow")
+    statRow(100, "Fav Glow "..(state.glowKgMin or 30).."kg+",       "sfGlowFav",          "Fav Glow")
     statRow(148, "Gate collect Glow >=60","sfGlowGate",         "Gate Glow 60")
     statRow(196, "Gift Glow (mail) ON",   "sfGlowGift",         "Gift Glow")
     -- v5.4: dulu input ambang gate ke-COPY 3x & ditumpuk di posisi sama -> teks numpuk di GUI.
@@ -12408,7 +12395,7 @@ state.autoHop = false
 -- STAR FARM: loop Glow (auto-fav >= glowKgMin + gift 20 per batch)
 -- ============================================================
 function Farm.starGlowTick()
-    local kgMin = state.glowKgMin or 50
+    local kgMin = state.glowKgMin or 30
     -- kumpulin buah Glow >= kgMin di TAS
     local glowList = {}
     for _, holder in ipairs(invHolders()) do
@@ -12452,6 +12439,24 @@ function Farm.starGlowTick()
             Farm._sfGiftVia = "manual"
         end
     end)
+    -- v6.2: PENGAMAN - gak ada yg minta (akun penerima matiin toggle / offline) TAPI ada Glow di tas
+    -- yg ke-unfav (sisa proses kirim yg batal/gagal) -> FAV ULANG SEKARANG JUGA, jangan nunggu
+    -- siklus berikutnya. Glow ke-unfav = rawan (walau anti-sell udah jaga, fav = lapis kedua).
+    if target == "" then
+        local nRefav = 0
+        for _, g in ipairs(glowList) do
+            if not g.fav then
+                pcall(function() Farm.setFruitFav(g.id, true) end)
+                nRefav = nRefav + 1
+                task.wait()
+            end
+        end
+        if nRefav > 0 then
+            print("[StarFarm] gak ada yg minta -> "..nRefav.." Glow di-FAV ULANG (aman di tas)")
+        end
+        Farm._sfGiftStatus = "gak ada yg minta - Glow ditahan di tas (kefav)"
+        return
+    end
     if state.sfGlowGift and target ~= "" and #glowList >= batch then
         local uid = resolveTargetId(target)
         if not uid then Farm._sfGiftStatus = "target '"..target.."' gak ketemu"; return end
@@ -12485,6 +12490,32 @@ function Farm.starGlowTick()
         end
         task.wait(0.5)          -- kasih waktu server mroses kiriman sebelum sell boleh jalan lagi
         Farm._giftBusy = false  -- lepas kunci
+    else
+        -- v6.2: gift GAK jadi jalan (penerima matiin toggle / Glow blm cukup / target kosong).
+        -- kalau ada Glow yg TERLANJUR ke-unfav (sisa gift yg batal/gagal), FAV LAGI SEKARANG -
+        -- jangan nunggu tick 5 detik berikutnya.
+        if state.sfGlowFav then
+            local nRefav = 0
+            for _, holder in ipairs(invHolders()) do
+                if holder then
+                    for _, o in ipairs(holder:GetChildren()) do
+                        local id = o:GetAttribute("Id")
+                        local w  = o:GetAttribute("Weight") or 0
+                        if id and getMutation(o) == "Glow" and w >= kgMin then
+                            local fav = (o:GetAttribute("Favorite") or o:GetAttribute("Favorited"))
+                            if not fav then
+                                pcall(function() Farm.setFruitFav(tostring(id), true) end)
+                                nRefav = nRefav + 1
+                                task.wait()
+                            end
+                        end
+                    end
+                end
+            end
+            if nRefav > 0 then
+                print("[StarFarm] gift batal -> "..nRefav.." Glow di-FAV lagi (dilindungi)")
+            end
+        end
     end
 end
 task.spawn(function()
@@ -12509,7 +12540,10 @@ if not state.af2SprTool or state.af2SprTool == "" then state.af2SprTool = "Super
 if not state.af2WCTool  or state.af2WCTool  == "" then state.af2WCTool  = "Super Watering Can" end
 -- Fitur Glow (SELALU ON):
 if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollectMin = 60 end   -- collect Glow cuma kalau di kebun >= ini
-if state.glowKgMin == nil then state.glowKgMin = 50 end                                          -- ambang kg buat fav/anti-sell/gift Glow
+-- v6.4: ambang Glow 50 -> 30 kg (permintaan user: Glow 30kg+ jangan kejual).
+-- dipakai buat: anti-sell, auto-fav, gift batch, & batas "Glow kecil" yg boleh dipanen bebas.
+-- DIPAKSA tiap start biar setting lama (50) ikut keupdate.
+state.glowKgMin = 30
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
 -- v4.8: SHOVEL BUAH <50kg, SEMUA jenis - auto ON (permintaan user).
