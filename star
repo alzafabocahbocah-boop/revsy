@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v5.2  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v5.3  (standalone, basis ZENX v44.79) - GAG 2
+-- v5.3: DIAG catat alasan ASLI skip di collectOnce (kenapa nyisain buah kecil matang)
 -- v5.2: weather buruk BALIK ke kick (hop ke publik terbukti mendarat di server ADA ORANG = bahaya steal)
 -- v5.1: FIX hop - sortOrder Asc (server sepi duluan). dulu Desc -> 0 server kosong ketemu
 -- v5.0: weather buruk -> AUTO HOP ke server KOSONG (dulu kick doang). server GAG2 semua 1/8 = kosong
@@ -252,7 +253,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v5.2"
+local VER       = "STAR v5.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1922,6 +1923,13 @@ task.spawn(function()
                 print(string.format("[DIAG] autoCollect2=%s collectMulti=%s c2NoMut=%s c2All=%s c2WeightF=%s antiHeavy=%s",
                     tostring(state.autoCollect2), tostring(state.collectMulti), tostring(state.c2NoMut),
                     tostring(state.c2All), tostring(state.c2WeightF), tostring(state.antiCollectHeavy)))
+                -- v5.3: alasan ASLI dari collectOnce kenapa buah kecil matang gak kefire
+                do
+                    local R = Farm._skipWhy or {}
+                    local parts = {}
+                    for k, v in pairs(R) do parts[#parts+1] = k.."="..v end
+                    print("[DIAG] SKIP di collectOnce (buah kecil matang): "..(#parts > 0 and table.concat(parts, " ") or "GAK ADA (semua kefire)"))
+                end
                 for core, e in pairs(tipe) do
                     print(string.format("[DIAG] jenis '%s': matang=%d mentah=%d | kg-GAKTAU=%d | rasio=%s",
                         tostring(core), e.matang, e.mentah, e.nokg, tostring(Farm._baseW[core] or "BELUM ADA (ini biang kg nil)")))
@@ -2539,6 +2547,7 @@ function Farm.collectOnce()
     if not gardens then print("[StarFarm] Gardens gak ada"); return end
 
     local _t0 = tick()  -- v6.8: timing - ukur durasi 1 siklus collect
+    Farm._skipWhy = {}   -- v5.3: reset pencatat alasan skip tiap siklus
     local fired, skipped = 0, 0
     local typesFired = {}
     if state.collectWeightF ~= 0 then Farm.updateBaseW() end  -- v10.9: kalibrasi kalau filter berat aktif
@@ -2640,12 +2649,30 @@ function Farm.collectOnce()
                     -- v2.3: + okHeavy (dulu kelewat -> Glow kecil bisa ketahan anti-heavy)
                     if gkg and gkg < (state.glowKgMin or 50) then okGlowGate = true; okMut = true; okW = true; okHeavy = true end
                 end
-                if fruitUUID and #tostring(fruitUUID) >= 30 and Farm.isFruitRipe(fruit)
-                   and okMut and okW and okFresh and okHeavy and okGlowGate then
+                -- v5.3: catat ALASAN buah gak kefire (dari kode ASLI, bukan tiruan DIAG).
+                -- biar ketauan kenapa selalu nyisain beberapa buah kecil matang.
+                local _ripe = Farm.isFruitRipe(fruit)
+                local _fidOk = fruitUUID and #tostring(fruitUUID) >= 30
+                if _fidOk and _ripe and okMut and okW and okFresh and okHeavy and okGlowGate then
                     pcall(function() p:Fire(tostring(plantId), tostring(fruitUUID)) end)
                     Farm._collectKg = Farm._collectKg + (Farm.gardenKg(fruit, seedName) or 0)  -- v10.8 (v1.2: or 0 - buah kg nil gak bikin ERROR -> collect gak crash)
                     fired = fired + 1; fruitCount = fruitCount + 1
                     task.wait()  -- jeda konsisten tiap fire (pola temen yg gacor)
+                else
+                    local R = Farm._skipWhy
+                    if R then
+                        local kgx = Farm.gardenKg(fruit, seedName) or 0
+                        local kecilMatang = (_ripe and kgx > 0 and kgx < math.abs(state.collectWeightF or 50))
+                        if kecilMatang then   -- cuma catat yg "mestinya kepanen"
+                            if not _fidOk then R.nofid = (R.nofid or 0) + 1
+                            elseif not okMut then R.mut = (R.mut or 0) + 1
+                            elseif not okW then R.berat = (R.berat or 0) + 1
+                            elseif not okFresh then R.basi = (R.basi or 0) + 1
+                            elseif not okHeavy then R.heavy = (R.heavy or 0) + 1
+                            elseif not okGlowGate then R.glowgate = (R.glowgate or 0) + 1
+                            end
+                        end
+                    end
                 end
             end
         end
