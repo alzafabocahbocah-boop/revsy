@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v3.9  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v4.0  (standalone, basis ZENX v44.79) - GAG 2
+-- v4.0: sembunyiin visual buah ILANG TOTAL auto-ON (buah tetep kedetect & kepanen)
 -- v3.9: deteksi matang pakai prompt Panen kalau Age gak ada (dulu dianggap matang -> kefire terus ditolak)
 -- v3.8: DIAG rincian per jenis (matang/mentah/kg-gaktau/rasio) - tau kenapa buah ilang dari hitungan
 -- v3.7: kunci SELL pas gift Glow jalan (unfav 20 buah rawan kejual kalau SellAll barengan)
@@ -240,7 +241,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v3.9"
+local VER       = "STAR v4.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -12257,6 +12258,14 @@ if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollec
 if state.glowKgMin == nil then state.glowKgMin = 50 end                                          -- ambang kg buat fav/anti-sell/gift Glow
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
+-- v4.0: sembunyiin VISUAL BUAH - ilang TOTAL (bukan samar). buah tetep kedetect & kepanen
+-- (cuma visual yg ilang, Model + atribut utuh). permintaan user.
+state.hideFruits = true
+state.hideFruitFaint = false    -- false = ILANG TOTAL (true = samar 0.7)
+task.spawn(function()
+    task.wait(3)   -- tunggu kebun ke-load dulu
+    pcall(function() Farm.setHideFruits(true) end)
+end)
 -- v3.5: diagnostik AUTO-ON (biar gak usah ngetik tiap execute/rejoin). matiin:
 --   getgenv().StarFarm._diagKecil = false
 Farm._diagKecil = true
