@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v4.0  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v4.1  (standalone, basis ZENX v44.79) - GAG 2
+-- v4.1: tombol SIMPAN POSISI sprinkler/WC dari karakter (persisten) + override picker plot
 -- v4.0: sembunyiin visual buah ILANG TOTAL auto-ON (buah tetep kedetect & kepanen)
 -- v3.9: deteksi matang pakai prompt Panen kalau Age gak ada (dulu dianggap matang -> kefire terus ditolak)
 -- v3.8: DIAG rincian per jenis (matang/mentah/kg-gaktau/rasio) - tau kenapa buah ilang dari hitungan
@@ -241,7 +242,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v4.0"
+local VER       = "STAR v4.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -808,6 +809,7 @@ local function saveState()
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
         out.af2WCTrigger = state.af2WCTrigger or 0
         out.hideBigKg = state.hideBigKg or 100   -- v32.8
+        out.af2SavePos = state.af2SavePos   -- v4.1: titik simpan sprinkler/WC (dari karakter)
         out.af2BigCap = state.af2BigCap or 100
         out.af2SavedPos = state.af2SavedPos or {}
         out.af2SprTool = state.af2SprTool or ""   -- v31.5: nama sprinkler dipilih
@@ -876,6 +878,7 @@ local function loadState()
                 if type(d.s2WeightF) == "number" then state.s2WeightF = d.s2WeightF end
                 if type(d.af2WCTrigger) == "number" then state.af2WCTrigger = d.af2WCTrigger end
                 if type(d.hideBigKg) == "number" then state.hideBigKg = d.hideBigKg end   -- v32.8
+                if type(d.af2SavePos) == "table" and type(d.af2SavePos.x) == "number" then state.af2SavePos = d.af2SavePos end
                 if type(d.af2BigCap) == "number" then state.af2BigCap = d.af2BigCap end
                 if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
                 if type(d.af2SprTool) == "string" then state.af2SprTool = d.af2SprTool end
@@ -9125,7 +9128,7 @@ end
 -- CARD AF2-1 + AF2-2: SUPER SPRINKLER + SUPER WC
 do
     local card, body, setH = mkFarmCard(10, "Auto Super Sprinkler & WC", "boost kg . percepat tumbuh . auto-detect posisi", buyList)
-    setH(420)
+    setH(400)
     local info = lbl(body, "Scan garden -> simpan posisi plot -> pakai buat place sprinkler.", 11, C.textDim, Enum.TextXAlignment.Left)
     info.Position = UDim2.new(0,0,0,4); info.Size = UDim2.new(1,0,0,16); info.TextWrapped = true
     -- v33.1: ROMBAK pemilihan lokasi - biar tau "Plot1" itu YANG MANA di garden:
@@ -9405,10 +9408,50 @@ do
     -- status live
     local stL = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
     stL.Position = UDim2.new(0,0,0,300); stL.Size = UDim2.new(1,0,0,48); stL.TextWrapped = true
-    task.spawn(function()
-        task.wait(2)
-        while card.Parent do stL.Text = Farm._af2Status or ""; task.wait(1) end
+    -- v4.1: SIMPAN POSISI dari tempat karakter berdiri -> dipakai buat naruh Sprinkler/WC
+    -- (override picker plot). berguna kalau mau titik naruh yg spesifik/lengang.
+    local savePosL = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
+    savePosL.Position = UDim2.new(0,0,0,352); savePosL.Size = UDim2.new(1,0,0,14); savePosL.TextWrapped = true
+    local function refreshSavePos()
+        local sp = state.af2SavePos
+        if sp and sp.x then
+            savePosL.Text = string.format("titik simpan: %.0f, %.0f, %.0f (DIPAKAI)", sp.x, sp.y, sp.z)
+            savePosL.TextColor3 = C.green
+        else
+            savePosL.Text = "titik simpan: (kosong) - pakai posisi plot otomatis"
+            savePosL.TextColor3 = C.textDim
+        end
+    end
+    local saveBtn = mk("TextButton", { Size = UDim2.new(0.62,-2,0,24), Position = UDim2.new(0,0,0,368),
+        BackgroundColor3 = C.accent, TextColor3 = Color3.new(1,1,1), Text = "Simpan posisi (dari karakter)",
+        Font = FONT_B, TextSize = 11, BorderSizePixel = 0, AutoButtonColor = false, Parent = body })
+    corner(saveBtn, 6)
+    saveBtn.MouseButton1Click:Connect(function()
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if not hrp then saveBtn.Text = "karakter gak ada"; task.wait(1); saveBtn.Text = "Simpan posisi (dari karakter)"; return end
+        local p0 = hrp.Position
+        -- patok Y ke TANAH biar sprinkler gak ke-place melayang
+        pcall(function()
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            rp.FilterDescendantsInstances = { player.Character }
+            local hit = workspace:Raycast(Vector3.new(p0.X, p0.Y + 10, p0.Z), Vector3.new(0, -200, 0), rp)
+            if hit then p0 = Vector3.new(p0.X, hit.Position.Y, p0.Z) end
+        end)
+        state.af2SavePos = { x = p0.X, y = p0.Y, z = p0.Z }
+        saveState(); refreshSavePos()
+        print(string.format("[AF2] posisi disimpan: %.1f, %.1f, %.1f", p0.X, p0.Y, p0.Z))
+        saveBtn.Text = "TERSIMPAN!"; task.wait(1); saveBtn.Text = "Simpan posisi (dari karakter)"
     end)
+    local clrBtn = mk("TextButton", { Size = UDim2.new(0.38,-2,0,24), Position = UDim2.new(0.62,2,0,368),
+        BackgroundColor3 = C.danger, TextColor3 = Color3.new(1,1,1), Text = "Hapus titik",
+        Font = FONT_B, TextSize = 11, BorderSizePixel = 0, AutoButtonColor = false, Parent = body })
+    corner(clrBtn, 6)
+    clrBtn.MouseButton1Click:Connect(function()
+        state.af2SavePos = nil; saveState(); refreshSavePos()
+        print("[AF2] titik simpan dihapus -> balik ke posisi plot otomatis")
+    end)
+    refreshSavePos()
 end
 
 -- CARD AF2-3: AUTO COLLECT 2 (terpisah dari AUTO FARM, default: semua buah, tanpa mutasi, -50kg)
@@ -9757,6 +9800,12 @@ end
 
 -- auto-detect posisi garden: 1 posisi per PLOT (bukan per tanaman) + filter UserId milik player
 function Farm.af2GetPlantPositions(seedFilter)
+    -- v4.1: POSISI TERSIMPAN (dari tombol "Simpan posisi" - ambil dari tempat karakter berdiri).
+    -- kalau ada, ini yg dipakai buat naruh Sprinkler/WC (override picker plot).
+    if state.af2SavePos and type(state.af2SavePos) == "table" and state.af2SavePos.x then
+        local sp = state.af2SavePos
+        return { { pos = Vector3.new(sp.x, sp.y, sp.z), plot = "SIMPAN" } }
+    end
     -- v29.2: pakai plot picker (af2SelectedPlots) kalau ada, ignore seedFilter
     local plotList = Farm.af2PlotList()
     local useAll = state.af2AllPlots
