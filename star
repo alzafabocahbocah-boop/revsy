@@ -9415,20 +9415,20 @@ do
     local function refreshSavePos()
         local sp = state.af2SavePos
         if sp and sp.x then
-            savePosL.Text = string.format("titik simpan: %.0f, %.0f, %.0f (DIPAKAI)", sp.x, sp.y, sp.z)
+            savePosL.Text = string.format("titik teleport: %.0f, %.0f, %.0f (DIPAKAI pas naruh)", sp.x, sp.y, sp.z)
             savePosL.TextColor3 = C.green
         else
-            savePosL.Text = "titik simpan: (kosong) - pakai posisi plot otomatis"
+            savePosL.Text = "titik teleport: (kosong) - TP deket pohon otomatis"
             savePosL.TextColor3 = C.textDim
         end
     end
     local saveBtn = mk("TextButton", { Size = UDim2.new(0.62,-2,0,24), Position = UDim2.new(0,0,0,368),
-        BackgroundColor3 = C.accent, TextColor3 = Color3.new(1,1,1), Text = "Simpan posisi (dari karakter)",
+        BackgroundColor3 = C.accent, TextColor3 = Color3.new(1,1,1), Text = "Simpan titik TELEPORT (posisi kamu)",
         Font = FONT_B, TextSize = 11, BorderSizePixel = 0, AutoButtonColor = false, Parent = body })
     corner(saveBtn, 6)
     saveBtn.MouseButton1Click:Connect(function()
         local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        if not hrp then saveBtn.Text = "karakter gak ada"; task.wait(1); saveBtn.Text = "Simpan posisi (dari karakter)"; return end
+        if not hrp then saveBtn.Text = "karakter gak ada"; task.wait(1); saveBtn.Text = "Simpan titik TELEPORT (posisi kamu)"; return end
         local p0 = hrp.Position
         -- patok Y ke TANAH biar sprinkler gak ke-place melayang
         pcall(function()
@@ -9440,8 +9440,8 @@ do
         end)
         state.af2SavePos = { x = p0.X, y = p0.Y, z = p0.Z }
         saveState(); refreshSavePos()
-        print(string.format("[AF2] posisi disimpan: %.1f, %.1f, %.1f", p0.X, p0.Y, p0.Z))
-        saveBtn.Text = "TERSIMPAN!"; task.wait(1); saveBtn.Text = "Simpan posisi (dari karakter)"
+        print(string.format("[AF2] titik teleport disimpan: %.1f, %.1f, %.1f", p0.X, p0.Y, p0.Z))
+        saveBtn.Text = "TERSIMPAN!"; task.wait(1); saveBtn.Text = "Simpan titik TELEPORT (posisi kamu)"
     end)
     local clrBtn = mk("TextButton", { Size = UDim2.new(0.38,-2,0,24), Position = UDim2.new(0.62,2,0,368),
         BackgroundColor3 = C.danger, TextColor3 = Color3.new(1,1,1), Text = "Hapus titik",
@@ -9449,7 +9449,7 @@ do
     corner(clrBtn, 6)
     clrBtn.MouseButton1Click:Connect(function()
         state.af2SavePos = nil; saveState(); refreshSavePos()
-        print("[AF2] titik simpan dihapus -> balik ke posisi plot otomatis")
+        print("[AF2] titik teleport dihapus -> balik TP deket pohon otomatis")
     end)
     refreshSavePos()
 end
@@ -9800,12 +9800,6 @@ end
 
 -- auto-detect posisi garden: 1 posisi per PLOT (bukan per tanaman) + filter UserId milik player
 function Farm.af2GetPlantPositions(seedFilter)
-    -- v4.1: POSISI TERSIMPAN (dari tombol "Simpan posisi" - ambil dari tempat karakter berdiri).
-    -- kalau ada, ini yg dipakai buat naruh Sprinkler/WC (override picker plot).
-    if state.af2SavePos and type(state.af2SavePos) == "table" and state.af2SavePos.x then
-        local sp = state.af2SavePos
-        return { { pos = Vector3.new(sp.x, sp.y, sp.z), plot = "SIMPAN" } }
-    end
     -- v29.2: pakai plot picker (af2SelectedPlots) kalau ada, ignore seedFilter
     local plotList = Farm.af2PlotList()
     local useAll = state.af2AllPlots
@@ -9861,6 +9855,17 @@ function Farm.af2GotoNear(pos, range)
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
     range = range or 25
+    -- v4.1: TITIK TELEPORT TERSIMPAN (dari tombol "Simpan titik teleport" - posisi karakter lo).
+    -- dulu teleport-nya HARDCODE: offset X dari pohon -> sering mendarat nabrak/numpuk tanaman.
+    -- sekarang kalau ada titik simpan, karakter TELEPORT KE SITU pas mau naruh sprinkler/WC.
+    local sp = state.af2SavePos
+    if sp and type(sp) == "table" and sp.x then
+        local tp = Vector3.new(sp.x, sp.y + 3, sp.z)
+        if (hrp.Position - tp).Magnitude <= 6 then return true end   -- udah di titik simpan
+        pcall(function() hrp.CFrame = CFrame.new(tp, pos) end)       -- berdiri di titik simpan, hadap tanaman
+        task.wait(0.25)
+        return true
+    end
     -- v1.2: kalau udah cukup deket, JANGAN teleport (dulu selalu TP walau udah deket)
     if (hrp.Position - pos).Magnitude <= range then return true end
     pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(AF2_PLACE_OFFSET, 8, 0), pos + Vector3.new(0, 3, 0)) end)  -- v1.1: lebih tinggi (8) biar di atas buah, jauh (offset) biar gak numpuk tanaman lain
