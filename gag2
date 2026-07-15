@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v7.5  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v7.7  (standalone, basis ZENX v44.79) - GAG 2
+-- v7.7: rejoin delay per cuaca (Gold 2 menit, Electric 6 menit) + buang TeleportToPlaceInstance (diblok)
+-- v7.6: cuaca buruk -> KICK + AUTO-REJOIN ke server SAMA (kick lokal = sc tetep hidup). delay 120s
 -- v7.5: gak fav buah yg mau dikirim (percuma+lambat) + teks mail auto-refresh via Mailbox.Updated
 -- v7.4: Farm 2 (-50/-60) NEMPEL - tersimpan ON = auto nyala lagi pas rejoin/re-exe, OFF ya OFF
 -- v7.3: mailCount cuma hitung gift yg MASIH bisa di-claim (bekas gift yg udah di-claim gak kehitung)
@@ -275,7 +277,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v7.5"
+local VER       = "STAR v7.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -770,6 +772,8 @@ local state = {
     gfStorageMinVal = 4000000,   -- v21.8: cuma buah >= nilai ini yg dikirim ke simpanan (4M)
     gfPrioMinVal    = 3000000,   -- v24.0: min nilai buah utk "Kirim Semua Kesini Dulu" (default 3M, bisa diatur)
     prioMailMax     = 20,        -- v7.2: target notif mail - kalau kecapai, priority OFF sendiri
+    weatherRejoinSec = 120,      -- v7.6: default delay rejoin cuaca buruk (dipakai jenis lain)
+    weatherDelaySec = { goldmoon = 120, lightning = 360, lain = 120 },   -- v7.7: delay per jenis cuaca (detik)
     gfStorDefV1     = false,      -- v21.8: flag apply default akun simpanan
     gfStorDefV2     = false,      -- v21.9: list simpanan diperluas 60-75
     storageMode     = false,      -- v22.0: akun ini = PENYIMPANAN (cuma terima, gak ngegift kayak farm)
@@ -859,6 +863,8 @@ local function saveState()
         out.buyGoodMinRarity = state.buyGoodMinRarity or "Mythic"  -- v26.3
         out.sfGlowGiftTarget = state.sfGlowGiftTarget or ""   -- STAR FARM: target gift Glow (PERSISTEN)
         out.glowCollectMin = state.glowCollectMin or 60   -- STAR FARM: ambang gate Glow (persisten)
+        out.weatherRejoinSec = state.weatherRejoinSec or 120  -- v7.6: delay rejoin cuaca buruk
+        out.weatherDelaySec = state.weatherDelaySec        -- v7.7: delay per jenis cuaca
         out.gfStorageTarget = state.gfStorageTarget or ""  -- v21.7
         out.gfStorageMinVal = state.gfStorageMinVal or 4000000  -- v21.8
         out.gfPrioMinVal = state.gfPrioMinVal or 3000000  -- v24.0
@@ -933,6 +939,8 @@ local function loadState()
                 if type(d.gfStorageMinVal) == "number" then state.gfStorageMinVal = d.gfStorageMinVal end
                 if type(d.gfPrioMinVal) == "number" then state.gfPrioMinVal = d.gfPrioMinVal end
                 if type(d.prioMailMax) == "number" then state.prioMailMax = d.prioMailMax end
+                if type(d.weatherRejoinSec) == "number" then state.weatherRejoinSec = d.weatherRejoinSec end
+                if type(d.weatherDelaySec) == "table" then state.weatherDelaySec = d.weatherDelaySec end
                 if type(d.collectWeightF) == "number" then state.collectWeightF = d.collectWeightF end
                 if type(d.sellWeightF) == "number" then state.sellWeightF = d.sellWeightF end
                 -- v8.2: koordinat sprinkler
@@ -8452,6 +8460,21 @@ function Farm.hideWeatherCountdown()
         Farm._wxCdLabel = nil
     end)
 end
+-- v7.7: DELAY REJOIN per JENIS CUACA (detik). permintaan user:
+--   Goldmoon = 2 menit, Electric/Lightning = 6 menit. sisanya pakai default.
+-- minimal 45 detik (ghost-slot bekas kita butuh ~30-60s buat bebas - dari sc leveling v13.26).
+-- bisa diubah pas jalan, mis:  getgenv().StarFarm._ui.state.weatherDelaySec.goldmoon = 180
+function Farm.weatherDelay(w)
+    local nm = tostring(w or ""):lower():gsub("%s+", "")
+    local t = state.weatherDelaySec or {}
+    local d
+    if nm:find("gold") then d = t.goldmoon or 120                       -- Goldmoon: 2 menit
+    elseif nm:find("lightning") or nm:find("electric") or nm:find("storm") then
+        d = t.lightning or 360                                          -- Electric/Lightning: 6 menit
+    else d = t.lain or state.weatherRejoinSec or 120 end
+    return math.max(45, tonumber(d) or 120)
+end
+
 function Farm.isBadWeatherNow()
     -- v35.4 (HASIL BONGKAR DATA): game punya DUA kanal terpisah -
     --   ActiveWeather = weather (Rain/Lightning/Rainbow/Snowfall/Starfall/Aurora/Sunburst)
@@ -8500,15 +8523,56 @@ staggerSpawn(function()
         if state.autoWeatherHop then
             local bad, w = Farm.isBadWeatherNow()
             if bad then
-                -- v5.2: BALIK ke KICK (ga hop ke publik). v5.0/5.1 sempet auto-hop ke "server kosong"
-                -- TAPI TES BUKTIIN: data API server-list BASI - pas scan 1 pemain, pas nyampe udah
-                -- 3 pemain. di GAG2 ada STEAL -> bahaya. dan rejoin balik ke PRIVATE SERVER gak bisa
-                -- otomatis (accessCode gak kebaca klien - diblok Roblox).
-                -- jadi: kick aja, user masukin lagi ke PS-nya sendiri (aman, gak kecemplung publik).
-                print("[StarFarm] weather buruk '"..tostring(w).."' -> KICK (masukin lagi ke server kamu)")
-                Farm._weatherHopState = nil
-                pcall(function() player:Kick("cuaca buruk ("..tostring(w)..") - masukin lagi ya") end)
-                task.wait(5)   -- jeda kecil biar ga spam kick
+                -- v7.7: KICK + AUTO-REJOIN. DELAY BEDA TIAP CUACA (Goldmoon 2 menit, Electric 6 menit).
+                -- TERBUKTI DI TES USER:
+                --  (1) player:Kick() itu kick LOKAL -> script executor TETEP HIDUP (log "MASIH
+                --      HIDUP" jalan terus abis kick, sampai 5 menit pun aman).
+                --  (2) TeleportToPlaceInstance ke PS DITOLAK Roblox ("Can't join private instance
+                --      through specific joins") -> DIBUANG, percuma.
+                --  (3) TS:Teleport(placeId) doang MALAH BALIK KE PS SENDIRI (GAG2 ngerutein tiap
+                --      pemain ke server-nya sendiri - nyambung sama temuan "100 server publik
+                --      semuanya 1/8 pemain"). jadi ini yg dipakai.
+                -- kenapa nunggu: cuaca GLOBAL (semua server sama) -> hop percuma. yg dibutuhin =
+                -- KELUAR dulu biar kebun gak kena mutasi jelek, baru balik pas cuacanya lewat.
+                local delay = Farm.weatherDelay(w)
+                print(string.format("[StarFarm] cuaca buruk '%s' -> KICK, rejoin %d menit %d detik lagi...",
+                    tostring(w), math.floor(delay/60), delay%60))
+                Farm._weatherHopState = "rejoin"
+                local TPS = game:GetService("TeleportService")
+                -- sembunyiin dialog "Disconnected" selama nunggu + retry (cukup buat 10 menit)
+                task.spawn(function()
+                    local cg = game:GetService("CoreGui")
+                    local gs = game:GetService("GuiService")
+                    for _ = 1, 1400 do
+                        pcall(function()
+                            for _, g in ipairs(cg:GetChildren()) do
+                                local n = tostring(g.Name):lower()
+                                if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                    if g:IsA("ScreenGui") then g.Enabled = false end
+                                    pcall(function() g.Parent = nil end)
+                                end
+                            end
+                            pcall(function() gs:ClearError() end)
+                        end)
+                        task.wait(0.5)
+                    end
+                end)
+                pcall(function() player:Kick("cuaca buruk ("..tostring(w)..") - rejoin "..math.floor(delay/60).." menit") end)
+                -- hitung mundur (sekalian bukti script masih hidup)
+                for i = delay, 1, -1 do
+                    Farm._weatherHopAt = i
+                    if i % 30 == 0 or i <= 5 then
+                        print(string.format("[StarFarm] rejoin dalam %d:%02d", math.floor(i/60), i%60))
+                    end
+                    task.wait(1)
+                end
+                local tries = 0
+                while true do
+                    tries = tries + 1
+                    print("[StarFarm] rejoin percobaan #"..tries.."...")
+                    pcall(function() TPS:Teleport(game.PlaceId, player) end)
+                    task.wait(12)
+                end
             else
                 Farm._weatherHopState = nil
                 pendingFrom = nil; Farm._weatherHopAt = nil
