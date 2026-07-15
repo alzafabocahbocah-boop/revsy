@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v3.7  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v3.9  (standalone, basis ZENX v44.79) - GAG 2
+-- v3.9: deteksi matang pakai prompt Panen kalau Age gak ada (dulu dianggap matang -> kefire terus ditolak)
+-- v3.8: DIAG rincian per jenis (matang/mentah/kg-gaktau/rasio) - tau kenapa buah ilang dari hitungan
 -- v3.7: kunci SELL pas gift Glow jalan (unfav 20 buah rawan kejual kalau SellAll barengan)
 -- v3.6: FAV Glow DULU sebelum SellAll (SellAll jual seluruh tas, filter anti-sell kelewat)
 -- v3.5: DIAG ikut generasi (dulu baca instance mati -> beat beku) + DIAG auto-ON
@@ -238,7 +240,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v3.7"
+local VER       = "STAR v3.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1044,8 +1046,17 @@ end
 function Farm.isFruitRipe(f)
     local age = f:GetAttribute("Age")
     local mx  = f:GetAttribute("MaxAge")
-    if type(age) ~= "number" or type(mx) ~= "number" or mx <= 0 then return true end
-    return age >= mx
+    if type(age) == "number" and type(mx) == "number" and mx > 0 then
+        return age >= mx
+    end
+    -- v3.9: gak ada Age/MaxAge -> pakai PROMPT PANEN sbg penanda matang (itu yg game sendiri pakai).
+    -- anti-leg cuma nge-DISABLE prompt (Enabled=false), objeknya MASIH ADA -> tetep kebaca.
+    -- (dulu fallback-nya "anggap matang" -> buah mentah kefire terus & ditolak server)
+    local ok, punya = pcall(function()
+        return f:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
+    end)
+    if ok then return punya end
+    return true
 end
 
 function Farm.gardenKg(fruit, seedName)
@@ -1883,6 +1894,25 @@ task.spawn(function()
                     end end
                 end
                 local b1 = Farm._collectBeat or 0
+                -- v3.8: rincian per JENIS - matang/mentah/kg-gaktau. biar ketauan kenapa buah
+                -- "ilang" dari hitungan kecil/besar (rasio kg blm ada? atau emang mentah?)
+                local tipe = {}
+                for _, pl in ipairs(G:GetChildren()) do
+                    local pf = pl:FindFirstChild("Plants")
+                    if pf then for _, p in ipairs(pf:GetChildren()) do
+                        if tonumber(tostring(p.Name):match("^(%d+)_")) == player.UserId then
+                            local sn = p:GetAttribute("SeedName")
+                            local fr = p:FindFirstChild("Fruits")
+                            if fr then for _, f in ipairs(fr:GetChildren()) do
+                                local core = f:GetAttribute("CorePartName") or sn or "?"
+                                local e = tipe[core]
+                                if not e then e = { matang=0, mentah=0, nokg=0 }; tipe[core] = e end
+                                if Farm.isFruitRipe(f) then e.matang = e.matang + 1 else e.mentah = e.mentah + 1 end
+                                if Farm.gardenKg(f, sn) == nil then e.nokg = e.nokg + 1 end
+                            end end
+                        end
+                    end end
+                end
                 print(string.format("[DIAG] kecil MATANG=%d | ketahan gate=%d | mestinya kepanen=%d | Glow=%d/%d | tasPenuh=%s",
                     n, gate, lolos, glowN, glowMin, tostring(Farm._bagFull)))
                 print(string.format("[DIAG] collectBeat=%s (naik=jalan) | fired terakhir=%s | durasi=%.2fs",
@@ -1890,6 +1920,10 @@ task.spawn(function()
                 print(string.format("[DIAG] autoCollect2=%s collectMulti=%s c2NoMut=%s c2All=%s c2WeightF=%s antiHeavy=%s",
                     tostring(state.autoCollect2), tostring(state.collectMulti), tostring(state.c2NoMut),
                     tostring(state.c2All), tostring(state.c2WeightF), tostring(state.antiCollectHeavy)))
+                for core, e in pairs(tipe) do
+                    print(string.format("[DIAG] jenis '%s': matang=%d mentah=%d | kg-GAKTAU=%d | rasio=%s",
+                        tostring(core), e.matang, e.mentah, e.nokg, tostring(Farm._baseW[core] or "BELUM ADA (ini biang kg nil)")))
+                end
                 for _, c in ipairs(contoh) do print("[DIAG]   "..c) end
             end)
         end
