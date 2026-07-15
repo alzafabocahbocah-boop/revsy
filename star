@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v3.4  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v3.5  (standalone, basis ZENX v44.79) - GAG 2
+-- v3.5: DIAG ikut generasi (dulu baca instance mati -> beat beku) + DIAG auto-ON
 -- v3.4: diagnostik + collectBeat/fired/toggle (tau collectOnce jalan & nembak berapa)
 -- v3.3: expose getMutation + diagnostik bawaan (_diagKecil) - lapor kenapa buah kecil gak kepanen
 -- v3.2: CABUT pause-sell gate Glow (bikin TAS PENUH -> collect gagal -> macet). anti-sell udah cukup
@@ -235,7 +236,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v3.4"
+local VER       = "STAR v3.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1825,9 +1826,12 @@ Farm.getMutation = getMutation   -- v3.3: expose biar debug/diagnostik bisa mang
 
 -- v3.3: DIAGNOSTIK BAWAAN - nyalain lewat: getgenv().StarFarm._diagKecil = true
 -- tiap 10s lapor: buah kecil MATANG ada berapa, dan ketahan di mana (gate/mutasi/kg/heavy).
+-- v3.5: loop IKUT GENERASI (isCurrentGen). dulu `while true` -> pas execute ulang, DIAG lama
+-- tetep jalan & baca Farm LAMA yg udah mati -> lapor "collectBeat=1" beku (nyesatin).
 task.spawn(function()
-    while true do
+    while isCurrentGen() do
         task.wait(10)
+        if not isCurrentGen() then break end
         if Farm._diagKecil then
             pcall(function()
                 local thr = math.abs(state.c2WeightF or 50)
@@ -12185,6 +12189,9 @@ if state.glowCollectMin == nil or state.glowCollectMin < 1 then state.glowCollec
 if state.glowKgMin == nil then state.glowKgMin = 50 end                                          -- ambang kg buat fav/anti-sell/gift Glow
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
 state.sfGlowGate = true         -- gate collect Glow >= glowCollectMin
+-- v3.5: diagnostik AUTO-ON (biar gak usah ngetik tiap execute/rejoin). matiin:
+--   getgenv().StarFarm._diagKecil = false
+Farm._diagKecil = true
 state.sfGlowAntiSell = true     -- anti-sell Glow >= glowKgMin
 state.sfGlowCollectSmall = true -- collect Glow kecil (< glowKgMin)
 -- Gift Mail Glow: kirim tepat 20 Glow >= glowKgMin per batch (target persisten)
