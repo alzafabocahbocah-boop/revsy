@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v3.5  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v3.7  (standalone, basis ZENX v44.79) - GAG 2
+-- v3.7: kunci SELL pas gift Glow jalan (unfav 20 buah rawan kejual kalau SellAll barengan)
+-- v3.6: FAV Glow DULU sebelum SellAll (SellAll jual seluruh tas, filter anti-sell kelewat)
 -- v3.5: DIAG ikut generasi (dulu baca instance mati -> beat beku) + DIAG auto-ON
 -- v3.4: diagnostik + collectBeat/fired/toggle (tau collectOnce jalan & nembak berapa)
 -- v3.3: expose getMutation + diagnostik bawaan (_diagKecil) - lapor kenapa buah kecil gak kepanen
@@ -236,7 +238,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v3.5"
+local VER       = "STAR v3.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -3281,11 +3283,37 @@ local function getInvMax()
     return state.sellMaxFallback
 end
 function Farm.sellOnce()
+    -- v3.7: JANGAN jual pas gift Glow lagi jalan (buah lagi di-unfav buat dikirim -> rawan kejual)
+    if Farm._giftBusy then return end
     Farm.updateBaseW()  -- v10.8: kalibrasi base weight dari buah di tas
     -- v10.9: kalau filter berat aktif, SellAll gak bisa (jual semua sekaligus) -> pakai per-fruit
     if state.sellAll and state.sellWeightF == 0 then
         local p = pkt("NPCS", "SellAll")
         if not p or not p.Fire then print("[StarFarm] SellAll packet gak ada"); return end
+        -- v3.6 FIX: SellAll = 1 remote yg jual SELURUH tas -> filter "Anti-Sell Glow" (yg kerjanya
+        -- per-buah) KELEWAT -> Glow ikut kejual. yg nyelametin cuma FAVORITE (game gak jual buah fav).
+        -- jadi: FAV Glow >= glowKgMin DULU, tunggu bentar, BARU SellAll.
+        if state.sfGlowAntiSell or state.sfGlowFav then
+            local nFav = 0
+            for _, holder in ipairs(getFruitHolders()) do
+                for _, o in ipairs(holder:GetChildren()) do
+                    local id = o:GetAttribute("Id")
+                    if id and getMutation(o) == "Glow" then
+                        local w = o:GetAttribute("Weight")
+                        local favNow = o:GetAttribute("Favorite") or o:GetAttribute("Favorited")
+                        if type(w) == "number" and w >= (state.glowKgMin or 50) and not favNow then
+                            pcall(function() Farm.setFruitFav(id, true) end)
+                            nFav = nFav + 1
+                            task.wait()
+                        end
+                    end
+                end
+            end
+            if nFav > 0 then
+                print(string.format("[StarFarm] fav %d Glow dulu sebelum SellAll (biar gak kejual)", nFav))
+                task.wait(0.6)   -- kasih waktu server nandain favorite
+            end
+        end
         -- v10.8: jumlahin berat semua buah di inventory SEBELUM dijual
         local kg = 0
         for _, holder in ipairs(getFruitHolders()) do
@@ -12145,6 +12173,10 @@ function Farm.starGlowTick()
         if uid == player.UserId then Farm._sfGiftStatus = "target = diri sendiri"; return end
         local sb = pkt("Mailbox", "SendBatch")
         if not (sb and sb.Fire) then Farm._sfGiftStatus = "SendBatch gak ada"; return end
+        -- v3.7 FIX: KUNCI SELL selama gift. buah yg mau dikirim harus di-UNFAV dulu (buah kefav gak
+        -- bisa di-gift) -> ada jendela beberapa detik dia GAK KELINDUNGI -> kalau SellAll kebetulan
+        -- jalan pas itu, 20 Glow KEJUAL. selama _giftBusy, sellOnce berhenti total.
+        Farm._giftBusy = true
         local items = {}
         for i = 1, batch do
             local g = glowList[i]
@@ -12162,6 +12194,8 @@ function Farm.starGlowTick()
             Farm._sfGiftStatus = "GAGAL kirim -> re-fav"
             print("[StarFarm] GIFT Glow GAGAL -> re-fav")
         end
+        task.wait(0.5)          -- kasih waktu server mroses kiriman sebelum sell boleh jalan lagi
+        Farm._giftBusy = false  -- lepas kunci
     end
 end
 task.spawn(function()
