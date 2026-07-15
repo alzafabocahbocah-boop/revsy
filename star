@@ -1,5 +1,8 @@
 -- ============================================================
--- STAR FARM  v4.9  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v5.2  (standalone, basis ZENX v44.79) - GAG 2
+-- v5.2: weather buruk BALIK ke kick (hop ke publik terbukti mendarat di server ADA ORANG = bahaya steal)
+-- v5.1: FIX hop - sortOrder Asc (server sepi duluan). dulu Desc -> 0 server kosong ketemu
+-- v5.0: weather buruk -> AUTO HOP ke server KOSONG (dulu kick doang). server GAG2 semua 1/8 = kosong
 -- v4.9: card "Auto Shovel Fruit" di Farm 2 (toggle + ambang kg + status live), auto-ON
 -- v4.8: SHOVEL BUAH <50kg semua jenis auto-ON (format terkonfirmasi via sniff) + fix nil-kg crash
 -- v4.7: balik destroy tanaman ON (v4.6 false alarm - masalahnya cuma Super WC salah naruh)
@@ -249,7 +252,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v4.9"
+local VER       = "STAR v5.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -7930,7 +7933,9 @@ local function doHop()
         local candidates = {}
         local cursor = nil
         for page = 1, 5 do
-            local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Desc&limit=100"
+            -- v5.1 FIX: sortOrder=Asc (server paling SEPI duluan). dulu Desc = paling PENUH duluan
+            -- -> 100 teratas isinya server terisi -> filter "kosong" nemu NOL -> nyasar ke server rame.
+            local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Asc&limit=100"
             if cursor then url = url .. "&cursor=" .. cursor end
             local body = httpGetJson(url)
             if not body or not body.data then break end
@@ -7956,6 +7961,18 @@ local function doHop()
         if #candidates > 0 then break end
         print("[StarFarm] scan kosong ("..(Farm._hopLastErr or "?").."), retry "..attempt.."/4...")
         task.wait(2)
+    end
+    -- v5.0: UTAMAIN server KOSONG (<=1 pemain). GAG2 max 8 slot & rata2 server emang kosong,
+    -- jadi ini bikin kita selalu mendarat di server sepi (gak nyasar ke yg udah ada orangnya).
+    do
+        local kosong = {}
+        for _, s in ipairs(candidates) do
+            if (s.playing or 0) <= 1 then kosong[#kosong+1] = s end
+        end
+        if #kosong > 0 then
+            print(string.format("[StarFarm] hop: %d server KOSONG dari %d kandidat -> pilih yg kosong", #kosong, #candidates))
+            candidates = kosong
+        end
     end
 
     if #candidates > 0 then
@@ -8246,14 +8263,14 @@ staggerSpawn(function()
         if state.autoWeatherHop then
             local bad, w = Farm.isBadWeatherNow()
             if bad then
-                -- v44.31: SEMENTARA - SEMUA weather buruk (termasuk petir) -> KICK doang, GA rejoin.
-                -- alasan: TeleportToPlaceInstance ke private server DIBLOK Roblox ("cant join private
-                -- instance through specific join"). balik ke PS butuh accessCode yg ga kebaca client.
-                -- nunggu weather lewat = kena mutasi jelek. jadi kick aja, user masukin manual.
-                -- (nanti spy cara dapet accessCode PS buat rejoin otomatis.)
-                print("[StarFarm] weather buruk '"..tostring(w).."' -> KICK (ga rejoin, masukin manual)")
+                -- v5.2: BALIK ke KICK (ga hop ke publik). v5.0/5.1 sempet auto-hop ke "server kosong"
+                -- TAPI TES BUKTIIN: data API server-list BASI - pas scan 1 pemain, pas nyampe udah
+                -- 3 pemain. di GAG2 ada STEAL -> bahaya. dan rejoin balik ke PRIVATE SERVER gak bisa
+                -- otomatis (accessCode gak kebaca klien - diblok Roblox).
+                -- jadi: kick aja, user masukin lagi ke PS-nya sendiri (aman, gak kecemplung publik).
+                print("[StarFarm] weather buruk '"..tostring(w).."' -> KICK (masukin lagi ke server kamu)")
                 Farm._weatherHopState = nil
-                pcall(function() player:Kick("cuaca buruk ("..tostring(w)..") - masukin lagi manual ya") end)
+                pcall(function() player:Kick("cuaca buruk ("..tostring(w)..") - masukin lagi ya") end)
                 task.wait(5)   -- jeda kecil biar ga spam kick
             else
                 Farm._weatherHopState = nil
