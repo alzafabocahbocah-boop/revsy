@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v6.0  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v6.1  (standalone, basis ZENX v44.79) - GAG 2
+-- v6.1: toggle "Kirim Semua Kesini Dulu" DISIMPEN (auto nyala lagi abis rejoin, gak usah pencet ulang)
 -- v6.0: Glow cuma dipanen kalau ADA YG MINTA (priority) + numpuk >= ambang. gak ada = numpuk di kebun
 -- v5.9: Glow 50kg+ dikirim ke akun yg MINTA (priority) + gift biasa gak ikut ngirim Glow (anti-bentrok)
 -- v5.8: Farm 2 nyalain Auto Gift Fruit + buah layak-kirim gak dijual pas priority "kirim kesini" aktif
@@ -260,7 +261,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v6.0"
+local VER       = "STAR v6.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -758,7 +759,7 @@ local state = {
     gfStorDefV2     = false,      -- v21.9: list simpanan diperluas 60-75
     storageMode     = false,      -- v22.0: akun ini = PENYIMPANAN (cuma terima, gak ngegift kayak farm)
     storageFull     = false,      -- v22.1: akun ini penuh -> farm skip (lewat relay)
-    storagePriority = false,      -- v22.2: "kirim semua kesini" (gak disave -> auto off pas rejoin)
+    storagePriority = false,      -- v22.2: "kirim semua kesini". v6.1: DISAVE (auto nyala lagi abis rejoin)
     notifOn         = true,       -- v22.3: notif popup tiap abis kirim buah
     gfStorageOn     = false,      -- v22.7: farm routing buah ke akun simpanan (default OFF)
     gfRelayUrl      = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxshk",  -- v18.8: relay default
@@ -786,7 +787,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora","Ignited","Glow"}
-local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyCrate","buyAllCrates","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","c2AllMutAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","antiLegMax","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop","imInPrivate",
+local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyCrate","buyAllCrates","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","c2AllMutAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","antiLegMax","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","storagePriority","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop","imInPrivate",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -5625,9 +5626,16 @@ end)
 staggerSpawn(function()
     task.wait(2)
     -- boot: kalau relay masih nyimpen nama akun ini sbg priority (sisa sebelum rejoin) -> bersihin
+    -- v6.1: KECUALI kalau toggle-nya emang tersimpan ON -> jangan dibersihin, malah di-assert ulang
+    -- (dulu toggle gak disave, jadi sisa di relay = sampah. sekarang disave, jadi itu SENGAJA).
     pcall(function()
         local url = Farm.priorityUrl()
         if url then
+            if state.storagePriority then
+                Farm.setPriority(true)   -- tersimpan ON -> assert ulang biar TTL fresh
+                print("[StarFarm] 'Kirim Semua Kesini Dulu' tersimpan ON -> lanjut minta kiriman")
+                return
+            end
             local resp = Farm.relayReq({ Url = url, Method = "GET" })
             local body = resp and (resp.Body or resp.body)
             if body then
