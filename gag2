@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v11.0  (standalone, basis ZENX v44.79) - GAG 2
--- v11.0: FIX buah gak kepanen - visual buah cuma dibantai KALAU UDAH MATANG (dulu pas lahir)
+-- STAR FARM  v11.1  (standalone, basis ZENX v44.79) - GAG 2
+-- v11.1: CATET DULU BARU DESTROY - buah yg belum kecatat gak disentuh. cache akhirnya DINYALAIN
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -306,6 +306,20 @@ local Farm = {}
 -- ("Out of local registers, exceeded limit 200"). 37 local jadi 1 = hemat 36 slot.
 local AP = {}
 
+-- ===== v11.1: NYALAIN CACHE BUAH DULUAN (sebelum destroy apa pun) =====
+-- rancangan user: "catet dulu semua buah, baru destroy. yg belum kecatet jangan di-destroy".
+-- TEMUAN: Farm.startFruitCache ternyata GAK PERNAH DIPANGGIL di sc ini - cache-nya kosong terus.
+-- makanya "catet dulu" gak pernah kejadian, dan buah kebantai sebelum datanya kerekam.
+task.spawn(function()
+    for _ = 1, 900 do
+        if Farm.startFruitCache then break end
+        task.wait(0.1)
+    end
+    pcall(function() Farm.startFruitCache() end)
+    print(string.format("[WAKTU] +%.1fs  cache buah NYALA (catet dulu, baru destroy)",
+        os.clock() - (getgenv().__StarT0 or os.clock())))
+end)
+
 -- ===== v10.9 TES: ANTI-LEG (destroy + lighting) BARU JALAN 30 DETIK SETELAH GUI MUNCUL =====
 -- permintaan user: "anti leg nya semua ya dari lightning sama destroy di bikin 30s setelah gui muncul".
 -- ini KEBALIKAN v10.6/v10.7 (yg ngejar secepetnya). tujuannya nyoba: kalau anti-leg jalan pas
@@ -346,7 +360,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v11.0"
+local VER       = "STAR v11.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1499,8 +1513,15 @@ end
 -- ===== v44.76: CACHE BUAH =====
 -- tiap buah muncul, rekam plantId+fruitUUID ke tabel kita SEBELUM game/destroy sempet ngerusak.
 -- collect nembak dari cache -> server masih punya buahnya walau Model klien udah despawn.
-Farm._fruitCache = {}          -- uuid -> { plantId=, at= }
+Farm._fruitCache = {}          -- uuid -> { plantId=, kg=, mut=, seed=, maxAge=, at=, dstr= }
 Farm._fruitCacheConn = nil
+-- v11.1 (rancangan user): CATET DULU, BARU DESTROY. buah yg BELUM kecatet JANGAN disentuh.
+-- kenapa: begitu visual buah dibantai, Model-nya bisa ilang/beku - kalau kita belum sempet nyatet,
+-- datanya HILANG SELAMANYA (itu yg bikin "buah gak bisa dipanen" + hitungan ngaco di v9.4).
+-- kalau udah kecatet, semua data yg dibutuhin (kg/mutasi/plantId/fid) ada di tabel kita sendiri,
+-- gak bergantung sama Model lagi.
+-- kg AMAN dicatet sejak lahir - TERBUKTI dari tes user: SizeMulti DIEM 20 detik (4.340169..)
+-- sementara Age naik 0.07 -> 0.71. jadi kg buah FIX PAS LAHIR, gak pernah tumbuh.
 local function cacheFruitModel(m)
     pcall(function()
         if not (m:IsA("Model") and m.Parent and m.Parent.Name == "Fruits") then return end
@@ -1509,10 +1530,32 @@ local function cacheFruitModel(m)
         if tonumber(tostring(plant.Name):match("^(%d+)_")) ~= player.UserId then return end
         local fid = m:GetAttribute("FruitId")
         local pid = m:GetAttribute("PlantId") or plant:GetAttribute("PlantId")
-        if fid and pid and #tostring(fid) >= 30 then
-            Farm._fruitCache[tostring(fid)] = { plantId = tostring(pid), at = os.clock() }
-        end
+        if not (fid and pid and #tostring(fid) >= 30) then return end
+        local key = tostring(fid)
+        local lama = Farm._fruitCache[key]
+        local seed = plant:GetAttribute("SeedName")
+        local e = lama or { at = os.clock() }
+        e.plantId = tostring(pid)
+        e.seed    = seed
+        e.maxAge  = m:GetAttribute("MaxAge")
+        e.kg      = Farm.gardenKg and Farm.gardenKg(m, seed) or nil
+        -- catatan: getMutation() dideklarasi jauh DI BAWAH (baris ~2474), jadi gak kejangkau dari
+        -- sini (lexical scope). pakai atribut mentahnya aja - isinya sama.
+        e.mut     = m:GetAttribute("Mutation")
+        e.model   = m
+        Farm._fruitCache[key] = e
     end)
+end
+-- v11.1: udah kecatet LENGKAP? (kg wajib ada - itu yg dipakai saringan Farm 2)
+function Farm.fruitSudahDicatat(m)
+    local ok = false
+    pcall(function()
+        local fid = m:GetAttribute("FruitId")
+        if not fid then return end
+        local e = Farm._fruitCache[tostring(fid)]
+        ok = (e ~= nil) and (e.plantId ~= nil) and (type(e.kg) == "number" and e.kg > 0)
+    end)
+    return ok
 end
 function Farm.startFruitCache()
     if Farm._fruitCacheConn then return end
@@ -1947,7 +1990,7 @@ function Farm.applyAntiRender(on)
                         local fs = plant:FindFirstChild("Fruits")
                         if fs then
                             for _, f in ipairs(fs:GetChildren()) do
-                                if not f:GetAttribute("_arDstr") and Farm.isFruitRipe(f) then
+                                if not f:GetAttribute("_arDstr") and Farm.fruitSudahDicatat(f) then
                                     for _, d in ipairs(f:GetDescendants()) do
                                         if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
                                            or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
@@ -2166,7 +2209,7 @@ task.spawn(function()
                             local fs = plant:FindFirstChild("Fruits")
                             if fs then
                                 for _, f in ipairs(fs:GetChildren()) do
-                                    if not f:GetAttribute("_arDstr") and Farm.isFruitRipe(f) then
+                                    if not f:GetAttribute("_arDstr") and Farm.fruitSudahDicatat(f) then
                                         for _, d in ipairs(f:GetDescendants()) do
                                             if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
                                                or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
