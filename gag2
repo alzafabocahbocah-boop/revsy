@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v12.2  (standalone, basis ZENX v44.79) - GAG 2
--- v12.2: shovel buah GAK dipaksa nyala lagi (ambangnya bentrok sama Collect 2 - sama2 50kg)
+-- STAR FARM  v12.3  (standalone, basis ZENX v44.79) - GAG 2
+-- v12.3: destroy buah DIMATIIN (tes A/B - shovel udah kebukti bukan penyebab bangkai)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -358,7 +358,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v12.2"
+local VER       = "STAR v12.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1220,23 +1220,42 @@ end
 -- CATATAN JUJUR: bug v9.4 penyebabnya MASIH BELUM KETEMU. dugaan terkuat sekarang = kg NIL
 -- (rasio jenis buah belum kekalibrasi -> gardenKg balik nil -> buah gak kehitung & gak kepanen),
 -- dan itu GAK ADA HUBUNGANNYA sama destroy. belum dicek.
--- ===== v12.1: SAKLAR DESTROY BUAH =====
--- NYALA (default). angka "+6 FPS" dari tes tes_fps_buah itu MENYESATKAN: waktu itu kebunnya
--- lagi dikit buah (2.550 part). sekarang 829 buah -> ~3.300+ part dari buah doang, dan naik
--- terus. jadi untungnya jauh lebih gede dari +6. (user: "aku cobak di kebun dikit buah,
--- ini buahnya banyak banget")
+-- ===== v12.3: DESTROY BUAH DIMATIIN (tes A/B tersangka terakhir) =====
+-- JEJAK TES (jangan diulang):
+--   * shovel MATI (v12.2) + Super WC doang -> bangkai TETEP kebentuk
+--     -> SHOVEL BUKAN penyebabnya. tersangka (b) GUGUR.
+--   * tinggal tersangka (a) = destroy visual buah. ini yg dimatiin sekarang.
+-- KALAU BANGKAI BERHENTI -> destroy buah biang keroknya, cabut permanen (pohon tetep +40 FPS).
+-- KALAU BANGKAI TETEP ADA -> DUA-DUANYA bukan penyebabnya. berarti bangkai kebentuk dari
+--   jalur lain (collect itu sendiri? game-nya sendiri?) - dan destroy buah boleh dinyalain lagi.
+-- ===== v12.3: DESTROY BUAH DIMATIIN - TES A/B =====
+-- kenapa dimatiin: ini TERSANGKA TERAKHIR. yg lain udah mati semua:
+--   x FruitSpawnLocations kehapus  -> diag: 196/196 utuh
+--   x umur beku gara2 destroy buah -> pantau_pohon: umur JALAN 1.080->6.840 abis dibantai
+--   x MaxAge nil dianggap matang   -> cek: MaxAge NIL=0, isFruitRipe udah nanganin
+--   x kg nil (rasio gak kekenal)   -> Hypno Bloom 672 buah, kg-NIL=0 (cuma Moon Bloom, 3 biji)
+--   x mutasi nyangkut              -> c2MutExcept=true + daftar kecuali KOSONG = semua lolos
+--   x shovel                       -> v12.2 matiin shovel, bangkai TETEP kebentuk
 --
--- MASALAH YG BELUM KELAR (jangan lupa): "makin lama makin parah, 10 menitan bener2 gak bisa
--- collect sama sekali". bukti DIAG: 621 buah, CollectFruit ditembak ~12.500x, NOL pindah.
--- polanya NUMPUK. dua tersangka yg sama2 numpuk seiring waktu:
---   (a) destroy visual buah  <- saklar ini
---   (b) auto-shovel buah <50kg (v6.6 sengaja nyekop yg MENTAH juga, nyala tiap Farm 2 ON)
--- kalau nanti macet lagi: matiin salah satu, tes 10 menit, gantian. jangan dua2nya sekaligus -
--- nanti gak ketauan yg mana.
---   Farm._dstrBuah = false   -> matiin destroy buah (tes tersangka a)
---   Auto Shovel Fruit OFF    -> matiin shovel (tes tersangka b)
-Farm._dstrBuah  = true    -- false = buah gak disentuh sama sekali (buat tes A/B)
-Farm._dstrBigKg = 0       -- 0 = semua buah, 50 = cuma yg >= 50kg
+-- BUKTI TERBARU (bongkar_bangkai, 2x jalan):
+--   tes 1: total 695, bangkai 626
+--   tes 2: total 852, bangkai 626   <- PERSIS SAMA, gak nambah satu pun
+--   sementara total naik +157 -> buah baru TETEP lahir & TETEP matang (226 normal).
+--   -> kebocorannya UDAH BERHENTI. 626 itu rombongan tetap yg beku di SATU momen,
+--      bukan numpuk pelan2. jadi tersangkanya BUKAN proses yg jalan terus, tapi SATU
+--      PERISTIWA yg mbunuh 626 buah sekaligus = SAPUAN DESTROY PAS BOOT (bantai SEMUA
+--      buah sekaligus, ribuan part dalam satu putaran).
+--   dan atribut bangkai vs sehat LENGKAP SAMA (MaxAge=8, GrowRateMulti=1, SizeMulti normal).
+--   yg beda cuma Age: bangkai = 0 PERSIS (gak pernah numbuh sedetik pun), sehat = 4.137.
+--   CATATAN: buah "sehat" itu JUGA part=0 & _arDstr=true -> udah dibantai tapi umurnya jalan.
+--   itu sebabnya destroy sempet keliatan gak bersalah.
+--
+-- HASIL TES INI:
+--   bangkai = 0        -> destroy KEBUKTI. fix beneran: sisain 1 part (dikecilin+transparan)
+--                         biar Model punya jangkar streaming. FPS tetep kepotong banyak.
+--   bangkai = ratusan  -> destroy BEBAS. tersangka habis, mulai dari nol.
+Farm._dstrBuah  = false   -- v12.3: TES - true = bantai visual buah lagi
+Farm._dstrBigKg = 0       -- kalau _dstrBuah true: 0 = semua buah, 50 = cuma yg >= 50kg
 function Farm.buahLayakDibantai(f, seed)
     if not Farm._dstrBuah then return false end   -- v12.1: saklar mati -> buah GAK disentuh
     local ok = false
@@ -13611,6 +13630,97 @@ if state.autoBuyPet then state.autoSell = true; state.sellWhenFull = false; stat
 -- kalau nanti butuh auto-buy-pet lagi, nyalain manual + hop-nya balikin.
 state.autoHop = false
 -- v44.6: autoWeatherHop TIDAK dipaksa - ikut state tersimpan (kalau di-ON manual, tetap ON pas rejoin)
+
+-- ============================================================
+-- v12.3: AUTO REJOIN KALAU BANGKAI KEBANYAKAN
+-- ============================================================
+-- MASALAHNYA: buah "bangkai" = Model buah yg di klien masih ada tapi di SERVER udah gak ada.
+-- ciri khasnya UMURNYA BEKU: server gak ngirim update lagi. akibatnya:
+--   * gak pernah matang -> gak pernah kepanen (Collect 2 wajib matang)
+--   * CollectFruit ditembak ribuan kali ke buah yg gak ada (bukti DIAG user: 621 buah,
+--     ~12.500 tembakan, NOL pindah)
+--   * numpuk terus -> ~10 menit -> "kayak gak ada apa2 di garden"
+-- KENAPA REJOIN: bangkai GAK BISA dibenerin dari klien - Model-nya udah putus dari server,
+-- gak ada cara maksa sinkron ulang satu objek. cuma rejoin yg bersihin (user: "pas rejoin
+-- dia ada dan banyak"). ini OBAT GEJALA, bukan akar - akarnya masih dicari.
+--
+-- CARA DETEKSI (gak nebak): tiap CEK_TIAP detik, umur semua buah MENTAH dicatat.
+-- ronde berikutnya, yg umurnya GAK GERAK SAMA SEKALI = bangkai.
+-- kenapa buah mentah? krn pakai Super WC/Sprinkler buah MESTINYA matang - buah yg stuck
+-- mentah dgn umur beku itu GAK NORMAL. buah beneran umurnya pasti jalan.
+-- pengaman: butuh 2 ronde berturut-turut beku (biar buah yg emang lagi diem sesaat gak kehitung).
+Farm._bangkaiOn    = true    -- false = matiin fitur ini
+Farm._bangkaiBatas = 150     -- rejoin kalau bangkai >= segini
+Farm._bangkaiCekTiap = 25    -- detik antar ronde cek
+Farm._bangkaiLast  = {}      -- [fruit] = umur ronde lalu
+Farm._bangkaiBeku  = {}      -- [fruit] = udah berapa ronde beku
+Farm._bangkaiN     = 0       -- jumlah bangkai terakhir (buat panel/DIAG)
+
+function Farm.hitungBangkai()
+    local n, cek = 0, 0
+    local lastBaru, bekuBaru = {}, {}
+    local g = workspace:FindFirstChild("Gardens")
+    if not g then return 0 end
+    for _, plot in ipairs(g:GetChildren()) do
+        local pf = plot:FindFirstChild("Plants")
+        if pf then
+            for _, pl in ipairs(pf:GetChildren()) do
+                if tonumber(tostring(pl.Name):match("^(%d+)_")) == player.UserId then
+                    local fs = pl:FindFirstChild("Fruits")
+                    if fs then
+                        for _, f in ipairs(fs:GetChildren()) do
+                            local a  = f:GetAttribute("Age")
+                            local mx = f:GetAttribute("MaxAge")
+                            -- cuma buah MENTAH yg dipantau (matang emang berhenti tumbuh - wajar)
+                            if type(a) == "number" and type(mx) == "number" and mx > 0 and a < mx then
+                                local prev = Farm._bangkaiLast[f]
+                                lastBaru[f] = a
+                                if prev ~= nil and math.abs(a - prev) < 0.0001 then
+                                    local r = (Farm._bangkaiBeku[f] or 0) + 1
+                                    bekuBaru[f] = r
+                                    if r >= 2 then n = n + 1 end   -- 2 ronde beku = bangkai
+                                end
+                                cek = cek + 1
+                                if cek % 200 == 0 then task.wait() end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    Farm._bangkaiLast = lastBaru   -- buah yg udah ilang otomatis kebuang dari tabel
+    Farm._bangkaiBeku = bekuBaru
+    Farm._bangkaiN = n
+    return n
+end
+
+task.spawn(function()
+    task.wait(60)   -- kasih waktu kebun ke-load + buah lahir dulu
+    while isCurrentGen() do
+        task.wait(Farm._bangkaiCekTiap or 25)
+        if not isCurrentGen() then break end
+        if Farm._bangkaiOn and state.farm2On then
+            local ok, n = pcall(Farm.hitungBangkai)
+            if ok and type(n) == "number" then
+                if n > 0 then
+                    print(string.format("[StarFarm] bangkai (umur beku >=2 ronde): %d / batas %d",
+                        n, Farm._bangkaiBatas or 150))
+                end
+                if n >= (Farm._bangkaiBatas or 150) then
+                    warn(string.format("[StarFarm] BANGKAI %d >= batas %d -> REJOIN ke server yg sama",
+                        n, Farm._bangkaiBatas or 150))
+                    local jid = game.JobId
+                    pcall(function()
+                        if Farm.rejoinSameServer then Farm.rejoinSameServer(jid)
+                        elseif Farm.simpleRejoin then Farm.simpleRejoin() end
+                    end)
+                    task.wait(20)   -- jangan nembak rejoin berkali2 kalau lagi proses
+                end
+            end
+        end
+    end
+end)
 
 -- ============================================================
 -- STAR FARM: loop Glow (auto-fav >= glowKgMin + gift 20 per batch)
