@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v10.9  (standalone, basis ZENX v44.79) - GAG 2
--- v10.9: TES - anti-leg (lighting + destroy) baru jalan 30 DETIK setelah GUI muncul
+-- STAR FARM  v11.0  (standalone, basis ZENX v44.79) - GAG 2
+-- v11.0: FIX buah gak kepanen - visual buah cuma dibantai KALAU UDAH MATANG (dulu pas lahir)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -346,7 +346,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v10.9"
+local VER       = "STAR v11.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1923,9 +1923,19 @@ function Farm.applyAntiRender(on)
         end
     end)
 
-    -- (8) VISUAL BUAH -> HAPUS, tapi Model + ATRIBUT DISISAIN.
-    -- PENTING: collect cuma butuh PlantId + FruitId dari atribut, GAK butuh mesh-nya. terbukti di
-    -- tes user: visual dibantai, collect & counter "buah kecil" TETEP JALAN.
+    -- ===== (8) VISUAL BUAH -> HAPUS, TAPI CUMA YG UDAH MATANG (v11.0) =====
+    -- HASIL TES USER (bukan tebakan):
+    --   * SizeMulti DIEM total 20 detik (4.340169..) sementara Age naik 0.07 -> 0.71
+    --     -> kg buah DITETAPKAN PAS LAHIR, gak pernah tumbuh. Age cuma progres MATENG.
+    --   * buah MATANG yg visualnya dibantai (part=0) -> COLLECT TETEP BERHASIL, masuk tas.
+    --     -> destroy GAK ngerusak panen.
+    -- KENAPA DULU RUSAK (v9.4): listener nge-destroy buah DETIK DIA LAHIR (masih mentah).
+    -- buah mentah yg udah dibantai gak pernah kebaca "matang" -> gak pernah kepanen -> hitungan
+    -- ngaco ("harusnya besar 300an"). yg masih kedetect = yg belum sempet kena listener.
+    -- ATURAN SEKARANG: buah cuma dibantai KALAU UDAH MATANG. pas matang, semua datanya udah final
+    -- (kg fix sejak lahir, mateng udah mentok) - jadi gak ada yg bisa rusak.
+    -- untungnya tetep gede: buah matang itu mayoritas (300+ besar yg nyangkut di kebun) - justru
+    -- itu biang leg-nya. yg mentah (~30) disisain, emang perlu keliatan buat trigger WC.
     local nBuah = 0
     pcall(function()
         local g = workspace:FindFirstChild("Gardens")
@@ -1937,7 +1947,7 @@ function Farm.applyAntiRender(on)
                         local fs = plant:FindFirstChild("Fruits")
                         if fs then
                             for _, f in ipairs(fs:GetChildren()) do
-                                if not f:GetAttribute("_arDstr") then
+                                if not f:GetAttribute("_arDstr") and Farm.isFruitRipe(f) then
                                     for _, d in ipairs(f:GetDescendants()) do
                                         if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
                                            or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
@@ -1946,8 +1956,8 @@ function Farm.applyAntiRender(on)
                                         end
                                     end
                                     f:SetAttribute("_arDstr", true)
-                                    napas()   -- v10.3: jeda per buah (buah bisa ribuan)
                                 end
+                                napas()
                             end
                         end
                     end
@@ -1962,22 +1972,9 @@ function Farm.applyAntiRender(on)
         task.defer(function()
             pcall(function()
                 if Farm._arMatiinEfek(d) then return end
-                -- v9.4: BUAH BARU -> visualnya langsung dibantai (Model+atribut tetep utuh).
-                -- ini wajib: buah lahir terus-terusan, kalau gak dipantau ya leg lagi.
-                if d:IsA("Model") and d.Parent and d.Parent.Name == "Fruits" then
-                    if not d:GetAttribute("_arDstr") then
-                        d:SetAttribute("_arDstr", true)
-                        task.wait(0.1)   -- kasih waktu game ngisi atributnya dulu
-                        for _, x in ipairs(d:GetDescendants()) do
-                            if x:IsA("BasePart") or x:IsA("Decal") or x:IsA("Texture")
-                               or x:IsA("ParticleEmitter") or x:IsA("Beam") or x:IsA("Trail")
-                               or x:IsA("SpecialMesh") or x:IsA("SurfaceAppearance") then
-                                pcall(function() x:Destroy() end)
-                            end
-                        end
-                    end
-                    return
-                end
+                -- v11.0: buah baru JANGAN dibantai di sini. dulu (v9.4) dibantai detik dia lahir -
+                -- padahal masih MENTAH -> gak pernah kebaca matang -> gak pernah kepanen.
+                -- sekarang diurus loop "sapu buah matang" di bawah (cek tiap 5 detik).
                 -- pagar baru -> hapus
                 local nm = tostring(d.Name):lower()
                 if (nm:find("fence") or nm:find("pagar")) and d:IsDescendantOf(workspace.Gardens) then
@@ -2144,6 +2141,50 @@ staggerSpawn(function()
                 else
                     for i, e in pairs(Farm._espG.lines) do pcall(function() e:Destroy() end); Farm._espG.lines[i] = nil end
                 end
+            end)
+        end
+    end
+end)
+
+-- ===== v11.0: SAPU BUAH MATANG (nyicil, tiap 5 detik) =====
+-- buah matengnya NYUSUL, jadi gak cukup disapu sekali pas anti-render nyala. loop ini mantau:
+-- begitu ada buah baru MATANG -> visualnya dibantai (Model + atribut disisain).
+-- KENAPA nunggu matang: buah mentah yg dibantai gak pernah kebaca matang -> gak kepanen (bug v9.4).
+-- kg-nya sendiri FIX SEJAK LAHIR (terbukti: SizeMulti diem 20 detik), jadi gak ada data yg ilang.
+-- nyicil pakai jeda biar gak nge-freeze pas Super WC bikin buah mateng massal.
+task.spawn(function()
+    while true do
+        task.wait(5)
+        if Farm._antiRenderOn then
+            pcall(function()
+                local g = workspace:FindFirstChild("Gardens"); if not g then return end
+                local n, ceked = 0, 0
+                for _, plot in ipairs(g:GetChildren()) do
+                    local pf = plot:FindFirstChild("Plants")
+                    if pf then
+                        for _, plant in ipairs(pf:GetChildren()) do
+                            local fs = plant:FindFirstChild("Fruits")
+                            if fs then
+                                for _, f in ipairs(fs:GetChildren()) do
+                                    if not f:GetAttribute("_arDstr") and Farm.isFruitRipe(f) then
+                                        for _, d in ipairs(f:GetDescendants()) do
+                                            if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
+                                               or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
+                                               or d:IsA("SpecialMesh") or d:IsA("SurfaceAppearance") then
+                                                pcall(function() d:Destroy() end)
+                                            end
+                                        end
+                                        f:SetAttribute("_arDstr", true)
+                                        n = n + 1
+                                    end
+                                    ceked = ceked + 1
+                                    if ceked % 150 == 0 then task.wait() end   -- napas
+                                end
+                            end
+                        end
+                    end
+                end
+                if n > 0 then print("[StarFarm] sapu buah matang: "..n.." buah dibantai visualnya") end
             end)
         end
     end
