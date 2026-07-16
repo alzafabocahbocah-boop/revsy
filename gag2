@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v10.0  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v10.1  (standalone, basis ZENX v44.79) - GAG 2
+-- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
 -- v9.9: Anti-Leg Max ikut bawa anti-render v9.4 (visual buah, tanah, pagar, garden orang)
 -- v9.8: FIX "Farm._Farm._arMatiinEfek" (dobel-prefix bekas refactor v9.6). local 169/200
@@ -294,7 +295,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v10.0"
+local VER       = "STAR v10.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -723,8 +724,8 @@ local state = {
     autoGift        = false,
     autoAcceptGift  = true,     -- v8.9: auto claim gift mailbox. v32.0: default ON (fresh), tapi bisa dimatiin & nempel
     autoAfk         = false,
-    antiLag         = false,    -- v11.4: matiin efek visual berat (max enteng)
-    antiLegMax      = false,    -- v44.62: ANTI-LEG TOTAL - antiLag + RenderFidelity/Light/Highlight/BillboardGui mati + panel pause + collect dilonggarin
+    antiLag         = true,     -- v10.1: SELALU ON (dipaksa tiap start - terbukti enteng)
+    antiLegMax      = true,     -- v10.1: SELALU ON tiap start. v44.62: ANTI-LEG TOTAL - antiLag + RenderFidelity/Light/Highlight/BillboardGui mati + panel pause + collect dilonggarin
     espGarden       = false,    -- v9.5: ESP kartu ringkasan kebun (ikut Farm 2)
     espGTinggi      = 45,       -- v10.0: tinggi kartu ESP (dulu 60 - kelewat tinggi)
     espGSisiKiri    = false,    -- v9.5: kartu di sisi kiri (default kanan)
@@ -13570,6 +13571,13 @@ state.glowCollectMin = 20
 state.af2WCTrigger   = 30
 state.af2BigCap      = 100
 state.espGTinggi     = 45    -- v10.0: tinggi kartu ESP (dulu 60 - kelewat tinggi)
+-- v10.1: ANTI-LEG MAX SELALU ON (permintaan user - hasil tes: enteng).
+-- ini nyalain: setAntiLag + anti-render v9.4 (lighting/air/partikel/bayangan/tanah/pagar/
+-- garden orang/visual buah) + destroy daun tanaman + sembunyiin toko + sweep tiap 8s.
+-- CATATAN: daun tanaman & visual buah DI-DESTROY permanen (balik cuma lewat rejoin) - tapi
+-- collect/shovel/counter tetep jalan karena atribut (PlantId/FruitId) disisain.
+state.antiLegMax = true
+state.antiLag    = true      -- basis-nya, biar toggle-nya jujur di GUI
 state.af2WCCooldown  = 12    -- v8.5: jeda WC 12 detik (dulu 30 - kerasa lemot)
 state.af2WCDelay     = 10    -- v8.8: tunggu 10 detik setelah buah kecil <= trigger, baru nyiram
 state.sfGlowFav = true          -- auto-fav Glow >= glowKgMin
@@ -13633,7 +13641,11 @@ end
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
 task.spawn(function()
     task.wait(3)
+    -- v10.1: APPLY Anti-Lag + Anti-Leg Max (state-nya udah dipaksa true di blok paksa atas).
+    -- apply-nya ditunda 3 detik biar gak nabrak load awal game (nabrak = freeze pas exe).
     pcall(function() AP.applyAntiLag() end)
+    task.wait(0.5)
+    pcall(function() AP.applyAntiLegMax() end)
     task.wait(0.5)
     pcall(function() AP.applyHidePlants() end)
     task.wait(0.5)
