@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v10.6  (standalone, basis ZENX v44.79) - GAG 2
--- v10.6: DESTROY dikejar paling duluan (blok pindah ke baris ~335, dulu ~13720 = nunggu GUI kelar)
+-- STAR FARM  v10.7  (standalone, basis ZENX v44.79) - GAG 2
+-- v10.7: urutan boot - DESTROY duluan, lighting nyusul (dua-duanya tetep di atas, sebelum GUI)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -299,34 +299,6 @@ task.spawn(function()
     end
 end)
 
--- ===== v10.5: LIGHTING DIMATIIN PALING AWAL (sebelum apa pun) =====
--- kenapa DI SINI, bukan di bawah: sc ini 13rb baris - bangun GUI-nya doang makan waktu (ratusan
--- Instance.new). kalau lighting-kill ditaruh bawah, dia nunggu semua itu kelar dulu.
--- user bilang: LOADING CEPET = LEG (kita nyampe kebun sebelum anti-leg jalan), LOADING LAMA = AMAN.
--- jadi tiap milidetik ngaruh. blok ini 0 scan (cuma set properti) -> instan, aman ditaruh paling atas.
-task.spawn(function()
-    pcall(function()
-        local L = game:GetService("Lighting")
-        L.GlobalShadows = false; L.ShadowSoftness = 0
-        L.EnvironmentDiffuseScale = 0; L.EnvironmentSpecularScale = 0
-        L.FogEnd = 9e9; L.FogStart = 9e9
-        L.Ambient = Color3.fromRGB(178,178,178); L.OutdoorAmbient = Color3.fromRGB(178,178,178)
-        for _, e in ipairs(L:GetChildren()) do
-            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
-                pcall(function() e.Enabled = false end)
-            end
-        end
-        local T = workspace:FindFirstChildOfClass("Terrain")
-        if T then
-            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
-            T.WaterReflectance = 0; T.WaterTransparency = 1
-            T.Decoration = false
-        end
-        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-    end)
-    print(string.format("[WAKTU] +%.1fs  lighting/air MATI", os.clock() - (getgenv().__StarT0 or os.clock())))
-end)
-
 -- tabel Farm dideklarasi DI SINI (dulu baris ~1130) supaya blok destroy di bawah ini bisa ngeliat.
 local Farm = {}
 
@@ -364,7 +336,37 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v10.6"
+-- v10.7: LIGHTING NYUSUL (permintaan user: "jangan lighting dulu tapi destroy dulu").
+-- destroy = yg paling ngaruh, jadi dia yg dikejar duluan. lighting ini murah (0 scan) & bakal
+-- kepanggil lagi di applyAntiRender, jadi taruh di belakang gak rugi.
+-- ===== LIGHTING/AIR DIMATIIN (v10.7: NYUSUL setelah destroy) =====
+-- tetep ditaruh di ATAS file (bukan baris 13rb) biar gak nunggu GUI kelar dibangun -
+-- tapi URUTANNYA di belakang blok DESTROY, krn destroy yg paling ngaruh.
+-- blok ini 0 scan (cuma set properti) -> instan.
+task.spawn(function()
+    pcall(function()
+        local L = game:GetService("Lighting")
+        L.GlobalShadows = false; L.ShadowSoftness = 0
+        L.EnvironmentDiffuseScale = 0; L.EnvironmentSpecularScale = 0
+        L.FogEnd = 9e9; L.FogStart = 9e9
+        L.Ambient = Color3.fromRGB(178,178,178); L.OutdoorAmbient = Color3.fromRGB(178,178,178)
+        for _, e in ipairs(L:GetChildren()) do
+            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
+                pcall(function() e.Enabled = false end)
+            end
+        end
+        local T = workspace:FindFirstChildOfClass("Terrain")
+        if T then
+            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
+            T.WaterReflectance = 0; T.WaterTransparency = 1
+            T.Decoration = false
+        end
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+    end)
+    print(string.format("[WAKTU] +%.1fs  lighting/air MATI (nyusul)", os.clock() - (getgenv().__StarT0 or os.clock())))
+end)
+
+local VER       = "STAR v10.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
