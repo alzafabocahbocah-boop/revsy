@@ -1,5 +1,8 @@
 -- ============================================================
--- STAR FARM  v9.2  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v9.5  (standalone, basis ZENX v44.79) - GAG 2
+-- v9.5: ESP GARDEN - 1 kartu di sisi kebun (buah/matang/VALUE/mutasi/pohon) + garis neon. ikut Farm 2
+-- v9.4: anti-render + tanah ijo dipolosin, pagar dihapus, garden orang dihapus, visual buah dihapus
+-- v9.3: ANTI-RENDER - lighting brutal + air + partikel + bayangan kebun (ikut toggle Anti-Lag)
 -- v9.2: SEMUA urusan Glow (fav/unfav/gift) cuma jalan kalau Farm 2 nyala. Farm 2 mati = gak disentuh
 -- v9.0: FIX gift Glow cuma nyampe 8-12 - TUNGGU unfav keproses server dulu, baru kirim 20
 -- v8.9: hitung mundur "WC tunggu" muncul di panel kanan atas (baris spr/wc)
@@ -287,7 +290,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v9.2"
+local VER       = "STAR v9.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -720,6 +723,7 @@ local state = {
     antiLegMax      = false,    -- v44.62: ANTI-LEG TOTAL - antiLag + RenderFidelity/Light/Highlight/BillboardGui mati + panel pause + collect dilonggarin
     noclip          = false,    -- v38.9: karakter nembus objek (no-clip)
     hidePlants      = false,    -- v11.7: sembunyiin visual tanaman (buah tetep keliatan)
+    antiRender      = false,    -- v9.3: matiin lighting/air/partikel/bayangan (anti-leg render)
     hideFruits      = false,    -- v11.8: sembunyiin buah juga
     hideFruitFaint  = true,     -- v11.8: true=sisain samar (transparan 0.7), false=ilang total
     hideBigFruits   = true,     -- v32.8: sembunyiin TOTAL buah >= hideBigKg. v33.0: default & force ON tiap start
@@ -796,6 +800,10 @@ local state = {
     gfAlert         = true,      -- v18.7: notif Discord pas sheckles < batas (sekali, anti-spam)
     gfAlertHook     = "https://discordapp.com/api/webhooks/1517745541595791370/WLFb5xOdnkcQxUaJIsUGIZROWKjoY-daksFnqnia-p307Ez-50dttV2cKofcplc9AD3v",
     toolHabisHook   = "",        -- v7.9: webhook notif status (kosong = pakai gfAlertHook)
+    espGarden       = true,      -- v9.5: ESP kartu kebun (ikut Farm 2, default ON)
+    espGarisPohon   = true,      -- v9.5: garis neon dari tiap pohon ke kartu
+    espTinggi       = 60,        -- v9.5: tinggi kartu ESP
+    espSisi         = "kanan",   -- v9.5: kartu di sisi kanan/kiri kebun
     glowNotifMin    = 60,        -- v8.0: notif kalau Glow di kebun >= ini
     af2WCTrigger    = 30,        -- v8.1: trigger Super WC - place kalau sisa buah kecil <= ini
     af2BigCap       = 100,       -- v8.2: batas buah besar (sprinkler/WC stop di sini)
@@ -823,7 +831,7 @@ local PET_RARITIES = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Di
 local MUTATIONS = {"Gold","Rainbow","Wet","Chilled","Frozen","Electric","Starstruck","Moonlit",
     "Bloodlit","Celestial","Disco","Plasma","Voidtouched","Dawnbound","Honeyglazed",
     "Sundried","Burnt","Verdant","Paradisal","Choc","Pollinated","Twisted","Aurora","Ignited","Glow"}
-local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyCrate","buyAllCrates","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","c2AllMutAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","antiLegMax","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","storagePriority","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop","imInPrivate",
+local SETBOOL = {"farm2On","collectAuto","dropAuto","autoCollect","autoSell","autoBuySeed","autoBuyCrate","buyAllCrates","autoBuyGear","buyAllGears","autoBuyPet","petTeleport","buyAllSeeds","collectAll","collectMulti","collectSingle","collectExpensiveFirst","collectMostFirst","debugLog","autoSprinkler","sprClusterMode","sprAllType","sellAll","sellWhenFull","collectMutAll","collectNoMut","c2MutExcept","c2GoldAnyKg","c2ElecRainAnyKg","c2AllMutAnyKg","sellMutAll","sellNoMut","sellNonMutOnly","allPetType","allPetRare","autoGift","autoAcceptGift","allPlantSeed","autoAfk","antiLag","antiLegMax","antiRender","espGarden","espGarisPohon","noclip","hidePlants","hideFruits","hideFruitFaint","hideBigFruits","autoSteal","stealTeleport","antiBot","antiKepental","autoGrabSeed","dgiftApproach","espPrice","collectFreshOnly","espInvent","espInventStock","kalkFruitAll","kalkMutAll","buyDefaultsV1","autoHop","gfAllFruit","gfAuto","gfOnce","buyDefaultsV2","buyDefaultsV3","buyDefaultsV4","gfSheckMode","gfValueMode","gfValueMarket","gfRelayWrite","gfAlert","gfDefaultsV1","gfDefaultsV2","gfNormalPriceV1","gpAllPet","gpAuto","gpDefaultsV1","petBuyBig","petBuyMega","petBuyRainbow","petDefV5","espMut","gfStorDefV1","gfStorDefV2","storageMode","storageFull","storagePriority","notifOn","gfStorageOn","seedAddVenom","petAddTurtle","seedAddHypno","buyGoodSeeds","autoWeatherHop","allGoodWeather","autoBloodHop","imInPrivate",
     -- v28.7: AUTO FARM 2
     "autoCollect2","c2All","c2NoMut","autoSell2","s2All","s2WhenFull","autoSuperSprinkler","autoSuperWC",
     -- v29.1: AF2 seed filter
@@ -860,6 +868,8 @@ local function saveState()
         out.petWebhook = state.petWebhook or ""   -- v16.7
         out.hopMinutes = state.hopMinutes or 30   -- v17.0
         out.weatherHopDelay = state.weatherHopDelay or 60   -- v28.1
+        out.espTinggi = state.espTinggi or 60             -- v9.5: tinggi kartu ESP
+        out.espSisi = state.espSisi or "kanan"           -- v9.5: sisi kartu ESP
         out.c2WeightF = state.c2WeightF or -50   -- v28.7: collect2 filter kg
         out.s2WeightF = state.s2WeightF or 0     -- v28.7: sell2 filter kg
         out.af2WCTrigger = state.af2WCTrigger or 30   -- v8.1: default 30
@@ -946,6 +956,8 @@ local function loadState()
                 if type(d.af2WCCooldown) == "number" then state.af2WCCooldown = d.af2WCCooldown end
                 if type(d.mailTargetCount) == "number" then state.mailTargetCount = d.mailTargetCount end
                 if type(d.af2WCDelay) == "number" then state.af2WCDelay = d.af2WCDelay end
+                if type(d.espTinggi) == "number" then state.espTinggi = d.espTinggi end
+                if type(d.espSisi) == "string" then state.espSisi = d.espSisi end
                 if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
                 if type(d.af2SprTool) == "string" then state.af2SprTool = d.af2SprTool end
                 if type(d.af2WCTool)  == "string" then state.af2WCTool  = d.af2WCTool  end
@@ -1642,6 +1654,238 @@ end
 
 -- v11.7: SEMBUNYIIN VISUAL TANAMAN (buah TETEP keliatan). ngurangin beban render berat.
 -- cara: di tiap plant Model, set part jadi transparan - KECUALI yg di folder Fruits.
+-- ===== v9.3: ANTI-RENDER (hasil tes user: lighting = paling BRUTAL efeknya) =====
+-- 4 hal yg terbukti ngefek: (1) efek Lighting, (2) air/terrain, (3) partikel, (4) bayangan kebun.
+-- lighting-nya dimatiin SEBRUTAL mungkin: shadow, semua PostEffect, Atmosphere, Sky, Clouds,
+-- environment scale, fog. bukan cuma GlobalShadows.
+-- CATATAN: partikel TERUS LAHIR (buah mutasi baru = efek baru), jadi ada listener yg matiin
+-- otomatis tiap ada yg nongol - kalau cuma sekali jalan, beberapa detik lagi leg lagi.
+Farm._antiRenderOn = false
+Farm._antiRenderConn = nil
+
+local function arMatiinEfek(d)
+    if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke")
+       or d:IsA("Fire") or d:IsA("Sparkles") then
+        pcall(function() d.Enabled = false end)
+        return true
+    end
+    return false
+end
+
+function Farm.applyAntiRender(on)
+    Farm._antiRenderOn = on and true or false
+    local L = game:GetService("Lighting")
+    local T = workspace:FindFirstChildOfClass("Terrain")
+
+    if not on then
+        -- lepas listener. sisanya balik sendiri pas rejoin (gak semua bisa dibalikin mulus)
+        if Farm._antiRenderConn then pcall(function() Farm._antiRenderConn:Disconnect() end); Farm._antiRenderConn = nil end
+        pcall(function()
+            L.GlobalShadows = true
+            L.EnvironmentDiffuseScale = 1; L.EnvironmentSpecularScale = 1
+            for _, e in ipairs(L:GetChildren()) do
+                if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then e.Enabled = true end
+            end
+            if T then T.Decoration = true end
+        end)
+        print("[StarFarm] anti-render OFF (rejoin buat balik total)")
+        return
+    end
+
+    -- (1) LIGHTING - brutal
+    pcall(function()
+        L.GlobalShadows = false
+        L.ShadowSoftness = 0
+        L.EnvironmentDiffuseScale = 0
+        L.EnvironmentSpecularScale = 0
+        L.FogEnd = 9e9
+        L.FogStart = 9e9
+        L.Brightness = 1
+        L.Ambient = Color3.fromRGB(178,178,178)      -- flat: gak usah ngitung cahaya
+        L.OutdoorAmbient = Color3.fromRGB(178,178,178)
+        for _, e in ipairs(L:GetChildren()) do
+            -- Bloom/Blur/ColorCorrection/DepthOfField/SunRays + Atmosphere + Sky
+            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
+                pcall(function() e.Enabled = false end)
+            end
+        end
+    end)
+    -- (2) AIR / TERRAIN
+    pcall(function()
+        if T then
+            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
+            T.WaterReflectance = 0; T.WaterTransparency = 1
+            T.Decoration = false
+            local cl = T:FindFirstChildOfClass("Clouds")
+            if cl then cl.Enabled = false end
+        end
+    end)
+    -- (3) PARTIKEL - semua yg udah ada
+    local nPart = 0
+    pcall(function()
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if arMatiinEfek(d) then nPart = nPart + 1 end
+        end
+    end)
+    -- (4) BAYANGAN KEBUN
+    local nShadow = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if g then
+            for _, d in ipairs(g:GetDescendants()) do
+                if d:IsA("BasePart") then d.CastShadow = false; d.Reflectance = 0; nShadow = nShadow + 1 end
+            end
+        end
+    end)
+
+    -- ===== v9.4: hasil tes user - 4 tambahan =====
+    -- plot KITA (dipakai buat mbedain garden sendiri vs orang)
+    local function arPlotKita()
+        local g = workspace:FindFirstChild("Gardens"); if not g then return nil end
+        for _, plot in ipairs(g:GetChildren()) do
+            local pf = plot:FindFirstChild("Plants")
+            if pf then
+                for _, p in ipairs(pf:GetChildren()) do
+                    if tonumber(tostring(p.Name):match("^(%d+)_")) == (player.UserId) then return plot end
+                end
+            end
+        end
+        return nil
+    end
+    local mine = arPlotKita()
+    Farm._arPlotKita = mine
+
+    -- (5) TANAH IJO -> DIPOLOSIN (bukan dihapus - permintaan user, biar gak sebrutal itu)
+    local nPolos = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if g then
+            for _, d in ipairs(g:GetDescendants()) do
+                if d:IsA("MeshPart") or d:IsA("Part") then
+                    local c = d.Color
+                    local ijo = (c.G > c.R * 1.05) and (c.G > c.B * 1.05)
+                    local nm = tostring(d.Name):lower()
+                    if ijo or nm:find("grass") or nm:find("lawn") or nm:find("ground") or nm:find("soil") then
+                        pcall(function()
+                            d.Material = Enum.Material.SmoothPlastic
+                            if d:IsA("MeshPart") then d.TextureID = "" end
+                            d.CastShadow = false; d.Reflectance = 0
+                        end)
+                        nPolos = nPolos + 1
+                    end
+                elseif d:IsA("Decal") or d:IsA("Texture") then
+                    -- decal/texture tanah -> buang (bukan part-nya)
+                    local par = d.Parent
+                    if par and not par:FindFirstAncestorOfClass("Model") then
+                        pcall(function() d:Destroy() end); nPolos = nPolos + 1
+                    end
+                end
+            end
+        end
+    end)
+
+    -- (6) PAGAR -> HAPUS
+    local nPagar = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if g then
+            for _, d in ipairs(g:GetDescendants()) do
+                local nm = tostring(d.Name):lower()
+                if (nm:find("fence") or nm:find("pagar")) and (d:IsA("Model") or d:IsA("BasePart") or d:IsA("Folder")) then
+                    pcall(function() d:Destroy() end); nPagar = nPagar + 1
+                end
+            end
+        end
+    end)
+
+    -- (7) GARDEN ORANG LAIN -> HAPUS (tanahnya disisain biar gak ngambang)
+    local nOrang = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if g and mine then
+            for _, plot in ipairs(g:GetChildren()) do
+                if plot ~= mine then
+                    for _, c in ipairs(plot:GetChildren()) do
+                        local nm = tostring(c.Name):lower()
+                        local tanah = nm:find("ground") or nm:find("base") or nm:find("floor") or nm:find("plot")
+                        if not tanah and (c:IsA("Model") or c:IsA("BasePart") or c:IsA("Folder")) then
+                            pcall(function() c:Destroy() end); nOrang = nOrang + 1
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- (8) VISUAL BUAH -> HAPUS, tapi Model + ATRIBUT DISISAIN.
+    -- PENTING: collect cuma butuh PlantId + FruitId dari atribut, GAK butuh mesh-nya. terbukti di
+    -- tes user: visual dibantai, collect & counter "buah kecil" TETEP JALAN.
+    local nBuah = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if g then
+            for _, plot in ipairs(g:GetChildren()) do
+                local pf = plot:FindFirstChild("Plants")
+                if pf then
+                    for _, plant in ipairs(pf:GetChildren()) do
+                        local fs = plant:FindFirstChild("Fruits")
+                        if fs then
+                            for _, f in ipairs(fs:GetChildren()) do
+                                if not f:GetAttribute("_arDstr") then
+                                    for _, d in ipairs(f:GetDescendants()) do
+                                        if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
+                                           or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
+                                           or d:IsA("SpecialMesh") or d:IsA("SurfaceAppearance") then
+                                            pcall(function() d:Destroy() end); nBuah = nBuah + 1
+                                        end
+                                    end
+                                    f:SetAttribute("_arDstr", true)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    -- listener: efek/part BARU otomatis dimatiin juga (buah baru lahir terus!)
+    if Farm._antiRenderConn then pcall(function() Farm._antiRenderConn:Disconnect() end) end
+    Farm._antiRenderConn = workspace.DescendantAdded:Connect(function(d)
+        if not Farm._antiRenderOn then return end
+        task.defer(function()
+            pcall(function()
+                if arMatiinEfek(d) then return end
+                -- v9.4: BUAH BARU -> visualnya langsung dibantai (Model+atribut tetep utuh).
+                -- ini wajib: buah lahir terus-terusan, kalau gak dipantau ya leg lagi.
+                if d:IsA("Model") and d.Parent and d.Parent.Name == "Fruits" then
+                    if not d:GetAttribute("_arDstr") then
+                        d:SetAttribute("_arDstr", true)
+                        task.wait(0.1)   -- kasih waktu game ngisi atributnya dulu
+                        for _, x in ipairs(d:GetDescendants()) do
+                            if x:IsA("BasePart") or x:IsA("Decal") or x:IsA("Texture")
+                               or x:IsA("ParticleEmitter") or x:IsA("Beam") or x:IsA("Trail")
+                               or x:IsA("SpecialMesh") or x:IsA("SurfaceAppearance") then
+                                pcall(function() x:Destroy() end)
+                            end
+                        end
+                    end
+                    return
+                end
+                -- pagar baru -> hapus
+                local nm = tostring(d.Name):lower()
+                if (nm:find("fence") or nm:find("pagar")) and d:IsDescendantOf(workspace.Gardens) then
+                    pcall(function() d:Destroy() end); return
+                end
+                if d:IsA("BasePart") and d:IsDescendantOf(workspace.Gardens) then
+                    d.CastShadow = false; d.Reflectance = 0
+                end
+            end)
+        end)
+    end)
+    print(string.format("[StarFarm] anti-render ON: %d partikel, %d bayangan, %d tanah dipolosin, %d pagar, %d objek garden orang, %d visual buah",
+        nPart, nShadow, nPolos, nPagar, nOrang, nBuah))
+end
+
 Farm._hidePlantsOn = false
 Farm._hidePlantsConn = nil
 function Farm.hidePlantParts(plant, hide)
@@ -8636,6 +8880,162 @@ staggerSpawn(function()
     end
 end)
 
+-- ===== v9.5: ESP GARDEN - 1 kartu ringkasan di SISI kebun + garis neon dari tiap pohon =====
+-- kenapa 1 kartu (bukan per buah/pohon): tes user -> 152 kartu = numpuk & berantakan.
+-- kartu nempel di sisi kebun (tinggi 60), tiap pohon narik garis ke situ.
+-- kepake banget kalau anti-render nyala (visual buah dihapus) - kebun invisible tapi isinya kebaca.
+Farm._espGardenOn = false
+-- v9.5: bersihin sisa ESP dari execute sebelumnya (part neon nyangkut di workspace)
+pcall(function()
+    for _, d in ipairs(workspace:GetChildren()) do
+        if d.Name == "StarEspLine" or d.Name == "StarEspAnchor" then d:Destroy() end
+    end
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if pg then for _, d in ipairs(pg:GetChildren()) do if d.Name == "StarEspCard" then d:Destroy() end end end
+    local hh = gethui and gethui()
+    if hh then for _, d in ipairs(hh:GetChildren()) do if d.Name == "StarEspCard" then d:Destroy() end end end
+end)
+local ESP_BG    = Color3.fromRGB(14,16,22)
+local ESP_AKSEN = Color3.fromRGB(90,220,200)
+local ESP_EMAS  = Color3.fromRGB(255,205,105)
+local ESP_PUTIH = Color3.fromRGB(235,240,245)
+local ESP_ABU   = Color3.fromRGB(135,145,158)
+local espKartu, espLines = nil, {}
+
+local function espPosTanaman(pl)
+    local p
+    pcall(function()
+        if pl.PrimaryPart then p = pl.PrimaryPart.Position return end
+        local b = pl:FindFirstChild("Base")
+        if b and b:IsA("BasePart") then p = b.Position return end
+        for _, d in ipairs(pl:GetDescendants()) do if d:IsA("BasePart") then p = d.Position return end end
+    end)
+    return p
+end
+local function espBikinKartu()
+    local host = (gethui and gethui()) or player:WaitForChild("PlayerGui")
+    local a = Instance.new("Part"); a.Anchored=true; a.CanCollide=false; a.CanQuery=false
+    a.Transparency=1; a.Size=Vector3.new(0.2,0.2,0.2); a.Name="StarEspAnchor"; a.Parent=workspace
+    local bb = Instance.new("BillboardGui"); bb.Name="StarEspCard"; bb.Size=UDim2.new(0,258,0,168)
+    bb.AlwaysOnTop=true; bb.MaxDistance=1000; bb.Adornee=a; bb.Parent=host
+    local c = Instance.new("Frame"); c.Size=UDim2.new(1,0,1,0); c.BackgroundColor3=ESP_BG
+    c.BackgroundTransparency=0.08; c.BorderSizePixel=0; c.Parent=bb
+    Instance.new("UICorner",c).CornerRadius=UDim.new(0,10)
+    local st=Instance.new("UIStroke"); st.Color=ESP_AKSEN; st.Thickness=1.5; st.Transparency=0.25; st.Parent=c
+    local bar=Instance.new("Frame"); bar.Size=UDim2.new(1,-20,0,3); bar.Position=UDim2.new(0,10,0,8)
+    bar.BackgroundColor3=ESP_AKSEN; bar.BorderSizePixel=0; bar.Parent=c
+    Instance.new("UICorner",bar).CornerRadius=UDim.new(1,0)
+    local function t(y,sz,w)
+        local l=Instance.new("TextLabel"); l.Size=UDim2.new(1,-20,0,sz+4); l.Position=UDim2.new(0,10,0,y)
+        l.BackgroundTransparency=1; l.TextColor3=w; l.Font=Enum.Font.GothamBold; l.TextSize=sz
+        l.TextXAlignment=Enum.TextXAlignment.Left; l.TextStrokeTransparency=0.7; l.Parent=c; return l
+    end
+    return { a=a, bb=bb, judul=t(15,13,ESP_AKSEN), total=t(36,17,ESP_PUTIH),
+             value=t(59,14,ESP_EMAS), rinci=t(80,12,ESP_ABU),
+             mut1=t(99,12,ESP_EMAS), mut2=t(116,12,ESP_EMAS), pohon=t(137,11,ESP_ABU) }
+end
+local function espGaris(i, dari, ke)
+    local e = espLines[i]
+    if not e then
+        e = Instance.new("Part"); e.Anchored=true; e.CanCollide=false; e.CanQuery=false
+        e.CastShadow=false; e.Material=Enum.Material.Neon; e.Color=ESP_AKSEN
+        e.Transparency=0.74; e.Name="StarEspLine"; e.Parent=workspace; espLines[i]=e
+    end
+    local d = ke - dari
+    e.Size = Vector3.new(0.06, 0.06, d.Magnitude)
+    e.CFrame = CFrame.lookAt(dari + d/2, ke)
+end
+local function espBersih()
+    if espKartu then pcall(function() espKartu.a:Destroy(); espKartu.bb:Destroy() end); espKartu=nil end
+    for i, e in pairs(espLines) do pcall(function() e:Destroy() end); espLines[i]=nil end
+end
+
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(1.5)
+        -- v9.5: ESP ikut FARM 2 (default nyala pas Farm 2 ON)
+        local mau = state.farm2On and state.espGarden ~= false
+        if not mau then
+            if espKartu then espBersih() end
+        else
+            pcall(function()
+                local g = workspace:FindFirstChild("Gardens"); if not g then return end
+                local plants, sum = {}, Vector3.zero
+                local minX, maxX = 1e9, -1e9
+                local tot, kecil, besar, mtg, nilai = 0,0,0,0,0
+                local muts, jenis = {}, {}
+                local thr = math.abs(state.c2WeightF or 50)
+                for _, plot in ipairs(g:GetChildren()) do
+                    local pf = plot:FindFirstChild("Plants")
+                    if pf then
+                        for _, pl in ipairs(pf:GetChildren()) do
+                            if tonumber(tostring(pl.Name):match("^(%d+)_")) == player.UserId then
+                                local pos = espPosTanaman(pl)
+                                if pos then
+                                    plants[#plants+1] = pos; sum = sum + pos
+                                    minX = math.min(minX,pos.X); maxX = math.max(maxX,pos.X)
+                                end
+                                local seed = pl:GetAttribute("SeedName") or "?"
+                                local fs = pl:FindFirstChild("Fruits")
+                                if fs then
+                                    for _, f in ipairs(fs:GetChildren()) do
+                                        local kg = Farm.gardenKg(f, seed) or 0
+                                        if kg > 0 then
+                                            tot = tot + 1
+                                            if kg < thr then kecil = kecil + 1 else besar = besar + 1 end
+                                            if Farm.isFruitRipe(f) then mtg = mtg + 1 end
+                                            local m = getMutation(f); if m then muts[m] = (muts[m] or 0) + 1 end
+                                            jenis[seed] = (jenis[seed] or 0) + 1
+                                        end
+                                        -- nilai NORMAL x1 (sama kayak baris "value" di panel)
+                                        local v = Farm.fruitPrice and Farm.fruitPrice(f, true)
+                                        if type(v) == "number" then nilai = nilai + v end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                if #plants == 0 then if espKartu then espBersih() end return end
+                local ctr = sum / #plants
+                local lebar = math.max(maxX - minX, 12)
+                local ofs = (state.espSisi == "kiri") and -(lebar/2 + 18) or (lebar/2 + 18)
+                local kPos = Vector3.new(ctr.X + ofs, ctr.Y + (tonumber(state.espTinggi) or 60), ctr.Z)
+
+                if not espKartu then espKartu = espBikinKartu() end
+                espKartu.a.Position = kPos
+                espKartu.judul.Text = "TAMAN ANDA"
+                espKartu.total.Text = tot.." buah   ·   "..mtg.." matang"
+                espKartu.value.Text = "value  "..Farm.abbrev(nilai)
+                espKartu.rinci.Text = "kecil "..kecil.."      besar "..besar.."/"..tostring(state.af2BigCap or 100)
+                local ml = {}
+                for m, n in pairs(muts) do ml[#ml+1] = {m, n} end
+                table.sort(ml, function(a,b) return a[2] > b[2] end)
+                local b1, b2 = {}, {}
+                for i, e in ipairs(ml) do
+                    local s = e[1].." "..e[2]
+                    if i <= 3 then b1[#b1+1] = s elseif i <= 6 then b2[#b2+1] = s end
+                end
+                espKartu.mut1.Text = #b1 > 0 and table.concat(b1, "   ") or "tanpa mutasi"
+                espKartu.mut2.Text = #b2 > 0 and table.concat(b2, "   ") or ""
+                local jl = {}
+                for j, n in pairs(jenis) do jl[#jl+1] = j.." "..n end
+                table.sort(jl)
+                espKartu.pohon.Text = #plants.." pohon  |  "..table.concat(jl, "  ")
+
+                if state.espGarisPohon ~= false then
+                    for i, p in ipairs(plants) do espGaris(i, p + Vector3.new(0,2,0), kPos) end
+                    for i = #plants + 1, #espLines do
+                        if espLines[i] then pcall(function() espLines[i]:Destroy() end); espLines[i] = nil end
+                    end
+                else
+                    for i, e in pairs(espLines) do pcall(function() e:Destroy() end); espLines[i] = nil end
+                end
+            end)
+        end
+    end
+end)
+
 function Farm.isBadWeatherNow()
     -- v35.4 (HASIL BONGKAR DATA): game punya DUA kanal terpisah -
     --   ActiveWeather = weather (Rain/Lightning/Rainbow/Snowfall/Starfall/Aurora/Sunburst)
@@ -11769,7 +12169,7 @@ do
     corner(card, 8); stroke(card, C.border, 1)
     local nameL = lbl(card, "Anti-Lag (Max Enteng)", 14, C.text, Enum.TextXAlignment.Left)
     nameL.Position = UDim2.new(0, 14, 0, 9); nameL.Size = UDim2.new(1, -80, 0, 18)
-    local descL = lbl(card, "matiin efek visual (tampilan jelek tapi kenceng)", 11, C.textMute, Enum.TextXAlignment.Left)
+    local descL = lbl(card, "matiin lighting+air+partikel+bayangan (jelek tapi KENCENG)", 11, C.textMute, Enum.TextXAlignment.Left)
     descL.Position = UDim2.new(0, 14, 0, 30); descL.Size = UDim2.new(1, -80, 0, 14)
     local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -64, 0.5, -13),
         BackgroundColor3 = C.input, Text = "", AutoButtonColor = false, BorderSizePixel = 0, Parent = card })
@@ -11786,6 +12186,10 @@ do
             knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
         end
         pcall(function() Farm.setAntiLag(state.antiLag) end)
+        -- v9.3: ANTI-RENDER ikut toggle Anti-Lag (biar gak nambah tombol).
+        -- 4 hal hasil tes user: lighting (paling brutal), air, partikel, bayangan kebun.
+        state.antiRender = state.antiLag
+        pcall(function() Farm.applyAntiRender(state.antiLag) end)
     end
     sw.MouseButton1Click:Connect(function()
         state.antiLag = not state.antiLag; saveState(); applyAntiLag()
