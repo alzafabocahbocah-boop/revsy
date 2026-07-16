@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v10.7  (standalone, basis ZENX v44.79) - GAG 2
--- v10.7: urutan boot - DESTROY duluan, lighting nyusul (dua-duanya tetep di atas, sebelum GUI)
+-- STAR FARM  v10.8  (standalone, basis ZENX v44.79) - GAG 2
+-- v10.8: FIX arPlotKita KEHAPUS sejak v10.3 (langkah "hapus garden orang" diem2 mati). balik ke v10.1
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -366,7 +366,7 @@ task.spawn(function()
     print(string.format("[WAKTU] +%.1fs  lighting/air MATI (nyusul)", os.clock() - (getgenv().__StarT0 or os.clock())))
 end)
 
-local VER       = "STAR v10.7"
+local VER       = "STAR v10.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1909,14 +1909,31 @@ function Farm.applyAntiRender(on)
     end)
 
     -- (7) GARDEN ORANG LAIN -> HAPUS (tanahnya disisain biar gak ngambang)
+    -- v10.8: fungsi ini KEHAPUS gara2 editku di v10.3 (aku ganti blok "(3) PARTIKEL"..."(6) PAGAR",
+    -- dan fungsi ini kebetulan ada di tengahnya). akibatnya 'mine' = nil -> langkah (7) DIEM-DIEM
+    -- GAK JALAN sejak v10.3 (gak ada error krn kebungkus pcall). sekarang dipasang balik.
+    -- pakai perilaku v10.1 (plot PERTAMA) sesuai permintaan user - v10.2 (semua plot) dicabut
+    -- krn dugaannya (trowel mati gara2 plot kehapus) TERBUKTI SALAH: trowel tetep mati abis v10.2.
+    local function arPlotKita()
+        local g = workspace:FindFirstChild("Gardens"); if not g then return nil end
+        for _, plot in ipairs(g:GetChildren()) do
+            local pf = plot:FindFirstChild("Plants")
+            if pf then
+                for _, p in ipairs(pf:GetChildren()) do
+                    if tonumber(tostring(p.Name):match("^(%d+)_")) == (player.UserId) then return plot end
+                end
+            end
+        end
+        return nil
+    end
+    local mine = arPlotKita()
+    Farm._arPlotKita = mine
     local nOrang = 0
     pcall(function()
         local g = workspace:FindFirstChild("Gardens")
-        -- v10.2: cuma jalan kalau plot kita KETEMU. kalau belum ke-load (adaMine=false), SKIP -
-        -- daripada salah hapus kebun sendiri.
-        if g and adaMine then
+        if g and mine then
             for _, plot in ipairs(g:GetChildren()) do
-                if not mine[plot] then   -- v10.2: cek SEMUA plot kita, bukan cuma yg pertama
+                if plot ~= mine then
                     for _, c in ipairs(plot:GetChildren()) do
                         local nm = tostring(c.Name):lower()
                         local tanah = nm:find("ground") or nm:find("base") or nm:find("floor") or nm:find("plot")
