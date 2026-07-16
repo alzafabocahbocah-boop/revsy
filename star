@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v9.5  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v9.6  (standalone, basis ZENX v44.79) - GAG 2
+-- v9.6: FIX FATAL - "Out of local registers (limit 200)" bikin loadstring nil -> sc GAK JALAN. 9 local jadi 1
+-- v9.5: ESP GARDEN - kartu ringkasan (buah/matang/VALUE/mutasi/pohon) + garis neon, ikut Farm 2
 -- v9.5: ESP GARDEN - 1 kartu di sisi kebun (buah/matang/VALUE/mutasi/pohon) + garis neon. ikut Farm 2
 -- v9.4: anti-render + tanah ijo dipolosin, pagar dihapus, garden orang dihapus, visual buah dihapus
 -- v9.3: ANTI-RENDER - lighting brutal + air + partikel + bayangan kebun (ikut toggle Anti-Lag)
@@ -290,7 +292,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v9.5"
+local VER       = "STAR v9.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -721,6 +723,10 @@ local state = {
     autoAfk         = false,
     antiLag         = false,    -- v11.4: matiin efek visual berat (max enteng)
     antiLegMax      = false,    -- v44.62: ANTI-LEG TOTAL - antiLag + RenderFidelity/Light/Highlight/BillboardGui mati + panel pause + collect dilonggarin
+    espGarden       = false,    -- v9.5: ESP kartu ringkasan kebun (ikut Farm 2)
+    espGTinggi      = 60,       -- v9.5: tinggi kartu ESP
+    espGSisiKiri    = false,    -- v9.5: kartu di sisi kiri (default kanan)
+    espGLine        = true,     -- v9.5: garis neon dari tiap pohon
     noclip          = false,    -- v38.9: karakter nembus objek (no-clip)
     hidePlants      = false,    -- v11.7: sembunyiin visual tanaman (buah tetep keliatan)
     antiRender      = false,    -- v9.3: matiin lighting/air/partikel/bayangan (anti-leg render)
@@ -862,6 +868,7 @@ local function saveState()
         out.dgiftMode = state.dgiftMode or "type"  -- v14.3
         out.collectFreshMax = state.collectFreshMax or 0.5  -- v15.4
         out.kalkWeightF = state.kalkWeightF or 0  -- v16.5
+        out.espGTinggi = state.espGTinggi or 60          -- v9.5: tinggi kartu ESP
         out.petMaxRebuy = state.petMaxRebuy or 3  -- v16.7
         out.petMaxPrice = state.petMaxPrice or 0  -- v17.2
         out.petMinPrice = state.petMinPrice or 0  -- v25.2
@@ -956,6 +963,7 @@ local function loadState()
                 if type(d.af2WCCooldown) == "number" then state.af2WCCooldown = d.af2WCCooldown end
                 if type(d.mailTargetCount) == "number" then state.mailTargetCount = d.mailTargetCount end
                 if type(d.af2WCDelay) == "number" then state.af2WCDelay = d.af2WCDelay end
+                if type(d.espGTinggi) == "number" then state.espGTinggi = d.espGTinggi end
                 if type(d.espTinggi) == "number" then state.espTinggi = d.espTinggi end
                 if type(d.espSisi) == "string" then state.espSisi = d.espSisi end
                 if type(d.af2SavedPos) == "table" then state.af2SavedPos = d.af2SavedPos end
@@ -1663,7 +1671,7 @@ end
 Farm._antiRenderOn = false
 Farm._antiRenderConn = nil
 
-local function arMatiinEfek(d)
+function Farm._Farm._arMatiinEfek(d)
     if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke")
        or d:IsA("Fire") or d:IsA("Sparkles") then
         pcall(function() d.Enabled = false end)
@@ -1724,7 +1732,7 @@ function Farm.applyAntiRender(on)
     local nPart = 0
     pcall(function()
         for _, d in ipairs(workspace:GetDescendants()) do
-            if arMatiinEfek(d) then nPart = nPart + 1 end
+            if Farm._arMatiinEfek(d) then nPart = nPart + 1 end
         end
     end)
     -- (4) BAYANGAN KEBUN
@@ -1854,7 +1862,7 @@ function Farm.applyAntiRender(on)
         if not Farm._antiRenderOn then return end
         task.defer(function()
             pcall(function()
-                if arMatiinEfek(d) then return end
+                if Farm._arMatiinEfek(d) then return end
                 -- v9.4: BUAH BARU -> visualnya langsung dibantai (Model+atribut tetep utuh).
                 -- ini wajib: buah lahir terus-terusan, kalau gak dipantau ya leg lagi.
                 if d:IsA("Model") and d.Parent and d.Parent.Name == "Fruits" then
@@ -1885,6 +1893,162 @@ function Farm.applyAntiRender(on)
     print(string.format("[StarFarm] anti-render ON: %d partikel, %d bayangan, %d tanah dipolosin, %d pagar, %d objek garden orang, %d visual buah",
         nPart, nShadow, nPolos, nPagar, nOrang, nBuah))
 end
+
+-- ===== v9.5: ESP GARDEN - 1 kartu ringkasan di SISI kebun + garis neon dari tiap pohon =====
+-- kenapa 1 kartu (bukan per buah/per pohon): tes user -> per buah = 26 tag numpuk jadi satu titik,
+-- per pohon = 152 kartu berantakan. 1 kartu + garis = kebaca & enteng.
+-- nempel ke FARM 2: nyala pas Farm 2 ON, mati pas OFF.
+Farm._espGardenOn = false
+Farm._espG = { kartu = nil, lines = {} }
+-- v9.6: 5 warna digabung jadi 1 tabel. ALASAN: Lua cuma boleh 200 'local' per chunk, dan sc ini
+-- udah 192 di level file -> tambahan v9.5 bikin JEBOL ("Out of local registers, exceeded limit 200")
+-- -> loadstring balik nil -> loader error "attempt to call a nil value". 1 tabel = 1 local, bukan 5.
+local ESPG = {
+    BG    = Color3.fromRGB(14,16,22),
+    AKSEN = Color3.fromRGB(90,220,200),
+    EMAS  = Color3.fromRGB(255,205,105),
+    PUTIH = Color3.fromRGB(235,240,245),
+    ABU   = Color3.fromRGB(135,145,158),
+}
+
+function Farm._espgPos(pl)
+    local p
+    pcall(function()
+        if pl.PrimaryPart then p = pl.PrimaryPart.Position return end
+        local b = pl:FindFirstChild("Base")
+        if b and b:IsA("BasePart") then p = b.Position return end
+        for _, d in ipairs(pl:GetDescendants()) do if d:IsA("BasePart") then p = d.Position return end end
+    end)
+    return p
+end
+function Farm._espgKartu()
+    local host = (gethui and gethui()) or player:WaitForChild("PlayerGui")
+    local a = Instance.new("Part"); a.Anchored=true; a.CanCollide=false; a.CanQuery=false
+    a.Transparency=1; a.Size=Vector3.new(0.2,0.2,0.2); a.Name="StarEspAnchor"; a.Parent=workspace
+    local bb = Instance.new("BillboardGui"); bb.Name="StarEspGarden"; bb.Size=UDim2.new(0,260,0,168)
+    bb.AlwaysOnTop=true; bb.MaxDistance=1000; bb.Adornee=a; bb.Parent=host
+    local c = Instance.new("Frame"); c.Size=UDim2.new(1,0,1,0); c.BackgroundColor3=ESPG.BG
+    c.BackgroundTransparency=0.08; c.BorderSizePixel=0; c.Parent=bb
+    Instance.new("UICorner",c).CornerRadius=UDim.new(0,10)
+    local st=Instance.new("UIStroke"); st.Color=ESPG.AKSEN; st.Thickness=1.5; st.Transparency=0.25; st.Parent=c
+    local bar=Instance.new("Frame"); bar.Size=UDim2.new(1,-20,0,3); bar.Position=UDim2.new(0,10,0,8)
+    bar.BackgroundColor3=ESPG.AKSEN; bar.BorderSizePixel=0; bar.Parent=c
+    Instance.new("UICorner",bar).CornerRadius=UDim.new(1,0)
+    local function t(y,sz,w)
+        local l=Instance.new("TextLabel"); l.Size=UDim2.new(1,-20,0,sz+4); l.Position=UDim2.new(0,10,0,y)
+        l.BackgroundTransparency=1; l.TextColor3=w; l.Font=Enum.Font.GothamBold; l.TextSize=sz
+        l.TextXAlignment=Enum.TextXAlignment.Left; l.TextStrokeTransparency=0.7; l.Parent=c; return l
+    end
+    return { a=a, bb=bb, judul=t(15,13,ESPG.AKSEN), total=t(36,17,ESPG.PUTIH),
+             value=t(59,14,ESPG.EMAS), rinci=t(80,12,ESPG.ABU),
+             mut1=t(99,12,ESPG.EMAS), mut2=t(116,12,ESPG.EMAS), pohon=t(137,11,ESPG.ABU) }
+end
+function Farm._espgGaris(i, dari, ke)
+    local e = Farm._espG.lines[i]
+    if not e or not e.Parent then
+        e = Instance.new("Part"); e.Anchored=true; e.CanCollide=false; e.CanQuery=false
+        e.CastShadow=false; e.Material=Enum.Material.Neon; e.Color=ESPG.AKSEN; e.Transparency=0.75
+        e.Name="StarEspLine"; e.Parent=workspace; Farm._espG.lines[i]=e
+    end
+    local d = ke - dari
+    e.Size = Vector3.new(0.06, 0.06, d.Magnitude)
+    e.CFrame = CFrame.lookAt(dari + d/2, ke)
+end
+function Farm.espGardenClear()
+    if Farm._espG.kartu then
+        pcall(function() Farm._espG.kartu.a:Destroy() end)
+        pcall(function() Farm._espG.kartu.bb:Destroy() end)
+        Farm._espG.kartu = nil
+    end
+    for i, e in pairs(Farm._espG.lines) do pcall(function() e:Destroy() end); Farm._espG.lines[i] = nil end
+end
+function Farm.setEspGarden(on)
+    Farm._espGardenOn = on and true or false
+    if not on then Farm.espGardenClear() end
+end
+staggerSpawn(function()
+    while isCurrentGen() do
+        task.wait(1.5)
+        if not Farm._espGardenOn then
+            if Farm._espG.kartu then Farm.espGardenClear() end
+        else
+            pcall(function()
+                local g = workspace:FindFirstChild("Gardens"); if not g then return end
+                local plants, sum = {}, Vector3.zero
+                local minX, maxX = 1e9, -1e9
+                local tot, kecil, besar, mtg, nilai = 0, 0, 0, 0, 0
+                local muts, jenis = {}, {}
+                local thr = math.abs(state.c2WeightF or 50)
+                for _, plot in ipairs(g:GetChildren()) do
+                    local pf = plot:FindFirstChild("Plants")
+                    if pf then
+                        for _, pl in ipairs(pf:GetChildren()) do
+                            if tonumber(tostring(pl.Name):match("^(%d+)_")) == player.UserId then
+                                local pos = Farm._espgPos(pl)
+                                if pos then
+                                    plants[#plants+1] = pos; sum = sum + pos
+                                    minX = math.min(minX, pos.X); maxX = math.max(maxX, pos.X)
+                                end
+                                local seed = pl:GetAttribute("SeedName") or "?"
+                                local fs = pl:FindFirstChild("Fruits")
+                                if fs then
+                                    for _, f in ipairs(fs:GetChildren()) do
+                                        local kg = Farm.gardenKg(f, seed) or 0
+                                        if kg > 0 then
+                                            tot = tot + 1
+                                            if kg < thr then kecil = kecil + 1 else besar = besar + 1 end
+                                            if Farm.isFruitRipe(f) then mtg = mtg + 1 end
+                                            local m = getMutation(f); if m then muts[m] = (muts[m] or 0) + 1 end
+                                            jenis[seed] = (jenis[seed] or 0) + 1
+                                            nilai = nilai + (Farm.fruitPrice(f) or 0)   -- v9.5: TOTAL VALUE
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                if #plants == 0 then Farm.espGardenClear(); return end
+                local ctr = sum / #plants
+                local lebar = math.max(maxX - minX, 12)
+                local ofs = (state.espGSisiKiri and -(lebar/2 + 18)) or (lebar/2 + 18)
+                local kPos = Vector3.new(ctr.X + ofs, ctr.Y + (state.espGTinggi or 60), ctr.Z)
+                if not Farm._espG.kartu then Farm._espG.kartu = Farm._espgKartu() end
+                local K = Farm._espG.kartu
+                K.a.Position = kPos
+                K.judul.Text = "TAMAN ANDA"
+                K.total.Text = tot.." buah   ·   "..mtg.." matang"
+                K.value.Text = "value  "..Farm.abbrev(nilai)
+                K.rinci.Text = "kecil "..kecil.."      besar "..besar
+                local ml = {}
+                for m, n in pairs(muts) do ml[#ml+1] = { m, n } end
+                table.sort(ml, function(a,b) return a[2] > b[2] end)
+                local b1, b2 = {}, {}
+                for i, e in ipairs(ml) do
+                    local s = e[1].." "..e[2]
+                    if i <= 3 then b1[#b1+1] = s elseif i <= 6 then b2[#b2+1] = s end
+                end
+                K.mut1.Text = #b1 > 0 and table.concat(b1, "   ") or "tanpa mutasi"
+                K.mut2.Text = #b2 > 0 and table.concat(b2, "   ") or ""
+                local jl = {}
+                for j, n in pairs(jenis) do jl[#jl+1] = j.." "..n end
+                table.sort(jl)
+                K.pohon.Text = #plants.." pohon  |  "..table.concat(jl, "  ")
+                -- garis dari tiap pohon ke kartu (per POHON, bukan per buah - per buah ~1800 garis = leg)
+                if state.espGLine ~= false then
+                    for i, p in ipairs(plants) do Farm._espgGaris(i, p + Vector3.new(0,2,0), kPos) end
+                    for i = #plants + 1, #Farm._espG.lines do
+                        if Farm._espG.lines[i] then
+                            pcall(function() Farm._espG.lines[i]:Destroy() end); Farm._espG.lines[i] = nil
+                        end
+                    end
+                else
+                    for i, e in pairs(Farm._espG.lines) do pcall(function() e:Destroy() end); Farm._espG.lines[i] = nil end
+                end
+            end)
+        end
+    end
+end)
 
 Farm._hidePlantsOn = false
 Farm._hidePlantsConn = nil
@@ -6991,6 +7155,9 @@ Farm.buildFarm2Btn = function()
             state.c2AllMutAnyKg = true    -- v44.56: auto ON pas Farm 2 (-50/-60) dipilih
             -- STAR FARM: fitur Glow auto-ON pas pencet tombol Farm 2 (60/50)
             state.sfGlowGate = true
+            -- v9.5: ESP Garden nyala bareng Farm 2
+            state.espGarden = true
+            pcall(function() Farm.setEspGarden(true) end)
             -- v6.3: gfAuto SENGAJA GAK dinyalain di sini. v5.8 dulu nyalain -> Auto Gift Fruit
             -- ngirim SEMUA buah >= 3M (Aurora/Frozen/Star Fruit ikut kekirim) - BUKAN itu maunya.
             -- yang boleh dikirim CUMA Glow 50kg+ lewat jalur khusus (starGlowTick).
@@ -7021,6 +7188,8 @@ Farm.buildFarm2Btn = function()
             state.autoSell2 = false
             state.autoWeatherHop = false    -- v44.34: weather kick ikut Farm 2 (OFF)
             state.shovelFruit = false       -- v6.5: shovel buah ikut Farm 2 (OFF)
+            state.espGarden = false          -- v9.5: ESP Garden ikut Farm 2 (OFF)
+            pcall(function() Farm.setEspGarden(false) end)
             state.collectAll = true
             state.collectMutAll = false
             state.selectedCollectMut = { Bloodlit = true, Glow = true }   -- v44.65: default Farm 1 collect = Bloodlit + Glow
@@ -13429,6 +13598,8 @@ task.spawn(function()
         pcall(function() Farm._applyFarm2(true, kg) end)
         print("[StarFarm] Farm 2 tersimpan ON -> dipasang ulang ("..tostring(kg).."kg)")
     end
+    -- v9.5: ESP Garden ikut keadaan Farm 2 pas start
+    pcall(function() Farm.setEspGarden(state.farm2On == true) end)
 end)
 -- v6.5: shovel buah GAK dipaksa ON lagi tiap start (v4.8 dulu maksa -> jalan terus walau Farm 2
 -- OFF & gak ada buah kecil). sekarang IKUT FARM 2: nyala pas pencet -50/-60, mati pas ALL OFF.
