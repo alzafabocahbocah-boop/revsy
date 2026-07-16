@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v11.7  (standalone, basis ZENX v44.79) - GAG 2
--- v11.7: panel kanan atas refresh 0.5s (dulu 2s). value tetep 2s biar ongkosnya gak naik 4x
+-- STAR FARM  v11.8  (standalone, basis ZENX v44.79) - GAG 2
+-- v11.8: anti-leg nunggu 30 detik SETELAH GUI muncul (atur di STAR_ANTILEG_DELAY, baris ~320)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -312,26 +312,28 @@ local AP = {}
 -- manggil gardenKg + baca atribut, buat nyimpen data yg GAK ADA YG BACA = beban tanpa untung.
 -- fungsinya sengaja disisain di bawah (gak dihapus) - siapa tau nanti kepake lagi.
 
--- ===== v11.4: DESTROY POHON DITUNDA 15 DETIK =====
--- permintaan user: "tunda lagi aja 15s tapi".
--- riwayatnya bolak-balik (v10.9 = 30s setelah GUI, v11.3 = langsung gas), jadi angkanya
--- sengaja ditaruh di SATU tempat biar gampang diutak-atik: ubah STAR_ANTILEG_DELAY di bawah.
---   0  = langsung gas begitu kebun ke-load (v11.3)
---   15 = sekarang
--- ngitungnya MULAI DARI kebun ke-load (bukan dari GUI muncul) - biar angkanya berarti walau
--- loading-nya cepet/lambat.
-STAR_ANTILEG_DELAY = 15
+-- ===== v11.8: ANTI-LEG NUNGGU 30 DETIK SETELAH GUI MUNCUL =====
+-- permintaan user: "anti leg nya tolong jangan langsung di bikin aktif nunggu 30s dah semenjak gui muncul".
+-- ngitungnya DARI GUI MUNCUL (Farm._guiSiap, di-set deket selectTab bawah file) - bukan dari
+-- kebun ke-load (itu v11.4). GUI muncul = sc udah kelar bangun semua, jadi patokannya lebih jelas.
+-- riwayat angka ini bolak-balik (30s dari GUI -> langsung -> 15s dari kebun -> 30s dari GUI lagi),
+-- makanya ditaruh SATU tempat: ubah STAR_ANTILEG_DELAY aja.
+STAR_ANTILEG_DELAY = 30
 task.spawn(function()
-    for _ = 1, 900 do   -- maks 90 detik: tunggu kebun ke-load
+    for _ = 1, 1200 do   -- maks 120 detik: tunggu GUI kelar dibangun
+        if Farm._guiSiap then break end
+        task.wait(0.1)
+    end
+    print(string.format("[WAKTU] +%.1fs  GUI muncul -> anti-leg nunggu %ds...",
+        os.clock() - (getgenv().__StarT0 or os.clock()), STAR_ANTILEG_DELAY))
+    task.wait(STAR_ANTILEG_DELAY)
+    -- pastiin kebun udah ke-load (kalau belum, nyapu = percuma)
+    for _ = 1, 300 do
         local g = workspace:FindFirstChild("Gardens")
-        local siap = (g and #g:GetChildren() > 0) and Farm.applyAntiRender and Farm.setAntiLegMax
-        if siap then break end
+        if g and #g:GetChildren() > 0 then break end
         task.wait(0.1)
     end
     if not (Farm.applyAntiRender and Farm.setAntiLegMax) then return end
-    print(string.format("[WAKTU] +%.1fs  kebun ke-load -> nunggu %ds...",
-        os.clock() - (getgenv().__StarT0 or os.clock()), STAR_ANTILEG_DELAY))
-    task.wait(STAR_ANTILEG_DELAY)
     print(string.format("[WAKTU] +%.1fs  ANTI-LEG MULAI (lighting + destroy pohon)",
         os.clock() - (getgenv().__StarT0 or os.clock())))
     pcall(function() Farm.applyAntiRender(true) end)   -- di dalemnya udah ada lighting (tahap 1) + sapu
@@ -356,7 +358,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v11.7"
+local VER       = "STAR v11.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -13883,7 +13885,7 @@ task.spawn(function()
     pcall(function() if state.espInventStock then Farm.applyEspInventStock() end end)  -- v22.9
 end)
 selectTab("farm")
-Farm._guiSiap = true   -- penanda GUI kelar dibangun (v11.3: anti-leg gak nunggu ini lagi - dia gas begitu kebun ke-load)
+Farm._guiSiap = true   -- v11.8: penanda GUI kelar dibangun -> anti-leg mulai ngitung 30 detik dari sini
 print("[StarFarm] "..VER.." loaded (kerangka UI - fungsi farm nyusul)")
 
 -- v22.9: HUD pengali pasar Dragon's Breath di POJOK KANAN BAWAH layar.
