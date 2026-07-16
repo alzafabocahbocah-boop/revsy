@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v9.6  (standalone, basis ZENX v44.79) - GAG 2
--- v9.6: FIX FATAL - "Out of local registers (limit 200)" bikin loadstring nil -> sc GAK JALAN. 9 local jadi 1
+-- STAR FARM  v9.7  (standalone, basis ZENX v44.79) - GAG 2
+-- v9.7: FIX FATAL lanjutan - 205 local (batas 200) -> 37 applyXxx digabung 1 tabel -> 169. sc jalan lagi
 -- v9.5: ESP GARDEN - kartu ringkasan (buah/matang/VALUE/mutasi/pohon) + garis neon, ikut Farm 2
 -- v9.5: ESP GARDEN - 1 kartu di sisi kebun (buah/matang/VALUE/mutasi/pohon) + garis neon. ikut Farm 2
 -- v9.4: anti-render + tanah ijo dipolosin, pagar dihapus, garden orang dihapus, visual buah dihapus
@@ -292,7 +292,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v9.6"
+local VER       = "STAR v9.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1085,6 +1085,10 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- FUNGSI FARM (placeholder - diisi nanti via debug)
 -- ============================================================
 local Farm = {}
+-- v9.7: 37 forward-declaration applyXxx digabung ke SATU tabel. ALASAN: Luau cuma boleh 200
+-- 'local' per chunk; sc ini nembus 205 -> loadstring balik NIL -> sc gak jalan sama sekali
+-- ("Out of local registers, exceeded limit 200"). 37 local jadi 1 = hemat 36 slot.
+local AP = {}
 pcall(function() getgenv().StarFarm = Farm end)   -- v36.4: expose buat tes console (mis. StarFarm.dropOneFruit())
 -- v44.26: CATAT JobId di AWAL (pas masuk server) - kunci balik ke server SAMA pas weather buruk.
 Farm._bootJobId = tostring(game.JobId or "")
@@ -9861,7 +9865,6 @@ end
 local function fruitList() if not Farm.seedList then Farm.seedList = loadSeedList() end return Farm.seedList end
 
 -- ====== CARD 1: AUTO COLLECT ======
-local applyCollect, applyCollectMulti, applyCollectSingle, applyCollectExp, applyCollectMost, applyFreshOnly, applyCollectNoMut
 do
     local card, body, setH = mkFarmCard(1, "Auto Collect", "kumpulin buah ready (tap utk atur)")
     setH(488)
@@ -9869,13 +9872,13 @@ do
     -- v5.9: filter mutasi (default Semua mutasi)
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedCollectMut, "collectMutAll", "Semua mutasi")
     -- v6.9: pisah multi & single harvest
-    applyCollectMulti  = mkBodyToggle(body, 84,  "Multi Harvest",  "collectMulti",  "Multi Harvest")
-    applyCollectSingle = mkBodyToggle(body, 124, "Single Harvest", "collectSingle", "Single Harvest")
+    AP.applyCollectMulti  = mkBodyToggle(body, 84,  "Multi Harvest",  "collectMulti",  "Multi Harvest")
+    AP.applyCollectSingle = mkBodyToggle(body, 124, "Single Harvest", "collectSingle", "Single Harvest")
     -- v7.6: collect termahal dulu
-    applyCollectExp    = mkBodyToggle(body, 164, "Termahal Dulu",  "collectExpensiveFirst", "Termahal Dulu")
+    AP.applyCollectExp    = mkBodyToggle(body, 164, "Termahal Dulu",  "collectExpensiveFirst", "Termahal Dulu")
     -- v9.5: collect per jenis dari terbanyak dulu
-    applyCollectMost   = mkBodyToggle(body, 204, "Terbanyak Dulu", "collectMostFirst", "Terbanyak Dulu")
-    applyCollect = mkBodyToggle(body, 244, "Auto Collect", "autoCollect", "Auto Collect")
+    AP.applyCollectMost   = mkBodyToggle(body, 204, "Terbanyak Dulu", "collectMostFirst", "Terbanyak Dulu")
+    AP.applyCollect = mkBodyToggle(body, 244, "Auto Collect", "autoCollect", "Auto Collect")
     -- v10.9: filter berat collect (+N = di atas N kg, -N = di bawah, 0 = semua)
     lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,288)
     local cwBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 285),
@@ -9888,7 +9891,7 @@ do
         print("[StarFarm] filter collect: "..(n==0 and "semua" or (n>0 and ("di atas "..n.."kg") or ("di bawah "..(-n).."kg"))))
     end)
     -- v15.4: skip buah basi (gabung di sini, bukan kartu sendiri)
-    applyFreshOnly = mkBodyToggle(body, 324, "Fresh Only (skip basi)", "collectFreshOnly", "Collect Fresh Only")
+    AP.applyFreshOnly = mkBodyToggle(body, 324, "Fresh Only (skip basi)", "collectFreshOnly", "Collect Fresh Only")
     lbl(body, "Batas decay (0-1)", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,368)
     local fmBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 365),
         BackgroundColor3 = C.input, Text = tostring(state.collectFreshMax or 0.5), PlaceholderText = "0.5",
@@ -9900,13 +9903,12 @@ do
         state.collectFreshMax = n; fmBox.Text = tostring(n); saveState()
     end)
     -- v22.6: ikut ambil buah TANPA mutasi (default off -> cuma yg bermutasi)
-    applyCollectNoMut = mkBodyToggle(body, 404, "Tanpa Mutasi (ikut ambil)", "collectNoMut", "Collect No Mutation")
+    AP.applyCollectNoMut = mkBodyToggle(body, 404, "Tanpa Mutasi (ikut ambil)", "collectNoMut", "Collect No Mutation")
     -- v23.1: anti-collect buah berat (>=100kg). default ON, ga disave -> selalu ON pas rejoin/exe
     mkBodyToggle(body, 444, "Anti Collect 100kg+", "antiCollectHeavy", "Anti Collect 100kg")
 end
 
 -- ====== CARD 2: AUTO SELL ======
-local applySell, applySellFull
 do
     local card, body, setH = mkFarmCard(2, "Auto Sell", "jual buah ke counter (tap utk atur)")
     setH(202)
@@ -9914,10 +9916,10 @@ do
     -- v5.9: filter mutasi
     mkTypeRow(body, 44, "Mutasi", function() return MUTATIONS end, state.selectedSellMut, "sellMutAll", "Semua mutasi")
     -- v5.7: toggle mode "sell pas penuh" (OFF = sell rutin tiap 5 detik)
-    applySellFull = mkBodyToggle(body, 84,  "Sell pas penuh", "sellWhenFull", "Sell When Full")
-    Farm._applySellFullRef = applySellFull
-    applySell     = mkBodyToggle(body, 124, "Auto Sell", "autoSell", "Auto Sell")
-    Farm._applySellRef = applySell
+    AP.applySellFull = mkBodyToggle(body, 84,  "Sell pas penuh", "sellWhenFull", "Sell When Full")
+    Farm._applySellFullRef = AP.applySellFull
+    AP.applySell     = mkBodyToggle(body, 124, "Auto Sell", "autoSell", "Auto Sell")
+    Farm._applySellRef = AP.applySell
     -- v10.9: filter berat sell (+N = di atas N kg, -N = di bawah, 0 = semua)
     lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,168)
     local swBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 165),
@@ -9970,12 +9972,11 @@ do
 end
 
 -- ====== CARD 3: AUTO BUY SEED ======
-local applyBuySeed
 do
     local card, body, setH = mkFarmCard(1, "Auto Buy Seed", "beli seed otomatis (tap utk atur)", misc2List)
     setH(154)
     mkTypeRow(body, 4, "Jenis Seed", fruitList, state.selectedSeeds, "buyAllSeeds", "Semua seed")
-    applyBuySeed = mkBodyToggle(body, 44, "Auto Buy", "autoBuySeed", "Auto Buy Seed")
+    AP.applyBuySeed = mkBodyToggle(body, 44, "Auto Buy", "autoBuySeed", "Auto Buy Seed")
     -- v26.3: auto-beli seed "bagus" by rarity (auto-include seed baru tier tinggi, tanpa update)
     mkBodyToggle(body, 76, "Auto seed bagus (by rarity)", "buyGoodSeeds", "Auto Buy Good Seeds")
     local rrBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30), Position = UDim2.new(0, 0, 0, 114),
@@ -9997,7 +9998,6 @@ do
 end
 
 -- ====== CARD 4: AUTO PLANT SEED ======
-local applyPlant
 do
     local card, body, setH = mkFarmCard(4, "Auto Plant Seed", "tanam seed otomatis (tap utk atur)")
     setH(168)
@@ -10027,11 +10027,10 @@ do
         state.plantSpread = n; spreadBox.Text = tostring(n); saveState()
         print("[StarFarm] sebar tanam: "..(n == 0 and "tepat di posisi" or (n.." stud")))
     end)
-    applyPlant = mkBodyToggle(body, 116, "Auto Plant", "autoPlant", "Auto Plant Seed")
+    AP.applyPlant = mkBodyToggle(body, 116, "Auto Plant", "autoPlant", "Auto Plant Seed")
 end
 
 -- ====== CARD 5: AUTO BUY PET (pet liar + buy-back + webhook) ======
-local applyBuyPet
 do
     local card, body, setH = mkFarmCard(3, "Auto Buy Pet", "tame pet liar + ambil balik (tap utk atur)", misc2List)
     setH(352)
@@ -10089,11 +10088,10 @@ do
         print("[StarFarm] webhook pet -> "..(state.petWebhook ~= "" and "diset" or "kosong"))
     end)
     -- v25.5: toggle Big/Mega/Rainbow DIBUANG - beli pet cukup by NAMA (Big/Mega/Rainbow namanya sama).
-    applyBuyPet = mkBodyToggle(body, 216, "Auto Buy Pet", "autoBuyPet", "Auto Buy Pet")
+    AP.applyBuyPet = mkBodyToggle(body, 216, "Auto Buy Pet", "autoBuyPet", "Auto Buy Pet")
 end
 
 -- ====== CARD 6: AUTO SHOVEL (v7.1: pindah dari MISC ke AUTO FARM) ======
-local applyShovel
 do
     local card, body, setH = mkFarmCard(99, "Auto Shovel", "gali tanaman kamu (pilih jenis, tap utk atur)")
     setH(126)
@@ -10103,7 +10101,7 @@ do
     -- pas picker pertama dibuka -> count gak kelihatan). sekarang selalu real-time.
     local shovelCountFn = function() return Farm.countMyGardenSeeds() end
     mkTypeRow(body, 4, "Jenis Seed", shovelListFn, state.selectedShovel, "shovelAll", "Semua seed", shovelCountFn)
-    applyShovel = mkBodyToggle(body, 44, "Auto Shovel", "autoShovel", "Auto Shovel")
+    AP.applyShovel = mkBodyToggle(body, 44, "Auto Shovel", "autoShovel", "Auto Shovel")
 end
 
 -- ====== CARD: AUTO SHOVEL FRUIT (v11.2) - buang buah satuan kecil/jelek ======
@@ -10166,13 +10164,12 @@ do
 end
 
 -- ====== CARD 7: AUTO BUY GEAR (v7.1) ======
-local applyBuyGear
 do
     local card, body, setH = mkFarmCard(2, "Auto Buy Gear", "beli gear/alat otomatis (tap utk atur)", misc2List)
     setH(96)
     local gearListFn = function() if not Farm.gearList then Farm.gearList = loadGearList() end return Farm.gearList end
     mkTypeRow(body, 4, "Jenis Gear", gearListFn, state.selectedGear, "buyAllGears", "Semua gear")
-    applyBuyGear = mkBodyToggle(body, 44, "Auto Buy", "autoBuyGear", "Auto Buy Gear")
+    AP.applyBuyGear = mkBodyToggle(body, 44, "Auto Buy", "autoBuyGear", "Auto Buy Gear")
 end
 
 -- v44.1: card AUTO BUY PETI/CRATE
@@ -10516,12 +10513,11 @@ do
 end
 
 -- CARD AF2-3: AUTO COLLECT 2 (terpisah dari AUTO FARM, default: semua buah, tanpa mutasi, -50kg)
-local applyCollect2
 do
     local card, body, setH = mkFarmCard(12, "Auto Collect 2", "semua buah . tanpa mutasi . filter -50kg", buyList)
     setH(202)
     mkTypeRow(body, 4, "Jenis Pohon", fruitList, state.selectedCollect2, "c2All", "Semua buah")
-    applyCollect2 = mkBodyToggle(body, 44, "Tanpa Mutasi", "c2NoMut", "Collect2 No Mutation")
+    AP.applyCollect2 = mkBodyToggle(body, 44, "Tanpa Mutasi", "c2NoMut", "Collect2 No Mutation")
     lbl(body, "Filter kg", 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,88)
     local c2wBox = mk("TextBox", { Size = UDim2.new(0.45, 0, 0, 28), Position = UDim2.new(0.55, 0, 0, 85),
         BackgroundColor3 = C.input, Text = tostring(state.c2WeightF or -50), PlaceholderText = "-50",
@@ -10582,7 +10578,6 @@ do
 end
 
 -- CARD AF2-4: AUTO SELL 2 (terpisah, default: semua, backpack penuh, kg=0)
-local applySell2
 do
     local card, body, setH = mkFarmCard(13, "Auto Sell 2", "sell all . backpack penuh . kg=0", buyList)
     setH(162)
@@ -10600,7 +10595,7 @@ do
     -- default s2All = true, s2WhenFull = true
     if state.s2All == nil then state.s2All = true; saveState() end
     if state.s2WhenFull == nil then state.s2WhenFull = true; saveState() end
-    applySell2 = mkBodyToggle(body, 124, "Auto Sell 2", "autoSell2", "Auto Sell 2")
+    AP.applySell2 = mkBodyToggle(body, 124, "Auto Sell 2", "autoSell2", "Auto Sell 2")
 end
 
 -- CARD AF2-5: GIFT GLOW (STAR FARM) - target user PERSISTEN + status live
@@ -11260,7 +11255,6 @@ end)
 --  bukan streaming. teleport ke tanaman gak perlu -> bikin karakter loncat2 aja.)
 
 
-local applySprinkler, applySprSave
 do
     local card, body, setH = mkFarmCard(7, "Auto Sprinkler", "place manual -> pilih posisi")
     setH(196)
@@ -11278,7 +11272,7 @@ do
     Farm._sprOnRecord = updInfo
 
     -- toggle SAVE POSITION (mode rekam) - pas ON, place sprinkler manual -> kerekam
-    applySprSave = (function()
+    AP.applySprSave = (function()
         local labelTxt = "Save Position"
         lbl(body, labelTxt, 13, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,24)
         local sw = mk("TextButton", { Size = UDim2.new(0, 52, 0, 26), Position = UDim2.new(1, -52, 0, 21),
@@ -11318,7 +11312,7 @@ do
         print("[StarFarm] sprinkler: posisi dihapus")
     end)
 
-    applySprinkler = mkBodyToggle(body, 132, "Auto Sprinkler", "autoSprinkler", "Auto Sprinkler")
+    AP.applySprinkler = mkBodyToggle(body, 132, "Auto Sprinkler", "autoSprinkler", "Auto Sprinkler")
     updInfo()
 end
 
@@ -11347,7 +11341,6 @@ local misc2List = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTr
     AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = misc2Panel })
 mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = misc2List })
 
-local applyGift, applyAcceptGift
 do
     -- daftar seed = PET_TYPES? no - seed pakai seedList; pet pakai Tool name (termasuk Big)
     local seedListFn = function() if not Farm.seedList then Farm.seedList = loadSeedList() end return Farm.seedList end
@@ -11406,8 +11399,8 @@ do
     mkTypeRow(body, 164, "Jenis Gear", function() return Farm.gearInBagList and Farm.gearInBagList() or {} end, state.giftGears, "_giftAllGear_NEVER", "pilih gear...", function() return Farm.countGearInBag and Farm.countGearInBag() or {} end)
     -- v12.7: mode sekali kirim (kirim 1x lalu Auto Gift OFF)
     mkBodyToggle(body, 208, "Sekali Kirim", "giftOnce", "Sekali Kirim (1x lalu OFF)")
-    applyGift = mkBodyToggle(body, 248, "Auto Send", "autoGift", "Auto Send Gift")
-    Farm._applyGiftRef = applyGift  -- biar giftOnce bisa matiin toggle dari kode
+    AP.applyGift = mkBodyToggle(body, 248, "Auto Send", "autoGift", "Auto Send Gift")
+    Farm._applyGiftRef = AP.applyGift  -- biar giftOnce bisa matiin toggle dari kode
     -- v12.8: label status simpel + warna (hijau=kekirim, merah=belum/gagal)
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
     statusL.Position = UDim2.new(0, 0, 0, 288); statusL.Size = UDim2.new(1, 0, 0, 20)
@@ -11437,7 +11430,6 @@ do
 end
 
 -- ====== MISC: Gift Langsung (Gifting.Send, tanpa mailbox) - v13.5 ======
-local applyDirectGift
 do
     local fruitListFn = function() return (Farm.shovelFruitList and Farm.shovelFruitList()) or {} end
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
@@ -11537,8 +11529,8 @@ do
     mkBodyToggle(body, 192, "Samperin Target", "dgiftApproach", "Samperin Target Sebelum Gift")
     -- sekali kirim
     mkBodyToggle(body, 232, "Sekali Kirim", "dgiftOnce", "Gift Langsung Sekali Kirim")
-    applyDirectGift = mkBodyToggle(body, 272, "Auto Gift Langsung", "autoDirectGift", "Auto Gift Langsung")
-    Farm._applyDGiftRef = applyDirectGift
+    AP.applyDirectGift = mkBodyToggle(body, 272, "Auto Gift Langsung", "autoDirectGift", "Auto Gift Langsung")
+    Farm._applyDGiftRef = AP.applyDirectGift
     -- status warna
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
     statusL.Position = UDim2.new(0, 0, 0, 312); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
@@ -11579,7 +11571,7 @@ do
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
     Farm._applyAcceptRef = nil
-    applyAcceptGift = function()
+    AP.applyAcceptGift = function()
         if state.autoAcceptGift then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -11589,15 +11581,14 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.autoAcceptGift = not state.autoAcceptGift; saveState(); applyAcceptGift()
+        state.autoAcceptGift = not state.autoAcceptGift; saveState(); AP.applyAcceptGift()
         print("[StarFarm] Auto Accept Gift -> "..(state.autoAcceptGift and "ON" or "OFF"))
     end)
-    applyAcceptGift()
-    Farm._applyAcceptRef = applyAcceptGift
+    AP.applyAcceptGift()
+    Farm._applyAcceptRef = AP.applyAcceptGift
 end
 
 -- ====== AUTO GIFT: Auto Gift Fruit (lewat mailbox) - v17.8 ======
-local applyGiftFruit
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = 4, Parent = giftList })
@@ -11793,9 +11784,9 @@ do
 
     -- toggle sekali kirim + auto
     mkBodyToggle(body, 336, "Sekali Kirim", "gfOnce", "Gift Fruit Sekali Kirim")
-    applyGiftFruit = mkBodyToggle(body, 376, "Auto Gift Fruit", "gfAuto", "Auto Gift Fruit")
-    Farm._applyGfAuto = applyGiftFruit
-    Farm._applyGFRef = applyGiftFruit
+    AP.applyGiftFruit = mkBodyToggle(body, 376, "Auto Gift Fruit", "gfAuto", "Auto Gift Fruit")
+    Farm._applyGfAuto = AP.applyGiftFruit
+    Farm._applyGFRef = AP.applyGiftFruit
 
     -- status
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
@@ -11828,7 +11819,6 @@ do
 end
 
 -- ====== AUTO GIFT: Auto Gift Pet (lewat mailbox) - v19.3 ======
-local applyGiftPet
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = 5, Parent = giftList })
@@ -11864,7 +11854,7 @@ do
         task.spawn(function() pcall(Farm.giftPetOnce); task.wait(0.4); sendBtn.Text = "KIRIM SEKARANG" end)
     end)
 
-    applyGiftPet = mkBodyToggle(body, 136, "Auto Gift Pet", "gpAuto", "Auto Gift Pet")
+    AP.applyGiftPet = mkBodyToggle(body, 136, "Auto Gift Pet", "gpAuto", "Auto Gift Pet")
 
     local statusL = lbl(body, "Belum", 13, C.textMute, Enum.TextXAlignment.Left)
     statusL.Position = UDim2.new(0, 0, 0, 178); statusL.Size = UDim2.new(1, 0, 0, 20); statusL.Font = FONT_B
@@ -12070,7 +12060,6 @@ do
     end)
     apply()
 end
-local applyAfk
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = misc2List })
@@ -12085,7 +12074,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyAfk = function()
+    AP.applyAfk = function()
         if state.autoAfk then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12095,14 +12084,13 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.autoAfk = not state.autoAfk; saveState(); applyAfk()
+        state.autoAfk = not state.autoAfk; saveState(); AP.applyAfk()
         print("[StarFarm] Auto AFK -> "..(state.autoAfk and "ON" or "OFF"))
     end)
-    applyAfk()
+    AP.applyAfk()
 end
 
 -- ====== MISC: ESP Harga Garden (toggle) - v15.4 ======
-local applyEspPriceUI
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
@@ -12117,7 +12105,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyEspPriceUI = function()
+    AP.applyEspPriceUI = function()
         if state.espPrice then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12127,11 +12115,11 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.espPrice = not state.espPrice; saveState(); applyEspPriceUI()
+        state.espPrice = not state.espPrice; saveState(); AP.applyEspPriceUI()
         pcall(Farm.applyEspPrice)
         print("[StarFarm] ESP Harga -> "..(state.espPrice and "ON" or "OFF"))
     end)
-    applyEspPriceUI()
+    AP.applyEspPriceUI()
 end
 
 -- ====== MISC: Drop Buah ke tanah (v36.4) - tombol tes drop 1 buah ======
@@ -12221,7 +12209,6 @@ do
 end
 
 -- ====== MISC: ESP Mutasi Garden (toggle) - v21.4 ======
-local applyEspMutUI
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
@@ -12236,7 +12223,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyEspMutUI = function()
+    AP.applyEspMutUI = function()
         if state.espMut then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12246,15 +12233,14 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.espMut = not state.espMut; saveState(); applyEspMutUI()
+        state.espMut = not state.espMut; saveState(); AP.applyEspMutUI()
         pcall(Farm.applyEspMut)
         print("[StarFarm] ESP Mutasi -> "..(state.espMut and "ON" or "OFF"))
     end)
-    applyEspMutUI()
+    AP.applyEspMutUI()
 end
 
 -- ====== MISC: ESP Harga Inventory (toggle) - v15.6 ======
-local applyEspInventUI, applyEspInventStockUI
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 2, Parent = miscList })
@@ -12269,7 +12255,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyEspInventUI = function()
+    AP.applyEspInventUI = function()
         if state.espInvent then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12282,14 +12268,14 @@ do
         state.espInvent = not state.espInvent
         if state.espInvent and state.espInventStock then   -- v22.9: jangan dobel, matiin yg satunya
             state.espInventStock = false
-            if applyEspInventStockUI then applyEspInventStockUI() end
+            if AP.applyEspInventStockUI then AP.applyEspInventStockUI() end
             pcall(Farm.applyEspInventStock)
         end
-        saveState(); applyEspInventUI()
+        saveState(); AP.applyEspInventUI()
         pcall(Farm.applyEspInvent)
         print("[StarFarm] ESP Harga Inventory -> "..(state.espInvent and "ON" or "OFF"))
     end)
-    applyEspInventUI()
+    AP.applyEspInventUI()
 end
 
 -- ====== MISC: ESP Harga Inventory + Pasar (toggle) - v22.9 ======
@@ -12307,7 +12293,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyEspInventStockUI = function()
+    AP.applyEspInventStockUI = function()
         if state.espInventStock then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12320,18 +12306,17 @@ do
         state.espInventStock = not state.espInventStock
         if state.espInventStock and state.espInvent then   -- mutual-exclusive sama ESP lama
             state.espInvent = false
-            if applyEspInventUI then applyEspInventUI() end
+            if AP.applyEspInventUI then AP.applyEspInventUI() end
             pcall(Farm.applyEspInvent)
         end
-        saveState(); applyEspInventStockUI()
+        saveState(); AP.applyEspInventStockUI()
         pcall(Farm.applyEspInventStock)
         print("[StarFarm] ESP Inventory +Pasar -> "..(state.espInventStock and "ON" or "OFF"))
     end)
-    applyEspInventStockUI()
+    AP.applyEspInventStockUI()
 end
 
 -- ====== MISC: Anti-Lag (toggle) - v11.4 ======
-local applyAntiLag
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 6, Parent = misc2List })
@@ -12346,7 +12331,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyAntiLag = function()
+    AP.applyAntiLag = function()
         if state.antiLag then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12361,14 +12346,13 @@ do
         pcall(function() Farm.applyAntiRender(state.antiLag) end)
     end
     sw.MouseButton1Click:Connect(function()
-        state.antiLag = not state.antiLag; saveState(); applyAntiLag()
+        state.antiLag = not state.antiLag; saveState(); AP.applyAntiLag()
         print("[StarFarm] Anti-Lag -> "..(state.antiLag and "ON" or "OFF"))
     end)
-    applyAntiLag()
+    AP.applyAntiLag()
 end
 
 -- ====== MISC: ANTI-LEG TOTAL (toggle) - v44.62 ======
-local applyAntiLegMax
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 6, Parent = misc2List })
@@ -12383,7 +12367,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyAntiLegMax = function()
+    AP.applyAntiLegMax = function()
         if state.antiLegMax then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12395,16 +12379,15 @@ do
         task.spawn(function() pcall(function() Farm.setAntiLegMax(state.antiLegMax) end) end)
     end
     sw.MouseButton1Click:Connect(function()
-        state.antiLegMax = not state.antiLegMax; saveState(); applyAntiLegMax()
+        state.antiLegMax = not state.antiLegMax; saveState(); AP.applyAntiLegMax()
         print("[StarFarm] ANTI-LEG TOTAL -> "..(state.antiLegMax and "ON" or "OFF"))
     end)
     -- v44.64: ANTI-LEG TOTAL default ON tiap start (permintaan user). matiin manual = sementara sesi ini, launch berikutnya nyala lagi.
     state.antiLegMax = true
-    applyAntiLegMax()
+    AP.applyAntiLegMax()
 end
 
 -- ====== MISC: Sembunyiin Pohon (toggle) - v11.7 ======
-local applyHidePlants
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 7, Parent = misc2List })
@@ -12419,7 +12402,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyHidePlants = function()
+    AP.applyHidePlants = function()
         if state.hidePlants then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12430,14 +12413,13 @@ do
         task.spawn(function() pcall(function() Farm.setHidePlants(state.hidePlants) end) end)
     end
     sw.MouseButton1Click:Connect(function()
-        state.hidePlants = not state.hidePlants; saveState(); applyHidePlants()
+        state.hidePlants = not state.hidePlants; saveState(); AP.applyHidePlants()
         print("[StarFarm] Sembunyiin Pohon -> "..(state.hidePlants and "ON" or "OFF"))
     end)
-    applyHidePlants()
+    AP.applyHidePlants()
 end
 
 -- ====== MISC: Sembunyiin Buah (toggle + mode samar) - v11.8 ======
-local applyHideFruits
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 8, Parent = misc2List })
@@ -12460,7 +12442,7 @@ do
     local function refreshMode()
         modeBtn.Text = "Mode: "..(state.hideFruitFaint and "Sisain samar [mata]" or "Ilang total x")
     end
-    applyHideFruits = function()
+    AP.applyHideFruits = function()
         if state.hideFruits then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12472,7 +12454,7 @@ do
         task.spawn(function() pcall(function() Farm.setHideFruits(state.hideFruits) end) end)
     end
     sw.MouseButton1Click:Connect(function()
-        state.hideFruits = not state.hideFruits; saveState(); applyHideFruits()
+        state.hideFruits = not state.hideFruits; saveState(); AP.applyHideFruits()
         print("[StarFarm] Sembunyiin Buah -> "..(state.hideFruits and "ON" or "OFF"))
     end)
     modeBtn.MouseButton1Click:Connect(function()
@@ -12481,11 +12463,10 @@ do
         if state.hideFruits then task.spawn(function() pcall(function() Farm.setHideFruits(true) end) end) end
         print("[StarFarm] mode buah -> "..(state.hideFruitFaint and "samar" or "ilang total"))
     end)
-    applyHideFruits()
+    AP.applyHideFruits()
 end
 
 -- ====== MISC: Sembunyiin Buah GEDE (>= N kg, ilang total) - v32.8 ======
-local applyHideBig
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 9, Parent = misc2List })
@@ -12515,7 +12496,7 @@ do
         if state.hideBigFruits then task.spawn(function() pcall(function() Farm.scanHideBigFruits(true) end) end) end
         print("[StarFarm] ambang buah gede -> "..n.."kg")
     end)
-    applyHideBig = function()
+    AP.applyHideBig = function()
         if state.hideBigFruits then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12526,14 +12507,13 @@ do
         task.spawn(function() pcall(function() Farm.setHideBigFruits(state.hideBigFruits) end) end)
     end
     sw.MouseButton1Click:Connect(function()
-        state.hideBigFruits = not state.hideBigFruits; saveState(); applyHideBig()
+        state.hideBigFruits = not state.hideBigFruits; saveState(); AP.applyHideBig()
         print("[StarFarm] Sembunyiin Buah Gede -> "..(state.hideBigFruits and "ON" or "OFF"))
     end)
-    applyHideBig()
+    AP.applyHideBig()
 end
 
 -- ====== MISC: Auto Steal (toggle simpel) ======
-local applySteal
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, ClipsDescendants = true, LayoutOrder = 3, Parent = miscList })
@@ -12548,7 +12528,7 @@ do
     local body = mk("Frame", { Size = UDim2.new(1, -20, 0, 80), Position = UDim2.new(0, 10, 0, 60),
         BackgroundTransparency = 1, Visible = false, Parent = card })
     local applyStealTp = mkBodyToggle(body, 4,  "Teleport ke buah", "stealTeleport", "Steal Teleport")
-    applySteal          = mkBodyToggle(body, 44, "Auto Steal",       "autoSteal",     "Auto Steal")
+    AP.applySteal          = mkBodyToggle(body, 44, "Auto Steal",       "autoSteal",     "Auto Steal")
     local expanded = false
     hd.MouseButton1Click:Connect(function()
         expanded = not expanded; body.Visible = expanded
@@ -12558,7 +12538,6 @@ do
 end
 
 -- ====== MISC: Anti-Bot Auto Hop (toggle simpel) ======
-local applyAntiBot
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 4, Parent = misc2List })
@@ -12573,7 +12552,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyAntiBot = function()
+    AP.applyAntiBot = function()
         if state.antiBot then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12583,16 +12562,15 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.antiBot = not state.antiBot; saveState(); applyAntiBot()
+        state.antiBot = not state.antiBot; saveState(); AP.applyAntiBot()
         print("[StarFarm] Anti-Bot -> "..(state.antiBot and "ON" or "OFF"))
     end)
-    applyAntiBot()
+    AP.applyAntiBot()
 end
 
 -- ====== MISC: Anti Kepental (toggle) - v10.0 ======
 -- MATIIN kalau main di private server orang (server bisa shutdown -> Roblox teleport
 -- balik = normal). nyalain kalau mau cegah anti-cheat mental-in ke server lain.
-local applyAntiKepental
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 5, Parent = miscList })
@@ -12607,7 +12585,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyAntiKepental = function()
+    AP.applyAntiKepental = function()
         -- sinkron ke flag global yg dibaca hook teleport
         local g = (typeof(getgenv) == "function") and getgenv() or _G
         g.ZenxAntiKepental = state.antiKepental
@@ -12620,14 +12598,13 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.antiKepental = not state.antiKepental; saveState(); applyAntiKepental()
+        state.antiKepental = not state.antiKepental; saveState(); AP.applyAntiKepental()
         print("[StarFarm] Anti Kepental -> "..(state.antiKepental and "ON" or "OFF (teleport bebas)"))
     end)
-    applyAntiKepental()
+    AP.applyAntiKepental()
 end
 
 -- ====== MISC: Auto Grab Seed Jatuh (toggle simpel) ======
-local applyGrabSeed
 do
     local card = mk("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 5, Parent = miscList })
@@ -12642,7 +12619,7 @@ do
     local knob = mk("Frame", { Size = UDim2.new(0, 20, 0, 20), Position = UDim2.new(0, 3, 0.5, -10),
         BackgroundColor3 = C.textDim, BorderSizePixel = 0, Parent = sw })
     corner(knob, 10)
-    applyGrabSeed = function()
+    AP.applyGrabSeed = function()
         if state.autoGrabSeed then
             sw.BackgroundColor3 = C.green; knob.BackgroundColor3 = Color3.new(1,1,1)
             knob.Position = UDim2.new(1, -23, 0.5, -10); swStroke.Color = C.green
@@ -12652,10 +12629,10 @@ do
         end
     end
     sw.MouseButton1Click:Connect(function()
-        state.autoGrabSeed = not state.autoGrabSeed; saveState(); applyGrabSeed()
+        state.autoGrabSeed = not state.autoGrabSeed; saveState(); AP.applyGrabSeed()
         print("[StarFarm] Auto Grab Seed -> "..(state.autoGrabSeed and "ON" or "OFF"))
     end)
-    applyGrabSeed()
+    AP.applyGrabSeed()
 end
 
 -- ====== MISC: Weather & Restock Info (live, cuma display) ======
@@ -13626,33 +13603,33 @@ if state.sfGlowGiftBatch == nil then state.sfGlowGiftBatch = 20 end
 if type(state.sfGlowGiftTarget) ~= "string" then state.sfGlowGiftTarget = "" end
 print("[StarFarm] STAR FARM start - buySeed(Mythic+) ON, Farm1 auto OFF, fitur Glow ON (min collect="..tostring(state.glowCollectMin)..", kg>="..tostring(state.glowKgMin)..")")
 
-applyCollect(); applyCollectMulti(); applyCollectSingle(); applyCollectExp(); applyCollectMost(); applySell(); applySellFull(); applyBuySeed(); applyBuyGear(); applyPlant(); applyBuyPet(); applyGift(); applyDirectGift(); applyAcceptGift(); applyGiftFruit(); applyGiftPet(); applyAfk(); applySteal(); applyAntiBot(); applyAntiKepental(); applyGrabSeed(); applyShovel(); applySprinkler()
+AP.applyCollect(); AP.applyCollectMulti(); AP.applyCollectSingle(); AP.applyCollectExp(); AP.applyCollectMost(); AP.applySell(); AP.applySellFull(); AP.applyBuySeed(); AP.applyBuyGear(); AP.applyPlant(); AP.applyBuyPet(); AP.applyGift(); AP.applyDirectGift(); AP.applyAcceptGift(); AP.applyGiftFruit(); AP.applyGiftPet(); AP.applyAfk(); AP.applySteal(); AP.applyAntiBot(); AP.applyAntiKepental(); AP.applyGrabSeed(); AP.applyShovel(); AP.applySprinkler()
 -- v39.1: refresh toggle yg dipengaruhi tombol FARM 2 (collect+sell Farm1, sprinkler/wc/collect2/sell2 Farm2)
 function Farm._refreshAllToggles()
-    pcall(function() applyCollect() end)
-    pcall(function() applyCollectMulti() end)
-    pcall(function() applyCollectSingle() end)
-    pcall(function() applyCollectExp() end)
-    pcall(function() applyCollectMost() end)
-    pcall(function() applyFreshOnly() end)
-    pcall(function() applyCollectNoMut() end)
-    pcall(function() applySell() end)
-    pcall(function() applySellFull() end)
-    pcall(function() applySprinkler() end)
-    pcall(function() if applyCollect2 then applyCollect2() end end)
-    pcall(function() if applySell2 then applySell2() end end)
+    pcall(function() AP.applyCollect() end)
+    pcall(function() AP.applyCollectMulti() end)
+    pcall(function() AP.applyCollectSingle() end)
+    pcall(function() AP.applyCollectExp() end)
+    pcall(function() AP.applyCollectMost() end)
+    pcall(function() AP.applyFreshOnly() end)
+    pcall(function() AP.applyCollectNoMut() end)
+    pcall(function() AP.applySell() end)
+    pcall(function() AP.applySellFull() end)
+    pcall(function() AP.applySprinkler() end)
+    pcall(function() if AP.applyCollect2 then AP.applyCollect2() end end)
+    pcall(function() if AP.applySell2 then AP.applySell2() end end)
 end
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
 task.spawn(function()
     task.wait(3)
-    pcall(function() applyAntiLag() end)
+    pcall(function() AP.applyAntiLag() end)
     task.wait(0.5)
-    pcall(function() applyHidePlants() end)
+    pcall(function() AP.applyHidePlants() end)
     task.wait(0.5)
-    pcall(function() applyHideFruits() end)
+    pcall(function() AP.applyHideFruits() end)
     task.wait(0.5)
-    pcall(function() applyHideBig() end)   -- v33.0: Sembunyiin Buah Gede selalu ON (di-force di atas)
+    pcall(function() AP.applyHideBig() end)   -- v33.0: Sembunyiin Buah Gede selalu ON (di-force di atas)
     task.wait(0.5)
     pcall(function() if state.espPrice then Farm.applyEspPrice() end end)  -- v15.4
     pcall(function() if state.espMut then Farm.applyEspMut() end end)  -- v21.4
