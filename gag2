@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v11.5  (standalone, basis ZENX v44.79) - GAG 2
--- v11.5: jeda destroy pohon 25 -> 100 tanaman (lebih dikit berhenti = kelar lebih cepet)
+-- STAR FARM  v11.7  (standalone, basis ZENX v44.79) - GAG 2
+-- v11.7: panel kanan atas refresh 0.5s (dulu 2s). value tetep 2s biar ongkosnya gak naik 4x
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -356,7 +356,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v11.5"
+local VER       = "STAR v11.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1203,6 +1203,28 @@ end
 -- sekali (server nolak) - jadi jangan dihitung di counter "kecil"/"besar" & jangan di-fire.
 -- bukti: Hypno Bloom Age=8/8 -> prompt Panen ADA (76kg); Age=4.2/8 -> prompt GAK ADA (12kg).
 -- kalau atribut Age/MaxAge gak ada (seed lain), anggap MATANG (biar gak nge-block seed lain).
+-- ===== v11.6: penentu "buah ini aman dibantai visualnya?" =====
+-- SYARAT (dua-duanya wajib):
+--   1. kg >= Farm._dstrBigKg (default 50) -> buah BESAR. dia gak pernah dipanen Farm 2 (di atas
+--      cap), cuma numpuk di kebun -> gak ada yg ilang kalau visualnya dibuang. kg-nya sendiri
+--      FIX SEJAK LAHIR (tes user: SizeMulti diem 20 detik), jadi ini gak bakal berubah nanti.
+--   2. UDAH MATANG -> pengaman. buah besar bisa kena Glow & dipanen buat gift; kalau dibantai
+--      pas mentah, kematangannya beku -> gak pernah kepanen (ini bug v9.4 yg bikin "besar 300an"
+--      jadi ngaco). matang = semua datanya final = nol risiko.
+-- buah KECIL sengaja DILEWATI - itu yg dipanen Farm 2 & jadi trigger WC.
+Farm._dstrBigKg = 50   -- ambang buah besar (kg). ubah di sini kalau mau dites angka lain.
+function Farm.buahLayakDibantai(f, seed)
+    local ok = false
+    pcall(function()
+        if f:GetAttribute("_arDstr") then return end          -- udah pernah dibantai
+        if not Farm.isFruitRipe(f) then return end            -- masih mentah -> JANGAN
+        local kg = Farm.gardenKg and Farm.gardenKg(f, seed)
+        if type(kg) ~= "number" or kg < (Farm._dstrBigKg or 50) then return end   -- kecil -> JANGAN
+        ok = true
+    end)
+    return ok
+end
+
 function Farm.isFruitRipe(f)
     -- v4.5: BALIK ke Age >= MaxAge. BUKTI dari dump garden: prompt Panen NGGAK konsisten -
     -- buah SizeMulti 9.05 (gede) prompt=false, tapi SizeMulti 1.37 (kecil) prompt=true.
@@ -1962,16 +1984,50 @@ function Farm.applyAntiRender(on)
         end
     end)
 
-    -- ===== (8) DESTROY VISUAL BUAH -> DICABUT (v11.2) =====
-    -- KEPUTUSAN dari hasil UKUR, bukan tebakan. tes user (2 script terpisah, kebun sama):
-    --   pohon : 38.465 part + 45.088 efek  ->  17 -> 57 FPS  (+40, +235%)
-    --   buah  :  2.550 part +  4.142 efek  ->  13 -> 19 FPS  (+6,  +46%)
-    -- pohon 15x lebih berat, dan destroy-nya GAK butuh cache sama sekali (gak ada data yg ilang).
-    -- buah cuma ngasih +6 FPS tapi minta: cache lengkap + gerbang "catet dulu" + urutan yg rapet
-    -- pas Super WC (400 buah lahir per 8 detik). dan semua kekacauan kemarin - buah gak kepanen,
-    -- hitungan "besar" ngaco, cache yg ternyata gak pernah nyala - SEMUA gara2 destroy buah ini.
-    -- untung kecil, risiko gede -> DICABUT. buah dibiarin utuh; yg dibantai cuma badan tanaman.
+    -- ===== (8) VISUAL BUAH BESAR (>=50kg) + MATANG -> HAPUS (v11.6) =====
+    -- kenapa ini AMAN, beda sama v9.4 yg bikin kacau:
+    --   * buah BESAR gak pernah dipanen (di atas cap) - dia numpuk di kebun selamanya. jadi kita
+    --     gak butuh apa2 dari dia selain angka counter, dan itu dari ATRIBUT (yg disisain).
+    --   * cuma yg UDAH MATANG. buah besar bisa kena Glow & dipanen buat gift - kalau dibantai pas
+    --     masih mentah, kematangannya beku -> gak pernah kepanen (persis bug v9.4). matang = final.
+    --   * kg FIX SEJAK LAHIR (tes user: SizeMulti diem 20 detik, 4.340169..) -> "besar" ketauan
+    --     sejak awal, gak perlu ditungguin.
+    --   * buah part=0 TETEP BISA DIPANEN (tes user: "buah ilang dari pohon=true, masuk tas=true").
+    -- buah KECIL sengaja dibiarin utuh - itu yg dipanen Farm 2 & dipakai buat trigger WC.
     local nBuah = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if g then
+            for _, plot in ipairs(g:GetChildren()) do
+                local pf = plot:FindFirstChild("Plants")
+                if pf then
+                    for _, plant in ipairs(pf:GetChildren()) do
+                        if tonumber(tostring(plant.Name):match("^(%d+)_")) == player.UserId then
+                            local seed = plant:GetAttribute("SeedName")
+                            local fs = plant:FindFirstChild("Fruits")
+                            if fs then
+                                for _, f in ipairs(fs:GetChildren()) do
+                                    if Farm.buahLayakDibantai(f, seed) then
+                                        for _, d in ipairs(f:GetDescendants()) do
+                                            if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
+                                               or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
+                                               or d:IsA("SpecialMesh") or d:IsA("SurfaceAppearance") then
+                                                pcall(function() d:Destroy() end)
+                                            end
+                                        end
+                                        f:SetAttribute("_arDstr", true)
+                                        nBuah = nBuah + 1
+                                    end
+                                    napas()
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
     -- listener: efek/part BARU otomatis dimatiin juga (buah baru lahir terus!)
     if Farm._antiRenderConn then pcall(function() Farm._antiRenderConn:Disconnect() end) end
     Farm._antiRenderConn = workspace.DescendantAdded:Connect(function(d)
@@ -2153,8 +2209,50 @@ staggerSpawn(function()
     end
 end)
 
--- v11.2: loop "SAPU BUAH MATANG" DICABUT - lihat alasan di langkah (8) applyAntiRender.
--- ringkasnya: buah cuma nyumbang +6 FPS, pohon +40. gak sebanding sama risikonya.
+-- ===== v11.6: SAPU BUAH BESAR MATANG (tiap 5 detik) =====
+-- buah baru lahir & mateng terus (Super WC = ~400 buah per 8 detik), jadi gak cukup disapu sekali
+-- pas anti-render nyala. loop ini nyusulin yg BARU jadi besar+matang.
+-- nyicil (napas tiap 150 buah) biar gak nyendat pas gelombang Super WC.
+task.spawn(function()
+    while true do
+        task.wait(5)
+        if Farm._antiRenderOn then
+            pcall(function()
+                local g = workspace:FindFirstChild("Gardens"); if not g then return end
+                local n, ceked = 0, 0
+                for _, plot in ipairs(g:GetChildren()) do
+                    local pf = plot:FindFirstChild("Plants")
+                    if pf then
+                        for _, plant in ipairs(pf:GetChildren()) do
+                            if tonumber(tostring(plant.Name):match("^(%d+)_")) == player.UserId then
+                                local seed = plant:GetAttribute("SeedName")
+                                local fs = plant:FindFirstChild("Fruits")
+                                if fs then
+                                    for _, f in ipairs(fs:GetChildren()) do
+                                        if Farm.buahLayakDibantai(f, seed) then
+                                            for _, d in ipairs(f:GetDescendants()) do
+                                                if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
+                                                   or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
+                                                   or d:IsA("SpecialMesh") or d:IsA("SurfaceAppearance") then
+                                                    pcall(function() d:Destroy() end)
+                                                end
+                                            end
+                                            f:SetAttribute("_arDstr", true)
+                                            n = n + 1
+                                        end
+                                        ceked = ceked + 1
+                                        if ceked % 150 == 0 then task.wait() end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                if n > 0 then print("[StarFarm] sapu buah besar: "..n.." buah (>="..tostring(Farm._dstrBigKg).."kg, matang) dibantai visualnya") end
+            end)
+        end
+    end
+end)
 
 Farm._hidePlantsOn = false
 Farm._hidePlantsConn = nil
@@ -7555,6 +7653,11 @@ Farm.buildScreenOverlay = function()
                         -- v44.61: SATU kali keliling kebun buat SEMUA counter (dulu 6x scan terpisah tiap detik
                         -- -> berat pas tanaman banyak). pohon/kecil/besar/value/total dihitung sekalian di 1 loop.
                         pcall(Farm.updateBaseW)   -- kalibrasi rasio kg (throttled 3s, murah)
+                        -- v11.7: panel refresh 0.5 detik (dulu 2s) - permintaan user, yg penting
+                        -- kecil/besar gesit. tapi value (fruitPrice per buah) tetep tiap 2 detik
+                        -- biar ongkosnya gak naik 4x lipat percuma.
+                        Farm._ovTick = (Farm._ovTick or 0) + 1
+                        local hitungValue = (Farm._ovTick % 4 == 1)
                         local thr = math.abs(state.c2WeightF or 50)
                         local dragonN, smallN, bigN, totalN, valN = 0, 0, 0, 0, 0
                         local gardens = workspace:FindFirstChild("Gardens")
@@ -7579,8 +7682,16 @@ Farm.buildScreenOverlay = function()
                                                         if kg > 0 and kg < thr then smallN = smallN + 1
                                                         elseif kg >= thr then bigN = bigN + 1 end
                                                     end
-                                                    local v = Farm.fruitPrice and Farm.fruitPrice(fruit, true)
-                                                    if type(v) == "number" then valN = valN + v end
+                                                    -- v11.7: fruitPrice() itu yg PALING MAHAL di loop ini
+                                                    -- (dipanggil PER BUAH: lookup harga + pengali mutasi).
+                                                    -- user cuma butuh KECIL/BESAR yg gesit, value gak.
+                                                    -- jadi value cuma dihitung tiap tick ke-4 (= 2 detik,
+                                                    -- sama kayak dulu). tick lain di-skip -> kecil/besar
+                                                    -- bisa 0.5s tanpa ngeborong ongkos value 4x.
+                                                    if hitungValue then
+                                                        local v = Farm.fruitPrice and Farm.fruitPrice(fruit, true)
+                                                        if type(v) == "number" then valN = valN + v end
+                                                    end
                                                 end
                                             end
                                         end
@@ -7592,7 +7703,10 @@ Farm.buildScreenOverlay = function()
                         vPohon.Text = tostring(dragonN)
                         vKecil.Text = tostring(smallN)
                         vBesar.Text = tostring(bigN).."/"..tostring(state.af2BigCap or 100)
-                        vGift.Text = Farm.abbrev(valN)
+                        -- v11.7: tick yg gak ngitung value -> pakai angka terakhir, jangan tampil 0
+                        -- (kalau nggak, value bakal kedip 0 tiap 3 dari 4 tick).
+                        if hitungValue then Farm._ovValLast = valN end
+                        vGift.Text = Farm.abbrev(Farm._ovValLast or 0)
                         -- v7.8: baris GLOW - jumlah Glow di KEBUN / ambang gate. ijo = gate kebuka
                         -- (Glow lagi dipanen & dikirim). ini yg paling perlu dipantau, bukan total buah.
                         do
@@ -7664,7 +7778,8 @@ Farm.buildScreenOverlay = function()
                         end
                     end
                 end)
-                task.wait(2)   -- v44.61: panel display refresh 2s (dulu 1s) - counter gak perlu se-realtime itu, ngurangin beban
+                task.wait(0.5)  -- v11.7: refresh 0.5s (dulu 2s) - permintaan user, kecil/besar mesti gesit.
+                -- ongkos value (fruitPrice per buah) TETEP 2s - lihat hitungValue di atas.
             end
         end)
     end
