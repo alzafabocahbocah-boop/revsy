@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v11.8  (standalone, basis ZENX v44.79) - GAG 2
--- v11.8: anti-leg nunggu 30 detik SETELAH GUI muncul (atur di STAR_ANTILEG_DELAY, baris ~320)
+-- STAR FARM  v12.0  (standalone, basis ZENX v44.79) - GAG 2
+-- v12.0: SEMUA visual buah dibantai (gerbang matang+kg dibuang - tes buktiin gak ngefek & destroy aman)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -358,7 +358,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v11.8"
+local VER       = "STAR v12.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -878,7 +878,7 @@ local state = {
     espSisi         = "kanan",   -- v9.5: kartu di sisi kanan/kiri kebun
     glowNotifMin    = 60,        -- v8.0: notif kalau Glow di kebun >= ini
     af2WCTrigger    = 30,        -- v8.1: trigger Super WC - place kalau sisa buah kecil <= ini
-    af2BigCap       = 100,       -- v8.2: batas buah besar (sprinkler/WC stop di sini)
+    af2BigCap       = 500,       -- v11.9: batas buah besar (sprinkler/WC stop di sini). dulu 100
     af2WCCooldown   = 12,        -- v8.5: jeda antar place Super WC (detik). 30=kelamaan, 2=kecepetan
     mailTargetCount = 0,         -- v8.7: berhenti kalau udah kirim N buah total (0 = tanpa batas)
     af2WCDelay      = 10,        -- v8.8: tunggu N detik setelah buah kecil <= trigger, baru nyiram
@@ -951,7 +951,7 @@ local function saveState()
         out.af2WCDelay = state.af2WCDelay or 10           -- v8.8: jeda tunggu WC
         out.hideBigKg = state.hideBigKg or 100   -- v32.8
         out.af2SavePos = state.af2SavePos   -- v4.1: titik simpan sprinkler/WC (dari karakter)
-        out.af2BigCap = state.af2BigCap or 100
+        out.af2BigCap = state.af2BigCap or 500
         out.af2SavedPos = state.af2SavedPos or {}
         out.af2SprTool = state.af2SprTool or ""   -- v31.5: nama sprinkler dipilih
         out.af2WCTool  = state.af2WCTool  or ""   -- v31.5: nama WC dipilih
@@ -1205,23 +1205,31 @@ end
 -- sekali (server nolak) - jadi jangan dihitung di counter "kecil"/"besar" & jangan di-fire.
 -- bukti: Hypno Bloom Age=8/8 -> prompt Panen ADA (76kg); Age=4.2/8 -> prompt GAK ADA (12kg).
 -- kalau atribut Age/MaxAge gak ada (seed lain), anggap MATANG (biar gak nge-block seed lain).
--- ===== v11.6: penentu "buah ini aman dibantai visualnya?" =====
--- SYARAT (dua-duanya wajib):
---   1. kg >= Farm._dstrBigKg (default 50) -> buah BESAR. dia gak pernah dipanen Farm 2 (di atas
---      cap), cuma numpuk di kebun -> gak ada yg ilang kalau visualnya dibuang. kg-nya sendiri
---      FIX SEJAK LAHIR (tes user: SizeMulti diem 20 detik), jadi ini gak bakal berubah nanti.
---   2. UDAH MATANG -> pengaman. buah besar bisa kena Glow & dipanen buat gift; kalau dibantai
---      pas mentah, kematangannya beku -> gak pernah kepanen (ini bug v9.4 yg bikin "besar 300an"
---      jadi ngaco). matang = semua datanya final = nol risiko.
--- buah KECIL sengaja DILEWATI - itu yg dipanen Farm 2 & jadi trigger WC.
-Farm._dstrBigKg = 50   -- ambang buah besar (kg). ubah di sini kalau mau dites angka lain.
+-- ===== v12.0: SEMUA buah dibantai visualnya (gerbang matang & kg DIBUANG) =====
+-- KENAPA gerbangnya dibuang - HASIL TES USER, bukan tebakan:
+--   1. "MATANG" gak pernah nolak apa2. buah lahir UDAH MATANG:
+--        Dragon's Breath  MaxAge 3   -> lahir di 3.000
+--        Moon Bloom       MaxAge 17  -> lahir di 17.000
+--        "mentah" = 0 terus, di dua-duanya. (Super WC bikin matang seketika)
+--      jadi isFruitRipe SELALU true -> gerbangnya cuma pajangan. v11.6 = v9.4 persis sama.
+--   2. DESTROY AMAN - kebukti:
+--        * buah part=0 TETEP KEPANEN ("buah ilang dari pohon=true, masuk tas=true")
+--        * pohon yg buahnya dibantai TETEP PRODUKSI: 4 buah (dstr) -> kepanen -> 0 ->
+--          lahir lagi 2 buah segar. slot GAK mampet.
+--   3. kg FIX SEJAK LAHIR (SizeMulti diem 20 detik) -> gak ada data yg ilang.
+-- CATATAN JUJUR: bug v9.4 penyebabnya MASIH BELUM KETEMU. dugaan terkuat sekarang = kg NIL
+-- (rasio jenis buah belum kekalibrasi -> gardenKg balik nil -> buah gak kehitung & gak kepanen),
+-- dan itu GAK ADA HUBUNGANNYA sama destroy. belum dicek.
+Farm._dstrBigKg = 0   -- 0 = semua buah. isi angka (mis. 50) kalau mau balik ke "yg >= N kg" doang.
 function Farm.buahLayakDibantai(f, seed)
     local ok = false
     pcall(function()
-        if f:GetAttribute("_arDstr") then return end          -- udah pernah dibantai
-        if not Farm.isFruitRipe(f) then return end            -- masih mentah -> JANGAN
-        local kg = Farm.gardenKg and Farm.gardenKg(f, seed)
-        if type(kg) ~= "number" or kg < (Farm._dstrBigKg or 50) then return end   -- kecil -> JANGAN
+        if f:GetAttribute("_arDstr") then return end   -- udah pernah dibantai
+        local ambang = Farm._dstrBigKg or 0
+        if ambang > 0 then
+            local kg = Farm.gardenKg and Farm.gardenKg(f, seed)
+            if type(kg) ~= "number" or kg < ambang then return end
+        end
         ok = true
     end)
     return ok
@@ -1986,7 +1994,7 @@ function Farm.applyAntiRender(on)
         end
     end)
 
-    -- ===== (8) VISUAL BUAH BESAR (>=50kg) + MATANG -> HAPUS (v11.6) =====
+    -- ===== (8) VISUAL BUAH -> HAPUS SEMUA (v12.0) - alasan lengkap di Farm.buahLayakDibantai =====
     -- kenapa ini AMAN, beda sama v9.4 yg bikin kacau:
     --   * buah BESAR gak pernah dipanen (di atas cap) - dia numpuk di kebun selamanya. jadi kita
     --     gak butuh apa2 dari dia selain angka counter, dan itu dari ATRIBUT (yg disisain).
@@ -2211,9 +2219,9 @@ staggerSpawn(function()
     end
 end)
 
--- ===== v11.6: SAPU BUAH BESAR MATANG (tiap 5 detik) =====
--- buah baru lahir & mateng terus (Super WC = ~400 buah per 8 detik), jadi gak cukup disapu sekali
--- pas anti-render nyala. loop ini nyusulin yg BARU jadi besar+matang.
+-- ===== v12.0: SAPU VISUAL BUAH BARU (tiap 5 detik) =====
+-- buah lahir terus (Super WC = ~400 buah per 8 detik), jadi gak cukup disapu sekali pas
+-- anti-render nyala. loop ini nyusulin buah yg BARU lahir.
 -- nyicil (napas tiap 150 buah) biar gak nyendat pas gelombang Super WC.
 task.spawn(function()
     while true do
@@ -2250,7 +2258,7 @@ task.spawn(function()
                         end
                     end
                 end
-                if n > 0 then print("[StarFarm] sapu buah besar: "..n.." buah (>="..tostring(Farm._dstrBigKg).."kg, matang) dibantai visualnya") end
+                if n > 0 then print("[StarFarm] sapu visual buah: "..n.." buah dibantai") end
             end)
         end
     end
@@ -7704,7 +7712,7 @@ Farm.buildScreenOverlay = function()
                         Farm._af2SmallCount = smallN; Farm._af2BigCount = bigN   -- share ke loop lain
                         vPohon.Text = tostring(dragonN)
                         vKecil.Text = tostring(smallN)
-                        vBesar.Text = tostring(bigN).."/"..tostring(state.af2BigCap or 100)
+                        vBesar.Text = tostring(bigN).."/"..tostring(state.af2BigCap or 500)
                         -- v11.7: tick yg gak ngitung value -> pakai angka terakhir, jangan tampil 0
                         -- (kalau nggak, value bakal kedip 0 tiap 3 dari 4 tick).
                         if hitungValue then Farm._ovValLast = valN end
@@ -9399,7 +9407,7 @@ staggerSpawn(function()
                 espKartu.judul.Text = "TAMAN ANDA"
                 espKartu.total.Text = tot.." buah   ·   "..mtg.." matang"
                 espKartu.value.Text = "value  "..Farm.abbrev(nilai)
-                espKartu.rinci.Text = "kecil "..kecil.."      besar "..besar.."/"..tostring(state.af2BigCap or 100)
+                espKartu.rinci.Text = "kecil "..kecil.."      besar "..besar.."/"..tostring(state.af2BigCap or 500)
                 local ml = {}
                 for m, n in pairs(muts) do ml[#ml+1] = {m, n} end
                 table.sort(ml, function(a,b) return a[2] > b[2] end)
@@ -10669,11 +10677,11 @@ do
     -- batas buah besar
     lbl(body, "Batas buah besar (stop)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,136)
     local bigBox = mk("TextBox", { Size = UDim2.new(0.35,0,0,26), Position = UDim2.new(0.65,0,0,133),
-        BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 100), PlaceholderText = "100",
+        BackgroundColor3 = C.input, Text = tostring(state.af2BigCap or 500), PlaceholderText = "500",
         TextColor3 = C.text, Font = FONT, TextSize = 12, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
     corner(bigBox, 6); stroke(bigBox, C.border, 1)
     bigBox.FocusLost:Connect(function()
-        local n = math.max(1, math.floor(tonumber(bigBox.Text) or 100))
+        local n = math.max(1, math.floor(tonumber(bigBox.Text) or 500))   -- v11.9: default 500
         state.af2BigCap = n; bigBox.Text = tostring(n); saveState()
     end)
     -- toggles
@@ -11388,7 +11396,7 @@ staggerSpawn(function()
             end
             local threshKg  = math.abs(state.c2WeightF or 50)
             local wcTrigger = state.af2WCTrigger or 30   -- v8.1: default 30 (dulu 0). place WC kalau small <= ini
-            local bigCap    = state.af2BigCap or 100      -- stop kalau big >= ini
+            local bigCap    = state.af2BigCap or 500      -- stop kalau big >= ini
             local smallCount = Farm.af2CountSmallFruits(threshKg)
             local bigCount   = Farm.af2CountBigFruits(threshKg)
             Farm._af2SmallCount = smallCount   -- v40.0: buat overlay layar
@@ -13787,7 +13795,9 @@ state.glowKgMin = 30
 -- kalau mau beda, ubah lewat kotak di GUI SETELAH sc jalan (perubahan tetep kesimpen).
 state.glowCollectMin = 20
 state.af2WCTrigger   = 30
-state.af2BigCap      = 100
+-- v11.9: af2BigCap GAK DIPAKSA lagi (permintaan user: "bisa di ganti").
+-- dulu dipaksa 100 tiap start -> diubah lewat input GUI pun percuma, balik lagi tiap masuk.
+-- sekarang: default 500 (buat akun baru), selebihnya ngikut setelan tersimpan.
 state.espGTinggi     = 45    -- v10.0: tinggi kartu ESP (dulu 60 - kelewat tinggi)
 -- v10.1: ANTI-LEG MAX SELALU ON (permintaan user - hasil tes: enteng).
 -- ini nyalain: setAntiLag + anti-render v9.4 (lighting/air/partikel/bayangan/tanah/pagar/
