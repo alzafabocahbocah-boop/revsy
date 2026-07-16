@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v9.7  (standalone, basis ZENX v44.79) - GAG 2
--- v9.7: FIX FATAL lanjutan - 205 local (batas 200) -> 37 applyXxx digabung 1 tabel -> 169. sc jalan lagi
+-- STAR FARM  v9.8  (standalone, basis ZENX v44.79) - GAG 2
+-- v9.8: FIX "Farm._Farm._arMatiinEfek" (dobel-prefix bekas refactor v9.6). local 169/200
 -- v9.5: ESP GARDEN - kartu ringkasan (buah/matang/VALUE/mutasi/pohon) + garis neon, ikut Farm 2
 -- v9.5: ESP GARDEN - 1 kartu di sisi kebun (buah/matang/VALUE/mutasi/pohon) + garis neon. ikut Farm 2
 -- v9.4: anti-render + tanah ijo dipolosin, pagar dihapus, garden orang dihapus, visual buah dihapus
@@ -292,7 +292,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v9.7"
+local VER       = "STAR v9.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1675,7 +1675,7 @@ end
 Farm._antiRenderOn = false
 Farm._antiRenderConn = nil
 
-function Farm._Farm._arMatiinEfek(d)
+function Farm._arMatiinEfek(d)
     if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke")
        or d:IsA("Fire") or d:IsA("Sparkles") then
         pcall(function() d.Enabled = false end)
