@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v10.7  (standalone, basis ZENX v44.79) - GAG 2
--- v10.7: urutan boot - DESTROY duluan, lighting nyusul (dua-duanya tetep di atas, sebelum GUI)
+-- STAR FARM  v10.9  (standalone, basis ZENX v44.79) - GAG 2
+-- v10.9: TES - anti-leg (lighting + destroy) baru jalan 30 DETIK setelah GUI muncul
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -301,29 +301,37 @@ end)
 
 -- tabel Farm dideklarasi DI SINI (dulu baris ~1130) supaya blok destroy di bawah ini bisa ngeliat.
 local Farm = {}
+-- v9.7: 37 forward-declaration applyXxx digabung ke SATU tabel. ALASAN: Luau cuma boleh 200
+-- 'local' per chunk; sc ini nembus 205 -> loadstring balik NIL -> sc gak jalan sama sekali
+-- ("Out of local registers, exceeded limit 200"). 37 local jadi 1 = hemat 36 slot.
+local AP = {}
 
--- ===== v10.6: DESTROY DIKEJAR PALING DULUAN =====
--- user: "paling ngaruh di sini tu destroy nya jadi dia harus duluan".
--- MASALAH v10.5: blok destroy ada di BARIS ~13720 - artinya pantauannya baru mulai SETELAH
--- seluruh GUI dibangun (ratusan Instance.new = detik-detik kebuang). padahal fungsi destroy-nya
--- (Farm.applyAntiRender / Farm.setAntiLegMax) udah siap dari baris ~1600.
--- sekarang: pantauan mulai DI SINI. begitu kebun ada isinya DAN fungsinya udah kedefinisi ->
--- langsung sapu, gak nunggu GUI. bisa kepotong beberapa detik.
+-- ===== v10.9 TES: ANTI-LEG (destroy + lighting) BARU JALAN 30 DETIK SETELAH GUI MUNCUL =====
+-- permintaan user: "anti leg nya semua ya dari lightning sama destroy di bikin 30s setelah gui muncul".
+-- ini KEBALIKAN v10.6/v10.7 (yg ngejar secepetnya). tujuannya nyoba: kalau anti-leg jalan pas
+-- semua udah tenang (loading kelar, GUI jadi), masih leg gak?
+-- Farm._guiSiap di-set pas GUI kelar dibangun (deket selectTab di bawah file).
+STAR_ANTILEG_DELAY = 30   -- detik setelah GUI muncul. ubah di sini kalau mau dites angka lain.
 task.spawn(function()
-    for _ = 1, 900 do   -- maks 90 detik
-        local g = workspace:FindFirstChild("Gardens")
-        local siap = (g and #g:GetChildren() > 0) and Farm.applyAntiRender and Farm.setAntiLegMax
-        if siap then break end
+    -- tunggu GUI kelar dibangun
+    for _ = 1, 1200 do
+        if Farm._guiSiap then break end
         task.wait(0.1)
     end
+    print(string.format("[WAKTU] +%.1fs  GUI muncul -> nunggu %ds...",
+        os.clock() - (getgenv().__StarT0 or os.clock()), STAR_ANTILEG_DELAY))
+    task.wait(STAR_ANTILEG_DELAY)
     if not (Farm.applyAntiRender and Farm.setAntiLegMax) then return end
-    print(string.format("[WAKTU] +%.1fs  kebun siap -> DESTROY MULAI (sebelum GUI)",
+    print(string.format("[WAKTU] +%.1fs  ANTI-LEG MULAI (lighting + destroy bareng)",
         os.clock() - (getgenv().__StarT0 or os.clock())))
-    pcall(function() Farm.applyAntiRender(true) end)
-    pcall(function() Farm.setAntiLegMax(true) end)
+    pcall(function() Farm.applyAntiRender(true) end)   -- di dalemnya udah ada lighting (tahap 1) + destroy
+    pcall(function() Farm.setAntiLegMax(true) end)     -- destroy daun tanaman
     Farm._arBootDone = true
-    Farm._destroyBootDone = true   -- tandain: blok bawah gak usah ngulang
-    print(string.format("[WAKTU] +%.1fs  DESTROY KELAR", os.clock() - (getgenv().__StarT0 or os.clock())))
+    Farm._destroyBootDone = true
+    -- samain tampilan tombol GUI (biar ijo) - sekarang _arBootDone udah true, jadi apply-nya
+    -- gak bakal ngulang sapu berat, cuma nyegerin.
+    pcall(function() if AP and AP.applyAntiLag then AP.applyAntiLag() end end)
+    print(string.format("[WAKTU] +%.1fs  ANTI-LEG KELAR", os.clock() - (getgenv().__StarT0 or os.clock())))
 end)
 -- v33.8: holder inventory yg AMAN. dulu pola {player.Character, Backpack} dipakai di 20 tempat -
 -- kalau Character nil (respawn/mati), ipairs berhenti di elemen 1 dan BACKPACK IKUT KESKIP
@@ -336,37 +344,9 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
--- v10.7: LIGHTING NYUSUL (permintaan user: "jangan lighting dulu tapi destroy dulu").
--- destroy = yg paling ngaruh, jadi dia yg dikejar duluan. lighting ini murah (0 scan) & bakal
--- kepanggil lagi di applyAntiRender, jadi taruh di belakang gak rugi.
--- ===== LIGHTING/AIR DIMATIIN (v10.7: NYUSUL setelah destroy) =====
--- tetep ditaruh di ATAS file (bukan baris 13rb) biar gak nunggu GUI kelar dibangun -
--- tapi URUTANNYA di belakang blok DESTROY, krn destroy yg paling ngaruh.
--- blok ini 0 scan (cuma set properti) -> instan.
-task.spawn(function()
-    pcall(function()
-        local L = game:GetService("Lighting")
-        L.GlobalShadows = false; L.ShadowSoftness = 0
-        L.EnvironmentDiffuseScale = 0; L.EnvironmentSpecularScale = 0
-        L.FogEnd = 9e9; L.FogStart = 9e9
-        L.Ambient = Color3.fromRGB(178,178,178); L.OutdoorAmbient = Color3.fromRGB(178,178,178)
-        for _, e in ipairs(L:GetChildren()) do
-            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
-                pcall(function() e.Enabled = false end)
-            end
-        end
-        local T = workspace:FindFirstChildOfClass("Terrain")
-        if T then
-            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
-            T.WaterReflectance = 0; T.WaterTransparency = 1
-            T.Decoration = false
-        end
-        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-    end)
-    print(string.format("[WAKTU] +%.1fs  lighting/air MATI (nyusul)", os.clock() - (getgenv().__StarT0 or os.clock())))
-end)
+-- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v10.7"
+local VER       = "STAR v10.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1159,10 +1139,7 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- FUNGSI FARM (placeholder - diisi nanti via debug)
 -- ============================================================
 -- v10.6: 'local Farm' DIPINDAH ke paling atas (biar blok destroy di atas bisa ngeliat).
--- v9.7: 37 forward-declaration applyXxx digabung ke SATU tabel. ALASAN: Luau cuma boleh 200
--- 'local' per chunk; sc ini nembus 205 -> loadstring balik NIL -> sc gak jalan sama sekali
--- ("Out of local registers, exceeded limit 200"). 37 local jadi 1 = hemat 36 slot.
-local AP = {}
+-- v10.9: 'local AP' DIPINDAH ke atas (deket Farm) - blok anti-leg 30s perlu ngeliat dia.
 pcall(function() getgenv().StarFarm = Farm end)   -- v36.4: expose buat tes console (mis. StarFarm.dropOneFruit())
 -- v44.26: CATAT JobId di AWAL (pas masuk server) - kunci balik ke server SAMA pas weather buruk.
 Farm._bootJobId = tostring(game.JobId or "")
@@ -1909,14 +1886,31 @@ function Farm.applyAntiRender(on)
     end)
 
     -- (7) GARDEN ORANG LAIN -> HAPUS (tanahnya disisain biar gak ngambang)
+    -- v10.8: fungsi ini KEHAPUS gara2 editku di v10.3 (aku ganti blok "(3) PARTIKEL"..."(6) PAGAR",
+    -- dan fungsi ini kebetulan ada di tengahnya). akibatnya 'mine' = nil -> langkah (7) DIEM-DIEM
+    -- GAK JALAN sejak v10.3 (gak ada error krn kebungkus pcall). sekarang dipasang balik.
+    -- pakai perilaku v10.1 (plot PERTAMA) sesuai permintaan user - v10.2 (semua plot) dicabut
+    -- krn dugaannya (trowel mati gara2 plot kehapus) TERBUKTI SALAH: trowel tetep mati abis v10.2.
+    local function arPlotKita()
+        local g = workspace:FindFirstChild("Gardens"); if not g then return nil end
+        for _, plot in ipairs(g:GetChildren()) do
+            local pf = plot:FindFirstChild("Plants")
+            if pf then
+                for _, p in ipairs(pf:GetChildren()) do
+                    if tonumber(tostring(p.Name):match("^(%d+)_")) == (player.UserId) then return plot end
+                end
+            end
+        end
+        return nil
+    end
+    local mine = arPlotKita()
+    Farm._arPlotKita = mine
     local nOrang = 0
     pcall(function()
         local g = workspace:FindFirstChild("Gardens")
-        -- v10.2: cuma jalan kalau plot kita KETEMU. kalau belum ke-load (adaMine=false), SKIP -
-        -- daripada salah hapus kebun sendiri.
-        if g and adaMine then
+        if g and mine then
             for _, plot in ipairs(g:GetChildren()) do
-                if not mine[plot] then   -- v10.2: cek SEMUA plot kita, bukan cuma yg pertama
+                if plot ~= mine then
                     for _, c in ipairs(plot:GetChildren()) do
                         local nm = tostring(c.Name):lower()
                         local tanah = nm:find("ground") or nm:find("base") or nm:find("floor") or nm:find("plot")
@@ -12440,11 +12434,15 @@ do
             sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
             knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
         end
-        pcall(function() Farm.setAntiLag(state.antiLag) end)
-        -- v9.3: ANTI-RENDER ikut toggle Anti-Lag (biar gak nambah tombol).
-        -- 4 hal hasil tes user: lighting (paling brutal), air, partikel, bayangan kebun.
-        state.antiRender = state.antiLag
-        pcall(function() Farm.applyAntiRender(state.antiLag) end)
+        -- v10.9: pas GUI BARU dibangun, JANGAN jalanin yg berat - blok "30 detik setelah GUI"
+        -- (atas file) yg ngurus. tanpa gerbang ini, card bikin anti-leg jalan duluan = tes rusak.
+        -- abis boot (_arBootDone), pencet tombol = langsung jalan kayak biasa.
+        if Farm._arBootDone then
+            pcall(function() Farm.setAntiLag(state.antiLag) end)
+            -- v9.3: ANTI-RENDER ikut toggle Anti-Lag (biar gak nambah tombol).
+            state.antiRender = state.antiLag
+            pcall(function() Farm.applyAntiRender(state.antiLag) end)
+        end
     end
     sw.MouseButton1Click:Connect(function()
         state.antiLag = not state.antiLag; saveState(); AP.applyAntiLag()
@@ -13748,14 +13746,8 @@ task.spawn(function()
         if g and #g:GetChildren() > 0 then break end
         task.wait(0.1)
     end
-    -- v10.6: sapu berat udah dikerjain blok DESTROY di paling atas file. tapi tombol GUI-nya
-    -- tetep perlu di-apply biar keliatan ijo (jujur sama keadaan aslinya).
-    -- sapu-nya kepanggil 2x? iya - TAPI murah: buah yg udah dibantai ditandai '_arDstr' -> di-skip,
-    -- tanaman udah kehapus, dan sapu-nya nyicil (napas). lagian ini jalan SETELAH kita masuk,
-    -- jadi gak ganggu yg kita kejar (destroy sebelum nyampe kebun).
-    Farm._arBootDone = true
-    pcall(function() AP.applyAntiLag() end)
-    pcall(function() AP.applyAntiLegMax() end)
+    -- v10.9: JANGAN apply anti-leg di sini - blok "30 detik setelah GUI" (atas file) yg ngurus.
+    -- kalau di-apply di sini juga, dia bakal jalan duluan & ngerusak tesnya.
     task.wait(0.5)
     pcall(function() AP.applyHidePlants() end)
     task.wait(0.5)
@@ -13769,6 +13761,7 @@ task.spawn(function()
     pcall(function() if state.espInventStock then Farm.applyEspInventStock() end end)  -- v22.9
 end)
 selectTab("farm")
+Farm._guiSiap = true   -- v10.9: penanda buat blok anti-leg (dia nunggu ini + 30 detik)
 print("[StarFarm] "..VER.." loaded (kerangka UI - fungsi farm nyusul)")
 
 -- v22.9: HUD pengali pasar Dragon's Breath di POJOK KANAN BAWAH layar.
