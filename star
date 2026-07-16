@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v10.4  (standalone, basis ZENX v44.79) - GAG 2
--- v10.4: KOREKSI - destroy JANGAN ditunda, kejar secepetnya. lighting dipisah (instan duluan)
+-- STAR FARM  v10.6  (standalone, basis ZENX v44.79) - GAG 2
+-- v10.6: DESTROY dikejar paling duluan (blok pindah ke baris ~335, dulu ~13720 = nunggu GUI kelar)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -286,6 +286,73 @@ local UIS       = game:GetService("UserInputService")
 local HS        = game:GetService("HttpService")
 local RS        = game:GetService("ReplicatedStorage")
 local player    = Players.LocalPlayer
+
+-- v10.5: penanda waktu - biar ketauan PASTI mana yg duluan: anti-leg jalan, atau kita nyampe kebun.
+-- user bilang "loading cepet = leg, loading lama = aman" -> ini yg mbuktiin, bukan tebakan.
+getgenv().__StarT0 = os.clock()
+task.spawn(function()
+    local c = player.Character or player.CharacterAdded:Wait()
+    local hrp = c:WaitForChild("HumanoidRootPart", 30)
+    if hrp then
+        print(string.format("[WAKTU] +%.1fs  KARAKTER NYAMPE (kalau ini duluan dari DESTROY = leg)",
+            os.clock() - getgenv().__StarT0))
+    end
+end)
+
+-- ===== v10.5: LIGHTING DIMATIIN PALING AWAL (sebelum apa pun) =====
+-- kenapa DI SINI, bukan di bawah: sc ini 13rb baris - bangun GUI-nya doang makan waktu (ratusan
+-- Instance.new). kalau lighting-kill ditaruh bawah, dia nunggu semua itu kelar dulu.
+-- user bilang: LOADING CEPET = LEG (kita nyampe kebun sebelum anti-leg jalan), LOADING LAMA = AMAN.
+-- jadi tiap milidetik ngaruh. blok ini 0 scan (cuma set properti) -> instan, aman ditaruh paling atas.
+task.spawn(function()
+    pcall(function()
+        local L = game:GetService("Lighting")
+        L.GlobalShadows = false; L.ShadowSoftness = 0
+        L.EnvironmentDiffuseScale = 0; L.EnvironmentSpecularScale = 0
+        L.FogEnd = 9e9; L.FogStart = 9e9
+        L.Ambient = Color3.fromRGB(178,178,178); L.OutdoorAmbient = Color3.fromRGB(178,178,178)
+        for _, e in ipairs(L:GetChildren()) do
+            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
+                pcall(function() e.Enabled = false end)
+            end
+        end
+        local T = workspace:FindFirstChildOfClass("Terrain")
+        if T then
+            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
+            T.WaterReflectance = 0; T.WaterTransparency = 1
+            T.Decoration = false
+        end
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+    end)
+    print(string.format("[WAKTU] +%.1fs  lighting/air MATI", os.clock() - (getgenv().__StarT0 or os.clock())))
+end)
+
+-- tabel Farm dideklarasi DI SINI (dulu baris ~1130) supaya blok destroy di bawah ini bisa ngeliat.
+local Farm = {}
+
+-- ===== v10.6: DESTROY DIKEJAR PALING DULUAN =====
+-- user: "paling ngaruh di sini tu destroy nya jadi dia harus duluan".
+-- MASALAH v10.5: blok destroy ada di BARIS ~13720 - artinya pantauannya baru mulai SETELAH
+-- seluruh GUI dibangun (ratusan Instance.new = detik-detik kebuang). padahal fungsi destroy-nya
+-- (Farm.applyAntiRender / Farm.setAntiLegMax) udah siap dari baris ~1600.
+-- sekarang: pantauan mulai DI SINI. begitu kebun ada isinya DAN fungsinya udah kedefinisi ->
+-- langsung sapu, gak nunggu GUI. bisa kepotong beberapa detik.
+task.spawn(function()
+    for _ = 1, 900 do   -- maks 90 detik
+        local g = workspace:FindFirstChild("Gardens")
+        local siap = (g and #g:GetChildren() > 0) and Farm.applyAntiRender and Farm.setAntiLegMax
+        if siap then break end
+        task.wait(0.1)
+    end
+    if not (Farm.applyAntiRender and Farm.setAntiLegMax) then return end
+    print(string.format("[WAKTU] +%.1fs  kebun siap -> DESTROY MULAI (sebelum GUI)",
+        os.clock() - (getgenv().__StarT0 or os.clock())))
+    pcall(function() Farm.applyAntiRender(true) end)
+    pcall(function() Farm.setAntiLegMax(true) end)
+    Farm._arBootDone = true
+    Farm._destroyBootDone = true   -- tandain: blok bawah gak usah ngulang
+    print(string.format("[WAKTU] +%.1fs  DESTROY KELAR", os.clock() - (getgenv().__StarT0 or os.clock())))
+end)
 -- v33.8: holder inventory yg AMAN. dulu pola {player.Character, Backpack} dipakai di 20 tempat -
 -- kalau Character nil (respawn/mati), ipairs berhenti di elemen 1 dan BACKPACK IKUT KESKIP
 -- (inventory kebaca kosong palsu; paling bahaya: verifikasi gift MAIL salah nandain "terkirim").
@@ -297,7 +364,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v10.4"
+local VER       = "STAR v10.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1089,7 +1156,7 @@ local function dprint(...) if state.debugLog then print(...) end end
 -- ============================================================
 -- FUNGSI FARM (placeholder - diisi nanti via debug)
 -- ============================================================
-local Farm = {}
+-- v10.6: 'local Farm' DIPINDAH ke paling atas (biar blok destroy di atas bisa ngeliat).
 -- v9.7: 37 forward-declaration applyXxx digabung ke SATU tabel. ALASAN: Luau cuma boleh 200
 -- 'local' per chunk; sc ini nembus 205 -> loadstring balik NIL -> sc gak jalan sama sekali
 -- ("Out of local registers, exceeded limit 200"). 37 local jadi 1 = hemat 36 slot.
@@ -13666,30 +13733,7 @@ function Farm._refreshAllToggles()
 end
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
--- v10.4: LIGHTING DULUAN & LANGSUNG (0 scan, cuma set properti - instan).
--- ini yg kata user "ngaruh brutal", jadi jangan nunggu kebun ke-load. dipisah dari sapu berat.
-task.spawn(function()
-    pcall(function()
-        local L = game:GetService("Lighting")
-        L.GlobalShadows = false; L.ShadowSoftness = 0
-        L.EnvironmentDiffuseScale = 0; L.EnvironmentSpecularScale = 0
-        L.FogEnd = 9e9; L.FogStart = 9e9
-        L.Ambient = Color3.fromRGB(178,178,178); L.OutdoorAmbient = Color3.fromRGB(178,178,178)
-        for _, e in ipairs(L:GetChildren()) do
-            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
-                pcall(function() e.Enabled = false end)
-            end
-        end
-        local T = workspace:FindFirstChildOfClass("Terrain")
-        if T then
-            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
-            T.WaterReflectance = 0; T.WaterTransparency = 1
-            T.Decoration = false
-        end
-        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-    end)
-    print("[StarFarm] lighting/air dimatiin (instan, sebelum kebun ke-load)")
-end)
+-- v10.5: blok lighting DIPINDAH ke paling atas file (biar gak nunggu GUI kelar dibangun)
 
 task.spawn(function()
     -- v10.4 (KOREKSI v10.3): DESTROY HARUS DULUAN. v10.3 malah bikin nunggu (game.Loaded +
@@ -13702,9 +13746,14 @@ task.spawn(function()
         if g and #g:GetChildren() > 0 then break end
         task.wait(0.1)
     end
+    -- v10.6: sapu berat udah dikerjain blok DESTROY di paling atas file. tapi tombol GUI-nya
+    -- tetep perlu di-apply biar keliatan ijo (jujur sama keadaan aslinya).
+    -- sapu-nya kepanggil 2x? iya - TAPI murah: buah yg udah dibantai ditandai '_arDstr' -> di-skip,
+    -- tanaman udah kehapus, dan sapu-nya nyicil (napas). lagian ini jalan SETELAH kita masuk,
+    -- jadi gak ganggu yg kita kejar (destroy sebelum nyampe kebun).
     Farm._arBootDone = true
-    pcall(function() AP.applyAntiLag() end)      -- destroy + lighting jalan di sini
-    pcall(function() AP.applyAntiLegMax() end)   -- destroy daun tanaman
+    pcall(function() AP.applyAntiLag() end)
+    pcall(function() AP.applyAntiLegMax() end)
     task.wait(0.5)
     pcall(function() AP.applyHidePlants() end)
     task.wait(0.5)
