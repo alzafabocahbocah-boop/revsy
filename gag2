@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v12.0  (standalone, basis ZENX v44.79) - GAG 2
--- v12.0: SEMUA visual buah dibantai (gerbang matang+kg dibuang - tes buktiin gak ngefek & destroy aman)
+-- STAR FARM  v12.2  (standalone, basis ZENX v44.79) - GAG 2
+-- v12.2: shovel buah GAK dipaksa nyala lagi (ambangnya bentrok sama Collect 2 - sama2 50kg)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -358,7 +358,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v12.0"
+local VER       = "STAR v12.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1220,8 +1220,25 @@ end
 -- CATATAN JUJUR: bug v9.4 penyebabnya MASIH BELUM KETEMU. dugaan terkuat sekarang = kg NIL
 -- (rasio jenis buah belum kekalibrasi -> gardenKg balik nil -> buah gak kehitung & gak kepanen),
 -- dan itu GAK ADA HUBUNGANNYA sama destroy. belum dicek.
-Farm._dstrBigKg = 0   -- 0 = semua buah. isi angka (mis. 50) kalau mau balik ke "yg >= N kg" doang.
+-- ===== v12.1: SAKLAR DESTROY BUAH =====
+-- NYALA (default). angka "+6 FPS" dari tes tes_fps_buah itu MENYESATKAN: waktu itu kebunnya
+-- lagi dikit buah (2.550 part). sekarang 829 buah -> ~3.300+ part dari buah doang, dan naik
+-- terus. jadi untungnya jauh lebih gede dari +6. (user: "aku cobak di kebun dikit buah,
+-- ini buahnya banyak banget")
+--
+-- MASALAH YG BELUM KELAR (jangan lupa): "makin lama makin parah, 10 menitan bener2 gak bisa
+-- collect sama sekali". bukti DIAG: 621 buah, CollectFruit ditembak ~12.500x, NOL pindah.
+-- polanya NUMPUK. dua tersangka yg sama2 numpuk seiring waktu:
+--   (a) destroy visual buah  <- saklar ini
+--   (b) auto-shovel buah <50kg (v6.6 sengaja nyekop yg MENTAH juga, nyala tiap Farm 2 ON)
+-- kalau nanti macet lagi: matiin salah satu, tes 10 menit, gantian. jangan dua2nya sekaligus -
+-- nanti gak ketauan yg mana.
+--   Farm._dstrBuah = false   -> matiin destroy buah (tes tersangka a)
+--   Auto Shovel Fruit OFF    -> matiin shovel (tes tersangka b)
+Farm._dstrBuah  = true    -- false = buah gak disentuh sama sekali (buat tes A/B)
+Farm._dstrBigKg = 0       -- 0 = semua buah, 50 = cuma yg >= 50kg
 function Farm.buahLayakDibantai(f, seed)
+    if not Farm._dstrBuah then return false end   -- v12.1: saklar mati -> buah GAK disentuh
     local ok = false
     pcall(function()
         if f:GetAttribute("_arDstr") then return end   -- udah pernah dibantai
@@ -7376,10 +7393,17 @@ Farm.buildFarm2Btn = function()
             -- ngirim SEMUA buah >= 3M (Aurora/Frozen/Star Fruit ikut kekirim) - BUKAN itu maunya.
             -- yang boleh dikirim CUMA Glow 50kg+ lewat jalur khusus (starGlowTick).
             -- kalau emang mau kirim semua buah bernilai, nyalain manual di tab AUTO GIFT.
-            -- v4.9: shovel buah kecil ikut nyala pas preset Farm 2 dipencet
-            state.shovelFruit = true
-            state.shovelFruitAll = true
-            if (state.shovelFruitKg or 0) <= 0 then state.shovelFruitKg = 50 end
+            -- ===== v12.2: SHOVEL BUAH GAK DIPAKSA NYALA LAGI (permintaan user: "gak perlu dah shovel") =====
+            -- dulu (v4.9) shovel ikut nyala tiap preset Farm 2 dipencet. masalahnya AMBANGNYA BENTROK:
+            --   Collect 2 : panen buah < math.abs(c2WeightF) = 50kg
+            --   Shovel    : sekop buah < shovelFruitKg      = 50kg
+            -- SAMA PERSIS -> tiap siklus mereka rebutan buah yg sama, siapa duluan. bukti dari DIAG
+            -- user: "kecil MATANG = 0" - buah kecil NOL, bukan gak kepanen tapi udah KESEKOP.
+            -- itu persis keluhan awal: "buah kecil harusnya banyak gak ke collect".
+            -- sekarang: OFF. kalau butuh, nyalain manual di card "Auto Shovel Fruit" (tab AUTO FARM 2)
+            -- - tapi ATUR AMBANGNYA DI BAWAH 50 (mis. 10) biar gak makan jatah Collect 2.
+            state.shovelFruit = false
+            state.shovelFruitAll = false
             state.sfGlowFav = true
             state.sfGlowAntiSell = true
             state.sfGlowCollectSmall = true
