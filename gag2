@@ -1,5 +1,6 @@
 -- ============================================================
--- STAR FARM  v10.2  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v10.4  (standalone, basis ZENX v44.79) - GAG 2
+-- v10.4: KOREKSI - destroy JANGAN ditunda, kejar secepetnya. lighting dipisah (instan duluan)
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -296,7 +297,7 @@ local function invHolders()
     if b then t[#t+1] = b end
     return t
 end
-local VER       = "STAR v10.2"
+local VER       = "STAR v10.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1695,6 +1696,60 @@ function Farm._arMatiinEfek(d)
     return false
 end
 
+-- v10.4: ANTI-RENDER dipisah 2 tahap. ALASAN (koreksi dari user): pas loading CEPET, pemain
+-- keburu nyampe kebun sebelum anti-leg jalan -> grafis full nyala -> LEG GAK BISA GERAK.
+-- pas loading lama malah aman (anti-leg keburu kepasang). jadi v10.3 (nunggu game kelar load)
+-- itu ARAH YG SALAH.
+-- TAPI mempercepat SEMUANYA juga salah (sapu 46rb objek nabrak load).
+-- SOLUSI: pisah berdasarkan ONGKOS -
+--   TAHAP 1 (fungsi ini): lighting + air + kualitas grafis. cuma ~20 set properti = INSTAN,
+--     dan justru INI yg efeknya paling brutal. dipanggil SEDINI MUNGKIN, gak pakai nunggu.
+--   TAHAP 2 (applyAntiRender): sapu partikel/bayangan/tanah/pagar/buah. berat -> nyusul + dijeda.
+function Farm.applyAntiRenderFast(on)
+    local L = game:GetService("Lighting")
+    local T = workspace:FindFirstChildOfClass("Terrain")
+    if not on then
+        pcall(function()
+            L.GlobalShadows = true
+            L.EnvironmentDiffuseScale = 1; L.EnvironmentSpecularScale = 1
+            for _, e in ipairs(L:GetChildren()) do
+                if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then e.Enabled = true end
+            end
+            if T then T.Decoration = true end
+        end)
+        return
+    end
+    -- LIGHTING (paling ngaruh, paling murah)
+    pcall(function()
+        L.GlobalShadows = false
+        L.ShadowSoftness = 0
+        L.EnvironmentDiffuseScale = 0
+        L.EnvironmentSpecularScale = 0
+        L.FogEnd = 9e9
+        L.FogStart = 9e9
+        L.Brightness = 1
+        L.Ambient = Color3.fromRGB(178,178,178)
+        L.OutdoorAmbient = Color3.fromRGB(178,178,178)
+        for _, e in ipairs(L:GetChildren()) do
+            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
+                pcall(function() e.Enabled = false end)
+            end
+        end
+    end)
+    -- AIR / TERRAIN
+    pcall(function()
+        if T then
+            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
+            T.WaterReflectance = 0; T.WaterTransparency = 1
+            T.Decoration = false
+            local cl = T:FindFirstChildOfClass("Clouds")
+            if cl then cl.Enabled = false end
+        end
+    end)
+    -- kualitas render paling rendah
+    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+end
+
 function Farm.applyAntiRender(on)
     Farm._antiRenderOn = on and true or false
     local L = game:GetService("Lighting")
@@ -1715,100 +1770,57 @@ function Farm.applyAntiRender(on)
         return
     end
 
-    -- (1) LIGHTING - brutal
-    pcall(function()
-        L.GlobalShadows = false
-        L.ShadowSoftness = 0
-        L.EnvironmentDiffuseScale = 0
-        L.EnvironmentSpecularScale = 0
-        L.FogEnd = 9e9
-        L.FogStart = 9e9
-        L.Brightness = 1
-        L.Ambient = Color3.fromRGB(178,178,178)      -- flat: gak usah ngitung cahaya
-        L.OutdoorAmbient = Color3.fromRGB(178,178,178)
-        for _, e in ipairs(L:GetChildren()) do
-            -- Bloom/Blur/ColorCorrection/DepthOfField/SunRays + Atmosphere + Sky
-            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
-                pcall(function() e.Enabled = false end)
-            end
-        end
-    end)
-    -- (2) AIR / TERRAIN
-    pcall(function()
-        if T then
-            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
-            T.WaterReflectance = 0; T.WaterTransparency = 1
-            T.Decoration = false
-            local cl = T:FindFirstChildOfClass("Clouds")
-            if cl then cl.Enabled = false end
-        end
-    end)
-    -- (3) PARTIKEL - semua yg udah ada
-    local nPart = 0
-    pcall(function()
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if Farm._arMatiinEfek(d) then nPart = nPart + 1 end
-        end
-    end)
-    -- (4) BAYANGAN KEBUN
-    local nShadow = 0
-    pcall(function()
-        local g = workspace:FindFirstChild("Gardens")
-        if g then
-            for _, d in ipairs(g:GetDescendants()) do
-                if d:IsA("BasePart") then d.CastShadow = false; d.Reflectance = 0; nShadow = nShadow + 1 end
-            end
-        end
-    end)
-
-    -- ===== v9.4: hasil tes user - 4 tambahan =====
-    -- SEMUA plot KITA (v10.2 FIX: dulu cuma balik plot PERTAMA -> plot kita yg lain ikut kehapus
-    -- di langkah (7) "hapus garden orang". kebun bisa lebih dari 1 plot (tombol PERLUAS) ->
-    -- akibatnya trowel mati: trowelPlotCenter kehilangan plot tujuan -> target nil.)
-    local function arPlotKita()
-        local set, ada = {}, false
-        local g = workspace:FindFirstChild("Gardens"); if not g then return set, false end
-        for _, plot in ipairs(g:GetChildren()) do
-            local pf = plot:FindFirstChild("Plants")
-            if pf then
-                for _, p in ipairs(pf:GetChildren()) do
-                    if tonumber(tostring(p.Name):match("^(%d+)_")) == (player.UserId) then
-                        set[plot] = true; ada = true; break
-                    end
-                end
-            end
-        end
-        return set, ada
+    Farm.applyAntiRenderFast(on)   -- v10.4: tahap 1 (instan)
+    -- ===== v10.3: SATU SCAN + KASIH JEDA =====
+    -- MASALAH v10.1: fungsi ini nyapu workspace 1x + kebun 3x, SEMUA sekaligus tanpa jeda.
+    -- di GAG2 (46rb+ objek) itu ngeblok thread utama berdetik-detik -> pas rejoin, KARAKTER GAK
+    -- BISA GEROK sampai selesai. sekarang: digabung jadi SATU scan, dan tiap 400 objek dikasih
+    -- task.wait() biar game sempet napas. hasil sama, tapi gak nge-freeze.
+    local nPart, nShadow, nPolos = 0, 0, 0
+    local ceked = 0
+    local function napas()
+        -- v10.4: jeda tiap 2000 (dulu 400). makin sering jeda = makin LAMA kelar, padahal yg
+        -- dibutuhin justru KELAR CEPET. 2000 = kompromi: gak hard-freeze, tapi kelar ~2 detik.
+        ceked = ceked + 1
+        if ceked % 2000 == 0 then task.wait() end
     end
-    local mine, adaMine = arPlotKita()
-    Farm._arPlotKita = mine
-
-    -- (5) TANAH IJO -> DIPOLOSIN (bukan dihapus - permintaan user, biar gak sebrutal itu)
-    local nPolos = 0
     pcall(function()
         local g = workspace:FindFirstChild("Gardens")
-        if g then
-            for _, d in ipairs(g:GetDescendants()) do
-                if d:IsA("MeshPart") or d:IsA("Part") then
-                    local c = d.Color
-                    local ijo = (c.G > c.R * 1.05) and (c.G > c.B * 1.05)
-                    local nm = tostring(d.Name):lower()
-                    if ijo or nm:find("grass") or nm:find("lawn") or nm:find("ground") or nm:find("soil") then
-                        pcall(function()
-                            d.Material = Enum.Material.SmoothPlastic
-                            if d:IsA("MeshPart") then d.TextureID = "" end
-                            d.CastShadow = false; d.Reflectance = 0
-                        end)
-                        nPolos = nPolos + 1
-                    end
-                elseif d:IsA("Decal") or d:IsA("Texture") then
-                    -- decal/texture tanah -> buang (bukan part-nya)
-                    local par = d.Parent
-                    if par and not par:FindFirstAncestorOfClass("Model") then
-                        pcall(function() d:Destroy() end); nPolos = nPolos + 1
-                    end
+        -- (3) partikel di LUAR kebun (di dalem kebun diurus scan bawah)
+        for _, d in ipairs(workspace:GetChildren()) do
+            if d ~= g then
+                for _, x in ipairs(d:GetDescendants()) do
+                    if Farm._arMatiinEfek(x) then nPart = nPart + 1 end
+                    napas()
                 end
             end
+        end
+        if not g then return end
+        -- (3)+(4)+(5) SEKALI JALAN buat isi kebun
+        for _, d in ipairs(g:GetDescendants()) do
+            if Farm._arMatiinEfek(d) then
+                nPart = nPart + 1
+            elseif d:IsA("BasePart") then
+                d.CastShadow = false; d.Reflectance = 0
+                nShadow = nShadow + 1
+                -- (5) tanah ijo -> DIPOLOSIN (bukan dihapus)
+                local c = d.Color
+                local ijo = (c.G > c.R * 1.05) and (c.G > c.B * 1.05)
+                local nm = tostring(d.Name):lower()
+                if ijo or nm:find("grass") or nm:find("lawn") or nm:find("ground") or nm:find("soil") then
+                    pcall(function()
+                        d.Material = Enum.Material.SmoothPlastic
+                        if d:IsA("MeshPart") then d.TextureID = "" end
+                    end)
+                    nPolos = nPolos + 1
+                end
+            elseif d:IsA("Decal") or d:IsA("Texture") then
+                local par = d.Parent
+                if par and not par:FindFirstAncestorOfClass("Model") then
+                    pcall(function() d:Destroy() end); nPolos = nPolos + 1
+                end
+            end
+            napas()
         end
     end)
 
@@ -1822,6 +1834,7 @@ function Farm.applyAntiRender(on)
                 if (nm:find("fence") or nm:find("pagar")) and (d:IsA("Model") or d:IsA("BasePart") or d:IsA("Folder")) then
                     pcall(function() d:Destroy() end); nPagar = nPagar + 1
                 end
+                napas()   -- v10.3
             end
         end
     end)
@@ -1870,6 +1883,7 @@ function Farm.applyAntiRender(on)
                                         end
                                     end
                                     f:SetAttribute("_arDstr", true)
+                                    napas()   -- v10.3: jeda per buah (buah bisa ribuan)
                                 end
                             end
                         end
@@ -12393,8 +12407,13 @@ do
             sw.BackgroundColor3 = C.input; knob.BackgroundColor3 = C.textDim
             knob.Position = UDim2.new(0, 3, 0.5, -10); swStroke.Color = C.border
         end
-        -- sweep workspace berat -> jalanin di thread terpisah biar UI gak nyangkut
-        task.spawn(function() pcall(function() Farm.setAntiLegMax(state.antiLegMax) end) end)
+        -- sweep workspace berat -> thread terpisah biar UI gak nyangkut.
+        -- v10.3: pas LOAD AWAL jangan langsung sapu (nabrak proses masuk = gak bisa gerak).
+        -- blok tunda di bawah ("tunggu game kelar load") yg bakal manggil ini. abis itu, tiap
+        -- tombol dipencet ya langsung jalan kayak biasa.
+        if Farm._arBootDone then
+            task.spawn(function() pcall(function() Farm.setAntiLegMax(state.antiLegMax) end) end)
+        end
     end
     sw.MouseButton1Click:Connect(function()
         state.antiLegMax = not state.antiLegMax; saveState(); AP.applyAntiLegMax()
@@ -13647,13 +13666,45 @@ function Farm._refreshAllToggles()
 end
 -- v11.9: apply visual BERAT (anti-lag, sembunyiin pohon/buah) DITUNDA 3 detik biar gak
 -- nabrak load awal game (yg bikin freeze pas exe). cuma jalan kalau emang ON.
+-- v10.4: LIGHTING DULUAN & LANGSUNG (0 scan, cuma set properti - instan).
+-- ini yg kata user "ngaruh brutal", jadi jangan nunggu kebun ke-load. dipisah dari sapu berat.
 task.spawn(function()
-    task.wait(3)
-    -- v10.1: APPLY Anti-Lag + Anti-Leg Max (state-nya udah dipaksa true di blok paksa atas).
-    -- apply-nya ditunda 3 detik biar gak nabrak load awal game (nabrak = freeze pas exe).
-    pcall(function() AP.applyAntiLag() end)
-    task.wait(0.5)
-    pcall(function() AP.applyAntiLegMax() end)
+    pcall(function()
+        local L = game:GetService("Lighting")
+        L.GlobalShadows = false; L.ShadowSoftness = 0
+        L.EnvironmentDiffuseScale = 0; L.EnvironmentSpecularScale = 0
+        L.FogEnd = 9e9; L.FogStart = 9e9
+        L.Ambient = Color3.fromRGB(178,178,178); L.OutdoorAmbient = Color3.fromRGB(178,178,178)
+        for _, e in ipairs(L:GetChildren()) do
+            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("Sky") then
+                pcall(function() e.Enabled = false end)
+            end
+        end
+        local T = workspace:FindFirstChildOfClass("Terrain")
+        if T then
+            T.WaterWaveSize = 0; T.WaterWaveSpeed = 0
+            T.WaterReflectance = 0; T.WaterTransparency = 1
+            T.Decoration = false
+        end
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+    end)
+    print("[StarFarm] lighting/air dimatiin (instan, sebelum kebun ke-load)")
+end)
+
+task.spawn(function()
+    -- v10.4 (KOREKSI v10.3): DESTROY HARUS DULUAN. v10.3 malah bikin nunggu (game.Loaded +
+    -- karakter + 5s + kebun) - itu SALAH ARAH: kalau loading CEPET, kita udah nyampe kebun dengan
+    -- grafis FULL NYALA -> berat -> gak bisa gerak; anti-leg baru dateng belakangan. pas loading
+    -- LAMA malah aman, krn anti-leg keburu jalan duluan. jadi: jangan nunggu, kejar secepetnya.
+    -- caranya: pantau kebun tiap 0.1 detik, begitu ADA ISINYA langsung sapu (gak nunggu apa2 lagi).
+    for _ = 1, 600 do          -- maks 60 detik
+        local g = workspace:FindFirstChild("Gardens")
+        if g and #g:GetChildren() > 0 then break end
+        task.wait(0.1)
+    end
+    Farm._arBootDone = true
+    pcall(function() AP.applyAntiLag() end)      -- destroy + lighting jalan di sini
+    pcall(function() AP.applyAntiLegMax() end)   -- destroy daun tanaman
     task.wait(0.5)
     pcall(function() AP.applyHidePlants() end)
     task.wait(0.5)
