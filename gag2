@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v11.1  (standalone, basis ZENX v44.79) - GAG 2
--- v11.1: CATET DULU BARU DESTROY - buah yg belum kecatat gak disentuh. cache akhirnya DINYALAIN
+-- STAR FARM  v11.2  (standalone, basis ZENX v44.79) - GAG 2
+-- v11.2: destroy VISUAL BUAH DICABUT (hasil ukur: buah +6 FPS, pohon +40). buah dibiarin utuh
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -306,19 +306,11 @@ local Farm = {}
 -- ("Out of local registers, exceeded limit 200"). 37 local jadi 1 = hemat 36 slot.
 local AP = {}
 
--- ===== v11.1: NYALAIN CACHE BUAH DULUAN (sebelum destroy apa pun) =====
--- rancangan user: "catet dulu semua buah, baru destroy. yg belum kecatet jangan di-destroy".
--- TEMUAN: Farm.startFruitCache ternyata GAK PERNAH DIPANGGIL di sc ini - cache-nya kosong terus.
--- makanya "catet dulu" gak pernah kejadian, dan buah kebantai sebelum datanya kerekam.
-task.spawn(function()
-    for _ = 1, 900 do
-        if Farm.startFruitCache then break end
-        task.wait(0.1)
-    end
-    pcall(function() Farm.startFruitCache() end)
-    print(string.format("[WAKTU] +%.1fs  cache buah NYALA (catet dulu, baru destroy)",
-        os.clock() - (getgenv().__StarT0 or os.clock())))
-end)
+-- v11.2: cache buah GAK DINYALAIN lagi. dia cuma dibutuhin buat "catet dulu sebelum destroy",
+-- dan destroy buah udah dicabut (lihat langkah (8) applyAntiRender: buah cuma +6 FPS, pohon +40).
+-- kalau tetep dinyalain, listener-nya nembak TIAP BUAH LAHIR (400 buah per 8 detik pas Super WC),
+-- manggil gardenKg + baca atribut, buat nyimpen data yg GAK ADA YG BACA = beban tanpa untung.
+-- fungsinya sengaja disisain di bawah (gak dihapus) - siapa tau nanti kepake lagi.
 
 -- ===== v10.9 TES: ANTI-LEG (destroy + lighting) BARU JALAN 30 DETIK SETELAH GUI MUNCUL =====
 -- permintaan user: "anti leg nya semua ya dari lightning sama destroy di bikin 30s setelah gui muncul".
@@ -360,7 +352,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v11.1"
+local VER       = "STAR v11.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1966,48 +1958,16 @@ function Farm.applyAntiRender(on)
         end
     end)
 
-    -- ===== (8) VISUAL BUAH -> HAPUS, TAPI CUMA YG UDAH MATANG (v11.0) =====
-    -- HASIL TES USER (bukan tebakan):
-    --   * SizeMulti DIEM total 20 detik (4.340169..) sementara Age naik 0.07 -> 0.71
-    --     -> kg buah DITETAPKAN PAS LAHIR, gak pernah tumbuh. Age cuma progres MATENG.
-    --   * buah MATANG yg visualnya dibantai (part=0) -> COLLECT TETEP BERHASIL, masuk tas.
-    --     -> destroy GAK ngerusak panen.
-    -- KENAPA DULU RUSAK (v9.4): listener nge-destroy buah DETIK DIA LAHIR (masih mentah).
-    -- buah mentah yg udah dibantai gak pernah kebaca "matang" -> gak pernah kepanen -> hitungan
-    -- ngaco ("harusnya besar 300an"). yg masih kedetect = yg belum sempet kena listener.
-    -- ATURAN SEKARANG: buah cuma dibantai KALAU UDAH MATANG. pas matang, semua datanya udah final
-    -- (kg fix sejak lahir, mateng udah mentok) - jadi gak ada yg bisa rusak.
-    -- untungnya tetep gede: buah matang itu mayoritas (300+ besar yg nyangkut di kebun) - justru
-    -- itu biang leg-nya. yg mentah (~30) disisain, emang perlu keliatan buat trigger WC.
+    -- ===== (8) DESTROY VISUAL BUAH -> DICABUT (v11.2) =====
+    -- KEPUTUSAN dari hasil UKUR, bukan tebakan. tes user (2 script terpisah, kebun sama):
+    --   pohon : 38.465 part + 45.088 efek  ->  17 -> 57 FPS  (+40, +235%)
+    --   buah  :  2.550 part +  4.142 efek  ->  13 -> 19 FPS  (+6,  +46%)
+    -- pohon 15x lebih berat, dan destroy-nya GAK butuh cache sama sekali (gak ada data yg ilang).
+    -- buah cuma ngasih +6 FPS tapi minta: cache lengkap + gerbang "catet dulu" + urutan yg rapet
+    -- pas Super WC (400 buah lahir per 8 detik). dan semua kekacauan kemarin - buah gak kepanen,
+    -- hitungan "besar" ngaco, cache yg ternyata gak pernah nyala - SEMUA gara2 destroy buah ini.
+    -- untung kecil, risiko gede -> DICABUT. buah dibiarin utuh; yg dibantai cuma badan tanaman.
     local nBuah = 0
-    pcall(function()
-        local g = workspace:FindFirstChild("Gardens")
-        if g then
-            for _, plot in ipairs(g:GetChildren()) do
-                local pf = plot:FindFirstChild("Plants")
-                if pf then
-                    for _, plant in ipairs(pf:GetChildren()) do
-                        local fs = plant:FindFirstChild("Fruits")
-                        if fs then
-                            for _, f in ipairs(fs:GetChildren()) do
-                                if not f:GetAttribute("_arDstr") and Farm.fruitSudahDicatat(f) then
-                                    for _, d in ipairs(f:GetDescendants()) do
-                                        if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
-                                           or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
-                                           or d:IsA("SpecialMesh") or d:IsA("SurfaceAppearance") then
-                                            pcall(function() d:Destroy() end); nBuah = nBuah + 1
-                                        end
-                                    end
-                                    f:SetAttribute("_arDstr", true)
-                                end
-                                napas()
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
     -- listener: efek/part BARU otomatis dimatiin juga (buah baru lahir terus!)
     if Farm._antiRenderConn then pcall(function() Farm._antiRenderConn:Disconnect() end) end
     Farm._antiRenderConn = workspace.DescendantAdded:Connect(function(d)
@@ -2189,49 +2149,8 @@ staggerSpawn(function()
     end
 end)
 
--- ===== v11.0: SAPU BUAH MATANG (nyicil, tiap 5 detik) =====
--- buah matengnya NYUSUL, jadi gak cukup disapu sekali pas anti-render nyala. loop ini mantau:
--- begitu ada buah baru MATANG -> visualnya dibantai (Model + atribut disisain).
--- KENAPA nunggu matang: buah mentah yg dibantai gak pernah kebaca matang -> gak kepanen (bug v9.4).
--- kg-nya sendiri FIX SEJAK LAHIR (terbukti: SizeMulti diem 20 detik), jadi gak ada data yg ilang.
--- nyicil pakai jeda biar gak nge-freeze pas Super WC bikin buah mateng massal.
-task.spawn(function()
-    while true do
-        task.wait(5)
-        if Farm._antiRenderOn then
-            pcall(function()
-                local g = workspace:FindFirstChild("Gardens"); if not g then return end
-                local n, ceked = 0, 0
-                for _, plot in ipairs(g:GetChildren()) do
-                    local pf = plot:FindFirstChild("Plants")
-                    if pf then
-                        for _, plant in ipairs(pf:GetChildren()) do
-                            local fs = plant:FindFirstChild("Fruits")
-                            if fs then
-                                for _, f in ipairs(fs:GetChildren()) do
-                                    if not f:GetAttribute("_arDstr") and Farm.fruitSudahDicatat(f) then
-                                        for _, d in ipairs(f:GetDescendants()) do
-                                            if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")
-                                               or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail")
-                                               or d:IsA("SpecialMesh") or d:IsA("SurfaceAppearance") then
-                                                pcall(function() d:Destroy() end)
-                                            end
-                                        end
-                                        f:SetAttribute("_arDstr", true)
-                                        n = n + 1
-                                    end
-                                    ceked = ceked + 1
-                                    if ceked % 150 == 0 then task.wait() end   -- napas
-                                end
-                            end
-                        end
-                    end
-                end
-                if n > 0 then print("[StarFarm] sapu buah matang: "..n.." buah dibantai visualnya") end
-            end)
-        end
-    end
-end)
+-- v11.2: loop "SAPU BUAH MATANG" DICABUT - lihat alasan di langkah (8) applyAntiRender.
+-- ringkasnya: buah cuma nyumbang +6 FPS, pohon +40. gak sebanding sama risikonya.
 
 Farm._hidePlantsOn = false
 Farm._hidePlantsConn = nil
