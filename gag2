@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v12.4  (standalone, basis ZENX v44.79) - GAG 2
--- v12.4: TES - hideBigFruits PAKSA OFF (tersangka baru: nulis atribut ke buah tiap 8s). destroy buah nyala lagi
+-- STAR FARM  v12.6  (standalone, basis ZENX v44.79) - GAG 2
+-- v12.6: no-clip GAK nembus tanah lagi - yg dimatiin tabrakannya TANAMAN, bukan karakter
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -358,7 +358,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v12.4"
+local VER       = "STAR v12.6"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1768,58 +1768,76 @@ end
 -- v38.9: NO-CLIP - karakter nembus objek (pohon/pagar/dll). set CanCollide=false tiap frame
 -- di semua BasePart karakter (kecuali HumanoidRootPart biar tetep bisa gerak normal).
 Farm._noclipConn = nil
+-- ===== v12.6: NO-CLIP TANPA NEMBUS TANAH =====
+-- permintaan user: "no clip jangan nembus tanah".
+-- DULU (v38.9): matiin CanCollide di SEMUA part KARAKTER tiap frame.
+--   -> gak ada apa2 yg nahan -> jatuh nembus tanah. itu bawaan caranya, bukan bug.
+-- SEKARANG: LOGIKANYA DIBALIK. karakter dibiarin NORMAL (tetep napak tanah),
+--   yg dimatiin tabrakannya = TANAMAN + BUAH doang.
+--   -> bisa nembus pohon/buah, TAPI tetep berdiri di tanah.
+-- yg disentuh CUMA isi folder Plants (badan tanaman + Fruits). tanah/lantai plot ADA DI LUAR
+-- folder itu -> gak pernah disentuh -> tetep nahan karakter.
+function Farm.noclipSapuTanaman()
+    local n = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens"); if not g then return end
+        for _, plot in ipairs(g:GetChildren()) do
+            local pls = plot:FindFirstChild("Plants")   -- CUMA folder Plants. lantai plot aman.
+            if pls then
+                for _, d in ipairs(pls:GetDescendants()) do
+                    if d:IsA("BasePart") and d.CanCollide then
+                        d.CanCollide = false; n = n + 1
+                    end
+                end
+            end
+        end
+    end)
+    return n
+end
+
 function Farm.applyNoclip(on)
     state.noclip = on
     if on then
+        -- karakter BALIK NORMAL kalau sebelumnya sempet dimatiin (biar gak jatuh)
+        pcall(function()
+            local char = player.Character
+            if char then
+                local h = char:FindFirstChild("HumanoidRootPart")
+                if h then h.CanCollide = true end
+                local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+                if torso then torso.CanCollide = true end
+            end
+        end)
+        -- sapu sekali langsung, biar kerasa instan
+        local n = Farm.noclipSapuTanaman()
+        print("[StarFarm] NO-CLIP ON - "..n.." part tanaman dimatiin tabrakannya (karakter TETEP napak tanah)")
+        -- listener: tanaman/buah BARU ikut dimatiin (buah lahir terus)
         if not Farm._noclipConn then
-            local RunService = game:GetService("RunService")
-            Farm._noclipConn = RunService.Stepped:Connect(function()
+            Farm._noclipConn = workspace.DescendantAdded:Connect(function(d)
                 if not state.noclip then return end
-                local char = player.Character
-                if not char then return end
-                for _, p in ipairs(char:GetDescendants()) do
-                    if p:IsA("BasePart") then p.CanCollide = false end   -- v44.68: PAKSA tiap frame (dulu di-skip kalau udah false -> kadang ke-reset game & nyangkut)
-                end
+                if not d:IsA("BasePart") then return end
+                -- cuma yg di dalem folder Plants
+                local ok = pcall(function()
+                    if d:FindFirstAncestor("Plants") and d:FindFirstAncestor("Gardens") then
+                        d.CanCollide = false
+                    end
+                end)
             end)
         end
-        -- v44.68: re-apply INSTAN pas respawn (dulu nunggu frame berikutnya -> sempet nyangkut sebentar)
-        if not Farm._noclipCharConn then
-            Farm._noclipCharConn = player.CharacterAdded:Connect(function(char)
-                task.wait(0.15)
-                if not state.noclip then return end
-                for _, p in ipairs(char:GetDescendants()) do
-                    if p:IsA("BasePart") then pcall(function() p.CanCollide = false end) end
-                end
-            end)
-        end
-        print("[StarFarm] NO-CLIP ON (karakter nembus objek)")
-        -- v1.1: matiin CanCollide di BUAH juga (biar karakter gak nabrak buah pas naruh WC/jalan)
+        -- jaring pengaman: sapu ulang tiap 1.5 detik (kalau listener kelewat / game nge-reset)
         if not Farm._noclipFruitLoop then
             Farm._noclipFruitLoop = true
             task.spawn(function()
                 while true do
                     task.wait(1.5)
-                    if state.noclip then
-                        pcall(function()
-                            local g = workspace:FindFirstChild("Gardens")
-                            if g then for _, plot in ipairs(g:GetChildren()) do
-                                local pls = plot:FindFirstChild("Plants")
-                                if pls then for _, plant in ipairs(pls:GetChildren()) do
-                                    local fr = plant:FindFirstChild("Fruits")
-                                    if fr then for _, d in ipairs(fr:GetDescendants()) do
-                                        if d:IsA("BasePart") and d.CanCollide then d.CanCollide = false end
-                                    end end
-                                end end
-                            end end
-                        end)
-                    end
+                    if state.noclip then Farm.noclipSapuTanaman() end
                 end
             end)
         end
     else
         if Farm._noclipConn then Farm._noclipConn:Disconnect(); Farm._noclipConn = nil end
         if Farm._noclipCharConn then Farm._noclipCharConn:Disconnect(); Farm._noclipCharConn = nil end
-        print("[StarFarm] NO-CLIP OFF")
+        print("[StarFarm] NO-CLIP OFF (tanaman balik nabrak pas rejoin)")
     end
 end
 
@@ -11361,7 +11379,13 @@ function Farm.af2PlaceWateringCan()
             -- signature persis hasil spy: (pos, nama, instance tool). 1x per titik (WC consumable xN)
             local ok, err = pcall(function() rem:Fire(pos, tool.Name, tool) end)
             print(string.format("[AF2] use WC pos=(%.1f,%.1f,%.1f) ok=%s err=%s", pos.X, pos.Y, pos.Z, tostring(ok), tostring(err)))
-            if ok then placed = placed + 1 end
+            if ok then
+                placed = placed + 1
+                -- v12.5: hitung TIAP SIRAMAN Super WC -> dipakai buat auto-rejoin (lihat baris ~13660).
+                -- ditaruh DI SINI (titik Fire beneran), bukan di loop luar - biar yg kehitung cuma
+                -- siraman yg BENERAN kekirim ke server.
+                Farm._wcCount = (Farm._wcCount or 0) + 1
+            end
             task.wait(0.3)
         end
         -- v36.6: JANGAN balik ke asal (tetep di plot). dulu: h.CFrame = origW
@@ -13656,74 +13680,41 @@ state.autoHop = false
 -- kenapa buah mentah? krn pakai Super WC/Sprinkler buah MESTINYA matang - buah yg stuck
 -- mentah dgn umur beku itu GAK NORMAL. buah beneran umurnya pasti jalan.
 -- pengaman: butuh 2 ronde berturut-turut beku (biar buah yg emang lagi diem sesaat gak kehitung).
-Farm._bangkaiOn    = true    -- false = matiin fitur ini
-Farm._bangkaiBatas = 150     -- rejoin kalau bangkai >= segini
-Farm._bangkaiCekTiap = 25    -- detik antar ronde cek
-Farm._bangkaiLast  = {}      -- [fruit] = umur ronde lalu
-Farm._bangkaiBeku  = {}      -- [fruit] = udah berapa ronde beku
-Farm._bangkaiN     = 0       -- jumlah bangkai terakhir (buat panel/DIAG)
-
-function Farm.hitungBangkai()
-    local n, cek = 0, 0
-    local lastBaru, bekuBaru = {}, {}
-    local g = workspace:FindFirstChild("Gardens")
-    if not g then return 0 end
-    for _, plot in ipairs(g:GetChildren()) do
-        local pf = plot:FindFirstChild("Plants")
-        if pf then
-            for _, pl in ipairs(pf:GetChildren()) do
-                if tonumber(tostring(pl.Name):match("^(%d+)_")) == player.UserId then
-                    local fs = pl:FindFirstChild("Fruits")
-                    if fs then
-                        for _, f in ipairs(fs:GetChildren()) do
-                            local a  = f:GetAttribute("Age")
-                            local mx = f:GetAttribute("MaxAge")
-                            -- cuma buah MENTAH yg dipantau (matang emang berhenti tumbuh - wajar)
-                            if type(a) == "number" and type(mx) == "number" and mx > 0 and a < mx then
-                                local prev = Farm._bangkaiLast[f]
-                                lastBaru[f] = a
-                                if prev ~= nil and math.abs(a - prev) < 0.0001 then
-                                    local r = (Farm._bangkaiBeku[f] or 0) + 1
-                                    bekuBaru[f] = r
-                                    if r >= 2 then n = n + 1 end   -- 2 ronde beku = bangkai
-                                end
-                                cek = cek + 1
-                                if cek % 200 == 0 then task.wait() end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    Farm._bangkaiLast = lastBaru   -- buah yg udah ilang otomatis kebuang dari tabel
-    Farm._bangkaiBeku = bekuBaru
-    Farm._bangkaiN = n
-    return n
-end
+-- ===== v12.5: AUTO-REJOIN TIAP 10x SIRAM SUPER WC =====
+-- permintaan user: "rejoin tiap 10x super watering can, ini HANYA untuk akun yg nyalain
+-- farm 2 -50".
+-- kenapa pindah dari "hitung bangkai" ke "hitung siraman":
+--   * hitung bangkai itu NEBAK dari akibatnya (umur beku 2 ronde = 50 detik) - telat, dan
+--     bisa salah tuduh.
+--   * siraman WC itu ANGKA PASTI: dihitung di titik Fire beneran (baris ~11369).
+--   * dan WC yg bikin ledakan buah - itu yg konsisten muncul sebelum macet.
+-- SYARAT (dua2nya wajib, biar akun lain gak ikut ke-rejoin):
+--   1. state.farm2On == true
+--   2. state.c2WeightF == -50   <- persis "Farm 2 -50", bukan -60
+Farm._wcRejoinOn    = true    -- false = matiin fitur ini
+Farm._wcRejoinTiap  = 10      -- rejoin tiap N siraman WC
+Farm._wcCount       = 0
 
 task.spawn(function()
-    task.wait(60)   -- kasih waktu kebun ke-load + buah lahir dulu
+    task.wait(60)   -- kasih waktu kebun ke-load + boot kelar
     while isCurrentGen() do
-        task.wait(Farm._bangkaiCekTiap or 25)
+        task.wait(5)
         if not isCurrentGen() then break end
-        if Farm._bangkaiOn and state.farm2On then
-            local ok, n = pcall(Farm.hitungBangkai)
-            if ok and type(n) == "number" then
-                if n > 0 then
-                    print(string.format("[StarFarm] bangkai (umur beku >=2 ronde): %d / batas %d",
-                        n, Farm._bangkaiBatas or 150))
-                end
-                if n >= (Farm._bangkaiBatas or 150) then
-                    warn(string.format("[StarFarm] BANGKAI %d >= batas %d -> REJOIN ke server yg sama",
-                        n, Farm._bangkaiBatas or 150))
-                    local jid = game.JobId
-                    pcall(function()
-                        if Farm.rejoinSameServer then Farm.rejoinSameServer(jid)
-                        elseif Farm.simpleRejoin then Farm.simpleRejoin() end
-                    end)
-                    task.wait(20)   -- jangan nembak rejoin berkali2 kalau lagi proses
-                end
+        -- gerbang: CUMA akun Farm 2 -50
+        local layak = Farm._wcRejoinOn and state.farm2On and (state.c2WeightF == -50)
+        if layak then
+            local n = Farm._wcCount or 0
+            local batas = Farm._wcRejoinTiap or 10
+            if n >= batas then
+                warn(string.format("[StarFarm] Super WC udah %dx (batas %d) -> REJOIN ke server yg sama", n, batas))
+                Farm._wcCount = 0
+                local jid = Farm._bootJobId
+                if not jid or jid == "" then jid = game.JobId end
+                pcall(function()
+                    if Farm.rejoinSameServer then Farm.rejoinSameServer(jid)
+                    elseif Farm.simpleRejoin then Farm.simpleRejoin() end
+                end)
+                task.wait(20)   -- jangan nembak rejoin berkali2 kalau lagi proses
             end
         end
     end
