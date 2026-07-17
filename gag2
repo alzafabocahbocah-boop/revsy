@@ -1,6 +1,6 @@
 -- ============================================================
--- STAR FARM  v12.6  (standalone, basis ZENX v44.79) - GAG 2
--- v12.6: no-clip GAK nembus tanah lagi - yg dimatiin tabrakannya TANAMAN, bukan karakter
+-- STAR FARM  v12.7  (standalone, basis ZENX v44.79) - GAG 2
+-- v12.7: saklar DIEM KONSOL (Farm._diamKonsol, baris ~309) - 266 print dimatiin sekaligus, hemat ram
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
@@ -306,6 +306,23 @@ local Farm = {}
 -- ("Out of local registers, exceeded limit 200"). 37 local jadi 1 = hemat 36 slot.
 local AP = {}
 
+-- ===== v12.7: SAKLAR DIEM KONSOL =====
+-- permintaan user: "emang gak bisa di hilangin aja console-nya biar gak nambahin ram terus".
+-- sc ini nyetak di 267 tempat, sebagian di dalem loop ([AF2] tiap siram, [DIAG] 6 baris tiap
+-- 10 detik, sapu buah tiap 5 detik, dll). tiap print itu:
+--   * bikin STRING baru (string.format) -> alokasi
+--   * masuk RIWAYAT LOG roblox + konsol executor -> DITAHAN di memori, gak dibuang
+-- jadi masuk akal dia nyumbang ke "naik 5-10 MB/detik".
+-- caranya: TIMPA print-nya di sini, sekali. gak usah ngubah 267 baris satu-satu.
+-- kode di bawah baris ini otomatis pakai print versi ini (local nutupin global).
+-- MATIIN DIEM (buat debug lagi): getgenv().StarFarm._diamKonsol = false
+Farm._diamKonsol = true      -- true = GAK nyetak apa2 (hemat ram). false = normal.
+local _printAsli = print
+local function print(...)
+    if Farm._diamKonsol then return end
+    return _printAsli(...)
+end
+
 -- v11.2: cache buah GAK DINYALAIN lagi. dia cuma dibutuhin buat "catet dulu sebelum destroy",
 -- dan destroy buah udah dicabut (lihat langkah (8) applyAntiRender: buah cuma +6 FPS, pohon +40).
 -- kalau tetep dinyalain, listener-nya nembak TIAP BUAH LAHIR (400 buah per 8 detik pas Super WC),
@@ -358,7 +375,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v12.6"
+local VER       = "STAR v12.7"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
