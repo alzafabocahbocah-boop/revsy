@@ -6,10 +6,15 @@
 -- v8.321: ANTI HTTP 429. cache lokal + guard: kalau kena 429, JANGAN spam retry.
 --   maks 1 HttpGet per re-exec. gagal -> pakai cache lama -> berhenti.
 do
-    local SCRIPT_URL = "https://raw.githubusercontent.com/petagee5/ronss/main/market"
+    local SCRIPT_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/market"
+    -- v8.331: file versi terpisah (kecil, ~10 byte). isinya cuma nomor, misal "8.331".
+    -- dipakai buat cek "ada update?" tanpa narik file penuh 12rb baris tiap kali.
+    local VER_URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/market_ver"
     local payload = [[
 local URL = "]]..SCRIPT_URL..[["
+local VER_URL = "]]..VER_URL..[["
 local CACHE = "ZenxMarket_cache.lua"
+local CACHE_VER = "ZenxMarket_cache_ver.txt"
 local CACHE_AGE = "ZenxMarket_cache_time.txt"
 if getgenv().__ZenxMarketExecuting then return end
 getgenv().__ZenxMarketExecuting = true
@@ -20,33 +25,45 @@ local function tryRun(src)
     end
     return false
 end
--- 1) cache lokal dulu (nol request GitHub). fresh (<20 mnt) -> pakai langsung.
-if isfile and readfile and isfile(CACHE) then
-    local fresh = true
-    if isfile(CACHE_AGE) then
-        local ok, t = pcall(readfile, CACHE_AGE)
-        if ok and tonumber(t) and (os.time() - tonumber(t)) > 1200 then fresh = false end
-    end
-    if fresh then
-        local ok, c = pcall(readfile, CACHE)
-        if ok and tryRun(c) then getgenv().__ZenxMarketExecuting = nil return end
-    end
+local function bebasin() getgenv().__ZenxMarketExecuting = nil end
+
+-- v8.331: CEK VERSI dulu (request kecil ke market_ver). kalau versi GitHub == versi
+-- cache -> pakai cache (nol fetch file besar). kalau beda / gak ada file versi ->
+-- fetch penuh. ini bikin update nyebar cepet TANPA narik 12rb baris tiap rejoin.
+local verGit = nil
+pcall(function()
+    local ok, v = pcall(function() return game:HttpGet(VER_URL) end)
+    if ok and type(v) == "string" then verGit = (v:gsub("%s+", "")) end
+end)
+local verCache = nil
+if isfile and isfile(CACHE_VER) then
+    local ok, v = pcall(readfile, CACHE_VER)
+    if ok then verCache = (tostring(v):gsub("%s+", "")) end
 end
--- 2) HttpGet 1x (ga ada retry -> ga spam 429). sukses -> cache + jalan.
+
+-- cache cocok versinya -> pakai langsung (paling hemat)
+if verGit and verCache and verGit == verCache and isfile and isfile(CACHE) then
+    local ok, c = pcall(readfile, CACHE)
+    if ok and tryRun(c) then bebasin() return end
+end
+
+-- versi beda / gak ketauan / cache rusak -> fetch penuh 1x
 local ok, res = pcall(function() return game:HttpGet(URL) end)
 if ok and type(res) == "string" and #res > 50000 then
     if writefile then
         pcall(function() writefile(CACHE, res) end)
         pcall(function() writefile(CACHE_AGE, tostring(os.time())) end)
+        if verGit then pcall(function() writefile(CACHE_VER, verGit) end) end
     end
-    if tryRun(res) then getgenv().__ZenxMarketExecuting = nil return end
+    if tryRun(res) then bebasin() return end
 end
--- 3) gagal (429) -> pakai CACHE LAMA (walau expired) sbg penyelamat. LALU BERHENTI.
+
+-- fetch gagal (429/offline) -> cache lama sbg penyelamat
 if isfile and isfile(CACHE) then
     local ok2, c2 = pcall(readfile, CACHE)
     if ok2 then tryRun(c2) end
 end
-getgenv().__ZenxMarketExecuting = nil
+bebasin()
 ]]
     local q = queue_on_teleport or (syn and syn.queue_on_teleport) or queueonteleport
     if q then
@@ -57,7 +74,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.330"
+local VERSION = "8.331"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -90,7 +107,7 @@ task.spawn(function()
     if getgenv().__ZenxMarketCaching then return end
     getgenv().__ZenxMarketCaching = true
     task.wait(3)   -- tunggu bentar biar ga barengan sama request lain
-    local URL = "https://raw.githubusercontent.com/petagee5/ronss/main/market"
+    local URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/market"
     local ok, res = pcall(function() return game:HttpGet(URL) end)
     if ok and type(res) == "string" and #res > 50000 then
         pcall(function() writefile(CACHE, res) end)
