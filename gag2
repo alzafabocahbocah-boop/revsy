@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v13.2  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v13.3  (standalone, basis ZENX v44.79) - GAG 2
+-- v13.3: Kartu PANEL WEB dipindah ke ATAS tab AUTO FARM (dulu keselip di dasar
+--        AUTO GIFT, susah ketemu). Status GEDE di atas; url/kunci disembunyiin.
 -- v13.2: Tim & Game DIBUANG dari GUI. Script cuma lapor nama akun; penugasan
 --        tim/game dilakuin dari panel web. Alasannya: bridge di dalam game gak
 --        tau dia di RedFinger mana -- nyuruh dia ngaku itu rapuh & gagalnya diem.
@@ -386,7 +388,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v12.7"
+local VER       = "STAR v13.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -10080,6 +10082,76 @@ local farmList = mk("ScrollingFrame", { Size = UDim2.new(1,0,1,0), BackgroundTra
     AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = farmPanel })
 local fLayout = mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = farmList })
 
+    -- v13.3: KARTU PANEL WEB, ditaro paling ATAS tab AUTO FARM (LayoutOrder -100).
+    -- Dulu keselip di dasar AUTO GIFT, di dalam kartu Auto Gift Fruit -- susah
+    -- ketemu, user muter-muter nyari. Sekarang langsung keliatan begitu GUI buka.
+    do
+        local pw = mk("Frame", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = -100, Parent = farmList })
+        corner(pw, 8); stroke(pw, C.border, 1)
+        local pad = mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,10),
+            PaddingLeft = UDim.new(0,12), PaddingRight = UDim.new(0,12), Parent = pw })
+        local col = mk("UIListLayout", { Padding = UDim.new(0,6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pw })
+
+        local head = lbl(pw, "PANEL WEB (ikut Farm 2)", 12, C.accent, Enum.TextXAlignment.Left)
+        head.Size = UDim2.new(1,0,0,18); head.Font = FONT_B; head.LayoutOrder = 1
+
+        -- status GEDE di atas -- ini yang paling sering dilirik
+        local pnStat = lbl(pw, "status: ...", 12, C.textDim, Enum.TextXAlignment.Left)
+        pnStat.Size = UDim2.new(1,0,0,20); pnStat.LayoutOrder = 2; pnStat.Font = FONT_B
+        task.spawn(function()
+            while pnStat and pnStat.Parent do
+                local t = Farm._panelKirim + Farm._panelLewat
+                local nyala = state.farm2On and (state.panelUrl or "") ~= "" and (state.panelKunci or "") ~= ""
+                if not state.farm2On then
+                    pnStat.Text = "status: MATI (Farm 2 OFF)"; pnStat.TextColor3 = Color3.fromRGB(230,180,90)
+                elseif not nyala then
+                    pnStat.Text = "status: MATI (url/kunci kosong)"; pnStat.TextColor3 = Color3.fromRGB(230,90,90)
+                else
+                    pnStat.Text = ("status: JALAN | kirim %d, lewat %d (hemat %d%%)")
+                        :format(Farm._panelKirim, Farm._panelLewat,
+                                t > 0 and math.floor(Farm._panelLewat / t * 100) or 0)
+                    pnStat.TextColor3 = C.green
+                end
+                task.wait(3)
+            end
+        end)
+
+        -- URL & Kunci disembunyiin di balik tombol "atur" -- udah bawaan, jarang disentuh
+        local moreBtn = mk("TextButton", { Size = UDim2.new(1,0,0,24), BackgroundColor3 = C.input,
+            Text = "atur url / kunci", TextColor3 = C.textDim, Font = FONT, TextSize = 11,
+            BorderSizePixel = 0, LayoutOrder = 3, Parent = pw })
+        corner(moreBtn, 6)
+        local more = mk("Frame", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1, Visible = false, LayoutOrder = 4, Parent = pw })
+        mk("UIListLayout", { Padding = UDim.new(0,5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = more })
+        moreBtn.MouseButton1Click:Connect(function() more.Visible = not more.Visible end)
+
+        local l1 = lbl(more, "Panel URL", 10, C.textDim, Enum.TextXAlignment.Left)
+        l1.Size = UDim2.new(1,0,0,14); l1.LayoutOrder = 1
+        local pnBox = mk("TextBox", { Size = UDim2.new(1,0,0,26), BackgroundColor3 = C.input,
+            Text = state.panelUrl or "", PlaceholderText = "kosongin = panel MATI", TextColor3 = C.text,
+            Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, LayoutOrder = 2, Parent = more })
+        corner(pnBox, 6); stroke(pnBox, C.border, 1)
+        pnBox.FocusLost:Connect(function()
+            local u = pnBox.Text:gsub("%s+$",""):gsub("/+$","")
+            state.panelUrl = u; pnBox.Text = u; saveState()
+            pcall(function() if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end end)
+        end)
+
+        local l2 = lbl(more, "Panel Kunci", 10, C.textDim, Enum.TextXAlignment.Left)
+        l2.Size = UDim2.new(1,0,0,14); l2.LayoutOrder = 3
+        local pkBox = mk("TextBox", { Size = UDim2.new(1,0,0,26), BackgroundColor3 = C.input,
+            Text = state.panelKunci or "", PlaceholderText = "X-Kunci", TextColor3 = C.text,
+            Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, LayoutOrder = 4, Parent = more })
+        corner(pkBox, 6); stroke(pkBox, C.border, 1)
+        pkBox.FocusLost:Connect(function()
+            state.panelKunci = pkBox.Text:gsub("%s+",""); pkBox.Text = state.panelKunci; saveState()
+            pcall(function() if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end end)
+        end)
+    end
+
+
 -- ----- panel AUTO BUY (kartu buy dipindah ke sini) -----
 local buyPanel = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Visible = false, Parent = content })
 panels.buy = buyPanel
@@ -12333,63 +12405,6 @@ do
     -- v12.8: PANEL WEB. Ditaro sini karena sebelahan sama Relay URL —
     -- dua-duanya "alamat ke luar". Bedanya: Relay URL = Pantry (antar-akun),
     -- Panel URL = Cloudflare (buat lo liat dari web). Jangan ketuker.
-    lbl(body, "── PANEL WEB (ikut Farm 2) ──", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,662)
-
-    lbl(body, "Panel URL (Cloudflare Worker)", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,684)
-    local pnBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 702),
-        BackgroundColor3 = C.input, Text = state.panelUrl or "", PlaceholderText = "udah keisi bawaan | kosongin = panel MATI",
-        TextColor3 = C.text, Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
-    corner(pnBox, 6); stroke(pnBox, C.border, 1)
-    pnBox.FocusLost:Connect(function()
-        local u = pnBox.Text:gsub("%s+$", ""):gsub("/+$", "")   -- buang spasi & garis miring buntut
-        state.panelUrl = u; pnBox.Text = u; saveState()
-        print("[Panel] url -> " .. (u ~= "" and "diset" or "kosong (panel mati)"))
-        pcall(function()
-            if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end
-        end)
-    end)
-
-    lbl(body, "Panel Kunci (X-Kunci)", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,734)
-    local pkBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 752),
-        BackgroundColor3 = C.input, Text = state.panelKunci or "", PlaceholderText = "udah keisi bawaan",
-        TextColor3 = C.text, Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
-    corner(pkBox, 6); stroke(pkBox, C.border, 1)
-    pkBox.FocusLost:Connect(function()
-        state.panelKunci = pkBox.Text:gsub("%s+", ""); pkBox.Text = state.panelKunci; saveState()
-        print("[Panel] kunci -> " .. (state.panelKunci ~= "" and "diset" or "kosong (panel mati)"))
-        pcall(function()
-            if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end
-        end)
-    end)
-
-    -- Tim & Game sebaris. Tim HARUS sama persis kayak zenx_worker di RedFinger ini,
-    -- kalau beda akunnya gak nempel ke tim mana pun dan panel keliatan kosong
-    -- TANPA error sama sekali.
-    -- v13.2: kolom Tim & Game DIBUANG dari sini.
-    -- Bridge jalan di dalam game -- dia gak tau lagi nangkring di RedFinger mana.
-    -- Nyuruh dia ngaku sendiri itu rapuh (salah pilih/typo = akun nyangkut di tim
-    -- yang salah, DIEM tanpa error). Sekarang script cuma lapor nama akun; tim &
-    -- game ditugasin dari panel web, sekali, sambil keliatan semuanya.
-
-    -- status: keliatan langsung nyambung apa nggak, gak usah buka console
-    local pnStat = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
-    pnStat.Position = UDim2.new(0,0,0,834); pnStat.Size = UDim2.new(1,0,0,16)
-    task.spawn(function()
-        while pnStat and pnStat.Parent do
-            local t = Farm._panelKirim + Farm._panelLewat
-            local nyala = state.farm2On and (state.panelUrl or "") ~= "" and (state.panelKunci or "") ~= ""
-            if not state.farm2On then
-                pnStat.Text = "status: mati (Farm 2 OFF)"
-            elseif not nyala then
-                pnStat.Text = "status: mati (url/kunci kosong)"
-            else
-                pnStat.Text = ("status: jalan | kirim %d, lewat %d (hemat %d%%)")
-                    :format(Farm._panelKirim, Farm._panelLewat,
-                            t > 0 and math.floor(Farm._panelLewat / t * 100) or 0)
-            end
-            task.wait(3)
-        end
-    end)
 
 
     -- tombol kirim sekarang (sekali jalan)
