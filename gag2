@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v13.5  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v13.8  (standalone, basis ZENX v44.79) - GAG 2
+-- v13.8: Lapor Super Watering Can + Super Sprinkler + total seed (buat panel Ringkas).
+-- v13.7: Lapor PlaceId -- panel petain GAG 1/GAG 2 sendiri (JobId itu ID server).
 -- v13.5: FIX panel "kirim 0 lewat 0" -- startPanelLoop dulu cuma dari toggle
 --        Farm 2, jadi kalau Farm 2 udah ON dari rejoin loop lapor gak jalan.
 --        Sekarang auto-start pas GUI kebangun.
@@ -394,7 +396,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v13.5"
+local VER       = "STAR v13.8"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1499,6 +1501,30 @@ local function isGearTool(t)
     if fid and fj then return false end                       -- fruit
     return true
 end
+-- v13.8: hitung Super Watering Can + Super Sprinkler di tas (buat panel).
+-- sama logika kayak countSprWC lokal di loop Farm 2 (baris ~7946).
+function Farm.countSuperGear()
+    local nSpr, nWC = 0, 0
+    pcall(function()
+        for _, holder in ipairs(invHolders()) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local nm = tostring(t.Name):lower()
+                        if nm:find("super") then
+                            local cnt = t:GetAttribute("Count")
+                            cnt = (type(cnt) == "number") and cnt or 1
+                            if nm:find("watering") or nm:find("can") then nWC = nWC + cnt
+                            elseif nm:find("sprinkler") then nSpr = nSpr + cnt end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return nSpr, nWC
+end
+
 function Farm.countGearInBag()
     local counts = {}
     for _, holder in ipairs(invHolders()) do
@@ -7599,6 +7625,7 @@ local function panelPetik()
         beratMax = state.antiCollectHeavyKg or 100,
         prio     = (Farm._glowAdaYgMinta == true),
         job      = tostring(game.JobId or ""):sub(1, 8),
+        place    = tostring(game.PlaceId or ""),
     }
 end
 
@@ -7612,7 +7639,13 @@ local function petikInventory()
         for _, e in ipairs(arr) do out[#out+1] = { n = e.nama, j = e.jml, r = e.rar } end
         return out
     end
-    return { seeds = ringkas(seeds), pets = ringkas(pets) }
+    local nSpr, nWC = 0, 0
+    pcall(function() nSpr, nWC = Farm.countSuperGear() end)
+    -- totSeed = jumlah semua seed (bukan jenis) buat ringkasan fleet
+    local totSeed = 0
+    for _, e in ipairs(seeds) do totSeed = totSeed + (e.jml or 0) end
+    return { seeds = ringkas(seeds), pets = ringkas(pets),
+             totSeed = totSeed, superSpr = nSpr, superWC = nWC }
 end
 
 -- Apa yang dianggap "berubah"?
@@ -7707,6 +7740,7 @@ function Farm.startPanelLoop()
             for _, e in ipairs(inv.seeds) do t[#t+1] = e.n .. ":" .. e.j end
             t[#t+1] = "|"
             for _, e in ipairs(inv.pets) do t[#t+1] = e.n .. ":" .. e.j end
+            t[#t+1] = "|spr" .. (inv.superSpr or 0) .. "wc" .. (inv.superWC or 0)
             return table.concat(t, ",")
         end
         while hidup() do
@@ -7717,7 +7751,8 @@ function Farm.startPanelLoop()
                     local cap = ringkasStr(inv)
                     local wajib = (skrg - invKirim) >= 300
                     if wajib or cap ~= invLama then
-                        local body = { akun = player.Name, seeds = inv.seeds, pets = inv.pets }
+                        local body = { akun = player.Name, seeds = inv.seeds, pets = inv.pets,
+                                       totSeed = inv.totSeed, superSpr = inv.superSpr, superWC = inv.superWC }
                         local r = panelReq("/inv", "POST", body)
                         if r and (r.StatusCode == 200 or r.Success) then
                             invLama, invKirim = cap, skrg
