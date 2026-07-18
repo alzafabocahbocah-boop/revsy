@@ -1,5 +1,8 @@
 -- ============================================================
--- STAR FARM  v13.3  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v13.4  (standalone, basis ZENX v44.79) - GAG 2
+-- v13.4: Lapor rincian SEED + PET inventory (urut rarity, bagus di atas).
+--        Panel LEPAS dari Farm 2 -- auto-nyala asal url+kunci ada, biar isi
+--        inventory keliatan walau akun idle.
 -- v13.3: Kartu PANEL WEB dipindah ke ATAS tab AUTO FARM (dulu keselip di dasar
 --        AUTO GIFT, susah ketemu). Status GEDE di atas; url/kunci disembunyiin.
 -- v13.2: Tim & Game DIBUANG dari GUI. Script cuma lapor nama akun; penugasan
@@ -388,7 +391,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v13.3"
+local VER       = "STAR v13.4"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1405,6 +1408,58 @@ end
 -- v15.3: hitung FRUIT di tas per jenis. fruit = anak Backpack/Character yg punya
 -- .Id (UUID) + .Fruit/.FruitName. GAK maksa IsA("Tool") - di GAG sebagian item
 -- inventory bukan Tool tapi tetep punya atribut buah (biar kebaca semua, bukan cuma hotbar).
+-- v13.4: hitung PET di tas per jenis (buat panel web). pet = item inventory
+-- yang punya atribut PetId/Pet. rarity dari atribut Rarity kalau ada.
+function Farm.countPetsInBag()
+    local counts, rare = {}, {}
+    for _, holder in ipairs(invHolders()) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                local pn = t:GetAttribute("PetName") or t:GetAttribute("Pet") or t:GetAttribute("PetType")
+                local isPet = t:GetAttribute("PetId") or t:GetAttribute("Pet")
+                if isPet and pn then
+                    counts[pn] = (counts[pn] or 0) + 1
+                    if not rare[pn] then rare[pn] = t:GetAttribute("Rarity") end
+                end
+            end
+        end
+    end
+    return counts, rare
+end
+
+-- v13.4: rincian inventory buat panel web. seed & pet, tiap-tiap diurut
+-- rarity BAGUS DULU (Super/Divine di atas), lalu abjad. Rarity dari data GAME.
+function Farm.inventoryRinci()
+    local PRANK = { Common=1, Uncommon=2, Rare=3, Epic=4, Legendary=5, Mythic=6, Super=7,
+                    Divine=7, Prismatic=8 }   -- seed & pet pakai skala sama; makin gede makin bagus
+
+    -- seed
+    local scount = Farm.countSeedsInBag()
+    local seeds = {}
+    for nm, n in pairs(scount) do
+        local rar = Farm.seedRarity and Farm.seedRarity(nm) or nil
+        seeds[#seeds+1] = { nama = nm, jml = n, rar = rar or "?", rank = PRANK[rar or ""] or 0 }
+    end
+    table.sort(seeds, function(a, b)
+        if a.rank ~= b.rank then return a.rank > b.rank end
+        return a.nama < b.nama
+    end)
+
+    -- pet
+    local pcount, prare = Farm.countPetsInBag()
+    local pets = {}
+    for nm, n in pairs(pcount) do
+        local rar = prare[nm]
+        pets[#pets+1] = { nama = nm, jml = n, rar = rar or "?", rank = PRANK[rar or ""] or 0 }
+    end
+    table.sort(pets, function(a, b)
+        if a.rank ~= b.rank then return a.rank > b.rank end
+        return a.nama < b.nama
+    end)
+
+    return seeds, pets
+end
+
 function Farm.countFruitsInBag()
     local counts = {}
     for _, holder in ipairs(invHolders()) do
@@ -7457,9 +7512,11 @@ Farm._panelGen = Farm._panelGen or 0
 local panelLamaData, panelLamaKirim, panelCfgTs = nil, 0, 0
 Farm._panelKirim, Farm._panelLewat = 0, 0
 
+-- v13.4: panel LEPAS dari Farm 2. Dulu ikut Farm 2 (mati kalau Farm 2 off),
+-- tapi lo mau liat isi inventory walau akun lagi idle -- jadi auto-nyala asal
+-- url + kunci keisi (dua-duanya udah bawaan). farm2On tetep dilaporin sbg data.
 local function panelAktif()
-    return state.farm2On
-        and type(state.panelUrl) == "string" and state.panelUrl ~= ""
+    return type(state.panelUrl) == "string" and state.panelUrl ~= ""
         and type(state.panelKunci) == "string" and state.panelKunci ~= ""
 end
 
@@ -7542,6 +7599,19 @@ local function panelPetik()
     }
 end
 
+-- v13.4: rincian seed & pet inventory buat panel. dipisah dari petik() biar
+-- lapor kebun (sering) gak selalu bawa inventory (jarang berubah drastis).
+local function petikInventory()
+    local okk, seeds, pets = pcall(function() return Farm.inventoryRinci() end)
+    if not okk then return nil end
+    local function ringkas(arr)
+        local out = {}
+        for _, e in ipairs(arr) do out[#out+1] = { n = e.nama, j = e.jml, r = e.rar } end
+        return out
+    end
+    return { seeds = ringkas(seeds), pets = ringkas(pets) }
+end
+
 -- Apa yang dianggap "berubah"?
 -- Kebun gak berubah tiap 15 detik. Yang bikin lo gerak itu KEJADIAN.
 -- Selisih 1-2 buah gak ngubah keputusan lo, jadi gak usah dilaporin.
@@ -7621,6 +7691,39 @@ function Farm.startPanelLoop()
             task.wait(PANEL_CEK)
         end
         print("[Panel] lapor berhenti.")
+    end)
+
+    -- v13.4: lapor INVENTORY (seed+pet rinci) ke endpoint terpisah.
+    -- Jarang: cek tiap 30s, kirim cuma kalau jumlah/jenis berubah + denyut 5 mnt.
+    -- Inventory jarang berubah drastis, jadi gak usah sesering lapor kebun.
+    task.spawn(function()
+        local invLama, invKirim = nil, 0
+        local function ringkasStr(inv)
+            -- string ringkas buat banding "berubah apa nggak" tanpa deep-compare
+            local t = {}
+            for _, e in ipairs(inv.seeds) do t[#t+1] = e.n .. ":" .. e.j end
+            t[#t+1] = "|"
+            for _, e in ipairs(inv.pets) do t[#t+1] = e.n .. ":" .. e.j end
+            return table.concat(t, ",")
+        end
+        while hidup() do
+            pcall(function()
+                local inv = petikInventory()
+                if inv then
+                    local skrg = os.time()
+                    local cap = ringkasStr(inv)
+                    local wajib = (skrg - invKirim) >= 300
+                    if wajib or cap ~= invLama then
+                        local body = { akun = player.Name, seeds = inv.seeds, pets = inv.pets }
+                        local r = panelReq("/inv", "POST", body)
+                        if r and (r.StatusCode == 200 or r.Success) then
+                            invLama, invKirim = cap, skrg
+                        end
+                    end
+                end
+            end)
+            task.wait(30)
+        end
     end)
 
     task.spawn(function()
@@ -10102,10 +10205,8 @@ local fLayout = mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum
         task.spawn(function()
             while pnStat and pnStat.Parent do
                 local t = Farm._panelKirim + Farm._panelLewat
-                local nyala = state.farm2On and (state.panelUrl or "") ~= "" and (state.panelKunci or "") ~= ""
-                if not state.farm2On then
-                    pnStat.Text = "status: MATI (Farm 2 OFF)"; pnStat.TextColor3 = Color3.fromRGB(230,180,90)
-                elseif not nyala then
+                local nyala = (state.panelUrl or "") ~= "" and (state.panelKunci or "") ~= ""
+                if not nyala then
                     pnStat.Text = "status: MATI (url/kunci kosong)"; pnStat.TextColor3 = Color3.fromRGB(230,90,90)
                 else
                     pnStat.Text = ("status: JALAN | kirim %d, lewat %d (hemat %d%%)")
