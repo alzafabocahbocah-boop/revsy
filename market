@@ -57,7 +57,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.329"
+local VERSION = "8.330"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -12651,21 +12651,35 @@ task.spawn(function()
         end
     end)
 
+    -- v8.330: hitung pet DIPISAH dari lapor. dulu totalPetCocokRule() dipanggil
+    -- tiap loop -- kalau inventory gede (26 rule x ratusan pet) itu berat & bisa
+    -- bikin loop macet -> panel liat "mati" walau akun idup. Sekarang:
+    --   * lapor denyut tiap 20s (ringan: cuma baca token) -> panel tau idup
+    --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
+    local petTerakhir, nRuleTerakhir = 0, 0
+    task.spawn(function()
+        while true do
+            local ok, p2, n2 = pcall(totalPetCocokRule)
+            if ok then petTerakhir, nRuleTerakhir = p2, n2 end
+            task.wait(60)
+        end
+    end)
+
     while true do
-        local tok = bacaTokens()
-        local pet, nRule = totalPetCocokRule()
+        local ok, tok = pcall(bacaTokens)
+        if not ok then tok = lamaTok >= 0 and lamaTok or 0 end
         local skrg = os.time()
-        local berubah = (tok ~= lamaTok) or (pet ~= lamaPet)
-        local wajib = (skrg - lamaKirim) >= 300
+        local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
+        local wajib = (skrg - lamaKirim) >= 120   -- denyut wajib tiap 2 menit
         if berubah or wajib then
             kirim("/market", {
                 akun = plr.Name,
                 place = tostring(game.PlaceId or ""),
                 tokens = tok,
-                petRule = pet,
-                nRule = nRule,
+                petRule = petTerakhir,
+                nRule = nRuleTerakhir,
             })
-            lamaTok, lamaPet, lamaKirim = tok, pet, skrg
+            lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
         end
         task.wait(20)
     end
