@@ -57,7 +57,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.327"
+local VERSION = "8.328"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -211,6 +211,7 @@ end
 
 -- ===== v8.28: STATE FILE (BH.myBoothUuid persistence) — semua di BH =====
 local BH = {}
+getgenv().ZenxMarketBH = BH   -- v8.328: expose buat bridge panel (baca listingRules + countMyPetsForRule)
 do
     BH.STATE_FILE = "ZenxMarket_state.json"
     function BH.saveMarketState(s)
@@ -12560,5 +12561,97 @@ task.spawn(function()
     while true do
         task.wait(5)
         pcall(function() re:FireServer(ticketName) end)
+    end
+end)
+
+-- ============================================================
+-- v8.328: BRIDGE PANEL (STAR PANEL) — lapor Tokens + total pet cocok rule
+-- Nebeng sistem yang sama kayak star_farm: Worker + KUNCI + tim.
+-- Akun market masuk panel sebagai akun GAG 1 (PlaceId market).
+-- ============================================================
+task.spawn(function()
+    local PANEL_URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local PANEL_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+
+    local Players = game:GetService("Players")
+    local HS      = game:GetService("HttpService")
+    local plr     = Players.LocalPlayer
+    if not plr then return end
+
+    -- request() executor (pola sama kayak baris 7762)
+    local req = (syn and syn.request) or (fluxus and fluxus.request)
+             or (krnl and krnl.request) or http_request or request or httprequest
+    if type(http) == "table" and http.request then req = http.request end
+    if not req then
+        warn("[MarketBridge] executor gak punya request() -- panel mati")
+        return
+    end
+
+    -- baca Tokens dari PlayerGui.BuyTokens.Frame.Label ("Tokens: 401")
+    local function bacaTokens()
+        local n = 0
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            local bt = pg and pg:FindFirstChild("BuyTokens")
+            local fr = bt and bt:FindFirstChild("Frame")
+            local lb = fr and fr:FindFirstChild("Label")
+            if lb and lb:IsA("TextLabel") then
+                local m = tostring(lb.Text):match("([%d,%.]+)")
+                if m then n = tonumber((m:gsub(",", ""))) or 0 end
+            end
+        end)
+        return n
+    end
+
+    -- total pet di inventory yang cocok SEMUA rule (gak dirinci)
+    local function totalPetCocokRule()
+        local total, nRule = 0, 0
+        pcall(function()
+            local BH = getgenv().ZenxMarketBH or _G.BH
+            -- BH lokal: coba ambil dari getgenv kalau di-expose, else skip
+            if not (BH and BH.countMyPetsForRule and BH.marketState) then return end
+            local rules = BH.marketState.listingRules
+            if type(rules) ~= "table" then return end
+            for _, r in ipairs(rules) do
+                nRule = nRule + 1
+                local c = BH.countMyPetsForRule(r) or 0
+                total = total + c
+            end
+        end)
+        return total, nRule
+    end
+
+    local function kirim(jalur, isi)
+        local ok, body = pcall(function() return HS:JSONEncode(isi) end)
+        if not ok then return end
+        pcall(function()
+            req({
+                Url = PANEL_URL .. jalur, Method = "POST",
+                Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                Body = body,
+            })
+        end)
+    end
+
+    local lamaTok, lamaPet, lamaKirim = -1, -1, 0
+    task.wait(8)   -- tunggu UI + BH kebangun
+    print("[MarketBridge] jalan | " .. plr.Name)
+    while true do
+        local tok = bacaTokens()
+        local pet, nRule = totalPetCocokRule()
+        local skrg = os.time()
+        local berubah = (tok ~= lamaTok) or (pet ~= lamaPet)
+        local wajib = (skrg - lamaKirim) >= 300
+        if berubah or wajib then
+            kirim("/market", {
+                akun = plr.Name,
+                place = tostring(game.PlaceId or ""),
+                tokens = tok,
+                petRule = pet,
+                nRule = nRule,
+            })
+            lamaTok, lamaPet, lamaKirim = tok, pet, skrg
+        end
+        task.wait(20)
     end
 end)
