@@ -2,11 +2,66 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
-local VERSION = "8.278"
-local VERSION_DATE = "v8.278: print versi mencolok di awal + kill GUI lama sebelum build (anti dobel/instance lama). auto-ticket garden tetap aktif."
+-- v8.309: AUTO RE-EXEC di PALING AWAL - daftarin queue_on_teleport sebelum apapun.
+-- v8.321: ANTI HTTP 429. cache lokal + guard: kalau kena 429, JANGAN spam retry.
+--   maks 1 HttpGet per re-exec. gagal -> pakai cache lama -> berhenti.
+do
+    local SCRIPT_URL = "https://raw.githubusercontent.com/petagee5/ronss/main/market"
+    local payload = [[
+local URL = "]]..SCRIPT_URL..[["
+local CACHE = "ZenxMarket_cache.lua"
+local CACHE_AGE = "ZenxMarket_cache_time.txt"
+if getgenv().__ZenxMarketExecuting then return end
+getgenv().__ZenxMarketExecuting = true
+local function tryRun(src)
+    if type(src) == "string" and #src > 50000 then
+        local fn = loadstring(src)
+        if fn then fn() return true end
+    end
+    return false
+end
+-- 1) cache lokal dulu (nol request GitHub). fresh (<20 mnt) -> pakai langsung.
+if isfile and readfile and isfile(CACHE) then
+    local fresh = true
+    if isfile(CACHE_AGE) then
+        local ok, t = pcall(readfile, CACHE_AGE)
+        if ok and tonumber(t) and (os.time() - tonumber(t)) > 1200 then fresh = false end
+    end
+    if fresh then
+        local ok, c = pcall(readfile, CACHE)
+        if ok and tryRun(c) then getgenv().__ZenxMarketExecuting = nil return end
+    end
+end
+-- 2) HttpGet 1x (ga ada retry -> ga spam 429). sukses -> cache + jalan.
+local ok, res = pcall(function() return game:HttpGet(URL) end)
+if ok and type(res) == "string" and #res > 50000 then
+    if writefile then
+        pcall(function() writefile(CACHE, res) end)
+        pcall(function() writefile(CACHE_AGE, tostring(os.time())) end)
+    end
+    if tryRun(res) then getgenv().__ZenxMarketExecuting = nil return end
+end
+-- 3) gagal (429) -> pakai CACHE LAMA (walau expired) sbg penyelamat. LALU BERHENTI.
+if isfile and isfile(CACHE) then
+    local ok2, c2 = pcall(readfile, CACHE)
+    if ok2 then tryRun(c2) end
+end
+getgenv().__ZenxMarketExecuting = nil
+]]
+    local q = queue_on_teleport or (syn and syn.queue_on_teleport) or queueonteleport
+    if q then
+        pcall(function() q(payload) end)
+        warn("[ZenxMarket] auto re-exec aktif (cache +anti-429)")
+    else
+        warn("[ZenxMarket] executor gak support queue_on_teleport")
+    end
+end
+
+local VERSION = "8.329"
+local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING — VERSI 8.278")
+warn("  ZENX MARKET LOADING - VERSI 8.326")
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -18,16 +73,46 @@ local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 local pg = player:WaitForChild("PlayerGui")
 
--- v8.278: bunuh GUI ZENX MARKET lama (dr load sebelumnya) biar gak dobel / instance lama nyangkut
-pcall(function()
-    for _, where in ipairs({ pg, game:GetService("CoreGui") }) do
-        for _, g in ipairs(where:GetChildren()) do
-            if g:IsA("ScreenGui") and (g.Name == "ZenxMarketGui" or g.Name:find("ZenxMarket", 1, true)
-               or g.Name:find("ZenxV8", 1, true)) then
-                pcall(function() g:Destroy() end)
+-- v8.325: refresh CACHE di background pas load normal (bukan cuma pas hop).
+-- dulu cache market cuma kebentuk pas hop -> load pertama selalu HttpGet -> 429.
+-- sekarang: kalau cache belum ada / expired (>20 mnt), fetch 1x di background + simpen.
+-- pakai guard biar ga dobel fetch. jsDelivr jadi sumbernya (anti-429).
+task.spawn(function()
+    if type(writefile) ~= "function" then return end
+    local CACHE = "ZenxMarket_cache.lua"
+    local CACHE_AGE = "ZenxMarket_cache_time.txt"
+    local need = true
+    if isfile and isfile(CACHE) and isfile(CACHE_AGE) then
+        local ok, t = pcall(readfile, CACHE_AGE)
+        if ok and tonumber(t) and (os.time() - tonumber(t)) < 1200 then need = false end
+    end
+    if not need then return end
+    if getgenv().__ZenxMarketCaching then return end
+    getgenv().__ZenxMarketCaching = true
+    task.wait(3)   -- tunggu bentar biar ga barengan sama request lain
+    local URL = "https://raw.githubusercontent.com/petagee5/ronss/main/market"
+    local ok, res = pcall(function() return game:HttpGet(URL) end)
+    if ok and type(res) == "string" and #res > 50000 then
+        pcall(function() writefile(CACHE, res) end)
+        pcall(function() writefile(CACHE_AGE, tostring(os.time())) end)
+    end
+    getgenv().__ZenxMarketCaching = nil
+end)
+
+-- v8.279: bunuh GUI ZENX MARKET lama (dr load sebelumnya) biar gak dobel.
+-- DIBUNGKUS task.spawn biar local di dalam gak nambah ke scope chunk utama
+-- (Luau limit 200 local/chunk — v8.278 nembus limit gara2 blok ini gak dibungkus).
+task.spawn(function()
+    pcall(function()
+        for _, where in ipairs({ pg, game:GetService("CoreGui") }) do
+            for _, g in ipairs(where:GetChildren()) do
+                if g:IsA("ScreenGui") and (g.Name == "ZenxMarketGui" or g.Name:find("ZenxMarket", 1, true)
+                   or g.Name:find("ZenxV8", 1, true)) then
+                    pcall(function() g:Destroy() end)
+                end
             end
         end
-    end
+    end)
 end)
 
 _G.ZenxV8 = _G.ZenxV8 or {}
@@ -60,7 +145,7 @@ do
     -- PROAKTIF — periodic loop every 2 min (lebih agresif dari 5 min)
     task.spawn(function()
         local tickCount = 0
-        while task.wait(120) do  -- 2 menit
+        while task.wait(90) do  -- v8.320: 1.5 menit (lebih sering, cegah 278)
             if antiAfkEnabled then
                 tickCount = tickCount + 1
                 local methods_tried = {}
@@ -98,14 +183,22 @@ do
                     table.insert(methods_tried, ok and "CAM✓" or "CAM✗")
                 end
 
-                -- Method 4: Character humanoid jump (subtle — only every 5 ticks = 10min)
-                if tickCount % 5 == 0 then
-                    local char = player.Character
-                    local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        local ok = pcall(function() hum.Jump = true end)
-                        table.insert(methods_tried, ok and "JUMP✓" or "JUMP✗")
-                    end
+                -- Method 4: v8.320 - GERAK KARAKTER BENERAN tiap tick (2min), bukan tiap 10min.
+                -- server GAG ngukur idle dari gerakan karakter, bukan input mouse. jadi jump +
+                -- step kecil tiap 2 menit biar posisi berubah -> server anggap AKTIF (cegah 278).
+                local char = player.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hum and hrp then
+                    local ok = pcall(function()
+                        hum.Jump = true
+                        -- step kecil: geser dikit lalu balik (posisi berubah = aktivitas)
+                        local cf = hrp.CFrame
+                        hrp.CFrame = cf * CFrame.new(0, 0, -0.5)
+                        task.wait(0.1)
+                        hrp.CFrame = cf
+                    end)
+                    table.insert(methods_tried, ok and "MOVE✓" or "MOVE✗")
                 end
 
                 L("[anti-afk] tick#"..tickCount.." | "..table.concat(methods_tried, " ")
@@ -118,6 +211,7 @@ end
 
 -- ===== v8.28: STATE FILE (BH.myBoothUuid persistence) — semua di BH =====
 local BH = {}
+getgenv().ZenxMarketBH = BH   -- v8.328: expose buat bridge panel (baca listingRules + countMyPetsForRule)
 do
     BH.STATE_FILE = "ZenxMarket_state.json"
     function BH.saveMarketState(s)
@@ -157,10 +251,62 @@ do
     BH.marketState = BH.loadMarketState()
     BH.myBoothUuid = BH.marketState.myBoothUuid
     if BH.myBoothUuid then L("[State] cached myBoothUuid: "..BH.myBoothUuid:sub(1,16).."...") end
-    -- v8.70: load anti-afk pref dari state (default true kalo gak ada)
-    if BH.marketState.antiAfkEnabled ~= nil then
-        antiAfkEnabled = BH.marketState.antiAfkEnabled
+    -- v8.314: DEFAULT AUTO-ON buat fitur Misc (cuma kalau belum pernah diset user).
+    -- auto-start, auto-claim booth, auto-rejoin, auto-switch depan = default ON.
+    -- rejoin interval default 25 menit.
+    do
+        BH.marketState.settings = BH.marketState.settings or {}
+        local S = BH.marketState.settings
+        -- v8.320: PAKSA auto-start + auto-claim + auto-clean SELALU ON tiap load (ga bisa dimatiin).
+        BH.marketState.autoStart = true
+        S.autoRejoinEnabled = true
+        if S.autoSwitchFront == nil then S.autoSwitchFront = true end
+        -- v8.319: PAKSA rejoin interval 18 menit SELALU tiap load (abaikan setting manual).
+        S.rejoinIntervalMin = "18"
+        S.autoRejoinEnabled = true
+        BH.marketState.autoClaim = true
+        BH.marketState.autoCleanNonMatch = true
+        -- v8.317: PAKSA semua akun (termasuk yg udah punya rules lama) pakai default rules ini.
+        -- pakai penanda versi: kalau defaultRulesVer != target, timpa SEKALI lalu tandai.
+        -- jadi ketimpa cuma sekali (pas update), abis itu user bebas edit tanpa ketimpa lagi.
+        local DEFAULT_RULES_VER = "2026-list-v1"
+        if BH.marketState.defaultRulesVer ~= DEFAULT_RULES_VER then
+            BH.marketState.listingRules = {
+                {type="Brontosaurus", min=6, max=6.4, price=140, maxListings=3},
+                {type="Ice Golem", min=6, max=6.4, price=170, maxListings=3},
+                {type="Peryton", min=6, max=6.4, price=290, maxListings=3},
+                {type="Ruby Squid", min=6, max=6.4, price=129, maxListings=3},
+                {type="Reindeer", min=6, max=7, price=150, maxListings=1},
+                {type="Reindeer", min=7, max=8, price=100, maxListings=1},
+                {type="Nutcracker", min=6, max=7, price=200, maxListings=2},
+                {type="Reindeer", min=8, max=9, price=120, maxListings=1},
+                {type="Reindeer", min=9, max=10, price=150, maxListings=1},
+                {type="Reindeer", min=10, max=11, price=550, maxListings=1},
+                {type="Yeti", min=8, max=9, price=3000, maxListings=1},
+                {type="Nutcracker", min=7, max=8, price=400, maxListings=1},
+                {type="Nutcracker", min=8, max=9, price=600, maxListings=1},
+                {type="Nutcracker", min=9, max=10, price=800, maxListings=1},
+                {type="Nutcracker", min=10, max=11, price=1500, maxListings=1},
+                {type="Gilded Choc Peryton", min=6.2, max=6.4, price=5034, maxListings=1},
+                {type="Gilded Choc Peryton", min=6, max=6.2, price=3500, maxListings=1},
+                {type="Mimic Octopus", min=6, max=6.4, price=142, maxListings=2},
+                {type="Spider", min=6, max=6.4, price=174, maxListings=2},
+                {type="Empress Bee", min=6, max=6.4, price=180, maxListings=2},
+                {type="Peacock", min=6, max=6.4, price=220, maxListings=2},
+                {type="Diamond Panther", min=6, max=6.4, price=133, maxListings=2},
+                {type="Fire Wisp", min=6, max=6.4, price=135, maxListings=8},
+                {type="Seal", min=6, max=6.4, price=100, maxListings=2},
+                {type="Peacock", min=3, max=4, price=98, maxListings=2},
+                {type="Mimic Octopus", min=3, max=4, price=102, maxListings=2},
+            }
+            BH.marketState.defaultRulesVer = DEFAULT_RULES_VER
+        end
+        pcall(function() BH.saveMarketState(BH.marketState) end)
     end
+    -- v8.320: PAKSA anti-afk ON selalu (cegah kick idle 278). abaikan state lama
+    -- yg mungkin ke-set false. anti-afk kritis biar akun ga ke-kick.
+    antiAfkEnabled = true
+    BH.marketState.antiAfkEnabled = true
 
     -- v8.127: centralized settings save — semua input/toggle bisa persist
     BH.marketState.settings = BH.marketState.settings or {}
@@ -1075,6 +1221,437 @@ sep.Size = UDim2.new(1, -32, 0, 1) sep.Position = UDim2.new(0, 16, 0, 44)
 sep.BackgroundColor3 = C.accent sep.BorderSizePixel = 0 sep.BackgroundTransparency = 0.7
 sep.Parent = main
 
+-- ============================================================
+-- v8.301: TEMPLATE MANAGER (SALIN TEMPLATE) di title bar.
+-- List template lokal (nama + x hapus), pilih -> popup konfirmasi ->
+-- apply. Bisa simpan baru dari setting skrg + import/export kode.
+-- SEMUA di do-block: NOL local chunk utama (limit-200 Luau!). ASCII only.
+-- ============================================================
+do
+    local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local function b64enc(data)
+        return ((data:gsub(".", function(x)
+            local r, b = "", x:byte()
+            for i = 8, 1, -1 do r = r .. (b % 2 ^ i - b % 2 ^ (i - 1) > 0 and "1" or "0") end
+            return r
+        end) .. "0000"):gsub("%d%d%d?%d?%d?%d?", function(x)
+            if #x < 6 then return "" end
+            local c = 0
+            for i = 1, 6 do c = c + (x:sub(i, i) == "1" and 2 ^ (6 - i) or 0) end
+            return B64:sub(c + 1, c + 1)
+        end) .. ({ "", "==", "=" })[#data % 3 + 1])
+    end
+    local function b64dec(data)
+        data = data:gsub("[^" .. B64 .. "=]", "")
+        return (data:gsub("=", ""):gsub(".", function(x)
+            local r, f = "", (B64:find(x, 1, true) - 1)
+            for i = 6, 1, -1 do r = r .. (f % 2 ^ i - f % 2 ^ (i - 1) > 0 and "1" or "0") end
+            return r
+        end):gsub("%d%d%d?%d?%d?%d?%d?%d?", function(x)
+            if #x ~= 8 then return "" end
+            local c = 0
+            for i = 1, 8 do c = c + (x:sub(i, i) == "1" and 2 ^ (8 - i) or 0) end
+            return string.char(c)
+        end))
+    end
+    local function sanitize(v)
+        if type(v) ~= "table" then
+            if v == math.huge or v == -math.huge then return nil end
+            return v
+        end
+        local out = {}
+        for k, vv in pairs(v) do local cv = sanitize(vv); if cv ~= nil then out[k] = cv end end
+        return out
+    end
+
+    -- ===== penyimpanan template lokal (file terpisah dari state) =====
+    local TPL_FILE = "ZenxMarket_templates.json"
+    local templates = {}   -- array of { name=, state= }
+    local function loadTemplates()
+        if isfile and readfile and isfile(TPL_FILE) then
+            local ok, data = pcall(function() return HttpService:JSONDecode(readfile(TPL_FILE)) end)
+            if ok and type(data) == "table" then templates = data end
+        end
+    end
+    local function saveTemplates()
+        if writefile then pcall(function() writefile(TPL_FILE, HttpService:JSONEncode(templates)) end) end
+    end
+    loadTemplates()
+
+    -- restore math.huge di rules setelah decode
+    local function fixRules(st)
+        if type(st) == "table" and type(st.listingRules) == "table" then
+            for _, r in ipairs(st.listingRules) do
+                if type(r) == "table" then
+                    r.max = r.max or math.huge
+                    r.maxListings = r.maxListings or math.huge
+                    r.min = r.min or 0
+                    r.price = r.price or 100
+                end
+            end
+        end
+        return st
+    end
+
+    -- apply state ke marketState aktif (tanpa ganti referensi)
+    local function applyState(st)
+        st = fixRules(st)
+        for k in pairs(BH.marketState) do BH.marketState[k] = nil end
+        for k, v in pairs(st) do BH.marketState[k] = v end
+        if type(BH.marketState.listingRules) ~= "table" then BH.marketState.listingRules = {} end
+        local nRules = #BH.marketState.listingRules
+        -- v8.308: pakai BH.listingRules (di-expose dari tab Listing yg didefinisikan belakangan).
+        local lr = BH.listingRules
+        local synced = false
+        if lr then
+            for i = #lr, 1, -1 do lr[i] = nil end
+            for i, r in ipairs(BH.marketState.listingRules) do lr[i] = r end
+            BH.marketState.listingRules = lr
+            synced = true
+        end
+        BH.saveMarketState(BH.marketState)
+        -- v8.311: refresh UI + return status buat ditampilin di popup (biar keliatan tanpa console).
+        local rebuiltOk = false
+        if BH.rebuildRulesUI then
+            rebuiltOk = pcall(BH.rebuildRulesUI)
+        end
+        print("[ZenxMarket] applyState: "..nRules.." rule | sync="..tostring(synced).." | rebuild="..tostring(rebuiltOk))
+        return nRules, synced, rebuiltOk
+    end
+
+    -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
+    local tplBtn = Instance.new("TextButton")
+    tplBtn.Size = UDim2.new(0, 96, 0, 24) tplBtn.Position = UDim2.new(1, -150, 0.5, -12)
+    tplBtn.BackgroundColor3 = C.card tplBtn.AutoButtonColor = false
+    tplBtn.Text = "SALIN TEMPLATE" tplBtn.TextColor3 = C.text
+    tplBtn.Font = FB tplBtn.TextSize = 9 tplBtn.Parent = titleBar
+    Instance.new("UICorner", tplBtn).CornerRadius = UDim.new(0, 5)
+    do local s = Instance.new("UIStroke", tplBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+
+    -- ===== popup manager =====
+    local pop = Instance.new("Frame")
+    pop.Size = UDim2.new(0, 380, 0, 448) pop.Position = UDim2.new(0.5, -190, 0.5, -224)
+    pop.BackgroundColor3 = C.bg pop.BorderSizePixel = 0 pop.Visible = false
+    pop.ZIndex = 200 pop.Parent = main
+    Instance.new("UICorner", pop).CornerRadius = UDim.new(0, 10)
+    do local s = Instance.new("UIStroke", pop); s.Color = C.accent; s.Thickness = 1.5; s.Transparency = 0.3 end
+
+    local popTitle = Instance.new("TextLabel")
+    popTitle.Size = UDim2.new(1, -40, 0, 28) popTitle.Position = UDim2.new(0, 14, 0, 8)
+    popTitle.BackgroundTransparency = 1 popTitle.Text = "SALIN TEMPLATE"
+    popTitle.TextColor3 = C.accent popTitle.Font = FB popTitle.TextSize = 14
+    popTitle.TextXAlignment = Enum.TextXAlignment.Left popTitle.ZIndex = 201 popTitle.Parent = pop
+
+    local popClose = Instance.new("TextButton")
+    popClose.Size = UDim2.new(0, 26, 0, 26) popClose.Position = UDim2.new(1, -32, 0, 8)
+    popClose.BackgroundColor3 = C.card popClose.Text = "X" popClose.TextColor3 = C.danger
+    popClose.Font = FB popClose.TextSize = 12 popClose.ZIndex = 201 popClose.Parent = pop
+    Instance.new("UICorner", popClose).CornerRadius = UDim.new(0, 6)
+    popClose.MouseButton1Click:Connect(function() pop.Visible = false end)
+
+    -- list template (scroll)
+    local listSF = Instance.new("ScrollingFrame")
+    listSF.Size = UDim2.new(1, -28, 0, 176) listSF.Position = UDim2.new(0, 14, 0, 42)
+    listSF.BackgroundColor3 = C.card listSF.BorderSizePixel = 0
+    listSF.ScrollBarThickness = 4 listSF.CanvasSize = UDim2.new(0, 0, 0, 0)
+    listSF.AutomaticCanvasSize = Enum.AutomaticSize.Y listSF.ZIndex = 201 listSF.Parent = pop
+    Instance.new("UICorner", listSF).CornerRadius = UDim.new(0, 8)
+    local listLay = Instance.new("UIListLayout")
+    listLay.Padding = UDim.new(0, 4) listLay.SortOrder = Enum.SortOrder.LayoutOrder listLay.Parent = listSF
+    Instance.new("UIPadding", listSF).PaddingTop = UDim.new(0, 6)
+
+    local statusLbl = Instance.new("TextLabel")
+    statusLbl.Size = UDim2.new(1, -28, 0, 28) statusLbl.Position = UDim2.new(0, 14, 0, 414)
+    statusLbl.BackgroundTransparency = 1 statusLbl.Text = ""
+    statusLbl.TextColor3 = C.textDim statusLbl.Font = FM statusLbl.TextSize = 11
+    statusLbl.TextXAlignment = Enum.TextXAlignment.Left statusLbl.TextYAlignment = Enum.TextYAlignment.Top
+    statusLbl.TextWrapped = true statusLbl.ZIndex = 201 statusLbl.Parent = pop
+    local function setStatus(txt, col)
+        statusLbl.Text = txt statusLbl.TextColor3 = col or C.textDim
+    end
+
+    -- konfirmasi mini (di dalam pop): "Anda yakin pakai template ini?"
+    -- v8.303: ZIndex TINGGI (300+) + posisi nutup penuh biar tombol ga ke-block elemen lain
+    -- v8.305: overlay penuh nutup popup pas konfirmasi muncul (block touch elemen lain,
+    -- termasuk TextBox editable yg nangkep input walau ZIndex rendah)
+    local overlay = Instance.new("TextButton")
+    overlay.Size = UDim2.new(1, 0, 1, 0) overlay.Position = UDim2.new(0, 0, 0, 0)
+    overlay.BackgroundColor3 = Color3.new(0, 0, 0) overlay.BackgroundTransparency = 0.5
+    overlay.Text = "" overlay.AutoButtonColor = false overlay.BorderSizePixel = 0
+    overlay.Visible = false overlay.ZIndex = 350 overlay.Active = true overlay.Parent = pop
+    overlay.MouseButton1Click:Connect(function() end)  -- serap klik, jangan tembus
+    Instance.new("UICorner", overlay).CornerRadius = UDim.new(0, 10)
+
+    -- kotak konfirmasi di TENGAH overlay (bukan numpuk list)
+    local confirm = overlay   -- alias biar handler lama (confirm.Visible) tetep jalan
+    local confBox = Instance.new("Frame")
+    confBox.Size = UDim2.new(0, 300, 0, 130) confBox.Position = UDim2.new(0.5, -150, 0.5, -65)
+    confBox.BackgroundColor3 = C.bg confBox.BorderSizePixel = 0
+    confBox.ZIndex = 351 confBox.Parent = overlay
+    Instance.new("UICorner", confBox).CornerRadius = UDim.new(0, 10)
+    do local s = Instance.new("UIStroke", confBox); s.Color = C.accent; s.Thickness = 2; s.Transparency = 0.2 end
+    local confirmLbl = Instance.new("TextLabel")
+    confirmLbl.Size = UDim2.new(1, -24, 0, 56) confirmLbl.Position = UDim2.new(0, 12, 0, 12)
+    confirmLbl.BackgroundTransparency = 1 confirmLbl.Text = "JAMAL KAMU BENERAN SUKA SAMA AGUS?"
+    confirmLbl.TextColor3 = C.text confirmLbl.Font = FM confirmLbl.TextSize = 13
+    confirmLbl.TextWrapped = true confirmLbl.TextXAlignment = Enum.TextXAlignment.Left
+    confirmLbl.TextYAlignment = Enum.TextYAlignment.Top
+    confirmLbl.ZIndex = 352 confirmLbl.Parent = confBox
+    local yesBtn = Instance.new("TextButton")
+    yesBtn.Size = UDim2.new(0, 130, 0, 38) yesBtn.Position = UDim2.new(0, 12, 1, -50)
+    yesBtn.BackgroundColor3 = C.accent yesBtn.Text = "YA AKU SUKA AGUS" yesBtn.TextColor3 = Color3.new(0,0,0)
+    yesBtn.Font = FB yesBtn.TextSize = 10 yesBtn.TextWrapped = true yesBtn.ZIndex = 352 yesBtn.Parent = confBox
+    Instance.new("UICorner", yesBtn).CornerRadius = UDim.new(0, 6)
+    local noBtn = Instance.new("TextButton")
+    noBtn.Size = UDim2.new(0, 130, 0, 38) noBtn.Position = UDim2.new(1, -142, 1, -50)
+    noBtn.BackgroundColor3 = C.input noBtn.Text = "AKU TIDAK SUKA AGUS" noBtn.TextColor3 = C.textDim
+    noBtn.Font = FB noBtn.TextSize = 10 noBtn.TextWrapped = true noBtn.ZIndex = 352 noBtn.Parent = confBox
+    Instance.new("UICorner", noBtn).CornerRadius = UDim.new(0, 6)
+
+    local pendingIdx = nil
+    local rebuildList  -- fwd decl
+
+    yesBtn.MouseButton1Click:Connect(function()
+        if pendingIdx and templates[pendingIdx] then
+            local t = templates[pendingIdx]
+            local nRules, synced, rebuiltOk = applyState(fixRules(t.state or {}))
+            BH.marketState.settingName = t.name
+            BH.saveMarketState(BH.marketState)
+            -- v8.311: status detail biar keliatan template kebaca/enggak tanpa buka console
+            local msg = "'"..tostring(t.name).."': "..tostring(nRules or 0).." rule"
+            if (nRules or 0) == 0 then
+                msg = msg .. " (KOSONG! template ga ada rules)"
+            elseif not synced or not rebuiltOk then
+                msg = msg .. " ke-load tapi UI ga refresh - RELOAD sc"
+            else
+                msg = msg .. " dipakai. cek List Harga."
+            end
+            setStatus(msg, (nRules or 0) > 0 and C.accent or C.danger)
+            confirm.Visible = false; overlay.Visible = false
+            if rebuildList then rebuildList() end
+        end
+    end)
+    noBtn.MouseButton1Click:Connect(function() confirm.Visible = false; overlay.Visible = false; pendingIdx = nil end)
+
+    rebuildList = function()
+        for _, c in ipairs(listSF:GetChildren()) do
+            if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
+        end
+        if #templates == 0 then
+            local empty = Instance.new("TextLabel")
+            empty.Size = UDim2.new(1, -12, 0, 40) empty.BackgroundTransparency = 1
+            empty.Text = "belum ada template. simpan setting skrg atau import kode."
+            empty.TextColor3 = C.textDim empty.Font = FM empty.TextSize = 11
+            empty.TextWrapped = true empty.ZIndex = 202 empty.Parent = listSF
+            return
+        end
+        local activeName = BH.marketState.settingName
+        for i, t in ipairs(templates) do
+            local row = Instance.new("Frame")
+            row.Size = UDim2.new(1, -12, 0, 32) row.BackgroundColor3 = C.input
+            row.BorderSizePixel = 0 row.LayoutOrder = i row.ZIndex = 202 row.Parent = listSF
+            Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+            local isActive = (activeName and t.name == activeName)
+            if isActive then
+                local s = Instance.new("UIStroke", row); s.Color = C.accent; s.Thickness = 2
+                row.BackgroundColor3 = C.card
+            end
+            -- nama (klik = pilih)
+            local pick = Instance.new("TextButton")
+            pick.Size = UDim2.new(1, -40, 1, 0) pick.Position = UDim2.new(0, 0, 0, 0)
+            pick.BackgroundTransparency = 1 pick.Text = "  " .. tostring(t.name)
+            pick.TextColor3 = isActive and C.accent or C.text
+            pick.Font = isActive and FB or FM pick.TextSize = 12
+            pick.TextXAlignment = Enum.TextXAlignment.Left pick.ZIndex = 203 pick.Parent = row
+            pick.MouseButton1Click:Connect(function()
+                pendingIdx = i
+                confirmLbl.Text = "JAMAL KAMU BENERAN SUKA SAMA AGUS?"
+                overlay.Visible = true; confirm.Visible = true
+            end)
+            -- tombol x (hapus)
+            local xb = Instance.new("TextButton")
+            xb.Size = UDim2.new(0, 28, 0, 24) xb.Position = UDim2.new(1, -32, 0.5, -12)
+            xb.BackgroundColor3 = C.bg xb.Text = "x" xb.TextColor3 = C.danger
+            xb.Font = FB xb.TextSize = 13 xb.ZIndex = 203 xb.Parent = row
+            Instance.new("UICorner", xb).CornerRadius = UDim.new(0, 5)
+            xb.MouseButton1Click:Connect(function()
+                table.remove(templates, i)
+                saveTemplates()
+                rebuildList()
+                setStatus("template '" .. tostring(t.name) .. "' dihapus.", C.danger)
+            end)
+        end
+    end
+    rebuildList()
+
+    -- ===== baris bawah: nama + SIMPAN BARU + IMPORT + EXPORT =====
+    local nameBox = Instance.new("TextBox")
+    nameBox.Size = UDim2.new(0, 150, 0, 26) nameBox.Position = UDim2.new(0, 14, 0, 224)
+    nameBox.BackgroundColor3 = C.input nameBox.TextColor3 = C.text
+    nameBox.Font = FM nameBox.TextSize = 11 nameBox.PlaceholderText = "nama template baru"
+    nameBox.Text = "" nameBox.ClearTextOnFocus = false nameBox.BorderSizePixel = 0
+    nameBox.ZIndex = 201 nameBox.Parent = pop
+    Instance.new("UICorner", nameBox).CornerRadius = UDim.new(0, 6)
+
+    local saveNewBtn = Instance.new("TextButton")
+    saveNewBtn.Size = UDim2.new(0, 92, 0, 26) saveNewBtn.Position = UDim2.new(0, 170, 0, 224)
+    saveNewBtn.BackgroundColor3 = C.card saveNewBtn.Text = "SIMPAN BARU" saveNewBtn.TextColor3 = C.text
+    saveNewBtn.Font = FB saveNewBtn.TextSize = 10 saveNewBtn.ZIndex = 201 saveNewBtn.Parent = pop
+    Instance.new("UICorner", saveNewBtn).CornerRadius = UDim.new(0, 6)
+    do local s = Instance.new("UIStroke", saveNewBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+    saveNewBtn.MouseButton1Click:Connect(function()
+        local nm = nameBox.Text
+        if not nm or nm:gsub("%s", "") == "" then setStatus("isi nama template dulu", C.danger); return end
+        -- simpan snapshot marketState skrg
+        table.insert(templates, { name = nm, state = sanitize(BH.marketState) })
+        saveTemplates()
+        BH.marketState.settingName = nm
+        BH.saveMarketState(BH.marketState)
+        nameBox.Text = ""
+        rebuildList()
+        setStatus("template '" .. nm .. "' disimpan dari setting sekarang.", C.accent)
+    end)
+
+    local expBtn = Instance.new("TextButton")
+    expBtn.Size = UDim2.new(0, 88, 0, 26) expBtn.Position = UDim2.new(0, 268, 0, 224)
+    expBtn.BackgroundColor3 = C.card expBtn.Text = "EXPORT AKTIF" expBtn.TextColor3 = C.text
+    expBtn.Font = FB expBtn.TextSize = 9 expBtn.ZIndex = 201 expBtn.Parent = pop
+    Instance.new("UICorner", expBtn).CornerRadius = UDim.new(0, 6)
+    do local s = Instance.new("UIStroke", expBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+
+    -- ===== KOTAK EXPORT (khusus nampilin kode hasil export, buat di-copy) =====
+    local expLbl = Instance.new("TextLabel")
+    expLbl.Size = UDim2.new(1, -28, 0, 14) expLbl.Position = UDim2.new(0, 14, 0, 258)
+    expLbl.BackgroundTransparency = 1 expLbl.Text = "KODE EXPORT (copy dari sini):"
+    expLbl.TextColor3 = C.textDim expLbl.Font = FM expLbl.TextSize = 10
+    expLbl.TextXAlignment = Enum.TextXAlignment.Left expLbl.ZIndex = 201 expLbl.Parent = pop
+
+    local codeBox = Instance.new("TextBox")
+    codeBox.Size = UDim2.new(1, -28, 0, 44) codeBox.Position = UDim2.new(0, 14, 0, 274)
+    codeBox.BackgroundColor3 = C.input codeBox.TextColor3 = C.text
+    codeBox.Font = Enum.Font.Code codeBox.TextSize = 10
+    codeBox.TextXAlignment = Enum.TextXAlignment.Left codeBox.TextYAlignment = Enum.TextYAlignment.Top
+    codeBox.TextWrapped = true codeBox.MultiLine = true codeBox.ClearTextOnFocus = false
+    codeBox.PlaceholderText = "pencet EXPORT AKTIF -> kode muncul di sini (auto-copy)"
+    codeBox.Text = "" codeBox.BorderSizePixel = 0 codeBox.ZIndex = 201 codeBox.Parent = pop
+    Instance.new("UICorner", codeBox).CornerRadius = UDim.new(0, 6)
+
+    -- ===== KOTAK IMPORT (khusus paste kode dari akun lain) =====
+    local impLbl = Instance.new("TextLabel")
+    impLbl.Size = UDim2.new(1, -28, 0, 14) impLbl.Position = UDim2.new(0, 14, 0, 324)
+    impLbl.BackgroundTransparency = 1 impLbl.Text = "PASTE KODE IMPORT di sini:"
+    impLbl.TextColor3 = C.textDim impLbl.Font = FM impLbl.TextSize = 10
+    impLbl.TextXAlignment = Enum.TextXAlignment.Left impLbl.ZIndex = 201 impLbl.Parent = pop
+
+    local impBox = Instance.new("TextBox")
+    impBox.Size = UDim2.new(1, -134, 0, 44) impBox.Position = UDim2.new(0, 14, 0, 340)
+    impBox.BackgroundColor3 = C.input impBox.TextColor3 = C.text
+    impBox.Font = Enum.Font.Code impBox.TextSize = 10
+    impBox.TextXAlignment = Enum.TextXAlignment.Left impBox.TextYAlignment = Enum.TextYAlignment.Top
+    impBox.TextWrapped = true impBox.MultiLine = true impBox.ClearTextOnFocus = false
+    impBox.PlaceholderText = "paste kode dari akun lain..."
+    impBox.Text = "" impBox.BorderSizePixel = 0 impBox.ZIndex = 201 impBox.Parent = pop
+    Instance.new("UICorner", impBox).CornerRadius = UDim.new(0, 6)
+
+    local impCodeBtn = Instance.new("TextButton")
+    impCodeBtn.Size = UDim2.new(0, 110, 0, 44) impCodeBtn.Position = UDim2.new(1, -124, 0, 340)
+    impCodeBtn.BackgroundColor3 = C.card impCodeBtn.Text = "IMPORT KODE" impCodeBtn.TextColor3 = C.accent
+    impCodeBtn.Font = FB impCodeBtn.TextSize = 10 impCodeBtn.ZIndex = 202 impCodeBtn.Parent = pop
+    Instance.new("UICorner", impCodeBtn).CornerRadius = UDim.new(0, 6)
+    do local s = Instance.new("UIStroke", impCodeBtn); s.Color = C.accent; s.Thickness = 1; s.Transparency = 0.5 end
+
+    -- EXPORT AKTIF: v8.312 - export RINGKAS. cuma listingRules (yg dibutuh pindah
+    -- antar-akun), format kompak array (bukan JSON verbose) -> kode jauh lebih PENDEK,
+    -- ga gampang kepotong pas transfer antar-HP.
+    expBtn.MouseButton1Click:Connect(function()
+        local nm = BH.marketState.settingName or "tanpa-nama"
+        local rules = BH.marketState.listingRules or {}
+        -- format kompak: tiap rule jadi 1 baris "type|min|max|price|maxListings|eggSource"
+        -- pisah antar-rule pakai ";". jauh lebih pendek dari JSON.
+        local parts = {}
+        for _, r in ipairs(rules) do
+            local mx = r.max
+            if mx == math.huge then mx = "" end
+            local ml = r.maxListings
+            if ml == math.huge then ml = "" end
+            parts[#parts+1] = table.concat({
+                tostring(r.type or ""), tostring(r.min or ""), tostring(mx or ""),
+                tostring(r.price or ""), tostring(ml or ""), tostring(r.eggSource or "")
+            }, "|")
+        end
+        local raw = "R1:" .. nm .. "~" .. table.concat(parts, ";")
+        local code = "ZENX3:" .. b64enc(raw)
+        codeBox.Text = code
+        local copied = false
+        if setclipboard then copied = pcall(function() setclipboard(code) end)
+        elseif toclipboard then copied = pcall(function() toclipboard(code) end) end
+        setStatus("export '" .. nm .. "' (" .. #rules .. " rule, " .. #code .. " char)" .. (copied and " ke-copy!" or " (copy manual dari kotak)"), C.accent)
+    end)
+
+    -- IMPORT KODE: paste (dari impBox) -> decode -> simpan sbg template baru di list
+    impCodeBtn.MouseButton1Click:Connect(function()
+        local code = impBox.Text
+        if not code or code:gsub("%s","") == "" then setStatus("paste kode dulu di kotak import", C.danger); return end
+        code = code:gsub("%s", "")
+        local ver = code:sub(1, 6)
+        -- v8.312: format ZENX3 (ringkas). decode -> parse "R1:nama~type|min|max|price|ml|egg;..."
+        if ver == "ZENX3:" then
+            local raw = nil
+            local okd = pcall(function() raw = b64dec(code:sub(7)) end)
+            if not okd or not raw or not raw:find("^R1:") then setStatus("kode ZENX3 invalid", C.danger); return end
+            raw = raw:sub(4)   -- buang "R1:"
+            local nm, body = raw:match("^(.-)~(.*)$")
+            if not nm then nm = "import"; body = raw end
+            local rules = {}
+            for chunk in tostring(body):gmatch("[^;]+") do
+                local f = {}
+                for v in (chunk .. "|"):gmatch("(.-)|") do f[#f+1] = v end
+                if #f >= 4 then
+                    local mx = tonumber(f[3]); if not mx or f[3] == "" then mx = math.huge end
+                    local ml = tonumber(f[5]); if not ml or f[5] == "" then ml = math.huge end
+                    rules[#rules+1] = {
+                        type = (f[1] ~= "" and f[1]) or nil,
+                        min = tonumber(f[2]) or 0,
+                        max = mx,
+                        price = tonumber(f[4]) or 0,
+                        maxListings = ml,
+                        eggSource = (f[6] and f[6] ~= "" and f[6]) or nil,
+                    }
+                end
+            end
+            if #rules == 0 then setStatus("kode ZENX3: 0 rule (kosong?)", C.danger); return end
+            table.insert(templates, { name = nm, state = sanitize({ listingRules = rules }) })
+            saveTemplates()
+            impBox.Text = ""
+            rebuildList()
+            setStatus("import '" .. tostring(nm) .. "' (" .. #rules .. " rule). pilih di list buat pakai.", C.accent)
+            return
+        end
+        -- format lama ZENX2/ZENX1 (JSON)
+        if ver == "ZENX2:" or ver == "ZENX1:" then code = code:sub(7) end
+        local ok, json = pcall(function() return b64dec(code) end)
+        if not ok or not json or json == "" then setStatus("kode invalid (decode gagal)", C.danger); return end
+        local ok2, data = pcall(function() return HttpService:JSONDecode(json) end)
+        if not ok2 or type(data) ~= "table" then setStatus("kode invalid", C.danger); return end
+        local st = nil
+        if data.marketState and type(data.marketState) == "table" then st = data.marketState
+        elseif data.listingRules then st = { listingRules = data.listingRules, settings = data.settings or {} } end
+        if not st then setStatus("kode invalid (ga ada data)", C.danger); return end
+        local nm = data.name or ("import-" .. (#templates + 1))
+        table.insert(templates, { name = nm, state = sanitize(st) })
+        saveTemplates()
+        impBox.Text = ""
+        rebuildList()
+        setStatus("kode di-import jadi template '" .. tostring(nm) .. "'. pilih di list buat pakai.", C.accent)
+    end)
+
+    tplBtn.MouseButton1Click:Connect(function()
+        pop.Visible = not pop.Visible
+        if pop.Visible then confirm.Visible = false; overlay.Visible = false; rebuildList() end
+    end)
+end
+
+
 -- ===== SIDEBAR =====
 local sidebar = Instance.new("Frame")
 sidebar.Size = UDim2.new(0, 130, 1, -60) sidebar.Position = UDim2.new(0, 10, 0, 52)
@@ -1486,6 +2063,8 @@ end
 -- Dummy stopBtn variable so handler bindings below don't crash (we wire StartBtn to do both)
 local stopBtn = startBtn
 
+
+
 -- ============================================================
 -- LIST HARGA (Mirror of rules with editable price) PANEL
 -- ============================================================
@@ -1701,6 +2280,7 @@ end)
 -- ============================================================
 local selectedType = nil  -- nil = all pet types (used by modal picker + add rule)
 local listingRules = {}
+BH.listingRules = listingRules  -- v8.308: expose biar applyState (title bar, didefinisikan lebih awal) bisa sync
 local rebuildRulesUI  -- forward declare so buildRuleRow can call it
 
 local function buildRuleRow(parent, r, idx, big)
@@ -1736,7 +2316,10 @@ local function buildRuleRow(parent, r, idx, big)
         box.Font = FB box.TextSize = fSize
         box.TextXAlignment = Enum.TextXAlignment.Left
         box.ClearTextOnFocus = false box.Parent = wrap
-        box:GetPropertyChangedSignal("Text"):Connect(function() onChange(box.Text) end)
+        -- v8.282: apply pas FocusLost (Enter/klik luar) — BUKAN tiap karakter.
+        -- dulu pakai GetPropertyChangedSignal("Text") -> tiap ketik/hapus ke-apply,
+        -- jadi pas user hapus angka mau ganti, nilai setengah keburu ke-set / batal.
+        box.FocusLost:Connect(function() onChange(box.Text) end)
         return wrap, box
     end
 
@@ -1772,6 +2355,10 @@ local function buildRuleRow(parent, r, idx, big)
     local function saveAfterEdit()
         BH.marketState.listingRules = listingRules
         BH.saveMarketState(BH.marketState)
+        -- v8.284: pas ubah rule (harga/kg/dll), PAUSE listing 5s. tiap ubah lagi
+        -- timer reset (tick()+5), jadi selama user masih ngedit terus nunggu.
+        BH.listPauseUntil = tick() + 5
+        L("[Listing] rule diubah → pause listing 5s")
     end
 
     -- Editable MIN KG (v8.87: shrunk 64→42)
@@ -1865,6 +2452,7 @@ function rebuildRulesUI()
         priceScroll.CanvasSize = UDim2.new(0, 0, 0, priceLayout.AbsoluteContentSize.Y + 16)
     end
 end
+BH.rebuildRulesUI = rebuildRulesUI  -- v8.308: expose biar applyState (title bar) bisa refresh UI
 
 -- v8.130: refresh count badges WITHOUT destroy/rebuild (anti keyboard close)
 BH.refreshPriceCounts = function()
@@ -2179,7 +2767,12 @@ BH.autoSwitchFrontToggle = addToggleRow(rejBody, "Auto-Switch ke booth DEPAN kal
 local rejoinBtn = addButtonRow(rejBody, "🔀 HOP NOW", C.accent)
 
 -- v8.127: bind rejoin settings to persist
-BH.bindInput(intervalBox, "rejoinIntervalMin")
+-- v8.319: interval PAKSA 18m - kotak read-only, selalu 18 (abaikan input manual).
+pcall(function()
+    intervalBox.Text = "18"
+    intervalBox.TextEditable = false
+    BH.setSetting("rejoinIntervalMin", "18")
+end)
 BH.bindInput(listingBox, "rejoinAfterListings")
 BH.bindToggle(autoRejoinToggle, "autoRejoinEnabled")
 BH.bindToggle(BH.autoRejoinLowPopToggle, "autoRejoinLowPop")
@@ -4112,7 +4705,7 @@ do
             Instance.new("UICorner", row).CornerRadius = UDim.new(0, 5)
 
             local info = Instance.new("TextLabel")
-            info.Size = UDim2.new(1, -60, 1, 0) info.Position = UDim2.new(0, 8, 0, 0)
+            info.Size = UDim2.new(1, -110, 1, 0) info.Position = UDim2.new(0, 8, 0, 0)
             info.BackgroundTransparency = 1
             local mutStr = (r.mutation and r.mutation ~= "") and (" ["..r.mutation.."]") or ""
             local kgStr = ""
@@ -4126,6 +4719,43 @@ do
             info.TextXAlignment = Enum.TextXAlignment.Left
             info.TextTruncate = Enum.TextTruncate.AtEnd
             info.Parent = row
+
+            -- v8.302: tombol egg PER-RULE (override global). siklus: ikut > prem > biasa > semua > ikut
+            local eggRuleBtn = Instance.new("TextButton")
+            eggRuleBtn.Size = UDim2.new(0, 46, 0, 22)
+            eggRuleBtn.Position = UDim2.new(1, -104, 0.5, -11)
+            eggRuleBtn.BackgroundColor3 = C.card
+            eggRuleBtn.TextColor3 = C.text eggRuleBtn.Font = FM eggRuleBtn.TextSize = 9
+            eggRuleBtn.BorderSizePixel = 0 eggRuleBtn.Parent = row
+            Instance.new("UICorner", eggRuleBtn).CornerRadius = UDim.new(0, 4)
+            local function eggRuleLabel()
+                local rs = BH.autoSnipe.rules[idx] and BH.autoSnipe.rules[idx].eggSource
+                if rs == "prem" then return "prem" end
+                if rs == "biasa" then return "biasa" end
+                if rs == "all" then return "semua" end
+                return "ikut"
+            end
+            local function eggRuleColor()
+                local rs = BH.autoSnipe.rules[idx] and BH.autoSnipe.rules[idx].eggSource
+                eggRuleBtn.TextColor3 = rs and C.accent or C.textDim
+            end
+            eggRuleBtn.Text = eggRuleLabel()
+            eggRuleColor()
+            eggRuleBtn.MouseButton1Click:Connect(function()
+                if not BH.autoSnipe.rules[idx] then return end
+                local rs = BH.autoSnipe.rules[idx].eggSource
+                if rs == nil then rs = "prem"
+                elseif rs == "prem" then rs = "biasa"
+                elseif rs == "biasa" then rs = "all"
+                else rs = nil end
+                BH.autoSnipe.rules[idx].eggSource = rs
+                eggRuleBtn.Text = eggRuleLabel()
+                eggRuleColor()
+                if BH.marketState then
+                    BH.marketState.autoSnipeRules = BH.autoSnipe.rules
+                    pcall(function() BH.saveMarketState(BH.marketState) end)
+                end
+            end)
 
             -- v8.127: EDIT button
             local editBtn = Instance.new("TextButton")
@@ -6192,6 +6822,12 @@ BH.onStartClick = function()
 
         -- Helper: list pets matching rules (single pass through backpack)
         local function listMatchingPets()
+            -- v8.283: kalau rule baru diubah, pause listing 10s (skip cycle).
+            if BH.listPauseUntil and tick() < BH.listPauseUntil then
+                local sisa = math.ceil(BH.listPauseUntil - tick())
+                L("[Listing] pause aktif ("..sisa.."s lagi) — skip cycle")
+                return 0
+            end
             local bp = player:FindFirstChild("Backpack")
             if not bp then return 0 end
 
@@ -6905,6 +7541,21 @@ task.spawn(function()
     L("⚠ [Auto-Start] timeout (rules tetep kosong selama 60s)")
 end)
 
+-- v8.320: WATCHDOG auto-start - kalau autoStart ON tapi isRunning mati (tiba2 stop),
+-- START lagi otomatis. cek tiap 20s. fix: auto-start one-shot ga restart pas mati di tengah.
+task.spawn(function()
+    task.wait(30)   -- kasih waktu init + auto-start pertama
+    while gui and gui.Parent do
+        pcall(function()
+            if BH.autoStart and not isRunning and #listingRules > 0 and BH.onStartClick then
+                L("🚀 [Auto-Start WATCHDOG] mati padahal ON -> START lagi")
+                pcall(BH.onStartClick)
+            end
+        end)
+        task.wait(20)
+    end
+end)
+
 -- ===== REJOIN (HOP NOW) =====
 -- v8.198: explicit hop with comprehensive fallback chain
 BH.lastHopClickTime = 0
@@ -6952,6 +7603,8 @@ task.spawn(function()
             -- skip — garden anchor, gak ikut hop walaupun toggle ON
         elseif autoRejoinToggle.get() then
             local intervalMin = tonumber(intervalBox.Text) or 0
+            -- v8.318: PAKSA max 18 menit (cegah kick idle 20m) walau user set lebih tinggi
+            if intervalMin <= 0 or intervalMin > 18 then intervalMin = 18 end
             if intervalMin > 0 then
                 local elapsedMin = (workspace.DistributedGameTime or 0) / 60
                 if elapsedMin >= intervalMin then
@@ -9263,8 +9916,8 @@ do
             end
             -- maxPrice: wajib
             if not p.price or p.price > rule.maxPrice then return false end
-            -- v8.258: filter asal egg (prem vs biasa). BH.autoSnipe.eggSource: all/prem/biasa
-            local es = BH.autoSnipe.eggSource or "all"
+            -- v8.302: filter asal egg PER-RULE. rule.eggSource override; nil = ikut global.
+            local es = rule.eggSource or BH.autoSnipe.eggSource or "all"
             if es == "prem" and not p.isPrem then return false end
             if es == "biasa" and p.isPrem then return false end
             return true
@@ -9842,16 +10495,24 @@ L("  - Inventory capacity")
             if type(v) == "table" then
                 local sub = {}
                 for k2, v2 in pairs(v) do
-                    table.insert(sub, tostring(k2).."="..tostring(v2):sub(1, 25))
+                    if type(v2) == "table" then
+                        local sub2 = {}
+                        for k3, v3 in pairs(v2) do
+                            table.insert(sub2, tostring(k3).."="..tostring(v3):sub(1,20))
+                        end
+                        table.insert(sub, tostring(k2).."={"..table.concat(sub2,",").."}")
+                    else
+                        table.insert(sub, tostring(k2).."="..tostring(v2):sub(1, 30))
+                    end
                 end
                 table.insert(parts, tostring(k).."={"..table.concat(sub, ",").."}")
             else
-                table.insert(parts, tostring(k).."="..tostring(v):sub(1, 30))
+                table.insert(parts, tostring(k).."("..type(v)..")="..tostring(v):sub(1, 40))
             end
         end
         L("")
-        L("════════════ HIST DUMP ════════════")
-        L("[Hist] "..(label or "entry").." struct: "..table.concat(parts, " | "):sub(1, 500))
+        L("════════════ HIST DUMP ("..(label or "entry")..") ════════════")
+        L("[Hist] "..table.concat(parts, " | "):sub(1, 900))
         L("════════════════════════════════════")
         L("")
     end
@@ -9887,7 +10548,7 @@ L("  - Inventory capacity")
             kg = e.BaseWeight * 1.1
         end
         -- v8.182: kalo masih "?", dump struct ini buat diagnose (max 3 dump)
-        if (not petType or petType == "") and unknownDumpCount < 3 then
+        if (not petType or petType == "") and unknownDumpCount < 5 then
             unknownDumpCount = unknownDumpCount + 1
             dumpEntry(e, "UNKNOWN#"..unknownDumpCount)
         end
@@ -11669,7 +12330,10 @@ BH.buildGardenPanel = function()
 end
 
 -- v8.273: ===== SHOP — AUTO BUY SEED & GEAR =====
-do
+-- v8.280: dibungkus task.spawn(function) (bukan 'do') — 'do...end' TIDAK bikin
+-- scope fungsi, jadi local-nya tetap kehitung di chunk utama -> nembus limit 200.
+-- pakai fungsi = local pindah ke scope fungsi -> chunk utama lega.
+task.spawn(function()
     local shopPanel = panels["SHOP"]  -- v8.274: ambil dari panels (bukan local di main chunk)
     local RS = game:GetService("ReplicatedStorage")
     -- resolve remote buy
@@ -11839,7 +12503,7 @@ do
             end
         end
     end)
-end
+end)
 
 -- v8.49: build garden panel after all helpers defined
 pcall(BH.buildGardenPanel)
@@ -11897,5 +12561,112 @@ task.spawn(function()
     while true do
         task.wait(5)
         pcall(function() re:FireServer(ticketName) end)
+    end
+end)
+
+-- ============================================================
+-- v8.328: BRIDGE PANEL (STAR PANEL) — lapor Tokens + total pet cocok rule
+-- Nebeng sistem yang sama kayak star_farm: Worker + KUNCI + tim.
+-- Akun market masuk panel sebagai akun GAG 1 (PlaceId market).
+-- ============================================================
+task.spawn(function()
+    local PANEL_URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local PANEL_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+
+    local Players = game:GetService("Players")
+    local HS      = game:GetService("HttpService")
+    local plr     = Players.LocalPlayer
+    if not plr then return end
+
+    -- request() executor (pola sama kayak baris 7762)
+    local req = (syn and syn.request) or (fluxus and fluxus.request)
+             or (krnl and krnl.request) or http_request or request or httprequest
+    if type(http) == "table" and http.request then req = http.request end
+    if not req then
+        warn("[MarketBridge] executor gak punya request() -- panel mati")
+        return
+    end
+
+    -- baca Tokens dari PlayerGui.BuyTokens.Frame.Label ("Tokens: 401")
+    local function bacaTokens()
+        local n = 0
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            local bt = pg and pg:FindFirstChild("BuyTokens")
+            local fr = bt and bt:FindFirstChild("Frame")
+            local lb = fr and fr:FindFirstChild("Label")
+            if lb and lb:IsA("TextLabel") then
+                local m = tostring(lb.Text):match("([%d,%.]+)")
+                if m then n = tonumber((m:gsub(",", ""))) or 0 end
+            end
+        end)
+        return n
+    end
+
+    -- total pet di inventory yang cocok SEMUA rule (gak dirinci)
+    local function totalPetCocokRule()
+        local total, nRule = 0, 0
+        pcall(function()
+            local BH = getgenv().ZenxMarketBH or _G.BH
+            -- BH lokal: coba ambil dari getgenv kalau di-expose, else skip
+            if not (BH and BH.countMyPetsForRule and BH.marketState) then return end
+            local rules = BH.marketState.listingRules
+            if type(rules) ~= "table" then return end
+            for _, r in ipairs(rules) do
+                nRule = nRule + 1
+                local c = BH.countMyPetsForRule(r) or 0
+                total = total + c
+            end
+        end)
+        return total, nRule
+    end
+
+    local function kirim(jalur, isi)
+        local ok, body = pcall(function() return HS:JSONEncode(isi) end)
+        if not ok then return end
+        pcall(function()
+            req({
+                Url = PANEL_URL .. jalur, Method = "POST",
+                Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                Body = body,
+            })
+        end)
+    end
+
+    local lamaTok, lamaPet, lamaKirim = -1, -1, 0
+    task.wait(8)   -- tunggu UI + BH kebangun
+    print("[MarketBridge] jalan | " .. plr.Name)
+
+    -- v8.329: kirim daftar SEMUA nama pet dari game (PetRegistry, ~421) ke Worker
+    -- SEKALI. Panel pakai buat picker jenis pet di editor rule. Jarang berubah,
+    -- jadi cukup 1x per sesi (kalau Worker udah punya, dia timpa aja -- murah).
+    task.spawn(function()
+        task.wait(3)
+        local BH = getgenv().ZenxMarketBH or _G.BH
+        if not (BH and BH.discoverPetNames) then return end
+        local ok, list = pcall(BH.discoverPetNames)
+        if ok and type(list) == "table" and #list > 0 then
+            kirim("/petlist", { pets = list })
+            print("[MarketBridge] kirim " .. #list .. " nama pet ke panel")
+        end
+    end)
+
+    while true do
+        local tok = bacaTokens()
+        local pet, nRule = totalPetCocokRule()
+        local skrg = os.time()
+        local berubah = (tok ~= lamaTok) or (pet ~= lamaPet)
+        local wajib = (skrg - lamaKirim) >= 300
+        if berubah or wajib then
+            kirim("/market", {
+                akun = plr.Name,
+                place = tostring(game.PlaceId or ""),
+                tokens = tok,
+                petRule = pet,
+                nRule = nRule,
+            })
+            lamaTok, lamaPet, lamaKirim = tok, pet, skrg
+        end
+        task.wait(20)
     end
 end)
