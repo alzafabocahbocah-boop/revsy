@@ -1,8 +1,9 @@
 -- ============================================================
--- STAR FARM  v13.1  (standalone, basis ZENX v44.79) - GAG 2
--- v13.1: Tim = tombol + picker. Daftarnya ditarik dari Worker (/tims) -- cuma tim
---        yang BENERAN ada. Nol ketikan, mustahil typo. "+ tim baru" ngambil
---        nomor kosong terkecil sendiri. Muat berapa pun tim.
+-- STAR FARM  v13.2  (standalone, basis ZENX v44.79) - GAG 2
+-- v13.2: Tim & Game DIBUANG dari GUI. Script cuma lapor nama akun; penugasan
+--        tim/game dilakuin dari panel web. Alasannya: bridge di dalam game gak
+--        tau dia di RedFinger mana -- nyuruh dia ngaku itu rapuh & gagalnya diem.
+--        Sisa di GUI cuma Panel URL + Kunci (dua-duanya udah bawaan).
 -- v12.9: Panel URL + Kunci jadi BAWAAN. Gak usah diketik di 14 akun (resep typo).
 --        Masih bisa ditimpa lewat GUI kalau perlu.
 -- v12.8: PANEL WEB dilebur ke sini (dulu file bridge terpisah). Lapor kebun ke
@@ -901,8 +902,7 @@ local state = {
     -- Glow/prio/moon -- panel jalan sendiri, gak nambah beban ke Pantry.
     panelUrl        = "https://dry-glitter-63e4.petagee5.workers.dev",  -- v12.9: bawaan, gak usah diketik per akun
     panelKunci      = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb",        -- v12.9: bawaan
-    panelTim        = "tim-1",   -- v12.8: RedFinger mana. samain sama zenx_worker.
-    panelGame       = "GAG 2",   -- v12.8: "GAG 1" / "GAG 2"
+    -- v13.2: panelTim & panelGame dibuang -- ditugasin dari panel web.
     gfAlert         = true,      -- v18.7: notif Discord pas sheckles < batas (sekali, anti-spam)
     gfAlertHook     = "https://discordapp.com/api/webhooks/1517745541595791370/WLFb5xOdnkcQxUaJIsUGIZROWKjoY-daksFnqnia-p307Ez-50dttV2cKofcplc9AD3v",
     toolHabisHook   = "",        -- v7.9: webhook notif status (kosong = pakai gfAlertHook)
@@ -997,8 +997,7 @@ local function saveState()
         out.gfRelayUrl = state.gfRelayUrl or ""   -- v18.5
         out.panelUrl = state.panelUrl or ""       -- v12.8: panel web
         out.panelKunci = state.panelKunci or ""
-        out.panelTim = state.panelTim or "tim-1"
-        out.panelGame = state.panelGame or "GAG 2"
+
         out.gfAlertHook = state.gfAlertHook or "" -- v18.7
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
         out.buyGoodMinRarity = state.buyGoodMinRarity or "Mythic"  -- v26.3
@@ -1083,13 +1082,6 @@ local function loadState()
                 -- ngalahin bawaan -- kalau nggak, akun lama panelnya mati terus.
                 if type(d.panelUrl) == "string" and d.panelUrl ~= "" then state.panelUrl = d.panelUrl end
                 if type(d.panelKunci) == "string" and d.panelKunci ~= "" then state.panelKunci = d.panelKunci end
-                -- v13.0: terima "tim-<angka>" berapa pun. save lama yang bentuknya
-                -- aneh ("tim1"/"Tim-1") diambil angkanya aja, prefiks dibangun ulang.
-                if type(d.panelTim) == "string" then
-                    local n = tonumber(d.panelTim:match("%d+") or "")
-                    if n and n >= 1 then state.panelTim = "tim-" .. n end
-                end
-                if type(d.panelGame) == "string" and d.panelGame ~= "" then state.panelGame = d.panelGame end
                 if type(d.gfAlertHook) == "string" and d.gfAlertHook ~= "" then state.gfAlertHook = d.gfAlertHook end
                 if type(d.gpTarget) == "string" and d.gpTarget ~= "" then state.gpTarget = d.gpTarget end
                 if type(d.buyGoodMinRarity) == "string" and d.buyGoodMinRarity ~= "" then state.buyGoodMinRarity = d.buyGoodMinRarity end
@@ -7530,9 +7522,7 @@ end
 local function panelPetik()
     local d = panelBacaKebun(); if not d then return nil end
     return {
-        akun     = player.Name,
-        tim      = state.panelTim or "tim-1",
-        game     = state.panelGame or "GAG 2",
+        akun     = player.Name,   -- v13.2: tim & game gak dikirim. panel yang nugasin.
         farm2On  = state.farm2On and true or false,
         kg       = state.c2WeightF or -50,
         glow     = d.glow,
@@ -7608,7 +7598,7 @@ function Farm.startPanelLoop()
     local function hidup() return Farm._panelGen == gen and panelAktif() end
 
     task.spawn(function()
-        print(("[Panel] jalan | %s | %s | %s"):format(player.Name, state.panelTim, state.panelGame))
+        print(("[Panel] jalan | %s | tim/game ditugasin dari web"):format(player.Name))
         while hidup() do
             pcall(function()
                 local baru = panelPetik()
@@ -12375,126 +12365,11 @@ do
     -- Tim & Game sebaris. Tim HARUS sama persis kayak zenx_worker di RedFinger ini,
     -- kalau beda akunnya gak nempel ke tim mana pun dan panel keliatan kosong
     -- TANPA error sama sekali.
-    -- v13.1: Tim = TOMBOL + PICKER. Nol ketikan.
-    -- Daftarnya bukan karangan: ditarik dari Worker (/tims), isinya tim yang
-    -- BENERAN udah lapor. Jadi mustahil milih tim yang gak ada, dan mustahil
-    -- typo -- dua-duanya jenis gagal yang DIEM (panel kosong, tanpa error).
-    -- "+ tim baru" ngambil nomor kosong terkecil sendiri.
-    lbl(body, "Tim", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,784)
-    local ptBtn = mk("TextButton", { Size = UDim2.new(0.48, 0, 0, 26), Position = UDim2.new(0, 0, 0, 802),
-        BackgroundColor3 = C.input, Text = state.panelTim or "tim-1", TextColor3 = C.text,
-        Font = FONT_B, TextSize = 11, BorderSizePixel = 0, Parent = body })
-    corner(ptBtn, 6); stroke(ptBtn, C.border, 1)
-
-    local function ambilDaftarTim()
-        if (state.panelUrl or "") == "" or (state.panelKunci or "") == "" then return nil end
-        local r = Farm.relayReq({
-            Url = state.panelUrl .. "/tims", Method = "GET",
-            Headers = { ["X-Kunci"] = state.panelKunci },
-        })
-        local body2 = r and (r.Body or r.body)
-        if not body2 or body2 == "" then return nil end
-        local ok2, d = pcall(function() return HS:JSONDecode(body2) end)
-        if not ok2 or type(d) ~= "table" or type(d.tims) ~= "table" then return nil end
-        return d.tims
-    end
-
-    local function bukaPickerTim()
-        local ov = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
-            BackgroundTransparency = 0.4, ZIndex = 50, BorderSizePixel = 0, Parent = main })
-        local bgc = mk("TextButton", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "",
-            AutoButtonColor = false, ZIndex = 50, Parent = ov })
-        bgc.MouseButton1Click:Connect(function() ov:Destroy() end)
-
-        local boxF = mk("Frame", { Size = UDim2.new(0, 260, 0, 340), Position = UDim2.new(0.5,0,0.5,0),
-            AnchorPoint = Vector2.new(0.5,0.5), BackgroundColor3 = C.bg, BorderSizePixel = 0,
-            ZIndex = 51, Parent = ov })
-        corner(boxF, 8)
-
-        local tl = lbl(boxF, "Pilih Tim", 13, C.accent, Enum.TextXAlignment.Left)
-        tl.Position = UDim2.new(0,10,0,6); tl.Size = UDim2.new(1,-20,0,24); tl.ZIndex = 52; tl.Font = FONT_B
-
-        local info = lbl(boxF, "narik daftar...", 10, C.textDim, Enum.TextXAlignment.Left)
-        info.Position = UDim2.new(0,10,0,30); info.Size = UDim2.new(1,-20,0,16); info.ZIndex = 52
-
-        local sc = mk("ScrollingFrame", { Size = UDim2.new(1,-20,1,-92), Position = UDim2.new(0,10,0,50),
-            BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
-            CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            ZIndex = 52, Parent = boxF })
-        local lay = mk("UIListLayout", { Padding = UDim.new(0,4), Parent = sc })
-        lay.SortOrder = Enum.SortOrder.LayoutOrder
-
-        local baruBtn = mk("TextButton", { Size = UDim2.new(1,-20,0,30), Position = UDim2.new(0,10,1,-38),
-            BackgroundColor3 = C.card, Text = "+ tim baru", TextColor3 = C.accent, Font = FONT_B,
-            TextSize = 12, BorderSizePixel = 0, ZIndex = 52, Parent = boxF })
-        corner(baruBtn, 6); stroke(baruBtn, C.border, 1)
-
-        local function pilih(nama)
-            state.panelTim = nama; ptBtn.Text = nama; saveState()
-            print("[Panel] tim -> " .. nama)
-            ov:Destroy()
-            pcall(function() if state.farm2On then Farm.startPanelLoop() end end)
-        end
-
-        task.spawn(function()
-            local tims = ambilDaftarTim()
-            if not sc.Parent then return end
-
-            if not tims then
-                info.Text = "gagal narik daftar (panel url/kunci?)"
-                info.TextColor3 = C.warn or C.textDim
-            elseif #tims == 0 then
-                info.Text = "belum ada tim. pencet '+ tim baru'."
-            else
-                info.Text = #tims .. " tim kedaftar"
-            end
-
-            for i, t in ipairs(tims or {}) do
-                local b = mk("TextButton", { Size = UDim2.new(1,-4,0,30), BackgroundColor3 = C.card,
-                    Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 53,
-                    LayoutOrder = i, Parent = sc })
-                corner(b, 5)
-                if t.nama == state.panelTim then stroke(b, C.accent, 1) else stroke(b, C.border, 1) end
-
-                local nm = lbl(b, t.nama, 12, C.text, Enum.TextXAlignment.Left)
-                nm.Position = UDim2.new(0,10,0,0); nm.Size = UDim2.new(0.55,0,1,0); nm.ZIndex = 54
-                nm.Font = FONT_B
-
-                -- hidup/mati itu INFO, bukan larangan. Tim yang workernya lagi mati
-                -- tetep boleh dipilih -- mungkin emang lagi disetel.
-                local st = lbl(b, t.hidup and "hidup" or "worker mati", 10,
-                    t.hidup and (C.green or C.accent) or C.textDim, Enum.TextXAlignment.Right)
-                st.Position = UDim2.new(0.55,0,0,0); st.Size = UDim2.new(0.45,-10,1,0); st.ZIndex = 54
-
-                b.MouseButton1Click:Connect(function() pilih(t.nama) end)
-            end
-
-            baruBtn.MouseButton1Click:Connect(function()
-                -- nomor kosong TERKECIL. bukan max+1 -- biar lubang bekas tim
-                -- yang dibuang kepake lagi, gak ninggalin nomor bolong.
-                local kepake = {}
-                for _, t in ipairs(tims or {}) do
-                    local n = tonumber(t.nama:match("%d+") or "")
-                    if n then kepake[n] = true end
-                end
-                local n = 1
-                while kepake[n] do n = n + 1 end
-                pilih("tim-" .. n)
-            end)
-        end)
-    end
-
-    ptBtn.MouseButton1Click:Connect(bukaPickerTim)
-
-    local pgBtn = mk("TextButton", { Size = UDim2.new(0.48, 0, 0, 26), Position = UDim2.new(0.52, 0, 0, 802),
-        BackgroundColor3 = C.input, Text = state.panelGame or "GAG 2", TextColor3 = C.text, Font = FONT_B,
-        TextSize = 11, BorderSizePixel = 0, Parent = body })
-    corner(pgBtn, 6); stroke(pgBtn, C.border, 1)
-    pgBtn.MouseButton1Click:Connect(function()
-        state.panelGame = (state.panelGame == "GAG 2") and "GAG 1" or "GAG 2"
-        pgBtn.Text = state.panelGame; saveState()
-        print("[Panel] game -> " .. state.panelGame)
-    end)
+    -- v13.2: kolom Tim & Game DIBUANG dari sini.
+    -- Bridge jalan di dalam game -- dia gak tau lagi nangkring di RedFinger mana.
+    -- Nyuruh dia ngaku sendiri itu rapuh (salah pilih/typo = akun nyangkut di tim
+    -- yang salah, DIEM tanpa error). Sekarang script cuma lapor nama akun; tim &
+    -- game ditugasin dari panel web, sekali, sambil keliatan semuanya.
 
     -- status: keliatan langsung nyambung apa nggak, gak usah buka console
     local pnStat = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
