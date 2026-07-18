@@ -1,11 +1,21 @@
 -- ============================================================
--- STAR FARM  v12.7  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v13.1  (standalone, basis ZENX v44.79) - GAG 2
+-- v13.1: Tim = tombol + picker. Daftarnya ditarik dari Worker (/tims) -- cuma tim
+--        yang BENERAN ada. Nol ketikan, mustahil typo. "+ tim baru" ngambil
+--        nomor kosong terkecil sendiri. Muat berapa pun tim.
+-- v12.9: Panel URL + Kunci jadi BAWAAN. Gak usah diketik di 14 akun (resep typo).
+--        Masih bisa ditimpa lewat GUI kalau perlu.
+-- v12.8: PANEL WEB dilebur ke sini (dulu file bridge terpisah). Lapor kebun ke
+--        Cloudflare Worker + terima setelan. Nebeng Farm.relayReq (dia cuma
+--        pembungkus request(), bukan barang Pantry). gfRelayUrl GAK disentuh --
+--        relay Glow/prio/moon tetep di Pantry. Ikut toggle Farm 2.
+--        Setelan di tab AUTO GIFT paling bawah. Lapor cuma pas BERUBAH (~hemat 85%).
 -- v12.7: saklar DIEM KONSOL (Farm._diamKonsol, baris ~309) - 266 print dimatiin sekaligus, hemat ram
 -- v10.2: FIX auto-trowel mati - anti-render v9.4 ngehapus PLOT KITA SENDIRI (kebun >1 plot / PERLUAS)
 -- v10.1: Anti-Lag + Anti-Leg Max SELALU ON tiap start (ditunda 3s biar gak nabrak load game)
 -- v10.0: tinggi kartu ESP Garden 60 -> 45 (dipaksa tiap start, nimpa setelan lama)
 -- v9.9: Anti-Leg Max ikut bawa anti-render v9.4 (visual buah, tanah, pagar, garden orang)
--- v9.8: FIX "Farm._Farm._arMatiinEfek" (dobel-prefix bekas refactor v9.6). local 169/200
+-- v9.8: FIX "Farm._Farm._arMatiinEfek" (dobel-prefix bekas refactor v12.8). local 169/200
 -- v9.5: ESP GARDEN - kartu ringkasan (buah/matang/VALUE/mutasi/pohon) + garis neon, ikut Farm 2
 -- v9.5: ESP GARDEN - 1 kartu di sisi kebun (buah/matang/VALUE/mutasi/pohon) + garis neon. ikut Farm 2
 -- v9.4: anti-render + tanah ijo dipolosin, pagar dihapus, garden orang dihapus, visual buah dihapus
@@ -886,6 +896,13 @@ local state = {
     gfStorageOn     = false,      -- v22.7: farm routing buah ke akun simpanan (default OFF)
     gfRelayUrl      = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxshk",  -- v18.8: relay default
     gfRelayWrite    = false,     -- v18.5: akun ini PET (tulis sheckles ke relay)
+    -- v12.8: PANEL WEB. Nebeng Farm.relayReq (dia cuma pembungkus request(),
+    -- bukan barang Pantry). gfRelayUrl DIBIARIN nunjuk ke Pantry buat relay
+    -- Glow/prio/moon -- panel jalan sendiri, gak nambah beban ke Pantry.
+    panelUrl        = "https://dry-glitter-63e4.petagee5.workers.dev",  -- v12.9: bawaan, gak usah diketik per akun
+    panelKunci      = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb",        -- v12.9: bawaan
+    panelTim        = "tim-1",   -- v12.8: RedFinger mana. samain sama zenx_worker.
+    panelGame       = "GAG 2",   -- v12.8: "GAG 1" / "GAG 2"
     gfAlert         = true,      -- v18.7: notif Discord pas sheckles < batas (sekali, anti-spam)
     gfAlertHook     = "https://discordapp.com/api/webhooks/1517745541595791370/WLFb5xOdnkcQxUaJIsUGIZROWKjoY-daksFnqnia-p307Ez-50dttV2cKofcplc9AD3v",
     toolHabisHook   = "",        -- v7.9: webhook notif status (kosong = pakai gfAlertHook)
@@ -978,6 +995,10 @@ local function saveState()
         out.gfSheckMax = state.gfSheckMax or 100000000  -- v18.4
         out.gfValueTarget = state.gfValueTarget or 500000000  -- v22.9
         out.gfRelayUrl = state.gfRelayUrl or ""   -- v18.5
+        out.panelUrl = state.panelUrl or ""       -- v12.8: panel web
+        out.panelKunci = state.panelKunci or ""
+        out.panelTim = state.panelTim or "tim-1"
+        out.panelGame = state.panelGame or "GAG 2"
         out.gfAlertHook = state.gfAlertHook or "" -- v18.7
         out.gpTarget = state.gpTarget or "wildnx_60"  -- v19.3
         out.buyGoodMinRarity = state.buyGoodMinRarity or "Mythic"  -- v26.3
@@ -1058,6 +1079,17 @@ local function loadState()
                 if type(d.gfSheckMax) == "number" then state.gfSheckMax = d.gfSheckMax end
                 if type(d.gfValueTarget) == "number" then state.gfValueTarget = d.gfValueTarget end
                 if type(d.gfRelayUrl) == "string" and d.gfRelayUrl ~= "" then state.gfRelayUrl = d.gfRelayUrl end
+                -- v12.9: cuma nimpa kalau ISINYA ADA. save lama yang kosong gak boleh
+                -- ngalahin bawaan -- kalau nggak, akun lama panelnya mati terus.
+                if type(d.panelUrl) == "string" and d.panelUrl ~= "" then state.panelUrl = d.panelUrl end
+                if type(d.panelKunci) == "string" and d.panelKunci ~= "" then state.panelKunci = d.panelKunci end
+                -- v13.0: terima "tim-<angka>" berapa pun. save lama yang bentuknya
+                -- aneh ("tim1"/"Tim-1") diambil angkanya aja, prefiks dibangun ulang.
+                if type(d.panelTim) == "string" then
+                    local n = tonumber(d.panelTim:match("%d+") or "")
+                    if n and n >= 1 then state.panelTim = "tim-" .. n end
+                end
+                if type(d.panelGame) == "string" and d.panelGame ~= "" then state.panelGame = d.panelGame end
                 if type(d.gfAlertHook) == "string" and d.gfAlertHook ~= "" then state.gfAlertHook = d.gfAlertHook end
                 if type(d.gpTarget) == "string" and d.gpTarget ~= "" then state.gpTarget = d.gpTarget end
                 if type(d.buyGoodMinRarity) == "string" and d.buyGoodMinRarity ~= "" then state.buyGoodMinRarity = d.buyGoodMinRarity end
@@ -2134,7 +2166,7 @@ end
 -- nempel ke FARM 2: nyala pas Farm 2 ON, mati pas OFF.
 Farm._espGardenOn = false
 Farm._espG = { kartu = nil, lines = {} }
--- v9.6: 5 warna digabung jadi 1 tabel. ALASAN: Lua cuma boleh 200 'local' per chunk, dan sc ini
+-- v12.8: 5 warna digabung jadi 1 tabel. ALASAN: Lua cuma boleh 200 'local' per chunk, dan sc ini
 -- udah 192 di level file -> tambahan v9.5 bikin JEBOL ("Out of local registers, exceeded limit 200")
 -- -> loadstring balik nil -> loader error "attempt to call a nil value". 1 tabel = 1 local, bukan 5.
 local ESPG = {
@@ -7406,6 +7438,233 @@ Farm.buildFarm2Btn = function()
         if on70 then farm2Btn70.BackgroundColor3 = Color3.fromRGB(46,160,80); farm2Btn70.TextColor3 = Color3.fromRGB(240,255,240)
         else farm2Btn70.BackgroundColor3 = C.card; farm2Btn70.TextColor3 = C.textDim end
     end
+-- ============================================================
+-- v12.8: PANEL WEB — lapor kebun ke Cloudflare Worker + terima setelan.
+--
+-- Kenapa nempel di sini, bukan file terpisah:
+--   * Farm.relayReq udah ada (baris ~5591) & dia cuma pembungkus request().
+--     Bukan barang Pantry. Jadi bisa dipake ke mana aja.
+--   * Ikut toggle Farm 2 -> gak ada request dari akun yang lagi nganggur.
+--   * Gak perlu patch/loadstring kedua yang gampang kelupaan.
+--
+-- gfRelayUrl (Pantry) SENGAJA gak disentuh. Relay Glow/prio/moon tetep di
+-- Pantry, panel di Cloudflare. Beban Pantry gak nambah.
+--
+-- HEMAT: cek tiap 15 detik (murah, gak ada request), tapi cuma KIRIM kalau
+-- ada yang beneran berubah + denyut tiap 5 menit. ~2.880 -> ~400 request/hari.
+-- Ini bukan cuma soal kuota: tiap request makan CPU RedFinger yang lagi
+-- nanggung 6-10 client.
+-- ============================================================
+local PANEL_CEK    = 15    -- detik: cek perubahan
+local PANEL_DENYUT = 300   -- detik: lapor walau gak berubah (biar panel tau masih idup)
+local PANEL_CFG    = 30    -- detik: ambil setelan dari panel
+
+Farm._panelGen = Farm._panelGen or 0
+local panelLamaData, panelLamaKirim, panelCfgTs = nil, 0, 0
+Farm._panelKirim, Farm._panelLewat = 0, 0
+
+local function panelAktif()
+    return state.farm2On
+        and type(state.panelUrl) == "string" and state.panelUrl ~= ""
+        and type(state.panelKunci) == "string" and state.panelKunci ~= ""
+end
+
+local function panelReq(jalur, metode, isi)
+    local o = {
+        Url = state.panelUrl .. jalur,
+        Method = metode,
+        Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = state.panelKunci },
+    }
+    if isi then
+        local ok, body = pcall(function() return HS:JSONEncode(isi) end)
+        if not ok then return nil end
+        o.Body = body
+    end
+    return Farm.relayReq(o)
+end
+
+-- baca kebun sendiri. pola sama kayak ESP Garden (~baris 2216).
+local function panelBacaKebun()
+    local d = { tot = 0, kecil = 0, besar = 0, matang = 0, glow = 0, nilai = 0 }
+    local ok = pcall(function()
+        local g = workspace:FindFirstChild("Gardens"); if not g then return end
+        local thr = math.abs(state.c2WeightF or 50)
+        for _, plot in ipairs(g:GetChildren()) do
+            local pf = plot:FindFirstChild("Plants")
+            if pf then
+                for _, pl in ipairs(pf:GetChildren()) do
+                    if tonumber(tostring(pl.Name):match("^(%d+)_")) == player.UserId then
+                        local seed = pl:GetAttribute("SeedName") or "?"
+                        local fs = pl:FindFirstChild("Fruits")
+                        if fs then
+                            for _, f in ipairs(fs:GetChildren()) do
+                                local kg = Farm.gardenKg(f, seed) or 0
+                                if kg > 0 then
+                                    d.tot = d.tot + 1
+                                    if kg < thr then d.kecil = d.kecil + 1 else d.besar = d.besar + 1 end
+                                    if Farm.isFruitRipe(f) then d.matang = d.matang + 1 end
+                                    if Farm.getMutation(f) == "Glow" then d.glow = d.glow + 1 end
+                                    d.nilai = d.nilai + (Farm.fruitPrice(f) or 0)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if not ok then return nil end
+    return d
+end
+
+local function panelSheckles()
+    local n = 0
+    pcall(function()
+        local ls = player:FindFirstChild("leaderstats")
+        local sh = ls and (ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Cash"))
+        if sh then n = tonumber(sh.Value) or 0 end
+    end)
+    return n
+end
+
+local function panelPetik()
+    local d = panelBacaKebun(); if not d then return nil end
+    return {
+        akun     = player.Name,
+        tim      = state.panelTim or "tim-1",
+        game     = state.panelGame or "GAG 2",
+        farm2On  = state.farm2On and true or false,
+        kg       = state.c2WeightF or -50,
+        glow     = d.glow,
+        gate     = state.glowCollectMin or 20,
+        kecil    = d.kecil,
+        besar    = d.besar,
+        matang   = d.matang,
+        tot      = d.tot,
+        nilai    = math.floor(d.nilai),
+        sheck    = panelSheckles(),
+        wcTrig   = state.af2WCTrigger or 30,
+        beratMax = state.antiCollectHeavyKg or 100,
+        prio     = (Farm._glowAdaYgMinta == true),
+        job      = tostring(game.JobId or ""):sub(1, 8),
+    }
+end
+
+-- Apa yang dianggap "berubah"?
+-- Kebun gak berubah tiap 15 detik. Yang bikin lo gerak itu KEJADIAN.
+-- Selisih 1-2 buah gak ngubah keputusan lo, jadi gak usah dilaporin.
+local function panelBerubah(baru, lama)
+    if not lama then return true end
+    -- kejadian: laporin persis
+    if baru.glow ~= lama.glow then return true end          -- gate Glow = angka pasti
+    if baru.farm2On ~= lama.farm2On then return true end
+    if baru.kg ~= lama.kg then return true end
+    if baru.gate ~= lama.gate then return true end
+    if baru.wcTrig ~= lama.wcTrig then return true end
+    if baru.prio ~= lama.prio then return true end
+    if baru.job ~= lama.job then return true end            -- job baru = abis rejoin
+    -- buah kecil: penting pas deket trigger WC, cuek pas masih banyak
+    local trig = baru.wcTrig or 30
+    if (baru.kecil <= trig) ~= (lama.kecil <= trig) then return true end
+    if baru.kecil <= trig and baru.kecil ~= lama.kecil then return true end
+    -- angka gerombolan: cuma kalau gesernya lumayan
+    if math.abs(baru.besar - lama.besar) >= 5 then return true end
+    if math.abs(baru.matang - lama.matang) >= 5 then return true end
+    if math.abs(baru.tot - lama.tot) >= 5 then return true end
+    if lama.nilai > 0 and math.abs(baru.nilai - lama.nilai) / lama.nilai > 0.10 then return true end
+    if lama.nilai == 0 and baru.nilai > 0 then return true end
+    return false
+end
+
+local function panelPasang(c)
+    local ubah = {}
+    if type(c.glowCollectMin) == "number" and c.glowCollectMin >= 1 then
+        state.glowCollectMin = math.floor(c.glowCollectMin)
+        ubah[#ubah + 1] = "gate Glow=" .. state.glowCollectMin
+    end
+    if type(c.af2WCTrigger) == "number" and c.af2WCTrigger >= 0 then
+        state.af2WCTrigger = math.floor(c.af2WCTrigger)
+        ubah[#ubah + 1] = "trigger WC=" .. state.af2WCTrigger
+    end
+    if type(c.antiCollectHeavyKg) == "number" and c.antiCollectHeavyKg >= 1 then
+        state.antiCollectHeavyKg = math.floor(c.antiCollectHeavyKg)
+        ubah[#ubah + 1] = "buah besar=" .. state.antiCollectHeavyKg
+    end
+    if #ubah > 0 then
+        pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
+        saveState()
+        panelLamaData = nil   -- paksa lapor balik, biar panel liat hasilnya
+        print("[Panel] setelan dari web: " .. table.concat(ubah, ", "))
+    end
+end
+
+-- CATATAN: farm2On SENGAJA gak diterima dari panel.
+-- Panel matiin Farm 2 -> panel ikut mati -> gak bisa dinyalain lagi dari web.
+-- Buka-tutup Farm 2 tetep lewat tombol -50/-60 di HP.
+
+function Farm.startPanelLoop()
+    Farm._panelGen = Farm._panelGen + 1
+    local gen = Farm._panelGen
+    local function hidup() return Farm._panelGen == gen and panelAktif() end
+
+    task.spawn(function()
+        print(("[Panel] jalan | %s | %s | %s"):format(player.Name, state.panelTim, state.panelGame))
+        while hidup() do
+            pcall(function()
+                local baru = panelPetik()
+                if baru then
+                    local skrg = os.time()
+                    local wajib = (skrg - panelLamaKirim) >= PANEL_DENYUT
+                    if wajib or panelBerubah(baru, panelLamaData) then
+                        local r = panelReq("/stat", "POST", baru)
+                        if r and (r.StatusCode == 200 or r.Success) then
+                            panelLamaData, panelLamaKirim = baru, skrg
+                            Farm._panelKirim = Farm._panelKirim + 1
+                        end
+                    else
+                        Farm._panelLewat = Farm._panelLewat + 1
+                    end
+                end
+            end)
+            task.wait(PANEL_CEK)
+        end
+        print("[Panel] lapor berhenti.")
+    end)
+
+    task.spawn(function()
+        while hidup() do
+            pcall(function()
+                local r = panelReq("/cfg?akun=" .. player.Name, "GET")
+                local body = r and (r.Body or r.body)
+                if body and body ~= "" then
+                    local ok, d = pcall(function() return HS:JSONDecode(body) end)
+                    if ok and type(d) == "table" and type(d.cfg) == "table" then
+                        local ts = tonumber(d.ts) or 0
+                        if ts > panelCfgTs then
+                            panelCfgTs = ts
+                            panelPasang(d.cfg)
+                        end
+                    end
+                end
+            end)
+            task.wait(PANEL_CFG)
+        end
+    end)
+end
+
+function Farm.stopPanelLoop()
+    Farm._panelGen = Farm._panelGen + 1   -- generasi lama otomatis berhenti
+end
+
+-- cek irit: StarFarm.panelStat()
+function Farm.panelStat()
+    local t = Farm._panelKirim + Farm._panelLewat
+    print(("[Panel] kirim %d | lewat %d | hemat %.0f%% | aktif: %s")
+        :format(Farm._panelKirim, Farm._panelLewat,
+                t > 0 and (Farm._panelLewat / t * 100) or 0,
+                tostring(panelAktif())))
+end
+
     -- preset bersama. weightF = -50 atau -60. turnOn=true nyalain Farm2, false matiin.
     local function applyFarm2(turnOn, weightF)
         if turnOn then
@@ -7490,6 +7749,10 @@ Farm.buildFarm2Btn = function()
             pcall(function() Farm.startSellNonMutLoop() end)
         end
         pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
+        -- v12.8: panel web ikut Farm 2. ON -> lapor jalan. OFF -> diem total.
+        pcall(function()
+            if turnOn then Farm.startPanelLoop() else Farm.stopPanelLoop() end
+        end)
         syncFarm2(); saveState()
     end
     -- tombol -50: toggle. kalau lagi ON di -50 -> matiin. kalau OFF/beda -> nyalain -50.
@@ -12076,6 +12339,183 @@ do
         TextSize = 12, BorderSizePixel = 0, Parent = body })
     corner(histBtn, 6); stroke(histBtn, C.border, 1)
     histBtn.MouseButton1Click:Connect(Farm.showGiftHistory)
+
+    -- v12.8: PANEL WEB. Ditaro sini karena sebelahan sama Relay URL —
+    -- dua-duanya "alamat ke luar". Bedanya: Relay URL = Pantry (antar-akun),
+    -- Panel URL = Cloudflare (buat lo liat dari web). Jangan ketuker.
+    lbl(body, "── PANEL WEB (ikut Farm 2) ──", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,662)
+
+    lbl(body, "Panel URL (Cloudflare Worker)", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,684)
+    local pnBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 702),
+        BackgroundColor3 = C.input, Text = state.panelUrl or "", PlaceholderText = "udah keisi bawaan | kosongin = panel MATI",
+        TextColor3 = C.text, Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(pnBox, 6); stroke(pnBox, C.border, 1)
+    pnBox.FocusLost:Connect(function()
+        local u = pnBox.Text:gsub("%s+$", ""):gsub("/+$", "")   -- buang spasi & garis miring buntut
+        state.panelUrl = u; pnBox.Text = u; saveState()
+        print("[Panel] url -> " .. (u ~= "" and "diset" or "kosong (panel mati)"))
+        pcall(function()
+            if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end
+        end)
+    end)
+
+    lbl(body, "Panel Kunci (X-Kunci)", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,734)
+    local pkBox = mk("TextBox", { Size = UDim2.new(1, 0, 0, 26), Position = UDim2.new(0, 0, 0, 752),
+        BackgroundColor3 = C.input, Text = state.panelKunci or "", PlaceholderText = "udah keisi bawaan",
+        TextColor3 = C.text, Font = FONT, TextSize = 10, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
+    corner(pkBox, 6); stroke(pkBox, C.border, 1)
+    pkBox.FocusLost:Connect(function()
+        state.panelKunci = pkBox.Text:gsub("%s+", ""); pkBox.Text = state.panelKunci; saveState()
+        print("[Panel] kunci -> " .. (state.panelKunci ~= "" and "diset" or "kosong (panel mati)"))
+        pcall(function()
+            if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end
+        end)
+    end)
+
+    -- Tim & Game sebaris. Tim HARUS sama persis kayak zenx_worker di RedFinger ini,
+    -- kalau beda akunnya gak nempel ke tim mana pun dan panel keliatan kosong
+    -- TANPA error sama sekali.
+    -- v13.1: Tim = TOMBOL + PICKER. Nol ketikan.
+    -- Daftarnya bukan karangan: ditarik dari Worker (/tims), isinya tim yang
+    -- BENERAN udah lapor. Jadi mustahil milih tim yang gak ada, dan mustahil
+    -- typo -- dua-duanya jenis gagal yang DIEM (panel kosong, tanpa error).
+    -- "+ tim baru" ngambil nomor kosong terkecil sendiri.
+    lbl(body, "Tim", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,784)
+    local ptBtn = mk("TextButton", { Size = UDim2.new(0.48, 0, 0, 26), Position = UDim2.new(0, 0, 0, 802),
+        BackgroundColor3 = C.input, Text = state.panelTim or "tim-1", TextColor3 = C.text,
+        Font = FONT_B, TextSize = 11, BorderSizePixel = 0, Parent = body })
+    corner(ptBtn, 6); stroke(ptBtn, C.border, 1)
+
+    local function ambilDaftarTim()
+        if (state.panelUrl or "") == "" or (state.panelKunci or "") == "" then return nil end
+        local r = Farm.relayReq({
+            Url = state.panelUrl .. "/tims", Method = "GET",
+            Headers = { ["X-Kunci"] = state.panelKunci },
+        })
+        local body2 = r and (r.Body or r.body)
+        if not body2 or body2 == "" then return nil end
+        local ok2, d = pcall(function() return HS:JSONDecode(body2) end)
+        if not ok2 or type(d) ~= "table" or type(d.tims) ~= "table" then return nil end
+        return d.tims
+    end
+
+    local function bukaPickerTim()
+        local ov = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
+            BackgroundTransparency = 0.4, ZIndex = 50, BorderSizePixel = 0, Parent = main })
+        local bgc = mk("TextButton", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "",
+            AutoButtonColor = false, ZIndex = 50, Parent = ov })
+        bgc.MouseButton1Click:Connect(function() ov:Destroy() end)
+
+        local boxF = mk("Frame", { Size = UDim2.new(0, 260, 0, 340), Position = UDim2.new(0.5,0,0.5,0),
+            AnchorPoint = Vector2.new(0.5,0.5), BackgroundColor3 = C.bg, BorderSizePixel = 0,
+            ZIndex = 51, Parent = ov })
+        corner(boxF, 8)
+
+        local tl = lbl(boxF, "Pilih Tim", 13, C.accent, Enum.TextXAlignment.Left)
+        tl.Position = UDim2.new(0,10,0,6); tl.Size = UDim2.new(1,-20,0,24); tl.ZIndex = 52; tl.Font = FONT_B
+
+        local info = lbl(boxF, "narik daftar...", 10, C.textDim, Enum.TextXAlignment.Left)
+        info.Position = UDim2.new(0,10,0,30); info.Size = UDim2.new(1,-20,0,16); info.ZIndex = 52
+
+        local sc = mk("ScrollingFrame", { Size = UDim2.new(1,-20,1,-92), Position = UDim2.new(0,10,0,50),
+            BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+            CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+            ZIndex = 52, Parent = boxF })
+        local lay = mk("UIListLayout", { Padding = UDim.new(0,4), Parent = sc })
+        lay.SortOrder = Enum.SortOrder.LayoutOrder
+
+        local baruBtn = mk("TextButton", { Size = UDim2.new(1,-20,0,30), Position = UDim2.new(0,10,1,-38),
+            BackgroundColor3 = C.card, Text = "+ tim baru", TextColor3 = C.accent, Font = FONT_B,
+            TextSize = 12, BorderSizePixel = 0, ZIndex = 52, Parent = boxF })
+        corner(baruBtn, 6); stroke(baruBtn, C.border, 1)
+
+        local function pilih(nama)
+            state.panelTim = nama; ptBtn.Text = nama; saveState()
+            print("[Panel] tim -> " .. nama)
+            ov:Destroy()
+            pcall(function() if state.farm2On then Farm.startPanelLoop() end end)
+        end
+
+        task.spawn(function()
+            local tims = ambilDaftarTim()
+            if not sc.Parent then return end
+
+            if not tims then
+                info.Text = "gagal narik daftar (panel url/kunci?)"
+                info.TextColor3 = C.warn or C.textDim
+            elseif #tims == 0 then
+                info.Text = "belum ada tim. pencet '+ tim baru'."
+            else
+                info.Text = #tims .. " tim kedaftar"
+            end
+
+            for i, t in ipairs(tims or {}) do
+                local b = mk("TextButton", { Size = UDim2.new(1,-4,0,30), BackgroundColor3 = C.card,
+                    Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 53,
+                    LayoutOrder = i, Parent = sc })
+                corner(b, 5)
+                if t.nama == state.panelTim then stroke(b, C.accent, 1) else stroke(b, C.border, 1) end
+
+                local nm = lbl(b, t.nama, 12, C.text, Enum.TextXAlignment.Left)
+                nm.Position = UDim2.new(0,10,0,0); nm.Size = UDim2.new(0.55,0,1,0); nm.ZIndex = 54
+                nm.Font = FONT_B
+
+                -- hidup/mati itu INFO, bukan larangan. Tim yang workernya lagi mati
+                -- tetep boleh dipilih -- mungkin emang lagi disetel.
+                local st = lbl(b, t.hidup and "hidup" or "worker mati", 10,
+                    t.hidup and (C.green or C.accent) or C.textDim, Enum.TextXAlignment.Right)
+                st.Position = UDim2.new(0.55,0,0,0); st.Size = UDim2.new(0.45,-10,1,0); st.ZIndex = 54
+
+                b.MouseButton1Click:Connect(function() pilih(t.nama) end)
+            end
+
+            baruBtn.MouseButton1Click:Connect(function()
+                -- nomor kosong TERKECIL. bukan max+1 -- biar lubang bekas tim
+                -- yang dibuang kepake lagi, gak ninggalin nomor bolong.
+                local kepake = {}
+                for _, t in ipairs(tims or {}) do
+                    local n = tonumber(t.nama:match("%d+") or "")
+                    if n then kepake[n] = true end
+                end
+                local n = 1
+                while kepake[n] do n = n + 1 end
+                pilih("tim-" .. n)
+            end)
+        end)
+    end
+
+    ptBtn.MouseButton1Click:Connect(bukaPickerTim)
+
+    local pgBtn = mk("TextButton", { Size = UDim2.new(0.48, 0, 0, 26), Position = UDim2.new(0.52, 0, 0, 802),
+        BackgroundColor3 = C.input, Text = state.panelGame or "GAG 2", TextColor3 = C.text, Font = FONT_B,
+        TextSize = 11, BorderSizePixel = 0, Parent = body })
+    corner(pgBtn, 6); stroke(pgBtn, C.border, 1)
+    pgBtn.MouseButton1Click:Connect(function()
+        state.panelGame = (state.panelGame == "GAG 2") and "GAG 1" or "GAG 2"
+        pgBtn.Text = state.panelGame; saveState()
+        print("[Panel] game -> " .. state.panelGame)
+    end)
+
+    -- status: keliatan langsung nyambung apa nggak, gak usah buka console
+    local pnStat = lbl(body, "", 10, C.textDim, Enum.TextXAlignment.Left)
+    pnStat.Position = UDim2.new(0,0,0,834); pnStat.Size = UDim2.new(1,0,0,16)
+    task.spawn(function()
+        while pnStat and pnStat.Parent do
+            local t = Farm._panelKirim + Farm._panelLewat
+            local nyala = state.farm2On and (state.panelUrl or "") ~= "" and (state.panelKunci or "") ~= ""
+            if not state.farm2On then
+                pnStat.Text = "status: mati (Farm 2 OFF)"
+            elseif not nyala then
+                pnStat.Text = "status: mati (url/kunci kosong)"
+            else
+                pnStat.Text = ("status: jalan | kirim %d, lewat %d (hemat %d%%)")
+                    :format(Farm._panelKirim, Farm._panelLewat,
+                            t > 0 and math.floor(Farm._panelLewat / t * 100) or 0)
+            end
+            task.wait(3)
+        end
+    end)
+
 
     -- tombol kirim sekarang (sekali jalan)
     local sendBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 292),
