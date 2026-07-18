@@ -1,5 +1,8 @@
 -- ============================================================
--- STAR FARM  v13.4  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v13.5  (standalone, basis ZENX v44.79) - GAG 2
+-- v13.5: FIX panel "kirim 0 lewat 0" -- startPanelLoop dulu cuma dari toggle
+--        Farm 2, jadi kalau Farm 2 udah ON dari rejoin loop lapor gak jalan.
+--        Sekarang auto-start pas GUI kebangun.
 -- v13.4: Lapor rincian SEED + PET inventory (urut rarity, bagus di atas).
 --        Panel LEPAS dari Farm 2 -- auto-nyala asal url+kunci ada, biar isi
 --        inventory keliatan walau akun idle.
@@ -391,7 +394,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v13.4"
+local VER       = "STAR v13.5"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -7844,10 +7847,8 @@ end
             pcall(function() Farm.startSellNonMutLoop() end)
         end
         pcall(function() if Farm._refreshAllToggles then Farm._refreshAllToggles() end end)
-        -- v12.8: panel web ikut Farm 2. ON -> lapor jalan. OFF -> diem total.
-        pcall(function()
-            if turnOn then Farm.startPanelLoop() else Farm.stopPanelLoop() end
-        end)
+        -- v13.5: panel LEPAS dari Farm 2 -- gak dimatiin pas Farm 2 off.
+        -- (auto-start via GUI kebangun; berhenti sendiri kalau url/kunci kosong)
         syncFarm2(); saveState()
     end
     -- tombol -50: toggle. kalau lagi ON di -50 -> matiin. kalau OFF/beda -> nyalain -50.
@@ -10237,7 +10238,7 @@ local fLayout = mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum
         pnBox.FocusLost:Connect(function()
             local u = pnBox.Text:gsub("%s+$",""):gsub("/+$","")
             state.panelUrl = u; pnBox.Text = u; saveState()
-            pcall(function() if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end end)
+            pcall(function() Farm.startPanelLoop() end)
         end)
 
         local l2 = lbl(more, "Panel Kunci", 10, C.textDim, Enum.TextXAlignment.Left)
@@ -10248,7 +10249,16 @@ local fLayout = mk("UIListLayout", { Padding = UDim.new(0, 10), SortOrder = Enum
         corner(pkBox, 6); stroke(pkBox, C.border, 1)
         pkBox.FocusLost:Connect(function()
             state.panelKunci = pkBox.Text:gsub("%s+",""); pkBox.Text = state.panelKunci; saveState()
-            pcall(function() if state.farm2On then Farm.startPanelLoop() else Farm.stopPanelLoop() end end)
+            pcall(function() Farm.startPanelLoop() end)
+        end)
+
+        -- v13.5: AUTO-START pas GUI kebangun. Dulu startPanelLoop cuma dipanggil
+        -- dari toggle Farm 2 -- kalau Farm 2 udah ON dari rejoin, loop lapor GAK
+        -- pernah jalan (status "JALAN" tapi kirim 0 lewat 0). Sekarang di-start
+        -- langsung; kalau url/kunci kosong, berhenti sendiri via panelAktif().
+        task.spawn(function()
+            task.wait(2)
+            pcall(function() Farm.startPanelLoop() end)
         end)
     end
 
