@@ -1,5 +1,7 @@
 -- ============================================================
--- STAR FARM  v13.8  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v13.9  (standalone, basis ZENX v44.79) - GAG 2
+-- v13.9: FIX seed kebaca 0 -- seed di tas namanya langsung "Bamboo" (tanpa
+--        atribut SeedName). Sekarang dikenali dari SeedData game.
 -- v13.8: Lapor Super Watering Can + Super Sprinkler + total seed (buat panel Ringkas).
 -- v13.7: Lapor PlaceId -- panel petain GAG 1/GAG 2 sendiri (JobId itu ID server).
 -- v13.5: FIX panel "kirim 0 lewat 0" -- startPanelLoop dulu cuma dari toggle
@@ -396,7 +398,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v13.8"
+local VER       = "STAR v13.9"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -1438,12 +1440,31 @@ function Farm.inventoryRinci()
     local PRANK = { Common=1, Uncommon=2, Rare=3, Epic=4, Legendary=5, Mythic=6, Super=7,
                     Divine=7, Prismatic=8 }   -- seed & pet pakai skala sama; makin gede makin bagus
 
-    -- seed
-    local scount = Farm.countSeedsInBag()
+    -- seed: v13.9 -- ternyata seed di tas namanya langsung "Bamboo"/"Tulip"
+    -- (TANPA atribut SeedName, TANPA akhiran "Seed"). countSeedsInBag lama baca 0.
+    -- Sekarang: tiap Tool yang NAMANYA ada di SeedData game = seed. Gear (Trowel,
+    -- Sprinkler) & mushroom-effect gak ada di SeedData -> otomatis keskip.
     local seeds = {}
-    for nm, n in pairs(scount) do
-        local rar = Farm.seedRarity and Farm.seedRarity(nm) or nil
-        seeds[#seeds+1] = { nama = nm, jml = n, rar = rar or "?", rank = PRANK[rar or ""] or 0 }
+    do
+        local scount = {}
+        for _, holder in ipairs(invHolders()) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local nm = t.Name
+                        -- seedRarity(nm) balik non-nil cuma kalau nm ada di SeedData
+                        if Farm.seedRarity and Farm.seedRarity(nm) then
+                            local cnt = t:GetAttribute("Count") or 1
+                            scount[nm] = (scount[nm] or 0) + cnt
+                        end
+                    end
+                end
+            end
+        end
+        for nm, n in pairs(scount) do
+            local rar = Farm.seedRarity(nm)
+            seeds[#seeds+1] = { nama = nm, jml = n, rar = rar or "?", rank = PRANK[rar or ""] or 0 }
+        end
     end
     table.sort(seeds, function(a, b)
         if a.rank ~= b.rank then return a.rank > b.rank end
