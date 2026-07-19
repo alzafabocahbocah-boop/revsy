@@ -11,8 +11,15 @@ do
 local URL = "]]..SCRIPT_URL..[["
 local CACHE = "ZenxMarket_cache.lua"
 local CACHE_AGE = "ZenxMarket_cache_time.txt"
-if getgenv().__ZenxMarketExecuting then return end
-getgenv().__ZenxMarketExecuting = true
+-- v8.334: guard TIMESTAMP (bukan boolean). guard boolean bisa NYANGKUT true kalau
+-- exec sebelumnya crash/kepotong teleport sebelum reset -> re-exec di TradeWorld
+-- ke-block selamanya -> bridge gak jalan. timestamp: kalau flag > 30 detik, anggap
+-- exec lama udah mati, boleh jalan lagi. jadi gak pernah nyangkut permanen.
+do
+    local t = tonumber(getgenv().__ZenxMarketExecuting)
+    if t and (os.time() - t) < 30 then return end   -- exec lain baru mulai (<30s) -> skip
+end
+getgenv().__ZenxMarketExecuting = os.time()
 local function tryRun(src)
     if type(src) == "string" and #src > 50000 then
         local fn = loadstring(src)
@@ -61,7 +68,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.333"
+local VERSION = "8.334"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -12574,6 +12581,16 @@ end)
 -- Akun market masuk panel sebagai akun GAG 1 (PlaceId market).
 -- ============================================================
 task.spawn(function()
+    -- v8.334: guard bridge SENDIRI (bukan ikut loader guard yg bisa nyangkut).
+    -- pas teleport garden->TradeWorld, script re-exec. bridge lama (dari garden)
+    -- mati pas teleport, tapi getgenv.ZenxMarketBH masih nyangkut -> keliatan
+    -- "BH ada" padahal loop mati. Guard ini: tiap bridge tulis heartbeat generasi.
+    -- bridge baru NAIKIN generasi -> bridge lama (kalau ada) berhenti sendiri,
+    -- bridge baru jalan. jadi selalu ada TEPAT 1 bridge aktif, gak pernah 0.
+    local GEN = (tonumber(_G.__ZenxBridgeGen) or 0) + 1
+    _G.__ZenxBridgeGen = GEN
+    local function masihGuaYangAktif() return _G.__ZenxBridgeGen == GEN end
+
     local PANEL_URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
     local PANEL_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
 
@@ -12662,7 +12679,7 @@ task.spawn(function()
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir = 0, 0
     task.spawn(function()
-        while true do
+        while masihGuaYangAktif() do
             pcall(function()
                 local ok, p2, n2 = pcall(totalPetCocokRule)
                 if ok and type(p2) == "number" then petTerakhir, nRuleTerakhir = p2, n2 end
@@ -12671,7 +12688,7 @@ task.spawn(function()
         end
     end)
 
-    while true do
+    while masihGuaYangAktif() do
         -- v8.333: SELURUH isi loop dibungkus pcall biar gak PERNAH macet.
         -- di TradeWorld, GUI garden gak ada -> bacaTokens bisa error. dulu error
         -- itu kadang bikin loop nyangkut -> berhenti lapor. sekarang apa pun yg
