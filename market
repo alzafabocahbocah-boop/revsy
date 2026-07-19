@@ -35,7 +35,9 @@ if isfile and readfile and isfile(CACHE) then
     end
 end
 -- HttpGet 1x (ga ada retry -> ga spam 429). sukses -> cache + jalan.
-local ok, res = pcall(function() return game:HttpGet(URL) end)
+-- v8.332: cache-buster (?cb=time) -> lewatin CDN github yg kadang kasih versi
+-- lama (raw.githubusercontent cache ~5 mnt, bikin "kadang balik 8.325").
+local ok, res = pcall(function() return game:HttpGet(URL .. "?cb=" .. os.time()) end)
 if ok and type(res) == "string" and #res > 50000 then
     if writefile then
         pcall(function() writefile(CACHE, res) end)
@@ -59,11 +61,11 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.331"
+local VERSION = "8.333"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
-warn("  ZENX MARKET LOADING - VERSI 8.326")
+warn("  ZENX MARKET LOADING - VERSI " .. VERSION)
 warn("  (kalau ini gak muncul, file lama yg jalan)")
 warn("============================================")
 
@@ -93,7 +95,7 @@ task.spawn(function()
     getgenv().__ZenxMarketCaching = true
     task.wait(3)   -- tunggu bentar biar ga barengan sama request lain
     local URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/market"
-    local ok, res = pcall(function() return game:HttpGet(URL) end)
+    local ok, res = pcall(function() return game:HttpGet(URL .. "?cb=" .. os.time()) end)
     if ok and type(res) == "string" and #res > 50000 then
         pcall(function() writefile(CACHE, res) end)
         pcall(function() writefile(CACHE_AGE, tostring(os.time())) end)
@@ -12661,28 +12663,37 @@ task.spawn(function()
     local petTerakhir, nRuleTerakhir = 0, 0
     task.spawn(function()
         while true do
-            local ok, p2, n2 = pcall(totalPetCocokRule)
-            if ok then petTerakhir, nRuleTerakhir = p2, n2 end
+            pcall(function()
+                local ok, p2, n2 = pcall(totalPetCocokRule)
+                if ok and type(p2) == "number" then petTerakhir, nRuleTerakhir = p2, n2 end
+            end)
             task.wait(60)
         end
     end)
 
     while true do
-        local ok, tok = pcall(bacaTokens)
-        if not ok then tok = lamaTok >= 0 and lamaTok or 0 end
-        local skrg = os.time()
-        local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
-        local wajib = (skrg - lamaKirim) >= 120   -- denyut wajib tiap 2 menit
-        if berubah or wajib then
-            kirim("/market", {
-                akun = plr.Name,
-                place = tostring(game.PlaceId or ""),
-                tokens = tok,
-                petRule = petTerakhir,
-                nRule = nRuleTerakhir,
-            })
-            lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
-        end
+        -- v8.333: SELURUH isi loop dibungkus pcall biar gak PERNAH macet.
+        -- di TradeWorld, GUI garden gak ada -> bacaTokens bisa error. dulu error
+        -- itu kadang bikin loop nyangkut -> berhenti lapor. sekarang apa pun yg
+        -- error, loop tetep lanjut ke task.wait -> denyut gak pernah putus.
+        pcall(function()
+            local ok, tok = pcall(bacaTokens)
+            if not ok or type(tok) ~= "number" then tok = lamaTok >= 0 and lamaTok or 0 end
+            local skrg = os.time()
+            local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
+            local wajib = (skrg - lamaKirim) >= 120
+            if berubah or wajib then
+                kirim("/market", {
+                    akun = plr.Name,
+                    place = tostring(game.PlaceId or ""),
+                    tokens = tok,
+                    petRule = petTerakhir,
+                    nRule = nRuleTerakhir,
+                })
+                lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
+            end
+        end)
+        _G.__ZenxMarketLaporTs = os.time()   -- penanda: loop idup (buat debug)
         task.wait(20)
     end
 end)
