@@ -68,7 +68,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.334"
+local VERSION = "8.335"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -82,6 +82,148 @@ local Workspace = game:GetService("Workspace")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
+
+-- v8.335: BRIDGE DIPINDAH KE ATAS biar kebal kode garden yg hang di TradeWorld.
+-- ============================================================
+-- v8.328: BRIDGE PANEL (STAR PANEL) — lapor Tokens + total pet cocok rule
+-- Nebeng sistem yang sama kayak star_farm: Worker + KUNCI + tim.
+-- Akun market masuk panel sebagai akun GAG 1 (PlaceId market).
+-- ============================================================
+task.spawn(function()
+    -- v8.334: guard bridge SENDIRI (bukan ikut loader guard yg bisa nyangkut).
+    -- pas teleport garden->TradeWorld, script re-exec. bridge lama (dari garden)
+    -- mati pas teleport, tapi getgenv.ZenxMarketBH masih nyangkut -> keliatan
+    -- "BH ada" padahal loop mati. Guard ini: tiap bridge tulis heartbeat generasi.
+    -- bridge baru NAIKIN generasi -> bridge lama (kalau ada) berhenti sendiri,
+    -- bridge baru jalan. jadi selalu ada TEPAT 1 bridge aktif, gak pernah 0.
+    local GEN = (tonumber(_G.__ZenxBridgeGen) or 0) + 1
+    _G.__ZenxBridgeGen = GEN
+    local function masihGuaYangAktif() return _G.__ZenxBridgeGen == GEN end
+
+    local PANEL_URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local PANEL_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+
+    local Players = game:GetService("Players")
+    local HS      = game:GetService("HttpService")
+    local plr     = Players.LocalPlayer
+    if not plr then return end
+
+    -- request() executor (pola sama kayak baris 7762)
+    local req = (syn and syn.request) or (fluxus and fluxus.request)
+             or (krnl and krnl.request) or http_request or request or httprequest
+    if type(http) == "table" and http.request then req = http.request end
+    if not req then
+        warn("[MarketBridge] executor gak punya request() -- panel mati")
+        return
+    end
+
+    -- baca Tokens dari PlayerGui.BuyTokens.Frame.Label ("Tokens: 401")
+    local function bacaTokens()
+        local n = 0
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            local bt = pg and pg:FindFirstChild("BuyTokens")
+            local fr = bt and bt:FindFirstChild("Frame")
+            local lb = fr and fr:FindFirstChild("Label")
+            if lb and lb:IsA("TextLabel") then
+                local m = tostring(lb.Text):match("([%d,%.]+)")
+                if m then n = tonumber((m:gsub(",", ""))) or 0 end
+            end
+        end)
+        return n
+    end
+
+    -- total pet di inventory yang cocok SEMUA rule (gak dirinci)
+    local function totalPetCocokRule()
+        local total, nRule = 0, 0
+        pcall(function()
+            local BH = getgenv().ZenxMarketBH or _G.BH
+            -- BH lokal: coba ambil dari getgenv kalau di-expose, else skip
+            if not (BH and BH.countMyPetsForRule and BH.marketState) then return end
+            local rules = BH.marketState.listingRules
+            if type(rules) ~= "table" then return end
+            for _, r in ipairs(rules) do
+                nRule = nRule + 1
+                local c = BH.countMyPetsForRule(r) or 0
+                total = total + c
+            end
+        end)
+        return total, nRule
+    end
+
+    local function kirim(jalur, isi)
+        local ok, body = pcall(function() return HS:JSONEncode(isi) end)
+        if not ok then return end
+        pcall(function()
+            req({
+                Url = PANEL_URL .. jalur, Method = "POST",
+                Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                Body = body,
+            })
+        end)
+    end
+
+    local lamaTok, lamaPet, lamaKirim = -1, -1, 0
+    task.wait(8)   -- tunggu UI + BH kebangun
+    print("[MarketBridge] jalan | " .. plr.Name)
+
+    -- v8.329: kirim daftar SEMUA nama pet dari game (PetRegistry, ~421) ke Worker
+    -- SEKALI. Panel pakai buat picker jenis pet di editor rule. Jarang berubah,
+    -- jadi cukup 1x per sesi (kalau Worker udah punya, dia timpa aja -- murah).
+    task.spawn(function()
+        task.wait(3)
+        local BH = getgenv().ZenxMarketBH or _G.BH
+        if not (BH and BH.discoverPetNames) then return end
+        local ok, list = pcall(BH.discoverPetNames)
+        if ok and type(list) == "table" and #list > 0 then
+            kirim("/petlist", { pets = list })
+            print("[MarketBridge] kirim " .. #list .. " nama pet ke panel")
+        end
+    end)
+
+    -- v8.330: hitung pet DIPISAH dari lapor. dulu totalPetCocokRule() dipanggil
+    -- tiap loop -- kalau inventory gede (26 rule x ratusan pet) itu berat & bisa
+    -- bikin loop macet -> panel liat "mati" walau akun idup. Sekarang:
+    --   * lapor denyut tiap 20s (ringan: cuma baca token) -> panel tau idup
+    --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
+    local petTerakhir, nRuleTerakhir = 0, 0
+    task.spawn(function()
+        while masihGuaYangAktif() do
+            pcall(function()
+                local ok, p2, n2 = pcall(totalPetCocokRule)
+                if ok and type(p2) == "number" then petTerakhir, nRuleTerakhir = p2, n2 end
+            end)
+            task.wait(60)
+        end
+    end)
+
+    while masihGuaYangAktif() do
+        -- v8.333: SELURUH isi loop dibungkus pcall biar gak PERNAH macet.
+        -- di TradeWorld, GUI garden gak ada -> bacaTokens bisa error. dulu error
+        -- itu kadang bikin loop nyangkut -> berhenti lapor. sekarang apa pun yg
+        -- error, loop tetep lanjut ke task.wait -> denyut gak pernah putus.
+        pcall(function()
+            local ok, tok = pcall(bacaTokens)
+            if not ok or type(tok) ~= "number" then tok = lamaTok >= 0 and lamaTok or 0 end
+            local skrg = os.time()
+            local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
+            local wajib = (skrg - lamaKirim) >= 120
+            if berubah or wajib then
+                kirim("/market", {
+                    akun = plr.Name,
+                    place = tostring(game.PlaceId or ""),
+                    tokens = tok,
+                    petRule = petTerakhir,
+                    nRule = nRuleTerakhir,
+                })
+                lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
+            end
+        end)
+        _G.__ZenxMarketLaporTs = os.time()   -- penanda: loop idup (buat debug)
+        task.wait(20)
+    end
+end)
+
 local pg = player:WaitForChild("PlayerGui")
 
 -- v8.325: refresh CACHE di background pas load normal (bukan cuma pas hop).
@@ -12572,145 +12714,5 @@ task.spawn(function()
     while true do
         task.wait(5)
         pcall(function() re:FireServer(ticketName) end)
-    end
-end)
-
--- ============================================================
--- v8.328: BRIDGE PANEL (STAR PANEL) — lapor Tokens + total pet cocok rule
--- Nebeng sistem yang sama kayak star_farm: Worker + KUNCI + tim.
--- Akun market masuk panel sebagai akun GAG 1 (PlaceId market).
--- ============================================================
-task.spawn(function()
-    -- v8.334: guard bridge SENDIRI (bukan ikut loader guard yg bisa nyangkut).
-    -- pas teleport garden->TradeWorld, script re-exec. bridge lama (dari garden)
-    -- mati pas teleport, tapi getgenv.ZenxMarketBH masih nyangkut -> keliatan
-    -- "BH ada" padahal loop mati. Guard ini: tiap bridge tulis heartbeat generasi.
-    -- bridge baru NAIKIN generasi -> bridge lama (kalau ada) berhenti sendiri,
-    -- bridge baru jalan. jadi selalu ada TEPAT 1 bridge aktif, gak pernah 0.
-    local GEN = (tonumber(_G.__ZenxBridgeGen) or 0) + 1
-    _G.__ZenxBridgeGen = GEN
-    local function masihGuaYangAktif() return _G.__ZenxBridgeGen == GEN end
-
-    local PANEL_URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
-    local PANEL_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
-
-    local Players = game:GetService("Players")
-    local HS      = game:GetService("HttpService")
-    local plr     = Players.LocalPlayer
-    if not plr then return end
-
-    -- request() executor (pola sama kayak baris 7762)
-    local req = (syn and syn.request) or (fluxus and fluxus.request)
-             or (krnl and krnl.request) or http_request or request or httprequest
-    if type(http) == "table" and http.request then req = http.request end
-    if not req then
-        warn("[MarketBridge] executor gak punya request() -- panel mati")
-        return
-    end
-
-    -- baca Tokens dari PlayerGui.BuyTokens.Frame.Label ("Tokens: 401")
-    local function bacaTokens()
-        local n = 0
-        pcall(function()
-            local pg = plr:FindFirstChild("PlayerGui")
-            local bt = pg and pg:FindFirstChild("BuyTokens")
-            local fr = bt and bt:FindFirstChild("Frame")
-            local lb = fr and fr:FindFirstChild("Label")
-            if lb and lb:IsA("TextLabel") then
-                local m = tostring(lb.Text):match("([%d,%.]+)")
-                if m then n = tonumber((m:gsub(",", ""))) or 0 end
-            end
-        end)
-        return n
-    end
-
-    -- total pet di inventory yang cocok SEMUA rule (gak dirinci)
-    local function totalPetCocokRule()
-        local total, nRule = 0, 0
-        pcall(function()
-            local BH = getgenv().ZenxMarketBH or _G.BH
-            -- BH lokal: coba ambil dari getgenv kalau di-expose, else skip
-            if not (BH and BH.countMyPetsForRule and BH.marketState) then return end
-            local rules = BH.marketState.listingRules
-            if type(rules) ~= "table" then return end
-            for _, r in ipairs(rules) do
-                nRule = nRule + 1
-                local c = BH.countMyPetsForRule(r) or 0
-                total = total + c
-            end
-        end)
-        return total, nRule
-    end
-
-    local function kirim(jalur, isi)
-        local ok, body = pcall(function() return HS:JSONEncode(isi) end)
-        if not ok then return end
-        pcall(function()
-            req({
-                Url = PANEL_URL .. jalur, Method = "POST",
-                Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
-                Body = body,
-            })
-        end)
-    end
-
-    local lamaTok, lamaPet, lamaKirim = -1, -1, 0
-    task.wait(8)   -- tunggu UI + BH kebangun
-    print("[MarketBridge] jalan | " .. plr.Name)
-
-    -- v8.329: kirim daftar SEMUA nama pet dari game (PetRegistry, ~421) ke Worker
-    -- SEKALI. Panel pakai buat picker jenis pet di editor rule. Jarang berubah,
-    -- jadi cukup 1x per sesi (kalau Worker udah punya, dia timpa aja -- murah).
-    task.spawn(function()
-        task.wait(3)
-        local BH = getgenv().ZenxMarketBH or _G.BH
-        if not (BH and BH.discoverPetNames) then return end
-        local ok, list = pcall(BH.discoverPetNames)
-        if ok and type(list) == "table" and #list > 0 then
-            kirim("/petlist", { pets = list })
-            print("[MarketBridge] kirim " .. #list .. " nama pet ke panel")
-        end
-    end)
-
-    -- v8.330: hitung pet DIPISAH dari lapor. dulu totalPetCocokRule() dipanggil
-    -- tiap loop -- kalau inventory gede (26 rule x ratusan pet) itu berat & bisa
-    -- bikin loop macet -> panel liat "mati" walau akun idup. Sekarang:
-    --   * lapor denyut tiap 20s (ringan: cuma baca token) -> panel tau idup
-    --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
-    local petTerakhir, nRuleTerakhir = 0, 0
-    task.spawn(function()
-        while masihGuaYangAktif() do
-            pcall(function()
-                local ok, p2, n2 = pcall(totalPetCocokRule)
-                if ok and type(p2) == "number" then petTerakhir, nRuleTerakhir = p2, n2 end
-            end)
-            task.wait(60)
-        end
-    end)
-
-    while masihGuaYangAktif() do
-        -- v8.333: SELURUH isi loop dibungkus pcall biar gak PERNAH macet.
-        -- di TradeWorld, GUI garden gak ada -> bacaTokens bisa error. dulu error
-        -- itu kadang bikin loop nyangkut -> berhenti lapor. sekarang apa pun yg
-        -- error, loop tetep lanjut ke task.wait -> denyut gak pernah putus.
-        pcall(function()
-            local ok, tok = pcall(bacaTokens)
-            if not ok or type(tok) ~= "number" then tok = lamaTok >= 0 and lamaTok or 0 end
-            local skrg = os.time()
-            local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
-            local wajib = (skrg - lamaKirim) >= 120
-            if berubah or wajib then
-                kirim("/market", {
-                    akun = plr.Name,
-                    place = tostring(game.PlaceId or ""),
-                    tokens = tok,
-                    petRule = petTerakhir,
-                    nRule = nRuleTerakhir,
-                })
-                lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
-            end
-        end)
-        _G.__ZenxMarketLaporTs = os.time()   -- penanda: loop idup (buat debug)
-        task.wait(20)
     end
 end)
