@@ -11,7 +11,7 @@ local RS         = game:GetService("ReplicatedStorage")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.20"
+local VER = "v2.23"
 local TARGETS_FILE = "ZenxAgeStats_targets.json"
 local SETTINGS_FILE = "ZenxAgeStats_settings.json"
 local MAX_RECENT = 8
@@ -636,7 +636,7 @@ end
 -- GIFT ON/OFF TOGGLE
 -- ============================================================
 local toggleBtn = Instance.new("TextButton")
-toggleBtn.Size = UDim2.new(1, 0, 0, 34)
+toggleBtn.Size = UDim2.new(0.62, -3, 0, 34)
 toggleBtn.Position = UDim2.new(0, 0, 0, 96)
 toggleBtn.BackgroundColor3 = C.Red
 toggleBtn.Text = "GIFT  OFF"
@@ -647,6 +647,35 @@ toggleBtn.BorderSizePixel = 0
 toggleBtn.AutoButtonColor = false
 toggleBtn.Parent = giftPanel
 Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 5)
+
+-- v2.22: tombol AUTO — target diambil dari panel (akun market yg stok pet-nya
+-- nipis). Kalau ON: target di-set otomatis + gift jalan/berhenti sendiri.
+local autoBtn = Instance.new("TextButton")
+autoBtn.Size = UDim2.new(0.38, -3, 0, 34)
+autoBtn.Position = UDim2.new(0.62, 3, 0, 96)
+autoBtn.BackgroundColor3 = C.Card
+autoBtn.Text = "AUTO  OFF"
+autoBtn.TextColor3 = C.Dim
+autoBtn.Font = Enum.Font.GothamBold
+autoBtn.TextSize = 11
+autoBtn.BorderSizePixel = 0
+autoBtn.AutoButtonColor = false
+autoBtn.Parent = giftPanel
+Instance.new("UICorner", autoBtn).CornerRadius = UDim.new(0, 5)
+
+-- v2.22: status mode AUTO (target dari panel). di-set dari settings pas load.
+local autoPanel = false
+local function updateAutoBtn()
+    if autoPanel then
+        autoBtn.BackgroundColor3 = C.Blue
+        autoBtn.Text = "AUTO  ON"
+        autoBtn.TextColor3 = Color3.new(1, 1, 1)
+    else
+        autoBtn.BackgroundColor3 = C.Card
+        autoBtn.Text = "AUTO  OFF"
+        autoBtn.TextColor3 = C.Dim
+    end
+end
 
 -- Status
 local statusLbl = Instance.new("TextLabel")
@@ -815,6 +844,7 @@ local function persistGiftSettings()
         kg         = kgBox.Text,
         age        = ageBox.Text,
         giftActive = _G.ZenxGiftActive == true,  -- persisted state
+        autoPanel  = autoPanel == true,          -- v2.22: mode target dari panel
     })
 end
 
@@ -1332,7 +1362,9 @@ if type(_savedGS) == "table" then
     end
     if type(_savedGS.kg) == "string" then kgBox.Text = _savedGS.kg end
     if type(_savedGS.age) == "string" then ageBox.Text = _savedGS.age end
+    if _savedGS.autoPanel == true then autoPanel = true end   -- v2.22
 end
+updateAutoBtn()   -- v2.22: samain tampilan tombol AUTO sama status tersimpan
 
 -- ============================================================
 -- GIFT LOOP
@@ -1497,6 +1529,113 @@ toggleBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
+-- v2.22: MODE AUTO — target diambil dari panel.
+-- Panel/CF nentuin akun market mana yg stok pet-nya nipis (petrule < ambang,
+-- default 150) DAN lagi idup. Script ini ambil daftarnya, jadiin target, terus
+-- gift jalan sendiri. Begitu stok mereka udah cukup -> daftar kosong -> berhenti.
+-- CATATAN: gift cuma nyampe kalau akun market ada di SERVER YANG SAMA. Kalau
+-- belum masuk, loop gift nunggu ("target offline semua") -- itu normal.
+-- ============================================================
+autoBtn.MouseButton1Click:Connect(function()
+    autoPanel = not autoPanel
+    updateAutoBtn()
+    persistGiftSettings()
+    if not autoPanel and giftActive then
+        stopGift()   -- keluar mode auto -> berhenti, biar gak jalan diam-diam
+    end
+end)
+
+task.spawn(function()
+    local GEN = (tonumber(_G.__ZenxAutoGen) or 0) + 1
+    _G.__ZenxAutoGen = GEN
+    local function masihAktif() return _G.__ZenxAutoGen == GEN end
+
+    local PANEL_URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local PANEL_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+    local CEK = 30   -- detik: seberapa sering nanya panel
+
+    local req = (syn and syn.request) or (fluxus and fluxus.request)
+             or (krnl and krnl.request) or http_request or request or httprequest
+    if type(http) == "table" and http.request then req = http.request end
+    if not req then return end
+
+    task.wait(12)   -- biar bridge + UI settle dulu
+    while masihAktif() do
+        if autoPanel then
+            pcall(function()
+                local r = req({
+                    Url = PANEL_URL .. "/gift-tugas", Method = "GET",
+                    Headers = { ["X-Kunci"] = PANEL_KUNCI },
+                })
+                if not (r and (r.StatusCode == 200 or r.Success) and r.Body) then return end
+                local ok, d = pcall(function() return HS:JSONDecode(r.Body) end)
+                if not ok or type(d) ~= "table" or type(d.target) ~= "table" then return end
+
+                -- v2.23: ATURAN dari panel (jenis pet + kg + age minimum).
+                -- petTypes kosong = semua jenis boleh (samain kayak filter lokal).
+                if type(d.petTypes) == "table" then
+                    local mauTipe, nTipe = {}, 0
+                    for _, nm in ipairs(d.petTypes) do
+                        if type(nm) == "string" and nm ~= "" then mauTipe[nm] = true; nTipe = nTipe + 1 end
+                    end
+                    local bedaTipe = false
+                    for k in pairs(mauTipe) do if not selectedPetTypes[k] then bedaTipe = true break end end
+                    if not bedaTipe then
+                        for k in pairs(selectedPetTypes) do if not mauTipe[k] then bedaTipe = true break end end
+                    end
+                    if bedaTipe then
+                        selectedPetTypes = mauTipe
+                        updatePetPickBtn()
+                        print(("[ZenxAuto] aturan jenis pet dari panel: %d jenis"):format(nTipe))
+                    end
+                end
+                if tonumber(d.kgMin) then
+                    local v = tonumber(d.kgMin) > 0 and tostring(d.kgMin) or ""
+                    if kgBox.Text ~= v then kgBox.Text = v end
+                end
+                if tonumber(d.ageMin) then
+                    local v = tonumber(d.ageMin) > 0 and tostring(math.floor(d.ageMin)) or ""
+                    if ageBox.Text ~= v then ageBox.Text = v end
+                end
+
+                -- daftar akun yg butuh disuplai
+                local mau, n = {}, 0
+                for _, t in ipairs(d.target) do
+                    if type(t) == "table" and type(t.akun) == "string" and t.akun ~= "" then
+                        -- jangan targetin diri sendiri
+                        if t.akun ~= player.Name then mau[t.akun] = true; n = n + 1 end
+                    end
+                end
+
+                -- samain selectedTargets sama daftar panel (cuma kalau beda)
+                local beda = false
+                for k in pairs(mau) do if not selectedTargets[k] then beda = true break end end
+                if not beda then
+                    for k in pairs(selectedTargets) do if not mau[k] then beda = true break end end
+                end
+                if beda then
+                    selectedTargets = mau
+                    persistGiftSettings()
+                    updateTargetBtn()
+                    print(("[ZenxAuto] target dari panel: %d akun (ambang %s)")
+                        :format(n, tostring(d.ambang or "?")))
+                end
+
+                -- jalanin/berhentiin gift ngikut ada-nggaknya tugas
+                if n > 0 and not giftActive then
+                    startGift()
+                elseif n == 0 and giftActive then
+                    statusLbl.Text = "Auto: semua akun market udah cukup stok"
+                    statusLbl.TextColor3 = C.Green
+                    stopGift()
+                end
+            end)
+        end
+        task.wait(CEK)
+    end
+end)
+
+-- ============================================================
 -- TAB SWITCH
 -- ============================================================
 local activeTab = "stats"
@@ -1632,6 +1771,98 @@ end
 hookBp(player:FindFirstChild("Backpack"))
 hookBp(player.Character)
 player.CharacterAdded:Connect(function(ch) hookBp(ch) end)
+
+-- ============================================================
+-- v2.21: BRIDGE PANEL (STAR PANEL) — lapor stats pet + gift ke web.
+-- Kenapa penting: script ini gak punya bridge sama sekali. Akun yg cuma
+-- jalanin script ini (tanpa market.lua) -> panel gak pernah dapet laporan ->
+-- dikira "off" -> worker auto-rejoin padahal lagi kerja. Bridge ini sekalian
+-- jadi DENYUT biar akun keitung idup.
+-- Pola ngikutin market v8.336: cek balasan server, gagal = diulang cepet
+-- (jangan dianggap sukses), semua dibungkus pcall biar loop gak pernah mati.
+-- ============================================================
+task.spawn(function()
+    local GEN = (tonumber(_G.__ZenxLvlBridgeGen) or 0) + 1
+    _G.__ZenxLvlBridgeGen = GEN
+    local function masihAktif() return _G.__ZenxLvlBridgeGen == GEN end
+
+    local PANEL_URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local PANEL_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+    local DENYUT      = 60    -- detik: lapor walau gak berubah (ambang panel 420s -> lega)
+    local CEK         = 15    -- detik: cek perubahan
+
+    local req = (syn and syn.request) or (fluxus and fluxus.request)
+             or (krnl and krnl.request) or http_request or request or httprequest
+    if type(http) == "table" and http.request then req = http.request end
+    if not req then
+        warn("[ZenxLvlBridge] executor gak punya request() -- panel mati")
+        return
+    end
+
+    local function kirim(isi)
+        local ok, body = pcall(function() return HS:JSONEncode(isi) end)
+        if not ok then return false end
+        local sukses = false
+        pcall(function()
+            local r = req({
+                Url = PANEL_URL .. "/leveling", Method = "POST",
+                Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                Body = body,
+            })
+            if r and (r.StatusCode == 200 or r.Success) then sukses = true end
+        end)
+        return sukses
+    end
+
+    -- ringkas jadi string buat banding "berubah apa nggak" (tanpa deep-compare)
+    local function sidik(d)
+        return table.concat({ d.total, d.age, d.kurang, d.sent, d.gagal, d.giftOn and 1 or 0 }, "|")
+    end
+
+    local lamaSidik, lamaKirim = nil, 0
+    task.wait(10)   -- kasih waktu container + backpack settle
+    print("[ZenxLvlBridge] jalan | " .. player.Name)
+
+    while masihAktif() do
+        pcall(function()
+            local byType, total, ageOk, kurang = collectStats(cachedContainer)
+            -- byType (map) -> array ringkas buat dikirim
+            local jenis = {}
+            for nama, v in pairs(byType or {}) do
+                jenis[#jenis + 1] = { n = nama, a = v.age100 or 0, k = v.less100 or 0 }
+            end
+            table.sort(jenis, function(x, y) return (x.a + x.k) > (y.a + y.k) end)
+
+            local target = {}
+            for n in pairs(selectedTargets) do target[#target + 1] = n end
+
+            local d = {
+                akun   = player.Name,
+                place  = tostring(game.PlaceId or ""),
+                total  = total or 0,
+                age    = ageOk or 0,
+                kurang = kurang or 0,
+                batas  = AGE_MAX,
+                giftOn = giftActive and true or false,
+                sent   = sentCount or 0,
+                gagal  = failCount or 0,
+                target = table.concat(target, ", "),
+                jenis  = jenis,
+            }
+
+            local skrg = os.time()
+            local sdk = sidik(d)
+            local wajib = (skrg - lamaKirim) >= DENYUT
+            if wajib or sdk ~= lamaSidik then
+                if kirim(d) then
+                    lamaSidik, lamaKirim = sdk, skrg
+                end
+            end
+        end)
+        task.wait(CEK)
+    end
+    print("[ZenxLvlBridge] lapor berhenti.")
+end)
 
 print("[ZenxAgeStats] "..VER.." loaded")
 
