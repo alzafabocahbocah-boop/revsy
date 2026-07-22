@@ -68,7 +68,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.335"
+local VERSION = "8.336"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -151,16 +151,22 @@ task.spawn(function()
         return total, nRule
     end
 
+    -- v8.336: BALIKIN sukses/gagal. dulu fire-and-forget -> gagal kirim gak
+    -- ketauan -> loop tetep nganggep "udah lapor" -> nunggu 120s lagi.
     local function kirim(jalur, isi)
         local ok, body = pcall(function() return HS:JSONEncode(isi) end)
-        if not ok then return end
+        if not ok then return false end
+        local sukses = false
         pcall(function()
-            req({
+            local r = req({
                 Url = PANEL_URL .. jalur, Method = "POST",
                 Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
                 Body = body,
             })
+            -- executor beda-beda: ada yg kasih StatusCode, ada yg Success
+            if r and (r.StatusCode == 200 or r.Success) then sukses = true end
         end)
+        return sukses
     end
 
     local lamaTok, lamaPet, lamaKirim = -1, -1, 0
@@ -209,14 +215,19 @@ task.spawn(function()
             local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
             local wajib = (skrg - lamaKirim) >= 120
             if berubah or wajib then
-                kirim("/market", {
+                -- v8.336 FIX FALSE-OFF: cuma catet "udah lapor" kalau server BENERAN
+                -- balas. dulu gagal kirim tetep dicatet sukses -> nunggu 120s lagi ->
+                -- 4x gagal berturut = 8 menit diem -> panel kira "off" PADAHAL game
+                -- jalan. sekarang gagal = gak dicatet -> diulang 20 detik lagi.
+                if kirim("/market", {
                     akun = plr.Name,
                     place = tostring(game.PlaceId or ""),
                     tokens = tok,
                     petRule = petTerakhir,
                     nRule = nRuleTerakhir,
-                })
-                lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
+                }) then
+                    lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
+                end
             end
         end)
         _G.__ZenxMarketLaporTs = os.time()   -- penanda: loop idup (buat debug)
