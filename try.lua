@@ -11,7 +11,7 @@ local RS         = game:GetService("ReplicatedStorage")
 local HS         = game:GetService("HttpService")
 local player     = Players.LocalPlayer
 local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.23"
+local VER = "v2.24"
 local TARGETS_FILE = "ZenxAgeStats_targets.json"
 local SETTINGS_FILE = "ZenxAgeStats_settings.json"
 local MAX_RECENT = 8
@@ -1848,6 +1848,10 @@ task.spawn(function()
                 gagal  = failCount or 0,
                 target = table.concat(target, ", "),
                 jenis  = jenis,
+                -- v2.24: berapa pemain di server INI sekarang. Dipakai panel biar
+                -- narik akun market gak sampai nabrak (server penuh -> join gagal).
+                pemain = #Players:GetPlayers(),
+                jobId  = tostring(game.JobId or ""),
             }
 
             local skrg = os.time()
