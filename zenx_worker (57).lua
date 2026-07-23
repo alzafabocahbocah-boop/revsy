@@ -1,0 +1,2659 @@
+#!/usr/bin/env lua
+-- ============================================================
+-- ZENX WORKER  v4.2  (Termux, Redfinger)
+-- 1 WORKER = 1 TIM = 1 RedFinger = 6-10 client Roblox.
+--
+-- Beda dari v3.0 (ntfy) -> v4.0 (Cloudflare Worker):
+--   * ntfy DIBUANG. Satu layanan, satu kunci, satu alamat.
+--   * Perintah : GET  /perintah?tim=X   (dulu: ntfy.sh/topic/json?poll=1)
+--   * Status   : POST /tim              (dulu: ntfy.sh/topic-status)
+--   * Kunci beneran (X-Kunci). Topic ntfy itu publik — siapa pun yang tau
+--     namanya bisa nembak FORCE ke tim lo.
+--   * CPU/RAM jadi keluar di panel.
+--
+-- v4.1: * Paket Roblox DIPINDAI OTOMATIS dari device. Gak usah ngetik
+--         6-10 nama paket satu-satu (gampang typo, susah dicek).
+--       * win_mode: OPSIONAL, bawaan 0 = jangan disenggol. Client yang
+--         udah auto-freeform gak perlu ini.
+--       * BUKA BERGILIR + DIVERIFIKASI. Tiap client ditungguin sampai
+--         beneran jalan sebelum lanjut ke berikutnya. Gagal -> diulang,
+--         terus dilaporin nama paketnya. Gak lagi tembak-lari.
+--
+-- v4.2: BISA DIMATIIN. Dulu cuma bisa `pkill` — mati mendadak, notif
+--       nyangkut, wake-lock kepegang, panel gak tau.
+--         lua5.4 zenx_worker.lua stop     -> berhenti baik-baik
+--         lua5.4 zenx_worker.lua status   -> jalan apa nggak
+--         KILL dari panel                 -> worker mati (beda dari STANDBY)
+--       Plus: gak bisa dobel jalan (2 worker 1 tim = RAM jebol).
+--
+-- Perintah nempel (sticky) sampai diganti. Di ntfy dulu perlu akal-akalan
+-- forceSticky karena pesan kedaluwarsa. Sekarang perintahnya kesimpen di DB,
+-- jadi isinya = keadaannya. Lebih simpel & gak bisa "ilang" sendiri.
+--
+-- v4.17: MASUK GAME DIKONFIRMASI BRIDGE (bukan cuma "proses muncul").
+--        Masalah: halaman Home Roblox JUGA pakai ActivityNativeMain, jadi
+--        client yg nyangkut di Home (kena popup age-check / PS link gagal)
+--        ke-baca "jalan" -> worker lanjut ke client lain, gak ngulang.
+--        Fix: setelah proses muncul, worker TUNGGUIN akun lapor BARU ke
+--        /stat (sinyal sama kayak auto-rejoin). Lapor baru = script jalan =
+--        BENERAN di game. Bridge diem sampai timeout = nyangkut -> ulang buka.
+--        Skip "udah jalan" juga dicek bridge, biar Home-stuck gak ke-skip.
+--        Default delay dinaikin (stagger 15, tunggu 60) + konfirmasi_sec 90.
+--
+-- v4.18: ORIENTASI LAYAR + KEEP-ALIVE (anti-FC).
+--        * orientasi: kunci RF ke landscape/portrait (opsional, setup).
+--        * keep-alive: client Roblox tahan di background (deviceidle whitelist +
+--          appops RUN_IN_BACKGROUND + oom_score_adj rendah, di-apply ulang tiap
+--          menit karena Android suka reset). Worker DILINDUNGIN LEBIH KUAT dari
+--          client -> kalau RAM mentok, yg dikorbanin client (bisa rejoin), bukan
+--          worker. CATATAN: di device RAM sesek keep-alive NGURANGIN kill, bukan
+--          NGILANGIN -> tetep bisa reboot kalau kepepet. Jaring rejoin tetep jalan.
+--
+-- v4.19: REJOIN GANTI SERVER: CEPET + NYEROBOT.
+--        * REJOIN (dari panel, ganti PS) pakai FAST mode -> skip bridge-confirm
+--          (gak nunggu tiap client lapor 90s). alur tetep: tutup semua -> refresh
+--          assign-ps (nurut panel) -> buka lagi ke PS baru, tapi CEPET.
+--        * REJOIN/CLOSE NYEROBOT FORCE yg lagi jalan -> FORCE dibatalin, perintah
+--          panel langsung dikerjain (gak nyangkut nunggu FORCE kelar dulu).
+--        FORCE/reopen berkala TETEP pakai bridge-confirm (biar Home-stuck ketangkep).
+--
+-- v4.20: REJOIN PER-CLIENT bisa BANYAK akun sekaligus.
+--        REJOIN:akun1,akun2 -> rejoin per-client masing-masing (tutup 1 buka 1),
+--        JANGAN kill all. Buat panel: kalau ganti server cuma sebagian client,
+--        yg di-rejoin cuma yg berubah (per-client). Kill all CUMA kalau REJOIN
+--        polos (tanpa :akun) = ganti server SEMUA client sekaligus.
+--
+-- v4.21: FALSE-OFF FIX (client kebekuin Android, keliatan off padahal di server).
+--        * MATIIN cached-app freezer (settings + device_config) -> Roblox background
+--          gak dibekuin -> loop script tetep jalan -> tetep lapor -> gak dikira off.
+--        * wake-lock CPU pas start (worker + client gak ditidurin layar idle).
+--        * AUTO-REJOIN pinter: bridge diem TAPI client masih di game (pkg_running) ->
+--          cukup DIBANGUNIN (bawa ke depan), JANGAN kill+buka. kill cuma kalau
+--          beneran keluar dari layar game.
+--
+-- v4.22: freezer-disable DICABUT (teorinya salah -- game jalan normal, yg berhenti
+--        cuma LAPORAN bridge). akar masalahnya jarak denyut kekencengan vs ambang
+--        off panel; dibenerin di script: star_farm v13.10 (denyut 300->120) +
+--        market v8.336 (gagal kirim gak lagi dianggap sukses). nudge auto-rejoin
+--        (v4.21) TETEP dipake -- itu tetep bener biar client idup gak di-kill.
+--
+-- v4.23: PINDAH SERVER OTOMATIS (buat suplai pet market <- leveling).
+--        * PS berubah di panel/CF -> worker rejoin client itu DOANG ke PS baru.
+--          Ini mesin umum: siapa pun yg ubah assign-ps, client nyusul sendiri.
+--        * suplai_master (v4.28: OTOMATIS tim-1, gak ditanya lagi) manggil /suplai-cek
+--          tiap 60 detik -> CF ngumpulin akun market yg stok nipis ke PS akun
+--          leveling yg pet siap-gift-nya banyak, terus mulangin kalau udah cukup.
+--          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
+-- ============================================================
+local CONFIG_FILE = "zenx_worker_config.lua"
+local VERSION = "4.77-cf"
+local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
+local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
+-- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
+-- warn() ikut kecatet (ditandain "!") supaya ERROR keliatan di panel juga.
+local LOG_KIRIM = {}          -- baris log terakhir (maks 20)
+local AKSI_SKRG = "mulai..."  -- lagi ngapain SEKARANG
+local SUDAH_GRID = false      -- v4.30: udah pernah nata grid sejak worker nyala?
+local function setAksi(txt)
+    AKSI_SKRG = tostring(txt or "")
+end
+local function catatKirim(baris)
+    LOG_KIRIM[#LOG_KIRIM+1] = baris
+    while #LOG_KIRIM > 20 do table.remove(LOG_KIRIM, 1) end
+end
+
+local function ok(m) log("OK  "..m,C.G) end
+local function err(m) log("ERR "..m,C.R) end
+local function info(m) log("--  "..m,C.C) end
+local function warn(m)
+    log("!   "..m,C.Y)
+    catatKirim(os.date("%H:%M:%S") .. " ! " .. tostring(m))   -- v4.26: error nongol di panel
+end
+
+-- ============================================================
+-- config
+-- ============================================================
+local function load_config()
+    local f=io.open(CONFIG_FILE,"r"); if not f then return nil end
+    local s=f:read("*all"); f:close()
+    local fn=load("return "..s); if not fn then return nil end
+    local o,cfg=pcall(fn); if o then return cfg end; return nil
+end
+
+local function save_config(cfg)
+    local f=io.open(CONFIG_FILE,"w"); if not f then return false end
+    f:write("{\n")
+    f:write(string.format("  tim=%q,\n",cfg.tim))
+    f:write(string.format("  url=%q,\n",cfg.url))
+    f:write(string.format("  kunci=%q,\n",cfg.kunci))
+    f:write(string.format("  targets=%q,\n",cfg.targets))
+    f:write(string.format("  place_id=%q,\n",cfg.place_id))
+    f:write(string.format("  game_label=%q,\n",cfg.game_label or ""))
+    f:write(string.format("  script_url=%q,\n",cfg.script_url or ""))
+    f:write(string.format("  link_code=%q,\n",cfg.link_code or ""))
+    f:write(string.format("  autoexec_dir=%q,\n",cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"))
+    f:write(string.format("  pkgs=%q,\n",cfg.pkgs))
+    f:write(string.format("  poll_sec=%d,\n",cfg.poll_sec))
+    f:write(string.format("  reopen_sec=%d,\n",cfg.reopen_sec or 300))
+    f:write(string.format("  auto_rejoin=%s,\n",tostring(cfg.auto_rejoin ~= false)))
+    f:write(string.format("  auto_rejoin_menit=%d,\n",cfg.auto_rejoin_menit or 8))
+    f:write(string.format("  stagger_sec=%d,\n",cfg.stagger_sec or 15))
+    f:write(string.format("  status_sec=%d,\n",cfg.status_sec or 20))
+    f:write(string.format("  win_mode=%d,\n",cfg.win_mode or 0))
+    f:write(string.format("  tunggu_sec=%d,\n",cfg.tunggu_sec or 60))
+    f:write(string.format("  konfirmasi_sec=%d,\n",cfg.konfirmasi_sec or 90))
+    f:write(string.format("  orientasi=%q,\n",cfg.orientasi or ""))
+    f:write(string.format("  keep_alive=%s,\n",tostring(cfg.keep_alive ~= false)))
+    f:write(string.format("  auto_grid=%s,\n",tostring(cfg.auto_grid == true)))
+    f:write(string.format("  deteksi_longgar=%s,\n",tostring(cfg.deteksi_longgar == true)))
+    f:write(string.format("  disconnect_menit=%d,\n",cfg.disconnect_menit or 3))
+    f:write(string.format("  jaga_depan_sec=%d,\n",cfg.jaga_depan_sec or 0))
+    f:write(string.format("  suplai_sec=%d,\n",cfg.suplai_sec or 20))
+    f:write(string.format("  shell_tetap=%s,\n",tostring(cfg.shell_tetap == true)))
+    f:write(string.format("  max_coba=%d,\n",cfg.max_coba or 5))
+    f:write("}\n"); f:close(); return true
+end
+
+local function ask(p,d)
+    io.write(C.Y.."? "..p..C.N)
+    if d and d~="" then io.write(C.D.." ["..tostring(d):sub(1,44).."]"..C.N) end
+    io.write(": "); io.flush()
+    local i=io.read(); if i=="" then return d end; return i
+end
+
+-- ============================================================
+-- shell
+-- ============================================================
+local function sh_lama(cmd)
+    -- timeout 5s: kalau cmd hang (mis. su nungguin izin), jangan freeze selamanya
+    local h=io.popen("timeout 5 "..cmd.." 2>/dev/null"); if not h then return "" end
+    local o=h:read("*all") or ""; h:close(); return o
+end
+
+-- ============================================================
+-- v4.70: SHELL ROOT TETAP (opsional, bawaan MATI)
+-- Masalahnya: tiap 'su -c ...' di RedFinger makan ~6 detik cuma buat MINTA
+-- izin root. Worker manggil puluhan kali per menit -> sebagian besar waktunya
+-- kebuang di situ.
+-- Idenya: buka SATU shell root di awal, biarin nyala, lempar perintah ke situ.
+-- Ongkos ~6 detik itu cuma dibayar SEKALI.
+--
+-- Pengaman (biar aman dicoba):
+--   * dites dulu pas nyala -- gagal = balik ke cara lama, gak ada yang rusak
+--   * tiap perintah dibungkus 'timeout' DI DALAM shell -> satu macet gak nahan
+--     antrean di belakangnya
+--   * tiap perintah punya penanda unik -> jawaban gak mungkin ketuker
+--   * kalau shell-nya mati di tengah jalan, kedeteksi & balik ke cara lama
+-- ============================================================
+local SHELL_AKTIF   = false      -- lagi kepakai apa nggak
+local SHELL_TULIS            -- pipa buat ngirim perintah
+-- v4.75: dulu di /data/local/tmp -- itu punya root, Termux gak bisa bikin file
+-- di situ, jadi mkfifo gagal diem-diem lalu "gagal buka pipa". Pakai folder
+-- Termux sendiri: pasti bisa ditulis, dan root tetep bisa baca.
+local RUMAH     = os.getenv("HOME") or "."
+local SHELL_IN  = RUMAH .. "/.zenx_in"
+local SHELL_OUT = RUMAH .. "/.zenx_out"
+local SHELL_URUT = 0
+
+local function shell_matikan()
+    if SHELL_TULIS then pcall(function() SHELL_TULIS:close() end) end
+    SHELL_TULIS, SHELL_AKTIF = nil, false
+    os.execute("rm -f " .. SHELL_IN .. " " .. SHELL_OUT .. "* >/dev/null 2>&1")
+end
+
+-- kirim satu perintah ke shell tetap. balikin: keluaran, atau nil kalau gagal
+local function shell_jalan(cmd, batas)
+    if not SHELL_AKTIF or not SHELL_TULIS then return nil end
+    SHELL_URUT = SHELL_URUT + 1
+
+    -- v4.77: tiap perintah nulis ke file SENDIRI, terus bikin file penanda
+    -- "selesai". Dulu semua nulis ke satu file yang terus kebuka -- keluarannya
+    -- nyangkut di penyangga (shell nulis ke file itu numpuk dulu di memori),
+    -- jadi jawabannya gak pernah nyampe. Begitu redirect '>' nutup (perintah
+    -- kelar), isinya PASTI ketulis -- gak ada yang nyangkut.
+    local fOut  = SHELL_OUT .. "." .. SHELL_URUT
+    local fDone = SHELL_OUT .. "." .. SHELL_URUT .. ".ok"
+    local aman  = "'" .. tostring(cmd):gsub("'", "'\\''") .. "'"
+
+    local ok = pcall(function()
+        SHELL_TULIS:write("timeout " .. (batas or 8) .. " sh -c " .. aman ..
+                          " > " .. fOut .. " 2>/dev/null; echo x > " .. fDone .. "\n")
+        SHELL_TULIS:flush()
+    end)
+    if not ok then shell_matikan(); return nil end
+
+    -- tungguin penanda selesai muncul
+    local mulai = os.time()
+    while (os.time() - mulai) <= (batas or 8) + 3 do
+        local d = io.open(fDone, "r")
+        if d then
+            d:close()
+            local hasil = ""
+            local f = io.open(fOut, "r")
+            if f then hasil = f:read("*all") or ""; f:close() end
+            os.remove(fOut); os.remove(fDone)
+            return hasil
+        end
+        os.execute("sleep 0.2")
+    end
+    os.remove(fOut); os.remove(fDone)
+    -- gak ada jawaban -> anggap shell-nya bermasalah, balik ke cara lama
+    shell_matikan()
+    return nil
+end
+
+local function shell_nyalakan()
+    -- pastiin su beneran jalan dulu (kalau nggak, jangan nekat buka pipa:
+    -- io.open ke FIFO bakal nunggu selamanya kalau gak ada yang baca)
+    local tes = sh_lama("su -c 'echo ZENXOK'")
+    if not tes:find("ZENXOK", 1, true) then return false, "su gak jalan" end
+
+    os.execute("rm -f " .. SHELL_IN .. " " .. SHELL_OUT .. " >/dev/null 2>&1")
+    os.execute("mkfifo " .. SHELL_IN .. " >/dev/null 2>&1")
+    os.execute("touch " .. SHELL_OUT .. " >/dev/null 2>&1")
+    -- pastiin pipanya beneran kebikin (mkfifo bisa gagal diem-diem)
+    local adaPipa = sh_lama("test -p " .. SHELL_IN .. " && echo ADA")
+    if not adaPipa:find("ADA", 1, true) then
+        return false, "mkfifo gak jalan (pkg install coreutils?)"
+    end
+    -- shell root nyala di latar, baca dari pipa, tulis ke file keluaran
+    os.execute("su -c 'sh < " .. SHELL_IN .. " >> " .. SHELL_OUT .. " 2>&1' >/dev/null 2>&1 &")
+    os.execute("sleep 1")
+
+    local f = io.open(SHELL_IN, "w")
+    if not f then shell_matikan(); return false, "gagal buka pipa" end
+    SHELL_TULIS, SHELL_AKTIF = f, true
+
+    -- tes beneran: harus balik jawaban yang bener
+    local uji = shell_jalan("echo ZENXSIAP", 5)
+    if not uji or not uji:find("ZENXSIAP", 1, true) then
+        shell_matikan(); return false, "shell gak jawab"
+    end
+    return true
+end
+
+-- Perintah yang ada udah dibungkus "su -c '...'". Kalau dijalanin DI DALAM
+-- shell yang emang udah root, bungkus itu bakal manggil su LAGI -- percuma,
+-- ongkosnya balik kayak semula. Jadi bungkusnya dibuka dulu.
+local function buka_bungkus_su(cmd)
+    local isi = cmd:match("^su %-c '(.*)'$") or cmd:match('^su %-c "(.*)"$')
+    if isi then
+        -- balikin escape yang dipakai pas ngebungkus
+        isi = isi:gsub('\\"', '"')
+        return isi
+    end
+    return cmd
+end
+
+-- pintu masuk tunggal: coba shell tetap dulu, gagal -> cara lama
+local function sh(cmd)
+    if SHELL_AKTIF then
+        local o = shell_jalan(buka_bungkus_su(cmd), 8)
+        if o then return o end
+        -- shell_jalan udah matiin dirinya kalau bermasalah -> lanjut ke cara lama
+    end
+    return sh_lama(cmd)
+end
+local function sh_silent(cmd)
+    if SHELL_AKTIF then
+        if shell_jalan(buka_bungkus_su(cmd), 8) then return end
+    end
+    os.execute("timeout 8 "..cmd.." >/dev/null 2>&1")
+end
+
+local function split(s,sep)
+    local t={}
+    for x in tostring(s or ""):gmatch("[^"..(sep or ",").."]+") do
+        x=x:gsub("^%s+",""):gsub("%s+$","")
+        if x~="" then t[#t+1]=x end
+    end
+    return t
+end
+
+local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+
+-- ============================================================
+-- v4.2: BISA DIMATIIN
+-- Dulu satu-satunya cara berhenti itu `pkill -f zenx_worker.lua` — mati
+-- mendadak: notif nyangkut, wake-lock kepegang, panel gak tau dia mati.
+--
+-- Lua polos gak bisa nangkep sinyal (kill/Ctrl+C) tanpa luaposix, jadi
+-- dipake FLAG FILE: `stop` bikin file, loop utama ngecek tiap putaran,
+-- terus keluar baik-baik.
+-- ============================================================
+local PID_FILE  = "zenx_worker.pid"
+local STOP_FILE = "zenx_worker.stop"
+
+local function tulis_pid()
+    local pid = tonumber(sh("echo $PPID")) or 0
+    local f = io.open(PID_FILE, "w")
+    if f then f:write(tostring(pid)); f:close() end
+    return pid
+end
+
+local function baca_pid()
+    local f = io.open(PID_FILE, "r"); if not f then return nil end
+    local p = tonumber(f:read("*l")); f:close(); return p
+end
+
+local function pid_hidup(pid)
+    if not pid then return false end
+    return sh("ps -p " .. pid .. " -o comm=") ~= ""
+end
+
+local function ada_stop()
+    local f = io.open(STOP_FILE, "r")
+    if f then f:close(); return true end
+    return false
+end
+
+local function hapus(f) os.remove(f) end
+
+-- dipanggil pas keluar baik-baik: beresin semua yang nyangkut
+local function bersih(cfg, sebab)
+    print()
+    info("Beres-beres (" .. (sebab or "?") .. ")...")
+    sh_silent("termux-notification-remove zenx_worker")
+    sh_silent("termux-wake-unlock")
+    hapus(PID_FILE)
+    hapus(STOP_FILE)
+    shell_matikan()   -- v4.70: tutup shell root tetap + bersihin pipa
+    ok("Worker berhenti.")
+end
+
+-- ============================================================
+-- API — Cloudflare Worker
+-- ============================================================
+local TMP = "/data/data/com.termux/files/usr/tmp/zenx_body.json"
+
+local function api_get(cfg, jalur)
+    local cmd = string.format("curl -s -m 10 -H %s %s",
+        shq("X-Kunci: " .. cfg.kunci), shq(cfg.url .. jalur))
+    return sh(cmd)
+end
+
+local function api_post(cfg, jalur, body)
+    local f = io.open(TMP, "w")
+    if not f then TMP = "./zenx_body.json"; f = io.open(TMP, "w") end
+    if not f then return "" end
+    f:write(body); f:close()
+    local cmd = string.format("curl -s -m 10 -X POST -H %s -H %s -d @%s %s",
+        shq("X-Kunci: " .. cfg.kunci), shq("Content-Type: application/json"),
+        TMP, shq(cfg.url .. jalur))
+    return sh(cmd)
+end
+
+-- JSON kecil doang, cukup pola. gak perlu library.
+local function ambil_str(js, k) return tostring(js or ""):match('"'..k..'"%s*:%s*"(.-)"') end
+local function ambil_num(js, k) return tonumber(tostring(js or ""):match('"'..k..'"%s*:%s*(-?%d+)')) end
+-- v4.32: escape LENGKAP. Dulu cuma \ dan " -- baris baru/tab dari output shell
+-- lolos mentah ke JSON -> laporan RUSAK -> Cloudflare nolak -> panel kira worker
+-- MATI padahal jalan. Sekarang semua karakter kontrol ikut di-escape.
+local function jstr(s)
+    s = tostring(s or ""):gsub('\\','\\\\'):gsub('"','\\"')
+    s = s:gsub('\n','\\n'):gsub('\r','\\r'):gsub('\t','\\t')
+    s = s:gsub('%c', ' ')   -- sisa karakter kontrol lain -> spasi
+    return '"'..s..'"'
+end
+
+-- ============================================================
+-- deteksi client
+-- ============================================================
+-- v4.34: JALAN DARURAT. Kalau penanda "ActivityNativeMain" gak cocok lagi
+-- (Roblox ganti nama activity / bentuk dumpsys beda), client kebaca OFF terus
+-- padahal game jalan. Set deteksi_longgar=true di config -> cukup "ada
+-- ActivityRecord" dianggap jalan. Efek samping: Roblox yang nyangkut di Home
+-- ikut kebaca "jalan". Bridge (/stat) tetep jadi penentu sebenernya.
+local DETEKSI_LONGGAR = false
+-- v4.36: Roblox GANTI NAMA activity. Dulu cuma dikenal "ActivityNativeMain";
+-- di Roblox baru namanya "com.roblox.client.startup.MainGameActivity". Worker
+-- nyari nama lama -> gak pernah ketemu -> client SELALU kebaca off padahal
+-- game jalan normal. Sekarang dua-duanya (plus varian *GameActivity) dikenal.
+local PENANDA_GAME = { "ActivityNativeMain", "MainGameActivity" }
+
+local function pkg_running(pkg)
+    -- "beneran DI GAME" -- bukan cuma "ada ActivityRecord" (Home Roblox,
+    -- key system, splash JUGA punya ActivityRecord tapi BUKAN di game).
+    local o = sh("su -c 'dumpsys activity activities | grep ActivityRecord | grep " .. pkg .. "'")
+    for line in o:gmatch("[^\n]+") do
+        if line:find(pkg, 1, true) then
+            for _, tanda in ipairs(PENANDA_GAME) do
+                if line:find(tanda, 1, true) then return true end
+            end
+        end
+    end
+    -- v4.34: mode longgar -> ada ActivityRecord buat paket ini = dianggap jalan
+    if DETEKSI_LONGGAR then
+        for line in o:gmatch("[^\n]+") do
+            if line:find(pkg, 1, true) then return true end
+        end
+    end
+    return false
+end
+
+-- v4.29: ID device -- dipakai buat "1 tim = 1 RedFinger".
+-- android_id nempel per-device & gak berubah kecuali factory reset.
+local DEV_ID_CACHE
+-- v4.63: cek status SEMUA client dari SATU dump. Dulu pkg_running dipanggil
+-- per client -- tiap panggilan 'su' di RedFinger ~6 detik, jadi 4 client = ~24
+-- detik. Padahal ini jalan tiap 10 detik -> worker lebih banyak nunggu su
+-- daripada kerja, dan perintah panel jadi telat dieksekusi.
+local function pkg_running_semua(pkgs)
+    local hasil = {}
+    for _, p in ipairs(pkgs) do hasil[p] = false end
+    local o = sh("su -c 'dumpsys activity activities | grep ActivityRecord'") or ""
+    for baris in o:gmatch("[^\r\n]+") do
+        for _, p in ipairs(pkgs) do
+            if not hasil[p] and baris:find(p, 1, true) then
+                for _, tanda in ipairs(PENANDA_GAME) do
+                    if baris:find(tanda, 1, true) then hasil[p] = true break end
+                end
+                if DETEKSI_LONGGAR then hasil[p] = true end
+            end
+        end
+    end
+    return hasil
+end
+
+local function dev_id()
+    if DEV_ID_CACHE then return DEV_ID_CACHE end
+    local id = (sh("su -c 'settings get secure android_id'") or ""):match("%w+")
+    if not id or id == "null" or #id < 4 then
+        id = (sh("su -c 'getprop ro.serialno'") or ""):match("%S+")
+    end
+    if not id or id == "" or id == "unknown" then
+        id = "rf-" .. tostring(os.time())   -- terakhir banget: acak sekali
+    end
+    DEV_ID_CACHE = id
+    return id
+end
+
+-- ============================================================
+-- v4.17: konfirmasi BENERAN di game lewat bridge (/stat)
+-- Home Roblox = ActivityNativeMain JUGA -> pkg_running gak bisa bedain Home
+-- vs in-game. Yg beneran nandain di dalam game + script jalan = akun LAPOR
+-- ke /stat (bridge cuma denyut dari dalam game). Sama persis kayak auto-rejoin.
+-- ============================================================
+local KONFIRMASI_POLL = 3    -- poll /stat tiap brp detik pas nungguin masuk game
+-- v4.60 FIX: dulu 45 detik -- padahal script cuma lapor tiap 120 detik kalau
+-- gak ada perubahan. Akibatnya client SEHAT sering keliatan basi -> gak dilewat
+-- -> DIBUNUH & DIBUKA ULANG percuma, terus ditungguin lapor lagi. Itu yang bikin
+-- kerasa "nunggu lama padahal client udah aman".
+-- Sekarang 200 detik: lebih longgar dari jarak lapor (120) + toleransi CPU 100%.
+-- v4.68: dari 200 -> 300. Script lapor tiap 120 detik, TAPI pas CPU 100% loop
+-- script molor bisa 2x -> laporan nyatanya tiap ~240 detik. Ambang 200 nyisain
+-- jarak cuma 80 detik: sekali molor, client SEHAT keliatan basi terus ditutup &
+-- dibuka ulang percuma. 300 ngasih toleransi 1,5x jarak lapor.
+local FRESH_WINDOW    = 300  -- akun "masih di game" kalau lapor <= sekian detik lalu
+
+-- ambil ts (kapan terakhir akun lapor) dari string /stat
+local function bridge_ts(stat, akun)
+    if not stat or not akun then return nil end
+    local blok = stat:match('{[^{}]-"nama"%s*:%s*"' .. akun .. '"[^{}]-}')
+    return blok and tonumber(blok:match('"ts"%s*:%s*(%d+)')) or nil
+end
+
+-- true kalau akun lapor fresh (masih beneran di game SEKARANG)
+local function bridge_fresh(stat, akun)
+    local ts = bridge_ts(stat, akun)
+    -- v4.53 FIX: "skrg" di /stat itu ANGKA, tapi dulu dibaca pakai ambil_str
+    -- (khusus teks berkutip) -> SELALU nil -> fungsi ini SELALU balik false.
+    -- Akibatnya: semua client kebaca "beku", dan skip-check di open_all gak
+    -- pernah kena (client yang udah jalan tetep dibuka ulang).
+    local skrg = ambil_num(stat, "skrg")
+    if not ts or not skrg then return false end
+    return (skrg - ts) <= FRESH_WINDOW
+end
+
+-- tungguin akun lapor BARU (ts > ts0) -> tanda script mulai jalan -> BENERAN masuk game.
+-- ts0 = ts sebelum client dibuka (bisa nil kalau belum pernah lapor).
+-- return true kalau kedeteksi masuk, false kalau timeout / dibatalin.
+-- v4.42: dideklarasi di depan -- tunggu_bridge perlu manggil ini, padahal
+-- definisinya jauh di bawah (butuh build_url dll).
+local cek_layar
+
+local INTIP_DETIK = 30   -- v4.42: kapan mulai ngintip layar (detik)
+local INTIP_ULANG = 10   -- v4.44: jeda sebelum cek ULANG (mastiin beneran nyangkut)
+local function tunggu_bridge(cfg, akun, ts0, batas, cek_batal, pkg, mapLink)
+    local mulai = os.time()
+    local sudahIntip = false
+    -- v4.41: kalau client MASIH di layar game, kasih perpanjangan. Pas CPU 100%
+    -- rantai "load game -> Delta inject -> script jalan -> lapor pertama" bisa
+    -- lewat 90 detik. Dulu langsung divonis nyangkut -> client SEHAT dibunuh ->
+    -- ngulang dari nol -> makin lama. Sekarang: selama masih di layar game,
+    -- ditungguin (maks 2x batas). Kalau kelempar dari game, langsung nyerah.
+    local batasMax = batas * 2
+    while (os.time() - mulai) < batasMax do
+        if cek_batal and cek_batal() then return false end
+        local ts = bridge_ts(api_get(cfg, "/stat"), akun)
+        if ts and (not ts0 or ts > ts0) then return true end
+        -- v4.42: jangan cuma nungguin bridge diem sampai 90 detik baru sadar.
+        -- Setelah INTIP_DETIK, lihat layarnya sekali: kalau nyangkut di Home /
+        -- popup umur / ada error, langsung ketauan -- gak usah nunggu penuh.
+        if (not sudahIntip) and (os.time() - mulai) >= INTIP_DETIK and pkg and cek_layar then
+            sudahIntip = true
+            local pesan, sifat, sidik1 = cek_layar(cfg, pkg, mapLink)
+            if pesan and (sifat == "home" or sifat == "manual" or sifat == "ulang") then
+                -- v4.44: JANGAN langsung divonis. Kadang beberapa detik kemudian
+                -- dia lanjut masuk game sendiri (Home cuma numpang lewat).
+                os.execute("sleep " .. INTIP_ULANG)
+                local ts2 = bridge_ts(api_get(cfg, "/stat"), akun)
+                if ts2 and (not ts0 or ts2 > ts0) then return true end   -- ternyata masuk
+                local pesan2, sifat2, sidik2 = cek_layar(cfg, pkg, mapLink)
+                if pesan2 then
+                    -- Home / popup umur / error: itu layar DIEM, gak bakal lanjut
+                    -- sendiri -> langsung vonis.
+                    if sifat2 == "home" or sifat2 == "manual" or (pesan2:find("Error", 1, true)) then
+                        return false, pesan2
+                    end
+                    -- Loading / layar kosong: cuma dianggap BEKU kalau layarnya
+                    -- GAK BERUBAH. Kalau berubah, berarti masih jalan (loading
+                    -- berat) -> jangan dibunuh, lanjut ditungguin.
+                    if sidik1 and sidik2 and sidik1 == sidik2 then
+                        return false, pesan2 .. " (layar gak gerak)"
+                    end
+                end
+                -- udah gak nyangkut / masih gerak -> lanjut nungguin bridge kayak biasa
+            end
+        end
+        if (os.time() - mulai) >= batas then
+            -- lewat batas normal: cuma lanjut kalau masih di layar game
+            if not (pkg and pkg_running(pkg)) then return false end
+        end
+        os.execute("sleep " .. KONFIRMASI_POLL)
+    end
+    return false
+end
+
+-- ============================================================
+-- v4.18: orientasi layar RF + keep-alive (anti-FC)
+-- ============================================================
+-- kunci orientasi RF. "landscape"/"portrait" -> set, "" / nil -> jangan disenggol.
+-- user_rotation: 0=portrait, 1=landscape, 2=portrait kebalik, 3=landscape kebalik.
+local function set_orientasi(cfg)
+    local o = (cfg.orientasi or ""):lower()
+    if o ~= "landscape" and o ~= "portrait" then return end
+    local rot = (o == "landscape") and 1 or 0
+    sh("su -c 'settings put system accelerometer_rotation 0 >/dev/null 2>&1; " ..
+       "settings put system user_rotation " .. rot .. " >/dev/null 2>&1'")
+end
+
+-- keep-alive / anti-FC. bikin client Roblox lebih tahan idup di background:
+--   * deviceidle whitelist        -> lepas dari Doze
+--   * appops RUN_IN_BACKGROUND     -> boleh jalan di background
+--   * oom_score_adj rendah         -> OOM killer segan bunuh
+-- Android suka RESET oom_score_adj balik -> makanya di-apply ULANG tiap ~menit.
+-- PENTING: worker (Termux) dilindungin LEBIH kuat dari client. jadi kalau RAM
+-- mentok, yg dikorbanin CLIENT (bisa di-rejoin), BUKAN worker (biar tetep mantau).
+local OOM_CLIENT = -300   -- client: dilindungin, tapi masih bisa dikorbanin kalau kepepet
+local OOM_WORKER = -800   -- worker: dilindungin lebih kuat, jangan sampe ke-kill
+-- v4.62: SATU panggilan su buat SEMUA paket. Tiap 'su -c' di RedFinger makan
+-- ~5 detik; dulu dipanggil per-paket (4 client = 5 panggilan = ~25 detik cuma
+-- buat keep-alive). Sekarang digabung -> sekali jalan.
+local function keep_alive_apply(cfg)
+    if cfg.keep_alive == false then return end
+    local bagian = {}
+    for _, pkg in ipairs(split(cfg.pkgs)) do
+        bagian[#bagian+1] = string.format(
+            "dumpsys deviceidle whitelist +%s >/dev/null 2>&1; " ..
+            "cmd appops set %s RUN_IN_BACKGROUND allow >/dev/null 2>&1; " ..
+            "for p in $(pidof %s); do echo %d > /proc/$p/oom_score_adj 2>/dev/null; done",
+            pkg, pkg, pkg, OOM_CLIENT)
+    end
+    -- lindungin worker sendiri LEBIH kuat (Termux app + proses worker ini)
+    local wpid = baca_pid() or ""
+    bagian[#bagian+1] = string.format(
+        "dumpsys deviceidle whitelist +com.termux >/dev/null 2>&1; " ..
+        "for p in $(pidof com.termux) %s; do echo %d > /proc/$p/oom_score_adj 2>/dev/null; done",
+        wpid, OOM_WORKER)
+    sh("su -c '" .. table.concat(bagian, "; ") .. "'")
+end
+
+-- ============================================================
+-- buka Roblox
+-- ============================================================
+local DEBUG_OPEN = false
+
+local function build_url(cfg, link_client)
+    -- v4.11: link PS PER-CLIENT (dari assign-ps panel). urutan prioritas:
+    --   1. link_client (assign per akun dari panel) -- kalau dikasih
+    --   2. cfg._ps_override (PS tim dari panel, lama)
+    --   3. cfg.link_code (diketik di Termux)
+    local lc = link_client
+    if lc == nil or lc == "" then lc = cfg._ps_override end
+    if lc == nil then lc = cfg.link_code or "" end
+    lc = lc or ""
+    -- v4.16: LINK SHARE MODERN (share?code=XXX&type=Server) -> code itu BUKAN
+    -- linkCode! itu kode share yg harus di-RESOLVE Roblox dulu. dulu worker
+    -- ambil code jadi linkCode langsung -> SALAH -> join gagal, nyangkut server
+    -- lama. FIX: buka URL share-nya LANGSUNG, biar Roblox sendiri yg resolve+join.
+    if lc:find("share%?code=") or lc:find("/share%?") then
+        -- pastikan pakai https lengkap, biar am start buka lewat Roblox app
+        if lc:sub(1,4) ~= "http" then lc = "https://www.roblox.com/" .. lc:gsub("^/", "") end
+        return lc   -- buka URL share apa adanya -> Roblox resolve sendiri
+    elseif lc:find("privateServerLinkCode=") then
+        -- format lama: linkCode asli beneran ada di sini
+        local code = lc:match("privateServerLinkCode=([^&]+)")
+        return code and ("roblox://placeId="..cfg.place_id.."&linkCode="..code) or lc
+    elseif lc:sub(1,4)=="http" then return lc
+    elseif lc~="" then return "roblox://placeId="..cfg.place_id.."&linkCode="..lc
+    else return "roblox://placeId="..cfg.place_id end
+end
+
+-- v4.1: FREEFORM
+-- Pencet ikon di RedFinger = LAUNCHER yang naro Roblox di freeform.
+-- `am start` NGELEWATIN launcher -> kebuka fullscreen. Makanya mesti
+-- diminta sendiri lewat --windowingMode.
+--   5 = freeform (jendela ngambang, bisa digeser)  <- yang dicari
+--   6 = multi-window (jalur Android 12+)
+--   0 = jangan minta apa-apa (kayak v4.0)
+local WIN_OK = nil   -- nil=belum dites, true=didukung, false=ditolak
+
+local function open_one(cfg, pkg, link_client)
+    local url = build_url(cfg, link_client)
+    local wm = tonumber(cfg.win_mode) or 0
+
+    local function coba(pakai_wm)
+        local inner = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg
+        if pakai_wm and wm > 0 then
+            inner = inner .. " --windowingMode " .. wm
+        end
+        local cmd = 'su -c "'..inner..'"'
+        if DEBUG_OPEN then print("\n"..C.Y.."[DEBUG] "..C.N..cmd) end
+        return cmd, sh(cmd)
+    end
+
+    if wm == 0 then
+        local cmd = coba(false)
+        sh_silent(cmd)
+        return
+    end
+
+    -- sekali doang: cek Android ini nerima --windowingMode apa nggak
+    if WIN_OK == nil then
+        local _, out = coba(true)
+        if out:find("Unknown option") or out:find("Error: Unknown") then
+            WIN_OK = false
+            warn("Android ini gak dukung --windowingMode "..wm.." -> balik ke fullscreen")
+            warn("Client bakal kebuka fullscreen, bukan freeform.")
+        else
+            WIN_OK = true
+            ok("freeform (mode "..wm..") didukung")
+        end
+        return   -- percobaan barusan udah kehitung buka
+    end
+
+    local cmd = coba(WIN_OK)
+    sh_silent(cmd)
+end
+
+-- ============================================================
+-- v4.1: TUNGGU SAMPAI BENERAN JALAN
+-- Dulu: buka -> tidur 4 detik -> lanjut. Gak pernah dicek.
+-- Kalau client ke-3 gagal, worker tetep lanjut ke ke-4 kayak gak ada apa-apa,
+-- terus lapor "8 client" padahal cuma 7 yang hidup.
+--
+-- Sekarang: buka -> tungguin muncul -> pastiin gak mati lagi -> baru lanjut.
+--
+-- CATATAN JUJUR: pgrep cuma tau PROSESNYA muncul, bukan "udah masuk game".
+-- Roblox masih butuh ~20-40 detik lagi buat loading. Yang tau beneran udah
+-- di kebun cuma star_bridge.lua (dari dalam game) -> keliatan di panel.
+-- ============================================================
+-- v4.31: prosesnya idup gak? (beda dari pkg_running yg nuntut UDAH DI LAYAR GAME)
+local function pkg_hidup(pkg)
+    return (sh("su -c 'pidof " .. pkg .. "'") or ""):match("%d") ~= nil
+end
+
+local function tunggu_jalan(pkg, batas, cek_batal)
+    local mulai = os.time()
+    local lastKabar = 0   -- v4.72: kabarin tiap 15 detik, biar gak keliatan diem
+    -- v4.31: kalau prosesnya UDAH IDUP tapi belum sampai layar game, itu artinya
+    -- LAGI LOADING -- bukan gagal. Dulu langsung di-'ulang', dan tiap ulang itu
+    -- am start lagi -> loading keinterupsi terus -> gak pernah kelar (muter).
+    -- Sekarang: dikasih perpanjangan waktu selama prosesnya masih idup.
+    -- v4.59: dulu 3x -- kelamaan. Gabungan sama tunggu bridge bikin satu client
+    -- bisa makan 6 menit. 2x udah cukup lega buat CPU 100%.
+    local batasMax = batas * 2
+    while (os.time() - mulai) < batasMax do
+        local lewatBatas = (os.time() - mulai) >= batas
+        if lewatBatas and not pkg_hidup(pkg) then
+            break   -- lewat batas DAN prosesnya emang gak ada -> beneran gagal
+        end
+        if cek_batal and cek_batal() then return false, os.time()-mulai, "STANDBY" end
+        -- v4.72: dulu bagian ini DIEM total sampai 2x batas -- keliatan kayak
+        -- worker nyangkut padahal lagi nungguin Roblox nyala.
+        local lewat = os.time() - mulai
+        if lewat - lastKabar >= 15 then
+            lastKabar = lewat
+            io.write(("      %s — nungguin nyala... (%ds)\n"):format(
+                pkg:gsub("com%%.roblox%%.",""), lewat))
+        end
+        if pkg_running(pkg) then
+            -- muncul. verifikasi STABIL: cek 2x lagi (5s+5s). Roblox suka muncul
+            -- sekejap terus mati pas RAM sesek -> jangan langsung dianggap sukses.
+            os.execute("sleep 5")
+            if not pkg_running(pkg) then
+                return false, os.time() - mulai, "muncul lalu mati (RAM sesek?)"
+            end
+            os.execute("sleep 5")
+            if pkg_running(pkg) then return true, os.time() - mulai end
+            return false, os.time() - mulai, "muncul lalu mati (RAM sesek?)"
+        end
+        os.execute("sleep 2")
+    end
+    local lama = os.time() - mulai
+    if pkg_hidup(pkg) then
+        -- proses idup tapi gak nyampe layar game: nyangkut loading / key-system /
+        -- kelempar ke Home. am start ulang gak bakal nolong -- laporin apa adanya.
+        return false, lama, "prosesnya idup tapi gak nyampe layar game (loading lama / nyangkut)"
+    end
+    return false, lama, "gak muncul sama sekali (RAM penuh? paket bener?)"
+end
+
+-- v4.4: tutup PAKSA semua client Roblox (am force-stop). buat CLOSE & REJOIN dari panel.
+-- v4.9: baca username Roblox tiap client dari prefs.xml. buat mapping client<->akun,
+-- biar worker tau "clienu = fifinx_5". dipakai auto-rejoin: kalau akun X berhenti
+-- lapor (keluar game), worker tau itu client mana -> rejoin client itu.
+local function baca_username(pkg)
+    local path = "/data/data/" .. pkg .. "/shared_prefs/prefs.xml"
+    local o = sh("su -c 'cat " .. path .. "'")
+    -- <string name="username">fifinx_5</string>
+    local u = o:match('<string name="username">(.-)</string>')
+    return u
+end
+
+-- v4.8: tulis LOADER ke autoexec Delta (/sdcard/Delta/Autoexecute/).
+-- Delta auto-jalanin file di folder ini pas masuk game (SETELAH user verif key).
+-- jadi: worker buka client -> user verif key manual -> Delta baca autoexec ->
+-- script auto-jalan. user cuma verif key, script masuk sendiri.
+-- 1 RF = 1 game, jadi 1 loader (sesuai game tim) buat semua client.
+local function tulis_autoexec(cfg)
+    if not cfg.script_url or cfg.script_url == "" then
+        warn("script_url kosong, autoexec dilewat")
+        return false
+    end
+    local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
+    -- loader: narik script dari GitHub. update cukup di GitHub, file autoexec tetap.
+    local loader = 'loadstring(game:HttpGet("' .. cfg.script_url .. '"))()'
+    local path = AUTOEXEC_DIR .. "/zenx_loader.lua"
+    -- Tulis lewat file lokal dulu (Termux home, gampang), baru cp ke folder Delta
+    -- pakai su. Ini ngehindarin neraka nested-quote (su -c ' ... " ... ').
+    local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
+    local f = io.open(tmp, "w")
+    if not f then warn("gagal bikin file tmp loader"); return false end
+    f:write(loader); f:close()
+    -- v4.62: mkdir + cp + chmod + verifikasi digabung jadi SATU panggilan su.
+    -- Dulu 4 panggilan terpisah -- tiap 'su -c' di RedFinger ~5-7 detik, jadi
+    -- bagian ini sendirian makan ~30 detik pas worker nyala.
+    local cek = sh("su -c 'mkdir -p " .. AUTOEXEC_DIR ..
+                   "; cp " .. tmp .. " " .. path ..
+                   "; chmod 664 " .. path ..
+                   "; cat " .. path .. "'")
+    if cek:find("loadstring", 1, true) then
+        ok("autoexec loader ditulis: " .. cfg.game_label .. " -> " .. path)
+        return true
+    else
+        warn("gagal nulis autoexec (cek izin folder Delta)")
+        return false
+    end
+end
+
+-- v4.12: bawa SEMUA client freeform ke depan sekaligus. pas pencet Termux/app lain,
+-- jendela Roblox ke-belakang. FRONT = am start tiap client yg udah jalan -> window
+-- muncul ke depan LAGI (Roblox udah jalan, am start cuma munculin window, gak restart).
+-- karena Delta freeform, semua jendela bisa nampil barengan di samping-samping.
+local function front_all(cfg, mapLink)
+    local list = split(cfg.pkgs)
+    local n = 0
+    for _, pkg in ipairs(list) do
+        if pkg_running(pkg) then
+            -- am start dgn flag REORDER_TO_FRONT (0x20000000): bawa window yg UDAH ADA
+            -- ke depan, JANGAN restart game. tanpa flag ini am start bisa reload.
+            local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
+            sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
+            n = n + 1
+            os.execute("sleep 1")   -- jeda tipis biar window ketata rapi
+        end
+    end
+    return n
+end
+
+-- ============================================================
+-- v4.25: ATUR GRID — susun jendela freeform biar gak numpuk.
+-- Butuh client jalan di mode freeform (win_mode 5). Caranya:
+--   1. baca ukuran layar (wm size)
+--   2. cari taskId tiap client (dumpsys)
+--   3. am task resizeTask <taskId> kiri atas kanan bawah
+-- CATATAN: 'am task resizeTask' gak ada di semua ROM. Kalau gagal, dilaporin
+-- ke log (gak diem-diem), dan client tetep jalan normal -- cuma gak ketata.
+-- ============================================================
+local function layar_ukuran()
+    -- "Physical size: 720x1280" (kadang ada "Override size:" -> itu yang dipakai)
+    local o = sh("su -c 'wm size'") or ""
+    local w, h = o:match("Override size:%s*(%d+)x(%d+)")
+    if not w then w, h = o:match("Physical size:%s*(%d+)x(%d+)") end
+    w, h = tonumber(w) or 0, tonumber(h) or 0
+    if w == 0 or h == 0 then return 0, 0, 0 end
+
+    -- v4.27: 'wm size' itu ukuran FISIK, GAK ikut muter pas layar landscape.
+    -- Kalau lagi landscape, lebar/tinggi efektifnya KEBALIK -> harus dituker,
+    -- kalau nggak grid-nya ngitung pakai bentuk portrait (jendela kepencet /
+    -- keluar layar). rotasi: 0=portrait, 1=landscape, 2=portrait kebalik, 3=landscape kebalik.
+    local rot = tonumber((sh("su -c 'settings get system user_rotation'") or ""):match("%d+"))
+    if not rot then
+        -- cadangan: baca dari window manager
+        local d = sh("su -c 'dumpsys window | grep -m1 -E \"mCurrentRotation|mRotation\"'") or ""
+        rot = tonumber(d:match("[Rr]otation[=:%s]*(%d+)")) or 0
+    end
+    if rot == 1 or rot == 3 then w, h = h, w end
+    return w, h, rot
+end
+
+-- v4.71: ambil taskId SEMUA client dari SATU dump. Dulu tiap client nyoba 4
+-- sumber berbeda -- 4 client = 16 panggilan 'su' = ~96 detik cuma buat nyusun
+-- grid. Sekarang: satu dump, dipilah lokal; sumber cadangan cuma dipakai kalau
+-- masih ada yang belum ketemu.
+local POLA_TASK = {
+    "taskId=(%d+)", "Task{%w+%s+#(%d+)", "#(%d+)%s+type=",
+    "taskId%s*=%s*(%d+)", "Task%s+id=(%d+)", "id=(%d+)",
+}
+local function task_id_semua(pkgs)
+    local hasil = {}
+    local function pungut(o)
+        for baris in (o or ""):gmatch("[^\r\n]+") do
+            for _, p in ipairs(pkgs) do
+                if not hasil[p] and baris:find(p, 1, true) then
+                    for _, pat in ipairs(POLA_TASK) do
+                        local id = baris:match(pat)
+                        if id and tonumber(id) and tonumber(id) > 0 then
+                            hasil[p] = tonumber(id); break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    -- satu dump dulu; kalau semua udah ketemu, gak usah lanjut
+    pungut(sh("su -c 'dumpsys activity activities'"))
+    local kurang = false
+    for _, p in ipairs(pkgs) do if not hasil[p] then kurang = true break end end
+    if kurang then pungut(sh("su -c 'dumpsys activity recents'")) end
+    kurang = false
+    for _, p in ipairs(pkgs) do if not hasil[p] then kurang = true break end end
+    if kurang then pungut(sh("su -c 'am stack list 2>/dev/null'")) end
+    return hasil
+end
+
+local function atur_grid(cfg)
+    local W, H, rot = layar_ukuran()
+    if W == 0 or H == 0 then
+        return 0, "gagal baca ukuran layar (wm size)"
+    end
+
+    -- kumpulin client yang lagi jalan
+    local aktif = {}
+    for _, pkg in ipairs(split(cfg.pkgs)) do
+        if pkg_running(pkg) then aktif[#aktif+1] = pkg end
+    end
+    local n = #aktif
+    if n == 0 then return 0, "gak ada client jalan" end
+
+    -- v4.27: bentuk grid NGIKUT bentuk layar.
+    --   landscape (lebar > tinggi) -> kolom lebih banyak (6 client = 3x2)
+    --   portrait  (tinggi > lebar) -> baris lebih banyak (6 client = 2x3)
+    -- kalau dipaksa sama, jendelanya jadi kurus/gepeng gak kepake.
+    local kol, bar
+    if W >= H then
+        kol = math.ceil(math.sqrt(n)); bar = math.ceil(n / kol)
+    else
+        bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
+    end
+    local lebar  = math.floor(W / kol)
+    local tinggi = math.floor(H / bar)
+
+    -- v4.71: taskId semua client sekali ambil, terus SEMUA resize dikirim dalam
+    -- SATU panggilan su. Dulu: 4 sumber x tiap client buat cari id, plus 1 su
+    -- per resize -- totalnya bisa 20 panggilan (~2 menit).
+    local petaId = task_id_semua(aktif)
+    local sukses, gagalPertama = 0, nil
+    local perintah = {}
+    for i, pkg in ipairs(aktif) do
+        local id = petaId[pkg]
+        if not id then
+            gagalPertama = gagalPertama or ("taskId " .. pkg:gsub("com%.roblox%.","") .. " gak ketemu")
+        else
+            local c = (i - 1) % kol              -- kolom ke-berapa
+            local r = math.floor((i - 1) / kol)  -- baris ke-berapa
+            local L, T = c * lebar, r * tinggi
+            perintah[#perintah+1] = string.format("am task resizeTask %d %d %d %d %d",
+                id, L, T, L + lebar, T + tinggi)
+            sukses = sukses + 1
+        end
+    end
+    if #perintah > 0 then
+        local out = sh("su -c '" .. table.concat(perintah, "; ") .. "' 2>&1") or ""
+        if out:lower():find("unknown command") or out:lower():find("exception") then
+            sukses, gagalPertama = 0, "ROM gak dukung 'am task resizeTask'"
+        end
+    end
+    -- v4.27: sertain ukuran+orientasi biar gampang dicek kalau hasilnya meleset
+    local info_layar = string.format("%dx%d %s", W, H, (W >= H) and "landscape" or "portrait")
+    return sukses, (sukses == 0 and gagalPertama or nil), kol, bar, info_layar
+end
+
+local function baca_ram()
+    local mi = sh("cat /proc/meminfo")
+    local total = tonumber(mi:match("MemTotal:%s+(%d+)")) or 0
+    local avail = tonumber(mi:match("MemAvailable:%s+(%d+)")) or 0
+    local gb = function(kb) return math.floor(kb/1024/1024*10+0.5)/10 end
+    return gb(total-avail), gb(avail), gb(total)
+end
+
+-- ============================================================
+-- v4.38: BACA DIALOG ERROR ROBLOX (Disconnected / Error Code 277 dst)
+-- Kalau Roblox kelempar dari server, dialognya nongol TAPI activity-nya tetep
+-- MainGameActivity -- jadi pkg_running tetep bilang "jalan" & worker gak sadar.
+-- Satu-satunya cara liat isinya: dump UI. uiautomator cuma bisa baca jendela
+-- yang lagi DI DEPAN, makanya client-nya dibawa ke depan dulu.
+-- MAHAL (bawa ke depan + dump), jadi cuma dipanggil pas bridge udah CURIGA diem.
+-- ============================================================
+-- v4.39: SEMUA kode error Roblox ketangkep (formatnya selalu "Error Code: NNN"),
+-- tapi penanganannya BEDA-BEDA. Asal masuk ulang buat semua error itu bahaya:
+-- kode 268 justru artinya "kebanyakan nyoba" -- diulang malah makin diblok.
+local ERROR_SIFAT = {
+    -- masuk ulang langsung: koneksi putus / kelempar biasa
+    [260]="ulang", [261]="ulang", [262]="ulang", [269]="ulang", [270]="ulang",
+    [272]="ulang", [273]="ulang", [277]="ulang", [279]="ulang", [280]="ulang",
+    [291]="ulang", [292]="ulang",
+    -- backoff dulu: server/akun lagi dibatesin, buru-buru = makin parah
+    [264]="tunggu",   -- akun yang sama join di tempat lain
+    [268]="tunggu",   -- kebanyakan percobaan (rate limit)
+    [529]="tunggu",   -- layanan Roblox lagi ngadat
+    [517]="tunggu",   -- server lagi dimatiin
+    -- percuma diulang: butuh dibenerin manual
+    [267]="manual",   -- di-kick script game
+    [524]="manual",   -- gak diizinin masuk private server (link salah/expired)
+    [522]="manual",   -- place dibatesin
+    [523]="manual",
+}
+local ERROR_TANDA = {
+    "Error Code", "Disconnected", "Reconnect",
+    "lost connection", "kicked", "Please check your internet",
+}
+-- v4.40: Delta/loader BEKU. Bukan kode error, tapi sama macetnya: script gak
+-- pernah jalan -> bridge diem selamanya -> dibangunin berkali-kali gak nolong.
+-- AMAN dari salah tangkap: pengecekan ini CUMA jalan kalau bridge udah diem
+-- bermenit-menit. Layar loading yang normal gak akan pernah kesini.
+-- v4.42: penanda LAYAR HOME Roblox / popup verifikasi umur. Ini yang bikin
+-- client "jalan" tapi gak pernah masuk game. Dikenali langsung dari layar,
+-- jadi gak usah nunggu bridge diem 90 detik baru sadar.
+local HOME_TANDA = {
+    "Access to popular games", "check your age", "Unlock",
+    "Discover", "Charts", "Marketplace",
+}
+local NYANGKUT_TANDA = {
+    "Loading", "Injecting", "Please wait", "Checking", "Verifying",
+}
+-- balikin: pesan, sifat ("ulang"/"tunggu"/"manual")
+local function cek_error_ui(cfg, pkg, mapLink)
+    local dump = "/sdcard/zenx_ui.xml"
+    -- bawa ke depan dulu (REORDER_TO_FRONT: cuma munculin window, gak restart game)
+    local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
+    sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
+    os.execute("sleep 3")
+    -- pastiin yang di depan BENERAN client ini, biar gak salah baca punya client lain
+    local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
+    if not fokus:find(pkg, 1, true) then return nil end
+
+    sh_silent("su -c 'rm -f " .. dump .. "'")
+    sh_silent("su -c 'uiautomator dump " .. dump .. "'")
+    local isi = sh("su -c 'cat " .. dump .. " 2>/dev/null'") or ""
+    sh_silent("su -c 'rm -f " .. dump .. "'")
+    if not isi:match("%S") then return nil end          -- dump gagal -> jangan nebak
+
+    -- v4.44: SIDIK layar -- buat banding "berubah apa nggak" antar-intipan.
+    -- Layar yang BERUBAH = masih jalan (loading beneran), bukan beku.
+    local sidik = #isi
+    for t in isi:gmatch('text="([^"]+)"') do sidik = sidik + #t end
+
+    local kode = tonumber(isi:match("[Ee]rror [Cc]ode:?%s*(%d+)"))
+    if kode then
+        local sifat = ERROR_SIFAT[kode] or "ulang"      -- kode gak dikenal -> ulang biasa
+        return ("Error Code " .. kode), sifat, sidik
+    end
+    for _, tanda in ipairs(ERROR_TANDA) do
+        if isi:lower():find(tanda:lower(), 1, true) then
+            return tanda, "ulang", sidik
+        end
+    end
+    -- v4.40: gak ada error, tapi masih nyangkut di layar loading/inject?
+    for _, tanda in ipairs(NYANGKUT_TANDA) do
+        if isi:find(tanda, 1, true) then
+            return ("nyangkut di '" .. tanda .. "'"), "ulang", sidik
+        end
+    end
+    -- v4.42: nyangkut di layar Home / popup umur?
+    for _, tanda in ipairs(HOME_TANDA) do
+        if isi:find(tanda, 1, true) then
+            local kenapa = (tanda == "Access to popular games" or tanda == "check your age")
+                and "popup verifikasi umur" or "layar Home Roblox"
+            return ("nyangkut di " .. kenapa), "home", sidik
+        end
+    end
+    -- v4.43: LAYAR KOSONG (putih polos, cuma logo). Gak ada teks yang bisa dibaca
+    -- sama sekali -> bukan layar game (game selalu punya tombol/label). Ini juga
+    -- nyangkut, cuma gak nyisain jejak teks. Aman: sampai sini artinya bridge
+    -- udah diem bermenit-menit, layar loading normal gak akan pernah nyampe sini.
+    local nTeks = 0
+    for t in isi:gmatch('text="([^"]+)"') do
+        if t:match("%S") then nTeks = nTeks + 1 end
+    end
+    if nTeks <= 2 then
+        -- v4.74: JANGAN vonis "layar kosong" pas RAM lagi mepet. Pas RAM tinggal
+        -- dikit, Roblox emang lama banget nampilin apa-apa -- layarnya kosong
+        -- karena LAMBAT, bukan karena beku. Dulu ini bikin worker nutup keempat
+        -- client bergiliran: tutup -> buka -> lambat -> divonis beku -> tutup...
+        -- muter terus, dan tiap tutup+buka malah makin bikin RAM sesek.
+        local _, sisaRam, totalRam = baca_ram()
+        if totalRam and totalRam > 0 and sisaRam and (sisaRam / totalRam) < 0.20 then
+            return nil, nil, sidik   -- RAM mepet -> anggap lagi lambat, bukan beku
+        end
+        return "nyangkut di layar kosong (loading beku)", "ulang", sidik
+    end
+    return nil, nil, sidik
+end
+
+-- sambungin ke deklarasi maju di atas (dipakai tunggu_bridge)
+cek_layar = cek_error_ui
+
+-- v4.52: JAGA DEPAN. Delta Lite kadang nguncup sendiri jadi gelembung; kalau
+-- dibiarin, Roblox di dalemnya disconnect ~15 detik kemudian. 'am start' dengan
+-- REORDER_TO_FRONT cuma MUNCULIN window yang udah ada (gak restart game), jadi
+-- aman dipanggil berkala -- kalau window-nya udah nongol, ini gak ngefek apa-apa.
+-- v4.63: satu panggilan su buat semua client (dulu satu-satu, tiap 10 detik).
+-- 'cekJalan' dioper dari cache biar gak dumpsys ulang.
+local function jaga_depan(cfg, mapLink, cekJalan)
+    local bagian, n = {}, 0
+    for _, pkg in ipairs(split(cfg.pkgs)) do
+        local jalan = cekJalan and cekJalan[pkg]
+        if jalan == nil then jalan = pkg_running(pkg) end
+        if jalan then
+            local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
+            bagian[#bagian+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '"
+                                .. url .. "' -p " .. pkg
+            n = n + 1
+        end
+    end
+    if n > 0 then
+        sh_silent('su -c "' .. table.concat(bagian, "; ") .. '"')
+    end
+    return n
+end
+
+-- v4.61: 'only' sekarang boleh: nil (semua), string (1 paket), atau TABEL
+-- (beberapa paket sekaligus). Nutup itu murah -- nutup 3 client barengan
+-- makan waktu sama kayak nutup 1. Dulu dipanggil satu-satu -> tiap panggilan
+-- nunggu verifikasi mati sendiri-sendiri -> lambat banget kalau banyak.
+local function close_all(cfg, only, mapLink, tanpaMunculin)
+    local list = split(cfg.pkgs)
+    local mau = nil
+    if type(only) == "table" then
+        mau = {}
+        for _, p in ipairs(only) do mau[p] = true end
+    end
+    local target = {}
+    for _, pkg in ipairs(list) do
+        if (not only) or (mau and mau[pkg]) or (type(only) == "string" and pkg == only) then
+            target[#target+1] = pkg
+        end
+    end
+    if #target == 0 then return 0 end
+    setAksi(#target == #list and "nutup semua client"
+            or ("nutup " .. #target .. " client"))
+    -- v4.19: FASE 1 -> force-stop SEMUA sekaligus (gak nunggu satu-satu dulu).
+    for _, pkg in ipairs(target) do
+        sh_silent("am force-stop " .. pkg)
+        sh_silent("su -c 'am force-stop " .. pkg .. "'")
+        info("tutup paksa: " .. pkg)
+    end
+    -- v4.19: FASE 2 -> tungguin SEMUA beneran mati PARALEL (bukan per-client 8s).
+    -- penting buat pindah server: am start pas app masih idup -> Roblox abaikan
+    -- (udah di server lama, gak pindah). tunggu sampai proses beneran mati.
+    local belum = {}
+    for _, pkg in ipairs(target) do belum[pkg] = true end
+    for _ = 1, 8 do   -- max ~8 detik TOTAL (bukan per-client)
+        os.execute("sleep 1")
+        local adaHidup = false
+        for pkg in pairs(belum) do
+            local o = sh("su -c 'pidof " .. pkg .. "'")
+            if not o:match("%d") then
+                belum[pkg] = nil
+            else
+                adaHidup = true
+                sh_silent("su -c 'am force-stop " .. pkg .. "'")   -- gedor lagi
+            end
+        end
+        if not adaHidup then break end
+    end
+    local gagalTutup = 0
+    for pkg in pairs(belum) do
+        warn(pkg .. " MASIH IDUP setelah force-stop")
+        gagalTutup = gagalTutup + 1
+    end
+    -- v4.56: kalau semua beneran mati, bilang -- biar gak dikira gagal diem-diem
+    if gagalTutup == 0 and #target > 0 then
+        info(("beneran ketutup: %d client"):format(#target))
+    end
+    os.execute("sleep 1")   -- napas ekstra biar sistem bersih
+
+    -- v4.65: nutup SEBAGIAN bikin Android nyusun ulang tumpukan jendela --
+    -- client yang GAK ditutup ikut kepental ke belakang (nyisa gelembung doang).
+    -- Jadi begitu selesai nutup, langsung munculin balik yang selamat.
+    -- v4.72: 'tanpaMunculin' dipakai kalau abis ini client-nya mau DIBUKA lagi.
+    -- Munculin jendela lain di situ percuma -- beberapa detik kemudian ketimpa
+    -- lagi sama client yang baru kebuka.
+    if only ~= nil and #target < #list and not tanpaMunculin then
+        local sisa = {}
+        for _, pkg in ipairs(list) do
+            local ikutDitutup = false
+            for _, t in ipairs(target) do
+                if t == pkg then ikutDitutup = true break end
+            end
+            if not ikutDitutup then sisa[#sisa+1] = pkg end
+        end
+        if #sisa > 0 then
+            local hidup = pkg_running_semua(sisa)
+            local bagian = {}
+            for _, pkg in ipairs(sisa) do
+                if hidup[pkg] then
+                    local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
+                    bagian[#bagian+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '"
+                                        .. url .. "' -p " .. pkg
+                end
+            end
+            if #bagian > 0 then
+                sh_silent('su -c "' .. table.concat(bagian, "; ") .. '"')
+                info(("%d client lain dimunculin balik"):format(#bagian))
+            end
+        end
+    end
+    return #target
+end
+
+-- cek_batal: dipanggil di sela-sela client. Buka 10 client bisa makan
+-- 5-10 menit; tanpa ini, STANDBY dari panel gak kebaca sampe semuanya kelar.
+local TERAKHIR_BUKA = {}   -- v4.68: pkg -> kapan terakhir dibuka worker
+local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
+    local list = split(cfg.pkgs)
+    local hasil = { ok = 0, gagal = 0, lewat = 0, nama_gagal = {} }
+    local urut = 0
+    -- v4.17: /stat sekali di awal, buat cek "beneran di game" pas skip client.
+    -- v4.19: fast=true (buat REJOIN ganti server) -> skip bridge-confirm biar CEPET,
+    -- gak nunggu tiap client lapor 90s. cukup mastiin proses muncul.
+    local stat0 = (not fast) and api_get(cfg, "/stat") or ""
+    local stat0Ts = os.time()   -- v4.67: kapan potret /stat itu diambil
+    local potretJalan = pkg_running_semua(list)   -- v4.71: sekali dumpsys buat semua
+    local potretTs = os.time()
+    local tunda = {}   -- v4.59: client yang nunggu konfirmasi bridge (dicek di akhir)
+    set_orientasi(cfg)   -- v4.18: pastiin orientasi pas buka (jaga-jaga ke-reset)
+
+    -- v4.64: DAHULUIN YANG STOKNYA HABIS. Client yang pet-nya tinggal dikit itu
+    -- yang paling butuh masuk gudang leveling -- makin cepet dia masuk, makin
+    -- cepet diisi. Yang stoknya masih tebal boleh belakangan; dia gak lagi
+    -- nunggu apa-apa. Urutan dibaca dari /stat (petrule per akun).
+    if not only and stat0 ~= "" then
+        local stok = {}
+        for pkg in pairs(mapAkun or {}) do
+            local ak = mapAkun[pkg]
+            local blok = ak and stat0:match('{[^{}]-"nama"%s*:%s*"' .. ak .. '"[^{}]-}')
+            stok[pkg] = blok and tonumber(blok:match('"petrule"%s*:%s*(%d+)')) or nil
+        end
+        table.sort(list, function(a, b)
+            local sa = stok[a] or math.huge      -- gak ketauan -> taro belakangan
+            local sb = stok[b] or math.huge
+            if sa ~= sb then return sa < sb end   -- paling kosong DULUAN
+            return a < b                          -- biar urutannya tetap
+        end)
+    end
+
+    for _, pkg in ipairs(list) do
+        if (not only) or (pkg == only) then
+            urut = urut + 1
+
+            if cek_batal and cek_batal() then
+                warn("perintah baru nyerobot -> berhenti buka (sisa dilewat)")
+                break
+            end
+
+            local akun = (mapAkun and mapAkun[pkg]) or baca_username(pkg)
+
+            -- v4.17: skip cuma kalau BENERAN di game = proses ADA + akun lapor fresh.
+            -- dulu: skip kalau pkg_running aja -> client nyangkut di Home ke-skip
+            -- selamanya (Home JUGA ActivityNativeMain). sekarang bridge yg mutusin.
+            -- v4.67: SEGERIN data sebelum mutusin. Dulu potret /stat diambil
+            -- SEKALI di awal open_all, padahal buka 4 client bisa makan menit-
+            -- menitan -- pas giliran client ke-3/4, potretnya udah basi, jadi
+            -- client yang BARU MULAI lapor tetep keliatan mati -> ditutup &
+            -- dibuka ulang percuma.
+            if (not fast) and (os.time() - stat0Ts) >= 30 then
+                stat0 = api_get(cfg, "/stat")
+                stat0Ts = os.time()
+            end
+            if (os.time() - potretTs) >= 30 then
+                potretJalan = pkg_running_semua(list)
+                potretTs = os.time()
+            end
+            -- v4.68: REM. Client yang BARU AJA dibuka-tutup jangan disentuh lagi
+            -- dalam waktu dekat -- kasih dia kesempatan lapor dulu. Tanpa ini,
+            -- client sehat yang laporannya telat dikit bisa kena buka-tutup
+            -- berulang tiap siklus.
+            local baruDisentuh = TERAKHIR_BUKA[pkg] and
+                                 (os.time() - TERAKHIR_BUKA[pkg]) < (cfg.konfirmasi_sec or 90)
+            -- v4.71: status dibaca dari potret gabungan (satu dumpsys buat semua),
+            -- bukan dumpsys per client. Dulu 4 client = 4 panggilan su tiap
+            -- open_all -- ~24 detik cuma buat mutusin "perlu disentuh nggak".
+            local lagiJalan = potretJalan and potretJalan[pkg]
+            if lagiJalan == nil then lagiJalan = pkg_running(pkg) end
+            if lagiJalan and (not akun or bridge_fresh(stat0, akun) or baruDisentuh) then
+                hasil.lewat = hasil.lewat + 1
+                -- v4.6: JANGAN print tiap client yg udah jalan (bikin spam log).
+            else
+                local sukses, lama, sebab = false, 0, nil
+                local maxc = cfg.max_coba or 5
+                for coba = 1, maxc do
+                    local link_c = mapLink and mapLink[pkg] or nil
+                    setAksi(string.format("buka client %d/%d: %s%s", urut, #list,
+                        (mapAkun and mapAkun[pkg]) or pkg:gsub("com%.roblox%.",""),
+                        coba > 1 and (" (ulang "..coba.."/"..maxc..")") or ""))
+                    io.write(string.format("[%d/%d] %s — buka%s...\n",
+                        urut, #list, pkg, coba > 1 and (" (ulang ke-"..coba.."/"..maxc..")") or ""))
+                    -- v4.17: catat ts SEBELUM buka -> nanti tunggu lapor BARU (ts naik)
+                    local ts0 = (akun and not fast) and bridge_ts(api_get(cfg, "/stat"), akun) or nil
+                    -- v4.58: kalau prosesnya UDAH JALAN, TUTUP DULU. 'am start' ke
+                    -- Roblox yang lagi jalan itu NO-OP -- dia bakal nangkring di
+                    -- server LAMA dan gak pernah pindah walau linknya udah ganti.
+                    -- Sampai sini artinya client-nya emang gak lolos saringan
+                    -- (bukan yang "udah jalan & lapor sehat"), jadi aman ditutup.
+                    if pkg_hidup(pkg) then
+                        info("   " .. pkg:gsub("com%.roblox%.","") .. " masih jalan -> ditutup dulu biar bisa pindah")
+                        close_all(cfg, pkg, mapLink, true)   -- v4.72: gak usah munculin yang lain
+                        os.execute("sleep 2")
+                    end
+                    open_one(cfg, pkg, link_c)
+                    TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
+                    -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
+                    -- 'am force-stop' bikin jendela lain nguncup jadi gelembung;
+                    -- buka satu client cuma munculin JENDELA ITU -- yang lain tetep
+                    -- nguncup. Jadi urutan yang bener: tutup -> buka -> munculin semua.
+                    jaga_depan(cfg, mapLink)
+                    sukses, lama, sebab = tunggu_jalan(pkg, cfg.tunggu_sec or 45, cek_batal)
+                    -- v4.59: JANGAN blokir antrean buat nungguin bridge tiap client.
+                    -- Dulu tiap client bisa makan 6+ menit (nunggu proses 3x batas +
+                    -- nunggu bridge 2x batas) -> 4 client = 25 menit. Sekarang:
+                    -- proses nongol = cukup buat lanjut, konfirmasi bridge-nya
+                    -- dilakuin SEKALIGUS di akhir buat semua client.
+                    if sukses and akun and not fast then
+                        tunda[#tunda+1] = { pkg = pkg, akun = akun, ts0 = ts0 }
+                        break
+                    elseif sukses then
+                        break
+                    end
+                    -- v4.36b: bedain DUA jenis kegagalan, penanganannya beda:
+                    --   A. bridge bilang GAK di game (nyangkut Home/age-check)
+                    --      -> BUNUH client-nya, buka ulang. WAJIB dibunuh dulu:
+                    --         'am start' ke app yang udah jalan itu no-op, jadi
+                    --         tanpa dibunuh dia bakal nyangkut di Home selamanya.
+                    --   B. gak ketauan (gak ada akun kepetakan / fast mode)
+                    --      -> lanjut aja, biar client lain kebagian.
+                    local nyangkut = (sebab or ""):find("nyangkut", 1, true) ~= nil
+                    if nyangkut then
+                        warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
+                            urut, #list, pkg))
+                        close_all(cfg, pkg, mapLink)
+                        os.execute("sleep 2")
+                    elseif pkg_hidup(pkg) then
+                        warn(string.format("[%d/%d] %s — prosesnya idup tapi gak kedeteksi di layar game; LANJUT ke client berikutnya",
+                            urut, #list, pkg))
+                        sukses = true   -- dihitung di blok bawah (jangan nambah di sini: dobel)
+                        break
+                    end
+                    warn(string.format("[%d/%d] %s — %s (%ds), ulang...", urut, #list, pkg, sebab, lama))
+                    if lapor_fn then pcall(lapor_fn) end   -- v4.33: segerin tabel tiap percobaan
+                    if cek_batal and cek_batal() then break end   -- v4.16: STANDBY di tengah retry
+                    if coba < maxc then
+                        -- jeda naik: 5, 10, 15... biar RF sempet lega sebelum coba lagi
+                        os.execute("sleep " .. (coba * 5))
+                    end
+                end
+                if cek_batal and cek_batal() then
+                    warn("STANDBY masuk -> berhenti (di tengah buka)")
+                    break
+                end
+
+                if sukses then
+                    hasil.ok = hasil.ok + 1
+                    ok(string.format("[%d/%d] %s — jalan (%ds)", urut, #list, pkg, lama))
+                else
+                    hasil.gagal = hasil.gagal + 1
+                    hasil.nama_gagal[#hasil.nama_gagal + 1] = pkg
+                    err(string.format("[%d/%d] %s — GAGAL: %s", urut, #list, pkg, sebab or "?"))
+                end
+
+                -- lapor ke panel di sela-sela, biar gak "ilang" bermenit-menit
+                if lapor_fn then pcall(lapor_fn) end
+
+                -- napas sebelum client berikutnya (RAM sempet settle)
+                if cek_batal and cek_batal() then break end   -- v4.16: STANDBY sebelum jeda
+                if cfg.stagger_sec > 0 then os.execute("sleep "..cfg.stagger_sec) end
+            end
+        end
+    end
+
+    -- v4.59: KONFIRMASI BERSAMA. Semua client udah kebuka; sekarang tungguin
+    -- mereka lapor -- SEKALIGUS, bukan satu-satu. Satu jendela waktu dipakai
+    -- bareng, jadi total waktunya nyaris sama kayak nungguin SATU client.
+    if #tunda > 0 and not (cek_batal and cek_batal()) then
+        local batas = cfg.konfirmasi_sec or 90
+        setAksi(("nunggu %d client masuk game (bareng, %ds)"):format(#tunda, batas))
+        io.write(("      nunggu %d client masuk game (bareng, maks %ds)...\n"):format(#tunda, batas))
+        local mulai = os.time()
+        local belum = {}
+        for _, t in ipairs(tunda) do belum[t.akun] = t end
+        while (os.time() - mulai) < batas do
+            if cek_batal and cek_batal() then break end
+            local st = api_get(cfg, "/stat")
+            local sisa = 0
+            for akun, t in pairs(belum) do
+                local ts = bridge_ts(st, akun)
+                -- v4.60: dianggap masuk kalau lapor BARU (ts naik) ATAU laporannya
+                -- masih segar. Yang kedua penting: script cuma lapor tiap 120 detik
+                -- kalau gak ada perubahan -- ngotot nunggu "lapor baru" bikin client
+                -- yang jelas-jelas aktif tetep ditungguin lama.
+                if ts and ((not t.ts0 or ts > t.ts0) or bridge_fresh(st, akun)) then
+                    belum[akun] = nil            -- beneran masuk game
+                else
+                    sisa = sisa + 1
+                end
+            end
+            if sisa == 0 then break end
+            os.execute("sleep " .. KONFIRMASI_POLL)
+        end
+        local nBelum = 0
+        for akun, t in pairs(belum) do
+            nBelum = nBelum + 1
+            warn(("%s belum lapor -- mungkin nyangkut, auto-rejoin yang nangani"):format(akun))
+        end
+        if nBelum == 0 then
+            ok(("semua %d client kekonfirmasi masuk game"):format(#tunda))
+        end
+    end
+
+    -- v4.26: AUTO GRID — susun jendela sendiri abis buka client, gak usah
+    -- dipencet dari panel. Cuma jalan kalau: auto_grid nyala, mode freeform
+    -- (win_mode 5/6 -- fullscreen gak ada yang bisa ditata), dan ada client
+    -- yang BARU kebuka (kalau semua cuma "dilewat", jendelanya gak berubah).
+    -- v4.30: dulu WAJIB ada client baru kebuka (hasil.ok > 0). Akibatnya kalau
+    -- worker di-restart pas client UDAH jalan, semuanya cuma "dilewat" -> grid
+    -- gak pernah jalan. Sekarang: jalan juga SEKALI pas worker baru nyala.
+    local adaJendela = (hasil.ok + hasil.lewat) > 0
+    local perluGrid  = (hasil.ok > 0) or (not SUDAH_GRID and adaJendela)
+    -- v4.32: JANGAN dikunci ke win_mode. Delta bisa auto-freeform sendiri -- dalam
+    -- kasus itu win_mode tetep 0 tapi jendelanya TETEP ngambang & bisa ditata.
+    if cfg.auto_grid == true and perluGrid then
+        if not (cek_batal and cek_batal()) then
+            SUDAH_GRID = true
+            setAksi("nyusun jendela jadi grid")
+            local n, gerr, kol, bar, layar = atur_grid(cfg)
+            if n > 0 then
+                ok(string.format("AUTO GRID: %d jendela ditata %dx%d (%s)",
+                    n, kol or 0, bar or 0, layar or "?"))
+                catatKirim(os.date("%H:%M:%S") .. " GRID: " .. n .. " jendela ditata "
+                           .. (kol or 0) .. "x" .. (bar or 0) .. " (" .. (layar or "?") .. ")")
+            else
+                warn("AUTO GRID gagal: " .. (gerr or "gak jelas"))
+            end
+        end
+    end
+
+    return hasil
+end
+
+-- ============================================================
+-- notifikasi
+-- ============================================================
+local NOTIF_ID="zenx_worker"
+local function notify(title,content)
+    local function e(s) return (s or ""):gsub('"','\\"') end
+    sh_silent(string.format('termux-notification --id %s --title "%s" --content "%s" --ongoing --priority low --alert-once',
+        NOTIF_ID, e(title), e(content)))
+end
+local function notify_clear() sh_silent("termux-notification-remove "..NOTIF_ID) end
+
+-- ============================================================
+-- lapor status -> POST /tim
+-- ============================================================
+local function baca_cpu()
+    local l1 = tonumber(sh("cat /proc/loadavg"):match("^([%d%.]+)")) or 0
+    local ncpu = tonumber(sh("nproc")) or 4
+    local pct = math.floor(l1/ncpu*100+0.5)
+    return pct > 100 and 100 or pct
+end
+
+-- v4.66: 'cache' = status client yang udah dibaca barusan. Dulu lapor()
+-- manggil pkg_running SENDIRI per client -- 4 client = 4 panggilan su (~24
+-- detik) TIAP LAPOR. Itu yang bikin panel telat banget update-nya, sekaligus
+-- bikin satu putaran loop jadi panjang.
+local function lapor(cfg, isi_perintah, cache)
+    local used, free, total = baca_ram()
+    local list = split(cfg.pkgs)
+    local parts, jalan = {}, 0
+    local semua = cache
+    if not semua then semua = pkg_running_semua(list) end   -- cadangan: sekali dump
+    for _, pkg in ipairs(list) do
+        local run = semua[pkg] and true or false
+        if run then jalan = jalan + 1 end
+        parts[#parts+1] = string.format('{"pkg":%s,"run":%s}', jstr(pkg), tostring(run))
+    end
+
+    -- v4.24: ikut kirim "lagi ngapain" + log terakhir
+    local logParts = {}
+    for _, l in ipairs(LOG_KIRIM) do logParts[#logParts+1] = jstr(l) end
+
+    local body = string.format(
+        '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
+        '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
+        '"aksi":%s,"log":[%s],"ver":%s,"dev":%s}',
+        jstr(cfg.tim), baca_cpu(), used, free, total,
+        jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
+        jstr(isi_perintah), table.concat(parts, ","),
+        jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id())
+    )
+
+    api_post(cfg, "/tim", body)
+    return jalan, #list
+end
+
+-- ============================================================
+-- perintah -> GET /perintah?tim=X
+-- ============================================================
+local function is_target(w, targets)
+    if not w or w == "" then return false end
+    local wl = w:lower()
+    for _, tgt in ipairs(split(targets)) do
+        if tgt ~= "" and wl:find(tgt:lower(), 1, true) then return true end
+    end
+    return false
+end
+
+-- ============================================================
+-- v4.1: pindai paket Roblox yang kepasang di device ini
+-- Ngetik 6-10 nama paket manual itu gampang typo, dan typo-nya diem —
+-- pgrep gak nemu, client gak kebuka, gak ada error. Mending dipindai.
+-- ============================================================
+local function pindai_pkgs()
+    local out = sh("su -c 'pm list packages'")
+    if out == "" then out = sh("pm list packages") end
+    local t = {}
+    for baris in out:gmatch("[^\n]+") do
+        local p = baris:match("^package:(%S+)")
+        if p and p:lower():find("roblox", 1, true) then t[#t+1] = p end
+    end
+    table.sort(t)
+    return t
+end
+
+-- ============================================================
+-- setup
+-- ============================================================
+local function setup_wizard()
+    print(C.BOLD..C.C.."\n=== ZENX WORKER v"..VERSION.." — SETUP ===\n"..C.N)
+    local cfg={}
+    -- v4.29: URL + kunci DIDULUIN, biar pas milih tim bisa langsung dicek ke
+    -- server: nomor itu udah dipegang RedFinger lain apa belum.
+    print(C.D.."  Alamat Cloudflare Worker (hasil `npx wrangler deploy`)."..C.N)
+    cfg.url=ask("URL panel","https://dry-glitter-63e4.petagee5.workers.dev")
+    print(C.D.."  Kunci yang sama kayak `npx wrangler secret put KUNCI`."..C.N)
+    cfg.kunci=ask("Kunci","nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb")
+
+    print("")
+    print(C.D.."  1 tim = 1 RedFinger. Nama HARUS sama kayak TIM di star_bridge.lua."..C.N)
+    -- Isi ANGKA doang, prefiks "tim-" ditempel otomatis -- sama persis kayak
+    -- kolom Tim di star_farm.lua. Prefiks yang beda ("tim1"/"Tim-1") bikin akun
+    -- gak nempel ke tim ini dan panel keliatan kosong TANPA error apa pun.
+    local DEV = dev_id()
+    local tn
+    while true do
+        tn = tonumber((ask("Nomor tim (angka aja)","1") or ""):match("%d+") or "")
+        if not tn or tn < 1 then
+            warn("Isi angka, minimal 1.")
+        else
+            local calon = "tim-" .. tn
+            cfg.tim = calon
+            local r = api_get(cfg, "/tim-klaim?tim=" .. calon .. "&dev=" .. DEV)
+            local boleh = ambil_str(r, "boleh")
+            if boleh == nil then
+                -- server gak kejawab (URL/kunci salah, atau lagi offline).
+                -- jangan ngunci setup: kasih tau, terus terusin.
+                warn("Gak bisa ngecek ke server (URL/kunci bener? internet nyala?)")
+                warn("Lanjut pakai " .. calon .. " -- pastiin sendiri gak dipake RF lain.")
+                break
+            elseif boleh == "ya" then
+                break
+            else
+                local sebab = ambil_str(r, "sebab") or (calon .. " udah dipegang device lain")
+                warn("DITOLAK: " .. sebab)
+                local dipakai = r and r:match('"terpakai"%s*:%s*%[(.-)%]') or ""
+                dipakai = dipakai:gsub('"', ''):gsub("tim%-", "")
+                if dipakai ~= "" then
+                    info("Nomor yang udah kepake: " .. dipakai)
+                end
+                info("Pilih nomor lain.")
+            end
+        end
+    end
+    cfg.tim = "tim-" .. tn
+    ok("Tim: " .. cfg.tim)
+    -- pasang klaim: mulai sekarang RF lain gak bisa ambil nomor ini
+    local rk = api_post(cfg, "/tim-klaim", string.format('{"tim":%s,"dev":%s}',
+        jstr(cfg.tim), jstr(DEV)))
+    if ambil_str(rk, "boleh") == "ya" then ok("Nomor tim ini kekunci buat RF ini") end
+    -- v4.5: pemicu di-hardcode FORCE (cuma itu yg dikirim panel). gak usah nanya.
+    cfg.targets="FORCE"
+    -- v4.5: pilih game -> otomatis isi Place ID (gak usah ketik manual)
+    print(C.D.."  Pilih game buat tim ini:"..C.N)
+    print(C.D.."    1) GAG 2  (farm/garden)      -> 97598239454123"..C.N)
+    print(C.D.."    2) GAG 1  (garden)           -> 126884695634066"..C.N)
+    print(C.D.."    3) GAG 1 MARKET (TradeWorld) -> 129954712878723"..C.N)
+    local pil = ask("Pilih (1/2/3)","1")
+    local GH = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/"
+    if pil == "2" then
+        cfg.place_id = "126884695634066"; cfg.game_label = "GAG 1"
+        cfg.script_url = GH .. "market"      -- GAG 1 pakai script market
+    elseif pil == "3" then
+        cfg.place_id = "129954712878723"; cfg.game_label = "GAG 1 MARKET"
+        cfg.script_url = GH .. "market"      -- market juga script market
+    else
+        cfg.place_id = "97598239454123"; cfg.game_label = "GAG 2"
+        cfg.script_url = GH .. "gag2"        -- GAG 2 pakai script farm
+    end
+    print(C.G.."  -> "..cfg.game_label.." (place "..cfg.place_id..")"..C.N)
+    print(C.D.."  Link join: paste share-URL ATAU linkCode. kosong=public."..C.N)
+    cfg.link_code=ask("Link/code (Enter=public)","")
+    print(C.D.."  Folder autoexec Delta (tempat naro script biar auto-jalan)."..C.N)
+    print(C.D.."  Default udah bener buat kebanyakan RF. Enter aja kalau ragu."..C.N)
+    cfg.autoexec_dir=ask("Folder autoexec","/sdcard/Delta/Autoexecute")
+
+    -- ===== paket: dipindai, bukan diketik =====
+    print()
+    info("Mindai paket Roblox di device ini...")
+    local ada = pindai_pkgs()
+    if #ada == 0 then
+        warn("Gak nemu paket Roblox. Root jalan? Client kepasang?")
+        cfg.pkgs = ask("Paket Roblox (ketik manual, pisah koma)","com.roblox.client")
+    else
+        ok("Ketemu "..#ada.." client:")
+        print("")
+        for i, p in ipairs(ada) do
+            local jalan = pkg_running(p) and " [jalan]" or ""
+            -- tanpa warna ANSI biar gak ke-wrap berantakan di layar RF sempit
+            print("   " .. i .. ". " .. p .. jalan)
+        end
+        print("")
+        print("  Enter = pakai SEMUA")
+        print("  atau ketik nomor pisah koma, misal: 1,3,5")
+        print("")
+        local j = ask("Pakai yang mana","")
+
+        if j == "" or j:lower() == "semua" then
+            cfg.pkgs = table.concat(ada, ",")
+        elseif j:find("com%.") then
+            cfg.pkgs = j
+        else
+            local pilih = {}
+            for n in j:gmatch("%d+") do
+                local p = ada[tonumber(n)]
+                if p then pilih[#pilih+1] = p end
+            end
+            if #pilih == 0 then
+                warn("Gak ada nomor yang cocok -> pakai semua")
+                cfg.pkgs = table.concat(ada, ",")
+            else
+                cfg.pkgs = table.concat(pilih, ",")
+            end
+        end
+    end
+
+    cfg.poll_sec=tonumber(ask("Cek perintah tiap brp detik","5")) or 5
+    print(C.D.."  Jeda minimal antar buka Roblox (biar gak spam)."..C.N)
+    cfg.reopen_sec=tonumber(ask("Jeda cek-ulang client (detik)","300")) or 300
+    local ar = ask("Auto-rejoin kalau akun keluar game? (y/n)","y")
+    cfg.auto_rejoin = (ar:lower() ~= "n")
+    cfg.auto_rejoin_menit = tonumber(ask("Auto-rejoin kalau script off berapa menit","8")) or 8
+    print(C.D.."  Nunggu berapa lama sampai 1 client dianggap gagal."..C.N)
+    print(C.D.."  Roblox di RedFinger biasanya 10-30 detik sampai proses muncul."..C.N)
+    cfg.tunggu_sec=tonumber(ask("Batas tunggu per client (detik)","60")) or 60
+    print(C.D.."  Nunggu bridge konfirmasi BENERAN masuk game (bukan nyangkut Home)."..C.N)
+    print(C.D.."  Script lapor tiap ~20 detik; kasih ruang loading + verif. 90 aman."..C.N)
+    cfg.konfirmasi_sec=tonumber(ask("Batas konfirmasi masuk game (detik)","90")) or 90
+    print(C.D.."  Kalau gagal, diulang berapa kali sebelum nyerah."..C.N)
+    cfg.max_coba=tonumber(ask("Coba ulang max per client","5")) or 5
+    print(C.D.."  Napas setelah 1 client jalan, sebelum buka berikutnya."..C.N)
+    cfg.stagger_sec=tonumber(ask("Jeda antar client (detik)","15")) or 15
+    print(C.D.."  Tiap brp detik lapor CPU/RAM ke panel."..C.N)
+    cfg.status_sec=tonumber(ask("Kirim status tiap (detik)","20")) or 20
+    print(C.D.."  Mode jendela. Kalau client lo udah auto-freeform, biarin 0."..C.N)
+    print(C.D.."    0 = jangan disenggol (bawaan)  |  5 = paksa freeform"..C.N)
+    cfg.win_mode=tonumber(ask("Mode jendela","0")) or 0
+    print(C.D.."  Shell root tetap: buka izin root SEKALI, terus dipakai terus."..C.N)
+    print(C.D.."  Tiap 'su' di RedFinger makan ~6 detik; ini ngilangin ongkos itu."..C.N)
+    print(C.D.."  MASIH BARU -- kalau gagal, worker balik sendiri ke cara lama."..C.N)
+    local st = ask("Pakai shell root tetap? (y/n)","n")
+    cfg.shell_tetap = (st:lower() == "y")
+
+    print(C.D.."  Delta Lite suka nguncup jadi gelembung sendiri. Kalau dibiarin,"..C.N)
+    print(C.D.."  Roblox di dalemnya disconnect ~15 detik kemudian. Worker bisa"..C.N)
+    print(C.D.."  munculin ulang jendelanya berkala. Isi 0 = mati, 10 = tiap 10 detik."..C.N)
+    cfg.jaga_depan_sec = tonumber(ask("Jaga jendela tetep nongol tiap (detik)","10")) or 0
+
+    print(C.D.."  Auto grid: abis buka client, jendelanya ditata rapi sendiri"..C.N)
+    print(C.D.."  (gak numpuk). Butuh jendela FREEFORM -- entah dari win_mode 5,"..C.N)
+    print(C.D.."  atau dari Delta yang emang udah auto-freeform sendiri."..C.N)
+    local ag = ask("Auto grid? (y/n)","y")
+    cfg.auto_grid = (ag:lower() ~= "n")
+    print(C.D.."  Kunci orientasi layar RF. Kosongin kalau gak mau disenggol."..C.N)
+    print(C.D.."    landscape / portrait / (Enter = jangan disenggol)"..C.N)
+    local ori = ask("Orientasi layar",""):lower()
+    cfg.orientasi = (ori == "landscape" or ori == "portrait") and ori or ""
+    print(C.D.."  Keep-alive: bikin client tahan di background (anti force-close)."..C.N)
+    print(C.D.."  Di RAM sesek ini NGURANGIN kill, bukan ngilangin. Worker tetep aman."..C.N)
+    local ka = ask("Keep-alive (anti-FC)? (y/n)","y")
+    cfg.keep_alive = (ka:lower() ~= "n")
+
+    local n = #split(cfg.pkgs)
+    save_config(cfg)
+    ok("Config disimpan: "..CONFIG_FILE)
+    info("Tim '"..cfg.tim.."' pegang "..n.." client:")
+    for _, p in ipairs(split(cfg.pkgs)) do print(C.D.."   - "..p..C.N) end
+    if n == 1 then warn("Baru 1 paket. Yakin? Biasanya 1 tim isinya 6-10.") end
+    return cfg
+end
+
+-- ============================================================
+-- jalan
+-- ============================================================
+local function run(cfg)
+    cfg.reopen_sec  = cfg.reopen_sec or 300
+    if cfg.auto_rejoin == nil then cfg.auto_rejoin = true end
+    cfg.auto_rejoin_menit = cfg.auto_rejoin_menit or 8
+    cfg.disconnect_menit  = cfg.disconnect_menit or 3   -- v4.38: ngintip dialog error
+    -- v4.73: bawaan NYALA (dulu 0/mati). Jendela nguncup jadi gelembung itu
+    -- kejadian terus, dan sejak v4.63 ongkosnya cuma 1 panggilan su gabungan
+    -- -- jadi murah. Isi 0 di config kalau mau dimatiin.
+    cfg.jaga_depan_sec    = cfg.jaga_depan_sec or 15
+    cfg.suplai_sec        = cfg.suplai_sec or 20        -- v4.54: jadwal cek suplai
+    if cfg.shell_tetap == nil then cfg.shell_tetap = false end   -- v4.70: bawaan MATI
+    cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
+    cfg.poll_sec    = cfg.poll_sec or 5
+    cfg.stagger_sec = cfg.stagger_sec or 15
+    cfg.status_sec  = cfg.status_sec or 20
+    cfg.win_mode    = cfg.win_mode or 0   -- config lama gak punya -> fullscreen, gak berubah perilaku
+    -- v4.34: nyalain mode deteksi longgar kalau diminta di config
+    if cfg.deteksi_longgar == true then
+        DETEKSI_LONGGAR = true
+        warn("Deteksi LONGGAR nyala: ada ActivityRecord = dianggap jalan")
+    end
+    cfg.tunggu_sec  = cfg.tunggu_sec or 60
+    -- v4.31: batas bawah. Di bawah 30 detik, Roblox di RF belum kelar loading ->
+    -- tiap "ulang" nginterupsi loading yg lagi jalan -> gak pernah selesai (muter).
+    if cfg.tunggu_sec < 30 then
+        warn("tunggu_sec=" .. cfg.tunggu_sec .. " kekecilan buat RedFinger -> dipakai 30")
+        cfg.tunggu_sec = 30
+    end
+    cfg.konfirmasi_sec = cfg.konfirmasi_sec or 90   -- v4.17: batas tunggu bridge konfirmasi masuk game
+    cfg.orientasi   = cfg.orientasi or ""            -- v4.18: "" = jangan senggol orientasi
+    if cfg.keep_alive == nil then cfg.keep_alive = true end   -- v4.18: config lama -> nyalain
+    -- v4.28: suplai otomatis diatur TIM-1, dihitung sendiri dari nama tim.
+    -- Gak usah ditanya pas setup, gak usah diinget di config -- jadi mustahil
+    -- ada 2 RF yang rebutan ngatur (dulu itu bisa bikin akun gak balik ke PS asal).
+    local timRingkas = (cfg.tim or ""):lower():gsub("[%s%-_]", "")
+    cfg.suplai_master = (timRingkas == "tim1")
+    -- v4.32: default NYALA. Kalau ternyata jendelanya fullscreen, atur_grid cuma
+    -- gagal & kecatet di log -- gak ngerusak apa-apa.
+    if cfg.auto_grid == nil then cfg.auto_grid = true end
+    cfg.max_coba    = cfg.max_coba or 5
+    cfg.tim         = cfg.tim or "tim-1"
+    cfg.pkgs        = cfg.pkgs or cfg.roblox_pkg or "com.roblox.client"
+
+    if not cfg.url or cfg.url:find("GANTI") or not cfg.kunci or cfg.kunci == "" then
+        err("URL/Kunci belum diisi. Jalanin ulang, pilih E.")
+        return
+    end
+
+    local list = split(cfg.pkgs)
+    print(C.BOLD..C.G.."\n=== ZENX WORKER v"..VERSION.." — RUNNING ===\n"..C.N)
+    info("Tim   : "..cfg.tim.." ("..#list.." client)")
+    info("Panel : "..cfg.url)
+    info("Pemicu: "..cfg.targets.." | poll "..cfg.poll_sec.."s")
+
+    -- v4.1: freeform butuh setelan sistem. Kalau ini mati, --windowingMode 5
+    -- DITERIMA tapi diem-diem gak ngefek -> kebuka fullscreen, gak ada error.
+    -- Ini jebakan paling nyebelin: keliatan jalan padahal nggak.
+    local wm = tonumber(cfg.win_mode) or 0
+    if wm == 5 then
+        local ff = sh("su -c 'settings get global enable_freeform_support'"):gsub("%s+","")
+        if ff ~= "1" then
+            warn("enable_freeform_support = "..(ff == "" and "null" or ff).." -> freeform MATI di sistem")
+            info("Nyalain...")
+            sh_silent("su -c 'settings put global enable_freeform_support 1'")
+            local cek = sh("su -c 'settings get global enable_freeform_support'"):gsub("%s+","")
+            if cek == "1" then
+                ok("freeform dinyalain")
+                warn("Sebagian device baru ngefek abis restart.")
+            else
+                err("Gagal nyalain. Root beneran jalan?")
+            end
+        else
+            ok("enable_freeform_support = 1")
+        end
+
+        local fr = sh("su -c 'settings get global force_resizable_activities'"):gsub("%s+","")
+        if fr ~= "1" then
+            info("force_resizable_activities = "..(fr == "" and "null" or fr))
+            info("Kalau Roblox nolak freeform, coba: settings put global force_resizable_activities 1")
+        end
+    end
+
+    info("Window: "..(wm == 5 and "freeform (5)" or wm == 6 and "multi-window (6)" or "fullscreen (bawaan)"))
+
+    -- tes sambungan dulu, biar gak diem-diem gagal berjam-jam
+    local tes = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+    if tes == "" then
+        err("Gak nyambung ke panel. Cek URL / internet.")
+        return
+    end
+    local kesalahan = ambil_str(tes, "error")
+    if kesalahan then
+        err("Panel nolak: " .. kesalahan)
+        if kesalahan:find("kunci") then err("Kunci beda sama `wrangler secret put KUNCI`.") end
+        return
+    end
+    ok("Nyambung ke panel")
+    tulis_autoexec(cfg)   -- v4.8: pasang loader ke autoexec Delta
+
+    -- v4.18: kunci orientasi (kalau diset) + keep-alive awal
+    if cfg.orientasi == "landscape" or cfg.orientasi == "portrait" then
+        set_orientasi(cfg); ok("Orientasi dikunci: " .. cfg.orientasi)
+    end
+    -- v4.70: nyalain shell root tetap (kalau diminta). Gagal = lanjut cara lama.
+    if cfg.shell_tetap == true then
+        local ok2, sebab = shell_nyalakan()
+        if ok2 then
+            ok("Shell root tetap NYALA -- 'su' cuma dibuka sekali")
+        else
+            warn("Shell root tetap gagal (" .. (sebab or "?") .. ") -> pakai cara lama")
+        end
+    end
+
+    -- v4.21: wake-lock CPU (biar worker gak ditidurin pas layar idle)
+    sh_silent("termux-wake-lock")
+    if cfg.suplai_master then
+        ok("tim-1 -> RF ini yang mancing suplai otomatis")
+    end
+    -- v4.30: kasih tau kenapa auto grid mati, biar gak bingung nunggu-nunggu
+    if cfg.auto_grid ~= true then
+        warn("AUTO GRID mati di config. Nyalain: setup ulang (rm zenx_worker_config.lua)")
+    else
+        ok("Auto grid nyala")
+    end
+    if cfg.keep_alive ~= false then
+        keep_alive_apply(cfg)
+        -- v4.22: freezer-disable DICABUT. dulu dikira client "off" karena Android
+        -- bekuin proses -- SALAH: game-nya jalan normal, yg berhenti cuma LAPORAN
+        -- (bug jarak denyut di bridge, udah dibenerin di star_farm v13.10 +
+        -- market v8.336). matiin freezer malah nambah beban CPU -> task.wait di
+        -- script makin molor -> laporan makin telat. jadi jangan disenggol.
+        ok("Keep-alive (anti-FC) nyala")
+    end
+
+    -- v4.9: cache mapping client<->akun (baca prefs.xml sekali di awal, refresh berkala).
+    -- prefs.xml jarang berubah (akun tetap per client), jadi gak usah baca tiap loop.
+    local mapAkun = {}   -- pkg -> username
+    -- v4.62: baca username SEMUA client dalam SATU panggilan su. Dulu satu-satu
+    -- (4 client = 4 x ~5 detik = ~20 detik tiap refresh).
+    local function refresh_map()
+        local pkgs = split(cfg.pkgs)
+        local perintah = {}
+        for _, pkg in ipairs(pkgs) do
+            perintah[#perintah+1] = string.format(
+                'echo "@@%s"; cat /data/data/%s/shared_prefs/prefs.xml 2>/dev/null', pkg, pkg)
+        end
+        local o = sh("su -c '" .. table.concat(perintah, "; ") .. "'") or ""
+        -- pisah per penanda @@<paket>
+        local skrgPkg = nil
+        for baris in o:gmatch("[^\r\n]+") do
+            local tanda = baris:match("^@@(%S+)")
+            if tanda then
+                skrgPkg = tanda
+            elseif skrgPkg then
+                local u = baris:match('<string name="username">(.-)</string>')
+                if u then mapAkun[skrgPkg] = u; skrgPkg = nil end
+            end
+        end
+        -- cadangan: kalau ada yang gak kebaca, ambil satu-satu (jarang)
+        for _, pkg in ipairs(pkgs) do
+            if not mapAkun[pkg] then
+                local u = baca_username(pkg)
+                if u then mapAkun[pkg] = u end
+            end
+        end
+    end
+    refresh_map()
+    local lastMapRefresh = os.time()
+
+    -- v4.14: auto-assign akun ke tim. worker kirim daftar akun yg dia pegang
+    -- (dari mapAkun) ke panel -> panel tau akun ini di tim mana OTOMATIS.
+    -- mode isi_kosong: gak nimpa assign manual di panel.
+    local function auto_assign_tim()
+        local akun = {}
+        for _, ak in pairs(mapAkun) do akun[#akun+1] = ak end
+        if #akun == 0 then return end
+        local body = '{"tim":"' .. cfg.tim .. '","game":"' .. (cfg.game_label or "") ..
+                     '","isi_kosong":true,"akun":['
+        for i, a in ipairs(akun) do
+            body = body .. '"' .. a .. '"'
+            if i < #akun then body = body .. "," end
+        end
+        body = body .. "]}"
+        pcall(function()
+            api_post(cfg, "/assign-tim", body)
+        end)
+        ok("auto-assign " .. #akun .. " akun ke " .. cfg.tim)
+    end
+    auto_assign_tim()
+    local lastAssign = os.time()
+
+    -- v4.11: assign PS per-client. narik dari panel /assign-ps?tim=X.
+    -- hasilnya: mapLink[pkg]=link (buat buka client ke PS-nya),
+    --           mapPsNama[pkg]=nama (buat tampil di tabel).
+    local mapLink, mapPsNama = {}, {}
+    local function refresh_ps()
+        local r = api_get(cfg, "/assign-ps?tim=" .. cfg.tim)
+        -- format: {"assign":[{"akun":"fifinx_5","ps_nama":"leveling 1","link":"..."},...]}
+        -- cocokin akun -> pkg (lewat mapAkun kebalik)
+        local akun2pkg = {}
+        for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
+        mapLink, mapPsNama = {}, {}
+        -- parse tiap objek assign
+        for obj in (r or ""):gmatch('{.-}') do
+            local akun = obj:match('"akun"%s*:%s*"(.-)"')
+            local psn  = obj:match('"ps_nama"%s*:%s*"(.-)"')
+            local link = obj:match('"link"%s*:%s*"(.-)"')
+            if akun and akun2pkg[akun] then
+                local pkg = akun2pkg[akun]
+                if link and link ~= "" then mapLink[pkg] = link end
+                if psn and psn ~= "" then mapPsNama[pkg] = psn end
+            end
+        end
+    end
+    refresh_ps()
+    local lastPsRefresh = os.time()
+
+    -- v4.10: tampilan TABEL (clear screen + redraw kiri atas, gak scroll spam).
+    -- log penting (auto-rejoin/error) ditaro di buffer, muncul di bawah tabel.
+    local logBuf = {}   -- ring buffer log terakhir
+    local function tambahLog(msg)
+        local baris = os.date("%H:%M:%S") .. " " .. msg
+        logBuf[#logBuf+1] = baris
+        while #logBuf > 6 do table.remove(logBuf, 1) end   -- simpan 6 terakhir
+        catatKirim(baris)   -- v4.24: ikut dikirim ke panel
+    end
+
+    -- v4.16: CACHE status client + ram/cpu. dulu gambar_tabel manggil pkg_running
+    -- (dumpsys, LAMBAT) buat tiap client TIAP redraw -> tabel lelet. sekarang status
+    -- di-refresh berkala di background, tabel cuma baca cache -> redraw INSTAN.
+    local cacheRun = {}    -- pkg -> true/false (jalan?)
+    local runSebelum = {}  -- v4.46: status ronde lalu, buat nangkep yang MATI MENDADAK
+    local cacheBridge = {} -- v4.49: script beneran lapor apa nggak (bukan cuma window ada)
+    local cacheRam = {0,0,0}
+    local cacheCpu = 0
+    local lastStatusCek = 0
+    local function refresh_status()
+        -- v4.63: satu dump buat semua client (dulu satu-satu -> ~24 detik)
+        local semua = pkg_running_semua(split(cfg.pkgs))
+        for _, pkg in ipairs(split(cfg.pkgs)) do
+            cacheRun[pkg] = semua[pkg]
+        end
+        -- v4.49: "ada di layar game" BEDA sama "script beneran jalan". Jendela
+        -- yang dikuncupin jadi gelembung tetep punya activity -> ke-baca jalan
+        -- padahal diem. Yang tau sebenernya cuma bridge (script lapor apa nggak).
+        local st = api_get(cfg, "/stat")
+        for _, pkg in ipairs(split(cfg.pkgs)) do
+            local ak = mapAkun[pkg]
+            cacheBridge[pkg] = ak and bridge_fresh(st, ak) or false
+        end
+        local u, f, t = baca_ram()
+        cacheRam = {u, f, t}
+        cacheCpu = baca_cpu()
+    end
+    -- v4.16: JANGAN refresh_status blocking di awal (dumpsys semua client = lama).
+    -- biarin cache kosong dulu -> tabel langsung muncul (status "cek..."), status
+    -- nyusul di loop pertama. jadi tabel muncul INSTAN, gak nunggu dumpsys.
+    for _, pkg in ipairs(split(cfg.pkgs)) do cacheRun[pkg] = nil end
+    local function gambar_tabel(isi, statusPerintah)
+        io.write("\27[2J\27[H")   -- clear screen + kursor ke kiri atas
+        local used, free, total = cacheRam[1], cacheRam[2], cacheRam[3]
+        local cpu = cacheCpu
+        -- header
+        io.write(C.BOLD..C.G.."  ZENX WORKER v"..VERSION.."  ·  "..cfg.tim.."  ·  "..(cfg.game_label or "").."\n"..C.N)
+        io.write(C.D.."  "..os.date("%H:%M:%S").."  ·  perintah: "..(isi ~= "" and isi or "-").."\n"..C.N)
+        io.write("\n")
+        -- tabel
+        local list = split(cfg.pkgs)
+        local jalan = 0
+        io.write(C.D.."  ┌──────────┬──────────────┬────────────┬──────────┐\n"..C.N)
+        io.write(C.D.."  │ "..C.N.."CLIENT   "..C.D.."│ "..C.N.."AKUN         "..C.D.."│ "..C.N.."SERVER     "..C.D.."│ "..C.N.."STATUS   "..C.D.."│\n"..C.N)
+        io.write(C.D.."  ├──────────┼──────────────┼────────────┼──────────┤\n"..C.N)
+        local beku = 0
+        for _, pkg in ipairs(list) do
+            local run = cacheRun[pkg]
+            -- v4.49: yang kehitung "jalan" cuma yang script-nya BENERAN lapor.
+            -- window ada tapi diem (dikuncupin/beku) dihitung terpisah.
+            if run and cacheBridge[pkg] == false and mapAkun[pkg] then
+                beku = beku + 1
+            elseif run then jalan = jalan + 1 end
+            local short = pkg:gsub("com%.roblox%.", "")   -- clienu
+            local akun = mapAkun[pkg] or "?"
+            local srv = mapPsNama[pkg] or "public"
+            local st, warna
+            if run == nil then st, warna = "◌ cek...", C.D      -- belum kecek
+            elseif run and cacheBridge[pkg] == false and mapAkun[pkg] then
+                -- window-nya ada tapi script gak lapor -> dikuncupin / beku
+                st, warna = "◐ beku", C.Y
+            elseif run then st, warna = "● jalan", C.G
+            else st, warna = "○ off", C.Y end
+            io.write(string.format("  "..C.D.."│ "..C.N.."%-8s "..C.D.."│ "..C.N.."%-12s "..C.D.."│ "..C.C.."%-10s"..C.D.." │ "..warna.."%-8s"..C.D.." │\n"..C.N,
+                short:sub(1,8), akun:sub(1,12), srv:sub(1,10), st))
+        end
+        io.write(C.D.."  └──────────┴──────────────┴────────────┴──────────┘\n"..C.N)
+        io.write("\n")
+        -- ringkas
+        io.write(string.format("  "..C.G.."%d/%d jalan"..C.N.."%s  ·  CPU %d%%  ·  RAM %.1f/%.1fGB\n",
+            jalan, #list,
+            beku > 0 and (C.Y.."  ·  "..beku.." beku"..C.N) or "",
+            cpu, used, total))
+        -- log
+        if #logBuf > 0 then
+            io.write("\n"..C.D.."  ── log ──\n"..C.N)
+            for _, l in ipairs(logBuf) do io.write(C.D.."  "..l.."\n"..C.N) end
+        end
+        io.flush()
+    end
+
+    notify("ZenX "..cfg.tim, "Standby — nungguin: "..cfg.targets)
+
+    local lastOpen, lastStatus = 0, 0
+    local lastAutoRejoin = 0   -- v4.9: kapan terakhir cek auto-rejoin
+    local lastKeepAlive = os.time()   -- v4.18: kapan terakhir apply keep-alive
+    local psGantiKerjakan = 0   -- v4.51: psGanti terakhir yang UDAH dikerjain
+    local lastJagaDepan = 0     -- v4.52: kapan terakhir munculin ulang jendela
+    local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
+    local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
+    local lastIsi = nil
+
+    while true do
+        -- ===== v4.2: pintu keluar =====
+        if ada_stop() then
+            bersih(cfg, "diminta stop")
+            return
+        end
+
+        local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+        local isi  = ambil_str(resp, "isi") or ""
+        -- v4.16: refresh status (dumpsys, berat) cuma tiap 10 detik, bukan tiap redraw.
+        if (os.time() - lastStatusCek) >= 10 then refresh_status(); lastStatusCek = os.time() end
+        gambar_tabel(isi)   -- v4.10: redraw tabel dari cache (instan)
+        local now  = os.time()
+
+        -- v4.3: narik link private server dari panel. kalau panel udah pernah set
+        -- (ts>0), pakai link panel (walau kosong = public). kalau panel belum
+        -- pernah set, biarin cfg._ps_override nil -> build_url pakai link lokal.
+        do
+            local rps = api_get(cfg, "/ps?tim=" .. cfg.tim)
+            local psTs = ambil_num(rps, "ts") or 0   -- v4.53: angka, bukan teks
+            if psTs > 0 then
+                local link = ambil_str(rps, "link") or ""
+                -- _ps_last nyimpen link terakhir dari panel biar gak spam log.
+                -- pakai flag terpisah, bukan _ps_override, biar "" (public) kebedain
+                -- dari nil (panel belum set).
+                if link ~= cfg._ps_last then
+                    cfg._ps_last = link
+                    cfg._ps_override = link
+                    info("PS dari panel: " .. (link ~= "" and link or "(public)"))
+                end
+            end
+        end
+
+        -- v4.4: CLOSE = tutup paksa semua client (Roblox ketutup, akun keluar).
+        -- REJOIN = tutup paksa DULU, terus buka lagi (fresh). beda dari FORCE yg
+        -- cuma mastiin kebuka (client yg udah jalan dibiarin).
+        -- pakai penanda biar gak loop terus (perintah nyangkut di DB).
+        -- v4.4: CLOSE / REJOIN ditangani dulu. skip_sisa=true -> lewati blok
+        -- FORCE/STANDBY di bawah biar gak dobel-buka. (pakai flag, bukan goto,
+        -- karena goto gak boleh lompatin deklarasi lokal di Luau.)
+        local skip_sisa = false
+        local U = isi:upper()
+        if U:find("REJOIN") then
+            if isi ~= lastIsi then
+                lastIsi = isi
+                -- v4.15: REJOIN:namaakun = rejoin CLIENT tertentu (bukan semua).
+                -- v4.20: bisa BANYAK akun, pisah koma: REJOIN:akun1,akun2 -> rejoin
+                -- per-client masing-masing (tutup 1, buka 1). JANGAN kill all.
+                -- REJOIN doang (tanpa :akun) = rejoin SEMUA (kill all) -- buat ganti
+                -- server SEMUA client sekaligus.
+                local akunTarget = isi:match("REJOIN:(.+)")
+                if akunTarget then
+                    -- parse daftar akun (pisah koma)
+                    local daftarAkun = {}
+                    for nm in akunTarget:gmatch("[^,]+") do
+                        nm = nm:gsub("%s+", "")
+                        if nm ~= "" then daftarAkun[#daftarAkun+1] = nm end
+                    end
+                    refresh_ps()   -- ambil PS terbaru sekali di awal
+                    -- v4.61: kumpulin dulu, TUTUP BARENGAN, baru buka bertahap.
+                    -- Perintah dari panel jadi kerasa langsung -- bukan nunggu
+                    -- client 1 kelar dulu baru nyentuh client 2.
+                    local pkgRejoin, namaRejoin = {}, {}
+                    for _, namaAkun in ipairs(daftarAkun) do
+                        local pkgTarget = nil
+                        for pkg, ak in pairs(mapAkun) do
+                            if ak == namaAkun then pkgTarget = pkg break end
+                        end
+                        if pkgTarget then
+                            pkgRejoin[#pkgRejoin+1]   = pkgTarget
+                            namaRejoin[#namaRejoin+1] = namaAkun
+                        else
+                            tambahLog("REJOIN: akun " .. namaAkun .. " gak ketemu di RF ini")
+                        end
+                    end
+                    if #pkgRejoin > 0 then
+                        -- semua client tim ikut? tutup sekalian (lebih bersih)
+                        local semua = (#pkgRejoin == #split(cfg.pkgs))
+                        tambahLog(("REJOIN %d akun: %s"):format(#pkgRejoin, table.concat(namaRejoin, ", ")))
+                        close_all(cfg, semua and nil or pkgRejoin, mapLink)
+                        os.execute("sleep 2")
+                        for i, pkg in ipairs(pkgRejoin) do
+                            open_one(cfg, pkg, mapLink[pkg])
+                            if i < #pkgRejoin then os.execute("sleep " .. (cfg.stagger_sec or 10)) end
+                        end
+                        notify("ZenX "..cfg.tim, "rejoin " .. #pkgRejoin .. " akun")
+                    end
+                else
+                    warn("REJOIN dari panel -> tutup semua, buka lagi")
+                    close_all(cfg)
+                    os.execute("sleep 3")
+                    local function batal_r()
+                        if ada_stop() then return true end
+                        local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+                        return (ambil_str(r, "isi") or ""):upper():find("STANDBY") ~= nil
+                    end
+                    refresh_ps()
+                    local function lapor_rejoin()
+                        refresh_status(); lastStatusCek = os.time()
+                        gambar_tabel(isi)
+                        lapor(cfg, isi, cacheRun)
+                    end
+                    local h = open_all(cfg, nil, batal_r, lapor_rejoin, mapLink, mapAkun, true)
+                    ok(string.format("REJOIN kelar: %d jalan, %d gagal", h.ok, h.gagal))
+                    notify("ZenX "..cfg.tim, "REJOIN -> "..h.ok.." client")
+                    lastOpen = os.time()
+                    lastStatus = 0
+                end
+            end
+            skip_sisa = true
+        elseif U:find("FRONT") then
+            if isi ~= lastIsi then
+                lastIsi = isi
+                local n = front_all(cfg, mapLink)
+                tambahLog("FRONT: " .. n .. " client dibawa ke depan")
+                notify("ZenX "..cfg.tim, "semua client ke depan")
+            end
+            skip_sisa = true
+        elseif U:find("TUGAS") then
+            -- v4.55: panel minta rincian "tim ini lagi ngapain & mau ngapain".
+            -- Semua ditulis lewat tambahLog biar ikut kekirim ke panel juga.
+            if isi ~= lastIsi then
+                lastIsi = isi
+                setAksi("nyusun laporan tugas")
+                local st  = api_get(cfg, "/stat")
+                local sup = api_get(cfg, "/suplai")
+                local skrgSrv = ambil_num(st, "skrg") or os.time()
+
+                tambahLog("=== TUGAS " .. cfg.tim .. " ===")
+                local nJalan, nBeku, nOff = 0, 0, 0
+                for _, pkg in ipairs(split(cfg.pkgs)) do
+                    local short = pkg:gsub("com%.roblox%.", "")
+                    local akun  = mapAkun[pkg] or "?"
+                    local ps    = mapPsNama[pkg] or "public"
+                    local ada   = pkg_running(pkg)
+                    local lapor = akun ~= "?" and bridge_ts(st, akun) or nil
+                    local umur  = lapor and (skrgSrv - lapor) or nil
+                    local kead
+                    if not ada then kead = "OFF (window gak ada)"; nOff = nOff + 1
+                    elseif umur and umur <= FRESH_WINDOW then
+                        kead = "jalan (lapor " .. umur .. "s lalu)"; nJalan = nJalan + 1
+                    else
+                        kead = "BEKU (" .. (umur and (umur .. "s gak lapor") or "belum pernah lapor") .. ")"
+                        nBeku = nBeku + 1
+                    end
+                    tambahLog(short .. " | " .. akun .. " | " .. ps .. " | " .. kead)
+                end
+                tambahLog(("ringkas: %d jalan, %d beku, %d off"):format(nJalan, nBeku, nOff))
+
+                -- tugas suplai yang lagi nyangkut di tim ini
+                local nAktif = ambil_num(sup, "jumlahAktif") or 0
+                local alasan = ambil_str(sup, "alasan") or ""
+                local psTuju = ambil_str(sup, "psTujuan") or ""
+                if nAktif > 0 then
+                    tambahLog("suplai: " .. nAktif .. " akun lagi dirutein"
+                              .. (psTuju ~= "" and (" (tujuan " .. psTuju .. ")") or ""))
+                else
+                    tambahLog("suplai: gak ada yang lagi dirutein"
+                              .. (alasan ~= "" and (" -- " .. alasan) or ""))
+                end
+                tambahLog("perintah aktif: " .. (isi ~= "" and isi or "-"))
+                notify("ZenX "..cfg.tim, "laporan tugas siap")
+            end
+            skip_sisa = true
+        elseif U:find("GRID") then
+            if isi ~= lastIsi then
+                lastIsi = isi
+                setAksi("nyusun jendela jadi grid")
+                local n, err, kol, bar, layar = atur_grid(cfg)
+                if n > 0 then
+                    tambahLog(string.format("GRID: %d jendela ditata %dx%d (%s)",
+                        n, kol or 0, bar or 0, layar or "?"))
+                    notify("ZenX "..cfg.tim, "grid "..n.." jendela")
+                else
+                    tambahLog("GRID gagal: " .. (err or "gak jelas"))
+                    warn("GRID gagal: " .. (err or "gak jelas"))
+                end
+            end
+            skip_sisa = true
+        elseif U:find("CLOSE") then
+            if isi ~= lastIsi then
+                warn("CLOSE dari panel -> tutup semua client")
+                lastIsi = isi
+                local n = close_all(cfg)
+                ok("CLOSE: " .. n .. " client ditutup")
+                notify("ZenX "..cfg.tim, "CLOSE -> "..n.." client ditutup")
+                lapor(cfg, isi, cacheRun)
+                lastStatus = os.time()
+            end
+            skip_sisa = true
+        end
+
+        if not skip_sisa then
+
+        -- KILL dari panel: beda sama STANDBY.
+        -- STANDBY = berhenti buka client, worker tetep jalan.
+        -- KILL    = worker-nya sendiri yang mati.
+        if isi:upper():find("KILL") then
+            warn("KILL dari panel")
+            lapor(cfg, "MATI")   -- kabarin panel dulu, biar gak nunggu 7 menit
+            bersih(cfg, "KILL dari panel")
+            return
+        end
+
+        if isi ~= lastIsi and isi ~= "" then
+            info("perintah baru: " .. isi)
+            lastIsi = isi
+        end
+
+        -- Perintah kesimpen di DB, jadi isinya = keadaannya.
+        -- Gak perlu forceSticky kayak jaman ntfy (pesan kedaluwarsa).
+        local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
+        local hit  = (not mati) and is_target(isi, cfg.targets)
+
+        -- v4.24: status dasar buat panel (nanti ditimpa aksi spesifik kalau lagi kerja)
+        if mati then
+            setAksi("standby — gak buka client")
+        else
+            local nJalan = 0
+            for _, p in ipairs(split(cfg.pkgs)) do if cacheRun[p] then nJalan = nJalan + 1 end end
+            setAksi(string.format("mantau %d/%d client jalan", nJalan, #split(cfg.pkgs)))
+        end
+
+        -- v4.46: CLIENT MATI MENDADAK (ditutup manual / di-swipe / crash).
+        -- Dulu nunggu siklus reopen_sec (5 MENIT) baru kebuka lagi. Sekarang
+        -- ketahuan dalam ~10 detik: banding status ronde ini sama ronde lalu.
+        -- Cuma pas FORCE aktif -- kalau STANDBY/CLOSE ya emang sengaja ditutup.
+        if hit then
+            for _, pkg in ipairs(split(cfg.pkgs)) do
+                if runSebelum[pkg] == true and cacheRun[pkg] == false then
+                    tambahLog("MATI MENDADAK: " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
+                              .. " -> dibuka lagi")
+                    setAksi("buka lagi " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")))
+                    open_one(cfg, pkg, mapLink[pkg])
+                    os.execute("sleep 3")
+                    refresh_status(); lastStatusCek = os.time()
+                    gambar_tabel(isi)
+                end
+            end
+        end
+        for _, pkg in ipairs(split(cfg.pkgs)) do runSebelum[pkg] = cacheRun[pkg] end
+
+        if hit then
+            local only = isi:match("FORCE:([%w%.%_]+)")
+            if (now - lastOpen) >= cfg.reopen_sec then
+                -- dipanggil di sela-sela client: STANDBY dari panel langsung kebaca,
+                -- gak nunggu 10 client kelar dulu
+                -- v4.53: catat penanda assign-PS pas MULAI. Kalau berubah di
+                -- tengah jalan (panel/suplai mindahin akun), berhenti aja --
+                -- instruksi panel lebih penting daripada nerusin sesi lama.
+                -- v4.56: PANEL SELALU DIDULUIN. Patokannya: apa pun yang berubah
+                -- di panel (perintah baru, assign PS baru) -> berhenti, kerjain
+                -- yang baru. Dulu cuma daftar perintah tertentu yang bisa nyerobot,
+                -- jadi instruksi lain nunggu sesi lama kelar (bisa bermenit-menit).
+                -- v4.57: JANGAN pakai potret lokal. Dulu psAwal dipotret pas mulai
+                -- dan gak pernah diperbarui -> perubahan yang SAMA bikin batal
+                -- berulang-ulang, worker gak pernah kelar buka client (kerasa lemot
+                -- banget). Sekarang pembandingnya psGantiKerjakan -- yang di-update
+                -- pas perubahan itu BENERAN dikerjain.
+                local cmdAwal   = (isi or ""):upper()
+                -- v4.57: REM. Sekali batal karena PS berubah, kasih jeda sebelum
+                -- boleh batal lagi karena alasan yang sama -- biar gak muter
+                -- "batal -> mulai -> batal" dalam hitungan detik.
+                local batalTerakhir = 0
+                local function batal()
+                    if ada_stop() then return true end   -- stop lokal juga ngebatalin
+                    local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+
+                    -- assign PS berubah (panel / suplai otomatis mindahin akun)
+                    local psSkrg = tonumber((r or ""):match('"psGanti"%s*:%s*(%d+)')) or 0
+                    if psGantiKerjakan > 0 and psSkrg > psGantiKerjakan
+                       and (os.time() - batalTerakhir) >= 30 then
+                        batalTerakhir = os.time()
+                        warn("assign PS berubah dari panel -> berhenti, ngerjain yang baru")
+                        return true
+                    end
+
+                    -- perintah dari panel. FORCE SENGAJA dikecualiin: panel suka
+                    -- ngirim FORCE otomatis abis REJOIN/FRONT/GRID -- kalau itu
+                    -- dianggap "perintah baru", worker malah motong kerjaannya
+                    -- sendiri. Selain FORCE = instruksi beneran -> didahulukan.
+                    local i = (ambil_str(r, "isi") or ""):upper()
+                    if i ~= "" and i ~= cmdAwal and not i:find("^FORCE$") then
+                        warn("perintah baru dari panel: " .. i .. " -> berhenti, itu duluan")
+                        return true
+                    end
+                    -- jaring lama: perintah yang WAJIB nyerobot walau sama isinya
+                    return i:find("STANDBY") ~= nil
+                        or i:find("STOP") ~= nil
+                        or i:find("KILL") ~= nil
+                        or i:find("REJOIN") ~= nil
+                        or i:find("CLOSE") ~= nil
+                end
+                -- v4.33: tabel ikut ke-update PAS lagi buka client. Dulu redraw
+                -- cuma di loop utama, sedangkan open_all ngeblok bermenit-menit ->
+                -- tabel nampilin data LAMA (client udah nyala tapi ketulis "off").
+                local function lapor_sela()
+                    refresh_status(); lastStatusCek = os.time()
+                    gambar_tabel(isi)
+                    lapor(cfg, isi, cacheRun)
+                end
+
+                local h = open_all(cfg, only, batal, lapor_sela, mapLink, mapAkun)
+
+                if h.ok > 0 or h.gagal > 0 then
+                    local ringkas = string.format("%d jalan, %d gagal, %d dilewat",
+                        h.ok, h.gagal, h.lewat)
+                    if h.gagal > 0 then
+                        err("Kelar: " .. ringkas)
+                        err("Gagal: " .. table.concat(h.nama_gagal, ", "))
+                        notify("ZenX "..cfg.tim, "GAGAL "..h.gagal.." client — cek Termux")
+                    else
+                        ok("Kelar: " .. ringkas)
+                        notify("ZenX "..cfg.tim, isi.." -> "..h.ok.." client jalan")
+                    end
+                else
+                    info("'"..isi.."' -> semua client udah jalan")
+                end
+                lastOpen = os.time()
+                lastStatus = 0   -- paksa lapor abis buka
+            else
+                -- v4.10: status ditampilin lewat tabel, gak print baris ini lagi
+            end
+        else
+            -- v4.10: status standby ditampilin lewat tabel
+        end
+
+        if (now - lastStatus) >= cfg.status_sec then
+            local jalan, total = lapor(cfg, isi, cacheRun)
+            notify("ZenX "..cfg.tim, jalan.."/"..total.." client jalan"..(hit and " · FORCE" or ""))
+            lastStatus = now
+        end
+
+        -- v4.9: AUTO-REJOIN per client. cek tiap akun (dari mapping client<->akun)
+        -- apakah masih lapor ke panel. akun yg keluar game -> script off -> berhenti
+        -- lapor. kalau > auto_rejoin_menit -> rejoin client itu doang (bukan semua).
+        -- cuma jalan kalau auto_rejoin nyala (FORCE aktif, gak STANDBY).
+        -- v4.51: kalau panel BARU AJA mindahin/mulangin akun, jangan nunggu
+        -- giliran 60 detik -- langsung masuk blok ini dan kerjain.
+        local psGantiPeek = tonumber((resp or ""):match('"psGanti"%s*:%s*(%d+)')) or 0
+        local adaTitahBaru = (psGantiPeek > 0 and psGantiPeek ~= psGantiKerjakan)
+        if cfg.auto_rejoin ~= false and hit and ((now - lastAutoRejoin) >= 60 or adaTitahBaru) then
+            lastAutoRejoin = now
+            -- refresh mapping tiap 10 menit (akun bisa ganti kalau setup ulang client)
+            if (now - lastMapRefresh) >= 600 then refresh_map(); lastMapRefresh = now end
+            if (now - lastAssign) >= 600 then auto_assign_tim(); lastAssign = now end
+            -- v4.51: keputusan panel LANGSUNG dikerjain. psGanti dibaca dari
+            -- /perintah yang emang udah di-poll tiap beberapa detik -- jadi begitu
+            -- panel mindahin/mulangin akun, worker nyusul dalam hitungan detik,
+            -- gak nunggu giliran 60 detik.
+            local psBaruDariPanel = adaTitahBaru
+            if psBaruDariPanel then
+                psGantiKerjakan = psGantiPeek
+                tambahLog("PANEL: ada perubahan server -> langsung dikerjain")
+            end
+            if psBaruDariPanel or (now - lastPsRefresh) >= 60 then
+                -- v4.23: PS pindah? -> rejoin client itu doang, biar masuk PS baru.
+                local psLama = {}
+                for k, v in pairs(mapPsNama) do psLama[k] = v end
+                refresh_ps()
+                lastPsRefresh = now
+                -- v4.61: KUMPULIN dulu semua yang pindah, TUTUP BARENGAN, baru
+                -- buka satu-satu. Dulu tiap client ditutup+dibuka sendiri-sendiri
+                -- -> 3 client bisa makan semenit lebih cuma buat nutup.
+                local pindahPkg = {}
+                for _, pkg in ipairs(split(cfg.pkgs)) do
+                    local baru = mapPsNama[pkg] or ""
+                    local lama = psLama[pkg]
+                    -- lama == nil = baru pertama kali kebaca (jangan rejoin, itu bukan pindah)
+                    if lama ~= nil and baru ~= lama then
+                        tambahLog(string.format("PINDAH SERVER: %s  %s -> %s",
+                            (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")),
+                            (lama ~= "" and lama or "public"),
+                            (baru ~= "" and baru or "public")))
+                        pindahPkg[#pindahPkg+1] = pkg
+                    end
+                end
+                if #pindahPkg > 0 then
+                    close_all(cfg, pindahPkg, mapLink)   -- SEKALI JALAN buat semuanya
+                    os.execute("sleep 2")
+                    for i, pkg in ipairs(pindahPkg) do
+                        open_one(cfg, pkg, mapLink[pkg])
+                        tambahLog("   -> " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
+                                  .. " dibuka lagi di " .. ((mapPsNama[pkg] or "") ~= "" and mapPsNama[pkg] or "public"))
+                        -- jeda cuma ANTAR buka (biar RAM gak kaget), bukan tiap tutup
+                        if i < #pindahPkg then os.execute("sleep " .. (cfg.stagger_sec or 15)) end
+                    end
+                end
+            end
+            -- ambil semua status akun dari panel sekali
+            local stat = api_get(cfg, "/stat")
+            local ambang = (tonumber(cfg.auto_rejoin_menit) or 8) * 60
+            -- v4.38: ambang CEPAT khusus buat ngintip dialog error (disconnect).
+            -- Nungguin 8 menit kelamaan kalau cuma kena "Error Code 277".
+            local ambangDc = (tonumber(cfg.disconnect_menit) or 3) * 60
+            for _, pkg in ipairs(split(cfg.pkgs)) do
+                local akun = mapAkun[pkg]
+                if akun then
+                    -- cari "ts" akun ini di /stat. format: ..."nama":"fifinx_5"...,"ts":123...
+                    local blok = stat:match('{[^{}]-"nama"%s*:%s*"' .. akun .. '"[^{}]-}')
+                    local ts = blok and tonumber(blok:match('"ts"%s*:%s*(%d+)')) or nil
+                    local skrgSrv = ambil_num(stat, "skrg") or now   -- v4.53: dulu selalu nil -> pakai jam LOKAL
+                    if ts and (skrgSrv - ts) > math.min(ambangDc, ambang) then
+                        -- v4.21: bridge diem > ambang. TAPI cek dulu client masih di
+                        -- game apa nggak (pkg_running). Android suka BEKUIN Roblox bg
+                        -- (proses idup, script beku, gak lapor) -> keliatan "off"
+                        -- padahal masih di server. jangan asal kill.
+                        if pkg_running(pkg) then
+                            -- v4.38: sebelum nebak-nebak, INTIP layarnya dulu. Kalau
+                            -- ada dialog error Roblox (Disconnected / Error 277), itu
+                            -- BUKAN beku -- dibangunin gak bakal nolong. Harus dibunuh
+                            -- terus dibuka ulang biar join dari awal.
+                            local errUi, errSifat = cek_error_ui(cfg, pkg, mapLink)
+                            if errUi and errSifat == "manual" then
+                                -- percuma diulang (link PS salah, di-kick script, place
+                                -- dibatesin). Diulang cuma muter-muter -> catet aja,
+                                -- biar keliatan di panel & bisa dibenerin manual.
+                                tambahLog(string.format("PERLU DICEK: %s kena '%s' -- masuk ulang gak bakal nolong", akun, errUi))
+                                nudgeCnt[pkg] = nil
+                                errUi = nil   -- jangan diapa-apain lagi ronde ini
+                            elseif errUi and errSifat == "tunggu" then
+                                -- lagi dibatesin (kebanyakan nyoba / server ngadat).
+                                -- Buru-buru masuk ulang malah makin diblok -> tutup
+                                -- aja, biarin adem; ronde berikutnya baru dibuka.
+                                tambahLog(string.format("DIBATESIN: %s kena '%s' -> ditutup dulu, adem ~1 menit", akun, errUi))
+                                close_all(cfg, pkg, mapLink)
+                                nudgeCnt[pkg] = nil
+                                errUi = nil
+                            end
+                            if errUi then
+                                tambahLog(string.format("DISCONNECT: %s kena '%s' -> tutup & masuk ulang", akun, errUi))
+                                close_all(cfg, pkg, mapLink)
+                                os.execute("sleep 2")
+                                open_one(cfg, pkg, mapLink[pkg])
+                                notify("ZenX "..cfg.tim, akun .. " " .. errUi .. " -> masuk ulang")
+                                nudgeCnt[pkg] = nil
+                                os.execute("sleep " .. (cfg.stagger_sec or 10))
+                            elseif (skrgSrv - ts) > ambang then
+                            -- gak ada dialog error, dan udah lewat ambang penuh
+                            nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
+                            if nudgeCnt[pkg] <= 2 then
+                                -- masih di game -> DIBANGUNIN (bawa ke depan) dulu,
+                                -- JANGAN kill (biar gak ilang progress + gak destruktif).
+                                tambahLog(string.format("BANGUNIN: %s diem %dm tapi masih di game -> bawa ke depan (%d/2)",
+                                    akun, math.floor((skrgSrv - ts)/60), nudgeCnt[pkg]))
+                                open_one(cfg, pkg, mapLink[pkg])   -- am start = window ke depan (join diabaikan krn udah in-game)
+                                os.execute("sleep 3")
+                            else
+                                -- udah dibangunin 2x masih diem -> script beneran mati -> rejoin penuh
+                                tambahLog(string.format("AUTO-REJOIN: %s dibangunin 2x masih diem -> rejoin penuh", akun))
+                                close_all(cfg, pkg, mapLink)
+                                os.execute("sleep 2")
+                                open_one(cfg, pkg, mapLink[pkg])
+                                notify("ZenX "..cfg.tim, "auto-rejoin "..akun.." (nudge gagal)")
+                                nudgeCnt[pkg] = nil
+                                os.execute("sleep " .. (cfg.stagger_sec or 10))
+                            end
+                            end   -- v4.38: tutup cabang "gak ada dialog error"
+                        elseif (skrgSrv - ts) > ambang then
+                            -- beneran keluar game (proses gak di layar game) -> rejoin penuh
+                            tambahLog(string.format("AUTO-REJOIN: %s off %dm -> rejoin",
+                                akun, math.floor((skrgSrv - ts)/60)))
+                            close_all(cfg, pkg, mapLink)  -- tutup client ini doang
+                            os.execute("sleep 2")
+                            open_one(cfg, pkg, mapLink[pkg])   -- buka lagi ke PS-nya
+                            notify("ZenX "..cfg.tim, "auto-rejoin "..akun.." (keluar game)")
+                            nudgeCnt[pkg] = nil
+                            os.execute("sleep " .. (cfg.stagger_sec or 10))  -- jeda sebelum cek berikutnya
+                        end
+                    elseif ts then
+                        nudgeCnt[pkg] = nil   -- v4.21: client lapor sehat -> reset counter nudge
+                    end
+                end
+            end
+        end
+
+        -- v4.54: SUPLAI punya jadwal SENDIRI, lepas dari gerbang auto-rejoin.
+        -- Dulu nebeng di situ -> keputusan "akun ini udah cukup, pulang" baru
+        -- DIBIKIN tiap 60 detik, terus nunggu giliran lagi buat dikerjain.
+        -- Sekarang dicek tiap suplai_sec (bawaan 20 detik).
+        if cfg.suplai_master == true and hit
+           and (now - lastSuplaiCek) >= (cfg.suplai_sec or 20) then
+            lastSuplaiCek = now
+            local rs = api_get(cfg, "/suplai-cek")
+            local nb  = ambil_num(rs, "nBerangkat") or 0
+            local np  = ambil_num(rs, "nPulang") or 0
+            local npd = ambil_num(rs, "nPindah") or 0
+            if nb > 0 then tambahLog("SUPLAI: " .. nb .. " akun market dikumpulin ke PS leveling") end
+            if np > 0 then tambahLog("SUPLAI: " .. np .. " akun market dipulangin (stok cukup)") end
+            if npd > 0 then tambahLog("SUPLAI: " .. npd .. " akun market pindah gudang (leveling abis)") end
+        end
+
+        -- v4.52: jaga jendela tetep nongol. Delta nguncup -> Roblox disconnect
+        -- ~15 detik kemudian, jadi jedanya mesti di bawah itu.
+        if cfg.jaga_depan_sec and cfg.jaga_depan_sec > 0 and hit
+           and (now - lastJagaDepan) >= cfg.jaga_depan_sec then
+            lastJagaDepan = now
+            jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
+        end
+
+        -- v4.18: keep-alive re-apply tiap 60 detik (Android suka reset oom_score_adj)
+        if cfg.keep_alive ~= false and (now - lastKeepAlive) >= 60 then
+            lastKeepAlive = now
+            keep_alive_apply(cfg)
+        end
+
+        end  -- if not skip_sisa
+
+        os.execute("sleep "..cfg.poll_sec)
+    end
+end
+
+-- ============================================================
+-- v4.2: subperintah
+--   lua5.4 zenx_worker.lua          -> jalan
+--   lua5.4 zenx_worker.lua stop     -> berhenti baik-baik
+--   lua5.4 zenx_worker.lua status   -> jalan apa nggak
+-- ============================================================
+local PERINTAH = (arg and arg[1] or ""):lower()
+
+if PERINTAH == "status" then
+    local pid = baca_pid()
+    if pid_hidup(pid) then
+        ok("Jalan (pid " .. pid .. ")")
+        print(sh("ps -p " .. pid .. " -o pid,etime,cmd="))
+    else
+        warn("Gak jalan.")
+        if pid then info("PID file basi (" .. pid .. ") -> dihapus"); hapus(PID_FILE) end
+    end
+    return
+end
+
+-- v4.34: `lua zenx_worker.lua cek` -> tunjukin APA yang worker liat per client.
+-- Buat nyari tau kenapa client kebaca "off" padahal game-nya jalan.
+if PERINTAH == "cek" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
+    print(C.BOLD..C.C.."\n=== DIAGNOSA DETEKSI CLIENT ===\n"..C.N)
+    for _, pkg in ipairs(split(cfg.pkgs)) do
+        print(C.BOLD..pkg..C.N)
+        local pid = sh("su -c 'pidof " .. pkg .. "'") or ""
+        print("  proses idup : " .. (pid:match("%d") and (C.G.."YA ("..pid:gsub("%s+$","")..")"..C.N) or (C.Y.."NGGAK"..C.N)))
+        local o = sh("su -c 'dumpsys activity activities | grep ActivityRecord | grep " .. pkg .. "'") or ""
+        if o:match("%S") then
+            print("  baris ActivityRecord:")
+            for line in o:gmatch("[^\n]+") do
+                print("    " .. C.D .. line:gsub("^%s+",""):sub(1,150) .. C.N)
+            end
+        else
+            print("  " .. C.Y .. "gak ada baris ActivityRecord sama sekali" .. C.N)
+        end
+        print("  dibaca worker: " .. (pkg_running(pkg) and (C.G.."JALAN"..C.N) or (C.Y.."OFF"..C.N)))
+        print("")
+    end
+    print(C.D.."Kalau 'proses idup: YA' tapi 'dibaca worker: OFF', kirim baris"..C.N)
+    print(C.D.."ActivityRecord di atas -- dari situ ketauan penanda yang bener."..C.N)
+    return
+end
+
+if PERINTAH == "stop" then
+    local pid = baca_pid()
+    if not pid_hidup(pid) then
+        warn("Gak ada yang jalan.")
+        hapus(PID_FILE); hapus(STOP_FILE)
+        -- jaga-jaga ada yatim piatu dari sesi lama
+        local yatim = sh("pgrep -f zenx_worker.lua")
+        if #yatim > 1 then
+            warn("Tapi ada proses nyangkut. Dibunuh...")
+            sh_silent("pkill -f 'lua.*zenx_worker.lua'")
+        end
+        sh_silent("termux-notification-remove zenx_worker")
+        sh_silent("termux-wake-unlock")
+        return
+    end
+
+    info("Minta berhenti ke pid " .. pid .. "...")
+    local f = io.open(STOP_FILE, "w"); if f then f:write(tostring(os.time())); f:close() end
+
+    -- worker ngecek flag tiap putaran (poll_sec, bawaan 5 detik).
+    -- Kasih waktu lebih, siapa tau lagi di tengah buka client.
+    for i = 1, 30 do
+        os.execute("sleep 2")
+        if not pid_hidup(pid) then
+            ok("Berhenti baik-baik.")
+            hapus(STOP_FILE)
+            return
+        end
+        io.write(C.D.."   nungguin... "..(i*2).."s\r"..C.N); io.flush()
+    end
+
+    print()
+    warn("60 detik gak mati juga. Dipaksa.")
+    sh_silent("kill -9 " .. pid)
+    sh_silent("pkill -9 -f 'lua.*zenx_worker.lua'")
+    sh_silent("termux-notification-remove zenx_worker")
+    sh_silent("termux-wake-unlock")
+    hapus(PID_FILE); hapus(STOP_FILE)
+    ok("Dimatiin paksa.")
+    return
+end
+
+-- ============================================================
+print(C.BOLD..C.C.."ZenX Worker v"..VERSION.." (Termux)\n"..C.N)
+
+-- jangan dobel: 2 worker di 1 tim = client dibuka barengan, RAM jebol
+local pid_lama = baca_pid()
+if pid_hidup(pid_lama) then
+    err("Udah ada worker jalan (pid " .. pid_lama .. ").")
+    info("Matiin dulu:  lua5.4 zenx_worker.lua stop")
+    return
+end
+hapus(STOP_FILE)   -- sisa dari sesi sebelumnya
+
+local cfg=load_config()
+
+-- v4.2: dijalanin Termux:Boot? Gak ada yang bisa ngetik jawaban wizard.
+-- Tanpa penjaga ini, worker nyangkut diem-diem nungguin io.read() selamanya.
+local NON_INTERAKTIF = (os.getenv("ZENX_AUTO") == "1")
+
+if not cfg then
+    if NON_INTERAKTIF then
+        err("Config gak ada, dan lagi mode auto (ZENX_AUTO=1).")
+        err("Wizard butuh diketik. Jalanin manual dulu:")
+        err("   lua5.4 zenx_worker.lua")
+        return
+    end
+    -- config ntfy lama?
+    local lama = io.open("zenx_worker_ntfy_config.lua","r")
+    if lama then
+        lama:close()
+        warn("Ketemu config ntfy lama. v4.x pakai Cloudflare Worker, bukan ntfy.")
+        warn("Setup ulang — siapin URL Worker + kunci.")
+    else
+        warn("Config kosong - setup dulu")
+    end
+    cfg=setup_wizard()
+elseif NON_INTERAKTIF then
+    ok("Config loaded (mode auto — langsung jalan)")
+else
+    ok("Config loaded")
+    io.write(C.Y.."Run sekarang? (Y=run / E=edit ulang): "..C.N); io.flush()
+    local c=io.read()
+    if c=="E" or c=="e" then cfg=setup_wizard() end
+end
+local pid = tulis_pid()
+info("pid " .. pid .. " (matiin: lua5.4 zenx_worker.lua stop)")
+
+local okrun,e=pcall(run,cfg)
+
+-- kalau run() keluar sendiri, bersih() udah dipanggil di dalem.
+-- Ini jaring pengaman buat error/Ctrl+C.
+if not okrun then
+    err("Berhenti: "..tostring(e))
+    bersih(cfg, "error")
+elseif io.open(PID_FILE, "r") then
+    bersih(cfg, "selesai")
+end
