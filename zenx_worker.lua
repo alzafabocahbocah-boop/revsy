@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.78-cf"
+local VERSION = "4.79-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -384,6 +384,47 @@ local function bypass_kunci(cfg, link, pakaiRefresh)
     if e and e ~= "" then return nil, "API bilang: " .. e, jawab end
 
     return nil, "jawaban API gak dikenali bentuknya", jawab
+end
+
+-- v4.79: tulis kunci API ke config TANPA setup ulang.
+-- Sengaja EDIT TERTARGET (baca teksnya, ganti/sisipin satu baris) -- bukan
+-- load_config lalu save_config. Alasannya: save_config cuma nulis daftar
+-- setelan yang dia kenal, jadi kalau ada setelan yang ditambah manual di
+-- config, itu bakal KEHAPUS diem-diem. Cara ini gak nyentuh baris lain.
+local function config_set_bypass(apikey)
+    local f = io.open(CONFIG_FILE, "r")
+    if not f then
+        return false, "config gak ada -- jalanin `zenx` dulu buat setup"
+    end
+    local isi = f:read("*all") or ""
+    f:close()
+
+    local baris = string.format('  bypass_api_key=%q,', apikey)
+    if isi:find("bypass_api_key%s*=") then
+        -- ganti yang lama (pakai fungsi, biar '%' di kunci gak dianggap kode)
+        isi = isi:gsub('%s*bypass_api_key%s*=%s*"[^"]*"%s*,?',
+                       function() return "\n" .. baris end, 1)
+    else
+        -- sisipin sebelum '}' penutup
+        local pos = isi:match("^.*()}")
+        if not pos then return false, "bentuk config gak dikenali" end
+        isi = isi:sub(1, pos - 1) .. baris .. "\n" .. isi:sub(pos)
+    end
+
+    local g = io.open(CONFIG_FILE, "w")
+    if not g then return false, "gak bisa nulis config (izin?)" end
+    g:write(isi)
+    g:close()
+
+    -- v4.79: dibaca ULANG buat mastiin hasilnya beneran sah -- config yang
+    -- rusak bikin worker gak mau nyala sama sekali, jadi jangan cuma percaya
+    -- tulisannya sukses.
+    local cek = load_config()
+    if not cek then return false, "config jadi RUSAK setelah ditulis" end
+    if (cek.bypass_api_key or "") ~= apikey then
+        return false, "kunci gak kesimpen bener"
+    end
+    return true
 end
 
 -- ============================================================
@@ -2596,6 +2637,7 @@ end
 --   lua5.4 zenx_worker.lua stop     -> berhenti baik-baik
 --   lua5.4 zenx_worker.lua status   -> jalan apa nggak
 --   v4.78: key [link|refresh]       -> bypass key Delta lewat api.bypass.vip
+--   v4.79: key set <APIKEY>         -> isi kunci API ke config (tanpa setup ulang)
 -- ============================================================
 local PERINTAH = (arg and arg[1] or ""):lower()
 
@@ -2611,6 +2653,26 @@ if PERINTAH == "key" then
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
 
     local a2 = arg and arg[2] or ""
+
+    -- v4.79: `zenx key set <APIKEY>` -- isi kunci API tanpa setup ulang.
+    -- Buat RF yang config-nya udah ada (wizard gak jalan lagi di situ).
+    if a2:lower() == "set" then
+        local apikey = arg and arg[3] or ""
+        if apikey == "" then
+            err("Kuncinya mana? Contoh:")
+            err("   zenx key set <kunci-api-bypass.vip>")
+            return
+        end
+        local sukses, sebab = config_set_bypass(apikey)
+        if sukses then
+            ok("Kunci API kesimpen di " .. CONFIG_FILE)
+            info("Cek: zenx key <link>")
+        else
+            err("Gagal: " .. tostring(sebab))
+        end
+        return
+    end
+
     local pakaiRefresh = (a2:lower() == "refresh")
     local link = pakaiRefresh and (arg and arg[3] or "") or a2
 
