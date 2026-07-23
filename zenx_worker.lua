@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.79-cf"
+local VERSION = "4.84-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -155,6 +155,7 @@ local function save_config(cfg)
     -- JANGAN dipindah ke zenx_worker.lua -- itu di-push ke GitHub publik, siapa
     -- pun yang tau URL-nya bisa baca kuncinya dan ngabisin kuota.
     f:write(string.format("  bypass_api_key=%q,\n",cfg.bypass_api_key or ""))
+    f:write(string.format("  key_tanda=%q,\n",cfg.key_tanda or ""))
     f:write("}\n"); f:close(); return true
 end
 
@@ -386,11 +387,64 @@ local function bypass_kunci(cfg, link, pakaiRefresh)
     return nil, "jawaban API gak dikenali bentuknya", jawab
 end
 
+-- ============================================================
+-- v4.80: TULIS KUNCI KE DELTA
+-- Ketemu lewat potret sebelum-sesudah: pas kunci ditempel manual, yang muncul
+-- file /sdcard/Delta/Internals/Cache/license -- isinya kunci POLOS, 37 byte
+-- (FREE_ + 32 hex), TANPA baris baru dan tanpa bungkus JSON.
+-- Letaknya di /sdcard (bukan /data/data/<paket>), jadi SATU file ini kepakai
+-- semua client sekaligus -- gak usah per-client.
+-- ============================================================
+local DELTA_LICENSE = "/sdcard/Delta/Internals/Cache/license"
+
+local function tulis_lisensi(cfg, kunci)
+    local path = (cfg and cfg.delta_license) or DELTA_LICENSE
+    local dir  = path:match("^(.*)/") or "/sdcard/Delta/Internals/Cache"
+
+    -- 1) coba tulis langsung. Termux yang udah dikasih izin penyimpanan
+    -- biasanya boleh nulis di /sdcard, jadi gak usah repot manggil root.
+    local f = io.open(path, "w")
+    if f then
+        f:write(kunci)          -- TANPA baris baru: aslinya emang pas 37 byte
+        f:close()
+    else
+        -- 2) gak boleh nulis langsung -> lewat root. Ditulis ke file sementara
+        -- dulu baru disalin, biar gak kejebak neraka tanda kutip di dalam su.
+        local tmp = (os.getenv("HOME") or ".") .. "/.zenx_lic.tmp"
+        local g = io.open(tmp, "w")
+        if not g then return false, "gak bisa bikin file sementara" end
+        g:write(kunci); g:close()
+        sh("su -c 'mkdir -p " .. dir .. "; cp " .. tmp .. " " .. path ..
+           "; chmod 660 " .. path .. "'")
+        os.remove(tmp)
+    end
+
+    -- 3) BACA ULANG. Nulis "berhasil" gak ada artinya kalau isinya gak nyampe --
+    -- dan kalau salah, lo baru sadar pas semua client gagal masuk.
+    local isi = nil
+    local cek = io.open(path, "r")
+    if cek then isi = cek:read("*all"); cek:close() end
+    if not isi or isi:gsub("%s+", "") == "" then
+        isi = sh("su -c 'cat " .. path .. "'")   -- cadangan: baca pakai root
+    end
+    isi = (isi or ""):gsub("^%s+", ""):gsub("%s+$", "")
+
+    if isi ~= kunci then
+        return false, "ketulis tapi isinya beda (kebaca: '" .. isi:sub(1, 45) .. "')"
+    end
+    return true, path
+end
+
 -- v4.79: tulis kunci API ke config TANPA setup ulang.
 -- Sengaja EDIT TERTARGET (baca teksnya, ganti/sisipin satu baris) -- bukan
 -- load_config lalu save_config. Alasannya: save_config cuma nulis daftar
 -- setelan yang dia kenal, jadi kalau ada setelan yang ditambah manual di
 -- config, itu bakal KEHAPUS diem-diem. Cara ini gak nyentuh baris lain.
+--
+-- v4.81 (PENTING): dulu urutannya TULIS DULU baru dicek. Pas pengecekannya
+-- gagal, config-nya udah terlanjur ketimpa rusak -- worker jadi gak mau nyala
+-- sama sekali. Sekarang dibalik: hasil editan DITES DI MEMORI dulu, baru
+-- ditulis kalau sah. Gagal = config lama gak disentuh sedikit pun.
 local function config_set_bypass(apikey)
     local f = io.open(CONFIG_FILE, "r")
     if not f then
@@ -400,30 +454,40 @@ local function config_set_bypass(apikey)
     f:close()
 
     local baris = string.format('  bypass_api_key=%q,', apikey)
+    local baru
     if isi:find("bypass_api_key%s*=") then
-        -- ganti yang lama (pakai fungsi, biar '%' di kunci gak dianggap kode)
-        isi = isi:gsub('%s*bypass_api_key%s*=%s*"[^"]*"%s*,?',
-                       function() return "\n" .. baris end, 1)
+        -- ganti yang lama, SATU baris utuh (pakai fungsi, biar '%' di kunci
+        -- gak dianggap kode pengganti)
+        baru = isi:gsub('[ \t]*bypass_api_key%s*=%s*"[^"]*"[ \t]*,?[ \t]*\r?\n?',
+                        function() return baris .. "\n" end, 1)
     else
         -- sisipin sebelum '}' penutup
         local pos = isi:match("^.*()}")
         if not pos then return false, "bentuk config gak dikenali" end
-        isi = isi:sub(1, pos - 1) .. baris .. "\n" .. isi:sub(pos)
+        baru = isi:sub(1, pos - 1) .. baris .. "\n" .. isi:sub(pos)
     end
+
+    -- === DITES DI MEMORI DULU ===
+    local uji = load("return " .. baru)
+    if not uji then
+        return false, "hasil editan gak sah -- config LAMA GAK DISENTUH"
+    end
+    local sah, hasil = pcall(uji)
+    if not sah or type(hasil) ~= "table" then
+        return false, "hasil editan gak sah -- config LAMA GAK DISENTUH"
+    end
+    if (hasil.bypass_api_key or "") ~= apikey then
+        return false, "kunci gak kebaca balik -- config LAMA GAK DISENTUH"
+    end
+
+    -- cadangan dulu, biar ada jalan pulang kalau ada apa-apa
+    local bak = io.open(CONFIG_FILE .. ".bak", "w")
+    if bak then bak:write(isi); bak:close() end
 
     local g = io.open(CONFIG_FILE, "w")
     if not g then return false, "gak bisa nulis config (izin?)" end
-    g:write(isi)
+    g:write(baru)
     g:close()
-
-    -- v4.79: dibaca ULANG buat mastiin hasilnya beneran sah -- config yang
-    -- rusak bikin worker gak mau nyala sama sekali, jadi jangan cuma percaya
-    -- tulisannya sukses.
-    local cek = load_config()
-    if not cek then return false, "config jadi RUSAK setelah ditulis" end
-    if (cek.bypass_api_key or "") ~= apikey then
-        return false, "kunci gak kesimpen bener"
-    end
     return true
 end
 
@@ -727,6 +791,29 @@ end
 -- ============================================================
 -- buka Roblox
 -- ============================================================
+-- v4.83: JATAH BUNUH per client. Tanpa ini, client yang masalahnya emang GAK
+-- bisa diselesaiin restart (link PS mati, akun kena limit, key belum masuk)
+-- bakal dibunuh-buka terus tiap ronde: boros RAM, bikin client lain ikut
+-- kesenggol, dan gak pernah kelar. Lewat jatah -> berhenti nyentuh, catet aja
+-- biar keliatan di panel dan bisa dibenerin manual.
+local KILL_CATAT  = {}
+local KILL_MAKS   = 3      -- maks sekian kali bunuh...
+local KILL_JENDELA = 1800  -- ...dalam sekian detik (30 menit) per client
+
+local function sisa_jatah_kill(pkg)
+    local skrg, sisa = os.time(), {}
+    for _, w in ipairs(KILL_CATAT[pkg] or {}) do
+        if (skrg - w) < KILL_JENDELA then sisa[#sisa+1] = w end
+    end
+    KILL_CATAT[pkg] = sisa
+    return KILL_MAKS - #sisa
+end
+
+local function catat_kill(pkg)
+    KILL_CATAT[pkg] = KILL_CATAT[pkg] or {}
+    table.insert(KILL_CATAT[pkg], os.time())
+end
+
 local DEBUG_OPEN = false
 
 local function build_url(cfg, link_client)
@@ -999,7 +1086,136 @@ local function task_id_semua(pkgs)
     return hasil
 end
 
-local function atur_grid(cfg)
+-- ============================================================
+-- v4.82: TATA JENDELA LEWAT PREFS APP CLONER
+--
+-- Kenapa bukan 'am ... resize': jendela ngambang itu DIGAMBAR APP CLONER,
+-- bukan Android. Android nganggep semua klon fullscreen (mWindowingMode=
+-- fullscreen, bounds=[0,0][layar penuh]) -- App Cloner nggambar kotaknya DI
+-- DALAM jendela fullscreen itu. Jadi perintah apa pun ke Android sia-sia:
+--   am task resizeTask    -> gak ada di ROM RedFinger
+--   am stack resize       -> keterima TAPI gak ngefek
+--   am task resize        -> Exception / gak ngefek
+--   --windowingMode 5     -> jalan, tapi Android nambah batang judul -> KOTAK DOBEL
+-- Yang jalan: tulis koordinat ke shared_prefs klon, terus buka aplikasinya.
+--
+-- ATURAN YANG GAK BISA DITAWAR:
+--   * WAJIB nulis DUA set: current_ DAN original_. Cuma current_ -> balik
+--     berantakan (App Cloner pakai original_ pas jendela pertama dibuka).
+--   * DITULIS PAS CLIENT MATI, sebelum dibuka. App Cloner baca prefs pas app
+--     MULAI, dan NIMPA BALIK pas app DITUTUP.
+--   * Petak dihitung dari urutan cfg.pkgs (TETAP), bukan urutan buka -- worker
+--     suka ngurutin ulang, kalau ikut itu jendelanya pindah-pindah tiap ronde.
+-- ============================================================
+local SELA = 15   -- jarak antar jendela = SELA x 2
+
+-- templat dipilih tangan; rumus akar kuadrat boros (8 client jadi 3x3, nganggur 1)
+local SUSUNAN = {
+    [1]={1,1}, [2]={2,1}, [3]={3,1},  [4]={2,2},
+    [5]={3,2}, [6]={3,2}, [7]={4,2},  [8]={4,2},
+    [9]={3,3}, [10]={5,2},[11]={4,3}, [12]={4,3},
+}
+
+local KUNCI_JENDELA = {
+    "app_cloner_current_window_left",   "app_cloner_current_window_top",
+    "app_cloner_current_window_right",  "app_cloner_current_window_bottom",
+    "app_cloner_original_window_left",  "app_cloner_original_window_top",
+    "app_cloner_original_window_right", "app_cloner_original_window_bottom",
+}
+
+-- balikin: peta pkg -> {L,T,R,B}, sebab, kol, bar, W, H
+local function grid_hitung(cfg)
+    local W, H = layar_ukuran()   -- udah nuker W/H kalau layar landscape
+    if W == 0 or H == 0 then return nil, "gagal baca ukuran layar (wm size)" end
+
+    local pkgs = split(cfg.pkgs)
+    local n = #pkgs
+    if n == 0 then return nil, "gak ada client di config" end
+
+    local kol, bar
+    local s = SUSUNAN[n]
+    if s then
+        kol, bar = s[1], s[2]
+    elseif W >= H then
+        kol = math.ceil(math.sqrt(n)); bar = math.ceil(n / kol)
+    else
+        bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
+    end
+
+    local lebar, tinggi = math.floor(W / kol), math.floor(H / bar)
+    local peta = {}
+    for i, pkg in ipairs(pkgs) do   -- URUTAN CONFIG, jangan urutan buka
+        local c = (i - 1) % kol
+        local r = math.floor((i - 1) / kol)
+        peta[pkg] = {
+            L = c * lebar + SELA,
+            T = r * tinggi + SELA,
+            R = (c + 1) * lebar - SELA,
+            B = (r + 1) * tinggi - SELA,
+        }
+    end
+    return peta, nil, kol, bar, W, H
+end
+
+local function prefs_path(pkg)
+    return "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+end
+
+-- tulis koordinat 1 client. balikin: berhasil, keterangan
+-- keterangan "udah pas" = gak ada yang ditulis (hemat 1 panggilan su)
+local function tata_satu(pkg, kotak)
+    local path = prefs_path(pkg)
+    -- stderr digabung DI DALAM su -- kalau dibuang, penolakan ROM ikut kebuang
+    -- dan kodenya ngira sukses padahal gagal.
+    local isi = sh("su -c 'cat " .. path .. " 2>&1'") or ""
+    if not isi:find("<map", 1, true) then
+        return false, "prefs belum ada (client belum pernah dibuka)"
+    end
+
+    local mau = {}
+    for _, k in ipairs(KUNCI_JENDELA) do
+        local v
+        if     k:find("_left$")   then v = kotak.L
+        elseif k:find("_top$")    then v = kotak.T
+        elseif k:find("_right$")  then v = kotak.R
+        else                           v = kotak.B end
+        mau[k] = v
+    end
+
+    -- udah pas? lewatin nulisnya -- hemat 1 su per client tiap ronde
+    local udahPas = true
+    for k, v in pairs(mau) do
+        local ada = tonumber(isi:match('<int name="' .. k .. '" value="(%-?%d+)"'))
+        if ada ~= v then udahPas = false break end
+    end
+    if udahPas then return true, "udah pas" end
+
+    local baru = isi
+    for k, v in pairs(mau) do
+        local ganti = string.format('<int name="%s" value="%d" />', k, v)
+        if baru:find('<int name="' .. k .. '"', 1, true) then
+            baru = baru:gsub('<int name="' .. k .. '"[^/]*/>', function() return ganti end, 1)
+        else
+            baru = baru:gsub("</map>", function() return "    " .. ganti .. "\n</map>" end, 1)
+        end
+    end
+
+    -- JANGAN pakai sed di dalam su -- '</map>' kebaca shell sebagai pengalihan
+    -- ("syntax error: unexpected '<'"). Jadi: ubah di Lua, tulis lewat berkas
+    -- sementara, salin pakai 'cat tmp > target' (bukan cp) biar pemilik & izin
+    -- berkas aslinya tetep.
+    local tmp = (os.getenv("HOME") or ".") .. "/.zenx_prefs.tmp"
+    local f = io.open(tmp, "w")
+    if not f then return false, "gagal bikin berkas sementara" end
+    f:write(baru); f:close()
+
+    local out = sh("su -c 'cat " .. tmp .. " > " .. path .. " 2>&1'") or ""
+    os.remove(tmp)
+    if out:match("%S") then return false, "gagal nulis: " .. out:gsub("%s+", " "):sub(1, 60) end
+    return true, "ditulis"
+end
+
+local function atur_grid_lama(cfg)
     local W, H, rot = layar_ukuran()
     if W == 0 or H == 0 then
         return 0, "gagal baca ukuran layar (wm size)"
@@ -1102,52 +1318,59 @@ local ERROR_TANDA = {
 -- v4.42: penanda LAYAR HOME Roblox / popup verifikasi umur. Ini yang bikin
 -- client "jalan" tapi gak pernah masuk game. Dikenali langsung dari layar,
 -- jadi gak usah nunggu bridge diem 90 detik baru sadar.
+-- v4.83: penanda LAYAR KEY SYSTEM Delta. Ini WAJIB dikenali sendiri, karena
+-- dibunuh pun gak nyelesaiin apa-apa -- kuncinya tetep harus masuk. Dulu layar
+-- key kebaca "Home"/"nyangkut" -> client di-kill terus, dan kalau lagi ngerjain
+-- `zenx key` bisa kepotong di tengah jalan.
+-- CATATAN: daftar ini masih SEMENTARA (belum dicocokin ke dump layar asli).
+-- Tambahin sendiri lewat config: key_tanda="Kata A,Kata B"
+local KEY_TANDA = {
+    "platorelay", "Key System", "KeySystem", "Get Key", "Getting Key",
+    "Copy Key", "Enter Key", "Paste Key", "Checkpoint", "key expired",
+    "Delta Key", "Verify Key",
+}
 local HOME_TANDA = {
-    "Access to popular games", "check your age", "Unlock",
+    "Access to popular games", "check your age",
     "Discover", "Charts", "Marketplace",
+    -- v4.83: "Unlock" DICABUT dari sini. Itu tombol yang lazim di halaman key,
+    -- jadi layar key kebaca Home -> client dibunuh percuma.
 }
 local NYANGKUT_TANDA = {
     "Loading", "Injecting", "Please wait", "Checking", "Verifying",
 }
 -- balikin: pesan, sifat ("ulang"/"tunggu"/"manual")
-local function cek_error_ui(cfg, pkg, mapLink)
-    local dump = "/sdcard/zenx_ui.xml"
-    -- bawa ke depan dulu (REORDER_TO_FRONT: cuma munculin window, gak restart game)
-    local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
-    sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
-    os.execute("sleep 3")
-    -- pastiin yang di depan BENERAN client ini, biar gak salah baca punya client lain
-    local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
-    if not fokus:find(pkg, 1, true) then return nil end
-
-    sh_silent("su -c 'rm -f " .. dump .. "'")
-    sh_silent("su -c 'uiautomator dump " .. dump .. "'")
-    local isi = sh("su -c 'cat " .. dump .. " 2>/dev/null'") or ""
-    sh_silent("su -c 'rm -f " .. dump .. "'")
-    if not isi:match("%S") then return nil end          -- dump gagal -> jangan nebak
-
-    -- v4.44: SIDIK layar -- buat banding "berubah apa nggak" antar-intipan.
-    -- Layar yang BERUBAH = masih jalan (loading beneran), bukan beku.
+-- v4.84: bagian PENILAIAN dipisah dari bagian AMBIL DUMP.
+-- Alasannya: perintah `zenx intip` harus nunjukin penilaian yang PERSIS SAMA
+-- kayak yang dipakai worker. Kalau logikanya disalin dua kali, cepat atau
+-- lambat dua-duanya beda -- dan diagnosa jadi nyesatin.
+local function klasifikasi_layar(isi)
+    -- sidik layar: buat banding "berubah apa nggak" antar-intipan
     local sidik = #isi
     for t in isi:gmatch('text="([^"]+)"') do sidik = sidik + #t end
 
+    -- LAYAR KEY dicek PALING DULU. Halaman key sering nampilin kata yang sama
+    -- kayak layar lain ("Verifying", "Unlock", "Checking") -- kalau dicek
+    -- belakangan, keburu keklasifikasi salah terus dibunuh percuma.
+    for _, tanda in ipairs(KEY_TANDA) do
+        if isi:lower():find(tanda:lower(), 1, true) then
+            return ("layar KEY Delta ('" .. tanda .. "')"), "manual", sidik
+        end
+    end
+
     local kode = tonumber(isi:match("[Ee]rror [Cc]ode:?%s*(%d+)"))
     if kode then
-        local sifat = ERROR_SIFAT[kode] or "ulang"      -- kode gak dikenal -> ulang biasa
-        return ("Error Code " .. kode), sifat, sidik
+        return ("Error Code " .. kode), (ERROR_SIFAT[kode] or "ulang"), sidik
     end
     for _, tanda in ipairs(ERROR_TANDA) do
         if isi:lower():find(tanda:lower(), 1, true) then
             return tanda, "ulang", sidik
         end
     end
-    -- v4.40: gak ada error, tapi masih nyangkut di layar loading/inject?
     for _, tanda in ipairs(NYANGKUT_TANDA) do
         if isi:find(tanda, 1, true) then
             return ("nyangkut di '" .. tanda .. "'"), "ulang", sidik
         end
     end
-    -- v4.42: nyangkut di layar Home / popup umur?
     for _, tanda in ipairs(HOME_TANDA) do
         if isi:find(tanda, 1, true) then
             local kenapa = (tanda == "Access to popular games" or tanda == "check your age")
@@ -1155,27 +1378,50 @@ local function cek_error_ui(cfg, pkg, mapLink)
             return ("nyangkut di " .. kenapa), "home", sidik
         end
     end
-    -- v4.43: LAYAR KOSONG (putih polos, cuma logo). Gak ada teks yang bisa dibaca
-    -- sama sekali -> bukan layar game (game selalu punya tombol/label). Ini juga
-    -- nyangkut, cuma gak nyisain jejak teks. Aman: sampai sini artinya bridge
-    -- udah diem bermenit-menit, layar loading normal gak akan pernah nyampe sini.
+
+    -- LAYAR KOSONG (putih polos / cuma logo): gak ada teks yang bisa dibaca ->
+    -- bukan layar game (game selalu punya tombol/label).
     local nTeks = 0
     for t in isi:gmatch('text="([^"]+)"') do
         if t:match("%S") then nTeks = nTeks + 1 end
     end
     if nTeks <= 2 then
-        -- v4.74: JANGAN vonis "layar kosong" pas RAM lagi mepet. Pas RAM tinggal
-        -- dikit, Roblox emang lama banget nampilin apa-apa -- layarnya kosong
-        -- karena LAMBAT, bukan karena beku. Dulu ini bikin worker nutup keempat
-        -- client bergiliran: tutup -> buka -> lambat -> divonis beku -> tutup...
-        -- muter terus, dan tiap tutup+buka malah makin bikin RAM sesek.
+        -- JANGAN vonis beku pas RAM mepet -- pas RAM tinggal dikit, Roblox emang
+        -- lama nampilin apa-apa. Layarnya kosong karena LAMBAT, bukan beku.
         local _, sisaRam, totalRam = baca_ram()
         if totalRam and totalRam > 0 and sisaRam and (sisaRam / totalRam) < 0.20 then
-            return nil, nil, sidik   -- RAM mepet -> anggap lagi lambat, bukan beku
+            return nil, nil, sidik
         end
         return "nyangkut di layar kosong (loading beku)", "ulang", sidik
     end
     return nil, nil, sidik
+end
+
+-- ambil dump layar 1 client. balikin isi XML, atau nil + sebab.
+local function ambil_dump(cfg, pkg, mapLink, lewatiFokus)
+    local dump = "/sdcard/zenx_ui.xml"
+    local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
+    sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
+    os.execute("sleep 3")
+    if not lewatiFokus then
+        local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
+        if not fokus:find(pkg, 1, true) then return nil, "yang di depan bukan client ini" end
+    end
+    sh_silent("su -c 'rm -f " .. dump .. "'")
+    sh_silent("su -c 'uiautomator dump " .. dump .. "'")
+    local isi = sh("su -c 'cat " .. dump .. " 2>/dev/null'") or ""
+    sh_silent("su -c 'rm -f " .. dump .. "'")
+    if not isi:match("%S") then return nil, "dump gagal / kosong" end
+    return isi
+end
+
+local function cek_error_ui(cfg, pkg, mapLink)
+    -- v4.84: tinggal ngerangkai dua bagian di atas. Dulu ambil-dump dan
+    -- penilaian nyampur di sini, jadi `zenx intip` gak bisa makai penilaian
+    -- yang sama tanpa nyalin kodenya.
+    local isi = ambil_dump(cfg, pkg, mapLink)
+    if not isi then return nil end
+    return klasifikasi_layar(isi)
 end
 
 -- sambungin ke deklarasi maju di atas (dipakai tunggu_bridge)
@@ -1306,6 +1552,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     -- v4.19: fast=true (buat REJOIN ganti server) -> skip bridge-confirm biar CEPET,
     -- gak nunggu tiap client lapor 90s. cukup mastiin proses muncul.
     local stat0 = (not fast) and api_get(cfg, "/stat") or ""
+    -- v4.82: petak dihitung SEKALI di awal, dari urutan cfg.pkgs (tetap) --
+    -- bukan urutan buka, yang suka diacak (client stok habis didahuluin).
+    local petaGrid = nil
+    if cfg.auto_grid == true then
+        local p, sebabGrid = grid_hitung(cfg)
+        if p then petaGrid = p
+        else warn("tata jendela dilewat: " .. tostring(sebabGrid)) end
+    end
     local stat0Ts = os.time()   -- v4.67: kapan potret /stat itu diambil
     local potretJalan = pkg_running_semua(list)   -- v4.71: sekali dumpsys buat semua
     local potretTs = os.time()
@@ -1393,6 +1647,19 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         info("   " .. pkg:gsub("com%.roblox%.","") .. " masih jalan -> ditutup dulu biar bisa pindah")
                         close_all(cfg, pkg, mapLink, true)   -- v4.72: gak usah munculin yang lain
                         os.execute("sleep 2")
+                    end
+                    -- v4.82: TULIS POSISI JENDELA DI SINI -- pas client MATI, sebelum
+                    -- dibuka. App Cloner baca prefs pas app mulai; kalau ditulis
+                    -- setelah kebuka, gak ngefek DAN ketimpa balik pas app ditutup.
+                    if petaGrid and petaGrid[pkg] then
+                        local tok, tket = tata_satu(pkg, petaGrid[pkg])
+                        if tok then
+                            if tket ~= "udah pas" then
+                                info("   posisi jendela " .. pkg:gsub("com%.roblox%.","") .. ": " .. tket)
+                            end
+                        else
+                            warn("posisi jendela " .. pkg:gsub("com%.roblox%.","") .. " gagal: " .. tostring(tket))
+                        end
                     end
                     open_one(cfg, pkg, link_c)
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
@@ -1503,31 +1770,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         end
     end
 
-    -- v4.26: AUTO GRID — susun jendela sendiri abis buka client, gak usah
-    -- dipencet dari panel. Cuma jalan kalau: auto_grid nyala, mode freeform
-    -- (win_mode 5/6 -- fullscreen gak ada yang bisa ditata), dan ada client
-    -- yang BARU kebuka (kalau semua cuma "dilewat", jendelanya gak berubah).
-    -- v4.30: dulu WAJIB ada client baru kebuka (hasil.ok > 0). Akibatnya kalau
-    -- worker di-restart pas client UDAH jalan, semuanya cuma "dilewat" -> grid
-    -- gak pernah jalan. Sekarang: jalan juga SEKALI pas worker baru nyala.
-    local adaJendela = (hasil.ok + hasil.lewat) > 0
-    local perluGrid  = (hasil.ok > 0) or (not SUDAH_GRID and adaJendela)
-    -- v4.32: JANGAN dikunci ke win_mode. Delta bisa auto-freeform sendiri -- dalam
-    -- kasus itu win_mode tetep 0 tapi jendelanya TETEP ngambang & bisa ditata.
-    if cfg.auto_grid == true and perluGrid then
-        if not (cek_batal and cek_batal()) then
-            SUDAH_GRID = true
-            setAksi("nyusun jendela jadi grid")
-            local n, gerr, kol, bar, layar = atur_grid(cfg)
-            if n > 0 then
-                ok(string.format("AUTO GRID: %d jendela ditata %dx%d (%s)",
-                    n, kol or 0, bar or 0, layar or "?"))
-                catatKirim(os.date("%H:%M:%S") .. " GRID: " .. n .. " jendela ditata "
-                           .. (kol or 0) .. "x" .. (bar or 0) .. " (" .. (layar or "?") .. ")")
-            else
-                warn("AUTO GRID gagal: " .. (gerr or "gak jelas"))
-            end
-        end
+    -- v4.82: blok AUTO GRID lama (am ... resize setelah client kebuka) DICABUT.
+    -- Cara itu gak pernah ngefek di ROM RedFinger -- jendelanya digambar App
+    -- Cloner, bukan Android, jadi Android gak pegang posisinya. Penggantinya
+    -- udah jalan di atas: koordinat ditulis ke prefs TIAP SEBELUM client dibuka.
+    if petaGrid and hasil.ok > 0 then
+        SUDAH_GRID = true
+        catatKirim(os.date("%H:%M:%S") .. " GRID: posisi jendela ditulis buat "
+                   .. hasil.ok .. " client yang baru dibuka")
     end
 
     return hasil
@@ -1822,6 +2072,16 @@ local function run(cfg)
         warn("Deteksi LONGGAR nyala: ada ActivityRecord = dianggap jalan")
     end
     cfg.tunggu_sec  = cfg.tunggu_sec or 60
+    -- v4.83: penanda layar KEY bisa ditambah dari config tanpa nyentuh worker:
+    --   key_tanda="Kata A,Kata B"
+    -- Berguna kalau Delta ganti tampilan -- gak usah nunggu worker diperbarui.
+    if cfg.key_tanda and cfg.key_tanda ~= "" then
+        local n = 0
+        for _, t in ipairs(split(cfg.key_tanda)) do
+            KEY_TANDA[#KEY_TANDA+1] = t; n = n + 1
+        end
+        if n > 0 then ok("Penanda layar KEY tambahan dari config: " .. n) end
+    end
     -- v4.31: batas bawah. Di bawah 30 detik, Roblox di RF belum kelar loading ->
     -- tiap "ulang" nginterupsi loading yg lagi jalan -> gak pernah selesai (muter).
     if cfg.tunggu_sec < 30 then
@@ -2286,15 +2546,51 @@ local function run(cfg)
         elseif U:find("GRID") then
             if isi ~= lastIsi then
                 lastIsi = isi
-                setAksi("nyusun jendela jadi grid")
-                local n, err, kol, bar, layar = atur_grid(cfg)
-                if n > 0 then
-                    tambahLog(string.format("GRID: %d jendela ditata %dx%d (%s)",
-                        n, kol or 0, bar or 0, layar or "?"))
-                    notify("ZenX "..cfg.tim, "grid "..n.." jendela")
+                -- v4.82: nata ulang HARUS lewat restart client. App Cloner cuma
+                -- baca posisi pas app MULAI, dan nimpa balik pas app DITUTUP --
+                -- jadi nulis ke client yang lagi jalan itu percuma dua kali.
+                -- Alurnya: tutup semua -> tulis semua -> buka satu-satu.
+                setAksi("nata jendela (tutup -> tulis posisi -> buka)")
+                local peta, sebabGrid, kol, bar, W, H = grid_hitung(cfg)
+                if not peta then
+                    tambahLog("GRID gagal: " .. tostring(sebabGrid))
+                    warn("GRID gagal: " .. tostring(sebabGrid))
                 else
-                    tambahLog("GRID gagal: " .. (err or "gak jelas"))
-                    warn("GRID gagal: " .. (err or "gak jelas"))
+                    tambahLog(string.format("GRID: nata %dx%d di layar %dx%d -- client ditutup dulu",
+                        kol or 0, bar or 0, W or 0, H or 0))
+                    close_all(cfg)
+                    os.execute("sleep 2")
+
+                    local nTulis, nGagal = 0, 0
+                    for _, pkg in ipairs(split(cfg.pkgs)) do
+                        local tok, tket = tata_satu(pkg, peta[pkg])
+                        if tok then nTulis = nTulis + 1
+                        else
+                            nGagal = nGagal + 1
+                            tambahLog("   " .. pkg:gsub("com%.roblox%.","") .. ": " .. tostring(tket))
+                        end
+                    end
+                    tambahLog(("GRID: posisi ketulis %d client%s"):format(
+                        nTulis, nGagal > 0 and (", " .. nGagal .. " gagal") or ""))
+
+                    refresh_ps()
+                    local function batal_g()
+                        if ada_stop() then return true end
+                        local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+                        local i = (ambil_str(r, "isi") or ""):upper()
+                        return i:find("STANDBY") ~= nil or i:find("STOP") ~= nil
+                            or i:find("KILL") ~= nil or i:find("CLOSE") ~= nil
+                    end
+                    local function lapor_g()
+                        refresh_status(); lastStatusCek = os.time()
+                        gambar_tabel(isi)
+                        lapor(cfg, isi, cacheRun)
+                    end
+                    local h = open_all(cfg, nil, batal_g, lapor_g, mapLink, mapAkun, true)
+                    tambahLog(("GRID: kelar -- %d client kebuka lagi"):format(h.ok))
+                    notify("ZenX "..cfg.tim, "grid: " .. nTulis .. " jendela ditata")
+                    lastOpen = os.time()
+                    lastStatus = 0
                 end
             end
             skip_sisa = true
@@ -2533,9 +2829,9 @@ local function run(cfg)
                             -- terus dibuka ulang biar join dari awal.
                             local errUi, errSifat = cek_error_ui(cfg, pkg, mapLink)
                             if errUi and errSifat == "manual" then
-                                -- percuma diulang (link PS salah, di-kick script, place
-                                -- dibatesin). Diulang cuma muter-muter -> catet aja,
-                                -- biar keliatan di panel & bisa dibenerin manual.
+                                -- percuma diulang (layar KEY, link PS salah, di-kick
+                                -- script, place dibatesin). Diulang cuma muter-muter ->
+                                -- catet aja, biar keliatan di panel & dibenerin manual.
                                 tambahLog(string.format("PERLU DICEK: %s kena '%s' -- masuk ulang gak bakal nolong", akun, errUi))
                                 nudgeCnt[pkg] = nil
                                 errUi = nil   -- jangan diapa-apain lagi ronde ini
@@ -2547,8 +2843,30 @@ local function run(cfg)
                                 close_all(cfg, pkg, mapLink)
                                 nudgeCnt[pkg] = nil
                                 errUi = nil
+                            elseif errUi and errSifat == "home" then
+                                -- v4.83: nyangkut di Home/popup umur -> DIBANGUNIN dulu
+                                -- (max 2x), jangan langsung dibunuh. Kadang dia cuma
+                                -- perlu didorong sekali dan lanjut masuk sendiri.
+                                nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
+                                if nudgeCnt[pkg] <= 2 then
+                                    tambahLog(string.format("BANGUNIN: %s %s -> didorong dulu (%d/2)",
+                                        akun, errUi, nudgeCnt[pkg]))
+                                    open_one(cfg, pkg, mapLink[pkg])
+                                    os.execute("sleep 3")
+                                    errUi = nil   -- belum saatnya dibunuh
+                                end
+                                -- udah 2x masih di Home -> jatuh ke blok bawah (dibunuh)
                             end
                             if errUi then
+                                -- v4.83: kill DIJATAH. Kalau client ini udah dibunuh
+                                -- berkali-kali dalam waktu dekat, berarti restart bukan
+                                -- obatnya -- berhenti, catet, biar diurus manual.
+                                if sisa_jatah_kill(pkg) <= 0 then
+                                    tambahLog(string.format("PERLU DICEK: %s kena '%s' -- udah dibunuh %dx/30menit, DISTOP dulu",
+                                        akun, errUi, KILL_MAKS))
+                                    nudgeCnt[pkg] = nil
+                                else
+                                catat_kill(pkg)
                                 tambahLog(string.format("DISCONNECT: %s kena '%s' -> tutup & masuk ulang", akun, errUi))
                                 close_all(cfg, pkg, mapLink)
                                 os.execute("sleep 2")
@@ -2556,6 +2874,7 @@ local function run(cfg)
                                 notify("ZenX "..cfg.tim, akun .. " " .. errUi .. " -> masuk ulang")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
+                                end
                             elseif (skrgSrv - ts) > ambang then
                             -- gak ada dialog error, dan udah lewat ambang penuh
                             nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
@@ -2648,14 +2967,181 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 --   zenx key refresh <link> -> link diketik + paksa proses ulang
 -- refresh JANGAN dipakai sembarangan -- itu ngelewatin hasil simpanan, buat
 -- link yang emang sering ganti doang.
-if PERINTAH == "key" then
+-- v4.84: `zenx intip <client> [jeda]` -- potret teks di layar client, buat
+-- nyocokin penanda (layar key / Home / error) ke tampilan ASLI, bukan tebakan.
+--   zenx intip              -> daftar client
+--   zenx intip clienu       -> potret sekarang (jeda bawaan 5 detik)
+--   zenx intip clienu 20    -> nunggu 20 detik dulu, baru dipotret
+-- Jeda itu buat ngasih waktu lo mindahin layar ke keadaan yang mau direkam.
+if PERINTAH == "intip" then
     local cfg = load_config()
-    if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
+
+    local daftar = split(cfg.pkgs)
+    local pilih  = arg and arg[2] or ""
+    local jeda   = tonumber(arg and arg[3] or "") or 5
+
+    if pilih == "" then
+        print(C.BOLD..C.C.."\n=== INTIP LAYAR CLIENT ===\n"..C.N)
+        info("Client di tim ini:")
+        for _, p in ipairs(daftar) do
+            print("   " .. p:gsub("com%.roblox%.", "") ..
+                  (pkg_running(p) and (C.G.."  [jalan]"..C.N) or (C.Y.."  [off]"..C.N)))
+        end
+        print()
+        info("Contoh:  zenx intip clienu 20")
+        info("         (nunggu 20 detik, baru dipotret -- sempet pindah layar dulu)")
+        return
+    end
+
+    -- boleh ketik pendek (clienu) atau lengkap (com.roblox.clienu)
+    local pkg = nil
+    for _, p in ipairs(daftar) do
+        if p == pilih or p:gsub("com%.roblox%.", "") == pilih then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. pilih .. "' gak ada di config.")
+        info("Liat daftarnya:  zenx intip")
+        return
+    end
+
+    print(C.BOLD..C.C.."\n=== INTIP: " .. pkg:gsub("com%.roblox%.", "") .. " ===\n"..C.N)
+    if jeda > 0 then
+        info("Nunggu " .. jeda .. " detik -- siapin layarnya sekarang.")
+        for sisa = jeda, 1, -1 do
+            io.write(C.D .. "   " .. sisa .. "...   \r" .. C.N); io.flush()
+            os.execute("sleep 1")
+        end
+        print()
+    end
+
+    info("Motret layar...")
+    -- lewatiFokus=true: pas diagnosa, mending dapet dump apa adanya daripada
+    -- nolak diem-diem cuma gara-gara pengecekan fokus meleset.
+    local isi, sebab = ambil_dump(cfg, pkg, nil, true)
+    if not isi then err("Gagal: " .. tostring(sebab)); return end
+
+    -- teks unik, urut -- ini yang dipakai buat nyusun penanda
+    local liat, unik = {}, {}
+    for t in isi:gmatch('text="([^"]+)"') do
+        if t:match("%S") and not liat[t] then liat[t] = true; unik[#unik+1] = t end
+    end
+    table.sort(unik)
+
+    print()
+    ok("Teks di layar (" .. #unik .. " potong):")
+    if #unik == 0 then
+        print(C.D .. "   (kosong -- layar putih polos / cuma gambar)" .. C.N)
+    end
+    for _, t in ipairs(unik) do print("   " .. t) end
+
+    -- penilaian yang PERSIS sama kayak yang dipakai worker
+    local pesan, sifat = klasifikasi_layar(isi)
+    print()
+    ok("Kata worker: " .. (pesan or "gak dikenali (dibiarin)"))
+    local tindakan = ({
+        manual = "CUMA DICATET -- client gak disentuh",
+        tunggu = "ditutup, didiemin dulu",
+        home   = "didorong 2x, baru dibunuh kalau bandel",
+        ulang  = "dibunuh + dibuka lagi (jatah 3x/30 menit)",
+    })[sifat or ""] or "gak ngapa-ngapain"
+    ok("Tindakannya: " .. tindakan)
+    print()
+    info("Kalau penilaiannya SALAH, kirim daftar teks di atas ke Claude.")
+    info("Atau tambah sendiri:  key_tanda=\"Kata A,Kata B\"  di config")
+    print()
+    return
+end
+
+-- v4.84: `zenx intip` -- motret TEKS yang lagi nongol di layar client.
+-- Dipakai buat nyocokin penanda layar (Home / key / error) ke tampilan ASLI,
+-- bukan tebakan. uiautomator cuma bisa baca jendela yang lagi DI DEPAN, makanya
+-- client-nya dibawa ke depan dulu -- atau dikasih jeda biar lo pindah manual.
+--   zenx intip clienu        -> bawa clienu ke depan, langsung potret
+--   zenx intip clienu 15     -> sama, tapi tunggu 15 detik dulu
+--   zenx intip 15            -> jangan pindahin apa-apa, potret layar depan
+--                               setelah 15 detik (buat pindah sendiri)
+if PERINTAH == "intip" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
     local a2 = arg and arg[2] or ""
+    local jeda = tonumber(a2)
+    local target = nil
+    if jeda then
+        jeda = math.floor(jeda)          -- `zenx intip 15`
+    else
+        target = a2
+        jeda = math.floor(tonumber(arg and arg[3] or "") or 0)
+    end
 
-    -- v4.79: `zenx key set <APIKEY>` -- isi kunci API tanpa setup ulang.
-    -- Buat RF yang config-nya udah ada (wizard gak jalan lagi di situ).
+    -- nama pendek boleh: "clienu" -> "com.roblox.clienu"
+    local pkg = nil
+    if target and target ~= "" then
+        for _, p in ipairs(split(cfg.pkgs)) do
+            if p == target or p:find(target, 1, true) then pkg = p break end
+        end
+        if not pkg then
+            err("Client '" .. target .. "' gak ada di config.")
+            info("Yang ada: " .. cfg.pkgs)
+            return
+        end
+    end
+
+    print(C.BOLD..C.C.."\n=== INTIP LAYAR ==="..C.N)
+    if pkg then
+        info("Bawa " .. pkg:gsub("com%.roblox%.","") .. " ke depan...")
+        local url = build_url(cfg, nil)
+        sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '"
+                  .. url .. "' -p " .. pkg .. "\"")
+        os.execute("sleep 3")
+    else
+        info("Gak mindahin apa-apa -- potret layar yang lagi di depan.")
+    end
+
+    if jeda > 0 then
+        for sisa = jeda, 1, -1 do
+            io.write(("\r   motret dalam %2d detik... (pindah ke layar yang mau dipotret)"):format(sisa))
+            io.flush()
+            os.execute("sleep 1")
+        end
+        io.write("\r" .. string.rep(" ", 70) .. "\r"); io.flush()
+    end
+
+    local dump = "/sdcard/zenx_intip.xml"
+    sh_silent("su -c 'rm -f " .. dump .. "'")
+    sh("su -c 'uiautomator dump " .. dump .. " 2>&1'")
+    local isi = sh("su -c 'cat " .. dump .. " 2>/dev/null'") or ""
+    if not isi:match("%S") then
+        err("Dump gagal (uiautomator gak jalan / layar terkunci?)")
+        return
+    end
+
+    -- siapa yang lagi di depan -- biar ketauan potretnya punya siapa
+    local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
+    local siapa = fokus:match("([%w%.]+)/") or "?"
+    info("Yang lagi di depan: " .. siapa)
+
+    local unik, urut = {}, {}
+    for t in isi:gmatch('text="([^"]*)"') do
+        if t:match("%S") and not unik[t] then unik[t] = true; urut[#urut+1] = t end
+    end
+    table.sort(urut)
+
+    print()
+    print(C.BOLD .. "TEKS DI LAYAR (" .. #urut .. " baris):" .. C.N)
+    for _, t in ipairs(urut) do print("  " .. t) end
+    print()
+    info("Kirim daftar ini ke Claude, sebut ini layar apa (Home / key / error).")
+    return
+end
+
+if PERINTAH == "key" then
+    local a2 = arg and arg[2] or ""
+
+    -- v4.81: `key set` DIDULUIN, sebelum config divalidasi. Kalau config-nya
+    -- rusak gara-gara baris kunci, ini yang bisa benerin -- percuma dihadang
+    -- duluan. Aman: config_set_bypass nolak nulis kalau hasilnya gak sah.
     if a2:lower() == "set" then
         local apikey = arg and arg[3] or ""
         if apikey == "" then
@@ -2669,6 +3155,30 @@ if PERINTAH == "key" then
             info("Cek: zenx key <link>")
         else
             err("Gagal: " .. tostring(sebab))
+        end
+        return
+    end
+
+    local cfg = load_config()
+    if not cfg then
+        -- v4.81: bedain "belum pernah setup" vs "ada tapi rusak". Dulu dua-duanya
+        -- dibilang "belum ada" -- bikin salah langkah (setup ulang padahal cuma
+        -- perlu benerin satu baris).
+        local adaFile = io.open(CONFIG_FILE, "r")
+        if adaFile then
+            adaFile:close()
+            err("Config ADA tapi RUSAK: " .. CONFIG_FILE)
+            local bak = io.open(CONFIG_FILE .. ".bak", "r")
+            if bak then
+                bak:close()
+                info("Ada cadangannya. Balikin pakai:")
+                info("   cp " .. CONFIG_FILE .. ".bak " .. CONFIG_FILE)
+            else
+                info("Liat isinya:  cat " .. CONFIG_FILE)
+                info("Atau setup ulang:  rm " .. CONFIG_FILE .. " && zenx")
+            end
+        else
+            err("Config belum ada. Jalanin `zenx` dulu buat setup.")
         end
         return
     end
@@ -2705,6 +3215,15 @@ if PERINTAH == "key" then
         end
         -- taro ke clipboard kalau termux-api ada -- tinggal tempel di Delta
         os.execute("printf %s " .. shq(kunci) .. " | timeout 10 termux-clipboard-set >/dev/null 2>&1")
+        -- v4.80: langsung tulis ke file lisensi Delta -- gak usah tempel manual.
+        local wok, wket = tulis_lisensi(cfg, kunci)
+        if wok then
+            ok("Ditulis ke Delta: " .. wket)
+            info("Semua client kepakai (file ini dipakai bareng). Buka ulang Delta.")
+        else
+            warn("Gagal nulis ke Delta: " .. tostring(wket))
+            warn("Kuncinya udah di clipboard -- tempel manual aja dulu.")
+        end
     else
         err("GAGAL: " .. tostring(sebab))
         if mentah and mentah:gsub("%s+", "") ~= "" then
@@ -2799,6 +3318,27 @@ if PERINTAH == "stop" then
 end
 
 -- ============================================================
+-- v4.84: perintah yang GAK DIKENAL jangan diem-diem nyalain worker. Dulu
+-- `zenx intip ...` di worker versi lama malah bikin worker nyala -- keliatan
+-- kayak perintahnya "gagal aneh", padahal cuma belum ada di versi itu.
+if PERINTAH ~= "" then
+    err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
+    print()
+    info("Yang ada:")
+    info("   zenx                    -> jalanin worker")
+    info("   zenx stop               -> berhenti baik-baik")
+    info("   zenx status             -> jalan apa nggak")
+    info("   zenx cek                -> diagnosa deteksi client")
+    info("   zenx intip <client> [d] -> potret teks di layar client")
+    info("   zenx key                -> bypass key Delta (link dari clipboard)")
+    info("   zenx key <link>         -> bypass key dari link yang diketik")
+    info("   zenx key set <APIKEY>   -> isi kunci API bypass.vip")
+    print()
+    info("Kalau perintahnya harusnya ada, versi di RF ini ketinggalan -- tarik ulang:")
+    info("   curl -fsSL <repo>/zenx_worker.lua -o ~/zenx_worker.lua")
+    return
+end
+
 print(C.BOLD..C.C.."ZenX Worker v"..VERSION.." (Termux)\n"..C.N)
 
 -- jangan dobel: 2 worker di 1 tim = client dibuka barengan, RAM jebol
