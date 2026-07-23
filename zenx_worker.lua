@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.77-cf"
+local VERSION = "4.78-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -151,6 +151,10 @@ local function save_config(cfg)
     f:write(string.format("  suplai_sec=%d,\n",cfg.suplai_sec or 20))
     f:write(string.format("  shell_tetap=%s,\n",tostring(cfg.shell_tetap == true)))
     f:write(string.format("  max_coba=%d,\n",cfg.max_coba or 5))
+    -- v4.78: kunci API bypass.vip. SENGAJA cuma di config (file lokal tiap RF),
+    -- JANGAN dipindah ke zenx_worker.lua -- itu di-push ke GitHub publik, siapa
+    -- pun yang tau URL-nya bisa baca kuncinya dan ngabisin kuota.
+    f:write(string.format("  bypass_api_key=%q,\n",cfg.bypass_api_key or ""))
     f:write("}\n"); f:close(); return true
 end
 
@@ -311,6 +315,76 @@ local function split(s,sep)
 end
 
 local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+
+-- ============================================================
+-- v4.78: BYPASS KEY DELTA (api.bypass.vip)
+-- Link key-system Delta (auth.platorelay.com/a?d=...) dilempar ke API, API-nya
+-- yang nyelesaiin checkpoint. Jadi gak usah tempel-tempel manual.
+--
+-- Kenapa gak lewat sh() biasa: sh() dipatok timeout 5-8 detik (emang sengaja --
+-- biar 'su' yang hang gak nahan worker). Bypass butuh 30-60 detik. Kalau maksa
+-- lewat sh(), hasilnya SELALU kepotong dan keliatan kayak "API-nya gagal".
+-- Lagipula curl ke internet gak butuh root, jadi gak usah lewat su sama sekali.
+-- ============================================================
+local BYPASS_BASE    = "https://api.bypass.vip/premium/bypass?url="
+local BYPASS_REFRESH = "https://api.bypass.vip/premium/refresh?url="
+
+local function url_encode(s)
+    return (tostring(s or ""):gsub("[^%w%-%._~]", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end))
+end
+
+-- ambil link dari clipboard Termux (butuh termux-api). balikin nil kalau gak ada.
+local function clipboard_ambil()
+    local h = io.popen("timeout 10 termux-clipboard-get 2>/dev/null")
+    if not h then return nil end
+    local s = (h:read("*all") or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    h:close()
+    if s == "" then return nil end
+    return s
+end
+
+-- panggil API bypass. balikin: kunci, pesanError, jawabanMentah
+local function bypass_kunci(cfg, link, pakaiRefresh)
+    local apikey = cfg and cfg.bypass_api_key or ""
+    if apikey == "" then
+        return nil, "bypass_api_key kosong di " .. CONFIG_FILE ..
+                    " -- isi dulu: bypass_api_key=\"...\"", nil
+    end
+    if not link or link == "" then return nil, "link kosong", nil end
+    if not link:find("^https?://") then
+        return nil, "yang dikasih bukan link (harus mulai http/https)", nil
+    end
+
+    local dasar = pakaiRefresh and BYPASS_REFRESH or BYPASS_BASE
+    -- timeout 90: API-nya emang lama (dia yang ngerjain checkpoint-nya)
+    local cmd = string.format("timeout 90 curl -s -m 85 -H %s %s 2>/dev/null",
+        shq("x-api-key: " .. apikey), shq(dasar .. url_encode(link)))
+    local h = io.popen(cmd)
+    if not h then return nil, "gagal jalanin curl", nil end
+    local jawab = h:read("*all") or ""
+    h:close()
+
+    if jawab:gsub("%s+", "") == "" then
+        return nil, "API gak jawab (internet mati / kelamaan / kuota abis?)", jawab
+    end
+
+    -- v4.78: bentuk JSON-nya belum pernah dilihat langsung, jadi JANGAN dikunci
+    -- ke satu nama field. Dicoba beberapa nama yang lazim; kalau meleset semua,
+    -- jawaban MENTAH-nya dicetak -- dari situ baru dikunci ke bentuk aslinya.
+    for _, k in ipairs({ "result", "key", "response", "bypassed", "data" }) do
+        local v = jawab:match('"' .. k .. '"%s*:%s*"(.-)"')
+        if v and v ~= "" then return v, nil, jawab end
+    end
+
+    -- ada pesan error dari API-nya?
+    local e = jawab:match('"error"%s*:%s*"(.-)"')
+            or jawab:match('"message"%s*:%s*"(.-)"')
+    if e and e ~= "" then return nil, "API bilang: " .. e, jawab end
+
+    return nil, "jawaban API gak dikenali bentuknya", jawab
+end
 
 -- ============================================================
 -- v4.2: BISA DIMATIIN
@@ -1669,6 +1743,10 @@ local function setup_wizard()
     local ka = ask("Keep-alive (anti-FC)? (y/n)","y")
     cfg.keep_alive = (ka:lower() ~= "n")
 
+    print(C.D.."  Kunci API bypass.vip -- buat perintah `zenx key` (bypass key Delta)."..C.N)
+    print(C.D.."  Kesimpen di config ini doang, GAK ikut ke GitHub. Enter = lewat."..C.N)
+    cfg.bypass_api_key = ask("Kunci API bypass.vip (Enter=lewat)", cfg.bypass_api_key or "")
+
     local n = #split(cfg.pkgs)
     save_config(cfg)
     ok("Config disimpan: "..CONFIG_FILE)
@@ -2517,8 +2595,65 @@ end
 --   lua5.4 zenx_worker.lua          -> jalan
 --   lua5.4 zenx_worker.lua stop     -> berhenti baik-baik
 --   lua5.4 zenx_worker.lua status   -> jalan apa nggak
+--   v4.78: key [link|refresh]       -> bypass key Delta lewat api.bypass.vip
 -- ============================================================
 local PERINTAH = (arg and arg[1] or ""):lower()
+
+-- v4.78: `zenx key` -- salin link key-system Delta, terus jalanin ini.
+--   zenx key                -> ambil link dari clipboard (termux-clipboard-get)
+--   zenx key <link>         -> pakai link yang diketik
+--   zenx key refresh        -> link dari clipboard, tapi paksa proses ulang
+--   zenx key refresh <link> -> link diketik + paksa proses ulang
+-- refresh JANGAN dipakai sembarangan -- itu ngelewatin hasil simpanan, buat
+-- link yang emang sering ganti doang.
+if PERINTAH == "key" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
+
+    local a2 = arg and arg[2] or ""
+    local pakaiRefresh = (a2:lower() == "refresh")
+    local link = pakaiRefresh and (arg and arg[3] or "") or a2
+
+    if link == "" then
+        link = clipboard_ambil()
+        if link then
+            info("Link diambil dari clipboard")
+        else
+            err("Gak ada link. Salin dulu link key-nya, atau ketik:")
+            err("   lua5.4 zenx_worker.lua key <link>")
+            info("(clipboard butuh paket termux-api: pkg install termux-api)")
+            return
+        end
+    end
+
+    print(C.BOLD..C.C.."\n=== BYPASS KEY DELTA ==="..C.N)
+    info("Link  : " .. link:sub(1, 60) .. (#link > 60 and "..." or ""))
+    info("Mode  : " .. (pakaiRefresh and "refresh (proses ulang)" or "biasa"))
+    info("Proses... (bisa 30-60 detik, jangan ditutup)")
+
+    local kunci, sebab, mentah = bypass_kunci(cfg, link, pakaiRefresh)
+    print()
+    if kunci then
+        ok("KUNCI: " .. kunci)
+        -- disimpen juga, biar gak ilang kalau layar Termux ke-clear
+        local f = io.open((os.getenv("HOME") or ".") .. "/zenx_key.txt", "w")
+        if f then
+            f:write(kunci .. "\n"); f:close()
+            info("Disimpen di ~/zenx_key.txt")
+        end
+        -- taro ke clipboard kalau termux-api ada -- tinggal tempel di Delta
+        os.execute("printf %s " .. shq(kunci) .. " | timeout 10 termux-clipboard-set >/dev/null 2>&1")
+    else
+        err("GAGAL: " .. tostring(sebab))
+        if mentah and mentah:gsub("%s+", "") ~= "" then
+            print()
+            info("Jawaban mentah dari API (kirim ini ke Claude kalau bentuknya beda):")
+            print(C.D .. mentah:sub(1, 900) .. C.N)
+        end
+    end
+    print()
+    return
+end
 
 if PERINTAH == "status" then
     local pid = baca_pid()
