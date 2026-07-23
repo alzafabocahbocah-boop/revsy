@@ -68,7 +68,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.337"
+local VERSION = "8.338"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -170,6 +170,7 @@ task.spawn(function()
     end
 
     local lamaTok, lamaPet, lamaKirim = -1, -1, 0
+    local lamaJual = 0   -- v8.338: kapan terakhir kirim ringkasan penjualan
     task.wait(8)   -- tunggu UI + BH kebangun
     print("[MarketBridge] jalan | " .. plr.Name)
 
@@ -219,14 +220,23 @@ task.spawn(function()
                 -- balas. dulu gagal kirim tetep dicatet sukses -> nunggu 120s lagi ->
                 -- 4x gagal berturut = 8 menit diem -> panel kira "off" PADAHAL game
                 -- jalan. sekarang gagal = gak dicatet -> diulang 20 detik lagi.
+                -- v8.338: ikut kirim ringkasan penjualan (24 jam terakhir).
+                -- Cuma tiap ~5 menit -- payloadnya lebih gede, gak usah tiap denyut.
+                local jual = nil
+                if (skrg - lamaJual) >= 300 and getgenv().ZenxRingkasJual then
+                    local okJ, rj = pcall(getgenv().ZenxRingkasJual, 86400)
+                    if okJ and type(rj) == "table" then jual = rj end
+                end
                 if kirim("/market", {
                     akun = plr.Name,
                     place = tostring(game.PlaceId or ""),
                     tokens = tok,
                     petRule = petTerakhir,
                     nRule = nRuleTerakhir,
+                    jual = jual,
                 }) then
                     lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
+                    if jual then lamaJual = skrg end
                 end
             end
         end)
@@ -10730,6 +10740,34 @@ L("  - Inventory capacity")
         table.insert(salesHistory, p)
         saveHist()  -- v8.159: persist on add
         return true
+    end
+
+    -- v8.338: buka ringkasan penjualan buat BRIDGE (dikirim ke panel).
+    -- Dikelompokin per jenis pet biar payload-nya kecil -- bukan kirim mentahan.
+    getgenv().ZenxRingkasJual = function(sejakDetik)
+        local batas = sejakDetik and (os.time() - sejakDetik) or 0
+        local per, nTotal, tokenTotal = {}, 0, 0
+        for _, e in ipairs(salesHistory) do
+            local t = tonumber(e.time) or 0
+            if t >= batas then
+                local nama = tostring(e.petType or "?")
+                local d = per[nama]
+                if not d then d = {n = 0, tok = 0}; per[nama] = d end
+                d.n   = d.n + 1
+                d.tok = d.tok + (tonumber(e.price) or 0)
+                nTotal = nTotal + 1
+                tokenTotal = tokenTotal + (tonumber(e.price) or 0)
+            end
+        end
+        -- jadiin array, urut dari yang paling laku
+        local arr = {}
+        for nama, d in pairs(per) do
+            arr[#arr+1] = {n = nama, j = d.n, t = d.tok}
+        end
+        table.sort(arr, function(x, y) return x.j > y.j end)
+        -- ambil 40 teratas aja, sisanya gak penting buat papan
+        while #arr > 40 do table.remove(arr) end
+        return { total = nTotal, token = tokenTotal, jenis = arr }
     end
 
     local function purgeOld()
