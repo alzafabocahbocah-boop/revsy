@@ -1,0 +1,2920 @@
+-- ============================================================
+-- STAR SEED  v1.3  -- GAG 2, AKUN AFK: BELI SEED + GEAR, TERIMA GIFT, JUAL PINTAR
+--
+-- v1.3: * terima gift otomatis dari mailbox
+--       * auto jual buah TAPI cuma pas pengali pasar >= ambang (bawaan 4x).
+--         Per-buah, BUKAN SellAll -- lihat catatan di blok JUAL.
+--       * baca pengali "Stok Harga Buah" + paksa refresh biar jalan pas AFK
+--
+-- v1.4: * cache pengali ke file (tahan rejoin, dicap per siklus restock) --
+--         niru star_farm.lua yang emang udah terbukti jalan
+--       * HUD pengali di pojok kanan bawah, mandiri dari GUI utama
+--
+-- v1.5: FIX kotak "Jual kalau >=" gak pernah kesimpen. `tonumber(t:gsub(...))`
+--       -- gsub balik DUA nilai, jadi jumlah-ganti kekirim sebagai BASIS
+--       bilangan ke tonumber -> error -> handler mati diam-diam -> ambang
+--       nyangkut di 4 walau diketik 1. Sekarang hasil gsub DIKURUNG.
+--
+-- v1.6: * jinakin pet liar (bawaan: Raccoon doang). Beda dari beli seed --
+--         karakter DIPINDAH ke posisi pet, jadi bawaannya MATI.
+--       * kirim pet ke akun lain lewat mailbox
+--       * SETELAN BISA DARI PANEL WEB (scope 'seed' di CF, ditarik tiap 30s).
+--         Scope 'all' SENGAJA gak disentuh -- itu punya script farm.
+--
+-- v1.7: pet CUMA diambil pas MASIH HARGA DASAR, dan CUMA DICOBA SEKALI.
+--       Sistem pet itu rebutan: begitu ada yang klaim, harganya naik dan siapa
+--       pun boleh nimpa dengan bayar lebih. Kita sengaja gak ikut perang harga.
+--       Saringannya: (1) belum ada pemilik, (2) harga <= harga dasar yang
+--       dipelajari sendiri dari nilai terendah yang pernah keliat.
+--
+-- v1.8: * harga dasar dibaca dari MODUL GAME (SharedModules.PetModules) kalau
+--         ada -- lebih akurat & gak perlu putaran belajar. Kalau gak ketemu,
+--         jatuh balik ke cara belajar.
+--       * deteksi mutasi/ukuran pet: Big, Mega (dari ukuran model), Rainbow.
+--       * `getgenv().StarSeed.debug()` -- dump APA ADANYA dari game: harga pet,
+--         isi SeedData, pet liar + atributnya, seed/pet yang belum tercatat.
+--
+-- v1.9: DISETEL KE DATA ASLI GAME (hasil star_debug di fifinx_1):
+--       * FIX BESAR: seed di tas dulu dideteksi lewat rarity dari SeedData --
+--         padahal SeedData isinya FUNGSI doang, jadi rarity selalu nil dan
+--         SEMUA seed di tas kebaca 0 (laporan /inv ke panel ikut kosong).
+--         Sekarang patokannya daftar seed gabungan (stok SeedShop = 64 jenis).
+--       * harga pasar dibaca lewat packet FruitStock.Request/Snapshot dulu,
+--         GUI cuma cadangan. Packet itu sumber aslinya.
+--       * terima gift pakai Mailbox.ClaimAll (satu tembakan, bukan per gift).
+--       * tier pet pakai BigScale/HugeScale ASLI per pet. Istilah game-nya
+--         "Huge", bukan "Mega".
+--       * CATATAN: PetModules TIDAK punya harga sama sekali -- harga dasar pet
+--         tetep dipelajari dari pengamatan.
+--
+-- v2.0: * PET MUTASI (Big / Huge / Rainbow) DISIKAT walau harganya udah naik.
+--         Aturan "cuma harga dasar" sengaja dilonggarin buat mereka -- kelewat
+--         pet langka lebih rugi daripada bayar mahal. Ada batas opsional.
+--       * KATALOG dikirim ke panel tiap 5 menit. Panel nyatat mana yang baru,
+--         jadi begitu dev game nambah pet/seed, panel tau sendiri.
+--
+-- v2.1: MUTASI DIBACA DARI NAMA. Bukti: hadiah guild nampilin "Mega Rainbow
+--       Black Dragon" -- mutasi itu AWALAN NAMA, bukan atribut. Jauh lebih
+--       andal daripada ngukur model. Ukuran tetep dipakai sebagai cadangan.
+--       Istilah "Huge" (data) = "Mega" (tampilan) -- dianggap sama.
+--
+-- v2.2: DISETEL KE DATA ASLI (hasil star_petdata di fifinx_1):
+--       * HARGA DASAR dibaca dari SharedData.PetData.<nama>.BasePrice.
+--         Kekonfirmasi cocok persis sama Price pet liar yang belum diklaim
+--         (Owl 25000, Bunny 20000, Frog 10000). PUTARAN BELAJAR GAK PERLU LAGI.
+--         Dulu nyari di SharedModules.PetModules -- itu isinya PERILAKU pet.
+--       * AMBANG UKURAN dari SharedData.PetSizes.Scales = { Big=2, Huge=4 }.
+--         Tebakan lama (1.5 & 3) SALAH -- Big bakal kebaca Mega.
+--       * RAINBOW lewat SharedData.PetTypes (registry resmi, boost 1.25x).
+--       * rarity pet ikut kebaca -- bisa dipakai nyaring nanti.
+--
+-- v2.3: katalog ke panel ikut bawa RINCIAN pet: harga dasar, rarity, dan
+--       peluang spawn. SpawnChance=0 = BELUM RILIS (ada di data tapi gak
+--       pernah spawn liar -- mis. Swan, Wolf, Black Dragon). Panel nandain
+--       itu, biar gak ada yang milih pet yang mustahil didapat.
+--
+-- v2.4: DATA SEED dari modul game (hasil star_seeddata):
+--       * RS.Assets.Seeds jadi sumber ke-4 -- ternyata PALING LENGKAP
+--         (72 jenis vs 64 di stok toko). Seed yang modelnya udah ada tapi
+--         belum dijual nongol di sini duluan.
+--       * SellValueData -> nilai jual per buah (Rocket Pop 22500 ... Carrot 5)
+--       * SeedShopEnabled.IsSeedEnabled() -> udah rilis apa belum. Ini
+--         padanan SpawnChance=0 punya pet.
+--       Dua-duanya dikirim ke panel, jadi picker seed ikut nunjukin nilai
+--       jual + tanda belum rilis.
+--
+-- v2.5: EVENT GUILD dilapor ke panel tiap 5 menit. Dua jalur: packet
+--       Guild.GetCompetition (jalan tanpa buka panel -- cocok AFK), cadangan
+--       baca panel ViewGuildProgress. Nama method packet-nya BELUM PASTI,
+--       jadi dicari sendiri dari metatable pas jalan terus dicoba satu-satu;
+--       yang berhasil diinget biar putaran berikutnya langsung kena.
+--
+-- v2.6: FIX cara manggil packet guild. Metatable-nya nunjukin method:
+--       Fire, Response, Serialize, Deserialize, FireClient, FireAllClients.
+--       Yang bener: p:Response(handler) DULU, baru p:Fire(). v2.5 manggil
+--       p:Response() tanpa argumen -> handler kosong -> jawaban server gak
+--       pernah ketangkep.
+--
+-- v2.7: dua FIX dari data lapangan:
+--       * NAMA EVENT SALAH AMBIL. Panel masih nyimpen teks event MINGGU LALU
+--         ("Carrot Frenzy") bareng yang aktif ("Tallest Plant"). v2.6 ambil
+--         nama pertama yang masuk akal -> ke-ambil yang lama. Sekarang
+--         patokannya: nama = teks TEPAT SEBELUM "Ends in".
+--       * Fire() nilai baliknya DITANGKEP. Writes/Reads kosong tapi
+--         ResponseWrites/Reads isinya serializer -- kemungkinan Fire() yield
+--         terus balikin jawabannya langsung.
+--
+-- v2.8: JALUR PACKET DICABUT. Kekonfirmasi dari dua dump: p:Response()
+--       NIMPA handler bawaan game (ResponseWrites/Reads jadi kosong sesudah
+--       dipanggil). Itu nulis ke barang milik game, bukan baca -- bisa bikin
+--       panel guild berhenti keupdate. Baca event sekarang lewat panel doang.
+--
+-- v1.2: * daftar seed digabung dari 3 sumber (stok toko + SeedData +
+--         RemoteDeveloperProducts) -- dulu cuma SeedData, jadi bolong.
+--       * SEED BARU kedeteksi otomatis & langsung dibeli (bisa dimatiin).
+--       * lapor Super WC + Super Sprinkler yang dipunya ke panel.
+--
+-- v1.1: ikut beli Super Watering Can + Super Sprinkler, NEBENG saklar yang
+--       sama (gak ada toggle terpisah). Gear digerbang RESTOCK, bukan tiap
+--       siklus -- lihat catatan di blok BELI GEAR.
+--
+-- Ini BUKAN script farm. Sengaja dibikin tipis: cuma beli seed + jaga akun
+-- tetep idup + lapor ke panel. Gak ada collect, sell, plant, gift, ESP,
+-- anti-lag, atau apa pun dari star_farm.lua.
+--
+-- Kenapa dipisah (bukan matiin fitur di script farm):
+--   * star_farm.lua ~14.000 baris. Walau toggle-nya dimatiin, loop-nya tetep
+--     ke-spawn, tabel tetep kebangun -> RAM kepakai percuma. Di RedFinger yang
+--     RAM-nya 4GB buat 3-8 client, itu mahal.
+--   * Akun beli-seed gak punya kebun buat dipantau, jadi separuh script farm
+--     kerja buat data yang gak ada.
+--
+-- Yang DIBAWA dari star_farm.lua (biar nyambung sama sistem STAR):
+--   * pola akses packet (SharedModules.Networking)
+--   * baca stok server (StockValues.SeedShop.Items) -- cuma beli yg ada stok
+--   * daftar & rarity seed dari SeedData
+--   * bridge panel (POST /stat + /inv, header X-Kunci)
+--   * anti-AFK VirtualUser
+--   * pola generasi (isCurrentGen) biar loop lama mati pas di-execute ulang
+--
+-- Dipakai lewat autoexec Delta:
+--   loadstring(game:HttpGet("<raw github>/star_seed"))()
+-- ============================================================
+
+local VERSI = "2.8"
+
+local Players    = game:GetService("Players")
+local RS         = game:GetService("ReplicatedStorage")
+local HS         = game:GetService("HttpService")
+local CoreGui    = game:GetService("CoreGui")
+local UIS        = game:GetService("UserInputService")
+local TweenS     = game:GetService("TweenService")
+local player     = Players.LocalPlayer
+
+-- ===== generasi: execute ulang -> loop lama BERHENTI sendiri =====
+-- Tanpa ini, tiap re-execute nambah satu set loop baru yang jalan barengan
+-- (di script farm ini pernah bikin lag & data nyesatin).
+local genv = getgenv and getgenv() or _G
+genv.StarSeedGen = (genv.StarSeedGen or 0) + 1
+local MY_GEN = genv.StarSeedGen
+local function isCurrentGen() return genv.StarSeedGen == MY_GEN end
+
+local Seed = {}
+genv.StarSeed = Seed
+
+-- ============================================================
+-- SETELAN + SIMPAN
+-- ============================================================
+local FILE_CFG = "star_seed_cfg.json"
+
+local state = {
+    beliOn        = false,    -- saklar utama
+    borongSemua   = true,     -- true = semua jenis; false = cuma yang dipilih
+    seedPilih     = {},       -- { ["Carrot"]=true, ... } dipakai kalau borongSemua=false
+    beliBagus     = false,    -- ikut beli seed ber-rarity tinggi walau gak dicentang
+    minRarity     = "Mythic", -- ambang buat beliBagus
+    seedBaruAuto  = true,     -- v1.2: seed yang BARU MUNCUL langsung dibeli
+    seedDikenal   = {},       -- v1.2: seed yang udah pernah keliat (buat tau mana yg baru)
+    maxPerSiklus  = 20,       -- batas fire per seed tiap siklus (jaga-jaga lag)
+    jedaSiklus    = 3,        -- detik antar siklus
+    sisaSheck     = 0,        -- berhenti beli kalau sheckles di bawah ini (0 = gak dibatesin)
+    autoAfk       = true,
+
+    -- v1.3: terima gift + jual pas harga lagi mahal
+    terimaGift    = true,     -- auto claim gift dari mailbox
+    jualOn        = false,    -- auto jual buah (sengaja MATI bawaan -- ini ngejual barang)
+    jualMinMult   = 4,        -- jual cuma kalau pengali pasar >= ini (4x harga normal)
+    jualTanpaMult = false,    -- kalau pengali gak kebaca, tetep jual? (bawaan: NGGAK)
+
+    -- v1.6: jinakin pet liar + kirim pet
+    petOn         = false,    -- auto jinakin pet liar (bawaan MATI -- ini mindahin karakter)
+    petPilih      = { Raccoon = true },   -- jenis pet yang diburu
+    petSemua      = false,    -- true = semua jenis (abaikan petPilih)
+    petMaxHarga   = 0,        -- lewatin pet yang lebih mahal dari ini (0 = bebas)
+    petHargaDasar = {},       -- v1.7: harga dasar per jenis, dipelajari sendiri
+    -- v2.0: pengecualian buat pet mutasi (Big / Huge / Rainbow)
+    mutasiSikat   = true,     -- ambil pet mutasi walau harganya udah naik
+    mutasiMaxKali = 0,        -- batas: maks sekian kali harga dasar (0 = tanpa batas)
+    mutasiBig     = true,     -- Big ikut disikat?
+    mutasiHuge    = true,     -- Huge ikut disikat?
+    mutasiRainbow = true,     -- Rainbow ikut disikat?
+    giftPetOn     = false,    -- kirim pet ke akun lain
+    giftTarget    = "",       -- nama akun tujuan
+
+    -- v1.6: setelan dari panel web
+    ikutPanel     = true,     -- tarik setelan dari panel (panel menang atas setelan lokal)
+    panelUrl      = "https://dry-glitter-63e4.petagee5.workers.dev",
+    panelKunci    = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb",
+}
+
+local function simpan()
+    pcall(function()
+        if not writefile then return end
+        writefile(FILE_CFG, HS:JSONEncode({
+            beliOn = state.beliOn, borongSemua = state.borongSemua,
+            seedPilih = state.seedPilih, beliBagus = state.beliBagus,
+            minRarity = state.minRarity, maxPerSiklus = state.maxPerSiklus,
+            seedBaruAuto = state.seedBaruAuto, seedDikenal = state.seedDikenal,
+            jedaSiklus = state.jedaSiklus, sisaSheck = state.sisaSheck,
+            autoAfk = state.autoAfk,
+            terimaGift = state.terimaGift, jualOn = state.jualOn,
+            jualMinMult = state.jualMinMult, jualTanpaMult = state.jualTanpaMult,
+            petOn = state.petOn, petPilih = state.petPilih, petSemua = state.petSemua,
+            petMaxHarga = state.petMaxHarga, petHargaDasar = state.petHargaDasar,
+            mutasiSikat = state.mutasiSikat, mutasiMaxKali = state.mutasiMaxKali,
+            mutasiBig = state.mutasiBig, mutasiHuge = state.mutasiHuge,
+            mutasiRainbow = state.mutasiRainbow,
+            giftPetOn = state.giftPetOn,
+            giftTarget = state.giftTarget, ikutPanel = state.ikutPanel,
+            panelUrl = state.panelUrl, panelKunci = state.panelKunci,
+        }))
+    end)
+end
+
+local function muat()
+    pcall(function()
+        if not (isfile and isfile(FILE_CFG) and readfile) then return end
+        local ok, d = pcall(function() return HS:JSONDecode(readfile(FILE_CFG)) end)
+        if not ok or type(d) ~= "table" then return end
+        for k, v in pairs(d) do
+            if state[k] ~= nil and type(v) == type(state[k]) then state[k] = v end
+        end
+    end)
+end
+muat()
+
+-- ============================================================
+-- AKSES PACKET (sistem Packet GAG 2)
+-- ============================================================
+local NET = nil
+pcall(function()
+    local sm = RS:FindFirstChild("SharedModules")
+    local net = sm and sm:FindFirstChild("Networking")
+    if net then local ok, m = pcall(require, net); if ok then NET = m end end
+end)
+local function pkt(grp, name)
+    if not NET then return nil end
+    local g = NET[grp]
+    return g and g[name] or nil
+end
+
+-- ============================================================
+-- DAFTAR SEED + RARITY (dari SeedData game)
+-- ============================================================
+local RARITY_RANK  = { Common=1, Uncommon=2, Rare=3, Epic=4, Legendary=5, Mythic=6, Super=7, Divine=7, Prismatic=8 }
+local RARITY_ORDER = { "Super", "Mythic", "Legendary", "Epic", "Rare", "Uncommon", "Common" }
+
+local function bacaSeedData()
+    local sm = RS:FindFirstChild("SharedModules")
+    local sd = sm and sm:FindFirstChild("SeedData")
+    if not sd then return nil end
+    local ok, mod = pcall(require, sd)
+    if not ok or type(mod) ~= "table" then return nil end
+    if type(mod.Seeds) == "table" then return mod.Seeds end
+    return mod
+end
+
+-- v1.2: daftar seed digabung dari TIGA sumber. Pakai SeedData doang bikin
+-- daftarnya bolong -- seed yang dijual di toko tapi belum masuk SeedData
+-- (biasanya seed baru / event) jadi gak keliatan & gak kebeli.
+--   1) StockValues.SeedShop.Items  -- APA YANG BENERAN DIJUAL sekarang. Paling
+--      penting: seed baru muncul di sini duluan, sebelum modul lain nyusul.
+--   2) SharedModules.SeedData      -- katalog resmi (bawa rarity juga)
+--   3) RemoteDeveloperProducts     -- entri "Seed:<Nama>:<qty>", nangkep yang
+--      belum nongol di dua sumber di atas
+local function muatDaftarSeed()
+    local seen, list = {}, {}
+    local function tambah(nm)
+        if type(nm) == "string" and nm ~= "" and not seen[nm] then
+            seen[nm] = true; list[#list+1] = nm
+        end
+    end
+
+    -- 1) stok toko (paling akurat buat "apa yang bisa dibeli")
+    pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        local shop = sv and sv:FindFirstChild("SeedShop")
+        local items = shop and shop:FindFirstChild("Items")
+        if items then
+            for _, it in ipairs(items:GetChildren()) do tambah(it.Name) end
+        end
+    end)
+
+    -- 2) katalog SeedData
+    -- v1.9 FIX: cuma ambil entri yang isinya TABEL (data seed beneran).
+    -- Di game asli SeedData isinya FUNGSI (GetSeed, Validate, dst) -- kalau
+    -- ikut diambil, nama fungsi itu masuk daftar seed, dianggap "seed baru",
+    -- terus ditembak beli. Kekonfirmasi dari star_debug.
+    pcall(function()
+        local src = bacaSeedData()
+        if not src then return end
+        for k, v in pairs(src) do
+            if type(v) == "table" then
+                if type(k) == "string" and not k:match("^_") then tambah(k) end
+                tambah(v.SeedName or v.Name)
+            end
+        end
+    end)
+
+    -- 3) RemoteDeveloperProducts -- format entri: "Seed:<Nama>:<qty>"
+    pcall(function()
+        local raw = workspace:GetAttribute("RemoteDeveloperProducts")
+        if type(raw) == "string" then
+            for nama in raw:gmatch('"Seed:([^:"]+):') do tambah(nama) end
+        end
+    end)
+
+    -- 4) RS.Assets.Seeds -- v2.4: ternyata INI yang paling lengkap (72 jenis,
+    -- vs 64 di stok toko). Seed yang modelnya udah ada tapi belum dijual
+    -- nongol di sini duluan (Buttercup, Lotus, Pumpkin, Thorn Rose, dst).
+    pcall(function()
+        local as = RS:FindFirstChild("Assets")
+        local sdd = as and as:FindFirstChild("Seeds")
+        if not sdd then return end
+        for _, c in ipairs(sdd:GetChildren()) do tambah(c.Name) end
+    end)
+
+    if #list == 0 then
+        -- cadangan terakhir kalau semua sumber buntu
+        list = {"Acorn","Apple","Baby Cactus","Bamboo","Banana","Blueberry","Briar Rose","Cactus","Carrot",
+            "Cherry","Coconut","Corn","Dragon Fruit","Dragon's Breath","Ghost Pepper","Glow Mushroom",
+            "Gold","Grape","Green Bean","Horned Melon","Hypno Bloom","Mango","Mega","Moon Bloom","Mushroom",
+            "Pineapple","Poison Apple","Poison Ivy","Pomegranate","Rainbow","Romanesco","Strawberry",
+            "Sunflower","Tomato","Tulip","Venom Spitter","Venus Fly Trap"}
+        for _, n in ipairs(list) do seen[n] = true end
+    end
+    table.sort(list)
+    return list
+end
+
+local function muatRarity()
+    local map = {}
+    pcall(function()
+        local src = bacaSeedData()
+        if not src then return end
+        for k, v in pairs(src) do
+            if type(v) == "table" then
+                local nm = (type(k) == "string" and k) or v.SeedName or v.Name
+                if type(nm) == "string" and type(v.Rarity) == "string" then map[nm] = v.Rarity end
+            end
+        end
+    end)
+    return map
+end
+
+Seed.daftar = nil
+Seed._rarity = nil
+function Seed.rarity(nama)
+    if not Seed._rarity then Seed._rarity = muatRarity() end
+    return Seed._rarity[nama]
+end
+function Seed.rank(nama)
+    local r = Seed.rarity(nama)
+    return (r and RARITY_RANK[r]) or 0
+end
+
+-- ============================================================
+-- STOK SERVER: StockValues.SeedShop.Items.<nama> = NumberValue
+-- Cuma beli yang stoknya > 0. Nembak seed yang habis itu percuma --
+-- server nolak, tapi packet-nya tetep kekirim (bikin lag di RF).
+-- ============================================================
+Seed._itemsRef = nil
+function Seed.stok(nama)
+    local items = Seed._itemsRef
+    if not items or not items.Parent then
+        local ok = pcall(function()
+            local sv = RS:FindFirstChild("StockValues")
+            local shop = sv and sv:FindFirstChild("SeedShop")
+            items = shop and shop:FindFirstChild("Items")
+        end)
+        if not ok or not items then return nil end
+        Seed._itemsRef = items
+    end
+    local n = items:FindFirstChild(nama)
+    if n and n:IsA("ValueBase") then return n.Value end
+    return nil
+end
+
+local function sheckles()
+    local n = 0
+    pcall(function()
+        local ls = player:FindFirstChild("leaderstats")
+        local sh = ls and (ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Cash"))
+        if sh then n = tonumber(sh.Value) or 0 end
+    end)
+    return n
+end
+
+-- ============================================================
+-- v1.2: PEMINDAI SEED BARU
+-- Daftar seed di-refresh berkala. Nama yang belum pernah keliat = SEED BARU
+-- -> langsung dicentang biar kebeli, tanpa nunggu diurus manual.
+--
+-- Kenapa perlu: di mode "Pilih jenis", seed yang baru rilis gak akan pernah
+-- kecentang -> kelewat total. Mode "Borong semua" aman, tapi daftarnya sendiri
+-- tetep harus di-refresh biar seed baru masuk hitungan.
+--
+-- Pertama kali jalan (seedDikenal masih kosong) SEMUA seed dianggap "udah
+-- dikenal" -- kalau nggak, semua langsung kecentang dan itu bukan maunya user.
+-- ============================================================
+Seed.seedBaru = {}     -- nama seed baru yang kedeteksi sesi ini (buat ditampilin)
+
+local function pindaiSeedBaru(pertamaKali)
+    local baru = {}
+    if not Seed.daftar then Seed.daftar = muatDaftarSeed() end
+    for _, nm in ipairs(Seed.daftar) do
+        if not state.seedDikenal[nm] then
+            state.seedDikenal[nm] = true
+            if not pertamaKali then baru[#baru+1] = nm end
+        end
+    end
+    if #baru > 0 then
+        for _, nm in ipairs(baru) do
+            Seed.seedBaru[#Seed.seedBaru + 1] = nm
+            if state.seedBaruAuto then state.seedPilih[nm] = true end
+        end
+        print(("[StarSeed] SEED BARU (%d): %s%s"):format(
+            #baru, table.concat(baru, ", "),
+            state.seedBaruAuto and " -> langsung dibeli" or " (auto-beli MATI, centang manual)"))
+    end
+    if #baru > 0 or pertamaKali then simpan() end
+    return baru
+end
+
+-- refresh daftar tiap 60 detik. Cukup jarang biar gak boros, cukup sering biar
+-- seed baru kena di siklus berikutnya.
+task.spawn(function()
+    task.wait(10)
+    while isCurrentGen() do
+        pcall(function()
+            local lama = Seed.daftar and #Seed.daftar or 0
+            Seed.daftar = muatDaftarSeed()
+            Seed._rarity = nil   -- rarity ikut dimuat ulang (seed baru bawa rarity baru)
+            local baru = pindaiSeedBaru(false)
+            if #baru > 0 and Seed._gambarDaftar then
+                pcall(Seed._gambarDaftar)   -- daftar di GUI ikut diperbarui
+            end
+        end)
+        task.wait(60)
+    end
+end)
+
+-- ============================================================
+-- BELI SEED -- satu siklus
+-- ============================================================
+Seed.statTerbeli = 0     -- total fire sejak script jalan
+Seed.statSiklus  = 0
+Seed._logAkhir   = ""
+
+local function daftarTarget()
+    if not Seed.daftar then Seed.daftar = muatDaftarSeed() end
+    if state.borongSemua then return Seed.daftar end
+
+    local sel, seen = {}, {}
+    for _, nm in ipairs(Seed.daftar) do
+        if state.seedPilih[nm] then sel[#sel+1] = nm; seen[nm] = true end
+    end
+    -- "seed bagus": ikut samber yang rarity-nya tinggi walau gak dicentang.
+    -- Seed baru / tier baru (rarity gak dikenal) ikut dibeli -- lebih baik
+    -- kebeli lalu dibuang daripada kelewat pas rilis seed baru.
+    if state.beliBagus then
+        local minRank = RARITY_RANK[state.minRarity or "Mythic"] or 6
+        for _, nm in ipairs(Seed.daftar) do
+            if not seen[nm] then
+                local rar = Seed.rarity(nm)
+                local rank = (rar and RARITY_RANK[rar]) or 0
+                local gakDikenal = (rar == nil) or (RARITY_RANK[rar] == nil)
+                if rank >= minRank or gakDikenal then sel[#sel+1] = nm; seen[nm] = true end
+            end
+        end
+    end
+    return sel
+end
+
+function Seed.beliSekali()
+    local p = pkt("SeedShop", "PurchaseSeed")
+    if not p or not p.Fire then
+        Seed._logAkhir = "packet PurchaseSeed gak ketemu"
+        return 0
+    end
+
+    -- rem sheckles: berhenti kalau saldo udah mepet
+    if (state.sisaSheck or 0) > 0 and sheckles() <= state.sisaSheck then
+        Seed._logAkhir = "sheckles mepet, beli ditahan"
+        return 0
+    end
+
+    local list = daftarTarget()
+    if #list == 0 then Seed._logAkhir = "gak ada seed yang dipilih"; return 0 end
+
+    local fired = 0
+    for _, nama in ipairs(list) do
+        if not (state.beliOn and isCurrentGen()) then break end
+        -- nama stok TANPA akhiran "Seed" ("Carrot", bukan "Carrot Seed") --
+        -- tapi gak semua begitu, jadi dicoba dua bentuk.
+        local pendek = nama:gsub("%s*Seed$", "")
+        local stok = Seed.stok(pendek)
+        if stok == nil then stok = Seed.stok(nama) end
+        if stok and stok > 0 then
+            if stok > (state.maxPerSiklus or 20) then stok = state.maxPerSiklus or 20 end
+            for _ = 1, stok do
+                if not (state.beliOn and isCurrentGen()) then break end
+                pcall(function() p:Fire(nama) end)
+                fired = fired + 1
+                -- jeda tiap 5 fire: tanpa ini, borong 30 jenis sekaligus bikin
+                -- lonjakan packet yang kerasa banget di RedFinger.
+                if fired % 5 == 0 then task.wait() end
+            end
+        end
+    end
+
+    if fired > 0 then
+        Seed.statTerbeli = Seed.statTerbeli + fired
+        Seed._logAkhir = fired .. " fire"
+    else
+        Seed._logAkhir = "semua stok kosong"
+    end
+    return fired
+end
+
+-- loop utama
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(state.jedaSiklus or 3)
+        if isCurrentGen() and state.beliOn then
+            Seed.statSiklus = Seed.statSiklus + 1
+            pcall(Seed.beliSekali)
+        end
+    end
+end)
+
+-- ============================================================
+-- BELI GEAR: Super Watering Can + Super Sprinkler
+-- Nebeng saklar `beliOn` yang sama -- sengaja gak dikasih toggle sendiri.
+--
+-- PENTING (pelajaran dari star_farm.lua v10.2): gear TIDAK boleh dibeli tiap
+-- siklus kayak seed. Dulu ditembak tiap 3 detik -> ~14 fire/3s -> server
+-- timeout 30-60 detik -> semua aksi lain ikut ke-block. Gear cuma restock
+-- sesekali dan stoknya 1-2 biji, jadi:
+--   * kalau UnixNextRestock kebaca -> beli CUMA pas nilainya berubah
+--   * kalau gak kebaca -> mundur ke jeda aman 60 detik, bukan spam
+-- ============================================================
+local GEAR_KATA = {
+    { "super", "watering" },   -- Super Watering Can
+    { "super", "sprinkler" },  -- Super Sprinkler
+}
+
+-- Nama gear dicocokin dari daftar ASLI di game (bukan hardcoded), biar tetep
+-- kena walau penulisannya beda ("Super Sprinkler" / "SuperSprinkler" / dsb).
+function Seed.gearTarget()
+    local out = {}
+    pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        local gs = sv and sv:FindFirstChild("GearShop")
+        local items = gs and gs:FindFirstChild("Items")
+        if not items then return end
+        for _, it in ipairs(items:GetChildren()) do
+            local ln = tostring(it.Name):lower()
+            for _, kata in ipairs(GEAR_KATA) do
+                local cocok = true
+                for _, k in ipairs(kata) do
+                    if not ln:find(k, 1, true) then cocok = false break end
+                end
+                if cocok then out[#out+1] = it.Name break end
+            end
+        end
+    end)
+    return out
+end
+
+function Seed.stokGear(nama)
+    local n = nil
+    pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        local gs = sv and sv:FindFirstChild("GearShop")
+        local items = gs and gs:FindFirstChild("Items")
+        local v = items and items:FindFirstChild(nama)
+        if v and v:IsA("ValueBase") then n = v.Value end
+    end)
+    return n
+end
+
+Seed.statGear = 0
+Seed._logGear = ""
+
+function Seed.beliGearSekali()
+    -- nama remote gear beda-beda antar versi game -> coba beberapa
+    local p = pkt("GearShop", "PurchaseGear") or pkt("GearShop", "Purchase")
+           or pkt("Gear", "Purchase") or pkt("Gear", "PurchaseGear")
+           or pkt("SeedShop", "PurchaseGear") or pkt("Shop", "PurchaseGear")
+    if not p or not p.Fire then
+        Seed._logGear = "remote gear gak ketemu"
+        return 0
+    end
+
+    if (state.sisaSheck or 0) > 0 and sheckles() <= state.sisaSheck then
+        Seed._logGear = "sheckles mepet"
+        return 0
+    end
+
+    local target = Seed.gearTarget()
+    if #target == 0 then Seed._logGear = "Super WC/Sprinkler gak ada di toko"; return 0 end
+
+    local fired = 0
+    for _, nama in ipairs(target) do
+        if not (state.beliOn and isCurrentGen()) then break end
+        local stok = Seed.stokGear(nama)
+        if stok and stok > 0 then
+            if stok > 20 then stok = 20 end
+            for _ = 1, stok do
+                if not (state.beliOn and isCurrentGen()) then break end
+                pcall(function() p:Fire(nama) end)
+                fired = fired + 1
+                if fired % 5 == 0 then task.wait() end
+            end
+        end
+    end
+
+    if fired > 0 then
+        Seed.statGear = Seed.statGear + fired
+        Seed._logGear = fired .. " fire"
+    else
+        Seed._logGear = "stok kosong"
+    end
+    return fired
+end
+
+-- loop gear: DIGERBANG RESTOCK (lihat catatan di atas -- jangan diubah jadi
+-- tiap siklus, itu yang dulu bikin server timeout).
+Seed._restockAkhir = nil
+Seed._gearBeliAkhir = 0
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(5)
+        if isCurrentGen() and state.beliOn then
+            pcall(function()
+                local restock = nil
+                pcall(function()
+                    local sv = RS:FindFirstChild("StockValues")
+                    local gs = sv and sv:FindFirstChild("GearShop")
+                    local nx = gs and gs:FindFirstChild("UnixNextRestock")
+                    if nx then restock = nx.Value end
+                end)
+
+                local beli = false
+                if restock ~= nil then
+                    -- restock kebaca: beli cuma pas nilainya BERUBAH (= stok baru)
+                    if restock ~= Seed._restockAkhir then
+                        Seed._restockAkhir = restock
+                        beli = true
+                    end
+                else
+                    -- restock gak kebaca: jangan spam -- maksimal 1x per 60 detik
+                    local now = os.time()
+                    if (now - Seed._gearBeliAkhir) >= 60 then
+                        Seed._gearBeliAkhir = now
+                        beli = true
+                    end
+                end
+
+                if beli then Seed.beliGearSekali() end
+            end)
+        end
+    end
+end)
+
+-- ============================================================
+-- v1.3: PENGALI PASAR ("Stok Harga Buah")
+--
+-- Sumbernya GUI: PlayerGui.FruitStockPrice -> tiap kartu Name="FruitCard"
+-- punya atribut SeedToolTip (nama buah) + child "Multiplier" (TextLabel "Xn").
+--
+-- MASALAHNYA: kartu itu cuma keisi kalau panelnya PERNAH DIBUKA. Di akun AFK
+-- gak ada yang buka -> pengali kebaca 1 terus -> syarat 4x gak pernah kena.
+-- Penanganan di sini:
+--   1) coba baca apa adanya
+--   2) kalau kosong, ScreenGui-nya dipaksa nyala SEBENTAR biar kartunya kebangun,
+--      dibaca, terus dibalikin ke keadaan semula
+--   3) hasilnya di-cache per SIKLUS RESTOCK (UnixLastRestock) -- pengali cuma
+--      ganti tiap restock, jadi gak perlu baca ulang terus
+-- Kalau tetep gak kebaca -> pengali dianggap NIL (bukan 1). Bedanya penting:
+-- nil = "gak tau" -> buah GAK dijual. Kalau dianggap 1, nanti dikira murah
+-- padahal belum tentu.
+-- ============================================================
+Seed._mktMap   = nil
+Seed._mktCycle = nil
+Seed._mktAt    = 0
+local MKT_FILE = "star_seed_mkt.json"
+
+local function siklusRestock()
+    local n = nil
+    pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        local v = sv and sv:FindFirstChild("UnixLastRestock")
+        if v then n = v.Value end
+    end)
+    return n
+end
+
+-- Cache ke file: pengali cuma ganti tiap restock (~5 menit). Kalau client
+-- rejoin di tengah siklus, nilai lama masih sah -- gak usah nunggu kartunya
+-- kebangun ulang. Dicap pakai nomor siklus, jadi otomatis basi pas restock baru.
+local function simpanCachePasar(cyc, map)
+    if type(writefile) ~= "function" then return end
+    pcall(function() writefile(MKT_FILE, HS:JSONEncode({ cycle = cyc, map = map })) end)
+end
+
+local function muatCachePasar(cyc)
+    if type(readfile) ~= "function" or type(isfile) ~= "function" or not isfile(MKT_FILE) then return nil end
+    local ok, d = pcall(function() return HS:JSONDecode(readfile(MKT_FILE)) end)
+    if ok and type(d) == "table" and type(d.map) == "table" then
+        if not cyc or d.cycle == cyc then return d.map end
+    end
+    return nil
+end
+
+-- v1.9: JALUR PACKET buat harga pasar. Bukti lapangan (star_debug) nunjukin
+-- ada grup packet "FruitStock" dengan Request & Snapshot -- itu sumber ASLI
+-- angka pengali, GUI cuma nampilinnya. Baca dari sini lebih tahan daripada
+-- ngintip PlayerGui (yang bergantung kartunya udah kebangun apa belum).
+-- Kalau packet-nya gak jawab, tetep jatuh balik ke cara baca GUI.
+Seed._snapPasar = nil
+do
+    local snap = pkt("FruitStock", "Snapshot")
+    if snap and snap.OnClientEvent then
+        pcall(function()
+            snap.OnClientEvent:Connect(function(data)
+                if type(data) ~= "table" then return end
+                local map = {}
+                -- bentuk datanya belum pasti -> tangani dua kemungkinan umum:
+                --   { ["Carrot"] = 0.82, ... }   atau   { {Name=..., Multiplier=...}, ... }
+                for k, v in pairs(data) do
+                    if type(k) == "string" and tonumber(v) then
+                        map[k] = tonumber(v)
+                    elseif type(v) == "table" then
+                        local nm = v.Name or v.Fruit or v.SeedToolTip
+                        local m = tonumber(v.Multiplier or v.Mult or v.Value)
+                        if nm and m then map[tostring(nm)] = m end
+                    end
+                end
+                if next(map) ~= nil then
+                    Seed._snapPasar = map
+                    Seed._snapPasarAt = os.time()
+                end
+            end)
+        end)
+    end
+end
+
+local function mintaSnapshotPasar()
+    local req = pkt("FruitStock", "Request")
+    if req and req.Fire then pcall(function() req:Fire() end) end
+end
+
+local function bacaKartuHarga()
+    local map = {}
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        local sgui = pg and pg:FindFirstChild("FruitStockPrice")
+        if not sgui then return end
+        for _, card in ipairs(sgui:GetDescendants()) do
+            if card:IsA("GuiObject") and card.Name == "FruitCard" then
+                local buah = card:GetAttribute("SeedToolTip")
+                local ml = card:FindFirstChild("Multiplier", true)
+                if buah and ml and ml:IsA("TextLabel") then
+                    local m = tostring(ml.Text):match("[xX]%s*([%d%.]+)")
+                    if m then map[buah] = tonumber(m) end
+                end
+            end
+        end
+    end)
+    return map
+end
+
+-- paksa GUI nyala sebentar biar kartunya kebangun, terus balikin
+local function bacaPaksa()
+    local map = {}
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        local sgui = pg and pg:FindFirstChild("FruitStockPrice")
+        if not sgui then return end
+        local target = sgui:IsA("ScreenGui") and sgui or sgui:FindFirstAncestorOfClass("ScreenGui")
+        if not target then return end
+        local semula = target.Enabled
+        if semula then return end          -- lagi kebuka user -> jangan disenggol
+        target.Enabled = true
+        task.wait(0.4)                     -- kasih waktu kartunya dibangun
+        map = bacaKartuHarga()
+        target.Enabled = semula            -- balikin, jangan ninggalin panel kebuka
+    end)
+    return map
+end
+
+function Seed.refreshPasar()
+    local cyc = siklusRestock()
+    if cyc and Seed._mktCycle and cyc ~= Seed._mktCycle then
+        Seed._mktMap = nil                 -- restock baru -> pengali lama basi
+    end
+    if cyc then Seed._mktCycle = cyc end
+
+    -- 1) jalur packet duluan -- paling andal, gak bergantung GUI
+    mintaSnapshotPasar()
+    if Seed._snapPasar and next(Seed._snapPasar) ~= nil then
+        Seed._mktMap = Seed._snapPasar
+        Seed._mktAt = os.time()
+        Seed._sumberPasar = "packet"
+        simpanCachePasar(cyc, Seed._mktMap)
+        return Seed._mktMap
+    end
+
+    -- 2) cadangan: baca kartu di GUI
+    local fresh = bacaKartuHarga()
+    if next(fresh) == nil then fresh = bacaPaksa() end
+    if next(fresh) ~= nil then
+        Seed._mktMap = fresh
+        Seed._mktAt = os.time()
+        Seed._sumberPasar = "gui"
+        simpanCachePasar(cyc, fresh)       -- simpen biar tahan rejoin
+    elseif not Seed._mktMap then
+        -- kartu belum kebangun sama sekali -> pakai cache siklus ini kalau ada
+        Seed._mktMap = muatCachePasar(cyc)
+        Seed._sumberPasar = Seed._mktMap and "cache" or nil
+    end
+    return Seed._mktMap
+end
+
+-- balik ANGKA kalau kebaca, NIL kalau gak tau
+function Seed.pengali(jenis)
+    if not Seed._mktMap then return nil end
+    return Seed._mktMap[jenis]
+end
+
+-- pengali paling tinggi yang lagi ada (buat ditampilin di GUI)
+function Seed.pengaliTertinggi()
+    if not Seed._mktMap then return nil, nil end
+    local nm, best = nil, 0
+    for k, v in pairs(Seed._mktMap) do
+        if v > best then nm, best = k, v end
+    end
+    if not nm then return nil, nil end
+    return best, nm
+end
+
+-- refresh pasar tiap 30 detik
+task.spawn(function()
+    task.wait(6)
+    while isCurrentGen() do
+        pcall(Seed.refreshPasar)
+        task.wait(30)
+    end
+end)
+
+-- ============================================================
+-- v1.3: TERIMA GIFT (mailbox)
+-- Claim: Mailbox.Claim:Fire("<id>"), id dari nama frame Gift_<id> di
+-- PlayerGui.MailboxUI.Frame.RecieveFrame.
+-- Isi RecieveFrame cuma kebangun/keperbarui pas mailbox DIBUKA -> perlu dibuka
+-- sesekali. Tapi tombol mailbox itu TOGGLE: kalau dibuka pas lagi kebuka,
+-- malah NUTUP. Makanya dicek dulu, dan cuma dibuka KALAU ADA gift.
+-- ============================================================
+Seed.statGift = 0
+
+function Seed.jumlahGift()
+    local n = 0
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        local mb = pg and pg:FindFirstChild("MailboxUI")
+        local frame = mb and mb:FindFirstChild("Frame")
+        local recv = frame and frame:FindFirstChild("RecieveFrame")
+        if not recv then return end
+        for _, g in ipairs(recv:GetChildren()) do
+            if tostring(g.Name):match("^Gift_") and g:IsA("GuiObject") and g.Visible then
+                n = n + 1
+            end
+        end
+    end)
+    return n
+end
+
+function Seed.bukaMailbox()
+    -- lagi kebuka? jangan disenggol (toggle -> malah nutup)
+    local kebuka = false
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        local mb = pg and pg:FindFirstChild("MailboxUI")
+        if not mb then return end
+        local sgui = mb:IsA("ScreenGui") and mb or mb:FindFirstAncestorOfClass("ScreenGui")
+        if sgui and sgui.Enabled == false then return end
+        local f = mb:FindFirstChild("Frame")
+        if f and f:IsA("GuiObject") and f.Visible then kebuka = true end
+    end)
+    if kebuka then return end
+    for _, nm in ipairs({ "OpenInbox", "Open", "List", "GetInbox", "Inbox" }) do
+        local op = pkt("Mailbox", nm)
+        if op and op.Fire then pcall(function() op:Fire() end) end
+    end
+end
+
+function Seed.terimaGiftSekali()
+    -- v1.9: game punya Mailbox.ClaimAll (kekonfirmasi dari star_debug).
+    -- Satu tembakan buat semua, jauh lebih enteng daripada claim satu-satu
+    -- (yang tiap gift-nya pakai task.wait(0.1)).
+    local semua = pkt("Mailbox", "ClaimAll")
+    if semua and semua.Fire then
+        local n = Seed.jumlahGift()
+        if n > 0 then
+            pcall(function() semua:Fire() end)
+            Seed.statGift = Seed.statGift + n
+            print("[StarSeed] terima gift (ClaimAll): " .. n)
+            return n
+        end
+        return 0
+    end
+
+    -- cadangan: claim satu-satu
+    local cl = pkt("Mailbox", "Claim")
+    if not cl or not cl.Fire then return 0 end
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    local mb = pg and pg:FindFirstChild("MailboxUI")
+    local frame = mb and mb:FindFirstChild("Frame")
+    local recv = frame and frame:FindFirstChild("RecieveFrame")
+    if not recv then return 0 end
+
+    local n = 0
+    for _, g in ipairs(recv:GetChildren()) do
+        if not (state.terimaGift and isCurrentGen()) then break end
+        local id = tostring(g.Name):match("^Gift_(.+)$")
+        if id and g:IsA("GuiObject") then
+            pcall(function() cl:Fire(id) end)
+            n = n + 1
+            task.wait(0.1)
+        end
+    end
+    if n > 0 then
+        Seed.statGift = Seed.statGift + n
+        print("[StarSeed] terima gift: " .. n)
+    end
+    return n
+end
+
+-- loop claim (cepet) + loop buka mailbox (jarang, cuma kalau ada gift)
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(2)
+        if isCurrentGen() and state.terimaGift then pcall(Seed.terimaGiftSekali) end
+    end
+end)
+task.spawn(function()
+    -- ikut sinyal server juga: Mailbox.Updated nembak pas ada gift baru
+    pcall(function()
+        local up = pkt("Mailbox", "Updated")
+        if up and up.OnClientEvent then
+            up.OnClientEvent:Connect(function() Seed._mailKotor = true end)
+        end
+    end)
+    while isCurrentGen() do
+        task.wait(15)
+        if isCurrentGen() and state.terimaGift then
+            if Seed._mailKotor or Seed.jumlahGift() > 0 then
+                Seed._mailKotor = false
+                pcall(Seed.bukaMailbox)
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- v1.3: JUAL PAS HARGA MAHAL
+--
+-- SENGAJA per-buah (NPCS.SellFruit), BUKAN SellAll. SellAll ngejual SELURUH
+-- tas sekaligus -- termasuk buah yang pengalinya lagi 0.86x. Itu kebalikan
+-- dari tujuannya. Jadi tiap buah dicek jenisnya dulu, cuma yang pengalinya
+-- >= ambang yang dilepas.
+-- ============================================================
+Seed.statJual = 0
+Seed._logJual = ""
+
+local function jenisBuah(nama)
+    -- "Green Bean [0.71kg]" -> "Green Bean"
+    return (tostring(nama):gsub("%s*%[.-%]%s*$", ""))
+end
+
+local function pemegangBuah()
+    local t = {}
+    local ch = player.Character; if ch then t[#t+1] = ch end
+    local bp = player:FindFirstChildOfClass("Backpack"); if bp then t[#t+1] = bp end
+    return t
+end
+
+function Seed.jualSekali()
+    local p = pkt("NPCS", "SellFruit")
+    if not p or not p.Fire then Seed._logJual = "packet SellFruit gak ada"; return 0 end
+
+    local ambang = tonumber(state.jualMinMult) or 4
+    local terjual, dilewat, takTau = 0, 0, 0
+
+    for _, holder in ipairs(pemegangBuah()) do
+        for _, o in ipairs(holder:GetChildren()) do
+            if not (state.jualOn and isCurrentGen()) then break end
+            local id = o:GetAttribute("Id")
+            if id then
+                local jenis = jenisBuah(o.Name)
+                local mult = Seed.pengali(jenis)
+                local boleh
+                if mult == nil then
+                    -- pengali gak kebaca. Bawaan: JANGAN jual -- nunggu mahal itu
+                    -- inti fiturnya, jual tanpa tau harga malah ngebuang buah.
+                    takTau = takTau + 1
+                    boleh = state.jualTanpaMult and true or false
+                else
+                    boleh = (mult >= ambang)
+                    if not boleh then dilewat = dilewat + 1 end
+                end
+                if boleh then
+                    pcall(function() p:Fire(id) end)
+                    terjual = terjual + 1
+                    if terjual % 5 == 0 then task.wait() end
+                end
+            end
+        end
+    end
+
+    if terjual > 0 then
+        Seed.statJual = Seed.statJual + terjual
+        Seed._logJual = terjual .. " buah dijual (>=" .. ambang .. "x)"
+        print("[StarSeed] jual: " .. terjual .. " buah pada pengali >= " .. ambang .. "x")
+    elseif takTau > 0 and not state.jualTanpaMult then
+        Seed._logJual = "pengali gak kebaca -> ditahan (" .. takTau .. " buah)"
+    elseif dilewat > 0 then
+        Seed._logJual = "harga belum " .. ambang .. "x (" .. dilewat .. " buah nunggu)"
+    else
+        Seed._logJual = "gak ada buah di tas"
+    end
+    return terjual
+end
+
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(5)
+        if isCurrentGen() and state.jualOn then pcall(Seed.jualSekali) end
+    end
+end)
+
+-- ============================================================
+-- v1.6: JINAKIN PET LIAR (Pets.WildPetTame)
+--
+-- BEDA SENDIRI dari beli seed/gear. Pet liar itu objek di peta
+-- (workspace.Map.WildPetRef -> "WildPet_<uuid>", atribut PetName & Rarity),
+-- dan buat ngambilnya karakter HARUS ADA DI SITU. Jadi ini bukan "beli AFK" --
+-- karakter beneran dipindahin ke posisi pet, ditahan sebentar, baru ditembak.
+--
+-- Konsekuensi yang perlu disadari:
+--   * karakter lompat-lompat di peta (keliatan, dan lebih berat buat RF)
+--   * makanya bawaan MATI -- nyalain kalau emang mau
+-- Cara nahannya: HRP di-pin tiap Heartbeat selama nembak (kalau cuma di-set
+-- sekali, karakter ketarik balik sama server sebelum tembakannya kedaftar).
+-- ============================================================
+Seed.statPet = 0
+Seed._logPet = ""
+Seed._petCoba = {}      -- uuid -> udah pernah dicoba? (SEKALI doang, lihat catatan)
+
+-- v1.7: harga dasar per jenis pet, DIPELAJARI dari yang paling murah pernah
+-- keliat. Harga pet cuma NAIK pas direbut, gak pernah turun -- jadi nilai
+-- terendah yang pernah kelihat = harga dasarnya. Kesimpen di config, makin
+-- lama makin akurat.
+local function catatHargaDasar(nama, harga)
+    if not nama or not harga or harga <= 0 then return end
+    local d = state.petHargaDasar[nama]
+    if not d or harga < d then
+        state.petHargaDasar[nama] = harga
+        simpan()
+    end
+end
+
+local function hargaPet(o)
+    local h = o:GetAttribute("Price")
+    if type(h) == "number" and h > 0 then return h end
+    return nil
+end
+
+-- pet udah diklaim orang? (kalau iya, harganya UDAH NAIK -> jangan ikut rebutan)
+local function adaPemilik(o)
+    local uid = o:GetAttribute("OwnerUserId")
+    if type(uid) == "number" and uid ~= 0 then return true, uid end
+    local nm = o:GetAttribute("OwnerName")
+    if type(nm) == "string" and nm ~= "" then return true, nm end
+    return false, nil
+end
+
+-- ============================================================
+-- v1.8: HARGA DASAR & MUTASI PET DARI DATA GAME
+--
+-- Sebelumnya harga dasar cuma DITEBAK dari pengamatan (nilai terendah yang
+-- pernah keliat). Kalau game nyimpen harganya di modul, itu jauh lebih akurat
+-- -- gak usah nunggu putaran belajar.
+-- Nama field-nya belum pasti antar versi game, jadi dicoba beberapa yang umum.
+-- Kalau gak ketemu, jatuh balik ke cara belajar (tetep jalan).
+-- ============================================================
+-- ============================================================
+-- v2.2: HARGA DASAR DARI DATA GAME (SharedData.PetData)
+--
+-- Bukti lapangan (star_petdata di fifinx_1):
+--   PetData.Owl.BasePrice   = 25000   <-> pet liar Owl   Price=25000
+--   PetData.Bunny.BasePrice = 20000   <-> pet liar Bunny Price=20000
+--   PetData.Frog.BasePrice  = 10000   <-> pet liar Frog  Price=10000
+-- Cocok persis. Jadi harga dasar GAK PERLU dipelajari lagi -- tinggal dibaca.
+--
+-- Catatan: dulu gua nyari di SharedModules.PetModules (isinya perilaku:
+-- WanderSpeed, PerchDuration, dst). Yang bener SharedData.PetData.
+-- ============================================================
+local FIELD_HARGA = { "BasePrice", "Price", "Cost", "TamePrice" }
+
+local function bacaPetData()
+    local sd = RS:FindFirstChild("SharedData")
+    local m = sd and sd:FindFirstChild("PetData")
+    if not m then return nil end
+    local ok, mod = pcall(require, m)
+    if ok and type(mod) == "table" then return mod end
+    return nil
+end
+
+local function bacaPetModules()
+    local sm = RS:FindFirstChild("SharedModules")
+    local pm = sm and sm:FindFirstChild("PetModules")
+    if not pm then return nil end
+    local ok, mod = pcall(require, pm)
+    if ok and type(mod) == "table" then return mod end
+    return nil
+end
+
+Seed._petData = nil
+Seed._petHargaGame = nil
+Seed._petRarity = nil
+Seed._petPeta = nil   -- nama disamakan (tanpa spasi/kapital) -> kunci asli
+
+-- v2.2: game nulis kunci "BlackDragon" tapi DisplayName-nya "Black Dragon",
+-- dan pet liar bisa muncul dengan dua-duanya. Jadi semua pencarian lewat peta
+-- yang udah diseragamin. Tanpa ini, "Black Dragon" gak bakal nemu harganya.
+local function ratakan(s) return tostring(s or ""):lower():gsub("[%s_%-]", "") end
+
+-- harga dasar dari modul game. nil = gak ketemu (baru pakai cara belajar)
+function Seed.hargaDasarGame(nama)
+    if Seed._petHargaGame == nil then
+        Seed._petHargaGame, Seed._petRarity, Seed._petPeta = {}, {}, {}
+        pcall(function()
+            local mod = bacaPetData()
+            if not mod then return end
+            Seed._petData = mod
+            local fn = type(mod.GetBasePrice) == "function" and mod.GetBasePrice or nil
+            for k, v in pairs(mod) do
+                if type(k) == "string" and type(v) == "table" then
+                    Seed._petPeta[ratakan(k)] = k
+                    -- DisplayName juga didaftarin ("Black Dragon" -> BlackDragon)
+                    if type(v.DisplayName) == "string" then
+                        Seed._petPeta[ratakan(v.DisplayName)] = k
+                    end
+                    for _, f in ipairs(FIELD_HARGA) do
+                        local n = tonumber(v[f])
+                        if n and n > 0 then Seed._petHargaGame[k] = n break end
+                    end
+                    if type(v.Rarity) == "string" then Seed._petRarity[k] = v.Rarity end
+                end
+            end
+            if fn then
+                for k in pairs(Seed._petRarity) do
+                    if not Seed._petHargaGame[k] then
+                        local ok2, h = pcall(fn, k)
+                        if ok2 and tonumber(h) then Seed._petHargaGame[k] = tonumber(h) end
+                    end
+                end
+            end
+        end)
+    end
+    if not nama then return nil end
+    local kunci = Seed._petPeta[ratakan(nama)]
+    return Seed._petHargaGame[kunci or nama]
+end
+
+function Seed.rarityPet(nama)
+    if Seed._petRarity == nil then Seed.hargaDasarGame("_muat_") end
+    if not Seed._petRarity then return nil end
+    local kunci = Seed._petPeta and Seed._petPeta[ratakan(nama)]
+    return Seed._petRarity[kunci or nama]
+end
+
+-- ============================================================
+-- v2.1: MUTASI DIBACA DARI NAMA
+--
+-- Bukti lapangan: hadiah guild nampilin "Mega Rainbow Black Dragon" -- mutasi
+-- ditulis sebagai AWALAN NAMA, bukan atribut terpisah. Itu jauh lebih andal
+-- daripada ngukur ukuran model (yang butuh model-nya ke-render dulu DAN butuh
+-- pembanding ukuran terkecil yang harus dipelajari duluan).
+--
+-- Catatan istilah: data game (PetModules) nyebut "Huge", tampilan game nyebut
+-- "Mega". Dua-duanya dianggap sama = tier paling gede.
+-- ============================================================
+local KATA_MUTASI = {
+    Rainbow = { "rainbow" },
+    Mega    = { "mega", "huge" },
+    Big     = { "big", "giant" },
+    Golden  = { "golden" },
+    Shiny   = { "shiny" },
+}
+
+-- balik: {Mega=true, Rainbow=true}, dan nama pet tanpa awalan mutasi
+function Seed.mutasiDariNama(nama)
+    local hasil = {}
+    if type(nama) ~= "string" or nama == "" then return hasil, nama end
+    local rendah = " " .. nama:lower() .. " "
+    for mut, kata in pairs(KATA_MUTASI) do
+        for _, k in ipairs(kata) do
+            -- kata UTUH, biar "big" gak kena di tengah kata lain
+            if rendah:find("%f[%w]" .. k .. "%f[%W]") then hasil[mut] = true break end
+        end
+    end
+    -- buang awalan mutasi buat dapet nama dasarnya
+    local dasar = nama
+    local lagi = true
+    while lagi do
+        lagi = false
+        for _, kata in pairs(KATA_MUTASI) do
+            for _, k in ipairs(kata) do
+                local pola = "^" .. k .. "%s+"
+                if dasar:lower():find(pola) then
+                    dasar = dasar:sub(#k + 1):gsub("^%s+", "")
+                    lagi = true
+                end
+            end
+        end
+    end
+    return hasil, dasar
+end
+
+-- ===== MUTASI / UKURAN PET =====
+-- Big & Mega gak disimpen sebagai atribut -- bedanya di UKURAN MODEL. Jadi
+-- diukur: model pet ada di workspace.Map.WildPetSpawns, dibandingin sama
+-- ukuran terkecil yang pernah keliat buat jenis itu.
+Seed._petUkuranDasar = {}
+
+function Seed.tierPet(uuid, nama)
+    if not nama then return "Normal", 1 end
+
+    -- v2.1: NAMA DULUAN. Kalau mutasi udah ketulis di nama, gak usah repot
+    -- ngukur model -- itu sumber yang pasti, bukan perkiraan.
+    local mut = Seed.mutasiDariNama(nama)
+    if mut.Mega then return "Mega", 3 end
+    if mut.Big then return "Big", 1.5 end
+
+    -- cadangan: ukur model (buat pet yang mutasinya gak ketulis di nama)
+    local map = workspace:FindFirstChild("Map")
+    local spawns = map and map:FindFirstChild("WildPetSpawns")
+    if not spawns then return "Normal", 1 end
+    local model
+    for _, m in ipairs(spawns:GetChildren()) do
+        if tostring(m.Name):find(uuid, 1, true) then model = m break end
+    end
+    if not model then return "Normal", 1 end
+
+    local lin
+    local rp = model:FindFirstChild("RootPart", true)
+    if rp and rp:IsA("BasePart") then
+        lin = math.max(rp.Size.X, rp.Size.Y, rp.Size.Z)
+    else
+        pcall(function()
+            local sz
+            if model:IsA("Model") then local _, s = model:GetBoundingBox(); sz = s
+            elseif model:IsA("BasePart") then sz = model.Size end
+            if sz then lin = math.max(sz.X, sz.Y, sz.Z) end
+        end)
+    end
+    if not lin or lin <= 0 then return "Normal", 1 end
+
+    local dasar = Seed._petUkuranDasar[nama]
+    if not dasar or lin < dasar then Seed._petUkuranDasar[nama] = lin; dasar = lin end
+    local skala = lin / dasar
+
+    -- v2.2: ambang dari SharedData.PetSizes.Scales -- ANGKA ASLI GAME.
+    -- Bukti: Scales = { Big=2, Huge=4 }, BoostMultipliers = { Big=2, Huge=3 }.
+    -- Tebakan lama gua (1.5 & 3) SALAH dan bakal bikin Big kebaca Huge.
+    -- Istilah: data nyebut "Huge", tampilan game nyebut "Mega" -- disamain
+    -- ke "Mega" biar gak dua istilah buat satu hal.
+    local ambangBig, ambangHuge = 2, 4
+    pcall(function()
+        local sd = RS:FindFirstChild("SharedData")
+        local m = sd and sd:FindFirstChild("PetSizes")
+        if not m then return end
+        local ok, mod = pcall(require, m)
+        if not ok or type(mod) ~= "table" then return end
+        Seed._petSizes = mod
+        if type(mod.Scales) == "table" then
+            ambangBig  = tonumber(mod.Scales.Big)  or ambangBig
+            ambangHuge = tonumber(mod.Scales.Huge) or ambangHuge
+        end
+    end)
+    -- toleransi 10% -- ukuran model bisa meleset dikit
+    if skala >= (ambangHuge * 0.9) then return "Mega", skala
+    elseif skala >= (ambangBig * 0.9) then return "Big", skala
+    else return "Normal", skala end
+end
+
+-- v2.2: Rainbow dicek lewat SharedData.PetTypes -- itu registry resminya
+-- (Registry.Rainbow.DisplayText = "RAINBOW", boost 1.25x, ada IsRainbow()).
+Seed._petTypes = nil
+local function muatPetTypes()
+    if Seed._petTypes ~= nil then return Seed._petTypes end
+    Seed._petTypes = false
+    pcall(function()
+        local sd = RS:FindFirstChild("SharedData")
+        local m = sd and sd:FindFirstChild("PetTypes")
+        if not m then return end
+        local ok, mod = pcall(require, m)
+        if ok and type(mod) == "table" then Seed._petTypes = mod end
+    end)
+    return Seed._petTypes
+end
+
+function Seed.rainbowPet(o, nama)
+    -- 1) fungsi resmi game (paling sah)
+    local pt = muatPetTypes()
+    if pt and type(pt.IsRainbow) == "function" then
+        local ok, hasil = pcall(function()
+            -- bentuk argumennya belum pasti -> coba objek dulu, terus nama
+            local a = o and pt.IsRainbow(o)
+            if a ~= nil then return a end
+            return pt.IsRainbow(nama)
+        end)
+        if ok and hasil == true then return true end
+    end
+    -- 2) atribut di objeknya
+    local r = false
+    pcall(function()
+        if o and (o:GetAttribute("Rainbow") or o:GetAttribute("IsRainbow")
+           or o:GetAttribute("PetType") == "Rainbow"
+           or o:GetAttribute("Variant") == "Rainbow"
+           or o:GetAttribute("Mutation") == "Rainbow") then r = true end
+    end)
+    if r then return true end
+    -- 3) nama (kalau varian ditulis di depan)
+    return Seed.mutasiDariNama(nama).Rainbow == true
+end
+
+-- ============================================================
+-- v1.8: DEBUG -- ngedump APA ADANYA dari game.
+-- Jalanin di konsol executor:  getgenv().StarSeed.debug()
+-- Gunanya: mastiin harga & nama field-nya bener, bukan tebakan. Kalau ada
+-- yang gak cocok, hasilnya tinggal ditempel biar kodenya disetel ke kenyataan.
+-- ============================================================
+function Seed.debug()
+    print("========== STAR SEED DEBUG v" .. VERSI .. " ==========")
+
+    -- 1) PET dari modul game
+    print("")
+    print("--- PET (SharedModules.PetModules) ---")
+    local mod = bacaPetModules()
+    if not mod then
+        print("  PetModules GAK KETEMU -- harga dasar bakal dipelajari dari pengamatan")
+    else
+        local n, contoh = 0, nil
+        for k, v in pairs(mod) do
+            if type(k) == "string" and not k:match("^_") then
+                n = n + 1
+                if not contoh and type(v) == "table" then contoh = { k, v } end
+            end
+        end
+        print("  jumlah entri: " .. n)
+        if contoh then
+            print("  contoh isi satu entri (" .. contoh[1] .. "):")
+            for kk, vv in pairs(contoh[2]) do
+                if type(vv) ~= "table" and type(vv) ~= "function" then
+                    print("     ." .. tostring(kk) .. " = " .. tostring(vv))
+                else
+                    print("     ." .. tostring(kk) .. " = <" .. type(vv) .. ">")
+                end
+            end
+        end
+        -- harga per jenis
+        local adaHarga = false
+        print("  harga yang kebaca:")
+        for k, v in pairs(mod) do
+            if type(k) == "string" and type(v) == "table" then
+                for _, f in ipairs(FIELD_HARGA) do
+                    local x = tonumber(v[f])
+                    if x and x > 0 then
+                        print(("     %-22s %s = %s"):format(k, f, x)); adaHarga = true; break
+                    end
+                end
+            end
+        end
+        if not adaHarga then
+            print("     (GAK ADA field harga yang kekenal -- lihat 'contoh isi' di atas,")
+            print("      kalau ada nama field harga yang beda, kabarin biar ditambahin)")
+        end
+    end
+
+    -- 2) SEED
+    print("")
+    print("--- SEED (3 sumber) ---")
+    local daftar = muatDaftarSeed()
+    print("  total kebaca: " .. #daftar)
+    local sd = bacaSeedData()
+    if sd then
+        local c1
+        for k, v in pairs(sd) do if type(v) == "table" then c1 = { k, v } break end end
+        if c1 then
+            print("  contoh isi SeedData (" .. tostring(c1[1]) .. "):")
+            for kk, vv in pairs(c1[2]) do
+                if type(vv) ~= "table" and type(vv) ~= "function" then
+                    print("     ." .. tostring(kk) .. " = " .. tostring(vv))
+                end
+            end
+        end
+    else
+        print("  SeedData gak kebaca")
+    end
+    local blmKenal = {}
+    for _, nm in ipairs(daftar) do
+        if not state.seedDikenal[nm] then blmKenal[#blmKenal+1] = nm end
+    end
+    print("  seed yang BELUM tercatat di config: " ..
+        (#blmKenal > 0 and table.concat(blmKenal, ", ") or "(gak ada)"))
+
+    -- 3) PET LIAR yang lagi ada
+    print("")
+    print("--- PET LIAR SEKARANG (workspace.Map.WildPetRef) ---")
+    local map = workspace:FindFirstChild("Map")
+    local ref = map and map:FindFirstChild("WildPetRef")
+    if not ref then
+        print("  WildPetRef GAK KETEMU")
+    else
+        local n = 0
+        for _, o in ipairs(ref:GetChildren()) do
+            if tostring(o.Name):sub(1, 8) == "WildPet_" then
+                n = n + 1
+                local uuid = tostring(o.Name):sub(9)
+                local nama = o:GetAttribute("PetName")
+                local tier = select(1, Seed.tierPet(uuid, nama))
+                local rb = Seed.rainbowPet(o, nama)
+                local atr = {}
+                pcall(function()
+                    for k, v in pairs(o:GetAttributes()) do
+                        atr[#atr+1] = tostring(k) .. "=" .. tostring(v)
+                    end
+                end)
+                table.sort(atr)
+                print(("  [%s] tier=%s rainbow=%s"):format(tostring(nama), tier, tostring(rb)))
+                print("     " .. table.concat(atr, "  "))
+            end
+        end
+        print("  total pet liar: " .. n)
+    end
+
+    -- 4) yang script udah tau
+    print("")
+    print("--- YANG SCRIPT UDAH TAU ---")
+    Seed.hargaDasarGame("_panasin_cache_")   -- biar peta harga kebangun dulu
+    local hg, hb = {}, {}
+    for k, v in pairs(Seed._petHargaGame or {}) do hg[#hg+1] = k .. "=" .. v end
+    for k, v in pairs(state.petHargaDasar or {}) do hb[#hb+1] = k .. "=" .. v end
+    print("  harga dari modul game : " .. (#hg > 0 and table.concat(hg, ", ") or "(kosong)"))
+    print("  harga hasil belajar   : " .. (#hb > 0 and table.concat(hb, ", ") or "(kosong)"))
+    print("  jenis pet diburu      : " .. (function()
+        local t = {}
+        for k in pairs(state.petPilih or {}) do t[#t+1] = k end
+        return #t > 0 and table.concat(t, ", ") or "(kosong)"
+    end)())
+    print("=================================================")
+end
+Seed.intipPet = Seed.debug   -- nama lama tetep jalan
+
+-- v2.1: pencocokan jenis pet harus TAHAN dua hal:
+--   1) awalan mutasi -- "Mega Rainbow Black Dragon" tetep harus kena filter
+--      "BlackDragon", jadi yang dibandingin nama DASAR-nya
+--   2) beda penulisan -- data game nulis "BlackDragon", tampilan "Black Dragon".
+--      Spasi & huruf besar-kecil diabaikan pas banding.
+local function samakan(s) return tostring(s or ""):lower():gsub("%s+", "") end
+
+local function jenisDipilih(nama)
+    if state.petSemua then return true end
+    if not nama then return false end
+    local _, dasar = Seed.mutasiDariNama(nama)
+    local kunciA, kunciB = samakan(nama), samakan(dasar)
+    for pilih in pairs(state.petPilih or {}) do
+        local p = samakan(pilih)
+        if p == kunciA or p == kunciB then return true end
+    end
+    return false
+end
+
+function Seed.tamePetSekali()
+    local p = pkt("Pets", "WildPetTame")
+    if not p or not p.Fire then Seed._logPet = "packet WildPetTame gak ada"; return 0 end
+
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then Seed._logPet = "karakter belum siap"; return 0 end
+
+    local map = workspace:FindFirstChild("Map")
+    local ref = map and map:FindFirstChild("WildPetRef")
+    if not ref then Seed._logPet = "WildPetRef gak ketemu"; return 0 end
+
+    local shk = sheckles()
+    local dapat, direbut, kemahalan, belumTau = 0, 0, 0, 0
+
+    -- Potret harga dasar SEBELUM scan ini. Dipakai sebagai pembanding di tahap 2.
+    -- Kenapa dipotret: tahap 1 nambahin harga dari scan ini juga. Kalau langsung
+    -- dipakai, pet yang harganya udah naik bisa "mendefinisikan dirinya sendiri"
+    -- sebagai harga dasar -- pas dia satu-satunya yang muncul di scan itu.
+    local dasarLama = {}
+    for k, v in pairs(state.petHargaDasar) do dasarLama[k] = v end
+
+    -- ===== TAHAP 1: PELAJARI HARGA DULU, JANGAN AMBIL APA-APA =====
+    -- Ini WAJIB duluan. Kalau dicampur sama tahap ambil, urutan scan nentuin
+    -- hasil: pet yang harganya udah naik bisa kebeli duluan gara-gara harga
+    -- dasarnya belum kepelajari. (Kejadian pas diuji: pet 4500 kebeli padahal
+    -- dasarnya 1000, cuma karena dia diproses lebih dulu.)
+    local kandidat = {}
+    for _, o in ipairs(ref:GetChildren()) do
+        if o:IsA("BasePart") and tostring(o.Name):sub(1, 8) == "WildPet_" then
+            local nama = o:GetAttribute("PetName")
+            local harga = hargaPet(o)
+            local punyaOrang = adaPemilik(o)
+            -- cuma belajar dari pet yang BELUM diklaim -- yang udah diklaim
+            -- harganya pasti udah naik, bukan patokan yang sah
+            if nama and harga and not punyaOrang then
+                -- cuma catat dari pet POLOS. Pet mutasi harganya emang beda,
+                -- kalau ikut dicatat, harga dasarnya jadi ngaco.
+                local m, nd = Seed.mutasiDariNama(nama)
+                if next(m) == nil then catatHargaDasar(nd, harga) end
+            end
+            kandidat[#kandidat+1] = { o = o, nama = nama, harga = harga, milik = punyaOrang }
+        end
+    end
+
+    -- ===== TAHAP 2: BARU AMBIL =====
+    for _, k in ipairs(kandidat) do
+        if not (state.petOn and isCurrentGen()) then break end
+        local o, nama, harga, punyaOrang = k.o, k.nama, k.harga, k.milik
+        local uuid = tostring(o.Name):sub(9)
+
+        local okJenis = jenisDipilih(nama)
+        -- v1.8: harga dari MODUL GAME menang. Itu angka pasti, bukan tebakan --
+        -- jadi gak perlu putaran belajar buat jenis yang datanya ada di modul.
+        -- harga dasar dicatat per nama DASAR -- "Mega Raccoon" & "Raccoon" itu
+        -- jenis yang sama, cuma beda mutasi. Kalau dipisah, tiap mutasi harus
+        -- belajar harganya sendiri dari nol.
+        local _, namaDasar = Seed.mutasiDariNama(nama)
+        local dasar = nama and (Seed.hargaDasarGame(namaDasar) or Seed.hargaDasarGame(nama)
+                                or dasarLama[namaDasar] or dasarLama[nama])
+
+        -- ===== v2.0: PENGECUALIAN PET MUTASI =====
+        -- Big / Huge / Rainbow itu langka. Aturan "cuma harga dasar" sengaja
+        -- DILONGGARIN buat mereka -- kelewat pet mutasi lebih rugi daripada
+        -- bayar lebih mahal. Batasnya bisa disetel (mutasiMaxKali).
+        local tier = select(1, Seed.tierPet(uuid, nama))
+        local rb = Seed.rainbowPet(o, nama)
+        local mutasi = nil
+        if rb and state.mutasiRainbow then mutasi = "Rainbow"
+        elseif tier == "Mega" and state.mutasiHuge then mutasi = "Mega"
+        elseif tier == "Big" and state.mutasiBig then mutasi = "Big" end
+        local istimewa = state.mutasiSikat and mutasi ~= nil
+
+        -- ===== SARINGAN "HARGA DASAR" =====
+        -- Sistem pet ini REBUTAN: begitu ada yang klaim, harganya naik dan
+        -- siapa pun boleh nimpa dengan bayar lebih. Kita SENGAJA gak ikut
+        -- perang harga -- cuma ambil yang masih perawan.
+        --   1) belum ada pemiliknya
+        --   2) harganya gak di atas harga dasar yang udah dipelajari
+        --   3) kalau harga dasarnya BELUM KETAUAN -> JANGAN AMBIL, pelajari
+        --      dulu. Lebih baik kelewat sekali daripada kebeli mahal. Harga
+        --      dasar kesimpen di config, jadi ini cuma sekali per jenis pet.
+        local masihBase, sebab
+        if istimewa then
+            -- pet mutasi: harga dasar DIABAIKAN, tapi tetep dibatesin
+            -- mutasiMaxKali (kalau diisi) biar gak kebablasan.
+            local batas = tonumber(state.mutasiMaxKali) or 0
+            if batas > 0 and dasar and harga and harga > (dasar * batas) then
+                masihBase, sebab = false, "mutasi_kemahalan"
+            else
+                masihBase = true
+            end
+        elseif punyaOrang then
+            masihBase, sebab = false, "direbut"
+        elseif not dasar then
+            masihBase, sebab = false, "belumtau"
+        elseif harga and harga > dasar then
+            masihBase, sebab = false, "mahal"
+        else
+            masihBase = true
+        end
+
+        local okHarga = (not harga) or (state.petMaxHarga or 0) <= 0 or harga <= state.petMaxHarga
+        local mampu   = (not harga) or harga <= shk
+        local belumDicoba = not Seed._petCoba[uuid]
+
+        if okJenis and masihBase and okHarga and mampu and belumDicoba then
+            -- SEKALI COBA. Kalau gagal, berarti keburu disamber orang --
+            -- ngulang cuma bikin ikut perang harga, persis yang dihindarin.
+            Seed._petCoba[uuid] = true
+            local posisiAsal = hrp.CFrame
+            local nempel = true
+            local hb
+            pcall(function()
+                hb = game:GetService("RunService").Heartbeat:Connect(function()
+                    if nempel and o.Parent and hrp and hrp.Parent then
+                        pcall(function()
+                            hrp.CFrame = o.CFrame + Vector3.new(0, 2.5, 0)
+                            hrp.AssemblyLinearVelocity = Vector3.zero
+                        end)
+                    end
+                end)
+            end)
+            task.wait(0.2)   -- kasih waktu posisi kedaftar di server SEBELUM nembak
+            local kena = false
+            for _ = 1, 6 do
+                if not o.Parent then kena = true break end
+                pcall(function() p:Fire(o) end)
+                task.wait(0.22)
+                if not o.Parent then kena = true break end
+            end
+            nempel = false
+            pcall(function() if hb then hb:Disconnect() end end)
+            pcall(function() if hrp and hrp.Parent then hrp.CFrame = posisiAsal end end)
+
+            if kena then
+                dapat = dapat + 1
+                Seed.statPet = Seed.statPet + 1
+                -- v2.1: JANGAN tempel ulang awalan mutasi kalau namanya emang
+                -- udah ngandung (mis. "Mega Rainbow Black Dragon"). Dulu jadi
+                -- "Rainbow Mega Mega Rainbow Black Dragon".
+                local adaDiNama = Seed.mutasiDariNama(nama)
+                local label = nama
+                if tier ~= "Normal" and not (adaDiNama.Mega or adaDiNama.Big) then
+                    label = tier .. " " .. label
+                end
+                if rb and not adaDiNama.Rainbow then label = "Rainbow " .. label end
+                print(("[StarSeed] dapet pet: %s @ %s (dasar %s)%s")
+                    :format(label, tostring(harga or "?"), tostring(dasar or "?"),
+                            istimewa and "  <- MUTASI, harga diabaikan" or ""))
+            end
+        elseif okJenis then
+            if sebab == "direbut" then direbut = direbut + 1
+            elseif sebab == "belumtau" then belumTau = belumTau + 1
+            elseif sebab == "mahal" or sebab == "mutasi_kemahalan" then
+                kemahalan = kemahalan + 1 end
+        end
+    end
+
+    if dapat > 0 then
+        Seed._logPet = dapat .. " pet (harga dasar)"
+    elseif direbut > 0 or kemahalan > 0 or belumTau > 0 then
+        Seed._logPet = ("dilewat: %d direbut, %d mahal, %d blm tau dasar")
+            :format(direbut, kemahalan, belumTau)
+    else
+        Seed._logPet = "gak ada pet yang dicari"
+    end
+    return dapat
+end
+
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(8)
+        if isCurrentGen() and state.petOn then pcall(Seed.tamePetSekali) end
+    end
+end)
+
+-- ============================================================
+-- v1.6: KIRIM PET ke akun lain (Mailbox.SendBatch, Category="Pets")
+-- Pet di tas = Tool ber-atribut Pet/PetName + PetId. Buah punya Fruit+Id, jadi
+-- dibedain lewat situ -- kalau nggak, buah ikut kekirim.
+-- Cuma scan BACKPACK: pet yang lagi dipasang gak keikut, jadi aman.
+-- ============================================================
+Seed.statGiftKirim = 0
+Seed._logKirim = ""
+Seed._uidCache = {}
+
+local function cariUserId(nama)
+    if Seed._uidCache[nama] then return Seed._uidCache[nama] end
+    local ok, id = pcall(function()
+        return Players:GetUserIdFromNameAsync(nama)
+    end)
+    if ok and id then Seed._uidCache[nama] = id; return id end
+    return nil
+end
+
+function Seed.kirimPetSekali()
+    local target = state.giftTarget
+    if not target or target == "" then Seed._logKirim = "tujuan kosong"; return 0 end
+    local sb = pkt("Mailbox", "SendBatch")
+    if not sb or not sb.Fire then Seed._logKirim = "packet SendBatch gak ada"; return 0 end
+
+    local uid = cariUserId(target)
+    if not uid then Seed._logKirim = "akun '" .. target .. "' gak ketemu"; return 0 end
+
+    local batch, total = {}, 0
+    local function lepas()
+        if #batch > 0 then
+            local isi = batch; batch = {}
+            pcall(function() sb:Fire(uid, isi, "") end)
+            total = total + #isi
+            task.wait(0.5)
+        end
+    end
+
+    local bp = player:FindFirstChildOfClass("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") then
+                local nama = t:GetAttribute("Pet") or t:GetAttribute("PetName") or t:GetAttribute("PetType")
+                local pid  = t:GetAttribute("PetId") or t:GetAttribute("Id")
+                local buah = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                if pid and nama and not buah then
+                    batch[#batch+1] = { ItemKey = tostring(pid), Count = 1, Category = "Pets" }
+                    if #batch >= 8 then lepas() end
+                end
+            end
+        end
+    end
+    lepas()
+
+    if total > 0 then
+        Seed.statGiftKirim = Seed.statGiftKirim + total
+        Seed._logKirim = total .. " pet dikirim"
+        print("[StarSeed] kirim " .. total .. " pet ke " .. target)
+    else
+        Seed._logKirim = "gak ada pet di tas"
+    end
+    return total
+end
+
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(10)
+        if isCurrentGen() and state.giftPetOn then pcall(Seed.kirimPetSekali) end
+    end
+end)
+
+-- ============================================================
+-- ANTI-AFK -- Roblox nendang yang diem ~20 menit
+-- ============================================================
+pcall(function()
+    local VU = game:GetService("VirtualUser")
+    player.Idled:Connect(function()
+        if not (isCurrentGen() and state.autoAfk) then return end
+        pcall(function()
+            VU:CaptureController()
+            VU:ClickButton2(Vector2.new())
+        end)
+    end)
+end)
+
+-- ============================================================
+-- BRIDGE PANEL -- biar akun ini kebaca idup di panel STAR
+-- ============================================================
+local function relayReq(opts)
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+        or (fluxus and fluxus.request)
+    if not req then return nil end
+    local ok, resp = pcall(function() return req(opts) end)
+    if ok then return resp end
+    return nil
+end
+
+local function panelAktif()
+    return type(state.panelUrl) == "string" and state.panelUrl ~= ""
+        and type(state.panelKunci) == "string" and state.panelKunci ~= ""
+end
+
+local function panelReq(jalur, metode, isi)
+    local o = {
+        Url = state.panelUrl .. jalur,
+        Method = metode,
+        Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = state.panelKunci },
+    }
+    if isi then
+        local ok, body = pcall(function() return HS:JSONEncode(isi) end)
+        if not ok then return nil end
+        o.Body = body
+    end
+    return relayReq(o)
+end
+
+-- hitung seed di tas. Seed di tas namanya LANGSUNG "Bamboo"/"Tulip" -- tanpa
+-- atribut SeedName, tanpa akhiran "Seed". Jadi patokannya: Tool yang namanya
+-- ada di SeedData. Gear (Trowel, Sprinkler) otomatis keskip karena gak ada di situ.
+local function tasHolders()
+    local t = {}
+    local bp = player:FindFirstChildOfClass("Backpack"); if bp then t[#t+1] = bp end
+    local ch = player.Character; if ch then t[#t+1] = ch end
+    return t
+end
+
+-- v1.9 FIX: deteksi seed di tas TIDAK BOLEH ngandelin Seed.rarity().
+-- Bukti lapangan (star_debug): SharedModules.SeedData isinya FUNGSI doang,
+-- bukan data -- jadi rarity SELALU nil dan semua seed di tas kebaca 0.
+-- Sekarang patokannya daftar seed gabungan (sumber utamanya stok SeedShop,
+-- 64 jenis). Gear/pet gak ada di daftar itu, jadi otomatis keskip.
+local function namaSeedValid(nm)
+    if not Seed.daftar then Seed.daftar = muatDaftarSeed() end
+    if not Seed._setSeed then
+        Seed._setSeed = {}
+        for _, n in ipairs(Seed.daftar) do Seed._setSeed[n] = true end
+    end
+    return Seed._setSeed[nm] == true
+end
+
+local function seedDiTas()
+    local hitung, total = {}, 0
+    pcall(function()
+        for _, holder in ipairs(tasHolders()) do
+            for _, tool in ipairs(holder:GetChildren()) do
+                if tool:IsA("Tool") and namaSeedValid(tool.Name) then
+                    local n = tool:GetAttribute("Count") or 1
+                    if n == 0 then n = 1 end   -- pet/seed kadang Count=0, artinya 1
+                    hitung[tool.Name] = (hitung[tool.Name] or 0) + n
+                    total = total + n
+                end
+            end
+        end
+    end)
+    local arr = {}
+    for nm, n in pairs(hitung) do
+        local rar = Seed.rarity(nm) or "?"
+        arr[#arr+1] = { n = nm, j = n, r = rar, rank = RARITY_RANK[rar] or 0 }
+    end
+    table.sort(arr, function(a, b)
+        if a.rank ~= b.rank then return a.rank > b.rank end
+        return a.n < b.n
+    end)
+    return arr, total
+end
+
+-- v1.2: hitung Super Watering Can & Super Sprinkler di tas. Panel punya kolom
+-- khusus buat dua ini di ringkasan fleet (superWC / superSpr), jadi sekalian
+-- dilapor -- biar keliatan stok gear se-armada tanpa buka satu-satu.
+local function gearDiTas()
+    local wc, spr = 0, 0
+    pcall(function()
+        for _, holder in ipairs(tasHolders()) do
+            for _, tool in ipairs(holder:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local ln = tostring(tool.Name):lower()
+                    local n = tool:GetAttribute("Count") or 1
+                    if ln:find("super", 1, true) then
+                        if ln:find("watering", 1, true) then wc = wc + n
+                        elseif ln:find("sprinkler", 1, true) then spr = spr + n end
+                    end
+                end
+            end
+        end
+    end)
+    return wc, spr
+end
+
+local PANEL_CEK, PANEL_DENYUT = 20, 120
+Seed._panelGen = 0
+
+function Seed.startPanel()
+    Seed._panelGen = Seed._panelGen + 1
+    local gen = Seed._panelGen
+    local function hidup() return Seed._panelGen == gen and isCurrentGen() and panelAktif() end
+
+    -- lapor status akun
+    task.spawn(function()
+        local kirimAkhir = 0
+        while hidup() do
+            pcall(function()
+                local skrg = os.time()
+                if (skrg - kirimAkhir) >= PANEL_DENYUT then
+                    local _, totSeed = seedDiTas()
+                    panelReq("/stat", "POST", {
+                        akun  = player.Name,
+                        -- farm2On dipakai panel buat nentuin status "jalan"/"rejoin".
+                        -- Di akun beli-seed, yang setara "lagi kerja" = saklar beli.
+                        farm2On = state.beliOn and true or false,
+                        sheck = sheckles(),
+                        tot   = totSeed,
+                        job   = tostring(game.JobId or ""):sub(1, 8),
+                        place = tostring(game.PlaceId or ""),
+                    })
+                    kirimAkhir = skrg
+                end
+            end)
+            task.wait(PANEL_CEK)
+        end
+    end)
+
+    -- lapor rincian seed (jarang -- inventory gak berubah drastis)
+    task.spawn(function()
+        local ringkasLama, kirimAkhir = nil, 0
+        while hidup() do
+            pcall(function()
+                local arr, total = seedDiTas()
+                local wcR, sprR = gearDiTas()
+                local t = {}
+                for _, e in ipairs(arr) do t[#t+1] = e.n .. ":" .. e.j end
+                -- gear ikut masuk patokan: kalau cuma seed yang dibanding, nambah
+                -- Super WC/Sprinkler gak keitung "berubah" -> panel telat 5 menit.
+                t[#t+1] = "wc:" .. wcR .. ",spr:" .. sprR
+                local ringkas = table.concat(t, ",")
+                local skrg = os.time()
+                if ringkas ~= ringkasLama or (skrg - kirimAkhir) >= 300 then
+                    local bersih = {}
+                    for _, e in ipairs(arr) do bersih[#bersih+1] = { n = e.n, j = e.j, r = e.r } end
+                    local wc, spr = gearDiTas()
+                    panelReq("/inv", "POST", {
+                        akun = player.Name, seeds = bersih, pets = {},
+                        totSeed = total, superWC = wc, superSpr = spr,
+                    })
+                    ringkasLama, kirimAkhir = ringkas, skrg
+                end
+            end)
+            task.wait(30)
+        end
+    end)
+end
+if panelAktif() then Seed.startPanel() end
+
+-- ============================================================
+-- v1.6: SETELAN DARI PANEL WEB
+--
+-- Panel nyimpen setelan di dua lapis (digabung di sisi CF):
+--   scope "seed"          -- berlaku ke SEMUA akun seed
+--   scope "seed:<akun>"   -- khusus akun ini, nimpa yang global
+-- Script narik gabungannya tiap 30 detik.
+--
+-- SENGAJA gak nyentuh scope "all" -- itu punya script farm. Nimpa di situ
+-- bakal ngerusak setelan farm semua akun.
+--
+-- Setelan lokal (dari GUI) tetep jalan. Panel cuma nimpa field yang DIA KIRIM;
+-- field yang gak dikirim panel dibiarin apa adanya. Jadi kalau panel belum
+-- diisi apa-apa, script jalan normal pakai setelan lokal.
+-- ============================================================
+Seed._cfgTs = 0
+Seed._cfgLog = "belum narik"
+
+local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
+                     "terimaGift","jualOn","jualTanpaMult",
+                     "petOn","petSemua","giftPetOn","autoAfk",
+                     "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow" }
+local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
+                     "maxPerSiklus","mutasiMaxKali" }
+
+function Seed.tarikCfgPanel()
+    if not (state.ikutPanel and panelAktif()) then return end
+    local r = panelReq("/seed-cfg?akun=" .. player.Name, "GET")
+    local body = r and (r.Body or r.body)
+    if not body then Seed._cfgLog = "panel gak jawab"; return end
+
+    local ok, d = pcall(function() return HS:JSONDecode(body) end)
+    if not ok or type(d) ~= "table" or type(d.cfg) ~= "table" then
+        Seed._cfgLog = "jawaban panel gak kebaca"; return
+    end
+    local c = d.cfg
+    local ubah = {}
+
+    for _, k in ipairs(BOOL_PANEL) do
+        if type(c[k]) == "boolean" and state[k] ~= c[k] then
+            state[k] = c[k]; ubah[#ubah+1] = k .. "=" .. tostring(c[k])
+        end
+    end
+    for _, k in ipairs(NUM_PANEL) do
+        local n = tonumber(c[k])
+        if n and state[k] ~= n then state[k] = n; ubah[#ubah+1] = k .. "=" .. n end
+    end
+    if type(c.giftTarget) == "string" and state.giftTarget ~= c.giftTarget then
+        state.giftTarget = c.giftTarget
+        Seed._uidCache = {}          -- tujuan ganti -> cache id lama gak berlaku
+        ubah[#ubah+1] = "giftTarget=" .. c.giftTarget
+    end
+    -- daftar jenis: dikirim panel sebagai array nama
+    if type(c.seedPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.seedPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.seedPilih = baru; ubah[#ubah+1] = "seedPilih(" .. #c.seedPilih .. ")"
+    end
+    if type(c.petPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.petPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.petPilih = baru; ubah[#ubah+1] = "petPilih(" .. #c.petPilih .. ")"
+    end
+
+    if #ubah > 0 then
+        simpan()
+        if Seed._segarkanGUI then pcall(Seed._segarkanGUI) end
+        Seed._cfgLog = "dari panel: " .. table.concat(ubah, ", ")
+        print("[StarSeed] setelan panel: " .. table.concat(ubah, ", "))
+    else
+        Seed._cfgLog = "sinkron"
+    end
+    Seed._cfgTs = os.time()
+end
+
+task.spawn(function()
+    task.wait(4)
+    while isCurrentGen() do
+        pcall(Seed.tarikCfgPanel)
+        task.wait(30)
+    end
+end)
+
+-- ============================================================
+-- v2.0: KIRIM KATALOG KE PANEL
+-- Script yang paling tau isi game -- dia baca langsung dari modul & stok toko.
+-- Jadi dia yang nyetor daftar jenis pet & seed ke panel. CF nyatat kapan tiap
+-- nama pertama kali keliat; yang belum pernah kecatat = BARU -> panel kasih
+-- notif. Begitu dev game nambah pet/seed, panel tau sendiri.
+--
+-- Dikirim tiap 5 menit. Jarang, karena isinya jarang berubah -- tapi cukup
+-- sering biar rilis baru ketangkep dalam hitungan menit.
+-- ============================================================
+-- ============================================================
+-- v2.5: BACA EVENT GUILD
+--
+-- Dua jalur, dicoba berurutan:
+-- SATU jalur: baca panel guild di layar (ViewGuildProgress).
+--
+-- Jalur packet (Guild.GetCompetition) sempat dicoba lalu DICABUT di v2.8 --
+-- lihat catatan di blok eventDariPacket. Singkatnya: satu-satunya cara
+-- nangkep jawabannya itu nimpa handler milik game.
+--
+-- Kabar baiknya: panel ternyata isinya udah kebangun sendiri pas masuk game
+-- (dump lapangan nunjukin teksnya ada walau panelnya gak dibuka), jadi ini
+-- kemungkinan besar tetep jalan di akun AFK.
+--
+-- Cuma manggil yang sifatnya BACA. Fungsi guild yang bisa ngubah keadaan
+-- (Join, Leave, Kick, Donate, Buy*) gak disentuh sama sekali.
+-- ============================================================
+Seed._guildMethod = nil
+Seed.guildEvent = nil
+
+-- v2.8: gak kepakai lagi (jalur packet dicabut). Ditinggal buat jaga-jaga
+-- kalau nanti ketemu cara BACA yang gak nimpa apa-apa.
+local function methodPacket(p)
+    local ada = {}
+    -- method bisa nempel langsung, atau di metatable.__index
+    pcall(function()
+        for k, v in pairs(p) do if type(v) == "function" then ada[k] = true end end
+        local mt = getmetatable(p)
+        if type(mt) == "table" and type(mt.__index) == "table" then
+            for k, v in pairs(mt.__index) do if type(v) == "function" then ada[k] = true end end
+        end
+    end)
+    return ada
+end
+
+local function petikDariTabel(t, dalam)
+    -- ambil field yang keliatan kayak info event, apa pun namanya
+    local hasil = {}
+    if type(t) ~= "table" or (dalam or 0) > 2 then return hasil end
+    for k, v in pairs(t) do
+        local kl = tostring(k):lower()
+        if type(v) == "string" and #v > 0 and #v < 120 then
+            if kl:find("name") or kl:find("title") or kl:find("nama") then hasil.nama = v
+            elseif kl:find("desc") or kl:find("tag") then hasil.tag = hasil.tag or v end
+        elseif type(v) == "number" then
+            if kl:find("end") or kl:find("expire") or kl:find("akhir") then hasil.berakhir = v
+            elseif kl:find("rank") or kl:find("place") then hasil.peringkat = v
+            elseif kl:find("score") or kl:find("skor") then hasil.skor = v end
+        elseif type(v) == "table" then
+            local dalam2 = petikDariTabel(v, (dalam or 0) + 1)
+            for k2, v2 in pairs(dalam2) do if hasil[k2] == nil then hasil[k2] = v2 end end
+        end
+    end
+    return hasil
+end
+
+-- v2.6 FIX: API packet-nya akhirnya ketauan dari metatable:
+--   Deserialize, Fire, FireAllClients, FireClient, Response, Serialize
+-- Polanya BUKAN "panggil lalu dapet balasan". Yang bener:
+--   1. daftarin handler lewat p:Response(fn)   <- ini yang v2.5 kelewat
+--   2. baru p:Fire()  buat ngirim permintaan
+--   3. tunggu handler-nya kepanggil (ResponseTimeout di game = 10 detik)
+-- v2.5 manggil p:Response() TANPA argumen -> handler kosong -> gak pernah
+-- ada yang nangkep jawabannya.
+-- ============================================================
+-- v2.8: JALUR PACKET DICABUT
+--
+-- Percobaan v2.6/v2.7 manggil p:Response(handler) buat nangkep jawaban
+-- Guild.GetCompetition. Server gak pernah jawab -- DAN ada efek samping yang
+-- kekonfirmasi dari dua dump berturut-turut:
+--     sebelum dipanggil : ResponseWrites 1=function  ResponseReads 1=function
+--     sesudah dipanggil : ResponseWrites (kosong)    ResponseReads (kosong)
+-- Handler bawaan GAME-nya ketimpa. Artinya Response() itu MENDAFTARKAN
+-- (nulis), bukan mendengarkan (baca) -- dan panel guild game bisa berhenti
+-- keupdate gara-gara itu.
+--
+-- Jadi jalur packet DICABUT sepenuhnya. Bacanya lewat panel aja: lebih
+-- lambat, tapi gak nyentuh apa pun milik game.
+-- ============================================================
+local function eventDariPacket()
+    return nil, "jalur packet dicabut (Response() nimpa handler game)"
+end
+
+local function eventDariPanel()
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if not pg then return nil end
+    local sgui = pg:FindFirstChild("ViewGuildProgress")
+    if not sgui then return nil end
+
+    local baris = {}
+    pcall(function()
+        for _, d in ipairs(sgui:GetDescendants()) do
+            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                local t = tostring(d.Text or ""):gsub("<[^>]->", "")
+                    :gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+                if t ~= "" and #t < 140 then baris[#baris+1] = t end
+            end
+        end
+    end)
+    if #baris == 0 then return nil end
+
+    -- v2.7 FIX: panel nyimpen teks event LAMA juga (minggu lalu belum kehapus).
+    -- v2.6 ngambil nama pertama yang masuk akal -> ke-ambil yang LAMA.
+    -- Bukti: panel isinya "Carrot Frenzy ... Tallest Plant / Ends in 5h 11m" --
+    -- yang aktif itu Tallest Plant, bukan Carrot Frenzy.
+    -- Patokan yang bener: nama event = teks TEPAT SEBELUM "Ends in".
+    local hasil = { sumber = "panel" }
+    local iEnds
+    for i, t in ipairs(baris) do
+        local j, m = t:match("[Ee]nds in (%d+)h (%d+)m")
+        if j then
+            hasil.sisaDetik = tonumber(j) * 3600 + tonumber(m) * 60
+            iEnds = i
+            break
+        end
+        local mm = t:match("^[Ee]nds in (%d+)m")
+        if mm then hasil.sisaDetik = tonumber(mm) * 60; iEnds = i break end
+    end
+
+    local function layakNama(t)
+        if not t or #t < 4 or #t > 60 then return false end
+        if t:match("^[Xx]$") then return false end
+        local l = t:lower()
+        if l:find("how to earn") or l:find("reward") or l:find("ends in")
+           or l:find("bracket") or l:find("placement") or l:match("^#") then
+            return false
+        end
+        return true
+    end
+
+    if iEnds then
+        -- mundur dari "Ends in" sampai ketemu teks yang layak jadi nama
+        for i = iEnds - 1, 1, -1 do
+            if layakNama(baris[i]) then hasil.nama = baris[i] break end
+        end
+    end
+    -- cadangan: kalau gak ada "Ends in" sama sekali, pakai yang pertama layak
+    if not hasil.nama then
+        for _, t in ipairs(baris) do
+            if layakNama(t) then hasil.nama = t break end
+        end
+    end
+
+    for _, t in ipairs(baris) do
+        if t:lower():find("contest over") then hasil.selesai = true end
+    end
+    return hasil.nama and hasil or nil
+end
+
+function Seed.bacaEventGuild()
+    local ev, sebab = eventDariPacket()
+    if not ev then ev = eventDariPanel() end
+    if not ev then
+        Seed._guildLog = sebab or "gak kebaca"
+        return nil
+    end
+    Seed.guildEvent = ev
+    Seed._guildLog = (ev.nama or "?") .. " (" .. (ev.sumber or "?") .. ")"
+    return ev
+end
+
+-- kirim ke panel bareng katalog (jarang, gak nambah beban)
+function Seed.kirimEventGuild()
+    if not panelAktif() then return end
+    local ev = Seed.bacaEventGuild()
+    if not ev or not ev.nama then return end
+    panelReq("/guild-event", "POST", {
+        akun    = player.Name,
+        nama    = tostring(ev.nama),
+        tag     = ev.tag and tostring(ev.tag) or "",
+        sisa    = tonumber(ev.sisaDetik) or tonumber(ev.berakhir) or 0,
+        selesai = ev.selesai and true or false,
+        sumber  = tostring(ev.sumber or "?"),
+    })
+end
+
+-- ============================================================
+-- v2.4: NILAI JUAL & STATUS RILIS SEED (dari modul game)
+--
+-- Bukti lapangan (star_seeddata):
+--   SellValueData.<nama>          = nilai jual dasar per buah
+--     (Rocket Pop 22500, Mushroom 13000 ... Carrot 5, Strawberry 3)
+--   SeedShopEnabled.IsSeedEnabled(nama) = udah rilis apa belum
+--     -- ini padanan SpawnChance=0 punya pet
+-- Dua-duanya dikirim ke panel, jadi picker bisa nunjukin mana yang berharga
+-- dan mana yang belum bisa didapat.
+-- ============================================================
+Seed._nilaiJual = nil
+Seed._seedEnabled = nil
+
+local function muatNilaiJual()
+    if Seed._nilaiJual ~= nil then return Seed._nilaiJual end
+    Seed._nilaiJual = {}
+    pcall(function()
+        local sm = RS:FindFirstChild("SharedModules")
+        local m = sm and sm:FindFirstChild("SellValueData")
+        if not m then return end
+        local ok, mod = pcall(require, m)
+        if not ok or type(mod) ~= "table" then return end
+        for k, v in pairs(mod) do
+            if type(k) == "string" and tonumber(v) then
+                Seed._nilaiJual[k] = tonumber(v)
+            end
+        end
+    end)
+    return Seed._nilaiJual
+end
+
+-- true / false / nil (nil = gak bisa dipastiin)
+local function seedUdahRilis(nama)
+    if Seed._seedEnabled == nil then
+        Seed._seedEnabled = false
+        pcall(function()
+            local sm = RS:FindFirstChild("SharedModules")
+            local m = sm and sm:FindFirstChild("SeedShopEnabled")
+            if not m then return end
+            local ok, mod = pcall(require, m)
+            if ok and type(mod) == "table" and type(mod.IsSeedEnabled) == "function" then
+                Seed._seedEnabled = mod
+            end
+        end)
+    end
+    if not Seed._seedEnabled then return nil end
+    local ok, hasil = pcall(Seed._seedEnabled.IsSeedEnabled, nama)
+    if ok and type(hasil) == "boolean" then return hasil end
+    return nil
+end
+
+function Seed.kirimKatalog()
+    if not panelAktif() then return end
+
+    local pets = {}
+    local detail = {}     -- v2.3: rincian per pet buat ditampilin di panel
+    pcall(function()
+        local mod = bacaPetModules()
+        if mod then
+            for k, v in pairs(mod) do
+                if type(k) == "string" and not k:match("^_") and type(v) == "table" then
+                    pets[#pets+1] = k
+                end
+            end
+        end
+        -- rincian dari SharedData.PetData: harga dasar, rarity, peluang spawn.
+        -- SpawnChance = 0 artinya BELUM RILIS -- pet-nya ada di data tapi gak
+        -- pernah spawn liar. Kalau gak ditandai, orang bisa milih pet yang
+        -- mustahil didapat dan bingung kenapa gak pernah kena.
+        local pd = bacaPetData()
+        if pd then
+            for k, v in pairs(pd) do
+                if type(k) == "string" and type(v) == "table" then
+                    local sc = tonumber(v.SpawnChance)
+                    detail[k] = {
+                        tampil = tostring(v.DisplayName or k),
+                        harga  = tonumber(v.BasePrice) or 0,
+                        rarity = tostring(v.Rarity or "?"),
+                        spawn  = sc,
+                        rilis  = not (sc ~= nil and sc <= 0),
+                    }
+                    local ada = false
+                    for _, n in ipairs(pets) do if n == k then ada = true break end end
+                    if not ada then pets[#pets+1] = k end
+                end
+            end
+        end
+        -- pet liar yang lagi spawn (jaga-jaga ada yang gak ada di modul)
+        local map = workspace:FindFirstChild("Map")
+        local ref = map and map:FindFirstChild("WildPetRef")
+        if ref then
+            local ada = {}
+            for _, n in ipairs(pets) do ada[n] = true end
+            for _, o in ipairs(ref:GetChildren()) do
+                local pn = o:GetAttribute("PetName")
+                if pn and not ada[tostring(pn)] then
+                    pets[#pets+1] = tostring(pn); ada[tostring(pn)] = true
+                end
+            end
+        end
+    end)
+
+    if not Seed.daftar then Seed.daftar = muatDaftarSeed() end
+    local seeds = {}
+    local nilai = muatNilaiJual()
+    for _, n in ipairs(Seed.daftar) do
+        seeds[#seeds+1] = n
+        local rilis = seedUdahRilis(n)
+        local jual = nilai[n]
+        if jual or rilis ~= nil then
+            detail[n] = {
+                tampil = n,
+                harga  = jual or 0,      -- buat seed, "harga" = nilai jual buahnya
+                rarity = Seed.rarity(n) or "?",
+                rilis  = (rilis ~= false),
+            }
+        end
+    end
+
+    if #pets == 0 and #seeds == 0 then return end
+
+    local r = panelReq("/katalog", "POST", { pets = pets, seeds = seeds, detail = detail })
+    local body = r and (r.Body or r.body)
+    if body then
+        local ok, d = pcall(function() return HS:JSONDecode(body) end)
+        if ok and type(d) == "table" and type(d.baru) == "table" then
+            local nP = #(d.baru.pets or {})
+            local nS = #(d.baru.seeds or {})
+            if nP > 0 or nS > 0 then
+                print(("[StarSeed] KATALOG: %d pet baru, %d seed baru -> dilaporin ke panel")
+                    :format(nP, nS))
+                if nP > 0 then print("   pet  : " .. table.concat(d.baru.pets, ", ")) end
+                if nS > 0 then print("   seed : " .. table.concat(d.baru.seeds, ", ")) end
+            end
+        end
+    end
+end
+
+task.spawn(function()
+    task.wait(12)   -- kasih waktu modul & stok kebaca dulu
+    while isCurrentGen() do
+        pcall(Seed.kirimKatalog)
+        pcall(Seed.kirimEventGuild)   -- v2.5: event guild ikut dilapor
+        task.wait(300)
+    end
+end)
+
+-- ============================================================
+-- GUI
+-- ============================================================
+local function mk(kelas, props)
+    local o = Instance.new(kelas)
+    for k, v in pairs(props) do
+        if k ~= "Parent" then o[k] = v end
+    end
+    if props.Parent then o.Parent = props.Parent end
+    return o
+end
+
+local WARNA = {
+    bg    = Color3.fromRGB(10, 10, 10),
+    kartu = Color3.fromRGB(20, 20, 20),
+    garis = Color3.fromRGB(38, 38, 38),
+    teks  = Color3.fromRGB(255, 255, 255),
+    redup = Color3.fromRGB(138, 138, 138),
+    samar = Color3.fromRGB(90, 90, 90),
+    aksen = Color3.fromRGB(232, 118, 58),
+}
+
+pcall(function()
+    local lama = CoreGui:FindFirstChild("StarSeed")
+    if lama then lama:Destroy() end
+end)
+
+local sg = mk("ScreenGui", { Name = "StarSeed", ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
+
+local W, H = 320, 470
+local main = mk("Frame", {
+    Name = "Main", Parent = sg, Active = true, Draggable = true,
+    Size = UDim2.new(0, W, 0, H),
+    Position = UDim2.new(0, 20, 0, 90),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+})
+mk("UICorner", { CornerRadius = UDim.new(0, 10), Parent = main })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = main })
+
+-- judul
+local judul = mk("Frame", { Parent = main, Size = UDim2.new(1, 0, 0, 40),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0 })
+mk("UICorner", { CornerRadius = UDim.new(0, 10), Parent = judul })
+mk("Frame", { Parent = judul, Size = UDim2.new(1, 0, 0, 10), Position = UDim2.new(0, 0, 1, -10),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0 })
+
+mk("TextLabel", { Parent = judul, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 14, 0, 0), Size = UDim2.new(1, -80, 1, 0),
+    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "STAR SEED" })
+mk("TextLabel", { Parent = judul, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 90, 0, 0), Size = UDim2.new(0, 60, 1, 0),
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "v" .. VERSI })
+
+local tblMin = mk("TextButton", { Parent = judul, BackgroundTransparency = 1,
+    Position = UDim2.new(1, -34, 0, 0), Size = UDim2.new(0, 34, 1, 0),
+    Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WARNA.redup, Text = "—" })
+
+local isi = mk("ScrollingFrame", { Parent = main, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 0, 0, 40), Size = UDim2.new(1, 0, 1, -40),
+    BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WARNA.garis,
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y })
+mk("UIListLayout", { Parent = isi, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder })
+mk("UIPadding", { Parent = isi, PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10),
+    PaddingRight = UDim.new(0, 10), PaddingBottom = UDim.new(0, 12) })
+
+local urut = 0
+local function kartu(tinggi)
+    urut = urut + 1
+    local f = mk("Frame", { Parent = isi, Size = UDim2.new(1, 0, 0, tinggi),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0, LayoutOrder = urut })
+    mk("UICorner", { CornerRadius = UDim.new(0, 8), Parent = f })
+    return f
+end
+
+-- ---------- saklar utama ----------
+local kSaklar = kartu(58)
+mk("TextLabel", { Parent = kSaklar, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -100, 0, 18),
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto beli seed + gear" })
+local lblStatus = mk("TextLabel", { Parent = kSaklar, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 29), Size = UDim2.new(1, -100, 0, 16),
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "mati" })
+
+local tblSaklar = mk("TextButton", { Parent = kSaklar,
+    Position = UDim2.new(1, -76, 0, 14), Size = UDim2.new(0, 64, 0, 30),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblSaklar })
+
+-- ---------- statistik ----------
+local kStat = kartu(82)
+local lblSheck = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 10), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Sheckles: —" })
+local lblSeed = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed di tas: —" })
+local lblBeli = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 44), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed kebeli: 0" })
+local lblGear = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 60), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Gear kebeli: 0" })
+
+-- ---------- mode ----------
+local kMode = kartu(128)
+mk("TextLabel", { Parent = kMode, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Mode" })
+
+local tblBorong = mk("TextButton", { Parent = kMode,
+    Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(0.5, -16, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.teks, Text = "Borong semua" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblBorong })
+
+local tblPilih = mk("TextButton", { Parent = kMode,
+    Position = UDim2.new(0.5, 4, 0, 30), Size = UDim2.new(0.5, -16, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup, Text = "Pilih jenis" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblPilih })
+
+local tblBagus = mk("TextButton", { Parent = kMode,
+    Position = UDim2.new(0, 12, 0, 62), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    Text = "Ikut samber seed bagus: MATI" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblBagus })
+
+local tblBaru = mk("TextButton", { Parent = kMode,
+    Position = UDim2.new(0, 12, 0, 94), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    Text = "Seed baru auto-beli: MATI" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblBaru })
+
+-- ---------- daftar seed (mode pilih) ----------
+local kDaftar = kartu(190)
+mk("TextLabel", { Parent = kDaftar, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
+local lblHint = mk("TextLabel", { Parent = kDaftar, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 24), Size = UDim2.new(1, -24, 0, 14),
+    Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "cuma kepakai di mode Pilih jenis" })
+
+local gulir = mk("ScrollingFrame", { Parent = kDaftar, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 8, 0, 42), Size = UDim2.new(1, -16, 1, -50),
+    BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WARNA.garis,
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y })
+mk("UIListLayout", { Parent = gulir, Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder })
+
+-- ---------- setelan angka ----------
+local kSet = kartu(76)
+mk("TextLabel", { Parent = kSet, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Sisa sheckles" })
+mk("TextLabel", { Parent = kSet, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 24), Size = UDim2.new(1, -24, 0, 14),
+    Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "berhenti beli kalau saldo di bawah ini (0 = bebas)" })
+local kotakSisa = mk("TextBox", { Parent = kSet,
+    Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Text = tostring(state.sisaSheck or 0) })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakSisa })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSisa })
+
+-- ---------- gift + jual ----------
+local kGift = kartu(150)
+mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Gift & jual" })
+
+local tblGift = mk("TextButton", { Parent = kGift,
+    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    Text = "Terima gift otomatis: MATI" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblGift })
+
+local tblJual = mk("TextButton", { Parent = kGift,
+    Position = UDim2.new(0, 12, 0, 58), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    Text = "Auto jual pas mahal: MATI" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblJual })
+
+mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(0, 108, 0, 26),
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Jual kalau >=" })
+local kotakMult = mk("TextBox", { Parent = kGift,
+    Position = UDim2.new(0, 120, 0, 88), Size = UDim2.new(1, -132, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Text = tostring(state.jualMinMult or 4) .. "x" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakMult })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakMult })
+
+local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 118), Size = UDim2.new(1, -24, 0, 26),
+    Font = Enum.Font.Gotham, TextSize = 10.5, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
+    Text = "pasar: belum kebaca" })
+
+-- ---------- pet ----------
+local kPet = kartu(120)
+mk("TextLabel", { Parent = kPet, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Pet" })
+
+local tblPet = mk("TextButton", { Parent = kPet,
+    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    Text = "Jinakin pet liar: MATI" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblPet })
+
+local tblKirim = mk("TextButton", { Parent = kPet,
+    Position = UDim2.new(0, 12, 0, 58), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    Text = "Kirim pet ke akun lain: MATI" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblKirim })
+
+local kotakTarget = mk("TextBox", { Parent = kPet,
+    Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(1, -24, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.teks,
+    PlaceholderText = "nama akun tujuan kirim",
+    Text = tostring(state.giftTarget or "") })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakTarget })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakTarget })
+
+-- ---------- anti-afk ----------
+local kAfk = kartu(44)
+mk("TextLabel", { Parent = kAfk, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -90, 1, 0),
+    Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Anti-AFK" })
+local tblAfk = mk("TextButton", { Parent = kAfk,
+    Position = UDim2.new(1, -70, 0, 9), Size = UDim2.new(0, 58, 0, 26),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "ON" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblAfk })
+
+-- ============================================================
+-- LOGIKA GUI
+-- ============================================================
+local function catSaklar(tbl, nyala, teksOn, teksOff)
+    tbl.Text = nyala and (teksOn or "ON") or (teksOff or "OFF")
+    tbl.BackgroundColor3 = nyala and WARNA.aksen or WARNA.garis
+    tbl.TextColor3 = nyala and Color3.fromRGB(255, 255, 255) or WARNA.redup
+end
+
+local barisSeed = {}
+local function gambarDaftarSeed()
+    for _, b in pairs(barisSeed) do b:Destroy() end
+    barisSeed = {}
+    if not Seed.daftar then Seed.daftar = muatDaftarSeed() end
+    for i, nama in ipairs(Seed.daftar) do
+        local rar = Seed.rarity(nama) or "?"
+        local b = mk("TextButton", { Parent = gulir, LayoutOrder = i,
+            Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = WARNA.bg,
+            BorderSizePixel = 0, Font = Enum.Font.Gotham, TextSize = 11,
+            TextColor3 = state.seedPilih[nama] and WARNA.aksen or WARNA.redup,
+            TextXAlignment = Enum.TextXAlignment.Left, Text = "  " .. nama })
+        mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
+        mk("TextLabel", { Parent = b, BackgroundTransparency = 1,
+            Position = UDim2.new(1, -74, 0, 0), Size = UDim2.new(0, 70, 1, 0),
+            Font = Enum.Font.Gotham, TextSize = 9.5, TextColor3 = WARNA.samar,
+            TextXAlignment = Enum.TextXAlignment.Right, Text = rar .. "  " })
+        b.MouseButton1Click:Connect(function()
+            state.seedPilih[nama] = (not state.seedPilih[nama]) or nil
+            b.TextColor3 = state.seedPilih[nama] and WARNA.aksen or WARNA.redup
+            simpan()
+        end)
+        barisSeed[nama] = b
+    end
+end
+Seed._gambarDaftar = gambarDaftarSeed   -- dipanggil pemindai kalau ada seed baru
+
+local function segarkanMode()
+    catSaklar(tblBorong, state.borongSemua, "Borong semua", "Borong semua")
+    catSaklar(tblPilih, not state.borongSemua, "Pilih jenis", "Pilih jenis")
+    catSaklar(tblBagus, state.beliBagus,
+        "Ikut samber seed bagus: " .. (state.minRarity or "Mythic") .. "+",
+        "Ikut samber seed bagus: MATI")
+    gulir.Visible = not state.borongSemua
+    lblHint.Text = state.borongSemua and "mode Borong semua -- semua jenis dibeli"
+                                      or "ketuk buat pilih/lepas"
+end
+
+tblSaklar.MouseButton1Click:Connect(function()
+    state.beliOn = not state.beliOn
+    catSaklar(tblSaklar, state.beliOn)
+    simpan()
+end)
+
+tblBorong.MouseButton1Click:Connect(function()
+    state.borongSemua = true; segarkanMode(); simpan()
+end)
+tblPilih.MouseButton1Click:Connect(function()
+    state.borongSemua = false; segarkanMode(); simpan()
+end)
+
+tblBagus.MouseButton1Click:Connect(function()
+    -- ketuk: mati -> Super -> Mythic -> ... -> Common -> mati
+    if not state.beliBagus then
+        state.beliBagus = true; state.minRarity = RARITY_ORDER[1]
+    else
+        local idx = 1
+        for i, r in ipairs(RARITY_ORDER) do if r == state.minRarity then idx = i break end end
+        if idx >= #RARITY_ORDER then state.beliBagus = false
+        else state.minRarity = RARITY_ORDER[idx + 1] end
+    end
+    segarkanMode(); simpan()
+end)
+
+tblAfk.MouseButton1Click:Connect(function()
+    state.autoAfk = not state.autoAfk
+    catSaklar(tblAfk, state.autoAfk)
+    simpan()
+end)
+
+tblBaru.MouseButton1Click:Connect(function()
+    state.seedBaruAuto = not state.seedBaruAuto
+    catSaklar(tblBaru, state.seedBaruAuto,
+        "Seed baru auto-beli: NYALA", "Seed baru auto-beli: MATI")
+    simpan()
+end)
+
+tblGift.MouseButton1Click:Connect(function()
+    state.terimaGift = not state.terimaGift
+    catSaklar(tblGift, state.terimaGift,
+        "Terima gift otomatis: NYALA", "Terima gift otomatis: MATI")
+    simpan()
+end)
+
+tblJual.MouseButton1Click:Connect(function()
+    state.jualOn = not state.jualOn
+    catSaklar(tblJual, state.jualOn,
+        "Auto jual pas mahal: NYALA", "Auto jual pas mahal: MATI")
+    simpan()
+end)
+
+tblPet.MouseButton1Click:Connect(function()
+    state.petOn = not state.petOn
+    catSaklar(tblPet, state.petOn, "Jinakin pet liar: NYALA", "Jinakin pet liar: MATI")
+    simpan()
+end)
+
+tblKirim.MouseButton1Click:Connect(function()
+    state.giftPetOn = not state.giftPetOn
+    catSaklar(tblKirim, state.giftPetOn,
+        "Kirim pet ke akun lain: NYALA", "Kirim pet ke akun lain: MATI")
+    simpan()
+end)
+
+kotakTarget.FocusLost:Connect(function()
+    state.giftTarget = tostring(kotakTarget.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    Seed._uidCache = {}
+    simpan()
+end)
+
+-- v1.6: dipanggil pas setelan dateng dari panel, biar tombol GUI ikut berubah
+function Seed._segarkanGUI()
+    catSaklar(tblSaklar, state.beliOn)
+    catSaklar(tblAfk, state.autoAfk)
+    catSaklar(tblBaru, state.seedBaruAuto,
+        "Seed baru auto-beli: NYALA", "Seed baru auto-beli: MATI")
+    catSaklar(tblGift, state.terimaGift,
+        "Terima gift otomatis: NYALA", "Terima gift otomatis: MATI")
+    catSaklar(tblJual, state.jualOn,
+        "Auto jual pas mahal: NYALA", "Auto jual pas mahal: MATI")
+    catSaklar(tblPet, state.petOn, "Jinakin pet liar: NYALA", "Jinakin pet liar: MATI")
+    catSaklar(tblKirim, state.giftPetOn,
+        "Kirim pet ke akun lain: NYALA", "Kirim pet ke akun lain: MATI")
+    kotakMult.Text = tostring(state.jualMinMult or 4) .. "x"
+    kotakSisa.Text = tostring(state.sisaSheck or 0)
+    kotakTarget.Text = tostring(state.giftTarget or "")
+    pcall(segarkanMode)
+end
+
+kotakMult.FocusLost:Connect(function()
+    -- v1.5 FIX: gsub balik DUA nilai (hasil, jumlah ganti). Tanpa kurung,
+    -- jumlah-ganti kekirim jadi argumen ke-2 tonumber = BASIS bilangan ->
+    -- error "base out of range" -> handler mati diam-diam -> angkanya gak
+    -- pernah kesimpen. Kurungnya WAJIB biar cuma nilai pertama yang kepakai.
+    local bersih = (tostring(kotakMult.Text or ""):gsub("[^%d%.]", ""))
+    local n = tonumber(bersih)
+    if n and n > 0 then
+        state.jualMinMult = n
+        print("[StarSeed] ambang jual -> " .. n .. "x")
+    end
+    kotakMult.Text = tostring(state.jualMinMult or 4) .. "x"
+    simpan()
+end)
+
+kotakSisa.FocusLost:Connect(function()
+    local n = tonumber(kotakSisa.Text)
+    state.sisaSheck = (n and n >= 0) and math.floor(n) or 0
+    kotakSisa.Text = tostring(state.sisaSheck)
+    simpan()
+end)
+
+local kecil = false
+tblMin.MouseButton1Click:Connect(function()
+    kecil = not kecil
+    isi.Visible = not kecil
+    main.Size = kecil and UDim2.new(0, W, 0, 40) or UDim2.new(0, W, 0, H)
+    tblMin.Text = kecil and "+" or "—"
+end)
+
+-- ============================================================
+-- REFRESH TAMPILAN
+-- ============================================================
+task.spawn(function()
+    while isCurrentGen() do
+        pcall(function()
+            local _, totSeed = seedDiTas()
+            lblSheck.Text = ("Sheckles: %s"):format(tostring(sheckles()))
+            lblSeed.Text  = ("Seed di tas: %d"):format(totSeed)
+            lblBeli.Text  = ("Seed kebeli: %d  ·  siklus %d  ·  %s")
+                :format(Seed.statTerbeli, Seed.statSiklus, Seed._logAkhir ~= "" and Seed._logAkhir or "-")
+            lblGear.Text  = ("Gear kebeli: %d  ·  %s")
+                :format(Seed.statGear, Seed._logGear ~= "" and Seed._logGear or "nunggu restock")
+
+            -- status pasar + gift/jual
+            local best, nmBest = Seed.pengaliTertinggi()
+            local bagian = {}
+            if best then
+                bagian[#bagian+1] = ("pasar tertinggi %.2fx (%s)"):format(best, nmBest or "?")
+            else
+                bagian[#bagian+1] = "pasar belum kebaca -- buka panel Stok Harga Buah sekali"
+            end
+            bagian[#bagian+1] = ("gift %d"):format(Seed.statGift)
+            if state.jualOn then
+                bagian[#bagian+1] = ("jual %d · %s"):format(Seed.statJual,
+                    Seed._logJual ~= "" and Seed._logJual or "-")
+            end
+            lblPasar.Text = table.concat(bagian, "  ·  ")
+            lblPasar.TextColor3 = (best and best >= (tonumber(state.jualMinMult) or 4))
+                and WARNA.aksen or WARNA.samar
+            if state.beliOn then
+                lblStatus.Text = "jalan -- seed tiap " .. (state.jedaSiklus or 3) .. "s, gear pas restock"
+                lblStatus.TextColor3 = WARNA.aksen
+            else
+                lblStatus.Text = "mati"
+                lblStatus.TextColor3 = WARNA.samar
+            end
+        end)
+        task.wait(2)
+    end
+end)
+
+-- ============================================================
+-- v1.4: HUD PENGALI di POJOK KANAN BAWAH
+-- Mandiri dari GUI utama (GUI bisa di-minimize, HUD tetep keliatan). Gunanya
+-- BUKAN hiasan: ini bukti mata kalau pembacaan pasar beneran jalan. Kalau HUD
+-- nunjukin angka yang cocok sama panel "Stok Harga Buah" di game, berarti
+-- syarat jual juga baca angka yang bener.
+-- Ijo = udah lewat ambang jual. Abu = belum. Merah = gak kebaca sama sekali.
+-- ============================================================
+do
+    local host = (gethui and gethui()) or CoreGui
+    pcall(function()
+        local old = host:FindFirstChild("StarSeedHUD")
+        if old then old:Destroy() end
+    end)
+    local hg = Instance.new("ScreenGui")
+    hg.Name = "StarSeedHUD"; hg.ResetOnSpawn = false
+    hg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    hg.IgnoreGuiInset = true
+    hg.Parent = host
+
+    local box = Instance.new("Frame")
+    box.AnchorPoint = Vector2.new(1, 1)
+    box.Position = UDim2.new(1, -12, 1, -12)
+    box.Size = UDim2.new(0, 236, 0, 34)
+    box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    box.BackgroundTransparency = 0.1
+    box.BorderSizePixel = 0
+    box.Parent = hg
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, 8); c.Parent = box
+    local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(38, 38, 38); st.Thickness = 1; st.Parent = box
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -16, 1, 0); lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.RichText = true
+    lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    lbl.Text = "pasar ..."
+    lbl.Parent = box
+
+    task.spawn(function()
+        while hg.Parent and isCurrentGen() do
+            pcall(function()
+                local ambang = tonumber(state.jualMinMult) or 4
+                local best, nama = Seed.pengaliTertinggi()
+                if not best then
+                    lbl.Text = '<font color="#E65B5B">pasar gak kebaca</font>'
+                else
+                    local warna = (best >= ambang) and "#5BE36A" or "#9AA0AA"
+                    local tanda = (best >= ambang) and "  JUAL" or ""
+                    lbl.Text = string.format(
+                        '%s <font color="%s">x%.2f%s</font>',
+                        tostring(nama):sub(1, 18), warna, best, tanda)
+                end
+            end)
+            task.wait(5)
+        end
+        pcall(function() hg:Destroy() end)
+    end)
+end
+
+-- ============================================================
+-- NYALAIN
+-- ============================================================
+catSaklar(tblSaklar, state.beliOn)
+catSaklar(tblAfk, state.autoAfk)
+catSaklar(tblBaru, state.seedBaruAuto,
+    "Seed baru auto-beli: NYALA", "Seed baru auto-beli: MATI")
+catSaklar(tblGift, state.terimaGift,
+    "Terima gift otomatis: NYALA", "Terima gift otomatis: MATI")
+catSaklar(tblJual, state.jualOn,
+    "Auto jual pas mahal: NYALA", "Auto jual pas mahal: MATI")
+catSaklar(tblPet, state.petOn, "Jinakin pet liar: NYALA", "Jinakin pet liar: MATI")
+catSaklar(tblKirim, state.giftPetOn,
+    "Kirim pet ke akun lain: NYALA", "Kirim pet ke akun lain: MATI")
+segarkanMode()
+
+-- v1.2: pindai awal. Kalau seedDikenal masih kosong (jalan pertama kali),
+-- semua seed ditandai "udah dikenal" -- biar gak semua langsung kecentang.
+do
+    local pertama = true
+    for _ in pairs(state.seedDikenal) do pertama = false break end
+    pindaiSeedBaru(pertama)
+end
+gambarDaftarSeed()
+
+print(("[StarSeed] v%s jalan | akun %s | %d jenis seed dikenali")
+    :format(VERSI, player.Name, Seed.daftar and #Seed.daftar or 0))
+if not NET then
+    warn("[StarSeed] SharedModules.Networking gak kebaca -- beli seed gak bakal jalan.")
+end
+if not panelAktif() then
+    print("[StarSeed] panel gak aktif (url/kunci kosong) -- jalan lokal aja")
+end
