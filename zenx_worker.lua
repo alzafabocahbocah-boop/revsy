@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.93-cf"
+local VERSION = "4.94-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -3302,7 +3302,7 @@ if PERINTAH == "rekam" then
     ok(("PECAHAN-nya: %.3f , %.3f"):format(hasil.fx, hasil.fy))
     print()
     info("Uji balik -- harusnya kepencet tombol yang sama:")
-    info(("   zenx tap %s %.3f %.3f 2"):format(target, hasil.fx, hasil.fy))
+    info(("   zenx tap %s %.3f %.3f 2 5"):format(target, hasil.fx, hasil.fy))
     print()
     info("Kalau bener, simpen di zenx_worker_config.lua:")
     info(('   key_tap="%.3f,%.3f",'):format(hasil.fx, hasil.fy))
@@ -3318,11 +3318,13 @@ if PERINTAH == "tap" then
     local fx = tonumber(arg and arg[3] or "")
     local fy = tonumber(arg and arg[4] or "")
     local kali = math.floor(tonumber(arg and arg[5] or "") or 1)
+    -- v4.94: jeda sebelum mencet -- biar sempet liat layarnya pas kepencet
+    local jeda = math.floor(tonumber(arg and arg[6] or "") or 0)
 
     if target == "" or not fx or not fy then
-        err("Cara pakai:  zenx tap <client> <x> <y> [kali]")
+        err("Cara pakai:  zenx tap <client> <x> <y> [kali] [jeda-detik]")
         info("   x & y = pecahan 0..1 dari kotak jendela")
-        info("   contoh:  zenx tap clienu 0.5 0.62 2")
+        info("   contoh:  zenx tap clienu 0.5 0.62 2 5   (pencet 2x, tunggu 5 detik dulu)")
         info("   (0.5 0.5 = tengah jendela; 0.5 0.62 = tengah, agak ke bawah)")
         return
     end
@@ -3346,6 +3348,15 @@ if PERINTAH == "tap" then
     local _, caraDepan = bawa_depan(pkg)
     info("   lewat: " .. tostring(caraDepan))
     os.execute("sleep 3")
+
+    if jeda > 0 then
+        for sisa = jeda, 1, -1 do
+            io.write(("\r   mencet dalam %2d detik... (liatin layarnya)"):format(sisa))
+            io.flush()
+            os.execute("sleep 1")
+        end
+        io.write("\r" .. string.rep(" ", 55) .. "\r"); io.flush()
+    end
 
     local hasil, sebab = tap_jendela(cfg, pkg, fx, fy, kali)
     if not hasil then
