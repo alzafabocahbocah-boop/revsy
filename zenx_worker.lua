@@ -84,9 +84,20 @@
 --          tiap 60 detik -> CF ngumpulin akun market yg stok nipis ke PS akun
 --          leveling yg pet siap-gift-nya banyak, terus mulangin kalau udah cukup.
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
+--
+-- v5.25: `zenx cookie` -- ekstrak cookie .ROBLOSECURITY dari akun sendiri buat
+--        BACKUP / pindah device. Bukan bypass apa-apa -- cuma baca kredensial
+--        milik sendiri dari storage client yang lagi login.
+--          zenx cookie          -> cuma client yang LAGI JALAN (yg terkait)
+--          zenx cookie <huruf>  -> satu client (com.roblox.clien<huruf>)
+--          zenx cookie all      -> semua paket kepasang (jalan atau nggak)
+--        "Bukti dulu": lokasi & format simpan cookie di clone App Cloner belum
+--        pasti, jadi command ini NAMPILIN file mana yg punya ROBLOSECURITY +
+--        ekstrak nilainya. Kalau nihil -> lokasinya beda, kabarin biar disetel.
+--        Pakai timeout panjang (grep rekursif lama) -- bukan sh() yg dipatok 8s.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.18-cf"
+local VERSION = "5.25-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -876,16 +887,22 @@ local TAP_FILE = "zenx_tap.txt"
 -- kalibrasi manual nunjukin tombolnya di x=0.81, jauh ke kanan. Makanya sapuan
 -- lama gak pernah kena, seberapa rapat pun titik Y-nya.
 -- Sekarang: kolom kanan (0.81) didahuluin, baru tengah, baru kiri.
+-- v5.21: disusun ulang pakai HASIL KALIBRASI NYATA di tiga bentuk grid:
+--   1 baris (610x653) -> 0.844 , 0.713
+--   2 baris (396x293) -> 0.823 , 0.723
+--   3 baris (348x173) -> 0.833 , 0.808
+-- X-nya STABIL di ~0.83 semua -- yang geser cuma Y (makin pendek jendelanya,
+-- makin ke bawah). Jadi sapuan difokusin di kolom 0.83, Y-nya yang diayak.
 local TITIK_SAPU = {
-    -- kolom kanan -- di sinilah tombolnya ketemu waktu kalibrasi manual
-    { 0.81, 0.70 }, { 0.81, 0.64 }, { 0.81, 0.76 }, { 0.81, 0.58 },
-    { 0.81, 0.82 }, { 0.81, 0.52 }, { 0.81, 0.88 },
-    -- agak geser dari kolom kanan
-    { 0.72, 0.70 }, { 0.90, 0.70 }, { 0.72, 0.64 }, { 0.90, 0.64 },
-    -- garis tengah, jaga-jaga kalau tata letaknya beda di ukuran lain
-    { 0.50, 0.70 }, { 0.50, 0.62 }, { 0.50, 0.78 }, { 0.50, 0.55 },
-    -- kolom kiri
-    { 0.25, 0.70 }, { 0.25, 0.62 },
+    -- kolom 0.83, Y persis di tiga titik yang kebukti dulu
+    { 0.83, 0.72 }, { 0.83, 0.81 }, { 0.83, 0.71 },
+    -- Y di antara & di luar ketiganya
+    { 0.83, 0.76 }, { 0.83, 0.66 }, { 0.83, 0.86 }, { 0.83, 0.61 },
+    { 0.83, 0.90 }, { 0.83, 0.56 },
+    -- geser kiri-kanan sedikit, kalau-kalau tata letaknya beda
+    { 0.75, 0.72 }, { 0.90, 0.72 }, { 0.75, 0.81 }, { 0.90, 0.81 },
+    -- garis tengah & kiri: jaring terakhir
+    { 0.50, 0.72 }, { 0.50, 0.81 }, { 0.25, 0.72 },
 }
 
 local function tap_muat()
@@ -1664,6 +1681,18 @@ local function petak_untuk(n, slot)
         R = (c + 1) * lebar - SELA,
         B = (r + 1) * tinggi - SELA,
     }, kol, bar, W, H
+end
+
+-- v5.20 (BUKTI LAPANGAN): grid 3 BARIS gak bisa dipakai bypass key.
+-- Di layar 1280x720, 3 baris bikin tinggi jendela cuma ~173px -- dialog key
+-- Delta gak muat, tombolnya kepotong. Udah dicoba di 9 client: gagal.
+-- Jadi batas aman = 8 client (masih 2 baris, tinggi ~293px). Ini batas LAYAR,
+-- beda dari batas RAM -- dua-duanya harus dilewatin.
+local function baris_grid(n, W, H)
+    local s = SUSUNAN[n]
+    if s then return s[2] end
+    if W >= H then return math.ceil(n / math.ceil(math.sqrt(n))) end
+    return math.ceil(math.sqrt(n))
 end
 
 local function grid_hitung(cfg)
@@ -2614,6 +2643,24 @@ local function setup_wizard()
     local n = #split(cfg.pkgs)
     save_config(cfg)
     ok("Config disimpan: "..CONFIG_FILE)
+
+    -- v5.22: pasang.sh nanya kunci API SEBELUM config ada, jadi dia nyimpen
+    -- sementara. Sekarang config-nya udah kebentuk -- pasang kuncinya, terus
+    -- berkas sementaranya dihapus (biar kunci gak nyangkut di dua tempat).
+    do
+        local jalur = (os.getenv("HOME") or ".") .. "/.zenx_apikey_sementara"
+        local f = io.open(jalur, "r")
+        if f then
+            local k = (f:read("*l") or ""):gsub("%s+", "")
+            f:close()
+            if k ~= "" then
+                local sukses, sebab = config_set_bypass(k)
+                if sukses then ok("Kunci API bypass.vip dipasang dari pasang.sh")
+                else warn("Gagal masang kunci API: " .. tostring(sebab)) end
+            end
+            os.remove(jalur)
+        end
+    end
     info("Tim '"..cfg.tim.."' pegang "..n.." client:")
     for _, p in ipairs(split(cfg.pkgs)) do print(C.D.."   - "..p..C.N) end
     if n == 1 then warn("Baru 1 paket. Yakin? Biasanya 1 tim isinya 6-10.") end
@@ -2675,6 +2722,9 @@ local function run(cfg)
     cfg.max_coba    = cfg.max_coba or 5
     cfg.tim         = cfg.tim or "tim-1"
     cfg.pkgs        = cfg.pkgs or cfg.roblox_pkg or "com.roblox.client"
+    -- v5.24: nilai bawaan buat setelan yang bisa hilang kalau config disunting
+    -- tangan. Tanpa ini, satu field kelupaan = worker mati pas nyala.
+    cfg.targets     = cfg.targets or "FORCE"
 
     if not cfg.url or cfg.url:find("GANTI") or not cfg.kunci or cfg.kunci == "" then
         err("URL/Kunci belum diisi. Jalanin ulang, pilih E.")
@@ -2684,6 +2734,10 @@ local function run(cfg)
     local list = split(cfg.pkgs)
     print(C.BOLD..C.G.."\n=== ZENX WORKER v"..VERSION.." — RUNNING ===\n"..C.N)
     info("Tim   : "..cfg.tim.." ("..#list.." client)")
+    -- v5.21: peringatan "3 baris gak muat" DICABUT -- ternyata SALAH.
+    -- Kalibrasi manual di 9 client emang gagal (tombolnya susah dilihat/dipencet
+    -- tangan di jendela ~173px), tapi sapuan otomatis KENA: 0.833, 0.808.
+    -- Jadi 3 baris tetep bisa dipakai bypass. Yang batesin cuma RAM.
     info("Panel : "..cfg.url)
     info("Pemicu: "..cfg.targets.." | poll "..cfg.poll_sec.."s")
 
@@ -3740,6 +3794,7 @@ if PERINTAH == "set" then
 
     print(C.BOLD..C.C.."\n=== SET UKURAN buat " .. jumlah .. " CLIENT ==="..C.N)
     info(("Layar %dx%d, susunan %dx%d"):format(W, H, kol, bar))
+
     info(("Petak %d: [%d,%d]-[%d,%d]  ->  %dx%d"):format(
         slot, petak.L, petak.T, petak.R, petak.B, petak.R - petak.L, petak.B - petak.T))
 
@@ -3800,6 +3855,10 @@ if PERINTAH == "catat" then
     print(C.BOLD..C.C.."\n=== CATAT TOMBOL buat " .. jumlah .. " CLIENT ==="..C.N)
     info(("Layar %dx%d, susunan %dx%d -> petak %dx%d"):format(
         W, H, kol, bar, petak.R - petak.L, petak.B - petak.T))
+    if bar >= 3 then
+        info("Jendelanya pendek -- kalau susah nge-tap tangan, pakai sapuan otomatis:")
+        info("   zenx set " .. target .. " " .. jumlah .. "   lalu   zenx cari " .. target)
+    end
 
     info("Tutup client, tulis ukuran, buka lagi...")
     close_all(cfg, pkg, nil, true)
@@ -3901,22 +3960,51 @@ if PERINTAH == "catat" then
         return
     end
 
-    -- rata-rata + sebaran, biar keliatan konsisten apa nggak
-    local sx, sy = 0, 0
-    local minx, maxx, miny, maxy = 9, -9, 9, -9
-    for _, k in ipairs(kumpul) do
-        sx = sx + k.fx; sy = sy + k.fy
-        if k.fx < minx then minx = k.fx end
-        if k.fx > maxx then maxx = k.fx end
-        if k.fy < miny then miny = k.fy end
-        if k.fy > maxy then maxy = k.fy end
+    -- v5.19: JANGAN pakai rata-rata polos. Satu tap nyasar langsung narik
+    -- hasilnya, dan rata-ratanya bisa jatuh di ANTARA dua elemen -- bukan di
+    -- tombolnya. Gantinya: cari KELOMPOK TAP PALING RAPAT (yang Y-nya
+    -- berdekatan), sisanya dibuang. Tombolnya panjang, jadi yang dipakai
+    -- ngelompokin cuma Y; X-nya boleh nyebar.
+    local RAPAT = 0.04   -- beda Y masih dianggap tombol yang sama
+    local juara = {}
+    for _, pusat in ipairs(kumpul) do
+        local anggota = {}
+        for _, k in ipairs(kumpul) do
+            if math.abs(k.fy - pusat.fy) <= RAPAT then anggota[#anggota+1] = k end
+        end
+        if #anggota > #juara then juara = anggota end
     end
-    local rx, ry = sx / #kumpul, sy / #kumpul
-    ok(("%d tap kecatat -> rata-rata %.3f , %.3f"):format(#kumpul, rx, ry))
-    info(("sebaran: x %.3f-%.3f  |  y %.3f-%.3f"):format(minx, maxx, miny, maxy))
-    if (maxy - miny) > 0.15 then
-        warn("Sebaran Y lebar -- kayaknya gak semua tap di tombol yang sama.")
-        warn("Kalau ragu, ulangi sambil tap tombol yang SAMA aja.")
+
+    local function ringkas(t)
+        local sx, sy, minx, maxx, miny, maxy = 0, 0, 9, -9, 9, -9
+        for _, k in ipairs(t) do
+            sx = sx + k.fx; sy = sy + k.fy
+            if k.fx < minx then minx = k.fx end
+            if k.fx > maxx then maxx = k.fx end
+            if k.fy < miny then miny = k.fy end
+            if k.fy > maxy then maxy = k.fy end
+        end
+        return sx / #t, sy / #t, minx, maxx, miny, maxy
+    end
+
+    local _, _, amx, aax, amy, aay = ringkas(kumpul)
+    info(("%d tap kecatat -- sebaran semua: x %.3f-%.3f | y %.3f-%.3f"):format(
+        #kumpul, amx, aax, amy, aay))
+
+    local rx, ry, kmx, kax, kmy, kay = ringkas(juara)
+    if #juara < #kumpul then
+        info(("%d tap nyasar dibuang, kepakai %d yang paling rapat"):format(
+            #kumpul - #juara, #juara))
+    end
+    ok(("Hasil: %.3f , %.3f   (dari %d tap, sebaran y %.3f-%.3f)"):format(
+        rx, ry, #juara, kmy, kay))
+
+    if #juara < 2 then
+        warn("Cuma 1 tap yang kepakai -- tap-tap lo kejauhan satu sama lain.")
+        warn("Ulangi, pastiin nge-tap TOMBOL YANG SAMA tiap kali.")
+    elseif (kay - kmy) > 0.05 then
+        warn("Sebaran Y masih lebar -- hasilnya belum tentu pas di tombol.")
+        warn("Uji dulu sebelum dipakai.")
     end
 
     if tap_simpan(kunci, rx, ry) then
@@ -4720,6 +4808,280 @@ end
 -- v4.84: perintah yang GAK DIKENAL jangan diem-diem nyalain worker. Dulu
 -- `zenx intip ...` di worker versi lama malah bikin worker nyala -- keliatan
 -- kayak perintahnya "gagal aneh", padahal cuma belum ada di versi itu.
+-- v5.23: `zenx pasang` -- SEMUA isi pasang.sh dipindah ke sini, biar cuma ada
+-- SATU berkas yang perlu di-push & diurus.
+--
+-- Yang gak bisa dipindah cuma satu: masang `lua` itu sendiri. Di Termux polos
+-- Lua belum ada, jadi berkas .lua gak bisa jalan buat masang Lua. Makanya
+-- perintah pemasangannya jadi satu baris:
+--
+--   pkg install lua54 curl -y && curl -sL <REPO>/zenx_worker.lua -o ~/zenx_worker.lua && lua5.4 ~/zenx_worker.lua pasang
+--
+-- Sisanya (izin penyimpanan, paket lain, cek root, pintasan, kalibrasi tombol,
+-- kunci API, auto-jalan) dikerjain di sini.
+if PERINTAH == "pasang" then
+    local REPO = "https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main"
+    local RUMAH = os.getenv("HOME") or "."
+    local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
+
+    local function jalan(cmd) os.execute(cmd) end
+    local function baca(cmd)
+        local h = io.popen(cmd .. " 2>/dev/null")
+        if not h then return "" end
+        local o = h:read("*all") or ""
+        h:close()
+        return o
+    end
+    local function ada_perintah(nama)
+        return baca("command -v " .. nama):match("%S") ~= nil
+    end
+    local function tanya(teks, bawaan)
+        io.write(C.Y .. "? " .. teks .. C.N)
+        if bawaan and bawaan ~= "" then io.write(C.D .. " [" .. bawaan .. "]" .. C.N) end
+        io.write(": "); io.flush()
+        local j = io.read()
+        if j == nil or j == "" then return bawaan or "" end
+        return j
+    end
+
+    print(C.BOLD .. C.C .. "\n=== ZENX PASANG (v" .. VERSION .. ") ===\n" .. C.N)
+
+    -- 1. izin penyimpanan -- buat nulis autoexec Delta + baca berkas lisensi
+    local adaStorage = baca("ls -d " .. RUMAH .. "/storage"):match("%S")
+    if not adaStorage then
+        info("Minta izin penyimpanan (bakal muncul kotak izin -- tap IZINKAN)")
+        jalan("termux-setup-storage")
+        jalan("sleep 3")
+    end
+    if baca("ls -d " .. RUMAH .. "/storage"):match("%S") then ok("Izin penyimpanan ada")
+    else warn("Izin penyimpanan belum -- autoexec mungkin gagal") end
+
+    -- 2. paket sisanya (lua & curl udah ada, kan dipakai buat nyampe sini)
+    info("Pasang termux-api + coreutils (agak lama di RF, sabar)")
+    jalan("pkg install termux-api coreutils -y >/dev/null 2>&1")
+    if ada_perintah("mkfifo") then ok("mkfifo siap (shell root tetap bisa dipakai)")
+    else warn("mkfifo gak ada -- shell root tetap bakal balik ke cara lama") end
+    if ada_perintah("termux-clipboard-get") then ok("termux-api siap (papan klip kebaca)")
+    else warn("termux-api gak ada -- `zenx key` gak bisa ambil link dari papan klip") end
+
+    -- 3. root
+    if baca("su -c 'echo ok'"):find("ok", 1, true) then
+        ok("Root jalan")
+    else
+        warn("Root GAK jalan. Worker butuh root buat buka/tutup client Roblox.")
+        warn("Buka root manager di RF, kasih izin buat Termux, terus ulangi.")
+    end
+
+    -- 4. kalibrasi tombol key -- ini yang paling ngirit waktu.
+    -- Isinya pecahan per UKURAN JENDELA, jadi kalau semua RF layarnya sama,
+    -- satu berkas kepakai di semua RF. Push sekali, RF baru langsung bisa.
+    local jalurTap = RUMAH .. "/" .. TAP_FILE
+    if not io.open(jalurTap, "r") then
+        info("Ambil kalibrasi tombol key (" .. TAP_FILE .. ") -- opsional")
+        jalan(("curl -fsSL '%s/%s?t=%d' -o '%s.baru' 2>/dev/null")
+            :format(REPO, TAP_FILE, os.time(), jalurTap))
+        local f = io.open(jalurTap .. ".baru", "r")
+        local isi = f and f:read("*all") or ""
+        if f then f:close() end
+        if isi:match("%d+x%d+%s+[%d.]+%s+[%d.]+") then
+            os.rename(jalurTap .. ".baru", jalurTap)
+            local n = 0
+            for _ in isi:gmatch("[^\n]+") do n = n + 1 end
+            ok("Kalibrasi keunduh (" .. n .. " ukuran jendela)")
+        else
+            os.remove(jalurTap .. ".baru")
+            warn("Belum ada " .. TAP_FILE .. " di GitHub -- nanti kalibrasi sendiri:")
+            warn("   zenx catat clienu <jumlah-client>")
+        end
+    else
+        ok("Kalibrasi udah ada")
+    end
+
+    -- 5. pintasan: zenx + up
+    local LUA = ada_perintah("lua5.4") and "lua5.4" or "lua"
+    local f1 = io.open(PREFIX .. "/bin/zenx", "w")
+    if f1 then
+        f1:write("#!" .. PREFIX .. "/bin/sh\n")
+        f1:write('cd "$HOME" && exec ' .. LUA .. ' zenx_worker.lua "$@"\n')
+        f1:close()
+        jalan("chmod +x " .. PREFIX .. "/bin/zenx")
+    end
+    -- `up`: anti-cache + DIPERIKSA sebelum nimpa, jadi kalau yang keunduh
+    -- halaman error GitHub, worker lama gak ikut rusak.
+    local f2 = io.open(PREFIX .. "/bin/up", "w")
+    if f2 then
+        f2:write("#!" .. PREFIX .. "/bin/sh\n")
+        f2:write("zenx stop >/dev/null 2>&1\n")
+        f2:write('echo "narik versi baru..."\n')
+        f2:write('curl -fsSL "' .. REPO .. '/zenx_worker.lua?t=$(date +%s)" -o "$HOME/zenx_worker.baru"\n')
+        f2:write('if head -5 "$HOME/zenx_worker.baru" 2>/dev/null | grep -q "ZENX WORKER"; then\n')
+        f2:write('    mv "$HOME/zenx_worker.baru" "$HOME/zenx_worker.lua"\n')
+        f2:write('    echo "OK  $(grep -m1 \'local VERSION\' "$HOME/zenx_worker.lua")"\n')
+        f2:write("else\n")
+        f2:write('    echo "GAGAL -- yang keunduh bukan worker (belum di-push?)"\n')
+        f2:write('    rm -f "$HOME/zenx_worker.baru"\n')
+        f2:write("fi\n")
+        f2:close()
+        jalan("chmod +x " .. PREFIX .. "/bin/up")
+    end
+    ok("Pintasan dibikin: zenx (jalanin) + up (update worker)")
+
+    -- 6. kunci API bypass.vip. SENGAJA ditanya di sini, bukan ditulis di worker
+    -- -- worker di-push ke GitHub publik, kalau kuncinya di dalam situ siapa pun
+    -- bisa baca & ngabisin kuota.
+    print()
+    info("Kunci API bypass.vip (buat `zenx key` -- bypass key Delta)")
+    info("Enter = lewat, bisa diisi nanti: zenx key set <APIKEY>")
+    local apikey = tanya("Kunci API", "")
+    if apikey ~= "" then
+        if io.open(CONFIG_FILE, "r") then
+            local sukses, sebab = config_set_bypass(apikey)
+            if sukses then ok("Kunci API kesimpen di " .. CONFIG_FILE)
+            else err("Gagal: " .. tostring(sebab)) end
+        else
+            -- config belum ada (setup belum jalan) -- simpen dulu, dipasang
+            -- otomatis begitu wizard selesai
+            local t = io.open(RUMAH .. "/.zenx_apikey_sementara", "w")
+            if t then t:write(apikey); t:close()
+                ok("Kunci disimpen sementara -- dipasang otomatis abis setup") end
+        end
+    end
+
+    -- 7. auto-jalan pas RF nyala (opsional, butuh app Termux:Boot)
+    print()
+    local jb = tanya("Jalanin worker otomatis tiap RF nyala? (y/N)", "n")
+    if jb:lower():sub(1, 1) == "y" then
+        jalan("mkdir -p " .. RUMAH .. "/.termux/boot")
+        local fb = io.open(RUMAH .. "/.termux/boot/zenx", "w")
+        if fb then
+            fb:write("#!" .. PREFIX .. "/bin/sh\n")
+            fb:write("termux-wake-lock\n")
+            fb:write("export ZENX_AUTO=1\n")
+            fb:write('cd "$HOME" && ' .. LUA .. ' zenx_worker.lua\n')
+            fb:close()
+            jalan("chmod +x " .. RUMAH .. "/.termux/boot/zenx")
+            ok("Auto-jalan dipasang")
+            warn("Pastiin app Termux:Boot kepasang & pernah dibuka sekali.")
+        end
+    end
+
+    print()
+    print(C.BOLD .. C.G .. "=== SIAP ===" .. C.N)
+    info("Jalanin  : zenx")
+    info("Matiin   : zenx stop")
+    info("Update   : up")
+    info("Diagnosa : zenx cek")
+    info("Kunci key: zenx lisensi  /  zenx key")
+    print()
+    -- v5.24: gak usah nanya "jalanin sekarang?" -- langsung lanjut ke alur
+    -- normal. Di situ udah ada pilihannya sendiri (Y=run / E=edit), atau
+    -- langsung masuk wizard kalau config belum ada. Dulu ditanya dua kali
+    -- padahal jawabannya sama.
+    PERINTAH = ""
+end
+
+-- ============================================================
+-- v5.25: `zenx cookie` -- ekstrak .ROBLOSECURITY dari akun SENDIRI (backup /
+-- pindah device). Baca kredensial milik sendiri dari storage client yg login.
+-- ============================================================
+if PERINTAH == "cookie" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
+
+    -- Satu panggilan su per client (inget 5.3: su ~6 detik/panggilan). Timeout
+    -- panjang -- grep rekursif se-data-dir bisa lama; sh() dipatok 8s -> kepotong.
+    -- @FILES = bukti file mana yg punya cookie. @COOKIE = nilai yg diekstrak.
+    -- Pola cookie: "_|WARNING..." lalu token [huruf/angka/_ | . : -].
+    local function ambil_cookie(pkg)
+        local skrip =
+            'd=/data/data/' .. pkg .. '; ' ..
+            'echo @FILES; ' ..
+            'grep -rla "ROBLOSECURITY" "$d" 2>/dev/null; ' ..
+            'echo @COOKIE; ' ..
+            'grep -rhoaE "_[|]WARNING[A-Za-z0-9_|.:-]+" "$d" 2>/dev/null | sort -u | head -1'
+        local cmd = "timeout 45 su -c " .. shq(skrip) .. " 2>/dev/null"
+        local h = io.popen(cmd)
+        if not h then return {}, nil end
+        local raw = h:read("*all") or ""; h:close()
+        local files, cookie, mode = {}, nil, nil
+        for baris in raw:gmatch("[^\n]+") do
+            if baris == "@FILES" then mode = "f"
+            elseif baris == "@COOKIE" then mode = "c"
+            elseif mode == "f" then files[#files+1] = baris
+            elseif mode == "c" and not cookie and baris:match("_[|]WARNING") then
+                cookie = baris
+            end
+        end
+        return files, cookie
+    end
+
+    -- tentuin target
+    local arg2 = (arg[2] or ""):lower()
+    local targets = {}
+    if arg2 == "all" then
+        targets = split(cfg.pkgs)
+    elseif arg2 ~= "" then
+        if #arg2 == 1 then targets = { "com.roblox.clien" .. arg2 }
+        else targets = { arg2 } end
+    else
+        for _, pkg in ipairs(split(cfg.pkgs)) do
+            if pkg_running(pkg) then targets[#targets+1] = pkg end
+        end
+        if #targets == 0 then
+            warn("Gak ada client yang kebaca jalan.")
+            info("Paksa satu client   :  zenx cookie <huruf>   (mis. zenx cookie u)")
+            info("Paksa semua kepasang:  zenx cookie all")
+            return
+        end
+    end
+
+    print(C.BOLD .. C.C .. "\n=== EKSTRAK COOKIE (backup akun sendiri) ===\n" .. C.N)
+    local OUT = "/sdcard/zenx_cookies.txt"
+    local hasil = {}
+    for _, pkg in ipairs(targets) do
+        io.write(C.BOLD .. pkg .. C.N .. "  ")
+        local files, cookie = ambil_cookie(pkg)
+        if cookie then
+            local pendek = cookie:sub(1, 28) .. "..." .. cookie:sub(-6)
+            print(C.G .. "OK" .. C.N .. "  (" .. #cookie .. " char)  " .. C.D .. pendek .. C.N)
+            if #files > 0 then
+                print("   " .. C.D .. "dari: " .. files[1] .. (#files > 1 and (" (+" .. (#files-1) .. " file lain)") or "") .. C.N)
+            end
+            hasil[#hasil+1] = pkg .. "\t" .. cookie
+        else
+            print(C.Y .. "GAK KETEMU" .. C.N)
+            if #files > 0 then
+                -- ada file ber-ROBLOSECURITY tapi pola cookie gak match -> format beda
+                print("   " .. C.Y .. "ada file ber-ROBLOSECURITY tapi nilainya gak ke-ekstrak:" .. C.N)
+                for i = 1, math.min(#files, 3) do
+                    print("   " .. C.D .. files[i] .. C.N)
+                end
+                print("   " .. C.D .. "kirim salah satu path ini -- formatnya beda, perlu disetel." .. C.N)
+            else
+                print("   " .. C.D .. "gak ada jejak ROBLOSECURITY di /data/data/" .. pkg .. C.N)
+                print("   " .. C.D .. "(client login? root jalan? mungkin token disimpen beda)" .. C.N)
+            end
+        end
+    end
+
+    print("")
+    if #hasil > 0 then
+        local f = io.open(OUT, "w")
+        if f then
+            f:write(table.concat(hasil, "\n") .. "\n"); f:close()
+            ok("Kesimpen: " .. OUT .. "  (" .. #hasil .. " cookie, format: <paket>\\t<cookie>)")
+            info("File ada di /sdcard -- tinggal tarik lewat RedFinger file manager / adb pull.")
+            print("   " .. C.D .. "Catatan: ini map per-PAKET (clienu..z), belum per-nama-akun." .. C.N)
+            print("   " .. C.D .. "Kalau perlu label nama akun (wildnx_XX), bilang -- bisa ditambahin." .. C.N)
+        else
+            err("Gagal nulis " .. OUT .. " (izin /sdcard? jalanin: termux-setup-storage)")
+        end
+    else
+        warn("Gak ada cookie keambil.")
+    end
+    return
+end
+
 if PERINTAH ~= "" then
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
     print()
@@ -4734,6 +5096,7 @@ if PERINTAH ~= "" then
     info("   zenx catat <cl> <jumlah>-> set ukuran, LO yang tap, kesimpen otomatis")
     info("   zenx uji <client>       -> tembak 6 titik, cek pencetan nyampe apa nggak")
     info("   zenx ukur <cl> <jumlah> -> set jendela ke ukuran N client, cari tombolnya")
+    info("   zenx pasang             -> pasang/atur RF baru (gantiin pasang.sh)")
     info("   zenx cari <client>      -> worker cari sendiri tombol key + bypass sekalian")
     info("   zenx pantau <client>    -> tiap dipencet, koordinatnya langsung nongol")
     info("   zenx rekam <client>     -> rekam sekali, ambil satu koordinat")
@@ -4741,6 +5104,9 @@ if PERINTAH ~= "" then
     info("   zenx key                -> bypass key Delta (link dari clipboard)")
     info("   zenx key <link>         -> bypass key dari link yang diketik")
     info("   zenx key set <APIKEY>   -> isi kunci API bypass.vip")
+    info("   zenx cookie             -> ekstrak cookie akun sendiri (yg lagi jalan) buat backup")
+    info("   zenx cookie <huruf>     -> ekstrak dari satu client (mis. zenx cookie u)")
+    info("   zenx cookie all         -> ekstrak dari semua paket kepasang")
     print()
     info("Kalau perintahnya harusnya ada, versi di RF ini ketinggalan -- tarik ulang:")
     info("   curl -fsSL <repo>/zenx_worker.lua -o ~/zenx_worker.lua")
