@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.09-cf"
+local VERSION = "5.11-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -828,12 +828,23 @@ end
 -- ============================================================
 local TAP_FILE = "zenx_tap.txt"
 
--- titik sapuan: sepanjang garis tengah, dari atas ke bawah.
--- Tombolnya panjang (kebukti: pas dipencet berkali-kali, satu sumbu tetap,
--- satunya nyebar ~50px), jadi x=0.5 cukup -- yang dicari tingginya.
+-- titik sapuan. v5.10: gak cuma garis tengah lagi.
+-- Awalnya cuma x=0.5 karena tombolnya panjang -- tapi itu berasumsi dialognya
+-- pas di tengah jendela. Di jendela sempit, dialognya bisa mepet/kepotong,
+-- jadi garis tengah doang bisa gak pernah kena.
+-- Sekarang: garis tengah DULU (paling mungkin), baru melebar kiri-kanan.
+-- Urutannya sengaja dari yang paling mungkin -- makin cepet ketemu, makin
+-- sedikit ronde yang kepakai.
 local TITIK_SAPU = {
+    -- garis tengah, dari tengah menyebar
     { 0.50, 0.62 }, { 0.50, 0.55 }, { 0.50, 0.70 }, { 0.50, 0.48 },
     { 0.50, 0.77 }, { 0.50, 0.42 }, { 0.50, 0.84 }, { 0.50, 0.35 },
+    -- agak ke kiri
+    { 0.35, 0.62 }, { 0.35, 0.70 }, { 0.35, 0.55 }, { 0.35, 0.77 },
+    -- agak ke kanan
+    { 0.65, 0.62 }, { 0.65, 0.70 }, { 0.65, 0.55 }, { 0.65, 0.77 },
+    -- pinggir
+    { 0.22, 0.62 }, { 0.78, 0.62 }, { 0.22, 0.70 }, { 0.78, 0.70 },
 }
 
 local function tap_muat()
@@ -916,6 +927,8 @@ local function cari_tombol_key(cfg, pkg)
                    " ke depan (yang di depan: " .. tostring(siapa) .. ")" ..
                    (BAWA_SEBAB and (" -- " .. BAWA_SEBAB) or ""))
         end
+        io.write(("\r   titik %d/%d  (%.2f, %.2f) ...          "):format(i, #urut, t[1], t[2]))
+        io.flush()
         tap_jendela(cfg, pkg, t[1], t[2], 2, kotak)   -- 2x, pakai kotak yang udah diukur
         os.execute("sleep 2")
 
@@ -3640,6 +3653,63 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- v5.00: `zenx cari <client>` -- worker nyari sendiri tombol key-nya, sampai
 -- papan klip keisi link. Ketemu -> diinget buat ukuran jendela itu -> langsung
 -- diproses jadi kunci Delta sekalian.
+-- v5.11: `zenx uji <client>` -- tembak beberapa titik menyebar sekaligus, buat
+-- mastiin pencetannya NYAMPE ke client apa nggak. Gak butuh tau letak tombol:
+-- kalau nyampe, PASTI ada yang bereaksi (papan ketik muncul / tombol nyala /
+-- dialog ketutup / browser kebuka). Kalau nol reaksi dari semua titik, berarti
+-- jalur pencetannya yang bermasalah -- dan nyapu 20 titik cuma buang waktu.
+if PERINTAH == "uji" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+    local target = arg and arg[2] or ""
+    if target == "" then
+        err("Cara pakai:  zenx uji <client>")
+        return
+    end
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs)) do
+        if p == target or p:find(target, 1, true) then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. target .. "' gak ada di config."); info("Yang ada: " .. cfg.pkgs); return
+    end
+
+    print(C.BOLD..C.C.."\n=== UJI PENCETAN ==="..C.N)
+    local naik, siapa = pastikan_depan(pkg)
+    if not naik then
+        err("Gagal munculin client ke depan (yang di depan: " .. tostring(siapa) .. ")")
+        if BAWA_SEBAB then info("Sebab: " .. BAWA_SEBAB) end
+        return
+    end
+    local kotak, sebab = jendela_kotak(pkg)
+    if not kotak then err("Gagal baca kotak jendela: " .. tostring(sebab)); return end
+    ok(("Jendela: [%d,%d]-[%d,%d]  (%dx%d)"):format(
+        kotak.L, kotak.T, kotak.R, kotak.B, kotak.R - kotak.L, kotak.B - kotak.T))
+    print()
+    print(C.BOLD..C.Y.."   LIATIN LAYAR CLIENT -- 6 titik ditembak berurutan"..C.N)
+    print(C.D.."   Yang gua tanya cuma: ADA perubahan apa pun nggak?"..C.N)
+    print()
+
+    -- semua titik dikirim dalam SATU panggilan su -- tiap 'su' di RF ~6 detik,
+    -- kalau satu-satu jadi lama banget dan susah diliatin.
+    local titik = { {0.5,0.20}, {0.5,0.35}, {0.5,0.50}, {0.5,0.65}, {0.5,0.80}, {0.5,0.92} }
+    local bagian = {}
+    for _, t in ipairs(titik) do
+        local x = math.floor(kotak.L + (kotak.R - kotak.L) * t[1])
+        local y = math.floor(kotak.T + (kotak.B - kotak.T) * t[2])
+        bagian[#bagian+1] = "input tap " .. x .. " " .. y
+        info(("   titik %.2f -> layar (%d, %d)"):format(t[2], x, y))
+    end
+    sh("su -c '" .. table.concat(bagian, "; sleep 1.2; ") .. " 2>&1'")
+
+    print()
+    ok("Selesai -- 6 titik ketembak.")
+    info("ADA reaksi (apa pun)  -> pencetan NYAMPE, lanjut:  zenx cari " .. target)
+    info("NOL reaksi semua      -> pencetan gak nyampe, kabarin gua")
+    print()
+    return
+end
+
 -- v5.06: `zenx ukur <client> <jumlah> [slot]` -- pakai SATU client buat nyoba
 -- ukuran jendela yang nanti kepakai kalau client-nya ada sekian.
 -- Jendelanya diset ke ukuran itu, client dibuka ulang, terus tombol key-nya
@@ -4375,6 +4445,7 @@ if PERINTAH ~= "" then
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
     info("   zenx lisensi            -> keadaan kunci Delta")
+    info("   zenx uji <client>       -> tembak 6 titik, cek pencetan nyampe apa nggak")
     info("   zenx ukur <cl> <jumlah> -> set jendela ke ukuran N client, cari tombolnya")
     info("   zenx cari <client>      -> worker cari sendiri tombol key + bypass sekalian")
     info("   zenx pantau <client>    -> tiap dipencet, koordinatnya langsung nongol")
