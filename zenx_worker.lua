@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.07-cf"
+local VERSION = "5.09-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -94,6 +94,7 @@ local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 local LOG_KIRIM = {}          -- baris log terakhir (maks 20)
 local AKSI_SKRG = "mulai..."  -- lagi ngapain SEKARANG
 local LAPOR_KEY_AT = 0        -- v4.86: kapan terakhir ngabarin "butuh key"
+local BAWA_SEBAB = nil       -- v5.08: kenapa gagal munculin jendela
 local PERTAMA_DIEM = {}      -- v5.04: kapan worker pertama liat client idup tapi bisu
 local BYPASS_TERAKHIR = 0   -- v5.02: kapan terakhir nyoba bypass key
 local SUDAH_GRID = false      -- v4.30: udah pernah nata grid sejak worker nyala?
@@ -544,6 +545,11 @@ local function bawa_depan(pkg)
         if not r:lower():find("unknown") and not r:lower():find("exception") then
             return true, "task " .. id
         end
+        BAWA_SEBAB = "move-task ditolak: " .. (r:gsub("%s+", " "):sub(1, 40))
+    else
+        -- v5.08: kenapa taskId gak ketemu -- ini yang bikin jatuh ke cara cadangan
+        BAWA_SEBAB = (o:match("%S") and "taskId gak ada di keluaran 'am stack list'")
+                     or "'am stack list' gak ngasih apa-apa"
     end
     -- 2) cadangan: panggil activity-nya langsung, TANPA -d (tanpa link)
     sh_silent("su -c 'am start -f 0x20000000 -n " .. pkg ..
@@ -555,6 +561,24 @@ end
 -- Dari dump: bounds="[688,167][1089,500]". Semua simpul bounds-nya sama karena
 -- isi jendela digambar ke permukaan -- tapi justru itu yang kita mau: kotak
 -- luar jendelanya.
+-- v5.08: PASTIIN client beneran yang di depan, jangan cuma "udah disuruh naik".
+-- Client itu jendela NGAMBANG kecil. Habis baca papan klip, Termux nutupin
+-- layar penuh -- kalau 'input tap' ditembak ke koordinat client sementara
+-- Termux masih di atas, yang nerima pencetan itu TERMUX. Koordinatnya bener,
+-- yang salah urutan tumpukannya.
+-- Jadi: disuruh naik -> DIPERIKSA lewat mCurrentFocus -> diulang kalau belum.
+local function pastikan_depan(pkg, maks)
+    for coba = 1, (maks or 3) do
+        bawa_depan(pkg)
+        os.execute("sleep 2")
+        local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
+        if fokus:find(pkg, 1, true) then return true, coba end
+    end
+    local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
+    local siapa = fokus:match("([%w%.]+)/") or "?"
+    return false, siapa
+end
+
 -- v5.07 (BUG PENTING): dulu fungsi ini cuma motret layar yang lagi DI DEPAN,
 -- tanpa mastiin itu beneran client-nya. Padahal di alur nyari tombol, Termux
 -- sering lagi di depan (abis baca papan klip) -- jadi yang keukur JENDELA
@@ -566,8 +590,7 @@ end
 local function jendela_kotak(pkg)
     local dump = "/sdcard/zenx_kotak.xml"
     for coba = 1, 2 do
-        bawa_depan(pkg)
-        os.execute("sleep 2")
+        pastikan_depan(pkg)
         -- hapus+dump+baca+hapus digabung jadi SATU panggilan su (tiap 'su' ~6 detik)
         local isi = sh("su -c 'rm -f " .. dump .. "; uiautomator dump " .. dump ..
                        " >/dev/null 2>&1; cat " .. dump .. " 2>/dev/null; rm -f " .. dump .. "'") or ""
@@ -884,10 +907,15 @@ local function cari_tombol_key(cfg, pkg)
     end
 
     for i, t in ipairs(urut) do
-        -- v5.07: client dibalikin ke depan tiap ronde -- ronde sebelumnya
-        -- mindahin fokus ke Termux buat baca papan klip.
-        bawa_depan(pkg)
-        os.execute("sleep 2")
+        -- v5.08: client HARUS beneran di depan sebelum ditembak. Ronde
+        -- sebelumnya mindahin fokus ke Termux buat baca papan klip, dan Termux
+        -- itu layar penuh -- nutupin jendela client yang ngambang.
+        local naik, siapa = pastikan_depan(pkg)
+        if not naik then
+            return nil, nil, nil, ("gagal munculin " .. pkg:gsub("com%.roblox%.", "") ..
+                   " ke depan (yang di depan: " .. tostring(siapa) .. ")" ..
+                   (BAWA_SEBAB and (" -- " .. BAWA_SEBAB) or ""))
+        end
         tap_jendela(cfg, pkg, t[1], t[2], 2, kotak)   -- 2x, pakai kotak yang udah diukur
         os.execute("sleep 2")
 
@@ -3688,7 +3716,8 @@ if PERINTAH == "ukur" then
                 nl, nt, lebar, tinggi))
             info("Lanjut aja, yang dipakai ukuran NYATA-nya.")
         else
-            ok(("Ukuran jendela sekarang: %dx%d  (sesuai)"):format(nl, nt))
+            ok(("Jendela sekarang: [%d,%d]-[%d,%d]  %dx%d  (sesuai)"):format(
+                nyata.L, nyata.T, nyata.R, nyata.B, nl, nt))
         end
     end
 
