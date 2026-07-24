@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.17-cf"
+local VERSION = "5.18-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -3712,6 +3712,68 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- nunjukin tombolnya (tap beberapa kali). Rata-ratanya disimpen otomatis.
 -- Bedanya sama `zenx ukur`: itu worker yang nyapu nebak-nebak; ini lo yang
 -- nunjukin -- jauh lebih cepet dan pasti.
+-- v5.18: `zenx set <client> <jumlah> [slot]` -- CUMA atur ukuran jendela ke
+-- petak N client, terus buka ulang. Gak nyapu, gak minta tap.
+-- Gunanya buat NGUJI: set ukuran lain, terus tembak pakai pecahan yang udah
+-- ada (`zenx tap`). Kalau kena juga, berarti satu angka cukup buat semua ukuran.
+if PERINTAH == "set" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+    local target = arg and arg[2] or ""
+    local jumlah = math.floor(tonumber(arg and arg[3] or "") or 0)
+    local slot   = math.floor(tonumber(arg and arg[4] or "") or 1)
+    if target == "" or jumlah < 1 then
+        err("Cara pakai:  zenx set <client> <jumlah-client> [slot]")
+        info("   contoh:  zenx set clienu 2    -> jendela jadi ukuran kalau 2 client")
+        return
+    end
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs)) do
+        if p == target or p:find(target, 1, true) then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. target .. "' gak ada di config."); info("Yang ada: " .. cfg.pkgs); return
+    end
+
+    local petak, kol, bar, W, H = petak_untuk(jumlah, slot)
+    if not petak then err("Gagal: " .. tostring(kol)); return end
+
+    print(C.BOLD..C.C.."\n=== SET UKURAN buat " .. jumlah .. " CLIENT ==="..C.N)
+    info(("Layar %dx%d, susunan %dx%d"):format(W, H, kol, bar))
+    info(("Petak %d: [%d,%d]-[%d,%d]  ->  %dx%d"):format(
+        slot, petak.L, petak.T, petak.R, petak.B, petak.R - petak.L, petak.B - petak.T))
+
+    close_all(cfg, pkg, nil, true)
+    os.execute("sleep 2")
+    local tok, tket = tata_satu(pkg, petak)
+    if not tok then err("Gagal nulis posisi: " .. tostring(tket)); return end
+    ok("Posisi ketulis: " .. tket)
+    open_one(cfg, pkg, nil)
+    for sisa = 40, 1, -1 do
+        io.write(("\r   nunggu client nyala... %2ds"):format(sisa))
+        io.flush(); os.execute("sleep 1")
+    end
+    io.write("\r" .. string.rep(" ", 45) .. "\r"); io.flush()
+
+    local nyata = jendela_kotak(pkg)
+    if nyata then
+        ok(("Jendela sekarang: [%d,%d]-[%d,%d]  %dx%d"):format(
+            nyata.L, nyata.T, nyata.R, nyata.B, nyata.R - nyata.L, nyata.B - nyata.T))
+        local simpan = tap_muat()[("%dx%d"):format(nyata.R - nyata.L, nyata.B - nyata.T)]
+        if simpan then
+            info(("Ukuran ini UDAH kecatat: %.3f , %.3f"):format(simpan.fx, simpan.fy))
+        else
+            info("Ukuran ini BELUM kecatat.")
+        end
+    end
+    print()
+    info("Uji pakai pecahan dari ukuran lain:")
+    info("   zenx tap " .. target .. " 0.823 0.723 2 5")
+    info("Terus cek papan klipnya:  zenx key")
+    print()
+    return
+end
+
 if PERINTAH == "catat" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
@@ -4668,6 +4730,7 @@ if PERINTAH ~= "" then
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
     info("   zenx lisensi            -> keadaan kunci Delta")
+    info("   zenx set <cl> <jumlah>  -> cuma atur ukuran jendela (buat nguji)")
     info("   zenx catat <cl> <jumlah>-> set ukuran, LO yang tap, kesimpen otomatis")
     info("   zenx uji <client>       -> tembak 6 titik, cek pencetan nyampe apa nggak")
     info("   zenx ukur <cl> <jumlah> -> set jendela ke ukuran N client, cari tombolnya")
