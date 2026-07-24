@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.11-cf"
+local VERSION = "5.15-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -162,6 +162,7 @@ local function save_config(cfg)
     f:write(string.format("  key_tanda=%q,\n",cfg.key_tanda or ""))
     f:write(string.format("  key_jam=%d,\n",cfg.key_jam or 24))
     f:write(string.format("  home_detik=%d,\n",cfg.home_detik or 60))
+    f:write(string.format("  auto_key=%s,\n",tostring(cfg.auto_key == true)))
     f:write(string.format("  key_tap=%q,\n",cfg.key_tap or ""))
     f:write("}\n"); f:close(); return true
 end
@@ -521,6 +522,17 @@ local function layar_ukuran()
     return w, h, rot
 end
 
+-- v5.14: DIPINDAH KE ATAS. Perintah panjang (nyari tombol, pantau sentuhan)
+-- perlu ngecek tanda berhenti, dan mereka dideklarasi jauh di atas sini.
+local PID_FILE  = "zenx_worker.pid"
+local STOP_FILE = "zenx_worker.stop"
+
+local function ada_stop()
+    local f = io.open(STOP_FILE, "r")
+    if f then f:close(); return true end
+    return false
+end
+
 -- v4.89: BAWA JENDELA KE DEPAN TANPA LINK JOIN.
 -- Dulu munculinnya pakai 'am start -d <link>'. Itu aman kalau client UDAH di
 -- dalam game (link jadi no-op), TAPI kalau lagi di layar key / belum masuk
@@ -835,16 +847,19 @@ local TAP_FILE = "zenx_tap.txt"
 -- Sekarang: garis tengah DULU (paling mungkin), baru melebar kiri-kanan.
 -- Urutannya sengaja dari yang paling mungkin -- makin cepet ketemu, makin
 -- sedikit ronde yang kepakai.
+-- v5.12: titik pinggir (0.22 / 0.78) DICABUT. Dari pengamatan lapangan, dialog
+-- Delta gak ngisi penuh jendela client -- sisanya tembus pandang, jadi pencetan
+-- di situ NEMBUS ke Termux di belakangnya (kelihatan kayak "Roblox masuk
+-- background"). Percuma disapu.
+-- Gantinya: garis tengah dirapetin (langkah 0,05), soalnya tombolnya panjang --
+-- yang perlu dicari cuma TINGGINYA, bukan kiri-kanannya.
 local TITIK_SAPU = {
-    -- garis tengah, dari tengah menyebar
-    { 0.50, 0.62 }, { 0.50, 0.55 }, { 0.50, 0.70 }, { 0.50, 0.48 },
-    { 0.50, 0.77 }, { 0.50, 0.42 }, { 0.50, 0.84 }, { 0.50, 0.35 },
-    -- agak ke kiri
-    { 0.35, 0.62 }, { 0.35, 0.70 }, { 0.35, 0.55 }, { 0.35, 0.77 },
-    -- agak ke kanan
-    { 0.65, 0.62 }, { 0.65, 0.70 }, { 0.65, 0.55 }, { 0.65, 0.77 },
-    -- pinggir
-    { 0.22, 0.62 }, { 0.78, 0.62 }, { 0.22, 0.70 }, { 0.78, 0.70 },
+    -- garis tengah, dari tengah nyebar ke atas-bawah
+    { 0.50, 0.62 }, { 0.50, 0.57 }, { 0.50, 0.67 }, { 0.50, 0.52 },
+    { 0.50, 0.72 }, { 0.50, 0.47 }, { 0.50, 0.77 }, { 0.50, 0.42 },
+    { 0.50, 0.82 }, { 0.50, 0.37 }, { 0.50, 0.87 }, { 0.50, 0.32 },
+    -- kalau tengah gak kena semua, dialognya mungkin gak center: geser dikit
+    { 0.40, 0.62 }, { 0.60, 0.62 }, { 0.40, 0.72 }, { 0.60, 0.72 },
 }
 
 local function tap_muat()
@@ -918,6 +933,13 @@ local function cari_tombol_key(cfg, pkg)
     end
 
     for i, t in ipairs(urut) do
+        -- v5.14: bisa DIHENTIKAN. Dulu perintah panjang kayak gini gak pernah
+        -- ngecek tanda berhenti -- 'zenx stop' cuma nyetop loop worker, dan
+        -- Ctrl+C sering gak nyampe kalau lagi nunggu 'su'. Jadi sapuan yang
+        -- lagi jalan gak bisa dibatalin sama sekali.
+        if ada_stop() then
+            return nil, nil, nil, "dihentikan (zenx stop)"
+        end
         -- v5.08: client HARUS beneran di depan sebelum ditembak. Ronde
         -- sebelumnya mindahin fokus ke Termux buat baca papan klip, dan Termux
         -- itu layar penuh -- nutupin jendela client yang ngambang.
@@ -1000,8 +1022,6 @@ end
 -- dipake FLAG FILE: `stop` bikin file, loop utama ngecek tiap putaran,
 -- terus keluar baik-baik.
 -- ============================================================
-local PID_FILE  = "zenx_worker.pid"
-local STOP_FILE = "zenx_worker.stop"
 
 local function tulis_pid()
     local pid = tonumber(sh("echo $PPID")) or 0
@@ -1020,11 +1040,6 @@ local function pid_hidup(pid)
     return sh("ps -p " .. pid .. " -o comm=") ~= ""
 end
 
-local function ada_stop()
-    local f = io.open(STOP_FILE, "r")
-    if f then f:close(); return true end
-    return false
-end
 
 local function hapus(f) os.remove(f) end
 
@@ -3184,7 +3199,11 @@ local function run(cfg)
         -- diulang per client.
         -- ============================================================
         local lewatiRonde = false
-        if hit and lisensi_keadaan(cfg) == "hilang"
+        -- v5.13: sapuan otomatis BAWAANNYA MATI. Nyapu itu mindah-mindahin
+        -- jendela terus -- ganggu banget kalau user lagi mau tap manual, dan
+        -- keberhasilannya belum kebukti di semua ukuran jendela.
+        -- Nyalain sendiri kalau mau:  auto_key=true  di config.
+        if hit and cfg.auto_key == true and lisensi_keadaan(cfg) == "hilang"
            and (now - (BYPASS_TERAKHIR or 0)) > 300 then
             BYPASS_TERAKHIR = now
             setAksi("BYPASS KEY -- fokus ke sini dulu")
@@ -3410,7 +3429,11 @@ local function run(cfg)
             local licTua   = (licKead == "basi")
             if butuhKey and (os.time() - (LAPOR_KEY_AT or 0)) > 600 then
                 LAPOR_KEY_AT = os.time()
-                tambahLog("BUTUH KEY: berkas lisensi Delta HILANG -- jalanin `zenx cari <client>`")
+                if cfg.auto_key == true then
+                    tambahLog("BUTUH KEY: lisensi Delta HILANG -- worker bakal nyari sendiri")
+                else
+                    tambahLog("BUTUH KEY: lisensi Delta HILANG -- tap tombolnya manual (2x), terus: zenx key")
+                end
             end
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 local akun = mapAkun[pkg]
@@ -3658,6 +3681,143 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- kalau nyampe, PASTI ada yang bereaksi (papan ketik muncul / tombol nyala /
 -- dialog ketutup / browser kebuka). Kalau nol reaksi dari semua titik, berarti
 -- jalur pencetannya yang bermasalah -- dan nyapu 20 titik cuma buang waktu.
+-- v5.15: `zenx catat <client> <jumlah> [detik]` -- SATU perintah buat kalibrasi
+-- manual: jendela diset ke ukuran N client, client dibuka ulang, terus LO yang
+-- nunjukin tombolnya (tap beberapa kali). Rata-ratanya disimpen otomatis.
+-- Bedanya sama `zenx ukur`: itu worker yang nyapu nebak-nebak; ini lo yang
+-- nunjukin -- jauh lebih cepet dan pasti.
+if PERINTAH == "catat" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+    local target = arg and arg[2] or ""
+    local jumlah = math.floor(tonumber(arg and arg[3] or "") or 0)
+    local detik  = math.floor(tonumber(arg and arg[4] or "") or 90)
+    if target == "" or jumlah < 1 then
+        err("Cara pakai:  zenx catat <client> <jumlah-client> [detik]")
+        info("   contoh:  zenx catat clienu 10")
+        info("            zenx catat clienu 4 120")
+        return
+    end
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs)) do
+        if p == target or p:find(target, 1, true) then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. target .. "' gak ada di config."); info("Yang ada: " .. cfg.pkgs); return
+    end
+
+    local petak, kol, bar, W, H = petak_untuk(jumlah, 1)
+    if not petak then err("Gagal: " .. tostring(kol)); return end
+
+    print(C.BOLD..C.C.."\n=== CATAT TOMBOL buat " .. jumlah .. " CLIENT ==="..C.N)
+    info(("Layar %dx%d, susunan %dx%d -> petak %dx%d"):format(
+        W, H, kol, bar, petak.R - petak.L, petak.B - petak.T))
+
+    info("Tutup client, tulis ukuran, buka lagi...")
+    close_all(cfg, pkg, nil, true)
+    os.execute("sleep 2")
+    local tok, tket = tata_satu(pkg, petak)
+    if not tok then err("Gagal nulis posisi: " .. tostring(tket)); return end
+    open_one(cfg, pkg, nil)
+    for sisa = 40, 1, -1 do
+        io.write(("\r   nunggu client nyala & layar key nongol... %2ds"):format(sisa))
+        io.flush(); os.execute("sleep 1")
+    end
+    io.write("\r" .. string.rep(" ", 60) .. "\r"); io.flush()
+
+    local kotak, sebabK = jendela_kotak(pkg)
+    if not kotak then err("Gagal baca kotak jendela: " .. tostring(sebabK)); return end
+    local lebar, tinggi = kotak.R - kotak.L, kotak.B - kotak.T
+    local kunci = ("%dx%d"):format(lebar, tinggi)
+    ok(("Jendela: [%d,%d]-[%d,%d]  %s"):format(kotak.L, kotak.T, kotak.R, kotak.B, kunci))
+
+    local maxX = (select(1, layar_fisik()) > 0) and select(1, layar_fisik()) or W
+    local maxY = (select(2, layar_fisik()) > 0) and select(2, layar_fisik()) or H
+
+    local berkas = "/sdcard/zenx_catat.txt"
+    sh_silent("su -c 'rm -f " .. berkas .. "'")
+    os.execute("su -c 'timeout " .. (detik + 20) .. " getevent -l > " .. berkas .. "' >/dev/null 2>&1 &")
+
+    print()
+    print(C.BOLD..C.Y.."   LANGKAH 1: TAP TENGAH JENDELA CLIENT (sekali)"..C.N)
+    print(C.D..("   buat ngunci arah layar. tengahnya di %d,%d")
+        :format(math.floor((kotak.L + kotak.R) / 2), math.floor((kotak.T + kotak.B) / 2))..C.N)
+    print()
+
+    local arahKunci, sudah, mulai = nil, 0, os.time()
+    local kumpul = {}
+    while (os.time() - mulai) < detik do
+        if ada_stop() then break end
+        os.execute("sleep 2")
+        local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
+        local xs, ys = {}, {}
+        for n in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do xs[#xs+1] = tonumber(n, 16) end
+        for n in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do ys[#ys+1] = tonumber(n, 16) end
+        local ada = math.min(#xs, #ys)
+        for i = sudah + 1, ada do
+            if not arahKunci then
+                local pilih, jarak = kunci_arah(xs[i], ys[i], maxX, maxY, W, H,
+                    (kotak.L + kotak.R) / 2, (kotak.T + kotak.B) / 2)
+                arahKunci = pilih
+                ok(("Arah terkunci: %s (meleset %.0f px)"):format(pilih.nama, jarak))
+                print()
+                print(C.BOLD..C.Y.."   LANGKAH 2: TAP TOMBOL 'Copied link' -- 3-5 kali"..C.N)
+                print(C.D.."   jangan geser/ubah ukuran jendela sampai selesai."..C.N)
+                print()
+            else
+                local t = sentuh_ke_pecahan(xs[i], ys[i], maxX, maxY, W, H, kotak, arahKunci)
+                if t and t.didalam then
+                    kumpul[#kumpul+1] = { fx = t.fx, fy = t.fy }
+                    print(("  %s#%d  layar(%4d,%4d)  ->  %.3f , %.3f%s")
+                        :format(C.G, #kumpul, t.X, t.Y, t.fx, t.fy, C.N))
+                elseif t then
+                    print(("  %s--  di LUAR jendela (abaikan)%s"):format(C.D, C.N))
+                end
+            end
+        end
+        sudah = ada
+    end
+    sh_silent("su -c 'rm -f " .. berkas .. "'")
+    sh_silent("su -c 'pkill -9 getevent'")
+
+    print()
+    if #kumpul == 0 then
+        err("Gak ada tap yang kecatat di dalam jendela.")
+        info("Pastiin tap-nya di dalam jendela client, terus ulangi.")
+        return
+    end
+
+    -- rata-rata + sebaran, biar keliatan konsisten apa nggak
+    local sx, sy = 0, 0
+    local minx, maxx, miny, maxy = 9, -9, 9, -9
+    for _, k in ipairs(kumpul) do
+        sx = sx + k.fx; sy = sy + k.fy
+        if k.fx < minx then minx = k.fx end
+        if k.fx > maxx then maxx = k.fx end
+        if k.fy < miny then miny = k.fy end
+        if k.fy > maxy then maxy = k.fy end
+    end
+    local rx, ry = sx / #kumpul, sy / #kumpul
+    ok(("%d tap kecatat -> rata-rata %.3f , %.3f"):format(#kumpul, rx, ry))
+    info(("sebaran: x %.3f-%.3f  |  y %.3f-%.3f"):format(minx, maxx, miny, maxy))
+    if (maxy - miny) > 0.15 then
+        warn("Sebaran Y lebar -- kayaknya gak semua tap di tombol yang sama.")
+        warn("Kalau ragu, ulangi sambil tap tombol yang SAMA aja.")
+    end
+
+    if tap_simpan(kunci, rx, ry) then
+        ok(("Kesimpen: %s -> %.3f , %.3f  (di %s)"):format(kunci, rx, ry, TAP_FILE))
+    else
+        err("Gagal nyimpen ke " .. TAP_FILE)
+    end
+    print()
+    info("Uji balik:  zenx tap " .. target .. (" %.3f %.3f 2 5"):format(rx, ry))
+    info("Ukuran lain:  zenx catat " .. target .. " 6")
+    info("Liat semua:  cat ~/" .. TAP_FILE)
+    print()
+    return
+end
+
 if PERINTAH == "uji" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
@@ -3941,6 +4101,7 @@ if PERINTAH == "pantau" then
 
     local arahKunci, sudah, mulai = nil, 0, os.time()
     while (os.time() - mulai) < detik do
+        if ada_stop() then info("dihentikan (zenx stop)"); break end   -- v5.14
         os.execute("sleep 2")
         local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
         local xs, ys = {}, {}
@@ -4405,6 +4566,16 @@ if PERINTAH == "stop" then
         return
     end
 
+    -- v5.14: perintah panjang (cari/ukur/pantau) itu proses TERPISAH dari worker.
+    -- Kasih tau caranya, biar gak bingung pas 'zenx stop' keliatan gak mempan.
+    do
+        local lain = sh("pgrep -f 'zenx_worker.lua' | wc -l") or ""
+        local n = tonumber(lain:match("%d+")) or 0
+        if n > 1 then
+            warn("Ada " .. n .. " proses zenx jalan (mungkin `cari`/`ukur`/`pantau`).")
+            info("Kalau gak mati juga:  pkill -9 -f zenx_worker.lua")
+        end
+    end
     info("Minta berhenti ke pid " .. pid .. "...")
     local f = io.open(STOP_FILE, "w"); if f then f:write(tostring(os.time())); f:close() end
 
@@ -4445,6 +4616,7 @@ if PERINTAH ~= "" then
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
     info("   zenx lisensi            -> keadaan kunci Delta")
+    info("   zenx catat <cl> <jumlah>-> set ukuran, LO yang tap, kesimpen otomatis")
     info("   zenx uji <client>       -> tembak 6 titik, cek pencetan nyampe apa nggak")
     info("   zenx ukur <cl> <jumlah> -> set jendela ke ukuran N client, cari tombolnya")
     info("   zenx cari <client>      -> worker cari sendiri tombol key + bypass sekalian")
