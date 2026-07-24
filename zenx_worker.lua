@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.91-cf"
+local VERSION = "4.92-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -480,6 +480,41 @@ local function umur_ringkas(detik)
     local m = math.floor((detik % 3600) / 60)
     if j > 0 then return j .. "j " .. m .. "m" end
     return m .. "m"
+end
+
+-- v4.92: DIPINDAH KE ATAS. Di Lua fungsi lokal gak diangkat ke atas --
+-- kalau dideklarasi di bawah tapi dipanggil di atas, isinya masih nil.
+-- rekam_sentuh manggil ini, jadi harus kedefinisi duluan.
+
+-- ============================================================
+-- v4.25: ATUR GRID — susun jendela freeform biar gak numpuk.
+-- Butuh client jalan di mode freeform (win_mode 5). Caranya:
+--   1. baca ukuran layar (wm size)
+--   2. cari taskId tiap client (dumpsys)
+--   3. am task resizeTask <taskId> kiri atas kanan bawah
+-- CATATAN: 'am task resizeTask' gak ada di semua ROM. Kalau gagal, dilaporin
+-- ke log (gak diem-diem), dan client tetep jalan normal -- cuma gak ketata.
+-- ============================================================
+local function layar_ukuran()
+    -- "Physical size: 720x1280" (kadang ada "Override size:" -> itu yang dipakai)
+    local o = sh("su -c 'wm size'") or ""
+    local w, h = o:match("Override size:%s*(%d+)x(%d+)")
+    if not w then w, h = o:match("Physical size:%s*(%d+)x(%d+)") end
+    w, h = tonumber(w) or 0, tonumber(h) or 0
+    if w == 0 or h == 0 then return 0, 0, 0 end
+
+    -- v4.27: 'wm size' itu ukuran FISIK, GAK ikut muter pas layar landscape.
+    -- Kalau lagi landscape, lebar/tinggi efektifnya KEBALIK -> harus dituker,
+    -- kalau nggak grid-nya ngitung pakai bentuk portrait (jendela kepencet /
+    -- keluar layar). rotasi: 0=portrait, 1=landscape, 2=portrait kebalik, 3=landscape kebalik.
+    local rot = tonumber((sh("su -c 'settings get system user_rotation'") or ""):match("%d+"))
+    if not rot then
+        -- cadangan: baca dari window manager
+        local d = sh("su -c 'dumpsys window | grep -m1 -E \"mCurrentRotation|mRotation\"'") or ""
+        rot = tonumber(d:match("[Rr]otation[=:%s]*(%d+)")) or 0
+    end
+    if rot == 1 or rot == 3 then w, h = h, w end
+    return w, h, rot
 end
 
 -- v4.89: BAWA JENDELA KE DEPAN TANPA LINK JOIN.
@@ -1213,36 +1248,6 @@ local function front_all(cfg, mapLink)
     return n
 end
 
--- ============================================================
--- v4.25: ATUR GRID — susun jendela freeform biar gak numpuk.
--- Butuh client jalan di mode freeform (win_mode 5). Caranya:
---   1. baca ukuran layar (wm size)
---   2. cari taskId tiap client (dumpsys)
---   3. am task resizeTask <taskId> kiri atas kanan bawah
--- CATATAN: 'am task resizeTask' gak ada di semua ROM. Kalau gagal, dilaporin
--- ke log (gak diem-diem), dan client tetep jalan normal -- cuma gak ketata.
--- ============================================================
-local function layar_ukuran()
-    -- "Physical size: 720x1280" (kadang ada "Override size:" -> itu yang dipakai)
-    local o = sh("su -c 'wm size'") or ""
-    local w, h = o:match("Override size:%s*(%d+)x(%d+)")
-    if not w then w, h = o:match("Physical size:%s*(%d+)x(%d+)") end
-    w, h = tonumber(w) or 0, tonumber(h) or 0
-    if w == 0 or h == 0 then return 0, 0, 0 end
-
-    -- v4.27: 'wm size' itu ukuran FISIK, GAK ikut muter pas layar landscape.
-    -- Kalau lagi landscape, lebar/tinggi efektifnya KEBALIK -> harus dituker,
-    -- kalau nggak grid-nya ngitung pakai bentuk portrait (jendela kepencet /
-    -- keluar layar). rotasi: 0=portrait, 1=landscape, 2=portrait kebalik, 3=landscape kebalik.
-    local rot = tonumber((sh("su -c 'settings get system user_rotation'") or ""):match("%d+"))
-    if not rot then
-        -- cadangan: baca dari window manager
-        local d = sh("su -c 'dumpsys window | grep -m1 -E \"mCurrentRotation|mRotation\"'") or ""
-        rot = tonumber(d:match("[Rr]otation[=:%s]*(%d+)")) or 0
-    end
-    if rot == 1 or rot == 3 then w, h = h, w end
-    return w, h, rot
-end
 
 -- v4.71: ambil taskId SEMUA client dari SATU dump. Dulu tiap client nyoba 4
 -- sumber berbeda -- 4 client = 16 panggilan 'su' = ~96 detik cuma buat nyusun
