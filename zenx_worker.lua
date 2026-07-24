@@ -86,13 +86,14 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.84-cf"
+local VERSION = "4.87-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
 -- warn() ikut kecatet (ditandain "!") supaya ERROR keliatan di panel juga.
 local LOG_KIRIM = {}          -- baris log terakhir (maks 20)
 local AKSI_SKRG = "mulai..."  -- lagi ngapain SEKARANG
+local LAPOR_KEY_AT = 0        -- v4.86: kapan terakhir ngabarin "butuh key"
 local SUDAH_GRID = false      -- v4.30: udah pernah nata grid sejak worker nyala?
 local function setAksi(txt)
     AKSI_SKRG = tostring(txt or "")
@@ -156,6 +157,7 @@ local function save_config(cfg)
     -- pun yang tau URL-nya bisa baca kuncinya dan ngabisin kuota.
     f:write(string.format("  bypass_api_key=%q,\n",cfg.bypass_api_key or ""))
     f:write(string.format("  key_tanda=%q,\n",cfg.key_tanda or ""))
+    f:write(string.format("  key_jam=%d,\n",cfg.key_jam or 24))
     f:write("}\n"); f:close(); return true
 end
 
@@ -445,6 +447,40 @@ end
 -- gagal, config-nya udah terlanjur ketimpa rusak -- worker jadi gak mau nyala
 -- sama sekali. Sekarang dibalik: hasil editan DITES DI MEMORI dulu, baru
 -- ditulis kalau sah. Gagal = config lama gak disentuh sedikit pun.
+-- v4.86: KEADAAN LISENSI DELTA.
+-- Layar gak bisa dibaca (kebukti: game/key/Home sama-sama 0 teks), jadi "lagi
+-- diminta key apa nggak" ditebak dari BERKASNYA -- itu kebaca jelas:
+--   /sdcard/Delta/Internals/Cache/license   37 byte, isinya kunci polos
+-- Kalau berkasnya HILANG atau UMURNYA lewat batas, hampir pasti Delta minta
+-- key lagi. Dalam keadaan itu client JANGAN dibunuh -- restart gak bikin kunci
+-- masuk, cuma muter-muter sambil ngabisin RAM.
+-- balikin: "ada" / "hilang" / "basi", umur dalam detik (nil kalau hilang)
+local function lisensi_keadaan(cfg)
+    local path = (cfg and cfg.delta_license) or DELTA_LICENSE
+    local batas = (tonumber(cfg and cfg.key_jam) or 24) * 3600
+
+    local o = sh("su -c 'stat -c %Y " .. path .. " 2>/dev/null'") or ""
+    local ts = tonumber(o:match("%d+"))
+    if not ts then
+        -- cadangan: sebagian ROM gak punya 'stat -c'. Minimal cek isinya ada.
+        local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+        if isi:match("%S") then return "ada", nil end
+        return "hilang", nil
+    end
+
+    local umur = os.time() - ts
+    if umur > batas then return "basi", umur end
+    return "ada", umur
+end
+
+local function umur_ringkas(detik)
+    if not detik then return "?" end
+    local j = math.floor(detik / 3600)
+    local m = math.floor((detik % 3600) / 60)
+    if j > 0 then return j .. "j " .. m .. "m" end
+    return m .. "m"
+end
+
 local function config_set_bypass(apikey)
     local f = io.open(CONFIG_FILE, "r")
     if not f then
@@ -1386,13 +1422,22 @@ local function klasifikasi_layar(isi)
         if t:match("%S") then nTeks = nTeks + 1 end
     end
     if nTeks <= 2 then
-        -- JANGAN vonis beku pas RAM mepet -- pas RAM tinggal dikit, Roblox emang
-        -- lama nampilin apa-apa. Layarnya kosong karena LAMBAT, bukan beku.
-        local _, sisaRam, totalRam = baca_ram()
-        if totalRam and totalRam > 0 and sisaRam and (sisaRam / totalRam) < 0.20 then
-            return nil, nil, sidik
-        end
-        return "nyangkut di layar kosong (loading beku)", "ulang", sidik
+        -- v4.85 (BUKTI LAPANGAN): di RedFinger, layar Roblox NGGAK PERNAH nyisain
+        -- teks yang kebaca uiautomator -- game, layar key, Home, loading, semuanya
+        -- kebaca 0 teks. Dua potret dibanding (client bermasalah vs client SEHAT)
+        -- hasilnya nyaris identik: 3497 vs 3487 byte, class & resource-id sama
+        -- persis, dua-duanya punya web_overlay_layout. Roblox nggambar semuanya ke
+        -- permukaan GL, uiautomator cuma liat cangkangnya.
+        --
+        -- Dulu keadaan ini divonis "loading beku" -> KILL. Artinya TIAP kali worker
+        -- ngintip, vonisnya selalu sama, termasuk buat client yang lagi sehat --
+        -- ngintipnya gak nambah informasi apa pun, cuma nambah keyakinan palsu.
+        -- Itu sumber utama client kebunuh percuma.
+        --
+        -- Sekarang: GAK TAU ya bilang GAK TAU. Keputusannya diserahin ke jalur yang
+        -- emang kebukti jalan -- bridge (script lapor apa nggak), didorong dulu 2x,
+        -- baru dibunuh, dan itu pun kena jatah 3x/30 menit.
+        return nil, nil, sidik
     end
     return nil, nil, sidik
 end
@@ -2810,6 +2855,16 @@ local function run(cfg)
             -- v4.38: ambang CEPAT khusus buat ngintip dialog error (disconnect).
             -- Nungguin 8 menit kelamaan kalau cuma kena "Error Code 277".
             local ambangDc = (tonumber(cfg.disconnect_menit) or 3) * 60
+            -- v4.86: cek lisensi SEKALI per ronde (berkasnya dipakai bareng semua
+            -- client, jadi gak usah dicek per client). Kalau hilang/basi, client
+            -- yang diem JANGAN dibunuh -- yang kurang itu kunci, bukan restart.
+            local licKead, licUmur = lisensi_keadaan(cfg)
+            local butuhKey = (licKead == "hilang" or licKead == "basi")
+            if butuhKey and (os.time() - (LAPOR_KEY_AT or 0)) > 600 then
+                LAPOR_KEY_AT = os.time()
+                tambahLog(("BUTUH KEY: lisensi Delta %s%s -- jalanin `zenx key` (kepakai semua client)")
+                    :format(licKead, licUmur and (" (umur " .. umur_ringkas(licUmur) .. ")") or ""))
+            end
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 local akun = mapAkun[pkg]
                 if akun then
@@ -2817,7 +2872,12 @@ local function run(cfg)
                     local blok = stat:match('{[^{}]-"nama"%s*:%s*"' .. akun .. '"[^{}]-}')
                     local ts = blok and tonumber(blok:match('"ts"%s*:%s*(%d+)')) or nil
                     local skrgSrv = ambil_num(stat, "skrg") or now   -- v4.53: dulu selalu nil -> pakai jam LOKAL
-                    if ts and (skrgSrv - ts) > math.min(ambangDc, ambang) then
+                    if ts and butuhKey then
+                        -- v4.86: lisensi hilang/basi -> script emang GAK BAKAL jalan
+                        -- sampai kunci masuk. Dibunuh/dibuka ulang cuma muter-muter
+                        -- sambil ngabisin RAM. Diemin aja, nunggu `zenx key`.
+                        nudgeCnt[pkg] = nil
+                    elseif ts and (skrgSrv - ts) > math.min(ambangDc, ambang) then
                         -- v4.21: bridge diem > ambang. TAPI cek dulu client masih di
                         -- game apa nggak (pkg_running). Android suka BEKUIN Roblox bg
                         -- (proses idup, script beku, gak lapor) -> keliatan "off"
@@ -2887,6 +2947,15 @@ local function run(cfg)
                                 os.execute("sleep 3")
                             else
                                 -- udah dibangunin 2x masih diem -> script beneran mati -> rejoin penuh
+                                -- v4.85: ikut kena JATAH. Sejak layar gak bisa dibaca lagi,
+                                -- jalur inilah yang paling sering kepakai -- kalau gak dijatah,
+                                -- client bermasalah balik dibunuh tiap ronde kayak dulu.
+                                if sisa_jatah_kill(pkg) <= 0 then
+                                    tambahLog(string.format("PERLU DICEK: %s diem terus -- udah di-rejoin %dx/30menit, DISTOP dulu",
+                                        akun, KILL_MAKS))
+                                    nudgeCnt[pkg] = nil
+                                else
+                                catat_kill(pkg)
                                 tambahLog(string.format("AUTO-REJOIN: %s dibangunin 2x masih diem -> rejoin penuh", akun))
                                 close_all(cfg, pkg, mapLink)
                                 os.execute("sleep 2")
@@ -2894,6 +2963,7 @@ local function run(cfg)
                                 notify("ZenX "..cfg.tim, "auto-rejoin "..akun.." (nudge gagal)")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
+                                end
                             end
                             end   -- v4.38: tutup cabang "gak ada dialog error"
                         elseif (skrgSrv - ts) > ambang then
@@ -2973,6 +3043,46 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 --   zenx intip clienu       -> potret sekarang (jeda bawaan 5 detik)
 --   zenx intip clienu 20    -> nunggu 20 detik dulu, baru dipotret
 -- Jeda itu buat ngasih waktu lo mindahin layar ke keadaan yang mau direkam.
+-- v4.87: `zenx lisensi` -- liat keadaan kunci Delta + apa yang bakal worker
+-- lakuin. Aman, cuma baca. Dipakai buat mastiin deteksinya bener tanpa harus
+-- nunggu kuncinya beneran kedaluwarsa.
+if PERINTAH == "lisensi" or PERINTAH == "license" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+
+    local path  = cfg.delta_license or DELTA_LICENSE
+    local batas = tonumber(cfg.key_jam) or 24
+    local kead, umur = lisensi_keadaan(cfg)
+
+    print(C.BOLD..C.C.."\n=== LISENSI DELTA ==="..C.N)
+    info("Berkas : " .. path)
+    info("Batas  : " .. batas .. " jam (atur lewat key_jam di config)")
+
+    local isi = (sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""):gsub("%s+$", "")
+    if isi ~= "" then
+        -- cuma tampilin sebagian -- ini kunci, gak usah kepampang utuh
+        info("Kunci  : " .. isi:sub(1, 12) .. "..." .. isi:sub(-4) .. "  (" .. #isi .. " byte)")
+    else
+        info("Kunci  : (kosong / gak kebaca)")
+    end
+
+    if kead == "ada" then
+        ok("Keadaan: MASIH BERLAKU" .. (umur and ("  (umur " .. umur_ringkas(umur) .. ")") or ""))
+        if umur then
+            local sisa = (batas * 3600) - umur
+            if sisa > 0 then info("Sisa   : ~" .. umur_ringkas(sisa) .. " lagi sebelum dianggap basi") end
+        end
+        info("Worker : jalan normal -- client yang diem tetep diurus kayak biasa")
+    else
+        warn("Keadaan: " .. kead:upper() ..
+             (umur and ("  (umur " .. umur_ringkas(umur) .. ")") or ""))
+        info("Worker : client yang diem GAK bakal dibunuh -- nunggu kunci masuk")
+        info("Langkah: salin link key dari Delta, terus jalanin  zenx key")
+    end
+    print()
+    return
+end
+
 if PERINTAH == "intip" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
@@ -3031,7 +3141,11 @@ if PERINTAH == "intip" then
     print()
     ok("Teks di layar (" .. #unik .. " potong):")
     if #unik == 0 then
-        print(C.D .. "   (kosong -- layar putih polos / cuma gambar)" .. C.N)
+        print(C.D .. "   (kosong -- gak ada satu pun node teks)" .. C.N)
+        print(C.D .. "   Ini NORMAL di RedFinger: Roblox nggambar semuanya ke" .. C.N)
+        print(C.D .. "   permukaan GL, uiautomator cuma liat cangkangnya. Jadi" .. C.N)
+        print(C.D .. "   layar game / key / Home kebacanya SAMA-SAMA kosong --" .. C.N)
+        print(C.D .. "   penanda berbasis teks emang gak bisa dipakai di sini." .. C.N)
     end
     for _, t in ipairs(unik) do print("   " .. t) end
 
@@ -3053,88 +3167,6 @@ if PERINTAH == "intip" then
     return
 end
 
--- v4.84: `zenx intip` -- motret TEKS yang lagi nongol di layar client.
--- Dipakai buat nyocokin penanda layar (Home / key / error) ke tampilan ASLI,
--- bukan tebakan. uiautomator cuma bisa baca jendela yang lagi DI DEPAN, makanya
--- client-nya dibawa ke depan dulu -- atau dikasih jeda biar lo pindah manual.
---   zenx intip clienu        -> bawa clienu ke depan, langsung potret
---   zenx intip clienu 15     -> sama, tapi tunggu 15 detik dulu
---   zenx intip 15            -> jangan pindahin apa-apa, potret layar depan
---                               setelah 15 detik (buat pindah sendiri)
-if PERINTAH == "intip" then
-    local cfg = load_config()
-    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
-
-    local a2 = arg and arg[2] or ""
-    local jeda = tonumber(a2)
-    local target = nil
-    if jeda then
-        jeda = math.floor(jeda)          -- `zenx intip 15`
-    else
-        target = a2
-        jeda = math.floor(tonumber(arg and arg[3] or "") or 0)
-    end
-
-    -- nama pendek boleh: "clienu" -> "com.roblox.clienu"
-    local pkg = nil
-    if target and target ~= "" then
-        for _, p in ipairs(split(cfg.pkgs)) do
-            if p == target or p:find(target, 1, true) then pkg = p break end
-        end
-        if not pkg then
-            err("Client '" .. target .. "' gak ada di config.")
-            info("Yang ada: " .. cfg.pkgs)
-            return
-        end
-    end
-
-    print(C.BOLD..C.C.."\n=== INTIP LAYAR ==="..C.N)
-    if pkg then
-        info("Bawa " .. pkg:gsub("com%.roblox%.","") .. " ke depan...")
-        local url = build_url(cfg, nil)
-        sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '"
-                  .. url .. "' -p " .. pkg .. "\"")
-        os.execute("sleep 3")
-    else
-        info("Gak mindahin apa-apa -- potret layar yang lagi di depan.")
-    end
-
-    if jeda > 0 then
-        for sisa = jeda, 1, -1 do
-            io.write(("\r   motret dalam %2d detik... (pindah ke layar yang mau dipotret)"):format(sisa))
-            io.flush()
-            os.execute("sleep 1")
-        end
-        io.write("\r" .. string.rep(" ", 70) .. "\r"); io.flush()
-    end
-
-    local dump = "/sdcard/zenx_intip.xml"
-    sh_silent("su -c 'rm -f " .. dump .. "'")
-    sh("su -c 'uiautomator dump " .. dump .. " 2>&1'")
-    local isi = sh("su -c 'cat " .. dump .. " 2>/dev/null'") or ""
-    if not isi:match("%S") then
-        err("Dump gagal (uiautomator gak jalan / layar terkunci?)")
-        return
-    end
-
-    -- siapa yang lagi di depan -- biar ketauan potretnya punya siapa
-    local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
-    local siapa = fokus:match("([%w%.]+)/") or "?"
-    info("Yang lagi di depan: " .. siapa)
-
-    local unik, urut = {}, {}
-    for t in isi:gmatch('text="([^"]*)"') do
-        if t:match("%S") and not unik[t] then unik[t] = true; urut[#urut+1] = t end
-    end
-    table.sort(urut)
-
-    print()
-    print(C.BOLD .. "TEKS DI LAYAR (" .. #urut .. " baris):" .. C.N)
-    for _, t in ipairs(urut) do print("  " .. t) end
-    print()
-    info("Kirim daftar ini ke Claude, sebut ini layar apa (Home / key / error).")
-    return
-end
 
 if PERINTAH == "key" then
     local a2 = arg and arg[2] or ""
@@ -3199,6 +3231,12 @@ if PERINTAH == "key" then
     end
 
     print(C.BOLD..C.C.."\n=== BYPASS KEY DELTA ==="..C.N)
+    do  -- v4.86: kabarin keadaan lisensi sekarang, biar keliatan perlu apa nggak
+        local kead, umur = lisensi_keadaan(cfg)
+        local warna = (kead == "ada") and C.G or C.Y
+        info("Lisensi sekarang: " .. warna .. kead .. C.N ..
+             (umur and ("  (umur " .. umur_ringkas(umur) .. ")") or ""))
+    end
     info("Link  : " .. link:sub(1, 60) .. (#link > 60 and "..." or ""))
     info("Mode  : " .. (pakaiRefresh and "refresh (proses ulang)" or "biasa"))
     info("Proses... (bisa 30-60 detik, jangan ditutup)")
@@ -3330,6 +3368,7 @@ if PERINTAH ~= "" then
     info("   zenx status             -> jalan apa nggak")
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
+    info("   zenx lisensi            -> keadaan kunci Delta")
     info("   zenx key                -> bypass key Delta (link dari clipboard)")
     info("   zenx key <link>         -> bypass key dari link yang diketik")
     info("   zenx key set <APIKEY>   -> isi kunci API bypass.vip")
