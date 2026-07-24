@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.05-cf"
+local VERSION = "5.06-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -1525,6 +1525,37 @@ local KUNCI_JENDELA = {
 }
 
 -- balikin: peta pkg -> {L,T,R,B}, sebab, kol, bar, W, H
+-- v5.06: hitung petak buat JUMLAH CLIENT SEMBARANG (bukan cuma yang kepasang).
+-- Gunanya: satu client dipakai buat nyoba semua ukuran. Mau tau petaknya kalau
+-- nanti 10 client? Set jendela client ini ke ukuran itu, cari tombolnya,
+-- simpen. Gak usah beneran buka 10 client.
+local function petak_untuk(n, slot)
+    local W, H = layar_ukuran()
+    if W == 0 or H == 0 then return nil, "gagal baca ukuran layar" end
+    if not n or n < 1 then return nil, "jumlah client gak masuk akal" end
+    slot = slot or 1
+
+    local kol, bar
+    local s = SUSUNAN[n]
+    if s then
+        kol, bar = s[1], s[2]
+    elseif W >= H then
+        kol = math.ceil(math.sqrt(n)); bar = math.ceil(n / kol)
+    else
+        bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
+    end
+
+    local lebar, tinggi = math.floor(W / kol), math.floor(H / bar)
+    local c = (slot - 1) % kol
+    local r = math.floor((slot - 1) / kol)
+    return {
+        L = c * lebar + SELA,
+        T = r * tinggi + SELA,
+        R = (c + 1) * lebar - SELA,
+        B = (r + 1) * tinggi - SELA,
+    }, kol, bar, W, H
+end
+
 local function grid_hitung(cfg)
     local W, H = layar_ukuran()   -- udah nuker W/H kalau layar landscape
     if W == 0 or H == 0 then return nil, "gagal baca ukuran layar (wm size)" end
@@ -3553,6 +3584,116 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- v5.00: `zenx cari <client>` -- worker nyari sendiri tombol key-nya, sampai
 -- papan klip keisi link. Ketemu -> diinget buat ukuran jendela itu -> langsung
 -- diproses jadi kunci Delta sekalian.
+-- v5.06: `zenx ukur <client> <jumlah> [slot]` -- pakai SATU client buat nyoba
+-- ukuran jendela yang nanti kepakai kalau client-nya ada sekian.
+-- Jendelanya diset ke ukuran itu, client dibuka ulang, terus tombol key-nya
+-- dicari + disimpen. Jadi pas nanti beneran jalan 10 client, ukurannya udah
+-- pernah dikenali -- gak usah nyapu lagi.
+--   zenx ukur clienu 4     -> ukuran kalau 4 client
+--   zenx ukur clienu 10    -> ukuran kalau 10 client
+if PERINTAH == "ukur" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+
+    local target = arg and arg[2] or ""
+    local jumlah = math.floor(tonumber(arg and arg[3] or "") or 0)
+    local slot   = math.floor(tonumber(arg and arg[4] or "") or 1)
+    if target == "" or jumlah < 1 then
+        err("Cara pakai:  zenx ukur <client> <jumlah-client> [slot]")
+        info("   contoh:  zenx ukur clienu 4     -> ukuran kalau nanti 4 client")
+        info("            zenx ukur clienu 10    -> ukuran kalau nanti 10 client")
+        return
+    end
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs)) do
+        if p == target or p:find(target, 1, true) then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. target .. "' gak ada di config.")
+        info("Yang ada: " .. cfg.pkgs)
+        return
+    end
+
+    local kotak, kol, bar, W, H = petak_untuk(jumlah, slot)
+    if not kotak then err("Gagal: " .. tostring(kol)); return end
+    local lebar, tinggi = kotak.R - kotak.L, kotak.B - kotak.T
+
+    print(C.BOLD..C.C.."\n=== UKUR BUAT " .. jumlah .. " CLIENT ==="..C.N)
+    info(("Layar   : %dx%d   susunan %dx%d"):format(W, H, kol, bar))
+    info(("Petak %d : [%d,%d]-[%d,%d]  ->  %dx%d"):format(
+        slot, kotak.L, kotak.T, kotak.R, kotak.B, lebar, tinggi))
+    print()
+
+    -- App Cloner baca posisi jendela pas app MULAI, dan nimpa balik pas app
+    -- DITUTUP. Jadi urutannya harga mati: tutup -> tulis -> buka.
+    info("Tutup client dulu...")
+    close_all(cfg, pkg, nil, true)
+    os.execute("sleep 2")
+
+    info("Tulis ukuran jendela ke prefs App Cloner...")
+    local tok, tket = tata_satu(pkg, kotak)
+    if not tok then
+        err("Gagal nulis posisi: " .. tostring(tket))
+        info("(prefs baru kebentuk kalau client-nya pernah dibuka sekali)")
+        return
+    end
+    ok("Posisi ketulis: " .. tket)
+
+    info("Buka lagi client-nya...")
+    open_one(cfg, pkg, nil)
+
+    -- tungguin dia nyala + nyampe layar key
+    local tunggu = 45
+    for sisa = tunggu, 1, -1 do
+        io.write(("\r   nunggu client nyala & nampilin layar key... %2ds"):format(sisa))
+        io.flush()
+        os.execute("sleep 1")
+    end
+    io.write("\r" .. string.rep(" ", 60) .. "\r"); io.flush()
+
+    -- pastiin ukurannya beneran kepakai
+    local nyata = jendela_kotak(pkg)
+    if nyata then
+        local nl, nt = nyata.R - nyata.L, nyata.B - nyata.T
+        if math.abs(nl - lebar) > 8 or math.abs(nt - tinggi) > 8 then
+            warn(("Jendelanya jadi %dx%d, bukan %dx%d -- App Cloner gak nurut?"):format(
+                nl, nt, lebar, tinggi))
+            info("Lanjut aja, yang dipakai ukuran NYATA-nya.")
+        else
+            ok(("Ukuran jendela sekarang: %dx%d  (sesuai)"):format(nl, nt))
+        end
+    end
+
+    print()
+    info("Sekarang cari tombol key-nya...")
+    local link, fx, fy, ket = cari_tombol_key(cfg, pkg)
+    if not link then
+        err("Gagal: " .. tostring(ket))
+        info("Pastiin client-nya emang lagi minta key (lisensi udah dihapus?).")
+        return
+    end
+    ok(("Ketemu!  %s"):format(ket))
+    ok(("Titik tombol: %.3f , %.3f  -- kesimpen di %s"):format(fx, fy, TAP_FILE))
+    print()
+    info("Ulangi buat ukuran lain:  zenx ukur " .. target .. " 6")
+    info("Liat semua yang udah kesimpen:  cat ~/" .. TAP_FILE)
+    print()
+
+    -- link-nya sekalian dipakai, sayang kalau kebuang
+    info("Sekalian diproses jadi kunci...")
+    local kunci, sebab = bypass_kunci(cfg, link, false)
+    if kunci then
+        ok("KUNCI: " .. kunci)
+        local wok, wket = tulis_lisensi(cfg, kunci)
+        if wok then ok("Ditulis ke Delta: " .. wket)
+        else warn("Gagal nulis lisensi: " .. tostring(wket)) end
+    else
+        warn("Bypass gagal: " .. tostring(sebab))
+    end
+    print()
+    return
+end
+
 if PERINTAH == "cari" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
@@ -4177,6 +4318,7 @@ if PERINTAH ~= "" then
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
     info("   zenx lisensi            -> keadaan kunci Delta")
+    info("   zenx ukur <cl> <jumlah> -> set jendela ke ukuran N client, cari tombolnya")
     info("   zenx cari <client>      -> worker cari sendiri tombol key + bypass sekalian")
     info("   zenx pantau <client>    -> tiap dipencet, koordinatnya langsung nongol")
     info("   zenx rekam <client>     -> rekam sekali, ambil satu koordinat")
