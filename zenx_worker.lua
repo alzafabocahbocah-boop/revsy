@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.98-cf"
+local VERSION = "5.00-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -756,6 +756,121 @@ local function rekam_sentuh(pkg, kotak, detik)
     return nil, (math.min(#xs, #ys) .. " sentuhan kerekam, tapi GAK ADA yang jatuh " ..
                  "di kotak jendela [" .. kotak.L .. "," .. kotak.T .. "]-[" ..
                  kotak.R .. "," .. kotak.B .. "] -- kepencetnya di luar jendela client?")
+end
+
+-- ============================================================
+-- v5.00: CARI TOMBOL KEY SENDIRI (nyapu + diverifikasi + diinget)
+--
+-- Kenapa nyapu, bukan dikalibrasi sekali: layar client GAK BISA diintip sama
+-- sekali di RedFinger -- uiautomator nol simpul teks, logcat gak nyatet URL-nya,
+-- berkas gak nyimpen. Semua jalur udah dicoba, buntu.
+--
+-- TAPI keberhasilannya BISA diperiksa: habis mencet, papan klip keisi link key
+-- atau nggak. Jawabannya pasti. Jadi worker gak perlu tau tombolnya di mana --
+-- dia coba beberapa titik, tiap kali diperiksa, berhenti pas kena.
+--
+-- Diinget PER UKURAN JENDELA. Worker sendiri yang naruh ukuran jendela (lewat
+-- prefs App Cloner), jadi ukurannya terbatas: 4 client sekian, 6 client sekian.
+-- Sekali ketemu buat satu ukuran, besoknya langsung tembak -- gak nyapu lagi.
+-- Ukuran berubah (ganti jumlah client) -> nyapu sekali lagi, terus diinget juga.
+-- ============================================================
+local TAP_FILE = "zenx_tap.txt"
+
+-- titik sapuan: sepanjang garis tengah, dari atas ke bawah.
+-- Tombolnya panjang (kebukti: pas dipencet berkali-kali, satu sumbu tetap,
+-- satunya nyebar ~50px), jadi x=0.5 cukup -- yang dicari tingginya.
+local TITIK_SAPU = {
+    { 0.50, 0.62 }, { 0.50, 0.55 }, { 0.50, 0.70 }, { 0.50, 0.48 },
+    { 0.50, 0.77 }, { 0.50, 0.42 }, { 0.50, 0.84 }, { 0.50, 0.35 },
+}
+
+local function tap_muat()
+    local t = {}
+    local f = io.open(TAP_FILE, "r")
+    if not f then return t end
+    for baris in f:lines() do
+        local k, fx, fy = baris:match("^(%d+x%d+)%s+([%d.]+)%s+([%d.]+)")
+        if k then t[k] = { fx = tonumber(fx), fy = tonumber(fy) } end
+    end
+    f:close()
+    return t
+end
+
+local function tap_simpan(kunci, fx, fy)
+    local t = tap_muat()
+    t[kunci] = { fx = fx, fy = fy }
+    local f = io.open(TAP_FILE, "w")
+    if not f then return false end
+    for k, v in pairs(t) do
+        f:write(("%s %.3f %.3f\n"):format(k, v.fx, v.fy))
+    end
+    f:close()
+    return true
+end
+
+-- Android 10+ cuma ngizinin baca papan klip kalau aplikasinya LAGI DI DEPAN.
+-- Jadi Termux dimunculin sebentar, dibaca, terus balik lagi ke client.
+local function baca_klip()
+    sh_silent("su -c 'am start -n com.termux/com.termux.app.TermuxActivity'")
+    os.execute("sleep 2")
+    local h = io.popen("timeout 10 termux-clipboard-get 2>/dev/null")
+    local isi = h and (h:read("*all") or "") or ""
+    if h then h:close() end
+    return (isi:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- link key yang sah? (jangan ketipu sisa salinan lama)
+local function klip_link_key(isi)
+    if not isi or isi == "" then return nil end
+    local link = isi:match("(https?://[^%s\"']+)")
+    if not link then return nil end
+    if link:find("platorelay", 1, true) or link:find("?d=", 1, true)
+       or link:find("&d=", 1, true) then
+        return link
+    end
+    return nil
+end
+
+-- balikin: link, fx, fy, keterangan
+local function cari_tombol_key(cfg, pkg)
+    local kotak, sebab = jendela_kotak(pkg)
+    if not kotak then return nil, nil, nil, "gagal baca kotak jendela: " .. tostring(sebab) end
+    local lebar  = kotak.R - kotak.L
+    local tinggi = kotak.B - kotak.T
+    local kunci  = ("%dx%d"):format(lebar, tinggi)
+
+    -- kosongin papan klip dulu, biar sisa salinan lama gak dikira berhasil
+    os.execute("printf '' | timeout 10 termux-clipboard-set >/dev/null 2>&1")
+
+    -- urutan coba: yang UDAH KEINGET buat ukuran ini duluan, baru sapuan
+    local urut = {}
+    local inget = tap_muat()[kunci]
+    if inget then
+        urut[#urut+1] = { inget.fx, inget.fy, ingetan = true }
+    end
+    for _, t in ipairs(TITIK_SAPU) do
+        if not (inget and math.abs(t[1] - inget.fx) < 0.01 and math.abs(t[2] - inget.fy) < 0.01) then
+            urut[#urut+1] = { t[1], t[2] }
+        end
+    end
+
+    for i, t in ipairs(urut) do
+        bawa_depan(pkg)
+        os.execute("sleep 1")
+        tap_jendela(cfg, pkg, t[1], t[2], 2)   -- 2x, sesuai kelakuan tombolnya
+        os.execute("sleep 2")
+
+        local link = klip_link_key(baca_klip())
+        if link then
+            tap_simpan(kunci, t[1], t[2])
+            return link, t[1], t[2],
+                   (t.ingetan and "pakai ingatan" or ("ketemu di percobaan ke-" .. i))
+                   .. " (" .. kunci .. ")"
+        end
+    end
+
+    return nil, nil, nil, ("dicoba " .. #urut .. " titik di jendela " .. kunci ..
+                           ", papan klip tetep kosong")
 end
 
 local function config_set_bypass(apikey)
@@ -3326,6 +3441,76 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- v4.97: `zenx pantau <client> [detik]` -- TIAP kali lo pencet, koordinatnya
 -- langsung nongol. Gak ada balapan sama waktu kayak `zenx rekam`: pencet
 -- sesukanya, liat angkanya, pilih sendiri yang bener.
+-- v5.00: `zenx cari <client>` -- worker nyari sendiri tombol key-nya, sampai
+-- papan klip keisi link. Ketemu -> diinget buat ukuran jendela itu -> langsung
+-- diproses jadi kunci Delta sekalian.
+if PERINTAH == "cari" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+
+    local target = arg and arg[2] or ""
+    if target == "" then
+        err("Cara pakai:  zenx cari <client>")
+        info("   contoh:  zenx cari clienu")
+        return
+    end
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs)) do
+        if p == target or p:find(target, 1, true) then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. target .. "' gak ada di config.")
+        info("Yang ada: " .. cfg.pkgs)
+        return
+    end
+
+    print(C.BOLD..C.C.."\n=== CARI TOMBOL KEY ==="..C.N)
+    do
+        local kead, umur = lisensi_keadaan(cfg)
+        info("Lisensi sekarang: " .. kead ..
+             (umur and ("  (umur " .. umur_ringkas(umur) .. ")") or ""))
+    end
+    info("Nyoba beberapa titik, tiap kali diperiksa papan klipnya.")
+    info("Bisa makan beberapa menit -- jangan disentuh dulu.")
+    print()
+
+    local link, fx, fy, ket = cari_tombol_key(cfg, pkg)
+    if not link then
+        err("Gagal: " .. tostring(ket))
+        info("Kemungkinan: layar key lagi gak nongol, atau tombolnya di luar garis tengah.")
+        info("Pastiin client-nya emang lagi minta key, terus coba lagi.")
+        return
+    end
+
+    ok(("Dapet link!  [%s]"):format(ket))
+    ok(("Titik tombol: %.3f , %.3f  -- diinget di %s"):format(fx, fy, TAP_FILE))
+    info("Link: " .. link:sub(1, 55) .. "...")
+    print()
+
+    info("Proses ke API bypass... (30-60 detik)")
+    local kunci, sebab, mentah = bypass_kunci(cfg, link, false)
+    if not kunci then
+        err("Bypass gagal: " .. tostring(sebab))
+        if mentah and mentah:gsub("%s+", "") ~= "" then
+            info("Jawaban mentah API:")
+            print(C.D .. mentah:sub(1, 400) .. C.N)
+        end
+        return
+    end
+    ok("KUNCI: " .. kunci)
+
+    local wok, wket = tulis_lisensi(cfg, kunci)
+    if wok then
+        ok("Ditulis ke Delta: " .. wket)
+        info("Kepakai SEMUA client. Restart client yang minta key:")
+        info("   su -c 'am force-stop " .. pkg .. "'")
+    else
+        warn("Gagal nulis ke Delta: " .. tostring(wket))
+    end
+    print()
+    return
+end
+
 if PERINTAH == "pantau" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
@@ -3372,8 +3557,9 @@ if PERINTAH == "pantau" then
     local tengahY = (kotak.T + kotak.B) / 2
     print()
     print(C.BOLD..C.Y.."   LANGKAH 1: TAP TEPAT DI TENGAH JENDELA CLIENT"..C.N)
+    -- v4.99: dibulatin dulu -- (124+1153)/2 = 638.5, dan %d nolak bilangan pecahan
     print(C.D..("   (kira-kira aja, buat ngunci arah layar. tengahnya di %d,%d)")
-        :format(tengahX, tengahY)..C.N)
+        :format(math.floor(tengahX), math.floor(tengahY))..C.N)
     print()
 
     local arahKunci, sudah, mulai = nil, 0, os.time()
@@ -3874,6 +4060,7 @@ if PERINTAH ~= "" then
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
     info("   zenx lisensi            -> keadaan kunci Delta")
+    info("   zenx cari <client>      -> worker cari sendiri tombol key + bypass sekalian")
     info("   zenx pantau <client>    -> tiap dipencet, koordinatnya langsung nongol")
     info("   zenx rekam <client>     -> rekam sekali, ambil satu koordinat")
     info("   zenx tap <cl> <x> <y>   -> pencet titik (pecahan 0..1)")
