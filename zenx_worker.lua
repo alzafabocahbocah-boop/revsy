@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.15-cf"
+local VERSION = "5.17-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -708,6 +708,24 @@ local function arah_calon(maxX, maxY, W, H)
     }
 end
 
+-- v5.16: penengah kalau tap-nya ambigu (dua arah sama-sama jatuh di dalam
+-- jendela). Cuma kejadian kalau jendelanya hampir sepenuh layar -- di ukuran
+-- grid beneran (226x293 / 610x330) risikonya 0%. Patokannya setelan putaran
+-- layar Android: rotasi 1 -> "diputar kiri", rotasi 3 -> "diputar kanan".
+local function arah_dari_rotasi(maxX, maxY, W, H)
+    local rot = tonumber((sh("su -c 'settings get system user_rotation'") or ""):match("%d+"))
+    if not rot then return nil end
+    local calon = arah_calon(maxX, maxY, W, H)
+    for _, c in ipairs(calon) do
+        if (rot == 1 and c.nama == "diputar kiri")
+        or (rot == 3 and c.nama == "diputar kanan")
+        or ((rot == 0 or rot == 2) and (c.nama == "apa adanya" or c.nama == "dibalik")) then
+            return c, rot
+        end
+    end
+    return nil, rot
+end
+
 -- v4.98: KUNCI ARAH pakai patokan. Dikasih satu sentuhan yang SUDAH DIKETAHUI
 -- mestinya jatuh di mana (mis. tengah jendela), dipilih arah yang hasilnya
 -- paling dekat ke situ. Sekali terkunci, dipakai buat semua sentuhan berikutnya
@@ -853,13 +871,21 @@ local TAP_FILE = "zenx_tap.txt"
 -- background"). Percuma disapu.
 -- Gantinya: garis tengah dirapetin (langkah 0,05), soalnya tombolnya panjang --
 -- yang perlu dicari cuma TINGGINYA, bukan kiri-kanannya.
+-- v5.17: DIBETULIN PAKAI DATA LAPANGAN. Dulu semua titik ada di garis tengah
+-- (x=0.5) -- itu asumsi gua bahwa dialognya di tengah jendela. SALAH: hasil
+-- kalibrasi manual nunjukin tombolnya di x=0.81, jauh ke kanan. Makanya sapuan
+-- lama gak pernah kena, seberapa rapat pun titik Y-nya.
+-- Sekarang: kolom kanan (0.81) didahuluin, baru tengah, baru kiri.
 local TITIK_SAPU = {
-    -- garis tengah, dari tengah nyebar ke atas-bawah
-    { 0.50, 0.62 }, { 0.50, 0.57 }, { 0.50, 0.67 }, { 0.50, 0.52 },
-    { 0.50, 0.72 }, { 0.50, 0.47 }, { 0.50, 0.77 }, { 0.50, 0.42 },
-    { 0.50, 0.82 }, { 0.50, 0.37 }, { 0.50, 0.87 }, { 0.50, 0.32 },
-    -- kalau tengah gak kena semua, dialognya mungkin gak center: geser dikit
-    { 0.40, 0.62 }, { 0.60, 0.62 }, { 0.40, 0.72 }, { 0.60, 0.72 },
+    -- kolom kanan -- di sinilah tombolnya ketemu waktu kalibrasi manual
+    { 0.81, 0.70 }, { 0.81, 0.64 }, { 0.81, 0.76 }, { 0.81, 0.58 },
+    { 0.81, 0.82 }, { 0.81, 0.52 }, { 0.81, 0.88 },
+    -- agak geser dari kolom kanan
+    { 0.72, 0.70 }, { 0.90, 0.70 }, { 0.72, 0.64 }, { 0.90, 0.64 },
+    -- garis tengah, jaga-jaga kalau tata letaknya beda di ukuran lain
+    { 0.50, 0.70 }, { 0.50, 0.62 }, { 0.50, 0.78 }, { 0.50, 0.55 },
+    -- kolom kiri
+    { 0.25, 0.70 }, { 0.25, 0.62 },
 }
 
 local function tap_muat()
@@ -3739,11 +3765,15 @@ if PERINTAH == "catat" then
     os.execute("su -c 'timeout " .. (detik + 20) .. " getevent -l > " .. berkas .. "' >/dev/null 2>&1 &")
 
     print()
-    print(C.BOLD..C.Y.."   LANGKAH 1: TAP TENGAH JENDELA CLIENT (sekali)"..C.N)
-    print(C.D..("   buat ngunci arah layar. tengahnya di %d,%d")
-        :format(math.floor((kotak.L + kotak.R) / 2), math.floor((kotak.T + kotak.B) / 2))..C.N)
+    print(C.BOLD..C.Y.."   TAP TOMBOL 'Copied link' -- 3-5 kali"..C.N)
+    print(C.D.."   jangan geser/ubah ukuran jendela sampai selesai."..C.N)
     print()
 
+    -- v5.16: gak usah tap tengah dulu. Arah layar ditentuin dari TAP LO SENDIRI:
+    -- dari dua arah yang mungkin (panel tegak, layar rebah), cuma satu yang bakal
+    -- jatuh DI DALAM jendela. Jendelanya kecil dibanding layar, jadi hampir
+    -- mustahil dua-duanya cocok -- dan kalau kebetulan cocok dua-duanya, tap itu
+    -- dilewat aja, nunggu tap berikutnya yang jelas.
     local arahKunci, sudah, mulai = nil, 0, os.time()
     local kumpul = {}
     while (os.time() - mulai) < detik do
@@ -3756,14 +3786,36 @@ if PERINTAH == "catat" then
         local ada = math.min(#xs, #ys)
         for i = sudah + 1, ada do
             if not arahKunci then
-                local pilih, jarak = kunci_arah(xs[i], ys[i], maxX, maxY, W, H,
-                    (kotak.L + kotak.R) / 2, (kotak.T + kotak.B) / 2)
-                arahKunci = pilih
-                ok(("Arah terkunci: %s (meleset %.0f px)"):format(pilih.nama, jarak))
-                print()
-                print(C.BOLD..C.Y.."   LANGKAH 2: TAP TOMBOL 'Copied link' -- 3-5 kali"..C.N)
-                print(C.D.."   jangan geser/ubah ukuran jendela sampai selesai."..C.N)
-                print()
+                -- arah mana yang bikin tap ini jatuh di dalam jendela?
+                local cocok = {}
+                for _, c in ipairs(arah_calon(maxX, maxY, W, H)) do
+                    local t = sentuh_ke_pecahan(xs[i], ys[i], maxX, maxY, W, H, kotak, c)
+                    if t and t.didalam then cocok[#cocok+1] = { c = c, t = t } end
+                end
+                if #cocok == 1 then
+                    arahKunci = cocok[1].c
+                    ok("Arah layar terkunci: " .. arahKunci.nama)
+                    kumpul[#kumpul+1] = { fx = cocok[1].t.fx, fy = cocok[1].t.fy }
+                    print(("  %s#1  layar(%4d,%4d)  ->  %.3f , %.3f%s"):format(
+                        C.G, cocok[1].t.X, cocok[1].t.Y, cocok[1].t.fx, cocok[1].t.fy, C.N))
+                elseif #cocok > 1 then
+                    -- dua-duanya cocok -> putusin lewat setelan putaran layar
+                    local c, rot = arah_dari_rotasi(maxX, maxY, W, H)
+                    if c then
+                        arahKunci = c
+                        ok(("Arah layar terkunci: %s (dari setelan putaran = %d)"):format(c.nama, rot or -1))
+                        local t = sentuh_ke_pecahan(xs[i], ys[i], maxX, maxY, W, H, kotak, c)
+                        if t and t.didalam then
+                            kumpul[#kumpul+1] = { fx = t.fx, fy = t.fy }
+                            print(("  %s#1  layar(%4d,%4d)  ->  %.3f , %.3f%s"):format(
+                                C.G, t.X, t.Y, t.fx, t.fy, C.N))
+                        end
+                    else
+                        print(C.D.."  --  arahnya ambigu, tap sekali lagi"..C.N)
+                    end
+                else
+                    print(C.D.."  --  di LUAR jendela (abaikan)"..C.N)
+                end
             else
                 local t = sentuh_ke_pecahan(xs[i], ys[i], maxX, maxY, W, H, kotak, arahKunci)
                 if t and t.didalam then
