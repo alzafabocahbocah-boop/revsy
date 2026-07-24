@@ -109,6 +109,13 @@
 --       dipanggil). Itu nulis ke barang milik game, bukan baca -- bisa bikin
 --       panel guild berhenti keupdate. Baca event sekarang lewat panel doang.
 --
+-- v2.9: RINGANKAN RAM. Akun ini gak pernah baca kebun (udah dicek: nol
+--       sentuhan ke workspace.Gardens; buah buat dijual diambil dari TAS).
+--       Jadi Sound & isi kebun boleh dibuang -- murni beban.
+--       Bukti lapangan: 242 Sound = 93 MB turun, 3.755 objek kebun = 8 MB.
+--       Jalan tiap 2 menit, karena Sound & tanaman baru terus muncul.
+--       Bawaan MATI -- ini ngapus barang, harus dinyalain sadar-sadar.
+--
 -- v1.2: * daftar seed digabung dari 3 sumber (stok toko + SeedData +
 --         RemoteDeveloperProducts) -- dulu cuma SeedData, jadi bolong.
 --       * SEED BARU kedeteksi otomatis & langsung dibeli (bisa dimatiin).
@@ -141,7 +148,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "2.8"
+local VERSI = "2.9"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -201,6 +208,11 @@ local state = {
     giftPetOn     = false,    -- kirim pet ke akun lain
     giftTarget    = "",       -- nama akun tujuan
 
+    -- v2.9: ringankan RAM (bawaan MATI -- ini ngapus barang)
+    ringanOn      = false,    -- saklar utama
+    ringanSuara   = true,     -- hapus Sound (kebukti 93 MB)
+    ringanKebun   = true,     -- hapus isi kebun (gak dibaca script ini)
+
     -- v1.6: setelan dari panel web
     ikutPanel     = true,     -- tarik setelan dari panel (panel menang atas setelan lokal)
     panelUrl      = "https://dry-glitter-63e4.petagee5.workers.dev",
@@ -226,6 +238,8 @@ local function simpan()
             mutasiRainbow = state.mutasiRainbow,
             giftPetOn = state.giftPetOn,
             giftTarget = state.giftTarget, ikutPanel = state.ikutPanel,
+            ringanOn = state.ringanOn, ringanSuara = state.ringanSuara,
+            ringanKebun = state.ringanKebun,
             panelUrl = state.panelUrl, panelKunci = state.panelKunci,
         }))
     end)
@@ -1754,6 +1768,86 @@ task.spawn(function()
 end)
 
 -- ============================================================
+-- v2.9: RINGANKAN RAM
+--
+-- Akun ini CUMA beli seed/gear/pet, terima gift, jual buah dari tas. Dia GAK
+-- PERNAH baca kebun -- udah dicek: gak ada satu pun bagian script yang
+-- nyentuh workspace.Gardens / Plants / Fruits. Buah buat dijual diambil dari
+-- TAS & KARAKTER (lihat pemegangBuah), bukan dari kebun.
+--
+-- Jadi buat akun ini, kebun itu murni beban: ribuan Part yang gak ada yang
+-- baca. Sama juga Sound -- gak ada yang dengerin.
+--
+-- Bukti lapangan kenapa Suara diprioritasin: ngapus 242 Sound nurunin RAM
+-- 93 MB, sedangkan ngapus 3.755 objek kebun cuma 8 MB. Satu Part beberapa
+-- ratus byte; tiap Sound megang data audio sendiri.
+--
+-- YANG GAK BOLEH DISENTUH (dipakai script ini):
+--   Backpack & Character  -> isi tas, buah buat dijual
+--   Map.WildPetRef/Spawns -> jinakin pet
+--   StockValues           -> stok toko
+--   PlayerGui             -> harga pasar, mailbox, guild
+-- Empat itu semua di LUAR workspace.Gardens, jadi aman.
+--
+-- Bawaannya MATI. Ini ngapus barang -- harus dinyalain sadar-sadar.
+-- ============================================================
+Seed.statRingan = { suara = 0, kebun = 0 }
+
+local function ringanSuara()
+    local n = 0
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("Sound") then
+            pcall(function() d:Destroy() end)
+            n = n + 1
+            if n % 60 == 0 then task.wait() end
+        end
+    end
+    pcall(function()
+        local ss = game:GetService("SoundService")
+        for _, d in ipairs(ss:GetDescendants()) do
+            if d:IsA("Sound") then pcall(function() d:Destroy() end); n = n + 1 end
+        end
+    end)
+    return n
+end
+
+local function ringanKebun()
+    local n = 0
+    local g = workspace:FindFirstChild("Gardens")
+    if not g then return 0 end
+    -- ISI-nya yang dihapus, foldernya DIBIARIN. Kalau foldernya ikut kehapus,
+    -- client game bisa bingung pas server ngirim data kebun baru.
+    for _, plot in ipairs(g:GetChildren()) do
+        local isi = #plot:GetDescendants()
+        pcall(function() plot:Destroy() end)
+        n = n + isi
+        task.wait()
+    end
+    return n
+end
+
+function Seed.ringankan()
+    if state.ringanSuara then
+        local ok, n = pcall(ringanSuara)
+        if ok then Seed.statRingan.suara = Seed.statRingan.suara + n end
+    end
+    if state.ringanKebun then
+        local ok, n = pcall(ringanKebun)
+        if ok then Seed.statRingan.kebun = Seed.statRingan.kebun + n end
+    end
+end
+
+-- Jalan berkala, bukan sekali doang: Sound & tanaman baru terus muncul
+-- selama main. Kalau cuma sekali pas start, sejam kemudian numpuk lagi.
+task.spawn(function()
+    task.wait(20)   -- kasih waktu game kebangun dulu
+    while isCurrentGen() do
+        if state.ringanOn then pcall(Seed.ringankan) end
+        task.wait(120)
+    end
+end)
+
+-- ============================================================
 -- ANTI-AFK -- Roblox nendang yang diem ~20 menit
 -- ============================================================
 pcall(function()
@@ -1955,7 +2049,8 @@ Seed._cfgLog = "belum narik"
 local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
                      "terimaGift","jualOn","jualTanpaMult",
                      "petOn","petSemua","giftPetOn","autoAfk",
-                     "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow" }
+                     "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow",
+                     "ringanOn","ringanSuara","ringanKebun" }
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
                      "maxPerSiklus","mutasiMaxKali" }
 
@@ -2381,7 +2476,7 @@ end)
 local sg = mk("ScreenGui", { Name = "StarSeed", ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
 
-local W, H = 320, 470
+local W, H = 320, 500
 local main = mk("Frame", {
     Name = "Main", Parent = sg, Active = true, Draggable = true,
     Size = UDim2.new(0, W, 0, H),
@@ -2601,6 +2696,31 @@ local kotakTarget = mk("TextBox", { Parent = kPet,
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakTarget })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakTarget })
 
+-- ---------- ringankan RAM ----------
+local kRingan = kartu(96)
+mk("TextLabel", { Parent = kRingan, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Ringankan RAM" })
+mk("TextLabel", { Parent = kRingan, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 24), Size = UDim2.new(1, -24, 0, 14),
+    Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "buang barang yang gak dibaca akun ini" })
+
+local tblRingan = mk("TextButton", { Parent = kRingan,
+    Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 0, 24),
+    BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.redup,
+    Text = "Ringankan RAM: MATI" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblRingan })
+
+local lblRingan = mk("TextLabel", { Parent = kRingan, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 70), Size = UDim2.new(1, -24, 0, 20),
+    Font = Enum.Font.Gotham, TextSize = 10.5, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
+    Text = "belum jalan" })
+
 -- ---------- anti-afk ----------
 local kAfk = kartu(44)
 mk("TextLabel", { Parent = kAfk, BackgroundTransparency = 1,
@@ -2713,6 +2833,16 @@ tblJual.MouseButton1Click:Connect(function()
     simpan()
 end)
 
+tblRingan.MouseButton1Click:Connect(function()
+    state.ringanOn = not state.ringanOn
+    catSaklar(tblRingan, state.ringanOn, "Ringankan RAM: NYALA", "Ringankan RAM: MATI")
+    simpan()
+    if state.ringanOn then
+        -- langsung jalan sekali, gak usah nunggu 2 menit
+        task.spawn(function() pcall(Seed.ringankan) end)
+    end
+end)
+
 tblPet.MouseButton1Click:Connect(function()
     state.petOn = not state.petOn
     catSaklar(tblPet, state.petOn, "Jinakin pet liar: NYALA", "Jinakin pet liar: MATI")
@@ -2743,6 +2873,7 @@ function Seed._segarkanGUI()
     catSaklar(tblJual, state.jualOn,
         "Auto jual pas mahal: NYALA", "Auto jual pas mahal: MATI")
     catSaklar(tblPet, state.petOn, "Jinakin pet liar: NYALA", "Jinakin pet liar: MATI")
+    catSaklar(tblRingan, state.ringanOn, "Ringankan RAM: NYALA", "Ringankan RAM: MATI")
     catSaklar(tblKirim, state.giftPetOn,
         "Kirim pet ke akun lain: NYALA", "Kirim pet ke akun lain: MATI")
     kotakMult.Text = tostring(state.jualMinMult or 4) .. "x"
@@ -2809,6 +2940,15 @@ task.spawn(function()
                     Seed._logJual ~= "" and Seed._logJual or "-")
             end
             lblPasar.Text = table.concat(bagian, "  ·  ")
+
+            if state.ringanOn then
+                lblRingan.Text = ("dibuang: %d suara, %d objek kebun")
+                    :format(Seed.statRingan.suara, Seed.statRingan.kebun)
+                lblRingan.TextColor3 = WARNA.aksen
+            else
+                lblRingan.Text = "mati -- suara & kebun dibiarin"
+                lblRingan.TextColor3 = WARNA.samar
+            end
             lblPasar.TextColor3 = (best and best >= (tonumber(state.jualMinMult) or 4))
                 and WARNA.aksen or WARNA.samar
             if state.beliOn then
@@ -2897,6 +3037,7 @@ catSaklar(tblGift, state.terimaGift,
 catSaklar(tblJual, state.jualOn,
     "Auto jual pas mahal: NYALA", "Auto jual pas mahal: MATI")
 catSaklar(tblPet, state.petOn, "Jinakin pet liar: NYALA", "Jinakin pet liar: MATI")
+catSaklar(tblRingan, state.ringanOn, "Ringankan RAM: NYALA", "Ringankan RAM: MATI")
 catSaklar(tblKirim, state.giftPetOn,
     "Kirim pet ke akun lain: NYALA", "Kirim pet ke akun lain: MATI")
 segarkanMode()
