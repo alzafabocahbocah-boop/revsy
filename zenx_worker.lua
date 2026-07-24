@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.88-cf"
+local VERSION = "4.89-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -480,6 +480,37 @@ local function umur_ringkas(detik)
     local m = math.floor((detik % 3600) / 60)
     if j > 0 then return j .. "j " .. m .. "m" end
     return m .. "m"
+end
+
+-- v4.89: BAWA JENDELA KE DEPAN TANPA LINK JOIN.
+-- Dulu munculinnya pakai 'am start -d <link>'. Itu aman kalau client UDAH di
+-- dalam game (link jadi no-op), TAPI kalau lagi di layar key / belum masuk
+-- game, link itu BENERAN dieksekusi -> client join & teleport sendiri. Kejadian
+-- pas kalibrasi tap: client malah pindah ke market.
+-- Sekarang: pindahin task-nya doang, gak nyentuh isi aplikasi sama sekali.
+local function bawa_depan(pkg)
+    -- 1) lewat taskId. Di RedFinger cuma 'am stack list' yang ngasih taskId
+    -- (dumpsys activity gagal). Keluarannya suka ke-wrap, jadi dibaca pakai
+    -- posisi, bukan per baris.
+    local o = sh("su -c 'am stack list 2>&1'") or ""
+    local id, cari = nil, 1
+    while true do
+        local _, b = o:find("taskId=", cari, true)
+        if not b then break end
+        local nomor = o:match("^(%d+)", b + 1)
+        if nomor and o:sub(b, b + 200):find(pkg, 1, true) then id = nomor break end
+        cari = b + 1
+    end
+    if id then
+        local r = sh("su -c 'am task move-task " .. id .. " true 2>&1'") or ""
+        if not r:lower():find("unknown") and not r:lower():find("exception") then
+            return true, "task " .. id
+        end
+    end
+    -- 2) cadangan: panggil activity-nya langsung, TANPA -d (tanpa link)
+    sh_silent("su -c 'am start -f 0x20000000 -n " .. pkg ..
+              "/com.roblox.client.startup.MainGameActivity'")
+    return true, "activity"
 end
 
 -- v4.88: baca KOTAK JENDELA client yang sebenernya (bukan hitungan grid).
@@ -1488,8 +1519,10 @@ end
 -- ambil dump layar 1 client. balikin isi XML, atau nil + sebab.
 local function ambil_dump(cfg, pkg, mapLink, lewatiFokus)
     local dump = "/sdcard/zenx_ui.xml"
-    local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
-    sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
+    -- v4.89: dulu munculinnya pakai 'am start -d <link>'. Kalau client lagi GAK
+    -- di dalam game (mis. layar key), link itu dieksekusi beneran -> client join
+    -- sendiri. Sekarang cuma mindahin task, gak nyentuh isi aplikasinya.
+    bawa_depan(pkg)
     os.execute("sleep 3")
     if not lewatiFokus then
         local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
@@ -1521,20 +1554,40 @@ cek_layar = cek_error_ui
 -- aman dipanggil berkala -- kalau window-nya udah nongol, ini gak ngefek apa-apa.
 -- v4.63: satu panggilan su buat semua client (dulu satu-satu, tiap 10 detik).
 -- 'cekJalan' dioper dari cache biar gak dumpsys ulang.
+-- v4.89: JANGAN pakai link join di sini. Fungsi ini jalan tiap 15 detik; kalau
+-- ada client yang lagi di layar key (belum masuk game), link-nya dieksekusi
+-- beneran -> client join sendiri, berulang tiap 15 detik. Sekarang cuma
+-- mindahin task ke depan: 1 panggilan su buat baca taskId semua client,
+-- 1 lagi buat mindahin semuanya sekaligus.
 local function jaga_depan(cfg, mapLink, cekJalan)
-    local bagian, n = {}, 0
+    local mau = {}
     for _, pkg in ipairs(split(cfg.pkgs)) do
         local jalan = cekJalan and cekJalan[pkg]
         if jalan == nil then jalan = pkg_running(pkg) end
-        if jalan then
-            local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
-            bagian[#bagian+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '"
-                                .. url .. "' -p " .. pkg
+        if jalan then mau[#mau+1] = pkg end
+    end
+    if #mau == 0 then return 0 end
+
+    -- taskId semua client sekali baca ('am stack list' -- satu-satunya yang
+    -- ngasih taskId di RedFinger)
+    local o = sh("su -c 'am stack list 2>&1'") or ""
+    local bagian, n = {}, 0
+    for _, pkg in ipairs(mau) do
+        local id, cari = nil, 1
+        while true do
+            local _, b = o:find("taskId=", cari, true)
+            if not b then break end
+            local nomor = o:match("^(%d+)", b + 1)
+            if nomor and o:sub(b, b + 200):find(pkg, 1, true) then id = nomor break end
+            cari = b + 1
+        end
+        if id then
+            bagian[#bagian+1] = "am task move-task " .. id .. " true"
             n = n + 1
         end
     end
     if n > 0 then
-        sh_silent('su -c "' .. table.concat(bagian, "; ") .. '"')
+        sh_silent("su -c '" .. table.concat(bagian, "; ") .. "'")
     end
     return n
 end
@@ -3127,10 +3180,9 @@ if PERINTAH == "tap" then
     end
 
     print(C.BOLD..C.C.."\n=== TAP KALIBRASI ==="..C.N)
-    info("Bawa " .. pkg:gsub("com%.roblox%.","") .. " ke depan...")
-    local url = build_url(cfg, nil)
-    sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '"
-              .. url .. "' -p " .. pkg .. "\"")
+    info("Bawa " .. pkg:gsub("com%.roblox%.","") .. " ke depan (tanpa link join)...")
+    local _, caraDepan = bawa_depan(pkg)
+    info("   lewat: " .. tostring(caraDepan))
     os.execute("sleep 3")
 
     local hasil, sebab = tap_jendela(cfg, pkg, fx, fy, kali)
