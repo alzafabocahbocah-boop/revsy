@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.92-cf"
+local VERSION = "4.93-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -638,7 +638,23 @@ local function rekam_sentuh(pkg, kotak, detik)
         px = isi:match("ABS_X%s+(%x+)")
         py = isi:match("ABS_Y%s+(%x+)")
     end
+    -- v4.93: dijaga SEBELUM diubah. Dulu langsung tonumber(nil,16) -> meledak,
+    -- padahal ini keadaan wajar (kelamaan mencet / kelewat waktunya).
+    if not px or not py then
+        -- bedain "gak kepencet" vs "getevent-nya emang gak ngerekam apa-apa"
+        local nBaris = 0
+        for _ in isi:gmatch("\n") do nBaris = nBaris + 1 end
+        local adaSentuh = isi:find("BTN_TOUCH", 1, true) ~= nil
+        if nBaris <= 5 then
+            return nil, "getevent gak ngerekam apa-apa (" .. nBaris .. " baris) -- root/izinnya?"
+        elseif adaSentuh then
+            return nil, "ada sentuhan kerekam tapi koordinatnya gak kebaca (format lain?)"
+        end
+        return nil, "gak ada sentuhan dalam " .. (detik or 30) ..
+                    " detik (" .. nBaris .. " baris kerekam) -- kelewat waktunya?"
+    end
     px, py = tonumber(px, 16), tonumber(py, 16)
+    if not px or not py then return nil, "koordinat gak kebaca" end
     if not px or not py then return nil, "gak nemu koordinat sentuhan -- kepencet gak?" end
 
     -- batas panel sentuh (buat ngubah ke ukuran layar)
