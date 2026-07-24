@@ -116,6 +116,27 @@
 --       Jalan tiap 2 menit, karena Sound & tanaman baru terus muncul.
 --       Bawaan MATI -- ini ngapus barang, harus dinyalain sadar-sadar.
 --
+-- v3.0: FIX "pet cuma teleport-teleport doang, gak kebeli". Dua sebab:
+--       1. DETEKSI BERHASIL SALAH. Cuma ngecek objek pet ilang (o.Parent).
+--          Padahal pas dijinakin, entrinya biasanya TETEP ADA -- yang berubah
+--          OwnerUserId. Jadi berhasil pun kebaca gagal. Sekarang dicek tiga
+--          tanda: objek ilang / pemiliknya kita / harganya berubah.
+--       2. DITANDAI "UDAH DICOBA" SEBELUM NYOBA. Gagal sekali karena hal
+--          sementara = pet itu gak pernah dicoba lagi selamanya. Sekarang
+--          ada jatah 3x, dan nyerah cuma kalau jatah habis atau keburu
+--          direbut orang. Ngulang di harga yang SAMA itu bukan perang harga.
+--       Plus: nembak baru setelah BENERAN deket (dicek jaraknya < 6 stud),
+--       bukan asal jeda 0.2 detik -- nembak sebelum server ngakuin posisi
+--       kita itu ditolak diam-diam, dan itu yang keliatan sebagai
+--       "teleport-teleport doang".
+--
+-- v3.1: SETELAN PANEL YANG GAGAL SEKARANG KELIATAN. Kalau backend belum
+--       di-deploy, CF balikin {"error":"jalur gak dikenal: /seed-cfg"} --
+--       dan versi lama diem-diem nganggep itu "gak ada perubahan". Jadi dari
+--       luar keliatannya panel diabaikan, padahal script emang gak pernah
+--       nerima setelannya. Sekarang: warning di konsol + baris "filter: ...
+--       [PANEL GAGAL]" di GUI, jadi ketauan dia lagi pakai setelan yang mana.
+--
 -- v1.2: * daftar seed digabung dari 3 sumber (stok toko + SeedData +
 --         RemoteDeveloperProducts) -- dulu cuma SeedData, jadi bolong.
 --       * SEED BARU kedeteksi otomatis & langsung dibeli (bisa dimatiin).
@@ -148,7 +169,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "2.9"
+local VERSI = "3.1"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1090,7 +1111,9 @@ end)
 -- ============================================================
 Seed.statPet = 0
 Seed._logPet = ""
-Seed._petCoba = {}      -- uuid -> udah pernah dicoba? (SEKALI doang, lihat catatan)
+local MY_UID = player.UserId
+Seed._petCoba  = {}     -- uuid -> udah selesai diurus (berhasil / nyerah)
+Seed._petGagal = {}     -- uuid -> berapa kali gagal (jatah 3, lihat v3.0)
 
 -- v1.7: harga dasar per jenis pet, DIPELAJARI dari yang paling murah pernah
 -- keliat. Harga pet cuma NAIK pas direbut, gak pernah turun -- jadi nilai
@@ -1628,7 +1651,11 @@ function Seed.tamePetSekali()
         if okJenis and masihBase and okHarga and mampu and belumDicoba then
             -- SEKALI COBA. Kalau gagal, berarti keburu disamber orang --
             -- ngulang cuma bikin ikut perang harga, persis yang dihindarin.
-            Seed._petCoba[uuid] = true
+            -- v3.0: JANGAN tandai "udah dicoba" di sini. Dulu ditandai SEBELUM
+            -- nyoba, jadi kalau gagal karena hal sementara (server telat
+            -- daftarin posisi kita) pet itu gak pernah dicoba lagi selamanya --
+            -- padahal masih perawan & masih harga dasar.
+            -- Sekarang ditandai di BAWAH, dan cuma kalau jatah cobanya habis.
             local posisiAsal = hrp.CFrame
             local nempel = true
             local hb
@@ -1642,17 +1669,83 @@ function Seed.tamePetSekali()
                     end
                 end)
             end)
-            task.wait(0.2)   -- kasih waktu posisi kedaftar di server SEBELUM nembak
+
+            -- v3.0: TUNGGU SAMPAI BENERAN DEKET, bukan asal jeda 0.2 detik.
+            -- Nembak sebelum server ngakuin posisi baru kita = ditolak diam2,
+            -- dan itu yang keliatan sebagai "teleport-teleport doang".
+            local dekat = false
+            for _ = 1, 15 do
+                task.wait(0.06)
+                if not o.Parent then break end
+                local ok2, jarak = pcall(function()
+                    return (hrp.Position - o.Position).Magnitude
+                end)
+                if ok2 and jarak and jarak < 6 then dekat = true break end
+            end
+            task.wait(0.25)   -- kasih waktu posisi itu ke-replikasi ke server
+
+            -- v3.0: BERHASIL itu gak cuma "objeknya ilang".
+            -- Pas pet dijinakin, entri di WildPetRef biasanya TETEP ADA --
+            -- yang berubah OwnerUserId-nya. Versi lama cuma ngecek o.Parent,
+            -- jadi berhasil pun kebaca gagal: nembak terus 6x lalu dilaporin
+            -- gagal. Sekarang tiga tanda dicek.
+            local hargaAwal = harga
+            local function udahKena()
+                if not o.Parent then return true end            -- objek ilang
+                local uid = o:GetAttribute("OwnerUserId")
+                if type(uid) == "number" and uid == MY_UID then return true end
+                local onm = o:GetAttribute("OwnerName")
+                if onm == player.Name then return true end
+                -- harga berubah = ada yang ngeklaim (bisa kita, bisa orang)
+                local h2 = hargaPet(o)
+                if hargaAwal and h2 and h2 ~= hargaAwal then return true end
+                return false
+            end
+
             local kena = false
+            local direbutOrang = false
             for _ = 1, 6 do
-                if not o.Parent then kena = true break end
+                if udahKena() then kena = true break end
                 pcall(function() p:Fire(o) end)
                 task.wait(0.22)
-                if not o.Parent then kena = true break end
+                if udahKena() then kena = true break end
             end
             nempel = false
             pcall(function() if hb then hb:Disconnect() end end)
             pcall(function() if hrp and hrp.Parent then hrp.CFrame = posisiAsal end end)
+
+            -- v3.0: cek "direbut orang" LEPAS dari status kena. Dulu
+            -- pengecekan ini cuma jalan kalau kena=true -- padahal pas
+            -- direbut orang, kena justru FALSE. Jadi gak pernah kedeteksi,
+            -- dan pet-nya masih dicoba lagi 2 putaran berikutnya percuma.
+            if o.Parent then
+                local uid = o:GetAttribute("OwnerUserId")
+                local onm = o:GetAttribute("OwnerName")
+                local punyaOrangLain =
+                    (type(uid) == "number" and uid ~= 0 and uid ~= MY_UID)
+                    or (type(onm) == "string" and onm ~= "" and onm ~= player.Name)
+                if punyaOrangLain then
+                    kena = false
+                    direbutOrang = true
+                end
+            end
+
+            -- v3.0: jatah coba. Gagal karena hal sementara boleh diulang di
+            -- putaran berikutnya -- ITU BUKAN perang harga, selama pet-nya
+            -- masih perawan & harganya masih dasar (dua-duanya udah dicek di
+            -- saringan atas). Yang dihindarin itu nawar lebih mahal, bukan
+            -- nyoba ulang di harga yang sama.
+            if not kena then
+                Seed._petGagal[uuid] = (Seed._petGagal[uuid] or 0) + 1
+                if direbutOrang or Seed._petGagal[uuid] >= 3 then
+                    Seed._petCoba[uuid] = true   -- nyerah, jangan ganggu lagi
+                end
+                if not dekat then
+                    Seed._logPet = "teleport gak nyampe -- server nolak posisi"
+                end
+            else
+                Seed._petCoba[uuid] = true
+            end
 
             if kena then
                 dapat = dapat + 1
@@ -2054,15 +2147,51 @@ local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
                      "maxPerSiklus","mutasiMaxKali" }
 
+-- v3.1: ringkasan filter pet yang BENERAN lagi dipakai. Perlu ditampilin
+-- karena kalau setelan panel gak nyampe, script diam-diam jalan pakai setelan
+-- lokal -- dan dari luar keliatannya kayak panel-nya diabaikan.
+function Seed.ringkasFilterPet()
+    if state.petSemua then return "SEMUA jenis" end
+    local t = {}
+    for k in pairs(state.petPilih or {}) do t[#t+1] = k end
+    table.sort(t)
+    if #t == 0 then return "(kosong -- gak ada yang diburu)" end
+    if #t <= 4 then return table.concat(t, ", ") end
+    return table.concat({t[1], t[2], t[3]}, ", ") .. " +" .. (#t - 3)
+end
+
 function Seed.tarikCfgPanel()
     if not (state.ikutPanel and panelAktif()) then return end
     local r = panelReq("/seed-cfg?akun=" .. player.Name, "GET")
     local body = r and (r.Body or r.body)
-    if not body then Seed._cfgLog = "panel gak jawab"; return end
+    if not body then
+        Seed._cfgLog = "GAGAL: panel gak jawab"
+        if not Seed._cfgWarn then Seed._cfgWarn = true
+            warn("[StarSeed] setelan panel GAK KEBACA: panel gak jawab") end
+        return
+    end
 
     local ok, d = pcall(function() return HS:JSONDecode(body) end)
-    if not ok or type(d) ~= "table" or type(d.cfg) ~= "table" then
-        Seed._cfgLog = "jawaban panel gak kebaca"; return
+    if not ok or type(d) ~= "table" then
+        Seed._cfgLog = "GAGAL: jawaban gak kebaca"
+        return
+    end
+    -- v3.1: kalau backend belum di-deploy, CF balikin {"error":"jalur gak
+    -- dikenal: /seed-cfg"}. Dulu ini diem-diem dianggap "gak ada perubahan"
+    -- -- makanya setelan panel keliatan diabaikan tanpa ada tanda apa pun.
+    if type(d.error) == "string" then
+        Seed._cfgLog = "GAGAL: " .. d.error
+        if not Seed._cfgWarn then
+            Seed._cfgWarn = true
+            warn("[StarSeed] SETELAN PANEL GAK KEPAKAI -> " .. d.error)
+            warn("[StarSeed] Backend Cloudflare kemungkinan belum di-deploy.")
+            warn("[StarSeed] Sementara ini script pakai setelan LOKAL (GUI).")
+        end
+        return
+    end
+    if type(d.cfg) ~= "table" then
+        Seed._cfgLog = "GAGAL: jawaban tanpa cfg"
+        return
     end
     local c = d.cfg
     local ubah = {}
@@ -2667,7 +2796,7 @@ local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     Text = "pasar: belum kebaca" })
 
 -- ---------- pet ----------
-local kPet = kartu(120)
+local kPet = kartu(150)
 mk("TextLabel", { Parent = kPet, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
     Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
@@ -2687,8 +2816,14 @@ local tblKirim = mk("TextButton", { Parent = kPet,
     Text = "Kirim pet ke akun lain: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblKirim })
 
-local kotakTarget = mk("TextBox", { Parent = kPet,
+local lblFilter = mk("TextLabel", { Parent = kPet, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(1, -24, 0, 26),
+    Font = Enum.Font.Gotham, TextSize = 10.5, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
+    Text = "filter: -" })
+
+local kotakTarget = mk("TextBox", { Parent = kPet,
+    Position = UDim2.new(0, 12, 0, 116), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
     Font = Enum.Font.Gotham, TextSize = 11.5, TextColor3 = WARNA.teks,
     PlaceholderText = "nama akun tujuan kirim",
@@ -2940,6 +3075,14 @@ task.spawn(function()
                     Seed._logJual ~= "" and Seed._logJual or "-")
             end
             lblPasar.Text = table.concat(bagian, "  ·  ")
+
+            -- v3.1: tampilin filter pet yang BENERAN kepakai + dari mana
+            -- asalnya. Kalau setelan panel gagal nyampe, ini yang bakal
+            -- ngasih tau -- dulu gagalnya diem doang.
+            local asal = (Seed._cfgLog or ""):find("^GAGAL") and " [PANEL GAGAL]"
+                or ((Seed._cfgTs or 0) > 0 and " [dari panel]" or " [lokal]")
+            lblFilter.Text = "filter: " .. Seed.ringkasFilterPet() .. asal
+            lblFilter.TextColor3 = (asal == " [PANEL GAGAL]") and WARNA.aksen or WARNA.samar
 
             if state.ringanOn then
                 lblRingan.Text = ("dibuang: %d suara, %d objek kebun")
