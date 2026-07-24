@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.97-cf"
+local VERSION = "4.98-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -620,20 +620,56 @@ local function layar_fisik()
 end
 
 
--- v4.97: ubah SATU sentuhan mentah jadi titik layar + pecahan jendela.
--- Dipakai bareng sama pemantau langsung (zenx pantau) dan perekam sekali jalan.
-local function sentuh_ke_pecahan(sx, sy, maxX, maxY, W, H, kotak)
-    local snx, sny = sx / maxX, sy / maxY
-    local arah = {
-        { nama = "apa adanya",    x = snx,     y = sny },
-        { nama = "diputar kanan", x = 1 - sny, y = snx },
-        { nama = "diputar kiri",  x = sny,     y = 1 - snx },
-        { nama = "dibalik",       x = 1 - snx, y = 1 - sny },
+-- v4.98: DAFTAR ARAH YANG MUNGKIN SECARA FISIK.
+-- Panel sentuh lapor dalam arah aslinya. Kalau panel TEGAK (720x1280) sedangkan
+-- layar REBAH (1280x720), maka "apa adanya" dan "dibalik" MUSTAHIL -- sumbu X
+-- panel cuma sampai 720, gak mungkin ngisi lebar layar 1280. Nyisain 2 arah.
+-- Dulu keempatnya dicoba, dan yang mustahil sering kepilih (asal jatuh di dalam
+-- jendela) -- itu yang bikin hasilnya ngawur pas jendelanya gede.
+local function arah_calon(maxX, maxY, W, H)
+    local bedaArah = ((maxY > maxX) ~= (H > W))
+    if bedaArah then
+        return {
+            { nama = "diputar kanan", x = function(nx, ny) return 1 - ny end,
+                                      y = function(nx, ny) return nx end },
+            { nama = "diputar kiri",  x = function(nx, ny) return ny end,
+                                      y = function(nx, ny) return 1 - nx end },
+        }
+    end
+    return {
+        { nama = "apa adanya", x = function(nx, ny) return nx end,
+                               y = function(nx, ny) return ny end },
+        { nama = "dibalik",    x = function(nx, ny) return 1 - nx end,
+                               y = function(nx, ny) return 1 - ny end },
     }
-    for _, c in ipairs(arah) do
-        local X, Y = c.x * W, c.y * H
-        if X >= kotak.L and X <= kotak.R and Y >= kotak.T and Y <= kotak.B then
-            return { X = math.floor(X), Y = math.floor(Y), cara = c.nama,
+end
+
+-- v4.98: KUNCI ARAH pakai patokan. Dikasih satu sentuhan yang SUDAH DIKETAHUI
+-- mestinya jatuh di mana (mis. tengah jendela), dipilih arah yang hasilnya
+-- paling dekat ke situ. Sekali terkunci, dipakai buat semua sentuhan berikutnya
+-- -- gak ada tebak-tebakan per sentuhan lagi.
+local function kunci_arah(sx, sy, maxX, maxY, W, H, sasX, sasY)
+    local nx, ny = sx / maxX, sy / maxY
+    local juara, jarakJuara
+    for _, c in ipairs(arah_calon(maxX, maxY, W, H)) do
+        local X, Y = c.x(nx, ny) * W, c.y(nx, ny) * H
+        local d = math.sqrt((X - sasX) ^ 2 + (Y - sasY) ^ 2)
+        if not jarakJuara or d < jarakJuara then juara, jarakJuara = c, d end
+    end
+    return juara, jarakJuara
+end
+
+-- v4.97: ubah SATU sentuhan mentah jadi titik layar + pecahan jendela.
+-- v4.98: kalau 'arah' dikasih, pakai itu (udah terkunci). Kalau nggak, jatuh ke
+-- cara lama: coba yang mungkin, ambil yang jatuh di dalam kotak.
+local function sentuh_ke_pecahan(sx, sy, maxX, maxY, W, H, kotak, arah)
+    local snx, sny = sx / maxX, sy / maxY
+    local coba = arah and { arah } or arah_calon(maxX, maxY, W, H)
+    for _, c in ipairs(coba) do
+        local X, Y = c.x(snx, sny) * W, c.y(snx, sny) * H
+        local didalam = (X >= kotak.L and X <= kotak.R and Y >= kotak.T and Y <= kotak.B)
+        if arah or didalam then
+            return { X = math.floor(X), Y = math.floor(Y), cara = c.nama, didalam = didalam,
                      fx = (X - kotak.L) / (kotak.R - kotak.L),
                      fy = (Y - kotak.T) / (kotak.B - kotak.T) }
         end
@@ -3331,12 +3367,16 @@ if PERINTAH == "pantau" then
     -- getevent jalan di latar, nulis ke berkas. Kita baca berkalanya.
     os.execute("su -c 'timeout " .. detik .. " getevent -l > " .. berkas .. "' >/dev/null 2>&1 &")
 
+    -- v4.98: LANGKAH 1 -- kunci arah putaran pakai patokan.
+    local tengahX = (kotak.L + kotak.R) / 2
+    local tengahY = (kotak.T + kotak.B) / 2
     print()
-    print(C.BOLD..C.Y..("   PENCET SESUKANYA -- " .. detik .. " detik. Ctrl+C buat berhenti.")..C.N)
-    print(C.D.."   Yang di LUAR jendela client bakal ditandain, tinggal diabaikan."..C.N)
+    print(C.BOLD..C.Y.."   LANGKAH 1: TAP TEPAT DI TENGAH JENDELA CLIENT"..C.N)
+    print(C.D..("   (kira-kira aja, buat ngunci arah layar. tengahnya di %d,%d)")
+        :format(tengahX, tengahY)..C.N)
     print()
 
-    local sudah, mulai = 0, os.time()
+    local arahKunci, sudah, mulai = nil, 0, os.time()
     while (os.time() - mulai) < detik do
         os.execute("sleep 2")
         local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
@@ -3344,14 +3384,27 @@ if PERINTAH == "pantau" then
         for n in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do xs[#xs+1] = tonumber(n, 16) end
         for n in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do ys[#ys+1] = tonumber(n, 16) end
         local ada = math.min(#xs, #ys)
+
         for i = sudah + 1, ada do
-            local t = sentuh_ke_pecahan(xs[i], ys[i], maxX, maxY, W, H, kotak)
-            if t then
-                print(("  %s#%d  layar(%4d,%4d)  ->  PECAHAN %.3f , %.3f   [%s]%s")
-                    :format(C.G, i, t.X, t.Y, t.fx, t.fy, t.cara, C.N))
+            if not arahKunci then
+                -- sentuhan pertama = patokan
+                local pilih, jarak = kunci_arah(xs[i], ys[i], maxX, maxY, W, H, tengahX, tengahY)
+                arahKunci = pilih
+                ok("Arah layar terkunci: " .. pilih.nama ..
+                   ("  (meleset %.0f px dari tengah)"):format(jarak))
+                print()
+                print(C.BOLD..C.Y.."   LANGKAH 2: SEKARANG TAP TOMBOLNYA -- boleh berkali-kali"..C.N)
+                print(C.D.."   JANGAN geser/ubah ukuran jendela sampai selesai."..C.N)
+                print()
             else
-                print(("  %s#%d  mentah(%d,%d)  -> di LUAR jendela (abaikan)%s")
-                    :format(C.D, i, xs[i], ys[i], C.N))
+                local t = sentuh_ke_pecahan(xs[i], ys[i], maxX, maxY, W, H, kotak, arahKunci)
+                if t and t.didalam then
+                    print(("  %s#%d  layar(%4d,%4d)  ->  PECAHAN %.3f , %.3f%s")
+                        :format(C.G, i, t.X, t.Y, t.fx, t.fy, C.N))
+                elseif t then
+                    print(("  %s#%d  layar(%4d,%4d)  -> di LUAR jendela (abaikan)%s")
+                        :format(C.D, i, t.X, t.Y, C.N))
+                end
             end
         end
         sudah = ada
