@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.94-cf"
+local VERSION = "4.95-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -629,15 +629,20 @@ local function rekam_sentuh(pkg, kotak, detik)
     if not isi:match("%S") then return nil, "gak ada kejadian kerekam (getevent gagal?)" end
 
     -- ambil pasangan X/Y TERAKHIR
-    -- v4.91: ambil sentuhan PERTAMA, bukan terakhir. Mencet tombol key bisa
-    -- bikin browser kebuka -- pencetan sesudahnya jatuh di browser, bukan di
-    -- tombolnya. Yang pertama itu yang kita mau.
-    local px = isi:match("ABS_MT_POSITION_X%s+(%x+)")
-    local py = isi:match("ABS_MT_POSITION_Y%s+(%x+)")
-    if not px then
-        px = isi:match("ABS_X%s+(%x+)")
-        py = isi:match("ABS_Y%s+(%x+)")
+    -- v4.95: KUMPULIN SEMUA sentuhan, bukan cuma satu.
+    -- Dulu diambil yang pertama -- tapi gerakan PINDAH ke jendela client itu
+    -- sendiri kecatat sebagai sentuhan, dan itu yang keambil (padahal bukan
+    -- tombolnya). Sekarang: semua dikumpulin, dipilih yang pertama JATUH DI
+    -- DALAM kotak jendela. Jadi mencet berkali-kali pun aman -- pencetan yang
+    -- di luar jendela (pindah aplikasi, browser) kesaring sendiri.
+    local xs, ys = {}, {}
+    for nilai in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do xs[#xs+1] = tonumber(nilai, 16) end
+    for nilai in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do ys[#ys+1] = tonumber(nilai, 16) end
+    if #xs == 0 then
+        for nilai in isi:gmatch("ABS_X%s+(%x+)") do xs[#xs+1] = tonumber(nilai, 16) end
+        for nilai in isi:gmatch("ABS_Y%s+(%x+)") do ys[#ys+1] = tonumber(nilai, 16) end
     end
+    local px, py = xs[1], ys[1]
     -- v4.93: dijaga SEBELUM diubah. Dulu langsung tonumber(nil,16) -> meledak,
     -- padahal ini keadaan wajar (kelamaan mencet / kelewat waktunya).
     if not px or not py then
@@ -676,17 +681,31 @@ local function rekam_sentuh(pkg, kotak, detik)
         { nama = "diputar kiri",    x = ny,     y = 1 - nx },
         { nama = "dibalik",         x = 1 - nx, y = 1 - ny },
     }
-    for _, c in ipairs(calon) do
-        local X, Y = c.x * W, c.y * H
-        if X >= kotak.L and X <= kotak.R and Y >= kotak.T and Y <= kotak.B then
-            local fx = (X - kotak.L) / (kotak.R - kotak.L)
-            local fy = (Y - kotak.T) / (kotak.B - kotak.T)
-            return { fx = fx, fy = fy, X = math.floor(X), Y = math.floor(Y),
-                     cara = c.nama, mentahX = px, mentahY = py }
+    -- v4.95: coba tiap sentuhan (urut), tiap arah -- ambil yang pertama jatuh
+    -- di dalam kotak jendela.
+    for i = 1, math.min(#xs, #ys) do
+        local sx, sy = xs[i], ys[i]
+        local snx, sny = sx / maxX, sy / maxY
+        local arah = {
+            { nama = "apa adanya",    x = snx,     y = sny },
+            { nama = "diputar kanan", x = 1 - sny, y = snx },
+            { nama = "diputar kiri",  x = sny,     y = 1 - snx },
+            { nama = "dibalik",       x = 1 - snx, y = 1 - sny },
+        }
+        for _, c in ipairs(arah) do
+            local X, Y = c.x * W, c.y * H
+            if X >= kotak.L and X <= kotak.R and Y >= kotak.T and Y <= kotak.B then
+                return { fx = (X - kotak.L) / (kotak.R - kotak.L),
+                         fy = (Y - kotak.T) / (kotak.B - kotak.T),
+                         X = math.floor(X), Y = math.floor(Y),
+                         cara = c.nama, mentahX = sx, mentahY = sy,
+                         keBerapa = i, total = math.min(#xs, #ys) }
+            end
         end
     end
-    return nil, ("sentuhan (" .. px .. "," .. py .. ") gak jatuh di jendela manapun -- " ..
-                 "kepencetnya di luar kotak client?")
+    return nil, (math.min(#xs, #ys) .. " sentuhan kerekam, tapi GAK ADA yang jatuh " ..
+                 "di kotak jendela [" .. kotak.L .. "," .. kotak.T .. "]-[" ..
+                 kotak.R .. "," .. kotak.B .. "] -- kepencetnya di luar jendela client?")
 end
 
 local function config_set_bypass(apikey)
@@ -3299,6 +3318,10 @@ if PERINTAH == "rekam" then
     end
 
     ok(("Kerekam di layar (%d, %d)  [arah: %s]"):format(hasil.X, hasil.Y, hasil.cara))
+    if hasil.total and hasil.total > 1 then
+        info(("   dari %d sentuhan, yang kepakai sentuhan ke-%d (yang jatuh di jendela)")
+            :format(hasil.total, hasil.keBerapa or 1))
+    end
     ok(("PECAHAN-nya: %.3f , %.3f"):format(hasil.fx, hasil.fy))
     print()
     info("Uji balik -- harusnya kepencet tombol yang sama:")
