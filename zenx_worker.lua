@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.95-cf"
+local VERSION = "4.97-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -619,6 +619,28 @@ local function layar_fisik()
     return tonumber(w) or 0, tonumber(h) or 0
 end
 
+
+-- v4.97: ubah SATU sentuhan mentah jadi titik layar + pecahan jendela.
+-- Dipakai bareng sama pemantau langsung (zenx pantau) dan perekam sekali jalan.
+local function sentuh_ke_pecahan(sx, sy, maxX, maxY, W, H, kotak)
+    local snx, sny = sx / maxX, sy / maxY
+    local arah = {
+        { nama = "apa adanya",    x = snx,     y = sny },
+        { nama = "diputar kanan", x = 1 - sny, y = snx },
+        { nama = "diputar kiri",  x = sny,     y = 1 - snx },
+        { nama = "dibalik",       x = 1 - snx, y = 1 - sny },
+    }
+    for _, c in ipairs(arah) do
+        local X, Y = c.x * W, c.y * H
+        if X >= kotak.L and X <= kotak.R and Y >= kotak.T and Y <= kotak.B then
+            return { X = math.floor(X), Y = math.floor(Y), cara = c.nama,
+                     fx = (X - kotak.L) / (kotak.R - kotak.L),
+                     fy = (Y - kotak.T) / (kotak.B - kotak.T) }
+        end
+    end
+    return nil
+end
+
 local function rekam_sentuh(pkg, kotak, detik)
     local berkas = "/sdcard/zenx_ev.txt"
     sh_silent("su -c 'rm -f " .. berkas .. "'")
@@ -658,9 +680,9 @@ local function rekam_sentuh(pkg, kotak, detik)
         return nil, "gak ada sentuhan dalam " .. (detik or 30) ..
                     " detik (" .. nBaris .. " baris kerekam) -- kelewat waktunya?"
     end
-    px, py = tonumber(px, 16), tonumber(py, 16)
-    if not px or not py then return nil, "koordinat gak kebaca" end
-    if not px or not py then return nil, "gak nemu koordinat sentuhan -- kepencet gak?" end
+    -- v4.96: JANGAN di-tonumber lagi di sini. Sejak v4.95 nilainya udah diubah
+    -- jadi bilangan pas dikumpulin ke xs/ys -- konversi kedua bikin error
+    -- ("string expected, got number"). Baris pemeriksaan dobel juga dibuang.
 
     -- batas panel sentuh (buat ngubah ke ukuran layar)
     local prop = sh("su -c 'getevent -p 2>&1'") or ""
@@ -673,14 +695,6 @@ local function rekam_sentuh(pkg, kotak, detik)
     if not maxX or maxX <= 0 then maxX = (fW > 0) and fW or W end
     if not maxY or maxY <= 0 then maxY = (fH > 0) and fH or H end
 
-    -- coba 4 kemungkinan arah, pilih yang jatuh di dalam kotak jendela
-    local nx, ny = px / maxX, py / maxY
-    local calon = {
-        { nama = "apa adanya",      x = nx,     y = ny },
-        { nama = "diputar kanan",   x = 1 - ny, y = nx },
-        { nama = "diputar kiri",    x = ny,     y = 1 - nx },
-        { nama = "dibalik",         x = 1 - nx, y = 1 - ny },
-    }
     -- v4.95: coba tiap sentuhan (urut), tiap arah -- ambil yang pertama jatuh
     -- di dalam kotak jendela.
     for i = 1, math.min(#xs, #ys) do
@@ -3273,6 +3287,89 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- Angka pecahan kepakai di SEMUA client -- petaknya beda-beda, ukurannya sama.
 -- v4.90: `zenx rekam <client> [detik]` -- lo yang pencet, worker yang nyatet.
 -- Jauh lebih akurat daripada nebak-geser angka.
+-- v4.97: `zenx pantau <client> [detik]` -- TIAP kali lo pencet, koordinatnya
+-- langsung nongol. Gak ada balapan sama waktu kayak `zenx rekam`: pencet
+-- sesukanya, liat angkanya, pilih sendiri yang bener.
+if PERINTAH == "pantau" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+
+    local target = arg and arg[2] or ""
+    local detik = math.floor(tonumber(arg and arg[3] or "") or 120)
+    if target == "" then
+        err("Cara pakai:  zenx pantau <client> [detik]")
+        info("   contoh:  zenx pantau clienu 120")
+        return
+    end
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs)) do
+        if p == target or p:find(target, 1, true) then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. target .. "' gak ada di config.")
+        info("Yang ada: " .. cfg.pkgs)
+        return
+    end
+
+    print(C.BOLD..C.C.."\n=== PANTAU SENTUHAN ==="..C.N)
+    info("Bawa " .. pkg:gsub("com%.roblox%.","") .. " ke depan (tanpa link join)...")
+    bawa_depan(pkg)
+    os.execute("sleep 3")
+
+    local kotak, sebabK = jendela_kotak(pkg)
+    if not kotak then err("Gagal baca kotak jendela: " .. tostring(sebabK)); return end
+    ok(("Jendela: [%d,%d]-[%d,%d]  (%dx%d)"):format(
+        kotak.L, kotak.T, kotak.R, kotak.B, kotak.R - kotak.L, kotak.B - kotak.T))
+
+    local W, H = layar_ukuran()
+    local fW, fH = layar_fisik()
+    local maxX = (fW > 0) and fW or W
+    local maxY = (fH > 0) and fH or H
+
+    local berkas = "/sdcard/zenx_pantau.txt"
+    sh_silent("su -c 'rm -f " .. berkas .. "'")
+    -- getevent jalan di latar, nulis ke berkas. Kita baca berkalanya.
+    os.execute("su -c 'timeout " .. detik .. " getevent -l > " .. berkas .. "' >/dev/null 2>&1 &")
+
+    print()
+    print(C.BOLD..C.Y..("   PENCET SESUKANYA -- " .. detik .. " detik. Ctrl+C buat berhenti.")..C.N)
+    print(C.D.."   Yang di LUAR jendela client bakal ditandain, tinggal diabaikan."..C.N)
+    print()
+
+    local sudah, mulai = 0, os.time()
+    while (os.time() - mulai) < detik do
+        os.execute("sleep 2")
+        local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
+        local xs, ys = {}, {}
+        for n in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do xs[#xs+1] = tonumber(n, 16) end
+        for n in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do ys[#ys+1] = tonumber(n, 16) end
+        local ada = math.min(#xs, #ys)
+        for i = sudah + 1, ada do
+            local t = sentuh_ke_pecahan(xs[i], ys[i], maxX, maxY, W, H, kotak)
+            if t then
+                print(("  %s#%d  layar(%4d,%4d)  ->  PECAHAN %.3f , %.3f   [%s]%s")
+                    :format(C.G, i, t.X, t.Y, t.fx, t.fy, t.cara, C.N))
+            else
+                print(("  %s#%d  mentah(%d,%d)  -> di LUAR jendela (abaikan)%s")
+                    :format(C.D, i, xs[i], ys[i], C.N))
+            end
+        end
+        sudah = ada
+    end
+
+    sh_silent("su -c 'rm -f " .. berkas .. "'")
+    print()
+    if sudah == 0 then
+        warn("Gak ada sentuhan kerekam sama sekali.")
+    else
+        info("Selesai. Ambil PECAHAN dari baris yang pas, terus simpen di config:")
+        info('   key_tap="<x>,<y>",')
+        info("Uji dulu:  zenx tap " .. target .. " <x> <y> 2 5")
+    end
+    print()
+    return
+end
+
 if PERINTAH == "rekam" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
@@ -3724,7 +3821,8 @@ if PERINTAH ~= "" then
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
     info("   zenx lisensi            -> keadaan kunci Delta")
-    info("   zenx rekam <client>     -> lo pencet, worker nyatet koordinatnya")
+    info("   zenx pantau <client>    -> tiap dipencet, koordinatnya langsung nongol")
+    info("   zenx rekam <client>     -> rekam sekali, ambil satu koordinat")
     info("   zenx tap <cl> <x> <y>   -> pencet titik (pecahan 0..1)")
     info("   zenx key                -> bypass key Delta (link dari clipboard)")
     info("   zenx key <link>         -> bypass key dari link yang diketik")
