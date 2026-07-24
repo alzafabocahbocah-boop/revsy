@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.90-cf"
+local VERSION = "4.91-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -519,10 +519,12 @@ end
 -- luar jendelanya.
 local function jendela_kotak(pkg)
     local dump = "/sdcard/zenx_kotak.xml"
-    sh_silent("su -c 'rm -f " .. dump .. "'")
-    sh("su -c 'uiautomator dump " .. dump .. " 2>&1'")
-    local isi = sh("su -c 'cat " .. dump .. " 2>/dev/null'") or ""
-    sh_silent("su -c 'rm -f " .. dump .. "'")
+    -- v4.91: hapus+dump+baca+hapus digabung jadi SATU panggilan su. Dulu 4
+    -- panggilan terpisah -- di RedFinger tiap 'su' ~6 detik, jadi ngukur kotak
+    -- doang makan ~48 detik. Itu yang bikin jendela perekaman keburu tutup
+    -- sebelum user sempet pindah & mencet.
+    local isi = sh("su -c 'rm -f " .. dump .. "; uiautomator dump " .. dump ..
+                   " >/dev/null 2>&1; cat " .. dump .. " 2>/dev/null; rm -f " .. dump .. "'") or ""
     if not isi:find("bounds", 1, true) then return nil, "dump gagal / kosong" end
 
     -- ambil kotak TERBESAR yang punya paket ini -- itu jendela luarnya
@@ -572,23 +574,36 @@ end
 -- sedangkan layar RF dikunci landscape -- jadi sumbunya keputar. Daripada nebak
 -- rumus putarannya, dicoba KEEMPAT kemungkinan, terus dipilih yang jatuh DI
 -- DALAM kotak jendela client. Cara ini benerin dirinya sendiri.
+-- v4.91: ukuran layar APA ADANYA (gak dituker walau landscape). Panel sentuh
+-- lapornya dalam arah fisik, jadi pembaginya harus yang ini -- bukan
+-- layar_ukuran() yang udah dituker buat landscape.
+local function layar_fisik()
+    local o = sh("su -c 'wm size'") or ""
+    local w, h = o:match("Override size:%s*(%d+)x(%d+)")
+    if not w then w, h = o:match("Physical size:%s*(%d+)x(%d+)") end
+    return tonumber(w) or 0, tonumber(h) or 0
+end
+
 local function rekam_sentuh(pkg, kotak, detik)
     local berkas = "/sdcard/zenx_ev.txt"
     sh_silent("su -c 'rm -f " .. berkas .. "'")
-    jalan_lama("su -c 'timeout " .. (detik or 15) .. " getevent -l > " .. berkas .. "'",
-               (detik or 15) + 5)
+    jalan_lama("su -c 'timeout " .. (detik or 30) .. " getevent -l > " .. berkas .. "'",
+               (detik or 30) + 8)
     local isi = sh("su -c 'cat " .. berkas .. " 2>/dev/null'") or ""
     sh_silent("su -c 'rm -f " .. berkas .. "'")
     if not isi:match("%S") then return nil, "gak ada kejadian kerekam (getevent gagal?)" end
 
     -- ambil pasangan X/Y TERAKHIR
-    local px, py
-    for nilai in isi:gmatch("ABS_MT_POSITION_X%s+(%x+)") do px = tonumber(nilai, 16) end
-    for nilai in isi:gmatch("ABS_MT_POSITION_Y%s+(%x+)") do py = tonumber(nilai, 16) end
+    -- v4.91: ambil sentuhan PERTAMA, bukan terakhir. Mencet tombol key bisa
+    -- bikin browser kebuka -- pencetan sesudahnya jatuh di browser, bukan di
+    -- tombolnya. Yang pertama itu yang kita mau.
+    local px = isi:match("ABS_MT_POSITION_X%s+(%x+)")
+    local py = isi:match("ABS_MT_POSITION_Y%s+(%x+)")
     if not px then
-        for nilai in isi:gmatch("ABS_X%s+(%x+)") do px = tonumber(nilai, 16) end
-        for nilai in isi:gmatch("ABS_Y%s+(%x+)") do py = tonumber(nilai, 16) end
+        px = isi:match("ABS_X%s+(%x+)")
+        py = isi:match("ABS_Y%s+(%x+)")
     end
+    px, py = tonumber(px, 16), tonumber(py, 16)
     if not px or not py then return nil, "gak nemu koordinat sentuhan -- kepencet gak?" end
 
     -- batas panel sentuh (buat ngubah ke ukuran layar)
@@ -597,9 +612,10 @@ local function rekam_sentuh(pkg, kotak, detik)
     for a, b in prop:gmatch("0035%s*:%s*value %d+, min %d+, max (%d+)()") do maxX = tonumber(a) end
     for a in prop:gmatch("0036%s*:%s*value %d+, min %d+, max (%d+)") do maxY = tonumber(a) end
 
-    local W, H = layar_ukuran()
-    if not maxX or maxX <= 0 then maxX = W end
-    if not maxY or maxY <= 0 then maxY = H end
+    local W, H = layar_ukuran()          -- layar tampilan (udah dituker kalau landscape)
+    local fW, fH = layar_fisik()         -- panel sentuh (arah fisik, gak dituker)
+    if not maxX or maxX <= 0 then maxX = (fW > 0) and fW or W end
+    if not maxY or maxY <= 0 then maxY = (fH > 0) and fH or H end
 
     -- coba 4 kemungkinan arah, pilih yang jatuh di dalam kotak jendela
     local nx, ny = px / maxX, py / maxY
@@ -3222,7 +3238,9 @@ if PERINTAH == "rekam" then
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
 
     local target = arg and arg[2] or ""
-    local detik = math.floor(tonumber(arg and arg[3] or "") or 15)
+    -- v4.91: bawaan 30 detik (dulu 15). Kudu cukup buat baca tulisannya, geser
+    -- ke jendela client, terus mencet -- 15 detik kesempitan.
+    local detik = math.floor(tonumber(arg and arg[3] or "") or 30)
     if target == "" then
         err("Cara pakai:  zenx rekam <client> [detik]")
         info("   contoh:  zenx rekam clienu 20")
@@ -3249,7 +3267,7 @@ if PERINTAH == "rekam" then
         kotak.L, kotak.T, kotak.R, kotak.B, kotak.R - kotak.L, kotak.B - kotak.T))
     print()
     print(C.BOLD..C.Y.."   >>> PENCET TOMBOLNYA SEKARANG <<<"..C.N)
-    print(C.D..("   direkam " .. detik .. " detik. Pencet SEKALI aja, yang jelas.")..C.N)
+    print(C.D..("   direkam " .. detik .. " detik. Geser ke jendela client, pencet SEKALI.")..C.N)
     print()
 
     local hasil, sebab = rekam_sentuh(pkg, kotak, detik)
