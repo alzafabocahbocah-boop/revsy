@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "4.87-cf"
+local VERSION = "4.88-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -158,6 +158,7 @@ local function save_config(cfg)
     f:write(string.format("  bypass_api_key=%q,\n",cfg.bypass_api_key or ""))
     f:write(string.format("  key_tanda=%q,\n",cfg.key_tanda or ""))
     f:write(string.format("  key_jam=%d,\n",cfg.key_jam or 24))
+    f:write(string.format("  key_tap=%q,\n",cfg.key_tap or ""))
     f:write("}\n"); f:close(); return true
 end
 
@@ -479,6 +480,48 @@ local function umur_ringkas(detik)
     local m = math.floor((detik % 3600) / 60)
     if j > 0 then return j .. "j " .. m .. "m" end
     return m .. "m"
+end
+
+-- v4.88: baca KOTAK JENDELA client yang sebenernya (bukan hitungan grid).
+-- Dari dump: bounds="[688,167][1089,500]". Semua simpul bounds-nya sama karena
+-- isi jendela digambar ke permukaan -- tapi justru itu yang kita mau: kotak
+-- luar jendelanya.
+local function jendela_kotak(pkg)
+    local dump = "/sdcard/zenx_kotak.xml"
+    sh_silent("su -c 'rm -f " .. dump .. "'")
+    sh("su -c 'uiautomator dump " .. dump .. " 2>&1'")
+    local isi = sh("su -c 'cat " .. dump .. " 2>/dev/null'") or ""
+    sh_silent("su -c 'rm -f " .. dump .. "'")
+    if not isi:find("bounds", 1, true) then return nil, "dump gagal / kosong" end
+
+    -- ambil kotak TERBESAR yang punya paket ini -- itu jendela luarnya
+    local bL, bT, bR, bB, luasMax = nil, nil, nil, nil, -1
+    for x1, y1, x2, y2 in isi:gmatch('bounds="%[(%-?%d+),(%-?%d+)%]%[(%-?%d+),(%-?%d+)%]"') do
+        x1, y1, x2, y2 = tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2)
+        local luas = (x2 - x1) * (y2 - y1)
+        if luas > luasMax then
+            luasMax = luas; bL, bT, bR, bB = x1, y1, x2, y2
+        end
+    end
+    if not bL then return nil, "gak nemu bounds" end
+    return { L = bL, T = bT, R = bR, B = bB }
+end
+
+-- v4.88: pencet titik di dalam jendela client, ditunjuk pakai PECAHAN (0..1)
+-- dari kotak jendelanya -- bukan koordinat layar. Jadi angka yang sama kepakai
+-- di semua client, walau petaknya beda-beda.
+local function tap_jendela(cfg, pkg, fx, fy, kali)
+    local kotak, sebab = jendela_kotak(pkg)
+    if not kotak then return nil, sebab end
+    local x = math.floor(kotak.L + (kotak.R - kotak.L) * fx)
+    local y = math.floor(kotak.T + (kotak.B - kotak.T) * fy)
+    local perintah = {}
+    for _ = 1, (kali or 1) do
+        perintah[#perintah+1] = "input tap " .. x .. " " .. y
+    end
+    -- digabung jadi SATU panggilan su -- di RedFinger tiap 'su' makan ~6 detik
+    sh("su -c '" .. table.concat(perintah, "; sleep 0.4; ") .. " 2>&1'")
+    return { x = x, y = y, kotak = kotak }
 end
 
 local function config_set_bypass(apikey)
@@ -3046,6 +3089,70 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- v4.87: `zenx lisensi` -- liat keadaan kunci Delta + apa yang bakal worker
 -- lakuin. Aman, cuma baca. Dipakai buat mastiin deteksinya bener tanpa harus
 -- nunggu kuncinya beneran kedaluwarsa.
+-- v4.88: `zenx tap <client> <x> <y> [kali]` -- kalibrasi letak tombol.
+-- x & y itu PECAHAN 0..1 dari kotak jendela (0.5 0.5 = tengah). Dipakai buat
+-- nyari letak tombol "Copied link" di layar key Delta: coba, liat kepencet apa
+-- nggak, geser angkanya, ulangi. Begitu ketemu, simpen di config:
+--   key_tap="0.5,0.62"
+-- Angka pecahan kepakai di SEMUA client -- petaknya beda-beda, ukurannya sama.
+if PERINTAH == "tap" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+
+    local target = arg and arg[2] or ""
+    local fx = tonumber(arg and arg[3] or "")
+    local fy = tonumber(arg and arg[4] or "")
+    local kali = math.floor(tonumber(arg and arg[5] or "") or 1)
+
+    if target == "" or not fx or not fy then
+        err("Cara pakai:  zenx tap <client> <x> <y> [kali]")
+        info("   x & y = pecahan 0..1 dari kotak jendela")
+        info("   contoh:  zenx tap clienu 0.5 0.62 2")
+        info("   (0.5 0.5 = tengah jendela; 0.5 0.62 = tengah, agak ke bawah)")
+        return
+    end
+    if fx < 0 or fx > 1 or fy < 0 or fy > 1 then
+        err("x & y harus antara 0 dan 1 (itu PECAHAN, bukan piksel).")
+        return
+    end
+
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs)) do
+        if p == target or p:find(target, 1, true) then pkg = p break end
+    end
+    if not pkg then
+        err("Client '" .. target .. "' gak ada di config.")
+        info("Yang ada: " .. cfg.pkgs)
+        return
+    end
+
+    print(C.BOLD..C.C.."\n=== TAP KALIBRASI ==="..C.N)
+    info("Bawa " .. pkg:gsub("com%.roblox%.","") .. " ke depan...")
+    local url = build_url(cfg, nil)
+    sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '"
+              .. url .. "' -p " .. pkg .. "\"")
+    os.execute("sleep 3")
+
+    local hasil, sebab = tap_jendela(cfg, pkg, fx, fy, kali)
+    if not hasil then
+        err("Gagal: " .. tostring(sebab))
+        return
+    end
+    local k = hasil.kotak
+    ok(("Jendela: [%d,%d]-[%d,%d]  (%dx%d)"):format(
+        k.L, k.T, k.R, k.B, k.R - k.L, k.B - k.T))
+    ok(("Dipencet %dx di (%d, %d)  = pecahan %.2f, %.2f"):format(kali, hasil.x, hasil.y, fx, fy))
+    print()
+    info("Kepencet tombolnya? Kalau meleset, geser angkanya:")
+    info("   kegedean ke bawah -> kecilin y   |  kurang ke bawah -> gedein y")
+    info("   contoh:  zenx tap " .. target .. " " .. fx .. " " .. (fy - 0.05) .. " " .. kali)
+    print()
+    info("Kalau PAS: cek papan klip udah keisi link key belum, terus simpen di config:")
+    info(('   key_tap="%.2f,%.2f"'):format(fx, fy))
+    print()
+    return
+end
+
 if PERINTAH == "lisensi" or PERINTAH == "license" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
@@ -3369,6 +3476,7 @@ if PERINTAH ~= "" then
     info("   zenx cek                -> diagnosa deteksi client")
     info("   zenx intip <client> [d] -> potret teks di layar client")
     info("   zenx lisensi            -> keadaan kunci Delta")
+    info("   zenx tap <cl> <x> <y>   -> kalibrasi letak tombol (pecahan 0..1)")
     info("   zenx key                -> bypass key Delta (link dari clipboard)")
     info("   zenx key <link>         -> bypass key dari link yang diketik")
     info("   zenx key set <APIKEY>   -> isi kunci API bypass.vip")
