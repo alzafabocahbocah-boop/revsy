@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.00-cf"
+local VERSION = "5.05-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -94,6 +94,8 @@ local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 local LOG_KIRIM = {}          -- baris log terakhir (maks 20)
 local AKSI_SKRG = "mulai..."  -- lagi ngapain SEKARANG
 local LAPOR_KEY_AT = 0        -- v4.86: kapan terakhir ngabarin "butuh key"
+local PERTAMA_DIEM = {}      -- v5.04: kapan worker pertama liat client idup tapi bisu
+local BYPASS_TERAKHIR = 0   -- v5.02: kapan terakhir nyoba bypass key
 local SUDAH_GRID = false      -- v4.30: udah pernah nata grid sejak worker nyala?
 local function setAksi(txt)
     AKSI_SKRG = tostring(txt or "")
@@ -158,6 +160,7 @@ local function save_config(cfg)
     f:write(string.format("  bypass_api_key=%q,\n",cfg.bypass_api_key or ""))
     f:write(string.format("  key_tanda=%q,\n",cfg.key_tanda or ""))
     f:write(string.format("  key_jam=%d,\n",cfg.key_jam or 24))
+    f:write(string.format("  home_detik=%d,\n",cfg.home_detik or 60))
     f:write(string.format("  key_tap=%q,\n",cfg.key_tap or ""))
     f:write("}\n"); f:close(); return true
 end
@@ -3067,6 +3070,59 @@ local function run(cfg)
             setAksi(string.format("mantau %d/%d client jalan", nJalan, #split(cfg.pkgs)))
         end
 
+        -- ============================================================
+        -- v5.02: BYPASS KEY OTOMATIS -- dikerjain SAMPAI KELAR, yang lain nunggu.
+        --
+        -- Kenapa harus eksklusif: nyari tombol itu butuh jendela client di depan
+        -- + baca papan klip (yang butuh Termux di depan sebentar). Kalau barengan
+        -- sama jaga-jendela / buka client / auto-rejoin, fokusnya kerebut terus
+        -- dan urutan tap-nya kacau. Karena Lua di sini jalan satu-satu, blok ini
+        -- otomatis nahan yang lain selama dia jalan.
+        --
+        -- CUKUP SATU CLIENT: berkas lisensinya di /sdcard, dipakai BARENG semua
+        -- client. Sekali ketulis, clienu sampai clienz kebagian -- gak usah
+        -- diulang per client.
+        -- ============================================================
+        local lewatiRonde = false
+        if hit and lisensi_keadaan(cfg) == "hilang"
+           and (now - (BYPASS_TERAKHIR or 0)) > 300 then
+            BYPASS_TERAKHIR = now
+            setAksi("BYPASS KEY -- fokus ke sini dulu")
+            tambahLog("BYPASS: lisensi Delta hilang -> cari key lewat 1 client, yang lain nunggu")
+
+            -- pilih 1 client: yang lagi jalan diutamakan (layar key-nya udah nongol)
+            local pilih
+            for _, p in ipairs(split(cfg.pkgs)) do
+                if cacheRun[p] then pilih = p break end
+            end
+            pilih = pilih or split(cfg.pkgs)[1]
+            tambahLog("BYPASS: pakai " .. pilih:gsub("com%.roblox%.", ""))
+
+            local link, _, _, ket = cari_tombol_key(cfg, pilih)
+            if link then
+                tambahLog("BYPASS: dapet link (" .. tostring(ket) .. ") -> kirim ke API")
+                local kunci, sebab = bypass_kunci(cfg, link, false)
+                if kunci then
+                    local wok, wket = tulis_lisensi(cfg, kunci)
+                    if wok then
+                        tambahLog("BYPASS: BERES -- kunci ketulis, kepakai SEMUA client")
+                        lastOpen = 0   -- langsung buka ulang client ronde berikutnya
+                    else
+                        tambahLog("BYPASS: kunci dapet TAPI gagal nulis -- " .. tostring(wket))
+                    end
+                else
+                    tambahLog("BYPASS: API gagal -- " .. tostring(sebab))
+                end
+            else
+                tambahLog("BYPASS: gagal nemu tombol -- " .. tostring(ket))
+                tambahLog("   (coba manual: zenx cari " .. pilih:gsub("com%.roblox%.", "") .. ")")
+            end
+            setAksi("bypass selesai")
+            lewatiRonde = true   -- sisa ronde ini dilewat, biar keadaannya settle dulu
+        end
+
+        if not lewatiRonde then   -- v5.02: ronde bypass gak ngerjain yang lain
+
         -- v4.46: CLIENT MATI MENDADAK (ditutup manual / di-swipe / crash).
         -- Dulu nunggu siklus reopen_sec (5 MENIT) baru kebuka lagi. Sekarang
         -- ketahuan dalam ~10 detik: banding status ronde ini sama ronde lalu.
@@ -3177,6 +3233,7 @@ local function run(cfg)
             lastStatus = now
         end
 
+
         -- v4.9: AUTO-REJOIN per client. cek tiap akun (dari mapping client<->akun)
         -- apakah masih lapor ke panel. akun yg keluar game -> script off -> berhenti
         -- lapor. kalau > auto_rejoin_menit -> rejoin client itu doang (bukan semua).
@@ -3243,11 +3300,17 @@ local function run(cfg)
             -- client, jadi gak usah dicek per client). Kalau hilang/basi, client
             -- yang diem JANGAN dibunuh -- yang kurang itu kunci, bukan restart.
             local licKead, licUmur = lisensi_keadaan(cfg)
-            local butuhKey = (licKead == "hilang" or licKead == "basi")
+            -- v5.01: cuma "hilang" yang bikin worker berhenti nyentuh client.
+            -- "basi" (lewat umur) TIDAK -- karena Delta cuma meriksa kunci pas
+            -- aplikasi MULAI. Client yang udah jalan tetep aman walau lisensinya
+            -- udah 28 jam, selama dia gak keluar. Kalau umur doang dipakai buat
+            -- berhenti ngurus, client yang cuma putus koneksi biasa jadi gak
+            -- pernah di-rejoin -- farm macet gara-gara umur berkas.
+            local butuhKey = (licKead == "hilang")
+            local licTua   = (licKead == "basi")
             if butuhKey and (os.time() - (LAPOR_KEY_AT or 0)) > 600 then
                 LAPOR_KEY_AT = os.time()
-                tambahLog(("BUTUH KEY: lisensi Delta %s%s -- jalanin `zenx key` (kepakai semua client)")
-                    :format(licKead, licUmur and (" (umur " .. umur_ringkas(licUmur) .. ")") or ""))
+                tambahLog("BUTUH KEY: berkas lisensi Delta HILANG -- jalanin `zenx cari <client>`")
             end
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 local akun = mapAkun[pkg]
@@ -3256,12 +3319,36 @@ local function run(cfg)
                     local blok = stat:match('{[^{}]-"nama"%s*:%s*"' .. akun .. '"[^{}]-}')
                     local ts = blok and tonumber(blok:match('"ts"%s*:%s*(%d+)')) or nil
                     local skrgSrv = ambil_num(stat, "skrg") or now   -- v4.53: dulu selalu nil -> pakai jam LOKAL
-                    if ts and butuhKey then
+
+                    -- v5.04: BERAPA LAMA DIEM. Dulu semua tindakan digantung ke 'ts'
+                    -- (kapan terakhir lapor). Masalahnya client yang nyangkut di Home
+                    -- BELUM PERNAH lapor sama sekali -> ts kosong -> SELURUH blok ini
+                    -- dilewat -> worker diem selamanya. Itu persis keluhan "kalau udah
+                    -- nyangkut, gak ngapa-ngapain lagi".
+                    -- Sekarang: kalau belum pernah lapor, umur diemnya dihitung dari
+                    -- kapan worker PERTAMA liat dia idup tapi bisu.
+                    local diem
+                    if ts then
+                        diem = skrgSrv - ts
+                        PERTAMA_DIEM[pkg] = nil
+                    elseif cacheRun[pkg] then
+                        PERTAMA_DIEM[pkg] = PERTAMA_DIEM[pkg] or now
+                        diem = now - PERTAMA_DIEM[pkg]
+                    end
+
+                    if diem and butuhKey then
                         -- v4.86: lisensi hilang/basi -> script emang GAK BAKAL jalan
                         -- sampai kunci masuk. Dibunuh/dibuka ulang cuma muter-muter
                         -- sambil ngabisin RAM. Diemin aja, nunggu `zenx key`.
                         nudgeCnt[pkg] = nil
-                    elseif ts and (skrgSrv - ts) > math.min(ambangDc, ambang) then
+                    -- v5.05: client yang BELUM PERNAH lapor itu PASTI nyangkut
+                    -- (Home / layar key) -- gak mungkin sehat. Jadi ambangnya
+                    -- pendek: 60 detik. Client yang PERNAH lapor tetep pakai
+                    -- ambang lama, soalnya normalnya dia emang cuma lapor tiap
+                    -- ~120 detik -- kalau ikut 60 detik, client SEHAT bakal
+                    -- ditembakin terus percuma.
+                    elseif diem and diem > (ts and math.min(ambangDc, ambang)
+                                                or (tonumber(cfg.home_detik) or 60)) then
                         -- v4.21: bridge diem > ambang. TAPI cek dulu client masih di
                         -- game apa nggak (pkg_running). Android suka BEKUIN Roblox bg
                         -- (proses idup, script beku, gak lapor) -> keliatan "off"
@@ -3288,18 +3375,25 @@ local function run(cfg)
                                 nudgeCnt[pkg] = nil
                                 errUi = nil
                             elseif errUi and errSifat == "home" then
-                                -- v4.83: nyangkut di Home/popup umur -> DIBANGUNIN dulu
-                                -- (max 2x), jangan langsung dibunuh. Kadang dia cuma
-                                -- perlu didorong sekali dan lanjut masuk sendiri.
+                                -- v5.04: nyangkut di Home -> LANGSUNG TEMBAK LINK PS,
+                                -- JANGAN dibunuh dulu. Di layar Home, Roblox BELUM di
+                                -- dalam game, jadi 'am start -d <link>' beneran jalan --
+                                -- ini kebukti gak sengaja waktu kalibrasi tap: client
+                                -- yang lagi di layar key kena link, terus beneran join.
+                                -- (Beda sama client yang UDAH di dalam game: di situ
+                                -- link jadi no-op, makanya dulu mesti ditutup dulu.)
+                                -- Dicoba sampai 4x -- murah, gak destruktif, gak
+                                -- ngilangin progress. Bunuh cuma pilihan terakhir.
+                                -- v5.05: nyangkut di Home -> REJOIN TERUS, GAK PERNAH DIBUNUH.
+                                -- Nembak link itu murah & gak ngilangin apa-apa; kalau
+                                -- 10x pun belum masuk, dibunuh juga gak bakal nolong
+                                -- (kasus layar key ditangani jalur bypass sendiri).
                                 nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
-                                if nudgeCnt[pkg] <= 2 then
-                                    tambahLog(string.format("BANGUNIN: %s %s -> didorong dulu (%d/2)",
-                                        akun, errUi, nudgeCnt[pkg]))
-                                    open_one(cfg, pkg, mapLink[pkg])
-                                    os.execute("sleep 3")
-                                    errUi = nil   -- belum saatnya dibunuh
-                                end
-                                -- udah 2x masih di Home -> jatuh ke blok bawah (dibunuh)
+                                tambahLog(string.format("HOME: %s %s -> rejoin ke PS (percobaan %d), GAK dibunuh",
+                                    akun, errUi, nudgeCnt[pkg]))
+                                open_one(cfg, pkg, mapLink[pkg])
+                                os.execute("sleep 5")   -- kasih waktu join
+                                errUi = nil             -- jangan jatuh ke blok bunuh
                             end
                             if errUi then
                                 -- v4.83: kill DIJATAH. Kalau client ini udah dibunuh
@@ -3319,16 +3413,20 @@ local function run(cfg)
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
                                 end
-                            elseif (skrgSrv - ts) > ambang then
+                            elseif diem > ambang then
                             -- gak ada dialog error, dan udah lewat ambang penuh
                             nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
-                            if nudgeCnt[pkg] <= 2 then
-                                -- masih di game -> DIBANGUNIN (bawa ke depan) dulu,
-                                -- JANGAN kill (biar gak ilang progress + gak destruktif).
-                                tambahLog(string.format("BANGUNIN: %s diem %dm tapi masih di game -> bawa ke depan (%d/2)",
-                                    akun, math.floor((skrgSrv - ts)/60), nudgeCnt[pkg]))
-                                open_one(cfg, pkg, mapLink[pkg])   -- am start = window ke depan (join diabaikan krn udah in-game)
-                                os.execute("sleep 3")
+                            if nudgeCnt[pkg] <= 4 then
+                                -- v5.04: dari 2x jadi 4x. 'am start -d <link>' itu murah
+                                -- dan gak destruktif: kalau client UDAH di dalam game,
+                                -- link-nya diabaikan (cuma jendelanya naik ke depan);
+                                -- kalau BELUM (nyangkut Home/key), link-nya beneran
+                                -- jalan dan dia join. Dua-duanya gak ngilangin apa-apa,
+                                -- jadi gak ada alasan buru-buru bunuh.
+                                tambahLog(string.format("DIEM: %s %dm gak lapor -> tembak link PS (%d/4), gak dibunuh",
+                                    akun, math.floor(diem/60), nudgeCnt[pkg]))
+                                open_one(cfg, pkg, mapLink[pkg])
+                                os.execute("sleep 5")
                             else
                                 -- udah dibangunin 2x masih diem -> script beneran mati -> rejoin penuh
                                 -- v4.85: ikut kena JATAH. Sejak layar gak bisa dibaca lagi,
@@ -3340,6 +3438,14 @@ local function run(cfg)
                                     nudgeCnt[pkg] = nil
                                 else
                                 catat_kill(pkg)
+                                -- v5.01: lisensi tua + client gak mau idup lagi = curiga
+                                -- nyangkut di layar key. Delta baru minta kunci pas
+                                -- MULAI, jadi curiganya baru masuk akal DI SINI --
+                                -- pas client-nya emang lagi dibuka ulang.
+                                if licTua then
+                                    tambahLog(("   (lisensi Delta umur %s -- kalau abis ini tetep diem, kemungkinan nyangkut di layar key: jalanin `zenx cari %s`)")
+                                        :format(umur_ringkas(licUmur), pkg:gsub("com%%.roblox%%.", "")))
+                                end
                                 tambahLog(string.format("AUTO-REJOIN: %s dibangunin 2x masih diem -> rejoin penuh", akun))
                                 close_all(cfg, pkg, mapLink)
                                 os.execute("sleep 2")
@@ -3350,10 +3456,10 @@ local function run(cfg)
                                 end
                             end
                             end   -- v4.38: tutup cabang "gak ada dialog error"
-                        elseif (skrgSrv - ts) > ambang then
+                        elseif diem > ambang then
                             -- beneran keluar game (proses gak di layar game) -> rejoin penuh
                             tambahLog(string.format("AUTO-REJOIN: %s off %dm -> rejoin",
-                                akun, math.floor((skrgSrv - ts)/60)))
+                                akun, math.floor(diem/60)))
                             close_all(cfg, pkg, mapLink)  -- tutup client ini doang
                             os.execute("sleep 2")
                             open_one(cfg, pkg, mapLink[pkg])   -- buka lagi ke PS-nya
@@ -3363,6 +3469,7 @@ local function run(cfg)
                         end
                     elseif ts then
                         nudgeCnt[pkg] = nil   -- v4.21: client lapor sehat -> reset counter nudge
+                        PERTAMA_DIEM[pkg] = nil
                     end
                 end
             end
@@ -3391,6 +3498,8 @@ local function run(cfg)
             lastJagaDepan = now
             jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
         end
+
+        end  -- v5.02: tutup 'if not lewatiRonde' (ronde bypass gak ngerjain sisanya)
 
         -- v4.18: keep-alive re-apply tiap 60 detik (Android suka reset oom_score_adj)
         if cfg.keep_alive ~= false and (now - lastKeepAlive) >= 60 then
@@ -3764,11 +3873,19 @@ if PERINTAH == "lisensi" or PERINTAH == "license" then
             if sisa > 0 then info("Sisa   : ~" .. umur_ringkas(sisa) .. " lagi sebelum dianggap basi") end
         end
         info("Worker : jalan normal -- client yang diem tetep diurus kayak biasa")
+    elseif kead == "hilang" then
+        warn("Keadaan: HILANG -- berkasnya gak ada")
+        info("Worker : client yang diem GAK disentuh -- restart gak bikin kunci masuk")
+        info("Langkah: zenx cari <client>   (worker cari tombolnya sendiri)")
     else
-        warn("Keadaan: " .. kead:upper() ..
-             (umur and ("  (umur " .. umur_ringkas(umur) .. ")") or ""))
-        info("Worker : client yang diem GAK bakal dibunuh -- nunggu kunci masuk")
-        info("Langkah: salin link key dari Delta, terus jalanin  zenx key")
+        warn("Keadaan: LEWAT UMUR" .. (umur and ("  (" .. umur_ringkas(umur) .. ")") or ""))
+        -- v5.01: ini yang dulu bikin salah paham. Umur lisensi TIDAK bikin client
+        -- yang lagi jalan tiba-tiba diminta kunci -- Delta cuma meriksa pas MULAI.
+        info("Client yang LAGI JALAN tetep AMAN -- Delta cuma meriksa kunci pas app MULAI.")
+        info("Mau 28 jam pun gak apa-apa, selama client-nya gak keluar.")
+        info("Yang kena cuma client yang DIBUKA ULANG: dia bakal nyangkut di layar key.")
+        info("Worker : tetep ngurus client kayak biasa (rejoin dll)")
+        info("Langkah: kalau ada client yang gak mau idup lagi -> zenx cari <client>")
     end
     print()
     return
