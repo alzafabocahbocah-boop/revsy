@@ -86,7 +86,7 @@
 --          Cuma tim-1 -> mustahil rebutan nulis (dulu bisa bikin akun gak balik).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.06-cf"
+local VERSION = "5.07-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -555,35 +555,61 @@ end
 -- Dari dump: bounds="[688,167][1089,500]". Semua simpul bounds-nya sama karena
 -- isi jendela digambar ke permukaan -- tapi justru itu yang kita mau: kotak
 -- luar jendelanya.
+-- v5.07 (BUG PENTING): dulu fungsi ini cuma motret layar yang lagi DI DEPAN,
+-- tanpa mastiin itu beneran client-nya. Padahal di alur nyari tombol, Termux
+-- sering lagi di depan (abis baca papan klip) -- jadi yang keukur JENDELA
+-- TERMUX, dan semua tap dihitung dari kotak yang salah. Itu sebabnya
+-- pencetannya nyasar ke Termux, bukan ke client.
+-- Sekarang: client dipaksa ke depan dulu, hasilnya DIVERIFIKASI (dump-nya harus
+-- beneran punya paket itu), dan kotaknya cuma diambil dari simpul milik paket
+-- itu -- bukan simpul terbesar apa pun yang kebetulan ada.
 local function jendela_kotak(pkg)
     local dump = "/sdcard/zenx_kotak.xml"
-    -- v4.91: hapus+dump+baca+hapus digabung jadi SATU panggilan su. Dulu 4
-    -- panggilan terpisah -- di RedFinger tiap 'su' ~6 detik, jadi ngukur kotak
-    -- doang makan ~48 detik. Itu yang bikin jendela perekaman keburu tutup
-    -- sebelum user sempet pindah & mencet.
-    local isi = sh("su -c 'rm -f " .. dump .. "; uiautomator dump " .. dump ..
-                   " >/dev/null 2>&1; cat " .. dump .. " 2>/dev/null; rm -f " .. dump .. "'") or ""
-    if not isi:find("bounds", 1, true) then return nil, "dump gagal / kosong" end
-
-    -- ambil kotak TERBESAR yang punya paket ini -- itu jendela luarnya
-    local bL, bT, bR, bB, luasMax = nil, nil, nil, nil, -1
-    for x1, y1, x2, y2 in isi:gmatch('bounds="%[(%-?%d+),(%-?%d+)%]%[(%-?%d+),(%-?%d+)%]"') do
-        x1, y1, x2, y2 = tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2)
-        local luas = (x2 - x1) * (y2 - y1)
-        if luas > luasMax then
-            luasMax = luas; bL, bT, bR, bB = x1, y1, x2, y2
+    for coba = 1, 2 do
+        bawa_depan(pkg)
+        os.execute("sleep 2")
+        -- hapus+dump+baca+hapus digabung jadi SATU panggilan su (tiap 'su' ~6 detik)
+        local isi = sh("su -c 'rm -f " .. dump .. "; uiautomator dump " .. dump ..
+                       " >/dev/null 2>&1; cat " .. dump .. " 2>/dev/null; rm -f " .. dump .. "'") or ""
+        if isi:find("bounds", 1, true) then
+            -- dump-nya beneran punya client ini?
+            if isi:find('package="' .. pkg .. '"', 1, true) then
+                -- ambil kotak TERBESAR DI ANTARA SIMPUL MILIK PAKET INI
+                local bL, bT, bR, bB, luasMax = nil, nil, nil, nil, -1
+                for simpul in isi:gmatch("<node[^>]*>") do
+                    if simpul:find('package="' .. pkg .. '"', 1, true) then
+                        local x1, y1, x2, y2 = simpul:match(
+                            'bounds="%[(%-?%d+),(%-?%d+)%]%[(%-?%d+),(%-?%d+)%]"')
+                        if x1 then
+                            x1, y1, x2, y2 = tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2)
+                            local luas = (x2 - x1) * (y2 - y1)
+                            if luas > luasMax then
+                                luasMax = luas; bL, bT, bR, bB = x1, y1, x2, y2
+                            end
+                        end
+                    end
+                end
+                if bL then return { L = bL, T = bT, R = bR, B = bB } end
+            end
         end
+        -- yang kepotret bukan client ini -> coba sekali lagi
     end
-    if not bL then return nil, "gak nemu bounds" end
-    return { L = bL, T = bT, R = bR, B = bB }
+    return nil, "yang di depan bukan " .. pkg:gsub("com%.roblox%.", "") ..
+                " (client-nya jalan? jendelanya nongol?)"
 end
 
 -- v4.88: pencet titik di dalam jendela client, ditunjuk pakai PECAHAN (0..1)
 -- dari kotak jendelanya -- bukan koordinat layar. Jadi angka yang sama kepakai
 -- di semua client, walau petaknya beda-beda.
-local function tap_jendela(cfg, pkg, fx, fy, kali)
-    local kotak, sebab = jendela_kotak(pkg)
-    if not kotak then return nil, sebab end
+-- v5.07: 'kotak' boleh dioper dari luar -- kalau udah diukur, gak usah diukur
+-- ulang. Ngukur itu 2 panggilan su (~12 detik); pas nyapu 8 titik, itu doang
+-- bisa makan 1,5 menit percuma.
+local function tap_jendela(cfg, pkg, fx, fy, kali, kotak)
+    local sebab
+    if not kotak then
+        kotak, sebab = jendela_kotak(pkg)
+        if not kotak then return nil, sebab end
+    end
     local x = math.floor(kotak.L + (kotak.R - kotak.L) * fx)
     local y = math.floor(kotak.T + (kotak.B - kotak.T) * fy)
     local perintah = {}
@@ -858,9 +884,11 @@ local function cari_tombol_key(cfg, pkg)
     end
 
     for i, t in ipairs(urut) do
+        -- v5.07: client dibalikin ke depan tiap ronde -- ronde sebelumnya
+        -- mindahin fokus ke Termux buat baca papan klip.
         bawa_depan(pkg)
-        os.execute("sleep 1")
-        tap_jendela(cfg, pkg, t[1], t[2], 2)   -- 2x, sesuai kelakuan tombolnya
+        os.execute("sleep 2")
+        tap_jendela(cfg, pkg, t[1], t[2], 2, kotak)   -- 2x, pakai kotak yang udah diukur
         os.execute("sleep 2")
 
         local link = klip_link_key(baca_klip())
