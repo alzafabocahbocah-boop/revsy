@@ -156,9 +156,15 @@
 --        !! KALAU REPO DIJADIIN PUBLIK, KOSONGIN BYPASS_KEY_BAWAAN DULUAN !!
 --        Itu kunci langganan berbayar -- siapa pun yang bisa baca file ini
 --        bisa ngabisin kuotanya.
+--
+-- v5.34: nama akun di tabel dipotong dari DEPAN, bukan belakang. Nama akun
+--        polanya awalan+nomor (wildnx_12, oliviainvent3) -- yang MEMBEDAKAN
+--        ada di ujung belakang. Motong dari belakang bikin 4 akun beda
+--        keliatan sama persis, dan itu nyesatin: keliatannya kayak 4 client
+--        login ke satu akun yang sama. Kolomnya juga dilebarin 12 -> 14.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.33-cf"
+local VERSION = "5.34-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -3162,9 +3168,9 @@ local function run(cfg)
         -- tabel
         local list = split(cfg.pkgs)
         local jalan = 0
-        io.write(C.D.."  ┌──────────┬──────────────┬────────────┬──────────┐\n"..C.N)
-        io.write(C.D.."  │ "..C.N.."CLIENT   "..C.D.."│ "..C.N.."AKUN         "..C.D.."│ "..C.N.."SERVER     "..C.D.."│ "..C.N.."STATUS   "..C.D.."│\n"..C.N)
-        io.write(C.D.."  ├──────────┼──────────────┼────────────┼──────────┤\n"..C.N)
+        io.write(C.D.."  ┌──────────┬────────────────┬────────────┬──────────┐\n"..C.N)
+        io.write(C.D.."  │ "..C.N.."CLIENT   "..C.D.."│ "..C.N.."AKUN           "..C.D.."│ "..C.N.."SERVER     "..C.D.."│ "..C.N.."STATUS   "..C.D.."│\n"..C.N)
+        io.write(C.D.."  ├──────────┼────────────────┼────────────┼──────────┤\n"..C.N)
         local beku = 0
         for _, pkg in ipairs(list) do
             local run = cacheRun[pkg]
@@ -3183,10 +3189,18 @@ local function run(cfg)
                 st, warna = "◐ beku", C.Y
             elseif run then st, warna = "● jalan", C.G
             else st, warna = "○ off", C.Y end
-            io.write(string.format("  "..C.D.."│ "..C.N.."%-8s "..C.D.."│ "..C.N.."%-12s "..C.D.."│ "..C.C.."%-10s"..C.D.." │ "..warna.."%-8s"..C.D.." │\n"..C.N,
-                short:sub(1,8), akun:sub(1,12), srv:sub(1,10), st))
+            -- v5.34: nama akun dipotong dari DEPAN, bukan belakang.
+            -- Pola nama akun itu awalan+nomor (wildnx_12, oliviainvent3), jadi
+            -- yang MEMBEDAKAN ada di ujung belakang. Motong dari belakang bikin
+            -- 4 akun beda keliatan sama persis ("oliviainvent" itu pas 12
+            -- huruf) -- dan itu nyesatin: keliatannya kayak 4 client login ke
+            -- satu akun yang sama, padahal cuma kepotong.
+            local akunTampil = akun
+            if #akunTampil > 14 then akunTampil = "…" .. akunTampil:sub(-13) end
+            io.write(string.format("  "..C.D.."│ "..C.N.."%-8s "..C.D.."│ "..C.N.."%-14s "..C.D.."│ "..C.C.."%-10s"..C.D.." │ "..warna.."%-8s"..C.D.." │\n"..C.N,
+                short:sub(1,8), akunTampil, srv:sub(1,10), st))
         end
-        io.write(C.D.."  └──────────┴──────────────┴────────────┴──────────┘\n"..C.N)
+        io.write(C.D.."  └──────────┴────────────────┴────────────┴──────────┘\n"..C.N)
         io.write("\n")
         -- ringkas
         io.write(string.format("  "..C.G.."%d/%d jalan"..C.N.."%s  ·  CPU %d%%  ·  RAM %.1f/%.1fGB\n",
