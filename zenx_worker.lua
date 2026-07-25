@@ -95,14 +95,53 @@
 --        pasti, jadi command ini NAMPILIN file mana yg punya ROBLOSECURITY +
 --        ekstrak nilainya. Kalau nihil -> lokasinya beda, kabarin biar disetel.
 --        Pakai timeout panjang (grep rekursif lama) -- bukan sh() yg dipatok 8s.
+--
+-- v5.26: `zenx cookie` sekarang ngasih LABEL NAMA AKUN (baca_username dari
+--        prefs.xml, sumber yg sama kayak mapping client<->akun auto-rejoin).
+--        Format file jadi: <akun>\t<paket>\t<cookie>. Gampang dicocokin pas
+--        restore. Akun '?' = prefs.xml belum punya username (client baru).
+--
+-- v5.27: `zenx cookie` sekarang AUTO-KIRIM cookie ke panel (CF /cookie-simpan)
+--        selain nulis file lokal. Di panel digerbang password (tab Cookie),
+--        sesi 24 jam. File /sdcard tetep ditulis sebagai cadangan. Butuh:
+--        tabel D1 'cookies' + endpoint /cookie-* di TEMPEL-KE-CLOUDFLARE.js.
+--
+-- v5.28: `zenx verif` -- daftar client yang BUTUH DICEK MANUAL. Bukan deteksi
+--        captcha (mustahil di RF ini -- layar kebaca 0 teks, lihat 5.9/v4.85),
+--        tapi penyaring POLA: idup tapi bridge gak pernah lapor = nyangkut
+--        sebelum masuk game (verif bot / layar key / popup umur semuanya masuk
+--        pola ini). Sekali dumpsys + sekali su + sekali GET /stat. Keputusan
+--        (ganti akun / verif manual) tetap di user -- worker gak nyentuh apa2.
+--
+-- v5.29: SCRIPT PER TIM DARI PANEL. Dulu tiap RF nulis `zenx_loader.lua` dari
+--        cfg.script_url LOKAL -- ganti script = edit config di tiap RF satu-satu.
+--        Sekarang panel bisa nentuin tim ini jalanin script apa; URL-nya nebeng
+--        di respons /perintah (yang emang udah di-poll), jadi NOL request tambahan.
+--        Begitu ganti: autoexec ditulis ulang + semua client ditutup (Delta cuma
+--        baca Autoexecute pas masuk game, jadi yang lagi jalan masih pakai script
+--        lama). Yang buka lagi blok FORCE. Kalau panel gak nentuin apa-apa,
+--        jatuh balik ke cfg.script_url lokal -- perilaku lama tetep jalan.
+--
+-- v5.30: LAPORAN KE PANEL YANG GAGAL SEKARANG KELIATAN.
+--        Dulu `api_post(cfg, "/tim", body)` nilai baliknya DIBUANG. Kalau POST
+--        ditolak (kunci salah, backend belum deploy, tim kosong), worker tetep
+--        keliatan normal -- config kebaca, tim kedeteksi, polling jalan --
+--        sementara di panel timnya KOSONG. Gagalnya diem, susah dilacak.
+--        Sekarang: baris status di layar ("LAPOR KE PANEL GAGAL: <sebab>")
+--        + perintah `zenx panel` yang nguji tiap endpoint satu-satu.
+--        Catatan kenapa gejalanya menyesatkan: GET /perintah bisa LOLOS
+--        sementara POST /tim ditolak -- dua-duanya endpoint beda.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.25-cf"
+local VERSION = "5.30-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
 -- warn() ikut kecatet (ditandain "!") supaya ERROR keliatan di panel juga.
 local LOG_KIRIM = {}          -- baris log terakhir (maks 20)
+-- v5.30: status laporan ke panel. Dipakai buat nampilin kalau lapor GAGAL --
+-- dulu gagalnya diem dan panel keliatan kosong tanpa sebab yang jelas.
+local LAPOR_OK, LAPOR_SEBAB, LAPOR_WARN, LAPOR_TS = nil, nil, nil, 0
 local AKSI_SKRG = "mulai..."  -- lagi ngapain SEKARANG
 local LAPOR_KEY_AT = 0        -- v4.86: kapan terakhir ngabarin "butuh key"
 local BAWA_SEBAB = nil       -- v5.08: kenapa gagal munculin jendela
@@ -1527,14 +1566,17 @@ end
 -- jadi: worker buka client -> user verif key manual -> Delta baca autoexec ->
 -- script auto-jalan. user cuma verif key, script masuk sendiri.
 -- 1 RF = 1 game, jadi 1 loader (sesuai game tim) buat semua client.
-local function tulis_autoexec(cfg)
-    if not cfg.script_url or cfg.script_url == "" then
+-- v5.29: url bisa DITIMPA panel (script per tim). Kalau urlPanel dikasih,
+-- itu yang dipakai; kalau nggak, jatuh ke cfg.script_url lokal RF kayak dulu.
+local function tulis_autoexec(cfg, urlPanel)
+    local url_script = (urlPanel and urlPanel ~= "") and urlPanel or cfg.script_url
+    if not url_script or url_script == "" then
         warn("script_url kosong, autoexec dilewat")
         return false
     end
     local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
     -- loader: narik script dari GitHub. update cukup di GitHub, file autoexec tetap.
-    local loader = 'loadstring(game:HttpGet("' .. cfg.script_url .. '"))()'
+    local loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
     local path = AUTOEXEC_DIR .. "/zenx_loader.lua"
     -- Tulis lewat file lokal dulu (Termux home, gampang), baru cp ke folder Delta
     -- pakai su. Ini ngehindarin neraka nested-quote (su -c ' ... " ... ').
@@ -1550,7 +1592,8 @@ local function tulis_autoexec(cfg)
                    "; chmod 664 " .. path ..
                    "; cat " .. path .. "'")
     if cek:find("loadstring", 1, true) then
-        ok("autoexec loader ditulis: " .. cfg.game_label .. " -> " .. path)
+        ok("autoexec loader ditulis: " .. ((urlPanel and urlPanel ~= "") and "DARI PANEL" or cfg.game_label)
+           .. " -> " .. url_script)
         return true
     else
         warn("gagal nulis autoexec (cek izin folder Delta)")
@@ -2436,7 +2479,34 @@ local function lapor(cfg, isi_perintah, cache)
         jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id())
     )
 
-    api_post(cfg, "/tim", body)
+    -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
+    -- dibuang -- kalau POST /tim ditolak (kunci salah, tabel belum ada, jalur
+    -- gak dikenal), worker tetep keliatan normal sementara panel KOSONG.
+    -- Gagalnya diem, dan itu bikin susah dilacak.
+    local resp = api_post(cfg, "/tim", body) or ""
+    if resp == "" then
+        LAPOR_OK, LAPOR_SEBAB = false, "gak nyambung"
+    else
+        local salah = ambil_str(resp, "error")
+        if salah then
+            LAPOR_OK, LAPOR_SEBAB = false, salah
+            -- cetak sekali aja per sebab, biar log gak kebanjiran
+            if LAPOR_WARN ~= salah then
+                LAPOR_WARN = salah
+                err("LAPOR KE PANEL DITOLAK: " .. salah)
+                if salah:find("kunci") then
+                    err("  -> KUNCI di config beda sama `wrangler secret put KUNCI`")
+                elseif salah:find("jalur") then
+                    err("  -> backend Cloudflare belum di-deploy / versinya lama")
+                end
+                err("  -> makanya tim ini KOSONG di panel")
+            end
+        else
+            if not LAPOR_OK then ok("Lapor ke panel: nyambung lagi") end
+            LAPOR_OK, LAPOR_SEBAB, LAPOR_WARN = true, nil, nil
+            LAPOR_TS = os.time()
+        end
+    end
     return jalan, #list
 end
 
@@ -2987,6 +3057,17 @@ local function run(cfg)
             jalan, #list,
             beku > 0 and (C.Y.."  ·  "..beku.." beku"..C.N) or "",
             cpu, used, total))
+        -- v5.30: status laporan ke panel. Kalau ini GAGAL, tim bakal keliatan
+        -- KOSONG di panel walau worker-nya sendiri jalan normal.
+        if LAPOR_OK == false then
+            io.write("  "..C.R.."LAPOR KE PANEL GAGAL: "..tostring(LAPOR_SEBAB or "?")..C.N.."\n")
+            io.write("  "..C.D.."   -> makanya tim ini kosong di panel"..C.N.."\n")
+        elseif LAPOR_OK == true then
+            local umur = os.time() - (LAPOR_TS or 0)
+            io.write("  "..C.D.."panel: kekirim "..umur.."s lalu"..C.N.."\n")
+        else
+            io.write("  "..C.D.."panel: belum pernah lapor"..C.N.."\n")
+        end
         -- log
         if #logBuf > 0 then
             io.write("\n"..C.D.."  ── log ──\n"..C.N)
@@ -3001,6 +3082,9 @@ local function run(cfg)
     local lastAutoRejoin = 0   -- v4.9: kapan terakhir cek auto-rejoin
     local lastKeepAlive = os.time()   -- v4.18: kapan terakhir apply keep-alive
     local psGantiKerjakan = 0   -- v4.51: psGanti terakhir yang UDAH dikerjain
+    -- v5.29: script per tim dari panel
+    local SCRIPT_KERJAKAN  = 0    -- scriptGanti terakhir yang udah dikerjain
+    local SCRIPT_URL_AKHIR = ""   -- url terakhir yang beneran ditulis ke autoexec
     local lastJagaDepan = 0     -- v4.52: kapan terakhir munculin ulang jendela
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
@@ -3432,6 +3516,37 @@ local function run(cfg)
             lastStatus = now
         end
 
+
+        -- ============================================================
+        -- v5.29: SCRIPT PER TIM DARI PANEL.
+        -- Panel nentuin tim ini jalanin script apa; URL-nya nebeng di /perintah
+        -- (yang emang udah di-poll), jadi gak nambah request.
+        -- Ganti script = tulis ulang autoexec + REJOIN. Rejoin-nya WAJIB:
+        -- Delta cuma baca folder Autoexecute pas aplikasi masuk game, jadi
+        -- client yang lagi jalan bakal tetep pakai script lama sampai join ulang.
+        -- ============================================================
+        do
+            local scrUrl   = ambil_str(resp, "scriptUrl") or ""
+            local scrNama  = ambil_str(resp, "scriptNama") or ""
+            local scrGanti = tonumber((resp or ""):match('"scriptGanti"%s*:%s*(%d+)')) or 0
+            if scrUrl ~= "" and scrGanti > 0 and scrGanti ~= SCRIPT_KERJAKAN then
+                if scrUrl ~= SCRIPT_URL_AKHIR then
+                    tambahLog("PANEL: script diganti -> " .. (scrNama ~= "" and scrNama or scrUrl))
+                    if tulis_autoexec(cfg, scrUrl) then
+                        SCRIPT_URL_AKHIR = scrUrl
+                        -- Client yang lagi jalan masih megang script LAMA -- Delta
+                        -- cuma baca Autoexecute pas masuk game. Jadi ditutup;
+                        -- yang buka lagi biar blok FORCE di bawah (kalau STANDBY,
+                        -- ya emang sengaja gak dibuka).
+                        tambahLog("Tutup semua client -- script baru kepakai pas join ulang")
+                        close_all(cfg, nil, mapLink)
+                    else
+                        tambahLog("! gagal nulis autoexec buat script baru")
+                    end
+                end
+                SCRIPT_KERJAKAN = scrGanti
+            end
+        end
 
         -- v4.9: AUTO-REJOIN per client. cek tiap akun (dari mapping client<->akun)
         -- apakah masih lapor ke panel. akun yg keluar game -> script off -> berhenti
@@ -5039,7 +5154,11 @@ if PERINTAH == "cookie" then
     local OUT = "/sdcard/zenx_cookies.txt"
     local hasil = {}
     for _, pkg in ipairs(targets) do
-        io.write(C.BOLD .. pkg .. C.N .. "  ")
+        -- v5.26: label nama akun dari prefs.xml (baca_username, sumber yg sama
+        -- kayak mapping client<->akun auto-rejoin). Kalau kosong -> "?".
+        local akun = baca_username(pkg) or ""
+        if akun == "" then akun = "?" end
+        io.write(C.BOLD .. pkg .. C.N .. "  " .. C.C .. akun .. C.N .. "  ")
         local files, cookie = ambil_cookie(pkg)
         if cookie then
             local pendek = cookie:sub(1, 28) .. "..." .. cookie:sub(-6)
@@ -5047,7 +5166,8 @@ if PERINTAH == "cookie" then
             if #files > 0 then
                 print("   " .. C.D .. "dari: " .. files[1] .. (#files > 1 and (" (+" .. (#files-1) .. " file lain)") or "") .. C.N)
             end
-            hasil[#hasil+1] = pkg .. "\t" .. cookie
+            -- format: <akun>\t<paket>\t<cookie>  -- akun didulukan biar gampang dicocokin
+            hasil[#hasil+1] = akun .. "\t" .. pkg .. "\t" .. cookie
         else
             print(C.Y .. "GAK KETEMU" .. C.N)
             if #files > 0 then
@@ -5069,16 +5189,283 @@ if PERINTAH == "cookie" then
         local f = io.open(OUT, "w")
         if f then
             f:write(table.concat(hasil, "\n") .. "\n"); f:close()
-            ok("Kesimpen: " .. OUT .. "  (" .. #hasil .. " cookie, format: <paket>\\t<cookie>)")
+            ok("Kesimpen: " .. OUT .. "  (" .. #hasil .. " cookie, format: <akun>\\t<paket>\\t<cookie>)")
             info("File ada di /sdcard -- tinggal tarik lewat RedFinger file manager / adb pull.")
-            print("   " .. C.D .. "Catatan: ini map per-PAKET (clienu..z), belum per-nama-akun." .. C.N)
-            print("   " .. C.D .. "Kalau perlu label nama akun (wildnx_XX), bilang -- bisa ditambahin." .. C.N)
+            print("   " .. C.D .. "Akun '?' = prefs.xml belum ada username-nya (client baru / belum login penuh)." .. C.N)
+
+            -- v5.27: KIRIM ke panel (CF) biar bisa diliat + copy dari panel.
+            -- Di panel digerbang password; di sini worker cuma nyetor (X-Kunci).
+            -- Gak fatal kalau gagal -- file lokal tetep ada sebagai cadangan.
+            print("")
+            info("Ngirim ke panel...")
+            local kirim_ok, kirim_gagal = 0, 0
+            for _, baris in ipairs(hasil) do
+                local akun2, paket2, cookie2 = baris:match("^(.-)\t(.-)\t(.*)$")
+                if cookie2 and cookie2 ~= "" then
+                    local body = '{"akun":"' .. jstr(akun2) .. '","paket":"' .. jstr(paket2) ..
+                                 '","cookie":"' .. jstr(cookie2) .. '"}'
+                    local resp = api_post(cfg, "/cookie-simpan", body) or ""
+                    if resp:find('"ok"%s*:%s*true') then
+                        kirim_ok = kirim_ok + 1
+                    elseif resp:find("belumSiap") then
+                        err("Tabel 'cookies' belum ada di D1. Buat dulu:")
+                        err("  CREATE TABLE IF NOT EXISTS cookies (akun TEXT PRIMARY KEY, paket TEXT, cookie TEXT, ts INTEGER);")
+                        kirim_gagal = kirim_gagal + 1
+                        break
+                    else
+                        kirim_gagal = kirim_gagal + 1
+                    end
+                end
+            end
+            if kirim_ok > 0 then ok("Kekirim ke panel: " .. kirim_ok .. " cookie -> buka tab Cookie di panel (password)") end
+            if kirim_gagal > 0 then warn("Gagal kirim " .. kirim_gagal .. " (cek koneksi / endpoint /cookie-simpan udah dideploy?)") end
         else
             err("Gagal nulis " .. OUT .. " (izin /sdcard? jalanin: termux-setup-storage)")
         end
     else
         warn("Gak ada cookie keambil.")
     end
+    return
+end
+
+-- ============================================================
+-- v5.28: `zenx verif` -- DAFTAR CLIENT YANG BUTUH DICEK MANUAL.
+--
+-- KENAPA BUKAN "DETEKSI CAPTCHA": di RF ini layar Roblox GAK BISA DIBACA
+-- (5.9 / v4.85 -- game, layar key, Home, loading semuanya kebaca 0 teks).
+-- Jadi mustahil tau "ini lagi nampilin captcha" dari layar. Yang bisa cuma
+-- kenali POLA: proses idup tapi bridge gak pernah lapor = nyangkut sebelum
+-- masuk game. Verif bot, layar key, popup umur, semuanya masuk pola itu.
+-- Command ini nyaring daftarnya, keputusan (ganti akun / verif manual) di lo.
+-- ============================================================
+if PERINTAH == "verif" or PERINTAH == "cekverif" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
+
+    local list = split(cfg.pkgs)
+    print(C.BOLD .. C.C .. "\n=== CLIENT YANG BUTUH DICEK ===\n" .. C.N)
+    info("Ngumpulin data (sekali dumpsys + sekali baca prefs)...")
+
+    -- 1. siapa yang idup -- SEKALI dumpsys buat semua (v4.71)
+    local jalan = pkg_running_semua(list) or {}
+
+    -- 2. username semua client dalam SATU panggilan su (inget 5.3: su ~6 detik)
+    local nama_pkg = {}
+    do
+        local bagian = {}
+        for _, pkg in ipairs(list) do
+            bagian[#bagian+1] = "echo @@" .. pkg .. "; cat /data/data/" .. pkg ..
+                                "/shared_prefs/prefs.xml 2>/dev/null | grep -o '<string name=\"username\">[^<]*' | head -1"
+        end
+        local skrip = table.concat(bagian, "; ")
+        local h = io.popen("timeout 60 su -c " .. shq(skrip) .. " 2>/dev/null")
+        if h then
+            local raw = h:read("*all") or ""; h:close()
+            local kini
+            for baris in raw:gmatch("[^\n]+") do
+                local p = baris:match("^@@(%S+)")
+                if p then kini = p
+                elseif kini then
+                    local u = baris:match('<string name="username">(.*)')
+                    if u and u:match("%S") then nama_pkg[kini] = u end
+                end
+            end
+        end
+    end
+
+    -- 3. bridge: kapan tiap akun terakhir lapor (sekali GET /stat)
+    local stat = api_get(cfg, "/stat") or ""
+    local now = os.time()
+
+    local perlu, sehat, mati = {}, 0, 0
+    for _, pkg in ipairs(list) do
+        local hidup = jalan[pkg]
+        local akun = nama_pkg[pkg]
+        local ts = akun and bridge_ts(stat, akun) or nil
+        local umur = ts and (now - ts) or nil
+
+        if not hidup then
+            mati = mati + 1
+            perlu[#perlu+1] = { pkg = pkg, akun = akun, kelas = "mati",
+                sebab = "proses gak jalan", saran = "dibuka worker (bukan verif)" }
+        elseif not ts then
+            -- idup tapi BELUM PERNAH lapor = nyangkut sebelum masuk game.
+            -- Ini pola paling khas buat verif bot / layar key / popup umur.
+            perlu[#perlu+1] = { pkg = pkg, akun = akun, kelas = "curiga",
+                sebab = "idup tapi BELUM PERNAH lapor ke bridge",
+                saran = "CEK LAYARNYA -- kemungkinan verif bot / layar key / popup umur" }
+        elseif umur > 900 then
+            perlu[#perlu+1] = { pkg = pkg, akun = akun, kelas = "curiga",
+                sebab = ("lapor terakhir %d menit lalu"):format(math.floor(umur/60)),
+                saran = "CEK LAYARNYA -- keluar game & gak balik, bisa kena verif pas rejoin" }
+        elseif umur > 300 then
+            perlu[#perlu+1] = { pkg = pkg, akun = akun, kelas = "pantau",
+                sebab = ("lapor terakhir %d menit lalu"):format(math.floor(umur/60)),
+                saran = "belum tentu masalah -- pantau dulu" }
+        else
+            sehat = sehat + 1
+        end
+    end
+
+    print("")
+    local nCuriga = 0
+    for _, x in ipairs(perlu) do if x.kelas == "curiga" then nCuriga = nCuriga + 1 end end
+
+    if nCuriga > 0 then
+        print(C.BOLD .. C.Y .. "  PERLU DILIHAT (" .. nCuriga .. ")" .. C.N)
+        for _, x in ipairs(perlu) do
+            if x.kelas == "curiga" then
+                print("  " .. C.BOLD .. x.pkg .. C.N .. "  " .. C.C .. (x.akun or "?") .. C.N)
+                print("     " .. C.Y .. x.sebab .. C.N)
+                print("     " .. C.D .. x.saran .. C.N)
+            end
+        end
+        print("")
+    end
+
+    local nPantau = 0
+    for _, x in ipairs(perlu) do if x.kelas == "pantau" then nPantau = nPantau + 1 end end
+    if nPantau > 0 then
+        print(C.D .. "  pantau dulu (" .. nPantau .. "):" .. C.N)
+        for _, x in ipairs(perlu) do
+            if x.kelas == "pantau" then
+                print("     " .. x.pkg .. "  " .. (x.akun or "?") .. "  -- " .. C.D .. x.sebab .. C.N)
+            end
+        end
+        print("")
+    end
+
+    if mati > 0 then
+        print(C.D .. "  gak jalan (" .. mati .. "): " .. C.N)
+        for _, x in ipairs(perlu) do
+            if x.kelas == "mati" then
+                print("     " .. C.D .. x.pkg .. "  " .. (x.akun or "?") .. C.N)
+            end
+        end
+        print("")
+    end
+
+    print(C.G .. "  sehat: " .. sehat .. C.N .. C.D .. " (lapor < 5 menit lalu)" .. C.N)
+    print("")
+    if nCuriga > 0 then
+        info("Buat liat layarnya: bawa client ke depan, terus liat sendiri di RF.")
+        info("Kalau emang kena verif bot -> verif manual, atau ganti akunnya.")
+    else
+        ok("Gak ada yang mencurigakan.")
+    end
+    print("")
+    print(C.D .. "  Catatan: worker GAK BISA baca layar di RF ini (lihat 5.9), jadi ini" .. C.N)
+    print(C.D .. "  tebakan dari POLA, bukan bacaan captcha. Keputusan tetap di lo." .. C.N)
+    return
+end
+
+-- ============================================================
+-- v5.30: `zenx panel` -- UJI SAMBUNGAN KE PANEL, endpoint per endpoint.
+--
+-- Perlu karena gejalanya menyesatkan: worker keliatan jalan normal (config
+-- kebaca, tim kedeteksi, polling jalan) tapi di panel timnya KOSONG. Itu
+-- kejadian kalau GET /perintah lolos sementara POST /tim ditolak -- dan dulu
+-- hasil POST-nya dibuang, jadi gak ada tanda apa pun.
+-- Di sini tiap endpoint dites sendiri dan jawaban mentahnya ditampilin.
+-- ============================================================
+if PERINTAH == "panel" or PERINTAH == "uji" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
+
+    print(C.BOLD .. C.C .. "\n=== UJI SAMBUNGAN PANEL ===\n" .. C.N)
+    info("URL  : " .. tostring(cfg.url))
+    info("tim  : " .. tostring(cfg.tim))
+    info("kunci: " .. (cfg.kunci and (cfg.kunci:sub(1, 6) .. "..." .. cfg.kunci:sub(-4)) or "KOSONG"))
+    print("")
+
+    local function potong(t, n)
+        t = tostring(t or ""):gsub("%s+", " ")
+        if #t > (n or 150) then return t:sub(1, n or 150) .. "..." end
+        return t
+    end
+
+    -- 1. GET /perintah -- ini yang biasanya lolos
+    io.write(C.BOLD .. "1. GET /perintah" .. C.N .. "  ")
+    local r1 = api_get(cfg, "/perintah?tim=" .. cfg.tim) or ""
+    if r1 == "" then
+        print(C.R .. "GAK NYAMBUNG" .. C.N)
+        err("   URL salah / internet mati / Cloudflare gak balesin")
+    else
+        local e1 = ambil_str(r1, "error")
+        if e1 then print(C.R .. "DITOLAK: " .. e1 .. C.N)
+        else print(C.G .. "OK" .. C.N .. "  " .. C.D .. potong(r1) .. C.N) end
+    end
+
+    -- 2. POST /tim -- INI yang nentuin tim muncul di panel apa nggak
+    io.write(C.BOLD .. "2. POST /tim" .. C.N .. "     ")
+    local body = string.format(
+        '{"tim":%s,"cpu":0,"ram_used":0,"ram_free":0,"ram_total":0,' ..
+        '"jalan":0,"total":0,"sticky":false,"sig":"","clients":[],' ..
+        '"aksi":%s,"log":[],"ver":%s,"dev":%s}',
+        jstr(cfg.tim), jstr("uji sambungan"), jstr(VERSION), jstr(dev_id()))
+    local r2 = api_post(cfg, "/tim", body) or ""
+    if r2 == "" then
+        print(C.R .. "GAK NYAMBUNG" .. C.N)
+    else
+        local e2 = ambil_str(r2, "error")
+        if e2 then
+            print(C.R .. "DITOLAK: " .. e2 .. C.N)
+            err("   INI SEBABNYA tim kosong di panel.")
+            if e2:find("kunci") then
+                err("   Kunci di config beda sama `wrangler secret put KUNCI`.")
+            elseif e2:find("jalur") then
+                err("   Backend Cloudflare belum di-deploy / versinya lama.")
+            elseif e2:find("kosong") then
+                err("   Nama tim kosong di config. Setup ulang.")
+            end
+        else
+            print(C.G .. "OK" .. C.N .. "  " .. C.D .. potong(r2) .. C.N)
+        end
+    end
+
+    -- 3. GET /stat -- cek tim ini BENERAN kecatat
+    io.write(C.BOLD .. "3. GET /stat" .. C.N .. "     ")
+    local r3 = api_get(cfg, "/stat") or ""
+    if r3 == "" then
+        print(C.R .. "GAK NYAMBUNG" .. C.N)
+    else
+        local e3 = ambil_str(r3, "error")
+        if e3 then print(C.R .. "DITOLAK: " .. e3 .. C.N)
+        else
+            -- cari nama tim ini di jawaban
+            local ada = r3:find('"nama"%s*:%s*"' .. cfg.tim:gsub("%-", "%%-") .. '"') ~= nil
+            if ada then
+                print(C.G .. "OK" .. C.N .. "  " .. cfg.tim .. " KECATAT di panel")
+            else
+                print(C.Y .. "OK tapi " .. cfg.tim .. " GAK ADA di daftar" .. C.N)
+                warn("   Panel nerima permintaan, tapi tim ini belum kecatat.")
+                warn("   Kalau langkah 2 OK, tunggu ~15 detik terus ulangi.")
+            end
+        end
+    end
+
+    -- 4. klaim tim -- 1 tim = 1 device
+    io.write(C.BOLD .. "4. klaim tim" .. C.N .. "     ")
+    local r4 = api_get(cfg, "/tim-klaim?tim=" .. cfg.tim .. "&dev=" .. dev_id()) or ""
+    if r4 == "" then
+        print(C.D .. "gak kebaca (gak fatal)" .. C.N)
+    else
+        local boleh = ambil_str(r4, "boleh")
+        local sebab = ambil_str(r4, "sebab")
+        if boleh == "ya" then
+            print(C.G .. "OK" .. C.N .. "  tim ini punya kita")
+        else
+            print(C.R .. "DIPEGANG DEVICE LAIN" .. C.N)
+            err("   " .. tostring(sebab or "?"))
+            err("   Pakai nomor tim lain, atau tunggu klaim lamanya basi (15 menit).")
+        end
+    end
+
+    print("")
+    print(C.D .. "  Kalau langkah 2 DITOLAK -> itu akar masalahnya." .. C.N)
+    print(C.D .. "  Kalau semua OK tapi panel masih kosong -> panel-nya yang" .. C.N)
+    print(C.D .. "  belum di-refresh, atau tab-nya nyaring game yang beda." .. C.N)
+    print("")
     return
 end
 
@@ -5107,6 +5494,8 @@ if PERINTAH ~= "" then
     info("   zenx cookie             -> ekstrak cookie akun sendiri (yg lagi jalan) buat backup")
     info("   zenx cookie <huruf>     -> ekstrak dari satu client (mis. zenx cookie u)")
     info("   zenx cookie all         -> ekstrak dari semua paket kepasang")
+    info("   zenx verif              -> daftar client yang butuh dicek manual (nyangkut/verif bot)")
+    info("   zenx panel              -> UJI sambungan ke panel (kalau tim kosong di panel)")
     print()
     info("Kalau perintahnya harusnya ada, versi di RF ini ketinggalan -- tarik ulang:")
     info("   curl -fsSL <repo>/zenx_worker.lua -o ~/zenx_worker.lua")
