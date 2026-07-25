@@ -255,9 +255,36 @@
 --        Risiko tarik-menarik (akun kepasang di 2 RF) sekarang KEKIHATAN --
 --        tiap perebutan dilaporin, jadi kalau muncul terus buat akun yang
 --        sama, ketara.
+--
+-- v5.45: status "off" DIPECAH jadi "off" dan "latar".
+--        Sebabnya pertanyaan yang wajar: log bilang "tutup paksa" buat client
+--        yang di tabel keliatan "off" -- kesannya gak masuk akal.
+--        Ternyata ada DUA ukuran beda:
+--          tabel      -> dumpsys: ada JENDELA di layar?
+--          saat buka  -> pidof:   PROSESnya idup?
+--        Client bisa prosesnya idup tapi jendelanya gak ada (jalan di latar).
+--        Keadaan itu HARUS ditutup dulu -- 'am start' ke proses yang masih
+--        idup itu NO-OP, dia nangkring di server lama.
+--        Jadi perilakunya bener, cuma labelnya nyesatin. Sekarang:
+--          ○ off   = mati total, tinggal dibuka
+--          ◍ latar = proses idup tanpa jendela -> bakal ditutup dulu
+--        pidof digabung ke panggilan su yang SAMA -> nol ongkos tambahan.
+--
+-- v5.46: LISENSI DELTA DICEK DULU, sebelum buka semua client.
+--        Dulu bypass jalan di loop utama -- artinya SETELAH semua client
+--        kebuka. Akibatnya keempat client nyangkut bareng di layar
+--        "Enter key", makan RAM & CPU percuma, baru dibypass belakangan.
+--        Berkas lisensinya di /sdcard, dipakai BARENG semua client (verif
+--        Delta itu per-DEVICE, bukan per-instance). Jadi urutan yang bener:
+--          1. cek lisensi
+--          2. hilang/basi -> buka SATU client, bypass, tulis kunci
+--          3. baru buka sisanya -- semuanya langsung lolos ke game
+--        Kalau auto_key MATI (bawaan), bypass gak dijalanin -- TAPI
+--        peringatannya muncul DI DEPAN, bukan setelah 4 client nyangkut.
+--        Itu sendiri nolong: dulu gejalanya cuma "client kebuka tapi diem".
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.44-cf"
+local VERSION = "5.46-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -1485,21 +1512,44 @@ local DEV_ID_CACHE
 -- per client -- tiap panggilan 'su' di RedFinger ~6 detik, jadi 4 client = ~24
 -- detik. Padahal ini jalan tiap 10 detik -> worker lebih banyak nunggu su
 -- daripada kerja, dan perintah panel jadi telat dieksekusi.
+-- v5.45: sekalian ngecek PROSES (pidof), bukan cuma jendela (dumpsys).
+-- Dua-duanya digabung ke SATU panggilan su, jadi gak nambah ongkos.
+--
+-- Kenapa perlu dibedain: client bisa PROSESNYA IDUP tapi JENDELANYA GAK ADA
+-- (jalan di latar / jendelanya keburu dilepas). Dulu keadaan itu ditampilin
+-- "off" -- padahal beda jauh artinya:
+--   off   = mati total, tinggal dibuka
+--   latar = prosesnya masih idup, HARUS ditutup dulu sebelum dibuka
+--           ('am start' ke proses yang idup itu NO-OP -- dia nangkring di
+--            server lama dan gak pernah pindah walau linknya udah ganti)
+-- Gara-gara sama-sama ditulis "off", log "tutup paksa" keliatan gak masuk akal.
+-- Balikin: hasil[p] = ada jendela?, hidup[p] = prosesnya idup?
 local function pkg_running_semua(pkgs)
-    local hasil = {}
-    for _, p in ipairs(pkgs) do hasil[p] = false end
-    local o = sh("su -c 'dumpsys activity activities | grep ActivityRecord'") or ""
+    local hasil, hidup = {}, {}
+    for _, p in ipairs(pkgs) do hasil[p] = false; hidup[p] = false end
+
+    local bagian = { "dumpsys activity activities | grep ActivityRecord" }
+    for _, p in ipairs(pkgs) do
+        bagian[#bagian+1] = 'echo "@PID ' .. p .. ' $(pidof ' .. p .. ')"'
+    end
+    local o = sh("su -c '" .. table.concat(bagian, "; ") .. "'") or ""
+
     for baris in o:gmatch("[^\r\n]+") do
-        for _, p in ipairs(pkgs) do
-            if not hasil[p] and baris:find(p, 1, true) then
-                for _, tanda in ipairs(PENANDA_GAME) do
-                    if baris:find(tanda, 1, true) then hasil[p] = true break end
+        local pkgPid, pidnya = baris:match("^@PID%s+(%S+)%s*(.*)$")
+        if pkgPid then
+            if tostring(pidnya):match("%d") then hidup[pkgPid] = true end
+        else
+            for _, p in ipairs(pkgs) do
+                if not hasil[p] and baris:find(p, 1, true) then
+                    for _, tanda in ipairs(PENANDA_GAME) do
+                        if baris:find(tanda, 1, true) then hasil[p] = true break end
+                    end
+                    if DETEKSI_LONGGAR then hasil[p] = true end
                 end
-                if DETEKSI_LONGGAR then hasil[p] = true end
             end
         end
     end
-    return hasil
+    return hasil, hidup
 end
 
 local function dev_id()
@@ -2497,6 +2547,77 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     local list = split(cfg.pkgs)
     local hasil = { ok = 0, gagal = 0, lewat = 0, nama_gagal = {} }
     local urut = 0
+
+    -- ============================================================
+    -- v5.46: CEK LISENSI DELTA DULU, SEBELUM BUKA SEMUA CLIENT.
+    --
+    -- Dulu bypass dijalanin di loop utama -- ARTINYA setelah semua client
+    -- kebuka. Akibatnya keempat client nyangkut bareng di layar "Enter key",
+    -- makan RAM & CPU percuma, dan baru dibypass belakangan.
+    --
+    -- Berkas lisensinya ada di /sdcard dan dipakai BARENG semua client (verif
+    -- Delta itu per-DEVICE, bukan per-instance). Jadi urutan yang bener:
+    --   1. cek lisensi
+    --   2. kalau hilang/basi -> buka SATU client, bypass, tulis kunci
+    --   3. baru buka sisanya -- semuanya langsung lolos ke game
+    --
+    -- Kalau auto_key MATI (bawaan), bypass-nya gak dijalanin -- tapi
+    -- peringatannya tetep muncul DI DEPAN, bukan setelah 4 client nyangkut.
+    -- Itu sendiri udah nolong: dulu gejalanya cuma "client kebuka tapi diem".
+    -- ============================================================
+    if not fast and not only then
+        local kead, umur = lisensi_keadaan(cfg)
+        if kead ~= "ada" then
+            local ket = (kead == "hilang") and "HILANG"
+                        or ("BASI (" .. umur_ringkas(umur) .. ")")
+            warn("Lisensi Delta " .. ket .. " -- client bakal nyangkut di layar key.")
+
+            if cfg.auto_key == true and (os.time() - (BYPASS_TERAKHIR or 0)) > 300 then
+                BYPASS_TERAKHIR = os.time()
+                info("  bypass DULU lewat 1 client, sisanya nunggu...")
+
+                -- pilih client: yang udah jalan diutamain (layar key-nya udah nongol)
+                local pilih
+                local potret = pkg_running_semua(list)
+                for _, p in ipairs(list) do
+                    if potret[p] then pilih = p break end
+                end
+                pilih = pilih or list[1]
+
+                -- kalau belum jalan, buka dia sendiri dulu biar layar key-nya nongol
+                if not potret[pilih] then
+                    info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
+                    open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
+                    tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
+                    os.execute("sleep 3")   -- kasih waktu layar key-nya kebentuk
+                end
+
+                local link, _, _, ketLink = cari_tombol_key(cfg, pilih)
+                if link then
+                    local kunci, sebab = bypass_kunci(cfg, link, false)
+                    if kunci then
+                        local wok, wket = tulis_lisensi(cfg, kunci)
+                        if wok then
+                            ok("  BYPASS BERES -- kunci ketulis, kepakai SEMUA client")
+                        else
+                            warn("  kunci dapet tapi gagal nulis: " .. tostring(wket))
+                        end
+                    else
+                        warn("  API bypass gagal: " .. tostring(sebab))
+                    end
+                else
+                    warn("  gagal nemu tombol key: " .. tostring(ketLink))
+                    info("  coba manual: zenx cari " .. pilih:gsub("com%.roblox%.", ""))
+                end
+            else
+                if cfg.auto_key ~= true then
+                    info("  auto_key MATI -> bypass gak dijalanin sendiri.")
+                    info("  Jalanin sekarang:  zenx key      (atau: auto_key=true di config)")
+                end
+            end
+        end
+    end
+
     -- v4.17: /stat sekali di awal, buat cek "beneran di game" pas skip client.
     -- v4.19: fast=true (buat REJOIN ganti server) -> skip bridge-confirm biar CEPET,
     -- gak nunggu tiap client lapor 90s. cukup mastiin proses muncul.
@@ -3422,7 +3543,8 @@ local function run(cfg)
     -- v4.16: CACHE status client + ram/cpu. dulu gambar_tabel manggil pkg_running
     -- (dumpsys, LAMBAT) buat tiap client TIAP redraw -> tabel lelet. sekarang status
     -- di-refresh berkala di background, tabel cuma baca cache -> redraw INSTAN.
-    local cacheRun = {}    -- pkg -> true/false (jalan?)
+    local cacheRun = {}    -- pkg -> true/false (ada jendela di layar?)
+    local cacheHidup = {}  -- v5.45: pkg -> true/false (prosesnya idup?)
     local runSebelum = {}  -- v4.46: status ronde lalu, buat nangkep yang MATI MENDADAK
     local cacheBridge = {} -- v4.49: script beneran lapor apa nggak (bukan cuma window ada)
     local cacheRam = {0,0,0}
@@ -3430,9 +3552,11 @@ local function run(cfg)
     local lastStatusCek = 0
     local function refresh_status()
         -- v4.63: satu dump buat semua client (dulu satu-satu -> ~24 detik)
-        local semua = pkg_running_semua(split(cfg.pkgs))
+        local semua, hidupMap = pkg_running_semua(split(cfg.pkgs))
         for _, pkg in ipairs(split(cfg.pkgs)) do
             cacheRun[pkg] = semua[pkg]
+            -- v5.45: proses idup tapi jendela gak ada = "latar", bukan "off"
+            cacheHidup[pkg] = hidupMap and hidupMap[pkg] or false
         end
         -- v4.49: "ada di layar game" BEDA sama "script beneran jalan". Jendela
         -- yang dikuncupin jadi gelembung tetep punya activity -> ke-baca jalan
@@ -3490,6 +3614,11 @@ local function run(cfg)
                 -- window-nya ada tapi script gak lapor -> dikuncupin / beku
                 st, warna = "◐ beku", C.Y
             elseif run then st, warna = "● jalan", C.G
+            elseif cacheHidup[pkg] then
+                -- v5.45: prosesnya IDUP tapi jendelanya gak ada. Beda dari mati:
+                -- ini HARUS ditutup dulu sebelum dibuka, dan itu yang bikin log
+                -- "tutup paksa" muncul buat client yang keliatan "off".
+                st, warna = "◍ latar", C.C
             else st, warna = "○ off", C.Y end
             -- v5.34: nama akun dipotong dari DEPAN, bukan belakang.
             -- Pola nama akun itu awalan+nomor (wildnx_12, oliviainvent3), jadi
