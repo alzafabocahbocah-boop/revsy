@@ -303,9 +303,21 @@
 --             1 baris -> Y 0.713   2 baris -> Y 0.723   3 baris -> Y 0.808
 --           X stabil ~0.83 di semua. Jadi tebakan ini biasanya kena di
 --           percobaan PERTAMA, bukan setelah nyapu belasan titik.
+--
+-- v5.48: FIX "lisensi hilang tapi tetep buka semua client".
+--        Ada DUA blok bypass yang tabrakan:
+--          * blok di loop utama (lama) jalan DULUAN, nyetel BYPASS_TERAKHIR
+--          * cek di open_all (v5.46) dipanggil setelahnya -> kena cooldown
+--            5 menit -> DILEWAT
+--        Jadi 4 client kebuka semua tanpa bypass, nyangkut di layar key --
+--        persis gejalanya. Dan blok lama itu sendiri cacat: dia milih client
+--        buat nyari tombol TAPI GAK MEMBUKANYA, jadi pas worker baru nyala
+--        (belum ada client jalan) dia nyari tombol di layar kosong.
+--        Blok lama DIBUANG. Yang di open_all bener -- dia buka client-nya
+--        dulu, tungguin layar key nongol, baru nyari tombol.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.47-cf"
+local VERSION = "5.48-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -4032,47 +4044,25 @@ local function run(cfg)
         -- client. Sekali ketulis, clienu sampai clienz kebagian -- gak usah
         -- diulang per client.
         -- ============================================================
+        -- ============================================================
+        -- v5.48: BLOK BYPASS DI LOOP UTAMA DIBUANG.
+        --
+        -- Dia TABRAKAN sama cek lisensi yang ada di open_all (v5.46/5.47):
+        --   1. blok ini jalan DULUAN dalam satu putaran, nyetel BYPASS_TERAKHIR
+        --   2. open_all dipanggil setelahnya -> cek di dalamnya kena cooldown
+        --      5 menit -> DILEWAT
+        --   3. jadi 4 client kebuka semua tanpa bypass, nyangkut di layar key
+        --
+        -- Dan blok ini sendiri cacat: dia milih client buat nyari tombol TAPI
+        -- GAK MEMBUKANYA. Pas worker baru nyala, gak ada client yang jalan ->
+        -- nyari tombol di layar kosong -> pasti gagal.
+        --
+        -- Yang di open_all bener: dia BUKA client-nya dulu, tungguin layar
+        -- key-nya nongol, baru nyari tombol. Dan open_all dipanggil berkala
+        -- (tiap reopen_sec), jadi lisensi yang abis di tengah sesi tetep
+        -- ketangkep -- gak perlu jaring kedua di sini.
+        -- ============================================================
         local lewatiRonde = false
-        -- v5.13: sapuan otomatis BAWAANNYA MATI. Nyapu itu mindah-mindahin
-        -- jendela terus -- ganggu banget kalau user lagi mau tap manual, dan
-        -- keberhasilannya belum kebukti di semua ukuran jendela.
-        -- Nyalain sendiri kalau mau:  auto_key=true  di config.
-        if hit and cfg.auto_key == true and lisensi_keadaan(cfg) == "hilang"
-           and (now - (BYPASS_TERAKHIR or 0)) > 300 then
-            BYPASS_TERAKHIR = now
-            setAksi("BYPASS KEY -- fokus ke sini dulu")
-            tambahLog("BYPASS: lisensi Delta hilang -> cari key lewat 1 client, yang lain nunggu")
-
-            -- pilih 1 client: yang lagi jalan diutamakan (layar key-nya udah nongol)
-            local pilih
-            for _, p in ipairs(split(cfg.pkgs)) do
-                if cacheRun[p] then pilih = p break end
-            end
-            pilih = pilih or split(cfg.pkgs)[1]
-            tambahLog("BYPASS: pakai " .. pilih:gsub("com%.roblox%.", ""))
-
-            local link, _, _, ket = cari_tombol_key(cfg, pilih)
-            if link then
-                tambahLog("BYPASS: dapet link (" .. tostring(ket) .. ") -> kirim ke API")
-                local kunci, sebab = bypass_kunci(cfg, link, false)
-                if kunci then
-                    local wok, wket = tulis_lisensi(cfg, kunci)
-                    if wok then
-                        tambahLog("BYPASS: BERES -- kunci ketulis, kepakai SEMUA client")
-                        lastOpen = 0   -- langsung buka ulang client ronde berikutnya
-                    else
-                        tambahLog("BYPASS: kunci dapet TAPI gagal nulis -- " .. tostring(wket))
-                    end
-                else
-                    tambahLog("BYPASS: API gagal -- " .. tostring(sebab))
-                end
-            else
-                tambahLog("BYPASS: gagal nemu tombol -- " .. tostring(ket))
-                tambahLog("   (coba manual: zenx cari " .. pilih:gsub("com%.roblox%.", "") .. ")")
-            end
-            setAksi("bypass selesai")
-            lewatiRonde = true   -- sisa ronde ini dilewat, biar keadaannya settle dulu
-        end
 
         if not lewatiRonde then   -- v5.02: ronde bypass gak ngerjain yang lain
 
