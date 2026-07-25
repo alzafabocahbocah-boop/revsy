@@ -131,9 +131,34 @@
 --        + perintah `zenx panel` yang nguji tiap endpoint satu-satu.
 --        Catatan kenapa gejalanya menyesatkan: GET /perintah bisa LOLOS
 --        sementara POST /tim ditolak -- dua-duanya endpoint beda.
+--
+-- v5.31: KUNCI API bypass.vip GAK DITANYA LAGI pas setup. Diisi SEKALI di
+--        panel, semua RF narik dari /bypass-key. Dulu ditanyain tiap setup --
+--        20 RF = 20 kali ngetik kunci yang sama, dan sekali salah ketik
+--        `zenx key` gagal tanpa sebab yang jelas.
+--        Urutan: config lokal MENANG (kalau RF ini perlu kunci beda), baru
+--        panel. Hasil panel di-cache 10 menit; kalau panel mati, yang udah
+--        kepegang tetep kepakai.
+--        Tetep GAK masuk GitHub -- kuncinya di D1, bukan di berkas yang
+--        di-push.
+--
+-- v5.32: kunci API DITARIK PAS WORKER NYALA, terus DISIMPEN ke config lokal.
+--        Sekali narik, habis itu instan & gak butuh panel lagi. Ini penting
+--        karena `zenx key` dipanggil justru pas lisensi Delta abis -- saat
+--        paling genting; kalau baru narik di situ dan panel lagi mati,
+--        bypass-nya gagal.
+--        Hasilnya: gak perlu ngetik manual di tiap RF, TANPA harus naruh
+--        kunci di berkas yang di-push ke GitHub.
+--
+-- v5.33: kunci API DITARUH LANGSUNG di file ini (BYPASS_KEY_BAWAAN), atas
+--        permintaan user -- repo `revsy` PRIVAT. Nol delay, gak nanya panel
+--        sama sekali. Urutan: config lokal > bawaan > panel.
+--        !! KALAU REPO DIJADIIN PUBLIK, KOSONGIN BYPASS_KEY_BAWAAN DULUAN !!
+--        Itu kunci langganan berbayar -- siapa pun yang bisa baca file ini
+--        bisa ngabisin kuotanya.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.30-cf"
+local VERSION = "5.33-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -388,6 +413,21 @@ local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 local BYPASS_BASE    = "https://api.bypass.vip/premium/bypass?url="
 local BYPASS_REFRESH = "https://api.bypass.vip/premium/refresh?url="
 
+-- ============================================================
+-- v5.33: KUNCI API BAWAAN, ditaruh langsung di sini.
+--
+-- KENAPA BOLEH: repo `revsy` itu PRIVAT. Kalau suatu saat repo-nya dijadiin
+-- publik, KOSONGIN baris ini duluan -- ini kunci langganan berbayar, siapa
+-- pun yang bisa baca file ini bisa ngabisin kuotanya.
+--
+-- Dipakai LANGSUNG tanpa nanya panel, jadi nol delay. Panel cuma dipakai
+-- kalau baris ini dikosongin.
+--
+-- Mau ganti kunci? Ubah di sini, push, terus `up` di tiap RF.
+-- Mau satu RF pakai kunci beda? `zenx key set <APIKEY>` -- config lokal menang.
+-- ============================================================
+local BYPASS_KEY_BAWAAN = "621eeee7-973c-4789-a605-138214d87873"
+
 local function url_encode(s)
     return (tostring(s or ""):gsub("[^%w%-%._~]", function(c)
         return string.format("%%%02X", string.byte(c))
@@ -404,13 +444,23 @@ local function clipboard_ambil()
     return s
 end
 
+-- v5.31: DEKLARASI MAJU. ambil_apikey butuh api_get & ambil_str yang
+-- dideklarasi jauh di bawah, tapi bypass_kunci (di sini) butuh ambil_apikey.
+-- Dua-duanya gak bisa ditaruh duluan. Jadi namanya dipesan dulu di sini,
+-- isinya diisi setelah api_get ada. Ini pola baku buat lingkaran begini --
+-- dan WAJIB, kalau nggak bakal "attempt to call a nil value" pas jalan
+-- (jebakan 5.14: luac -p GAK nangkep ini).
+local ambil_apikey
+
 -- panggil API bypass. balikin: kunci, pesanError, jawabanMentah
 local function bypass_kunci(cfg, link, pakaiRefresh)
-    local apikey = cfg and cfg.bypass_api_key or ""
+    local apikey, asal = ambil_apikey(cfg)
     if apikey == "" then
-        return nil, "bypass_api_key kosong di " .. CONFIG_FILE ..
-                    " -- isi dulu: bypass_api_key=\"...\"", nil
+        return nil, "kunci API bypass.vip belum ada.\n" ..
+                    "   Isi BYPASS_KEY_BAWAAN di zenx_worker.lua, atau\n" ..
+                    "   per-RF: zenx key set <APIKEY>", nil
     end
+    if asal ~= "config" then info("kunci API dari " .. asal) end
     if not link or link == "" then return nil, "link kosong", nil end
     if not link:find("^https?://") then
         return nil, "yang dikasih bukan link (harus mulai http/https)", nil
@@ -1171,6 +1221,67 @@ local function jstr(s)
     s = s:gsub('%c', ' ')   -- sisa karakter kontrol lain -> spasi
     return '"'..s..'"'
 end
+
+-- ============================================================
+-- v5.31: KUNCI API bypass DIAMBIL DARI PANEL kalau config kosong.
+--
+-- Dulu ditanyain di SETIAP setup RF. 20 RF = 20 kali ngetik kunci yang sama,
+-- dan tiap salah ketik = `zenx key` gagal tanpa sebab yang jelas.
+--
+-- Sekarang urutannya:
+--   1. config lokal (kalau diisi manual, itu yang menang -- bisa beda per RF)
+--   2. panel (/bypass-key) -- diisi SEKALI di sana, semua RF kebagian
+-- Hasil dari panel di-cache di memori; kalau panel mati, yang udah kepegang
+-- tetep kepakai sampai worker restart.
+--
+-- Tetep GAK masuk GitHub: kuncinya ada di D1, bukan di berkas yang di-push.
+-- ============================================================
+local BYPASS_CACHE, BYPASS_CACHE_TS = nil, 0
+
+ambil_apikey = function(cfg)
+    -- 1. config lokal MENANG -- buat RF yang sengaja dikasih kunci beda
+    --    (`zenx key set <APIKEY>`)
+    local lokal = cfg and cfg.bypass_api_key or ""
+    if lokal ~= "" then return lokal, "config" end
+
+    -- 2. bawaan yang ditaruh di file ini. Dipakai LANGSUNG -- gak nanya panel,
+    --    jadi nol delay dan gak bergantung panel idup apa nggak.
+    if BYPASS_KEY_BAWAAN ~= "" then return BYPASS_KEY_BAWAAN, "bawaan" end
+
+    -- 3. panel -- cuma kepakai kalau BYPASS_KEY_BAWAAN dikosongin
+    --    (mis. repo dijadiin publik)
+    -- cache masih segar (10 menit) -> pakai itu
+    if BYPASS_CACHE and BYPASS_CACHE ~= "" and (os.time() - BYPASS_CACHE_TS) < 600 then
+        return BYPASS_CACHE, "panel (cache)"
+    end
+
+    local r = api_get(cfg, "/bypass-key") or ""
+    if r ~= "" then
+        local k = ambil_str(r, "key")
+        if k and k ~= "" then
+            BYPASS_CACHE, BYPASS_CACHE_TS = k, os.time()
+            -- v5.32: SIMPEN KE CONFIG LOKAL. Sekali narik, habis itu gak
+            -- pernah butuh panel lagi -- instan, dan tetep jalan walau panel
+            -- lagi mati pas lisensi Delta abis (itu justru saat paling
+            -- genting). Ini yang bikin gak perlu ngetik manual TANPA harus
+            -- naruh kunci di berkas yang di-push ke GitHub.
+            if cfg then
+                cfg.bypass_api_key = k
+                local okS = pcall(function() save_config(cfg) end)
+                if okS then ok("Kunci API disimpen ke config RF ini -- gak narik dari panel lagi.") end
+            end
+            return k, "panel"
+        end
+        -- endpoint ada tapi kuncinya belum diisi
+        if not ambil_str(r, "error") then return "", "panel (kosong)" end
+    end
+    -- panel gak jawab tapi cache lama masih ada -> lebih baik dipakai
+    if BYPASS_CACHE and BYPASS_CACHE ~= "" then
+        return BYPASS_CACHE, "panel (cache lama)"
+    end
+    return "", "gak ada"
+end
+
 
 -- ============================================================
 -- deteksi client
@@ -2706,9 +2817,18 @@ local function setup_wizard()
     local ka = ask("Keep-alive (anti-FC)? (y/n)","y")
     cfg.keep_alive = (ka:lower() ~= "n")
 
-    print(C.D.."  Kunci API bypass.vip -- buat perintah `zenx key` (bypass key Delta)."..C.N)
-    print(C.D.."  Kesimpen di config ini doang, GAK ikut ke GitHub. Enter = lewat."..C.N)
-    cfg.bypass_api_key = ask("Kunci API bypass.vip (Enter=lewat)", cfg.bypass_api_key or "")
+    -- v5.31: GAK DITANYA LAGI. Kuncinya diisi SEKALI di panel, semua RF
+    -- narik dari sana. Dulu ditanyain tiap setup -- 20 RF = 20 kali ngetik
+    -- kunci yang sama, dan sekali salah ketik `zenx key` gagal tanpa sebab
+    -- yang jelas. Kalau RF ini butuh kunci BEDA (jarang), isi manual:
+    --   zenx key set <APIKEY>
+    cfg.bypass_api_key = cfg.bypass_api_key or ""
+    if cfg.bypass_api_key ~= "" then
+        info("Kunci API bypass: pakai yang udah ada di config RF ini.")
+    else
+        info("Kunci API bypass: diambil dari panel (isi sekali di tab Seed).")
+        info("  Kalau RF ini perlu kunci sendiri: zenx key set <APIKEY>")
+    end
 
     local n = #split(cfg.pkgs)
     save_config(cfg)
@@ -2854,6 +2974,22 @@ local function run(cfg)
         return
     end
     ok("Nyambung ke panel")
+
+    -- v5.32: TARIK KUNCI API SEKARANG, bukan nanti pas dibutuhin.
+    -- Alasannya: `zenx key` dipanggil justru pas lisensi Delta abis -- saat
+    -- paling genting. Kalau baru narik di situ dan panel lagi mati, bypass
+    -- gagal. Ditarik di awal + disimpen ke config = pas dibutuhin udah lokal,
+    -- instan, dan gak bergantung panel sama sekali.
+    do
+        local k, asal = ambil_apikey(cfg)
+        if k ~= "" then
+            info("Kunci API bypass siap (dari " .. asal .. ")")
+        else
+            warn("Kunci API bypass belum ada -- `zenx key` bakal gagal.")
+            warn("  Isi BYPASS_KEY_BAWAAN di worker, atau: zenx key set <APIKEY>")
+        end
+    end
+
     tulis_autoexec(cfg)   -- v4.8: pasang loader ke autoexec Delta
 
     -- v4.18: kunci orientasi (kalau diset) + keep-alive awal
