@@ -5902,4 +5902,3 @@ if not okrun then
 elseif io.open(PID_FILE, "r") then
     bersih(cfg, "selesai")
 end
-
