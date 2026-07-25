@@ -282,9 +282,30 @@
 --        Kalau auto_key MATI (bawaan), bypass gak dijalanin -- TAPI
 --        peringatannya muncul DI DEPAN, bukan setelah 4 client nyangkut.
 --        Itu sendiri nolong: dulu gejalanya cuma "client kebuka tapi diem".
+--        Tambahan: client yang dipakai buat bypass dibuka JENDELA PENUH.
+--        Cuma satu client yang kebuka saat itu, jadi petak grid gak ada
+--        gunanya -- dan di RF 10 client petak itu cuma ~1/10 layar, tombolnya
+--        jadi ~173px (v5.21: segitu susah dideteksi). Kalau client-nya udah
+--        jalan duluan dengan petak kecil dan deteksi gagal, dia ditutup lalu
+--        dibuka ulang penuh SEKALI -- App Cloner cuma baca posisi jendela pas
+--        app MULAI, jadi gak bisa dibesarin sambil jalan.
+--
+-- v5.47: DUA perbaikan soal kalibrasi tombol key.
+--        1. v5.46 maksa client bypass dibuka JENDELA PENUH -- itu SALAH.
+--           Kalibrasi (zenx_tap.txt) dikunci per UKURAN JENDELA, dan ukuran
+--           petak grid itu yang udah kebukti kena. Jendela penuh bikin ukuran
+--           baru yang belum terkalibrasi -> worker harus nyapu ulang percuma.
+--           Sekarang: petak grid DULU, jendela penuh cuma kalau itu gagal.
+--        2. Ukuran yang BELUM dikalibrasi gak lagi disapu buta -- ditebak dari
+--           JUMLAH BARIS grid dulu. Data lapangan: yang nentuin posisi tombol
+--           itu jumlah BARIS, bukan jumlah client (dialog Delta ukurannya
+--           tetap, jadi makin pendek jendelanya makin ke bawah tombolnya):
+--             1 baris -> Y 0.713   2 baris -> Y 0.723   3 baris -> Y 0.808
+--           X stabil ~0.83 di semua. Jadi tebakan ini biasanya kena di
+--           percobaan PERTAMA, bukan setelah nyapu belasan titik.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.46-cf"
+local VERSION = "5.47-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -1237,12 +1258,42 @@ local function cari_tombol_key(cfg, pkg)
 
     -- urutan coba: yang UDAH KEINGET buat ukuran ini duluan, baru sapuan
     local urut = {}
+    local tebakX, tebakY = nil, nil   -- v5.47: tebakan dari jumlah baris grid
     local inget = tap_muat()[kunci]
     if inget then
         urut[#urut+1] = { inget.fx, inget.fy, ingetan = true }
     end
+
+    -- v5.47: kalau ukuran ini BELUM pernah dikalibrasi, tebak dari JUMLAH BARIS
+    -- grid. Data lapangan nunjukin yang nentuin posisi tombol itu jumlah BARIS,
+    -- bukan jumlah client -- dialog Delta ukurannya tetap, jadi makin pendek
+    -- jendelanya, makin ke bawah tombolnya:
+    --   1 baris -> Y 0.713    2 baris -> Y 0.723    3 baris -> Y 0.808
+    -- X-nya stabil ~0.83 di semua. Jadi tebakan ini biasanya kena di percobaan
+    -- PERTAMA, bukan setelah nyapu belasan titik.
+    if not inget then
+        local tinggiLayar = select(2, layar_ukuran())
+        if tinggiLayar and tinggiLayar > 0 and tinggi > 0 then
+            local baris = math.max(1, math.floor(tinggiLayar / tinggi + 0.5))
+            local ty = ({ [1] = 0.713, [2] = 0.723, [3] = 0.808 })[baris]
+                       or (baris > 3 and 0.808 or nil)
+            if ty then
+                tebakX, tebakY = 0.83, ty
+                urut[#urut+1] = { tebakX, tebakY, tebakan = baris }
+            end
+        end
+    end
+
     for _, t in ipairs(TITIK_SAPU) do
-        if not (inget and math.abs(t[1] - inget.fx) < 0.01 and math.abs(t[2] - inget.fy) < 0.01) then
+        -- v5.47 FIX: bandingin ke tebakan yang DISIMPEN, bukan ke urut[#urut].
+        -- Dulu urut[#urut] udah bukan tebakan lagi begitu titik sapuan pertama
+        -- masuk -- jadi duplikatnya cuma kesaring di item pertama. Ketangkep
+        -- pas uji 3 baris: tebakan 0.808 terus 0.810 nongol lagi.
+        local samaIngetan = inget and math.abs(t[1] - inget.fx) < 0.01
+                            and math.abs(t[2] - inget.fy) < 0.01
+        local samaTebakan = tebakY and math.abs(t[1] - tebakX) < 0.01
+                            and math.abs(t[2] - tebakY) < 0.01
+        if not samaIngetan and not samaTebakan then
             urut[#urut+1] = { t[1], t[2] }
         end
     end
@@ -2583,9 +2634,25 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     if potret[p] then pilih = p break end
                 end
                 pilih = pilih or list[1]
+                local sudahJalan = potret[pilih] and true or false
 
                 -- kalau belum jalan, buka dia sendiri dulu biar layar key-nya nongol
-                if not potret[pilih] then
+                if not sudahJalan then
+                    -- v5.46b: DIBUKA DI PETAK GRID-nya, bukan jendela penuh.
+                    -- Alasannya: kalibrasi tombol (zenx_tap.txt) dikunci per
+                    -- UKURAN JENDELA -- "396x293 0.823 0.723" dst. Ukuran grid
+                    -- itu yang udah kebukti kena. Maksa jendela penuh bikin
+                    -- ukurannya jadi baru, kalibrasinya gak kepakai, dan worker
+                    -- harus nyapu ulang -- padahal gak perlu.
+                    -- Jendela penuh tetep dipakai, TAPI cuma kalau deteksi di
+                    -- ukuran grid gagal (lihat di bawah).
+                    local petaK = grid_hitung(cfg)
+                    if petaK and petaK[pilih] then
+                        local tok, tket = tata_satu(pilih, petaK[pilih])
+                        if tok and tket ~= "udah pas" then
+                            info("  posisi jendela " .. pilih:gsub("com%.roblox%.", "") .. ": " .. tket)
+                        end
+                    end
                     info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
                     open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
                     tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
@@ -2593,6 +2660,28 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 end
 
                 local link, _, _, ketLink = cari_tombol_key(cfg, pilih)
+
+                -- v5.46b: CADANGAN jendela penuh -- cuma kalau deteksi di ukuran
+                -- grid GAGAL. Ukuran grid dicoba duluan karena itu yang ada di
+                -- kalibrasi (zenx_tap.txt). Kalau ternyata ukuran jendela RF ini
+                -- belum pernah dikalibrasi, sapuan bisa gagal -- di situ jendela
+                -- penuh nolong: tombolnya jauh lebih gede.
+                -- App Cloner cuma baca posisi jendela pas app MULAI, jadi harus
+                -- ditutup dulu -- gak bisa dibesarin sambil jalan.
+                if not link then
+                    warn("  gagal di ukuran grid -- coba ulang dengan jendela penuh")
+                    local W, H = layar_ukuran()
+                    if W > 0 and H > 0 then
+                        close_all(cfg, pilih, mapLink, true)
+                        os.execute("sleep 2")
+                        tata_satu(pilih, { L = 0, T = 0, R = W, B = H })
+                        open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
+                        tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
+                        os.execute("sleep 3")
+                        link, _, _, ketLink = cari_tombol_key(cfg, pilih)
+                    end
+                end
+
                 if link then
                     local kunci, sebab = bypass_kunci(cfg, link, false)
                     if kunci then
