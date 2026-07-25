@@ -1,5 +1,19 @@
 -- ============================================================
--- STAR FARM  v13.9  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v14.0  (standalone, basis ZENX v44.79) - GAG 2
+--
+-- v14.0: RELAY PINDAH DARI PANTRY KE PANEL STAR (Cloudflare Worker).
+--        Cuma satu baris yang berubah -- bawaan gfRelayUrl. Semua mekanismenya
+--        (priority, gate Glow, registry penuh, gift Glow) DIPAKAI APA ADANYA,
+--        gak ada logika baru.
+--        Bedanya: isi keranjang priority sekarang DIHITUNG PANEL -- akun seed
+--        yang sheckles-nya paling mepet, masih lapor, dan belum dikirimin.
+--        Dulu nunggu ada yang nyalain "Kirim Semua Kesini Dulu" manual.
+--        Jalurnya sengaja ditahan mirip Pantry (".../basket/<nama>") karena
+--        priorityUrl() & fullRegistryUrl() nurunin alamat pakai
+--        gsub("/basket/[^/]+$") -- kalau polanya beda, tiga fitur mati bareng.
+--        Save lama yang masih nunjuk Pantry DIABAIKAN (lihat catatan di
+--        pemuatan config) -- kalau nggak, RF yang udah pernah jalan bakal
+--        nyangkut di relay lama tanpa gejala yang keliatan.
 -- v13.9: FIX seed kebaca 0 -- seed di tas namanya langsung "Bamboo" (tanpa
 --        atribut SeedName). Sekarang dikenali dari SeedData game.
 -- v13.8: Lapor Super Watering Can + Super Sprinkler + total seed (buat panel Ringkas).
@@ -398,7 +412,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v13.9"
+local VER       = "STAR v14.0"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -907,7 +921,17 @@ local state = {
     storagePriority = false,      -- v22.2: "kirim semua kesini". v6.1: DISAVE (auto nyala lagi abis rejoin)
     notifOn         = true,       -- v22.3: notif popup tiap abis kirim buah
     gfStorageOn     = false,      -- v22.7: farm routing buah ke akun simpanan (default OFF)
-    gfRelayUrl      = "https://getpantry.cloud/apiv1/pantry/25efb22c-2754-4d73-bf2d-e3aa987b52c6/basket/zenxshk",  -- v18.8: relay default
+    -- v14.0: relay pindah dari Pantry ke panel STAR (Cloudflare Worker).
+    -- Bentuk jalurnya SENGAJA ditahan mirip Pantry (".../basket/<nama>") --
+    -- priorityUrl()/fullRegistryUrl() nurunin alamatnya pakai
+    -- gsub("/basket/[^/]+$", ...), jadi kalau polanya beda, tiga fitur
+    -- (relay, priority, registry penuh) langsung mati bareng.
+    -- Kuncinya ditaruh DI DEPAN (/k/<kunci>/...), bukan di query -- kalau di
+    -- query bakal kehapus sama gsub yang sama.
+    -- Bedanya sama Pantry: isi keranjangnya DIHITUNG SENDIRI sama panel
+    -- (akun seed yang sheckles-nya paling mepet), bukan nunggu ada yang
+    -- nyalain toggle "Kirim Semua Kesini Dulu" manual.
+    gfRelayUrl      = "https://dry-glitter-63e4.petagee5.workers.dev/k/nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb/basket/relay",
     gfRelayWrite    = false,     -- v18.5: akun ini PET (tulis sheckles ke relay)
     -- v12.8: PANEL WEB. Nebeng Farm.relayReq (dia cuma pembungkus request(),
     -- bukan barang Pantry). gfRelayUrl DIBIARIN nunjuk ke Pantry buat relay
@@ -1089,7 +1113,15 @@ local function loadState()
                 if type(d.gfWeightF) == "number" then state.gfWeightF = d.gfWeightF end
                 if type(d.gfSheckMax) == "number" then state.gfSheckMax = d.gfSheckMax end
                 if type(d.gfValueTarget) == "number" then state.gfValueTarget = d.gfValueTarget end
-                if type(d.gfRelayUrl) == "string" and d.gfRelayUrl ~= "" then state.gfRelayUrl = d.gfRelayUrl end
+                -- v14.0: save lama yang masih nunjuk Pantry DIABAIKAN -- kalau
+                -- dipakai, akun yang udah pernah jalan bakal nyangkut di relay
+                -- lama selamanya dan auto-suplai dari panel gak pernah kena.
+                -- Gejalanya bisu: semua toggle keliatan nyala, tapi "gak ada yg
+                -- minta" terus. Yang diisi manual (bukan Pantry) tetep dihormatin.
+                if type(d.gfRelayUrl) == "string" and d.gfRelayUrl ~= ""
+                   and not d.gfRelayUrl:find("getpantry", 1, true) then
+                    state.gfRelayUrl = d.gfRelayUrl
+                end
                 -- v12.9: cuma nimpa kalau ISINYA ADA. save lama yang kosong gak boleh
                 -- ngalahin bawaan -- kalau nggak, akun lama panelnya mati terus.
                 if type(d.panelUrl) == "string" and d.panelUrl ~= "" then state.panelUrl = d.panelUrl end
