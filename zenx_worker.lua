@@ -162,9 +162,15 @@
 --        ada di ujung belakang. Motong dari belakang bikin 4 akun beda
 --        keliatan sama persis, dan itu nyesatin: keliatannya kayak 4 client
 --        login ke satu akun yang sama. Kolomnya juga dilebarin 12 -> 14.
+--
+-- v5.35: SCRIPT AUTOEXEC DIPILIH SENDIRI pas setup: STAR FARM / STAR SEED /
+--        MARKET. Dulu kepaksa ngikut game -- GAG 2 selalu dapet `gag2`.
+--        Padahal satu tim GAG 2 bisa dipakai buat dua hal beda: farm kebun
+--        atau AFK beli seed. Bawaannya nyesuain game, jadi kasus umum
+--        tinggal Enter.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.34-cf"
+local VERSION = "5.35-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -215,6 +221,7 @@ local function save_config(cfg)
     f:write(string.format("  place_id=%q,\n",cfg.place_id))
     f:write(string.format("  game_label=%q,\n",cfg.game_label or ""))
     f:write(string.format("  script_url=%q,\n",cfg.script_url or ""))
+    f:write(string.format("  script_label=%q,\n",cfg.script_label or ""))
     f:write(string.format("  link_code=%q,\n",cfg.link_code or ""))
     f:write(string.format("  autoexec_dir=%q,\n",cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"))
     f:write(string.format("  pkgs=%q,\n",cfg.pkgs))
@@ -2722,15 +2729,39 @@ local function setup_wizard()
     local GH = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/"
     if pil == "2" then
         cfg.place_id = "126884695634066"; cfg.game_label = "GAG 1"
-        cfg.script_url = GH .. "market"      -- GAG 1 pakai script market
     elseif pil == "3" then
         cfg.place_id = "129954712878723"; cfg.game_label = "GAG 1 MARKET"
-        cfg.script_url = GH .. "market"      -- market juga script market
     else
         cfg.place_id = "97598239454123"; cfg.game_label = "GAG 2"
-        cfg.script_url = GH .. "gag2"        -- GAG 2 pakai script farm
     end
     print(C.G.."  -> "..cfg.game_label.." (place "..cfg.place_id..")"..C.N)
+
+    -- ============================================================
+    -- v5.35: SCRIPT DIPILIH SENDIRI, gak lagi kepaksa ngikut game.
+    --
+    -- Dulu GAG 2 SELALU dapet `gag2` (star farm). Padahal satu tim GAG 2 bisa
+    -- dipakai buat dua hal beda: farm kebun (star farm) ATAU AFK beli
+    -- seed/gear/pet (star seed). Jadi pilihannya dipisah.
+    --
+    -- Bawaannya nyesuain game biar tinggal Enter buat kasus umum:
+    --   GAG 2 -> STAR FARM,  GAG 1 / market -> MARKET
+    -- ============================================================
+    local SCRIPT_PILIHAN = {
+        { "STAR FARM", "gag2",   "farm kebun: tanam, collect, jual" },
+        { "STAR SEED", "seed",   "AFK beli seed + gear + pet, terima gift" },
+        { "MARKET",    "market", "akun market / TradeWorld" },
+    }
+    print("")
+    print(C.D.."  Script yang dijalanin client tim ini:"..C.N)
+    for i, sc in ipairs(SCRIPT_PILIHAN) do
+        print(C.D..string.format("    %d) %-10s -> %-7s  %s", i, sc[1], sc[2], sc[3])..C.N)
+    end
+    local bawaanScript = (cfg.game_label == "GAG 2") and "1" or "3"
+    local ps = ask("Pilih script (1/2/3)", bawaanScript)
+    local sc = SCRIPT_PILIHAN[tonumber(ps) or 0] or SCRIPT_PILIHAN[tonumber(bawaanScript)]
+    cfg.script_url = GH .. sc[2]
+    cfg.script_label = sc[1]
+    print(C.G.."  -> "..sc[1].."  "..cfg.script_url..C.N)
     print(C.D.."  Link join: paste share-URL ATAU linkCode. kosong=public."..C.N)
     cfg.link_code=ask("Link/code (Enter=public)","")
     print(C.D.."  Folder autoexec Delta (tempat naro script biar auto-jalan)."..C.N)
@@ -3162,7 +3193,16 @@ local function run(cfg)
         local used, free, total = cacheRam[1], cacheRam[2], cacheRam[3]
         local cpu = cacheCpu
         -- header
-        io.write(C.BOLD..C.G.."  ZENX WORKER v"..VERSION.."  ·  "..cfg.tim.."  ·  "..(cfg.game_label or "").."\n"..C.N)
+        -- v5.35: script yang aktif ikut ditampilin. Perlu karena satu tim GAG 2
+        -- bisa jalanin STAR FARM atau STAR SEED -- tanpa ini gak keliatan yang
+        -- mana, dan salah script itu gejalanya membingungkan (client jalan tapi
+        -- gak ngapa-ngapain).
+        local scLabel = cfg.script_label or ""
+        if scLabel == "" and (cfg.script_url or "") ~= "" then
+            scLabel = tostring(cfg.script_url):match("([^/]+)$") or ""
+        end
+        io.write(C.BOLD..C.G.."  ZENX WORKER v"..VERSION.."  ·  "..cfg.tim.."  ·  "..(cfg.game_label or "")..C.N
+            ..(scLabel ~= "" and (C.D.."  ·  "..C.C..scLabel..C.N) or "").."\n")
         io.write(C.D.."  "..os.date("%H:%M:%S").."  ·  perintah: "..(isi ~= "" and isi or "-").."\n"..C.N)
         io.write("\n")
         -- tabel
@@ -5619,6 +5659,73 @@ if PERINTAH == "panel" or PERINTAH == "uji" then
     return
 end
 
+-- ============================================================
+-- v5.35: `zenx script` -- ganti script autoexec tanpa setup ulang.
+-- Tanpa ini, mau tuker STAR FARM <-> STAR SEED harus ngulang setup dari nol
+-- (nomor tim, game, scan paket, dst) -- padahal yang mau diubah satu baris.
+-- ============================================================
+if PERINTAH == "script" or PERINTAH == "sc" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
+
+    local GH = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/"
+    local PILIHAN = {
+        { "STAR FARM", "gag2",   "farm kebun: tanam, collect, jual" },
+        { "STAR SEED", "seed",   "AFK beli seed + gear + pet, terima gift" },
+        { "MARKET",    "market", "akun market / TradeWorld" },
+    }
+
+    print(C.BOLD .. C.C .. "\n=== GANTI SCRIPT AUTOEXEC ===\n" .. C.N)
+    info("tim      : " .. tostring(cfg.tim))
+    info("game     : " .. tostring(cfg.game_label or "-"))
+    info("sekarang : " .. tostring(cfg.script_label or "-") ..
+         "  (" .. tostring(cfg.script_url or "-") .. ")")
+    print("")
+
+    -- boleh langsung: zenx script seed
+    local minta = (arg[2] or ""):lower()
+    local sc
+    if minta ~= "" then
+        for _, x in ipairs(PILIHAN) do
+            if minta == x[2] or minta == x[1]:lower():gsub("%s", "")
+               or minta == x[1]:lower() then sc = x break end
+        end
+        if not sc then
+            err("'" .. minta .. "' gak dikenal. Pilihannya: gag2 / seed / market")
+            return
+        end
+    else
+        for i, x in ipairs(PILIHAN) do
+            print(C.D .. string.format("  %d) %-10s -> %-7s  %s", i, x[1], x[2], x[3]) .. C.N)
+        end
+        print("")
+        local ps = ask("Pilih (1/2/3, Enter=batal)", "")
+        if ps == "" then info("Dibatalin."); return end
+        sc = PILIHAN[tonumber(ps) or 0]
+        if not sc then err("Pilihan gak ada."); return end
+    end
+
+    if cfg.script_url == (GH .. sc[2]) then
+        info("Udah pakai " .. sc[1] .. " -- gak ada yang diubah.")
+        return
+    end
+
+    cfg.script_url = GH .. sc[2]
+    cfg.script_label = sc[1]
+    save_config(cfg)
+    ok("Config disimpen: " .. sc[1] .. " -> " .. cfg.script_url)
+
+    -- tulis ulang autoexec biar langsung kepakai
+    if tulis_autoexec(cfg) then
+        print("")
+        warn("Client yang LAGI JALAN masih pakai script LAMA.")
+        warn("Delta cuma baca autoexec pas masuk game -- jadi harus join ulang:")
+        info("  panel -> tim ini -> Rejoin   (atau: zenx stop terus jalanin lagi)")
+    end
+    print("")
+    return
+end
+
 if PERINTAH ~= "" then
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
     print()
@@ -5646,6 +5753,8 @@ if PERINTAH ~= "" then
     info("   zenx cookie all         -> ekstrak dari semua paket kepasang")
     info("   zenx verif              -> daftar client yang butuh dicek manual (nyangkut/verif bot)")
     info("   zenx panel              -> UJI sambungan ke panel (kalau tim kosong di panel)")
+    info("   zenx script             -> ganti script autoexec (STAR FARM / STAR SEED / MARKET)")
+    info("   zenx script seed        -> langsung ke STAR SEED, tanpa nanya")
     print()
     info("Kalau perintahnya harusnya ada, versi di RF ini ketinggalan -- tarik ulang:")
     info("   curl -fsSL <repo>/zenx_worker.lua -o ~/zenx_worker.lua")
