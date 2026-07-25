@@ -216,7 +216,7 @@
 --        (text.txt yang pernah ditaruh manual, loader dari nama lama) bakal
 --        jalan BARENGAN sama yang baru -- dua script aktif di satu client,
 --        aksi dobel, atau yang bener ketimpa yang salah.
---        Yang dilewat cuma zenx_loader.lua punya kita. Apa aja yang dibuang
+--        Yang dilewat cuma zenx_loader.txt punya kita. Apa aja yang dibuang
 --        DILAPORIN, biar gak ada yang ilang diam-diam.
 --        Digabung ke panggilan su yang sama -> praktis gratis.
 --        Mau dimatiin: config -> autoexec_bersih=false
@@ -439,9 +439,24 @@
 --        Sekalian cabang "client udah jalan" dibuang -- keadaannya sekarang
 --        selalu sama (semua ketutup), jadi gak perlu dua jalur. Cabang itu
 --        dulu bikin jendelanya kepakai petak lama.
+--
+-- v5.61: LOADER DITULIS SEBAGAI zenx_loader.txt (bukan .lua).
+--        Dasarnya pengalaman berulang user: pakai .txt SELALU jalan.
+--        Perjalanan kesimpulannya (biar gak keulang):
+--          v5.59 mutusin .txt -- alasannya SALAH (nyangka text.txt kosong di
+--                folder itu yang bikin jalan; padahal itu baru dibikin manual)
+--          v5.60 nulis .txt + .lua sekaligus buat aman
+--          v5.61 .txt doang -- keterangan langsung dari user lebih kuat, dan
+--                nulis dua-duanya berisiko script jalan 2x kalau Delta ternyata
+--                baca semua berkas (2x unduh, 2 salinan jalan barengan; di RF
+--                4GB dengan 4 client itu pemborosan yang gak perlu).
+--        Gejala aslinya ada DUA sebab numpuk: (1) nama berkas .lua, dan
+--        (2) Delta nyangkut di layar "Enter key" -- autoexec gak jalan sampai
+--        Delta kebuka (diberesin v5.46-5.58). Yang bikin susah dilacak: semua
+--        pemeriksaan di sisi worker LOLOS, gagalnya di sisi Delta.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.58-cf"
+local VERSION = "5.61-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -2147,7 +2162,26 @@ local function tulis_autoexec(cfg, urlPanel)
     local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
     -- loader: narik script dari GitHub. update cukup di GitHub, file autoexec tetap.
     local loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
-    local path = AUTOEXEC_DIR .. "/zenx_loader.lua"
+    -- ============================================================
+    -- v5.61: LOADER = .txt DOANG.
+    --
+    -- Dasarnya pengalaman berulang user: pakai .txt SELALU jalan. Itu bukti
+    -- yang lebih kuat daripada tebakan gua, jadi salinan .lua dibuang.
+    --
+    -- Kenapa gak ditulis dua-duanya buat aman: kalau ternyata Delta baca SEMUA
+    -- berkas di folder itu, script kejalanin 2x -- dua kali unduh dari GitHub
+    -- dan dua salinan jalan barengan sebentar. Di RF 4GB dengan 4 client itu
+    -- pemborosan yang gak perlu, dan .txt udah kebukti cukup.
+    --
+    -- Catatan sejarah biar gak keulang: sepanjang sesi debug ini gejalanya
+    -- "autoexec kebaca ketulis & terverifikasi TAPI script gak pernah jalan".
+    -- Itu ada DUA sebab yang numpuk:
+    --   1. nama berkasnya .lua (bagian ini)
+    --   2. Delta nyangkut di layar "Enter key" -- autoexec gak jalan sampai
+    --      Delta kebuka (diberesin v5.46-5.58)
+    -- Yang bikin susah dilacak: semua pemeriksaan di sisi worker LOLOS.
+    -- ============================================================
+    local path = AUTOEXEC_DIR .. "/zenx_loader.txt"
     -- Tulis lewat file lokal dulu (Termux home, gampang), baru cp ke folder Delta
     -- pakai su. Ini ngehindarin neraka nested-quote (su -c ' ... " ... ').
     local tmp = os.getenv("HOME") .. "/.zenx_loader.tmp"
@@ -2171,7 +2205,7 @@ local function tulis_autoexec(cfg, urlPanel)
     if cfg.autoexec_bersih ~= false then
         bersih = "for f in " .. AUTOEXEC_DIR .. "/*; do " ..
                  '[ -f "$f" ] || continue; ' ..
-                 'case "$f" in */zenx_loader.lua) ;; ' ..
+                 'case "$f" in */zenx_loader.txt) ;; ' ..
                  '*) echo "HAPUS:$f"; rm -f "$f";; esac; ' ..
                  "done; "
     end
