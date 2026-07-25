@@ -394,9 +394,17 @@
 --        Kenapa gak nyuruh user jalanin 2x lalu nempel dua-duanya: dump
 --        mentahnya panjang (9 bagian x belasan baris). Yang dibutuhin cuma
 --        yang berubah, jadi alat ini yang ngerjain pembandingannya.
+--
+-- v5.55: `zenx layar` nunjukin CLIENT-NYA YANG MANA.
+--        Jendela di RF judulnya "NO MERCY DELTA LITE [64 BIT] 02/03" -- gak
+--        ada nama paketnya sama sekali. Jadi user gak tau "clienu" itu jendela
+--        yang mana, dan gak bisa ngarahin keadaan yang bener buat diukur.
+--        Sekarang: daftar semua client + nama akun + status jalan/mati, terus
+--        yang jadi target DIBAWA KE DEPAN (am start REORDER_TO_FRONT, gak
+--        nge-restart game) biar jelas jendela mana yang dimaksud.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.54-cf"
+local VERSION = "5.55-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -6574,6 +6582,43 @@ if PERINTAH == "layar" then
         target = target or pkgs[1]
     end
     if not target then err("Gak ada client di config."); return end
+
+    -- ============================================================
+    -- v5.55: TUNJUKIN CLIENT-NYA YANG MANA.
+    -- Jendela di RF judulnya "NO MERCY DELTA LITE [64 BIT] 02/03" -- gak ada
+    -- nama paketnya. Jadi user gak tau "clienu" itu jendela yang mana, dan
+    -- gak bisa ngarahin keadaan yang bener.
+    -- Di sini: daftar semua client + nama akunnya, terus yang jadi target
+    -- DIBAWA KE DEPAN biar keliatan jelas.
+    -- ============================================================
+    do
+        print("")
+        print(C.BOLD .. "  Client di RF ini:" .. C.N)
+        local potretL = pkg_running_semua(pkgs)
+        for _, p in ipairs(pkgs) do
+            local ak = baca_username(p) or "(belum login)"
+            local tanda = (p == target) and (C.G .. "  <<< TARGET" .. C.N) or ""
+            print(("   %s %-10s %-20s %s%s"):format(
+                potretL[p] and (C.G .. "*" .. C.N) or " ",
+                p:gsub("com%.roblox%.", ""), ak,
+                potretL[p] and "jalan" or "mati", tanda))
+        end
+        print(C.D .. "   (* = lagi jalan.  ganti target:  zenx layar clienv)" .. C.N)
+
+        if potretL[target] then
+            info("Bawa " .. target:gsub("com%.roblox%.", "") ..
+                 " ke depan biar keliatan yang mana...")
+            local url = build_url(cfg, nil)
+            sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" ..
+                      url .. "' -p " .. target .. "\"")
+            os.execute("sleep 2")
+            ok("Jendela yang paling depan sekarang = " .. target:gsub("com%.roblox%.", "") ..
+               "  (akun " .. (baca_username(target) or "?") .. ")")
+        else
+            warn(target:gsub("com%.roblox%.", "") .. " GAK JALAN -- gak bisa dibawa ke depan.")
+            warn("  Buka dulu client-nya, atau pilih yang lagi jalan (tanda * di atas).")
+        end
+    end
 
     -- daftar kandidat sinyal. Tiap entri: { judul, perintah shell }
     local KANDIDAT = {
