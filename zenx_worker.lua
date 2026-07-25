@@ -315,9 +315,33 @@
 --        (belum ada client jalan) dia nyari tombol di layar kosong.
 --        Blok lama DIBUANG. Yang di open_all bener -- dia buka client-nya
 --        dulu, tungguin layar key nongol, baru nyari tombol.
+--
+-- v5.49: client yang dipakai buat ambil key DITUTUP setelah bypass sukses.
+--        Dia kebuka SEBELUM lisensinya ada, jadi nyangkut di layar key --
+--        lisensi baru gak kebaca sama sesi yang udah jalan. Ditutup biar dia
+--        ikut dibuka ULANG di urutan normal ([1/4], [2/4], ...) dengan lisensi
+--        yang udah ada, jadi langsung lolos ke game.
+--        Kenapa gak cukup ngandelin saringan "udah jalan": saringan itu ngecek
+--        laporan bridge, dan akun ini bisa jadi masih punya laporan segar dari
+--        sesi SEBELUM lisensinya abis -> kelewat, dan nyangkut selamanya.
+--        Penutupan ditaruh SEBELUM potretJalan diambil, jadi potretnya udah
+--        nunjukin dia mati dan dia masuk jalur buka normal.
+--
+-- v5.50: FIX "layar Enter key nongol tapi worker bilang lisensi ADA".
+--        lisensi_keadaan() nebak dari UMUR BERKAS pakai key_jam (bawaan 24
+--        jam) -- dan angka itu masih TEBAKAN, belum pernah diukur. Kalau masa
+--        berlaku kunci Delta aslinya lebih pendek, berkasnya kebaca "ada"
+--        padahal Delta udah minta key lagi -> bypass gak jalan, 4 client
+--        nyangkut di layar key, dan gak ada tanda apa pun.
+--        Layar RF gak bisa dibaca teksnya (v4.86), jadi dipakai sinyal
+--        PERILAKU: client yang JALAN tapi script-nya GAK PERNAH LAPOR.
+--        Sah dipakai di sini karena pemeriksaan jalan SEBELUM client dibuka --
+--        yang kedapetan jalan itu sisa ronde sebelumnya, udah dapet waktu satu
+--        ronde penuh (reopen_sec) buat lapor. Belum lapor = ada yang ngeblok,
+--        dan layar key itu penyebab paling umum.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.48-cf"
+local VERSION = "5.50-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -2630,8 +2654,50 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     -- ============================================================
     if not fast and not only then
         local kead, umur = lisensi_keadaan(cfg)
+
+        -- ============================================================
+        -- v5.50: BERKAS BILANG "ADA" BELUM TENTU LISENSINYA SAH.
+        --
+        -- lisensi_keadaan() nebak dari UMUR BERKAS pakai key_jam (bawaan 24
+        -- jam) -- dan angka itu masih TEBAKAN, belum pernah diukur. Kalau masa
+        -- berlaku kunci Delta aslinya lebih pendek, berkasnya kebaca "ada"
+        -- padahal Delta udah minta key lagi. Gejalanya: client kebuka, layar
+        -- "Enter key" nongol, worker bilang gak ada masalah.
+        --
+        -- Layar RF gak bisa dibaca teksnya (v4.86), jadi dipakai sinyal
+        -- PERILAKU: client yang JALAN tapi script-nya GAK PERNAH LAPOR.
+        --
+        -- Kenapa sinyal ini sah di sini: pemeriksaan ini jalan SEBELUM client
+        -- dibuka. Jadi client yang kedapetan jalan itu sisa dari ronde
+        -- SEBELUMNYA -- dia udah dapet waktu satu ronde penuh (reopen_sec,
+        -- bawaan 300 detik) buat lapor. Kalau sampai sekarang belum, ada yang
+        -- ngeblok, dan layar key itu penyebab paling umum.
+        -- ============================================================
+        if kead == "ada" then
+            local potretC = pkg_running_semua(list)
+            local statC = api_get(cfg, "/stat")
+            local jalanTapiBisu, contoh = 0, nil
+            for _, p in ipairs(list) do
+                local ak = mapAkun and mapAkun[p]
+                if potretC[p] and ak and not bridge_fresh(statC, ak) then
+                    jalanTapiBisu = jalanTapiBisu + 1
+                    contoh = contoh or p
+                end
+            end
+            if jalanTapiBisu > 0 then
+                kead = "curiga"
+                warn(("Lisensi kebaca 'ada' (umur %s) TAPI %d client jalan tanpa lapor.")
+                    :format(umur_ringkas(umur), jalanTapiBisu))
+                warn("  Kemungkinan Delta udah minta key lagi -- key_jam=" ..
+                     tostring(cfg.key_jam or 24) .. "j itu cuma tebakan.")
+                info("  Dianggap butuh bypass. Contoh: " ..
+                     tostring(contoh and contoh:gsub("com%.roblox%.", "") or "?"))
+            end
+        end
+
         if kead ~= "ada" then
             local ket = (kead == "hilang") and "HILANG"
+                        or (kead == "curiga") and "CURIGA (client bisu)"
                         or ("BASI (" .. umur_ringkas(umur) .. ")")
             warn("Lisensi Delta " .. ket .. " -- client bakal nyangkut di layar key.")
 
@@ -2700,6 +2766,21 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         local wok, wket = tulis_lisensi(cfg, kunci)
                         if wok then
                             ok("  BYPASS BERES -- kunci ketulis, kepakai SEMUA client")
+                            -- v5.49: client yang dipakai buat ambil key DITUTUP.
+                            -- Dia kebuka SEBELUM lisensinya ada, jadi sekarang
+                            -- nyangkut di layar key -- lisensi baru gak kebaca
+                            -- sama sesi yang udah jalan.
+                            -- Ditutup biar dia ikut dibuka ULANG di urutan
+                            -- normal ([1/4], [2/4], ...) dengan lisensi yang
+                            -- udah ada -> langsung lolos ke game.
+                            -- Kalau cuma ngandelin saringan "udah jalan" di
+                            -- bawah, dia BISA kelewat: saringan itu ngecek
+                            -- laporan bridge, dan akun ini mungkin masih punya
+                            -- laporan segar dari sesi sebelum lisensi abis.
+                            close_all(cfg, pilih, mapLink, true)
+                            os.execute("sleep 2")
+                            info("  " .. pilih:gsub("com%.roblox%.", "") ..
+                                 " ditutup -- dibuka ulang bareng yang lain")
                         else
                             warn("  kunci dapet tapi gagal nulis: " .. tostring(wket))
                         end
