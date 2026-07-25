@@ -199,9 +199,51 @@
 --        Mau ditahan dulu? panel -> "Hentikan".
 --        Sekalian api_post bisa milih metode (bawaan POST) -- /perintah minta
 --        PUT, dan tanpa itu setup gak bisa nyetel perintahnya sendiri.
+--
+-- v5.40: FIX `up` nyangkut di versi lama. Kejadian nyata: `up` di RF bilang
+--        "OK 5.35" berulang-ulang padahal GitHub udah 5.39 -- dan karena dia
+--        bilang OK (bukan gagal), gak ada yang curiga.
+--        Sebabnya: `up` itu skrip yang dibikin SEKALI pas `pasang`. RF yang
+--        dipasang pakai worker lama kebawa skrip lama selamanya.
+--        Sekarang worker NULIS ULANG `up` tiap nyala (cuma kalau isinya beda),
+--        jadi sekali dapet worker baru, `up`-nya kebetulin sendiri.
+--        Plus: header no-cache (jaga-jaga ada proxy di jaringan RF yang gak
+--        peduli sama ?t=), dan alamat repo disatuin jadi SATU konstanta --
+--        dulu ketulis di dua tempat, bisa beda diam-diam.
+--
+-- v5.41: FILE LAIN di folder autoexec DIBUANG pas nulis loader.
+--        Delta jalanin SEMUA file di folder itu. Jadi sisa script lama
+--        (text.txt yang pernah ditaruh manual, loader dari nama lama) bakal
+--        jalan BARENGAN sama yang baru -- dua script aktif di satu client,
+--        aksi dobel, atau yang bener ketimpa yang salah.
+--        Yang dilewat cuma zenx_loader.lua punya kita. Apa aja yang dibuang
+--        DILAPORIN, biar gak ada yang ilang diam-diam.
+--        Digabung ke panggilan su yang sama -> praktis gratis.
+--        Mau dimatiin: config -> autoexec_bersih=false
+--
+-- v5.42: `zenx panel` diperluas -- sekarang ikut ngecek AKUN, bukan cuma
+--        sambungan. Perlu karena ada gejala yang gak kejelasan sebabnya:
+--        panel bilang "0 akun di tim ini" padahal client-nya ada dan worker
+--        nampilin nama akunnya di tabel.
+--        Tiga langkah baru:
+--          5. akun yang worker TAU (dari prefs.xml tiap client)
+--          6. POST /assign-tim + jawaban mentahnya
+--          7. cek di /stat: akun itu kecatat di tim & game APA
+--        Langkah 7 yang menentukan: akun cuma nongol di sebuah tab kalau
+--        tim DAN game-nya cocok. Kalau game-nya kebawa dari pemakaian lama
+--        (mis. akun ini dulu dipakai GAG 1), dia gak akan nongol di tab GAG 2
+--        walau timnya bener.
+--
+-- v5.43: auto-assign sekarang LAPOR apa yang dibetulin, bukan cuma jumlahnya.
+--        Pasangannya perubahan di CF (/assign-tim v15-66): kolom `game` DITIMPA
+--        dari worker, dan `place` yang nunjuk game lain DIBUANG.
+--        Kenapa dua-duanya: panel nentuin game akun dari PLACE[place] DULU,
+--        baru kolom game. Jadi betulin `game` aja gak cukup -- place basi
+--        masih nutupin, dan akunnya tetep nyangkut di tab game lama.
+--        Yang TETEP dijaga: akun milik tim LAIN gak direbut.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.39-cf"
+local VERSION = "5.43-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -227,10 +269,65 @@ end
 local function ok(m) log("OK  "..m,C.G) end
 local function err(m) log("ERR "..m,C.R) end
 local function info(m) log("--  "..m,C.C) end
+
 local function warn(m)
     log("!   "..m,C.Y)
     catatKirim(os.date("%H:%M:%S") .. " ! " .. tostring(m))   -- v4.26: error nongol di panel
 end
+
+-- ============================================================
+-- v5.40: REPO jadi SATU konstanta, dan skrip `up` DITULIS ULANG tiap worker
+-- nyala.
+--
+-- Kejadian nyata: `up` di RF bilang "OK 5.35" terus-terusan padahal GitHub
+-- udah 5.39. Sebabnya `up` itu dibikin SEKALI pas `pasang` -- kalau RF-nya
+-- dipasang pakai worker versi lama, skripnya ketinggalan selamanya, dan
+-- gejalanya nyesatin: dia bilang OK, bukan gagal.
+--
+-- Sekarang worker nulis ulang `up` tiap nyala. Jadi sekali dapet worker baru
+-- (lewat curl manual), `up`-nya kebetulin sendiri buat seterusnya.
+-- Sekalian ditambah header no-cache -- jaga-jaga ada proxy di jaringan RF
+-- yang gak peduli sama `?t=`.
+-- ============================================================
+local REPO_WORKER = "https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main"
+
+local function tulis_skrip_up(diam)
+    local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
+    local jalur = PREFIX .. "/bin/up"
+    local isi = table.concat({
+        "#!" .. PREFIX .. "/bin/sh",
+        "zenx stop >/dev/null 2>&1",
+        'echo "narik versi baru..."',
+        'curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" \\',
+        '  "' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)" \\',
+        '  -o "$HOME/zenx_worker.baru"',
+        'if head -5 "$HOME/zenx_worker.baru" 2>/dev/null | grep -q "ZENX WORKER"; then',
+        '    mv "$HOME/zenx_worker.baru" "$HOME/zenx_worker.lua"',
+        '    echo "OK  $(grep -m1 \'local VERSION\' "$HOME/zenx_worker.lua")"',
+        "else",
+        '    echo "GAGAL -- yang keunduh bukan worker (belum di-push?)"',
+        '    rm -f "$HOME/zenx_worker.baru"',
+        "fi",
+        "",
+    }, "\n")
+
+    -- cuma ditulis kalau BEDA, biar gak nulis-nulis berkas tiap nyala
+    local lama = ""
+    local fr = io.open(jalur, "r")
+    if fr then lama = fr:read("*all") or ""; fr:close() end
+    if lama == isi then return false end
+
+    local f = io.open(jalur, "w")
+    if not f then
+        if not diam then warn("gak bisa nulis " .. jalur) end
+        return false
+    end
+    f:write(isi); f:close()
+    os.execute("chmod +x " .. PREFIX .. "/bin/up")
+    if not diam then ok("Skrip `up` diperbarui (anti-cache + repo terbaru)") end
+    return true
+end
+
 
 -- ============================================================
 -- config
@@ -255,6 +352,7 @@ local function save_config(cfg)
     f:write(string.format("  script_label=%q,\n",cfg.script_label or ""))
     f:write(string.format("  link_code=%q,\n",cfg.link_code or ""))
     f:write(string.format("  autoexec_dir=%q,\n",cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"))
+    f:write(string.format("  autoexec_bersih=%s,\n",tostring(cfg.autoexec_bersih ~= false)))
     f:write(string.format("  pkgs=%q,\n",cfg.pkgs))
     f:write(string.format("  poll_sec=%d,\n",cfg.poll_sec))
     f:write(string.format("  reopen_sec=%d,\n",cfg.reopen_sec or 300))
@@ -1743,13 +1841,46 @@ local function tulis_autoexec(cfg, urlPanel)
     local f = io.open(tmp, "w")
     if not f then warn("gagal bikin file tmp loader"); return false end
     f:write(loader); f:close()
+    -- ============================================================
+    -- v5.41: BERSIHIN FILE LAIN di folder autoexec.
+    --
+    -- Delta jalanin SEMUA file di folder ini. Jadi sisa script lama (mis.
+    -- text.txt yang pernah ditaruh manual, atau loader dari nama lama) bakal
+    -- jalan BARENGAN sama yang baru -> dua script aktif di satu client, aksi
+    -- dobel, atau yang bener ketimpa yang salah.
+    --
+    -- Digabung ke panggilan su yang SAMA -- tiap 'su' di RedFinger ~6 detik,
+    -- jadi pembersihan ini praktis gratis.
+    -- Yang dilewat cuma loader punya kita sendiri.
+    -- Mau dimatiin? config -> autoexec_bersih=false
+    -- ============================================================
+    local bersih = ""
+    if cfg.autoexec_bersih ~= false then
+        bersih = "for f in " .. AUTOEXEC_DIR .. "/*; do " ..
+                 '[ -f "$f" ] || continue; ' ..
+                 'case "$f" in */zenx_loader.lua) ;; ' ..
+                 '*) echo "HAPUS:$f"; rm -f "$f";; esac; ' ..
+                 "done; "
+    end
+
     -- v4.62: mkdir + cp + chmod + verifikasi digabung jadi SATU panggilan su.
     -- Dulu 4 panggilan terpisah -- tiap 'su -c' di RedFinger ~5-7 detik, jadi
     -- bagian ini sendirian makan ~30 detik pas worker nyala.
-    local cek = sh("su -c 'mkdir -p " .. AUTOEXEC_DIR ..
-                   "; cp " .. tmp .. " " .. path ..
+    local cek = sh("su -c 'mkdir -p " .. AUTOEXEC_DIR .. "; " .. bersih ..
+                   "cp " .. tmp .. " " .. path ..
                    "; chmod 664 " .. path ..
                    "; cat " .. path .. "'")
+
+    -- lapor apa aja yang dibuang, biar gak ada yang ilang diam-diam
+    local dibuang = {}
+    for nm in tostring(cek):gmatch("HAPUS:([^\n]+)") do
+        dibuang[#dibuang+1] = nm:match("([^/]+)$") or nm
+    end
+    if #dibuang > 0 then
+        warn("file lain di folder autoexec dibuang: " .. table.concat(dibuang, ", "))
+        warn("  (Delta jalanin SEMUA file di situ -- kalau dibiarin, script dobel)")
+    end
+
     if cek:find("loadstring", 1, true) then
         ok("autoexec loader ditulis: " .. ((urlPanel and urlPanel ~= "") and "DARI PANEL" or cfg.game_label)
            .. " -> " .. url_script)
@@ -3098,6 +3229,11 @@ local function run(cfg)
     end
     ok("Nyambung ke panel")
 
+    -- v5.40: benerin skrip `up` kalau ketinggalan. Ini yang bikin RF lama
+    -- nyangkut di versi tua: `up`-nya dibikin sekali pas pasang, terus gak
+    -- pernah diperbarui -- dan dia bilang "OK", bukan gagal.
+    pcall(tulis_skrip_up)
+
     -- v5.32: TARIK KUNCI API SEKARANG, bukan nanti pas dibutuhin.
     -- Alasannya: `zenx key` dipanggil justru pas lisensi Delta abis -- saat
     -- paling genting. Kalau baru narik di situ dan panel lagi mati, bypass
@@ -3199,10 +3335,23 @@ local function run(cfg)
             if i < #akun then body = body .. "," end
         end
         body = body .. "]}"
+        local r = ""
         pcall(function()
-            api_post(cfg, "/assign-tim", body)
+            r = api_post(cfg, "/assign-tim", body) or ""
         end)
-        ok("auto-assign " .. #akun .. " akun ke " .. cfg.tim)
+        -- v5.43: lapor apa yang DIBETULIN, bukan cuma jumlahnya.
+        -- Perlu karena akun bekas game lain itu masalah yang membingungkan:
+        -- timnya bener tapi gak nongol di tab yang bener, dan gak ada tanda
+        -- apa pun. Sekarang keliatan pas dibetulin.
+        local nG = tonumber((r or ""):match('"gameDiperbarui"%s*:%s*(%d+)')) or 0
+        local nP = tonumber((r or ""):match('"placeDibersihin"%s*:%s*(%d+)')) or 0
+        if nG > 0 or nP > 0 then
+            ok(("auto-assign %d akun ke %s  (%d game dibetulin, %d place basi dibuang)")
+                :format(#akun, cfg.tim, nG, nP))
+            info("  akun ini bekas game lain -- sekarang kecatat di " .. (cfg.game_label or "?"))
+        else
+            ok("auto-assign " .. #akun .. " akun ke " .. cfg.tim)
+        end
     end
     auto_assign_tim()
     local lastAssign = os.time()
@@ -5211,7 +5360,9 @@ end
 -- Sisanya (izin penyimpanan, paket lain, cek root, pintasan, kalibrasi tombol,
 -- kunci API, auto-jalan) dikerjain di sini.
 if PERINTAH == "pasang" then
-    local REPO = "https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main"
+    -- v5.40: pakai konstanta yang sama kayak tulis_skrip_up -- biar gak ada
+    -- dua alamat repo yang bisa beda diam-diam.
+    local REPO = REPO_WORKER
     local RUMAH = os.getenv("HOME") or "."
     local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
 
@@ -5297,24 +5448,9 @@ if PERINTAH == "pasang" then
         f1:close()
         jalan("chmod +x " .. PREFIX .. "/bin/zenx")
     end
-    -- `up`: anti-cache + DIPERIKSA sebelum nimpa, jadi kalau yang keunduh
-    -- halaman error GitHub, worker lama gak ikut rusak.
-    local f2 = io.open(PREFIX .. "/bin/up", "w")
-    if f2 then
-        f2:write("#!" .. PREFIX .. "/bin/sh\n")
-        f2:write("zenx stop >/dev/null 2>&1\n")
-        f2:write('echo "narik versi baru..."\n')
-        f2:write('curl -fsSL "' .. REPO .. '/zenx_worker.lua?t=$(date +%s)" -o "$HOME/zenx_worker.baru"\n')
-        f2:write('if head -5 "$HOME/zenx_worker.baru" 2>/dev/null | grep -q "ZENX WORKER"; then\n')
-        f2:write('    mv "$HOME/zenx_worker.baru" "$HOME/zenx_worker.lua"\n')
-        f2:write('    echo "OK  $(grep -m1 \'local VERSION\' "$HOME/zenx_worker.lua")"\n')
-        f2:write("else\n")
-        f2:write('    echo "GAGAL -- yang keunduh bukan worker (belum di-push?)"\n')
-        f2:write('    rm -f "$HOME/zenx_worker.baru"\n')
-        f2:write("fi\n")
-        f2:close()
-        jalan("chmod +x " .. PREFIX .. "/bin/up")
-    end
+    -- `up`: dibikin lewat fungsi yang sama kayak yang dipanggil pas worker
+    -- nyala -- biar isinya gak pernah beda antara RF baru dan RF lama.
+    tulis_skrip_up(true)
     ok("Pintasan dibikin: zenx (jalanin) + up (update worker)")
 
     -- 6. kunci API bypass.vip. SENGAJA ditanya di sini, bukan ditulis di worker
@@ -5734,6 +5870,87 @@ if PERINTAH == "panel" or PERINTAH == "uji" then
             print(C.R .. "DIPEGANG DEVICE LAIN" .. C.N)
             err("   " .. tostring(sebab or "?"))
             err("   Pakai nomor tim lain, atau tunggu klaim lamanya basi (15 menit).")
+        end
+    end
+
+    -- 5. akun: apa yang worker TAU vs apa yang panel PUNYA
+    -- Ini yang nentuin kenapa panel bisa bilang "0 akun" padahal client-nya ada.
+    print("")
+    io.write(C.BOLD .. "5. akun yang worker tau" .. C.N .. "  ")
+    local mapA = {}
+    do
+        local pkgs = split(cfg.pkgs)
+        local perintah = {}
+        for _, pkg in ipairs(pkgs) do
+            perintah[#perintah+1] = string.format(
+                'echo "@@%s"; cat /data/data/%s/shared_prefs/prefs.xml 2>/dev/null', pkg, pkg)
+        end
+        local o = sh("su -c '" .. table.concat(perintah, "; ") .. "'") or ""
+        local kini
+        for baris in o:gmatch("[^\r\n]+") do
+            local t = baris:match("^@@(%S+)")
+            if t then kini = t
+            elseif kini then
+                local u = baris:match('<string name="username">(.-)</string>')
+                if u then mapA[kini] = u; kini = nil end
+            end
+        end
+        local n = 0
+        for _ in pairs(mapA) do n = n + 1 end
+        print(n .. " dari " .. #pkgs .. " client")
+        for _, pkg in ipairs(pkgs) do
+            print("     " .. C.D .. pkg:gsub("com%.roblox%.", "") .. C.N .. "  " ..
+                  (mapA[pkg] and (C.C .. mapA[pkg] .. C.N)
+                   or (C.Y .. "prefs.xml gak kebaca (client belum pernah login?)" .. C.N)))
+        end
+    end
+
+    -- 6. daftarin akun itu ke tim (assign-tim), tampilin jawabannya
+    io.write(C.BOLD .. "6. POST /assign-tim" .. C.N .. "  ")
+    do
+        local daftar = {}
+        for _, ak in pairs(mapA) do daftar[#daftar+1] = '"' .. ak .. '"' end
+        if #daftar == 0 then
+            print(C.Y .. "DILEWAT -- gak ada akun yang kebaca" .. C.N)
+            err("   Ini sebabnya panel bilang 0 akun: worker sendiri gak tau akunnya.")
+            err("   Buka tiap client sekali & login, biar prefs.xml kebentuk.")
+        else
+            local body = '{"tim":"' .. cfg.tim .. '","game":"' .. (cfg.game_label or "") ..
+                         '","isi_kosong":true,"akun":[' .. table.concat(daftar, ",") .. "]}"
+            local r6 = api_post(cfg, "/assign-tim", body) or ""
+            local e6 = ambil_str(r6, "error")
+            if r6 == "" then print(C.R .. "GAK NYAMBUNG" .. C.N)
+            elseif e6 then print(C.R .. "DITOLAK: " .. e6 .. C.N)
+            else print(C.G .. "OK" .. C.N .. "  " .. C.D .. potong(r6) .. C.N) end
+        end
+    end
+
+    -- 7. cek di /stat: akun itu kecatat di tim mana & game apa
+    io.write(C.BOLD .. "7. cek di /stat" .. C.N .. "      ")
+    do
+        local r7 = api_get(cfg, "/stat") or ""
+        if r7 == "" then
+            print(C.R .. "GAK NYAMBUNG" .. C.N)
+        else
+            print("")
+            for _, ak in pairs(mapA) do
+                -- cari blok akun ini, ambil tim & game-nya
+                local pola = '"nama"%s*:%s*"' .. ak:gsub("([%.%-%+%*%?%[%]%^%$%(%)%%])", "%%%1") .. '"(.-)}'
+                local blok = r7:match(pola)
+                if blok then
+                    local tim = blok:match('"tim"%s*:%s*"(.-)"') or "(kosong)"
+                    local game = blok:match('"game"%s*:%s*"(.-)"') or "(kosong)"
+                    local cocok = (tim == cfg.tim)
+                    print("     " .. (cocok and C.G or C.Y) .. ak .. C.N ..
+                          "  tim=" .. tim .. "  game=" .. game ..
+                          (cocok and "" or (C.Y .. "  <- BEDA dari " .. cfg.tim .. C.N)))
+                else
+                    print("     " .. C.R .. ak .. C.N .. "  GAK ADA di panel")
+                end
+            end
+            print("     " .. C.D .. "tim harus = " .. cfg.tim ..
+                  " dan game harus = " .. (cfg.game_label or "?") ..
+                  " biar nongol di tab itu" .. C.N)
         end
     end
 
