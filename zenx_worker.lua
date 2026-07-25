@@ -339,9 +339,23 @@
 --        yang kedapetan jalan itu sisa ronde sebelumnya, udah dapet waktu satu
 --        ronde penuh (reopen_sec) buat lapor. Belum lapor = ada yang ngeblok,
 --        dan layar key itu penyebab paling umum.
+--
+-- v5.51: FIX SETUP NGEHAPUS SETELAN MANUAL.
+--        setup_wizard mulai dari `local cfg = {}` -- tabel KOSONG. Tapi
+--        save_config nulis SEMUA field. Jadi setelan yang gak ditanya di
+--        wizard ketulis ulang jadi bawaannya:
+--          auto_key=true   -> false     (ini yang kejadian)
+--          key_jam=12      -> 24
+--          autoexec_bersih=false -> true
+--          bypass_api_key  -> kosong
+--        Gejalanya bisu: log cuma bilang "auto_key MATI", keliatan kayak
+--        user-nya gak pernah nyetel.
+--        Sekarang setup mulai dari config LAMA, dan yang kejaga dilaporin.
+--        Plus auto_key SEKARANG DITANYA (bawaan y) -- dulu tersembunyi, cuma
+--        bisa diedit manual, jadi gak ada yang tau dia ada.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.50-cf"
+local VERSION = "5.51-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -3151,7 +3165,38 @@ end
 -- ============================================================
 local function setup_wizard()
     print(C.BOLD..C.C.."\n=== ZENX WORKER v"..VERSION.." — SETUP ===\n"..C.N)
-    local cfg={}
+
+    -- ============================================================
+    -- v5.51: MULAI DARI CONFIG LAMA, bukan tabel kosong.
+    --
+    -- Dulu `local cfg = {}`. Akibatnya setiap setelan yang GAK DITANYA di
+    -- wizard ini ketulis ulang jadi bawaannya -- padahal save_config nulis
+    -- SEMUA field. Contoh nyatanya: auto_key.
+    --   auto_key gak pernah ditanya di setup (cuma bisa diedit manual di
+    --   config). Jadi tiap kali setup dijalanin ulang:
+    --     tostring(cfg.auto_key == true)  ->  nil == true  ->  "false"
+    --   Setelan true yang udah diisi manual KEHAPUS DIAM-DIAM, dan gejalanya
+    --   cuma "auto_key MATI" di log -- keliatan kayak user gak pernah nyetel.
+    -- Field lain yang senasib: delta_license, key_jam, autoexec_bersih,
+    -- suplai_master, script_label, dan setelan apa pun yang ditambah nanti.
+    -- ============================================================
+    local cfg = {}
+    do
+        local lama = load_config()
+        if lama then
+            cfg = lama
+            ok("Setelan lama dibaca dari " .. CONFIG_FILE)
+            local jaga = {}
+            if cfg.auto_key == true then jaga[#jaga+1] = "auto_key=true" end
+            if (cfg.bypass_api_key or "") ~= "" then jaga[#jaga+1] = "kunci API" end
+            if cfg.key_jam and cfg.key_jam ~= 24 then jaga[#jaga+1] = "key_jam=" .. cfg.key_jam end
+            if cfg.autoexec_bersih == false then jaga[#jaga+1] = "autoexec_bersih=false" end
+            if #jaga > 0 then
+                info("  yang gak ditanya di bawah TETEP kepakai: " .. table.concat(jaga, ", "))
+            end
+        end
+    end
+
     -- v4.29: URL + kunci DIDULUIN, biar pas milih tim bisa langsung dicek ke
     -- server: nomor itu udah dipegang RedFinger lain apa belum.
     print(C.D.."  Alamat Cloudflare Worker (hasil `npx wrangler deploy`)."..C.N)
@@ -3358,6 +3403,17 @@ local function setup_wizard()
     print(C.D.."  Di RAM sesek ini NGURANGIN kill, bukan ngilangin. Worker tetep aman."..C.N)
     local ka = ask("Keep-alive (anti-FC)? (y/n)","y")
     cfg.keep_alive = (ka:lower() ~= "n")
+
+    -- v5.51: auto_key SEKARANG DITANYA. Dulu cuma bisa diedit manual di config
+    -- -- dan itu yang bikin masalah: gak keliatan di setup, jadi user gak tau
+    -- dia ada, dan tiap setup ulang nilainya kehapus tanpa suara.
+    print("")
+    print(C.D.."  Bypass key Delta otomatis: kalau lisensi hilang, worker cari"..C.N)
+    print(C.D.."  key-nya sendiri (buka 1 client, ambil link, tembak API)."..C.N)
+    print(C.D.."  Butuh kunci API bypass.vip -- udah ketanam di worker."..C.N)
+    local akd = (cfg.auto_key == true) and "y" or "y"   -- bawaan y
+    local ak2 = ask("Bypass key otomatis? (y/n)", akd)
+    cfg.auto_key = (ak2:lower() ~= "n")
 
     -- v5.31: GAK DITANYA LAGI. Kuncinya diisi SEKALI di panel, semua RF
     -- narik dari sana. Dulu ditanyain tiap setup -- 20 RF = 20 kali ngetik
