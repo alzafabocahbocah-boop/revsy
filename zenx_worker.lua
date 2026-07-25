@@ -241,9 +241,23 @@
 --        baru kolom game. Jadi betulin `game` aja gak cukup -- place basi
 --        masih nutupin, dan akunnya tetep nyangkut di tab game lama.
 --        Yang TETEP dijaga: akun milik tim LAIN gak direbut.
+--
+-- v5.44: PEMBALIKAN dari v5.43 -- worker pemegang client SEKARANG MEREBUT akun
+--        dari tim lain, dan perpindahannya dilaporin.
+--        Kenapa dibalik: bukti lapangan (zenx panel) nunjukin 4 akun nyangkut
+--        di tim-1/GAG 1 MARKET sisa pemakaian lama, padahal fisiknya udah di
+--        RF tim-4. Perlindungan v5.43 ("jangan rebut") justru yang ngeblok --
+--        gameDiperbarui=0, dan akunnya nyangkut SELAMANYA tanpa sebab yang
+--        keliatan.
+--        Dasarnya: worker baca nama akun dari prefs.xml client-nya SENDIRI.
+--        Itu bukan rencana, itu FAKTA. Kalau kolom tim di panel bilang lain,
+--        yang basi itu panelnya.
+--        Risiko tarik-menarik (akun kepasang di 2 RF) sekarang KEKIHATAN --
+--        tiap perebutan dilaporin, jadi kalau muncul terus buat akun yang
+--        sama, ketara.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.43-cf"
+local VERSION = "5.44-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -3345,6 +3359,19 @@ local function run(cfg)
         -- apa pun. Sekarang keliatan pas dibetulin.
         local nG = tonumber((r or ""):match('"gameDiperbarui"%s*:%s*(%d+)')) or 0
         local nP = tonumber((r or ""):match('"placeDibersihin"%s*:%s*(%d+)')) or 0
+        -- v5.44: akun yang DIREBUT dari tim lain dilaporin satu-satu.
+        -- Penting: kalau satu akun kepasang di client DUA RF, dua worker bakal
+        -- tarik-menarik -- dan itu bakal keliatan di sini tiap 10 menit. Kalau
+        -- baris ini muncul terus buat akun yang sama, berarti akunnya kepasang
+        -- ganda dan harus dibenerin di RF-nya.
+        local dipindah = {}
+        for nm, dari in (r or ""):gmatch('"nama"%s*:%s*"(.-)"%s*,%s*"dari"%s*:%s*"(.-)"') do
+            dipindah[#dipindah+1] = nm .. " (dari " .. dari .. ")"
+        end
+        if #dipindah > 0 then
+            warn("akun DIREBUT ke " .. cfg.tim .. ": " .. table.concat(dipindah, ", "))
+            warn("  kalau ini muncul TERUS buat akun yang sama -> akunnya kepasang di 2 RF")
+        end
         if nG > 0 or nP > 0 then
             ok(("auto-assign %d akun ke %s  (%d game dibetulin, %d place basi dibuang)")
                 :format(#akun, cfg.tim, nG, nP))
