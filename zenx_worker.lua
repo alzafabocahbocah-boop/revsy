@@ -353,9 +353,50 @@
 --        Sekarang setup mulai dari config LAMA, dan yang kejaga dilaporin.
 --        Plus auto_key SEKARANG DITANYA (bawaan y) -- dulu tersembunyi, cuma
 --        bisa diedit manual, jadi gak ada yang tau dia ada.
+--        Plus BAWAAN PERTANYAAN ikut nilai yang SEKARANG, bukan angka mati:
+--          nomor tim  -> dulu selalu "1". Di RF tim-4, tekan Enter = pindah ke
+--                        tim-1 DIAM-DIAM. Akun kepindah, perintah panel nyasar.
+--                        Sekarang bawaannya 4, dan kalau diubah -> DIKONFIRMASI
+--                        ("yakin ganti?" bawaan n), plus dijelasin akibatnya.
+--          game       -> dulu selalu "1" (GAG 2). Di RF GAG 1, Enter = ganti
+--                        game diam-diam, place_id ikut ganti, client join ke
+--                        game yang salah.
+--          script     -> ikut script yang sekarang kepakai.
+--
+-- v5.52: FIX "nyapu titik padahal client belum masuk game".
+--        Dialog key Delta baru muncul SETELAH game kebuka. Dulu sapuan mulai
+--        cuma 3 detik setelah tunggu_jalan bilang "udah jalan" -- padahal saat
+--        itu client masih di halaman awal Roblox (kebukti dari layar:
+--        Search/Charts/Avatar). 16 titik dihabisin buat dialog yang belum ada.
+--        GAK BISA diberesin dengan nunggu activity yang lebih tepat:
+--        ActivityNativeMain & MainGameActivity itu nama LAMA vs BARU buat
+--        activity yang SAMA (v4.36) -- halaman awal dan di-dalam-game satu
+--        activity, gak ada bedanya di mata dumpsys. Teks layar juga gak
+--        kebaca (v4.86).
+--        Jadi: jeda awal 3s -> 20s, DAN sapuan diulang 3 putaran berjeda 25s.
+--        Jangkauannya jadi ~106 detik -- cukup buat 1 client yang kebuka
+--        sendirian.
+--
+-- v5.53: `zenx layar <client>` -- alat buat NYARI sinyal "di Home vs di game".
+--        Dugaan gua di v5.52 ("gak mungkin dibedain") itu SALAH -- panel lain
+--        bisa bedain, jadi sinyalnya ada, cuma belum ketemu.
+--        Alat ini nge-dump 9 kandidat sekaligus: nama+state activity, daftar
+--        window (dialog Delta kemungkinan jadi window sendiri), fokus layar,
+--        koneksi UDP/TCP (di game harusnya ada sambungan ke server Roblox),
+--        berkas log Roblox + isinya, CPU, dan memori.
+--        Cara pakai: jalanin sekali pas di halaman awal, sekali pas udah di
+--        game, terus bandingin. Yang beda = sinyalnya.
+--
+-- v5.54: `zenx layar` sekarang NGUKUR SENDIRI 2x terus nunjukin BEDANYA.
+--        Alurnya: hitung mundur 20s (siapin keadaan 1) -> ukur -> hitung
+--        mundur 20s (user pindahin client ke game) -> ukur -> tampilin cuma
+--        baris yang BERUBAH.
+--        Kenapa gak nyuruh user jalanin 2x lalu nempel dua-duanya: dump
+--        mentahnya panjang (9 bagian x belasan baris). Yang dibutuhin cuma
+--        yang berubah, jadi alat ini yang ngerjain pembandingannya.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.51-cf"
+local VERSION = "5.54-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -2748,10 +2789,51 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
                     open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
                     tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
-                    os.execute("sleep 3")   -- kasih waktu layar key-nya kebentuk
+                    -- v5.52: 20 detik, bukan 3. tunggu_jalan cuma mastiin
+                    -- activity Roblox nongol -- game-nya sendiri masih loading,
+                    -- dan Delta nyuntik dialognya setelah itu. 3 detik bikin
+                    -- sapuan pertama selalu kebuang.
+                    info("  nunggu game kebuka + Delta nyuntik dialog (20s)...")
+                    for _ = 1, 20 do
+                        if cek_batal and cek_batal() then break end
+                        os.execute("sleep 1")
+                    end
                 end
 
-                local link, _, _, ketLink = cari_tombol_key(cfg, pilih)
+                -- ============================================================
+                -- v5.52: SAPUAN DICOBA BEBERAPA PUTARAN, bukan sekali habis.
+                --
+                -- Masalahnya: dialog key Delta baru muncul SETELAH game kebuka.
+                -- Dulu sapuan mulai cuma 3 detik setelah tunggu_jalan bilang
+                -- "udah jalan" -- padahal saat itu client masih di halaman awal
+                -- Roblox (kebukti dari layar: Search/Charts/Avatar). 16 titik
+                -- dihabisin buat dialog yang belum ada, terus dilaporin gagal.
+                --
+                -- Dan ini GAK BISA diberesin dengan nunggu activity yang lebih
+                -- tepat: ActivityNativeMain & MainGameActivity itu nama LAMA vs
+                -- BARU buat activity yang SAMA (lihat v4.36) -- halaman awal dan
+                -- di-dalam-game dihosting activity yang sama, jadi gak ada
+                -- bedanya di mata dumpsys. Teks layar juga gak kebaca (v4.86).
+                --
+                -- Jadi dipakai cara yang gak butuh deteksi: SAPU ULANG beberapa
+                -- kali dengan jeda. Kalau dialognya muncul belakangan, putaran
+                -- berikutnya yang nangkep.
+                -- ============================================================
+                local link, ketLink
+                local PUTARAN, JEDA = 3, 25
+                for putar = 1, PUTARAN do
+                    if putar > 1 then
+                        info(("  dialog key belum nongol -- tunggu %ds, sapu lagi (%d/%d)")
+                            :format(JEDA, putar, PUTARAN))
+                        for _ = 1, JEDA do
+                            if cek_batal and cek_batal() then break end
+                            os.execute("sleep 1")
+                        end
+                        if cek_batal and cek_batal() then break end
+                    end
+                    link, _, _, ketLink = cari_tombol_key(cfg, pilih)
+                    if link then break end
+                end
 
                 -- v5.46b: CADANGAN jendela penuh -- cuma kalau deteksi di ukuran
                 -- grid GAGAL. Ukuran grid dicoba duluan karena itu yang ada di
@@ -3210,11 +3292,48 @@ local function setup_wizard()
     -- kolom Tim di star_farm.lua. Prefiks yang beda ("tim1"/"Tim-1") bikin akun
     -- gak nempel ke tim ini dan panel keliatan kosong TANPA error apa pun.
     local DEV = dev_id()
+
+    -- v5.51: BAWAANNYA DARI CONFIG LAMA, bukan "1" mati.
+    -- Dulu bawaannya selalu "1". Di RF yang udah jalan sebagai tim-4, tekan
+    -- Enter di sini = pindah ke tim-1 DIAM-DIAM. Akibatnya berat: akun kepindah
+    -- tim, perintah panel nyasar, dan gak ada yang ngasih tau.
+    -- Sekarang bawaannya nomor yang sekarang, dan kalau diubah -> dikonfirmasi.
+    local timLama = tostring(cfg.tim or ""):match("tim%-(%d+)")
+    if timLama then
+        info("Tim RF ini sekarang: tim-" .. timLama .. "  (Enter = biarin)")
+    end
     local tn
     while true do
-        tn = tonumber((ask("Nomor tim (angka aja)","1") or ""):match("%d+") or "")
+        tn = tonumber((ask("Nomor tim (angka aja)", timLama or "1") or ""):match("%d+") or "")
         if not tn or tn < 1 then
             warn("Isi angka, minimal 1.")
+        elseif timLama and tostring(tn) ~= timLama then
+            -- ganti tim itu tindakan besar -- jangan kejadian gara-gara salah ketik
+            warn("Tim RF ini sekarang tim-" .. timLama .. ", mau diganti ke tim-" .. tn .. "?")
+            warn("  Akibatnya: akun di RF ini pindah ke tim-" .. tn .. ", dan perintah")
+            warn("  buat tim-" .. timLama .. " gak nyampe lagi ke sini.")
+            local ya = ask("Yakin ganti? (y/n)", "n")
+            if ya:lower() == "y" then
+                local calon = "tim-" .. tn
+                cfg.tim = calon
+                local r = api_get(cfg, "/tim-klaim?tim=" .. calon .. "&dev=" .. DEV)
+                local boleh = ambil_str(r, "boleh")
+                if boleh == nil then
+                    warn("Gak bisa ngecek ke server (URL/kunci bener? internet nyala?)")
+                    warn("Lanjut pakai " .. calon .. " -- pastiin sendiri gak dipake RF lain.")
+                    break
+                elseif boleh == "ya" then
+                    break
+                else
+                    local sebab = ambil_str(r, "sebab") or (calon .. " udah dipegang device lain")
+                    warn("DITOLAK: " .. sebab)
+                end
+            else
+                info("Dibatalin -- tetep tim-" .. timLama)
+                tn = tonumber(timLama)
+                cfg.tim = "tim-" .. tn
+                break
+            end
         else
             local calon = "tim-" .. tn
             cfg.tim = calon
@@ -3253,7 +3372,14 @@ local function setup_wizard()
     print(C.D.."    1) GAG 2  (farm/garden)      -> 97598239454123"..C.N)
     print(C.D.."    2) GAG 1  (garden)           -> 126884695634066"..C.N)
     print(C.D.."    3) GAG 1 MARKET (TradeWorld) -> 129954712878723"..C.N)
-    local pil = ask("Pilih (1/2/3)","1")
+    -- v5.51: bawaan ikut game yang SEKARANG, bukan "1" mati. Masalahnya sama
+    -- kayak nomor tim: di RF GAG 1, tekan Enter di sini bikin dia jadi GAG 2
+    -- diam-diam -- place_id ganti, client join ke game yang salah.
+    local pilLama = ({ ["GAG 2"] = "1", ["GAG 1"] = "2", ["GAG 1 MARKET"] = "3" })[cfg.game_label or ""]
+    if pilLama then
+        info("Game RF ini sekarang: " .. cfg.game_label .. "  (Enter = biarin)")
+    end
+    local pil = ask("Pilih (1/2/3)", pilLama or "1")
     local GH = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/"
     if pil == "2" then
         cfg.place_id = "126884695634066"; cfg.game_label = "GAG 1"
@@ -3284,7 +3410,12 @@ local function setup_wizard()
     for i, sc in ipairs(SCRIPT_PILIHAN) do
         print(C.D..string.format("    %d) %-10s -> %-7s  %s", i, sc[1], sc[2], sc[3])..C.N)
     end
-    local bawaanScript = (cfg.game_label == "GAG 2") and "1" or "3"
+    -- v5.51: bawaan ikut script yang SEKARANG kepakai, baru nyesuain game
+    local scLama = ({ ["STAR FARM"] = "1", ["STAR SEED"] = "2", ["MARKET"] = "3" })[cfg.script_label or ""]
+    if scLama then
+        info("Script RF ini sekarang: " .. cfg.script_label .. "  (Enter = biarin)")
+    end
+    local bawaanScript = scLama or ((cfg.game_label == "GAG 2") and "1" or "3")
     local ps = ask("Pilih script (1/2/3)", bawaanScript)
     local sc = SCRIPT_PILIHAN[tonumber(ps) or 0] or SCRIPT_PILIHAN[tonumber(bawaanScript)]
     cfg.script_url = GH .. sc[2]
@@ -6401,6 +6532,152 @@ if PERINTAH == "script" or PERINTAH == "sc" then
     return
 end
 
+-- ============================================================
+-- v5.53: `zenx layar <client>` -- CARI SINYAL "di Home vs di game".
+--
+-- Latar: worker gak bisa bedain client yang lagi di halaman awal Roblox dari
+-- yang udah di dalam game. Akibatnya sapuan tombol key mulai kecepetan.
+-- Dugaan awal gua "gak mungkin dibedain" itu SALAH -- panel lain bisa, jadi
+-- sinyalnya ada, cuma belum ketemu.
+--
+-- Alat ini nge-dump SEMUA kandidat sinyal sekaligus. Cara pakainya:
+--   1. jalanin pas client lagi di HALAMAN AWAL   -> simpen hasilnya
+--   2. jalanin lagi pas client UDAH DI GAME      -> bandingin
+-- Yang BEDA di antara dua itu = sinyal yang dicari.
+-- ============================================================
+-- ============================================================
+-- v5.54: `zenx layar [client]` -- CARI SINYAL "di Home vs di game",
+-- dengan ngukur DUA KALI sendiri terus nunjukin BEDANYA.
+--
+-- Latar: worker gak bisa bedain client yang lagi di halaman awal Roblox dari
+-- yang udah di dalam game -- akibatnya sapuan tombol key mulai kecepetan.
+-- Dugaan awal gua "gak mungkin dibedain" itu SALAH: panel lain bisa, jadi
+-- sinyalnya ada, cuma belum ketemu.
+--
+-- Kenapa ngukur sendiri 2x + nge-diff, bukan nyuruh user jalanin 2x:
+-- dump mentahnya panjang (9 bagian x belasan baris). Yang dibutuhin cuma
+-- BARIS YANG BERUBAH. Jadi alat ini yang ngerjain pembandingannya.
+--
+-- Alur: hitung mundur -> ukur keadaan 1 -> hitung mundur (user pindahin
+-- client) -> ukur keadaan 2 -> tampilin cuma yang beda.
+-- ============================================================
+if PERINTAH == "layar" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada."); return end
+
+    local pkgs = split(cfg.pkgs)
+    local target = arg[2]
+    if target and not target:find("^com%.") then target = "com.roblox." .. target end
+    if not target then
+        local potret = pkg_running_semua(pkgs)
+        for _, p in ipairs(pkgs) do if potret[p] then target = p break end end
+        target = target or pkgs[1]
+    end
+    if not target then err("Gak ada client di config."); return end
+
+    -- daftar kandidat sinyal. Tiap entri: { judul, perintah shell }
+    local KANDIDAT = {
+        { "activity + state",
+          "dumpsys activity activities | grep -i " .. target ..
+          " | grep -oE '(ActivityRecord\\{[^ ]*|state=[A-Za-z]+|mResumed=[a-z]+|visible=[a-z]+)'" },
+        { "window milik client",
+          "dumpsys window windows | grep -i " .. target .. " | grep -oE 'Window\\{[^ ]*|mHasSurface=[a-z]+'" },
+        { "fokus layar",
+          "dumpsys window | grep -iE 'mCurrentFocus|mFocusedApp' | sed 's/  */ /g'" },
+        { "jumlah koneksi UDP",
+          "cat /proc/net/udp 2>/dev/null | awk 'NR>1 && $5!=\"00000000:0000\"' | wc -l" },
+        { "koneksi UDP (alamat tujuan)",
+          "cat /proc/net/udp 2>/dev/null | awk 'NR>1 && $5!=\"00000000:0000\" {print $5}' | sort | head -8" },
+        { "jumlah koneksi TCP nyambung",
+          "cat /proc/net/tcp 2>/dev/null | awk 'NR>1 && $4==\"01\"' | wc -l" },
+        { "berkas log Roblox terbaru",
+          "for d in /sdcard/Android/data/" .. target .. "/files /data/data/" .. target .. "/files; do " ..
+          "ls -t $d/*log* $d/logs/* 2>/dev/null | head -2; done" },
+        { "kata kunci di log (join/connect/teleport)",
+          "for d in /sdcard/Android/data/" .. target .. "/files /data/data/" .. target .. "/files; do " ..
+          "f=$(ls -t $d/*log* $d/logs/* 2>/dev/null | head -1); " ..
+          "[ -n \"$f\" ] && tail -80 \"$f\" | grep -oiE '(join[a-z]*|connect[a-z]*|teleport[a-z]*|" ..
+          "datamodel|placeid|gameid|serverid)' | sort | uniq -c | head -10; done" },
+        { "memori (TOTAL / Graphics)",
+          "dumpsys meminfo " .. target .. " 2>/dev/null | grep -iE 'TOTAL PSS|Graphics' | sed 's/  */ /g'" },
+    }
+
+    local function ukur()
+        local hasil = {}
+        for _, k in ipairs(KANDIDAT) do
+            local o = sh("su -c " .. shq(k[2])) or ""
+            local baris = {}
+            for b in o:gmatch("[^\r\n]+") do
+                b = b:gsub("^%s+", ""):gsub("%s+$", "")
+                if b ~= "" then baris[#baris+1] = b:sub(1, 130) end
+            end
+            hasil[k[1]] = baris
+        end
+        return hasil
+    end
+
+    local function hitungMundur(detik, pesan)
+        print("")
+        print(C.BOLD .. C.Y .. "  " .. pesan .. C.N)
+        for s = detik, 1, -1 do
+            io.write(("\r  mulai ngukur dalam %2ds ... "):format(s))
+            io.flush()
+            os.execute("sleep 1")
+        end
+        io.write("\r  ngukur sekarang...            \n")
+        io.flush()
+    end
+
+    print(C.BOLD .. C.C .. "\n=== SINYAL LAYAR: " .. target .. " ===" .. C.N)
+    print(C.D .. "  Diukur 2x, terus ditampilin cuma yang BEDA." .. C.N)
+
+    hitungMundur(20, "SIAPIN keadaan PERTAMA (mis. biarin di HALAMAN AWAL Roblox)")
+    local a = ukur()
+    ok("Keadaan 1 kerekam.")
+
+    hitungMundur(20, "SEKARANG PINDAHIN ke keadaan KEDUA (mis. MASUK GAME)")
+    local b = ukur()
+    ok("Keadaan 2 kerekam.")
+
+    -- bandingin
+    print("")
+    print(C.BOLD .. "=== YANG BEDA (ini sinyal yang dicari) ===" .. C.N)
+    local adaBeda = false
+    for _, k in ipairs(KANDIDAT) do
+        local judul = k[1]
+        local la, lb = a[judul] or {}, b[judul] or {}
+        local setA, setB = {}, {}
+        for _, x in ipairs(la) do setA[x] = true end
+        for _, x in ipairs(lb) do setB[x] = true end
+        local cumaA, cumaB = {}, {}
+        for _, x in ipairs(la) do if not setB[x] then cumaA[#cumaA+1] = x end end
+        for _, x in ipairs(lb) do if not setA[x] then cumaB[#cumaB+1] = x end end
+        if #cumaA > 0 or #cumaB > 0 then
+            adaBeda = true
+            print("")
+            print(C.BOLD .. "  [" .. judul .. "]" .. C.N)
+            for i, x in ipairs(cumaA) do
+                if i > 6 then print(C.D .. "      ... (dipotong)" .. C.N) break end
+                print(C.Y .. "    - HOME  : " .. x .. C.N)
+            end
+            for i, x in ipairs(cumaB) do
+                if i > 6 then print(C.D .. "      ... (dipotong)" .. C.N) break end
+                print(C.G .. "    + GAME  : " .. x .. C.N)
+            end
+        end
+    end
+    if not adaBeda then
+        warn("  GAK ADA yang beda sama sekali.")
+        warn("  Kemungkinan client-nya gak kepindah keadaan, atau sinyalnya di")
+        warn("  tempat lain. Coba ulangi dan pastiin keadaan 2 beneran di game.")
+    end
+
+    print("")
+    print(C.D .. "  Tempel bagian 'YANG BEDA' ini -- itu udah cukup." .. C.N)
+    print("")
+    return
+end
+
 if PERINTAH ~= "" then
     err("Perintah '" .. PERINTAH .. "' gak dikenal di v" .. VERSION)
     print()
@@ -6430,6 +6707,7 @@ if PERINTAH ~= "" then
     info("   zenx panel              -> UJI sambungan ke panel (kalau tim kosong di panel)")
     info("   zenx script             -> ganti script autoexec (STAR FARM / STAR SEED / MARKET)")
     info("   zenx script seed        -> langsung ke STAR SEED, tanpa nanya")
+    info("   zenx layar [client]     -> dump sinyal layar (buat bedain Home vs di game)")
     print()
     info("Kalau perintahnya harusnya ada, versi di RF ini ketinggalan -- tarik ulang:")
     info("   curl -fsSL <repo>/zenx_worker.lua -o ~/zenx_worker.lua")
