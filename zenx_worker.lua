@@ -168,9 +168,40 @@
 --        Padahal satu tim GAG 2 bisa dipakai buat dua hal beda: farm kebun
 --        atau AFK beli seed. Bawaannya nyesuain game, jadi kasus umum
 --        tinggal Enter.
+--
+-- v5.36: pertanyaan "Folder autoexec" DIBUANG dari setup. Jawabannya selalu
+--        sama -- 20 RF = 20 kali mencet Enter buat nilai yang gak pernah beda.
+--        Nilainya tetep ketulis di config, dan ada cadangan di dua tempat
+--        (run + tulis_autoexec), jadi gak ada yang rusak. Kalau suatu saat
+--        ada RF yang foldernya beda: edit config -> autoexec_dir="/path/lain"
+--
+-- v5.37: pertanyaan "Pakai shell root tetap?" DIBUANG, bawaannya jadi NYALA.
+--        Dulu bawaannya "n" padahal selalu dijawab y -- dan untungnya besar
+--        (tiap 'su' di RF makan ~6 detik, ini bikin root dibuka sekali aja).
+--        Aman dipaksa: dites pas nyala, gagal = balik ke cara lama; kalau
+--        shell-nya mati di tengah jalan juga kedeteksi. Paling jelek dia cuma
+--        balik ke perilaku lama.
+--        Config lama yang shell_tetap=false tetep dihormatin.
+--
+-- v5.38: pertanyaan "Auto grid?" DIBUANG, bawaannya NYALA. Grid itu bukan
+--        pilihan gaya -- jendela HARUS ketata biar URL key Delta bisa diambil
+--        dari tiap client. Susunannya juga udah otomatis dari dulu:
+--        grid_hitung baca ukuran layar sendiri + tabel SUSUNAN (4 client ->
+--        2x2). Sekarang hasil hitungannya ditampilin pas setup, biar keliatan
+--        gak ada yang perlu diatur.
+--
+-- v5.39: SETUP NYETEL PERINTAH AWAL SENDIRI = FORCE.
+--        Dulu RF yang baru selesai setup NGANGGUR: "perintah: -", semua client
+--        off, gak ada yang jalan sampai ada orang mencet "Jalankan semua" di
+--        panel. Gejalanya nyesatin -- worker keliatan sehat (nyambung, lapor
+--        jalan tiap detik) tapi gak ngapa-ngapain, dan gak ada petunjuk kenapa.
+--        Padahal RF yang baru disetup ya jelas mau dijalanin.
+--        Mau ditahan dulu? panel -> "Hentikan".
+--        Sekalian api_post bisa milih metode (bawaan POST) -- /perintah minta
+--        PUT, dan tanpa itu setup gak bisa nyetel perintahnya sendiri.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.35-cf"
+local VERSION = "5.39-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -1211,12 +1242,16 @@ local function api_get(cfg, jalur)
     return sh(cmd)
 end
 
-local function api_post(cfg, jalur, body)
+-- v5.39: metode bisa dipilih (bawaan POST, biar pemakaian lama gak berubah).
+-- Perlu karena /perintah minta PUT -- dan tanpa ini setup gak bisa nyetel
+-- perintah awal sendiri.
+local function api_post(cfg, jalur, body, metode)
     local f = io.open(TMP, "w")
     if not f then TMP = "./zenx_body.json"; f = io.open(TMP, "w") end
     if not f then return "" end
     f:write(body); f:close()
-    local cmd = string.format("curl -s -m 10 -X POST -H %s -H %s -d @%s %s",
+    local cmd = string.format("curl -s -m 10 -X %s -H %s -H %s -d @%s %s",
+        (metode or "POST"),
         shq("X-Kunci: " .. cfg.kunci), shq("Content-Type: application/json"),
         TMP, shq(cfg.url .. jalur))
     return sh(cmd)
@@ -2764,9 +2799,12 @@ local function setup_wizard()
     print(C.G.."  -> "..sc[1].."  "..cfg.script_url..C.N)
     print(C.D.."  Link join: paste share-URL ATAU linkCode. kosong=public."..C.N)
     cfg.link_code=ask("Link/code (Enter=public)","")
-    print(C.D.."  Folder autoexec Delta (tempat naro script biar auto-jalan)."..C.N)
-    print(C.D.."  Default udah bener buat kebanyakan RF. Enter aja kalau ragu."..C.N)
-    cfg.autoexec_dir=ask("Folder autoexec","/sdcard/Delta/Autoexecute")
+    -- v5.36: pertanyaan "Folder autoexec" DIBUANG. Jawabannya selalu sama --
+    -- 20 RF = 20 kali mencet Enter buat nilai yang gak pernah beda. Nilainya
+    -- tetep ada di config (ada cadangan juga di run() & tulis_autoexec), jadi
+    -- kalau suatu saat ada RF yang foldernya beda, tinggal edit config-nya:
+    --   autoexec_dir="/path/lain"
+    cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
 
     -- ===== paket: dipindai, bukan diketik =====
     print()
@@ -2829,22 +2867,41 @@ local function setup_wizard()
     print(C.D.."  Mode jendela. Kalau client lo udah auto-freeform, biarin 0."..C.N)
     print(C.D.."    0 = jangan disenggol (bawaan)  |  5 = paksa freeform"..C.N)
     cfg.win_mode=tonumber(ask("Mode jendela","0")) or 0
-    print(C.D.."  Shell root tetap: buka izin root SEKALI, terus dipakai terus."..C.N)
-    print(C.D.."  Tiap 'su' di RedFinger makan ~6 detik; ini ngilangin ongkos itu."..C.N)
-    print(C.D.."  MASIH BARU -- kalau gagal, worker balik sendiri ke cara lama."..C.N)
-    local st = ask("Pakai shell root tetap? (y/n)","n")
-    cfg.shell_tetap = (st:lower() == "y")
+    -- v5.37: pertanyaan shell root tetap DIBUANG, dan bawaannya jadi NYALA.
+    -- Dulu ditanya dengan bawaan "n" -- padahal ini selalu dijawab y, dan
+    -- untungnya besar: tiap 'su' di RedFinger makan ~6 detik, ini bikin izin
+    -- root dibuka SEKALI aja.
+    -- Aman dipaksa nyala karena cadangannya lengkap: dites pas nyala (gagal =
+    -- balik ke cara lama), dan kalau shell-nya mati di tengah jalan kedeteksi
+    -- juga. Jadi paling jelek dia cuma balik ke perilaku lama.
+    -- Mau matiin di RF tertentu? edit config -> shell_tetap=false
+    if cfg.shell_tetap == nil then cfg.shell_tetap = true end
 
     print(C.D.."  Delta Lite suka nguncup jadi gelembung sendiri. Kalau dibiarin,"..C.N)
     print(C.D.."  Roblox di dalemnya disconnect ~15 detik kemudian. Worker bisa"..C.N)
     print(C.D.."  munculin ulang jendelanya berkala. Isi 0 = mati, 10 = tiap 10 detik."..C.N)
     cfg.jaga_depan_sec = tonumber(ask("Jaga jendela tetep nongol tiap (detik)","10")) or 0
 
-    print(C.D.."  Auto grid: abis buka client, jendelanya ditata rapi sendiri"..C.N)
-    print(C.D.."  (gak numpuk). Butuh jendela FREEFORM -- entah dari win_mode 5,"..C.N)
-    print(C.D.."  atau dari Delta yang emang udah auto-freeform sendiri."..C.N)
-    local ag = ask("Auto grid? (y/n)","y")
-    cfg.auto_grid = (ag:lower() ~= "n")
+    -- v5.38: pertanyaan "Auto grid?" DIBUANG, bawaannya NYALA.
+    -- Grid itu bukan pilihan gaya -- jendela HARUS ketata biar URL key Delta
+    -- bisa diambil dari tiap client. Jadi nanya y/n itu gak masuk akal.
+    -- Susunannya juga udah otomatis: grid_hitung baca ukuran layar sendiri dan
+    -- ngitung dari jumlah client (4 client -> 2x2, lihat tabel SUSUNAN).
+    -- Mau matiin di RF tertentu? edit config -> auto_grid=false
+    if cfg.auto_grid == nil then cfg.auto_grid = true end
+    do
+        local n = #split(cfg.pkgs or "")
+        local sus = SUSUNAN[n]
+        if sus then
+            info(("Auto grid nyala -- %d client -> %dx%d (otomatis dari jumlah client)")
+                :format(n, sus[1], sus[2]))
+        elseif n > 0 then
+            info(("Auto grid nyala -- %d client, susunan dihitung dari ukuran layar")
+                :format(n))
+        else
+            info("Auto grid nyala")
+        end
+    end
     print(C.D.."  Kunci orientasi layar RF. Kosongin kalau gak mau disenggol."..C.N)
     print(C.D.."    landscape / portrait / (Enter = jangan disenggol)"..C.N)
     local ori = ask("Orientasi layar",""):lower()
@@ -2870,6 +2927,33 @@ local function setup_wizard()
     local n = #split(cfg.pkgs)
     save_config(cfg)
     ok("Config disimpan: "..CONFIG_FILE)
+
+    -- ============================================================
+    -- v5.39: PERINTAH AWAL DISETEL SENDIRI = FORCE.
+    --
+    -- Dulu RF yang baru selesai setup NGANGGUR: `perintah: -`, semua client
+    -- off, dan gak ada yang jalan sampai ada orang mencet "Jalankan semua" di
+    -- panel. Gejalanya nyesatin -- worker keliatan normal (nyambung, lapor
+    -- jalan) tapi gak ngapa-ngapain, dan gak ada petunjuk kenapa.
+    --
+    -- Padahal RF yang baru disetup ya jelas mau dijalanin. Jadi setup nyetel
+    -- FORCE sendiri buat timnya. Mau ditahan dulu? panel -> "Hentikan".
+    -- ============================================================
+    do
+        local r = api_post(cfg, "/perintah",
+            string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+        local salah = ambil_str(r or "", "error")
+        if r == "" then
+            warn("Perintah awal gak kekirim (panel gak nyambung).")
+            warn("  Nanti pencet 'Jalankan semua' di panel, atau setup ulang.")
+        elseif salah then
+            warn("Perintah awal ditolak panel: " .. salah)
+            warn("  Nanti pencet 'Jalankan semua' di panel.")
+        else
+            ok("Perintah awal disetel: FORCE -- client bakal langsung dibuka.")
+            info("  Mau ditahan dulu? panel -> tim ini -> Hentikan.")
+        end
+    end
 
     -- v5.22: pasang.sh nanya kunci API SEBELUM config ada, jadi dia nyimpen
     -- sementara. Sekarang config-nya udah kebentuk -- pasang kuncinya, terus
@@ -2907,7 +2991,9 @@ local function run(cfg)
     -- -- jadi murah. Isi 0 di config kalau mau dimatiin.
     cfg.jaga_depan_sec    = cfg.jaga_depan_sec or 15
     cfg.suplai_sec        = cfg.suplai_sec or 20        -- v4.54: jadwal cek suplai
-    if cfg.shell_tetap == nil then cfg.shell_tetap = false end   -- v4.70: bawaan MATI
+    -- v5.37: bawaan NYALA (dulu mati). Cadangannya lengkap -- lihat catatan
+    -- di setup. Config lama yang shell_tetap=false tetep dihormatin.
+    if cfg.shell_tetap == nil then cfg.shell_tetap = true end
     cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
     cfg.poll_sec    = cfg.poll_sec or 5
     cfg.stagger_sec = cfg.stagger_sec or 15
@@ -5816,3 +5902,4 @@ if not okrun then
 elseif io.open(PID_FILE, "r") then
     bersih(cfg, "selesai")
 end
+
