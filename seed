@@ -137,6 +137,14 @@
 --       nerima setelannya. Sekarang: warning di konsol + baris "filter: ...
 --       [PANEL GAGAL]" di GUI, jadi ketauan dia lagi pakai setelan yang mana.
 --
+-- v3.2: SEMUA setelan sekarang bisa diatur dari panel. Sebelumnya 8 field
+--       diterima script tapi panel gak punya kontrolnya -- jadi mustahil
+--       diubah dari sana: autoAfk, beliBagus, jedaSiklus, jualTanpaMult,
+--       maxPerSiklus, dan trio ringanOn/ringanSuara/ringanKebun (fitur
+--       Ringankan RAM yang ditambah v2.9 tapi lupa disambungin).
+--       Plus minRarity sekarang ikut dibaca (teks, divalidasi ke RARITY_ORDER
+--       biar gak kesetel ke nilai ngawur yang bikin saringan gak pernah kena).
+--
 -- v1.2: * daftar seed digabung dari 3 sumber (stok toko + SeedData +
 --         RemoteDeveloperProducts) -- dulu cuma SeedData, jadi bolong.
 --       * SEED BARU kedeteksi otomatis & langsung dibeli (bisa dimatiin).
@@ -169,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.1"
+local VERSI = "3.2"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2205,10 +2213,31 @@ function Seed.tarikCfgPanel()
         local n = tonumber(c[k])
         if n and state[k] ~= n then state[k] = n; ubah[#ubah+1] = k .. "=" .. n end
     end
+    -- v3.2: field TEKS dari panel. Dulu cuma giftTarget yang ditangani; minRarity
+    -- kelewat, jadi "Ikut samber seed bagus" bisa dinyalain dari panel tapi
+    -- ambangnya gak bisa diubah -- nyangkut di nilai lokal.
     if type(c.giftTarget) == "string" and state.giftTarget ~= c.giftTarget then
         state.giftTarget = c.giftTarget
         Seed._uidCache = {}          -- tujuan ganti -> cache id lama gak berlaku
         ubah[#ubah+1] = "giftTarget=" .. c.giftTarget
+    end
+    if type(c.minRarity) == "string" and c.minRarity ~= "" then
+        -- cuma terima yang beneran ada di daftar rarity, biar gak nyetel ke
+        -- nilai ngawur yang bikin saringan diam-diam gak pernah kena
+        local sah = false
+        for _, r in ipairs(RARITY_ORDER) do
+            if r:lower() == c.minRarity:lower() then
+                if state.minRarity ~= r then
+                    state.minRarity = r
+                    ubah[#ubah+1] = "minRarity=" .. r
+                end
+                sah = true
+                break
+            end
+        end
+        if not sah then
+            Seed._cfgLog = "minRarity '" .. c.minRarity .. "' gak dikenal"
+        end
     end
     -- daftar jenis: dikirim panel sebagai array nama
     if type(c.seedPilih) == "table" then
