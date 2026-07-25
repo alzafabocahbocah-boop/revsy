@@ -454,9 +454,34 @@
 --        (2) Delta nyangkut di layar "Enter key" -- autoexec gak jalan sampai
 --        Delta kebuka (diberesin v5.46-5.58). Yang bikin susah dilacak: semua
 --        pemeriksaan di sisi worker LOLOS, gagalnya di sisi Delta.
+--
+-- v5.62: FIX POSITIF PALSU di heuristik "client bisu" (v5.50).
+--        Kejadian: lisensi umur 9 MENIT dicurigai basi cuma gara-gara ada 1
+--        client yang belum lapor -> semua client ditutup, bypass jalan
+--        percuma. Padahal masa berlaku kunci Delta gak mungkin sesingkat itu.
+--        Sekarang heuristik itu cuma berlaku kalau lisensinya UDAH LEWAT
+--        AMBANG UMUR (bawaan 1 jam, setel lewat curiga_jam di config).
+--        Di bawah ambang -> berkasnya DIPERCAYA, gak diperiksa lebih jauh.
+--        Pelajarannya: "client jalan tanpa lapor" itu sinyal LEMAH -- sebabnya
+--        banyak (masih loading, panel gak kejangkau, atau nama berkas loader
+--        salah kayak yang kejadian di v5.61). Dia cuma layak jadi jaring
+--        pengaman buat kasus key_jam kegedean, bukan penentu utama.
+--
+-- v5.63: FIX deteksi "masuk game" yang kena PEMBAGIAN NOL logis.
+--        Bug di v5.57: patokan grafis diambil SEKALI, tepat habis client nyala
+--        -- dan saat itu nilainya masih 0.0 MB. Aturan "kini >= dasar * 2"
+--        jadi "kini >= 0" yang SELALU BENAR, jadi dia ngaku "masuk game
+--        setelah 5s" padahal client masih di halaman awal. Sapuan mulai
+--        kecepetan -- persis masalah yang v5.57 mau beresin.
+--        Sekarang DUA TAHAP:
+--          1. tungguin grafis naik lalu MENDATAR (dua bacaan beda <15%, dan
+--             minimal 2 MB) -> itu patokan "udah di halaman awal"
+--          2. baru tungguin naik tajam dari patokan itu -> masuk game
+--        Diuji 4 deret: mulai-dari-0, langsung-stabil, petak mungil, dan
+--        nyangkut-di-home (yang terakhir bener-bener GAK kedeteksi).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.61-cf"
+local VERSION = "5.63-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -566,6 +591,7 @@ local function save_config(cfg)
     f:write(string.format("  link_code=%q,\n",cfg.link_code or ""))
     f:write(string.format("  autoexec_dir=%q,\n",cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"))
     f:write(string.format("  autoexec_bersih=%s,\n",tostring(cfg.autoexec_bersih ~= false)))
+    f:write(string.format("  curiga_jam=%s,\n",tostring(tonumber(cfg.curiga_jam) or 1)))
     f:write(string.format("  pkgs=%q,\n",cfg.pkgs))
     f:write(string.format("  poll_sec=%d,\n",cfg.poll_sec))
     f:write(string.format("  reopen_sec=%d,\n",cfg.reopen_sec or 300))
@@ -2057,18 +2083,50 @@ local function grafis_kb(pkg)
 end
 
 -- Tungguin client bener-bener masuk game. Balik: true/false, lama, sebab.
+--
+-- v5.63 FIX: nilai awal WAJIB stabil dulu, gak boleh langsung dipakai.
+-- Bug di v5.57: nilai awal diambil sekali, tepat habis client nyala -- dan saat
+-- itu grafisnya masih 0.0 MB. Aturan "kini >= dasar * 2" jadi "kini >= 0",
+-- yang SELALU benar. Hasilnya dia ngaku "masuk game setelah 5s" padahal client
+-- masih di halaman awal, terus sapuan mulai kecepetan (persis yang mau
+-- dihindarin).
+--
+-- Sekarang dua tahap:
+--   Tahap 1  tungguin grafis NAIK lalu MENDATAR -> itu keadaan "udah di
+--            halaman awal, selesai gambar". Nilai itu yang jadi patokan.
+--   Tahap 2  baru tungguin dia naik tajam dari patokan itu -> masuk game.
 local function tunggu_masuk_game(pkg, batas, cek_batal)
-    batas = batas or 120
+    batas = batas or 150
     local mulai = os.time()
-    local dasar = grafis_kb(pkg)
-    if not dasar then
-        -- meminfo gak kebaca (ROM aneh / paket salah) -> jangan ngeblok,
-        -- balik false biar pemanggil pakai cara lama (nunggu waktu)
-        return false, 0, "meminfo gak kebaca"
-    end
-    info(("  grafis awal %s: %.1f MB -- nungguin naik (tanda udah di game)")
-        :format(pkg:gsub("com%.roblox%.", ""), dasar / 1024))
+    local nama = pkg:gsub("com%.roblox%.", "")
 
+    -- ---------- tahap 1: cari patokan yang stabil ----------
+    local MIN_KB = 2000        -- di bawah 2 MB = belum gambar apa-apa
+    local dasar, sebelum = nil, 0
+    while (os.time() - mulai) < batas do
+        if cek_batal and cek_batal() then return false, os.time() - mulai, "STANDBY" end
+        local kini = grafis_kb(pkg)
+        if not kini then
+            return false, os.time() - mulai, "meminfo gak kebaca"
+        end
+        if kini >= MIN_KB then
+            -- stabil = dua bacaan berurutan bedanya < 15%
+            if sebelum > 0 and math.abs(kini - sebelum) < (sebelum * 0.15) then
+                dasar = math.max(kini, sebelum)
+                break
+            end
+            sebelum = kini
+        end
+        os.execute("sleep 3")
+    end
+    if not dasar then
+        return false, os.time() - mulai,
+            ("grafis gak pernah stabil di atas %.0f MB"):format(MIN_KB / 1024)
+    end
+    info(("  grafis %s mendatar di %.1f MB -- itu patokan 'halaman awal'")
+        :format(nama, dasar / 1024))
+
+    -- ---------- tahap 2: tungguin naik tajam ----------
     local puncak = dasar
     while (os.time() - mulai) < batas do
         if cek_batal and cek_batal() then return false, os.time() - mulai, "STANDBY" end
@@ -2076,16 +2134,16 @@ local function tunggu_masuk_game(pkg, batas, cek_batal)
         local kini = grafis_kb(pkg)
         if kini then
             if kini > puncak then puncak = kini end
-            -- 2x nilai awal ATAU naik 20 MB -- mana pun yang kena duluan.
-            -- Dua-duanya dipakai biar tetep kena walau nilai awalnya kecil
-            -- (jendela mungil) atau besar (jendela penuh).
+            -- 2x patokan ATAU naik 20 MB -- mana pun kena duluan.
+            -- Dua-duanya dipakai biar petak mungil (kena 2x) dan jendela besar
+            -- (kena +20MB) sama-sama ketangkep.
             if kini >= dasar * 2 or (kini - dasar) >= 20000 then
                 return true, os.time() - mulai
             end
         end
     end
     return false, os.time() - mulai,
-        ("grafis cuma naik %.1f -> %.1f MB"):format(dasar / 1024, puncak / 1024)
+        ("grafis cuma %.1f -> %.1f MB"):format(dasar / 1024, puncak / 1024)
 end
 
 local function tunggu_jalan(pkg, batas, cek_batal)
@@ -2869,7 +2927,26 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         -- bawaan 300 detik) buat lapor. Kalau sampai sekarang belum, ada yang
         -- ngeblok, dan layar key itu penyebab paling umum.
         -- ============================================================
-        if kead == "ada" then
+        -- v5.62: heuristik "client bisu" cuma berlaku kalau lisensinya UDAH
+        -- CUKUP TUA. Ini pembatas yang v5.50 lupa dipasang, dan akibatnya
+        -- positif palsu: lisensi umur 9 MENIT dicurigai basi cuma gara-gara
+        -- ada 1 client yang belum lapor -- terus semua client ditutup dan
+        -- bypass dijalanin percuma.
+        --
+        -- Kenapa gerbang ini sah: masa berlaku kunci Delta gak mungkin cuma
+        -- semenit-dua menit -- kalau iya, seluruh pendekatan bypass ini gak
+        -- ada gunanya. Jadi di bawah ambang ini, berkasnya DIPERCAYA.
+        --
+        -- Dan "client jalan tanpa lapor" itu sinyal yang LEMAH -- sebabnya
+        -- banyak: masih loading, panel gak kejangkau, atau (yang kejadian
+        -- di sini) nama berkas loader-nya salah jadi script gak pernah jalan.
+        -- Heuristik ini cuma jaring pengaman buat kasus key_jam kegedean,
+        -- bukan penentu utama.
+        local UMUR_MIN_CURIGA = (tonumber(cfg.curiga_jam) or 1) * 3600
+        if kead == "ada" and (umur or 0) < UMUR_MIN_CURIGA then
+            -- masih muda -> percaya berkasnya, gak usah diperiksa lebih jauh
+            kead = "ada"
+        elseif kead == "ada" then
             local potretC = pkg_running_semua(list)
             local statC = api_get(cfg, "/stat")
             local jalanTapiBisu, contoh = 0, nil
@@ -2882,8 +2959,8 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             end
             if jalanTapiBisu > 0 then
                 kead = "curiga"
-                warn(("Lisensi kebaca 'ada' (umur %s) TAPI %d client jalan tanpa lapor.")
-                    :format(umur_ringkas(umur), jalanTapiBisu))
+                warn(("Lisensi kebaca 'ada' (umur %s, di atas ambang %dj) TAPI %d client jalan tanpa lapor.")
+                    :format(umur_ringkas(umur), (tonumber(cfg.curiga_jam) or 1), jalanTapiBisu))
                 warn("  Kemungkinan Delta udah minta key lagi -- key_jam=" ..
                      tostring(cfg.key_jam or 24) .. "j itu cuma tebakan.")
                 info("  Dianggap butuh bypass. Contoh: " ..
