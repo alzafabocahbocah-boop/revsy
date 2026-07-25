@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.3"
+local VERSI = "3.4"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1048,6 +1048,56 @@ local function pemegangBuah()
     local bp = player:FindFirstChildOfClass("Backpack"); if bp then t[#t+1] = bp end
     return t
 end
+
+local function muatNilaiJual()
+    if Seed._nilaiJual ~= nil then return Seed._nilaiJual end
+    Seed._nilaiJual = {}
+    pcall(function()
+        local sm = RS:FindFirstChild("SharedModules")
+        local m = sm and sm:FindFirstChild("SellValueData")
+        if not m then return end
+        local ok, mod = pcall(require, m)
+        if not ok or type(mod) ~= "table" then return end
+        for k, v in pairs(mod) do
+            if type(k) == "string" and tonumber(v) then
+                Seed._nilaiJual[k] = tonumber(v)
+            end
+        end
+    end)
+    return Seed._nilaiJual
+end
+
+-- ============================================================
+-- v3.4: SHECKLES TERTUNDA -- nilai buah di tas yang BELUM kejual.
+--
+-- Kenapa bukan ngitung jumlah mail di mailbox: terimaGift ngosongin mailbox
+-- tiap siklus, jadi mail gak pernah numpuk -- begitu masuk langsung diklaim
+-- dan buahnya pindah ke TAS. Yang nunggu di tas itu yang sebenernya
+-- "sheckles tertunda": barangnya udah ada, tinggal nunggu pengali pasar
+-- nyampe ambang jual.
+--
+-- Nilainya dari SellValueData x jumlah. Ini PERKIRAAN KASAR -- harga jual
+-- asli masih dikali pengali pasar dan ukuran buah. Dipakai buat mutusin
+-- "akun ini udah dikirimin, jangan dikirimin lagi", bukan buat pembukuan.
+-- ============================================================
+function Seed.nilaiTertunda()
+    local nilai, jumlah = 0, 0
+    local hargaMap = muatNilaiJual()
+    pcall(function()
+        for _, holder in ipairs(pemegangBuah()) do
+            for _, o in ipairs(holder:GetChildren()) do
+                if o:GetAttribute("Id") then          -- penanda buah
+                    jumlah = jumlah + 1
+                    local jenis = jenisBuah(o.Name)
+                    local h = jenis and hargaMap[jenis]
+                    if h then nilai = nilai + h end
+                end
+            end
+        end
+    end)
+    return nilai, jumlah
+end
+
 
 function Seed.jualSekali()
     local p = pkt("NPCS", "SellFruit")
@@ -2095,6 +2145,14 @@ function Seed.startPanel()
                         -- Di akun beli-seed, yang setara "lagi kerja" = saklar beli.
                         farm2On = state.beliOn and true or false,
                         sheck = sheckles(),
+                        -- v3.4: buah nunggu jual + isi mailbox. Panel pakai ini
+                        -- buat "sheckles tertunda" -- akun yang barangnya udah
+                        -- dateng tapi belum kejual (nunggu pengali nyampe ambang).
+                        -- Tanpa ini, auto-suplai bakal ngirim terus ke akun yang
+                        -- sebenernya udah dikirimin.
+                        tunda = select(1, Seed.nilaiTertunda()),
+                        buah  = select(2, Seed.nilaiTertunda()),
+                        mail  = Seed.jumlahGift(),
                         tot   = totSeed,
                         job   = tostring(game.JobId or ""):sub(1, 8),
                         place = tostring(game.PlaceId or ""),
@@ -2478,23 +2536,6 @@ end
 Seed._nilaiJual = nil
 Seed._seedEnabled = nil
 
-local function muatNilaiJual()
-    if Seed._nilaiJual ~= nil then return Seed._nilaiJual end
-    Seed._nilaiJual = {}
-    pcall(function()
-        local sm = RS:FindFirstChild("SharedModules")
-        local m = sm and sm:FindFirstChild("SellValueData")
-        if not m then return end
-        local ok, mod = pcall(require, m)
-        if not ok or type(mod) ~= "table" then return end
-        for k, v in pairs(mod) do
-            if type(k) == "string" and tonumber(v) then
-                Seed._nilaiJual[k] = tonumber(v)
-            end
-        end
-    end)
-    return Seed._nilaiJual
-end
 
 -- true / false / nil (nil = gak bisa dipastiin)
 local function seedUdahRilis(nama)
