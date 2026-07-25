@@ -402,9 +402,46 @@
 --        Sekarang: daftar semua client + nama akun + status jalan/mati, terus
 --        yang jadi target DIBAWA KE DEPAN (am start REORDER_TO_FRONT, gak
 --        nge-restart game) biar jelas jendela mana yang dimaksud.
+--
+-- v5.56: `zenx layar` nunggu ENTER, bukan hitung mundur.
+--        Hitung mundur 20 detik kependekan: user masih harus nyari jendelanya,
+--        tap "Tap anywhere to play", terus nungguin game-nya kebuka -- dan
+--        lamanya beda-beda tergantung RF lagi berat apa nggak.
+--        Enter = gak ada batas waktu, dan kendalinya di user.
+--
+-- v5.57: DETEKSI "UDAH DI DALAM GAME" AKHIRNYA KETEMU -- lewat MEMORI GRAFIS.
+--        Hasil ukur lapangan (`zenx layar`, RF aMKTN1):
+--            Graphics   HOME 15.284 KB  ->  GAME 48.988 KB   (3,2x)
+--        Kandidat lain gugur:
+--          * jumlah window 6 vs 6 -- sama. ID-nya berubah tapi itu cuma
+--            handle acak, bukan penanda.
+--          * UDP/TCP keukur SE-DEVICE (/proc/net/*), bukan per-client --
+--            kecampur app lain, gak bisa dipercaya. (Salah rancang di alat
+--            ukurnya, bukan sinyalnya yang jelek.)
+--        Graphics dari `dumpsys meminfo <pkg>` beneran per-client.
+--        Ambangnya RELATIF (2x nilai awal ATAU +20 MB), bukan angka mati --
+--        memori grafis ikut ukuran jendela, jadi angka tetap bakal salah di
+--        RF dengan susunan grid beda. Dua aturan dipakai barengan biar
+--        petak mungil (kena 2x) dan jendela besar (kena +20MB) sama-sama
+--        ketangkep.
+--        Sekarang sapuan tombol key nunggu SINYAL, bukan nebak 20 detik.
+--
+-- v5.58: BYPASS DIMULAI DARI PAPAN BERSIH -- semua client ditutup dulu.
+--        Dulu client lain (statusnya latar/beku) dibiarin nyala selama bypass.
+--        Dua masalahnya:
+--          1. RAM kebagi. Di RF 4GB dengan 3 client nyala, sisa buat client
+--             bypass tinggal sedikit -- loading game lama atau gak nyampe, dan
+--             deteksi grafis (v5.57) gagal.
+--          2. Client-client itu nyangkut di layar key juga -- nyala tanpa guna,
+--             cuma makan tenaga.
+--        Sekarang urutannya bener-bener: tutup semua -> bypass sendirian dengan
+--        RAM penuh -> tutup lagi -> buka semua dari [1/4] kayak biasa.
+--        Sekalian cabang "client udah jalan" dibuang -- keadaannya sekarang
+--        selalu sama (semua ketutup), jadi gak perlu dua jalur. Cabang itu
+--        dulu bikin jendelanya kepakai petak lama.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.55-cf"
+local VERSION = "5.58-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -1974,6 +2011,68 @@ local function pkg_hidup(pkg)
     return (sh("su -c 'pidof " .. pkg .. "'") or ""):match("%d") ~= nil
 end
 
+-- ============================================================
+-- v5.57: DETEKSI "UDAH DI DALAM GAME" LEWAT MEMORI GRAFIS.
+--
+-- Latar: activity Roblox SAMA persis antara halaman awal dan di-dalam-game
+-- (v4.36 -- ActivityNativeMain & MainGameActivity itu nama lama vs baru buat
+-- activity yang sama), dan teks layar gak kebaca (v4.86). Jadi dulu gak ada
+-- cara tau client udah masuk game apa belum -- sapuan tombol key mulai
+-- kecepetan, 16 titik kebuang buat dialog yang belum nongol.
+--
+-- Hasil ukur di lapangan (`zenx layar`, RF aMKTN1):
+--     Graphics   HOME  15.284 KB   ->   GAME  48.988 KB   (3,2x)
+-- Kandidat lain gugur:
+--   * jumlah window: 6 vs 6 -- sama. ID-nya emang berubah, tapi itu cuma
+--     handle acak, bukan penanda.
+--   * UDP/TCP: keukur SE-DEVICE (/proc/net/*), bukan per-client -- kecampur
+--     app lain, jadi gak bisa dipercaya.
+-- Graphics dari `dumpsys meminfo <pkg>` itu BENERAN per-client.
+--
+-- Patokannya SENGAJA relatif (kelipatan dari nilai awal), bukan angka mati:
+-- memori grafis ikut ukuran jendela. Di RF 10 client petaknya kecil, angkanya
+-- pasti lebih rendah dari hasil ukur di atas. Kalau dipatok angka tetap,
+-- deteksi bakal salah di RF dengan susunan beda.
+-- ============================================================
+local function grafis_kb(pkg)
+    local o = sh("su -c 'dumpsys meminfo " .. pkg .. " 2>/dev/null | grep -i Graphics'") or ""
+    -- baris bentuknya: "  Graphics:    48988      ..." -> ambil angka pertama
+    local n = o:match("[Gg]raphics:%s*(%d+)")
+    return tonumber(n)
+end
+
+-- Tungguin client bener-bener masuk game. Balik: true/false, lama, sebab.
+local function tunggu_masuk_game(pkg, batas, cek_batal)
+    batas = batas or 120
+    local mulai = os.time()
+    local dasar = grafis_kb(pkg)
+    if not dasar then
+        -- meminfo gak kebaca (ROM aneh / paket salah) -> jangan ngeblok,
+        -- balik false biar pemanggil pakai cara lama (nunggu waktu)
+        return false, 0, "meminfo gak kebaca"
+    end
+    info(("  grafis awal %s: %.1f MB -- nungguin naik (tanda udah di game)")
+        :format(pkg:gsub("com%.roblox%.", ""), dasar / 1024))
+
+    local puncak = dasar
+    while (os.time() - mulai) < batas do
+        if cek_batal and cek_batal() then return false, os.time() - mulai, "STANDBY" end
+        os.execute("sleep 5")
+        local kini = grafis_kb(pkg)
+        if kini then
+            if kini > puncak then puncak = kini end
+            -- 2x nilai awal ATAU naik 20 MB -- mana pun yang kena duluan.
+            -- Dua-duanya dipakai biar tetep kena walau nilai awalnya kecil
+            -- (jendela mungil) atau besar (jendela penuh).
+            if kini >= dasar * 2 or (kini - dasar) >= 20000 then
+                return true, os.time() - mulai
+            end
+        end
+    end
+    return false, os.time() - mulai,
+        ("grafis cuma naik %.1f -> %.1f MB"):format(dasar / 1024, puncak / 1024)
+end
+
 local function tunggu_jalan(pkg, batas, cek_batal)
     local mulai = os.time()
     local lastKabar = 0   -- v4.72: kabarin tiap 15 detik, biar gak keliatan diem
@@ -2766,19 +2865,40 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
 
             if cfg.auto_key == true and (os.time() - (BYPASS_TERAKHIR or 0)) > 300 then
                 BYPASS_TERAKHIR = os.time()
-                info("  bypass DULU lewat 1 client, sisanya nunggu...")
+                info("  bypass DULU -- semua client ditutup, mulai dari nol")
 
-                -- pilih client: yang udah jalan diutamain (layar key-nya udah nongol)
-                local pilih
-                local potret = pkg_running_semua(list)
-                for _, p in ipairs(list) do
-                    if potret[p] then pilih = p break end
+                -- ============================================================
+                -- v5.58: TUTUP SEMUA CLIENT DULU, baru bypass.
+                --
+                -- Dulu client lain (yang statusnya latar/beku) dibiarin nyala
+                -- selama bypass. Dua masalahnya:
+                --   1. RAM kebagi. Di RF 4GB dengan 3 client nyala, sisa buat
+                --      client bypass tinggal sedikit -- loading game jadi lama
+                --      atau malah gak nyampe, dan deteksi grafis gagal.
+                --   2. Client-client itu nyangkut di layar key juga -- gak ada
+                --      gunanya nyala, cuma makan tenaga.
+                -- Sekarang: bersihin semua, bypass sendirian dengan RAM penuh,
+                -- baru buka semua dari [1/4] kayak biasa.
+                -- ============================================================
+                do
+                    local potretAwal = pkg_running_semua(list)
+                    local nyala = 0
+                    for _, p in ipairs(list) do if potretAwal[p] then nyala = nyala + 1 end end
+                    if nyala > 0 then
+                        info(("  tutup %d client yang nyala biar RAM lega buat bypass..."):format(nyala))
+                        close_all(cfg, nil, mapLink, true)
+                        os.execute("sleep 3")
+                    end
                 end
-                pilih = pilih or list[1]
-                local sudahJalan = potret[pilih] and true or false
 
-                -- kalau belum jalan, buka dia sendiri dulu biar layar key-nya nongol
-                if not sudahJalan then
+                -- semua ketutup -> selalu buka dari nol. Ambil client pertama.
+                local pilih = list[1]
+
+                -- buka dia sendirian biar layar key-nya nongol.
+                -- (v5.58: gak ada lagi cabang "udah jalan" -- semua udah
+                -- ditutup di atas, jadi keadaannya selalu sama. Dulu ada dua
+                -- cabang dan yang satu bikin jendelanya kepakai petak lama.)
+                do
                     -- v5.46b: DIBUKA DI PETAK GRID-nya, bukan jendela penuh.
                     -- Alasannya: kalibrasi tombol (zenx_tap.txt) dikunci per
                     -- UKURAN JENDELA -- "396x293 0.823 0.723" dst. Ukuran grid
@@ -2797,14 +2917,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
                     open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
                     tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
-                    -- v5.52: 20 detik, bukan 3. tunggu_jalan cuma mastiin
-                    -- activity Roblox nongol -- game-nya sendiri masih loading,
-                    -- dan Delta nyuntik dialognya setelah itu. 3 detik bikin
-                    -- sapuan pertama selalu kebuang.
-                    info("  nunggu game kebuka + Delta nyuntik dialog (20s)...")
-                    for _ = 1, 20 do
-                        if cek_batal and cek_batal() then break end
-                        os.execute("sleep 1")
+                    -- v5.57: nunggu SINYAL, bukan nebak waktu. tunggu_jalan
+                    -- cuma mastiin activity Roblox nongol -- dan itu udah kena
+                    -- di halaman awal. Yang nandain beneran masuk game itu
+                    -- MEMORI GRAFIS naik tajam (ukur lapangan: 15 -> 49 MB).
+                    local msk, lama, sbb = tunggu_masuk_game(pilih, 150, cek_batal)
+                    if msk then
+                        ok(("  masuk game setelah %ds -- dialog key bentar lagi nongol"):format(lama))
+                        os.execute("sleep 8")   -- kasih jeda Delta nyuntik dialognya
+                    else
+                        warn("  gak kedeteksi masuk game (" .. tostring(sbb) .. ")")
+                        info("  lanjut aja -- sapuan tetep dicoba beberapa putaran")
                     end
                 end
 
@@ -6661,26 +6784,35 @@ if PERINTAH == "layar" then
         return hasil
     end
 
-    local function hitungMundur(detik, pesan)
+    -- v5.56: TUNGGU ENTER, bukan hitung mundur.
+    -- Hitung mundur 20 detik itu kependekan: user masih harus nyari jendelanya,
+    -- tap "Tap anywhere to play", terus nungguin game-nya kebuka. Dan waktu yang
+    -- pas itu beda-beda -- tergantung RF lagi berat apa nggak.
+    -- Enter = gak ada batas waktu, dan yang megang kendali user.
+    local function tungguSiap(pesan, rinci)
         print("")
         print(C.BOLD .. C.Y .. "  " .. pesan .. C.N)
-        for s = detik, 1, -1 do
-            io.write(("\r  mulai ngukur dalam %2ds ... "):format(s))
-            io.flush()
-            os.execute("sleep 1")
+        if rinci then
+            for _, r in ipairs(rinci) do print(C.D .. "    " .. r .. C.N) end
         end
-        io.write("\r  ngukur sekarang...            \n")
-        io.flush()
+        ask("  Tekan ENTER kalau udah siap", "")
+        info("  ngukur...")
     end
 
     print(C.BOLD .. C.C .. "\n=== SINYAL LAYAR: " .. target .. " ===" .. C.N)
     print(C.D .. "  Diukur 2x, terus ditampilin cuma yang BEDA." .. C.N)
 
-    hitungMundur(20, "SIAPIN keadaan PERTAMA (mis. biarin di HALAMAN AWAL Roblox)")
+    tungguSiap("KEADAAN 1 -- biarin client di HALAMAN AWAL Roblox", {
+        "yang keliatan: Search / Charts / Avatar",
+        "kalau lagi di dalam game, keluar dulu ke halaman awal",
+    })
     local a = ukur()
     ok("Keadaan 1 kerekam.")
 
-    hitungMundur(20, "SEKARANG PINDAHIN ke keadaan KEDUA (mis. MASUK GAME)")
+    tungguSiap("KEADAAN 2 -- sekarang MASUKIN client ke GAME", {
+        "tap 'Tap anywhere to play', tungguin sampai kebun-nya kebuka",
+        "gak usah buru-buru -- gak ada batas waktu",
+    })
     local b = ukur()
     ok("Keadaan 2 kerekam.")
 
