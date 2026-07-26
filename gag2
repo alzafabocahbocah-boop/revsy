@@ -14,6 +14,25 @@
 --        pas gak ada gunanya.
 --        Mau balik ke perilaku lama: config -> sprIkutTrigger=false
 --
+-- v14.2: ANTREAN SUPLAI ditampilin di tab AUTO GIFT -- akun seed mana aja yang
+--        nunggu dikirimin, plus berapa yang tertunda.
+--        Gunanya NGECEK SILANG sama panel: dua angka dari satu sumber (aturan
+--        SQL-nya sama persis kayak /basket/relay). Kalau panel bilang 10 tapi
+--        di sini 0, yang bermasalah SAMBUNGANNYA, bukan datanya -- dan itu
+--        ketauan langsung, bukan setelah berjam-jam bingung kok gak ngirim.
+--        Alamatnya diturunin dari gfRelayUrl (gsub -> /basket/zenxantrean),
+--        jadi cukup satu URL yang disetel.
+--        TEMPATNYA di tab AUTO FARM 2, kartu "Gift Glow (Mail)" -- di situ
+--        Glow-nya dikirim, jadi di situ juga tujuannya diliat. Kotak ketikan
+--        "Target user" DIGANTI daftar ini, karena target manual itu SELALU
+--        ditimpa getPriorityTarget() dari panel -- kotaknya keliatan
+--        berpengaruh padahal nggak, dan itu nyesatin.
+--        Ditarik pas kartu dibuka, pas pencet SEGARKAN, dan otomatis tiap 20
+--        detik. Ini buat DILIAT, bukan buat ngambil keputusan -- narik lebih
+--        sering cuma boros kuota tanpa nambah guna.
+--        Isian manual masih ada di config (sfGlowGiftTarget) buat cadangan
+--        kalau panel gak ngasih target sama sekali.
+--
 -- v14.0: RELAY PINDAH DARI PANTRY KE PANEL STAR (Cloudflare Worker).
 --        Cuma satu baris yang berubah -- bawaan gfRelayUrl. Semua mekanismenya
 --        (priority, gate Glow, registry penuh, gift Glow) DIPAKAI APA ADANYA,
@@ -425,7 +444,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v14.1"
+local VER       = "STAR v14.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5854,6 +5873,80 @@ function Farm.fullRegistryUrl()
     if not u or u == "" then return nil end
     return (u:gsub("/basket/[^/]+$", "/basket/zenxfull"))
 end
+-- ============================================================
+-- v14.2: BACA ANTREAN SUPLAI -- akun seed mana aja yang nunggu dikirimin.
+--
+-- Kenapa ditampilin di sisi farm juga, padahal panel udah punya: sekarang
+-- satu-satunya cara tau sambungan panel<->farm jalan itu ngeliat panel. Kalau
+-- farm nampilin daftar yang SAMA, dua sisi bisa saling dicek -- panel bilang
+-- 10 tapi farm bilang 0 berarti sambungannya yang bermasalah, bukan datanya.
+--
+-- Alamatnya diturunin dari gfRelayUrl pakai gsub yang sama kayak zenxprio &
+-- zenxfull -- jadi cukup satu URL yang disetel, sisanya ngikut.
+--
+-- Cache 15 detik: ini cuma buat DILIAT, gak buat ngambil keputusan. Ngambil
+-- lebih sering cuma boros permintaan (kuota CF), tanpa nambah guna.
+-- ============================================================
+function Farm.antreanUrl()
+    local u = state.gfRelayUrl
+    if not u or u == "" then return nil end
+    return (u:gsub("/basket/[^/]+$", "/basket/zenxantrean"))
+end
+
+function Farm.getAntrean()
+    local now = os.clock()
+    if Farm._antreCache and (now - (Farm._antreCacheAt or 0)) < 15 then
+        return Farm._antreCache
+    end
+    local hasil = { aktif = false, sebab = "belum kebaca", antre = {}, jml = 0, tertunda = 0 }
+    local url = Farm.antreanUrl()
+    if not url then
+        hasil.sebab = "gfRelayUrl belum disetel"
+        Farm._antreCache, Farm._antreCacheAt = hasil, now
+        return hasil
+    end
+
+    local resp = Farm.relayReq({ Url = url, Method = "GET" })
+    local body = resp and (resp.Body or resp.body)
+    if not body then
+        hasil.sebab = "panel gak jawab"
+        Farm._antreCache, Farm._antreCacheAt = hasil, now
+        return hasil
+    end
+
+    local ok, d = pcall(function() return HS:JSONDecode(body) end)
+    if not ok or type(d) ~= "table" then
+        hasil.sebab = "jawaban gak kebaca"
+    elseif type(d.error) == "string" then
+        -- backend versi lama -> jalur ini belum ada. Dibilangin terus terang,
+        -- biar gak keliatan kayak "gak ada yang butuh".
+        hasil.sebab = "panel: " .. d.error
+    else
+        hasil.aktif    = (d.aktif == true)
+        hasil.sebab    = d.sebab or (hasil.aktif and "aktif" or "?")
+        hasil.ambang   = tonumber(d.ambang) or 0
+        hasil.tertunda = tonumber(d.tertunda) or 0
+        hasil.antre    = {}
+        if type(d.antre) == "table" then
+            for _, x in ipairs(d.antre) do
+                if type(x) == "table" and type(x.nm) == "string" then
+                    hasil.antre[#hasil.antre + 1] = {
+                        nm    = x.nm,
+                        shk   = tonumber(x.shk) or 0,
+                        tunda = tonumber(x.tunda) or 0,
+                        mail  = tonumber(x.mail) or 0,
+                        tim   = tostring(x.tim or ""),
+                    }
+                end
+            end
+        end
+        hasil.jml = #hasil.antre
+    end
+
+    Farm._antreCache, Farm._antreCacheAt = hasil, now
+    return hasil
+end
+
 -- akun penyimpanan: tandai penuh / gak penuh (value timestamp = penuh, 0 = gak)
 function Farm.setStorageFull(isFull)
     local url = Farm.fullRegistryUrl()
@@ -11434,33 +11527,126 @@ do
     AP.applySell2 = mkBodyToggle(body, 124, "Auto Sell 2", "autoSell2", "Auto Sell 2")
 end
 
--- CARD AF2-5: GIFT GLOW (STAR FARM) - target user PERSISTEN + status live
+-- ============================================================
+-- CARD AF2-5: GIFT GLOW (Mail)
+--
+-- v14.2: kotak "Target user" DIGANTI daftar ANTREAN OTOMATIS.
+--
+-- Alasannya: target-nya udah gak diisi manual lagi. getPriorityTarget() baca
+-- dari panel (/basket/zenxprio) dan itu NIMPA isian manual -- jadi kotak
+-- ketikan di sini cuma bikin bingung: keliatan berpengaruh, padahal ditimpa.
+--
+-- Yang ditampilin sekarang: antrean akun seed yang nunggu dikirimin, urut
+-- dari yang sheckles-nya paling mepet. Ini yang bikin sambungan panel<->farm
+-- bisa DICEK: kalau panel bilang 10 tapi di sini 0, sambungannya bermasalah.
+-- Aturan SQL-nya sama persis kayak yang dipakai buat MILIH target, jadi baris
+-- teratas di daftar ini = akun yang bakal dikirimin sekarang.
+--
+-- Isian manual masih ada di config (sfGlowGiftTarget) buat kasus darurat --
+-- cuma kepakai kalau panel gak ngasih target sama sekali.
+-- ============================================================
 do
-    local card, body, setH = mkFarmCard(14, "Gift Glow (Mail)", "auto: 20 Glow >=50kg/batch . target disave", buyList)
-    setH(150)
-    lbl(body, "Target user (username)", 12, C.text, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,4)
-    local tgtBox = mk("TextBox", { Size = UDim2.new(1,0,0,30), Position = UDim2.new(0,0,0,28),
-        BackgroundColor3 = C.input, Text = tostring(state.sfGlowGiftTarget or ""), PlaceholderText = "username penerima",
-        TextColor3 = C.text, Font = FONT, TextSize = 13, BorderSizePixel = 0, ClearTextOnFocus = false, Parent = body })
-    corner(tgtBox, 6); stroke(tgtBox, C.border, 1)
-    tgtBox.FocusLost:Connect(function()
-        state.sfGlowGiftTarget = (tgtBox.Text or ""):gsub("%s+", "")
-        tgtBox.Text = state.sfGlowGiftTarget
-        saveState()
-        print("[StarFarm] target gift Glow: "..(state.sfGlowGiftTarget ~= "" and state.sfGlowGiftTarget or "(kosong)"))
+    local card, body, setH = mkFarmCard(14, "Gift Glow (Mail)",
+        "auto: 20 Glow >=50kg/batch . target dari panel", buyList)
+    setH(196)
+
+    lbl(body, "Antrean suplai (dari panel)", 12, C.text, Enum.TextXAlignment.Left)
+        .Position = UDim2.new(0, 0, 0, 4)
+
+    local antStat = lbl(body, "belum kebaca", 10, C.textDim, Enum.TextXAlignment.Left)
+    antStat.Position = UDim2.new(0, 0, 0, 22)
+    antStat.Size = UDim2.new(0.66, 0, 0, 14)
+
+    local antBtn = mk("TextButton", { Size = UDim2.new(0.32, 0, 0, 22),
+        Position = UDim2.new(0.68, 0, 0, 18), BackgroundColor3 = C.input,
+        Text = "SEGARKAN", TextColor3 = C.text, Font = FONT, TextSize = 10,
+        BorderSizePixel = 0, Parent = body })
+    corner(antBtn, 6); stroke(antBtn, C.border, 1)
+
+    local antList = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 0, 84),
+        Position = UDim2.new(0, 0, 0, 44), BackgroundColor3 = C.input,
+        BorderSizePixel = 0, ScrollBarThickness = 3,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = body })
+    corner(antList, 6); stroke(antList, C.border, 1)
+    mk("UIListLayout", { Padding = UDim.new(0, 2), Parent = antList })
+    mk("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 6),
+        PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 4), Parent = antList })
+
+    local function gambarAntrean()
+        for _, c in ipairs(antList:GetChildren()) do
+            if c:IsA("TextLabel") then c:Destroy() end
+        end
+        local a = Farm.getAntrean()
+
+        if not a.aktif then
+            antStat.Text = "MATI -- " .. tostring(a.sebab)
+            antStat.TextColor3 = C.red
+            local l = lbl(antList, tostring(a.sebab), 10, C.textDim, Enum.TextXAlignment.Left)
+            l.Size = UDim2.new(1, 0, 0, 16)
+            return
+        end
+
+        -- v14.2: Farm.abbrev, BUKAN fmtN. fmtN itu lokal di blok lain (baris
+        -- ~12684) dan gak ada di scope kartu ini -- manggilnya bakal "attempt
+        -- to call a nil value" yang ketelan pcall, jadi daftarnya diem tanpa
+        -- sebab. Ketangkep pas ngecek urutan deklarasi.
+        antStat.Text = ("%d nunggu  ·  %d tertunda  ·  ambang %s"):format(
+            a.jml, a.tertunda, Farm.abbrev(a.ambang or 0))
+        antStat.TextColor3 = (a.jml > 0) and C.green or C.textDim
+
+        if a.jml == 0 then
+            local l = lbl(antList, "gak ada yang butuh -- Glow ditahan di tas", 10,
+                          C.textDim, Enum.TextXAlignment.Left)
+            l.Size = UDim2.new(1, 0, 0, 16)
+            return
+        end
+
+        for i, x in ipairs(a.antre) do
+            -- baris teratas = yang bakal dikirimin sekarang (urutannya sama
+            -- kayak yang dipakai buat milih target)
+            local l = lbl(antList,
+                ("%s%-16s %s%s"):format(i == 1 and "> " or "  ",
+                    x.nm:sub(1, 16), Farm.abbrev(x.shk),
+                    x.tim ~= "" and ("  " .. x.tim) or ""),
+                10, (i == 1) and C.green or C.textDim, Enum.TextXAlignment.Left)
+            l.Size = UDim2.new(1, 0, 0, 15)
+        end
+    end
+
+    antBtn.MouseButton1Click:Connect(function()
+        antBtn.Text = "..."
+        Farm._antreCacheAt = nil          -- paksa tarik ulang
+        task.spawn(function()
+            pcall(gambarAntrean)
+            antBtn.Text = "SEGARKAN"
+        end)
     end)
+
     local gInfo = lbl(body, "", 11, C.textMute, Enum.TextXAlignment.Left)
-    gInfo.Position = UDim2.new(0,0,0,66); gInfo.Size = UDim2.new(1,0,0,72); gInfo.TextWrapped = true; gInfo.TextYAlignment = Enum.TextYAlignment.Top
+    gInfo.Position = UDim2.new(0, 0, 0, 132)
+    gInfo.Size = UDim2.new(1, 0, 0, 58)
+    gInfo.TextWrapped = true
+    gInfo.TextYAlignment = Enum.TextYAlignment.Top
+
     task.spawn(function()
+        local n = 0
         while card.Parent do
             pcall(function()
                 gInfo.Text = string.format("Glow >=%dkg di tas: %s  |  kirim tiap >=%s  |  %s",
                     state.glowKgMin or 30, tostring(Farm._sfGlowInBag or 0),
-                    tostring(state.sfGlowGiftBatch or 20), Farm._sfGiftStatus or "nunggu buah...")
+                    tostring(state.sfGlowGiftBatch or 20),
+                    Farm._sfGiftStatus or "nunggu buah...")
             end)
+            -- antrean disegarkan sendiri tiap 20 detik. Jarang, karena ini buat
+            -- DILIAT -- yang butuh segar sekarang tinggal pencet SEGARKAN.
+            n = n + 1
+            if n % 20 == 0 then pcall(gambarAntrean) end
             task.wait(1)
         end
     end)
+
+    task.spawn(function() pcall(gambarAntrean) end)
 end
 
 -- CARD AF2-6: GLOW SETTINGS (STAR FARM) - toggle khusus buah Glow + status ASLI per fitur
@@ -12530,6 +12716,11 @@ do
         print("[StarFarm] relay url -> "..(state.gfRelayUrl ~= "" and "diset" or "kosong"))
     end)
     Farm._applyGfWrite = mkBodyToggle(body, 252, "Akun ini PET (kirim sheckles)", "gfRelayWrite", "Relay Writer")
+
+    -- v14.2: daftar antrean suplai DIPINDAH ke tab AUTO FARM 2, di kartu
+    -- "Gift Glow (Mail)" -- di situ tempatnya, karena Glow itu yang dikirim
+    -- ke antrean tersebut. Ditaruh di dua tempat cuma bikin dua tempat yang
+    -- harus dirawat, dan dua angka yang bisa beda kalau salah satu ketinggalan.
 
     -- v21.8: akun simpanan (rotasi, dipisah koma) - buah >= 4M dialihin ke sini kalau pet udah cukup
     lbl(body, "Akun Simpanan (rotasi, pisah koma | buah >=4M)", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,446)
