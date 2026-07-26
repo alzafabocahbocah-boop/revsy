@@ -521,9 +521,38 @@
 --          * daftar client               -> dipindai; nol client = berhenti
 --        Tanpa preset, wizard lama tetep jalan -- ada RF yang perlu setelan
 --        gak biasa, dan maksa semuanya lewat preset cuma mindahin kerumitan.
+--
+-- v5.69: FIX `pasang <preset>` masih NANYA -- jadi klaim "sekali jalan langsung
+--        jadi" itu bohong. Kejadian di lapangan: mandek di 'Kunci API
+--        bypass.vip' nunggu Enter.
+--        Sebabnya presetnya dibaca di UJUNG blok pasang, padahal prompt-nya
+--        ada di TENGAH. Sekarang dibaca di awal, dan tiga prompt dilewat:
+--          * Kunci API   -> gak perlu; kuncinya di panel (v15-64), `zenx key`
+--                           narik dari sana. Nanya per-RF itu ngundang salah
+--                           tempel, dan kalau kuncinya ganti harus dibenerin
+--                           di 20 HP satu-satu.
+--          * Auto-jalan  -> langsung dipasang. RF pakai preset itu memang buat
+--                           jalan terus, dan kalau ini kelewat gejalanya paling
+--                           nyusahin: RF restart, semua keliatan normal, tapi
+--                           worker gak pernah nyala lagi tanpa tanda apa pun.
+--          * Run sekarang -> `pasang <preset>` dihitung NON_INTERAKTIF.
+--
+-- v5.70: FIX TERMINAL KEREBUT -- gejalanya "Termux gak bisa diketik apa pun".
+--        Shell root latar dijalanin gini:
+--            su -c 'sh < FIFO >> OUT 2>&1' >/dev/null 2>&1 &
+--        `sh` di dalamnya dialihin ke pipa, TAPI `su` sendiri masih nempel ke
+--        stdin TERMINAL. Akibatnya: (1) `su` ikut ngerebut ketikan, jadi prompt
+--        keliatan nunggu tapi ketikan gak nyampe; (2) sebagian `su` naruh tty
+--        ke mode raw -> carriage return ilang, keluaran menjorok makin dalam
+--        tiap baris (itu yang keliatan di layar).
+--        Gejalanya NYESATIN: keliatan worker-nya nyangkut, padahal
+--        TERMINALNYA yang rusak.
+--        Diperbaiki tiga lapis: </dev/null (stdin bukan terminal lagi),
+--        setsid kalau ada (lepas dari controlling terminal), stty sane
+--        setelahnya (benerin tty kalau sempat kena).
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.68-cf"
+local VERSION = "5.70-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -767,9 +796,38 @@ local function shell_nyalakan()
     if not adaPipa:find("ADA", 1, true) then
         return false, "mkfifo gak jalan (pkg install coreutils?)"
     end
-    -- shell root nyala di latar, baca dari pipa, tulis ke file keluaran
-    os.execute("su -c 'sh < " .. SHELL_IN .. " >> " .. SHELL_OUT .. " 2>&1' >/dev/null 2>&1 &")
+    -- ============================================================
+    -- v5.70: shell root DILEPAS dari terminal.
+    --
+    -- Dulu: su -c '...' >/dev/null 2>&1 &
+    -- `sh` di dalamnya dialihin ke pipa, TAPI `su` sendiri masih nempel ke
+    -- stdin terminal. Dua akibatnya, dan dua-duanya kejadian di lapangan:
+    --   1. `su` ikut ngerebut apa yang diketik -> prompt keliatan nunggu tapi
+    --      ketikan gak nyampe. Kesannya Termux hang.
+    --   2. sebagian implementasi `su` naruh tty ke mode raw -> carriage return
+    --      ilang, dan keluaran jadi menjorok makin dalam tiap baris.
+    -- Gejalanya nyesatin: keliatan kayak worker-nya nyangkut, padahal
+    -- terminalnya yang rusak.
+    --
+    -- Tiga lapis biar bener-bener lepas:
+    --   </dev/null  -> stdin su gak lagi terminal
+    --   setsid      -> lepas dari controlling terminal (kalau ada)
+    --   stty sane   -> benerin tty setelahnya, kalau sempat kena
+    -- ============================================================
+    -- v5.70: dicek pakai `command -v`, BUKAN ada_perintah() -- fungsi itu
+    -- lokal di dalam blok `pasang` (baris ~6395) dan GAK ADA di sini.
+    -- Manggilnya bakal "attempt to call a nil value" dan shell root gagal
+    -- total. Ketangkep pas ngecek urutan deklarasi.
+    local pakaiSetsid = ""
+    if sh_lama("command -v setsid >/dev/null 2>&1 && echo ADA"):find("ADA", 1, true) then
+        pakaiSetsid = "setsid "
+    end
+    os.execute(pakaiSetsid .. "su -c 'sh < " .. SHELL_IN .. " >> " .. SHELL_OUT ..
+               " 2>&1' </dev/null >/dev/null 2>&1 &")
     os.execute("sleep 1")
+    -- benerin terminal kalau `su` sempat ngerusak line discipline-nya.
+    -- Murah, dan gak ngefek apa-apa kalau ternyata aman.
+    os.execute("stty sane 2>/dev/null")
 
     local f = io.open(SHELL_IN, "w")
     if not f then shell_matikan(); return false, "gagal buka pipa" end
@@ -6358,6 +6416,13 @@ if PERINTAH == "pasang" then
     local function ada_perintah(nama)
         return baca("command -v " .. nama):match("%S") ~= nil
     end
+    -- v5.69: preset dibaca DI AWAL, bukan di akhir.
+    -- Dulu dibaca di ujung -- jadi prompt-prompt di bawah tetep nanya walau
+    -- presetnya disebut, dan pemasangannya nyangkut nunggu Enter. Yang
+    -- kejadian di lapangan: "pasang seed" mandek di 'Kunci API bypass.vip'.
+    local PRESET_ARG = (arg and arg[2] or ""):lower()
+    local OTOMATIS = (PRESET_ARG ~= "")
+
     local function tanya(teks, bawaan)
         io.write(C.Y .. "? " .. teks .. C.N)
         if bawaan and bawaan ~= "" then io.write(C.D .. " [" .. bawaan .. "]" .. C.N) end
@@ -6438,9 +6503,19 @@ if PERINTAH == "pasang" then
     -- -- worker di-push ke GitHub publik, kalau kuncinya di dalam situ siapa pun
     -- bisa baca & ngabisin kuota.
     print()
-    info("Kunci API bypass.vip (buat `zenx key` -- bypass key Delta)")
-    info("Enter = lewat, bisa diisi nanti: zenx key set <APIKEY>")
-    local apikey = tanya("Kunci API", "")
+    -- v5.69: pas OTOMATIS, ini GAK DITANYA.
+    -- Bukan cuma buat ngirit pertanyaan: kuncinya udah disimpen di panel
+    -- (satu tempat, dipakai semua RF -- panel v15-64), dan `zenx key` narik
+    -- dari sana. Nanya per-RF itu ngundang salah tempel, dan kalau kuncinya
+    -- ganti harus dibenerin di 20 HP satu-satu.
+    local apikey = ""
+    if OTOMATIS then
+        info("Kunci API bypass.vip: dilewat -- ditarik dari panel.")
+    else
+        info("Kunci API bypass.vip (buat `zenx key` -- bypass key Delta)")
+        info("Enter = lewat, bisa diisi nanti: zenx key set <APIKEY>")
+        apikey = tanya("Kunci API", "")
+    end
     if apikey ~= "" then
         if io.open(CONFIG_FILE, "r") then
             local sukses, sebab = config_set_bypass(apikey)
@@ -6455,9 +6530,14 @@ if PERINTAH == "pasang" then
         end
     end
 
-    -- 7. auto-jalan pas RF nyala (opsional, butuh app Termux:Boot)
+    -- 7. auto-jalan pas RF nyala (butuh app Termux:Boot)
     print()
-    local jb = tanya("Jalanin worker otomatis tiap RF nyala? (y/N)", "n")
+    -- v5.69: pas OTOMATIS, langsung dipasang tanpa nanya. RF yang dipasang
+    -- pakai preset itu memang buat jalan terus -- dan kalau ini kelewat,
+    -- gejalanya paling nyusahin: RF restart, semuanya keliatan normal, tapi
+    -- worker-nya gak pernah nyala lagi dan gak ada tanda apa pun.
+    local jb = OTOMATIS and "y" or tanya("Jalanin worker otomatis tiap RF nyala? (y/N)", "n")
+    if OTOMATIS then info("Auto-jalan pas RF nyala: dipasang.") end
     if jb:lower():sub(1, 1) == "y" then
         jalan("mkdir -p " .. RUMAH .. "/.termux/boot")
         local fb = io.open(RUMAH .. "/.termux/boot/zenx", "w")
@@ -6490,7 +6570,7 @@ if PERINTAH == "pasang" then
     -- dipertahanin, bukan sisa -- ada RF yang perlu setelan gak biasa, dan
     -- maksa semuanya lewat preset cuma mindahin kerumitan ke tempat lain.
     -- ============================================================
-    local preset = (arg and arg[2] or ""):lower()
+    local preset = PRESET_ARG
     if preset ~= "" then
         local cfgOto = setup_otomatis(preset)
         if not cfgOto then
@@ -7293,7 +7373,14 @@ local cfg=load_config()
 
 -- v4.2: dijalanin Termux:Boot? Gak ada yang bisa ngetik jawaban wizard.
 -- Tanpa penjaga ini, worker nyangkut diem-diem nungguin io.read() selamanya.
+-- v5.69: `pasang <preset>` juga dihitung non-interaktif.
+-- Tanpa ini, pasang otomatis masih mandek di ujung ("Run sekarang? Y/E") --
+-- jadi klaim "sekali jalan langsung jadi" itu bohong: masih ada satu Enter
+-- yang harus dicari orangnya. Dan di RF yang dipasang borongan, satu prompt
+-- yang kelewat itu bikin RF-nya diem berjam-jam tanpa ada yang sadar.
 local NON_INTERAKTIF = (os.getenv("ZENX_AUTO") == "1")
+                       or ((arg and arg[1] or ""):lower() == "pasang"
+                           and (arg and arg[2] or "") ~= "")
 
 if not cfg then
     if NON_INTERAKTIF then
