@@ -550,9 +550,73 @@
 --        Diperbaiki tiga lapis: </dev/null (stdin bukan terminal lagi),
 --        setsid kalau ada (lepas dari controlling terminal), stty sane
 --        setelahnya (benerin tty kalau sempat kena).
+--
+-- v5.71: REJOIN CEPAT dari LAPORAN KICK (star_seed v3.12 yang ngirim).
+--        Dulu: client kena kick -> berhenti lapor -> nunggu auto_rejoin_menit
+--        (3 menit) -> ditutup-buka, TANPA pernah tau sebabnya.
+--        Sekarang script lapor dari dalam game (di situ dialognya kebaca),
+--        lengkap sama sebabnya -- dan worker bisa bedain:
+--          gagal-muat-data / koneksi -> rejoin SEKARANG (obatnya)
+--          anti-cheat                -> JANGAN direjoin, cuma dicatet.
+--        Yang kedua penting: rejoin terus ke akun kena anti-cheat itu mancing
+--        hukuman lebih berat.
+--        Penanda KICK_DIURUS pakai kunci "<akun>:<kick_ts>", bukan nama akun
+--        doang -- satu akun bisa kena kick berkali-kali, dan tiap kejadian
+--        harus diurus sendiri. Laporan lebih tua dari 5 menit dilewat, biar
+--        laporan basi gak bikin rejoin berulang tiap ronde.
+--
+-- v5.72: REJOIN-KARENA-KICK DIJATAH. Ini KOREKSI v5.71, bukan tambahan.
+--        gag2 v6.5 udah nyatet (atas permintaan sendiri):
+--          "auto-rejoin (teleport balik pas 267) malah sering bikin error 267
+--           LAGI -- teleport-nya sendiri ketrigger anti-cheat / data load gagal"
+--        Jadi rejoin otomatis pas 267 UDAH PERNAH DICOBA DAN DIBUANG. v5.71
+--        gua bikin tanpa tau itu, dan risikonya sama: badai 267.
+--        Sekarang disambungin ke JATAH BUNUH yang UDAH ADA (maks 3x/30 menit
+--        per client, v4.83) -- bukan penjatah kedua yang bisa beda perilaku.
+--        Plus jeda 8 detik sebelum buka ulang: Roblox nolak muat data kalau
+--        join-nya kerapetan, dan itu justru sumber 267 yang mau diobatin.
+--        Lewat jatah -> berhenti, catet aja. 267 berulang itu bukan masalah
+--        rejoin: bisa akun kena limit, atau datastore server yang rusak.
+--
+-- v5.73: CATATAN KEJADIAN + `zenx riwayat` -- BERHENTI NEBAK, MULAI NGUKUR.
+--        Log yang ada cuma 6 baris di memori, jadi pertanyaan dasar macam
+--        "267-nya nempel setelah rejoin atau muncul sendiri?" GAK BISA
+--        DIJAWAB -- dan tanpa itu tiap perbaikan cuma tebakan. Termasuk
+--        tebakan gua sendiri di v5.71.
+--        Sekarang rejoin & kick dicatet ke ~/zenx_riwayat.log (append, dipangkas
+--        di 2000 baris). Yang rutin TIDAK dicatet -- kalau semua dicatet, yang
+--        penting ketimbun.
+--        `zenx riwayat` ngeringkas: jumlah per jenis, rejoin per akun + jarak
+--        rata-ratanya, dan yang paling penting -- kick muncul berapa lama
+--        setelah rejoin. <2 menit dominan = rejoin kita yang mancing.
+--        Nyebar/lama = dari game.
+--        Nama jenisnya SENGAJA cuma "KICK" dan "REJOIN". Percobaan pertama
+--        pakai "REJOIN-KICK" -- nama itu ngandung dua-duanya, jadi satu
+--        kejadian kehitung dua kali dan kesimpulannya ngaco. Ketangkep pas uji:
+--        pola badai yang jelas malah dibilang "belum cukup data".
+--
+-- v5.74: CADANGAN wget kalau curl RUSAK.
+--        Kejadian nyata di RF baru:
+--          CANNOT LINK EXECUTABLE ".../curl": cannot locate symbol
+--          "SSL_set_quic_tls_transport_params" ... libngtcp2_crypto_ossl.so
+--        Itu libngtcp2 (HTTP/3) dibangun buat OpenSSL yang lebih baru dari yang
+--        kepasang -- akibat upgrade Termux setengah jalan. curl mati TOTAL.
+--        Dan curl itu satu-satunya jalan worker ngomong ke panel, jadi satu
+--        paket rusak bikin seluruh RF diem. Titik gagal tunggal yang gak perlu
+--        ada: wget hampir selalu ada dan gak kena masalah yang sama.
+--        curl dites BENERAN JALAN (`curl --version` harus balikin "curl <angka>"),
+--        bukan cuma dicek ada berkasnya -- kasus di atas persisnya begitu:
+--        berkasnya ada, `command -v` nemu, tapi begitu dijalanin gagal link.
+--        Skrip `up` juga dikasih cadangan yang sama. Kalau `up` ikut mati, gak
+--        ada jalan mbenerin worker dari jauh -- harus pegang HP satu-satu.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.70-cf"
+local VERSION = "5.74-cf"
+-- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
+-- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
+-- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
+-- kedua bakal dilewat dan client-nya nyangkut.
+local KICK_DIURUS = {}
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -607,9 +671,22 @@ local function tulis_skrip_up(diam)
         "#!" .. PREFIX .. "/bin/sh",
         "zenx stop >/dev/null 2>&1",
         'echo "narik versi baru..."',
-        'curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" \\',
-        '  "' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)" \\',
-        '  -o "$HOME/zenx_worker.baru"',
+        -- v5.74: wget dipakai kalau curl rusak.
+        -- Kejadian nyata: curl gagal link gara-gara OpenSSL beda versi sama
+        -- libngtcp2. Kalau `up` ikut mati, gak ada jalan lagi mbenerin worker
+        -- dari jauh -- harus pegang HP-nya satu-satu.
+        'URL="' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)"',
+        'if curl --version >/dev/null 2>&1; then',
+        '    curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" \\',
+        '      "$URL" -o "$HOME/zenx_worker.baru"',
+        'elif wget --version >/dev/null 2>&1; then',
+        '    echo "curl rusak -> pakai wget"',
+        '    wget -q --no-cache -O "$HOME/zenx_worker.baru" "$URL"',
+        'else',
+        '    echo "GAGAL -- curl DAN wget dua-duanya gak jalan"',
+        '    echo "  betulin dulu: pkg update -y && pkg upgrade -y"',
+        '    exit 1',
+        'fi',
         'if head -5 "$HOME/zenx_worker.baru" 2>/dev/null | grep -q "ZENX WORKER"; then',
         '    mv "$HOME/zenx_worker.baru" "$HOME/zenx_worker.lua"',
         '    echo "OK  $(grep -m1 \'local VERSION\' "$HOME/zenx_worker.lua")"',
@@ -1701,12 +1778,78 @@ end
 -- ============================================================
 -- API — Cloudflare Worker
 -- ============================================================
+-- ============================================================
+-- v5.74: PILIH ALAT HTTP -- curl ATAU wget.
+--
+-- Kenapa perlu: curl di Termux gampang rusak gara-gara upgrade setengah jalan.
+-- Yang kejadian di lapangan:
+--   CANNOT LINK EXECUTABLE ".../curl": cannot locate symbol
+--   "SSL_set_quic_tls_transport_params" referenced by "libngtcp2_crypto_ossl.so"
+-- Itu libngtcp2 (dukungan HTTP/3) dibangun buat OpenSSL yang lebih baru dari
+-- yang kepasang. Akibatnya curl mati TOTAL.
+--
+-- Dan curl itu satu-satunya jalan worker ngomong ke panel -- jadi satu paket
+-- rusak bikin seluruh RF diem. Itu titik gagal tunggal yang gak perlu ada:
+-- wget hampir selalu ada di Termux dan gak kena masalah yang sama.
+--
+-- Dicek SEKALI di awal, hasilnya diinget. Bukan tiap permintaan -- itu boros
+-- dan hasilnya gak bakal berubah di tengah jalan.
+-- ============================================================
+-- Ditempel ke RIW (tabel yang udah ada), BUKAN lokal baru: Lua batesin 200
+-- lokal per fungsi utama dan file ini udah mepet -- nambah satu bikin gagal
+-- compile. Namanya RIW.http biar jelas ini kelompok lain.
+RIW.http = { alat = nil }
+
+function RIW.http.pilih()
+    if RIW.http.alat then return RIW.http.alat end
+    -- curl dites BENERAN JALAN, bukan cuma "ada berkasnya". Kasus di atas
+    -- persisnya begitu: berkasnya ada, `command -v` nemu, tapi begitu
+    -- dijalanin langsung gagal link.
+    local uji = io.popen("curl --version 2>&1")
+    local out = uji and uji:read("*all") or ""
+    if uji then uji:close() end
+    if out:find("curl %d") then RIW.http.alat = "curl"
+    else
+        local u2 = io.popen("wget --version 2>&1")
+        local o2 = u2 and u2:read("*all") or ""
+        if u2 then u2:close() end
+        if o2:find("Wget") or o2:find("wget") then RIW.http.alat = "wget"
+        else RIW.http.alat = "curl" end   -- gak ada dua-duanya: tetep curl biar
+                                       -- pesan errornya keliatan, bukan diem
+    end
+    return RIW.http.alat
+end
+
+-- GET. Balikin perintah shell-nya, biar pemanggil tetep pakai sh() yang sama.
+function RIW.http.get_cmd(kunci, alamat, detik)
+    detik = detik or 10
+    if RIW.http.pilih() == "wget" then
+        return string.format("wget -qO- --timeout=%d --header=%s %s",
+            detik, shq("X-Kunci: " .. kunci), shq(alamat))
+    end
+    return string.format("curl -s -m %d -H %s %s",
+        detik, shq("X-Kunci: " .. kunci), shq(alamat))
+end
+
+function RIW.http.kirim_cmd(kunci, alamat, metode, berkas, detik)
+    detik = detik or 10
+    if RIW.http.pilih() == "wget" then
+        -- wget: PUT/DELETE lewat --method (butuh wget yang agak baru).
+        -- --body-file buat kirim isi berkas.
+        return string.format(
+            "wget -qO- --timeout=%d --method=%s --header=%s --header=%s --body-file=%s %s",
+            detik, metode, shq("X-Kunci: " .. kunci),
+            shq("Content-Type: application/json"), berkas, shq(alamat))
+    end
+    return string.format("curl -s -m %d -X %s -H %s -H %s -d @%s %s",
+        detik, metode, shq("X-Kunci: " .. kunci),
+        shq("Content-Type: application/json"), berkas, shq(alamat))
+end
+
 local TMP = "/data/data/com.termux/files/usr/tmp/zenx_body.json"
 
 local function api_get(cfg, jalur)
-    local cmd = string.format("curl -s -m 10 -H %s %s",
-        shq("X-Kunci: " .. cfg.kunci), shq(cfg.url .. jalur))
-    return sh(cmd)
+    return sh(RIW.http.get_cmd(cfg.kunci, cfg.url .. jalur, 10))
 end
 
 -- v5.39: metode bisa dipilih (bawaan POST, biar pemakaian lama gak berubah).
@@ -1717,11 +1860,8 @@ local function api_post(cfg, jalur, body, metode)
     if not f then TMP = "./zenx_body.json"; f = io.open(TMP, "w") end
     if not f then return "" end
     f:write(body); f:close()
-    local cmd = string.format("curl -s -m 10 -X %s -H %s -H %s -d @%s %s",
-        (metode or "POST"),
-        shq("X-Kunci: " .. cfg.kunci), shq("Content-Type: application/json"),
-        TMP, shq(cfg.url .. jalur))
-    return sh(cmd)
+    return sh(RIW.http.kirim_cmd(cfg.kunci, cfg.url .. jalur,
+                             metode or "POST", TMP, 10))
 end
 
 -- JSON kecil doang, cukup pola. gak perlu library.
@@ -2045,6 +2185,56 @@ end
 local KILL_CATAT  = {}
 local KILL_MAKS   = 3      -- maks sekian kali bunuh...
 local KILL_JENDELA = 1800  -- ...dalam sekian detik (30 menit) per client
+
+-- ============================================================
+-- v5.73: CATATAN KEJADIAN KE BERKAS -- buat DIAGNOSA, bukan buat dibaca live.
+--
+-- Kenapa perlu: log yang ada cuma 6 baris terakhir di memori. Jadi pertanyaan
+-- macam "267-nya kejadian SETELAH rejoin, atau sendiri?" dan "berapa kali
+-- rejoin per jam?" GAK BISA DIJAWAB -- dan tanpa itu, tiap perbaikan cuma
+-- tebakan. (Termasuk tebakan gua sendiri di v5.71: gua bikin rejoin instan
+-- pas 267 tanpa tau gag2 v6.5 udah pernah nyoba dan buang pendekatan itu.)
+--
+-- Yang dicatet SENGAJA cuma kejadian yang jarang: rejoin, kick, buka/tutup.
+-- Status rutin TIDAK dicatet -- kalau semua dicatet, berkasnya gede dan yang
+-- penting ketimbun.
+--
+-- Berkasnya dibatesin ~2000 baris (dipangkas dari depan). Ini alat diagnosa,
+-- bukan pembukuan -- yang dibutuhin pola beberapa jam terakhir.
+-- ============================================================
+-- SATU tabel, bukan tiga variabel terpisah -- Lua batesin 200 lokal per fungsi
+-- utama, dan file ini udah mepet. Nambah tiga bikin gagal compile.
+local RIW = {
+    file = (os.getenv("HOME") or ".") .. "/zenx_riwayat.log",
+    maks = 2000,
+}
+
+function RIW.catat(jenis, akun, ket)
+    pcall(function()
+        local f = io.open(RIW.file, "a")
+        if not f then return end
+        f:write(string.format("%d\t%s\t%s\t%s\t%s\n",
+            os.time(), os.date("%Y-%m-%d %H:%M:%S"),
+            tostring(jenis), tostring(akun or "-"), tostring(ket or "")))
+        f:close()
+    end)
+    -- pangkas kalau kegedean. Dicek jarang (1 dari ~50 tulisan) biar gak baca
+    -- seluruh berkas tiap kali nyatet.
+    if math.random(50) == 1 then
+        pcall(function()
+            local f = io.open(RIW.file, "r")
+            if not f then return end
+            local baris = {}
+            for l in f:lines() do baris[#baris+1] = l end
+            f:close()
+            if #baris <= RIW.maks then return end
+            local g = io.open(RIW.file, "w")
+            if not g then return end
+            for i = #baris - RIW.maks + 1, #baris do g:write(baris[i], "\n") end
+            g:close()
+        end)
+    end
+end
 
 local function sisa_jatah_kill(pkg)
     local skrg, sisa = os.time(), {}
@@ -4648,7 +4838,8 @@ local function run(cfg)
                             pkgRejoin[#pkgRejoin+1]   = pkgTarget
                             namaRejoin[#namaRejoin+1] = namaAkun
                         else
-                            tambahLog("REJOIN: akun " .. namaAkun .. " gak ketemu di RF ini")
+                            RIW.catat("REJOIN", "-", "karena=perintah-panel")
+            tambahLog("REJOIN: akun " .. namaAkun .. " gak ketemu di RF ini")
                         end
                     end
                     if #pkgRejoin > 0 then
@@ -4879,6 +5070,7 @@ local function run(cfg)
                 if runSebelum[pkg] == true and cacheRun[pkg] == false then
                     tambahLog("MATI MENDADAK: " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
                               .. " -> dibuka lagi")
+                    RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-mendadak")
                     setAksi("buka lagi " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")))
                     open_one(cfg, pkg, mapLink[pkg])
                     os.execute("sleep 3")
@@ -5101,6 +5293,97 @@ local function run(cfg)
                     local blok = stat:match('{[^{}]-"nama"%s*:%s*"' .. akun .. '"[^{}]-}')
                     local ts = blok and tonumber(blok:match('"ts"%s*:%s*(%d+)')) or nil
                     local skrgSrv = ambil_num(stat, "skrg") or now   -- v4.53: dulu selalu nil -> pakai jam LOKAL
+
+                    -- ============================================================
+                    -- v5.71: LAPORAN KICK dari script (star_seed v3.12).
+                    --
+                    -- Ini nutup lubang yang lama: worker GAK BISA baca dialog
+                    -- kick sendiri (uiautomator 0 teks di RF -- v4.85). Jadi
+                    -- dulu cuma tau "berhenti lapor", terus nunggu
+                    -- auto_rejoin_menit (3 menit) tanpa tau sebabnya.
+                    -- Sekarang script yang lapor DARI DALAM, di mana dialognya
+                    -- kebaca -- lengkap sama sebabnya.
+                    --
+                    -- Bedanya penting, dan ini yang gak bisa ditebak dari luar:
+                    --   gagal-muat-data / koneksi -> ngulang ITU OBATNYA
+                    --   anti-cheat                -> ngulang MAKIN PARAH
+                    -- Yang kedua SENGAJA gak direjoin; cuma dicatet biar
+                    -- keliatan di log. Rejoin terus ke akun kena anti-cheat itu
+                    -- mancing hukuman lebih berat.
+                    -- ============================================================
+                    local kickKode = blok and tonumber(blok:match('"kick"%s*:%s*(%d+)')) or nil
+                    local kickTs   = blok and tonumber(blok:match('"kick_ts"%s*:%s*(%d+)')) or nil
+                    local kickSbb  = blok and blok:match('"kick_sebab"%s*:%s*"([^"]*)"') or ""
+                    -- cuma yang BARU (<5 menit) -- laporan lama gak boleh bikin
+                    -- rejoin berulang tiap ronde
+                    if kickKode and kickKode > 0 and kickTs
+                       and (skrgSrv - kickTs) < 300
+                       and not KICK_DIURUS[akun .. ":" .. kickTs] then
+                        KICK_DIURUS[akun .. ":" .. kickTs] = true
+                        -- ============================================================
+                        -- v5.72: DIJATAH, dan ini BUKAN kehati-hatian berlebihan.
+                        --
+                        -- Catatan gag2 v6.5 (ditulis atas permintaan sendiri):
+                        --   "auto-rejoin (teleport balik pas 267) malah sering
+                        --    bikin error 267 LAGI -- teleport-nya sendiri
+                        --    ketrigger anti-cheat / data load gagal."
+                        -- Jadi rejoin otomatis pas 267 UDAH PERNAH DICOBA dan
+                        -- DIBUANG. Rejoin di sini beda jalur (force-stop + buka
+                        -- ulang aplikasi, bukan teleport dalam game), tapi
+                        -- risiko badainya sama: 267 -> rejoin -> 267 -> rejoin.
+                        --
+                        -- Makanya disambungin ke JATAH BUNUH yang udah ada
+                        -- (maks 3x / 30 menit per client, v4.83) -- bukan bikin
+                        -- penjatah kedua yang bisa beda perilaku.
+                        -- Lewat jatah -> berhenti, catet aja. Client yang 267
+                        -- terus itu masalahnya BUKAN di rejoin: bisa akun kena
+                        -- limit, atau server datastore-nya yang lagi rusak.
+                        -- ============================================================
+                        if kickSbb == "anti-cheat" then
+                            tambahLog(("KICK %d %s: %s -- TIDAK direjoin (ngulang malah makin parah)")
+                                      :format(kickKode, kickSbb, akun))
+                            RIW.catat("KICK", akun,
+                                ("kode=%d sebab=%s TIDAK-direjoin"):format(kickKode, kickSbb))
+                        elseif sisa_jatah_kill(pkg) <= 0 then
+                            tambahLog(("KICK %d %s: %s -- JATAH HABIS (3x/30menit), berhenti rejoin")
+                                      :format(kickKode, kickSbb ~= "" and kickSbb or "?", akun))
+                            tambahLog("  267 berulang = bukan masalah rejoin. Cek akun/limit manual.")
+                            RIW.catat("KICK", akun,
+                                ("kode=%d sebab=%s jatah-habis"):format(kickKode, kickSbb))
+                        else
+                            catat_kill(pkg)
+                            tambahLog(("KICK %d %s: %s -> rejoin (sisa jatah %d)")
+                                      :format(kickKode, kickSbb ~= "" and kickSbb or "?",
+                                              akun, sisa_jatah_kill(pkg)))
+                            setAksi("rejoin " .. akun .. " (kick " .. kickKode .. ")")
+                            -- v5.73: DUA baris, bukan satu gabungan.
+                            -- Nama jenis SENGAJA gak digabung ("REJOIN-KICK")
+                            -- -- nama begitu ngandung "KICK" DAN "REJOIN", jadi
+                            -- pas dianalisis satu kejadian kehitung dua kali dan
+                            -- kesimpulannya ngaco. Ketangkep pas uji: pola badai
+                            -- yang jelas malah dibilang "belum cukup data".
+                            RIW.catat("KICK", akun,
+                                ("kode=%d sebab=%s"):format(kickKode, kickSbb))
+                            RIW.catat("REJOIN", akun,
+                                ("karena=kick sisaJatah=%d"):format(sisa_jatah_kill(pkg)))
+                            -- jeda sebelum buka ulang. Roblox nolak muat data
+                            -- kalau join-nya kerapetan -- itu justru sumber 267
+                            -- yang kita coba obatin.
+                            os.execute("sleep 8")
+                            -- v5.71: force-stop langsung, BUKAN close_one() --
+                            -- fungsi itu gak ada (ketangkep pas ngecek urutan
+                            -- deklarasi). Pola dua baris ini sama kayak yang
+                            -- dipakai di tutup_semua: perintah polos dulu, terus
+                            -- lewat su -- karena di sebagian RF yang polos gagal
+                            -- tanpa pesan apa pun.
+                            sh_silent("am force-stop " .. pkg)
+                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                            os.execute("sleep 2")
+                            open_one(cfg, pkg, mapLink[pkg])
+                            os.execute("sleep 3")
+                            refresh_status(); lastStatusCek = os.time()
+                        end
+                    end
 
                     -- v5.04: BERAPA LAMA DIEM. Dulu semua tindakan digantung ke 'ts'
                     -- (kapan terakhir lapor). Masalahnya client yang nyangkut di Home
@@ -6612,6 +6895,136 @@ end
 -- v5.25: `zenx cookie` -- ekstrak .ROBLOSECURITY dari akun SENDIRI (backup /
 -- pindah device). Baca kredensial milik sendiri dari storage client yg login.
 -- ============================================================
+-- ============================================================
+-- v5.73: `zenx riwayat` -- RINGKAS pola kejadian dari zenx_riwayat.log.
+--
+-- Ini yang jawab pertanyaan yang selama ini cuma ditebak:
+--   * berapa kali rejoin per jam, per akun?
+--   * 267-nya nempel SETELAH rejoin (berarti rejoin-nya yang mancing),
+--     atau muncul sendiri (berarti dari game/server)?
+--   * ada akun yang kena terus, atau kejadiannya nyebar?
+--
+-- Yang ketiga penting buat mutusin arah: kalau kejadiannya numpuk di 1-2 akun,
+-- itu masalah akun (limit/ban). Kalau nyebar rata, itu masalah pola rejoin
+-- kita -- dan itu yang perlu diobatin.
+-- ============================================================
+if PERINTAH == "riwayat" then
+    local f = io.open(RIW.file, "r")
+    if not f then
+        err("Belum ada catatan: " .. RIW.file)
+        info("Berkasnya kebentuk sendiri begitu ada rejoin/kick pertama.")
+        info("Biarin worker jalan beberapa jam, terus jalanin lagi.")
+        return
+    end
+
+    local rows = {}
+    for l in f:lines() do
+        local ts, waktu, jenis, akun, ket = l:match("^(%d+)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t(.*)$")
+        if ts then
+            rows[#rows+1] = { ts = tonumber(ts), waktu = waktu,
+                              jenis = jenis, akun = akun, ket = ket }
+        end
+    end
+    f:close()
+
+    if #rows == 0 then
+        err("Catatan ada tapi kosong / formatnya gak kebaca.")
+        return
+    end
+
+    local skrg = os.time()
+    print(C.BOLD .. C.C .. "\n=== RIWAYAT KEJADIAN ===" .. C.N)
+    info(("%d kejadian, dari %s"):format(#rows, rows[1].waktu))
+    print()
+
+    -- per jenis
+    local perJenis = {}
+    for _, r in ipairs(rows) do perJenis[r.jenis] = (perJenis[r.jenis] or 0) + 1 end
+    print(C.BOLD .. "  PER JENIS" .. C.N)
+    local jns = {}
+    for k in pairs(perJenis) do jns[#jns+1] = k end
+    table.sort(jns, function(a, b) return perJenis[a] > perJenis[b] end)
+    for _, k in ipairs(jns) do
+        print(("    %-16s %d"):format(k, perJenis[k]))
+    end
+
+    -- per akun, cuma yang rejoin
+    print()
+    print(C.BOLD .. "  REJOIN PER AKUN" .. C.N)
+    local perAkun = {}
+    for _, r in ipairs(rows) do
+        if r.jenis == "REJOIN" then
+            perAkun[r.akun] = perAkun[r.akun] or { n = 0, jam = {} }
+            perAkun[r.akun].n = perAkun[r.akun].n + 1
+            perAkun[r.akun].jam[#perAkun[r.akun].jam + 1] = r.ts
+        end
+    end
+    local ak = {}
+    for k in pairs(perAkun) do ak[#ak+1] = k end
+    table.sort(ak, function(a, b) return perAkun[a].n > perAkun[b].n end)
+    if #ak == 0 then
+        print("    (belum ada rejoin kecatet)")
+    end
+    for i, k in ipairs(ak) do
+        if i > 12 then print(("    ... +%d akun lagi"):format(#ak - 12)) break end
+        local d = perAkun[k]
+        -- jarak rata-rata antar rejoin: kalau kecil, itu tanda badai
+        local rata = "-"
+        if #d.jam >= 2 then
+            local total = d.jam[#d.jam] - d.jam[1]
+            rata = string.format("%.0f menit", (total / (#d.jam - 1)) / 60)
+        end
+        print(("    %-20s %2dx   jarak rata-rata: %s"):format(k:sub(1, 20), d.n, rata))
+    end
+
+    -- INI yang paling penting: kick nempel setelah rejoin?
+    print()
+    print(C.BOLD .. "  KICK MUNCUL BERAPA LAMA SETELAH REJOIN?" .. C.N)
+    info("  kalau kebanyakan <2 menit -> rejoin-nya yang mancing kick")
+    info("  kalau nyebar / lama       -> kick dari game, bukan dari kita")
+    local nDekat, nJauh, nSendiri = 0, 0, 0
+    for i, r in ipairs(rows) do
+        if r.jenis == "KICK" then
+            -- cari rejoin terakhir buat akun yang sama SEBELUM ini
+            local jarak = nil
+            for j = i - 1, 1, -1 do
+                local q = rows[j]
+                if q.akun == r.akun and q.jenis == "REJOIN" then
+                    jarak = r.ts - q.ts break
+                end
+            end
+            if not jarak then nSendiri = nSendiri + 1
+            elseif jarak < 120 then nDekat = nDekat + 1
+            else nJauh = nJauh + 1 end
+        end
+    end
+    print(("    <2 menit setelah rejoin : %d"):format(nDekat))
+    print(("    >2 menit setelah rejoin : %d"):format(nJauh))
+    print(("    gak ada rejoin sebelumnya: %d"):format(nSendiri))
+    print()
+    if nDekat > (nJauh + nSendiri) then
+        warn("  POLANYA: kick nempel setelah rejoin -> rejoin kita yang mancing.")
+        warn("  Saran: naikin auto_rejoin_menit, dan turunin jatah rejoin.")
+    elseif (nJauh + nSendiri) > nDekat and (nJauh + nSendiri) > 0 then
+        ok("  POLANYA: kick MUNCUL SENDIRI -> dari game/server, bukan dari rejoin kita.")
+        ok("  Saran: rejoin otomatis boleh dipertahanin; fokusin ke stabilitas join.")
+    else
+        info("  Belum cukup data buat nyimpulin. Biarin jalan beberapa jam lagi.")
+    end
+
+    -- 20 kejadian terakhir, mentah
+    print()
+    print(C.BOLD .. "  20 TERAKHIR" .. C.N)
+    for i = math.max(1, #rows - 19), #rows do
+        local r = rows[i]
+        print(("    %s  %-14s %-18s %s"):format(
+            r.waktu:sub(6), r.jenis, r.akun:sub(1, 18), r.ket))
+    end
+    print()
+    info("Berkas mentahnya: " .. RIW.file)
+    return
+end
+
 if PERINTAH == "cookie" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
