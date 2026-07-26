@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.76-cf"
+local VERSION = "5.77-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1824,6 +1824,26 @@ end
 -- Ditempel ke RIW (tabel yang udah ada), BUKAN lokal baru: Lua batesin 200
 -- lokal per fungsi utama dan file ini udah mepet -- nambah satu bikin gagal
 -- compile. Namanya RIW.http biar jelas ini kelompok lain.
+-- ============================================================
+-- v5.77 FIX: `RIW` dideklarasi DI SINI, sebelum dipakai.
+--
+-- Dulu deklarasinya di bawah (dekat catat_riwayat) sementara RIW.http diisi
+-- di atas -- jadi pas dijalanin: "attempt to index a nil value (global 'RIW')"
+-- dan worker MATI TOTAL di baris pertama.
+--
+-- Kenapa lolos: penyisir urutan-deklarasi cuma nyari PEMANGGILAN FUNGSI
+-- (`nama(`), gak nyari PENGAKSESAN TABEL (`nama.field`). Dua-duanya kena
+-- masalah yang sama, tapi cuma satu yang dicek.
+--
+-- Satu tabel buat dua kelompok (riwayat + http) SENGAJA: Lua batesin 200 lokal
+-- per fungsi utama dan file ini udah mepet -- nambah lokal baru bikin gagal
+-- compile.
+-- ============================================================
+local RIW = {
+    file = (os.getenv("HOME") or ".") .. "/zenx_riwayat.log",
+    maks = 2000,
+}
+
 RIW.http = { alat = nil }
 
 function RIW.http.pilih()
@@ -2228,12 +2248,6 @@ local KILL_JENDELA = 1800  -- ...dalam sekian detik (30 menit) per client
 -- Berkasnya dibatesin ~2000 baris (dipangkas dari depan). Ini alat diagnosa,
 -- bukan pembukuan -- yang dibutuhin pola beberapa jam terakhir.
 -- ============================================================
--- SATU tabel, bukan tiga variabel terpisah -- Lua batesin 200 lokal per fungsi
--- utama, dan file ini udah mepet. Nambah tiga bikin gagal compile.
-local RIW = {
-    file = (os.getenv("HOME") or ".") .. "/zenx_riwayat.log",
-    maks = 2000,
-}
 
 function RIW.catat(jenis, akun, ket)
     pcall(function()
@@ -3752,7 +3766,18 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             ok(("semua %d client kekonfirmasi masuk game"):format(#tunda))
         elseif nBelum == #tunda and #tunda >= 3 then
             -- ============================================================
-            -- v5.76: SEMUA gagal lapor itu beda dari SEBAGIAN gagal.
+            -- v5.77: FIX worker MATI TOTAL di baris pertama --
+--        "attempt to index a nil value (global 'RIW')".
+--        `RIW.http = {...}` ada di baris ~1827, tapi `local RIW` dideklarasi
+--        di ~2233. Pas dimuat, RIW masih nil.
+--        Kenapa lolos pemeriksaan: penyisir urutan-deklarasi cuma nyari
+--        PEMANGGILAN FUNGSI (`nama(`), gak nyari PENGAKSESAN TABEL
+--        (`nama.field`). Dua-duanya masalah yang sama persis, cuma satu yang
+--        dicek -- dan yang gak dicek itu justru yang lebih fatal, karena
+--        jalan langsung pas berkas dimuat.
+--        Penyisirnya ikut dibetulin (penyisir.py v2).
+--
+-- v5.76: SEMUA gagal lapor itu beda dari SEBAGIAN gagal.
             --
             -- Kalau 1-2 dari 8 gak lapor, itu masuk akal -- client-nya emang
             -- nyangkut. Tapi kalau SEMUANYA gagal, penyebab per-client gak
