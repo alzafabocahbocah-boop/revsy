@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.77-cf"
+local VERSION = "5.78-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2432,12 +2432,38 @@ local function tunggu_masuk_game(pkg, batas, cek_batal)
 
     -- ---------- tahap 1: cari patokan yang stabil ----------
     local MIN_KB = 2000        -- di bawah 2 MB = belum gambar apa-apa
+    -- ============================================================
+    -- v5.78: AMBANG MUTLAK -- "udah gede" = udah di dalam game.
+    --
+    -- Cara lama cuma liat KENAIKAN: stabil dulu (itu jadi patokan "halaman
+    -- awal"), baru tungguin naik tajam. Itu jebol kalau client masuk game
+    -- LANGSUNG tanpa mampir halaman awal -- yang stabil justru nilai IN-GAME,
+    -- terus worker nungguin kenaikan yang UDAH LEWAT.
+    --
+    -- Kejadian nyata: "grafis clienp mendatar di 42.2 MB -- itu patokan
+    -- 'halaman awal'". Padahal ukur `zenx layar` di RF yang sama:
+    --     HOME 15 MB  ->  GAME 49 MB
+    -- Jadi 42 MB itu jelas udah di dalam game. Worker nunggu sampai 84 MB (2x)
+    -- atau 62 MB (+20MB) -- dua-duanya gak pernah datang.
+    --
+    -- 30 MB dipilih karena ada DI TENGAH dua nilai terukur itu, jauh dari
+    -- dua-duanya. Bukan angka bulat asal.
+    -- Ini cuma JALAN PINTAS: di bawah ambang, cara kenaikan yang lama tetep
+    -- dipakai -- dia lebih peka buat RF yang nilainya beda.
+    -- ============================================================
+    local GAME_KB = 30000
     local dasar, sebelum = nil, 0
     while (os.time() - mulai) < batas do
         if cek_batal and cek_batal() then return false, os.time() - mulai, "STANDBY" end
         local kini = grafis_kb(pkg)
         if not kini then
             return false, os.time() - mulai, "meminfo gak kebaca"
+        end
+        -- jalan pintas: udah di atas ambang mutlak -> gak usah nunggu apa-apa
+        if kini >= GAME_KB then
+            info(("  grafis %s %.1f MB (>= %.0f MB) -- udah di dalam game"):format(
+                nama, kini / 1024, GAME_KB / 1024))
+            return true, os.time() - mulai
         end
         if kini >= MIN_KB then
             -- stabil = dua bacaan berurutan bedanya < 15%
@@ -3766,7 +3792,19 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             ok(("semua %d client kekonfirmasi masuk game"):format(#tunda))
         elseif nBelum == #tunda and #tunda >= 3 then
             -- ============================================================
-            -- v5.77: FIX worker MATI TOTAL di baris pertama --
+            -- v5.78: FIX deteksi masuk game NYANGKUT kalau client masuk LANGSUNG.
+--        Log lapangan: "grafis clienp mendatar di 42.2 MB -- itu patokan
+--        'halaman awal'". Padahal ukur `zenx layar` di RF yang sama bilang
+--        HOME 15 MB / GAME 49 MB -- jadi 42 MB itu udah DI DALAM GAME.
+--        Cara lama cuma liat KENAIKAN, jadi dia nunggu 84 MB (2x) atau 62 MB
+--        (+20MB) -- kenaikan yang UDAH LEWAT sebelum dia mulai ngukur.
+--        Ditambah ambang MUTLAK 30 MB: di atas itu, langsung dianggap masuk
+--        game. 30 dipilih karena persis di tengah dua nilai terukur (15/49),
+--        jauh dari dua-duanya -- bukan angka bulat asal.
+--        Di bawah ambang, cara kenaikan lama tetep dipakai: dia lebih peka
+--        buat RF yang nilainya beda (mis. petak mungil 8 -> 22 MB).
+--
+-- v5.77: FIX worker MATI TOTAL di baris pertama --
 --        "attempt to index a nil value (global 'RIW')".
 --        `RIW.http = {...}` ada di baris ~1827, tapi `local RIW` dideklarasi
 --        di ~2233. Pas dimuat, RIW masih nil.
