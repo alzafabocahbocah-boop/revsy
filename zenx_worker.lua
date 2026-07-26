@@ -479,9 +479,51 @@
 --          2. baru tungguin naik tajam dari patokan itu -> masuk game
 --        Diuji 4 deret: mulai-dari-0, langsung-stabil, petak mungil, dan
 --        nyangkut-di-home (yang terakhir bener-bener GAK kedeteksi).
+--
+-- v5.64: CADANGAN "buka ulang jendela penuh" DIBUANG.
+--        Dulu (v5.46) kalau sapuan gagal, client ditutup lalu dibuka ulang
+--        FULLSCREEN, alasannya "tombolnya jadi lebih gede".
+--        Itu salah arah: kalibrasi tombol (zenx_tap.txt) dikunci per UKURAN
+--        JENDELA, dan ukuran petak grid itu yang udah kebukti kena (610x653,
+--        396x293, 348x173). Jendela penuh = ukuran yang belum pernah
+--        dikalibrasi -> worker malah kehilangan koordinat yang udah pasti dan
+--        harus nyapu dari nol.
+--        Kalau sapuan gagal, yang bener NYAPU LAGI di petak yang sama --
+--        udah ditangani 3 putaran berjeda (v5.52).
+--
+-- v5.66: worker LAPORIN SCRIPT yang dijalanin RF ini (field "sc" di /tim).
+--        Panel butuh buat misahin tab "GAG 2 farm" dari "GAG 2 seed".
+--        Info per-TIM lebih andal daripada penanda per-akun: satu sumber
+--        (config RF), langsung berlaku buat SEMUA akun tim itu, dan akun yang
+--        belum pernah lapor pun ikut keklasifikasi -- gak perlu nunggu tiap
+--        client rejoin dulu.
+--
+-- v5.67: Error 267 DILIAT ISI PESANNYA, bukan cuma kodenya.
+--        267 = "di-kick script game" -- itu payung, sebabnya beda-beda:
+--          anti-cheat / ban          -> ngulang malah makin parah (manual)
+--          GAGAL MUAT DATA SIMPANAN  -> ngulang justru OBATNYA    (ulang)
+--        Yang kedua rutin di GAG, dan game-nya SENDIRI nyuruh masuk ulang:
+--        "Your save data didn't load right ... Please rejoin to try again."
+--        Dulu dua-duanya dianggap "manual", jadi client yang cuma gagal muat
+--        data nyangkut di dialog sampai ada yang mencet manual.
+--
+-- v5.68: SETUP OTOMATIS PENUH -- `pasang <preset>`, nol pertanyaan.
+--        Pasang RF baru dulu 21 pertanyaan, 18 di antaranya selalu dijawab
+--        sama. Buat 20 RF itu ratusan kali mencet Enter, dan tiap kali ada
+--        peluang salah ketik yang gejalanya baru ketara berjam-jam kemudian.
+--        Yang bikin ini BISA otomatis penuh cuma satu hal: NOMOR TIM diambil
+--        dari server (/tim-kosong, CF v15-84), bukan diinget manusia. Sisanya
+--        cuma nilai tetap.
+--        Game & script dari PRESET: farm / seed / market / gag1.
+--        Yang SENGAJA gak diotomatiskan -- kalau salah, seluruh sistem mati
+--        tanpa gejala jelas, jadi dicek dulu dan setup BERHENTI kalau gagal:
+--          * sambungan panel (URL/kunci) -> dites sebelum apa pun ditulis
+--          * daftar client               -> dipindai; nol client = berhenti
+--        Tanpa preset, wizard lama tetep jalan -- ada RF yang perlu setelan
+--        gak biasa, dan maksa semuanya lewat preset cuma mindahin kerumitan.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.63-cf"
+local VERSION = "5.68-cf"
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
@@ -2287,11 +2329,27 @@ local function tulis_autoexec(cfg, urlPanel)
     end
 
     if cek:find("loadstring", 1, true) then
-        ok("autoexec loader ditulis: " .. ((urlPanel and urlPanel ~= "") and "DARI PANEL" or cfg.game_label)
-           .. " -> " .. url_script)
+        -- v5.65: sebut LOKASI berkasnya, bukan cuma "ditulis". Dulu pesannya
+        -- cuma nyebut URL script -- jadi kalau ada yang bingung "kok berkasnya
+        -- gak ada", gak ada cara ngecek selain buka file manager.
+        ok("autoexec ditulis: " .. path)
+        info("  isi: loadstring(...\"" .. url_script .. "\")...")
+        -- tunjukin isi folder biar gak ada keraguan
+        local isiFolder = sh("su -c 'ls -l " .. AUTOEXEC_DIR .. " 2>&1 | tail -n +2'") or ""
+        if isiFolder ~= "" then
+            for baris in isiFolder:gmatch("[^\r\n]+") do
+                local nm = baris:match("(%S+)%s*$")
+                local sz = baris:match("%s(%d+)%s+%d%d%d%d%-") or baris:match("root%s+(%d+)%s")
+                if nm and nm ~= "" then
+                    info("  folder: " .. nm .. (sz and ("  " .. sz .. " B") or ""))
+                end
+            end
+        end
         return true
     else
-        warn("gagal nulis autoexec (cek izin folder Delta)")
+        warn("GAGAL nulis autoexec ke " .. path)
+        warn("  yang kebaca balik: " .. tostring(cek):sub(1, 120))
+        warn("  cek izin folder Delta / root masih jalan?")
         return false
     end
 end
@@ -2668,7 +2726,46 @@ local function klasifikasi_layar(isi)
 
     local kode = tonumber(isi:match("[Ee]rror [Cc]ode:?%s*(%d+)"))
     if kode then
-        return ("Error Code " .. kode), (ERROR_SIFAT[kode] or "ulang"), sidik
+        local sifat = ERROR_SIFAT[kode] or "ulang"
+
+        -- ============================================================
+        -- !! CATATAN PENTING SEBELUM PERCAYA BLOK INI !!
+        -- Di RedFinger, dump uiautomator NYARIS SELALU 0 teks buat layar
+        -- Roblox (lihat v4.85 di bawah) -- jadi seluruh pencocokan pesan di
+        -- sini JARANG kepanggil. Yang beneran nangkep client kelempar itu
+        -- BRIDGE DIEM: script berhenti lapor -> lewat auto_rejoin_menit ->
+        -- client ditutup-buka. Blok ini cuma nolong kalau suatu saat dump-nya
+        -- beneran kebaca (ROM/Android lain).
+        -- Jangan nyetel auto_rejoin_menit kegedean dengan asumsi blok ini
+        -- yang bakal nangkep duluan -- dia kemungkinan besar gak jalan.
+        --
+        -- v5.67: 267 DILIAT ISINYA, bukan cuma kodenya.
+        --
+        -- 267 = "di-kick script game" -- itu payung, sebabnya beda-beda:
+        --   anti-cheat / ban        -> ngulang malah makin parah  (manual)
+        --   GAGAL MUAT DATA SIMPANAN -> ngulang justru OBATNYA    (ulang)
+        --
+        -- Yang kedua itu kejadian rutin di GAG, dan game-nya SENDIRI yang
+        -- nyuruh masuk ulang: "Uh oh! Your save data didn't load right. This
+        -- is usually a Roblox problem, not the game's fault! Please rejoin to
+        -- try again."
+        -- Dulu dua-duanya dianggap "manual", jadi client yang cuma gagal muat
+        -- data nyangkut di dialog sampai ada yang mencet manual.
+        --
+        -- Sengaja dicocokin ke KALIMATNYA, bukan cuma kata "rejoin" -- biar
+        -- pesan lain yang kebetulan ngandung kata itu gak ikut kena.
+        if kode == 267 then
+            local l = isi:lower()
+            local gagalMuat = l:find("save data", 1, true)
+                              or l:find("didn't load", 1, true)
+                              or l:find("did not load", 1, true)
+            if gagalMuat then
+                sifat = "ulang"
+                return ("Error 267 (gagal muat data -> masuk ulang)"), sifat, sidik
+            end
+        end
+
+        return ("Error Code " .. kode), sifat, sidik
     end
     for _, tanda in ipairs(ERROR_TANDA) do
         if isi:lower():find(tanda:lower(), 1, true) then
@@ -3051,15 +3148,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 -- Roblox (kebukti dari layar: Search/Charts/Avatar). 16 titik
                 -- dihabisin buat dialog yang belum ada, terus dilaporin gagal.
                 --
-                -- Dan ini GAK BISA diberesin dengan nunggu activity yang lebih
-                -- tepat: ActivityNativeMain & MainGameActivity itu nama LAMA vs
-                -- BARU buat activity yang SAMA (lihat v4.36) -- halaman awal dan
-                -- di-dalam-game dihosting activity yang sama, jadi gak ada
-                -- bedanya di mata dumpsys. Teks layar juga gak kebaca (v4.86).
+                -- Activity gak bisa dipakai buat mastiin: ActivityNativeMain &
+                -- MainGameActivity itu nama LAMA vs BARU buat activity yang SAMA
+                -- (v4.36) -- halaman awal dan di-dalam-game satu activity, gak
+                -- ada bedanya di mata dumpsys. Teks layar juga gak kebaca (v4.86).
                 --
-                -- Jadi dipakai cara yang gak butuh deteksi: SAPU ULANG beberapa
-                -- kali dengan jeda. Kalau dialognya muncul belakangan, putaran
-                -- berikutnya yang nangkep.
+                -- Deteksinya akhirnya ketemu di v5.63: MEMORI GRAFIS naik tajam
+                -- (tunggu_masuk_game, dipanggil di atas). Putaran sapuan ini
+                -- TETEP dipertahanin sebagai jaring: jeda antara "masuk game"
+                -- dan "Delta nyuntik dialognya" gak pasti, dan kalau meminfo
+                -- gak kebaca, deteksinya nyerah -- di situ putaran ini yang
+                -- nutupin.
                 -- ============================================================
                 local link, ketLink
                 local PUTARAN, JEDA = 3, 25
@@ -3077,26 +3176,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     if link then break end
                 end
 
-                -- v5.46b: CADANGAN jendela penuh -- cuma kalau deteksi di ukuran
-                -- grid GAGAL. Ukuran grid dicoba duluan karena itu yang ada di
-                -- kalibrasi (zenx_tap.txt). Kalau ternyata ukuran jendela RF ini
-                -- belum pernah dikalibrasi, sapuan bisa gagal -- di situ jendela
-                -- penuh nolong: tombolnya jauh lebih gede.
-                -- App Cloner cuma baca posisi jendela pas app MULAI, jadi harus
-                -- ditutup dulu -- gak bisa dibesarin sambil jalan.
-                if not link then
-                    warn("  gagal di ukuran grid -- coba ulang dengan jendela penuh")
-                    local W, H = layar_ukuran()
-                    if W > 0 and H > 0 then
-                        close_all(cfg, pilih, mapLink, true)
-                        os.execute("sleep 2")
-                        tata_satu(pilih, { L = 0, T = 0, R = W, B = H })
-                        open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
-                        tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
-                        os.execute("sleep 3")
-                        link, _, _, ketLink = cari_tombol_key(cfg, pilih)
-                    end
-                end
+                -- v5.64: CADANGAN "buka ulang jendela penuh" DIBUANG.
+                -- Dulu kalau sapuan gagal, client ditutup lalu dibuka ulang
+                -- FULLSCREEN dengan alasan "tombolnya jadi lebih gede".
+                -- Itu salah arah: kalibrasi tombol (zenx_tap.txt) dikunci per
+                -- UKURAN JENDELA, dan ukuran petak grid itu yang udah kebukti
+                -- kena. Jendela penuh = ukuran yang belum pernah dikalibrasi,
+                -- jadi worker malah kehilangan koordinat yang udah pasti dan
+                -- harus nyapu dari nol.
+                -- Kalau sapuan gagal, yang bener itu NYAPU LAGI di petak yang
+                -- sama (udah ditangani 3 putaran berjeda di atas), bukan ganti
+                -- ukuran jendela.
 
                 if link then
                     local kunci, sebab = bypass_kunci(cfg, link, false)
@@ -3417,11 +3507,17 @@ local function lapor(cfg, isi_perintah, cache)
     local body = string.format(
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
-        '"aksi":%s,"log":[%s],"ver":%s,"dev":%s}',
+        '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"sc":%s}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
-        jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id())
+        jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id()),
+        -- v5.66: laporin SCRIPT yang dijalanin RF ini. Panel butuh ini buat
+        -- misahin tab "GAG 2 farm" dari "GAG 2 seed" -- dan pakai info per-TIM
+        -- lebih andal daripada penanda per-akun: satu sumber (config RF),
+        -- langsung berlaku buat semua akun tim itu, dan akun yang belum pernah
+        -- lapor pun ikut keklasifikasi.
+        jstr(cfg.script_label or "")
     )
 
     -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
@@ -3487,6 +3583,146 @@ end
 -- ============================================================
 -- setup
 -- ============================================================
+-- ============================================================
+-- v5.68: SETUP OTOMATIS PENUH -- nol pertanyaan.
+--
+-- Kenapa: pasang RF baru itu 21 pertanyaan, dan 18 di antaranya selalu dijawab
+-- sama. Buat 20 RF itu ratusan kali mencet Enter, dan tiap kali ada peluang
+-- salah ketik yang gejalanya baru ketara berjam-jam kemudian.
+--
+-- Yang bikin ini BISA otomatis penuh cuma satu hal: nomor tim diambil dari
+-- server (/tim-kosong), bukan diinget manusia. Sisanya cuma nilai tetap.
+--
+-- GAME & SCRIPT dari PRESET, bukan pertanyaan. Presetnya disebut di perintah
+-- pasang, jadi satu baris beda buat tiap jenis RF:
+--   ... pasang farm    -> GAG 2 + STAR FARM
+--   ... pasang seed    -> GAG 2 + STAR SEED
+--   ... pasang market  -> GAG 1 MARKET + MARKET
+--   ... pasang gag1    -> GAG 1 + MARKET
+--
+-- Yang TIDAK diotomatiskan, dan alasannya:
+--   * URL & kunci panel -> udah ada nilai bawaannya di kode, tapi kalau salah
+--     seluruh sistem mati tanpa gejala jelas. Dicek ke server dulu sebelum
+--     lanjut, dan kalau gagal setup BERHENTI -- bukan lanjut bikin config
+--     yang gak nyambung.
+--   * daftar paket client -> dipindai dari HP. Kalau hasilnya nol, berhenti:
+--     config tanpa client itu gak ada gunanya.
+-- ============================================================
+local PRESET = {
+    farm   = { place = "97598239454123",  game = "GAG 2",        sc = "STAR FARM", url = "gag2"   },
+    seed   = { place = "97598239454123",  game = "GAG 2",        sc = "STAR SEED", url = "seed"   },
+    market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
+    gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
+}
+
+local function setup_otomatis(namaPreset)
+    local pre = PRESET[(namaPreset or ""):lower()]
+    if not pre then
+        err("Preset '" .. tostring(namaPreset) .. "' gak dikenal.")
+        info("Yang ada: farm / seed / market / gag1")
+        return nil
+    end
+
+    print(C.BOLD .. C.C .. "\n=== SETUP OTOMATIS: " .. namaPreset:upper() .. " ===\n" .. C.N)
+
+    -- mulai dari config lama kalau ada (v5.51) -- setelan manual yang gak
+    -- disentuh preset tetep kepakai
+    local cfg = load_config() or {}
+
+    cfg.url   = cfg.url   or "https://dry-glitter-63e4.petagee5.workers.dev"
+    cfg.kunci = cfg.kunci or "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+
+    -- ---------- 1. cek sambungan DULU ----------
+    -- Kalau ini gagal, berhenti. Lanjut bikin config yang gak nyambung cuma
+    -- mindahin kegagalan ke tempat yang lebih susah dilacak.
+    info("Cek sambungan ke panel...")
+    local tes = api_get(cfg, "/perintah?tim=tim-1")
+    if tes == "" then
+        err("Panel GAK KEJANGKAU. Setup dibatalin.")
+        err("  Cek internet, atau URL-nya: " .. cfg.url)
+        return nil
+    end
+    local salahKunci = ambil_str(tes, "error")
+    if salahKunci then
+        err("Panel nolak: " .. salahKunci)
+        if salahKunci:find("kunci") then
+            err("  Kunci beda sama `wrangler secret put KUNCI`.")
+        end
+        return nil
+    end
+    ok("Panel nyambung.")
+
+    -- ---------- 2. nomor tim dari server ----------
+    local DEV = dev_id()
+    local rt = api_get(cfg, "/tim-kosong?dev=" .. DEV)
+    local nomor = tonumber(ambil_str(rt, "nomor") or "")
+                  or tonumber(tostring(rt):match('"nomor"%s*:%s*(%d+)') or "")
+    if not nomor then
+        err("Gak bisa ambil nomor tim dari panel.")
+        err("  Jawaban: " .. tostring(rt):sub(1, 120))
+        err("  Backend mungkin belum di-deploy (butuh /tim-kosong).")
+        return nil
+    end
+    cfg.tim = "tim-" .. nomor
+    local alasan = ambil_str(rt, "alasan") or ""
+    ok("Nomor tim: " .. cfg.tim .. (alasan ~= "" and ("  (" .. alasan .. ")") or ""))
+
+    -- klaim biar RF lain gak ngambil nomor yang sama
+    local rk = api_get(cfg, "/tim-klaim?tim=" .. cfg.tim .. "&dev=" .. DEV)
+    if ambil_str(rk, "boleh") == "nggak" then
+        err("Nomor " .. cfg.tim .. " keburu dipegang device lain.")
+        err("  " .. tostring(ambil_str(rk, "sebab") or ""))
+        err("  Jalanin ulang -- nomor berikutnya bakal dicoba.")
+        return nil
+    end
+
+    -- ---------- 3. game & script dari preset ----------
+    cfg.place_id     = pre.place
+    cfg.game_label   = pre.game
+    cfg.script_label = pre.sc
+    cfg.script_url   = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/" .. pre.url
+    ok("Game  : " .. cfg.game_label)
+    ok("Script: " .. cfg.script_label .. "  (" .. pre.url .. ")")
+
+    -- ---------- 4. paket client: dipindai ----------
+    info("Mindai client Roblox di HP ini...")
+    local pkgs = pindai_pkgs()
+    if not pkgs or #pkgs == 0 then
+        err("GAK ADA client Roblox kebaca. Setup dibatalin.")
+        err("  Pasang/clone client-nya dulu (App Cloner), terus jalanin lagi.")
+        return nil
+    end
+    cfg.pkgs = table.concat(pkgs, ",")
+    ok(#pkgs .. " client: " .. cfg.pkgs:gsub("com%.roblox%.", ""))
+
+    -- ---------- 5. sisanya nilai tetap ----------
+    -- Angka-angka ini hasil pemakaian, bukan tebakan -- dan semuanya masih
+    -- bisa diubah manual di config kalau ada RF yang butuh beda.
+    cfg.targets           = "FORCE"
+    cfg.link_code         = ""        -- kosong = public
+    cfg.poll_sec          = 5
+    cfg.reopen_sec        = 300
+    cfg.auto_rejoin       = true
+    cfg.auto_rejoin_menit = 3
+    cfg.wait_sec          = 60
+    cfg.konfirmasi_sec    = 90
+    cfg.max_coba          = 5
+    cfg.stagger_sec       = 15
+    cfg.status_sec        = 20
+    cfg.win_mode          = 0
+    cfg.jaga_depan_sec    = 7
+    cfg.orientasi         = "landscape"
+    cfg.keep_alive        = true
+    cfg.auto_key          = true
+    cfg.disconnect_menit  = cfg.disconnect_menit or 3
+    cfg.autoexec_dir      = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
+    if cfg.shell_tetap == nil then cfg.shell_tetap = true end
+    if cfg.auto_grid == nil then cfg.auto_grid = true end
+    if cfg.autoexec_bersih == nil then cfg.autoexec_bersih = true end
+
+    return cfg
+end
+
 local function setup_wizard()
     print(C.BOLD..C.C.."\n=== ZENX WORKER v"..VERSION.." — SETUP ===\n"..C.N)
 
@@ -6245,6 +6481,46 @@ if PERINTAH == "pasang" then
     info("Diagnosa : zenx cek")
     info("Kunci key: zenx lisensi  /  zenx key")
     print()
+
+    -- ============================================================
+    -- v5.68: kalau presetnya disebut (`pasang seed`), config dibikin
+    -- OTOMATIS -- nol pertanyaan, langsung jalan.
+    --
+    -- Tanpa preset, alurnya tetep kayak dulu: masuk wizard. Itu SENGAJA
+    -- dipertahanin, bukan sisa -- ada RF yang perlu setelan gak biasa, dan
+    -- maksa semuanya lewat preset cuma mindahin kerumitan ke tempat lain.
+    -- ============================================================
+    local preset = (arg and arg[2] or ""):lower()
+    if preset ~= "" then
+        local cfgOto = setup_otomatis(preset)
+        if not cfgOto then
+            err("Setup otomatis GAGAL -- config gak ditulis.")
+            info("Betulin sebabnya di atas, terus jalanin lagi:")
+            info("  lua5.4 ~/zenx_worker.lua pasang " .. preset)
+            return
+        end
+        save_config(cfgOto)
+        ok("Config disimpan: " .. CONFIG_FILE)
+
+        -- perintah awal FORCE (v5.39) -- RF yang baru dipasang ya mau jalan
+        do
+            local r = api_post(cfgOto, "/perintah",
+                string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfgOto.tim)), "PUT")
+            local sl = ambil_str(r or "", "error")
+            if r == "" or sl then
+                warn("Perintah awal gak kekirim" .. (sl and (": " .. sl) or ""))
+                warn("  Nanti pencet 'Jalankan semua' di panel.")
+            else
+                ok("Perintah awal: FORCE")
+            end
+        end
+
+        print()
+        print(C.BOLD .. C.G .. "=== " .. cfgOto.tim .. " SIAP JALAN ===" .. C.N)
+        info(cfgOto.game_label .. "  ·  " .. cfgOto.script_label)
+        print()
+    end
+
     -- v5.24: gak usah nanya "jalanin sekarang?" -- langsung lanjut ke alur
     -- normal. Di situ udah ada pilihannya sendiri (Y=run / E=edit), atau
     -- langsung masuk wizard kalau config belum ada. Dulu ditanya dua kali
