@@ -14,6 +14,18 @@
 --        pas gak ada gunanya.
 --        Mau balik ke perilaku lama: config -> sprIkutTrigger=false
 --
+-- v14.2: ANTREAN SUPLAI ditampilin di tab AUTO GIFT -- akun seed mana aja yang
+--        nunggu dikirimin, plus berapa yang tertunda.
+--        Gunanya NGECEK SILANG sama panel: dua angka dari satu sumber (aturan
+--        SQL-nya sama persis kayak /basket/relay). Kalau panel bilang 10 tapi
+--        di sini 0, yang bermasalah SAMBUNGANNYA, bukan datanya -- dan itu
+--        ketauan langsung, bukan setelah berjam-jam bingung kok gak ngirim.
+--        Alamatnya diturunin dari gfRelayUrl (gsub -> /basket/zenxantrean),
+--        jadi cukup satu URL yang disetel.
+--        Ditarik cuma pas tab dibuka + pas pencet SEGARKAN, di-cache 15 detik.
+--        Ini buat DILIAT, bukan buat ngambil keputusan -- narik lebih sering
+--        cuma boros kuota tanpa nambah guna.
+--
 -- v14.0: RELAY PINDAH DARI PANTRY KE PANEL STAR (Cloudflare Worker).
 --        Cuma satu baris yang berubah -- bawaan gfRelayUrl. Semua mekanismenya
 --        (priority, gate Glow, registry penuh, gift Glow) DIPAKAI APA ADANYA,
@@ -425,7 +437,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v14.1"
+local VER       = "STAR v14.2"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -5854,6 +5866,80 @@ function Farm.fullRegistryUrl()
     if not u or u == "" then return nil end
     return (u:gsub("/basket/[^/]+$", "/basket/zenxfull"))
 end
+-- ============================================================
+-- v14.2: BACA ANTREAN SUPLAI -- akun seed mana aja yang nunggu dikirimin.
+--
+-- Kenapa ditampilin di sisi farm juga, padahal panel udah punya: sekarang
+-- satu-satunya cara tau sambungan panel<->farm jalan itu ngeliat panel. Kalau
+-- farm nampilin daftar yang SAMA, dua sisi bisa saling dicek -- panel bilang
+-- 10 tapi farm bilang 0 berarti sambungannya yang bermasalah, bukan datanya.
+--
+-- Alamatnya diturunin dari gfRelayUrl pakai gsub yang sama kayak zenxprio &
+-- zenxfull -- jadi cukup satu URL yang disetel, sisanya ngikut.
+--
+-- Cache 15 detik: ini cuma buat DILIAT, gak buat ngambil keputusan. Ngambil
+-- lebih sering cuma boros permintaan (kuota CF), tanpa nambah guna.
+-- ============================================================
+function Farm.antreanUrl()
+    local u = state.gfRelayUrl
+    if not u or u == "" then return nil end
+    return (u:gsub("/basket/[^/]+$", "/basket/zenxantrean"))
+end
+
+function Farm.getAntrean()
+    local now = os.clock()
+    if Farm._antreCache and (now - (Farm._antreCacheAt or 0)) < 15 then
+        return Farm._antreCache
+    end
+    local hasil = { aktif = false, sebab = "belum kebaca", antre = {}, jml = 0, tertunda = 0 }
+    local url = Farm.antreanUrl()
+    if not url then
+        hasil.sebab = "gfRelayUrl belum disetel"
+        Farm._antreCache, Farm._antreCacheAt = hasil, now
+        return hasil
+    end
+
+    local resp = Farm.relayReq({ Url = url, Method = "GET" })
+    local body = resp and (resp.Body or resp.body)
+    if not body then
+        hasil.sebab = "panel gak jawab"
+        Farm._antreCache, Farm._antreCacheAt = hasil, now
+        return hasil
+    end
+
+    local ok, d = pcall(function() return HS:JSONDecode(body) end)
+    if not ok or type(d) ~= "table" then
+        hasil.sebab = "jawaban gak kebaca"
+    elseif type(d.error) == "string" then
+        -- backend versi lama -> jalur ini belum ada. Dibilangin terus terang,
+        -- biar gak keliatan kayak "gak ada yang butuh".
+        hasil.sebab = "panel: " .. d.error
+    else
+        hasil.aktif    = (d.aktif == true)
+        hasil.sebab    = d.sebab or (hasil.aktif and "aktif" or "?")
+        hasil.ambang   = tonumber(d.ambang) or 0
+        hasil.tertunda = tonumber(d.tertunda) or 0
+        hasil.antre    = {}
+        if type(d.antre) == "table" then
+            for _, x in ipairs(d.antre) do
+                if type(x) == "table" and type(x.nm) == "string" then
+                    hasil.antre[#hasil.antre + 1] = {
+                        nm    = x.nm,
+                        shk   = tonumber(x.shk) or 0,
+                        tunda = tonumber(x.tunda) or 0,
+                        mail  = tonumber(x.mail) or 0,
+                        tim   = tostring(x.tim or ""),
+                    }
+                end
+            end
+        end
+        hasil.jml = #hasil.antre
+    end
+
+    Farm._antreCache, Farm._antreCacheAt = hasil, now
+    return hasil
+end
+
 -- akun penyimpanan: tandai penuh / gak penuh (value timestamp = penuh, 0 = gak)
 function Farm.setStorageFull(isFull)
     local url = Farm.fullRegistryUrl()
@@ -12530,6 +12616,90 @@ do
         print("[StarFarm] relay url -> "..(state.gfRelayUrl ~= "" and "diset" or "kosong"))
     end)
     Farm._applyGfWrite = mkBodyToggle(body, 252, "Akun ini PET (kirim sheckles)", "gfRelayWrite", "Relay Writer")
+
+    -- ============================================================
+    -- v14.2: ANTREAN SUPLAI -- akun seed mana aja yang nunggu dikirimin.
+    --
+    -- Ditaruh di sini, tepat di bawah Relay URL, karena isinya LANGSUNG
+    -- bergantung URL itu. Kalau URL-nya salah/kosong, daftar ini yang pertama
+    -- ngasih tau -- bukan nunggu berjam-jam terus bingung kok gak ngirim.
+    --
+    -- Gunanya buat NGECEK SILANG sama panel: kalau panel bilang 10 tapi di sini
+    -- 0, yang bermasalah sambungannya, bukan datanya. Dua angka dari satu
+    -- sumber (aturan SQL-nya sama persis) -- jadi kalau beda, itu sinyal.
+    -- ============================================================
+    lbl(body, "Antrean suplai (nunggu dikirimin)", 12, C.text, Enum.TextXAlignment.Left)
+        .Position = UDim2.new(0, 0, 0, 288)
+
+    local antStat = lbl(body, "belum kebaca -- pencet SEGARKAN", 10, C.textDim,
+                        Enum.TextXAlignment.Left)
+    antStat.Position = UDim2.new(0, 0, 0, 306)
+    antStat.Size = UDim2.new(0.68, 0, 0, 14)
+
+    local antBtn = mk("TextButton", { Size = UDim2.new(0.3, 0, 0, 22),
+        Position = UDim2.new(0.7, 0, 0, 302), BackgroundColor3 = C.input,
+        Text = "SEGARKAN", TextColor3 = C.text, Font = FONT, TextSize = 10,
+        BorderSizePixel = 0, Parent = body })
+    corner(antBtn, 6); stroke(antBtn, C.border, 1)
+
+    local antList = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 0, 106),
+        Position = UDim2.new(0, 0, 0, 328), BackgroundColor3 = C.input,
+        BorderSizePixel = 0, ScrollBarThickness = 3,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = body })
+    corner(antList, 6); stroke(antList, C.border, 1)
+    mk("UIListLayout", { Padding = UDim.new(0, 2), Parent = antList })
+    mk("UIPadding", { PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 6),
+        PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 4), Parent = antList })
+
+    local function gambarAntrean()
+        for _, c in ipairs(antList:GetChildren()) do
+            if c:IsA("TextLabel") then c:Destroy() end
+        end
+        local a = Farm.getAntrean()
+
+        if not a.aktif then
+            antStat.Text = "MATI -- " .. tostring(a.sebab)
+            antStat.TextColor3 = C.red
+            local l = lbl(antList, tostring(a.sebab), 10, C.textDim, Enum.TextXAlignment.Left)
+            l.Size = UDim2.new(1, 0, 0, 16)
+            return
+        end
+
+        antStat.Text = ("%d nunggu  ·  %d tertunda  ·  ambang %s"):format(
+            a.jml, a.tertunda, fmtN(a.ambang or 0))
+        antStat.TextColor3 = (a.jml > 0) and C.green or C.textDim
+
+        if a.jml == 0 then
+            local l = lbl(antList, "gak ada yang butuh sekarang", 10, C.textDim,
+                          Enum.TextXAlignment.Left)
+            l.Size = UDim2.new(1, 0, 0, 16)
+            return
+        end
+
+        for i, x in ipairs(a.antre) do
+            -- yang paling atas itu yang bakal dikirimin duluan (diurut sheckles
+            -- paling sedikit di sisi panel) -- ditandai biar jelas
+            local tanda = (i == 1) and "> " or "  "
+            local l = lbl(antList,
+                ("%s%-18s %s%s"):format(tanda, x.nm:sub(1, 18), fmtN(x.shk),
+                    x.tim ~= "" and ("  " .. x.tim) or ""),
+                10, (i == 1) and C.text or C.textDim, Enum.TextXAlignment.Left)
+            l.Size = UDim2.new(1, 0, 0, 15)
+        end
+    end
+
+    antBtn.MouseButton1Click:Connect(function()
+        antBtn.Text = "..."
+        Farm._antreCacheAt = nil          -- paksa tarik ulang, jangan pakai cache
+        task.spawn(function()
+            pcall(gambarAntrean)
+            antBtn.Text = "SEGARKAN"
+        end)
+    end)
+    -- gambar sekali pas tab dibuka, tapi JANGAN nembak permintaan -- pakai
+    -- cache kalau ada. Yang mau data segar tinggal pencet SEGARKAN.
+    task.spawn(function() pcall(gambarAntrean) end)
 
     -- v21.8: akun simpanan (rotasi, dipisah koma) - buah >= 4M dialihin ke sini kalau pet udah cukup
     lbl(body, "Akun Simpanan (rotasi, pisah koma | buah >=4M)", 11, C.textDim, Enum.TextXAlignment.Left).Position = UDim2.new(0,0,0,446)
