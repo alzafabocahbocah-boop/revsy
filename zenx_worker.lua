@@ -609,9 +609,35 @@
 --        berkasnya ada, `command -v` nemu, tapi begitu dijalanin gagal link.
 --        Skrip `up` juga dikasih cadangan yang sama. Kalau `up` ikut mati, gak
 --        ada jalan mbenerin worker dari jauh -- harus pegang HP satu-satu.
+--
+-- v5.75: FIX "REJOIN SEMUA BARENG" -- akhirnya ketemu, dan ini akarnya.
+--
+--        bridge_fresh() balik FALSE kalau /stat gak kebaca. Itu kejadian buat
+--        SEMUA akun sekaligus pas panel gak kejangkau (kuota CF habis,
+--        jaringan putus, curl rusak). Akibatnya di open_all: gak ada satu pun
+--        client yang lolos syarat "dilewati" -> SEMUANYA ditutup-buka, tiap
+--        reopen_sec (300 detik).
+--        Tiap putaran nambah satu join. Cukup banyak putaran -> Roblox nolak
+--        muat data -> error 267 "Your save data didn't load right".
+--
+--        KEKONFIRMASI DARI DUA SISI:
+--          * script jalan TANPA Termux -> gak pernah rejoin sama sekali
+--          * kuota CF emang sempat habis (1027) berjam-jam, dan selama itu
+--            /stat balikin halaman error terus
+--
+--        Yang salah bukan bacanya, tapi PERILAKU GAGALNYA: "gak bisa baca"
+--        diperlakukan sama kayak "client mati". Padahal panel gak kejangkau
+--        itu masalah jaringan -- bukan alasan nutup 10 client.
+--        Sekarang dibedain: /stat gak kebaca -> client dibiarin apa adanya.
+--        Yang beneran nyangkut tetep ketangkep jalur lain (mati mendadak,
+--        auto-rejoin bridge-diem) yang gak bergantung /stat.
+--
+--        Jalur kedua yang kena akar sama: heuristik "curiga" di cek lisensi --
+--        semua akun keliatan bisu -> lisensi sehat dicurigai basi -> semua
+--        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.74-cf"
+local VERSION = "5.76-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3294,6 +3320,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         elseif kead == "ada" then
             local potretC = pkg_running_semua(list)
             local statC = api_get(cfg, "/stat")
+            -- v5.75: kalau /stat gak kebaca, SEMUA akun keliatan bisu -- dan
+            -- itu bikin lisensi yang sehat dicurigai basi, lalu semua client
+            -- ditutup buat bypass percuma. Sama akarnya kayak fix di open_all.
+            local statSah = (ambil_num(statC, "skrg") ~= nil)
             local jalanTapiBisu, contoh = 0, nil
             for _, p in ipairs(list) do
                 local ak = mapAkun and mapAkun[p]
@@ -3302,7 +3332,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     contoh = contoh or p
                 end
             end
-            if jalanTapiBisu > 0 then
+            if jalanTapiBisu > 0 and statSah then
                 kead = "curiga"
                 warn(("Lisensi kebaca 'ada' (umur %s, di atas ambang %dj) TAPI %d client jalan tanpa lapor.")
                     :format(umur_ringkas(umur), (tonumber(cfg.curiga_jam) or 1), jalanTapiBisu))
@@ -3310,6 +3340,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                      tostring(cfg.key_jam or 24) .. "j itu cuma tebakan.")
                 info("  Dianggap butuh bypass. Contoh: " ..
                      tostring(contoh and contoh:gsub("com%.roblox%.", "") or "?"))
+            elseif jalanTapiBisu > 0 and not statSah then
+                warn(("%d client jalan tanpa lapor, TAPI /stat gak kebaca."):format(jalanTapiBisu))
+                warn("  Gak bisa dibedain 'script mati' vs 'panel gak kejangkau'.")
+                warn("  Lisensi DIPERCAYA -- client gak disentuh.")
             end
         end
 
@@ -3551,7 +3585,28 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             -- open_all -- ~24 detik cuma buat mutusin "perlu disentuh nggak".
             local lagiJalan = potretJalan and potretJalan[pkg]
             if lagiJalan == nil then lagiJalan = pkg_running(pkg) end
-            if lagiJalan and (not akun or bridge_fresh(stat0, akun) or baruDisentuh) then
+            -- ============================================================
+            -- v5.75 FIX: BEDAIN "akun gak lapor" dari "PANEL gak kejangkau".
+            --
+            -- bridge_fresh() balik FALSE kalau /stat gak kebaca -- dan itu
+            -- kejadian buat SEMUA akun sekaligus pas panelnya gak kejangkau
+            -- (kuota CF habis, jaringan putus, curl rusak).
+            -- Akibatnya: gak ada satu pun client yang lolos syarat "dilewati",
+            -- jadi SEMUANYA ditutup-buka. Tiap reopen_sec (300 detik).
+            --
+            -- Itu yang bikin "rejoin semua bareng" -- dan tiap putaran nambah
+            -- satu join, sampai Roblox nolak muat data (267).
+            -- Kekonfirmasi dari dua sisi: script jalan TANPA Termux gak pernah
+            -- rejoin, dan kuota CF emang sempat habis berjam-jam.
+            --
+            -- Panel gak kejangkau itu masalah JARINGAN, bukan alasan nutup 10
+            -- client. Kalau /stat gak kebaca, client dibiarin apa adanya --
+            -- yang bener-bener nyangkut tetep ketangkep jalur lain (mati
+            -- mendadak, auto-rejoin bridge-diem) yang gak bergantung /stat.
+            -- ============================================================
+            local panelBuram = (ambil_num(stat0, "skrg") == nil)
+            if lagiJalan and (panelBuram or not akun
+                              or bridge_fresh(stat0, akun) or baruDisentuh) then
                 hasil.lewat = hasil.lewat + 1
                 -- v4.6: JANGAN print tiap client yg udah jalan (bikin spam log).
             else
@@ -3695,6 +3750,33 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         end
         if nBelum == 0 then
             ok(("semua %d client kekonfirmasi masuk game"):format(#tunda))
+        elseif nBelum == #tunda and #tunda >= 3 then
+            -- ============================================================
+            -- v5.76: SEMUA gagal lapor itu beda dari SEBAGIAN gagal.
+            --
+            -- Kalau 1-2 dari 8 gak lapor, itu masuk akal -- client-nya emang
+            -- nyangkut. Tapi kalau SEMUANYA gagal, penyebab per-client gak
+            -- masuk akal lagi: yang lebih mungkin ada satu hal di jalur
+            -- bersama yang rusak.
+            --
+            -- Kejadian nyata yang bikin ini perlu: backend di-deploy pakai
+            -- kolom D1 baru tapi ALTER TABLE-nya belum dijalanin. Tiap laporan
+            -- ditolak D1 -> nol akun kecatat -> worker nyimpulin 8 client
+            -- nyangkut -> nutup-buka semua -> join kesering -> error 267.
+            -- Satu ALTER TABLE kelewat bikin seluruh armada rejoin berulang,
+            -- dan gak ada satu pun pesan yang nunjuk ke sana.
+            --
+            -- Ini gak ngubah tindakan -- jatah bunuh tetep yang ngerem. Yang
+            -- ditambahin: SEBABNYA disebut, biar gak dikira client-nya rusak.
+            -- ============================================================
+            warn(("SEMUA %d client gak lapor -- bukan cuma sebagian."):format(nBelum))
+            warn("  Pola begini biasanya BUKAN client yang rusak.")
+            warn("  Cek dulu, urut dari yang paling sering:")
+            warn("   1. kolom D1 belum dibikin (ALTER TABLE kelewat)")
+            warn("      -> di client, GUI script bilang 'DITOLAK: ... no column'")
+            warn("   2. backend belum di-deploy / versinya ketinggalan")
+            warn("   3. autoexec salah nama atau folder")
+            warn("  Selama sebabnya belum kelar, nutup-buka client gak nolong.")
         end
     end
 
