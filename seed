@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.7"
+local VERSI = "3.11"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -608,8 +608,25 @@ function Seed.beliSekali()
         return 0
     end
 
-    -- rem sheckles: berhenti kalau saldo udah mepet
-    if (state.sisaSheck or 0) > 0 and sheckles() <= state.sisaSheck then
+    -- ============================================================
+    -- v3.8: DUA REM, bukan satu.
+    --
+    -- Rem lama cuma jalan kalau sisaSheck DIISI. Bawaannya 0, jadi syaratnya
+    -- dilewat total -- dan script tetep nembak beli walau saldonya NOL.
+    -- Kejadian di lapangan: "Not enough Sheckles! [X3495]" -- 3.495 percobaan
+    -- gagal beruntun. Itu banjir packet ke server tanpa hasil apa pun, dan
+    -- risiko kena anti-cheat.
+    --
+    -- Rem KERAS di bawah gak bisa dimatiin: beli pas saldo nol itu gak pernah
+    -- ada gunanya, jadi gak ada alasan bikin itu bisa disetel.
+    -- ============================================================
+    local saldo = sheckles()
+    if saldo <= 0 then
+        Seed._logAkhir = "sheckles NOL -- beli ditahan"
+        return 0
+    end
+    -- rem lunak: ambang yang diatur user
+    if (state.sisaSheck or 0) > 0 and saldo <= state.sisaSheck then
         Seed._logAkhir = "sheckles mepet, beli ditahan"
         return 0
     end
@@ -722,7 +739,13 @@ function Seed.beliGearSekali()
         return 0
     end
 
-    if (state.sisaSheck or 0) > 0 and sheckles() <= state.sisaSheck then
+    -- v3.8: rem keras yang sama kayak beli seed -- lihat catatan di beliSekali
+    local saldoG = sheckles()
+    if saldoG <= 0 then
+        Seed._logGear = "sheckles NOL -- beli ditahan"
+        return 0
+    end
+    if (state.sisaSheck or 0) > 0 and saldoG <= state.sisaSheck then
         Seed._logGear = "sheckles mepet"
         return 0
     end
@@ -989,6 +1012,92 @@ end)
 -- ============================================================
 Seed.statGift = 0
 
+-- ============================================================
+-- v3.9: BACA ISI MAILBOX -- siapa ngirim, isinya apa.
+--
+-- Bentuk isi tiap gift BELUM PASTI (nama child bisa beda antar versi game),
+-- jadi pembacanya SENGAJA gak nebak nama: dia nyisir seluruh keturunan tiap
+-- frame Gift_*, ngumpulin SEMUA teks yang keliatan + SEMUA atribut. Cara ini
+-- tetep jalan walau dev game ngubah susunannya.
+--
+-- Dari kumpulan itu baru ditebak mana yang pengirim & mana yang barang:
+--   * atribut bernama Sender/From/Giver          -> pengirim
+--   * teks yang cocok "xN" atau "Nama xN"        -> barang + jumlah
+--   * sisanya disimpen apa adanya di `mentah`    -> biar gak ada info kebuang
+--
+-- Kalau nanti bentuk aslinya udah ketauan dari `mentah`, penebaknya bisa
+-- dipertajam -- tapi jangan dihapus jaring sapuannya.
+-- ============================================================
+function Seed.isiMailbox()
+    local out = {}
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        local mb = pg and pg:FindFirstChild("MailboxUI")
+        local frame = mb and mb:FindFirstChild("Frame")
+        local recv = frame and frame:FindFirstChild("RecieveFrame")
+        if not recv then return end
+
+        for _, g in ipairs(recv:GetChildren()) do
+            local id = tostring(g.Name):match("^Gift_(.+)$")
+            if id and g:IsA("GuiObject") then
+                local e = { id = id, dari = nil, barang = {}, mentah = {} }
+
+                -- atribut di frame-nya sendiri
+                pcall(function()
+                    for k, v in pairs(g:GetAttributes()) do
+                        local kl = tostring(k):lower()
+                        if kl:find("sender") or kl:find("from") or kl:find("giver")
+                           or kl:find("pengirim") then
+                            e.dari = tostring(v)
+                        else
+                            e.mentah[#e.mentah+1] = tostring(k) .. "=" .. tostring(v)
+                        end
+                    end
+                end)
+
+                -- semua teks di dalamnya
+                pcall(function()
+                    for _, d in ipairs(g:GetDescendants()) do
+                        if d:IsA("TextLabel") or d:IsA("TextButton") then
+                            local t = tostring(d.Text or "")
+                                :gsub("<[^>]->", "")          -- buang tag RichText
+                                :gsub("%s+", " ")
+                                :gsub("^%s+", ""):gsub("%s+$", "")
+                            if t ~= "" and #t < 80 then
+                                -- "Carrot x12" / "x12 Carrot" / "Carrot 12"
+                                local nm, jm = t:match("^(.-)%s*[xX]%s*(%d+)$")
+                                if not nm then jm, nm = t:match("^[xX]%s*(%d+)%s+(.+)$") end
+                                if nm and jm and nm ~= "" then
+                                    e.barang[#e.barang+1] = { n = nm, j = tonumber(jm) or 1 }
+                                else
+                                    -- pengirim kadang ditulis di TEKS, bukan atribut
+                                    local dr = t:match("^[Ff]rom:?%s*(.+)$")
+                                             or t:match("^[Dd]ari:?%s*(.+)$")
+                                             or t:match("^[Ss]ent by:?%s*(.+)$")
+                                    if dr and not e.dari then
+                                        e.dari = dr
+                                    else
+                                        e.mentah[#e.mentah+1] = t
+                                    end
+                                end
+                            end
+                        end
+                        -- atribut di keturunan juga (kadang data barangnya di sini)
+                        pcall(function()
+                            for k, v in pairs(d:GetAttributes()) do
+                                e.mentah[#e.mentah+1] = d.Name .. "." .. tostring(k) .. "=" .. tostring(v)
+                            end
+                        end)
+                    end
+                end)
+
+                out[#out+1] = e
+            end
+        end
+    end)
+    return out
+end
+
 function Seed.jumlahGift()
     local n = 0
     pcall(function()
@@ -1004,6 +1113,183 @@ function Seed.jumlahGift()
         end
     end)
     return n
+end
+
+-- ============================================================
+-- v3.9: BACA ISI MAILBOX -- dikirimin apa, dari siapa, berapa.
+--
+-- Kenapa perlu: sampai sekarang mailbox cuma DIHITUNG (jumlahGift) terus
+-- diklaim borongan (ClaimAll). Jadi gak ada catatan barang apa yang masuk --
+-- padahal itu yang nentuin auto-suplai jalan bener apa nggak. Kalau farm
+-- ngirim Carrot (nilai 5) bukan Glow (ribuan kali lebih mahal), yang keliatan
+-- di panel cuma "ada 5 mail" -- gak ketauan isinya sampah.
+--
+-- Struktur yang dipakai (kekonfirmasi dari jumlahGift):
+--   PlayerGui.MailboxUI.Frame.RecieveFrame.Gift_<id>
+-- Nama child DI DALAM Gift_* belum pasti antar versi, jadi teksnya diambil
+-- APA ADANYA dari semua TextLabel di dalamnya -- gak ngandelin nama tertentu.
+--
+-- PENTING: isi RecieveFrame cuma kebangun pas mailbox DIBUKA (lihat catatan
+-- di bukaMailbox). Jadi baca ini setelah mailbox pernah kebuka; kalau belum,
+-- hasilnya kosong walau mailboxnya sebenernya ada isinya.
+-- ============================================================
+function Seed.bacaMailbox()
+    local hasil = {}
+    pcall(function()
+        local pg = player:FindFirstChildOfClass("PlayerGui")
+        local mb = pg and pg:FindFirstChild("MailboxUI")
+        local frame = mb and mb:FindFirstChild("Frame")
+        local recv = frame and frame:FindFirstChild("RecieveFrame")
+        if not recv then return end
+
+        for _, g in ipairs(recv:GetChildren()) do
+            local id = tostring(g.Name):match("^Gift_(.+)$")
+            if id and g:IsA("GuiObject") then
+                local baris = {}
+                for _, d in ipairs(g:GetDescendants()) do
+                    if d:IsA("TextLabel") or d:IsA("TextButton") then
+                        local t = tostring(d.Text or "")
+                            :gsub("<[^>]->", "")        -- buang tag RichText
+                            :gsub("%s+", " ")
+                            :gsub("^%s+", ""):gsub("%s+$", "")
+                        -- lewati teks tombol yang gak ada isinya
+                        if t ~= "" and #t < 90 and not t:match("^[Xx]$") then
+                            baris[#baris+1] = { nama = d.Name, teks = t }
+                        end
+                    end
+                end
+                hasil[#hasil+1] = { id = id, tampil = g.Visible, isi = baris }
+            end
+        end
+    end)
+    return hasil
+end
+
+-- ============================================================
+-- v3.10 KOREKSI PENTING (hasil ukur star_mail v1.0 di fifinx_1):
+--
+-- UI mailbox TIDAK MENYEBUT BARANGNYA sama sekali. Isi surat aslinya cuma:
+--     [SubjectLine1]  From @fifibuah_13!
+--     [NoteTextlabel] Here is a gift!
+--     [TextLabel]     Reply / Claim / Delete
+-- Gak ada nama barang, gak ada jumlah. Roblox baru nunjukin isinya SETELAH
+-- diklaim. Jadi "dikirimin apa" MUSTAHIL dijawab dari UI.
+--
+-- Akibatnya bagian `barang` di v3.9 ngejar sesuatu yang gak ada -- dan lebih
+-- buruk: dia ngambil "teks terpanjang" sebagai nama barang, yang di kenyataan
+-- bakal jadi "From @fifibuah_13!" atau "Here is a gift!". Itu bukan cuma gagal,
+-- itu NGARANG.
+--
+-- Sekarang yang dilaporin cuma yang beneran ada: JUMLAH surat + PENGIRIM.
+-- Buat tau isinya, jalurnya packet (List / ClaimAllProgress) -- masih
+-- diselidiki lewat star_mail, belum dipasang di sini.
+--
+-- Temuan lain yang berguna:
+--   * RecieveFrame isinya 7 objek, 5 di antaranya TEMPLATE (GiftTemplate,
+--     GuildInviteTemplate, GuildRewardTemplate*). Pola "^Gift_" udah bener
+--     nyaring itu -- "GiftTemplate" gak cocok karena gak ada underscore.
+--   * id gift bentuknya "4:<uuid>", bukan uuid polos.
+--   * pengirim ada di SubjectLine1/2 dengan pola "From @<nama>!"
+-- ============================================================
+-- Ringkasan mailbox buat GUI & laporan panel.
+--
+-- Balikin TABEL, bukan string -- sengaja, biar pemanggilnya bisa milih mau
+-- nampilin bagian mana tanpa mengurai teks lagi:
+--   { surat = <jumlah gift>,
+--     barang = { "Glow Carrot x20", ... },   -- nama barang, maks 4 + sisa
+--     dari   = { "wildnx_3", ... },          -- pengirim, kalau kebaca
+--     adaBarang = <bool> }                   -- false = teksnya gak kebaca
+--
+-- adaBarang perlu dibedain dari "kosong": kalau mailbox ADA isinya tapi
+-- teksnya gak kebaca (nama child beda di versi Roblox lain), yang salah itu
+-- PEMBACANYA -- dan itu harus keliatan, bukan disamarkan jadi "gak ada apa-apa".
+-- ============================================================
+function Seed.ringkasMailbox()
+    local m = Seed.bacaMailbox()
+    if #m == 0 then return nil end
+
+    -- kata UI yang bentuknya mirip nama akun tapi jelas bukan.
+    -- Ketangkep pas uji: "Claim" lolos saringan (huruf doang, 5 karakter) dan
+    -- kebaca sebagai pengirim. Disaring pakai daftar, bukan pola -- soalnya
+    -- nama akun juga huruf+angka, jadi gak bisa dibedain dari bentuknya.
+    local BUKAN_NAMA = {
+        claim = true, claimall = true, close = true, cancel = true, ok = true,
+        accept = true, decline = true, delete = true, gift = true, gifts = true,
+        mail = true, mailbox = true, inbox = true, send = true, receive = true,
+        recieve = true, from = true, to = true, all = true, new = true,
+    }
+
+    local barang, dari, seenDari = {}, {}, {}
+    for i, g in ipairs(m) do
+        -- pengirim: teks yang keliatan kayak nama akun (huruf+angka+underscore,
+        -- gak ada spasi), bukan angka doang, dan bukan kata UI
+        -- v3.10: pengirim dibaca dari POLA YANG KEBUKTI di lapangan --
+        -- "From @<nama>!" di SubjectLine1/2. Jauh lebih tepat daripada nebak
+        -- "teks yang bentuknya kayak nama akun", yang dulu bikin "Claim"
+        -- kebaca sebagai pengirim.
+        for _, b in ipairs(g.isi) do
+            local nm = b.teks:match("^From%s+@([%w_]+)!?$")
+                    or b.teks:match("^From:?%s*@?([%w_]+)$")
+                    or b.teks:match("^Dari%s+@?([%w_]+)!?$")
+            if nm and #nm >= 3 and not BUKAN_NAMA[nm:lower()] and not seenDari[nm] then
+                seenDari[nm] = true
+                if #dari < 3 then dari[#dari+1] = nm end
+            end
+        end
+    end
+
+    return {
+        surat = #m,
+        dari  = dari,
+        -- v3.10: `barang` DIBUANG -- UI-nya gak punya info itu (lihat catatan
+        -- di atas). Dipertahanin sebagai tabel kosong biar pemanggil lama gak
+        -- meledak, tapi isinya gak pernah keisi.
+        barang    = {},
+        adaBarang = false,
+    }
+end
+
+-- ============================================================
+-- v3.9: ALAT INTIP -- dump struktur mailbox apa adanya.
+-- Jalanin di konsol executor:  getgenv().StarSeed.intipMailbox()
+-- Dipakai kalau ringkasMailbox() hasilnya ngaco: dari sini ketauan nama child
+-- dan teks aslinya, jadi pembacanya bisa disetel ke kenyataan -- bukan tebakan.
+-- ============================================================
+function Seed.intipMailbox()
+    print("========== INTIP MAILBOX ==========")
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    local mb = pg and pg:FindFirstChild("MailboxUI")
+    if not mb then
+        print("  MailboxUI GAK KETEMU di PlayerGui")
+        print("  Buka mailbox dulu di layar, terus jalanin lagi.")
+        return
+    end
+    print("  MailboxUI ada. Anak-anaknya:")
+    for _, a in ipairs(mb:GetChildren()) do
+        print(("    %-22s %s"):format(a.Name, a.ClassName))
+    end
+
+    local m = Seed.bacaMailbox()
+    print("")
+    print("  gift kebaca: " .. #m)
+    for i, g in ipairs(m) do
+        print("")
+        print(("  [%d] Gift_%s   tampil=%s"):format(i, g.id, tostring(g.tampil)))
+        if #g.isi == 0 then
+            print("      (gak ada teks kebaca)")
+        end
+        for _, b in ipairs(g.isi) do
+            print(("      %-24s %s"):format(b.nama, b.teks))
+        end
+    end
+    if #m == 0 then
+        print("")
+        print("  Kosong. Dua kemungkinan:")
+        print("   1. mailbox beneran kosong")
+        print("   2. mailbox BELUM PERNAH DIBUKA -> isinya belum kebangun")
+        print("      (Seed.bukaMailbox() atau buka manual dulu)")
+    end
+    print("===================================")
 end
 
 function Seed.bukaMailbox()
@@ -1074,12 +1360,84 @@ task.spawn(function()
         if isCurrentGen() and state.terimaGift then pcall(Seed.terimaGiftSekali) end
     end
 end)
+-- ============================================================
+-- v3.11: TANGKEP ISI DARI EVENT KLAIM.
+--
+-- Latar: UI mailbox gak nyebut barangnya (ukur star_mail v1.0), dan packet
+-- List gak bisa dipakai -- satu-satunya cara nangkep jawabannya itu
+-- Response(handler), dan itu NIMPA handler bawaan game (kekonfirmasi v2.8 pas
+-- nyelidiki packet guild; ResponseWrites/Reads jadi kosong sesudah dipanggil).
+--
+-- Yang AMAN: dengerin event yang game tembak SENDIRI. Connect cuma nambah
+-- pendengar, gak nimpa apa pun. Tiga yang relevan:
+--   Updated           -> nembak pas ada gift masuk
+--   ClaimAllProgress  -> nembak per barang selama ClaimAll jalan
+--   ClaimAllFinished  -> nembak pas selesai
+--
+-- Jadi isinya ketauan SETELAH diklaim, bukan sebelum. Itu lebih terbatas dari
+-- yang diharepin, tapi tetep jawab pertanyaan intinya: "tadi dikirimin apa".
+-- Dan buat auto-suplai itu cukup -- yang perlu dipastiin cuma farm ngirim
+-- barang berharga, bukan sampah.
+--
+-- Argumen event bentuknya BELUM PASTI, jadi disimpen apa adanya (diratakan
+-- jadi teks) dan ditampilin mentah. Begitu bentuknya ketauan dari lapangan,
+-- baru diurai lebih rapi -- bukan sebaliknya.
+-- ============================================================
+Seed.mailMasuk = {}      -- riwayat barang yang keklaim, terbaru di depan
+
+-- v3.11: NAMANYA sengaja gak "ratakan" -- udah ada fungsi lain dengan nama
+-- itu di bawah (buat nyeragamkan nama pet). Secara lingkup Lua dua-duanya
+-- jalan, tapi dua nama sama dengan tugas beda total itu jebakan buat yang
+-- baca nanti.
+local function ratakanNilai(v, dalam)
+    dalam = dalam or 0
+    if dalam > 3 then return "..." end
+    if type(v) ~= "table" then return tostring(v):sub(1, 60) end
+    local bagian, n = {}, 0
+    for k, vv in pairs(v) do
+        n = n + 1
+        if n > 6 then bagian[#bagian+1] = "..." break end
+        bagian[#bagian+1] = tostring(k) .. "=" .. ratakanNilai(vv, dalam + 1)
+    end
+    return "{" .. table.concat(bagian, " ") .. "}"
+end
+
+local function catatMail(sumber, ...)
+    local arg = { ... }
+    if #arg == 0 then return end
+    local bagian = {}
+    for _, v in ipairs(arg) do bagian[#bagian+1] = ratakanNilai(v) end
+    table.insert(Seed.mailMasuk, 1, {
+        ts = os.time(), sumber = sumber, isi = table.concat(bagian, " | "),
+    })
+    -- simpen 20 terakhir aja -- ini buat lihat pola, bukan pembukuan
+    while #Seed.mailMasuk > 20 do table.remove(Seed.mailMasuk) end
+    print(("[StarSeed] mail[%s]: %s"):format(sumber, Seed.mailMasuk[1].isi))
+end
+
 task.spawn(function()
     -- ikut sinyal server juga: Mailbox.Updated nembak pas ada gift baru
     pcall(function()
         local up = pkt("Mailbox", "Updated")
         if up and up.OnClientEvent then
-            up.OnClientEvent:Connect(function() Seed._mailKotor = true end)
+            up.OnClientEvent:Connect(function(...)
+                Seed._mailKotor = true
+                -- v3.11: argumennya DITANGKEP, bukan dibuang. Dulu cuma nyetel
+                -- penanda -- padahal di sini kemungkinan ada rincian barangnya.
+                pcall(catatMail, "Updated", ...)
+            end)
+        end
+    end)
+
+    -- v3.11: event klaim -- ini yang paling mungkin bawa nama barang
+    pcall(function()
+        for _, nm in ipairs({ "ClaimAllProgress", "ClaimAllFinished" }) do
+            local p = pkt("Mailbox", nm)
+            if p and p.OnClientEvent then
+                p.OnClientEvent:Connect(function(...)
+                    pcall(catatMail, nm, ...)
+                end)
+            end
         end
     end)
     while isCurrentGen() do
@@ -1528,6 +1886,8 @@ end
 -- ============================================================
 function Seed.debug()
     print("========== STAR SEED DEBUG v" .. VERSI .. " ==========")
+    -- v3.9: isi mailbox ikut didump di sini, biar sekali jalan dapet semua
+    pcall(Seed.intipMailbox)
 
     -- 1) PET dari modul game
     print("")
@@ -1644,6 +2004,36 @@ function Seed.debug()
         for k in pairs(state.petPilih or {}) do t[#t+1] = k end
         return #t > 0 and table.concat(t, ", ") or "(kosong)"
     end)())
+    -- 5) ISI MAILBOX -- v3.9
+    print("")
+    print("--- ISI MAILBOX (apa yang dikirim ke kita) ---")
+    local mb = Seed.isiMailbox()
+    if #mb == 0 then
+        print("  (kosong) -- mailbox belum kebangun, atau emang gak ada surat.")
+        print("  Isi RecieveFrame cuma keisi pas mailbox PERNAH DIBUKA.")
+        print("  Coba: getgenv().StarSeed.bukaMailbox()  terus jalanin debug lagi.")
+    else
+        for i, e in ipairs(mb) do
+            print(("  [%d] id=%s  dari=%s"):format(i, e.id, tostring(e.dari or "?")))
+            if #e.barang > 0 then
+                for _, b in ipairs(e.barang) do
+                    print(("       barang: %-28s x%d"):format(b.n, b.j))
+                end
+            else
+                print("       barang: (gak kekenali polanya)")
+            end
+            -- mentah SELALU dicetak: kalau penebak barang meleset, di sinilah
+            -- bentuk aslinya keliatan -- itu yang dipakai buat mempertajam
+            if #e.mentah > 0 then
+                print("       mentah:")
+                for j, m in ipairs(e.mentah) do
+                    if j > 12 then print("         ... (" .. (#e.mentah - 12) .. " lagi)") break end
+                    print("         " .. m:sub(1, 110))
+                end
+            end
+        end
+    end
+
     print("=================================================")
 end
 Seed.intipPet = Seed.debug   -- nama lama tetep jalan
@@ -2303,6 +2693,44 @@ local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
 -- v3.1: ringkasan filter pet yang BENERAN lagi dipakai. Perlu ditampilin
 -- karena kalau setelan panel gak nyampe, script diam-diam jalan pakai setelan
 -- lokal -- dan dari luar keliatannya kayak panel-nya diabaikan.
+-- v3.9: ringkasan isi mailbox buat baris status. Dipisah dari isiMailbox()
+-- biar yang baca datanya gak kecampur yang nyusun teksnya.
+function Seed.ringkasMailbox()
+    local isi = Seed.isiMailbox()
+    if #isi == 0 then return nil end
+
+    -- gabung barang yang sama dari SEMUA gift -- yang penting totalnya,
+    -- bukan pecahan per surat
+    local total, urut = {}, {}
+    local pengirim = {}
+    for _, e in ipairs(isi) do
+        if e.dari and e.dari ~= "" then pengirim[e.dari] = true end
+        for _, b in ipairs(e.barang) do
+            if not total[b.n] then total[b.n] = 0; urut[#urut+1] = b.n end
+            total[b.n] = total[b.n] + b.j
+        end
+    end
+    table.sort(urut, function(a, b) return total[a] > total[b] end)
+
+    local t = {}
+    for i, nm in ipairs(urut) do
+        if i > 4 then t[#t+1] = "+" .. (#urut - 4) .. " lain" break end
+        t[#t+1] = nm .. " x" .. total[nm]
+    end
+
+    local dari = {}
+    for nm in pairs(pengirim) do dari[#dari+1] = nm end
+
+    return {
+        surat = #isi,
+        barang = t,
+        dari = dari,
+        -- kalau barangnya GAK kebaca, itu penting diketahui: berarti bentuk
+        -- isinya beda dari dugaan, dan `mentah` yang perlu diliat
+        adaBarang = #urut > 0,
+    }
+end
+
 function Seed.ringkasFilterPet()
     if state.petSemua then return "SEMUA jenis" end
     local t = {}
@@ -3263,6 +3691,30 @@ task.spawn(function()
             if state.jualOn then
                 bagian[#bagian+1] = ("jual %d · %s"):format(Seed.statJual,
                     Seed._logJual ~= "" and Seed._logJual or "-")
+            end
+            -- v3.9: isi mailbox ikut ditampilin -- biar keliatan dikirimin apa,
+            -- gak cuma "gift 3"
+            -- v3.10: cuma jumlah + pengirim. Nama barangnya SENGAJA gak
+            -- ditampilin -- UI mailbox gak punya info itu (lihat catatan di
+            -- ringkasMailbox). Dulu nulis "isi gak kebaca", dan itu nyesatin:
+            -- kesannya ada yang salah, padahal datanya memang gak ada.
+            local mb = Seed.ringkasMailbox()
+            if mb then
+                if #mb.dari > 0 then
+                    bagian[#bagian+1] = ("mailbox %d dari %s"):format(
+                        mb.surat, table.concat(mb.dari, ", "))
+                else
+                    bagian[#bagian+1] = ("mailbox %d"):format(mb.surat)
+                end
+            end
+            -- v3.11: barang terakhir yang keklaim. Ini SATU-SATUNYA sumber isi
+            -- yang bisa didapat dengan aman -- UI-nya gak nyebut barang, dan
+            -- packet List cuma bisa dibaca lewat Response() yang nimpa handler
+            -- game. Jadi ketauannya setelah diklaim, bukan sebelum.
+            if Seed.mailMasuk and #Seed.mailMasuk > 0 then
+                local m1 = Seed.mailMasuk[1]
+                bagian[#bagian+1] = ("terakhir[%s] %s"):format(
+                    m1.sumber, tostring(m1.isi):sub(1, 60))
             end
             lblPasar.Text = table.concat(bagian, "  ·  ")
 
