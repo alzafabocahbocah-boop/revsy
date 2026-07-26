@@ -1,121 +1,202 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # ============================================================
-# ZENX — PASANG SEKALI JALAN
+# ZENX PASANG  v1.0  --  pintu masuk tunggal buat RF baru
 #
-# Buat RedFinger BARU. Dari Termux polos sampai worker jalan,
-# cukup SATU perintah -- gak usah pkg install satu-satu, gak usah
-# copy file dari /sdcard manual.
+# Dipakai:
+#   curl -sL <REPO>/pasang.sh | sh -s seed
+#   wget -qO- <REPO>/pasang.sh | sh -s seed
 #
-# Cara pakai (tempel di Termux):
-#   curl -sL https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/pasang.sh | sh
+# Preset: seed / farm / market / gag1
 #
-# Kalau curl belum ada:
-#   pkg install curl -y && curl -sL <url di atas> | sh
+# ------------------------------------------------------------
+# KENAPA SKRIP INI ADA, bukan satu baris panjang:
+#
+# 1. MIRROR HARUS DISET DULU. Termux polos gak punya mirror kepilih, jadi
+#    `pkg install` narik dari sumber campur dan versinya gak sepadan. Kejadian
+#    nyata: libngtcp2 1.25.0 (butuh OpenSSL 3.6) ketemu OpenSSL 3.4.1 ->
+#    curl mati total dengan pesan "CANNOT LINK EXECUTABLE ... cannot locate
+#    symbol SSL_set_quic_tls_transport_params".
+#    Yang bikin susah dilacak: `apt upgrade` bilang "0 upgraded" -- keliatan
+#    gak ada masalah, padahal apt cuma gak punya sumber buat narik.
+#
+# 2. TIAP LANGKAH HARUS BISA BERHENTI DENGAN SEBAB JELAS. Di satu baris
+#    ber-&&, kalau langkah ke-3 gagal yang keliatan cuma error langkah ke-5 --
+#    dan orangnya ngutak-atik bagian yang salah.
+#
+# 3. curl DAN wget dua-duanya dicoba. Alat unduh itu jangan jadi titik gagal
+#    tunggal -- kalau dua-duanya mati, gak ada jalan masuk lagi ke RF itu.
 # ============================================================
 
 REPO="https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main"
-WORKER="$HOME/zenx_worker.lua"
+MIRROR="https://packages-cf.termux.dev/apt/termux-main"
 
-H='\033[1;36m'; OK='\033[0;32m'; W='\033[0;33m'; E='\033[0;31m'; N='\033[0m'
-lapor()  { printf "${H}==>${N} %s\n" "$1"; }
-sukses() { printf "${OK}OK ${N} %s\n" "$1"; }
-warn()   { printf "${W}!  ${N} %s\n" "$1"; }
-gagal()  { printf "${E}ERR${N} %s\n" "$1"; exit 1; }
-
-printf "\n${H}=== ZENX — PASANG SEKALI JALAN ===${N}\n\n"
-
-# ---------- 1. izin penyimpanan ----------
-# Dibutuhin buat nulis autoexec Delta di /sdcard.
-if [ ! -d "$HOME/storage" ]; then
-    lapor "Minta izin penyimpanan (bakal muncul kotak izin -- tap IZINKAN)"
-    termux-setup-storage
-    sleep 3
-fi
-[ -d "$HOME/storage" ] && sukses "Izin penyimpanan ada" || warn "Izin penyimpanan belum -- autoexec mungkin gagal"
-
-# ---------- 2. paket ----------
-lapor "Update daftar paket (agak lama di RF, sabar)"
-pkg update -y >/dev/null 2>&1
-pkg upgrade -y >/dev/null 2>&1
-
-lapor "Pasang lua54, curl, termux-api"
-pkg install lua54 curl termux-api -y >/dev/null 2>&1
-
-# beberapa Termux namain 'lua5.4', sebagian 'lua54' -- pastiin salah satu ada
-if command -v lua5.4 >/dev/null 2>&1; then
-    LUA="lua5.4"
-elif command -v lua >/dev/null 2>&1; then
-    LUA="lua"
+# ---------- warna (dimatiin kalau bukan terminal) ----------
+if [ -t 1 ]; then
+    M='\033[1;31m'; H='\033[1;32m'; K='\033[1;33m'
+    B='\033[1;36m'; A='\033[1m';    N='\033[0m'
 else
-    gagal "Lua gagal kepasang. Coba manual: pkg install lua54 -y"
-fi
-sukses "Lua siap ($LUA)"
-
-command -v curl >/dev/null 2>&1 || gagal "curl gagal kepasang. Coba: pkg install curl -y"
-sukses "curl siap"
-
-# mkfifo dipakai buat shell root tetap (yang bikin worker jauh lebih cepet)
-if ! command -v mkfifo >/dev/null 2>&1; then
-    pkg install coreutils -y >/dev/null 2>&1
-fi
-command -v mkfifo >/dev/null 2>&1 && sukses "mkfifo siap (shell root tetap bisa dipakai)" \
-    || warn "mkfifo gak ada -- shell root tetap bakal balik ke cara lama"
-
-# ---------- 3. cek root ----------
-lapor "Cek akses root"
-if su -c 'echo ok' >/dev/null 2>&1; then
-    sukses "Root jalan"
-else
-    warn "Root GAK jalan. Worker butuh root buat buka/tutup client Roblox."
-    warn "Buka aplikasi root manager di RF, kasih izin buat Termux, terus ulangi."
+    M=''; H=''; K=''; B=''; A=''; N=''
 fi
 
-# ---------- 4. ambil worker ----------
-lapor "Ambil zenx_worker.lua dari GitHub"
-if curl -fsSL "$REPO/zenx_worker.lua" -o "$WORKER.baru" 2>/dev/null; then
-    # pastiin isinya beneran worker, bukan halaman error GitHub
-    if head -5 "$WORKER.baru" | grep -q "ZENX WORKER"; then
-        mv "$WORKER.baru" "$WORKER"
-        sukses "Worker keunduh: $(grep -m1 'local VERSION' "$WORKER" | cut -d'"' -f2)"
-    else
-        rm -f "$WORKER.baru"
-        warn "Yang keunduh bukan file worker (repo/nama file salah?)"
-    fi
-else
-    rm -f "$WORKER.baru"
-    warn "Gagal unduh dari GitHub"
-fi
+langkah=0
+TOTAL=6
 
-# cadangan: ambil dari /sdcard/Download kalau unduhan gagal
-if [ ! -f "$WORKER" ]; then
-    lapor "Coba ambil dari /sdcard/Download"
-    ADA=$(ls -t /sdcard/Download/zenx_worker*.lua* 2>/dev/null | head -1)
-    if [ -n "$ADA" ]; then
-        cp "$ADA" "$WORKER"
-        sukses "Diambil dari: $ADA"
-    else
-        gagal "Worker gak ketemu. Taruh zenx_worker.lua di /sdcard/Download, terus ulangi."
-    fi
-fi
+judul() {
+    langkah=$((langkah + 1))
+    printf "\n${B}[%d/%d] %s${N}\n" "$langkah" "$TOTAL" "$1"
+}
+ok()   { printf "  ${H}OK${N}   %s\n" "$1"; }
+info() { printf "       %s\n" "$1"; }
+warn() { printf "  ${K}!${N}    %s\n" "$1"; }
 
-# ---------- 5. pintasan ----------
-# biar berikutnya cukup ketik: zenx
-cat > "$PREFIX/bin/zenx" <<EOF
-#!/data/data/com.termux/files/usr/bin/sh
-cd "\$HOME" && exec $LUA zenx_worker.lua "\$@"
-EOF
-chmod +x "$PREFIX/bin/zenx"
-sukses "Pintasan dibikin -- lain kali cukup ketik: zenx"
+# gagal() SENGAJA nyebut apa yang harus dilakuin, bukan cuma "gagal".
+# Skrip ini jalan di RF yang kadang dipegang orang lain -- pesan tanpa
+# tindak lanjut cuma bikin dia nunggu.
+gagal() {
+    printf "\n  ${M}GAGAL${N}  %s\n" "$1"
+    shift
+    for baris in "$@"; do printf "         %s\n" "$baris"; done
+    printf "\n"
+    exit 1
+}
 
-# ---------- 6. jalan ----------
-printf "\n${OK}=== SIAP ===${N}\n"
-printf "  Jalanin  : ${H}zenx${N}\n"
-printf "  Matiin   : ${H}zenx stop${N}\n"
-printf "  Diagnosa : ${H}zenx cek${N}\n\n"
+# ---------- preset ----------
+PRESET="$1"
+[ -z "$PRESET" ] && PRESET="seed"
 
-printf "Jalanin sekarang? (Y/n): "
-read JWB
-case "$JWB" in
-    [Nn]*) printf "Oke. Ketik ${H}zenx${N} kalau mau mulai.\n\n" ;;
-    *)     cd "$HOME" && exec $LUA zenx_worker.lua ;;
+case "$PRESET" in
+    seed|farm|market|gag1) ;;
+    *)
+        gagal "Preset '$PRESET' gak dikenal." \
+              "Yang ada: seed / farm / market / gag1" \
+              "Contoh:  ... | sh -s seed"
+        ;;
 esac
+
+printf "\n${A}=== ZENX PASANG -- preset: %s ===${N}\n" "$PRESET"
+
+# ============================================================
+judul "Cek lingkungan"
+# ============================================================
+if [ -z "$PREFIX" ]; then
+    gagal "Ini bukan Termux (PREFIX kosong)." \
+          "Skrip ini cuma buat Termux di Android."
+fi
+ok "Termux: $PREFIX"
+
+# ============================================================
+judul "Set mirror"
+# ============================================================
+# Ini langkah yang paling sering dilewat, dan akibatnya paling nyesatin --
+# lihat catatan nomor 1 di atas.
+SRC="$PREFIX/etc/apt/sources.list"
+if grep -q "packages-cf.termux.dev" "$SRC" 2>/dev/null; then
+    ok "Mirror udah keset"
+else
+    echo "deb $MIRROR stable main" > "$SRC" 2>/dev/null \
+        || gagal "Gak bisa nulis $SRC" "Cek izin / ruang penyimpanan."
+    ok "Mirror diset: packages-cf.termux.dev"
+fi
+
+# ============================================================
+judul "Upgrade paket (agak lama, sabar)"
+# ============================================================
+apt update -y >/dev/null 2>&1 || warn "apt update ada keluhan -- dilanjut"
+
+# full-upgrade, BUKAN upgrade: dia boleh buang paket yang bentrok. Itu yang
+# dibutuhin buat kasus libngtcp2-vs-OpenSSL -- `upgrade` biasa nolak nyentuh
+# paket yang perlu dibuang, jadi bentroknya gak pernah kelar.
+# DEBIAN_FRONTEND + force-confnew: pertanyaan berkas config gak dijawab sama
+# `-y`, dan kalau gak dijawab prosesnya nyangkut diem -- keliatan kayak hang.
+DEBIAN_FRONTEND=noninteractive apt full-upgrade -y \
+    -o Dpkg::Options::="--force-confnew" >/dev/null 2>&1
+
+SISA=$(apt list --upgradable 2>/dev/null | grep -c upgradable)
+if [ "$SISA" -gt 1 ] 2>/dev/null; then
+    warn "$SISA paket masih bisa diupgrade -- biasanya gak masalah"
+else
+    ok "Paket udah terkini"
+fi
+
+# ============================================================
+judul "Pasang lua54 + alat unduh"
+# ============================================================
+apt install -y lua54 >/dev/null 2>&1
+if ! command -v lua5.4 >/dev/null 2>&1; then
+    gagal "lua5.4 gak kepasang." \
+          "Coba manual:  apt install lua54 -y" \
+          "Kalau nolak, mirror-nya mungkin gak kejangkau."
+fi
+ok "lua5.4 siap"
+
+# curl & wget dua-duanya dipasang. Bukan boros -- satu bisa rusak sendiri
+# (libngtcp2/OpenSSL), dan kalau gak ada cadangannya RF-nya gak bisa
+# diapa-apain dari jauh.
+apt install -y curl wget openssl >/dev/null 2>&1
+
+# ---- dites BENERAN JALAN, bukan cuma dicek ada berkasnya ----
+# Kasus lapangan persisnya begitu: berkasnya ada, `command -v` nemu, tapi
+# begitu dijalanin langsung gagal link. Jadi `command -v` gak cukup.
+#
+# Polanya SPESIFIK ("curl <angka>" / "Wget <angka>"), bukan cuma nyari kata
+# "curl"/"wget". Percobaan pertama pakai `grep -qi wget` -- dan itu KENA sama
+# pesan error `CANNOT LINK EXECUTABLE ".../bin/wget"`, karena kata "wget" ada
+# di jalur berkasnya. Jadi wget rusak dianggap sehat, lalu gagal di langkah
+# berikutnya dengan pesan yang gak nyambung ("unduhan kosong").
+UNDUH=""
+if curl --version 2>&1 | grep -q "^curl [0-9]"; then
+    UNDUH="curl"
+    ok "curl jalan: $(curl --version 2>/dev/null | head -1 | cut -d' ' -f1-2)"
+elif wget --version 2>&1 | grep -q "Wget [0-9]"; then
+    UNDUH="wget"
+    warn "curl RUSAK -> pakai wget"
+    info "$(curl --version 2>&1 | head -1 | cut -c1-70)"
+    ok "wget jalan"
+else
+    gagal "curl DAN wget dua-duanya gak jalan." \
+          "Biasanya OpenSSL ketinggalan versi. Coba:" \
+          "  apt install -y --reinstall openssl libnghttp3 libngtcp2 curl" \
+          "Kalau tetep, install ulang Termux (config ada di panel, gak ilang)."
+fi
+
+# ============================================================
+judul "Unduh worker"
+# ============================================================
+BARU="$HOME/zenx_worker.baru"
+URL="$REPO/zenx_worker.lua?v=$(date +%s)"   # ?v= biar gak kena cache GitHub
+
+rm -f "$BARU"
+if [ "$UNDUH" = "curl" ]; then
+    curl -fsSL -H "Cache-Control: no-cache" "$URL" -o "$BARU" 2>/dev/null
+else
+    wget -q --no-cache -O "$BARU" "$URL" 2>/dev/null
+fi
+
+# Isinya diperiksa, bukan cuma "unduhannya sukses". GitHub bisa balikin
+# halaman 404 dengan status 200 -- dan berkas HTML yang disimpen sebagai .lua
+# itu gagal belakangan, di tempat yang jauh dari sebabnya.
+if [ ! -s "$BARU" ]; then
+    gagal "Unduhan kosong." \
+          "URL: $URL" \
+          "Cek internet, atau worker-nya belum di-push ke repo."
+fi
+if ! head -20 "$BARU" 2>/dev/null | grep -q "ZENX WORKER"; then
+    gagal "Yang keunduh BUKAN worker." \
+          "Kemungkinan: berkasnya belum ada di repo (GitHub balikin halaman 404)." \
+          "Cek: $REPO/zenx_worker.lua" \
+          "Isi awal yang keunduh:" \
+          "  $(head -1 "$BARU" | cut -c1-60)"
+fi
+
+mv "$BARU" "$HOME/zenx_worker.lua"
+VER=$(grep -m1 'local VERSION' "$HOME/zenx_worker.lua" | cut -d'"' -f2)
+ok "Worker keunduh: ${VER:-?}"
+
+# ============================================================
+judul "Setup otomatis"
+# ============================================================
+info "Preset '$PRESET' -- nol pertanyaan."
+info "Nomor tim ditarik dari panel, jadi gak bentrok sama RF lain."
+printf "\n"
+
+exec lua5.4 "$HOME/zenx_worker.lua" pasang "$PRESET"
