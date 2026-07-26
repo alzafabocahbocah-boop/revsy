@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.11"
+local VERSI = "3.13"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2575,6 +2575,108 @@ end
 local PANEL_CEK, PANEL_DENYUT = 20, 120
 Seed._panelGen = 0
 
+-- ============================================================
+-- v3.12: DETEKSI DI-KICK, DILAPOR KE PANEL.
+--
+-- Masalah yang dipecahin: pas Roblox nendang (mis. Error 267 "Your save data
+-- didn't load right"), worker di RF GAK BISA TAU sebabnya. Dialognya digambar
+-- ke permukaan GL, dan uiautomator balik 0 teks -- kekonfirmasi v4.85 di
+-- zenx_worker. Jadi worker cuma tau "script berhenti lapor", lalu nunggu
+-- auto_rejoin_menit (3 menit) sebelum nutup-buka client.
+--
+-- Dari DALAM game beda: dialognya objek Roblox biasa di CoreGui, dan itu
+-- KEBUKTI kebaca -- star_mail berhasil baca MailboxUI dengan cara yang sama.
+--
+-- Caranya: sapu CoreGui cari teks yang mirip pesan kick, patokannya ISI
+-- teksnya BUKAN nama objeknya. Nama child beda-beda antar versi Roblox; isi
+-- pesannya jauh lebih stabil.
+--
+-- Yang dilaporin: kode + potongan pesannya. Worker jadi bisa tau BEDANYA
+-- antara "gagal muat data" (ngulang = obatnya) dan "anti-cheat" (ngulang =
+-- makin parah) -- beda yang gak mungkin dia tau dari luar.
+--
+-- CATATAN: laporannya dikirim SEKALI per kejadian. Client yang kena kick
+-- sering masih sempat jalan beberapa detik sebelum DataModel dibongkar --
+-- itu jendelanya. Kalau kelewat, jalur lama (bridge diem) tetep nangkep.
+-- ============================================================
+local KICK_KATA = {
+    "error code", "kicked by this experience", "moderation message",
+    "save data didn't load", "save data did not load",
+    "lost connection", "disconnected", "please rejoin", "you were banned",
+}
+
+function Seed.cekKick()
+    local hasil = nil
+    pcall(function()
+        local CoreGui = game:GetService("CoreGui")
+        local kumpul, kode = {}, nil
+        for _, d in ipairs(CoreGui:GetDescendants()) do
+            if d:IsA("TextLabel") or d:IsA("TextButton") then
+                local t = tostring(d.Text or "")
+                if t:match("%S") then
+                    local l = t:lower()
+                    for _, k in ipairs(KICK_KATA) do
+                        if l:find(k, 1, true) then
+                            kumpul[#kumpul + 1] = t:gsub("%s+", " ")
+                            kode = kode or tonumber(t:match("[Ee]rror [Cc]ode:?%s*(%d+)"))
+                            break
+                        end
+                    end
+                end
+            end
+            if #kumpul >= 6 then break end
+        end
+        if #kumpul == 0 then return end
+
+        local pesan = table.concat(kumpul, " | ")
+        -- sebab dibedain di SINI, di tempat pesannya kebaca. Worker gak bisa
+        -- bedain ini dari luar, jadi kalau gak dilakuin di sini ya gak
+        -- kejadian sama sekali.
+        local l = pesan:lower()
+        local sebab = "lain"
+        if l:find("save data", 1, true) or l:find("didn't load", 1, true)
+           or l:find("did not load", 1, true) then
+            sebab = "gagal-muat-data"      -- ngulang = obatnya
+        elseif l:find("banned", 1, true) or l:find("exploit", 1, true)
+            or l:find("cheat", 1, true) then
+            sebab = "anti-cheat"           -- JANGAN diulang
+        elseif l:find("lost connection", 1, true) then
+            sebab = "koneksi"
+        end
+        hasil = { kode = kode or 0, sebab = sebab, pesan = pesan:sub(1, 180) }
+    end)
+    return hasil
+end
+
+-- pemantau: begitu ketauan, lapor SEKALI lalu berhenti mantau
+function Seed.pantauKick()
+    task.spawn(function()
+        local dilapor = false
+        while isCurrentGen() and not dilapor do
+            local k = Seed.cekKick()
+            if k then
+                dilapor = true
+                Seed._kick = k
+                warn(("[StarSeed] DI-KICK: %d (%s) -- %s"):format(k.kode, k.sebab, k.pesan))
+                -- lapor cepat, jangan nunggu denyut /stat berikutnya (120 detik).
+                -- Waktu itu penting: DataModel bisa dibongkar kapan aja.
+                pcall(function()
+                    panelReq("/stat", "POST", {
+                        akun = player.Name, sc = "seed",
+                        kick = k.kode, kickSebab = k.sebab, kickPesan = k.pesan,
+                        farm2On = false,
+                        job = tostring(game.JobId or ""):sub(1, 8),
+                        place = tostring(game.PlaceId or ""),
+                    })
+                end)
+            end
+            -- 3 detik: cukup rapat buat nangkep jendela sebelum DataModel
+            -- dibongkar, cukup jarang buat gak jadi beban.
+            task.wait(3)
+        end
+    end)
+end
+
 function Seed.startPanel()
     Seed._panelGen = Seed._panelGen + 1
     local gen = Seed._panelGen
@@ -2627,6 +2729,43 @@ function Seed.startPanel()
                     -- yield. Tanpa penjaga, itu "attempt to call a nil value"
                     -- yang cuma muncul sesekali (paling susah dilacak).
                     if Seed.pakaiCfgPanel then Seed.pakaiCfgPanel(r) end
+
+                    -- ============================================================
+                    -- v3.13: PERIKSA JAWABAN /stat. Dulu ditembak lalu dilupain.
+                    --
+                    -- Kejadian nyata yang bikin ini perlu: backend di-deploy
+                    -- pakai kolom baru (tunda/buah/mail/kick), tapi ALTER TABLE-nya
+                    -- belum dijalanin. Tiap laporan GAGAL di D1 -- dan script
+                    -- gak tau apa-apa, terus lapor ke tembok berjam-jam.
+                    --
+                    -- Akibat berantainya jauh lebih parah dari kelihatannya:
+                    -- worker liat NOL akun lapor -> nyimpulin semua client
+                    -- nyangkut -> nutup-buka semua -> join kesering -> 267.
+                    -- Satu ALTER TABLE kelewat bikin seluruh armada rejoin
+                    -- berulang, dan gak ada satu pun pesan yang nunjuk ke sana.
+                    --
+                    -- Sekarang gagalnya KELIATAN: di GUI dan di konsol.
+                    -- ============================================================
+                    local badan = r and (r.Body or r.body)
+                    if not badan or badan == "" then
+                        Seed._statLog = "GAGAL: panel gak jawab"
+                    else
+                        local salah = tostring(badan):match('"error"%s*:%s*"([^"]*)"')
+                        if salah then
+                            Seed._statLog = "DITOLAK: " .. salah
+                            if not Seed._statWarn then
+                                Seed._statWarn = true
+                                warn("[StarSeed] laporan ke panel DITOLAK: " .. salah)
+                                if salah:lower():find("column") or salah:lower():find("sqlite") then
+                                    warn("  Sepertinya kolom D1 belum dibikin.")
+                                    warn("  Jalanin ALTER TABLE yang kurang di D1 console.")
+                                end
+                            end
+                        else
+                            Seed._statLog = "ok"
+                            Seed._statWarn = false   -- pulih -> boleh warn lagi nanti
+                        end
+                    end
                 end
             end)
             task.wait(PANEL_CEK)
@@ -2663,6 +2802,9 @@ function Seed.startPanel()
     end)
 end
 if panelAktif() then Seed.startPanel() end
+-- v3.12: pemantau kick jalan TERPISAH dari startPanel -- dia perlu jalan walau
+-- panelnya belum siap, karena kick bisa kejadian kapan aja termasuk pas loading.
+pcall(Seed.pantauKick)
 
 -- ============================================================
 -- v1.6: SETELAN DARI PANEL WEB
