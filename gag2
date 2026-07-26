@@ -33,6 +33,14 @@
 --        Isian manual masih ada di config (sfGlowGiftTarget) buat cadangan
 --        kalau panel gak ngasih target sama sekali.
 --
+-- v14.3: FIX nama akun di daftar antrean dipotong dari BELAKANG -> empat akun
+--        kebaca identik ("oliviainventmax1" semua), karena 16 karakter
+--        pertamanya sama dan pembedanya (...16c/12c/13c/15c) ada di UJUNG.
+--        Sekarang dipotong dari DEPAN: "…" + ekor.
+--        Ini kesalahan yang SAMA yang udah dibetulin di worker v5.34. Pola
+--        nama akun di sistem ini selalu naruh pembeda di belakang, jadi
+--        motong dari belakang itu selalu salah -- di mana pun.
+--
 -- v14.0: RELAY PINDAH DARI PANTRY KE PANEL STAR (Cloudflare Worker).
 --        Cuma satu baris yang berubah -- bawaan gfRelayUrl. Semua mekanismenya
 --        (priority, gate Glow, registry penuh, gift Glow) DIPAKAI APA ADANYA,
@@ -444,7 +452,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v14.2"
+local VER       = "STAR v14.3"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -11602,12 +11610,30 @@ do
             return
         end
 
+        -- ============================================================
+        -- v14.3 FIX: nama dipotong dari DEPAN, sisain EKORNYA.
+        --
+        -- Bukti lapangan: empat akun kebaca identik di daftar --
+        --   oliviainventmax16c / ...12c / ...13c / ...15c
+        -- semuanya jadi "oliviainventmax1" karena dipotong sub(1,16) dan
+        -- 16 karakter pertamanya SAMA. Yang bikin beda justru di ujung.
+        --
+        -- Ini kesalahan yang SAMA yang udah dibetulin di worker v5.34 --
+        -- pola nama akun di sini pakai pembeda di belakang, jadi motong dari
+        -- belakang itu selalu salah. Cara worker dipakai ulang: "…" + ekor.
+        -- ============================================================
+        local LEBAR = 17
+        local function namaPendek(nm)
+            if #nm <= LEBAR then return nm end
+            return "…" .. nm:sub(-(LEBAR - 1))
+        end
+
         for i, x in ipairs(a.antre) do
             -- baris teratas = yang bakal dikirimin sekarang (urutannya sama
             -- kayak yang dipakai buat milih target)
             local l = lbl(antList,
-                ("%s%-16s %s%s"):format(i == 1 and "> " or "  ",
-                    x.nm:sub(1, 16), Farm.abbrev(x.shk),
+                ("%s%-17s %s%s"):format(i == 1 and "> " or "  ",
+                    namaPendek(x.nm), Farm.abbrev(x.shk),
                     x.tim ~= "" and ("  " .. x.tim) or ""),
                 10, (i == 1) and C.green or C.textDim, Enum.TextXAlignment.Left)
             l.Size = UDim2.new(1, 0, 0, 15)
