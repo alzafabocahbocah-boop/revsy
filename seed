@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.5"
+local VERSI = "3.7"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -264,10 +264,23 @@ local state = {
     panelKunci    = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb",
 }
 
+local CFG_VERSI = 3.6
+
+-- saklar yang di-reset pas naik dari versi lama. Data (petHargaDasar,
+-- seedDikenal, giftTarget, dst) SENGAJA gak masuk sini -- itu hasil
+-- pengamatan/isian, bukan keputusan yang mau dibalikin ke nol.
+local SAKLAR_RESET = {
+    "beliOn","borongSemua","beliBagus","seedBaruAuto","terimaGift",
+    "jualOn","jualTanpaMult","petOn","petSemua","giftPetOn",
+    "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow",
+    "ringanOn","ringanSuara","ringanKebun",
+}
+
 local function simpan()
     pcall(function()
         if not writefile then return end
         writefile(FILE_CFG, HS:JSONEncode({
+            cfgVersi = CFG_VERSI,   -- v3.6: cap versi, biar naik-versi kedeteksi
             beliOn = state.beliOn, borongSemua = state.borongSemua,
             seedPilih = state.seedPilih, beliBagus = state.beliBagus,
             minRarity = state.minRarity, maxPerSiklus = state.maxPerSiklus,
@@ -290,13 +303,51 @@ local function simpan()
     end)
 end
 
+-- ============================================================
+-- v3.6: SAKLAR LAMA GAK BOLEH NGALAHIN BAWAAN BARU.
+--
+-- v3.5 matiin semua saklar di BAWAAN, tapi berkas simpanan di HP masih ditulis
+-- versi lama (borongSemua=true, seedBaruAuto=true, dst). Dan muat() nimpa
+-- SEMUA field dari berkas -- jadi bawaan barunya kalah, dan client tetep beli
+-- walau kodenya udah v3.5.
+--
+-- Persis jebakan yang sama kayak auto_key di worker dan gfRelayUrl di gag2:
+-- "ganti bawaan" gak ngefek apa-apa selama ada simpanan lama yang nimpa.
+--
+-- Perbaikannya: berkas dikasih CAP VERSI. Kalau capnya kurang dari 3.6 (atau
+-- gak ada sama sekali = tulisan versi lama), SAKLAR-nya dilewat -- yang dimuat
+-- cuma data hasil belajar & isian teks, yang emang sayang kalau ilang.
+-- ============================================================
 local function muat()
     pcall(function()
         if not (isfile and isfile(FILE_CFG) and readfile) then return end
         local ok, d = pcall(function() return HS:JSONDecode(readfile(FILE_CFG)) end)
         if not ok or type(d) ~= "table" then return end
+
+        local capLama = tonumber(d.cfgVersi) or 0
+        local usang = capLama < CFG_VERSI
+
+        local lewat = {}
+        if usang then
+            for _, k in ipairs(SAKLAR_RESET) do lewat[k] = true end
+            -- petPilih ikut dikosongin: v3.5 mulai dari kosong, tapi simpanan
+            -- lama isinya Raccoon dan itu bakal kebawa terus.
+            lewat.petPilih = true
+        end
+
+        local nLewat = 0
         for k, v in pairs(d) do
-            if state[k] ~= nil and type(v) == type(state[k]) then state[k] = v end
+            if lewat[k] then
+                nLewat = nLewat + 1
+            elseif state[k] ~= nil and type(v) == type(state[k]) then
+                state[k] = v
+            end
+        end
+
+        if usang then
+            print(("[StarSeed] config lama (v%s) -> %d saklar direset ke MATI."):format(
+                capLama > 0 and tostring(capLama) or "?", nLewat))
+            print("[StarSeed] Nyalain yang dibutuhin dari panel.")
         end
     end)
 end
@@ -2147,7 +2198,7 @@ function Seed.startPanel()
                 local skrg = os.time()
                 if (skrg - kirimAkhir) >= PANEL_DENYUT then
                     local _, totSeed = seedDiTas()
-                    panelReq("/stat", "POST", {
+                    local r = panelReq("/stat", "POST", {
                         akun  = player.Name,
                         -- v3.3: PENANDA SCRIPT. Panel butuh ini buat misahin
                         -- akun GAG 2 yang jalanin star_seed dari yang jalanin
@@ -2174,6 +2225,18 @@ function Seed.startPanel()
                         place = tostring(game.PlaceId or ""),
                     })
                     kirimAkhir = skrg
+                    -- v3.7: SETELAN NEBENG DI JAWABAN INI.
+                    -- Dulu ada loop sendiri yang narik /seed-cfg tiap 30 detik
+                    -- -- 2.880 permintaan/hari per akun, dan 99% jawabannya
+                    -- sama persis. Itu 65% dari seluruh beban akun, cuma buat
+                    -- nanya "ada yang berubah?".
+                    -- Sekarang panel nyelipin setelannya di jawaban /stat yang
+                    -- MEMANG SUDAH dikirim -> nol permintaan tambahan.
+                    -- v3.7: dijaga -- fungsinya dideklarasi di bawah blok ini,
+                    -- dan loop ini bisa jalan duluan kalau HTTP-nya gak sempat
+                    -- yield. Tanpa penjaga, itu "attempt to call a nil value"
+                    -- yang cuma muncul sesekali (paling susah dilacak).
+                    if Seed.pakaiCfgPanel then Seed.pakaiCfgPanel(r) end
                 end
             end)
             task.wait(PANEL_CEK)
@@ -2250,9 +2313,18 @@ function Seed.ringkasFilterPet()
     return table.concat({t[1], t[2], t[3]}, ", ") .. " +" .. (#t - 3)
 end
 
-function Seed.tarikCfgPanel()
-    if not (state.ikutPanel and panelAktif()) then return end
-    local r = panelReq("/seed-cfg?akun=" .. player.Name, "GET")
+-- ============================================================
+-- v3.7: TERIMA SETELAN dari jawaban HTTP apa pun.
+--
+-- Dipisah dari "narik" biar bisa dipakai dua jalur:
+--   1. nebeng di jawaban POST /stat  <- jalur utama sekarang, nol permintaan
+--   2. GET /seed-cfg sendiri          <- cadangan, kalau panel versi lama
+--
+-- Bentuk yang diterima sama: { cfg = {...} }. Jawaban /stat nyelipin field
+-- `cfg` yang isinya persis sama kayak yang dulu dikasih /seed-cfg.
+-- ============================================================
+function Seed.pakaiCfgPanel(r)
+    if not state.ikutPanel then return end
     local body = r and (r.Body or r.body)
     if not body then
         Seed._cfgLog = "GAGAL: panel gak jawab"
@@ -2344,11 +2416,35 @@ function Seed.tarikCfgPanel()
     Seed._cfgTs = os.time()
 end
 
+-- ============================================================
+-- v3.7: CADANGAN -- narik setelan sendiri lewat GET /seed-cfg.
+--
+-- Jalur utamanya sekarang nebeng di jawaban /stat (nol permintaan tambahan).
+-- Ini cuma dipanggil kalau setelan GAK PERNAH nyampe lewat jalur itu --
+-- misalnya backend belum di-deploy, atau akunnya belum kebaca sebagai akun
+-- seed di panel (jadi /stat gak nyelipin cfg).
+--
+-- Dicek jarang (5 menit) dan cuma kalau belum pernah dapet: kalau dijalanin
+-- terus, hematnya hilang dan kita balik ke pola lama.
+-- ============================================================
+function Seed.tarikCfgPanel()
+    if not (state.ikutPanel and panelAktif()) then return end
+    local r = panelReq("/seed-cfg?akun=" .. player.Name, "GET")
+    Seed.pakaiCfgPanel(r)
+end
+
 task.spawn(function()
-    task.wait(4)
+    task.wait(45)   -- kasih waktu /stat pertama jalan duluan
     while isCurrentGen() do
-        pcall(Seed.tarikCfgPanel)
-        task.wait(30)
+        -- cuma narik sendiri kalau setelan belum pernah nyampe
+        if (Seed._cfgTs or 0) == 0 then
+            pcall(Seed.tarikCfgPanel)
+            if (Seed._cfgTs or 0) > 0 then
+                print("[StarSeed] setelan dari /seed-cfg (cadangan) -- " ..
+                      "backend mungkin belum di-deploy")
+            end
+        end
+        task.wait(300)
     end
 end)
 
