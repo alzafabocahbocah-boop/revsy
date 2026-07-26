@@ -1,5 +1,18 @@
 -- ============================================================
--- STAR FARM  v14.0  (standalone, basis ZENX v44.79) - GAG 2
+-- STAR FARM  v14.1  (standalone, basis ZENX v44.79) - GAG 2
+--
+-- v14.1: SPRINKLER IKUT NUNGGU BUAH KECIL HABIS DIPANEN.
+--        Dulu Sprinkler dipasang tiap 2 menit TANPA peduli jumlah buah kecil --
+--        beda dari WC yang nunggu smallCount <= wcTrigger. Akibatnya kebuang:
+--        pas buah kecil masih numpuk (kejadian nyata: 130), durasi Sprinkler
+--        kepakai buat mempercepat tumbuh buah yang BELUM bisa dipetik.
+--        Sekarang syaratnya sama kayak WC -- mempercepat cuma pas kebun udah
+--        dikosongin, waktu di mana itu beneran nambah hasil.
+--        Efek samping yang perlu diketahui: kalau Sprinkler kadaluwarsa pas
+--        buah kecil masih banyak, dia gak diganti sampai buahnya kepanen, dan
+--        selama itu WC juga nunggu. Itu memang maunya -- dua-duanya nganggur
+--        pas gak ada gunanya.
+--        Mau balik ke perilaku lama: config -> sprIkutTrigger=false
 --
 -- v14.0: RELAY PINDAH DARI PANTRY KE PANEL STAR (Cloudflare Worker).
 --        Cuma satu baris yang berubah -- bawaan gfRelayUrl. Semua mekanismenya
@@ -412,7 +425,7 @@ local function invHolders()
 end
 -- v10.9: blok lighting terpisah DIBUANG - sekarang ikut applyAntiRender (30s setelah GUI).
 
-local VER       = "STAR v14.0"
+local VER       = "STAR v14.1"
 -- v12.5: save per-USER (pakai UserId) biar banyak akun di 1 device gak ketuker settings-nya.
 -- UserId dipakai (bukan username) karena unik & gak berubah walau ganti nama.
 local SAVE_FILE = "StarFarm_settings_" .. tostring(player and player.UserId or "guest") .. ".json"
@@ -12009,8 +12022,30 @@ staggerSpawn(function()
             -- ~cap). collect (loop TERPISAH) tetep jalan -> buah kecil yg tumbuh ALAMI tetep kepanen.
             local overCap = bigCount >= bigCap
 
+            -- ============================================================
+            -- v14.1: SPRINKLER IKUT NUNGGU BUAH KECIL HABIS DIPANEN.
+            --
+            -- Dulu Sprinkler dipasang tiap 2 menit TANPA peduli jumlah buah
+            -- kecil -- beda dari WC yang nunggu `smallCount <= wcTrigger`.
+            -- Akibatnya kebuang: pas buah kecil masih numpuk (mis. 130), durasi
+            -- Sprinkler kepakai buat mempercepat tumbuh buah yang BELUM bisa
+            -- dipetik. Yang berguna itu mempercepat SETELAH kebun dikosongin.
+            --
+            -- Sekarang syaratnya sama kayak WC. Efek sampingnya perlu diketahui:
+            -- kalau Sprinkler kadaluwarsa pas buah kecil masih banyak, dia GAK
+            -- diganti sampai buahnya kepanen -- dan selama itu WC juga nunggu
+            -- ("nunggu Super Sprinkler dulu di garden"). Itu memang maunya:
+            -- dua-duanya nganggur pas gak ada gunanya.
+            --
+            -- Mau balik ke perilaku lama? config -> sprIkutTrigger=false
+            -- ============================================================
+            local sprBolehTrig = true
+            if state.sprIkutTrigger ~= false then
+                sprBolehTrig = (smallCount <= wcTrigger)
+            end
+
             -- SUPER SPRINKLER: place langsung pertama kali, lalu tiap 2 menit. (SKIP kalau udah cap)
-            if state.autoSuperSprinkler and not overCap then
+            if state.autoSuperSprinkler and not overCap and sprBolehTrig then
                 local sprElapsed = Farm._af2SprLastPlace and (now - Farm._af2SprLastPlace) or AF2_SPR_DURATION
                 -- v34.4: DETEKSI LANGSUNG tiap siklus - pakai detektor yg sama dgn gerbang WC.
                 -- sprinkler GA ADA di garden (abis/expired/place gagal) + place terakhir >10s (grace
@@ -12061,6 +12096,14 @@ staggerSpawn(function()
             local remSpr = Farm._af2SprLastPlace and math.max(0, math.floor(AF2_SPR_DURATION - (now - Farm._af2SprLastPlace))) or 0
             local sprActive = Farm.af2IsSprinklerActive()
             local _wcSince = Farm._af2WCSince and math.max(0, math.floor((tonumber(state.af2WCDelay) or 10) - (now - Farm._af2WCSince))) or nil
+            -- v14.1: kalau Sprinkler ditahan gerbang, bilang -- biar gak
+            -- keliatan kayak fiturnya mati
+            if state.autoSuperSprinkler and not overCap and not sprBolehTrig then
+                Farm._af2SprTahan = string.format("nunggu buah kecil turun (%d > %d)",
+                                                 smallCount, wcTrigger)
+            else
+                Farm._af2SprTahan = nil
+            end
             local wcStatus = smallCount <= wcTrigger
                 and ((_wcSince and _wcSince > 0) and ("tunggu ".._wcSince.."s")
                      or (sprActive and "place" or "nunggu spr"))
