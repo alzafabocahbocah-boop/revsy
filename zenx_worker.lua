@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.78-cf"
+local VERSION = "5.80-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3792,7 +3792,35 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             ok(("semua %d client kekonfirmasi masuk game"):format(#tunda))
         elseif nBelum == #tunda and #tunda >= 3 then
             -- ============================================================
-            -- v5.78: FIX deteksi masuk game NYANGKUT kalau client masuk LANGSUNG.
+            -- v5.79: `zenx apk` -- unduh & pasang 10 APK client dari Node-X, buat RF baru.
+--        Alur kekonfirmasi dari uji lapangan:
+--          GET /  -> cookie csrfToken
+--          POST /api/unlock-folder  -> HARUS bawa header X-CSRF-Token.
+--            Cookie doang GAK CUKUP -- percobaan awal kena
+--            "Forbidden: Invalid or missing CSRF token".
+--          GET /api/folders?parentId=<id>  -> daftar + ukuran + versi di nama
+--          GET /api/files/<id>/download    -> APK (~95 MB masing-masing)
+--        Diunduh SATU-SATU lalu langsung dipasang & dihapus. Sepuluh APK itu
+--        ~950 MB; kalau ditumpuk dulu, RF yang penyimpanannya pas-pasan penuh
+--        di tengah jalan dan semuanya sia-sia.
+--        Ukuran dicek sebelum pasang -- unduhan kepotong bikin `pm install`
+--        gagal dengan pesan yang gak nyambung.
+--        CATATAN: nama paket TERTANAM di APK-nya, jadi `pm install` naruh tiap
+--        APK ke slot sendiri. Urutan unduhan GAK ngaruh ke kebenaran; nomor di
+--        nama berkas cuma buat laporan.
+--
+-- v5.80: `zenx apk` bisa MILIH client, gak borongan.
+--        Daftarnya ditampilin dulu, terus diminta pilih: "1,2,3", "1-5", atau
+--        Enter buat semua.
+--        Kenapa perlu: sepuluh APK itu ~950 MB dan 4-20 menit. Kalau RF cuma
+--        pakai 5 client, separuhnya kepasang jadi paket yang gak pernah dibuka
+--        -- makan ~475 MB penyimpanan percuma.
+--        Rentang ("1-5") didukung karena itu cara nulis paling wajar buat
+--        lima client pertama. Nomor di luar jangkauan ditolak satu-satu dan
+--        disebutin, sisanya tetep jalan -- salah ketik satu gak bikin batal
+--        semua.
+--
+-- v5.78: FIX deteksi masuk game NYANGKUT kalau client masuk LANGSUNG.
 --        Log lapangan: "grafis clienp mendatar di 42.2 MB -- itu patokan
 --        'halaman awal'". Padahal ukur `zenx layar` di RF yang sama bilang
 --        HOME 15 MB / GAME 49 MB -- jadi 42 MB itu udah DI DALAM GAME.
@@ -7167,6 +7195,210 @@ if PERINTAH == "riwayat" then
     end
     print()
     info("Berkas mentahnya: " .. RIW.file)
+    return
+end
+
+-- ============================================================
+-- v5.79: `zenx apk` -- unduh & pasang APK client dari Node-X.
+--
+-- Buat RF BARU: sepuluh client Roblox (Delta Lite) dipasang sekaligus, gak
+-- usah unduh manual satu-satu terus kirim ke RF.
+--
+-- Alur yang kekonfirmasi dari uji lapangan:
+--   1. GET /                      -> server nyetel cookie csrfToken
+--   2. POST /api/unlock-folder    -> butuh header X-CSRF-Token (BUKAN cookie
+--                                    doang -- itu yang bikin percobaan awal
+--                                    kena "Invalid or missing CSRF token")
+--   3. GET /api/folders?parentId= -> daftar berkas + ukuran + versi di NAMA
+--   4. GET /api/files/<id>/download
+--
+-- CATATAN PENTING soal pemetaan:
+-- Nama paket TERTANAM di dalam APK-nya, jadi `pm install` naruh tiap APK ke
+-- slot-nya sendiri. Kita GAK milih tujuan, dan urutan unduhan gak ngaruh ke
+-- kebenaran. Nomor di nama berkas ("01".."10") cuma dipakai buat NYARING dan
+-- LAPORAN.
+--
+-- Diunduh SATU-SATU lalu langsung dipasang & dihapus -- bukan semua dulu.
+-- Sepuluh APK itu ~950 MB; kalau ditumpuk, RF yang penyimpanannya pas-pasan
+-- bakal penuh di tengah jalan dan semuanya sia-sia.
+-- ============================================================
+if PERINTAH == "apk" then
+    local NX = "https://node-x.my.id"
+    local cfg = load_config()
+    if not cfg then
+        err("Config gak ada. Jalanin `pasang <preset>` dulu.")
+        return
+    end
+
+    -- folder & password: dari argumen, atau dari config
+    local folderId = tonumber(arg and arg[2] or "") or tonumber(cfg.apk_folder or "") or 43
+    local sandi = (arg and arg[3]) or cfg.apk_sandi or ""
+    if sandi == "" then
+        err("Password folder belum ada.")
+        info("Pakai:  zenx apk <folderId> <password>")
+        info("Contoh: zenx apk 43 Delta32")
+        info("Sekali diisi, kesimpen di config buat berikutnya.")
+        return
+    end
+
+    local JAR = (os.getenv("HOME") or ".") .. "/nx_cookie.txt"
+    local TMPAPK = (os.getenv("HOME") or ".") .. "/nx_unduh.apk"
+    os.remove(JAR)
+
+    print(C.BOLD .. C.C .. "\n=== ZENX APK -- folder " .. folderId .. " ===\n" .. C.N)
+
+    -- ---------- 1. ambil csrfToken ----------
+    info("Ambil token...")
+    sh_silent(("curl -s -c %s %s -o /dev/null"):format(shq(JAR), shq(NX .. "/")))
+    local tok = sh(("grep -i csrfToken %s | awk '{print $7}'"):format(shq(JAR)))
+    tok = (tok or ""):gsub("%s+$", "")
+    if tok == "" then
+        err("csrfToken gak keset -- situsnya kejangkau gak?")
+        return
+    end
+    ok(("token: %d karakter"):format(#tok))
+
+    -- ---------- 2. buka kunci ----------
+    local body = string.format('{"folderId":%d,"password":%s}', folderId, jstr(sandi))
+    local r = sh(("curl -s -b %s -c %s -X POST %s -H %s -H %s -H %s -d %s"):format(
+        shq(JAR), shq(JAR), shq(NX .. "/api/unlock-folder"),
+        shq("Content-Type: application/json"),
+        shq("X-CSRF-Token: " .. tok),
+        shq("Referer: " .. NX .. "/folder/" .. folderId),
+        shq(body)))
+    if not tostring(r):find('"success"%s*:%s*true') then
+        err("Buka kunci GAGAL: " .. tostring(r):sub(1, 160))
+        err("  Password salah, atau folderId-nya bukan " .. folderId .. "?")
+        return
+    end
+    ok("Folder kebuka.")
+
+    -- password bener -> disimpen biar gak usah diketik lagi
+    cfg.apk_folder, cfg.apk_sandi = folderId, sandi
+    save_config(cfg)
+
+    -- ---------- 3. daftar berkas ----------
+    local daftar = sh(("curl -s -b %s %s"):format(
+        shq(JAR), shq(NX .. "/api/folders?parentId=" .. folderId .. "&sort=newest")))
+    if not tostring(daftar):find('"files"') then
+        err("Daftar berkas gak kebaca.")
+        return
+    end
+
+    -- kumpulin: id, nama, ukuran
+    local berkas = {}
+    for blok in tostring(daftar):gmatch('{"id":%d+,"folder_id".-}') do
+        local fid = tonumber(blok:match('"id":(%d+)'))
+        local nm  = blok:match('"filename":"([^"]*)"')
+        local sz  = tonumber(blok:match('"filesize":(%d+)'))
+        if fid and nm and sz then
+            berkas[#berkas + 1] = { id = fid, nama = nm, ukur = sz,
+                                    no = nm:match("%s(%d%d)_") or "??" }
+        end
+    end
+    if #berkas == 0 then
+        err("Nol berkas. Folder kosong, atau kuncinya gak kepakai.")
+        return
+    end
+    -- urut pakai NOMOR di nama, bukan id -- biar laporannya kebaca urut
+    table.sort(berkas, function(a, b) return a.no < b.no end)
+
+    local versi = berkas[1].nama:match("_([%d%.]+)%.apk$") or "?"
+    ok(("%d berkas, versi %s"):format(#berkas, versi))
+
+    -- ---------- 3b. tampilin & biarin dipilih ----------
+    -- Kenapa dipilih, bukan borongan: sepuluh APK itu ~950 MB dan 4-20 menit.
+    -- Kalau RF cuma pakai 5 client, separuhnya kepasang jadi paket yang gak
+    -- pernah dibuka -- makan ~475 MB penyimpanan percuma.
+    print()
+    print(C.BOLD .. "  DAFTAR CLIENT" .. C.N)
+    for i, b in ipairs(berkas) do
+        print(("    %2d. client %s   %.0f MB"):format(i, b.no, b.ukur / 1e6))
+    end
+    print()
+    io.write(C.Y .. "  Pilih nomor (1,2,3 atau 1-5) -- Enter = SEMUA: " .. C.N)
+    io.flush()
+    local pilihan = (io.read() or ""):gsub("%s+", "")
+
+    local dipilih = {}
+    if pilihan == "" then
+        for i = 1, #berkas do dipilih[i] = true end
+    else
+        -- "1,2,5-7" -> {1,2,5,6,7}. Rentang didukung karena "1-5" itu cara
+        -- nulis paling wajar buat lima client pertama.
+        for bagian in pilihan:gmatch("[^,]+") do
+            local a, z = bagian:match("^(%d+)%-(%d+)$")
+            if a then
+                for i = tonumber(a), tonumber(z) do
+                    if berkas[i] then dipilih[i] = true end
+                end
+            else
+                local n = tonumber(bagian)
+                if n and berkas[n] then dipilih[n] = true
+                elseif bagian ~= "" then
+                    warn(("  '%s' dilewat -- di luar 1..%d"):format(bagian, #berkas))
+                end
+            end
+        end
+    end
+
+    local antre = {}
+    for i, b in ipairs(berkas) do
+        if dipilih[i] then antre[#antre + 1] = b end
+    end
+    if #antre == 0 then
+        err("Gak ada yang dipilih.")
+        return
+    end
+
+    do
+        local no = {}
+        for _, b in ipairs(antre) do no[#no + 1] = b.no end
+        local totMB = 0
+        for _, b in ipairs(antre) do totMB = totMB + b.ukur end
+        ok(("%d dipilih: %s  (~%.1f GB)"):format(
+            #antre, table.concat(no, ", "), totMB / 1e9))
+    end
+    print()
+
+    -- ---------- 4. unduh + pasang satu-satu ----------
+    local sukses, gagal = 0, {}
+    for i, b in ipairs(antre) do
+        io.write(("  [%d/%d] %s  (%.0f MB) ... "):format(i, #antre, b.no, b.ukur / 1e6))
+        io.flush()
+
+        os.remove(TMPAPK)
+        sh_silent(("curl -s -b %s %s -o %s"):format(
+            shq(JAR), shq(NX .. "/api/files/" .. b.id .. "/download"), shq(TMPAPK)))
+
+        -- ukuran dicek SEBELUM dipasang. Unduhan kepotong bikin `pm install`
+        -- gagal dengan pesan yang gak nyambung -- lebih baik ketauan di sini.
+        local nyata = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+        if nyata < b.ukur * 0.98 then
+            print(C.R .. ("GAGAL unduh (%.0f/%.0f MB)"):format(nyata / 1e6, b.ukur / 1e6) .. C.N)
+            gagal[#gagal + 1] = b.no .. " (unduh kepotong)"
+        else
+            local hasil = sh(("su -c 'pm install -r %s' 2>&1"):format(shq(TMPAPK)))
+            if tostring(hasil):find("Success") then
+                print(C.G .. "OK" .. C.N)
+                sukses = sukses + 1
+            else
+                print(C.R .. "GAGAL pasang" .. C.N)
+                info("      " .. tostring(hasil):gsub("%s+", " "):sub(1, 90))
+                gagal[#gagal + 1] = b.no .. " (pasang)"
+            end
+        end
+        os.remove(TMPAPK)   -- langsung dihapus, jangan numpuk
+    end
+
+    os.remove(JAR)
+    print()
+    if #gagal == 0 then
+        ok(("SEMUA %d APK kepasang (versi %s)"):format(sukses, versi))
+    else
+        warn(("%d kepasang, %d gagal: %s"):format(sukses, #gagal, table.concat(gagal, ", ")))
+        info("Jalanin lagi buat nyoba yang gagal -- yang udah kepasang dilewat cepat.")
+    end
     return
 end
 
