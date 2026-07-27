@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.83-cf"
+local VERSION = "5.85-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3808,6 +3808,25 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
 --        CATATAN: nama paket TERTANAM di APK-nya, jadi `pm install` naruh tiap
 --        APK ke slot sendiri. Urutan unduhan GAK ngaruh ke kebenaran; nomor di
 --        nama berkas cuma buat laporan.
+--
+-- v5.85: `zenx login` CEK cookie hidup dulu sebelum inject.
+--        Endpoint users.roblox.com/v1/users/authenticated -- bedain
+--        alive/dead/captcha/ban, karena tindakannya beda (captcha bisa
+--        di-solve, ban nggak, dead perlu login ulang). Status disetor ke CF
+--        (/cookie-status) biar panel bisa nampilin akun mana kena apa --
+--        kayak Pandora yang lapor "cookie invalid" pas start.
+--        Header Cookie ditulis ke berkas dulu (bukan langsung di baris
+--        perintah) -- cookie 1171 char bisa nembus batas panjang argumen.
+--
+-- v5.84: `zenx login <akun>` -- login client pakai cookie via SQL UPDATE.
+--        Cara kekonfirmasi (diuji manual berkali-kali): tulis cookie ke
+--        app_webview/Cookies lewat sqlite3 UPDATE (BUKAN cp -- cp bikin journal
+--        SQLite gak konsisten, Roblox anggap rusak -> CREATE ACCOUNT), terus
+--        buka pakai `am` (BUKAN panel -- panel nimpa cookie kita duluan).
+--        Cookie diambil sekali dari client yang login akun itu, disetor ke CF,
+--        seterusnya dipakai ulang.
+--        uname buat nyocokin akun DI-DECODE base64 dulu (terkubur di tengah
+--        cookie) -- pola teks biasa gak kena. Ketangkep pas uji.
 --
 -- v5.83: bilah kemajuan curl dinyalain + kecepatan dilaporin.
 --        Tampilannya jadi lebih berantakan (curl nulis bilah di baris sendiri),
@@ -7396,7 +7415,26 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
     -- ---------- 4. unduh + pasang satu-satu ----------
     local sukses, gagal = 0, {}
     for i, b in ipairs(antre) do
-        -- v5.83: bilah kemajuan curl DINYALAIN. Barisnya jadi berantakan
+        -- v5.85: `zenx login` CEK cookie hidup dulu sebelum inject.
+--        Endpoint users.roblox.com/v1/users/authenticated -- bedain
+--        alive/dead/captcha/ban, karena tindakannya beda (captcha bisa
+--        di-solve, ban nggak, dead perlu login ulang). Status disetor ke CF
+--        (/cookie-status) biar panel bisa nampilin akun mana kena apa --
+--        kayak Pandora yang lapor "cookie invalid" pas start.
+--        Header Cookie ditulis ke berkas dulu (bukan langsung di baris
+--        perintah) -- cookie 1171 char bisa nembus batas panjang argumen.
+--
+-- v5.84: `zenx login <akun>` -- login client pakai cookie via SQL UPDATE.
+--        Cara kekonfirmasi (diuji manual berkali-kali): tulis cookie ke
+--        app_webview/Cookies lewat sqlite3 UPDATE (BUKAN cp -- cp bikin journal
+--        SQLite gak konsisten, Roblox anggap rusak -> CREATE ACCOUNT), terus
+--        buka pakai `am` (BUKAN panel -- panel nimpa cookie kita duluan).
+--        Cookie diambil sekali dari client yang login akun itu, disetor ke CF,
+--        seterusnya dipakai ulang.
+--        uname buat nyocokin akun DI-DECODE base64 dulu (terkubur di tengah
+--        cookie) -- pola teks biasa gak kena. Ketangkep pas uji.
+--
+-- v5.83: bilah kemajuan curl DINYALAIN. Barisnya jadi berantakan
         -- (curl nulis di baris sendiri), tapi ditukar sama hal yang lebih
         -- berguna: keliatan angkanya jalan. Unduhan 95 MB itu 1-3 menit, dan
         -- tanpa tanda apa-apa gak ada bedanya antara "lagi jalan" sama
@@ -7472,6 +7510,235 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
         warn(("%d kepasang, %d gagal: %s"):format(sukses, #gagal, table.concat(gagal, ", ")))
         info("Jalanin lagi buat nyoba yang gagal -- yang udah kepasang dilewat cepat.")
     end
+    return
+end
+
+-- ============================================================
+-- v5.85: `zenx login` CEK cookie hidup dulu sebelum inject.
+--        Endpoint users.roblox.com/v1/users/authenticated -- bedain
+--        alive/dead/captcha/ban, karena tindakannya beda (captcha bisa
+--        di-solve, ban nggak, dead perlu login ulang). Status disetor ke CF
+--        (/cookie-status) biar panel bisa nampilin akun mana kena apa --
+--        kayak Pandora yang lapor "cookie invalid" pas start.
+--        Header Cookie ditulis ke berkas dulu (bukan langsung di baris
+--        perintah) -- cookie 1171 char bisa nembus batas panjang argumen.
+--
+-- v5.84: `zenx login <akun>` -- login client pakai cookie via SQL UPDATE.
+--
+-- Cara ini KEKONFIRMASI jalan (diuji manual berkali-kali): cookie ditulis
+-- ke app_webview/Cookies lewat sqlite3 UPDATE (BUKAN cp -- cp bikin journal
+-- SQLite gak konsisten -> Roblox anggap rusak -> CREATE ACCOUNT), terus client
+-- dibuka pakai `am` (BUKAN panel Pandora -- kalau lewat panel, panel nulis
+-- cookie-nya sendiri duluan dan nimpa punya kita).
+--
+-- Alur:
+--   1. cookie akun <akun> udah ada di CF? BELUM -> ambil dari client yang lagi
+--      login akun itu, setor ke CF (sekali doang, seterusnya dipakai ulang).
+--   2. tarik cookie dari CF
+--   3. matiin client target
+--   4. sqlite3 UPDATE cookies SET value=... WHERE name=.ROBLOSECURITY
+--   5. buka pakai am
+--
+-- sqlite3 diakses via path Termux penuh -- `su` PATH-nya beda, gak liat folder
+-- Termux. `command -v sqlite3` di lingkungan su gagal walau sqlite3 kepasang.
+-- ============================================================
+-- decode uname dari cookie Roblox. Bagian tengah (antara "|_" dan ".") itu
+-- base64 protobuf yang isinya duid/uname/uid. Di-decode pakai `base64 -d`
+-- (ada di Termux coreutils). Kalau gagal, balik nil -- pemanggil lanjut nyari.
+-- cek cookie ke API Roblox: hidup / mati / kena verif.
+-- Endpoint users.roblox.com/v1/users/authenticated -- paling ringan, cuma
+-- balikin id+nama kalau cookie sah. Yang penting bukan cuma "sah/nggak" tapi
+-- BEDAIN sebabnya, karena tindakannya beda:
+--   alive   -> cookie oke, lanjut login
+--   dead    -> cookie mati (logout/kadaluarsa) -> perlu login ulang manual
+--   captcha -> kena verif bot -> bisa di-solve BlockSolve
+--   ban     -> akun kena tindakan -> gak bisa diapa-apain
+-- Roblox balikin 200 (alive) / 401 (dead). captcha & ban kebedain dari
+-- badan responsnya, bukan cuma kode -- makanya badan ikut diperiksa.
+local function cek_cookie_roblox(cookie)
+    local tmp = (os.getenv("HOME") or ".") .. "/nx_ckcek.txt"
+    os.remove(tmp)
+    -- tulis header Cookie ke berkas biar cookie yang panjang gak kepotong di
+    -- baris perintah (ada batas panjang argumen).
+    local hf = io.open(tmp, "w")
+    if not hf then return "error", "gak bisa nulis tmp" end
+    hf:write(".ROBLOSECURITY=", cookie)
+    hf:close()
+
+    local alat = RIW and RIW.http and RIW.http.pilih() or "curl"
+    local cmd
+    if alat == "wget" then
+        cmd = ("wget -qO- --server-response --timeout=15 --header=\"Cookie: $(cat %s)\" " ..
+               "https://users.roblox.com/v1/users/authenticated 2>&1"):format(shq(tmp))
+    else
+        cmd = ("curl -s -m 15 -w \"\\nHTTP:%%{http_code}\" -H \"Cookie: $(cat %s)\" " ..
+               "https://users.roblox.com/v1/users/authenticated 2>&1"):format(shq(tmp))
+    end
+    local h = io.popen(cmd)
+    local out = h and h:read("*all") or ""
+    if h then h:close() end
+    os.remove(tmp)
+
+    local kode = out:match("HTTP:(%d+)") or out:match("HTTP/%d%.?%d?%s+(%d+)")
+    if kode == "200" and out:find('"name"') then
+        local nama = out:match('"name"%s*:%s*"([^"]*)"')
+        return "alive", nama
+    end
+    -- captcha / ban kebedain dari isi
+    local low = out:lower()
+    if low:find("captcha") or low:find("challenge") then return "captcha", nil end
+    if low:find("ban") or low:find("terminat") or low:find("moderat") then return "ban", nil end
+    if kode == "401" then return "dead", nil end
+    return "error", ("kode=%s"):format(kode or "?")
+end
+
+local function uname_dari_cookie(ck)
+    if not ck then return nil end
+    local mid = ck:match("|_([A-Za-z0-9+/=_%-]+)%.")
+    if not mid then return nil end
+    -- base64url -> base64 standar
+    mid = mid:gsub("-", "+"):gsub("_", "/")
+    local pad = #mid % 4
+    if pad > 0 then mid = mid .. string.rep("=", 4 - pad) end
+    local h = io.popen("printf %s " .. shq(mid) .. " | base64 -d 2>/dev/null")
+    local raw = h and h:read("*all") or ""
+    if h then h:close() end
+    -- setelah decode, uname muncul sebagai teks: "uname" + panjang + nama
+    return raw:match("uname..([a-zA-Z0-9_]+)")
+end
+
+if PERINTAH == "login" then
+    local cfg = load_config()
+    if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
+
+    local akun = arg and arg[2]
+    if not akun or akun == "" then
+        err("Akun mana?  zenx login <akun>")
+        info("Contoh: zenx login fifinx_10")
+        return
+    end
+    -- client target: argumen ke-3, atau client pertama di config
+    local pkg = arg and arg[3]
+    if pkg and not pkg:find("%.") then pkg = "com.roblox." .. pkg end
+    if not pkg then
+        local list = cfg.pkgs or {}
+        pkg = list[1]
+    end
+    if not pkg then err("Client target gak ketauan. `zenx login <akun> <client>`"); return end
+
+    local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
+    local DB = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+
+    -- helper baca cookie dari client via SQL
+    local function cookie_dari_client(p)
+        local db = "/data/data/" .. p .. "/app_webview/Default/Cookies"
+        local cmd = ("su -c %s 2>/dev/null"):format(
+            shq(SQ .. " " .. db ..
+                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\""))
+        local h = io.popen(cmd)
+        local out = h and h:read("*all") or ""
+        if h then h:close() end
+        out = (out or ""):gsub("%s+$", "")
+        return (out ~= "" and out:find("_|WARNING")) and out or nil
+    end
+
+    -- ---------- 1. cek CF udah punya cookie akun ini? ----------
+    info("Cek cookie " .. akun .. " di panel...")
+    local adaResp = api_get(cfg, "/cookie-ambil?akun=" .. akun)
+    local cookie = tostring(adaResp or ""):match('"cookie"%s*:%s*"([^"]*)"')
+
+    if cookie and cookie:find("_|WARNING") then
+        ok("Cookie udah ada di panel (dipakai ulang).")
+    else
+        -- belum ada -> ambil dari client yang LAGI login akun ini
+        info("Belum ada di panel. Nyari client yang login " .. akun .. "...")
+        local ketemu = nil
+        for _, p in ipairs(cfg.pkgs or {}) do
+            local ck = cookie_dari_client(p)
+            if ck then
+                -- cek uname cocok. uname TERKUBUR di base64 (bagian tengah
+                -- cookie, antara |_ dan .), jadi harus di-decode dulu -- pola
+                -- teks biasa GAK KENA. Ketangkep pas uji: cookie fifinx_10
+                -- mentah gak punya kata "uname" yang kebaca.
+                local un = uname_dari_cookie(ck)
+                if un == akun then ketemu = ck; break end
+            end
+        end
+        if not ketemu then
+            err("Gak nemu client yang lagi login " .. akun .. ".")
+            info("Login dulu akun itu manual di satu client, terus ulang.")
+            return
+        end
+        cookie = ketemu
+        -- setor ke CF (sekali)
+        info("Setor cookie ke panel...")
+        local body = string.format('{"akun":%s,"cookie":%s}', jstr(akun), jstr(cookie))
+        api_post(cfg, "/cookie-simpan", body)
+        ok("Cookie kesimpen di panel.")
+    end
+
+    -- ---------- 2b. CEK cookie valid dulu ----------
+    -- Kalau cookie mati, gak ada gunanya inject + buka client -- cuma buang
+    -- waktu dan client-nya bakal CREATE ACCOUNT. Lebih baik ketauan di sini,
+    -- dan statusnya disetor ke panel biar keliatan akun mana yang perlu
+    -- diurus (login ulang / solve captcha).
+    info("Cek cookie hidup...")
+    local keadaan, ket = cek_cookie_roblox(cookie)
+    -- setor status ke CF (buat panel) -- gagal setor gak fatal
+    pcall(function()
+        local body = string.format('{"akun":%s,"status":%s}', jstr(akun), jstr(keadaan))
+        api_post(cfg, "/cookie-status", body)
+    end)
+    if keadaan == "alive" then
+        ok("Cookie HIDUP" .. (ket and (" (" .. ket .. ")") or "") .. ".")
+    elseif keadaan == "captcha" then
+        err("Cookie " .. akun .. " kena VERIF/CAPTCHA.")
+        info("Bisa di-solve: nanti lewat BlockSolve. Login dibatalin.")
+        return
+    elseif keadaan == "ban" then
+        err("Cookie " .. akun .. " kena BAN/moderasi. Login dibatalin.")
+        return
+    elseif keadaan == "dead" then
+        err("Cookie " .. akun .. " MATI (invalid).")
+        info("Perlu login ulang manual buat dapet cookie baru. Login dibatalin.")
+        return
+    else
+        warn("Cek cookie gak pasti (" .. tostring(ket) .. "). Lanjut coba login.")
+    end
+
+    -- ---------- 3. matiin client ----------
+    info("Matiin " .. pkg:gsub("com%.roblox%.", "") .. "...")
+    sh_silent("am force-stop " .. pkg)
+    os.execute("sleep 2")
+
+    -- ---------- 4. tulis cookie via SQL ----------
+    -- cookie di-escape buat SQL: kutip tunggal digandain. Tapi cookie Roblox
+    -- gak pernah punya kutip tunggal (kekonfirmasi: cuma A-Z a-z 0-9 _ - | . :),
+    -- jadi ini jaga-jaga.
+    local ck_sql = cookie:gsub("'", "''")
+    local upd = ("%s %s \"UPDATE cookies SET value='%s' WHERE name='.ROBLOSECURITY'\""):format(
+        SQ, DB, ck_sql)
+    local h = io.popen(("su -c %s 2>&1"):format(shq(upd)))
+    local uout = h and h:read("*all") or ""
+    if h then h:close() end
+    if uout and uout:find("[Ee]rror") then
+        err("SQL gagal: " .. uout:sub(1, 120))
+        return
+    end
+
+    -- verifikasi panjang
+    local cek = io.popen(("su -c %s 2>/dev/null"):format(
+        shq(SQ .. " " .. DB ..
+            " \"SELECT length(value) FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+    local pj = cek and cek:read("*all") or ""
+    if cek then cek:close() end
+    pj = (pj or ""):gsub("%s+", "")
+    ok(("Cookie ketulis (panjang %s)."):format(pj ~= "" and pj or "?"))
+
+    -- ---------- 5. buka pakai am ----------
+    info("Buka client...")
+    sh_silent("am start -n " .. pkg .. "/.startup.ActivityProtocolLauncher")
+    ok("Login " .. akun .. " -> " .. pkg:gsub("com%.roblox%.", "") .. ". Tunggu masuk game.")
     return
 end
 
