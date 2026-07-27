@@ -31,7 +31,7 @@ su -c "test -d /data/data/$P" 2>/dev/null || { echo "GAGAL: $P gak ada"; exit 1;
 OUT="$HOME/pantau_${C}.txt"
 PREV="$HOME/_pantau_prev.txt"
 CUR="$HOME/_pantau_cur.txt"
-JEDA=3
+JEDA=1   # v1.1: dipercepat -- ganti akun Pandora cuma ~5 detik, jeda 3 bisa kelewat
 
 foto() {
     su -c "find /data/data/$P -type f \
