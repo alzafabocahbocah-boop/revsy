@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.80-cf"
+local VERSION = "5.82-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3808,6 +3808,22 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
 --        CATATAN: nama paket TERTANAM di APK-nya, jadi `pm install` naruh tiap
 --        APK ke slot sendiri. Urutan unduhan GAK ngaruh ke kebenaran; nomor di
 --        nama berkas cuma buat laporan.
+--
+-- v5.82: FIX unduhan APK selalu kepotong di ~10-20 MB.
+--        Sebabnya sh_silent() motong tiap perintah di `timeout 8`. Buat
+--        perintah biasa itu wajar -- tapi 95 MB butuh 50-100 detik.
+--        Gejalanya bikin salah sangka: "GAGAL unduh (13/95 MB)" keliatan kayak
+--        jaringan putus atau server nolak, padahal KITA yang motong. Ukurannya
+--        beda-beda tiap kali (9, 13, 18, 21 MB) justru karena itu batas WAKTU.
+--        Unduhan & `pm install` sekarang lewat os.execute/io.popen langsung
+--        dengan batas sendiri (900 detik unduh, 300 detik pasang).
+--        Ditambah --fail biar balasan HTTP 4xx/5xx gak kesimpen jadi berkas
+--        sampah yang keliatan kayak unduhan berhasil.
+--
+-- v5.81: perintahnya jadi `zenx download` (`dl` juga jalan).
+--        `apk` DIPERTAHANIN -- RF yang udah kepasang mungkin masih pakai itu,
+--        dan nambah nama lain gak ada ongkosnya sementara ngilangin yang lama
+--        ada. Ikut didaftarin di `zenx bantu` biar gak perlu diinget.
 --
 -- v5.80: `zenx apk` bisa MILIH client, gak borongan.
 --        Daftarnya ditampilin dulu, terus diminta pilih: "1,2,3", "1-5", atau
@@ -7222,7 +7238,10 @@ end
 -- Sepuluh APK itu ~950 MB; kalau ditumpuk, RF yang penyimpanannya pas-pasan
 -- bakal penuh di tengah jalan dan semuanya sia-sia.
 -- ============================================================
-if PERINTAH == "apk" then
+-- Tiga nama, satu tempat: `download` yang dipakai sehari-hari, `dl` buat yang
+-- males ngetik, `apk` DIPERTAHANIN karena RF yang udah kepasang mungkin masih
+-- pakai itu. Nambah nama lain gak ada ongkosnya; ngilangin yang lama ada.
+if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
     local NX = "https://node-x.my.id"
     local cfg = load_config()
     if not cfg then
@@ -7235,8 +7254,8 @@ if PERINTAH == "apk" then
     local sandi = (arg and arg[3]) or cfg.apk_sandi or ""
     if sandi == "" then
         err("Password folder belum ada.")
-        info("Pakai:  zenx apk <folderId> <password>")
-        info("Contoh: zenx apk 43 Delta32")
+        info("Pakai:  zenx download <folderId> <password>")
+        info("Contoh: zenx download 43 Delta32")
         info("Sekali diisi, kesimpen di config buat berikutnya.")
         return
     end
@@ -7245,7 +7264,7 @@ if PERINTAH == "apk" then
     local TMPAPK = (os.getenv("HOME") or ".") .. "/nx_unduh.apk"
     os.remove(JAR)
 
-    print(C.BOLD .. C.C .. "\n=== ZENX APK -- folder " .. folderId .. " ===\n" .. C.N)
+    print(C.BOLD .. C.C .. "\n=== ZENX DOWNLOAD -- folder " .. folderId .. " ===\n" .. C.N)
 
     -- ---------- 1. ambil csrfToken ----------
     info("Ambil token...")
@@ -7368,7 +7387,23 @@ if PERINTAH == "apk" then
         io.flush()
 
         os.remove(TMPAPK)
-        sh_silent(("curl -s -b %s %s -o %s"):format(
+        -- ============================================================
+        -- v5.82 FIX: unduhan JANGAN lewat sh_silent().
+        --
+        -- sh_silent() motong tiap perintah di `timeout 8`. Buat perintah biasa
+        -- itu masuk akal -- tapi 95 MB butuh 50-100 detik, jadi tiap unduhan
+        -- dipotong di detik ke-8.
+        -- Gejalanya bikin salah sangka: "GAGAL unduh (13/95 MB)" keliatan kayak
+        -- jaringan putus atau server nolak, padahal kita sendiri yang motong.
+        -- Ukurannya beda-beda tiap kali (9, 13, 18, 21 MB) justru karena itu
+        -- batas WAKTU, bukan batas ukuran.
+        --
+        -- os.execute langsung, dengan batas 15 menit -- cukup buat 95 MB di
+        -- sambungan paling lemot, dan tetep ada rem kalau beneran nyangkut.
+        -- --fail biar HTTP 4xx/5xx gak kesimpen jadi berkas sampah yang
+        -- keliatan kayak unduhan berhasil.
+        -- ============================================================
+        os.execute(("timeout 900 curl -s --fail -b %s %s -o %s >/dev/null 2>&1"):format(
             shq(JAR), shq(NX .. "/api/files/" .. b.id .. "/download"), shq(TMPAPK)))
 
         -- ukuran dicek SEBELUM dipasang. Unduhan kepotong bikin `pm install`
@@ -7378,7 +7413,12 @@ if PERINTAH == "apk" then
             print(C.R .. ("GAGAL unduh (%.0f/%.0f MB)"):format(nyata / 1e6, b.ukur / 1e6) .. C.N)
             gagal[#gagal + 1] = b.no .. " (unduh kepotong)"
         else
-            local hasil = sh(("su -c 'pm install -r %s' 2>&1"):format(shq(TMPAPK)))
+            -- v5.82: pm install juga JANGAN lewat sh() -- batas 8 detiknya
+            -- kekecilan buat APK 95 MB. Kalau kepotong, hasilnya kebaca
+            -- "gagal pasang" padahal pemasangannya lagi jalan.
+            local ph = io.popen(("timeout 300 su -c 'pm install -r %s' 2>&1"):format(shq(TMPAPK)))
+            local hasil = ph and ph:read("*all") or ""
+            if ph then ph:close() end
             if tostring(hasil):find("Success") then
                 print(C.G .. "OK" .. C.N)
                 sukses = sukses + 1
@@ -8127,6 +8167,8 @@ if PERINTAH ~= "" then
     info("   zenx uji <client>       -> tembak 6 titik, cek pencetan nyampe apa nggak")
     info("   zenx ukur <cl> <jumlah> -> set jendela ke ukuran N client, cari tombolnya")
     info("   zenx pasang             -> pasang/atur RF baru (gantiin pasang.sh)")
+    info("   zenx download [id] [pw] -> unduh & pasang APK client (bisa milih 1-10)")
+    info("   zenx riwayat            -> pola rejoin & kick (buat diagnosa)")
     info("   zenx cari <client>      -> worker cari sendiri tombol key + bypass sekalian")
     info("   zenx pantau <client>    -> tiap dipencet, koordinatnya langsung nongol")
     info("   zenx rekam <client>     -> rekam sekali, ambil satu koordinat")
