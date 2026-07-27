@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.82-cf"
+local VERSION = "5.83-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3808,6 +3808,19 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
 --        CATATAN: nama paket TERTANAM di APK-nya, jadi `pm install` naruh tiap
 --        APK ke slot sendiri. Urutan unduhan GAK ngaruh ke kebenaran; nomor di
 --        nama berkas cuma buat laporan.
+--
+-- v5.83: bilah kemajuan curl dinyalain + kecepatan dilaporin.
+--        Tampilannya jadi lebih berantakan (curl nulis bilah di baris sendiri),
+--        tapi ditukar sama dua hal yang lebih berguna:
+--          1. keliatan angkanya JALAN. Unduhan 95 MB itu 1-3 menit, dan tanpa
+--             tanda apa-apa gak ada bedanya antara "lagi jalan" sama
+--             "nyangkut" -- bikin orang nunggu sia-sia atau mbatalin yang
+--             sebenernya jalan.
+--          2. kecepatan per client dicatet (MB/s). Bilah kemajuan lewat gitu
+--             aja tanpa ninggalin jejak; angka ini yang bikin ketauan kalau
+--             ada satu client yang anehnya lambat.
+--        Catatan: stderr SENGAJA gak dibuang -- bilah curl ditulis ke situ,
+--        kalau dibuang bilahnya ikut ilang.
 --
 -- v5.82: FIX unduhan APK selalu kepotong di ~10-20 MB.
 --        Sebabnya sh_silent() motong tiap perintah di `timeout 8`. Buat
@@ -7383,8 +7396,13 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
     -- ---------- 4. unduh + pasang satu-satu ----------
     local sukses, gagal = 0, {}
     for i, b in ipairs(antre) do
-        io.write(("  [%d/%d] %s  (%.0f MB) ... "):format(i, #antre, b.no, b.ukur / 1e6))
-        io.flush()
+        -- v5.83: bilah kemajuan curl DINYALAIN. Barisnya jadi berantakan
+        -- (curl nulis di baris sendiri), tapi ditukar sama hal yang lebih
+        -- berguna: keliatan angkanya jalan. Unduhan 95 MB itu 1-3 menit, dan
+        -- tanpa tanda apa-apa gak ada bedanya antara "lagi jalan" sama
+        -- "nyangkut" -- dan itu bikin orang nunggu sia-sia atau mbatalin yang
+        -- sebenernya jalan.
+        print(("  [%d/%d] client %s  (%.0f MB)"):format(i, #antre, b.no, b.ukur / 1e6))
 
         os.remove(TMPAPK)
         -- ============================================================
@@ -7403,27 +7421,42 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
         -- --fail biar HTTP 4xx/5xx gak kesimpen jadi berkas sampah yang
         -- keliatan kayak unduhan berhasil.
         -- ============================================================
-        os.execute(("timeout 900 curl -s --fail -b %s %s -o %s >/dev/null 2>&1"):format(
+        local t0 = os.time()
+        -- -# = bilah ringkas (bukan tabel angka penuh). 2>&1 SENGAJA gak
+        -- dibuang: bilahnya ditulis curl ke stderr, jadi kalau dibuang
+        -- bilahnya ikut ilang.
+        os.execute(("timeout 900 curl -# --fail -b %s %s -o %s"):format(
             shq(JAR), shq(NX .. "/api/files/" .. b.id .. "/download"), shq(TMPAPK)))
+        local lama_detik = os.time() - t0
 
         -- ukuran dicek SEBELUM dipasang. Unduhan kepotong bikin `pm install`
         -- gagal dengan pesan yang gak nyambung -- lebih baik ketauan di sini.
         local nyata = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
         if nyata < b.ukur * 0.98 then
-            print(C.R .. ("GAGAL unduh (%.0f/%.0f MB)"):format(nyata / 1e6, b.ukur / 1e6) .. C.N)
+            print(C.R .. ("      GAGAL unduh (%.0f/%.0f MB dalam %ds)"):format(
+                nyata / 1e6, b.ukur / 1e6, lama_detik) .. C.N)
             gagal[#gagal + 1] = b.no .. " (unduh kepotong)"
         else
             -- v5.82: pm install juga JANGAN lewat sh() -- batas 8 detiknya
             -- kekecilan buat APK 95 MB. Kalau kepotong, hasilnya kebaca
             -- "gagal pasang" padahal pemasangannya lagi jalan.
+            -- kecepatan unduh dilaporin biar bisa DIBANDINGIN antar client.
+            -- Bilah kemajuan lewat gitu aja tanpa ninggalin jejak; angka ini
+            -- yang bikin ketauan kalau ada satu client yang anehnya lambat.
+            local laju = lama_detik > 0 and (nyata / 1e6 / lama_detik) or 0
+            io.write(("      unduh OK (%.0f MB, %ds, %.1f MB/s) -- pasang... "):format(
+                nyata / 1e6, lama_detik, laju))
+            io.flush()
+
+            local t1 = os.time()
             local ph = io.popen(("timeout 300 su -c 'pm install -r %s' 2>&1"):format(shq(TMPAPK)))
             local hasil = ph and ph:read("*all") or ""
             if ph then ph:close() end
             if tostring(hasil):find("Success") then
-                print(C.G .. "OK" .. C.N)
+                print(C.G .. ("OK (%ds)"):format(os.time() - t1) .. C.N)
                 sukses = sukses + 1
             else
-                print(C.R .. "GAGAL pasang" .. C.N)
+                print(C.R .. "GAGAL" .. C.N)
                 info("      " .. tostring(hasil):gsub("%s+", " "):sub(1, 90))
                 gagal[#gagal + 1] = b.no .. " (pasang)"
             end
