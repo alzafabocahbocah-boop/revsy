@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.87-cf"
+local VERSION = "5.90-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5244,6 +5244,29 @@ local function run(cfg)
             lastIsi = isi
         end
 
+        -- v5.88: LOGIN dari panel. Format perintah: "LOGIN:<akun>:<client>"
+        -- Panel kirim ini pas user pilih cookie di kartu client. Worker
+        -- jalanin login (cek cookie hidup -> inject SQL -> buka am), terus
+        -- balik ke FORCE biar gak nyangkut. Aksi SEKALI.
+        do
+            local akunL, clientL = isi:match("^LOGIN:([^:]+):([^:]+)")
+            if akunL and clientL then
+                info(("LOGIN dari panel: %s -> %s"):format(akunL, clientL))
+                -- panggil alur login lewat os.execute ke diri sendiri (zenx login).
+                -- Ini reuse kode yang udah kebukti jalan, gak nulis-ulang.
+                local pkgL = clientL:find("%.") and clientL or ("com.roblox." .. clientL)
+                os.execute(("%s login %s %s"):format(
+                    (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                    akunL, pkgL:gsub("com%.roblox%.", "")))
+                -- balik ke FORCE (biar worker lanjut normal, gak ngulang login)
+                pcall(function()
+                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                end)
+                lastIsi = "FORCE"
+                skip_sisa = true
+            end
+        end
+
         -- Perintah kesimpen di DB, jadi isinya = keadaannya.
         -- Gak perlu forceSticky kayak jaman ntfy (pesan kedaluwarsa).
         local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
@@ -7378,9 +7401,21 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
         print(("    %2d. client %s   %.0f MB"):format(i, b.no, b.ukur / 1e6))
     end
     print()
-    io.write(C.Y .. "  Pilih nomor (1,2,3 atau 1-5) -- Enter = SEMUA: " .. C.N)
-    io.flush()
-    local pilihan = (io.read() or ""):gsub("%s+", "")
+    -- v5.89: argumen ke-4 = pilihan langsung, skip prompt. io.read() di
+    -- sebagian terminal RF (VNC/panel) gak nerima ketikan -> nyangkut selamanya,
+    -- Ctrl+C ke-swallow. Kasih jalan tanpa prompt:
+    --   zenx download 48 pw semua   -> semua
+    --   zenx download 48 pw 1-3     -> client 1-3
+    local pilihan
+    local argPilih = arg and arg[4]
+    if argPilih and argPilih ~= "" then
+        pilihan = (argPilih == "semua" or argPilih == "all") and "" or argPilih
+        info("Pilihan dari argumen: " .. (pilihan == "" and "SEMUA" or pilihan))
+    else
+        io.write(C.Y .. "  Pilih nomor (1,2,3 atau 1-5) -- Enter=SEMUA, atau lewat argumen ke-4: " .. C.N)
+        io.flush()
+        pilihan = (io.read() or ""):gsub("%s+", "")
+    end
 
     local dipilih = {}
     if pilihan == "" then
@@ -7508,10 +7543,29 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
                 nyata / 1e6, lama_detik, laju))
             io.flush()
 
+            -- v5.90: pm install di BACKGROUND + polling file hasil. Sebabnya:
+            -- pm install masang APK cepat (~15s) TAPI prosesnya baru exit setelah
+            -- dexopt/verify background kelar (~200s). Nunggu exit (read atau
+            -- os.execute biasa) = kejebak 200s padahal APK udah kepakai di 15s.
+            -- Solusi: jalanin background, redirect hasil ke file, POLLING file
+            -- tiap 2 detik sampai muncul "Success"/"Failure". Begitu kelihatan,
+            -- lanjut -- biarin dexopt kelar sendiri di belakang.
             local t1 = os.time()
-            local ph = io.popen(("timeout 300 su -c 'pm install -r %s' 2>&1"):format(shq(TMPAPK)))
-            local hasil = ph and ph:read("*all") or ""
-            if ph then ph:close() end
+            local outf = (os.getenv("HOME") or ".") .. "/nx_pm.txt"
+            os.remove(outf)
+            os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(
+                shq(TMPAPK), shq(outf)))
+            local hasil = ""
+            for _ = 1, 150 do   -- maks 300 detik (150 x 2s)
+                os.execute("sleep 2")
+                local hf = io.open(outf, "r")
+                if hf then
+                    hasil = hf:read("*all") or ""
+                    hf:close()
+                    if hasil:find("Success") or hasil:find("Failure") then break end
+                end
+            end
+            os.remove(outf)
             if tostring(hasil):find("Success") then
                 print(C.G .. ("OK (%ds)"):format(os.time() - t1) .. C.N)
                 sukses = sukses + 1
@@ -7677,7 +7731,7 @@ if PERINTAH == "login" then
 
     -- ---------- 1. cek CF udah punya cookie akun ini? ----------
     info("Cek cookie " .. akun .. " di panel...")
-    local adaResp = api_get(cfg, "/cookie-ambil?akun=" .. akun)
+    local adaResp = api_get(cfg, "/cookie-satu?akun=" .. akun)
     local cookie = tostring(adaResp or ""):match('"cookie"%s*:%s*"([^"]*)"')
 
     if cookie and cookie:find("_|WARNING") then
