@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.10-cf"
+local VERSION = "6.11-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1330,16 +1330,18 @@ end
 -- ulang. Ngukur itu 2 panggilan su (~12 detik); pas nyapu 8 titik, itu doang
 -- bisa makan 1,5 menit percuma.
 local function tap_jendela(cfg, pkg, fx, fy, kali, kotak)
-    local sebab
-    if not kotak then
-        kotak, sebab = jendela_kotak(pkg)
-        if not kotak then return nil, sebab end
+    -- v6.11: JANGAN PERNAH TAP SEBELUM NGUKUR. Aturan tegas: tiap tap WAJIB
+    -- ukur jendela fresh (jendela_kotak). Kotak yang dioper dari luar bisa BASI
+    -- (jendela udah pindah/fullscreen sejak diukur) -> tap pakai koordinat lama
+    -- -> nyasar ke app lain (Termux). Jadi kotak dari luar cuma dipakai sebagai
+    -- PETUNJUK; kotak asli tetep diukur ulang di sini.
+    local ukur = jendela_kotak(pkg)
+    if not ukur then
+        return nil, "gagal ukur jendela sebelum tap -- tap dibatalin (gak nebak koordinat)"
     end
-    -- v6.10: PENGAMAN -- TOLAK tap kalau kotak FULLSCREEN (lebar > 1000).
-    -- Bahaya nyata: pas jendela belum settle ke petak (masih 1280x720),
-    -- koordinat pecahan (fx=0.83) jatuh di piksel ~1057 -- di LUAR petak
-    -- client, kena app di belakang (Termux!). Tap nyasar itu yang bikin
-    -- client/RF keluar. Lebih baik GAGAL AMAN daripada tap nyasar.
+    kotak = ukur
+    -- PENGAMAN: TOLAK tap kalau kotak FULLSCREEN (lebar > 1000). Jendela belum
+    -- settle ke petak -> koordinat pecahan jatuh di luar petak -> kena app lain.
     local lebarK = kotak.R - kotak.L
     if lebarK > 1000 then
         return nil, ("jendela masih fullscreen (%d) -- tap DITOLAK biar gak nyasar ke app lain"):format(lebarK)
