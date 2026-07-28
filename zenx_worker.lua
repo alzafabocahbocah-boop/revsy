@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.13-cf"
+local VERSION = "6.15-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5007,6 +5007,7 @@ local function run(cfg)
     local cacheRun = {}    -- pkg -> true/false (ada jendela di layar?)
     local cacheHidup = {}  -- v5.45: pkg -> true/false (prosesnya idup?)
     local runSebelum = {}  -- v4.46: status ronde lalu, buat nangkep yang MATI MENDADAK
+    local bekuSejak = {}   -- v6.15: kapan client mulai beku (script gak lapor)
     local cacheBridge = {} -- v4.49: script beneran lapor apa nggak (bukan cuma window ada)
     local cacheRam = {0,0,0}
     local cacheCpu = 0
@@ -5129,6 +5130,7 @@ local function run(cfg)
     local SCRIPT_URL_AKHIR = ""   -- url terakhir yang beneran ditulis ke autoexec
     local lastJagaDepan = 0     -- v4.52: kapan terakhir munculin ulang jendela
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
+    local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
 
@@ -5145,6 +5147,22 @@ local function run(cfg)
         if (os.time() - lastStatusCek) >= 10 then refresh_status(); lastStatusCek = os.time() end
         gambar_tabel(isi)   -- v4.10: redraw tabel dari cache (instan)
         local now  = os.time()
+
+        -- v6.14: CEK LISENSI BERKALA tiap 60 detik. Kalau lisensi Delta HILANG
+        -- (file kosong = key habis), langsung bypass -- gak nunggu ronde buka
+        -- client (reopen_sec 5 menit). Jadi begitu key habis, key baru diambil
+        -- dalam <1 menit, bukan nunggu 5 menit. auto_key harus ON.
+        if cfg.auto_key == true and (now - lastLisensiCek) >= 60 then
+            lastLisensiCek = now
+            local kd = lisensi_keadaan(cfg)
+            if kd == "hilang" and (now - (BYPASS_TERAKHIR or 0)) > 300 then
+                warn("Lisensi HILANG (cek berkala) -- ambil key baru sekarang")
+                -- open_all dgn fast=false biar blok bypass di dalamnya jalan.
+                -- only=nil (semua). Ini nutup semua client + bypass + buka ulang.
+                open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false)
+                refresh_status(); lastStatusCek = os.time()
+            end
+        end
 
         -- v4.3: narik link private server dari panel. kalau panel udah pernah set
         -- (ts>0), pakai link panel (walau kosong = public). kalau panel belum
@@ -5496,6 +5514,35 @@ local function run(cfg)
             end
         end
         for _, pkg in ipairs(split(cfg.pkgs)) do runSebelum[pkg] = cacheRun[pkg] end
+
+        -- v6.15: CLIENT BEKU / NYANGKUT DI HOME > 3 MENIT -> PERINTAH MASUK BARU.
+        -- Client yang window-nya ADA tapi script GAK PERNAH LAPOR (nyangkut di
+        -- Home, PS link gagal, popup age-check) itu "beku". Dulu dibiarin sampai
+        -- ronde reopen_sec, atau ditutup. User minta: JANGAN kill (buang RAM +
+        -- loading ulang lama) -- cukup am start lagi ke link game (open_one),
+        -- lebih ringan. Ambang 3 menit biar loading normal gak kepotong.
+        if hit then
+            for _, pkg in ipairs(split(cfg.pkgs)) do
+                local beku = (cacheRun[pkg] == true and cacheBridge[pkg] == false
+                              and mapAkun[pkg]) and true or false
+                if beku then
+                    if not bekuSejak[pkg] then bekuSejak[pkg] = now end
+                    if (now - bekuSejak[pkg]) >= 180 then
+                        tambahLog("BEKU >3mnt: " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
+                                  .. " -> perintah masuk baru (gak di-kill)")
+                        RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=beku-3menit")
+                        setAksi("masuk ulang " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")))
+                        open_one(cfg, pkg, mapLink[pkg])   -- am start lagi, TANPA kill
+                        bekuSejak[pkg] = now   -- reset timer biar gak spam tiap ronde
+                        os.execute("sleep 3")
+                        refresh_status(); lastStatusCek = os.time()
+                        gambar_tabel(isi)
+                    end
+                else
+                    bekuSejak[pkg] = nil   -- gak beku lagi -> reset
+                end
+            end
+        end
 
         if hit then
             local only = isi:match("FORCE:([%w%.%_]+)")
