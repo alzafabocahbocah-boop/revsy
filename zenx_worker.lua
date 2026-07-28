@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.92-cf"
+local VERSION = "5.95-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3178,42 +3178,36 @@ local function jaga_depan(cfg, mapLink, cekJalan)
     end
     if #mau == 0 then return 0 end
 
-    -- v5.92: sekalian RESIZE ke petak. move-task cuma bawa ke depan -- kalau
-    -- client udah nguncup jadi BUBBLE (logo ngambang), move-task gak ngeluarin
-    -- dia dari bubble. `am task resizeTask <id> L T R B` MAKSA jendela ke bounds
-    -- petak -> keluar dari bubble, balik jadi jendela. Ini yang bikin client
-    -- yang "kepental jadi bulat" balik ke petaknya sendiri.
-    local peta = nil
-    if cfg.auto_grid == true then
-        peta = grid_hitung(cfg)   -- pkg -> {L,T,R,B}
-    end
-
-    -- taskId semua client sekali baca ('am stack list' -- satu-satunya yang
-    -- ngasih taskId di RedFinger)
+    -- v5.95: PENCET BUBBLE via `input tap`. TEMUAN LAPANGAN penting:
+    --   * `am task move-task` DAN `am task resizeTask` GAK ADA di ROM RedFinger
+    --     ("unknown command"/"not allowed") -- jadi jaga_depan lama GAK PERNAH
+    --     jalan (error-nya ketelen sh_silent).
+    --   * Yang bikin bubble expand = `input tap <x> <y>` ke TENGAH petak --
+    --     beneran niru jari user mencet. Kebukti: visible=false -> true.
+    -- Jadi: buat tiap client yang nguncup (visible=false), tap tengah petaknya.
+    -- Yang udah visible=true dilewat (gak usah diganggu).
+    local peta = grid_hitung(cfg)   -- pkg -> {L,T,R,B}
+    if not peta then return 0 end   -- gak tau petak -> gak bisa tap tepat
     local o = sh("su -c 'am stack list 2>&1'") or ""
-    local bagian, n = {}, 0
+    local n = 0
     for _, pkg in ipairs(mau) do
-        local id, cari = nil, 1
-        while true do
-            local _, b = o:find("taskId=", cari, true)
-            if not b then break end
-            local nomor = o:match("^(%d+)", b + 1)
-            if nomor and o:sub(b, b + 200):find(pkg, 1, true) then id = nomor break end
-            cari = b + 1
+        -- cek visible client ini dari blok stack list-nya
+        local vis = false
+        local pos = o:find(pkg, 1, true)
+        if pos then
+            -- baca visible= di sekitar baris pkg (dalam 220 char)
+            local blok = o:sub(math.max(1, pos - 220), pos + 40)
+            vis = blok:find("visible=true", 1, true) ~= nil
         end
-        if id then
-            -- resize DULU (keluarin dari bubble ke petak), baru bawa ke depan.
-            local kotak = peta and peta[pkg]
-            if kotak then
-                bagian[#bagian+1] = ("am task resizeTask %s %d %d %d %d"):format(
-                    id, kotak.L, kotak.T, kotak.R, kotak.B)
-            end
-            bagian[#bagian+1] = "am task move-task " .. id .. " true"
+        local kotak = peta[pkg]
+        if kotak and not vis then
+            -- tengah petak
+            local cx = math.floor((kotak.L + kotak.R) / 2)
+            local cy = math.floor((kotak.T + kotak.B) / 2)
+            sh_silent(("su -c 'input tap %d %d'"):format(cx, cy))
+            os.execute("sleep 0.3")   -- kasih waktu expand sebelum tap berikutnya
             n = n + 1
         end
-    end
-    if n > 0 then
-        sh_silent("su -c '" .. table.concat(bagian, "; ") .. "'")
     end
     return n
 end
@@ -3954,6 +3948,37 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         SUDAH_GRID = true
         catatKirim(os.date("%H:%M:%S") .. " GRID: posisi jendela ditulis buat "
                    .. hasil.ok .. " client yang baru dibuka")
+    end
+
+    -- v5.93: AUTO-SETOR COOKIE ke panel -- kayak "cookie ready" Pandora.
+    -- Inline (bukan fungsi lokal -- file mepet batas 200 lokal). Tiap client
+    -- jalan & login, cookie disetor sekali (penanda di KICK_DIURUS["ck:akun"]
+    -- biar gak nambah lokal baru -- file mepet batas 200 lokal Lua).
+    for _, pkg in ipairs(list) do
+        if pkg_running(pkg) then
+            local ak = (mapAkun and mapAkun[pkg]) or baca_username(pkg)
+            if ak and ak ~= "" and ak ~= "?" and not KICK_DIURUS["ck:" .. ak] then
+                local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                local cmd = ("su -c %s 2>/dev/null"):format(shq(
+                    "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
+                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\""))
+                local hC = io.popen(cmd)
+                local ckC = hC and hC:read("*all") or ""
+                if hC then hC:close() end
+                ckC = (ckC or ""):gsub("%s+$", "")
+                if ckC ~= "" and ckC:find("_|WARNING") then
+                    pcall(function()
+                        local body = string.format('{"akun":%s,"paket":%s,"cookie":%s}',
+                            jstr(ak), jstr(pkg), jstr(ckC))
+                        local resp = api_post(cfg, "/cookie-simpan", body) or ""
+                        if resp:find('"ok"%s*:%s*true') then
+                            KICK_DIURUS["ck:" .. ak] = true
+                            info("   cookie " .. ak .. " -> panel (ready)")
+                        end
+                    end)
+                end
+            end
+        end
     end
 
     return hasil
