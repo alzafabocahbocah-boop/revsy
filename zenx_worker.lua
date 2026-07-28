@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.03-cf"
+local VERSION = "6.05-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4156,28 +4156,22 @@ local function setup_otomatis(namaPreset)
     end
     ok("Panel nyambung.")
 
-    -- ---------- 2. nomor tim dari server ----------
+    -- ---------- 2. IDENTITAS = DEVICE ID (v6.05, migrasi dari tim) ----------
+    -- Dulu minta "nomor tim" dari /tim-kosong -- nomor bisa ganti, bikin sampah
+    -- numpuk. Sekarang IDENTITAS = device ID (android_id) yang NEMPEL per RF &
+    -- gak pernah ganti. cfg.tim diisi device ID -- struktur backend/panel tetap
+    -- (tim.nama = akun.tim), cuma isinya device ID. Nama device (Samsung dll)
+    -- buat tampilan udah dikirim via devnama.
     local DEV = dev_id()
-    local rt = api_get(cfg, "/tim-kosong?dev=" .. DEV)
-    local nomor = tonumber(ambil_str(rt, "nomor") or "")
-                  or tonumber(tostring(rt):match('"nomor"%s*:%s*(%d+)') or "")
-    if not nomor then
-        err("Gak bisa ambil nomor tim dari panel.")
-        err("  Jawaban: " .. tostring(rt):sub(1, 120))
-        err("  Backend mungkin belum di-deploy (butuh /tim-kosong).")
-        return nil
-    end
-    cfg.tim = "tim-" .. nomor
-    local alasan = ambil_str(rt, "alasan") or ""
-    ok("Nomor tim: " .. cfg.tim .. (alasan ~= "" and ("  (" .. alasan .. ")") or ""))
+    cfg.tim = DEV
+    ok("Identitas device: " .. DEV .. "  (" .. devnama_now() .. ")")
 
-    -- klaim biar RF lain gak ngambil nomor yang sama
-    local rk = api_get(cfg, "/tim-klaim?tim=" .. cfg.tim .. "&dev=" .. DEV)
+    -- klaim biar RF lain gak nyerobot (device ID unik, harusnya gak bentrok --
+    -- tapi klaim tetep dijalanin biar konsisten sama sistem lama)
+    local rk = api_get(cfg, "/tim-klaim?tim=" .. DEV .. "&dev=" .. DEV)
     if ambil_str(rk, "boleh") == "nggak" then
-        err("Nomor " .. cfg.tim .. " keburu dipegang device lain.")
-        err("  " .. tostring(ambil_str(rk, "sebab") or ""))
-        err("  Jalanin ulang -- nomor berikutnya bakal dicoba.")
-        return nil
+        -- device ID sama = RF ini juga (pasang ulang), bukan bentrok -> lanjut
+        info("Klaim: " .. tostring(ambil_str(rk, "sebab") or "device udah kedaftar"))
     end
 
     -- ---------- 3. game & script dari preset ----------
@@ -5289,6 +5283,19 @@ local function run(cfg)
                 lastIsi = "FORCE"
                 skip_sisa = true
             end
+        end
+
+        -- v6.04: UPDATE dari panel. Tarik worker terbaru (skrip `up`) + exit.
+        -- Worker gak auto-restart -- user FORCE lagi dari panel buat nyalain
+        -- worker baru (mekanisme restart diserahin ke user, lebih aman drpd
+        -- nebak exec/loop yang belum tentu ada di RF ini).
+        if isi:upper():find("^UPDATE") then
+            info("UPDATE dari panel -- tarik worker terbaru")
+            local PFX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
+            os.execute(PFX .. "/bin/up")   -- stop + download + validasi + ganti file
+            ok("Worker keupdate. FORCE dari panel buat nyalain versi baru.")
+            info("(worker lama berhenti sekarang -- file udah versi baru)")
+            os.exit(0)
         end
 
         -- v5.99: CEKCOOKIE dari panel. Panel kirim "CEKCOOKIE" ke tim ini ->
