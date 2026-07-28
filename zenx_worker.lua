@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.98-cf"
+local VERSION = "6.01-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2083,6 +2083,23 @@ local function dev_id()
     end
     DEV_ID_CACHE = id
     return id
+end
+
+-- v6.00: nama device buat panel. GLOBAL (bukan local) biar gak kena batas 200
+-- lokal Lua -- file worker udah mentok. Cache di KICK_DIURUS.
+function devnama_now()
+    if KICK_DIURUS["_devnama"] then return KICK_DIURUS["_devnama"] end
+    local brand = (sh("su -c 'getprop ro.product.brand' 2>/dev/null") or ""):match("[%w ]+") or ""
+    local model = (sh("su -c 'getprop ro.product.model' 2>/dev/null") or ""):match("[%w %-_]+") or ""
+    brand = brand:gsub("%s+$", ""); model = model:gsub("%s+$", "")
+    local nama
+    if brand ~= "" and model ~= "" then
+        nama = brand:sub(1,1):upper() .. brand:sub(2) .. " " .. model
+    elseif model ~= "" then nama = model
+    elseif brand ~= "" then nama = brand
+    else nama = "RedFinger" end
+    KICK_DIURUS["_devnama"] = nama
+    return nama
 end
 
 -- ============================================================
@@ -3980,11 +3997,11 @@ local function lapor(cfg, isi_perintah, cache)
     local body = string.format(
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
-        '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"sc":%s}',
+        '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
-        jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id()),
+        jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id()), jstr(devnama_now()),
         -- v5.66: laporin SCRIPT yang dijalanin RF ini. Panel butuh ini buat
         -- misahin tab "GAG 2 farm" dari "GAG 2 seed" -- dan pakai info per-TIM
         -- lebih andal daripada penanda per-akun: satu sumber (config RF),
@@ -5258,6 +5275,20 @@ local function run(cfg)
                 lastIsi = "FORCE"
                 skip_sisa = true
             end
+        end
+
+        -- v5.99: CEKCOOKIE dari panel. Panel kirim "CEKCOOKIE" ke tim ini ->
+        -- worker cek cookie SEMUA akun yang lagi login di client-nya (hidup/
+        -- mati/captcha/ban), setor status ke panel. Aksi sekali, balik FORCE.
+        if isi:upper():find("^CEKCOOKIE") then
+            info("CEKCOOKIE dari panel -- cek cookie semua akun tim ini")
+            os.execute(((os.getenv("PREFIX") or "/data/data/com.termux/files/usr")
+                .. "/bin/zenx") .. " cekcookie")
+            pcall(function()
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+            end)
+            lastIsi = "FORCE"
+            skip_sisa = true
         end
 
         -- Perintah kesimpen di DB, jadi isinya = keadaannya.
@@ -7302,11 +7333,13 @@ end
 -- pakai itu. Nambah nama lain gak ada ongkosnya; ngilangin yang lama ada.
 if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
     local NX = "https://node-x.my.id"
+    -- v6.01: config GAK WAJIB buat download. RF baru (config belum dibikin)
+    -- tetep bisa download client asal folder+password dikasih di argumen.
+    -- cfg cuma dipakai buat: baca folder/sandi tersimpan + nyimpen balik.
+    -- Kalau gak ada cfg, jalan pakai argumen aja (gak nyimpen -- gak fatal).
     local cfg = load_config()
-    if not cfg then
-        err("Config gak ada. Jalanin `pasang <preset>` dulu.")
-        return
-    end
+    local adaCfg = (cfg ~= nil)
+    cfg = cfg or {}
 
     -- folder & password: dari argumen, atau dari config
     local folderId = tonumber(arg and arg[2] or "") or tonumber(cfg.apk_folder or "") or 43
@@ -7353,7 +7386,9 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
 
     -- password bener -> disimpen biar gak usah diketik lagi
     cfg.apk_folder, cfg.apk_sandi = folderId, sandi
-    save_config(cfg)
+    -- v6.01: simpen cuma kalau config file udah ada (RF udah dipasang).
+    -- RF baru tanpa config: skip simpen -- download tetep jalan, argumen diulang lain kali.
+    if adaCfg then save_config(cfg) end
 
     -- ---------- 3. daftar berkas ----------
     local daftar = sh(("curl -s -b %s %s"):format(
@@ -7837,6 +7872,56 @@ if PERINTAH == "login" then
     info("Buka client...")
     sh_silent("am start -n " .. pkg .. "/.startup.ActivityProtocolLauncher")
     ok("Login " .. akun .. " -> " .. pkg:gsub("com%.roblox%.", "") .. ". Tunggu masuk game.")
+    return
+end
+
+if PERINTAH == "cekcookie" then
+    -- v5.99: cek cookie SEMUA akun yang lagi login di client tim ini.
+    -- Buat tiap client jalan: baca username + cookie -> cek_cookie_roblox ->
+    -- setor status ke panel (/cookie-status). Dipanggil dari panel (tombol
+    -- "cek" per tim) lewat perintah CEKCOOKIE, atau manual `zenx cekcookie`.
+    local cfg = load_config()
+    if not cfg then err("Config belum ada."); return end
+    local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
+    print(C.BOLD .. C.C .. "\n=== CEK COOKIE HIDUP (semua akun tim) ===\n" .. C.N)
+    local cek, hidup = 0, 0
+    for _, pkg in ipairs(split(cfg.pkgs)) do
+        if pkg_running(pkg) then
+            local akun = baca_username(pkg)
+            if akun and akun ~= "" and akun ~= "?" then
+                -- baca cookie via SQL
+                local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                local cmd = ("su -c %s 2>/dev/null"):format(shq(
+                    SQ .. " " .. db ..
+                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\""))
+                local hC = io.popen(cmd)
+                local ck = hC and hC:read("*all") or ""
+                if hC then hC:close() end
+                ck = (ck or ""):gsub("%s+$", "")
+                if ck ~= "" and ck:find("_|WARNING") then
+                    io.write(C.BOLD .. akun .. C.N .. "  ")
+                    io.flush()
+                    local keadaan, ket = cek_cookie_roblox(ck)
+                    cek = cek + 1
+                    if keadaan == "alive" then hidup = hidup + 1 end
+                    -- warna status
+                    local warna = (keadaan == "alive") and C.G
+                        or (keadaan == "captcha") and C.Y or C.R
+                    print(warna .. keadaan:upper() .. C.N ..
+                          (ket and (" " .. C.D .. "(" .. ket .. ")" .. C.N) or ""))
+                    -- setor ke panel
+                    pcall(function()
+                        local body = string.format('{"akun":%s,"status":%s}',
+                            jstr(akun), jstr(keadaan))
+                        api_post(cfg, "/cookie-status", body)
+                    end)
+                end
+            end
+        end
+    end
+    print("")
+    ok(("Selesai: %d cookie dicek, %d hidup."):format(cek, hidup))
+    info("Status kesetor ke panel -- cek tab Cookie.")
     return
 end
 
