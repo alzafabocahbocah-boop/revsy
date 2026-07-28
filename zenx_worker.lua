@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.01-cf"
+local VERSION = "6.02-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3942,7 +3942,16 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         local resp = api_post(cfg, "/cookie-simpan", body) or ""
                         if resp:find('"ok"%s*:%s*true') then
                             KICK_DIURUS["ck:" .. ak] = true
-                            info("   cookie " .. ak .. " -> panel (ready)")
+                            -- v6.02: sekalian CEK HIDUP biar status gak "belum dicek".
+                            -- 1 request ke Roblox per akun -- setor status juga.
+                            local keadaan = cek_cookie_roblox(ckC)
+                            pcall(function()
+                                api_post(cfg, "/cookie-status", string.format(
+                                    '{"akun":%s,"status":%s}', jstr(ak), jstr(keadaan)))
+                            end)
+                            local tanda = (keadaan == "alive") and "hidup"
+                                or (keadaan == "captcha") and "captcha" or "mati"
+                            info("   cookie " .. ak .. " -> panel (" .. tanda .. ")")
                         end
                     end)
                 end
@@ -7670,7 +7679,9 @@ end
 --   ban     -> akun kena tindakan -> gak bisa diapa-apain
 -- Roblox balikin 200 (alive) / 401 (dead). captcha & ban kebedain dari
 -- badan responsnya, bukan cuma kode -- makanya badan ikut diperiksa.
-local function cek_cookie_roblox(cookie)
+-- v6.02: GLOBAL (bukan local) -- dipanggil dari auto-setor (lebih awal di file)
+-- + gak nambah lokal (batas 200).
+function cek_cookie_roblox(cookie)
     local tmp = (os.getenv("HOME") or ".") .. "/nx_ckcek.txt"
     os.remove(tmp)
     -- tulis header Cookie ke berkas biar cookie yang panjang gak kepotong di
