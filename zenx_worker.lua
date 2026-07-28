@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.91-cf"
+local VERSION = "5.92-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3178,6 +3178,16 @@ local function jaga_depan(cfg, mapLink, cekJalan)
     end
     if #mau == 0 then return 0 end
 
+    -- v5.92: sekalian RESIZE ke petak. move-task cuma bawa ke depan -- kalau
+    -- client udah nguncup jadi BUBBLE (logo ngambang), move-task gak ngeluarin
+    -- dia dari bubble. `am task resizeTask <id> L T R B` MAKSA jendela ke bounds
+    -- petak -> keluar dari bubble, balik jadi jendela. Ini yang bikin client
+    -- yang "kepental jadi bulat" balik ke petaknya sendiri.
+    local peta = nil
+    if cfg.auto_grid == true then
+        peta = grid_hitung(cfg)   -- pkg -> {L,T,R,B}
+    end
+
     -- taskId semua client sekali baca ('am stack list' -- satu-satunya yang
     -- ngasih taskId di RedFinger)
     local o = sh("su -c 'am stack list 2>&1'") or ""
@@ -3192,6 +3202,12 @@ local function jaga_depan(cfg, mapLink, cekJalan)
             cari = b + 1
         end
         if id then
+            -- resize DULU (keluarin dari bubble ke petak), baru bawa ke depan.
+            local kotak = peta and peta[pkg]
+            if kotak then
+                bagian[#bagian+1] = ("am task resizeTask %s %d %d %d %d"):format(
+                    id, kotak.L, kotak.T, kotak.R, kotak.B)
+            end
             bagian[#bagian+1] = "am task move-task " .. id .. " true"
             n = n + 1
         end
