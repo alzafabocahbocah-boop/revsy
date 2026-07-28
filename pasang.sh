@@ -134,6 +134,10 @@ ok "lua5.4 siap"
 # diapa-apain dari jauh.
 apt install -y curl wget openssl >/dev/null 2>&1
 
+# sqlite3: WAJIB buat fitur cookie (zenx login, auto-setor cookie ke panel).
+# Tanpa ini, worker baca cookie -> "sqlite3 not found" -> cookie gak masuk panel.
+apt install -y sqlite >/dev/null 2>&1
+
 # ---- dites BENERAN JALAN, bukan cuma dicek ada berkasnya ----
 # Kasus lapangan persisnya begitu: berkasnya ada, `command -v` nemu, tapi
 # begitu dijalanin langsung gagal link. Jadi `command -v` gak cukup.
