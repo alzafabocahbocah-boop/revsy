@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.12-cf"
+local VERSION = "6.13-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1291,8 +1291,12 @@ end
 -- itu -- bukan simpul terbesar apa pun yang kebetulan ada.
 local function jendela_kotak(pkg)
     local dump = "/sdcard/zenx_kotak.xml"
+    -- v6.13: pastikan_depan DIBUANG. Logika user (bener): kalau client di petak
+    -- (freeform), dia UDAH di depan -- ukur langsung. Kalau ketutup/fullscreen,
+    -- paksa-depan cuma goyangin fokus (bikin Termux nyelonong -> tap nyasar).
+    -- Ganti: ukur apa adanya. Yang manggil yang mutusin (kalau kotak salah ->
+    -- buka ulang Roblox, bukan paksa depan).
     for coba = 1, 2 do
-        pastikan_depan(pkg)
         -- hapus+dump+baca+hapus digabung jadi SATU panggilan su (tiap 'su' ~6 detik)
         local isi = sh("su -c 'rm -f " .. dump .. "; uiautomator dump " .. dump ..
                        " >/dev/null 2>&1; cat " .. dump .. " 2>/dev/null; rm -f " .. dump .. "'") or ""
@@ -1345,6 +1349,17 @@ local function tap_jendela(cfg, pkg, fx, fy, kali, kotak)
     local lebarK = kotak.R - kotak.L
     if lebarK > 1000 then
         return nil, ("jendela masih fullscreen (%d) -- tap DITOLAK biar gak nyasar ke app lain"):format(lebarK)
+    end
+    -- v6.13: VERIFIKASI client BENERAN DI DEPAN tepat sebelum tap. Bahaya:
+    -- antara ukur & tap, Termux bisa nyelonong ke depan (abis baca clipboard,
+    -- Termux layar penuh nutupin petak). Kalau tap jalan pas Termux di depan,
+    -- koordinat petak yang bener tetep KENA TERMUX (yang nangkring di situ).
+    -- Cek fokus: kalau bukan client ini di depan -> BATAL, jangan tap.
+    local fokus = sh("su -c 'dumpsys window | grep mCurrentFocus'") or ""
+    if not fokus:find(pkg, 1, true) then
+        local siapa = fokus:match("([%w%.]+)/") or "?"
+        return nil, ("yang di depan " .. siapa:gsub("com%.roblox%.","") ..
+                     ", bukan " .. pkg:gsub("com%.roblox%.","") .. " -- tap DIBATALIN (anti-nyasar)")
     end
     local x = math.floor(kotak.L + (kotak.R - kotak.L) * fx)
     local y = math.floor(kotak.T + (kotak.B - kotak.T) * fy)
@@ -1730,16 +1745,23 @@ local function cari_tombol_key(cfg, pkg)
         -- v5.08: client HARUS beneran di depan sebelum ditembak. Ronde
         -- sebelumnya mindahin fokus ke Termux buat baca papan klip, dan Termux
         -- itu layar penuh -- nutupin jendela client yang ngambang.
-        local naik, siapa = pastikan_depan(pkg)
-        if not naik then
-            return nil, nil, nil, ("gagal munculin " .. pkg:gsub("com%.roblox%.", "") ..
-                   " ke depan (yang di depan: " .. tostring(siapa) .. ")" ..
-                   (BAWA_SEBAB and (" -- " .. BAWA_SEBAB) or ""))
-        end
+        -- v6.13: pastikan_depan DIBUANG. tap_jendela ukur fresh + cek fokus
+        -- SENDIRI sebelum tap -- kalau client gak di depan (Termux nyelonong),
+        -- tap BATAL sendiri. Gak perlu paksa-depan (yang goyangin fokus).
         io.write(("\r   titik %d/%d  (%.2f, %.2f) ...          "):format(i, #urut, t[1], t[2]))
         io.flush()
-        tap_jendela(cfg, pkg, t[1], t[2], 2, kotak)   -- 2x, pakai kotak yang udah diukur
-        os.execute("sleep 2")
+        local tok, tsebab = tap_jendela(cfg, pkg, t[1], t[2], 2)   -- ukur fresh sendiri
+        if not tok then
+            -- tap dibatalin tap_jendela (fullscreen / Termux di depan / gagal ukur).
+            -- JANGAN tap nyasar. Catat & lanjut -- putaran sapu berikut (di bypass)
+            -- udah cek grafis + settle petak, jadi client dibenerin di situ.
+            io.write("\n")
+            info("  tap batal: " .. tostring(tsebab))
+            -- kasih jeda dikit, jangan langsung hajar titik berikut
+            os.execute("sleep 2")
+        else
+            os.execute("sleep 2")
+        end
 
         local link = klip_link_key(baca_klip())
         if link then
