@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.15-cf"
+local VERSION = "6.17-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1615,13 +1615,14 @@ local function tap_muat()
     -- kalibrasi lapangan (zenx catat). RF baru langsung punya titik key buat
     -- ukuran umum, gak perlu catat manual. File zenx_tap.txt NIMPA bawaan
     -- per-ukuran -> kalibrasi manual per-RF tetep menang.
-    --   290x330 = 8 client (4x2) · 610x653 = 2 client · 396x293 = 2 baris
-    --   348x173 = 3 baris
+    --   290x330 = 8 client (4x2) · 610x330 = 4 client (2x2) · 610x653 = 2 client
+    --   396x293 = 2 baris · 348x173 = 3 baris
     local t = {
-        ["290x330"] = { fx = 0.819, fy = 0.686 },
-        ["610x653"] = { fx = 0.844, fy = 0.713 },
-        ["396x293"] = { fx = 0.823, fy = 0.723 },
-        ["348x173"] = { fx = 0.833, fy = 0.808 },
+        ["290x330"] = { fx = 0.819, fy = 0.686 },   -- 8 client (4x2)
+        ["610x330"] = { fx = 0.830, fy = 0.681 },   -- 4 client (2x2)
+        ["610x653"] = { fx = 0.844, fy = 0.713 },   -- 2 client (1 baris)
+        ["396x293"] = { fx = 0.823, fy = 0.723 },   -- 2 baris
+        ["348x173"] = { fx = 0.833, fy = 0.808 },   -- 3 baris
     }
     local f = io.open(TAP_FILE, "r")
     if not f then return t end
@@ -7790,13 +7791,73 @@ if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
         os.remove(TMPAPK)   -- langsung dihapus, jangan numpuk
     end
 
+    -- v6.16: AUTO-RETRY client yang gagal -- LANGSUNG di sini, gak nunggu user
+    -- jalanin ulang. Cuma ulang yang GAGAL (unduh kepotong / pasang gagal),
+    -- yang udah sukses gak disentuh. 2 putaran retry (total 3x percobaan).
+    -- Alasan: gagal biasanya karena koneksi putus sesaat (Connection reset) --
+    -- ulang sekali-dua kali biasanya beres, gak perlu ngulang semua dari awal.
+    local putaran_retry = 0
+    while #gagal > 0 and putaran_retry < 2 do
+        putaran_retry = putaran_retry + 1
+        -- kumpulin nomor client yang gagal (buang keterangan "(unduh...)"/"(pasang)")
+        local ulang = {}
+        for _, g in ipairs(gagal) do
+            local no = tostring(g):match("^(%S+)")
+            if no then ulang[#ulang + 1] = no end
+        end
+        warn(("RETRY %d/2 -- ulang %d client yang gagal: %s"):format(
+            putaran_retry, #ulang, table.concat(ulang, ", ")))
+        gagal = {}   -- reset, isi lagi kalau masih gagal
+        for _, b in ipairs(antre) do
+            local cocok = false
+            for _, no in ipairs(ulang) do if tostring(b.no) == no then cocok = true break end end
+            if cocok then
+                print(("  [retry] client %s  (%.0f MB)"):format(b.no, b.ukur / 1e6))
+                os.remove(TMPAPK)
+                local t0 = os.time()
+                os.execute(("timeout 900 curl -# --fail -b %s %s -o %s"):format(
+                    shq(JAR), shq(NX .. "/api/files/" .. b.id .. "/download"), shq(TMPAPK)))
+                local lama_detik = os.time() - t0
+                local nyata = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+                if nyata < b.ukur * 0.98 then
+                    print(C.R .. ("      GAGAL unduh lagi (%.0f/%.0f MB)"):format(nyata/1e6, b.ukur/1e6) .. C.N)
+                    gagal[#gagal + 1] = b.no .. " (unduh kepotong)"
+                else
+                    local laju = lama_detik > 0 and (nyata / 1e6 / lama_detik) or 0
+                    io.write(("      unduh OK (%.0f MB, %ds, %.1f MB/s) -- pasang... "):format(
+                        nyata / 1e6, lama_detik, laju)); io.flush()
+                    local t1 = os.time()
+                    local outf = (os.getenv("HOME") or ".") .. "/nx_pm.txt"
+                    os.remove(outf)
+                    os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(shq(TMPAPK), shq(outf)))
+                    local hasil = ""
+                    for _ = 1, 150 do
+                        os.execute("sleep 2")
+                        local hf = io.open(outf, "r")
+                        if hf then hasil = hf:read("*all") or ""; hf:close()
+                            if hasil:find("Success") or hasil:find("Failure") then break end end
+                    end
+                    os.remove(outf)
+                    if tostring(hasil):find("Success") then
+                        print(C.G .. ("OK (%ds)"):format(os.time() - t1) .. C.N)
+                        sukses = sukses + 1
+                    else
+                        print(C.R .. "GAGAL" .. C.N)
+                        gagal[#gagal + 1] = b.no .. " (pasang)"
+                    end
+                end
+                os.remove(TMPAPK)
+            end
+        end
+    end
+
     os.remove(JAR)
     print()
     if #gagal == 0 then
         ok(("SEMUA %d APK kepasang (versi %s)"):format(sukses, versi))
     else
-        warn(("%d kepasang, %d gagal: %s"):format(sukses, #gagal, table.concat(gagal, ", ")))
-        info("Jalanin lagi buat nyoba yang gagal -- yang udah kepasang dilewat cepat.")
+        warn(("%d kepasang, %d masih gagal setelah 3x coba: %s"):format(sukses, #gagal, table.concat(gagal, ", ")))
+        info("Cek koneksi -- client sisa bisa diulang: zenx download " .. folderId)
     end
     return
 end
