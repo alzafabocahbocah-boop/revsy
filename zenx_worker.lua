@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.08-cf"
+local VERSION = "6.09-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3485,6 +3485,32 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 -- gak kebaca, deteksinya nyerah -- di situ putaran ini yang
                 -- nutupin.
                 -- ============================================================
+                -- v6.09: PASTIIN JENDELA UDAH DI PETAK sebelum sapu. Masalah:
+                -- pas bypass buka client, jendelanya FULLSCREEN dulu (1280x720)
+                -- sebelum App Cloner naruh ke petak (290x330). Kalau sapu kebaca
+                -- pas masih fullscreen -> kunci ukuran salah -> kalibrasi 290x330
+                -- gak kepakai -> tebakan baris meleset -> sapu belasan titik.
+                -- Fix: tunggu + tata ke petak, cek ukuran settle dulu.
+                do
+                    local petaP = grid_hitung(cfg)
+                    if petaP and petaP[pilih] then
+                        for coba = 1, 4 do
+                            local k = jendela_kotak(pilih)
+                            local lebar = k and (k.R - k.L) or 0
+                            -- fullscreen (lebar > 1000) = belum settle -> tata + tunggu
+                            if lebar > 0 and lebar <= 1000 then
+                                info(("  jendela udah di petak (%dx%d) -- lanjut sapu")
+                                    :format(lebar, k.B - k.T))
+                                break
+                            end
+                            info(("  jendela masih fullscreen (%d) -- tata ke petak, tunggu..."):format(lebar))
+                            tata_satu(pilih, petaP[pilih])
+                            os.execute("sleep 3")   -- kasih App Cloner waktu naruh
+                            if cek_batal and cek_batal() then break end
+                        end
+                    end
+                end
+
                 local link, ketLink
                 local PUTARAN, JEDA = 3, 25
                 -- v6.06: ambang grafis "masih di game". Di bawah ini = kemungkinan
