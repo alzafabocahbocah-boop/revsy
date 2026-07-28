@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.17-cf"
+local VERSION = "6.20-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3745,6 +3745,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                               or bridge_fresh(stat0, akun) or baruDisentuh) then
                 hasil.lewat = hasil.lewat + 1
                 -- v4.6: JANGAN print tiap client yg udah jalan (bikin spam log).
+            elseif akun and KICK_DIURUS["mati:" .. akun] then
+                -- v6.19: cookie akun ini MATI/BAN -> gak usah dibuka ke game.
+                -- Cuma buang waktu (bakal gagal login / CREATE ACCOUNT). Skip,
+                -- statusnya udah di panel (tab Error) buat diurus manual.
+                hasil.lewat = hasil.lewat + 1
+                info("   " .. akun .. " cookie mati -> gak dibuka (perbaiki cookie dulu)")
             else
                 local sukses, lama, sebab = false, 0, nil
                 local maxc = cfg.max_coba or 5
@@ -4061,14 +4067,33 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                             KICK_DIURUS["ck:" .. ak] = true
                             -- v6.02: sekalian CEK HIDUP biar status gak "belum dicek".
                             -- 1 request ke Roblox per akun -- setor status juga.
-                            local keadaan = cek_cookie_roblox(ckC)
-                            pcall(function()
-                                api_post(cfg, "/cookie-status", string.format(
-                                    '{"akun":%s,"status":%s}', jstr(ak), jstr(keadaan)))
-                            end)
-                            local tanda = (keadaan == "alive") and "hidup"
-                                or (keadaan == "captcha") and "captcha" or "mati"
-                            info("   cookie " .. ak .. " -> panel (" .. tanda .. ")")
+                            local keadaan, ketCek = cek_cookie_roblox(ckC)
+                            -- v6.17: JANGAN lapor "mati" kalau cek GAGAL (error/
+                            -- timeout/koneksi) -- itu false negative, cookie bisa
+                            -- aja hidup tapi cek-nya yang gagal. Cuma setor status
+                            -- yang PASTI (alive/dead/captcha/ban). "error" -> skip
+                            -- setor status (biarin status lama, jangan timpa "mati").
+                            if keadaan == "error" then
+                                info("   cookie " .. ak .. " -> panel (tersimpan, cek nanti: " ..
+                                     tostring(ketCek or "cek gagal") .. ")")
+                            else
+                                pcall(function()
+                                    api_post(cfg, "/cookie-status", string.format(
+                                        '{"akun":%s,"status":%s}', jstr(ak), jstr(keadaan)))
+                                end)
+                                local tanda = (keadaan == "alive") and "hidup"
+                                    or (keadaan == "captcha") and "captcha"
+                                    or (keadaan == "ban") and "ban" or "mati"
+                                -- v6.19: tandai cookie MATI/BAN biar open_all SKIP
+                                -- (gak buang waktu buka client yang cookie-nya mati).
+                                -- Numpang KICK_DIURUS (prefix "mati:") -- gak nambah lokal.
+                                if keadaan == "dead" or keadaan == "ban" then
+                                    KICK_DIURUS["mati:" .. ak] = true
+                                else
+                                    KICK_DIURUS["mati:" .. ak] = nil   -- hidup/captcha -> boleh buka
+                                end
+                                info("   cookie " .. ak .. " -> panel (" .. tanda .. ")")
+                            end
                         end
                     end)
                 end
@@ -7512,6 +7537,61 @@ end
 -- Diunduh SATU-SATU lalu langsung dipasang & dihapus -- bukan semua dulu.
 -- Sepuluh APK itu ~950 MB; kalau ditumpuk, RF yang penyimpanannya pas-pasan
 -- bakal penuh di tengah jalan dan semuanya sia-sia.
+-- ============================================================
+-- v6.20: `zenx update` -- SCAN ULANG client yang kepasang, update ke config.
+-- Buat RF baru (atau abis `zenx download` nambah client): client baru belum
+-- masuk cfg.pkgs, jadi worker gak tau ada client itu. `zenx update` pindai
+-- ulang + simpen. Beda dari `zenx download` (yang UNDUH APK) -- ini cuma
+-- DAFTAR ULANG yang udah kepasang.
+if PERINTAH == "update" or PERINTAH == "scan" then
+    print(C.BOLD .. C.C .. "\n=== ZENX UPDATE -- scan client kepasang ===\n" .. C.N)
+    local cfg = load_config()
+    if not cfg then
+        err("Config gak ada. Jalanin `pasang <preset>` dulu.")
+        return
+    end
+    info("Mindai client Roblox di HP ini...")
+    local pkgs = pindai_pkgs()
+    if #pkgs == 0 then
+        err("Gak nemu client Roblox. Unduh dulu: zenx download 48 juraganontop 1-8")
+        return
+    end
+    -- bandingin sama config lama
+    local lama = {}
+    for _, p in ipairs(split(cfg.pkgs or "")) do lama[p] = true end
+    local baru_ada = {}
+    for _, p in ipairs(pkgs) do
+        if not lama[p] then baru_ada[#baru_ada + 1] = p end
+    end
+    local hilang = {}
+    for p in pairs(lama) do
+        local masih = false
+        for _, q in ipairs(pkgs) do if q == p then masih = true break end end
+        if not masih then hilang[#hilang + 1] = p end
+    end
+
+    ok(("Ketemu %d client:"):format(#pkgs))
+    for i, p in ipairs(pkgs) do
+        local tanda = lama[p] and "" or C.G .. "  (BARU)" .. C.N
+        print(("   %d. %s%s"):format(i, p:gsub("com%.roblox%.", ""), tanda))
+    end
+    if #baru_ada > 0 then
+        ok(("%d client baru ditambah ke config"):format(#baru_ada))
+    end
+    if #hilang > 0 then
+        warn(("%d client di config udah gak ada (dibuang): %s"):format(
+            #hilang, table.concat(hilang, ", "):gsub("com%.roblox%.", "")))
+    end
+    if #baru_ada == 0 and #hilang == 0 then
+        info("Config udah sinkron -- gak ada perubahan.")
+    end
+
+    cfg.pkgs = table.concat(pkgs, ",")
+    save_config(cfg)
+    ok("Config keupdate. Client siap dipakai (FORCE dari panel buat mulai).")
+    return
+end
+
 -- ============================================================
 -- Tiga nama, satu tempat: `download` yang dipakai sehari-hari, `dl` buat yang
 -- males ngetik, `apk` DIPERTAHANIN karena RF yang udah kepasang mungkin masih
