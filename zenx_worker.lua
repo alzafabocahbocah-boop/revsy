@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.11-cf"
+local VERSION = "6.12-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3468,7 +3468,16 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     local msk, lama, sbb = tunggu_masuk_game(pilih, 150, cek_batal)
                     if msk then
                         ok(("  masuk game setelah %ds -- dialog key bentar lagi nongol"):format(lama))
-                        os.execute("sleep 8")   -- kasih jeda Delta nyuntik dialognya
+                        -- v6.12: dialog Delta nongol 10-20 DETIK setelah masuk game
+                        -- (ukur lapangan). Dulu cuma sleep 8 -> tap pas dialog
+                        -- BELUM nongol -> kena kosong. Naikin ke 18 detik biar
+                        -- dialog udah muncul sebelum tap pertama. Loop sapu (jeda
+                        -- 25s tiap putaran) tetep jadi jaring kalau masih telat.
+                        info("  tunggu dialog key nongol (~18s)...")
+                        for _ = 1, 18 do
+                            if cek_batal and cek_batal() then break end
+                            os.execute("sleep 1")
+                        end
                     else
                         warn("  gak kedeteksi masuk game (" .. tostring(sbb) .. ")")
                         info("  lanjut aja -- sapuan tetep dicoba beberapa putaran")
