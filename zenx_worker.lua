@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.96-cf"
+local VERSION = "5.98-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3176,46 +3176,18 @@ cek_layar = cek_error_ui
 -- mindahin task ke depan: 1 panggilan su buat baca taskId semua client,
 -- 1 lagi buat mindahin semuanya sekaligus.
 local function jaga_depan(cfg, mapLink, cekJalan)
-    local mau = {}
-    for _, pkg in ipairs(split(cfg.pkgs)) do
-        local jalan = cekJalan and cekJalan[pkg]
-        if jalan == nil then jalan = pkg_running(pkg) end
-        if jalan then mau[#mau+1] = pkg end
-    end
-    if #mau == 0 then return 0 end
-
-    -- v5.95: PENCET BUBBLE via `input tap`. TEMUAN LAPANGAN penting:
-    --   * `am task move-task` DAN `am task resizeTask` GAK ADA di ROM RedFinger
-    --     ("unknown command"/"not allowed") -- jadi jaga_depan lama GAK PERNAH
-    --     jalan (error-nya ketelen sh_silent).
-    --   * Yang bikin bubble expand = `input tap <x> <y>` ke TENGAH petak --
-    --     beneran niru jari user mencet. Kebukti: visible=false -> true.
-    -- Jadi: buat tiap client yang nguncup (visible=false), tap tengah petaknya.
-    -- Yang udah visible=true dilewat (gak usah diganggu).
-    local peta = grid_hitung(cfg)   -- pkg -> {L,T,R,B}
-    if not peta then return 0 end   -- gak tau petak -> gak bisa tap tepat
-    local o = sh("su -c 'am stack list 2>&1'") or ""
-    local n = 0
-    for _, pkg in ipairs(mau) do
-        -- cek visible client ini dari blok stack list-nya
-        local vis = false
-        local pos = o:find(pkg, 1, true)
-        if pos then
-            -- baca visible= di sekitar baris pkg (dalam 220 char)
-            local blok = o:sub(math.max(1, pos - 220), pos + 40)
-            vis = blok:find("visible=true", 1, true) ~= nil
-        end
-        local kotak = peta[pkg]
-        if kotak and not vis then
-            -- tengah petak
-            local cx = math.floor((kotak.L + kotak.R) / 2)
-            local cy = math.floor((kotak.T + kotak.B) / 2)
-            sh_silent(("su -c 'input tap %d %d'"):format(cx, cy))
-            os.execute("sleep 0.3")   -- kasih waktu expand sebelum tap berikutnya
-            n = n + 1
-        end
-    end
-    return n
+    -- v5.98: jaga_depan DIMATIIN (no-op). RIWAYAT PANJANG:
+    --   * move-task/resizeTask GAK ADA di ROM RedFinger.
+    --   * input tap ke petak BISA expand bubble TAPI sering MELESET ke app di
+    --     belakangnya -> mencet APK lain -> client lain keluar. Bahaya.
+    --   * kill-bubble berisiko: visible=false muncul di client SEHAT juga, jadi
+    --     gak ada patokan aman buat bedain bubble vs sehat dari am stack list.
+    -- KENAPA AMAN DIMATIIN: bubble = client bisu (script nguncup gak jalan/lapor).
+    -- Dan REOPEN BERKALA (tiap reopen_sec, default 5 menit) UDAH buka-ulang client
+    -- bisu -> masuk freeform bener dari awal. Jadi bubble kehandle di situ, bukan
+    -- di sini. jaga_depan gak perlu ngutak-atik jendela yang udah jalan.
+    -- Dibiarin sebagai fungsi (dipanggil di banyak tempat) tapi gak ngapa-ngapain.
+    return 0
 end
 
 -- v4.61: 'only' sekarang boleh: nil (semua), string (1 paket), atau TABEL
