@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.09-cf"
+local VERSION = "6.10-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1334,6 +1334,15 @@ local function tap_jendela(cfg, pkg, fx, fy, kali, kotak)
     if not kotak then
         kotak, sebab = jendela_kotak(pkg)
         if not kotak then return nil, sebab end
+    end
+    -- v6.10: PENGAMAN -- TOLAK tap kalau kotak FULLSCREEN (lebar > 1000).
+    -- Bahaya nyata: pas jendela belum settle ke petak (masih 1280x720),
+    -- koordinat pecahan (fx=0.83) jatuh di piksel ~1057 -- di LUAR petak
+    -- client, kena app di belakang (Termux!). Tap nyasar itu yang bikin
+    -- client/RF keluar. Lebih baik GAGAL AMAN daripada tap nyasar.
+    local lebarK = kotak.R - kotak.L
+    if lebarK > 1000 then
+        return nil, ("jendela masih fullscreen (%d) -- tap DITOLAK biar gak nyasar ke app lain"):format(lebarK)
     end
     local x = math.floor(kotak.L + (kotak.R - kotak.L) * fx)
     local y = math.floor(kotak.T + (kotak.B - kotak.T) * fy)
