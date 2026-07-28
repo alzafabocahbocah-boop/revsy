@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.05-cf"
+local VERSION = "6.08-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1585,9 +1585,21 @@ local TITIK_SAPU = {
 }
 
 local function tap_muat()
-    local t = {}
+    -- v6.08: KALIBRASI BAWAAN (inline, gak nambah lokal -- batas 200). Dari
+    -- kalibrasi lapangan (zenx catat). RF baru langsung punya titik key buat
+    -- ukuran umum, gak perlu catat manual. File zenx_tap.txt NIMPA bawaan
+    -- per-ukuran -> kalibrasi manual per-RF tetep menang.
+    --   290x330 = 8 client (4x2) · 610x653 = 2 client · 396x293 = 2 baris
+    --   348x173 = 3 baris
+    local t = {
+        ["290x330"] = { fx = 0.819, fy = 0.686 },
+        ["610x653"] = { fx = 0.844, fy = 0.713 },
+        ["396x293"] = { fx = 0.823, fy = 0.723 },
+        ["348x173"] = { fx = 0.833, fy = 0.808 },
+    }
     local f = io.open(TAP_FILE, "r")
     if not f then return t end
+    -- file NIMPA bawaan (kalibrasi manual per-RF menang)
     for baris in f:lines() do
         local k, fx, fy = baris:match("^(%d+x%d+)%s+([%d.]+)%s+([%d.]+)")
         if k then t[k] = { fx = tonumber(fx), fy = tonumber(fy) } end
@@ -1661,12 +1673,24 @@ local function cari_tombol_key(cfg, pkg)
         local tinggiLayar = select(2, layar_ukuran())
         if tinggiLayar and tinggiLayar > 0 and tinggi > 0 then
             local baris = math.max(1, math.floor(tinggiLayar / tinggi + 0.5))
+            -- v6.07: Y per jumlah baris (dari kalibrasi lapangan user):
+            --   1 baris 0.713 · 2 baris 0.723 · 3 baris 0.808
+            -- X SELALU ~0.83 di semua ukuran (temuan user). Jadi tebakan ini
+            -- HAMPIR SELALU kena di percobaan pertama -- gak perlu sapu 16 titik.
+            -- baris > 3 (jarang) pakai 0.808 (paling bawah). baris gak masuk akal
+            -- (0 atau kegedean) tetep kasih tebakan default 2-baris -- daripada
+            -- langsung sapu 16 titik dari nol.
             local ty = ({ [1] = 0.713, [2] = 0.723, [3] = 0.808 })[baris]
-                       or (baris > 3 and 0.808 or nil)
-            if ty then
-                tebakX, tebakY = 0.83, ty
-                urut[#urut+1] = { tebakX, tebakY, tebakan = baris }
+            if not ty then
+                ty = (baris > 3) and 0.808 or 0.723   -- default aman: 2-baris
             end
+            tebakX, tebakY = 0.83, ty
+            urut[#urut+1] = { tebakX, tebakY, tebakan = baris }
+        else
+            -- v6.07: gagal ukur layar/jendela -> tetep kasih tebakan default
+            -- (X 0.83, Y 0.723 = posisi 2-baris paling umum) daripada sapu nol.
+            tebakX, tebakY = 0.83, 0.723
+            urut[#urut+1] = { tebakX, tebakY, tebakan = 0 }
         end
     end
 
@@ -3463,6 +3487,9 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 -- ============================================================
                 local link, ketLink
                 local PUTARAN, JEDA = 3, 25
+                -- v6.06: ambang grafis "masih di game". Di bawah ini = kemungkinan
+                -- balik ke Home (client kadang keluar game lagi setelah masuk).
+                local GAME_MIN_KB = 25 * 1024   -- 25 MB (game ~30-49, home ~15)
                 for putar = 1, PUTARAN do
                     if putar > 1 then
                         info(("  dialog key belum nongol -- tunggu %ds, sapu lagi (%d/%d)")
@@ -3473,6 +3500,27 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         end
                         if cek_batal and cek_batal() then break end
                     end
+
+                    -- v6.06: CEK ULANG masih di game SEBELUM nyapu. Client kadang
+                    -- keluar ke Home setelah masuk -- kalau gitu, titik key disapu
+                    -- di layar kosong (Home) -> gagal. Jadi: cek grafis, kalau
+                    -- turun (balik Home) -> masukin lagi ke game DULU, baru sapu.
+                    local gnow = grafis_kb(pilih) or 0
+                    if gnow < GAME_MIN_KB then
+                        warn(("  client balik ke Home (grafis %.1f MB) -- masukin lagi ke game"):format(gnow/1024))
+                        -- BUKA lagi (open_one) -- tunggu_masuk_game cuma NUNGGU,
+                        -- gak masukin. Harus di-open_one dulu biar beneran masuk.
+                        open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
+                        local msk2 = tunggu_masuk_game(pilih, 90, cek_batal)
+                        if msk2 then
+                            ok("  udah balik di game -- lanjut sapu titik")
+                            os.execute("sleep 6")   -- kasih Delta nyuntik dialog lagi
+                        else
+                            info("  belum kedeteksi di game -- sapu tetep dicoba")
+                        end
+                        if cek_batal and cek_batal() then break end
+                    end
+
                     link, _, _, ketLink = cari_tombol_key(cfg, pilih)
                     if link then break end
                 end
