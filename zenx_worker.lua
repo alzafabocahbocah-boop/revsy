@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.02-cf"
+local VERSION = "6.03-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3996,7 +3996,12 @@ local function lapor(cfg, isi_perintah, cache)
     for _, pkg in ipairs(list) do
         local run = semua[pkg] and true or false
         if run then jalan = jalan + 1 end
-        parts[#parts+1] = string.format('{"pkg":%s,"run":%s}', jstr(pkg), tostring(run))
+        -- v6.03: ikut kirim NAMA AKUN tiap client (dari prefs.xml) biar panel
+        -- bisa nunjukin "akun ini jalan di client mana". baca_username murah
+        -- (baca file prefs), gak nambah beban berarti.
+        local akunPkg = baca_username(pkg) or ""
+        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s}',
+            jstr(pkg), tostring(run), jstr(akunPkg))
     end
 
     -- v4.24: ikut kirim "lagi ngapain" + log terakhir
