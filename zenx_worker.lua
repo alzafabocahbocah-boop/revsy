@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.90-cf"
+local VERSION = "5.91-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -781,7 +781,7 @@ local function save_config(cfg)
     f:write(string.format("  auto_grid=%s,\n",tostring(cfg.auto_grid == true)))
     f:write(string.format("  deteksi_longgar=%s,\n",tostring(cfg.deteksi_longgar == true)))
     f:write(string.format("  disconnect_menit=%d,\n",cfg.disconnect_menit or 3))
-    f:write(string.format("  jaga_depan_sec=%d,\n",cfg.jaga_depan_sec or 0))
+    f:write(string.format("  jaga_depan_sec=%d,\n",cfg.jaga_depan_sec or 15))  -- v5.91: JANGAN 0 -- 0 matiin jaga_depan (jendela gak balik ke depan). Default aman 15.
     f:write(string.format("  suplai_sec=%d,\n",cfg.suplai_sec or 20))
     f:write(string.format("  shell_tetap=%s,\n",tostring(cfg.shell_tetap == true)))
     f:write(string.format("  max_coba=%d,\n",cfg.max_coba or 5))
@@ -4462,7 +4462,7 @@ local function setup_wizard()
     print(C.D.."  Delta Lite suka nguncup jadi gelembung sendiri. Kalau dibiarin,"..C.N)
     print(C.D.."  Roblox di dalemnya disconnect ~15 detik kemudian. Worker bisa"..C.N)
     print(C.D.."  munculin ulang jendelanya berkala. Isi 0 = mati, 10 = tiap 10 detik."..C.N)
-    cfg.jaga_depan_sec = tonumber(ask("Jaga jendela tetep nongol tiap (detik)","10")) or 0
+    cfg.jaga_depan_sec = tonumber(ask("Jaga jendela tetep nongol tiap (detik)","10")) or 10  -- v5.91: fallback 10, bukan 0 (0 = mati)
 
     -- v5.38: pertanyaan "Auto grid?" DIBUANG, bawaannya NYALA.
     -- Grid itu bukan pilihan gaya -- jendela HARUS ketata biar URL key Delta
