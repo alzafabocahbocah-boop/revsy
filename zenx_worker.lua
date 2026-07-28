@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "5.95-cf"
+local VERSION = "5.96-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -765,7 +765,7 @@ local function save_config(cfg)
     f:write(string.format("  link_code=%q,\n",cfg.link_code or ""))
     f:write(string.format("  autoexec_dir=%q,\n",cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"))
     f:write(string.format("  autoexec_bersih=%s,\n",tostring(cfg.autoexec_bersih ~= false)))
-    f:write(string.format("  curiga_jam=%s,\n",tostring(tonumber(cfg.curiga_jam) or 1)))
+    f:write(string.format("  curiga_jam=%s,\n",tostring(tonumber(cfg.curiga_jam) or 24)))  -- v5.96: 24j (samain key_jam). 1j kekecilan -> lisensi sehat dicurigai.
     f:write(string.format("  pkgs=%q,\n",cfg.pkgs))
     f:write(string.format("  poll_sec=%d,\n",cfg.poll_sec))
     f:write(string.format("  reopen_sec=%d,\n",cfg.reopen_sec or 300))
@@ -1147,20 +1147,26 @@ end
 -- balikin: "ada" / "hilang" / "basi", umur dalam detik (nil kalau hilang)
 local function lisensi_keadaan(cfg)
     local path = (cfg and cfg.delta_license) or DELTA_LICENSE
-    local batas = (tonumber(cfg and cfg.key_jam) or 24) * 3600
 
-    local o = sh("su -c 'stat -c %Y " .. path .. " 2>/dev/null'") or ""
-    local ts = tonumber(o:match("%d+"))
-    if not ts then
-        -- cadangan: sebagian ROM gak punya 'stat -c'. Minimal cek isinya ada.
-        local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
-        if isi:match("%S") then return "ada", nil end
-        return "hilang", nil
+    -- v5.96: PENENTU UTAMA = ISI FILE, bukan umur. Kebukti di lapangan:
+    --   * lisensi VALID   = file ada, isi "FREE_<hash 32 hex>" (37 byte)
+    --   * key HABIS        = file HILANG (Delta hapus). cat -> kosong.
+    -- Umur file GAK ANDAL (key_jam cuma tebakan) -- dan bikin positif palsu:
+    -- lisensi sehat umur 1j45m dicurigai basi -> tutup semua + bypass percuma.
+    -- Jadi: cek isinya. Ada key-nya = valid, titik. Gak usah nebak umur.
+    local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+    -- key valid: ada string tipe "FREE_<hex>" atau minimal token panjang.
+    -- (format lain Delta juga ketangkep: apa aja yg bukan kosong & cukup panjang)
+    local adaKey = isi:match("FREE_%x+") or isi:match("[%w_]-%x%x%x%x%x%x%x%x%x%x")
+    if adaKey and #isi:gsub("%s", "") >= 20 then
+        -- masih hitung umur buat INFO (ditampilin), tapi BUKAN penentu basi.
+        local o = sh("su -c 'stat -c %Y " .. path .. " 2>/dev/null'") or ""
+        local ts = tonumber(o:match("%d+"))
+        local umur = ts and (os.time() - ts) or nil
+        return "ada", umur
     end
-
-    local umur = os.time() - ts
-    if umur > batas then return "basi", umur end
-    return "ada", umur
+    -- isi kosong / file hilang / key gak kebentuk -> beneran habis
+    return "hilang", nil
 end
 
 local function umur_ringkas(detik)
@@ -3363,39 +3369,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         -- di sini) nama berkas loader-nya salah jadi script gak pernah jalan.
         -- Heuristik ini cuma jaring pengaman buat kasus key_jam kegedean,
         -- bukan penentu utama.
-        local UMUR_MIN_CURIGA = (tonumber(cfg.curiga_jam) or 1) * 3600
-        if kead == "ada" and (umur or 0) < UMUR_MIN_CURIGA then
-            -- masih muda -> percaya berkasnya, gak usah diperiksa lebih jauh
-            kead = "ada"
-        elseif kead == "ada" then
-            local potretC = pkg_running_semua(list)
-            local statC = api_get(cfg, "/stat")
-            -- v5.75: kalau /stat gak kebaca, SEMUA akun keliatan bisu -- dan
-            -- itu bikin lisensi yang sehat dicurigai basi, lalu semua client
-            -- ditutup buat bypass percuma. Sama akarnya kayak fix di open_all.
-            local statSah = (ambil_num(statC, "skrg") ~= nil)
-            local jalanTapiBisu, contoh = 0, nil
-            for _, p in ipairs(list) do
-                local ak = mapAkun and mapAkun[p]
-                if potretC[p] and ak and not bridge_fresh(statC, ak) then
-                    jalanTapiBisu = jalanTapiBisu + 1
-                    contoh = contoh or p
-                end
-            end
-            if jalanTapiBisu > 0 and statSah then
-                kead = "curiga"
-                warn(("Lisensi kebaca 'ada' (umur %s, di atas ambang %dj) TAPI %d client jalan tanpa lapor.")
-                    :format(umur_ringkas(umur), (tonumber(cfg.curiga_jam) or 1), jalanTapiBisu))
-                warn("  Kemungkinan Delta udah minta key lagi -- key_jam=" ..
-                     tostring(cfg.key_jam or 24) .. "j itu cuma tebakan.")
-                info("  Dianggap butuh bypass. Contoh: " ..
-                     tostring(contoh and contoh:gsub("com%.roblox%.", "") or "?"))
-            elseif jalanTapiBisu > 0 and not statSah then
-                warn(("%d client jalan tanpa lapor, TAPI /stat gak kebaca."):format(jalanTapiBisu))
-                warn("  Gak bisa dibedain 'script mati' vs 'panel gak kejangkau'.")
-                warn("  Lisensi DIPERCAYA -- client gak disentuh.")
-            end
-        end
+        -- v5.96: heuristik "client bisu -> curiga lisensi" DIBUANG.
+        -- Sekarang lisensi_keadaan() cek ISI file (FREE_<hash>) langsung --
+        -- kalau isinya ada, key PASTI valid, gak peduli client bisu.
+        -- Client bisu sebabnya lain (loading/lapor telat/loader salah nama),
+        -- BUKAN key habis. Dulu heuristik ini bikin positif palsu: lisensi
+        -- sehat -> tutup semua + bypass percuma. Cek isi jauh lebih andal.
+        -- kead di sini udah "ada" atau "hilang" dari cek isi -- dipercaya.
 
         if kead ~= "ada" then
             local ket = (kead == "hilang") and "HILANG"
