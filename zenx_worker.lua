@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.55-cf"
+local VERSION = "6.56-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5228,6 +5228,7 @@ local function run(cfg)
     local lastJagaDepan = 0     -- v4.52: kapan terakhir munculin ulang jendela
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
+    local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
 
@@ -5304,6 +5305,41 @@ local function run(cfg)
         if (os.time() - lastStatusCek) >= 10 then refresh_status(); lastStatusCek = os.time() end
         gambar_tabel(isi)   -- v4.10: redraw tabel dari cache (instan)
         local now  = os.time()
+
+        -- v6.55: CEK CAPTCHA BERKALA tiap 90 detik. Deteksi captcha gak boleh
+        -- cuma nebeng jalur nyangkut-home/auto-rejoin (banyak & ruwet). Di sini
+        -- worker cek client yang RUNNING tapi GAK lapor (kandidat kena captcha):
+        -- bawa ke depan, dump uiautomator, cari penanda captcha. Kena -> tandai
+        -- (badge panel) + skip; enggak -> clear. Satu client per ronde (gak berat).
+        if (now - (lastCekCaptcha or 0)) >= 90 then
+            lastCekCaptcha = now
+            local kand = nil
+            for _, pkgX in ipairs(split(cfg.pkgs or "")) do
+                -- kandidat: running TAPI gak jalan di game (cacheRun false = script
+                -- off) -> mungkin nyangkut captcha. Yang udah ditandai captcha,
+                -- cek ulang (mungkin udah solved).
+                if pkg_running(pkgX) and not cacheRun[pkgX] then
+                    kand = pkgX
+                    -- prioritas yang udah ditandai captcha (cek udah solved apa belum)
+                    if KICK_DIURUS["captcha:" .. pkgX] then break end
+                end
+            end
+            if kand then
+                local ceC = cek_error_ui(cfg, kand, mapLink)
+                if ceC and ceC:find("CAPTCHA", 1, true) then
+                    if not KICK_DIURUS["captcha:" .. kand] then
+                        tambahLog("CAPTCHA: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
+                    end
+                    KICK_DIURUS["captcha:" .. kand] = baca_username(kand) or kand
+                else
+                    -- gak (lagi) captcha -> clear kalau sebelumnya ketandai
+                    if KICK_DIURUS["captcha:" .. kand] then
+                        tambahLog("CAPTCHA kelar: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")))
+                        KICK_DIURUS["captcha:" .. kand] = nil
+                    end
+                end
+            end
+        end
 
         -- v6.48: CEK GANTI AKUN. Buat tiap client yang abis di-LOGIN (target
         -- kesimpen + jadwal cekganti), pas waktunya (60s) lewat: bandingin akun
