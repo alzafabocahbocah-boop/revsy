@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.58-cf"
+local VERSION = "6.61-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4164,6 +4164,28 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     end)
                 end
             end
+
+            -- v6.60: SEKALIAN CEK CAPTCHA di sini (pas cek cookie). Ini momen pas
+            -- -- worker udah akses client ini. Cuma buat client yang HIDUP tapi
+            -- cookie ALIVE (bukan mati/ban) -- karena captcha kejadian pas cookie
+            -- valid tapi kena verif bot pas join. Kalau kena -> tandai + badge.
+            if pkg_running(pkg) and ckC ~= "" and ckC:find("_|WARNING") then
+                local statC = api_get(cfg, "/stat") or ""
+                local lapor = ak and bridge_fresh(statC, ak)
+                if not lapor then   -- gak lapor = mungkin nyangkut captcha
+                    local hasilCap = cek_captcha_paksa(pkg)
+                    if hasilCap and hasilCap:find("CAPTCHA", 1, true) then
+                        if not KICK_DIURUS["captcha:" .. pkg] then
+                            tambahLog("CAPTCHA: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
+                        end
+                        KICK_DIURUS["captcha:" .. pkg] = ak or pkg
+                    elseif KICK_DIURUS["captcha:" .. pkg] and hasilCap == "" then
+                        -- kebaca & bukan captcha -> udah solved, clear
+                        tambahLog("CAPTCHA kelar: " .. (ak or pkg:gsub("com%.roblox%.","")))
+                        KICK_DIURUS["captcha:" .. pkg] = nil
+                    end
+                end
+            end
         end
     end
 
@@ -5330,17 +5352,23 @@ local function run(cfg)
         gambar_tabel(isi)   -- v4.10: redraw tabel dari cache (instan)
         local now  = os.time()
 
-        -- v6.55: CEK CAPTCHA BERKALA tiap 90 detik. Deteksi captcha gak boleh
+        -- v6.60: CEK CAPTCHA BERKALA tiap 45 detik. Deteksi captcha gak boleh
         -- cuma nebeng jalur nyangkut-home/auto-rejoin (banyak & ruwet). Di sini
         -- worker cek client yang RUNNING tapi GAK lapor (kandidat kena captcha):
         -- bawa ke depan, dump uiautomator, cari penanda captcha. Kena -> tandai
         -- (badge panel) + skip; enggak -> clear. Satu client per ronde (gak berat).
-        if (now - (lastCekCaptcha or 0)) >= 90 then
+        if (now - (lastCekCaptcha or 0)) >= 45 then
             lastCekCaptcha = now
             local kand = nil
             local nKand = 0
+            local statCap = api_get(cfg, "/stat") or ""
             for _, pkgX in ipairs(split(cfg.pkgs or "")) do
-                if pkg_running(pkgX) and not cacheRun[pkgX] then
+                -- v6.58: kandidat = client HIDUP tapi GAK lapor fresh ke panel
+                -- (bridge_fresh false). cacheRun bisa true padahal nyangkut captcha
+                -- -> jangan andelin itu. Pakai bridge_fresh (lapor beneran apa nggak).
+                local akX = mapAkun and mapAkun[pkgX]
+                local lapor = akX and bridge_fresh(statCap, akX)
+                if pkg_running(pkgX) and not lapor then
                     kand = pkgX
                     nKand = nKand + 1
                     if KICK_DIURUS["captcha:" .. pkgX] then break end
@@ -6003,6 +6031,13 @@ local function run(cfg)
                 end
 
                 local h = open_all(cfg, only, batal, lapor_sela, mapLink, mapAkun)
+
+                -- v6.60: abis buka client (open_all makan menit-menitan), RESET
+                -- jadwal cek captcha -> iterasi berikutnya LANGSUNG cek (client
+                -- udah kebuka & mungkin kena captcha). Tanpa ini, cek captcha
+                -- jalan di AWAL iterasi (sebelum client dibuka -> 0 kandidat),
+                -- terus nunggu 1 iterasi penuh (~5 menit) baru cek lagi.
+                lastCekCaptcha = 0
 
                 -- v6.31: FORCE di-break sama LOGIN -> PROSES LOGIN LANGSUNG di sini,
                 -- gak nunggu iterasi baru (yang keburu ketimpa FORCE). batal()
