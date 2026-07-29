@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.20-cf"
+local VERSION = "6.24-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5541,32 +5541,87 @@ local function run(cfg)
         end
         for _, pkg in ipairs(split(cfg.pkgs)) do runSebelum[pkg] = cacheRun[pkg] end
 
-        -- v6.15: CLIENT BEKU / NYANGKUT DI HOME > 3 MENIT -> PERINTAH MASUK BARU.
-        -- Client yang window-nya ADA tapi script GAK PERNAH LAPOR (nyangkut di
-        -- Home, PS link gagal, popup age-check) itu "beku". Dulu dibiarin sampai
-        -- ronde reopen_sec, atau ditutup. User minta: JANGAN kill (buang RAM +
-        -- loading ulang lama) -- cukup am start lagi ke link game (open_one),
-        -- lebih ringan. Ambang 3 menit biar loading normal gak kepotong.
+        -- v6.21: NYANGKUT DI HOME (grafis < 30MB) -> SEGERA MASUKIN, gak nunggu.
+        -- User minta lebih agresif: begitu ketauan client nyangkut di Home
+        -- (grafis rendah = bukan di game), langsung am start ke game -- gak ada
+        -- drama nyangkut lama. BEDA dari "script off" (client MATI/ditutup) --
+        -- itu JANGAN dipaksa (mungkin sengaja dimatiin). Cuma yang JALAN tapi
+        -- nyangkut di Home yang dimasukin.
+        --   grafis >= 30MB = di game (aman, skip)
+        --   grafis <  30MB + client jalan = nyangkut Home -> masukin
+        --   client MATI (run=false) = script off -> BIARIN (jangan paksa)
+        -- Jeda 90s antar cek-grafis per client (grafis_kb ~12s, jangan spam).
         if hit then
             for _, pkg in ipairs(split(cfg.pkgs)) do
-                local beku = (cacheRun[pkg] == true and cacheBridge[pkg] == false
-                              and mapAkun[pkg]) and true or false
-                if beku then
-                    if not bekuSejak[pkg] then bekuSejak[pkg] = now end
-                    if (now - bekuSejak[pkg]) >= 180 then
-                        tambahLog("BEKU >3mnt: " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
-                                  .. " -> perintah masuk baru (gak di-kill)")
-                        RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=beku-3menit")
-                        setAksi("masuk ulang " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")))
-                        open_one(cfg, pkg, mapLink[pkg])   -- am start lagi, TANPA kill
-                        bekuSejak[pkg] = now   -- reset timer biar gak spam tiap ronde
-                        os.execute("sleep 3")
-                        refresh_status(); lastStatusCek = os.time()
-                        gambar_tabel(isi)
+                local akCk = mapAkun[pkg]
+                -- v6.24: cookie MATI/BAN -> SKIP TOTAL dari sesi ini. Anggap null.
+                -- Gak dicek, gak dicek-grafis, gak direjoin -- worker gak sentuh
+                -- sama sekali sampai cookie diperbaiki. Client-nya DIBIARIN (gak
+                -- di-kick) -- cuma diabaikan worker. Sekali ditandai mati (di cek
+                -- nyangkut / auto-setor), lewati terus.
+                if akCk and KICK_DIURUS["mati:" .. akCk] then
+                    -- lewati -- akun ini dianggap gak ada sampai cookie beres
+                else
+                -- cuma cek client yang JALAN tapi script gak lapor. Yang MATI
+                -- (script off) dilewat -- sesuai permintaan user.
+                local jalanTapiDiem = (cacheRun[pkg] == true and cacheBridge[pkg] == false
+                                       and mapAkun[pkg]) and true or false
+                if jalanTapiDiem then
+                    -- jeda cek grafis biar gak berat (grafis_kb mahal)
+                    if (now - (bekuSejak[pkg] or 0)) >= 60 then
+                        bekuSejak[pkg] = now
+                        local g = grafis_kb(pkg) or 0
+                        if g < 30 * 1024 then
+                            -- NYANGKUT DI HOME. v6.23: CEK COOKIE DULU sebelum rejoin.
+                            -- Kalau cookie BAN/MATI -> percuma rejoin (bakal nyangkut
+                            -- lagi). Cuma rejoin kalau cookie HIDUP. Cek dulu, baru
+                            -- mutusin -- hemat usaha, gak muter-muter di akun mati.
+                            local ak = mapAkun[pkg]
+                            local namaP = ak or pkg:gsub("com%.roblox%.","")
+                            -- baca cookie via SQL client ini
+                            local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
+                            local dbc = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                            local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                                SQ .. " " .. dbc ..
+                                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+                            local ck = hC and hC:read("*all") or ""
+                            if hC then hC:close() end
+                            ck = (ck or ""):gsub("%s+$", "")
+
+                            local kead = "?"
+                            if ck ~= "" and ck:find("_|WARNING") then
+                                kead = cek_cookie_roblox(ck)
+                                -- setor status ke panel sekalian
+                                pcall(function()
+                                    api_post(cfg, "/cookie-status", string.format(
+                                        '{"akun":%s,"status":%s}', jstr(ak or "?"), jstr(kead)))
+                                end)
+                            end
+
+                            if kead == "dead" or kead == "ban" then
+                                -- cookie mati -> JANGAN rejoin, tandai biar gak dibuka
+                                tambahLog("NYANGKUT Home " .. namaP .. " tapi cookie " ..
+                                          kead:upper() .. " -> GAK direjoin (perbaiki cookie dulu)")
+                                if ak then KICK_DIURUS["mati:" .. ak] = true end
+                            else
+                                -- cookie hidup/captcha/gak kebaca -> rejoin (masukin game)
+                                tambahLog("NYANGKUT Home (" .. string.format("%.0f", g/1024)
+                                          .. "MB): " .. namaP .. " cookie " ..
+                                          (kead == "alive" and "ON" or kead) .. " -> masukin game")
+                                RIW.catat("REJOIN", ak or pkg, "karena=nyangkut-home")
+                                setAksi("masukin " .. namaP)
+                                open_one(cfg, pkg, mapLink[pkg])   -- am start, TANPA kill
+                                os.execute("sleep 3")
+                                refresh_status(); lastStatusCek = os.time()
+                                gambar_tabel(isi)
+                            end
+                        end
+                        -- kalau grafis >= 30MB = di game (lagi loading script) -> biarin
                     end
                 else
-                    bekuSejak[pkg] = nil   -- gak beku lagi -> reset
+                    bekuSejak[pkg] = nil   -- mati / jalan normal -> reset timer
                 end
+                end   -- v6.24: tutup blok skip-cookie-mati
             end
         end
 
