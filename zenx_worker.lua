@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.38-cf"
+local VERSION = "6.39-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4153,10 +4153,26 @@ local function lapor(cfg, isi_perintah, cache)
     for _, pkg in ipairs(list) do
         local run = semua[pkg] and true or false
         if run then jalan = jalan + 1 end
-        -- v6.03: ikut kirim NAMA AKUN tiap client (dari prefs.xml) biar panel
-        -- bisa nunjukin "akun ini jalan di client mana". baca_username murah
-        -- (baca file prefs), gak nambah beban berarti.
-        local akunPkg = baca_username(pkg) or ""
+        -- v6.03: ikut kirim NAMA AKUN tiap client biar panel bisa nunjukin
+        -- "akun ini jalan di client mana".
+        -- v6.38: baca username DARI COOKIE (bukan prefs.xml). Sebabnya: abis
+        -- ganti akun (suntik cookie), prefs.xml KETINGGALAN (masih akun lama) ->
+        -- panel nampilin akun lama padahal client udah ganti. Cookie SQL = sumber
+        -- kebenaran (udah akun baru). Fallback prefs.xml kalau cookie gagal baca.
+        local akunPkg = ""
+        do
+            local dbC = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+            local hK = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                "/data/data/com.termux/files/usr/bin/sqlite3 " .. dbC ..
+                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+            local ckK = hK and hK:read("*all") or ""
+            if hK then hK:close() end
+            ckK = cookie_terpanjang(ckK or "")
+            if ckK ~= "" and ckK:find("_|WARNING") then
+                akunPkg = uname_dari_cookie(ckK) or ""
+            end
+            if akunPkg == "" then akunPkg = baca_username(pkg) or "" end
+        end
         parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s}',
             jstr(pkg), tostring(run), jstr(akunPkg))
     end
