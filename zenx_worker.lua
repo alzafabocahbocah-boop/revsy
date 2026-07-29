@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.39-cf"
+local VERSION = "6.42-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4155,14 +4155,13 @@ local function lapor(cfg, isi_perintah, cache)
         if run then jalan = jalan + 1 end
         -- v6.03: ikut kirim NAMA AKUN tiap client biar panel bisa nunjukin
         -- "akun ini jalan di client mana".
-        -- v6.38: baca username DARI COOKIE (bukan prefs.xml). Sebabnya: abis
-        -- ganti akun (suntik cookie), prefs.xml KETINGGALAN (masih akun lama) ->
-        -- panel nampilin akun lama padahal client udah ganti. Cookie SQL = sumber
-        -- kebenaran (udah akun baru). Fallback prefs.xml kalau cookie gagal baca.
+        -- v6.41: username DARI COOKIE (akurat abis ganti akun) -- prefs.xml bisa
+        -- ketinggalan. Query dikasih timeout 8s biar gak HANG kalau client beku /
+        -- SQL lock. Fallback prefs.xml kalau cookie gagal/timeout.
         local akunPkg = ""
         do
             local dbC = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
-            local hK = io.popen(("su -c %s 2>/dev/null"):format(shq(
+            local hK = io.popen(("timeout 8 su -c %s 2>/dev/null"):format(shq(
                 "/data/data/com.termux/files/usr/bin/sqlite3 " .. dbC ..
                 " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
             local ckK = hK and hK:read("*all") or ""
@@ -5222,7 +5221,7 @@ local function run(cfg)
                 info(("Suntik cookie: %s -> client %s"):format(akunG, clientG))
                 KICK_DIURUS["mati:" .. akunG] = nil
                 local pkgG = clientG:find("%.") and clientG or ("com.roblox." .. clientG)
-                os.execute(("%s login %s %s"):format(
+                os.execute(("timeout 120 %s login %s %s"):format(
                     (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                     akunG, pkgG:gsub("com%.roblox%.", "")))
                 ok(("LOGIN selesai: %s -> %s"):format(akunG, clientG))
@@ -5317,7 +5316,11 @@ local function run(cfg)
                         pkgL:gsub("com%.roblox%.", "")))
                     warn("  Client valid: " .. (cfg.pkgs or "?"):gsub("com%.roblox%.", ""))
                 end
-                os.execute(("%s login %s %s"):format(
+                -- v6.41: timeout 120s biar kalau `zenx login` HANG (client beku /
+                -- force-stop macet / SQL lock), worker GAK ikut macet -- paksa
+                -- berhenti, lanjut. Dulu os.execute nunggu selamanya -> worker
+                -- diem total pas login gagal.
+                os.execute(("timeout 120 %s login %s %s"):format(
                     (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                     akunL, pkgL:gsub("com%.roblox%.", "")))
                 ok(("LOGIN selesai: %s -> %s"):format(akunL, clientL))
@@ -5804,7 +5807,7 @@ local function run(cfg)
                         info(("Suntik cookie: %s -> client %s"):format(akunL, clientL))
                         KICK_DIURUS["mati:" .. akunL] = nil
                         local pkgL = clientL:find("%.") and clientL or ("com.roblox." .. clientL)
-                        os.execute(("%s login %s %s"):format(
+                        os.execute(("timeout 120 %s login %s %s"):format(
                             (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                             akunL, pkgL:gsub("com%.roblox%.", "")))
                         ok(("LOGIN selesai: %s -> %s"):format(akunL, clientL))
@@ -8404,6 +8407,21 @@ if PERINTAH == "login" then
     if cek then cek:close() end
     pj = (pj or ""):gsub("%s+", "")
     ok(("Cookie ketulis (panjang %s)."):format(pj ~= "" and pj or "?"))
+
+    -- v6.40: UPDATE prefs.xml biar SINKRON sama cookie baru. Lapor status rutin
+    -- baca username dari prefs.xml (murah, gak hang) -- kalau prefs ketinggalan,
+    -- panel nampilin akun lama. Update sekali di sini (pas ganti) = prefs bener,
+    -- lapor rutin tetep ringan. Username diambil dari cookie yang baru disuntik.
+    do
+        local unBaru = uname_dari_cookie(cookie)
+        if unBaru and unBaru ~= "" then
+            local prefsPath = "/data/data/" .. pkg .. "/shared_prefs/prefs.xml"
+            -- ganti nilai <string name="username">...</string> pakai sed
+            local sed = ("sed -i 's|<string name=\"username\">[^<]*</string>|<string name=\"username\">%s</string>|' %s"):format(unBaru, prefsPath)
+            sh_silent("su -c " .. shq(sed))
+            info("prefs.xml diupdate: username -> " .. unBaru)
+        end
+    end
 
     -- ---------- 5. buka pakai am ----------
     info("Buka client...")
