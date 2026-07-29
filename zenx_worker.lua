@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.56-cf"
+local VERSION = "6.57-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5314,18 +5314,18 @@ local function run(cfg)
         if (now - (lastCekCaptcha or 0)) >= 90 then
             lastCekCaptcha = now
             local kand = nil
+            local nKand = 0
             for _, pkgX in ipairs(split(cfg.pkgs or "")) do
-                -- kandidat: running TAPI gak jalan di game (cacheRun false = script
-                -- off) -> mungkin nyangkut captcha. Yang udah ditandai captcha,
-                -- cek ulang (mungkin udah solved).
                 if pkg_running(pkgX) and not cacheRun[pkgX] then
                     kand = pkgX
-                    -- prioritas yang udah ditandai captcha (cek udah solved apa belum)
+                    nKand = nKand + 1
                     if KICK_DIURUS["captcha:" .. pkgX] then break end
                 end
             end
+            tambahLog(("[cek-captcha] %d kandidat, cek: %s"):format(nKand, kand and kand:gsub("com%.roblox%.","") or "gak ada"))
             if kand then
                 local ceC = cek_error_ui(cfg, kand, mapLink)
+                tambahLog("[cek-captcha] hasil " .. kand:gsub("com%.roblox%.","") .. ": " .. (ceC or "nil/gak kebaca"))
                 if ceC and ceC:find("CAPTCHA", 1, true) then
                     if not KICK_DIURUS["captcha:" .. kand] then
                         tambahLog("CAPTCHA: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
@@ -6148,7 +6148,24 @@ local function run(cfg)
             end
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 local akun = mapAkun[pkg]
-                if akun then
+                -- v6.57: KALAU KENA CAPTCHA -> SKIP dari auto-rejoin. Jangan
+                -- di-rejoin (percuma, captcha butuh solve manual). Cek dulu masih
+                -- captcha apa nggak; kalau udah solved (masuk game), clear & lanjut.
+                local lewatiCaptcha = false
+                if pkg_running(pkg) and (KICK_DIURUS["captcha:" .. pkg] or (akun and not cacheRun[pkg])) then
+                    local ceR = cek_error_ui(cfg, pkg, mapLink)
+                    if ceR and ceR:find("CAPTCHA", 1, true) then
+                        if not KICK_DIURUS["captcha:" .. pkg] then
+                            tambahLog("CAPTCHA: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip auto-rejoin (solve manual)")
+                        end
+                        KICK_DIURUS["captcha:" .. pkg] = akun or pkg
+                        lewatiCaptcha = true
+                    elseif KICK_DIURUS["captcha:" .. pkg] then
+                        tambahLog("CAPTCHA kelar: " .. (akun or pkg:gsub("com%.roblox%.","")))
+                        KICK_DIURUS["captcha:" .. pkg] = nil
+                    end
+                end
+                if akun and not lewatiCaptcha then
                     -- cari "ts" akun ini di /stat. format: ..."nama":"fifinx_5"...,"ts":123...
                     local blok = stat:match('{[^{}]-"nama"%s*:%s*"' .. akun .. '"[^{}]-}')
                     local ts = blok and tonumber(blok:match('"ts"%s*:%s*(%d+)')) or nil
