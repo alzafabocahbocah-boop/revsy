@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.68-cf"
+local VERSION = "6.69-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4278,12 +4278,11 @@ local function lapor(cfg, isi_perintah, cache)
         local gg = KICK_DIURUS["gantigagal:" .. pkgPend2]
         -- v6.49: kirim "off berapa lama" (detik) biar panel nampilin durasi off.
         local offL = KICK_DIURUS["offlama:" .. pkg]
-        -- v6.51: kirim status captcha (kalau client kena verif bot) -> panel badge.
-        -- v6.52: kalau client udah RUN (jalan di game), berarti captcha kelar ->
-        -- clear penanda (badge captcha ilang otomatis).
-        if run and KICK_DIURUS["captcha:" .. pkg] then
-            KICK_DIURUS["captcha:" .. pkg] = nil
-        end
+        -- v6.68 FIX: JANGAN clear captcha di sini. Dulu clear pas run=true
+        -- (proses hidup), tapi client kena captcha proses-nya HIDUP tapi belum
+        -- masuk game -> langsung ke-clear -> capt=false -> BADGE GAK MUNCUL.
+        -- Clear captcha dipindah ke LOOP UTAMA (yang punya /stat buat bridge_fresh)
+        -- -- badge ilang cuma pas client beneran udah main (solved).
         local capt = KICK_DIURUS["captcha:" .. pkg] and true or false
         parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d,"captcha":%s}',
             jstr(pkg), tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0), tostring(capt))
@@ -5397,6 +5396,18 @@ local function run(cfg)
             local kand = nil
             local nKand = 0
             local statCap = api_get(cfg, "/stat") or ""
+            -- v6.68: CLEAR captcha buat client yang UDAH lapor fresh (beneran
+            -- masuk game = solved). Badge captcha ilang di panel. Ini gantiin
+            -- clear-di-lapor yang salah (pakai run=proses hidup).
+            for _, pkgC in ipairs(split(cfg.pkgs or "")) do
+                if KICK_DIURUS["captcha:" .. pkgC] then
+                    local akC = mapAkun and mapAkun[pkgC]
+                    if akC and bridge_fresh(statCap, akC) then
+                        tambahLog("CAPTCHA kelar: " .. akC .. " (udah masuk game)")
+                        KICK_DIURUS["captcha:" .. pkgC] = nil
+                    end
+                end
+            end
             for _, pkgX in ipairs(split(cfg.pkgs or "")) do
                 -- v6.67: kandidat = HIDUP + GAK lapor fresh + BELUM ketandai
                 -- captcha. Yang UDAH ketandai captcha di-SKIP (gak usah cek dump
