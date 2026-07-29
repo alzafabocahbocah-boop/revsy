@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.43-cf"
+local VERSION = "6.44-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8397,7 +8397,26 @@ if PERINTAH == "login" then
     -- gak pernah punya kutip tunggal (kekonfirmasi: cuma A-Z a-z 0-9 _ - | . :),
     -- jadi ini jaga-jaga.
     local ck_sql = cookie:gsub("'", "''")
-    local upd = ("%s %s \"UPDATE cookies SET value='%s' WHERE name='.ROBLOSECURITY'\""):format(
+    -- v6.43: cek KOLOM cookie dulu. WebView beda versi: ada yang `value`
+    -- (plaintext), ada yang cuma `encrypted_value`. UPDATE ke kolom yang salah
+    -- -> "no such column" -> cookie GAK kesuntik -> akun GAK ganti di RF.
+    local kolInfo = io.popen(("su -c %s 2>/dev/null"):format(shq(
+        SQ .. " " .. DB .. " \"PRAGMA table_info(cookies)\"")))
+    local kolRaw = kolInfo and kolInfo:read("*all") or ""
+    if kolInfo then kolInfo:close() end
+    -- PRAGMA output tiap baris: "cid|name|type|notnull|dflt|pk"
+    -- cari baris yang name-nya persis "value" (dikelilingi | )
+    local adaValue = kolRaw:find("|value|") ~= nil
+    local kolom = adaValue and "value" or nil
+
+    if not kolom then
+        err("Client " .. pkg:gsub("com%.roblox%.","") .. " skema cookie-nya pakai")
+        err("  kolom terenkripsi (bukan 'value') -- suntik plaintext gak bisa.")
+        err("  Cookie GAK kesuntik. Client ini perlu WebView versi lain.")
+        return
+    end
+
+    local upd = ("%s %s \"UPDATE cookies SET " .. kolom .. "='%s' WHERE name='.ROBLOSECURITY'\""):format(
         SQ, DB, ck_sql)
     local h = io.popen(("su -c %s 2>&1"):format(shq(upd)))
     local uout = h and h:read("*all") or ""
@@ -8410,7 +8429,7 @@ if PERINTAH == "login" then
     -- verifikasi panjang
     local cek = io.popen(("su -c %s 2>/dev/null"):format(
         shq(SQ .. " " .. DB ..
-            " \"SELECT length(value) FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+            " \"SELECT length(" .. kolom .. ") FROM cookies WHERE name='.ROBLOSECURITY'\"")))
     local pj = cek and cek:read("*all") or ""
     if cek then cek:close() end
     pj = (pj or ""):gsub("%s+", "")
