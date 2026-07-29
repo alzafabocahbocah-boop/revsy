@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.26-cf"
+local VERSION = "6.27-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5231,7 +5231,33 @@ local function run(cfg)
         -- karena goto gak boleh lompatin deklarasi lokal di Luau.)
         local skip_sisa = false
         local U = isi:upper()
-        if U:find("REJOIN") then
+
+        -- v6.27: LOGIN PALING PRIORITAS. Pas panel suntik cookie (LOGIN:akun:client),
+        -- worker langsung jalanin ITU DULU, skip semua perintah lain ronde ini.
+        -- Biar akun langsung keganti gak nunggu antrian (buka client dll).
+        local loginPrioritas = false
+        do
+            local akunL, clientL = isi:match("^LOGIN:([^:]+):([^:]+)")
+            if akunL and clientL then
+                info(("LOGIN (prioritas): %s -> %s"):format(akunL, clientL))
+                local pkgL = clientL:find("%.") and clientL or ("com.roblox." .. clientL)
+                os.execute(("%s login %s %s"):format(
+                    (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                    akunL, pkgL:gsub("com%.roblox%.", "")))
+                pcall(function()
+                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                end)
+                lastIsi = "FORCE"
+                refresh_status(); lastStatusCek = os.time()
+                gambar_tabel(isi)
+                loginPrioritas = true   -- skip semua perintah lain ronde ini
+                skip_sisa = true
+            end
+        end
+
+        if loginPrioritas then
+            -- LOGIN udah dijalanin, lewati semua handler perintah lain ronde ini
+        elseif U:find("REJOIN") then
             if isi ~= lastIsi then
                 lastIsi = isi
                 -- v4.15: REJOIN:namaakun = rejoin CLIENT tertentu (bukan semua).
@@ -5433,29 +5459,6 @@ local function run(cfg)
         if isi ~= lastIsi and isi ~= "" then
             info("perintah baru: " .. isi)
             lastIsi = isi
-        end
-
-        -- v5.88: LOGIN dari panel. Format perintah: "LOGIN:<akun>:<client>"
-        -- Panel kirim ini pas user pilih cookie di kartu client. Worker
-        -- jalanin login (cek cookie hidup -> inject SQL -> buka am), terus
-        -- balik ke FORCE biar gak nyangkut. Aksi SEKALI.
-        do
-            local akunL, clientL = isi:match("^LOGIN:([^:]+):([^:]+)")
-            if akunL and clientL then
-                info(("LOGIN dari panel: %s -> %s"):format(akunL, clientL))
-                -- panggil alur login lewat os.execute ke diri sendiri (zenx login).
-                -- Ini reuse kode yang udah kebukti jalan, gak nulis-ulang.
-                local pkgL = clientL:find("%.") and clientL or ("com.roblox." .. clientL)
-                os.execute(("%s login %s %s"):format(
-                    (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
-                    akunL, pkgL:gsub("com%.roblox%.", "")))
-                -- balik ke FORCE (biar worker lanjut normal, gak ngulang login)
-                pcall(function()
-                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
-                end)
-                lastIsi = "FORCE"
-                skip_sisa = true
-            end
         end
 
         -- v6.04: UPDATE dari panel. Tarik worker terbaru (skrip `up`) + exit.
