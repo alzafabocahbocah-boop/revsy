@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.33-cf"
+local VERSION = "6.34-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5245,7 +5245,10 @@ local function run(cfg)
         local loginPrioritas = false
         do
             local akunL, clientL = isi:match("^LOGIN:([^:]+):([^:]+)")
-            if akunL and clientL then
+            -- v6.34: cuma proses kalau BELUM diproses (isi beda dari lastIsi).
+            -- Karena gak balikin FORCE lagi, backend tetep LOGIN -> tanpa cek ini
+            -- LOGIN sama diulang tiap iterasi. isi beda (client/akun lain) = baru.
+            if akunL and clientL and isi ~= lastIsi then
                 print("")
                 print(C.BOLD .. C.C .. ">>> JALANIN PERINTAH LOGIN <<<" .. C.N)
                 info(("Suntik cookie: %s -> client %s"):format(akunL, clientL))
@@ -5272,10 +5275,13 @@ local function run(cfg)
                     (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                     akunL, pkgL:gsub("com%.roblox%.", "")))
                 ok(("LOGIN selesai: %s -> %s"):format(akunL, clientL))
-                pcall(function()
-                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
-                end)
-                lastIsi = "FORCE"
+                -- v6.33: JANGAN balikin FORCE ke backend. Dulu worker nulis FORCE
+                -- abis LOGIN -> pas lo suntik LOGIN client BERIKUTNYA, FORCE ini
+                -- keburu nimpa -> LOGIN kedua ilang (cuma perintah pertama jalan).
+                -- Cukup tandai lokal aja; worker lanjut normal, backend dibiarin
+                -- (LOGIN kehapus sendiri pas kebaca, atau ketimpa perintah lo
+                -- berikutnya -- yang justru kita mau).
+                lastIsi = isi   -- tandai LOGIN ini udah diproses (jgn ulang)
                 refresh_status(); lastStatusCek = os.time()
                 gambar_tabel(isi)
                 loginPrioritas = true   -- skip semua perintah lain ronde ini
@@ -5756,10 +5762,8 @@ local function run(cfg)
                             (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                             akunL, pkgL:gsub("com%.roblox%.", "")))
                         ok(("LOGIN selesai: %s -> %s"):format(akunL, clientL))
-                        pcall(function()
-                            api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
-                        end)
-                        lastIsi = "FORCE"
+                        -- v6.33: JANGAN balikin FORCE (nimpa LOGIN berikutnya).
+                        lastIsi = isiL
                         refresh_status(); lastStatusCek = os.time()
                     end
                 end
