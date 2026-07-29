@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.27-cf"
+local VERSION = "6.28-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5239,11 +5239,20 @@ local function run(cfg)
         do
             local akunL, clientL = isi:match("^LOGIN:([^:]+):([^:]+)")
             if akunL and clientL then
-                info(("LOGIN (prioritas): %s -> %s"):format(akunL, clientL))
+                print("")
+                print(C.BOLD .. C.C .. ">>> JALANIN PERINTAH LOGIN <<<" .. C.N)
+                info(("Suntik cookie: %s -> client %s"):format(akunL, clientL))
+                info("(login diprioritasin -- perintah lain di-skip ronde ini)")
+                -- v6.28: HAPUS tanda mati akun ini. Lo lagi GANTI ke akun ini,
+                -- jadi override skip-mati (v6.24). Kalau akun sebelumnya kena
+                -- verif/mati & ditandai skip, tanda itu dibuang biar login jalan
+                -- & akun baru gak keskip.
+                KICK_DIURUS["mati:" .. akunL] = nil
                 local pkgL = clientL:find("%.") and clientL or ("com.roblox." .. clientL)
                 os.execute(("%s login %s %s"):format(
                     (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                     akunL, pkgL:gsub("com%.roblox%.", "")))
+                ok(("LOGIN selesai: %s -> %s"):format(akunL, clientL))
                 pcall(function()
                     api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
                 end)
@@ -8124,6 +8133,7 @@ if PERINTAH == "login" then
     local cfg = load_config()
     if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
 
+    print(C.BOLD .. C.C .. "\n=== ZENX LOGIN (suntik cookie) ===" .. C.N)
     local akun = arg and arg[2]
     if not akun or akun == "" then
         err("Akun mana?  zenx login <akun>")
