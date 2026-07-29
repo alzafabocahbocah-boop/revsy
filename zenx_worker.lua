@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.57-cf"
+local VERSION = "6.58-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3248,6 +3248,30 @@ local function ambil_dump(cfg, pkg, mapLink, lewatiFokus)
     return isi
 end
 
+-- v6.58: cek captcha "maksa" -- bawa client ke depan, dump, cari penanda
+-- captcha. GAK cek fokus ketat kayak ambil_dump (yang sering bikin nil kalau
+-- client gak persis di depan). Ini yang bikin `zenx captcha` manual berhasil
+-- tapi cek loop (cek_error_ui) gagal. Global biar kepakai di loop.
+function cek_captcha_paksa(pkg)
+    sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+    os.execute("sleep 2")
+    sh_silent("su -c 'uiautomator dump /sdcard/capf.xml'")
+    local ui = sh("su -c 'cat /sdcard/capf.xml 2>/dev/null'") or ""
+    sh_silent("su -c 'rm -f /sdcard/capf.xml'")
+    if not ui:match("%S") then return nil end   -- gak kebaca
+    local low = ui:lower()
+    if ui:find("FunCaptcha", 1, true) or ui:find("arkose", 1, true)
+       or ui:find("challenge-container", 1, true)
+       or low:find("start puzzle", 1, true)
+       or low:find("not a bot", 1, true)
+       or low:find("solve this challenge", 1, true)
+       or low:find("verifying browser", 1, true)
+       or low:find("verifying you", 1, true) then
+        return "CAPTCHA"
+    end
+    return ""   -- kebaca tapi bukan captcha
+end
+
 local function cek_error_ui(cfg, pkg, mapLink)
     -- v4.84: tinggal ngerangkai dua bagian di atas. Dulu ambil-dump dan
     -- penilaian nyampur di sini, jadi `zenx intip` gak bisa makai penilaian
@@ -5324,7 +5348,7 @@ local function run(cfg)
             end
             tambahLog(("[cek-captcha] %d kandidat, cek: %s"):format(nKand, kand and kand:gsub("com%.roblox%.","") or "gak ada"))
             if kand then
-                local ceC = cek_error_ui(cfg, kand, mapLink)
+                local ceC = cek_captcha_paksa(kand)
                 tambahLog("[cek-captcha] hasil " .. kand:gsub("com%.roblox%.","") .. ": " .. (ceC or "nil/gak kebaca"))
                 if ceC and ceC:find("CAPTCHA", 1, true) then
                     if not KICK_DIURUS["captcha:" .. kand] then
@@ -5879,7 +5903,7 @@ local function run(cfg)
                                 -- nyangkut Home + cookie ON bisa jadi lagi KENA CAPTCHA
                                 -- (verif bot). Kalau iya -> JANGAN rejoin (percuma,
                                 -- captcha butuh solve manual) -> tandai + skip.
-                                local ce = cek_error_ui(cfg, pkg, mapLink)
+                                local ce = cek_captcha_paksa(pkg)
                                 if ce and ce:find("CAPTCHA", 1, true) then
                                     tambahLog("CAPTCHA: " .. namaP .. " kena verif bot -> skip (solve manual)")
                                     KICK_DIURUS["captcha:" .. pkg] = ak or namaP
@@ -6153,7 +6177,7 @@ local function run(cfg)
                 -- captcha apa nggak; kalau udah solved (masuk game), clear & lanjut.
                 local lewatiCaptcha = false
                 if pkg_running(pkg) and (KICK_DIURUS["captcha:" .. pkg] or (akun and not cacheRun[pkg])) then
-                    local ceR = cek_error_ui(cfg, pkg, mapLink)
+                    local ceR = cek_captcha_paksa(pkg)
                     if ceR and ceR:find("CAPTCHA", 1, true) then
                         if not KICK_DIURUS["captcha:" .. pkg] then
                             tambahLog("CAPTCHA: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip auto-rejoin (solve manual)")
