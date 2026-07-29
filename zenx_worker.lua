@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.47-cf"
+local VERSION = "6.50-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4178,8 +4178,14 @@ local function lapor(cfg, isi_perintah, cache)
             end
             if akunPkg == "" then akunPkg = baca_username(pkg) or "" end
         end
-        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s}',
-            jstr(pkg), tostring(run), jstr(akunPkg))
+        -- v6.48: ikut kirim alasan "belum ganti" (kalau ada) biar panel bisa
+        -- nampilin kenapa client belum ke-ganti akun (cookie mati/ban/dll).
+        local pkgPend2 = pkg:gsub("com%.roblox%.", "")
+        local gg = KICK_DIURUS["gantigagal:" .. pkgPend2]
+        -- v6.49: kirim "off berapa lama" (detik) biar panel nampilin durasi off.
+        local offL = KICK_DIURUS["offlama:" .. pkg]
+        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d}',
+            jstr(pkg), tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0))
     end
 
     -- v4.24: ikut kirim "lagi ngapain" + log terakhir
@@ -5249,6 +5255,13 @@ local function run(cfg)
                         (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                         akunG, pkgG:gsub("com%.roblox%.", "")))
                     ok(("LOGIN selesai: %s -> %s"):format(akunG, clientG))
+                    -- v6.48: SIMPEN TARGET akun per client + jadwal CEK 60 detik
+                    -- ke depan. Nanti worker cek: client udah beneran ganti ke
+                    -- akun ini? Kalau belum -> lapor alasan + auto re-suntik.
+                    local pkgPend = pkgG:gsub("com%.roblox%.", "")
+                    KICK_DIURUS["target:" .. pkgPend] = akunG
+                    KICK_DIURUS["cekganti:" .. pkgPend] = os.time() + 60
+                    KICK_DIURUS["retry:" .. pkgPend] = 0
                     refresh_status(); lastStatusCek = os.time()
                     gambar_tabel(isi)
                 end
@@ -5263,6 +5276,76 @@ local function run(cfg)
         if (os.time() - lastStatusCek) >= 10 then refresh_status(); lastStatusCek = os.time() end
         gambar_tabel(isi)   -- v4.10: redraw tabel dari cache (instan)
         local now  = os.time()
+
+        -- v6.48: CEK GANTI AKUN. Buat tiap client yang abis di-LOGIN (target
+        -- kesimpen + jadwal cekganti), pas waktunya (60s) lewat: bandingin akun
+        -- ASLI di client (dari cookie) vs TARGET. Belum ganti -> lapor alasan
+        -- (log + panel) + AUTO re-suntik (kecuali cookie invalid/ban -> stop,
+        -- nunggu user ganti cookie). Re-suntik: client dikeluarin dulu, masuk lagi.
+        for _, pkgC in ipairs(split(cfg.pkgs or "")) do
+            local pkgPend = pkgC:gsub("com%.roblox%.", "")
+            local target = KICK_DIURUS["target:" .. pkgPend]
+            local jadwal = KICK_DIURUS["cekganti:" .. pkgPend]
+            if target and jadwal and now >= jadwal then
+                -- baca akun asli di client (dari cookie, timeout biar gak hang)
+                local dbC = "/data/data/" .. pkgC .. "/app_webview/Default/Cookies"
+                local hK = io.popen(("timeout 8 su -c %s 2>/dev/null"):format(shq(
+                    "/data/data/com.termux/files/usr/bin/sqlite3 " .. dbC ..
+                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+                local ckK = hK and hK:read("*all") or ""
+                if hK then hK:close() end
+                ckK = cookie_terpanjang(ckK or "")
+                local asli = (ckK ~= "" and ckK:find("_|WARNING")) and uname_dari_cookie(ckK) or ""
+
+                if asli == target then
+                    -- BERHASIL ganti
+                    ok(("GANTI AKUN OK: %s udah jadi %s"):format(pkgPend, target))
+                    KICK_DIURUS["target:" .. pkgPend] = nil
+                    KICK_DIURUS["cekganti:" .. pkgPend] = nil
+                    KICK_DIURUS["retry:" .. pkgPend] = nil
+                    KICK_DIURUS["gantigagal:" .. pkgPend] = nil
+                else
+                    -- BELUM ganti -- cari alasan
+                    local sebab
+                    local keadaan = cek_cookie_roblox(ckK ~= "" and ckK or nil)
+                    if ckK == "" or not ckK:find("_|WARNING") then
+                        sebab = "cookie gak kebaca di client"
+                    elseif keadaan == "ban" then
+                        sebab = "cookie KENA BAN"
+                    elseif keadaan == "dead" then
+                        sebab = "cookie MATI (invalid)"
+                    elseif asli ~= "" and asli ~= target then
+                        sebab = "masih akun lama (" .. asli .. ")"
+                    else
+                        sebab = "belum masuk / nyangkut"
+                    end
+                    -- cookie invalid/ban -> STOP, nunggu user ganti cookie
+                    if keadaan == "ban" or keadaan == "dead" then
+                        warn(("GANTI GAGAL: %s -> %s. Sebab: %s"):format(pkgPend, target, sebab))
+                        warn("  Stop re-suntik -- ganti cookie dulu (fresh).")
+                        KICK_DIURUS["gantigagal:" .. pkgPend] = target .. "|" .. sebab
+                        KICK_DIURUS["target:" .. pkgPend] = nil
+                        KICK_DIURUS["cekganti:" .. pkgPend] = nil
+                    else
+                        -- AUTO RE-SUNTIK: keluarin client dulu, masuk lagi
+                        local retry = (KICK_DIURUS["retry:" .. pkgPend] or 0) + 1
+                        KICK_DIURUS["retry:" .. pkgPend] = retry
+                        warn(("GANTI belum kelar: %s -> %s. Sebab: %s (re-suntik #%d)"):format(
+                            pkgPend, target, sebab, retry))
+                        KICK_DIURUS["gantigagal:" .. pkgPend] = target .. "|" .. sebab .. " (coba lagi #" .. retry .. ")"
+                        -- keluarin client dulu
+                        sh_silent("am force-stop " .. pkgC)
+                        os.execute("sleep 2")
+                        -- re-suntik
+                        os.execute(("timeout 120 %s login %s %s"):format(
+                            (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                            target, pkgPend))
+                        -- jadwalin cek lagi 60s ke depan
+                        KICK_DIURUS["cekganti:" .. pkgPend] = os.time() + 60
+                    end
+                end
+            end
+        end
 
         -- v6.14: CEK LISENSI BERKALA tiap 60 detik. Kalau lisensi Delta HILANG
         -- (file kosong = key habis), langsung bypass -- gak nunggu ronde buka
@@ -6099,6 +6182,10 @@ local function run(cfg)
                         PERTAMA_DIEM[pkg] = PERTAMA_DIEM[pkg] or now
                         diem = now - PERTAMA_DIEM[pkg]
                     end
+                    -- v6.49: simpen "off berapa lama" per client biar dikirim ke
+                    -- panel (nampilin "script off X menit").
+                    if diem then KICK_DIURUS["offlama:" .. pkg] = diem
+                    else KICK_DIURUS["offlama:" .. pkg] = nil end
 
                     if diem and butuhKey then
                         -- v4.86: lisensi hilang/basi -> script emang GAK BAKAL jalan
@@ -8722,6 +8809,68 @@ end
 -- masuk game. Verif bot, layar key, popup umur, semuanya masuk pola itu.
 -- Command ini nyaring daftarnya, keputusan (ganti akun / verif manual) di lo.
 -- ============================================================
+if PERINTAH == "cekcaptcha" then
+    -- v6.50: DIAGNOSTIK captcha. Jalanin PAS client lagi kena captcha/verif.
+    -- Dump SEMUA window + activity + view WebView -> biar keliatan ada nama
+    -- captcha (Arkose/FunCaptcha/challenge) yang bisa dideteksi apa nggak.
+    -- Pandora kemungkinan deteksi via window/activity ini (bukan baca isi).
+    local cfg = load_config()
+    if not cfg then err("Config belum ada."); return end
+    local client = arg and arg[2]
+    if not client then
+        err("Client mana?  zenx cekcaptcha <client>")
+        info("Jalanin PAS client lagi kena captcha biar keliatan window-nya.")
+        return
+    end
+    local pkg = client:find("%.") and client or ("com.roblox." .. client)
+
+    print(C.BOLD .. C.C .. "\n=== DIAGNOSTIK CAPTCHA: " .. pkg .. " ===\n" .. C.N)
+
+    info("1. Window yang lagi fokus:")
+    print(sh("su -c 'dumpsys window | grep -iE \"mCurrentFocus|mFocusedApp\"'") or "(kosong)")
+
+    info("2. SEMUA window punya client ini:")
+    print(sh("su -c 'dumpsys window windows | grep -iE \"Window #|" .. pkg .. "\"'") or "(kosong)")
+
+    info("3. Cari window captcha (Arkose/FunCaptcha/challenge/verif):")
+    local capt = sh("su -c 'dumpsys window | grep -iE \"arkose|funcaptcha|captcha|challenge|verif|hcaptcha|recaptcha\"'") or ""
+    if capt:match("%S") then
+        warn("KETEMU window captcha:")
+        print(capt)
+    else
+        info("  (gak ada nama captcha di window -- mungkin di dalam WebView)")
+    end
+
+    info("4. Activity stack Roblox:")
+    print(sh("su -c 'dumpsys activity activities | grep -iE \"" .. pkg .. "|ResumedActivity\" | head -10'") or "(kosong)")
+
+    info("5. WebView/view yang lagi kebuka (uiautomator):")
+    sh_silent("su -c 'uiautomator dump /sdcard/capt.xml'")
+    local ui = sh("su -c 'cat /sdcard/capt.xml 2>/dev/null'") or ""
+    sh_silent("su -c 'rm -f /sdcard/capt.xml'")
+    if ui:match("%S") then
+        -- cari petunjuk captcha di dump
+        local found = ui:match("[Cc]aptcha") or ui:match("[Aa]rkose") or ui:match("[Rr]obot")
+                      or ui:match("[Vv]erif") or ui:match("[Cc]hallenge")
+        if found then
+            warn("  Petunjuk captcha di UI: " .. found)
+        else
+            info("  UI kebaca (" .. #ui .. " char) tapi gak ada kata captcha.")
+            info("  Contoh isi (300 char pertama):")
+            print(ui:sub(1, 300))
+        end
+    else
+        warn("  uiautomator balikin KOSONG (captcha WebView -- gak kebaca teks).")
+    end
+
+    info("6. Package yang lagi jalan di client (proses):")
+    print(sh("su -c 'ps -A | grep -iE \"arkose|captcha|" .. pkg .. "\"'") or "(kosong)")
+
+    print("")
+    ok("Diagnostik selesai. Tempel hasil ini ke Claude biar tau apa yg bisa dideteksi.")
+    return
+end
+
 if PERINTAH == "verif" or PERINTAH == "cekverif" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
