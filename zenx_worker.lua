@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.28-cf"
+local VERSION = "6.29-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5249,6 +5249,18 @@ local function run(cfg)
                 -- & akun baru gak keskip.
                 KICK_DIURUS["mati:" .. akunL] = nil
                 local pkgL = clientL:find("%.") and clientL or ("com.roblox." .. clientL)
+                -- v6.28: cek client valid (ada di config). Kalau yang dikirim
+                -- ternyata NAMA AKUN (bug lama panel), pkgL gak ada di pkgs ->
+                -- kasih tau, jangan diam.
+                local adaClient = false
+                for _, pk in ipairs(split(cfg.pkgs or "")) do
+                    if pk == pkgL then adaClient = true break end
+                end
+                if not adaClient then
+                    warn(("Client '%s' gak ada di config -- mungkin salah kirim (nama akun?)."):format(
+                        pkgL:gsub("com%.roblox%.", "")))
+                    warn("  Client valid: " .. (cfg.pkgs or "?"):gsub("com%.roblox%.", ""))
+                end
                 os.execute(("%s login %s %s"):format(
                     (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                     akunL, pkgL:gsub("com%.roblox%.", "")))
