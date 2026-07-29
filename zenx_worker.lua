@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.61-cf"
+local VERSION = "6.62-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3258,6 +3258,7 @@ function cek_captcha_paksa(pkg)
     sh_silent("su -c 'uiautomator dump /sdcard/capf.xml'")
     local ui = sh("su -c 'cat /sdcard/capf.xml 2>/dev/null'") or ""
     sh_silent("su -c 'rm -f /sdcard/capf.xml'")
+    tambahLog("[paksa] " .. pkg:gsub("com%.roblox%.","") .. " dump " .. #ui .. " char")
     if not ui:match("%S") then return nil end   -- gak kebaca
     local low = ui:lower()
     if ui:find("FunCaptcha", 1, true) or ui:find("arkose", 1, true)
@@ -4172,6 +4173,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             if pkg_running(pkg) and ckC ~= "" and ckC:find("_|WARNING") then
                 local statC = api_get(cfg, "/stat") or ""
                 local lapor = ak and bridge_fresh(statC, ak)
+                tambahLog("[cc-cookie] " .. (ak or "?") .. " running, lapor=" .. tostring(lapor))
                 if not lapor then   -- gak lapor = mungkin nyangkut captcha
                     local hasilCap = cek_captcha_paksa(pkg)
                     if hasilCap and hasilCap:find("CAPTCHA", 1, true) then
