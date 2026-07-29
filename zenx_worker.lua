@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.34-cf"
+local VERSION = "6.38-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4060,16 +4060,19 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     end
     for _, pkg in ipairs(scanCk) do
         if pkg_running(pkg) then
-            local ak = (mapAkun and mapAkun[pkg]) or baca_username(pkg)
+            local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+            local cmd = ("su -c %s 2>/dev/null"):format(shq(
+                "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
+                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\""))
+            local hC = io.popen(cmd)
+            local ckC = hC and hC:read("*all") or ""
+            if hC then hC:close() end
+            ckC = cookie_terpanjang(ckC or "")
+            -- v6.35: username DARI cookie (sinkron sama cookie), bukan prefs.xml
+            -- yang bisa ketinggalan. Fallback ke mapAkun/prefs kalau decode gagal.
+            local ak = (ckC ~= "" and ckC:find("_|WARNING")) and uname_dari_cookie(ckC) or nil
+            if not ak or ak == "" then ak = (mapAkun and mapAkun[pkg]) or baca_username(pkg) end
             if ak and ak ~= "" and ak ~= "?" and not KICK_DIURUS["ck:" .. ak] then
-                local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
-                local cmd = ("su -c %s 2>/dev/null"):format(shq(
-                    "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
-                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\""))
-                local hC = io.popen(cmd)
-                local ckC = hC and hC:read("*all") or ""
-                if hC then hC:close() end
-                ckC = (ckC or ""):gsub("%s+$", "")
                 if ckC ~= "" and ckC:find("_|WARNING") then
                     pcall(function()
                         local body = string.format('{"akun":%s,"paket":%s,"cookie":%s}',
@@ -5189,6 +5192,33 @@ local function run(cfg)
             KICK_DIURUS["login_tertunda"] = nil
             info("LOGIN tertunda diproses: " .. isi)
         end
+
+        -- v6.35: LOGIN DIPROSES PALING ATAS -- sebelum cek lisensi/beku/nyangkut.
+        -- Dulu LOGIN handler ada di tengah loop, ketutup aktivitas lain (client
+        -- beku, cek lisensi). Kalau ada client beku, worker sibuk situ, LOGIN
+        -- gak kebagian giliran -> nyangkut. Sekarang LOGIN paling awal, langsung.
+        local loginKelar = false
+        do
+            local akunG, clientG = isi:match("^LOGIN:([^:]+):([^:]+)")
+            if akunG and clientG and isi ~= lastIsi then
+                print("")
+                print(C.BOLD .. C.C .. ">>> LOGIN (paling atas) <<<" .. C.N)
+                info(("Suntik cookie: %s -> client %s"):format(akunG, clientG))
+                KICK_DIURUS["mati:" .. akunG] = nil
+                local pkgG = clientG:find("%.") and clientG or ("com.roblox." .. clientG)
+                os.execute(("%s login %s %s"):format(
+                    (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                    akunG, pkgG:gsub("com%.roblox%.", "")))
+                ok(("LOGIN selesai: %s -> %s"):format(akunG, clientG))
+                lastIsi = isi
+                refresh_status(); lastStatusCek = os.time()
+                gambar_tabel(isi)
+                loginKelar = true   -- skip sisa loop ronde ini
+            end
+        end
+
+        if not loginKelar then
+
         -- v4.16: refresh status (dumpsys, berat) cuma tiap 10 detik, bukan tiap redraw.
         if (os.time() - lastStatusCek) >= 10 then refresh_status(); lastStatusCek = os.time() end
         gambar_tabel(isi)   -- v4.10: redraw tabel dari cache (instan)
@@ -5636,7 +5666,7 @@ local function run(cfg)
                                 " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
                             local ck = hC and hC:read("*all") or ""
                             if hC then hC:close() end
-                            ck = (ck or ""):gsub("%s+$", "")
+                            ck = cookie_terpanjang(ck or "")
 
                             local kead = "?"
                             if ck ~= "" and ck:find("_|WARNING") then
@@ -6198,6 +6228,8 @@ local function run(cfg)
         end
 
         end  -- if not skip_sisa
+
+        end  -- v6.35: tutup 'if not loginKelar' (LOGIN skip sisa ronde)
 
         os.execute("sleep "..cfg.poll_sec)
     end
@@ -8170,7 +8202,29 @@ function cek_cookie_roblox(cookie)
     return "error", ("kode=%s"):format(kode or "?")
 end
 
-local function uname_dari_cookie(ck)
+-- v6.37: dari hasil query (bisa MULTI-BARIS kalau ada beberapa .ROBLOSECURITY
+-- beda domain/path), pilih baris cookie yang PALING PANJANG = paling lengkap.
+-- Dilakuin di Lua (bukan SQL ORDER BY) biar gak gantung ke nama kolom/versi
+-- WebView (skema beda antar-client -- ada yang error "no such column").
+function cookie_terpanjang(raw)
+    if not raw or raw == "" then return "" end
+    local best = ""
+    for baris in (raw .. "\n"):gmatch("(.-)\n") do
+        baris = baris:gsub("%s+$", "")
+        if baris:find("_|WARNING") and #baris > #best then best = baris end
+    end
+    -- kalau gak ada yang _|WARNING (jaga-jaga), balikin baris terpanjang apa adanya
+    if best == "" then
+        for baris in (raw .. "\n"):gmatch("(.-)\n") do
+            baris = baris:gsub("%s+$", "")
+            if #baris > #best then best = baris end
+        end
+    end
+    return best
+end
+
+-- v6.35: GLOBAL -- dipakai auto-setor cookie (lebih awal di file)
+function uname_dari_cookie(ck)
     if not ck then return nil end
     local mid = ck:match("|_([A-Za-z0-9+/=_%-]+)%.")
     if not mid then return nil end
@@ -8358,16 +8412,25 @@ if PERINTAH == "pantaucookie" or PERINTAH == "catatakun" then
     while true do
         for _, pkg in ipairs(pindai_pkgs()) do
             if pkg_running(pkg) then
-                local ak = baca_username(pkg)
+                -- v6.35: extract cookie DULU, terus ambil username DARI COOKIE
+                -- (uname_dari_cookie), BUKAN prefs.xml. Sebabnya: prefs.xml bisa
+                -- KETINGGALAN (masih akun lama) sedangkan cookie SQL udah akun
+                -- baru -> nama & cookie GAK SINKRON (nama akun A, cookie akun B).
+                -- Ambil dari cookie = pasti cocok, apa pun isi prefs.xml.
+                local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                -- v6.36: bisa ADA BEBERAPA baris .ROBLOSECURITY (beda domain/path);
+                -- sebagian bisa kepotong/mati. Ambil yang PALING PANJANG (cookie
+                -- asli paling panjang & lengkap) -> hindari yang invalid.
+                local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                    SQ .. " " .. db ..
+                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+                local ckC = hC and hC:read("*all") or ""
+                if hC then hC:close() end
+                ckC = cookie_terpanjang(ckC or "")
+                -- username DARI cookie (sinkron), fallback prefs.xml kalau gagal decode
+                local ak = (ckC ~= "" and ckC:find("_|WARNING")) and uname_dari_cookie(ckC) or nil
+                if not ak or ak == "" then ak = baca_username(pkg) end
                 if ak and ak ~= "" and ak ~= "?" and not sudah[ak] then
-                    -- extract cookie
-                    local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
-                    local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
-                        SQ .. " " .. db ..
-                        " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
-                    local ckC = hC and hC:read("*all") or ""
-                    if hC then hC:close() end
-                    ckC = (ckC or ""):gsub("%s+$", "")
                     if ckC ~= "" and ckC:find("_|WARNING") then
                         io.write(C.BOLD .. ak .. C.N .. "  ")
                         io.flush()
@@ -8414,7 +8477,7 @@ if PERINTAH == "cekcookie" then
                 local hC = io.popen(cmd)
                 local ck = hC and hC:read("*all") or ""
                 if hC then hC:close() end
-                ck = (ck or ""):gsub("%s+$", "")
+                ck = cookie_terpanjang(ck or "")
                 if ck ~= "" and ck:find("_|WARNING") then
                     io.write(C.BOLD .. akun .. C.N .. "  ")
                     io.flush()
