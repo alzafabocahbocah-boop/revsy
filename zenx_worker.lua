@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.24-cf"
+local VERSION = "6.26-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4046,7 +4046,19 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     -- Inline (bukan fungsi lokal -- file mepet batas 200 lokal). Tiap client
     -- jalan & login, cookie disetor sekali (penanda di KICK_DIURUS["ck:akun"]
     -- biar gak nambah lokal baru -- file mepet batas 200 lokal Lua).
-    for _, pkg in ipairs(list) do
+    -- v6.25: scan SEMUA client Roblox kepasang (bukan cuma config) -- biar
+    -- AKUN BARU yang lo bikin manual di client mana pun ke-setor otomatis ke
+    -- panel. Jadi abis bikin akun, cookie-nya langsung masuk pool (bisa dipakai
+    -- gantiin akun yang kena verif di RF lain). Gabung config + pindai_pkgs.
+    local scanCk = {}
+    do
+        local ada = {}
+        for _, pkg in ipairs(list) do scanCk[#scanCk+1] = pkg; ada[pkg] = true end
+        for _, pkg in ipairs(pindai_pkgs()) do
+            if not ada[pkg] then scanCk[#scanCk+1] = pkg end
+        end
+    end
+    for _, pkg in ipairs(scanCk) do
         if pkg_running(pkg) then
             local ak = (mapAkun and mapAkun[pkg]) or baca_username(pkg)
             if ak and ak ~= "" and ak ~= "?" and not KICK_DIURUS["ck:" .. ak] then
@@ -4214,7 +4226,8 @@ end
 -- Ngetik 6-10 nama paket manual itu gampang typo, dan typo-nya diem —
 -- pgrep gak nemu, client gak kebuka, gak ada error. Mending dipindai.
 -- ============================================================
-local function pindai_pkgs()
+-- v6.25: GLOBAL (bukan local) -- dipanggil dari open_all (lebih awal di file)
+function pindai_pkgs()
     local out = sh("su -c 'pm list packages'")
     if out == "" then out = sh("pm list packages") end
     local t = {}
@@ -8254,6 +8267,56 @@ if PERINTAH == "login" then
     info("Buka client...")
     sh_silent("am start -n " .. pkg .. "/.startup.ActivityProtocolLauncher")
     ok("Login " .. akun .. " -> " .. pkg:gsub("com%.roblox%.", "") .. ". Tunggu masuk game.")
+    return
+end
+
+if PERINTAH == "pantau" then
+    -- v6.26: MODE PANTAU -- cuma catat cookie akun baru ke panel, GAK buka
+    -- client / masukin game. Buat pas bikin akun manual di RF: worker ngintip
+    -- client Roblox kepasang, tiap ada akun BARU login (belum kesetor), extract
+    -- cookie + setor + cek hidup. Loop terus sampai Ctrl-C. Beda dari FORCE yang
+    -- auto buka semua client + masukin game.
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `pasang <preset>` dulu."); return end
+    local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
+    print(C.BOLD .. C.C .. "\n=== MODE PANTAU COOKIE (Ctrl-C buat stop) ===\n" .. C.N)
+    info("Bikin akun manual di client RF -- cookie akun baru auto-kecatat ke panel.")
+    info("Worker GAK buka client / masukin game di mode ini.\n")
+    local sudah = {}   -- akun yang udah kesetor sesi ini
+    while true do
+        for _, pkg in ipairs(pindai_pkgs()) do
+            if pkg_running(pkg) then
+                local ak = baca_username(pkg)
+                if ak and ak ~= "" and ak ~= "?" and not sudah[ak] then
+                    -- extract cookie
+                    local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                    local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                        SQ .. " " .. db ..
+                        " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+                    local ckC = hC and hC:read("*all") or ""
+                    if hC then hC:close() end
+                    ckC = (ckC or ""):gsub("%s+$", "")
+                    if ckC ~= "" and ckC:find("_|WARNING") then
+                        io.write(C.BOLD .. ak .. C.N .. "  ")
+                        io.flush()
+                        pcall(function()
+                            api_post(cfg, "/cookie-simpan", string.format(
+                                '{"akun":%s,"paket":%s,"cookie":%s}', jstr(ak), jstr(pkg), jstr(ckC)))
+                        end)
+                        local kead = cek_cookie_roblox(ckC)
+                        pcall(function()
+                            api_post(cfg, "/cookie-status", string.format(
+                                '{"akun":%s,"status":%s}', jstr(ak), jstr(kead)))
+                        end)
+                        local warna = (kead == "alive") and C.G or (kead == "captcha") and C.Y or C.R
+                        print(warna .. kead:upper() .. C.N .. C.D .. "  -> panel" .. C.N)
+                        sudah[ak] = true
+                    end
+                end
+            end
+        end
+        os.execute("sleep 5")   -- cek tiap 5 detik
+    end
     return
 end
 
