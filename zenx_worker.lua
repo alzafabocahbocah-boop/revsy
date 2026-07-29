@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.29-cf"
+local VERSION = "6.30-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5182,6 +5182,13 @@ local function run(cfg)
 
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
         local isi  = ambil_str(resp, "isi") or ""
+        -- v6.29: LOGIN tertunda (kesimpen pas cek_batal) diproses DULUAN, biar
+        -- gak keburu ketimpa FORCE. Ambil & bersihin penanda.
+        if KICK_DIURUS["login_tertunda"] then
+            isi = KICK_DIURUS["login_tertunda"]
+            KICK_DIURUS["login_tertunda"] = nil
+            info("LOGIN tertunda diproses: " .. isi)
+        end
         -- v4.16: refresh status (dumpsys, berat) cuma tiap 10 detik, bukan tiap redraw.
         if (os.time() - lastStatusCek) >= 10 then refresh_status(); lastStatusCek = os.time() end
         gambar_tabel(isi)   -- v4.10: redraw tabel dari cache (instan)
@@ -5701,8 +5708,15 @@ local function run(cfg)
                     -- ngirim FORCE otomatis abis REJOIN/FRONT/GRID -- kalau itu
                     -- dianggap "perintah baru", worker malah motong kerjaannya
                     -- sendiri. Selain FORCE = instruksi beneran -> didahulukan.
-                    local i = (ambil_str(r, "isi") or ""):upper()
+                    local iAsli = ambil_str(r, "isi") or ""
+                    local i = iAsli:upper()
                     if i ~= "" and i ~= cmdAwal and not i:find("^FORCE$") then
+                        -- v6.29: kalau LOGIN, SIMPEN isi aslinya (huruf kecil) biar
+                        -- gak keburu ketimpa FORCE sebelum diproses. Loop utama
+                        -- jalanin dari simpanan ini, bukan baca ulang backend.
+                        if iAsli:match("^LOGIN:") then
+                            KICK_DIURUS["login_tertunda"] = iAsli
+                        end
                         warn("perintah baru dari panel: " .. i .. " -> berhenti, itu duluan")
                         return true
                     end
