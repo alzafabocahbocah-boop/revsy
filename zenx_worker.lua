@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.31-cf"
+local VERSION = "6.32-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5738,6 +5738,31 @@ local function run(cfg)
                 end
 
                 local h = open_all(cfg, only, batal, lapor_sela, mapLink, mapAkun)
+
+                -- v6.31: FORCE di-break sama LOGIN -> PROSES LOGIN LANGSUNG di sini,
+                -- gak nunggu iterasi baru (yang keburu ketimpa FORCE). batal()
+                -- nyimpen login_tertunda; kita eksekusi sekarang juga.
+                if KICK_DIURUS["login_tertunda"] then
+                    local isiL = KICK_DIURUS["login_tertunda"]
+                    KICK_DIURUS["login_tertunda"] = nil
+                    local akunL, clientL = isiL:match("^LOGIN:([^:]+):([^:]+)")
+                    if akunL and clientL then
+                        print("")
+                        print(C.BOLD .. C.C .. ">>> JALANIN PERINTAH LOGIN (langsung) <<<" .. C.N)
+                        info(("Suntik cookie: %s -> client %s"):format(akunL, clientL))
+                        KICK_DIURUS["mati:" .. akunL] = nil
+                        local pkgL = clientL:find("%.") and clientL or ("com.roblox." .. clientL)
+                        os.execute(("%s login %s %s"):format(
+                            (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                            akunL, pkgL:gsub("com%.roblox%.", "")))
+                        ok(("LOGIN selesai: %s -> %s"):format(akunL, clientL))
+                        pcall(function()
+                            api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                        end)
+                        lastIsi = "FORCE"
+                        refresh_status(); lastStatusCek = os.time()
+                    end
+                end
 
                 if h.ok > 0 or h.gagal > 0 then
                     local ringkas = string.format("%d jalan, %d gagal, %d dilewat",
