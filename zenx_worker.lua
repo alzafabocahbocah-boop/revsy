@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.52-cf"
+local VERSION = "6.53-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8842,6 +8842,53 @@ end
 -- masuk game. Verif bot, layar key, popup umur, semuanya masuk pola itu.
 -- Command ini nyaring daftarnya, keputusan (ganti akun / verif manual) di lo.
 -- ============================================================
+if PERINTAH == "captcha" then
+    -- v6.53: CEK CAPTCHA ringkas -- fokus WebView aja (bukan 5 bagian ceklayar).
+    -- Bawa client ke depan, dump uiautomator, cari penanda captcha. Langsung
+    -- kasih tau: KENA atau ENGGAK. `zenx captcha seiyx` (+ delay opsional).
+    local cfg = load_config()
+    if not cfg then err("Config belum ada."); return end
+    local client = arg and arg[2]
+    if not client then
+        err("Client mana?  zenx captcha <client> [delay]")
+        return
+    end
+    local pkg = client:find("%.") and client or ("com.roblox." .. client)
+    local delay = tonumber(arg and arg[3]) or 0
+
+    if delay > 0 then
+        info("Tunggu " .. delay .. "s (siapin client)...")
+        sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+        os.execute("sleep " .. delay)
+    else
+        -- bawa ke depan bentar biar uiautomator bisa baca
+        sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+        os.execute("sleep 2")
+    end
+
+    sh_silent("su -c 'uiautomator dump /sdcard/cap.xml'")
+    local ui = sh("su -c 'cat /sdcard/cap.xml 2>/dev/null'") or ""
+    sh_silent("su -c 'rm -f /sdcard/cap.xml'")
+
+    local low = ui:lower()
+    local kena = ui:find("FunCaptcha", 1, true) or ui:find("arkose", 1, true)
+                 or ui:find("challenge-container", 1, true)
+                 or low:find("start puzzle", 1, true)
+                 or low:find("not a bot", 1, true)
+                 or low:find("solve this challenge", 1, true)
+
+    print("")
+    if kena then
+        warn(">>> " .. client .. " KENA CAPTCHA (verif bot) <<<")
+        info("Solve manual. Worker bakal skip client ini otomatis.")
+    elseif not ui:match("%S") then
+        info(client .. ": layar gak kebaca (client mungkin gak di depan).")
+    else
+        ok(client .. ": GAK kena captcha (aman).")
+    end
+    return
+end
+
 if PERINTAH == "ceklayar" or PERINTAH == "cekcaptcha" then
     -- v6.51: DIAGNOSTIK LAYAR umum. Jalanin PAS client lagi di situasi apa aja
     -- (captcha, error Roblox, layar key Delta, popup). Dump window + activity +
@@ -8858,7 +8905,20 @@ if PERINTAH == "ceklayar" or PERINTAH == "cekcaptcha" then
     end
     local pkg = client:find("%.") and client or ("com.roblox." .. client)
 
+    -- v6.53: DELAY opsional (argumen ke-3, detik). Bawa client ke depan + tunggu
+    -- biar user sempet siapin (captcha butuh client di depan buat uiautomator).
+    local delay = tonumber(arg and arg[3]) or 0
     print(C.BOLD .. C.C .. "\n=== DIAGNOSTIK LAYAR: " .. pkg .. " ===\n" .. C.N)
+    if delay > 0 then
+        info("Bawa " .. client .. " ke depan + tunggu " .. delay .. "s...")
+        info("(client dibawa ke depan biar captcha kebaca uiautomator)")
+        sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 2>/dev/null'")
+        for i = delay, 1, -1 do
+            io.write("\r  tunggu " .. i .. "s ...  "); io.flush()
+            os.execute("sleep 1")
+        end
+        print("")
+    end
 
     info("1. Window yang lagi fokus:")
     print(sh("su -c 'dumpsys window | grep -iE \"mCurrentFocus|mFocusedApp\"'") or "(kosong)")
