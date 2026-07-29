@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.42-cf"
+local VERSION = "6.43-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5215,7 +5215,15 @@ local function run(cfg)
         local loginKelar = false
         do
             local akunG, clientG = isi:match("^LOGIN:([^:]+):([^:]+)")
-            if akunG and clientG and isi ~= lastIsi then
+            -- v6.42: penanda per-ISI (bukan lastIsi global). Dulu pakai
+            -- `isi ~= lastIsi` -- tapi worker gak balikin FORCE, jadi backend
+            -- TETAP LOGIN. lastIsi = LOGIN pertama. LOGIN KEDUA yang beda tetep
+            -- keproses, TAPI kalau ada aktivitas lain nyetel lastIsi, LOGIN bisa
+            -- keblok. Sekarang: tiap isi LOGIN diproses SEKALI (penanda per-isi),
+            -- gak gantung lastIsi. LOGIN baru (isi beda) SELALU keproses.
+            local sudahIni = KICK_DIURUS["login_done:" .. isi]
+            if akunG and clientG and not sudahIni then
+                KICK_DIURUS["login_done:" .. isi] = true
                 print("")
                 print(C.BOLD .. C.C .. ">>> LOGIN (paling atas) <<<" .. C.N)
                 info(("Suntik cookie: %s -> client %s"):format(akunG, clientG))
