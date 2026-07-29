@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.65-cf"
+local VERSION = "6.67-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3259,13 +3259,14 @@ end
 -- client gak persis di depan). Ini yang bikin `zenx captcha` manual berhasil
 -- tapi cek loop (cek_error_ui) gagal. Global biar kepakai di loop.
 function cek_captcha_paksa(pkg)
-    -- v6.63: cek BEBERAPA KALI (3x, jeda 3s). Captcha bolak-balik loading <->
-    -- puzzle -- sekali dump bisa kebetulan pas LOADING (webview kosong, ~6000
-    -- char) belum ke-render captcha (~13000+ char, ada FunCaptcha/Start Puzzle).
-    -- Cek 3x biar nangkep pas captcha muncul. Bawa depan sekali di awal.
+    -- v6.65: cek 5x (jeda 3s). Captcha render BERTAHAP: loading (~6000 char) ->
+    -- transisi (~8000) -> full (~13000+, ada FunCaptcha/Start Puzzle). Sekali/2x
+    -- cek bisa kebetulan pas belum full. Cek 5x + tanda tambahan: kalau
+    -- "fragment_webview" kebuka TAPI GAK ADA elemen game (surfaceview + activity
+    -- game), itu = webview verif nutupin layar = kemungkinan captcha.
     sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 2>/dev/null'")
     local kebaca = false
-    for percobaan = 1, 3 do
+    for percobaan = 1, 5 do
         os.execute("sleep 3")
         sh_silent("su -c 'uiautomator dump /sdcard/capf.xml'")
         local ui = sh("su -c 'cat /sdcard/capf.xml 2>/dev/null'") or ""
@@ -3274,6 +3275,7 @@ function cek_captcha_paksa(pkg)
         if ui:match("%S") then
             kebaca = true
             local low = ui:lower()
+            -- penanda PASTI (teks/id captcha)
             if ui:find("FunCaptcha", 1, true) or ui:find("arkose", 1, true)
                or ui:find("challenge-container", 1, true)
                or low:find("start puzzle", 1, true)
@@ -3286,7 +3288,7 @@ function cek_captcha_paksa(pkg)
         end
     end
     if not kebaca then return nil end   -- gak kebaca sama sekali
-    return ""   -- kebaca 3x tapi gak ada captcha
+    return ""   -- kebaca 5x tapi gak ada captcha
 end
 
 local function cek_error_ui(cfg, pkg, mapLink)
@@ -5202,6 +5204,14 @@ local function run(cfg)
     -- nyusul di loop pertama. jadi tabel muncul INSTAN, gak nunggu dumpsys.
     for _, pkg in ipairs(split(cfg.pkgs)) do cacheRun[pkg] = nil end
     local function gambar_tabel(isi, statusPerintah)
+        -- v6.67: mode NOCLEAR buat debug/salin. Kalau env ZENX_NOCLEAR=1, tabel
+        -- GAK digambar sama sekali -- biar layar cuma isi LOG (numpuk bersih,
+        -- gampang disalin banyak, gak ketimbun tabel tiap redraw). Jalanin:
+        --   ZENX_NOCLEAR=1 zenx
+        -- Normal (tanpa env) clear + gambar tabel kayak biasa.
+        if os.getenv("ZENX_NOCLEAR") == "1" then
+            return   -- skip gambar tabel; log jalan terus & numpuk
+        end
         io.write("\27[2J\27[H")   -- clear screen + kursor ke kiri atas
         local used, free, total = cacheRam[1], cacheRam[2], cacheRam[3]
         local cpu = cacheCpu
