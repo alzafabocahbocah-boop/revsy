@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.50-cf"
+local VERSION = "6.51-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8809,22 +8809,23 @@ end
 -- masuk game. Verif bot, layar key, popup umur, semuanya masuk pola itu.
 -- Command ini nyaring daftarnya, keputusan (ganti akun / verif manual) di lo.
 -- ============================================================
-if PERINTAH == "cekcaptcha" then
-    -- v6.50: DIAGNOSTIK captcha. Jalanin PAS client lagi kena captcha/verif.
-    -- Dump SEMUA window + activity + view WebView -> biar keliatan ada nama
-    -- captcha (Arkose/FunCaptcha/challenge) yang bisa dideteksi apa nggak.
-    -- Pandora kemungkinan deteksi via window/activity ini (bukan baca isi).
+if PERINTAH == "ceklayar" or PERINTAH == "cekcaptcha" then
+    -- v6.51: DIAGNOSTIK LAYAR umum. Jalanin PAS client lagi di situasi apa aja
+    -- (captcha, error Roblox, layar key Delta, popup). Dump window + activity +
+    -- SEMUA teks/desc/webview/resource-id -> biar keliatan elemen yang bisa
+    -- dideteksi buat auto-handle. Pakai buat kumpulin data tiap situasi.
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
     local client = arg and arg[2]
     if not client then
-        err("Client mana?  zenx cekcaptcha <client>")
-        info("Jalanin PAS client lagi kena captcha biar keliatan window-nya.")
+        err("Client mana?  zenx ceklayar <client>")
+        info("Jalanin PAS client lagi di situasi yang mau dideteksi")
+        info("(captcha / error Roblox / layar key Delta / popup).")
         return
     end
     local pkg = client:find("%.") and client or ("com.roblox." .. client)
 
-    print(C.BOLD .. C.C .. "\n=== DIAGNOSTIK CAPTCHA: " .. pkg .. " ===\n" .. C.N)
+    print(C.BOLD .. C.C .. "\n=== DIAGNOSTIK LAYAR: " .. pkg .. " ===\n" .. C.N)
 
     info("1. Window yang lagi fokus:")
     print(sh("su -c 'dumpsys window | grep -iE \"mCurrentFocus|mFocusedApp\"'") or "(kosong)")
@@ -8849,18 +8850,41 @@ if PERINTAH == "cekcaptcha" then
     local ui = sh("su -c 'cat /sdcard/capt.xml 2>/dev/null'") or ""
     sh_silent("su -c 'rm -f /sdcard/capt.xml'")
     if ui:match("%S") then
-        -- cari petunjuk captcha di dump
+        info("  UI kebaca (" .. #ui .. " char).")
+        -- cari petunjuk captcha
         local found = ui:match("[Cc]aptcha") or ui:match("[Aa]rkose") or ui:match("[Rr]obot")
-                      or ui:match("[Vv]erif") or ui:match("[Cc]hallenge")
+                      or ui:match("[Vv]erif") or ui:match("[Cc]hallenge") or ui:match("[Pp]uzzle")
         if found then
-            warn("  Petunjuk captcha di UI: " .. found)
+            warn("  >> KETEMU petunjuk captcha: " .. found)
         else
-            info("  UI kebaca (" .. #ui .. " char) tapi gak ada kata captcha.")
-            info("  Contoh isi (300 char pertama):")
-            print(ui:sub(1, 300))
+            info("  (gak ada kata captcha langsung)")
         end
+        -- tampilin SEMUA teks non-kosong (biar keliatan tombol/label captcha)
+        info("  -- Semua TEXT di layar:")
+        local adaTeks = false
+        for t in ui:gmatch('text="([^"]+)"') do
+            if t:match("%S") then print("     [text] " .. t); adaTeks = true end
+        end
+        if not adaTeks then print("     (gak ada text -- semua kosong)") end
+        -- tampilin content-desc (label aksesibilitas)
+        info("  -- Semua CONTENT-DESC:")
+        local adaDesc = false
+        for d in ui:gmatch('content%-desc="([^"]+)"') do
+            if d:match("%S") then print("     [desc] " .. d); adaDesc = true end
+        end
+        if not adaDesc then print("     (gak ada content-desc)") end
+        -- tampilin class WebView / resource-id (elemen web = kemungkinan captcha)
+        info("  -- WebView / resource-id:")
+        local adaWeb = false
+        for c in ui:gmatch('class="(android%.webkit%.[^"]+)"') do
+            print("     [class] " .. c); adaWeb = true
+        end
+        for r in ui:gmatch('resource%-id="([^"]+)"') do
+            if r:match("%S") then print("     [id] " .. r); adaWeb = true end
+        end
+        if not adaWeb then print("     (gak ada WebView/resource-id -- layar native/GL)") end
     else
-        warn("  uiautomator balikin KOSONG (captcha WebView -- gak kebaca teks).")
+        warn("  uiautomator balikin KOSONG.")
     end
 
     info("6. Package yang lagi jalan di client (proses):")
