@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.44-cf"
+local VERSION = "6.45-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4072,14 +4072,20 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             -- yang bisa ketinggalan. Fallback ke mapAkun/prefs kalau decode gagal.
             local ak = (ckC ~= "" and ckC:find("_|WARNING")) and uname_dari_cookie(ckC) or nil
             if not ak or ak == "" then ak = (mapAkun and mapAkun[pkg]) or baca_username(pkg) end
-            if ak and ak ~= "" and ak ~= "?" and not KICK_DIURUS["ck:" .. ak] then
+            -- v6.44: PERBARUI COOKIE FRESH tiap 10 menit (bukan sekali). Cookie
+            -- Roblox bisa di-rotate/refresh -- kalau cuma setor sekali, panel
+            -- pegang cookie lama yang bisa mati. Perbarui berkala = panel selalu
+            -- punya versi fresh dari client yang lagi login. Penanda = timestamp.
+            local ckTerakhir = KICK_DIURUS["ck:" .. ak]
+            local perluSetor = (type(ckTerakhir) ~= "number") or (os.time() - ckTerakhir >= 600)
+            if ak and ak ~= "" and ak ~= "?" and perluSetor then
                 if ckC ~= "" and ckC:find("_|WARNING") then
                     pcall(function()
                         local body = string.format('{"akun":%s,"paket":%s,"cookie":%s}',
                             jstr(ak), jstr(pkg), jstr(ckC))
                         local resp = api_post(cfg, "/cookie-simpan", body) or ""
                         if resp:find('"ok"%s*:%s*true') then
-                            KICK_DIURUS["ck:" .. ak] = true
+                            KICK_DIURUS["ck:" .. ak] = os.time()   -- timestamp, bukan true
                             -- v6.02: sekalian CEK HIDUP biar status gak "belum dicek".
                             -- 1 request ke Roblox per akun -- setor status juga.
                             local keadaan, ketCek = cek_cookie_roblox(ckC)
