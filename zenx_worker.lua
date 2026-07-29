@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.32-cf"
+local VERSION = "6.33-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8292,9 +8292,12 @@ if PERINTAH == "login" then
         err("Cookie " .. akun .. " kena BAN/moderasi. Login dibatalin.")
         return
     elseif keadaan == "dead" then
-        err("Cookie " .. akun .. " MATI (invalid).")
-        info("Perlu login ulang manual buat dapet cookie baru. Login dibatalin.")
-        return
+        -- v6.32: JANGAN batalin login gara-gara cek "dead". Cek cookie sebelum
+        -- login sering FALSE NEGATIF -- kena rate-limit (401/429) pas dicek
+        -- berkali-kali cepat, padahal cookie HIDUP. Suntik aja, biar CLIENT yang
+        -- buktiin (kalau beneran mati, client gagal masuk -> itu bukti asli).
+        warn("Cek cookie " .. akun .. " bilang mati -- tapi cek sering meleset")
+        warn("  (rate-limit). Tetep disuntik -- client yang buktiin.")
     else
         warn("Cek cookie gak pasti (" .. tostring(ket) .. "). Lanjut coba login.")
     end
