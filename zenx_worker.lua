@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.64-cf"
+local VERSION = "6.65-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2409,6 +2409,12 @@ end
 local WIN_OK = nil   -- nil=belum dites, true=didukung, false=ditolak
 
 local function open_one(cfg, pkg, link_client)
+    -- v6.64: GUARD CAPTCHA. Kalau client kena captcha (penanda dari cek captcha),
+    -- JANGAN rejoin -- percuma, captcha butuh solve manual, rejoin cuma mancing
+    -- verif lagi. Semua jalur rejoin lewat sini, jadi cukup dijaga di satu titik.
+    if KICK_DIURUS["captcha:" .. pkg] then
+        return   -- di-skip, nunggu user solve manual
+    end
     local url = build_url(cfg, link_client)
     local wm = tonumber(cfg.win_mode) or 0
 
@@ -3807,6 +3813,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 -- statusnya udah di panel (tab Error) buat diurus manual.
                 hasil.lewat = hasil.lewat + 1
                 info("   " .. akun .. " cookie mati -> gak dibuka (perbaiki cookie dulu)")
+            elseif KICK_DIURUS["captcha:" .. pkg] then
+                -- v6.65: client kena CAPTCHA -> gak dibuka (percuma, verif butuh
+                -- solve manual, rejoin mancing verif lagi). Skip, badge di panel.
+                hasil.lewat = hasil.lewat + 1
+                info("   " .. (akun or pkg:gsub("com%.roblox%.","")) .. " KENA CAPTCHA -> gak dibuka (solve manual dulu)")
             else
                 local sukses, lama, sebab = false, 0, nil
                 local maxc = cfg.max_coba or 5
