@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.67-cf"
+local VERSION = "6.68-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4193,20 +4193,23 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             -- -- worker udah akses client ini. Cuma buat client yang HIDUP tapi
             -- cookie ALIVE (bukan mati/ban) -- karena captcha kejadian pas cookie
             -- valid tapi kena verif bot pas join. Kalau kena -> tandai + badge.
-            if pkg_running(pkg) and ckC ~= "" and ckC:find("_|WARNING") then
+            -- v6.67: cek captcha DI SINI cuma kalau BELUM ketandai captcha.
+            -- Kalau UDAH ketandai -> SKIP (gak usah cek dump lagi tiap putaran,
+            -- buang waktu). Penanda captcha CUMA di-clear pas client beneran RUN
+            -- (masuk game) -- di tempat lapor, BUKAN dari cek "bukan captcha"
+            -- (captcha bolak-balik loading, cek pas loading bisa salah clear ->
+            -- kejadian di-rejoin lagi). Jadi sekali kena captcha, TETAP skip
+            -- sampai user solve (client run).
+            if pkg_running(pkg) and ckC ~= "" and ckC:find("_|WARNING")
+               and not KICK_DIURUS["captcha:" .. pkg] then
                 local statC = api_get(cfg, "/stat") or ""
                 local lapor = ak and bridge_fresh(statC, ak)
                 info("[cc-cookie] " .. (ak or "?") .. " running, lapor=" .. tostring(lapor))
                 if not lapor then   -- gak lapor = mungkin nyangkut captcha
                     local hasilCap = cek_captcha_paksa(pkg)
                     if hasilCap and hasilCap:find("CAPTCHA", 1, true) then
-                        if not KICK_DIURUS["captcha:" .. pkg] then
-                            info("CAPTCHA: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
-                        end
+                        info("CAPTCHA: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
                         KICK_DIURUS["captcha:" .. pkg] = ak or pkg
-                    elseif KICK_DIURUS["captcha:" .. pkg] and hasilCap == "" then
-                        info("CAPTCHA kelar: " .. (ak or pkg:gsub("com%.roblox%.","")))
-                        KICK_DIURUS["captcha:" .. pkg] = nil
                     end
                 end
             end
@@ -5395,15 +5398,16 @@ local function run(cfg)
             local nKand = 0
             local statCap = api_get(cfg, "/stat") or ""
             for _, pkgX in ipairs(split(cfg.pkgs or "")) do
-                -- v6.58: kandidat = client HIDUP tapi GAK lapor fresh ke panel
-                -- (bridge_fresh false). cacheRun bisa true padahal nyangkut captcha
-                -- -> jangan andelin itu. Pakai bridge_fresh (lapor beneran apa nggak).
+                -- v6.67: kandidat = HIDUP + GAK lapor fresh + BELUM ketandai
+                -- captcha. Yang UDAH ketandai captcha di-SKIP (gak usah cek dump
+                -- lagi -- udah dapet, buang waktu; penanda dilepas pas client RUN
+                -- di tempat lapor). Captcha bolak-balik loading, cek pas loading
+                -- bisa salah clear -> di-rejoin lagi. Makanya sekali kena, tetap.
                 local akX = mapAkun and mapAkun[pkgX]
                 local lapor = akX and bridge_fresh(statCap, akX)
-                if pkg_running(pkgX) and not lapor then
+                if pkg_running(pkgX) and not lapor and not KICK_DIURUS["captcha:" .. pkgX] then
                     kand = pkgX
                     nKand = nKand + 1
-                    if KICK_DIURUS["captcha:" .. pkgX] then break end
                 end
             end
             tambahLog(("[cek-captcha] %d kandidat, cek: %s"):format(nKand, kand and kand:gsub("com%.roblox%.","") or "gak ada"))
@@ -5411,16 +5415,8 @@ local function run(cfg)
                 local ceC = cek_captcha_paksa(kand)
                 tambahLog("[cek-captcha] hasil " .. kand:gsub("com%.roblox%.","") .. ": " .. (ceC or "nil/gak kebaca"))
                 if ceC and ceC:find("CAPTCHA", 1, true) then
-                    if not KICK_DIURUS["captcha:" .. kand] then
-                        tambahLog("CAPTCHA: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
-                    end
+                    tambahLog("CAPTCHA: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
                     KICK_DIURUS["captcha:" .. kand] = baca_username(kand) or kand
-                else
-                    -- gak (lagi) captcha -> clear kalau sebelumnya ketandai
-                    if KICK_DIURUS["captcha:" .. kand] then
-                        tambahLog("CAPTCHA kelar: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")))
-                        KICK_DIURUS["captcha:" .. kand] = nil
-                    end
                 end
             end
         end
@@ -6242,18 +6238,20 @@ local function run(cfg)
                 -- v6.57: KALAU KENA CAPTCHA -> SKIP dari auto-rejoin. Jangan
                 -- di-rejoin (percuma, captcha butuh solve manual). Cek dulu masih
                 -- captcha apa nggak; kalau udah solved (masuk game), clear & lanjut.
+                -- v6.67: kalau UDAH ketandai captcha -> langsung skip (gak usah
+                -- cek dump lagi). Cek dump CUMA buat yang belum ketandai. Penanda
+                -- dilepas pas client RUN (masuk game) di tempat lapor -- BUKAN
+                -- dari cek "bukan captcha" (captcha bolak-balik, salah clear ->
+                -- di-rejoin lagi).
                 local lewatiCaptcha = false
-                if pkg_running(pkg) and (KICK_DIURUS["captcha:" .. pkg] or (akun and not cacheRun[pkg])) then
+                if KICK_DIURUS["captcha:" .. pkg] then
+                    lewatiCaptcha = true   -- udah kena captcha -> skip, gak cek ulang
+                elseif pkg_running(pkg) and akun and not cacheRun[pkg] then
                     local ceR = cek_captcha_paksa(pkg)
                     if ceR and ceR:find("CAPTCHA", 1, true) then
-                        if not KICK_DIURUS["captcha:" .. pkg] then
-                            tambahLog("CAPTCHA: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip auto-rejoin (solve manual)")
-                        end
+                        tambahLog("CAPTCHA: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip auto-rejoin (solve manual)")
                         KICK_DIURUS["captcha:" .. pkg] = akun or pkg
                         lewatiCaptcha = true
-                    elseif KICK_DIURUS["captcha:" .. pkg] then
-                        tambahLog("CAPTCHA kelar: " .. (akun or pkg:gsub("com%.roblox%.","")))
-                        KICK_DIURUS["captcha:" .. pkg] = nil
                     end
                 end
                 if akun and not lewatiCaptcha then
