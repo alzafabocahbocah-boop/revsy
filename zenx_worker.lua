@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.45-cf"
+local VERSION = "6.47-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5219,31 +5219,42 @@ local function run(cfg)
         -- beku, cek lisensi). Kalau ada client beku, worker sibuk situ, LOGIN
         -- gak kebagian giliran -> nyangkut. Sekarang LOGIN paling awal, langsung.
         local loginKelar = false
-        do
-            local akunG, clientG = isi:match("^LOGIN:([^:]+):([^:]+)")
-            -- v6.42: penanda per-ISI (bukan lastIsi global). Dulu pakai
-            -- `isi ~= lastIsi` -- tapi worker gak balikin FORCE, jadi backend
-            -- TETAP LOGIN. lastIsi = LOGIN pertama. LOGIN KEDUA yang beda tetep
-            -- keproses, TAPI kalau ada aktivitas lain nyetel lastIsi, LOGIN bisa
-            -- keblok. Sekarang: tiap isi LOGIN diproses SEKALI (penanda per-isi),
-            -- gak gantung lastIsi. LOGIN baru (isi beda) SELALU keproses.
-            local sudahIni = KICK_DIURUS["login_done:" .. isi]
-            if akunG and clientG and not sudahIni then
-                KICK_DIURUS["login_done:" .. isi] = true
-                print("")
-                print(C.BOLD .. C.C .. ">>> LOGIN (paling atas) <<<" .. C.N)
-                info(("Suntik cookie: %s -> client %s"):format(akunG, clientG))
-                KICK_DIURUS["mati:" .. akunG] = nil
-                local pkgG = clientG:find("%.") and clientG or ("com.roblox." .. clientG)
-                os.execute(("timeout 120 %s login %s %s"):format(
-                    (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
-                    akunG, pkgG:gsub("com%.roblox%.", "")))
-                ok(("LOGIN selesai: %s -> %s"):format(akunG, clientG))
-                lastIsi = isi
-                refresh_status(); lastStatusCek = os.time()
-                gambar_tabel(isi)
-                loginKelar = true   -- skip sisa loop ronde ini
+        if isi:match("^LOGIN:") then
+            -- v6.45: ANTRE LOGIN. Backend bisa gabung banyak LOGIN pakai ";"
+            -- (LOGIN:A:c1;LOGIN:B:c2;...) pas user spam ganti akun cepat. Proses
+            -- SEMUA di antrean, satu-satu. Dulu cuma 1 yang kebaca (saling nimpa).
+            -- v6.46: HAPUS antrean LOGIN dari backend DULU (ganti FORCE) sebelum
+            -- diproses. Gitu tiap LOGIN diproses SEKALI, backend bersih -> LOGIN
+            -- yang SAMA bisa diulang kapan aja (suntik lagi dari panel = proses
+            -- lagi), gak keblok penanda permanen / gak auto-ulang tiap iterasi.
+            pcall(function()
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+            end)
+            -- v6.47: dedup DALAM antrean ini aja (biar kalau backend kebetulan
+            -- gabung 2x client sama, gak diproses dobel). GAK ada penanda
+            -- permanen -- backend udah dibersihin (FORCE) di atas, jadi LOGIN
+            -- yang sama bisa diulang LANGSUNG (suntik lagi = proses lagi), tanpa
+            -- nunggu jeda / loop.
+            local dproses = {}
+            for satu in (isi .. ";"):gmatch("(.-);") do
+                local akunG, clientG = satu:match("^LOGIN:([^:]+):([^:]+)")
+                if akunG and clientG and not dproses[satu] then
+                    dproses[satu] = true
+                    print("")
+                    print(C.BOLD .. C.C .. ">>> LOGIN <<<" .. C.N)
+                    info(("Suntik cookie: %s -> client %s"):format(akunG, clientG))
+                    KICK_DIURUS["mati:" .. akunG] = nil
+                    local pkgG = clientG:find("%.") and clientG or ("com.roblox." .. clientG)
+                    os.execute(("timeout 120 %s login %s %s"):format(
+                        (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                        akunG, pkgG:gsub("com%.roblox%.", "")))
+                    ok(("LOGIN selesai: %s -> %s"):format(akunG, clientG))
+                    refresh_status(); lastStatusCek = os.time()
+                    gambar_tabel(isi)
+                end
             end
+            lastIsi = isi
+            loginKelar = true   -- skip sisa loop ronde ini
         end
 
         if not loginKelar then
