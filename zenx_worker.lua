@@ -8270,8 +8270,8 @@ if PERINTAH == "login" then
     return
 end
 
-if PERINTAH == "pantau" then
-    -- v6.26: MODE PANTAU -- cuma catat cookie akun baru ke panel, GAK buka
+if PERINTAH == "pantaucookie" or PERINTAH == "catatakun" then
+    -- v6.26: MODE PANTAU COOKIE -- cuma catat cookie akun baru ke panel, GAK buka
     -- client / masukin game. Buat pas bikin akun manual di RF: worker ngintip
     -- client Roblox kepasang, tiap ada akun BARU login (belum kesetor), extract
     -- cookie + setor + cek hidup. Loop terus sampai Ctrl-C. Beda dari FORCE yang
