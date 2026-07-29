@@ -6243,10 +6243,14 @@ local function run(cfg)
                 -- dilepas pas client RUN (masuk game) di tempat lapor -- BUKAN
                 -- dari cek "bukan captcha" (captcha bolak-balik, salah clear ->
                 -- di-rejoin lagi).
+                -- v6.68: guard captcha PAKAI bridge_fresh (bukan cacheRun --
+                -- cacheRun bisa true padahal nyangkut captcha -> guard gak jalan
+                -- -> tetep tembak link PS). bridge_fresh = client lapor beneran
+                -- apa nggak. Gak lapor + hidup = kandidat captcha -> cek dump.
                 local lewatiCaptcha = false
                 if KICK_DIURUS["captcha:" .. pkg] then
                     lewatiCaptcha = true   -- udah kena captcha -> skip, gak cek ulang
-                elseif pkg_running(pkg) and akun and not cacheRun[pkg] then
+                elseif pkg_running(pkg) and akun and not bridge_fresh(stat, akun) then
                     local ceR = cek_captcha_paksa(pkg)
                     if ceR and ceR:find("CAPTCHA", 1, true) then
                         tambahLog("CAPTCHA: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip auto-rejoin (solve manual)")
