@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.53-cf"
+local VERSION = "6.55-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3121,7 +3121,12 @@ local function klasifikasi_layar(isi)
            or isi:find("challenge-container", 1, true)
            or low:find("start puzzle", 1, true)
            or low:find("not a bot", 1, true)
-           or low:find("solve this challenge", 1, true) then
+           or low:find("solve this challenge", 1, true)
+           -- v6.54: "Verifying browser" / "Verifying you're..." = TAHAP AWAL
+           -- sebelum puzzle muncul. Deteksi lebih DINI (Roblox lagi ngecek
+           -- browser sebelum kasih captcha). Kena juga -> skip.
+           or low:find("verifying browser", 1, true)
+           or low:find("verifying you", 1, true) then
             return "CAPTCHA (verif bot)", "captcha", sidik
         end
     end
@@ -5834,7 +5839,20 @@ local function run(cfg)
                                           kead:upper() .. " -> GAK direjoin (perbaiki cookie dulu)")
                                 if ak then KICK_DIURUS["mati:" .. ak] = true end
                             else
-                                -- cookie hidup/captcha/gak kebaca -> rejoin (masukin game)
+                                -- v6.54: SEBELUM rejoin, CEK CAPTCHA dulu. fifinx yang
+                                -- nyangkut Home + cookie ON bisa jadi lagi KENA CAPTCHA
+                                -- (verif bot). Kalau iya -> JANGAN rejoin (percuma,
+                                -- captcha butuh solve manual) -> tandai + skip.
+                                local ce = cek_error_ui(cfg, pkg, mapLink)
+                                if ce and ce:find("CAPTCHA", 1, true) then
+                                    tambahLog("CAPTCHA: " .. namaP .. " kena verif bot -> skip (solve manual)")
+                                    KICK_DIURUS["captcha:" .. pkg] = ak or namaP
+                                elseif kead == "dead" or kead == "ban" then
+                                    -- (udah dihandle di atas, jaga-jaga)
+                                    if ak then KICK_DIURUS["mati:" .. ak] = true end
+                                else
+                                -- cookie hidup/gak kebaca & bukan captcha -> rejoin
+                                KICK_DIURUS["captcha:" .. pkg] = nil   -- clear kalau ada
                                 tambahLog("NYANGKUT Home (" .. string.format("%.0f", g/1024)
                                           .. "MB): " .. namaP .. " cookie " ..
                                           (kead == "alive" and "ON" or kead) .. " -> masukin game")
@@ -5844,6 +5862,7 @@ local function run(cfg)
                                 os.execute("sleep 3")
                                 refresh_status(); lastStatusCek = os.time()
                                 gambar_tabel(isi)
+                                end   -- v6.54: tutup else (bukan captcha/mati)
                             end
                         end
                         -- kalau grafis >= 30MB = di game (lagi loading script) -> biarin
@@ -8876,6 +8895,8 @@ if PERINTAH == "captcha" then
                  or low:find("start puzzle", 1, true)
                  or low:find("not a bot", 1, true)
                  or low:find("solve this challenge", 1, true)
+                 or low:find("verifying browser", 1, true)
+                 or low:find("verifying you", 1, true)
 
     print("")
     if kena then
