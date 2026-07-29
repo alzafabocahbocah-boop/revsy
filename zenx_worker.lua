@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.63-cf"
+local VERSION = "6.64-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3253,24 +3253,34 @@ end
 -- client gak persis di depan). Ini yang bikin `zenx captcha` manual berhasil
 -- tapi cek loop (cek_error_ui) gagal. Global biar kepakai di loop.
 function cek_captcha_paksa(pkg)
+    -- v6.63: cek BEBERAPA KALI (3x, jeda 3s). Captcha bolak-balik loading <->
+    -- puzzle -- sekali dump bisa kebetulan pas LOADING (webview kosong, ~6000
+    -- char) belum ke-render captcha (~13000+ char, ada FunCaptcha/Start Puzzle).
+    -- Cek 3x biar nangkep pas captcha muncul. Bawa depan sekali di awal.
     sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 2>/dev/null'")
-    os.execute("sleep 2")
-    sh_silent("su -c 'uiautomator dump /sdcard/capf.xml'")
-    local ui = sh("su -c 'cat /sdcard/capf.xml 2>/dev/null'") or ""
-    sh_silent("su -c 'rm -f /sdcard/capf.xml'")
-    print("[paksa] " .. pkg:gsub("com%.roblox%.","") .. " dump " .. #ui .. " char")
-    if not ui:match("%S") then return nil end   -- gak kebaca
-    local low = ui:lower()
-    if ui:find("FunCaptcha", 1, true) or ui:find("arkose", 1, true)
-       or ui:find("challenge-container", 1, true)
-       or low:find("start puzzle", 1, true)
-       or low:find("not a bot", 1, true)
-       or low:find("solve this challenge", 1, true)
-       or low:find("verifying browser", 1, true)
-       or low:find("verifying you", 1, true) then
-        return "CAPTCHA"
+    local kebaca = false
+    for percobaan = 1, 3 do
+        os.execute("sleep 3")
+        sh_silent("su -c 'uiautomator dump /sdcard/capf.xml'")
+        local ui = sh("su -c 'cat /sdcard/capf.xml 2>/dev/null'") or ""
+        sh_silent("su -c 'rm -f /sdcard/capf.xml'")
+        print("[paksa] " .. pkg:gsub("com%.roblox%.","") .. " #" .. percobaan .. " dump " .. #ui .. " char")
+        if ui:match("%S") then
+            kebaca = true
+            local low = ui:lower()
+            if ui:find("FunCaptcha", 1, true) or ui:find("arkose", 1, true)
+               or ui:find("challenge-container", 1, true)
+               or low:find("start puzzle", 1, true)
+               or low:find("not a bot", 1, true)
+               or low:find("solve this challenge", 1, true)
+               or low:find("verifying browser", 1, true)
+               or low:find("verifying you", 1, true) then
+                return "CAPTCHA"
+            end
+        end
     end
-    return ""   -- kebaca tapi bukan captcha
+    if not kebaca then return nil end   -- gak kebaca sama sekali
+    return ""   -- kebaca 3x tapi gak ada captcha
 end
 
 local function cek_error_ui(cfg, pkg, mapLink)
