@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.30-cf"
+local VERSION = "6.31-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5716,6 +5716,7 @@ local function run(cfg)
                         -- jalanin dari simpanan ini, bukan baca ulang backend.
                         if iAsli:match("^LOGIN:") then
                             KICK_DIURUS["login_tertunda"] = iAsli
+                            warn("  >> LOGIN disimpen buat diproses: " .. iAsli)
                         end
                         warn("perintah baru dari panel: " .. i .. " -> berhenti, itu duluan")
                         return true
