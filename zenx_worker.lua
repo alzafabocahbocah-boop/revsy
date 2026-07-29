@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.51-cf"
+local VERSION = "6.52-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3110,6 +3110,22 @@ local function klasifikasi_layar(isi)
     local sidik = #isi
     for t in isi:gmatch('text="([^"]+)"') do sidik = sidik + #t end
 
+    -- v6.51: CAPTCHA dicek PALING DULU. Penanda PASTI dari dump asli RF:
+    -- resource-id "FunCaptcha"/"arkose-0"/"challenge-container", plus teks
+    -- "Start Puzzle" / "not a bot" / "solve this challenge". Kalau kena ->
+    -- "captcha" (dilaporin panel + client di-skip, GAK dibunuh/rejoin -- rejoin
+    -- percuma, captcha butuh solve manual).
+    do
+        local low = isi:lower()
+        if isi:find("FunCaptcha", 1, true) or isi:find("arkose", 1, true)
+           or isi:find("challenge-container", 1, true)
+           or low:find("start puzzle", 1, true)
+           or low:find("not a bot", 1, true)
+           or low:find("solve this challenge", 1, true) then
+            return "CAPTCHA (verif bot)", "captcha", sidik
+        end
+    end
+
     -- LAYAR KEY dicek PALING DULU. Halaman key sering nampilin kata yang sama
     -- kayak layar lain ("Verifying", "Unlock", "Checking") -- kalau dicek
     -- belakangan, keburu keklasifikasi salah terus dibunuh percuma.
@@ -4184,8 +4200,15 @@ local function lapor(cfg, isi_perintah, cache)
         local gg = KICK_DIURUS["gantigagal:" .. pkgPend2]
         -- v6.49: kirim "off berapa lama" (detik) biar panel nampilin durasi off.
         local offL = KICK_DIURUS["offlama:" .. pkg]
-        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d}',
-            jstr(pkg), tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0))
+        -- v6.51: kirim status captcha (kalau client kena verif bot) -> panel badge.
+        -- v6.52: kalau client udah RUN (jalan di game), berarti captcha kelar ->
+        -- clear penanda (badge captcha ilang otomatis).
+        if run and KICK_DIURUS["captcha:" .. pkg] then
+            KICK_DIURUS["captcha:" .. pkg] = nil
+        end
+        local capt = KICK_DIURUS["captcha:" .. pkg] and true or false
+        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d,"captcha":%s}',
+            jstr(pkg), tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0), tostring(capt))
     end
 
     -- v4.24: ikut kirim "lagi ngapain" + log terakhir
@@ -6210,7 +6233,17 @@ local function run(cfg)
                             -- BUKAN beku -- dibangunin gak bakal nolong. Harus dibunuh
                             -- terus dibuka ulang biar join dari awal.
                             local errUi, errSifat = cek_error_ui(cfg, pkg, mapLink)
-                            if errUi and errSifat == "manual" then
+                            if errUi and errSifat == "captcha" then
+                                -- v6.51: KENA CAPTCHA (verif bot). Rejoin percuma --
+                                -- captcha butuh solve manual. Lapor ke panel (badge)
+                                -- + SKIP client ini dari loop (jangan dipaksa join
+                                -- terus -> makin dicurigai). Nunggu user solve manual.
+                                local akCap = mapAkun and mapAkun[pkg] or akun
+                                warn(string.format("CAPTCHA: %s (%s) kena verif bot -> skip, solve manual", akun, pkg:gsub("com%.roblox%.","")))
+                                KICK_DIURUS["captcha:" .. pkg] = akCap or akun
+                                nudgeCnt[pkg] = nil
+                                errUi = nil
+                            elseif errUi and errSifat == "manual" then
                                 -- percuma diulang (layar KEY, link PS salah, di-kick
                                 -- script, place dibatesin). Diulang cuma muter-muter ->
                                 -- catet aja, biar keliatan di panel & dibenerin manual.
