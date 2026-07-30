@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.97-cf"
+local VERSION = "6.98-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -9190,7 +9190,7 @@ if PERINTAH == "login" then
             shq(SQ .. " " .. DB .. " \"SELECT COUNT(*) FROM cookies\"")))
         local jml = adaRow and adaRow:read("*all") or "0"
         if adaRow then adaRow:close() end
-        jml = tonumber((jml or ""):gsub("%s+","")) or 0
+        jml = tonumber(((jml or ""):gsub("%s+",""))) or 0
 
         local iout = ""
         if jml > 0 then
