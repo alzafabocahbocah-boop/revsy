@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.80-cf"
+local VERSION = "6.81-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8230,12 +8230,14 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     local TMPAPK = HOME .. "/mercy_unduh.apk"
     local sukses, gagal = 0, 0
     for i, nama in ipairs(files) do
-        print(C.C .. ("[%d/%d] "):format(i, #files) .. C.N .. "download...")
+        print(C.C .. ("[%d/%d] "):format(i, #files) .. C.N .. nama:sub(1,40) .. "...")
         os.remove(TMPAPK)
-        -- v6.79: pakai curl DENGAN progress bar (-# = garis-garis), kayak
-        -- zenx download node-x. -L ikutin redirect (GitHub -> CDN). os.execute
-        -- (bukan sh_silent) biar progress bar keliatan langsung di layar.
-        os.execute(("curl -# -L -o %s %s"):format(
+        -- v6.80: SAMAIN dengan curl node-x biar progress bar (garis-garis) muncul.
+        -- KUNCI: stderr JANGAN dibuang (2>/dev/null) -- curl nulis bilah progress
+        -- ke stderr; kalau dibuang, bilahnya ilang. -# bilah ringkas, --fail biar
+        -- gagal kalau HTTP error (gak simpen HTML), -L ikutin redirect GitHub->CDN,
+        -- timeout 900 jaga-jaga. os.execute (bukan sh_silent yg buang output).
+        os.execute(("timeout 900 curl -# --fail -L -o %s %s"):format(
             shq(TMPAPK), shq(BASE .. nama)))
         local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
         if sz < 1000000 then
