@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.75-cf"
+local VERSION = "6.77-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5512,6 +5512,12 @@ local function run(cfg)
                 if ceC and ceC:find("CAPTCHA", 1, true) then
                     tambahLog("CAPTCHA: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
                     KICK_DIURUS["captcha:" .. kand] = baca_username(kand) or kand
+                elseif ceC == "REJOIN" then
+                    -- v6.75: error kick (save data/disconnect/teleport) kedeteksi di
+                    -- cek berkala -> MASUK LAGI. Ini yang bikin "gak kedeteksi" --
+                    -- dulu cek berkala cuma handle CAPTCHA, hasil REJOIN diabaikan.
+                    tambahLog("KICK: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
+                    open_one(cfg, kand, mapLink and mapLink[kand] or nil)
                 end
             end
         end
@@ -8200,6 +8206,100 @@ end
 -- Tiga nama, satu tempat: `download` yang dipakai sehari-hari, `dl` buat yang
 -- males ngetik, `apk` DIPERTAHANIN karena RF yang udah kepasang mungkin masih
 -- pakai itu. Nambah nama lain gak ada ongkosnya; ngilangin yang lama ada.
+if PERINTAH == "download" and (arg and arg[2] == "mercy") then
+    -- v6.76: DOWNLOAD DELTA LITE NO MERCY dari gofile.io. Beda mekanisme dari
+    -- node-x: gofile pakai guest token + content API. Ambil semua APK di link,
+    -- pasang satu-satu. Link di-hardcode (content id SS8g6u); bisa diganti argumen
+    -- ke-3. CATATAN: gofile API kadang berubah -- kalau gagal, cek respons JSON-nya.
+    local GOFILE_ID = (arg and arg[3]) or "SS8g6u"
+    print(C.BOLD .. C.C .. "\n=== ZENX DOWNLOAD MERCY (gofile " .. GOFILE_ID .. ") ===\n" .. C.N)
+    local HOME = os.getenv("HOME") or "."
+
+    -- 1. ambil guest token (wt) dari gofile
+    info("Ambil token gofile...")
+    local acc = sh("curl -s -X POST https://api.gofile.io/accounts 2>/dev/null") or ""
+    local token = acc:match('"token"%s*:%s*"([^"]+)"')
+    if not token or token == "" then
+        err("Gagal ambil token gofile. Respons:")
+        info("  " .. acc:sub(1, 200))
+        info("(gofile API mungkin berubah -- kabarin Claude buat sesuaiin)")
+        return
+    end
+    info("Token: " .. token:sub(1, 12) .. "...")
+
+    -- 2. ambil daftar isi konten (butuh wt param -- diambil dari js gofile global)
+    -- gofile perlu "wt" (website token). Ambil dari global.js mereka.
+    local gjs = sh("curl -s https://gofile.io/dist/js/global.js 2>/dev/null") or ""
+    local wt = gjs:match('appdata%.wt%s*=%s*"([^"]+)"') or gjs:match('wt%s*[:=]%s*"([%w]+)"')
+    local wtParam = wt and ("&wt=" .. wt) or ""
+
+    info("Ambil daftar file...")
+    local url = ("https://api.gofile.io/contents/%s?token=%s%s"):format(GOFILE_ID, token, wtParam)
+    local konten = sh(("curl -s %s -H %s 2>/dev/null"):format(
+        shq(url), shq("Authorization: Bearer " .. token))) or ""
+
+    -- kumpulin semua link download (.apk) dari respons
+    local links = {}
+    for lk in konten:gmatch('"link"%s*:%s*"([^"]+)"') do
+        if lk:lower():find("%.apk") then links[#links+1] = lk:gsub("\\/", "/") end
+    end
+    if #links == 0 then
+        -- coba pola link gofile store (download/xxx/nama.apk)
+        for lk in konten:gmatch('"(https://[^"]-%.apk)"') do links[#links+1] = lk:gsub("\\/", "/") end
+    end
+
+    if #links == 0 then
+        err("Gak nemu file APK di link gofile ini.")
+        info("Respons (300 char):")
+        info("  " .. konten:sub(1, 300))
+        info("(mungkin link salah / gofile API berubah / folder kosong)")
+        return
+    end
+
+    ok(("Nemu %d APK. Download + pasang...\n"):format(#links))
+    local TMPAPK = HOME .. "/mercy_unduh.apk"
+    local sukses, gagal = 0, 0
+    for i, lk in ipairs(links) do
+        print(C.C .. ("[%d/%d] "):format(i, #links) .. C.N .. "download...")
+        os.remove(TMPAPK)
+        -- download pakai cookie token (gofile butuh accountToken cookie)
+        sh_silent(("curl -s -L -o %s -H %s --cookie %s %s 2>/dev/null"):format(
+            shq(TMPAPK), shq("Authorization: Bearer " .. token),
+            shq("accountToken=" .. token), shq(lk)))
+        local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+        if sz < 100000 then
+            print(C.R .. "  GAGAL (file kekecilan " .. sz .. " byte)" .. C.N)
+            gagal = gagal + 1
+        else
+            print(("  pasang (%.0f MB)..."):format(sz / 1024 / 1024))
+            local outf = HOME .. "/mercy_pm.txt"
+            os.remove(outf)
+            os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(
+                shq(TMPAPK), shq(outf)))
+            local hasil = ""
+            for _ = 1, 150 do
+                os.execute("sleep 2")
+                local hf = io.open(outf, "r")
+                if hf then hasil = hf:read("*all") or ""; hf:close()
+                    if hasil:find("Success") or hasil:find("Failure") then break end
+                end
+            end
+            os.remove(outf)
+            if tostring(hasil):find("Success") then
+                print(C.G .. "  OK" .. C.N); sukses = sukses + 1
+            else
+                print(C.R .. "  GAGAL pasang" .. C.N)
+                info("    " .. tostring(hasil):gsub("%s+", " "):sub(1, 90))
+                gagal = gagal + 1
+            end
+        end
+    end
+    os.remove(TMPAPK)
+    print("")
+    ok(("Selesai: %d pasang, %d gagal"):format(sukses, gagal))
+    return
+end
+
 if PERINTAH == "download" or PERINTAH == "dl" or PERINTAH == "apk" then
     local NX = "https://node-x.my.id"
     -- v6.01: config GAK WAJIB buat download. RF baru (config belum dibikin)
