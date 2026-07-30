@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.09-cf"
+local VERSION = "7.10-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5446,14 +5446,14 @@ local function run(cfg)
             -- SEMUA di antrean, satu-satu. Dulu cuma 1 yang kebaca (saling nimpa).
             -- v6.46: HAPUS antrean LOGIN dari backend DULU (ganti perintah biasa)
             -- sebelum diproses. Gitu tiap LOGIN diproses SEKALI, backend bersih.
-            -- v6.91: balik ke STANDBY kalau lagi standby (BUKAN hardcode FORCE) --
-            -- dulu selalu balik FORCE -> ganti akun pas standby malah bikin FORCE
-            -- (client kebuka). Sekarang: standby tetep standby, force tetep force.
-            local isiSblm = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
-            local balikKe = (isiSblm:upper():find("STANDBY") or isiSblm:upper():find("STOP"))
-                            and "STANDBY" or "FORCE"
+            -- v7.09: ganti akun SELALU balik ke STANDBY. User minta: ganti akun
+            -- itu operasi STANDBY -- gak boleh auto-lanjut FORCE. Dulu balikKe bisa
+            -- "FORCE" kalau perintah sebelumnya FORCE (FORCE lama nyantol) -> habis
+            -- ganti akun worker buka semua client + bypass lisensi tutup semua.
+            -- Sekarang: ganti akun -> balik STANDBY. FORCE cuma jalan kalau user
+            -- PENCET START sendiri (bukan warisan FORCE lama).
             pcall(function()
-                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(balikKe)), "PUT")
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"STANDBY"}', jstr(cfg.tim)), "PUT")
             end)
             -- v6.47: dedup DALAM antrean ini aja (biar kalau backend kebetulan
             -- gabung 2x client sama, gak diproses dobel). GAK ada penanda
@@ -5571,14 +5571,15 @@ local function run(cfg)
         -- jalan (client belum kebuka), udah dump [paksa] buat client sisa/latar
         -- yang kebetulan jalan -> dump percuma kepagian. Sekarang nunggu open_all
         -- jalan dulu (client beneran dibuka worker) baru cek captcha.
-        if not mati and lastOpen > 0 and (now - (lastCekCaptcha or 0)) >= 30 then
+        -- v7.10: DUMP ALL tiap 90 detik. Ganti dari "1 kandidat per ronde (30s)"
+        -- -- yang suka ke-skip timing (iterasi lama -> jarang kejalan) -- jadi
+        -- DUMP SEMUA client sekaligus tiap 90s. Tiap client yang idup + gak lapor
+        -- fresh + belum ketandai captcha -> cek dump uiautomator (captcha/error).
+        -- Konsisten: gak ada yang ke-skip, semua kena giliran tiap 90 detik.
+        if not mati and lastOpen > 0 and (now - (lastCekCaptcha or 0)) >= 90 then
             lastCekCaptcha = now
-            local kand = nil
-            local nKand = 0
             local statCap = api_get(cfg, "/stat") or ""
-            -- v6.68: CLEAR captcha buat client yang UDAH lapor fresh (beneran
-            -- masuk game = solved). Badge captcha ilang di panel. Ini gantiin
-            -- clear-di-lapor yang salah (pakai run=proses hidup).
+            -- CLEAR captcha buat client yang UDAH lapor fresh (masuk game = solved)
             for _, pkgC in ipairs(split(cfg.pkgs or "")) do
                 if KICK_DIURUS["captcha:" .. pkgC] then
                     local akC = mapAkun and mapAkun[pkgC]
@@ -5588,34 +5589,28 @@ local function run(cfg)
                     end
                 end
             end
+            -- kumpulin SEMUA kandidat (idup + gak lapor + belum ketandai captcha)
+            local kandidat = {}
             for _, pkgX in ipairs(split(cfg.pkgs or "")) do
-                -- v6.67: kandidat = HIDUP + GAK lapor fresh + BELUM ketandai
-                -- captcha. Yang UDAH ketandai captcha di-SKIP (gak usah cek dump
-                -- lagi -- udah dapet, buang waktu; penanda dilepas pas client RUN
-                -- di tempat lapor). Captcha bolak-balik loading, cek pas loading
-                -- bisa salah clear -> di-rejoin lagi. Makanya sekali kena, tetap.
                 local akX = mapAkun and mapAkun[pkgX]
                 local lapor = akX and bridge_fresh(statCap, akX)
                 if pkg_running(pkgX) and not lapor and not KICK_DIURUS["captcha:" .. pkgX] then
-                    kand = pkgX
-                    nKand = nKand + 1
+                    kandidat[#kandidat+1] = pkgX
                 end
             end
-            tambahLog(("[cek-captcha] %d kandidat, cek: %s"):format(nKand, kand and kand:gsub("com%.roblox%.","") or "gak ada"))
-            if kand then
+            tambahLog(("[dump-all] %d kandidat: %s"):format(#kandidat,
+                #kandidat > 0 and table.concat((function() local t={} for _,k in ipairs(kandidat) do t[#t+1]=k:gsub("com%.roblox%.","") end return t end)(), ", ") or "gak ada"))
+            -- DUMP SEMUA satu-satu (cek captcha/error tiap kandidat)
+            for _, kand in ipairs(kandidat) do
                 local ceC = cek_captcha_paksa(kand)
-                tambahLog("[cek-captcha] hasil " .. kand:gsub("com%.roblox%.","") .. ": " .. (ceC or "nil/gak kebaca"))
                 local akKand = baca_username(kand) or kand:gsub("com%.roblox%.","")
-                -- v7.03: dari dump -> CUMA CAPTCHA yang di-SKIP (solve manual).
-                -- SELAINNYA (error kick / nyangkut / off gak jelas / gak kebaca)
-                -- -> LANGSUNG TEMBAK MASUK. User: cuma captcha yang gak ditembak,
-                -- sisanya tembak semua.
+                tambahLog("[dump-all] " .. akKand .. ": " .. (ceC or "nil/gak kebaca"))
                 if ceC and ceC:find("CAPTCHA", 1, true) then
+                    -- CUMA captcha yang di-skip (solve manual)
                     tambahLog("CAPTCHA: " .. akKand .. " kena verif bot -> skip (solve manual)")
                     KICK_DIURUS["captcha:" .. kand] = akKand
                 else
-                    -- REJOIN (error kick) / "" (kebaca bukan captcha) / nil (gak
-                    -- kebaca/nyangkut) -> semua TEMBAK MASUK.
+                    -- selain captcha (error kick/nyangkut/gak kebaca) -> TEMBAK MASUK
                     local sebabT = (ceC == "REJOIN") and "error kick (save data/disconnect)"
                                    or (ceC == "" and "nyangkut (bukan captcha)")
                                    or "off gak jelas"
