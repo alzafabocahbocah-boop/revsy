@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.96-cf"
+local VERSION = "6.97-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -9180,22 +9180,41 @@ if PERINTAH == "login" then
         -- Timestamp unik (creation dipakai jadi bagian primary key di sebagian
         -- skema) -> pakai waktu sekarang dalam mikrodetik WebKit.
         local nowUtc = (os.time() + 11644473600) * 1000000
-        local ins = ('%s %s "INSERT INTO cookies (creation_utc,host_key,name,%s,path,expires_utc,is_secure,is_httponly,last_access_utc,has_expires,is_persistent,priority,samesite,source_scheme,source_port,is_same_party) VALUES (%d,\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\',13300000000000000,1,1,%d,1,1,1,-1,2,443,0)"'):format(
-            SQ, DB, kolom, nowUtc, ck_sql, nowUtc)
-        local hi = io.popen(("su -c %s 2>&1"):format(shq(ins)))
-        local iout = hi and hi:read("*all") or ""
-        if hi then hi:close() end
+        -- v6.96: CARA PALING ANDAL -- COPY row cookie yang UDAH ADA (apa pun),
+        -- ganti creation_utc (unik) + host_key + name + value + expires. Ini
+        -- otomatis isi SEMUA kolom NOT NULL (top_frame_site_key, dll) dari row
+        -- contoh -> gak perlu nebak kolom wajib satu-satu (creation, top_frame,
+        -- has_cross_site_ancestor, ...). Roblox client PASTI punya cookie lain
+        -- (dari sesi WebView), jadi ada row contoh.
+        local adaRow = io.popen(("su -c %s 2>/dev/null"):format(
+            shq(SQ .. " " .. DB .. " \"SELECT COUNT(*) FROM cookies\"")))
+        local jml = adaRow and adaRow:read("*all") or "0"
+        if adaRow then adaRow:close() end
+        jml = tonumber((jml or ""):gsub("%s+","")) or 0
+
+        local iout = ""
+        if jml > 0 then
+            -- copy row contoh (INSERT ... SELECT), terus timpa kolom penting.
+            -- pakai \" buat SQL (sama kayak UPDATE di atas), shq buat su -c.
+            local copyCmd = ('%s %s "INSERT INTO cookies SELECT * FROM cookies LIMIT 1"'):format(SQ, DB)
+            os.execute(("su -c %s >/dev/null 2>&1"):format(shq(copyCmd)))
+            -- row baru masih duplikat -> timpa jadi .ROBLOSECURITY + value baru.
+            -- creation_utc UNIK (nowUtc) biar jadi row sah, gak bentrok.
+            local fixCmd = ('%s %s "UPDATE cookies SET creation_utc=%d, host_key=\'.roblox.com\', name=\'.ROBLOSECURITY\', %s=\'%s\', path=\'/\', expires_utc=13300000000000000, is_secure=1, is_httponly=1 WHERE rowid=(SELECT MAX(rowid) FROM cookies)"'):format(
+                SQ, DB, nowUtc, kolom, ck_sql)
+            local hf = io.popen(("su -c %s 2>&1"):format(shq(fixCmd)))
+            iout = hf and hf:read("*all") or ""
+            if hf then hf:close() end
+        else
+            -- gak ada row contoh -> INSERT manual lengkap (fallback)
+            local ins = ('%s %s "INSERT INTO cookies (creation_utc,host_key,name,%s,path,expires_utc,is_secure,is_httponly,last_access_utc,has_expires,is_persistent,priority,samesite,source_scheme,source_port,is_same_party,top_frame_site_key,has_cross_site_ancestor) VALUES (%d,\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\',13300000000000000,1,1,%d,1,1,1,-1,2,443,0,\'\',0)"'):format(
+                SQ, DB, kolom, nowUtc, ck_sql, nowUtc)
+            local hi = io.popen(("su -c %s 2>&1"):format(shq(ins)))
+            iout = hi and hi:read("*all") or ""
+            if hi then hi:close() end
+        end
         if iout and iout:find("[Ee]rror") then
-            -- skema beda -> INSERT dengan kolom inti + creation (yang wajib)
-            warn("INSERT lengkap gagal, coba inti: " .. iout:sub(1,80))
-            local ins2 = ('%s %s "INSERT INTO cookies (creation_utc,host_key,name,%s,path,expires_utc,is_secure,is_httponly,last_access_utc,has_expires,is_persistent) VALUES (%d,\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\',13300000000000000,1,1,%d,1,1)"'):format(
-                SQ, DB, kolom, nowUtc + 1, ck_sql, nowUtc + 1)
-            local hi2 = io.popen(("su -c %s 2>&1"):format(shq(ins2)))
-            local iout2 = hi2 and hi2:read("*all") or ""
-            if hi2 then hi2:close() end
-            if iout2 and iout2:find("[Ee]rror") then
-                warn("INSERT inti gagal juga: " .. iout2:sub(1,80))
-            end
+            warn("INSERT cookie gagal: " .. iout:sub(1,100))
         end
         -- cek ulang panjang setelah INSERT
         local cek2 = io.popen(("su -c %s 2>/dev/null"):format(
