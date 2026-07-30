@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.07-cf"
+local VERSION = "7.08-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7974,6 +7974,54 @@ if PERINTAH == "cek" then
     end
     print(C.D.."Kalau 'proses idup: YA' tapi 'dibaca worker: OFF', kirim baris"..C.N)
     print(C.D.."ActivityRecord di atas -- dari situ ketauan penanda yang bener."..C.N)
+    return
+end
+
+if PERINTAH == "hapus" then
+    -- v7.07: UNINSTALL SEMUA client Roblox dari RF. Pindai paket roblox, hapus
+    -- satu-satu. Konfirmasi dulu (biar gak kehapus gak sengaja).
+    print(C.BOLD .. C.C .. ">>> ZENX HAPUS -- uninstall semua client <<<" .. C.N)
+    local pkgs = pindai_pkgs()
+    if #pkgs == 0 then
+        warn("Gak ada client Roblox kepasang.")
+        return
+    end
+    info("Client kepasang (" .. #pkgs .. "):")
+    for _, pk in ipairs(pkgs) do info("  - " .. pk) end
+    io.write("Yakin HAPUS semua " .. #pkgs .. " client? (ketik 'ya' buat lanjut): ")
+    io.flush()
+    local jwb = io.read("*l") or ""
+    if jwb:lower() ~= "ya" then
+        warn("Dibatalin.")
+        return
+    end
+    -- stop worker dulu (biar gak ganggu)
+    sh_silent("pkill -f 'lua.*zenx_worker.lua' 2>/dev/null")
+    os.execute("sleep 1")
+    local ok_n, gagal_n = 0, 0
+    for _, pk in ipairs(pkgs) do
+        info("Uninstall " .. pk .. "...")
+        -- force-stop dulu, terus uninstall (su, timeout biar gak hang)
+        sh_silent("am force-stop " .. pk)
+        local hasil = sh(("timeout 60 su -c 'pm uninstall %s' 2>&1"):format(pk))
+        if hasil:find("Success") then
+            ok(pk .. " kehapus.")
+            ok_n = ok_n + 1
+        else
+            -- coba tanpa su (kalau pm uninstall butuh user)
+            local h2 = sh(("timeout 60 pm uninstall %s 2>&1"):format(pk))
+            if h2:find("Success") then
+                ok(pk .. " kehapus.")
+                ok_n = ok_n + 1
+            else
+                warn(pk .. " GAGAL: " .. (hasil:sub(1,60)))
+                gagal_n = gagal_n + 1
+            end
+        end
+    end
+    print("")
+    ok(("SELESAI: %d client kehapus%s"):format(
+        ok_n, gagal_n > 0 and (", " .. gagal_n .. " gagal") or ""))
     return
 end
 
