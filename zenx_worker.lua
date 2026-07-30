@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.78-cf"
+local VERSION = "6.80-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -794,6 +794,9 @@ local function save_config(cfg)
     f:write(string.format("  home_detik=%d,\n",cfg.home_detik or 60))
     f:write(string.format("  auto_key=%s,\n",tostring(cfg.auto_key == true)))
     f:write(string.format("  key_tap=%q,\n",cfg.key_tap or ""))
+    f:write(string.format("  gofile_token=%q,\n",cfg.gofile_token or ""))  -- v6.79: token gofile premium
+    f:write(string.format("  apk_folder=%q,\n",tostring(cfg.apk_folder or "")))
+    f:write(string.format("  apk_sandi=%q,\n",cfg.apk_sandi or ""))
     f:write("}\n"); f:close(); return true
 end
 
@@ -8206,6 +8209,69 @@ end
 -- Tiga nama, satu tempat: `download` yang dipakai sehari-hari, `dl` buat yang
 -- males ngetik, `apk` DIPERTAHANIN karena RF yang udah kepasang mungkin masih
 -- pakai itu. Nambah nama lain gak ada ongkosnya; ngilangin yang lama ada.
+if PERINTAH == "download" and (arg and arg[2] == "mercy") then
+    -- v6.79: DOWNLOAD DELTA NO MERCY dari GITHUB RELEASES (tag worker_64).
+    -- github.com di-whitelist -> pasti jalan (beda dari gofile yg kena premium).
+    -- 10 APK, nama pola: NO.MERCY.DELTA.LITE.64BIT.0N-2.731.944.apk.apk
+    -- (file 01 beda: ...apk.1.apk). Download + pasang satu-satu.
+    local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
+    local HOME = os.getenv("HOME") or "."
+    print(C.BOLD .. C.C .. "\n=== DOWNLOAD MERCY (GitHub Releases worker_64) ===\n" .. C.N)
+
+    -- daftar nama file (01 beda, 02-10 pola sama)
+    local files = {
+        "NO.MERCY.DELTA.LITE.64BIT.01-2.731.944.apk.1.apk",
+    }
+    for n = 2, 10 do
+        files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-2.731.944.apk.apk"):format(n)
+    end
+
+    ok(("%d APK dari GitHub Releases. Download + pasang...\n"):format(#files))
+    local TMPAPK = HOME .. "/mercy_unduh.apk"
+    local sukses, gagal = 0, 0
+    for i, nama in ipairs(files) do
+        print(C.C .. ("[%d/%d] "):format(i, #files) .. C.N .. "download...")
+        os.remove(TMPAPK)
+        -- -L ikutin redirect (GitHub release -> objects CDN). curl url-encode spasi? nama gak ada spasi.
+        sh_silent(("curl -s -L -o %s %s 2>/dev/null"):format(
+            shq(TMPAPK), shq(BASE .. nama)))
+        local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+        if sz < 1000000 then
+            print(C.R .. ("  GAGAL download (%d byte)"):format(sz) .. C.N)
+            -- tampilin awal file (mungkin html error) buat diagnosa
+            local awal = sh(("head -c 120 %s 2>/dev/null"):format(shq(TMPAPK))) or ""
+            if awal:match("%S") then info("    " .. awal:gsub("%s+"," "):sub(1,80)) end
+            gagal = gagal + 1
+        else
+            print(("  pasang (%.0f MB)..."):format(sz / 1024 / 1024))
+            local outf = HOME .. "/mercy_pm.txt"
+            os.remove(outf)
+            os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(
+                shq(TMPAPK), shq(outf)))
+            local hasil = ""
+            for _ = 1, 150 do
+                os.execute("sleep 2")
+                local hf = io.open(outf, "r")
+                if hf then hasil = hf:read("*all") or ""; hf:close()
+                    if hasil:find("Success") or hasil:find("Failure") then break end
+                end
+            end
+            os.remove(outf)
+            if tostring(hasil):find("Success") then
+                print(C.G .. "  OK" .. C.N); sukses = sukses + 1
+            else
+                print(C.R .. "  GAGAL pasang" .. C.N)
+                info("    " .. tostring(hasil):gsub("%s+", " "):sub(1, 90))
+                gagal = gagal + 1
+            end
+        end
+    end
+    os.remove(TMPAPK)
+    print("")
+    ok(("Selesai: %d pasang, %d gagal"):format(sukses, gagal))
+    return
+end
+
 if PERINTAH == "pasang" and (arg and arg[2] == "mercy") or (PERINTAH == "mercy") then
     -- v6.77: PASANG DELTA LITE NO MERCY dari APK yang udah didownload MANUAL.
     -- Download langsung dari gofile GAK BISA (butuh premium -- respons
