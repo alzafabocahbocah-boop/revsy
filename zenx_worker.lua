@@ -5381,6 +5381,7 @@ local function run(cfg)
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
+    local lastPendingLog = 0     -- v6.92: kapan terakhir log "nunggu ganti akun"
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
 
@@ -6202,7 +6203,25 @@ local function run(cfg)
             end
         end
 
-        if hit then
+        -- v6.92: PASTIIN GANTI AKUN KELAR DULU sebelum open_all. Kalau ada
+        -- client dengan target: (pending ganti akun) yang BELUM dikonfirmasi,
+        -- JANGAN buka client lain dulu -- tunggu ganti akun beres. User minta:
+        -- pas awal FORCE, kalau akun belum dipastiin ganti, jangan lanjut
+        -- perintah lain. cek-ganti (di atas) yang mastiin + clear target: pas beres.
+        local adaPendingGanti = false
+        for _, pkgP in ipairs(split(cfg.pkgs or "")) do
+            local pend = pkgP:gsub("com%.roblox%.", "")
+            if KICK_DIURUS["target:" .. pend] then adaPendingGanti = true; break end
+        end
+        if hit and adaPendingGanti then
+            -- ada ganti akun belum kelar -> tunda open_all, biar cek-ganti kerja dulu
+            if (now - (lastPendingLog or 0)) >= 15 then
+                info("Nunggu ganti akun kelar dulu sebelum buka client lain...")
+                lastPendingLog = now
+            end
+        end
+
+        if hit and not adaPendingGanti then
             local only = isi:match("FORCE:([%w%.%_]+)")
             if (now - lastOpen) >= cfg.reopen_sec then
                 -- dipanggil di sela-sela client: STANDBY dari panel langsung kebaca,
