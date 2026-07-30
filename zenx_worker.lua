@@ -5364,6 +5364,15 @@ local function run(cfg)
                         (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                         akunG, pkgG:gsub("com%.roblox%.", "")))
                     ok(("LOGIN selesai: %s -> %s"):format(akunG, clientG))
+                    -- v6.69: LANGSUNG MASUK ULANG client abis suntik cookie (ke
+                    -- public). Tanpa ini, cookie kesuntik TAPI client gak dibuka
+                    -- -> akun baru gak aktif (diem), apalagi pas standby. GAK
+                    -- di-kill (force-stop) -- cukup open_one (am start) buat masuk
+                    -- ulang; lebih ringan & cepet, cookie baru langsung kepakai.
+                    info("Masuk ulang " .. clientG .. " dengan akun baru...")
+                    KICK_DIURUS["captcha:" .. pkgG] = nil   -- reset penanda captcha akun lama
+                    open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil)
+                    os.execute("sleep 3")
                     -- v6.48: SIMPEN TARGET akun per client + jadwal CEK 60 detik
                     -- ke depan. Nanti worker cek: client udah beneran ganti ke
                     -- akun ini? Kalau belum -> lapor alasan + auto re-suntik.
