@@ -2621,8 +2621,32 @@ local function tunggu_jalan(pkg, batas, cek_batal)
                 return false, os.time() - mulai, "muncul lalu mati (RAM sesek?)"
             end
             os.execute("sleep 5")
-            if pkg_running(pkg) then return true, os.time() - mulai end
-            return false, os.time() - mulai, "muncul lalu mati (RAM sesek?)"
+            if not pkg_running(pkg) then
+                return false, os.time() - mulai, "muncul lalu mati (RAM sesek?)"
+            end
+            -- v6.75: proses nyala != masuk game. Bisa NYANGKUT HOME (grafis
+            -- rendah). Cek grafis: kalau masih rendah (< 30MB = Home/loading),
+            -- TEMBAK link masuk + cek lagi. Ulang sampai grafis tinggi (di game)
+            -- atau nyerah. Gitu "nungguin nyala" sekalian mastiin BENERAN MASUK,
+            -- bukan cuma proses idup di Home.
+            local cobaMasuk = 0
+            while (os.time() - mulai) < batasMax do
+                local g = grafis_kb(pkg) or 0
+                if g >= 30000 then
+                    return true, os.time() - mulai   -- grafis tinggi = di game
+                end
+                cobaMasuk = cobaMasuk + 1
+                io.write(("      %s — di Home (%.0fMB), tembak masuk #%d...\n"):format(
+                    pkg:gsub("com%%.roblox%%.",""), g/1024, cobaMasuk))
+                sh_silent("su -c 'am start -a android.intent.action.VIEW -p " .. pkg .. " 2>/dev/null'")
+                os.execute("sleep 8")
+                if cek_batal and cek_batal() then return false, os.time()-mulai, "STANDBY" end
+                if not pkg_running(pkg) then
+                    return false, os.time() - mulai, "mati pas masuk game"
+                end
+            end
+            -- lewat batas tapi proses idup -> anggap sukses (di game / loading berat)
+            return true, os.time() - mulai
         end
         os.execute("sleep 2")
     end
