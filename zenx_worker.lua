@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.84-cf"
+local VERSION = "6.87-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5412,13 +5412,13 @@ local function run(cfg)
 
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
         local isi  = ambil_str(resp, "isi") or ""
-        -- v6.82: kalau perintah KOSONG (worker baru jalan, panel belum pernah
-        -- set apa2 buat tim ini) -> anggap FORCE (jalan sendiri). Dulu worker
-        -- NGANGGUR sampai ada yang mencet "Jalankan semua" -- worker orang lain
-        -- yang baru jalan diem terus. Kosong = belum diatur = jelas mau jalan.
-        -- (STOP/STANDBY itu isi-nya keisi, bukan kosong -> gak ke-override.)
+        -- v6.84: kalau perintah KOSONG (worker baru jalan / panel belum set) ->
+        -- STANDBY. User minta FORCE HARUS dari panel -- worker jalan itu STANDBY
+        -- dulu (cek cookie/lisensi, GAK buka client), nunggu user pencet FORCE
+        -- di panel. Dulu (v6.82) default FORCE -> worker langsung buka client
+        -- sendiri, padahal user mau nunggu perintah panel.
         if isi == "" or isi == "-" then
-            isi = "FORCE"
+            isi = "STANDBY"
         end
         -- v6.29: LOGIN tertunda (kesimpen pas cek_batal) diproses DULUAN, biar
         -- gak keburu ketimpa FORCE. Ambil & bersihin penanda.
@@ -5515,7 +5515,17 @@ local function run(cfg)
         -- worker cek client yang RUNNING tapi GAK lapor (kandidat kena captcha):
         -- bawa ke depan, dump uiautomator, cari penanda captcha. Kena -> tandai
         -- (badge panel) + skip; enggak -> clear. Satu client per ronde (gak berat).
-        if (now - (lastCekCaptcha or 0)) >= 45 then
+        -- v6.84: cek captcha CUMA pas TIDAK standby (mati=false). Pas standby
+        -- (FORCE dari panel belum dipencet), worker gak buka client -> gak perlu
+        -- cek captcha (biar gak dump [paksa] terus pas standby). Client yang
+        -- jalan pas standby (sisa/manual) tetep aman -- cek captcha nyala lagi
+        -- pas FORCE.
+        -- v6.85: cek captcha CUMA kalau client UDAH PERNAH DIBUKA (lastOpen > 0).
+        -- Dulu cek captcha jalan tiap 45 detik dari AWAL loop -- pas worker baru
+        -- jalan (client belum kebuka), udah dump [paksa] buat client sisa/latar
+        -- yang kebetulan jalan -> dump percuma kepagian. Sekarang nunggu open_all
+        -- jalan dulu (client beneran dibuka worker) baru cek captcha.
+        if not mati and lastOpen > 0 and (now - (lastCekCaptcha or 0)) >= 45 then
             lastCekCaptcha = now
             local kand = nil
             local nKand = 0
@@ -6016,6 +6026,14 @@ local function run(cfg)
         -- v4.24: status dasar buat panel (nanti ditimpa aksi spesifik kalau lagi kerja)
         if mati then
             setAksi("standby — gak buka client")
+            -- v6.87: pas STANDBY, CLEAR offlama + diag semua client. "off X menit"
+            -- cuma valid pas udah FORCE (client harusnya jalan). Pas standby (user
+            -- sengaja belum start), client off itu WAJAR -> jangan hitung/tampilin
+            -- "off X menit" di panel, jangan diagnosa. Reset biar bersih.
+            for _, pStd in ipairs(split(cfg.pkgs or "")) do
+                KICK_DIURUS["offlama:" .. pStd] = nil
+                KICK_DIURUS["diag:" .. pStd] = nil
+            end
         else
             local nJalan = 0
             for _, p in ipairs(split(cfg.pkgs)) do if cacheRun[p] then nJalan = nJalan + 1 end end
@@ -6568,6 +6586,33 @@ local function run(cfg)
                     -- panel (nampilin "script off X menit").
                     if diem then KICK_DIURUS["offlama:" .. pkg] = diem
                     else KICK_DIURUS["offlama:" .. pkg] = nil end
+
+                    -- v6.86: SCRIPT OFF >= 2 MENIT -> DIAGNOSA penyebab (dump client).
+                    -- Cek: nyangkut Home / kena captcha (verif) / kena error code.
+                    -- Cuma sekali per "sesi off" (penanda diag: <pkg>) biar gak dump
+                    -- tiap ronde. cek_captcha_paksa balikin CAPTCHA / REJOIN(error kick).
+                    if diem and diem >= 120 and pkg_running(pkg)
+                       and not KICK_DIURUS["diag:" .. pkg] then
+                        KICK_DIURUS["diag:" .. pkg] = now
+                        local akD = mapAkun and mapAkun[pkg] or pkg:gsub("com%.roblox%.","")
+                        info(("DIAGNOSA %s (off %dm) -- cek nyangkut/verif/error..."):format(akD, math.floor(diem/60)))
+                        local g = grafis_kb(pkg) or 0
+                        local ceD = cek_captcha_paksa(pkg)
+                        if ceD and ceD:find("CAPTCHA", 1, true) then
+                            warn(("  -> %s KENA CAPTCHA (verif bot). Solve manual."):format(akD))
+                            KICK_DIURUS["captcha:" .. pkg] = akD
+                        elseif ceD == "REJOIN" then
+                            warn(("  -> %s KENA ERROR KICK (save data/disconnect/teleport)."):format(akD))
+                        elseif g < 30000 then
+                            warn(("  -> %s NYANGKUT HOME (grafis %.0fMB, belum masuk game)."):format(akD, g/1024))
+                        else
+                            info(("  -> %s di game (grafis %.0fMB) tapi script diem -- mungkin script mati."):format(akD, g/1024))
+                        end
+                    end
+                    -- reset penanda diag kalau script udah jalan lagi (diem = nil)
+                    if not diem and KICK_DIURUS["diag:" .. pkg] then
+                        KICK_DIURUS["diag:" .. pkg] = nil
+                    end
 
                     if diem and butuhKey then
                         -- v4.86: lisensi hilang/basi -> script emang GAK BAKAL jalan
