@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.73-cf"
+local VERSION = "6.74-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3312,10 +3312,22 @@ function cek_captcha_paksa(pkg)
                or low:find("verifying you", 1, true) then
                 return "CAPTCHA"
             end
+            -- v6.73: SEKALIAN cek error KICK yang butuh REJOIN (save data gagal
+            -- load / disconnect / teleport failed). Ini yang bikin "gak kebaca
+            -- uiautomator" -- cek_error_ui cek fokus ketat, sering nil. cek paksa
+            -- ini gak cek fokus -> kebaca. Balikin "REJOIN" biar caller masuk lagi.
+            if low:find("save data", 1, true)
+               or low:find("didn't load", 1, true)
+               or low:find("did not load", 1, true)
+               or low:find("please rejoin", 1, true)
+               or low:find("teleport failed", 1, true)
+               or (low:find("disconnected", 1, true) and low:find("kicked", 1, true)) then
+                return "REJOIN"
+            end
         end
     end
     if not kebaca then return nil end   -- gak kebaca sama sekali
-    return ""   -- kebaca 5x tapi gak ada captcha
+    return ""   -- kebaca 5x tapi gak ada captcha/error
 end
 
 local function cek_error_ui(cfg, pkg, mapLink)
@@ -4245,6 +4257,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     if hasilCap and hasilCap:find("CAPTCHA", 1, true) then
                         info("CAPTCHA: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
                         KICK_DIURUS["captcha:" .. pkg] = ak or pkg
+                    elseif hasilCap == "REJOIN" then
+                        -- v6.73: error kick (save data/disconnect) -> masuk lagi
+                        info("KICK: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil)
                     end
                 end
             end
@@ -6311,6 +6327,12 @@ local function run(cfg)
                         tambahLog("CAPTCHA: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip auto-rejoin (solve manual)")
                         KICK_DIURUS["captcha:" .. pkg] = akun or pkg
                         lewatiCaptcha = true
+                    elseif ceR == "REJOIN" then
+                        -- v6.73: error kick (save data/disconnect/teleport) -> masuk
+                        -- lagi LANGSUNG, gak usah lewat jalur diem/nudge yang lama.
+                        tambahLog("KICK: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
+                        open_one(cfg, pkg, mapLink[pkg])
+                        lewatiCaptcha = true   -- udah ditangani, skip sisa
                     end
                 end
                 if akun and not lewatiCaptcha then
