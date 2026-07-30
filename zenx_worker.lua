@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.87-cf"
+local VERSION = "6.88-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4903,29 +4903,22 @@ local function setup_wizard()
     ok("Config disimpan: "..CONFIG_FILE)
 
     -- ============================================================
-    -- v5.39: PERINTAH AWAL DISETEL SENDIRI = FORCE.
-    --
-    -- Dulu RF yang baru selesai setup NGANGGUR: `perintah: -`, semua client
-    -- off, dan gak ada yang jalan sampai ada orang mencet "Jalankan semua" di
-    -- panel. Gejalanya nyesatin -- worker keliatan normal (nyambung, lapor
-    -- jalan) tapi gak ngapa-ngapain, dan gak ada petunjuk kenapa.
-    --
-    -- Padahal RF yang baru disetup ya jelas mau dijalanin. Jadi setup nyetel
-    -- FORCE sendiri buat timnya. Mau ditahan dulu? panel -> "Hentikan".
-    -- ============================================================
+    -- v6.87: PERINTAH AWAL = STANDBY (bukan FORCE lagi). User minta FORCE HARUS
+    -- dari panel -- RF baru selesai setup itu STANDBY dulu (cek cookie/lisensi,
+    -- GAK buka client), nunggu user pencet "Jalankan semua" di panel. Dulu
+    -- (v5.39) setup langsung FORCE -> client kebuka sendiri pas pasang, padahal
+    -- user mau kontrol kapan start dari panel.
     do
         local r = api_post(cfg, "/perintah",
-            string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+            string.format('{"tim":%s,"isi":"STANDBY"}', jstr(cfg.tim)), "PUT")
         local salah = ambil_str(r or "", "error")
         if r == "" then
             warn("Perintah awal gak kekirim (panel gak nyambung).")
-            warn("  Nanti pencet 'Jalankan semua' di panel, atau setup ulang.")
         elseif salah then
             warn("Perintah awal ditolak panel: " .. salah)
-            warn("  Nanti pencet 'Jalankan semua' di panel.")
         else
-            ok("Perintah awal disetel: FORCE -- client bakal langsung dibuka.")
-            info("  Mau ditahan dulu? panel -> tim ini -> Hentikan.")
+            ok("Perintah awal: STANDBY -- client GAK dibuka dulu.")
+            info("  Pencet 'Jalankan semua' di panel buat mulai.")
         end
     end
 
