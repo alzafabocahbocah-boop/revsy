@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.04-cf"
+local VERSION = "7.05-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6099,6 +6099,21 @@ local function run(cfg)
         -- v4.24: status dasar buat panel (nanti ditimpa aksi spesifik kalau lagi kerja)
         if mati then
             setAksi("standby — gak buka client")
+            -- v7.04: STOP (bukan STANDBY biasa) = STANDBY + KILL ALL client. User
+            -- minta: pencet Stop -> langsung tutup semua client (balik awal/kosong),
+            -- pas Force lagi mulai fresh. Cuma SEKALI pas transisi ke STOP (penanda
+            -- stop_killed) biar gak kill tiap ronde. STANDBY biasa gak kill (client
+            -- dibiarin, cuma gak buka baru).
+            local isiStop = isi:upper():find("STOP")
+            if isiStop and not KICK_DIURUS["stop_killed"] then
+                warn("STOP dari panel -> tutup SEMUA client (balik awal)")
+                local n = close_all(cfg)
+                ok("STOP: " .. n .. " client ditutup. Pencet Start buat mulai fresh.")
+                KICK_DIURUS["stop_killed"] = true
+                -- reset kondisi biar Force nanti mulai fresh
+                SUDAH_GRID = false
+                lastOpen = 0
+            end
             -- v6.87: pas STANDBY, CLEAR offlama + diag semua client. "off X menit"
             -- cuma valid pas udah FORCE (client harusnya jalan). Pas standby (user
             -- sengaja belum start), client off itu WAJAR -> jangan hitung/tampilin
@@ -6108,6 +6123,9 @@ local function run(cfg)
                 KICK_DIURUS["diag:" .. pStd] = nil
             end
         else
+            -- v7.04: keluar dari STOP/STANDBY (lagi FORCE) -> reset penanda
+            -- stop_killed biar STOP berikutnya kill lagi.
+            KICK_DIURUS["stop_killed"] = nil
             local nJalan = 0
             for _, p in ipairs(split(cfg.pkgs)) do if cacheRun[p] then nJalan = nJalan + 1 end end
             setAksi(string.format("mantau %d/%d client jalan", nJalan, #split(cfg.pkgs)))
