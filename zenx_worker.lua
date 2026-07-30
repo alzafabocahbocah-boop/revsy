@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.02-cf"
+local VERSION = "7.04-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5512,20 +5512,11 @@ local function run(cfg)
                     if lagiStandby then
                         info("STANDBY -- cookie disiapin, client DIBUKA pas FORCE nanti.")
                     else
+                        -- v7.02: GAK perlu suntik ulang (spam). Cookie udah masuk
+                        -- bener (creation_utc wajar -> Roblox terima, gak dihapus).
                         info("Masuk ulang " .. clientG .. " dengan akun baru...")
                         open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil)
                         os.execute("sleep 3")
-                        -- v6.99: SUNTIK ULANG 2x setelah client dibuka. Pas client
-                        -- buka, Roblox WebView bisa nimpa cookie kita (balik akun
-                        -- lama / logout). Suntik ulang biar cookie KITA menang.
-                        -- Jeda antar suntik biar Roblox sempet "settle" dulu.
-                        for reSuntik = 1, 2 do
-                            os.execute("sleep 4")
-                            info(("Suntik ulang cookie %s (#%d) -- jaga2 ketimpa..."):format(akunG, reSuntik))
-                            os.execute(("timeout 120 %s login %s %s"):format(
-                                (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
-                                akunG, pkgG:gsub("com%.roblox%.", "")))
-                        end
                     end
                     -- v6.48: SIMPEN TARGET akun per client + jadwal CEK 60 detik
                     -- ke depan. Nanti worker cek: client udah beneran ganti ke
@@ -5568,7 +5559,7 @@ local function run(cfg)
         -- jalan (client belum kebuka), udah dump [paksa] buat client sisa/latar
         -- yang kebetulan jalan -> dump percuma kepagian. Sekarang nunggu open_all
         -- jalan dulu (client beneran dibuka worker) baru cek captcha.
-        if not mati and lastOpen > 0 and (now - (lastCekCaptcha or 0)) >= 45 then
+        if not mati and lastOpen > 0 and (now - (lastCekCaptcha or 0)) >= 30 then
             lastCekCaptcha = now
             local kand = nil
             local nKand = 0
@@ -5602,14 +5593,21 @@ local function run(cfg)
             if kand then
                 local ceC = cek_captcha_paksa(kand)
                 tambahLog("[cek-captcha] hasil " .. kand:gsub("com%.roblox%.","") .. ": " .. (ceC or "nil/gak kebaca"))
+                local akKand = baca_username(kand) or kand:gsub("com%.roblox%.","")
+                -- v7.03: dari dump -> CUMA CAPTCHA yang di-SKIP (solve manual).
+                -- SELAINNYA (error kick / nyangkut / off gak jelas / gak kebaca)
+                -- -> LANGSUNG TEMBAK MASUK. User: cuma captcha yang gak ditembak,
+                -- sisanya tembak semua.
                 if ceC and ceC:find("CAPTCHA", 1, true) then
-                    tambahLog("CAPTCHA: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
-                    KICK_DIURUS["captcha:" .. kand] = baca_username(kand) or kand
-                elseif ceC == "REJOIN" then
-                    -- v6.75: error kick (save data/disconnect/teleport) kedeteksi di
-                    -- cek berkala -> MASUK LAGI. Ini yang bikin "gak kedeteksi" --
-                    -- dulu cek berkala cuma handle CAPTCHA, hasil REJOIN diabaikan.
-                    tambahLog("KICK: " .. (baca_username(kand) or kand:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
+                    tambahLog("CAPTCHA: " .. akKand .. " kena verif bot -> skip (solve manual)")
+                    KICK_DIURUS["captcha:" .. kand] = akKand
+                else
+                    -- REJOIN (error kick) / "" (kebaca bukan captcha) / nil (gak
+                    -- kebaca/nyangkut) -> semua TEMBAK MASUK.
+                    local sebabT = (ceC == "REJOIN") and "error kick (save data/disconnect)"
+                                   or (ceC == "" and "nyangkut (bukan captcha)")
+                                   or "off gak jelas"
+                    tambahLog("TEMBAK MASUK: " .. akKand .. " (" .. sebabT .. ")")
                     open_one(cfg, kand, mapLink and mapLink[kand] or nil)
                 end
             end
@@ -6040,6 +6038,19 @@ local function run(cfg)
 
         if isi ~= lastIsi and isi ~= "" then
             info("perintah baru: " .. isi)
+            -- v7.03: FORCE dari panel = MULAI FRESH kayak worker baru. Reset
+            -- SUDAH_GRID (nata tempat/tiling ULANG) + lastOpen (buka client dari
+            -- 1/8 lagi). User minta: pencet Start/FORCE -> ngulang semua dari awal
+            -- (nata grid, buka client dari awal). Cuma pas TRANSISI ke FORCE
+            -- (dari standby/perintah lain), bukan tiap ronde FORCE.
+            local isiBaruU = isi:upper()
+            local lastU = (lastIsi or ""):upper()
+            local jadiForce = isiBaruU:find("FORCE") and not lastU:find("FORCE")
+            if jadiForce then
+                info("FORCE dari panel -- mulai fresh (nata tempat + buka client dari awal)")
+                SUDAH_GRID = false   -- nata grid/tiling ulang
+                lastOpen = 0         -- buka client dari 1/8 lagi (gak nunggu reopen_sec)
+            end
             lastIsi = isi
         end
 
