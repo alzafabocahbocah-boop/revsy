@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.69-cf"
+local VERSION = "6.70-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3134,6 +3134,19 @@ local function klasifikasi_layar(isi)
            or low:find("verifying browser", 1, true)
            or low:find("verifying you", 1, true) then
             return "CAPTCHA (verif bot)", "captcha", sidik
+        end
+    end
+
+    -- v6.70: ERROR KICK "save data didn't load" (GAG kick karena data akun gak
+    -- ke-load). Teks jelas kebaca. Handle: MASUK LAGI (sifat "ulang" = rejoin).
+    -- Error sementara Roblox, rejoin biasanya beres.
+    do
+        local low = isi:lower()
+        if low:find("save data didn't load", 1, true)
+           or low:find("save data didnt load", 1, true)
+           or low:find("your save data didn", 1, true)
+           or (low:find("kicked by this experience", 1, true) and low:find("save data", 1, true)) then
+            return "KICK (save data gagal load) -> masuk lagi", "ulang", sidik
         end
     end
 
