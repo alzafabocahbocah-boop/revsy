@@ -5629,21 +5629,32 @@ local function run(cfg)
                         KICK_DIURUS["target:" .. pkgPend] = nil
                         KICK_DIURUS["cekganti:" .. pkgPend] = nil
                     else
-                        -- AUTO RE-SUNTIK: keluarin client dulu, masuk lagi
+                        -- v6.92: BATESI re-suntik MAKS 2x. User minta: yang gagal
+                        -- JANGAN dicoba terus -- setelah 2x gagal, STOP + lapor
+                        -- panel + log jelas kenapa. Dulu re-suntik selamanya
+                        -- (muter nyoba client yang gak mau ganti).
                         local retry = (KICK_DIURUS["retry:" .. pkgPend] or 0) + 1
                         KICK_DIURUS["retry:" .. pkgPend] = retry
-                        warn(("GANTI belum kelar: %s -> %s. Sebab: %s (re-suntik #%d)"):format(
-                            pkgPend, target, sebab, retry))
-                        KICK_DIURUS["gantigagal:" .. pkgPend] = target .. "|" .. sebab .. " (coba lagi #" .. retry .. ")"
-                        -- keluarin client dulu
-                        sh_silent("am force-stop " .. pkgC)
-                        os.execute("sleep 2")
-                        -- re-suntik
-                        os.execute(("timeout 120 %s login %s %s"):format(
-                            (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
-                            target, pkgPend))
-                        -- jadwalin cek lagi 60s ke depan
-                        KICK_DIURUS["cekganti:" .. pkgPend] = os.time() + 60
+                        if retry > 2 then
+                            -- STOP -- udah 2x gagal, gak dicoba lagi
+                            warn((">>> GANTI AKUN GAGAL: %s -> %s <<<"):format(pkgPend, target))
+                            warn(("    Sebab: %s. Udah dicoba %d kali, STOP."):format(sebab, retry - 1))
+                            warn("    Client ini GAK diproses lagi. Cek cookie/ganti dari panel.")
+                            KICK_DIURUS["gantigagal:" .. pkgPend] = target .. "|" .. sebab .. " (gagal " .. (retry-1) .. "x, stop)"
+                            KICK_DIURUS["target:" .. pkgPend] = nil
+                            KICK_DIURUS["cekganti:" .. pkgPend] = nil
+                        else
+                            -- masih boleh coba lagi (< 2x)
+                            warn(("GANTI belum kelar: %s -> %s. Sebab: %s (coba lagi #%d)"):format(
+                                pkgPend, target, sebab, retry))
+                            KICK_DIURUS["gantigagal:" .. pkgPend] = target .. "|" .. sebab .. " (coba #" .. retry .. ")"
+                            sh_silent("am force-stop " .. pkgC)
+                            os.execute("sleep 2")
+                            os.execute(("timeout 120 %s login %s %s"):format(
+                                (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                                target, pkgPend))
+                            KICK_DIURUS["cekganti:" .. pkgPend] = os.time() + 60
+                        end
                     end
                 end
             end
