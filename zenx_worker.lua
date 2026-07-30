@@ -8232,8 +8232,10 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     for i, nama in ipairs(files) do
         print(C.C .. ("[%d/%d] "):format(i, #files) .. C.N .. "download...")
         os.remove(TMPAPK)
-        -- -L ikutin redirect (GitHub release -> objects CDN). curl url-encode spasi? nama gak ada spasi.
-        sh_silent(("curl -s -L -o %s %s 2>/dev/null"):format(
+        -- v6.79: pakai curl DENGAN progress bar (-# = garis-garis), kayak
+        -- zenx download node-x. -L ikutin redirect (GitHub -> CDN). os.execute
+        -- (bukan sh_silent) biar progress bar keliatan langsung di layar.
+        os.execute(("curl -# -L -o %s %s"):format(
             shq(TMPAPK), shq(BASE .. nama)))
         local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
         if sz < 1000000 then
