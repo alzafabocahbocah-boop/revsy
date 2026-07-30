@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.83-cf"
+local VERSION = "6.84-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5387,6 +5387,7 @@ local function run(cfg)
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
+    local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
 
@@ -5631,6 +5632,12 @@ local function run(cfg)
             end
         end
 
+        -- v6.84: definisi `mati` (STANDBY/STOP) DIPINDAH ke sini (dari bawah) --
+        -- biar cek lisensi & cek cookie standby (di bawah) bisa tau lagi standby
+        -- apa nggak. Dulu `mati` didefinisi SETELAH cek lisensi -> nil -> cek
+        -- standby gak pernah jalan.
+        local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
+
         -- v6.14: CEK LISENSI BERKALA tiap 60 detik. Kalau lisensi Delta HILANG
         -- (file kosong = key habis), langsung bypass -- gak nunggu ronde buka
         -- client (reopen_sec 5 menit). Jadi begitu key habis, key baru diambil
@@ -5660,6 +5667,19 @@ local function run(cfg)
                     refresh_status(); lastStatusCek = os.time()
                 end
             end
+        end
+
+        -- v6.84: CEK COOKIE AKUN LAMA pas STANDBY (tiap 5 menit). Cek cookie yang
+        -- lagi kepasang di tiap client masih hidup apa nggak -> setor status ke
+        -- panel. Jadi SEBELUM start, udah ketauan cookie mana yang mati (badge
+        -- panel) -> bisa langsung ganti. Cuma pas standby (pas jalan, cek cookie
+        -- udah ada di jalur lain). zenx cekcookie = cek semua akun tim, setor CF.
+        if mati and (now - lastCookieStandby) >= 300 then
+            lastCookieStandby = now
+            info("Cek cookie akun lama (standby) -- mastiin masih hidup...")
+            os.execute(("timeout 180 %s cekcookie"):format(
+                (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
+            refresh_status(); lastStatusCek = os.time()
         end
 
         -- v4.3: narik link private server dari panel. kalau panel udah pernah set
@@ -5980,7 +6000,7 @@ local function run(cfg)
 
         -- Perintah kesimpen di DB, jadi isinya = keadaannya.
         -- Gak perlu forceSticky kayak jaman ntfy (pesan kedaluwarsa).
-        local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
+        -- v6.84: `mati` udah didefinisi di atas (sebelum cek lisensi).
         -- v6.82: FORCE itu perintah UNIVERSAL -- worker APA PUN jalan pas FORCE,
         -- gak peduli cfg.targets. Dulu hit CUMA is_target(isi, targets) -> kalau
         -- targets worker beda dari kata di perintah, FORCE gak "hit" -> worker
