@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.94-cf"
+local VERSION = "6.96-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5382,6 +5382,8 @@ local function run(cfg)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
     local lastPendingLog = 0     -- v6.92: kapan terakhir log "nunggu ganti akun"
+    local waktuAktivitas = 0     -- v6.95: kapan terakhir ada aktivitas ganti akun/LOGIN
+    local lastCooldownLog = 0    -- v6.95: kapan terakhir log cooldown 3 menit
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
 
@@ -5508,6 +5510,10 @@ local function run(cfg)
             end
             lastIsi = isi
             loginKelar = true   -- skip sisa loop ronde ini
+            -- v6.95: catat AKTIVITAS ganti akun. Loop biasa (buka client) nunggu
+            -- 3 menit setelah ini -- biar ganti akun kelar + adem dulu, gak
+            -- tabrakan sama farming.
+            waktuAktivitas = os.time()
         end
 
         if not loginKelar then
@@ -6232,7 +6238,20 @@ local function run(cfg)
             end
         end
 
-        if hit and not adaPendingGanti then
+        -- v6.95: COOLDOWN 3 MENIT. Loop biasa (buka client) cuma jalan kalau udah
+        -- 180 detik GAK ADA aktivitas ganti akun. Tiap ada LOGIN, waktuAktivitas
+        -- di-reset -> timer mulai lagi. Jadi ganti akun kelar + adem 3 menit dulu,
+        -- baru farming. User minta: pisahin loop ganti akun & loop biasa 3 menit.
+        local cooldownJalan = (waktuAktivitas == 0) or ((now - waktuAktivitas) >= 180)
+        if hit and not adaPendingGanti and not cooldownJalan then
+            if (now - (lastCooldownLog or 0)) >= 20 then
+                local sisa = 180 - (now - waktuAktivitas)
+                info(("Adem dulu %ds abis ganti akun sebelum buka client biasa..."):format(sisa > 0 and sisa or 0))
+                lastCooldownLog = now
+            end
+        end
+
+        if hit and not adaPendingGanti and cooldownJalan then
             local only = isi:match("FORCE:([%w%.%_]+)")
             if (now - lastOpen) >= cfg.reopen_sec then
                 -- dipanggil di sela-sela client: STANDBY dari panel langsung kebaca,
@@ -9155,19 +9174,28 @@ if PERINTAH == "login" then
     -- "panjang ?" -> akun gak ganti. Ini sebab utama client baru gak bisa login.
     if pj == "" then
         info("Row cookie belum ada (client baru) -- INSERT baru...")
-        -- kolom minimal buat WebView Cookies: name, value, host_key, path,
-        -- is_secure, expires_utc. host_key .roblox.com biar kekirim ke roblox.
-        local ins = ('%s %s "INSERT INTO cookies (host_key,name,%s,path,is_secure,is_httponly,expires_utc,is_persistent,priority,samesite,source_scheme) VALUES (\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\',1,1,13300000000000000,1,1,-1,2)"'):format(
-            SQ, DB, kolom, ck_sql)
+        -- v6.94: creation_utc WAJIB (NOT NULL) + last_access_utc. Pakai timestamp
+        -- WebKit (mikrodetik sejak 1601). Dulu INSERT gak isi creation -> "NOT
+        -- NULL constraint failed: cookies.creation" -> cookie gak masuk.
+        -- Timestamp unik (creation dipakai jadi bagian primary key di sebagian
+        -- skema) -> pakai waktu sekarang dalam mikrodetik WebKit.
+        local nowUtc = (os.time() + 11644473600) * 1000000
+        local ins = ('%s %s "INSERT INTO cookies (creation_utc,host_key,name,%s,path,expires_utc,is_secure,is_httponly,last_access_utc,has_expires,is_persistent,priority,samesite,source_scheme,source_port,is_same_party) VALUES (%d,\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\',13300000000000000,1,1,%d,1,1,1,-1,2,443,0)"'):format(
+            SQ, DB, kolom, nowUtc, ck_sql, nowUtc)
         local hi = io.popen(("su -c %s 2>&1"):format(shq(ins)))
         local iout = hi and hi:read("*all") or ""
         if hi then hi:close() end
         if iout and iout:find("[Ee]rror") then
-            -- kolom mungkin beda skema -> coba INSERT minimal (name+value+host+path)
-            warn("INSERT lengkap gagal, coba minimal: " .. iout:sub(1,80))
-            local ins2 = ('%s %s "INSERT INTO cookies (host_key,name,%s,path) VALUES (\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\')"'):format(
-                SQ, DB, kolom, ck_sql)
-            os.execute(("su -c %s >/dev/null 2>&1"):format(shq(ins2)))
+            -- skema beda -> INSERT dengan kolom inti + creation (yang wajib)
+            warn("INSERT lengkap gagal, coba inti: " .. iout:sub(1,80))
+            local ins2 = ('%s %s "INSERT INTO cookies (creation_utc,host_key,name,%s,path,expires_utc,is_secure,is_httponly,last_access_utc,has_expires,is_persistent) VALUES (%d,\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\',13300000000000000,1,1,%d,1,1)"'):format(
+                SQ, DB, kolom, nowUtc + 1, ck_sql, nowUtc + 1)
+            local hi2 = io.popen(("su -c %s 2>&1"):format(shq(ins2)))
+            local iout2 = hi2 and hi2:read("*all") or ""
+            if hi2 then hi2:close() end
+            if iout2 and iout2:find("[Ee]rror") then
+                warn("INSERT inti gagal juga: " .. iout2:sub(1,80))
+            end
         end
         -- cek ulang panjang setelah INSERT
         local cek2 = io.popen(("su -c %s 2>/dev/null"):format(
