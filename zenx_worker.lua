@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.08-cf"
+local VERSION = "7.09-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5536,6 +5536,7 @@ local function run(cfg)
                     KICK_DIURUS["target:" .. pkgPend] = akunG
                     KICK_DIURUS["cekganti:" .. pkgPend] = os.time() + 60
                     KICK_DIURUS["retry:" .. pkgPend] = 0
+                    KICK_DIURUS["tglganti:" .. pkgPend] = os.time()  -- v7.09: buat timeout
                     refresh_status(); lastStatusCek = os.time()
                     gambar_tabel(isi)
                 end
@@ -6308,7 +6309,26 @@ local function run(cfg)
         local adaPendingGanti = false
         for _, pkgP in ipairs(split(cfg.pkgs or "")) do
             local pend = pkgP:gsub("com%.roblox%.", "")
-            if KICK_DIURUS["target:" .. pend] then adaPendingGanti = true; break end
+            if KICK_DIURUS["target:" .. pend] then
+                -- v7.09: TIMEOUT. Kalau ganti akun ketahan > 3 menit (gak pernah
+                -- kelar -- misal cookie terenkripsi/client rusak), JANGAN nyangkut
+                -- selamanya. Clear target + lapor gagal ke panel, biar client lain
+                -- gak ke-blok. Dulu: target gak pernah clear -> "Nunggu ganti akun
+                -- kelar" selamanya -> semua client mati nunggu.
+                local tgl = KICK_DIURUS["tglganti:" .. pend] or now
+                if (now - tgl) > 180 then
+                    local akunGagal = KICK_DIURUS["target:" .. pend]
+                    tambahLog("GANTI AKUN TIMEOUT: " .. pend .. " (" .. tostring(akunGagal) ..
+                        ") gak kelar 3 menit -> nyerah, lanjut. Cek cookie/client (mungkin terenkripsi).")
+                    KICK_DIURUS["gantigagal:" .. pend] = akunGagal or "timeout"
+                    KICK_DIURUS["target:" .. pend] = nil
+                    KICK_DIURUS["cekganti:" .. pend] = nil
+                    KICK_DIURUS["tglganti:" .. pend] = nil
+                    KICK_DIURUS["retry:" .. pend] = nil
+                else
+                    adaPendingGanti = true; break
+                end
+            end
         end
         if hit and adaPendingGanti then
             -- ada ganti akun belum kelar -> tunda open_all, biar cek-ganti kerja dulu
