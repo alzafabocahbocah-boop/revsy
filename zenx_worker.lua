@@ -5480,7 +5480,6 @@ local function run(cfg)
                     -- baca cookie SETELAH client buka -> ke-timpa -> "gak kebaca".
                     if unameBaru ~= "" and unameBaru:lower() == akunG:lower() then
                         ok(("Cookie %s AMAN, siap (kebaca di client sebelum buka)"):format(akunG))
-                        KICK_DIURUS["cookie_ok:" .. pkgPendVerif] = akunG
                     else
                         -- prefs belum keupdate -> cek langsung dari cookie yang disuntik
                         local dbV = "/data/data/" .. pkgG .. "/app_webview/Default/Cookies"
@@ -5493,7 +5492,6 @@ local function run(cfg)
                         local unVck = (ckV ~= "" and ckV:find("_|WARNING")) and uname_dari_cookie(ckV) or ""
                         if unVck ~= "" and unVck:lower() == akunG:lower() then
                             ok(("Cookie %s AMAN, siap (kebaca dari cookie)"):format(akunG))
-                            KICK_DIURUS["cookie_ok:" .. pkgPendVerif] = akunG
                         elseif unameBaru ~= "" then
                             info(("Client kebaca sbg %s (nunggu update ke %s)"):format(unameBaru, akunG))
                         else
@@ -5517,6 +5515,17 @@ local function run(cfg)
                         info("Masuk ulang " .. clientG .. " dengan akun baru...")
                         open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil)
                         os.execute("sleep 3")
+                        -- v6.99: SUNTIK ULANG 2x setelah client dibuka. Pas client
+                        -- buka, Roblox WebView bisa nimpa cookie kita (balik akun
+                        -- lama / logout). Suntik ulang biar cookie KITA menang.
+                        -- Jeda antar suntik biar Roblox sempet "settle" dulu.
+                        for reSuntik = 1, 2 do
+                            os.execute("sleep 4")
+                            info(("Suntik ulang cookie %s (#%d) -- jaga2 ketimpa..."):format(akunG, reSuntik))
+                            os.execute(("timeout 120 %s login %s %s"):format(
+                                (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
+                                akunG, pkgG:gsub("com%.roblox%.", "")))
+                        end
                     end
                     -- v6.48: SIMPEN TARGET akun per client + jadwal CEK 60 detik
                     -- ke depan. Nanti worker cek: client udah beneran ganti ke
@@ -5616,19 +5625,6 @@ local function run(cfg)
             local target = KICK_DIURUS["target:" .. pkgPend]
             local jadwal = KICK_DIURUS["cekganti:" .. pkgPend]
             if target and jadwal and now >= jadwal then
-                -- v6.98: kalau cookie UDAH terverifikasi pas suntik (cookie_ok,
-                -- kebaca fresh sebelum client dibuka), langsung SUKSES. Gak baca
-                -- ulang cookie dari client -- pas client dibuka, Roblox WebView
-                -- bisa nimpa/hapus cookie kita -> baca ulang jadi "gak kebaca"
-                -- (false negatif). Kalau udah cookie_ok, ganti akun beneran sukses.
-                if KICK_DIURUS["cookie_ok:" .. pkgPend] == target then
-                    ok(("GANTI AKUN OK: %s udah jadi %s (terverifikasi pas suntik)"):format(pkgPend, target))
-                    KICK_DIURUS["target:" .. pkgPend] = nil
-                    KICK_DIURUS["cekganti:" .. pkgPend] = nil
-                    KICK_DIURUS["retry:" .. pkgPend] = nil
-                    KICK_DIURUS["gantigagal:" .. pkgPend] = nil
-                    KICK_DIURUS["cookie_ok:" .. pkgPend] = nil
-                else
                 -- baca akun asli di client (dari cookie, timeout biar gak hang)
                 local dbC = "/data/data/" .. pkgC .. "/app_webview/Default/Cookies"
                 local hK = io.popen(("timeout 8 su -c %s 2>/dev/null"):format(shq(
@@ -5697,7 +5693,6 @@ local function run(cfg)
                         end
                     end
                 end
-                end   -- v6.98: tutup else cookie_ok
             end
         end
 
