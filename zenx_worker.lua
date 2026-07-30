@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.91-cf"
+local VERSION = "6.92-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5430,12 +5430,16 @@ local function run(cfg)
             -- v6.45: ANTRE LOGIN. Backend bisa gabung banyak LOGIN pakai ";"
             -- (LOGIN:A:c1;LOGIN:B:c2;...) pas user spam ganti akun cepat. Proses
             -- SEMUA di antrean, satu-satu. Dulu cuma 1 yang kebaca (saling nimpa).
-            -- v6.46: HAPUS antrean LOGIN dari backend DULU (ganti FORCE) sebelum
-            -- diproses. Gitu tiap LOGIN diproses SEKALI, backend bersih -> LOGIN
-            -- yang SAMA bisa diulang kapan aja (suntik lagi dari panel = proses
-            -- lagi), gak keblok penanda permanen / gak auto-ulang tiap iterasi.
+            -- v6.46: HAPUS antrean LOGIN dari backend DULU (ganti perintah biasa)
+            -- sebelum diproses. Gitu tiap LOGIN diproses SEKALI, backend bersih.
+            -- v6.91: balik ke STANDBY kalau lagi standby (BUKAN hardcode FORCE) --
+            -- dulu selalu balik FORCE -> ganti akun pas standby malah bikin FORCE
+            -- (client kebuka). Sekarang: standby tetep standby, force tetep force.
+            local isiSblm = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+            local balikKe = (isiSblm:upper():find("STANDBY") or isiSblm:upper():find("STOP"))
+                            and "STANDBY" or "FORCE"
             pcall(function()
-                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(balikKe)), "PUT")
             end)
             -- v6.47: dedup DALAM antrean ini aja (biar kalau backend kebetulan
             -- gabung 2x client sama, gak diproses dobel). GAK ada penanda
@@ -5477,10 +5481,19 @@ local function run(cfg)
                     -- -> akun baru gak aktif (diem), apalagi pas standby. GAK
                     -- di-kill (force-stop) -- cukup open_one (am start) buat masuk
                     -- ulang; lebih ringan & cepet, cookie baru langsung kepakai.
-                    info("Masuk ulang " .. clientG .. " dengan akun baru...")
                     KICK_DIURUS["captcha:" .. pkgG] = nil   -- reset penanda captcha akun lama
-                    open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil)
-                    os.execute("sleep 3")
+                    -- v6.91: kalau lagi STANDBY, JANGAN buka client -- cukup suntik
+                    -- cookie (persiapan). Client dibuka nanti pas user FORCE. Cek
+                    -- perintah SEKARANG (isiSekarang) standby apa nggak.
+                    local isiSekarang = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+                    local lagiStandby = isiSekarang:upper():find("STANDBY") or isiSekarang:upper():find("STOP")
+                    if lagiStandby then
+                        info("STANDBY -- cookie disiapin, client DIBUKA pas FORCE nanti.")
+                    else
+                        info("Masuk ulang " .. clientG .. " dengan akun baru...")
+                        open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil)
+                        os.execute("sleep 3")
+                    end
                     -- v6.48: SIMPEN TARGET akun per client + jadwal CEK 60 detik
                     -- ke depan. Nanti worker cek: client udah beneran ganti ke
                     -- akun ini? Kalau belum -> lapor alasan + auto re-suntik.
