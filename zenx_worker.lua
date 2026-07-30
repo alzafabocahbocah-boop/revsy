@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.10-cf"
+local VERSION = "7.11-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -9141,6 +9141,150 @@ function uname_dari_cookie(ck)
     if h then h:close() end
     -- setelah decode, uname muncul sebagai teks: "uname" + panjang + nama
     return raw:match("uname..([a-zA-Z0-9_]+)")
+end
+
+-- v7.11: ZENX LOGIN ATAS/BAWAH/RANDOM -- auto-ambil akun dari POOL, isi client
+-- KOSONG (belum ada akun). atas=RF1 ambil dari atas pool, bawah=RF2 dari bawah,
+-- random=acak. Gak nabrak antar-RF (arah beda). Ulang sampai client kosong habis
+-- atau pool habis (standby nunggu cookie baru).
+if PERINTAH == "login" and arg and arg[2] and
+   (arg[2] == "atas" or arg[2] == "bawah" or arg[2] == "random") then
+    local arah = arg[2]
+    local cfg = load_config()
+    if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
+    print(C.BOLD .. C.C .. ("\n=== ZENX LOGIN POOL (%s) ===" .. C.N):format(arah:upper()))
+
+    local list = split(cfg.pkgs or "")
+    if #list == 0 then err("Gak ada client di config."); return end
+
+    -- cari client KOSONG (baca_username nil/kosong = belum ada akun)
+    local kosong = {}
+    for _, pkg in ipairs(list) do
+        local u = baca_username(pkg)
+        if not u or u == "" then kosong[#kosong+1] = pkg end
+    end
+    if #kosong == 0 then ok("Semua client udah ada akun. Gak ada yang kosong."); return end
+    info(("%d client kosong: %s"):format(#kosong,
+        table.concat((function() local t={} for _,k in ipairs(kosong) do t[#t+1]=k:gsub("com%%.roblox%%.","") end return t end)(), ", ")))
+
+    -- isi tiap client kosong: ambil akun dari pool -> suntik -> masuk
+    local terisi, poolHabis = 0, false
+    for _, pkg in ipairs(kosong) do
+        -- ambil akun dari pool (arah)
+        local resp = api_post(cfg, "/pool-ambil", string.format('{"arah":%s}', jstr(arah)), "POST") or ""
+        local ada = resp:find('"ada"%s*:%s*true')
+        if not ada then
+            warn("Pool habis -- gak ada akun siap lagi. Standby nunggu cookie baru.")
+            poolHabis = true
+            break
+        end
+        local akunP = resp:match('"akun"%s*:%s*"([^"]+)"')
+        if not akunP or akunP == "" then
+            warn("Respons pool aneh (gak ada akun): " .. resp:sub(1,120))
+            break
+        end
+        local clientPend = pkg:gsub("com%.roblox%.", "")
+        info(("-> %s: isi dengan %s (dari pool)"):format(clientPend, akunP))
+        -- panggil zenx login <akun> <client> (suntik cookie + masuk) via subprocess
+        local zbin = (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"
+        os.execute(("timeout 120 %s login %s %s"):format(zbin, akunP, clientPend))
+        -- verifikasi: akun beneran kepasang?
+        os.execute("sleep 3")
+        local uCek = baca_username(pkg)
+        if uCek and uCek:lower() == akunP:lower() then
+            ok(("%s <- %s BERHASIL"):format(clientPend, akunP))
+            -- tandai akun kepakai (hilang dari pool)
+            pcall(function()
+                api_post(cfg, "/pool-status",
+                    string.format('{"akun":%s,"pool":"kepakai"}', jstr(akunP)), "POST")
+            end)
+            terisi = terisi + 1
+        else
+            warn(("%s <- %s GAGAL (kebaca: %s). Balikin akun ke pool."):format(
+                clientPend, akunP, uCek or "kosong"))
+            -- gagal -> balikin akun ke pool (siap lagi)
+            pcall(function()
+                api_post(cfg, "/pool-status",
+                    string.format('{"akun":%s,"pool":"siap"}', jstr(akunP)), "POST")
+            end)
+        end
+        os.execute("sleep 2")
+    end
+    print("")
+    ok(("Selesai: %d client keisi%s"):format(terisi, poolHabis and " (pool habis)" or ""))
+    return
+end
+
+-- v7.11: ZENX GANTI -- client yang cookie-nya KE-BAN, ganti akun dari POOL.
+-- Cek tiap client: cookie ban? -> ambil akun pool (atas default) -> suntik.
+-- Beda dari login pool (yang isi client KOSONG); ini ganti client BAN.
+if PERINTAH == "ganti" then
+    local arah = (arg and arg[2]) or "atas"
+    if arah ~= "atas" and arah ~= "bawah" and arah ~= "random" then arah = "atas" end
+    local cfg = load_config()
+    if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
+    print(C.BOLD .. C.C .. "\n=== ZENX GANTI (client cookie ban) ===" .. C.N)
+
+    local SQg = "/data/data/com.termux/files/usr/bin/sqlite3"
+    local function ckClient(p)
+        local db = "/data/data/" .. p .. "/app_webview/Default/Cookies"
+        local h = io.popen(("timeout 8 su -c %s 2>/dev/null"):format(shq(
+            SQg .. " " .. db .. " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+        local out = h and h:read("*all") or ""
+        if h then h:close() end
+        out = (out or ""):gsub("%s+$", "")
+        return (out ~= "" and out:find("_|WARNING")) and out or nil
+    end
+
+    local list = split(cfg.pkgs or "")
+    if #list == 0 then err("Gak ada client di config."); return end
+
+    -- cari client yang cookie-nya BAN
+    info("Cek cookie tiap client (ban?)...")
+    local banClient = {}
+    for _, pkg in ipairs(list) do
+        local ck = ckClient(pkg)
+        if ck then
+            local keadaan = cek_cookie_roblox(ck)
+            if keadaan == "ban" then
+                banClient[#banClient+1] = pkg
+                info("  " .. pkg:gsub("com%.roblox%.","") .. " -> BAN")
+            end
+        end
+    end
+    if #banClient == 0 then ok("Gak ada client cookie ban. Semua aman."); return end
+    info(("%d client ban -> ganti dari pool"):format(#banClient))
+
+    local ganti, poolHabis = 0, false
+    for _, pkg in ipairs(banClient) do
+        local resp = api_post(cfg, "/pool-ambil", string.format('{"arah":%s}', jstr(arah)), "POST") or ""
+        if not resp:find('"ada"%s*:%s*true') then
+            warn("Pool habis -- gak ada akun siap. Standby nunggu cookie baru.")
+            poolHabis = true; break
+        end
+        local akunP = resp:match('"akun"%s*:%s*"([^"]+)"')
+        if not akunP or akunP == "" then warn("Respons pool aneh: " .. resp:sub(1,120)); break end
+        local clientPend = pkg:gsub("com%.roblox%.", "")
+        info(("-> %s (ban): ganti ke %s (dari pool)"):format(clientPend, akunP))
+        local zbin = (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"
+        os.execute(("timeout 120 %s login %s %s"):format(zbin, akunP, clientPend))
+        os.execute("sleep 3")
+        local uCek = baca_username(pkg)
+        if uCek and uCek:lower() == akunP:lower() then
+            ok(("%s <- %s BERHASIL"):format(clientPend, akunP))
+            pcall(function() api_post(cfg, "/pool-status",
+                string.format('{"akun":%s,"pool":"kepakai"}', jstr(akunP)), "POST") end)
+            ganti = ganti + 1
+        else
+            warn(("%s <- %s GAGAL. Balikin ke pool."):format(clientPend, akunP))
+            pcall(function() api_post(cfg, "/pool-status",
+                string.format('{"akun":%s,"pool":"siap"}', jstr(akunP)), "POST") end)
+        end
+        os.execute("sleep 2")
+    end
+    print("")
+    ok(("Selesai: %d client diganti%s"):format(ganti, poolHabis and " (pool habis)" or ""))
+    return
 end
 
 if PERINTAH == "login" then
