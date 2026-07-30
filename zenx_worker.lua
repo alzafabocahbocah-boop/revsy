@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.72-cf"
+local VERSION = "6.73-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3078,9 +3078,11 @@ local ERROR_SIFAT = {
     [268]="tunggu",   -- kebanyakan percobaan (rate limit)
     [529]="tunggu",   -- layanan Roblox lagi ngadat
     [517]="tunggu",   -- server lagi dimatiin
+    -- v6.72: 524 -> "ulang" (masuk kembali). User minta coba lagi -- 524 sering
+    -- muncul sementara (link PS baru di-assign belum sync), rejoin biasanya beres.
+    [524]="ulang",    -- gak diizinin masuk private server -> coba masuk lagi
     -- percuma diulang: butuh dibenerin manual
     [267]="manual",   -- di-kick script game
-    [524]="manual",   -- gak diizinin masuk private server (link salah/expired)
     [522]="manual",   -- place dibatesin
     [523]="manual",
 }
