@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.74-cf"
+local VERSION = "6.75-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5989,8 +5989,11 @@ local function run(cfg)
                 local jalanTapiDiem = (cacheRun[pkg] == true and cacheBridge[pkg] == false
                                        and mapAkun[pkg]) and true or false
                 if jalanTapiDiem then
-                    -- jeda cek grafis biar gak berat (grafis_kb mahal)
-                    if (now - (bekuSejak[pkg] or 0)) >= 60 then
+                    -- v6.74: jeda cek grafis 60 -> 30 detik. User minta cek terus
+                    -- langsung masukin -- biar client nyangkut Home kedeteksi &
+                    -- dimasukin lebih cepet (gak nunggu lama). grafis_kb ~12s,
+                    -- 30s masih aman (gak spam).
+                    if (now - (bekuSejak[pkg] or 0)) >= 30 then
                         bekuSejak[pkg] = now
                         local g = grafis_kb(pkg) or 0
                         if g < 30 * 1024 then
