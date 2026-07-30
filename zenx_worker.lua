@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.89-cf"
+local VERSION = "6.90-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8086,16 +8086,17 @@ if PERINTAH == "pasang" then
         save_config(cfgOto)
         ok("Config disimpan: " .. CONFIG_FILE)
 
-        -- perintah awal FORCE (v5.39) -- RF yang baru dipasang ya mau jalan
+        -- v6.89: perintah awal STANDBY (bukan FORCE). User minta FORCE HARUS dari
+        -- panel. Ini setup OTOMATIS (pasang.sh preset) -- yang beneran kepakai.
+        -- (Blok setup manual di atas juga udah STANDBY.)
         do
             local r = api_post(cfgOto, "/perintah",
-                string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfgOto.tim)), "PUT")
+                string.format('{"tim":%s,"isi":"STANDBY"}', jstr(cfgOto.tim)), "PUT")
             local sl = ambil_str(r or "", "error")
             if r == "" or sl then
                 warn("Perintah awal gak kekirim" .. (sl and (": " .. sl) or ""))
-                warn("  Nanti pencet 'Jalankan semua' di panel.")
             else
-                ok("Perintah awal: FORCE")
+                ok("Perintah awal: STANDBY -- client GAK dibuka. Pencet 'Jalankan semua' di panel buat mulai.")
             end
         end
 
