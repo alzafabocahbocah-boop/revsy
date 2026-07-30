@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.93-cf"
+local VERSION = "6.94-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8901,13 +8901,20 @@ end
 -- v6.02: GLOBAL (bukan local) -- dipanggil dari auto-setor (lebih awal di file)
 -- + gak nambah lokal (batas 200).
 function cek_cookie_roblox(cookie)
+    -- v6.93: guard cookie nil/kosong -> langsung "dead" (jangan write nil ->
+    -- CRASH "bad argument to write"). Kejadian pas cek cookie client yang belum
+    -- ada cookie (akun "?"). Dulu nil masuk ke write -> worker mati di tengah
+    -- ganti akun -> ganti akun gak kelar.
+    if not cookie or cookie == "" then
+        return "dead", "cookie kosong/nil"
+    end
     local tmp = (os.getenv("HOME") or ".") .. "/nx_ckcek.txt"
     os.remove(tmp)
     -- tulis header Cookie ke berkas biar cookie yang panjang gak kepotong di
     -- baris perintah (ada batas panjang argumen).
     local hf = io.open(tmp, "w")
     if not hf then return "error", "gak bisa nulis tmp" end
-    hf:write(".ROBLOSECURITY=", cookie)
+    hf:write(".ROBLOSECURITY=" .. cookie)
     hf:close()
 
     local alat = RIW and RIW.http and RIW.http.pilih() or "curl"
