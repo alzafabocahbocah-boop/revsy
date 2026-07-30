@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.81-cf"
+local VERSION = "6.82-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5399,6 +5399,14 @@ local function run(cfg)
 
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
         local isi  = ambil_str(resp, "isi") or ""
+        -- v6.82: kalau perintah KOSONG (worker baru jalan, panel belum pernah
+        -- set apa2 buat tim ini) -> anggap FORCE (jalan sendiri). Dulu worker
+        -- NGANGGUR sampai ada yang mencet "Jalankan semua" -- worker orang lain
+        -- yang baru jalan diem terus. Kosong = belum diatur = jelas mau jalan.
+        -- (STOP/STANDBY itu isi-nya keisi, bukan kosong -> gak ke-override.)
+        if isi == "" or isi == "-" then
+            isi = "FORCE"
+        end
         -- v6.29: LOGIN tertunda (kesimpen pas cek_batal) diproses DULUAN, biar
         -- gak keburu ketimpa FORCE. Ambil & bersihin penanda.
         if KICK_DIURUS["login_tertunda"] then
@@ -5930,7 +5938,17 @@ local function run(cfg)
         -- Perintah kesimpen di DB, jadi isinya = keadaannya.
         -- Gak perlu forceSticky kayak jaman ntfy (pesan kedaluwarsa).
         local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
-        local hit  = (not mati) and is_target(isi, cfg.targets)
+        -- v6.82: FORCE itu perintah UNIVERSAL -- worker APA PUN jalan pas FORCE,
+        -- gak peduli cfg.targets. Dulu hit CUMA is_target(isi, targets) -> kalau
+        -- targets worker beda dari kata di perintah, FORCE gak "hit" -> worker
+        -- gak buka client (walau di-start dari panel). STOP jalan (dicek
+        -- terpisah). Sekarang: FORCE / REJOIN / target-match -> semua bikin hit.
+        local isiU = isi:upper()
+        local hit  = (not mati) and (
+            isiU:find("FORCE") ~= nil or
+            isiU:find("REJOIN") ~= nil or
+            is_target(isi, cfg.targets)
+        )
 
         -- v4.24: status dasar buat panel (nanti ditimpa aksi spesifik kalau lagi kerja)
         if mati then
