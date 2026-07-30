@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.05-cf"
+local VERSION = "7.07-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2885,6 +2885,8 @@ local function petak_untuk(n, slot)
     if W == 0 or H == 0 then return nil, "gagal baca ukuran layar" end
     if not n or n < 1 then return nil, "jumlah client gak masuk akal" end
     slot = slot or 1
+    -- v7.06: paksa landscape (W = sisi panjang) -- samain dgn grid_hitung.
+    if W < H then W, H = H, W end
 
     local kol, bar
     local s = SUSUNAN[n]
@@ -2922,6 +2924,15 @@ end
 local function grid_hitung(cfg)
     local W, H = layar_ukuran()   -- udah nuker W/H kalau layar landscape
     if W == 0 or H == 0 then return nil, "gagal baca ukuran layar (wm size)" end
+
+    -- v7.06: PAKSA LANDSCAPE. RF kadang tiba-tiba balik portrait (wm size baca
+    -- 720x1280), tapi grid HARUS tetep dihitung kayak landscape (W = sisi
+    -- PANJANG, H = sisi pendek). Kalau W < H (kebaca portrait), TUKER -> W jadi
+    -- sisi panjang. Jadi grid 10 client selalu 5x2 (landscape), gak berantakan
+    -- jadi 2x5 sempit pas layar kebaca portrait. Client tetep landscape.
+    if W < H then
+        W, H = H, W
+    end
 
     local pkgs = split(cfg.pkgs)
     local n = #pkgs
@@ -6105,6 +6116,8 @@ local function run(cfg)
             -- stop_killed) biar gak kill tiap ronde. STANDBY biasa gak kill (client
             -- dibiarin, cuma gak buka baru).
             local isiStop = isi:upper():find("STOP")
+            info(("[STOP-DBG] isi='%s' isiStop=%s stop_killed=%s"):format(
+                isi, tostring(isiStop), tostring(KICK_DIURUS["stop_killed"])))
             if isiStop and not KICK_DIURUS["stop_killed"] then
                 warn("STOP dari panel -> tutup SEMUA client (balik awal)")
                 local n = close_all(cfg)
