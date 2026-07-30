@@ -9148,6 +9148,36 @@ if PERINTAH == "login" then
     local pj = cek and cek:read("*all") or ""
     if cek then cek:close() end
     pj = (pj or ""):gsub("%s+", "")
+
+    -- v6.94: kalau UPDATE gak kena row (panjang kosong = row .ROBLOSECURITY
+    -- BELUM ADA, client baru belum pernah login), INSERT row baru. UPDATE cuma
+    -- ngubah row yang udah ada -- client baru gak punya -> cookie gak masuk ->
+    -- "panjang ?" -> akun gak ganti. Ini sebab utama client baru gak bisa login.
+    if pj == "" then
+        info("Row cookie belum ada (client baru) -- INSERT baru...")
+        -- kolom minimal buat WebView Cookies: name, value, host_key, path,
+        -- is_secure, expires_utc. host_key .roblox.com biar kekirim ke roblox.
+        local ins = ('%s %s "INSERT INTO cookies (host_key,name,%s,path,is_secure,is_httponly,expires_utc,is_persistent,priority,samesite,source_scheme) VALUES (\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\',1,1,13300000000000000,1,1,-1,2)"'):format(
+            SQ, DB, kolom, ck_sql)
+        local hi = io.popen(("su -c %s 2>&1"):format(shq(ins)))
+        local iout = hi and hi:read("*all") or ""
+        if hi then hi:close() end
+        if iout and iout:find("[Ee]rror") then
+            -- kolom mungkin beda skema -> coba INSERT minimal (name+value+host+path)
+            warn("INSERT lengkap gagal, coba minimal: " .. iout:sub(1,80))
+            local ins2 = ('%s %s "INSERT INTO cookies (host_key,name,%s,path) VALUES (\'.roblox.com\',\'.ROBLOSECURITY\',\'%s\',\'/\')"'):format(
+                SQ, DB, kolom, ck_sql)
+            os.execute(("su -c %s >/dev/null 2>&1"):format(shq(ins2)))
+        end
+        -- cek ulang panjang setelah INSERT
+        local cek2 = io.popen(("su -c %s 2>/dev/null"):format(
+            shq(SQ .. " " .. DB ..
+                " \"SELECT length(" .. kolom .. ") FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+        pj = cek2 and cek2:read("*all") or ""
+        if cek2 then cek2:close() end
+        pj = (pj or ""):gsub("%s+", "")
+    end
+
     ok(("Cookie ketulis (panjang %s)."):format(pj ~= "" and pj or "?"))
 
     -- v6.40: UPDATE prefs.xml biar SINKRON sama cookie baru. Lapor status rutin
