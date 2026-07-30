@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.90-cf"
+local VERSION = "6.91-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5277,13 +5277,13 @@ local function run(cfg)
     -- nyusul di loop pertama. jadi tabel muncul INSTAN, gak nunggu dumpsys.
     for _, pkg in ipairs(split(cfg.pkgs)) do cacheRun[pkg] = nil end
     local function gambar_tabel(isi, statusPerintah)
-        -- v6.67: mode NOCLEAR buat debug/salin. Kalau env ZENX_NOCLEAR=1, tabel
-        -- GAK digambar sama sekali -- biar layar cuma isi LOG (numpuk bersih,
-        -- gampang disalin banyak, gak ketimbun tabel tiap redraw). Jalanin:
-        --   ZENX_NOCLEAR=1 zenx
-        -- Normal (tanpa env) clear + gambar tabel kayak biasa.
-        if os.getenv("ZENX_NOCLEAR") == "1" then
-            return   -- skip gambar tabel; log jalan terus & numpuk
+        -- v6.90: DEFAULT skip tabel -- cuma LOG yang numpuk (gak dihapus/clear).
+        -- User minta log jangan ke-clear terus (tabel gak penting, status client
+        -- ada di panel). Dulu tabel di-redraw + clear screen tiap 5s -> log lama
+        -- keilangan. Sekarang tabel gak digambar, clear screen gak jalan -> log
+        -- numpuk terus (bisa discroll & disalin). Mau tabel balik? set ZENX_TABEL=1.
+        if os.getenv("ZENX_TABEL") ~= "1" then
+            return   -- skip tabel + skip clear screen; log numpuk terus
         end
         io.write("\27[2J\27[H")   -- clear screen + kursor ke kiri atas
         local used, free, total = cacheRam[1], cacheRam[2], cacheRam[3]
