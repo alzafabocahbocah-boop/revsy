@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.82-cf"
+local VERSION = "6.83-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5390,6 +5390,18 @@ local function run(cfg)
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
 
+    -- v6.83: LAPOR AWAL sebelum loop -- scan client + akun, kirim ke panel
+    -- LANGSUNG (gak nunggu 20 detik lapor rutin / gak nunggu FORCE). Biar panel
+    -- gak KOSONG pas worker baru jalan / standby -> user bisa langsung ganti akun.
+    do
+        info("Lapor awal ke panel (client + akun)...")
+        refresh_status()   -- isi cacheRun (client nyala apa nggak)
+        local isiAwal = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+        local ia = ambil_str(isiAwal, "isi") or ""
+        lapor(cfg, ia, cacheRun)   -- kirim daftar client + akun ke panel
+        lastStatus = os.time()
+    end
+
     while true do
         -- ===== v4.2: pintu keluar =====
         if ada_stop() then
@@ -5441,15 +5453,31 @@ local function run(cfg)
                 local akunG, clientG = satu:match("^LOGIN:([^:]+):([^:]+)")
                 if akunG and clientG and not dproses[satu] then
                     dproses[satu] = true
-                    print("")
-                    print(C.BOLD .. C.C .. ">>> LOGIN <<<" .. C.N)
-                    info(("Suntik cookie: %s -> client %s"):format(akunG, clientG))
-                    KICK_DIURUS["mati:" .. akunG] = nil
                     local pkgG = clientG:find("%.") and clientG or ("com.roblox." .. clientG)
+                    -- v6.83: baca akun LAMA (yang lagi kepasang di client ini)
+                    -- SEBELUM suntik -> log jelas "akun lama -> akun baru".
+                    local akunLama = baca_username(pkgG) or "?"
+                    print("")
+                    print(C.BOLD .. C.C .. ">>> GANTI AKUN <<<" .. C.N)
+                    info(("Client %s: cookie %s -> %s"):format(
+                        clientG, akunLama, akunG))
+                    KICK_DIURUS["mati:" .. akunG] = nil
                     os.execute(("timeout 120 %s login %s %s"):format(
                         (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
                         akunG, pkgG:gsub("com%.roblox%.", "")))
-                    ok(("LOGIN selesai: %s -> %s"):format(akunG, clientG))
+                    -- v6.83: CEK akun baru kebaca di client (dari prefs.xml,
+                    -- pakai baca_username yg udah ke-scope). Kalau username di
+                    -- client udah = akun baru -> cookie kebaca, AMAN siap. Kalau
+                    -- masih kosong/akun lama -> tunggu (prefs kadang telat ke-update).
+                    os.execute("sleep 1")   -- kasih waktu prefs ke-tulis
+                    local unameBaru = baca_username(pkgG) or ""
+                    if unameBaru ~= "" and unameBaru:lower() == akunG:lower() then
+                        ok(("Cookie %s AMAN, siap (kebaca di client)"):format(akunG))
+                    elseif unameBaru ~= "" then
+                        info(("Client kebaca sbg %s (nunggu update ke %s)"):format(unameBaru, akunG))
+                    else
+                        info(("Cookie %s kesuntik -- kebaca pas masuk game"):format(akunG))
+                    end
                     -- v6.69: LANGSUNG MASUK ULANG client abis suntik cookie (ke
                     -- public). Tanpa ini, cookie kesuntik TAPI client gak dibuka
                     -- -> akun baru gak aktif (diem), apalagi pas standby. GAK
@@ -5611,11 +5639,26 @@ local function run(cfg)
             lastLisensiCek = now
             local kd = lisensi_keadaan(cfg)
             if kd == "hilang" and (now - (BYPASS_TERAKHIR or 0)) > 300 then
-                warn("Lisensi HILANG (cek berkala) -- ambil key baru sekarang")
-                -- open_all dgn fast=false biar blok bypass di dalamnya jalan.
-                -- only=nil (semua). Ini nutup semua client + bypass + buka ulang.
-                open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false)
-                refresh_status(); lastStatusCek = os.time()
+                if mati then
+                    -- v6.83: STANDBY -> cek lisensi & AMBIL KEY doang (bypass_kunci),
+                    -- TANPA buka client (open_all). User minta: pas standby cek
+                    -- lisensi sekalian biar pas start langsung siap -- tapi jangan
+                    -- buka client (standby = gak buka). Jadi key udah siap nunggu FORCE.
+                    warn("Lisensi HILANG (standby) -- ambil key doang (client gak dibuka)")
+                    local okB, pesanB = bypass_kunci(cfg, nil, false)
+                    if okB then
+                        ok("Key Delta siap (standby) -- pas start langsung jalan")
+                        BYPASS_TERAKHIR = now
+                    else
+                        warn("Bypass key gagal (standby): " .. tostring(pesanB))
+                    end
+                else
+                    warn("Lisensi HILANG (cek berkala) -- ambil key baru sekarang")
+                    -- open_all dgn fast=false biar blok bypass di dalamnya jalan.
+                    -- only=nil (semua). Ini nutup semua client + bypass + buka ulang.
+                    open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false)
+                    refresh_status(); lastStatusCek = os.time()
+                end
             end
         end
 
