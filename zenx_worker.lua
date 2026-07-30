@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "6.70-cf"
+local VERSION = "6.72-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2909,6 +2909,15 @@ local function grid_hitung(cfg)
     else
         bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
     end
+    -- v6.71: JARING PENGAMAN landscape. Layar landscape (W>=H) HARUS punya kolom
+    -- >= baris (lebih lebar). Kalau kebalik (kol < bar -> jendela jadi tinggi
+    -- sempit / kadang 1 baris aneh), TUKER. Ini nangkep kasus grid kacau pas
+    -- ukuran layar kebaca nanggung. n>=2 aja (n=1 gak masalah).
+    if W >= H and n >= 2 and kol < bar then
+        kol, bar = bar, kol
+    end
+    -- pastiin kol*bar cukup nampung semua client (jangan ada yang kepotong)
+    while kol * bar < n do kol = kol + 1 end
 
     local lebar, tinggi = math.floor(W / kol), math.floor(H / bar)
     local peta = {}
@@ -3063,7 +3072,7 @@ local ERROR_SIFAT = {
     -- masuk ulang langsung: koneksi putus / kelempar biasa
     [260]="ulang", [261]="ulang", [262]="ulang", [269]="ulang", [270]="ulang",
     [272]="ulang", [273]="ulang", [277]="ulang", [279]="ulang", [280]="ulang",
-    [291]="ulang", [292]="ulang",
+    [291]="ulang", [292]="ulang", [773]="ulang",  -- 773: teleport ke place restricted
     -- backoff dulu: server/akun lagi dibatesin, buru-buru = makin parah
     [264]="tunggu",   -- akun yang sama join di tempat lain
     [268]="tunggu",   -- kebanyakan percobaan (rate limit)
@@ -3159,7 +3168,10 @@ local function klasifikasi_layar(isi)
         end
     end
 
-    local kode = tonumber(isi:match("[Ee]rror [Cc]ode:?%s*(%d+)"))
+    -- v6.71: match case-insensitive (isi:lower). Dulu "[Ee]rror [Cc]ode" gak
+    -- nangkep "ERROR CODE" (semua kapital, kayak teks kick asli) -> kode gak
+    -- kebaca -> error kayak 773 gak ke-handle. Sekarang lower dulu.
+    local kode = tonumber(isi:lower():match("error code:?%s*(%d+)"))
     if kode then
         local sifat = ERROR_SIFAT[kode] or "ulang"
 
@@ -3729,6 +3741,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     local stat0 = (not fast) and api_get(cfg, "/stat") or ""
     -- v4.82: petak dihitung SEKALI di awal, dari urutan cfg.pkgs (tetap) --
     -- bukan urutan buka, yang suka diacak (client stok habis didahuluin).
+    -- v6.71: PAKSA LANDSCAPE dulu SEBELUM hitung grid. Kalau layar lagi portrait
+    -- pas grid dihitung, layar_ukuran() baca W/H portrait -> susunan kacau (8
+    -- client bisa jadi 1 baris kecil2). User mau SELALU landscape + grid rapi
+    -- konsisten. Set rotasi landscape + tunggu 1 detik biar rotate kelar, baru
+    -- baca ukuran. (accelerometer_rotation 0 = matiin auto-rotate biar gak balik.)
+    sh("su -c 'settings put system accelerometer_rotation 0 >/dev/null 2>&1; " ..
+       "settings put system user_rotation 1 >/dev/null 2>&1'")
+    os.execute("sleep 1")
     local petaGrid = nil
     if cfg.auto_grid == true then
         local p, sebabGrid = grid_hitung(cfg)
@@ -6486,12 +6506,13 @@ local function run(cfg)
                                         akun, errUi, KILL_MAKS))
                                     nudgeCnt[pkg] = nil
                                 else
-                                catat_kill(pkg)
-                                tambahLog(string.format("DISCONNECT: %s kena '%s' -> tutup & masuk ulang", akun, errUi))
-                                close_all(cfg, pkg, mapLink)
-                                os.execute("sleep 2")
+                                -- v6.70: DISCONNECT/koneksi terputus -> MASUK KEMBALI
+                                -- (open_one), GAK di-kill (close_all). User minta:
+                                -- semua disconnect cukup masuk lagi, jangan bunuh.
+                                -- am start munculin window + join link -> masuk lagi.
+                                tambahLog(string.format("DISCONNECT: %s kena '%s' -> masuk kembali (gak dibunuh)", akun, errUi))
                                 open_one(cfg, pkg, mapLink[pkg])
-                                notify("ZenX "..cfg.tim, akun .. " " .. errUi .. " -> masuk ulang")
+                                notify("ZenX "..cfg.tim, akun .. " " .. errUi .. " -> masuk kembali")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
                                 end
@@ -6528,24 +6549,26 @@ local function run(cfg)
                                     tambahLog(("   (lisensi Delta umur %s -- kalau abis ini tetep diem, kemungkinan nyangkut di layar key: jalanin `zenx cari %s`)")
                                         :format(umur_ringkas(licUmur), pkg:gsub("com%%.roblox%%.", "")))
                                 end
-                                tambahLog(string.format("AUTO-REJOIN: %s dibangunin 2x masih diem -> rejoin penuh", akun))
-                                close_all(cfg, pkg, mapLink)
-                                os.execute("sleep 2")
+                                -- v6.70: JANGAN kill (close_all) -- cukup open_one
+                                -- (masuk ulang ke server). User minta: nyangkut home
+                                -- gak usah dibunuh, cukup masukin lagi. am start
+                                -- munculin window + join link; kalau nyangkut home,
+                                -- link-nya jalan (join). Lebih ringan, gak reset client.
+                                tambahLog(string.format("AUTO-REJOIN: %s dibangunin 2x masih diem -> masuk ulang (gak dibunuh)", akun))
                                 open_one(cfg, pkg, mapLink[pkg])
-                                notify("ZenX "..cfg.tim, "auto-rejoin "..akun.." (nudge gagal)")
+                                notify("ZenX "..cfg.tim, "masuk ulang "..akun.." (nyangkut)")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
                                 end
                             end
                             end   -- v4.38: tutup cabang "gak ada dialog error"
                         elseif diem > ambang then
-                            -- beneran keluar game (proses gak di layar game) -> rejoin penuh
-                            tambahLog(string.format("AUTO-REJOIN: %s off %dm -> rejoin",
+                            -- v6.70: keluar game -> MASUK KEMBALI (open_one), GAK
+                            -- di-kill. Semua disconnect/keluar game cukup masuk lagi.
+                            tambahLog(string.format("AUTO-REJOIN: %s off %dm -> masuk kembali (gak dibunuh)",
                                 akun, math.floor(diem/60)))
-                            close_all(cfg, pkg, mapLink)  -- tutup client ini doang
-                            os.execute("sleep 2")
                             open_one(cfg, pkg, mapLink[pkg])   -- buka lagi ke PS-nya
-                            notify("ZenX "..cfg.tim, "auto-rejoin "..akun.." (keluar game)")
+                            notify("ZenX "..cfg.tim, "masuk kembali "..akun.." (keluar game)")
                             nudgeCnt[pkg] = nil
                             os.execute("sleep " .. (cfg.stagger_sec or 10))  -- jeda sebelum cek berikutnya
                         end
