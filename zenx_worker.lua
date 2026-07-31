@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.33-cf"
+local VERSION = "7.35-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2411,29 +2411,24 @@ end
 --   0 = jangan minta apa-apa (kayak v4.0)
 local WIN_OK = nil   -- nil=belum dites, true=didukung, false=ditolak
 
-local function open_one(cfg, pkg, link_client)
+local function open_one(cfg, pkg, link_client, alasan)
     -- v6.64: GUARD CAPTCHA. Kalau client kena captcha (penanda dari cek captcha),
     -- JANGAN rejoin -- percuma, captcha butuh solve manual, rejoin cuma mancing
     -- verif lagi. Semua jalur rejoin lewat sini, jadi cukup dijaga di satu titik.
     if KICK_DIURUS["captcha:" .. pkg] then
         return   -- di-skip, nunggu user solve manual
     end
-    -- v7.32b: LOG SETIAP REJOIN. Ambil traceback DI SINI (scope open_one), cari
-    -- baris PEMANGGIL (baris ke-2 di traceback yg nyebut zenx_worker.lua -- baris
-    -- pertama = open_one sendiri, kedua = yang manggil). Buat tau jalur rejoin.
+    -- v7.34: LOG SETIAP REJOIN dengan ALASAN yang jelas (label dari pemanggil,
+    -- gak ngandelin traceback yg suka salah). Tiap jalur open_one kasih `alasan`.
+    -- `zenx rejoin-log` nampilin ringkasan per alasan -> langsung ketauan jalur
+    -- mana yang bikin rejoin bareng/sering. alasan nil = "start/buka-awal".
     do
-        local tb = debug.traceback("", 2) or ""
-        -- kumpulin semua nomor baris zenx_worker.lua di traceback
-        local barisList = {}
-        for ln in tb:gmatch("zenx_worker%.lua:(%d+)") do barisList[#barisList+1] = ln end
-        -- baris[1] = dalam open_one (deket sini), baris[2] = PEMANGGIL asli
-        local pemanggil = barisList[2] or barisList[1] or "?"
+        local al = alasan or "start"
         pcall(function()
             local nama = pkg:gsub("com%.roblox%.", "")
             local f = io.open("/sdcard/zenx_rejoin.log", "a")
             if f then
-                f:write(string.format("%s | %s | baris=%s\n",
-                    os.date("%H:%M:%S"), nama, pemanggil))
+                f:write(string.format("%s | %s | %s\n", os.date("%H:%M:%S"), nama, al))
                 f:close()
             end
         end)
@@ -3777,7 +3772,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         end
                     end
                     info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
-                    open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
+                    open_one(cfg, pilih, mapLink and mapLink[pilih] or nil, "start-bypass")
                     tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
                     -- v5.57: nunggu SINYAL, bukan nebak waktu. tunggu_jalan
                     -- cuma mastiin activity Roblox nongol -- dan itu udah kena
@@ -3874,7 +3869,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         warn(("  client balik ke Home (grafis %.1f MB) -- masukin lagi ke game"):format(gnow/1024))
                         -- BUKA lagi (open_one) -- tunggu_masuk_game cuma NUNGGU,
                         -- gak masukin. Harus di-open_one dulu biar beneran masuk.
-                        open_one(cfg, pilih, mapLink and mapLink[pilih] or nil)
+                        open_one(cfg, pilih, mapLink and mapLink[pilih] or nil, "balik-home-startup")
                         local msk2 = tunggu_masuk_game(pilih, 90, cek_batal)
                         if msk2 then
                             ok("  udah balik di game -- lanjut sapu titik")
@@ -4113,7 +4108,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                             end
                         end
                     end
-                    open_one(cfg, pkg, link_c)
+                    open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v7.29: MODE TEMBAK BARENGAN -- skip tunggu masuk game (grafis).
                     -- JANGAN jaga_depan tiap client di sini -- jaga_depan monkey
@@ -4490,7 +4485,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     elseif hasilCap == "REJOIN" then
                         -- v6.73: error kick (save data/disconnect) -> masuk lagi
                         info("KICK: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
-                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil)
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "diagnosa-kick")
                     end
                 end
             end
@@ -5719,7 +5714,7 @@ local function run(cfg)
                         -- v7.02: GAK perlu suntik ulang (spam). Cookie udah masuk
                         -- bener (creation_utc wajar -> Roblox terima, gak dihapus).
                         info("Masuk ulang " .. clientG .. " dengan akun baru...")
-                        open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil)
+                        open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil, "ganti-akun")
                         os.execute("sleep 3")
                     end
                     -- v6.48: SIMPEN TARGET akun per client + jadwal CEK 60 detik
@@ -5808,7 +5803,7 @@ local function run(cfg)
                                    or (ceC == "" and "nyangkut (bukan captcha)")
                                    or "off gak jelas"
                     tambahLog("TEMBAK MASUK: " .. akKand .. " (" .. sebabT .. ")")
-                    open_one(cfg, kand, mapLink and mapLink[kand] or nil)
+                    open_one(cfg, kand, mapLink and mapLink[kand] or nil, "dump-tembak")
                 end
             end
         end
@@ -6078,7 +6073,7 @@ local function run(cfg)
                         close_all(cfg, semua and nil or pkgRejoin, mapLink)
                         os.execute("sleep 2")
                         for i, pkg in ipairs(pkgRejoin) do
-                            open_one(cfg, pkg, mapLink[pkg])
+                            open_one(cfg, pkg, mapLink[pkg], "rejoin-manual-panel")
                             if i < #pkgRejoin then os.execute("sleep " .. (cfg.stagger_sec or 10)) end
                         end
                         notify("ZenX "..cfg.tim, "rejoin " .. #pkgRejoin .. " akun")
@@ -6388,7 +6383,7 @@ local function run(cfg)
                 tambahLog(("MATI BARENGAN: %d client keluar bareng -> masukin lagi (delay 12s per client)"):format(#matiBareng))
                 for _, pkg in ipairs(matiBareng) do
                     RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-bareng")
-                    open_one(cfg, pkg, mapLink[pkg])
+                    open_one(cfg, pkg, mapLink[pkg], "mati-bareng")
                     jaga_depan(cfg, mapLink)   -- munculin jendela tiap abis buka
                     refresh_status()
                     gambar_tabel(isi)
@@ -6405,7 +6400,7 @@ local function run(cfg)
                               .. " -> dibuka lagi")
                     RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-mendadak")
                     setAksi("buka lagi " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")))
-                    open_one(cfg, pkg, mapLink[pkg])
+                    open_one(cfg, pkg, mapLink[pkg], "mati-mendadak")
                     os.execute("sleep 3")
                     refresh_status(); lastStatusCek = os.time()
                     gambar_tabel(isi)
@@ -6498,7 +6493,7 @@ local function run(cfg)
                                           (kead == "alive" and "ON" or kead) .. " -> masukin game")
                                 RIW.catat("REJOIN", ak or pkg, "karena=nyangkut-home")
                                 setAksi("masukin " .. namaP)
-                                open_one(cfg, pkg, mapLink[pkg])   -- am start, TANPA kill
+                                open_one(cfg, pkg, mapLink[pkg], "nyangkut-home")   -- am start, TANPA kill
                                 os.execute("sleep 3")
                                 refresh_status(); lastStatusCek = os.time()
                                 gambar_tabel(isi)
@@ -6773,7 +6768,7 @@ local function run(cfg)
                     close_all(cfg, pindahPkg, mapLink)   -- SEKALI JALAN buat semuanya
                     os.execute("sleep 2")
                     for i, pkg in ipairs(pindahPkg) do
-                        open_one(cfg, pkg, mapLink[pkg])
+                        open_one(cfg, pkg, mapLink[pkg], "pindah-warehouse")
                         tambahLog("   -> " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
                                   .. " dibuka lagi di " .. ((mapPsNama[pkg] or "") ~= "" and mapPsNama[pkg] or "public"))
                         -- jeda cuma ANTAR buka (biar RAM gak kaget), bukan tiap tutup
@@ -6834,7 +6829,7 @@ local function run(cfg)
                         -- v6.73: error kick (save data/disconnect/teleport) -> masuk
                         -- lagi LANGSUNG, gak usah lewat jalur diem/nudge yang lama.
                         tambahLog("KICK: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
-                        open_one(cfg, pkg, mapLink[pkg])
+                        open_one(cfg, pkg, mapLink[pkg], "rejoin-diagnosa")
                         lewatiCaptcha = true   -- udah ditangani, skip sisa
                     end
                 end
@@ -6929,7 +6924,7 @@ local function run(cfg)
                             sh_silent("am force-stop " .. pkg)
                             sh_silent("su -c 'am force-stop " .. pkg .. "'")
                             os.execute("sleep 2")
-                            open_one(cfg, pkg, mapLink[pkg])
+                            open_one(cfg, pkg, mapLink[pkg], "diem-diagnosa")
                             os.execute("sleep 3")
                             refresh_status(); lastStatusCek = os.time()
                         end
@@ -7047,7 +7042,7 @@ local function run(cfg)
                                 nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
                                 tambahLog(string.format("HOME: %s %s -> rejoin ke PS (percobaan %d), GAK dibunuh",
                                     akun, errUi, nudgeCnt[pkg]))
-                                open_one(cfg, pkg, mapLink[pkg])
+                                open_one(cfg, pkg, mapLink[pkg], "home-nudge")
                                 os.execute("sleep 5")   -- kasih waktu join
                                 errUi = nil             -- jangan jatuh ke blok bunuh
                             end
@@ -7065,7 +7060,7 @@ local function run(cfg)
                                 -- semua disconnect cukup masuk lagi, jangan bunuh.
                                 -- am start munculin window + join link -> masuk lagi.
                                 tambahLog(string.format("DISCONNECT: %s kena '%s' -> masuk kembali (gak dibunuh)", akun, errUi))
-                                open_one(cfg, pkg, mapLink[pkg])
+                                open_one(cfg, pkg, mapLink[pkg], "disconnect-errui")
                                 notify("ZenX "..cfg.tim, akun .. " " .. errUi .. " -> masuk kembali")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
@@ -7082,7 +7077,7 @@ local function run(cfg)
                                 -- jadi gak ada alasan buru-buru bunuh.
                                 tambahLog(string.format("DIEM: %s %dm gak lapor -> tembak link PS (%d/4), gak dibunuh",
                                     akun, math.floor(diem/60), nudgeCnt[pkg]))
-                                open_one(cfg, pkg, mapLink[pkg])
+                                open_one(cfg, pkg, mapLink[pkg], "diem-nudge")
                                 os.execute("sleep 5")
                             else
                                 -- udah dibangunin 2x masih diem -> script beneran mati -> rejoin penuh
@@ -7109,7 +7104,7 @@ local function run(cfg)
                                 -- munculin window + join link; kalau nyangkut home,
                                 -- link-nya jalan (join). Lebih ringan, gak reset client.
                                 tambahLog(string.format("AUTO-REJOIN: %s dibangunin 2x masih diem -> masuk ulang (gak dibunuh)", akun))
-                                open_one(cfg, pkg, mapLink[pkg])
+                                open_one(cfg, pkg, mapLink[pkg], "auto-rejoin-dibangunin")
                                 notify("ZenX "..cfg.tim, "masuk ulang "..akun.." (nyangkut)")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
@@ -7121,7 +7116,7 @@ local function run(cfg)
                             -- di-kill. Semua disconnect/keluar game cukup masuk lagi.
                             tambahLog(string.format("AUTO-REJOIN: %s off %dm -> masuk kembali (gak dibunuh)",
                                 akun, math.floor(diem/60)))
-                            open_one(cfg, pkg, mapLink[pkg])   -- buka lagi ke PS-nya
+                            open_one(cfg, pkg, mapLink[pkg], "auto-rejoin-offlama")   -- buka lagi ke PS-nya
                             notify("ZenX "..cfg.tim, "masuk kembali "..akun.." (keluar game)")
                             nudgeCnt[pkg] = nil
                             os.execute("sleep " .. (cfg.stagger_sec or 10))  -- jeda sebelum cek berikutnya
@@ -7185,7 +7180,7 @@ local function run(cfg)
                     if not KICK_DIURUS["captcha:" .. pkg] and not baruDibuka then
                         local ak = (mapAkun and mapAkun[pkg]) or r.nama
                         tambahLog(("[logcat] %s disconnect (kode %s) -> REJOIN"):format(ak, r.kode))
-                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil)
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "logcat-stream")
                     end
                 end
             end)
@@ -7294,7 +7289,7 @@ if PERINTAH == "set" then
     local tok, tket = tata_satu(pkg, petak)
     if not tok then err("Gagal nulis posisi: " .. tostring(tket)); return end
     ok("Posisi ketulis: " .. tket)
-    open_one(cfg, pkg, nil)
+    open_one(cfg, pkg, nil, "cli-manual")
     for sisa = 40, 1, -1 do
         io.write(("\r   nunggu client nyala... %2ds"):format(sisa))
         io.flush(); os.execute("sleep 1")
@@ -7356,7 +7351,7 @@ if PERINTAH == "catat" then
     os.execute("sleep 2")
     local tok, tket = tata_satu(pkg, petak)
     if not tok then err("Gagal nulis posisi: " .. tostring(tket)); return end
-    open_one(cfg, pkg, nil)
+    open_one(cfg, pkg, nil, "cli-manual")
     for sisa = 40, 1, -1 do
         io.write(("\r   nunggu client nyala & layar key nongol... %2ds"):format(sisa))
         io.flush(); os.execute("sleep 1")
@@ -7619,7 +7614,7 @@ if PERINTAH == "ukur" then
     ok("Posisi ketulis: " .. tket)
 
     info("Buka lagi client-nya...")
-    open_one(cfg, pkg, nil)
+    open_one(cfg, pkg, nil, "cli-manual")
 
     -- tungguin dia nyala + nyampe layar key
     local tunggu = 45
@@ -8036,22 +8031,23 @@ if PERINTAH == "rejoin-log" then
     local baris = {}
     for l in isi:gmatch("[^\n]+") do baris[#baris+1] = l end
 
-    -- ringkasan: per baris kode (jalur mana yang paling sering rejoin)
+    -- ringkasan: per ALASAN (jalur) -- yang paling sering = biang rejoin
     local perBaris, perClient = {}, {}
     for _, l in ipairs(baris) do
-        local br = l:match("baris=(%S+)") or "?"
-        local cl = l:match("| (%S+) | baris") or "?"
-        perBaris[br] = (perBaris[br] or 0) + 1
+        -- format: "HH:MM:SS | client | alasan"
+        local cl = l:match("| (%S+) | ") or "?"
+        local al = l:match("| %S+ | (.+)$") or "?"
+        perBaris[al] = (perBaris[al] or 0) + 1
         perClient[cl] = (perClient[cl] or 0) + 1
     end
     info(("Total %d rejoin terekam:"):format(#baris))
     print()
-    info("Per JALUR (baris kode) -- yang paling sering = biang rejoin:")
+    info("Per ALASAN -- yang paling sering = biang rejoin:")
     -- urut dari terbanyak
     local arrB = {}
     for br, n in pairs(perBaris) do arrB[#arrB+1] = {br, n} end
     table.sort(arrB, function(a,b) return a[2] > b[2] end)
-    for _, e in ipairs(arrB) do print(("   baris %-6s x%d"):format(e[1], e[2])) end
+    for _, e in ipairs(arrB) do print(("   %-22s x%d"):format(e[1], e[2])) end
     print()
     info("Per CLIENT:")
     local arrC = {}
