@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.31-cf"
+local VERSION = "7.32-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2418,6 +2418,22 @@ local function open_one(cfg, pkg, link_client)
     if KICK_DIURUS["captcha:" .. pkg] then
         return   -- di-skip, nunggu user solve manual
     end
+    -- v7.32: LOG SETIAP REJOIN ke /sdcard/zenx_rejoin.log -- catat WAKTU, CLIENT,
+    -- dan DARI MANA dipanggil (baris kode pemanggil via traceback). Buat tau
+    -- kenapa worker sering rejoin + jalur mana yang bandel (rejoin bareng).
+    -- `zenx rejoin-log` buat liat. Semua rejoin lewat open_one, jadi 1 titik.
+    pcall(function()
+        local nama = pkg:gsub("com%.roblox%.", "")
+        -- traceback: cari baris pemanggil (level 2-4, lewat baris ini sendiri)
+        local tb = debug.traceback("", 2) or ""
+        local pemanggil = tb:match("zenx_worker%.lua:(%d+)") or "?"
+        local f = io.open("/sdcard/zenx_rejoin.log", "a")
+        if f then
+            f:write(string.format("%s | %s | baris=%s\n",
+                os.date("%H:%M:%S"), nama, pemanggil))
+            f:close()
+        end
+    end)
     local url = build_url(cfg, link_client)
     local wm = tonumber(cfg.win_mode) or 0
 
@@ -7999,6 +8015,55 @@ end
 -- Cara: ambil PID tiap client -> filter logcat by PID -> cari baris disconnect/
 -- kick/reason. Kode 285=DisconnectClientInitiated (keluar sendiri/backgrounding),
 -- 267=kicked (game/experience Kick), 264=dobel login, 277=lost connection, dll.
+if PERINTAH == "rejoin-log" then
+    -- v7.32: liat log rejoin (siapa + dari baris mana + berapa sering).
+    local sub = arg and arg[2] or ""
+    local RJ = "/sdcard/zenx_rejoin.log"
+    if sub == "clear" or sub == "hapus" then
+        os.execute("rm -f " .. RJ)
+        ok("Log rejoin dihapus.")
+        return
+    end
+    print(C.BOLD .. C.C .. "\n=== ZENX REJOIN-LOG ===\n" .. C.N)
+    local f = io.open(RJ, "r")
+    if not f then warn("Belum ada log rejoin (worker belum rejoin apa-apa)."); return end
+    local isi = f:read("*all") or ""; f:close()
+    if isi == "" then warn("Log rejoin kosong."); return end
+    local baris = {}
+    for l in isi:gmatch("[^\n]+") do baris[#baris+1] = l end
+
+    -- ringkasan: per baris kode (jalur mana yang paling sering rejoin)
+    local perBaris, perClient = {}, {}
+    for _, l in ipairs(baris) do
+        local br = l:match("baris=(%S+)") or "?"
+        local cl = l:match("| (%S+) | baris") or "?"
+        perBaris[br] = (perBaris[br] or 0) + 1
+        perClient[cl] = (perClient[cl] or 0) + 1
+    end
+    info(("Total %d rejoin terekam:"):format(#baris))
+    print()
+    info("Per JALUR (baris kode) -- yang paling sering = biang rejoin:")
+    -- urut dari terbanyak
+    local arrB = {}
+    for br, n in pairs(perBaris) do arrB[#arrB+1] = {br, n} end
+    table.sort(arrB, function(a,b) return a[2] > b[2] end)
+    for _, e in ipairs(arrB) do print(("   baris %-6s x%d"):format(e[1], e[2])) end
+    print()
+    info("Per CLIENT:")
+    local arrC = {}
+    for cl, n in pairs(perClient) do arrC[#arrC+1] = {cl, n} end
+    table.sort(arrC, function(a,b) return a[2] > b[2] end)
+    for _, e in ipairs(arrC) do print(("   %-10s x%d"):format(e[1], e[2])) end
+    print()
+    info("Detail (30 terakhir):")
+    local mulai = math.max(1, #baris - 29)
+    for i = mulai, #baris do print("   " .. baris[i]) end
+    print()
+    info("Tempel ini ke chat -- biar tau baris mana yang bikin rejoin bareng.")
+    info("Hapus: zenx rejoin-log clear")
+    return
+end
+
 if PERINTAH == "logcat" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
