@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.32-cf"
+local VERSION = "7.33-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2418,22 +2418,26 @@ local function open_one(cfg, pkg, link_client)
     if KICK_DIURUS["captcha:" .. pkg] then
         return   -- di-skip, nunggu user solve manual
     end
-    -- v7.32: LOG SETIAP REJOIN ke /sdcard/zenx_rejoin.log -- catat WAKTU, CLIENT,
-    -- dan DARI MANA dipanggil (baris kode pemanggil via traceback). Buat tau
-    -- kenapa worker sering rejoin + jalur mana yang bandel (rejoin bareng).
-    -- `zenx rejoin-log` buat liat. Semua rejoin lewat open_one, jadi 1 titik.
-    pcall(function()
-        local nama = pkg:gsub("com%.roblox%.", "")
-        -- traceback: cari baris pemanggil (level 2-4, lewat baris ini sendiri)
+    -- v7.32b: LOG SETIAP REJOIN. Ambil traceback DI SINI (scope open_one), cari
+    -- baris PEMANGGIL (baris ke-2 di traceback yg nyebut zenx_worker.lua -- baris
+    -- pertama = open_one sendiri, kedua = yang manggil). Buat tau jalur rejoin.
+    do
         local tb = debug.traceback("", 2) or ""
-        local pemanggil = tb:match("zenx_worker%.lua:(%d+)") or "?"
-        local f = io.open("/sdcard/zenx_rejoin.log", "a")
-        if f then
-            f:write(string.format("%s | %s | baris=%s\n",
-                os.date("%H:%M:%S"), nama, pemanggil))
-            f:close()
-        end
-    end)
+        -- kumpulin semua nomor baris zenx_worker.lua di traceback
+        local barisList = {}
+        for ln in tb:gmatch("zenx_worker%.lua:(%d+)") do barisList[#barisList+1] = ln end
+        -- baris[1] = dalam open_one (deket sini), baris[2] = PEMANGGIL asli
+        local pemanggil = barisList[2] or barisList[1] or "?"
+        pcall(function()
+            local nama = pkg:gsub("com%.roblox%.", "")
+            local f = io.open("/sdcard/zenx_rejoin.log", "a")
+            if f then
+                f:write(string.format("%s | %s | baris=%s\n",
+                    os.date("%H:%M:%S"), nama, pemanggil))
+                f:close()
+            end
+        end)
+    end
     local url = build_url(cfg, link_client)
     local wm = tonumber(cfg.win_mode) or 0
 
