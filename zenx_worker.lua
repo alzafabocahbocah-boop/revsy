@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.16-cf"
+local VERSION = "7.17-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3984,13 +3984,26 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
                     jaga_depan(cfg, mapLink)
-                    -- v7.12: MODE TEMBAK BARENGAN. Kalau lisensi ada, tunggu_jalan
-                    -- CUKUP mastiin proses NONGOL (timeout pendek 8s), GAK nunggu
-                    -- masuk game 45s. Yang nyangkut Home ketangkep cek berkala.
-                    -- Kalau lisensi HABIS (perlu key), tetep sabar (45s) biar
-                    -- urutan bypass gak kacau.
-                    local batasJalan = lisensiAda and 8 or (cfg.tunggu_sec or 45)
-                    sukses, lama, sebab = tunggu_jalan(pkg, batasJalan, cek_batal)
+                    -- v7.17: MODE TEMBAK BARENGAN -- SKIP tunggu_jalan sepenuhnya.
+                    -- Cukup cek proses NONGOL (sleep 2 + pkg_running), LANGSUNG
+                    -- lanjut client berikutnya. GAK nunggu masuk game (grafis).
+                    -- tunggu_jalan internal-nya nunggu grafis naik (masuk game) --
+                    -- itu yang bikin 21-23s tiap client. Yang nyangkut Home
+                    -- ketangkep cek berkala/dump (90s) -> dimasukin. User minta:
+                    -- tembak semua bareng, gak nungguin tiap client jalan.
+                    if lisensiAda then
+                        os.execute("sleep 2")
+                        if pkg_running(pkg) then
+                            sukses, lama, sebab = true, os.time() - (TERAKHIR_BUKA[pkg] or os.time()), nil
+                        else
+                            -- proses gak nongol -> coba lagi (jarang)
+                            sukses, lama, sebab = false, 2, "proses gak nongol"
+                        end
+                    else
+                        -- lisensi habis / hati2 -> sabar (tunggu masuk game)
+                        local batasJalan = cfg.tunggu_sec or 45
+                        sukses, lama, sebab = tunggu_jalan(pkg, batasJalan, cek_batal)
+                    end
                     -- v4.59: JANGAN blokir antrean buat nungguin bridge tiap client.
                     -- Dulu tiap client bisa makan 6+ menit (nunggu proses 3x batas +
                     -- nunggu bridge 2x batas) -> 4 client = 25 menit. Sekarang:
