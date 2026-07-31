@@ -3323,6 +3323,48 @@ end
 -- captcha. GAK cek fokus ketat kayak ambil_dump (yang sering bikin nil kalau
 -- client gak persis di depan). Ini yang bikin `zenx captcha` manual berhasil
 -- tapi cek loop (cek_error_ui) gagal. Global biar kepakai di loop.
+-- v7.29: REKAM DISCONNECT dari logcat ke file /sdcard/zenx_disconnect.log.
+-- Worker panggil ini berkala (30s) sambil jalan. Baca logcat, cari baris
+-- disconnect/kick Roblox, catat yang BARU (anti-dobel pakai penanda waktu baris)
+-- ke file. Format catatan: WAKTU | CLIENT | kode | jenis | teks-inti.
+-- Dipakai `zenx logcat` buat liat history. GLOBAL (batas 200 lokal).
+DC_LOG = "/sdcard/zenx_disconnect.log"
+DC_TERAKHIR = {}   -- penanda baris yg udah dicatat (anti-dobel): teks -> true
+function rekam_disconnect(cfg, pidKe)
+    local h = io.popen("su -c 'logcat -d' 2>/dev/null")
+    local semua = h and h:read("*all") or ""
+    if h then h:close() end
+    if semua == "" then return 0 end
+    local baru = 0
+    local f = io.open(DC_LOG, "a")
+    for baris in semua:gmatch("[^\n]+") do
+        local low = baris:lower()
+        -- cuma baris disconnect/kick yang PENTING (bukan tiap log Roblox)
+        if (low:find("disconnected from server for reason") or low:find("networkclient:remove")
+            or low:find("save data") or low:find("error code") or low:find("kicked"))
+           and not DC_TERAKHIR[baris] then
+            DC_TERAKHIR[baris] = true
+            baru = baru + 1
+            local pid = baris:match("^%S+%s+%S+%s+(%d+)")
+            local nama = (pid and pidKe and pidKe[pid]) or "?"
+            local kode = baris:match("reason:%s*%a*:?%s*(%d+)") or ""
+            local jenis = baris:match("%((%w+)%)") or ""
+            local waktu = os.date("%Y-%m-%d %H:%M:%S")
+            local inti = (baris:match("%[.*$") or baris):sub(1, 140)
+            if f then
+                f:write(string.format("%s | %s | kode=%s | %s | %s\n",
+                    waktu, nama, kode ~= "" and kode or "-", jenis ~= "" and jenis or "-", inti))
+            end
+        end
+    end
+    if f then f:close() end
+    -- jaga DC_TERAKHIR gak bengkak (reset kalau > 500 entri)
+    local cnt = 0
+    for _ in pairs(DC_TERAKHIR) do cnt = cnt + 1 end
+    if cnt > 500 then DC_TERAKHIR = {} end
+    return baru
+end
+
 function cek_captcha_paksa(pkg)
     -- v6.65: cek 5x (jeda 3s). Captcha render BERTAHAP: loading (~6000 char) ->
     -- transisi (~8000) -> full (~13000+, ada FunCaptcha/Start Puzzle). Sekali/2x
@@ -5463,6 +5505,7 @@ local function run(cfg)
     local SCRIPT_KERJAKAN  = 0    -- scriptGanti terakhir yang udah dikerjain
     local SCRIPT_URL_AKHIR = ""   -- url terakhir yang beneran ditulis ke autoexec
     local lastJagaDepan = 0     -- v4.52: kapan terakhir munculin ulang jendela
+    local lastRekamDc = 0       -- v7.29: kapan terakhir rekam disconnect dari logcat
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
@@ -7041,6 +7084,22 @@ local function run(cfg)
             jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
         end
 
+        -- v7.29: REKAM DISCONNECT dari logcat ke file (tiap 30s). Worker ngerekam
+        -- sambil jalan -> `zenx logcat` bisa liat history disconnect kapan aja.
+        if (now - lastRekamDc) >= 30 then
+            lastRekamDc = now
+            -- ambil PID tiap client (biar tau disconnect dari client mana)
+            local pidKe = {}
+            for _, pkg in ipairs(split(cfg.pkgs or "")) do
+                local nama = pkg:gsub("com%.roblox%.", "")
+                local hp = io.popen("su -c 'pidof " .. pkg .. "' 2>/dev/null")
+                local pids = hp and hp:read("*all") or ""
+                if hp then hp:close() end
+                for pid in pids:gmatch("%d+") do pidKe[pid] = nama end
+            end
+            pcall(function() rekam_disconnect(cfg, pidKe) end)
+        end
+
         end  -- v5.02: tutup 'if not lewatiRonde' (ronde bypass gak ngerjain sisanya)
 
         -- v4.18: keep-alive re-apply tiap 60 detik (Android suka reset oom_score_adj)
@@ -7872,8 +7931,74 @@ end
 if PERINTAH == "logcat" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
+    print(C.BOLD .. C.C .. "\\n=== ZENX LOGCAT (history disconnect) ===\\n" .. C.N)
+
+    -- v7.29: baca dari FILE history yang direkam worker (/sdcard/zenx_disconnect.log).
+    -- Worker ngerekam disconnect tiap 30s sambil jalan. `zenx logcat clear` = hapus.
+    local sub = arg and arg[2] or ""
+    if sub == "clear" or sub == "hapus" then
+        os.execute("rm -f " .. DC_LOG)
+        ok("History disconnect dihapus (" .. DC_LOG .. ")")
+        return
+    end
+
+    local f = io.open(DC_LOG, "r")
+    if not f then
+        warn("Belum ada history disconnect.")
+        info("Worker ngerekam otomatis tiap 30s sambil jalan (FORCE).")
+        info("Kalau worker baru nyala / belum ada disconnect, file belum kebikin.")
+        info("Biarin worker jalan, disconnect bakal kerekam sendiri.")
+        return
+    end
+    local isi = f:read("*all") or ""
+    f:close()
+    if isi == "" then warn("History kosong."); return end
+
+    -- kumpulin baris + ringkasan per kode
+    local baris = {}
+    for l in isi:gmatch("[^\n]+") do baris[#baris+1] = l end
+    local ringkas = {}
+    for _, l in ipairs(baris) do
+        local k = l:match("kode=(%S+)") or "-"
+        ringkas[k] = (ringkas[k] or 0) + 1
+    end
+
+    info(("Total %d disconnect terekam:"):format(#baris))
+    print()
+    info("Ringkasan per kode:")
+    for k, n in pairs(ringkas) do
+        local ket = (k == "285") and "keluar sendiri / backgrounding (NORMAL)"
+                 or (k == "267") and "KICKED game/experience (perlu rejoin!)"
+                 or (k == "264") and "dobel login (akun kepakai di tempat lain)"
+                 or (k == "277") and "lost connection"
+                 or (k == "268") and "untrusted / ditolak"
+                 or (k == "-") and "tanpa kode (save data / remove / kicked teks)"
+                 or "?"
+        print(("   kode %-6s x%-4d %s"):format(k, n, ket))
+    end
+    print()
+
+    -- 30 baris terakhir (paling baru)
+    info("Detail (30 terakhir):")
+    local mulai = math.max(1, #baris - 29)
+    for i = mulai, #baris do
+        local l = baris[i]
+        local kode = l:match("kode=(%S+)")
+        local warna = (kode == "267") and C.R or (kode == "285") and C.Y or C.N
+        print(warna .. "   " .. l:sub(1, 130) .. C.N)
+    end
+    print()
+    info("267/save data = kick (rejoin). 285 = keluar sendiri (normal).")
+    info("Hapus history:  zenx logcat clear")
+    info("Tempel hasil ini ke chat biar tau pola disconnect-nya.")
+    return
+end
+
+if PERINTAH == "logcat-live" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada."); return end
     local daftar = split(cfg.pkgs)
-    print(C.BOLD .. C.C .. "\\n=== ZENX LOGCAT (disconnect/kick Roblox) ===\\n" .. C.N)
+    print(C.BOLD .. C.C .. "\\n=== ZENX LOGCAT LIVE (dump sekarang) ===\\n" .. C.N)
 
     -- ambil PID tiap client (biar tau baris log dari client mana)
     local pidKe = {}   -- pid -> nama client
