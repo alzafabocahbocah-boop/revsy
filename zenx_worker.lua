@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.14-cf"
+local VERSION = "7.16-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3392,18 +3392,26 @@ cek_layar = cek_error_ui
 -- mindahin task ke depan: 1 panggilan su buat baca taskId semua client,
 -- 1 lagi buat mindahin semuanya sekaligus.
 local function jaga_depan(cfg, mapLink, cekJalan)
-    -- v5.98: jaga_depan DIMATIIN (no-op). RIWAYAT PANJANG:
-    --   * move-task/resizeTask GAK ADA di ROM RedFinger.
-    --   * input tap ke petak BISA expand bubble TAPI sering MELESET ke app di
-    --     belakangnya -> mencet APK lain -> client lain keluar. Bahaya.
-    --   * kill-bubble berisiko: visible=false muncul di client SEHAT juga, jadi
-    --     gak ada patokan aman buat bedain bubble vs sehat dari am stack list.
-    -- KENAPA AMAN DIMATIIN: bubble = client bisu (script nguncup gak jalan/lapor).
-    -- Dan REOPEN BERKALA (tiap reopen_sec, default 5 menit) UDAH buka-ulang client
-    -- bisu -> masuk freeform bener dari awal. Jadi bubble kehandle di situ, bukan
-    -- di sini. jaga_depan gak perlu ngutak-atik jendela yang udah jalan.
-    -- Dibiarin sebagai fungsi (dipanggil di banyak tempat) tapi gak ngapa-ngapain.
-    return 0
+    -- v7.14: DIAKTIFIN LAGI (user: error dulu bukan karena jaga_depan). Cara
+    -- AMAN: pakai `monkey -p <pkg> LAUNCHER` buat bawa tiap client ke depan --
+    -- ini GAK nge-tap koordinat layar (beda dari cara lama yang tap petak &
+    -- sering meleset ke app lain -> bahaya). monkey cuma kirim intent LAUNCHER,
+    -- app naik ke depan / bubble balik freeform. Aman, gak mencet apa-apa.
+    -- Cepet (gak dumpsys, gak cek fokus). Dipanggil tiap jaga_depan_sec (3s).
+    local list = split(cfg.pkgs)
+    local n = 0
+    for _, pkg in ipairs(list) do
+        -- cuma client yang HIDUP (proses ada) yang dibawa depan. Yang mati biar
+        -- diurus jalur lain (mati mendadak / reopen). cekJalan = cache pkg_running.
+        local hidup
+        if cekJalan ~= nil then hidup = cekJalan[pkg]
+        else hidup = pkg_running(pkg) end
+        if hidup then
+            sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1'")
+            n = n + 1
+        end
+    end
+    return n
 end
 
 -- v4.61: 'only' sekarang boleh: nil (semua), string (1 paket), atau TABEL
@@ -3765,6 +3773,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         local wok, wket = tulis_lisensi(cfg, kunci)
                         if wok then
                             ok("  BYPASS BERES -- kunci ketulis, kepakai SEMUA client")
+                            lisensiAda = true   -- v7.16: key udah ada -> sisa client TEMBAK BARENGAN (cepet)
                             -- v5.49: client yang dipakai buat ambil key DITUTUP.
                             -- Dia kebuka SEBELUM lisensinya ada, jadi sekarang
                             -- nyangkut di layar key -- lisensi baru gak kebaca
@@ -4626,7 +4635,7 @@ local function setup_otomatis(namaPreset)
     cfg.stagger_sec       = 15
     cfg.status_sec        = 20
     cfg.win_mode          = 0
-    cfg.jaga_depan_sec    = 7
+    cfg.jaga_depan_sec    = 3   -- v7.14: cek tiap 3s (user minta)
     cfg.orientasi         = "landscape"
     cfg.keep_alive        = true
     cfg.auto_key          = true
@@ -5011,7 +5020,7 @@ local function run(cfg)
     -- v4.73: bawaan NYALA (dulu 0/mati). Jendela nguncup jadi gelembung itu
     -- kejadian terus, dan sejak v4.63 ongkosnya cuma 1 panggilan su gabungan
     -- -- jadi murah. Isi 0 di config kalau mau dimatiin.
-    cfg.jaga_depan_sec    = cfg.jaga_depan_sec or 15
+    cfg.jaga_depan_sec    = cfg.jaga_depan_sec or 3
     cfg.suplai_sec        = cfg.suplai_sec or 20        -- v4.54: jadwal cek suplai
     -- v5.37: bawaan NYALA (dulu mati). Cadangannya lengkap -- lihat catatan
     -- di setup. Config lama yang shell_tetap=false tetep dihormatin.
@@ -7000,8 +7009,9 @@ local function run(cfg)
 
         -- v4.52: jaga jendela tetep nongol. Delta nguncup -> Roblox disconnect
         -- ~15 detik kemudian, jadi jedanya mesti di bawah itu.
-        if cfg.jaga_depan_sec and cfg.jaga_depan_sec > 0 and hit
-           and (now - lastJagaDepan) >= cfg.jaga_depan_sec then
+        -- v7.15: PAKSA 3 detik (user minta) -- abaikan config lama yang mungkin
+        -- masih 7/15. jaga_depan pakai monkey (aman, gak nge-tap).
+        if hit and (now - lastJagaDepan) >= 3 then
             lastJagaDepan = now
             jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
         end
