@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.17-cf"
+local VERSION = "7.19-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3984,21 +3984,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
                     jaga_depan(cfg, mapLink)
-                    -- v7.17: MODE TEMBAK BARENGAN -- SKIP tunggu_jalan sepenuhnya.
-                    -- Cukup cek proses NONGOL (sleep 2 + pkg_running), LANGSUNG
-                    -- lanjut client berikutnya. GAK nunggu masuk game (grafis).
-                    -- tunggu_jalan internal-nya nunggu grafis naik (masuk game) --
-                    -- itu yang bikin 21-23s tiap client. Yang nyangkut Home
-                    -- ketangkep cek berkala/dump (90s) -> dimasukin. User minta:
-                    -- tembak semua bareng, gak nungguin tiap client jalan.
+                    -- v7.18: MODE TEMBAK BARENGAN -- open_one terus LANGSUNG lanjut,
+                    -- TANPA cek nongol per client (gak sleep, gak pkg_running).
+                    -- Bener2 tembak semua sekaligus. Cek home + dump jalan
+                    -- BARENGAN (berkala) yang masukin yang belum masuk. User:
+                    -- tenang aja, cek lain-lain kan ada dump + cek home berkala.
                     if lisensiAda then
-                        os.execute("sleep 2")
-                        if pkg_running(pkg) then
-                            sukses, lama, sebab = true, os.time() - (TERAKHIR_BUKA[pkg] or os.time()), nil
-                        else
-                            -- proses gak nongol -> coba lagi (jarang)
-                            sukses, lama, sebab = false, 2, "proses gak nongol"
-                        end
+                        sukses, lama, sebab = true, 0, nil   -- anggap sukses, lanjut
                     else
                         -- lisensi habis / hati2 -> sabar (tunggu masuk game)
                         local batasJalan = cfg.tunggu_sec or 45
@@ -4070,7 +4062,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 if cek_batal and cek_batal() then break end   -- v4.16: STANDBY sebelum jeda
                 -- v7.12: mode tembak barengan -> jeda KECIL (2s) biar cepet.
                 -- Normal (lisensi habis / hati2) -> stagger penuh.
-                local jedaStagger = lisensiAda and 2 or (cfg.stagger_sec or 0)
+                local jedaStagger = lisensiAda and 0 or (cfg.stagger_sec or 0)
                 if jedaStagger > 0 then os.execute("sleep " .. jedaStagger) end
             end
         end
@@ -6309,11 +6301,10 @@ local function run(cfg)
                 local jalanTapiDiem = (cacheRun[pkg] == true and cacheBridge[pkg] == false
                                        and mapAkun[pkg]) and true or false
                 if jalanTapiDiem then
-                    -- v6.74: jeda cek grafis 60 -> 30 detik. User minta cek terus
-                    -- langsung masukin -- biar client nyangkut Home kedeteksi &
-                    -- dimasukin lebih cepet (gak nunggu lama). grafis_kb ~12s,
-                    -- 30s masih aman (gak spam).
-                    if (now - (bekuSejak[pkg] or 0)) >= 30 then
+                    -- v7.18: jeda cek grafis 90 detik -- BARENGIN sama dump
+                    -- (cek captcha/error juga 90s). User minta: cek home jangan
+                    -- terpisah 30s, gabung 90s bareng dump. Satu siklus cek.
+                    if (now - (bekuSejak[pkg] or 0)) >= 90 then
                         bekuSejak[pkg] = now
                         local g = grafis_kb(pkg) or 0
                         if g < 30 * 1024 then
