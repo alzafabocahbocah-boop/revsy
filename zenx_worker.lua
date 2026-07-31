@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.13-cf"
+local VERSION = "7.14-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3530,7 +3530,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     -- ============================================================
     if not fast and not only then
         local kead, umur = lisensi_keadaan(cfg)
-        if kead == "ada" then lisensiAda = true end   -- v7.12: buat tembak barengan
+        -- v7.14: tembak barengan kalau GAK PERLU BYPASS KEY. Itu berarti:
+        -- lisensi ADA, ATAU auto_key MATI (worker gak ngurus key -> gak ada
+        -- fase bypass yang butuh urutan). Cuma lisensi HILANG + auto_key NYALA
+        -- (bener2 mau bypass) yang perlu sabar (client 1 dulu buat ambil key).
+        if kead == "ada" or cfg.auto_key ~= true then lisensiAda = true end
 
         -- ============================================================
         -- v5.50: BERKAS BILANG "ADA" BELUM TENTU LISENSINYA SAH.
@@ -3815,6 +3819,22 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         if p then petaGrid = p
         else warn("tata jendela dilewat: " .. tostring(sebabGrid)) end
     end
+    -- v7.13: TULIS GRID SEMUA CLIENT SEKALI DI AWAL (mode tembak barengan).
+    -- Grid gak permanen (App Cloner baca prefs pas app mulai), tapi cukup ditulis
+    -- SEKALI -- posisi keset, client tinggal dibuka di petaknya. Gak perlu
+    -- tutup+tulis-grid tiap buka. User: grid sekali doang, terus tembak aja.
+    -- Client yang hidup di-force-stop dulu (biar prefs grid kebaca pas buka ulang).
+    if lisensiAda and petaGrid then
+        info("Set grid semua client sekali (mode tembak barengan)...")
+        for _, pkg in ipairs(list) do
+            if petaGrid[pkg] then
+                -- force-stop biar App Cloner baca prefs grid pas app mulai lagi
+                if pkg_hidup(pkg) then sh_silent("am force-stop " .. pkg) end
+                tata_satu(pkg, petaGrid[pkg])
+            end
+        end
+        os.execute("sleep 1")
+    end
     local stat0Ts = os.time()   -- v4.67: kapan potret /stat itu diambil
     local potretJalan = pkg_running_semua(list)   -- v4.71: sekali dumpsys buat semua
     local potretTs = os.time()
@@ -3840,6 +3860,9 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         end)
     end
 
+    if lisensiAda and not only and not fast then
+        info(">> MODE TEMBAK BARENGAN (lisensi ok / auto_key mati) -- buka cepet, gak tutup dulu")
+    end
     for _, pkg in ipairs(list) do
         if (not only) or (pkg == only) then
             urut = urut + 1
@@ -3930,22 +3953,22 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- server LAMA dan gak pernah pindah walau linknya udah ganti.
                     -- Sampai sini artinya client-nya emang gak lolos saringan
                     -- (bukan yang "udah jalan & lapor sehat"), jadi aman ditutup.
-                    if pkg_hidup(pkg) then
-                        info("   " .. pkg:gsub("com%.roblox%.","") .. " masih jalan -> ditutup dulu biar bisa pindah")
-                        close_all(cfg, pkg, mapLink, true)   -- v4.72: gak usah munculin yang lain
-                        os.execute("sleep 2")
-                    end
-                    -- v4.82: TULIS POSISI JENDELA DI SINI -- pas client MATI, sebelum
-                    -- dibuka. App Cloner baca prefs pas app mulai; kalau ditulis
-                    -- setelah kebuka, gak ngefek DAN ketimpa balik pas app ditutup.
-                    if petaGrid and petaGrid[pkg] then
-                        local tok, tket = tata_satu(pkg, petaGrid[pkg])
-                        if tok then
-                            if tket ~= "udah pas" then
+                    -- v7.13: MODE TEMBAK BARENGAN -- LANGSUNG tembak (open_one),
+                    -- GAK tutup dulu. Grid udah ditulis SEKALI di awal (posisi
+                    -- keset). User: kalau cuma tembak masuk, gak perlu tutup.
+                    -- Kalau BUKAN mode ini (lisensi habis / hati2), pertahanin
+                    -- perilaku lama: tutup dulu (am start ke Roblox jalan = no-op).
+                    if not lisensiAda then
+                        if pkg_hidup(pkg) then
+                            info("   " .. pkg:gsub("com%.roblox%.","") .. " masih jalan -> ditutup dulu biar bisa pindah")
+                            close_all(cfg, pkg, mapLink, true)
+                            os.execute("sleep 2")
+                        end
+                        if petaGrid and petaGrid[pkg] then
+                            local tok, tket = tata_satu(pkg, petaGrid[pkg])
+                            if tok and tket ~= "udah pas" then
                                 info("   posisi jendela " .. pkg:gsub("com%.roblox%.","") .. ": " .. tket)
                             end
-                        else
-                            warn("posisi jendela " .. pkg:gsub("com%.roblox%.","") .. " gagal: " .. tostring(tket))
                         end
                     end
                     open_one(cfg, pkg, link_c)
