@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.11-cf"
+local VERSION = "7.13-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3503,6 +3503,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     local list = split(cfg.pkgs)
     local hasil = { ok = 0, gagal = 0, lewat = 0, nama_gagal = {} }
     local urut = 0
+    -- v7.12: TEMBAK BARENGAN. Kalau lisensi Delta ADA (gak perlu bypass key),
+    -- buka semua client CEPET: open_one + tata grid, TANPA nunggu tiap client
+    -- masuk game (tunggu_jalan pendek, gak bunuh-ulang nyangkut). Yang nyangkut
+    -- Home ketangkep cek berkala/dump (tiap 90s) -> dimasukin. User minta: pas
+    -- awal Start gak usah 1-1 nungguin, tembak semua bareng. lisensiAda di-set
+    -- pas cek lisensi di bawah.
+    local lisensiAda = false
 
     -- ============================================================
     -- v5.46: CEK LISENSI DELTA DULU, SEBELUM BUKA SEMUA CLIENT.
@@ -3523,6 +3530,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     -- ============================================================
     if not fast and not only then
         local kead, umur = lisensi_keadaan(cfg)
+        if kead == "ada" then lisensiAda = true end   -- v7.12: buat tembak barengan
 
         -- ============================================================
         -- v5.50: BERKAS BILANG "ADA" BELUM TENTU LISENSINYA SAH.
@@ -3943,11 +3951,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     open_one(cfg, pkg, link_c)
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
-                    -- 'am force-stop' bikin jendela lain nguncup jadi gelembung;
-                    -- buka satu client cuma munculin JENDELA ITU -- yang lain tetep
-                    -- nguncup. Jadi urutan yang bener: tutup -> buka -> munculin semua.
                     jaga_depan(cfg, mapLink)
-                    sukses, lama, sebab = tunggu_jalan(pkg, cfg.tunggu_sec or 45, cek_batal)
+                    -- v7.12: MODE TEMBAK BARENGAN. Kalau lisensi ada, tunggu_jalan
+                    -- CUKUP mastiin proses NONGOL (timeout pendek 8s), GAK nunggu
+                    -- masuk game 45s. Yang nyangkut Home ketangkep cek berkala.
+                    -- Kalau lisensi HABIS (perlu key), tetep sabar (45s) biar
+                    -- urutan bypass gak kacau.
+                    local batasJalan = lisensiAda and 8 or (cfg.tunggu_sec or 45)
+                    sukses, lama, sebab = tunggu_jalan(pkg, batasJalan, cek_batal)
                     -- v4.59: JANGAN blokir antrean buat nungguin bridge tiap client.
                     -- Dulu tiap client bisa makan 6+ menit (nunggu proses 3x batas +
                     -- nunggu bridge 2x batas) -> 4 client = 25 menit. Sekarang:
@@ -3967,7 +3978,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     --   B. gak ketauan (gak ada akun kepetakan / fast mode)
                     --      -> lanjut aja, biar client lain kebagian.
                     local nyangkut = (sebab or ""):find("nyangkut", 1, true) ~= nil
-                    if nyangkut then
+                    if lisensiAda and pkg_hidup(pkg) then
+                        -- v7.12: MODE TEMBAK BARENGAN -- proses idup = cukup, LANJUT.
+                        -- Nyangkut Home/loading gak dibunuh-ulang di sini (buang
+                        -- waktu); cek berkala/dump (tiap 90s) yang masukin. Yang
+                        -- penting semua client kebuka CEPET.
+                        sukses = true
+                        break
+                    elseif nyangkut then
                         warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
                             urut, #list, pkg))
                         close_all(cfg, pkg, mapLink)
@@ -4005,7 +4023,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
 
                 -- napas sebelum client berikutnya (RAM sempet settle)
                 if cek_batal and cek_batal() then break end   -- v4.16: STANDBY sebelum jeda
-                if cfg.stagger_sec > 0 then os.execute("sleep "..cfg.stagger_sec) end
+                -- v7.12: mode tembak barengan -> jeda KECIL (2s) biar cepet.
+                -- Normal (lisensi habis / hati2) -> stagger penuh.
+                local jedaStagger = lisensiAda and 2 or (cfg.stagger_sec or 0)
+                if jedaStagger > 0 then os.execute("sleep " .. jedaStagger) end
             end
         end
     end
@@ -6180,8 +6201,30 @@ local function run(cfg)
         -- ketahuan dalam ~10 detik: banding status ronde ini sama ronde lalu.
         -- Cuma pas FORCE aktif -- kalau STANDBY/CLOSE ya emang sengaja ditutup.
         if hit then
+            -- v7.13: kumpulin SEMUA yang mati mendadak DULU, baru putusin cara buka.
+            local matiBareng = {}
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 if runSebelum[pkg] == true and cacheRun[pkg] == false then
+                    matiBareng[#matiBareng+1] = pkg
+                end
+            end
+            if #matiBareng >= 3 then
+                -- BANYAK mati bareng (crash massal / RF nge-lag / RAM). TEMBAK
+                -- BARENGAN: buka semua cepet (tanpa sleep 3 per client), yang
+                -- nyangkut ketangkep cek berkala. User minta: kalau keluar semua,
+                -- cek cepet + masukin bareng (kayak mode tembak barengan Start).
+                tambahLog(("MATI BARENGAN: %d client keluar bareng -> tembak masuk semua"):format(#matiBareng))
+                for _, pkg in ipairs(matiBareng) do
+                    RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-bareng")
+                    open_one(cfg, pkg, mapLink[pkg])
+                    os.execute("sleep 1")   -- jeda kecil aja biar RF gak keteteran
+                end
+                jaga_depan(cfg, mapLink)   -- munculin semua jendela
+                refresh_status(); lastStatusCek = os.time()
+                gambar_tabel(isi)
+            else
+                -- sedikit (1-2) -> buka satu-satu kayak biasa (aman)
+                for _, pkg in ipairs(matiBareng) do
                     tambahLog("MATI MENDADAK: " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
                               .. " -> dibuka lagi")
                     RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-mendadak")
