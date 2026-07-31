@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.25-cf"
+local VERSION = "7.26-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3828,12 +3828,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         if p then petaGrid = p
         else warn("tata jendela dilewat: " .. tostring(sebabGrid)) end
     end
-    -- v7.13: TULIS GRID SEMUA CLIENT SEKALI DI AWAL (mode tembak barengan).
-    -- Grid gak permanen (App Cloner baca prefs pas app mulai), tapi cukup ditulis
-    -- SEKALI -- posisi keset, client tinggal dibuka di petaknya. Gak perlu
-    -- tutup+tulis-grid tiap buka. User: grid sekali doang, terus tembak aja.
-    -- Client yang hidup di-force-stop dulu (biar prefs grid kebaca pas buka ulang).
-    if lisensiAda and petaGrid then
+    -- v7.25: set grid CUMA kalau belum pernah (SUDAH_GRID false). Dulu jalan
+    -- TIAP open_all -> force-stop SEMUA client tiap ronde FORCE -> semua keluar
+    -- terus dibuka ulang (user liat "keluar semua"). SUDAH_GRID di-reset cuma
+    -- pas FORCE transisi (Start baru), jadi grid keset sekali per sesi.
+    if lisensiAda and petaGrid and not SUDAH_GRID then
         info("Set grid semua client sekali (mode tembak barengan)...")
         for _, pkg in ipairs(list) do
             if petaGrid[pkg] then
