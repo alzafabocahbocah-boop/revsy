@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.29-cf"
+local VERSION = "7.30-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1985,7 +1985,7 @@ local function ambil_num(js, k) return tonumber(tostring(js or ""):match('"'..k.
 -- MATI padahal jalan. Sekarang semua karakter kontrol ikut di-escape.
 local function jstr(s)
     s = tostring(s or ""):gsub('\\','\\\\'):gsub('"','\\"')
-    s = s:gsub('\n','\\n'):gsub('\r','\\r'):gsub('\t','\\t')
+    s = s:gsub('\n','\n'):gsub('\r','\\r'):gsub('\t','\\t')
     s = s:gsub('%c', ' ')   -- sisa karakter kontrol lain -> spasi
     return '"'..s..'"'
 end
@@ -3340,8 +3340,10 @@ function rekam_disconnect(cfg, pidKe)
     for baris in semua:gmatch("[^\n]+") do
         local low = baris:lower()
         -- cuma baris disconnect/kick yang PENTING (bukan tiap log Roblox)
-        if (low:find("disconnected from server for reason") or low:find("networkclient:remove")
-            or low:find("save data") or low:find("error code") or low:find("kicked"))
+        if (low:find("disconnected from server") or low:find("networkclient:remove")
+            or low:find("save data") or low:find("error code") or low:find("kicked")
+            or low:find("client:disconnect") or low:find("teleport failed")
+            or low:find("lost connection") or low:find("disconnect with"))
            and not DC_TERAKHIR[baris] then
             DC_TERAKHIR[baris] = true
             baru = baru + 1
@@ -4041,14 +4043,15 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     end
                     open_one(cfg, pkg, link_c)
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
-                    -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
-                    jaga_depan(cfg, mapLink)
-                    -- v7.18: MODE TEMBAK BARENGAN -- skip tunggu masuk game (grafis).
-                    -- Cukup anggap sukses, langsung lanjut. Yang nyangkut ketangkep
-                    -- cek berkala/dump. Kalau lisensi habis -> sabar (tunggu game).
+                    -- v7.29: MODE TEMBAK BARENGAN -- skip tunggu masuk game (grafis).
+                    -- JANGAN jaga_depan tiap client di sini -- jaga_depan monkey
+                    -- LAUNCHER = tembak LAGI (keliatan "tembak 2x"). Cukup open_one
+                    -- sekali. jaga_depan berkala (3s di loop utama) yang urus jendela.
                     if lisensiAda then
                         sukses, lama, sebab = true, 0, nil   -- anggap sukses, lanjut
                     else
+                        -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
+                        jaga_depan(cfg, mapLink)
                         local batasJalan = cfg.tunggu_sec or 45
                         sukses, lama, sebab = tunggu_jalan(pkg, batasJalan, cek_batal)
                     end
@@ -4121,7 +4124,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 -- v7.23: delay 5 detik antar tembak client (user minta) -- biar
                 -- RF gak keteteran buka barengan sekaligus. Normal (lisensi habis)
                 -- pakai stagger config.
-                local jedaStagger = lisensiAda and 5 or (cfg.stagger_sec or 0)
+                local jedaStagger = lisensiAda and 16 or (cfg.stagger_sec or 0)
                 if jedaStagger > 0 then os.execute("sleep " .. jedaStagger) end
             end
         end
@@ -7084,9 +7087,9 @@ local function run(cfg)
             jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
         end
 
-        -- v7.29: REKAM DISCONNECT dari logcat ke file (tiap 30s). Worker ngerekam
+        -- v7.29: REKAM DISCONNECT dari logcat ke file (tiap 15s). Worker ngerekam
         -- sambil jalan -> `zenx logcat` bisa liat history disconnect kapan aja.
-        if (now - lastRekamDc) >= 30 then
+        if (now - lastRekamDc) >= 15 then
             lastRekamDc = now
             -- ambil PID tiap client (biar tau disconnect dari client mana)
             local pidKe = {}
@@ -7097,7 +7100,10 @@ local function run(cfg)
                 if hp then hp:close() end
                 for pid in pids:gmatch("%d+") do pidKe[pid] = nama end
             end
-            pcall(function() rekam_disconnect(cfg, pidKe) end)
+            pcall(function()
+                local n = rekam_disconnect(cfg, pidKe)
+                if n and n > 0 then tambahLog(("[logcat] rekam %d disconnect baru"):format(n)) end
+            end)
         end
 
         end  -- v5.02: tutup 'if not lewatiRonde' (ronde bypass gak ngerjain sisanya)
@@ -7931,7 +7937,7 @@ end
 if PERINTAH == "logcat" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
-    print(C.BOLD .. C.C .. "\\n=== ZENX LOGCAT (history disconnect) ===\\n" .. C.N)
+    print(C.BOLD .. C.C .. "\n=== ZENX LOGCAT (history disconnect) ===\n" .. C.N)
 
     -- v7.29: baca dari FILE history yang direkam worker (/sdcard/zenx_disconnect.log).
     -- Worker ngerekam disconnect tiap 30s sambil jalan. `zenx logcat clear` = hapus.
@@ -7998,7 +8004,7 @@ if PERINTAH == "logcat-live" then
     local cfg = load_config()
     if not cfg then err("Config belum ada."); return end
     local daftar = split(cfg.pkgs)
-    print(C.BOLD .. C.C .. "\\n=== ZENX LOGCAT LIVE (dump sekarang) ===\\n" .. C.N)
+    print(C.BOLD .. C.C .. "\n=== ZENX LOGCAT LIVE (dump sekarang) ===\n" .. C.N)
 
     -- ambil PID tiap client (biar tau baris log dari client mana)
     local pidKe = {}   -- pid -> nama client
@@ -8033,7 +8039,7 @@ if PERINTAH == "logcat-live" then
 
     -- filter: baris yang ada Roblox + (disconnect/kick/reason/removed/save data)
     local hits = {}
-    for baris in semua:gmatch("[^\\n]+") do
+    for baris in semua:gmatch("[^\n]+") do
         local low = baris:lower()
         if (low:find("roblox") or low:find("networkclient") or low:find("rbxtransport"))
            and (low:find("disconnect") or low:find("kick") or low:find("reason:")
@@ -8056,7 +8062,7 @@ if PERINTAH == "logcat-live" then
         return
     end
 
-    print(C.BOLD .. ("Nemu %d baris disconnect/kick:"):format(#hits) .. C.N .. "\\n")
+    print(C.BOLD .. ("Nemu %d baris disconnect/kick:"):format(#hits) .. C.N .. "\n")
     -- ringkasan per kode
     local ringkas = {}
     for _, hit in ipairs(hits) do
@@ -9419,7 +9425,7 @@ function cek_cookie_roblox(cookie)
         cmd = ("wget -qO- --server-response --timeout=15 --header=\"Cookie: $(cat %s)\" " ..
                "https://users.roblox.com/v1/users/authenticated 2>&1"):format(shq(tmp))
     else
-        cmd = ("curl -s -m 15 -w \"\\nHTTP:%%{http_code}\" -H \"Cookie: $(cat %s)\" " ..
+        cmd = ("curl -s -m 15 -w \"\nHTTP:%%{http_code}\" -H \"Cookie: $(cat %s)\" " ..
                "https://users.roblox.com/v1/users/authenticated 2>&1"):format(shq(tmp))
     end
     local h = io.popen(cmd)
