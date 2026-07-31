@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.21-cf"
+local VERSION = "7.22-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3956,12 +3956,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     io.write(string.format("[%d/%d] %s — buka%s...\n",
                         urut, #list, pkg, coba > 1 and (" (ulang ke-"..coba.."/"..maxc..")") or ""))
                     -- v4.17: catat ts SEBELUM buka -> nanti tunggu lapor BARU (ts naik)
-                    -- v7.20: pas TEMBAK BARENGAN, SKIP api_get("/stat") ini -- itu
-                    -- network call ke panel TIAP client (~8s tiap client!) -- ITU
-                    -- biang jeda antar client, bukan open_one/jaga_depan. ts0 cuma
-                    -- dipakai buat konfirmasi bridge yang di mode ini gak dipakai.
-                    local ts0 = (akun and not fast and not lisensiAda)
-                                and bridge_ts(api_get(cfg, "/stat"), akun) or nil
+                    local ts0 = (akun and not fast) and bridge_ts(api_get(cfg, "/stat"), akun) or nil
                     -- v4.58: kalau prosesnya UDAH JALAN, TUTUP DULU. 'am start' ke
                     -- Roblox yang lagi jalan itu NO-OP -- dia bakal nangkring di
                     -- server LAMA dan gak pernah pindah walau linknya udah ganti.
