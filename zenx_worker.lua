@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.22-cf"
+local VERSION = "7.23-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3982,16 +3982,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     end
                     open_one(cfg, pkg, link_c)
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
-                    -- v7.19: MODE TEMBAK BARENGAN -- JANGAN jaga_depan tiap client
-                    -- (itu monkey SEMUA 10 client tiap buka 1 -> ~10s per client,
-                    -- itu biang jeda 8-14s antar client). jaga_depan cukup SEKALI
-                    -- di akhir (semua kebuka). Loop cuma open_one + langsung lanjut.
+                    -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
+                    jaga_depan(cfg, mapLink)
+                    -- v7.18: MODE TEMBAK BARENGAN -- skip tunggu masuk game (grafis).
+                    -- Cukup anggap sukses, langsung lanjut. Yang nyangkut ketangkep
+                    -- cek berkala/dump. Kalau lisensi habis -> sabar (tunggu game).
                     if lisensiAda then
                         sukses, lama, sebab = true, 0, nil   -- anggap sukses, lanjut
                     else
-                        -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
-                        jaga_depan(cfg, mapLink)
-                        -- lisensi habis / hati2 -> sabar (tunggu masuk game)
                         local batasJalan = cfg.tunggu_sec or 45
                         sukses, lama, sebab = tunggu_jalan(pkg, batasJalan, cek_batal)
                     end
@@ -4054,10 +4052,8 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     err(string.format("[%d/%d] %s — GAGAL: %s", urut, #list, pkg, sebab or "?"))
                 end
 
-                -- lapor ke panel di sela-sela, biar gak "ilang" bermenit-menit.
-                -- v7.19: pas tembak barengan, SKIP lapor per client (network call
-                -- ~sedetik tiap client -> nambah jeda). Lapor sekali di akhir aja.
-                if lapor_fn and not lisensiAda then pcall(lapor_fn) end
+                -- lapor ke panel di sela-sela, biar gak "ilang" bermenit-menit
+                if lapor_fn then pcall(lapor_fn) end
 
                 -- napas sebelum client berikutnya (RAM sempet settle)
                 if cek_batal and cek_batal() then break end   -- v4.16: STANDBY sebelum jeda
@@ -4067,13 +4063,6 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 if jedaStagger > 0 then os.execute("sleep " .. jedaStagger) end
             end
         end
-    end
-
-    -- v7.19: pas tembak barengan, jaga_depan + lapor SEKALI di akhir (semua
-    -- udah kebuka). Ini gantiin per-client yang di-skip di loop (biar cepet).
-    if lisensiAda and not only then
-        jaga_depan(cfg, mapLink)
-        if lapor_fn then pcall(lapor_fn) end
     end
 
     -- v4.59: KONFIRMASI BERSAMA. Semua client udah kebuka; sekarang tungguin
