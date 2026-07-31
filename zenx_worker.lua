@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.23-cf"
+local VERSION = "7.25-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4059,7 +4059,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 if cek_batal and cek_batal() then break end   -- v4.16: STANDBY sebelum jeda
                 -- v7.12: mode tembak barengan -> jeda KECIL (2s) biar cepet.
                 -- Normal (lisensi habis / hati2) -> stagger penuh.
-                local jedaStagger = lisensiAda and 0 or (cfg.stagger_sec or 0)
+                -- v7.23: delay 5 detik antar tembak client (user minta) -- biar
+                -- RF gak keteteran buka barengan sekaligus. Normal (lisensi habis)
+                -- pakai stagger config.
+                local jedaStagger = lisensiAda and 5 or (cfg.stagger_sec or 0)
                 if jedaStagger > 0 then os.execute("sleep " .. jedaStagger) end
             end
         end
