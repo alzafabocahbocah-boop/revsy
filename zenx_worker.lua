@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.30-cf"
+local VERSION = "7.31-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3323,48 +3323,100 @@ end
 -- captcha. GAK cek fokus ketat kayak ambil_dump (yang sering bikin nil kalau
 -- client gak persis di depan). Ini yang bikin `zenx captcha` manual berhasil
 -- tapi cek loop (cek_error_ui) gagal. Global biar kepakai di loop.
--- v7.29: REKAM DISCONNECT dari logcat ke file /sdcard/zenx_disconnect.log.
--- Worker panggil ini berkala (30s) sambil jalan. Baca logcat, cari baris
--- disconnect/kick Roblox, catat yang BARU (anti-dobel pakai penanda waktu baris)
--- ke file. Format catatan: WAKTU | CLIENT | kode | jenis | teks-inti.
--- Dipakai `zenx logcat` buat liat history. GLOBAL (batas 200 lokal).
-DC_LOG = "/sdcard/zenx_disconnect.log"
-DC_TERAKHIR = {}   -- penanda baris yg udah dicatat (anti-dobel): teks -> true
-function rekam_disconnect(cfg, pidKe)
-    local h = io.popen("su -c 'logcat -d' 2>/dev/null")
-    local semua = h and h:read("*all") or ""
+-- v7.31: LOGCAT STREAMING (kayak Pandora). Nyalain `logcat` STREAMING ke file
+-- di background (bukan `logcat -d` dump berkala yg telat). Roblox nulis
+-- disconnect ke logcat REAL-TIME -> worker baca ekor file tiap ronde -> deteksi
+-- disconnect -> rejoin CEPAT. Pandora pake cara ini (logcat plain jalan terus,
+-- gak uiautomator). GLOBAL (batas 200 lokal).
+DC_LOG = "/sdcard/zenx_disconnect.log"   -- history disconnect (buat `zenx logcat`)
+LIVE_LOG = "/sdcard/zenx_logcat_live.log" -- stream mentah logcat (di-tail worker)
+DC_TERAKHIR = {}   -- anti-dobel history: teks -> true
+LIVE_OFFSET = 0    -- posisi byte terakhir yg udah dibaca dari LIVE_LOG
+
+-- nyalain logcat streaming ke file (sekali, di background). Idempotent: kalau
+-- udah jalan (ada proses logcat nulis ke LIVE_LOG), gak nyalain lagi.
+function mulai_logcat_stream()
+    -- cek udah ada logcat streaming ke file kita belum
+    local h = io.popen("su -c 'pgrep -f \"logcat -v threadtime\"' 2>/dev/null")
+    local ada = h and h:read("*all") or ""
     if h then h:close() end
-    if semua == "" then return 0 end
-    local baru = 0
-    local f = io.open(DC_LOG, "a")
-    for baris in semua:gmatch("[^\n]+") do
+    if ada:match("%d") then return false end   -- udah jalan
+    -- kosongin file lama + nyalain logcat streaming di background.
+    -- -v threadtime: format ada PID (biar tau client mana). -b main: buffer utama.
+    -- nohup + & : jalan terus walau shell induk mati.
+    os.execute("rm -f " .. LIVE_LOG)
+    os.execute("su -c 'nohup logcat -v threadtime -b main > " .. LIVE_LOG .. " 2>/dev/null &' >/dev/null 2>&1")
+    LIVE_OFFSET = 0
+    return true
+end
+
+-- baca baris BARU dari LIVE_LOG (sejak offset terakhir), cari disconnect/kick.
+-- Balikin daftar { pkg, kode, teks } yang perlu rejoin. Sekaligus catat ke
+-- history (DC_LOG) buat `zenx logcat`. pidKe: pid -> nama client.
+function baca_logcat_stream(cfg, pidKe)
+    local f = io.open(LIVE_LOG, "r")
+    if not f then return {} end
+    f:seek("set", LIVE_OFFSET)
+    local data = f:read("*all") or ""
+    LIVE_OFFSET = f:seek()   -- posisi baru
+    f:close()
+    if data == "" then return {} end
+
+    local perluRejoin = {}
+    local seenPkg = {}   -- 1 client cukup 1x rejoin per batch
+    local fh = io.open(DC_LOG, "a")
+    for baris in data:gmatch("[^\n]+") do
         local low = baris:lower()
-        -- cuma baris disconnect/kick yang PENTING (bukan tiap log Roblox)
-        if (low:find("disconnected from server") or low:find("networkclient:remove")
-            or low:find("save data") or low:find("error code") or low:find("kicked")
-            or low:find("client:disconnect") or low:find("teleport failed")
-            or low:find("lost connection") or low:find("disconnect with"))
-           and not DC_TERAKHIR[baris] then
-            DC_TERAKHIR[baris] = true
-            baru = baru + 1
+        -- baris disconnect/kick PENTING
+        if low:find("disconnected from server") or low:find("networkclient:remove")
+           or low:find("save data") or low:find("error code") or low:find("kicked")
+           or low:find("client:disconnect") or low:find("teleport failed")
+           or low:find("lost connection") or low:find("disconnect with") then
             local pid = baris:match("^%S+%s+%S+%s+(%d+)")
             local nama = (pid and pidKe and pidKe[pid]) or "?"
             local kode = baris:match("reason:%s*%a*:?%s*(%d+)") or ""
             local jenis = baris:match("%((%w+)%)") or ""
-            local waktu = os.date("%Y-%m-%d %H:%M:%S")
-            local inti = (baris:match("%[.*$") or baris):sub(1, 140)
-            if f then
-                f:write(string.format("%s | %s | kode=%s | %s | %s\n",
+            -- catat history (buat zenx logcat)
+            if fh and not DC_TERAKHIR[baris] then
+                DC_TERAKHIR[baris] = true
+                local waktu = os.date("%Y-%m-%d %H:%M:%S")
+                local inti = (baris:match("%[.*$") or baris):sub(1, 140)
+                fh:write(string.format("%s | %s | kode=%s | %s | %s\n",
                     waktu, nama, kode ~= "" and kode or "-", jenis ~= "" and jenis or "-", inti))
+            end
+            -- REJOIN: client yang kepetakan (bukan "?") + belum di batch ini.
+            -- Kode 285 (DisconnectClientInitiated) = keluar sendiri/backgrounding.
+            -- Tetep rejoin (client keluar game = harus masuk lagi), KECUALI kalau
+            -- lagi di-diurus (captcha). Yang penting client balik ke game.
+            if nama ~= "?" and not seenPkg[nama] then
+                seenPkg[nama] = true
+                perluRejoin[#perluRejoin+1] = { nama = nama, kode = kode ~= "" and kode or "-" }
             end
         end
     end
-    if f then f:close() end
-    -- jaga DC_TERAKHIR gak bengkak (reset kalau > 500 entri)
+    if fh then fh:close() end
+    -- jaga DC_TERAKHIR gak bengkak
     local cnt = 0
     for _ in pairs(DC_TERAKHIR) do cnt = cnt + 1 end
-    if cnt > 500 then DC_TERAKHIR = {} end
-    return baru
+    if cnt > 800 then DC_TERAKHIR = {} end
+    -- jaga LIVE_LOG gak bengkak (kalau > 5MB, reset stream)
+    local fs = io.open(LIVE_LOG, "r")
+    if fs then
+        local sz = fs:seek("end"); fs:close()
+        if sz and sz > 5*1024*1024 then
+            os.execute("su -c 'pkill -f \"logcat -v threadtime\"' 2>/dev/null")
+            os.execute("rm -f " .. LIVE_LOG)
+            LIVE_OFFSET = 0
+            mulai_logcat_stream()
+        end
+    end
+    return perluRejoin
+end
+
+-- fungsi lama (dump berkala) -- dipertahanin buat kompatibilitas, tapi gak
+-- dipanggil lagi (diganti streaming). Biarin biar `zenx logcat` lama gak error.
+function rekam_disconnect(cfg, pidKe)
+    return 0
 end
 
 function cek_captcha_paksa(pkg)
@@ -7087,11 +7139,13 @@ local function run(cfg)
             jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
         end
 
-        -- v7.29: REKAM DISCONNECT dari logcat ke file (tiap 15s). Worker ngerekam
-        -- sambil jalan -> `zenx logcat` bisa liat history disconnect kapan aja.
-        if (now - lastRekamDc) >= 15 then
+        -- v7.31: LOGCAT STREAMING (kayak Pandora). Baca baris BARU dari stream
+        -- file tiap 5s (ringan, cuma baca ekor file -- bukan spawn logcat -d).
+        -- Nemu disconnect -> REJOIN real-time. Nyalain stream sekali kalau belum.
+        if (now - lastRekamDc) >= 5 then
             lastRekamDc = now
-            -- ambil PID tiap client (biar tau disconnect dari client mana)
+            pcall(function() mulai_logcat_stream() end)   -- idempotent
+            -- PID tiap client (biar tau disconnect dari client mana)
             local pidKe = {}
             for _, pkg in ipairs(split(cfg.pkgs or "")) do
                 local nama = pkg:gsub("com%.roblox%.", "")
@@ -7101,8 +7155,19 @@ local function run(cfg)
                 for pid in pids:gmatch("%d+") do pidKe[pid] = nama end
             end
             pcall(function()
-                local n = rekam_disconnect(cfg, pidKe)
-                if n and n > 0 then tambahLog(("[logcat] rekam %d disconnect baru"):format(n)) end
+                local rejoinList = baca_logcat_stream(cfg, pidKe)
+                for _, r in ipairs(rejoinList) do
+                    local pkg = "com.roblox." .. r.nama
+                    -- skip kalau lagi diurus captcha (nunggu solve manual)
+                    -- ATAU baru dibuka < 40s (kasih waktu masuk, anti rejoin-loop:
+                    -- disconnect 285 pas loading sering muncul, jangan langsung tembak)
+                    local baruDibuka = TERAKHIR_BUKA[pkg] and (now - TERAKHIR_BUKA[pkg]) < 40
+                    if not KICK_DIURUS["captcha:" .. pkg] and not baruDibuka then
+                        local ak = (mapAkun and mapAkun[pkg]) or r.nama
+                        tambahLog(("[logcat] %s disconnect (kode %s) -> REJOIN"):format(ak, r.kode))
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil)
+                    end
+                end
             end)
         end
 
