@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.26-cf"
+local VERSION = "7.28-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3360,6 +3360,24 @@ function cek_captcha_paksa(pkg)
                or low:find("please rejoin", 1, true)
                or low:find("teleport failed", 1, true)
                or (low:find("disconnected", 1, true) and low:find("kicked", 1, true)) then
+                return "REJOIN"
+            end
+            -- v7.27: DETEKSI KODE ERROR NUMERIK (267, 773, 524, dll). Teks kick
+            -- Roblox: "Error Code: 267" (kapital di layar). Dulu gak kedeteksi --
+            -- dump cuma bilang "5433 char" tanpa ngasih tau error apa. Sekarang:
+            -- kalau nemu "error code XXX", LAPORIN kodenya + balikin REJOIN biar
+            -- dimasukin lagi (kalau kode-nya sifat "ulang").
+            local kode = low:match("error code:?%s*(%d+)")
+            if kode then
+                print("[paksa] " .. pkg:gsub("com%.roblox%.","") .. " KENA ERROR CODE " .. kode)
+                return "REJOIN"
+            end
+            -- teks kick umum tanpa kode (kicked/removed/lost connection)
+            if low:find("you were kicked", 1, true)
+               or low:find("lost connection", 1, true)
+               or low:find("connection attempt failed", 1, true)
+               or low:find("reconnect", 1, true) then
+                print("[paksa] " .. pkg:gsub("com%.roblox%.","") .. " kena kick/disconnect (tanpa kode)")
                 return "REJOIN"
             end
         end
@@ -6245,19 +6263,23 @@ local function run(cfg)
                 end
             end
             if #matiBareng >= 3 then
-                -- BANYAK mati bareng (crash massal / RF nge-lag / RAM). TEMBAK
-                -- BARENGAN: buka semua cepet (tanpa sleep 3 per client), yang
-                -- nyangkut ketangkep cek berkala. User minta: kalau keluar semua,
-                -- cek cepet + masukin bareng (kayak mode tembak barengan Start).
-                tambahLog(("MATI BARENGAN: %d client keluar bareng -> tembak masuk semua"):format(#matiBareng))
+                -- BANYAK mati bareng (crash massal / RF nge-lag / RAM). Masukin
+                -- lagi satu-satu dengan DELAY 12 detik per client (user minta) --
+                -- biar RF gak keteteran buka barengan. Yang nyangkut ketangkep
+                -- cek berkala. Delay 12s kasih napas RAM tiap client.
+                tambahLog(("MATI BARENGAN: %d client keluar bareng -> masukin lagi (delay 12s per client)"):format(#matiBareng))
                 for _, pkg in ipairs(matiBareng) do
                     RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-bareng")
                     open_one(cfg, pkg, mapLink[pkg])
-                    os.execute("sleep 1")   -- jeda kecil aja biar RF gak keteteran
+                    jaga_depan(cfg, mapLink)   -- munculin jendela tiap abis buka
+                    refresh_status()
+                    gambar_tabel(isi)
+                    -- cek standby di tengah (biar bisa diinterupsi)
+                    local pNow = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+                    if pNow:upper():find("STANDBY") or pNow:upper():find("STOP") then break end
+                    os.execute("sleep 12")   -- delay 12s per client
                 end
-                jaga_depan(cfg, mapLink)   -- munculin semua jendela
-                refresh_status(); lastStatusCek = os.time()
-                gambar_tabel(isi)
+                lastStatusCek = os.time()
             else
                 -- sedikit (1-2) -> buka satu-satu kayak biasa (aman)
                 for _, pkg in ipairs(matiBareng) do
