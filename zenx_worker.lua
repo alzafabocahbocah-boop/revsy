@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.35-cf"
+local VERSION = "7.37-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2393,6 +2393,11 @@ local function build_url(cfg, link_client)
         -- pastikan pakai https lengkap, biar am start buka lewat Roblox app
         if lc:sub(1,4) ~= "http" then lc = "https://www.roblox.com/" .. lc:gsub("^/", "") end
         return lc   -- buka URL share apa adanya -> Roblox resolve sendiri
+    elseif lc:find("accessCode=") then
+        -- v7.36: PRIVATE SERVER via accessCode (dari zenx getps -- API Roblox
+        -- private-servers). Format: "accessCode=UUID". Join langsung ke PS akun.
+        local code = lc:match("accessCode=([%w%-]+)")
+        return code and ("roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code) or lc
     elseif lc:find("privateServerLinkCode=") then
         -- format lama: linkCode asli beneran ada di sini
         local code = lc:match("privateServerLinkCode=([^&]+)")
@@ -5427,6 +5432,24 @@ local function run(cfg)
         end
     end
     refresh_ps()
+    -- v7.36: GABUNG PS LINK dari getps (per akun, disimpen backend kolom ps_link).
+    -- Kalau akun punya ps_link (accessCode=UUID dari zenx getps), pakai itu buat
+    -- masuk PS pribadi akun. Prioritas: assign-ps panel > ps_link getps > public.
+    local function refresh_ps_getps()
+        local r = api_get(cfg, "/ps-list") or ""
+        local akun2pkg = {}
+        for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
+        for obj in r:gmatch('{.-}') do
+            local akun = obj:match('"akun"%s*:%s*"(.-)"')
+            local psl  = obj:match('"ps_link"%s*:%s*"(.-)"')
+            if akun and akun2pkg[akun] and psl and psl ~= "" then
+                local pkg = akun2pkg[akun]
+                -- cuma isi kalau BELUM ada dari assign-ps (assign-ps prioritas)
+                if not mapLink[pkg] then mapLink[pkg] = psl end
+            end
+        end
+    end
+    pcall(refresh_ps_getps)
     local lastPsRefresh = os.time()
 
     -- v4.10: tampilan TABEL (clear screen + redraw kiri atas, gak scroll spam).
@@ -7173,14 +7196,21 @@ local function run(cfg)
                 local rejoinList = baca_logcat_stream(cfg, pidKe)
                 for _, r in ipairs(rejoinList) do
                     local pkg = "com.roblox." .. r.nama
-                    -- skip kalau lagi diurus captcha (nunggu solve manual)
-                    -- ATAU baru dibuka < 40s (kasih waktu masuk, anti rejoin-loop:
-                    -- disconnect 285 pas loading sering muncul, jangan langsung tembak)
+                    -- v7.35: JANGAN rejoin kode 285 (DisconnectClientInitiated) --
+                    -- itu client KELUAR SENDIRI (backgrounding / worker navigate
+                    -- ulang), BUKAN kick. Rejoin 285 = LOOP (rejoin->285->rejoin).
+                    -- Cuma rejoin kalau kick ASLI (kode selain 285, misal 267).
+                    -- Note: 267 (game kick) ternyata GAK muncul di logcat -- jadi
+                    -- praktis ini jarang rejoin. Rejoin utama tetep jalur lain
+                    -- (mati-mendadak/diem). Logcat cuma buat nangkep kick asli
+                    -- kalau ADA + rekam history.
+                    local kode285 = (r.kode == "285")
                     local baruDibuka = TERAKHIR_BUKA[pkg] and (now - TERAKHIR_BUKA[pkg]) < 40
-                    if not KICK_DIURUS["captcha:" .. pkg] and not baruDibuka then
+                    if not kode285 and r.kode ~= "-"
+                       and not KICK_DIURUS["captcha:" .. pkg] and not baruDibuka then
                         local ak = (mapAkun and mapAkun[pkg]) or r.nama
-                        tambahLog(("[logcat] %s disconnect (kode %s) -> REJOIN"):format(ak, r.kode))
-                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "logcat-stream")
+                        tambahLog(("[logcat] %s KICK kode %s -> REJOIN"):format(ak, r.kode))
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "logcat-kick")
                     end
                 end
             end)
@@ -8014,6 +8044,57 @@ end
 -- Cara: ambil PID tiap client -> filter logcat by PID -> cari baris disconnect/
 -- kick/reason. Kode 285=DisconnectClientInitiated (keluar sendiri/backgrounding),
 -- 267=kicked (game/experience Kick), 264=dobel login, 277=lost connection, dll.
+if PERINTAH == "getps" then
+    -- v7.36: GET PS LINK per akun (kayak Pandora). Loop semua akun tim, fetch
+    -- accessCode dari API Roblox private-servers (pake cookie akun), simpen ke
+    -- backend (kolom ps_link). Worker nanti masuk pake PS masing-masing akun.
+    local cfg = load_config()
+    if not cfg then err("Config gak ada."); return end
+    print(C.BOLD .. C.C .. "\n=== ZENX GETPS (ambil PS link per akun) ===\n" .. C.N)
+
+    -- daftar akun: dari cookie-list backend (semua akun yang punya cookie)
+    local resp = api_get(cfg, "/cookie-list") or ""
+    local akunList = {}
+    for a in resp:gmatch('"akun"%s*:%s*"([^"]+)"') do akunList[#akunList+1] = a end
+    if #akunList == 0 then
+        warn("Gak ada akun di backend. Setor cookie dulu.")
+        return
+    end
+    info(("%d akun -- ambil PS link satu-satu..."):format(#akunList))
+    print()
+
+    local dapet, gagal = 0, 0
+    for _, akun in ipairs(akunList) do
+        -- ambil cookie akun
+        local ck = api_get(cfg, "/cookie-satu?akun=" .. akun) or ""
+        local cookie = ck:match('"cookie"%s*:%s*"([^"]+)"')
+        if not cookie or cookie == "" then
+            warn(("%s: cookie gak ada -> skip"):format(akun))
+            gagal = gagal + 1
+        else
+            local code, ket = getps_akun(cfg, cookie)
+            if code then
+                -- simpen ke backend: ps_link = "accessCode=CODE"
+                local psLink = "accessCode=" .. code
+                pcall(function()
+                    api_post(cfg, "/ps-simpan",
+                        string.format('{"akun":%s,"ps_link":%s}', jstr(akun), jstr(psLink)), "POST")
+                end)
+                ok(("%s -> PS dapet (%s)"):format(akun, ket or "PS"))
+                dapet = dapet + 1
+            else
+                warn(("%s -> gagal: %s"):format(akun, ket or "?"))
+                gagal = gagal + 1
+            end
+        end
+        os.execute("sleep 1")   -- jeda biar gak kena rate-limit Roblox
+    end
+    print()
+    ok(("Selesai: %d dapet PS, %d gagal."):format(dapet, gagal))
+    info("Worker bakal masuk PS masing-masing akun (kalau ps_link kesimpen).")
+    return
+end
+
 if PERINTAH == "rejoin-log" then
     -- v7.32: liat log rejoin (siapa + dari baris mana + berapa sering).
     local sub = arg and arg[2] or ""
@@ -9574,6 +9655,38 @@ function cek_cookie_roblox(cookie)
     if low:find("ban") or low:find("terminat") or low:find("moderat") then return "ban", nil end
     if kode == "401" then return "dead", nil end
     return "error", ("kode=%s"):format(kode or "?")
+end
+
+-- v7.36: GET PS LINK per akun (kayak Pandora). Fetch private-servers API pake
+-- cookie akun -> ambil accessCode -> balikin "accessCode=UUID" (buat build_url).
+-- Endpoint: games.roblox.com/v1/games/PLACE/private-servers?cursor=
+-- Response: data[].accessCode. Akun harus UDAH punya PS (VIP server).
+-- Balikin: accessCode string, atau nil + alasan.
+function getps_akun(cfg, cookie)
+    if not cookie or cookie == "" then return nil, "cookie kosong" end
+    local place = cfg.place_id or "97598239454123"
+    local tmp = (os.getenv("HOME") or ".") .. "/nx_getps.txt"
+    os.remove(tmp)
+    local hf = io.open(tmp, "w")
+    if not hf then return nil, "gak bisa nulis tmp" end
+    hf:write(".ROBLOSECURITY=" .. cookie)
+    hf:close()
+    local url = "https://games.roblox.com/v1/games/" .. place .. "/private-servers?cursor="
+    local cmd = ("curl -s -m 20 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), url)
+    local h = io.popen(cmd)
+    local out = h and h:read("*all") or ""
+    if h then h:close() end
+    os.remove(tmp)
+    -- ambil accessCode pertama dari response
+    local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
+    if code then
+        local nama = out:match('"name"%s*:%s*"([^"]*)"')
+        return code, (nama or "PS")
+    end
+    -- gak ada PS
+    if out:find('"data"%s*:%s*%[%s*%]') then return nil, "akun belum punya PS" end
+    if out:lower():find("unauthorized") or out:find('"errors"') then return nil, "cookie invalid/error" end
+    return nil, "accessCode gak ketemu di response"
 end
 
 -- v6.37: dari hasil query (bisa MULTI-BARIS kalau ada beberapa .ROBLOSECURITY
