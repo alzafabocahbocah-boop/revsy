@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.28-cf"
+local VERSION = "7.29-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7860,6 +7860,114 @@ if PERINTAH == "lisensi" or PERINTAH == "license" then
         info("Langkah: kalau ada client yang gak mau idup lagi -> zenx cari <client>")
     end
     print()
+    return
+end
+
+-- v7.28: ZENX LOGCAT -- diagnostik. Tampilin SEMUA disconnect/kick dari logcat
+-- Roblox, per client. Buat tau pola: disconnect apa aja yang muncul, kode berapa,
+-- dari client mana. Dari sini kita tau harus deteksi apa buat auto-rejoin.
+-- Cara: ambil PID tiap client -> filter logcat by PID -> cari baris disconnect/
+-- kick/reason. Kode 285=DisconnectClientInitiated (keluar sendiri/backgrounding),
+-- 267=kicked (game/experience Kick), 264=dobel login, 277=lost connection, dll.
+if PERINTAH == "logcat" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
+    local daftar = split(cfg.pkgs)
+    print(C.BOLD .. C.C .. "\\n=== ZENX LOGCAT (disconnect/kick Roblox) ===\\n" .. C.N)
+
+    -- ambil PID tiap client (biar tau baris log dari client mana)
+    local pidKe = {}   -- pid -> nama client
+    for _, pkg in ipairs(daftar) do
+        local nama = pkg:gsub("com%.roblox%.", "")
+        local h = io.popen("su -c 'pidof " .. pkg .. "' 2>/dev/null")
+        local pids = h and h:read("*all") or ""
+        if h then h:close() end
+        for pid in pids:gmatch("%d+") do pidKe[pid] = nama end
+    end
+    local adaPid = false
+    for _ in pairs(pidKe) do adaPid = true break end
+    if not adaPid then
+        warn("Gak ada client jalan (gak ada PID). Start dulu, baru cek logcat.")
+        return
+    end
+    info("Client jalan:")
+    do
+        local seen = {}
+        for pid, nama in pairs(pidKe) do
+            if not seen[nama] then print("   " .. nama .. " (pid " .. pid .. ")"); seen[nama]=true end
+        end
+    end
+    print()
+
+    -- ambil logcat penuh (dump), cari baris disconnect/kick/reason
+    info("Baca logcat (dump)...")
+    local h = io.popen("su -c 'logcat -d' 2>/dev/null")
+    local semua = h and h:read("*all") or ""
+    if h then h:close() end
+    if semua == "" then warn("Logcat kosong / gak kebaca."); return end
+
+    -- filter: baris yang ada Roblox + (disconnect/kick/reason/removed/save data)
+    local hits = {}
+    for baris in semua:gmatch("[^\\n]+") do
+        local low = baris:lower()
+        if (low:find("roblox") or low:find("networkclient") or low:find("rbxtransport"))
+           and (low:find("disconnect") or low:find("kick") or low:find("reason:")
+                or low:find("networkclient:remove") or low:find("save data")
+                or low:find("error code") or low:find("teleport")) then
+            -- ambil PID dari kolom ke-2 (format: date time PID TID ...)
+            local pid = baris:match("^%S+%s+%S+%s+(%d+)")
+            local nama = pid and pidKe[pid] or "?"
+            -- ambil kode reason kalau ada: "reason: Player: NNN (Xxx)"
+            local kode = baris:match("reason:%s*%a*:?%s*(%d+)")
+            local jenis = baris:match("%((%w+)%)")   -- (DisconnectClientInitiated)
+            hits[#hits+1] = { nama = nama, kode = kode, jenis = jenis, teks = baris }
+        end
+    end
+
+    if #hits == 0 then
+        warn("Gak nemu baris disconnect/kick di logcat.")
+        info("Mungkin: (1) belum ada yang disconnect, (2) log udah ke-rotate/ketimpa.")
+        info("Coba lagi PAS ada client kena kick/keluar.")
+        return
+    end
+
+    print(C.BOLD .. ("Nemu %d baris disconnect/kick:"):format(#hits) .. C.N .. "\\n")
+    -- ringkasan per kode
+    local ringkas = {}
+    for _, hit in ipairs(hits) do
+        local k = hit.kode or (hit.jenis or "?")
+        ringkas[k] = (ringkas[k] or 0) + 1
+    end
+    info("Ringkasan kode disconnect:")
+    for k, n in pairs(ringkas) do
+        local ket = (k == "285") and "keluar sendiri / backgrounding (NORMAL)"
+                 or (k == "267") and "KICKED (game/experience -- ini yang rejoin!)"
+                 or (k == "264") and "dobel login (akun kepakai di tempat lain)"
+                 or (k == "277") and "lost connection"
+                 or (k == "268") and "untrusted / ditolak"
+                 or "?"
+        print(("   kode %-6s x%-3d  %s"):format(k, n, ket))
+    end
+    print()
+
+    -- detail 20 baris terakhir (paling baru)
+    info("Detail (20 terakhir):")
+    local mulai = math.max(1, #hits - 19)
+    for i = mulai, #hits do
+        local hit = hits[i]
+        local tag = hit.kode and ("kode " .. hit.kode) or (hit.jenis or "?")
+        -- warna: 267/kick = merah (perlu rejoin), 285 = kuning (normal)
+        local warna = (hit.kode == "267") and C.R
+                   or (hit.kode == "285") and C.Y
+                   or C.N
+        -- ambil bagian inti baris (buang timestamp panjang)
+        local inti = hit.teks:match("%[.*%]?.*$") or hit.teks
+        inti = inti:sub(1, 120)
+        print(warna .. ("   [%s] %s"):format(hit.nama, inti) .. C.N)
+    end
+    print()
+    info("Kode 267 = kena KICK (rejoin). Kode 285 = keluar sendiri (normal, gak usah rejoin).")
+    info("Tempel hasil ini ke chat biar tau pola disconnect-nya.")
     return
 end
 
