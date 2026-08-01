@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.47-cf"
+local VERSION = "7.48-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4198,14 +4198,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     end
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
-                    -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 20s.
+                    -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 30s.
                     -- Kalau udah di game (grafis >= 30MB) -> SUKSES, lanjut client
                     -- berikutnya. Kalau belum (masih out/home) -> tembak LAGI,
                     -- tunggu 20s lagi. Maks 3x. Kalau 3x gak masuk -> skip client
                     -- ini (ketangkep ronde berikutnya). jaga_depan berkala (3s)
                     -- yang urus jendela, JANGAN di sini (tembak 2x).
                     if lisensiAda then
-                        local masukG, mbG = cek_masuk_game(pkg, 20, cek_batal)
+                        local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
                         if masukG then
                             sukses, lama, sebab = true, 0, nil   -- udah di game
                         else
@@ -6489,8 +6489,8 @@ local function run(cfg)
                             -- cek standby di tengah (interupsi)
                             local pNow = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
                             if pNow:upper():find("STANDBY") or pNow:upper():find("STOP") then break end
-                            -- PASTIIN MASUK: cek grafis 20s (log MB pas masuk)
-                            local masukG, mbG = cek_masuk_game(pkg, 20, cek_batal)
+                            -- PASTIIN MASUK: cek grafis 30s (log MB pas masuk)
+                            local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
                             if masukG then
                                 masuk = true
                                 tambahLog(("  %s MASUK GAME (grafis %.0f MB, percobaan %d)"):format(
