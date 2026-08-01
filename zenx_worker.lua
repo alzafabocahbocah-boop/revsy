@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.76-cf"
+local VERSION = "7.78-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8267,21 +8267,16 @@ if PERINTAH == "buka" then
     info("am start -S DIBUANG (ngerusak). URL: " .. url)
     info("")
     for _, c in ipairs(cara) do
-        local gSeb = grafis_kb(pkg) or 0
         print("")
         print(C.BOLD .. C.Y .. "########## CARA " .. c.n .. " ##########" .. C.N)
         print(C.C .. "  " .. c.ket .. C.N)
-        print(C.D .. "  grafis sebelum: " .. string.format("%.0f MB", gSeb/1024) .. C.N)
         print(C.D .. "  cmd: " .. c.cmd .. C.N)
         sh_silent("su -c \"" .. c.cmd .. "\"")
-        os.execute("sleep 3")
-        jaga_depan(cfg, nil)   -- munculin window
-        os.execute("sleep 7")   -- total 10s
-        local gSes = grafis_kb(pkg) or 0
-        local masuk = gSes >= GAME_AMBANG_KB
-        print((masuk and C.G or C.Y) .. "  grafis sesudah: " .. string.format("%.0f MB", gSes/1024)
-              .. (masuk and "  -> MASUK GAME" or "  -> belum masuk") .. C.N)
-        print(C.D .. "  << LIAT LAYAR RF: client lain aman? >>" .. C.N)
+        -- v7.77: jeda 20s bersih (gak ada grafis_kb/jaga_depan yang berat --
+        -- dumpsys ~12s bikin total 1 menit). Cukup tembak + tunggu 20s, user
+        -- LIAT SENDIRI di layar RF (masuk gak, client lain aman gak).
+        print(C.D .. "  << tunggu 10s -- LIAT LAYAR RF sekarang >>" .. C.N)
+        os.execute("sleep 10")
     end
     print("")
     info("Semua cara udah dicoba. Cara mana yang MASUK + gak ganggu client lain?")
