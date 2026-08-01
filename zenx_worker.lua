@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.45-cf"
+local VERSION = "7.46-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4221,13 +4221,26 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     --   B. gak ketauan (gak ada akun kepetakan / fast mode)
                     --      -> lanjut aja, biar client lain kebagian.
                     local nyangkut = (sebab or ""):find("nyangkut", 1, true) ~= nil
-                    if lisensiAda and pkg_hidup(pkg) then
-                        -- v7.12: MODE TEMBAK BARENGAN -- proses idup = cukup, LANJUT.
-                        -- Nyangkut Home/loading gak dibunuh-ulang di sini (buang
-                        -- waktu); cek berkala/dump (tiap 90s) yang masukin. Yang
-                        -- penting semua client kebuka CEPET.
-                        sukses = true
-                        break
+                    if lisensiAda then
+                        -- v7.46: MODE TEMBAK BARENGAN -- cek_masuk_game udah nentuin
+                        -- sukses (grafis >= 30MB). Kalau BELUM masuk (sukses false),
+                        -- JANGAN paksa sukses cuma karena proses hidup -- itu bikin
+                        -- cek grafis percuma (clienq "hidup" tapi belum di game ->
+                        -- dianggap sukses). Biarin loop tembak ulang sampai grafis
+                        -- naik (maks 3x). Baru di percobaan TERAKHIR nyerah (skip,
+                        -- ketangkep ronde berikutnya).
+                        if coba >= maxc then
+                            warn(string.format("[%d/%d] %s — belum masuk game setelah %dx, SKIP (coba ronde berikutnya)",
+                                urut, totalBuka, pkg, maxc))
+                            -- sukses tetep false -> masuk hitungan gagal, tapi gak nyangkut
+                            break
+                        end
+                        -- belum maxc -> tembak ulang (jangan break, lanjut coba++)
+                        warn(string.format("[%d/%d] %s — %s, tembak lagi (%d/%d)...",
+                            urut, totalBuka, pkg, sebab or "belum masuk", coba, maxc))
+                        if lapor_fn then pcall(lapor_fn) end
+                        if cek_batal and cek_batal() then break end
+                        os.execute("sleep 3")
                     elseif nyangkut then
                         warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
                             urut, #list, pkg))
