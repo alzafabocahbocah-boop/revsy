@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.91-cf"
+local VERSION = "7.92-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8297,6 +8297,13 @@ if PERINTAH == "buka" then
     -- PANDORA (cmp ActivityProtocolLaunch + flag beda) + beberapa alternatif.
     -- am start -S (stop activity) DIBUANG -- ngerusak (user konfirmasi).
     local cara = {
+        -- === CARA T: hapus task lama DULU, baru A3 (MULTIPLE_TASK) -- biar isolasi
+        -- MULTIPLE_TASK dapet TAPI task gak numpuk (bug A3). am stack/task remove
+        -- hapus task lama (window/activity) tanpa force-stop proses (lebih ringan).
+        { n = "T", ket = "hapus task lama + MULTIPLE_TASK (fix bug A3 numpuk)",
+          cmd = "for t in $(am stack list 2>/dev/null | grep -o 'taskId=[0-9]*' | grep -o '[0-9]*'); do am stack info $t 2>/dev/null | grep -q "..pkg.." && am task remove $t 2>/dev/null; done; sleep 1; am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x18000000" },
+        { n = "T2", ket = "am stack remove pkg + A3 MULTIPLE_TASK (cara lain hapus task)",
+          cmd = "am stack remove "..pkg.." 2>/dev/null; sleep 1; am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x18000000" },
         -- === CARA PANDORA PERSIS (dari logcat: -p pkg + -n cmp + flag 0x10000000) ===
         { n = "P", ket = "PANDORA PERSIS: -p pkg + -n cmp + NEW_TASK (deeplink)",
           cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
