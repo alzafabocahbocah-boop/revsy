@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.37-cf"
+local VERSION = "7.38-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3967,11 +3967,15 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     -- terus dibuka ulang (user liat "keluar semua"). SUDAH_GRID di-reset cuma
     -- pas FORCE transisi (Start baru), jadi grid keset sekali per sesi.
     if lisensiAda and petaGrid and not SUDAH_GRID then
-        info("Set grid semua client sekali (mode tembak barengan)...")
+        info("Set grid semua client sekali (tulis prefs, gak force-stop)...")
         for _, pkg in ipairs(list) do
             if petaGrid[pkg] then
-                -- force-stop biar App Cloner baca prefs grid pas app mulai lagi
-                if pkg_hidup(pkg) then sh_silent("am force-stop " .. pkg) end
+                -- v7.38: JANGAN force-stop! Dulu force-stop SEMUA client hidup
+                -- biar App Cloner langsung baca prefs -> tapi itu bikin MATI
+                -- BARENGAN (client yang lagi main ke-kill). Kayak Pandora: cukup
+                -- TULIS prefs posisi (tata_satu udah nulis ke shared_prefs).
+                -- Client nyusul posisi pas restart NATURAL (rejoin/crash/buka).
+                -- Yang lagi main gak keganggu -> gak ada mati bareng.
                 tata_satu(pkg, petaGrid[pkg])
             end
         end
