@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.78-cf"
+local VERSION = "7.80-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8263,6 +8263,26 @@ if PERINTAH == "buka" then
     }
 
     info("=== TES CARA MASUKIN: " .. nama .. " ===")
+    -- v7.79: kalau dikasih arg ke-3 (nama cara, mis A3), cuma jalanin ITU aja.
+    -- Contoh: zenx buka clienu A3  -> tes cara A3 doang (gak semua 9).
+    local caraPilih = (arg and arg[3] or ""):upper()
+    if caraPilih ~= "" then
+        local ketemu = nil
+        for _, c in ipairs(cara) do if c.n:upper() == caraPilih then ketemu = c break end end
+        if not ketemu then
+            err("Cara '" .. caraPilih .. "' gak ada. Pilihan: A1 A2 A3 A4 A5 A6 B1 B2 D1")
+            return
+        end
+        print("")
+        print(C.BOLD .. C.Y .. "########## CARA " .. ketemu.n .. " (manual) ##########" .. C.N)
+        print(C.C .. "  " .. ketemu.ket .. C.N)
+        print(C.D .. "  cmd: " .. ketemu.cmd .. C.N)
+        print(C.Y .. "  siap-siap... tembak 5 detik lagi (LIAT LAYAR RF)" .. C.N)
+        os.execute("sleep 5")   -- v7.80: delay 5s sebelum aktivasi (user minta)
+        sh_silent("su -c \"" .. ketemu.cmd .. "\"")
+        print(C.D .. "  << ditembak -- LIAT LAYAR RF: masuk gak? client lain aman? >>" .. C.N)
+        return
+    end
     info("9 cara (fokus variasi Pandora). Jeda 10s. LIAT: masuk gak? client lain aman?")
     info("am start -S DIBUANG (ngerusak). URL: " .. url)
     info("")
