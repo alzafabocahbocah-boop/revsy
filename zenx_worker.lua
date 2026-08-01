@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.85-cf"
+local VERSION = "7.88-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2573,6 +2573,33 @@ local function grafis_kb(pkg)
     return tonumber(n)
 end
 
+-- v7.87: cek grafis SEMUA client dalam 1 SU CALL (bukan per-client). su di RF
+-- makan ~6s tiap panggil -- 10 client = 60s kalau satu-satu. Gabung ke 1 su
+-- (loop di shell), tandain tiap pkg -> parse. Balik map pkg -> KB.
+-- Dipakai loop grafis: cek semua sekali, yang <30MB baru diurus.
+local function grafis_semua(pkgs)
+    local hasil = {}
+    if #pkgs == 0 then return hasil end
+    -- bikin script shell: tiap pkg -> echo "PKG|" + graphics value
+    local cmds = {}
+    for _, pkg in ipairs(pkgs) do
+        -- echo penanda pkg, terus dumpsys grep Graphics
+        cmds[#cmds+1] = "echo -n '@@" .. pkg .. "@@'; dumpsys meminfo " .. pkg
+            .. " 2>/dev/null | grep -i Graphics | head -1"
+    end
+    local skrip = table.concat(cmds, "; ")
+    local out = sh("su -c \"" .. skrip .. "\"") or ""
+    -- parse: tiap baris "@@pkg@@  Graphics:   48988 ..."
+    for pkg, angka in out:gmatch("@@(com%.roblox%.[%w_]+)@@%s*[Gg]raphics:%s*(%d+)") do
+        hasil[pkg] = tonumber(angka)
+    end
+    -- pkg yang gak ada Graphics (mati/home <2MB) -> 0
+    for _, pkg in ipairs(pkgs) do
+        if hasil[pkg] == nil then hasil[pkg] = 0 end
+    end
+    return hasil
+end
+
 -- v7.40: cek client udah MASUK GAME via grafis MB, tungguin sampai BATAS detik.
 -- Balik: masuk(true/false), mb(angka MB grafis). Ambang 30 MB (game ~30-49,
 -- home ~15, loading <2). Dipakai di loop buka + mati-bareng.
@@ -3682,10 +3709,14 @@ local function close_all(cfg, only, mapLink, tanpaMunculin)
     if #target == 0 then return 0 end
     setAksi(#target == #list and "nutup semua client"
             or ("nutup " .. #target .. " client"))
-    -- v4.19: FASE 1 -> force-stop SEMUA sekaligus (gak nunggu satu-satu dulu).
+    -- v7.86: force-stop SATU-SATU + JEDA (kayak Pandora, dari logcat: tiap client
+    -- jeda ~6-7s). Dulu force-stop SEMUA BARENG -> App Cloner service (Persistent
+    -- AppService) keteteran -> NGERUSAK client lain. Pandora satu-satu biar service
+    -- restart bersih tiap client. Jeda 3s (kompromi -- 6-7s kelamaan buat 10 client).
     for _, pkg in ipairs(target) do
-        sh_silent("su -c 'am force-stop " .. pkg .. "'")   -- v7.82: 1x aja (kayak Pandora)
+        sh_silent("su -c 'am force-stop " .. pkg .. "'")
         info("tutup paksa: " .. pkg)
+        os.execute("sleep 3")   -- jeda tiap client (App Cloner service napas)
     end
     -- v4.19: FASE 2 -> tungguin SEMUA beneran mati PARALEL (bukan per-client 8s).
     -- penting buat pindah server: am start pas app masih idup -> Roblox abaikan
@@ -7377,6 +7408,9 @@ local function run(cfg)
         -- Muter terus tiap ronde. Skip client yang cookie mati/ban (mati:).
         -- Cuma jalan pas FORCE (hit) & client udah pernah dibuka (lastOpen > 0).
         if hit and lastOpen > 0 and lisensiAda then
+            -- v7.87: cek grafis SEMUA client SEKALI (1 su call, cepet) di awal.
+            -- Dulu grafis_kb per client (10x su = ~60s). Sekarang 1x su buat semua.
+            local petaGrafis = grafis_semua(split(cfg.pkgs or ""))
             for _, pkg in ipairs(split(cfg.pkgs or "")) do
                 -- cek batal (STANDBY/STOP nyerobot) tiap client
                 if cek_batal and cek_batal() then break end
@@ -7385,7 +7419,7 @@ local function run(cfg)
                 if akun and KICK_DIURUS["mati:" .. akun] then
                     -- skip diam
                 else
-                    local g = grafis_kb(pkg) or 0
+                    local g = petaGrafis[pkg] or 0   -- dari cek all (bukan per-client)
                     if g >= GAME_AMBANG_KB then
                         -- udah di game -> lanjut (gak usah ngapa-ngapain)
                     else
@@ -8187,6 +8221,37 @@ end
 -- v7.74: `zenx buka <client>` -- TES SEMUA CARA MASUKIN 1 client, jeda 10s tiap
 -- cara. Biar user liat sendiri cara mana yang BERHASIL masuk + GAK ganggu client
 -- lain. Tiap cara dikasih nomor + nama, jeda 10s biar sempet diliat.
+-- v7.88: `zenx grafis` -- cek grafis SEMUA client sekaligus (1 su call). Nampilin
+-- grafis MB + status (di game / out) tiap client. Cepet (gak per-client).
+if PERINTAH == "grafis" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
+    local pkgs = split(cfg.pkgs or "")
+    if #pkgs == 0 then err("Gak ada client di config.") return end
+    info("=== CEK GRAFIS SEMUA CLIENT (1 su call) ===")
+    info("Ambang di game: >= 30 MB (game ~30-49, home ~15, out <2)")
+    print("")
+    local peta = grafis_semua(pkgs)
+    local diGame, out = 0, 0
+    for _, pkg in ipairs(pkgs) do
+        local kb = peta[pkg] or 0
+        local mb = kb / 1024
+        local nama = pkg:gsub("com%.roblox%.", "")
+        local status, warna
+        if kb >= GAME_AMBANG_KB then
+            status = "DI GAME"; warna = C.G; diGame = diGame + 1
+        elseif kb >= 5 * 1024 then
+            status = "home/loading"; warna = C.Y; out = out + 1
+        else
+            status = "OUT/mati"; warna = C.D; out = out + 1
+        end
+        print(("  %s%-8s  %6.0f MB   %s%s"):format(warna, nama, mb, status, C.N))
+    end
+    print("")
+    info(("Total: %d di game, %d out/home (dari %d client)"):format(diGame, out, #pkgs))
+    return
+end
+
 if PERINTAH == "buka" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
