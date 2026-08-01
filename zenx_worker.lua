@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.92-cf"
+local VERSION = "7.93-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8359,7 +8359,18 @@ if PERINTAH == "buka" then
     if caraPilih ~= "TES" then
         info("Buka " .. nama .. " pakai cara Pandora persis (production, open_one)...")
         info("(mau tes 9 cara? ketik: zenx buka " .. nama .. " tes)")
-        open_one(cfg, pkg, linkClient, "manual-buka")
+        -- v7.93: DEBUG -- tampilin URL + command persis + status client sebelum.
+        local urlDbg = build_url(cfg, linkClient)
+        local hidup = pkg_hidup(pkg)
+        local gNow = grafis_kb(pkg) or 0
+        info(("Status: %s, grafis %.0f MB"):format(hidup and "hidup" or "mati", gNow/1024))
+        info("URL: " .. urlDbg)
+        local cmdDbg = "am start -a android.intent.action.VIEW -d '"..urlDbg.."'"
+            .. " -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000"
+        info("CMD: su -c \"" .. cmdDbg .. "\"")
+        -- jalanin + tangkep output (biar keliatan error am start)
+        local hasilAm = sh("su -c \"" .. cmdDbg .. " 2>&1\"") or ""
+        if hasilAm:match("%S") then info("am start bilang: " .. hasilAm:gsub("%s+"," "):sub(1,120)) end
         info("Ditembak. Cek grafis 30s (masuk gak)...")
         local masuk, mb = cek_masuk_game(pkg, 30, nil)
         if masuk then ok(("%s MASUK GAME (grafis %.0f MB)"):format(nama, mb or 0))
