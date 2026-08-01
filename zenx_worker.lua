@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.71-cf"
+local VERSION = "7.74-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4273,15 +4273,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- stop client INI DULU (cuma dia, bukan semua), baru open_one
                     -- biar fresh masuk. Cuma pas hidup+nyangkut (bukan yg udah di
                     -- game). Ini gak bikin mati-bareng (cuma 1 client bermasalah).
-                    -- v7.66: KILL DULU baru tembak (user minta -- fresh dari awal
-                    -- Start). Aman -- isolasi Pandora (open_one cmp ActivityProtocol
-                    -- Launch) bikin client lain gak keganggu pas force-stop.
-                    if pkg_hidup(pkg) then
-                        io.write(("      kill %s dulu (fresh)...\n"):format(pkg:gsub("com%.roblox%.","")))
-                        sh_silent("am force-stop " .. pkg)
-                        sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                        os.execute("sleep 2")
-                    end
+                    -- v7.72: FORCE KILL DIBUANG (ngerusak client lain!). Balik ke
+                    -- TANPA kill -- open_one pakai cmp ActivityProtocolLaunch (cara
+                    -- Pandora) yang udah kebukti ISOLATED (client lain aman). Ternyata
+                    -- 'am force-stop' + langsung open_one yang ganggu window clone
+                    -- lain (App Cloner share window manager). ActivityProtocolLaunch
+                    -- re-join tanpa kill -> cukup, gak ganggu.
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 30s.
@@ -7421,31 +7418,21 @@ local function run(cfg)
                             if akun then KICK_DIURUS["captcha:" .. pkg] = akun end
                             -- lewati tembak, lanjut client berikutnya
                         else
-                        -- OUT (grafis rendah) -> KILL dulu baru tembak
+                        -- OUT (grafis rendah) -> tembak (TANPA kill)
                         local nama = pkg:gsub("com%.roblox%.", "")
-                        tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> kill + masukin"):format(
+                        tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
                             akun or nama, g/1024))
-                        -- v7.64: FORCE-STOP DULU (user minta -- kill client dulu biar
-                        -- fresh). Aman sekarang -- isolasi Pandora (open_one cmp
-                        -- ActivityProtocolLaunch) bikin client lain gak keganggu.
-                        -- Terus grid + tembak.
-                        if pkg_hidup(pkg) then
-                            sh_silent("am force-stop " .. pkg)
-                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                            os.execute("sleep 2")
-                        end
+                        -- v7.72: TANPA force kill (ngerusak client lain). open_one
+                        -- cara Pandora (ActivityProtocolLaunch) re-join tanpa kill.
                         grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         TERAKHIR_BUKA[pkg] = os.time()
                         jaga_depan(cfg, mapLink)
                         local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
                         if not masukG and not (cek_batal and cek_batal()) then
-                            -- coba 2: masih belum masuk -> kill + tembak lagi
-                            tambahLog(("[grafis] %s masih belum masuk (%.0f MB) -> kill + tembak ulang"):format(
+                            -- coba 2: masih belum masuk -> tembak lagi (TANPA kill)
+                            tambahLog(("[grafis] %s masih belum masuk (%.0f MB) -> tembak ulang"):format(
                                 akun or nama, mbG or 0))
-                            sh_silent("am force-stop " .. pkg)
-                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                            os.execute("sleep 2")
                             open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                             TERAKHIR_BUKA[pkg] = os.time()
                             jaga_depan(cfg, mapLink)
@@ -8212,6 +8199,63 @@ if PERINTAH == "rekam" then
     info("Kalau bener, simpen di zenx_worker_config.lua:")
     info(('   key_tap="%.3f,%.3f",'):format(hasil.fx, hasil.fy))
     print()
+    return
+end
+
+-- v7.74: `zenx buka <client>` -- TES SEMUA CARA MASUKIN 1 client, jeda 10s tiap
+-- cara. Biar user liat sendiri cara mana yang BERHASIL masuk + GAK ganggu client
+-- lain. Tiap cara dikasih nomor + nama, jeda 10s biar sempet diliat.
+if PERINTAH == "buka" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
+    local target = arg and arg[2] or ""
+    if target == "" then
+        err("Cara pakai:  zenx buka <client>")
+        info("   contoh:  zenx buka clienp")
+        info("   (coba SEMUA cara masukin 1 client, jeda 10s -- liat mana yg works)")
+        return
+    end
+    local pkg = target:find("^com%.roblox%.") and target or ("com.roblox." .. target)
+    local nama = pkg:gsub("com%.roblox%.", "")
+    local url = build_url(cfg, nil)
+
+    -- daftar CARA MASUKIN (dicoba satu-satu, jeda 10s)
+    local cara = {
+        { n = "A", ket = "ActivityProtocolLaunch + flag NEW_TASK (0x10000000) [cara Pandora]",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
+        { n = "B", ket = "am start biasa -d roblox:// -p pkg (cara lama ZenX)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg },
+        { n = "C", ket = "am start -S (stop activity dulu, baru start)",
+          cmd = "am start -S -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch" },
+        { n = "D", ket = "monkey (launch app via launcher)",
+          cmd = "monkey -p "..pkg.." -c android.intent.category.LAUNCHER 1" },
+        { n = "E", ket = "am start flag NEW_TASK|CLEAR_TOP (0x14000000)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x14000000" },
+    }
+
+    info("=== TES CARA MASUKIN: " .. nama .. " ===")
+    info("Tiap cara dicoba, jeda 10s. LIAT SENDIRI: masuk gak? client lain aman gak?")
+    info("URL: " .. url)
+    info("")
+    for _, c in ipairs(cara) do
+        local gSeb = grafis_kb(pkg) or 0
+        print("")
+        print(C.BOLD .. C.Y .. "########## CARA " .. c.n .. " ##########" .. C.N)
+        print(C.C .. "  " .. c.ket .. C.N)
+        print(C.D .. "  grafis sebelum: " .. string.format("%.0f MB", gSeb/1024) .. C.N)
+        print(C.D .. "  cmd: " .. c.cmd .. C.N)
+        sh_silent("su -c \"" .. c.cmd .. "\"")
+        os.execute("sleep 3")
+        jaga_depan(cfg, nil)   -- munculin window
+        os.execute("sleep 7")   -- total 10s
+        local gSes = grafis_kb(pkg) or 0
+        local masuk = gSes >= GAME_AMBANG_KB
+        print((masuk and C.G or C.Y) .. "  grafis sesudah: " .. string.format("%.0f MB", gSes/1024)
+              .. (masuk and "  -> MASUK GAME" or "  -> belum masuk") .. C.N)
+        print(C.D .. "  << LIAT LAYAR RF: client lain aman? >>" .. C.N)
+    end
+    print("")
+    info("Semua cara udah dicoba. Cara mana yang MASUK + gak ganggu client lain?")
     return
 end
 
