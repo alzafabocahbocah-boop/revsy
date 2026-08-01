@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.93-cf"
+local VERSION = "7.94-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7438,17 +7438,23 @@ local function run(cfg)
                         local nama = pkg:gsub("com%.roblox%.", "")
                         tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
                             akun or nama, g/1024))
-                        -- v7.72: TANPA force kill (ngerusak client lain). open_one
-                        -- cara Pandora (ActivityProtocolLaunch) re-join tanpa kill.
+                        -- coba 1: tembak TANPA kill (cara Pandora re-join). Cukup
+                        -- kalau client fresh/loading.
                         grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         TERAKHIR_BUKA[pkg] = os.time()
                         jaga_depan(cfg, mapLink)
                         local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
                         if not masukG and not (cek_batal and cek_batal()) then
-                            -- coba 2: masih belum masuk -> tembak lagi (TANPA kill)
-                            tambahLog(("[grafis] %s masih belum masuk (%.0f MB) -> tembak ulang"):format(
+                            -- coba 2: masih nyangkut (Home, am start no-op ke app
+                            -- hidup) -> FORCE-STOP 1 client ini dulu (AMAN sekarang:
+                            -- satu-satu kayak Pandora, gak bareng -> gak ngerusak),
+                            -- baru tembak fresh. Pandora pun force-stop tiap client
+                            -- sebelum buka (dari logcat: satu-satu jeda 6-7s).
+                            tambahLog(("[grafis] %s masih nyangkut (%.0f MB) -> force-stop + tembak fresh"):format(
                                 akun or nama, mbG or 0))
+                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                            os.execute("sleep 3")   -- jeda kayak Pandora (service napas)
                             open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                             TERAKHIR_BUKA[pkg] = os.time()
                             jaga_depan(cfg, mapLink)
