@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.46-cf"
+local VERSION = "7.47-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4180,6 +4180,22 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                             end
                         end
                     end
+                    -- v7.47: KALAU client UDAH HIDUP tapi nyangkut (grafis rendah
+                    -- = di Home), 'am start' NO-OP (Android abaikan app yg udah
+                    -- jalan) -> tembak gak ngefek (grafis tetep 11 MB). Fix: force-
+                    -- stop client INI DULU (cuma dia, bukan semua), baru open_one
+                    -- biar fresh masuk. Cuma pas hidup+nyangkut (bukan yg udah di
+                    -- game). Ini gak bikin mati-bareng (cuma 1 client bermasalah).
+                    if pkg_hidup(pkg) then
+                        local gNyangkut = grafis_kb(pkg) or 0
+                        if gNyangkut < GAME_AMBANG_KB then
+                            info(("   %s nyangkut (grafis %.0f MB) -> force-stop dulu biar tembak ngefek"):format(
+                                pkg:gsub("com%.roblox%.",""), gNyangkut/1024))
+                            sh_silent("am force-stop " .. pkg)
+                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                            os.execute("sleep 2")
+                        end
+                    end
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 20s.
@@ -6457,6 +6473,16 @@ local function run(cfg)
                         local masuk = false
                         for coba = 1, 3 do
                             RIW.catat("REJOIN", akM or pkg, "karena=mati-bareng")
+                            -- v7.47: kalau hidup+nyangkut, force-stop dulu (am
+                            -- start no-op ke app hidup). Cuma client ini.
+                            if pkg_hidup(pkg) then
+                                local gN = grafis_kb(pkg) or 0
+                                if gN < GAME_AMBANG_KB then
+                                    sh_silent("am force-stop " .. pkg)
+                                    sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                                    os.execute("sleep 2")
+                                end
+                            end
                             open_one(cfg, pkg, mapLink[pkg], "mati-bareng")
                             jaga_depan(cfg, mapLink)
                             refresh_status(); gambar_tabel(isi)
