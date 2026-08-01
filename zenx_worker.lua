@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.80-cf"
+local VERSION = "7.85-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2482,18 +2482,16 @@ local function open_one(cfg, pkg, link_client, alasan)
     local wm = tonumber(cfg.win_mode) or 0
 
     local function coba(pakai_wm)
-        -- v7.51: CARA PANDORA (dari intip logcat ActivityTaskManager).
-        -- Pandora buka client dengan:
-        --   START {act=VIEW dat=https://... flg=0x10000000
-        --          cmp=com.roblox.clienX/com.roblox.client.ActivityProtocolLaunch}
-        -- Kunci ISOLASI (client lain gak keganggu):
-        --   1. cmp SPESIFIK per-package (ActivityProtocolLaunch) -- target
-        --      Activity join DI package itu, bukan biar Android routing global
-        --   2. flg=0x10000000 = FLAG_ACTIVITY_NEW_TASK doang (BUKAN CLEAR_TOP
-        --      0x04000000 yang bisa ganggu task client lain)
-        -- Dulu ZenX: 'am start -a VIEW -d roblox:// -p pkg' TANPA cmp -> Android
-        -- pilih routing sendiri -> bisa ganggu window/task clone lain.
+        -- v7.85: CARA PANDORA PERSIS (dari logcat: START {dat=... flg=0x10000000
+        -- pkg=com.roblox.clienX cmp=.../ActivityProtocolLaunch} from uid 0).
+        -- Persis kayak Pandora:
+        --   1. -p pkg DAN -n cmp BARENG (routing pasti ke package + activity)
+        --   2. flag 0x10000000 = NEW_TASK doang (BUKAN MULTIPLE_TASK -- itu bikin
+        --      task numpuk / kadang gak masuk. Pandora TANPA MULTIPLE_TASK)
+        --   3. cmp ActivityProtocolLaunch (activity join)
+        -- Isolasi Pandora BUKAN dari MULTIPLE_TASK, tapi dari -p+-n+cmp yg bener.
         local inner = "am start -a android.intent.action.VIEW -d '"..url.."'"
+            .. " -p "..pkg
             .. " -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch"
             .. " -f 0x10000000"
         if pakai_wm and wm > 0 then
@@ -3686,8 +3684,7 @@ local function close_all(cfg, only, mapLink, tanpaMunculin)
             or ("nutup " .. #target .. " client"))
     -- v4.19: FASE 1 -> force-stop SEMUA sekaligus (gak nunggu satu-satu dulu).
     for _, pkg in ipairs(target) do
-        sh_silent("am force-stop " .. pkg)
-        sh_silent("su -c 'am force-stop " .. pkg .. "'")
+        sh_silent("su -c 'am force-stop " .. pkg .. "'")   -- v7.82: 1x aja (kayak Pandora)
         info("tutup paksa: " .. pkg)
     end
     -- v4.19: FASE 2 -> tungguin SEMUA beneran mati PARALEL (bukan per-client 8s).
@@ -6594,14 +6591,8 @@ local function run(cfg)
                             RIW.catat("REJOIN", akM or pkg, "karena=mati-bareng")
                             -- v7.47: kalau hidup+nyangkut, force-stop dulu (am
                             -- start no-op ke app hidup). Cuma client ini.
-                            if pkg_hidup(pkg) then
-                                local gN = grafis_kb(pkg) or 0
-                                if gN < GAME_AMBANG_KB then
-                                    sh_silent("am force-stop " .. pkg)
-                                    sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                                    os.execute("sleep 2")
-                                end
-                            end
+                            -- v7.84: force-stop DIHAPUS (user minta). open_one
+                            -- cara Pandora (P/A3) re-join tanpa kill.
                             grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
                             open_one(cfg, pkg, mapLink[pkg], "mati-bareng")
                             jaga_depan(cfg, mapLink)
@@ -7130,15 +7121,8 @@ local function run(cfg)
                             -- kalau join-nya kerapetan -- itu justru sumber 267
                             -- yang kita coba obatin.
                             os.execute("sleep 8")
-                            -- v5.71: force-stop langsung, BUKAN close_one() --
-                            -- fungsi itu gak ada (ketangkep pas ngecek urutan
-                            -- deklarasi). Pola dua baris ini sama kayak yang
-                            -- dipakai di tutup_semua: perintah polos dulu, terus
-                            -- lewat su -- karena di sebagian RF yang polos gagal
-                            -- tanpa pesan apa pun.
-                            sh_silent("am force-stop " .. pkg)
-                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                            os.execute("sleep 2")
+                            -- v7.84: force-stop DIHAPUS (user minta). Langsung
+                            -- open_one (cara Pandora re-join tanpa kill).
                             open_one(cfg, pkg, mapLink[pkg], "diem-diagnosa")
                             os.execute("sleep 3")
                             refresh_status(); lastStatusCek = os.time()
@@ -7190,9 +7174,7 @@ local function run(cfg)
                             -- bukan captcha -> script mati/nyangkut -> MASUKIN LAGI
                             info(("SCRIPT OFF %s (off %dm) -> force-stop + masukin lagi (aktifin script)"):format(akD, math.floor(diem/60)))
                             RIW.catat("REJOIN", akD, "karena=script-off-3menit")
-                            sh_silent("am force-stop " .. pkg)
-                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                            os.execute("sleep 2")
+                            -- v7.84: force-stop DIHAPUS (user minta). Langsung tembak.
                             grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
                             open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "script-off-3menit")
                             TERAKHIR_BUKA[pkg] = os.time()
@@ -8238,6 +8220,11 @@ if PERINTAH == "buka" then
     -- PANDORA (cmp ActivityProtocolLaunch + flag beda) + beberapa alternatif.
     -- am start -S (stop activity) DIBUANG -- ngerusak (user konfirmasi).
     local cara = {
+        -- === CARA PANDORA PERSIS (dari logcat: -p pkg + -n cmp + flag 0x10000000) ===
+        { n = "P", ket = "PANDORA PERSIS: -p pkg + -n cmp + NEW_TASK (deeplink)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
+        { n = "PW", ket = "PANDORA + WEB URL (kalau ada share link) -p + -n + NEW_TASK",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
         -- === VARIASI CARA PANDORA (cmp ActivityProtocolLaunch, flag beda) ===
         { n = "A1", ket = "Pandora asli: cmp ActivityProtocolLaunch + NEW_TASK (0x10000000)",
           cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
@@ -10371,7 +10358,7 @@ if PERINTAH == "login" then
 
     -- ---------- 3. matiin client ----------
     info("Matiin " .. pkg:gsub("com%.roblox%.", "") .. "...")
-    sh_silent("am force-stop " .. pkg)
+    sh_silent("su -c 'am force-stop " .. pkg .. "'")   -- v7.82: pakai su (root)
     os.execute("sleep 2")
 
     -- ---------- 4. tulis cookie via SQL ----------
