@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.48-cf"
+local VERSION = "7.49-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5871,7 +5871,7 @@ local function run(cfg)
         -- DUMP SEMUA client sekaligus tiap 90s. Tiap client yang idup + gak lapor
         -- fresh + belum ketandai captcha -> cek dump uiautomator (captcha/error).
         -- Konsisten: gak ada yang ke-skip, semua kena giliran tiap 90 detik.
-        if not mati and lastOpen > 0 and (now - (lastCekCaptcha or 0)) >= 90 then
+        if false then  -- v7.49: cek captcha DIMATIIN (ganti loop grafis)
             lastCekCaptcha = now
             local statCap = api_get(cfg, "/stat") or ""
             -- CLEAR captcha buat client yang UDAH lapor fresh (masuk game = solved)
@@ -6449,7 +6449,7 @@ local function run(cfg)
         -- Dulu nunggu siklus reopen_sec (5 MENIT) baru kebuka lagi. Sekarang
         -- ketahuan dalam ~10 detik: banding status ronde ini sama ronde lalu.
         -- Cuma pas FORCE aktif -- kalau STANDBY/CLOSE ya emang sengaja ditutup.
-        if hit then
+        if false then  -- v7.49: mati-bareng DIMATIIN (ganti loop grafis)
             -- v7.13: kumpulin SEMUA yang mati mendadak DULU, baru putusin cara buka.
             local matiBareng = {}
             for _, pkg in ipairs(split(cfg.pkgs)) do
@@ -6534,7 +6534,7 @@ local function run(cfg)
         --   grafis <  30MB + client jalan = nyangkut Home -> masukin
         --   client MATI (run=false) = script off -> BIARIN (jangan paksa)
         -- Jeda 90s antar cek-grafis per client (grafis_kb ~12s, jangan spam).
-        if hit then
+        if false then  -- v7.49: nyangkut-home DIMATIIN (ganti loop grafis)
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 local akCk = mapAkun[pkg]
                 -- v6.24: cookie MATI/BAN -> SKIP TOTAL dari sesi ini. Anggap null.
@@ -6833,7 +6833,7 @@ local function run(cfg)
         -- giliran 60 detik -- langsung masuk blok ini dan kerjain.
         local psGantiPeek = tonumber((resp or ""):match('"psGanti"%s*:%s*(%d+)')) or 0
         local adaTitahBaru = (psGantiPeek > 0 and psGantiPeek ~= psGantiKerjakan)
-        if cfg.auto_rejoin ~= false and hit and ((now - lastAutoRejoin) >= 60 or adaTitahBaru) then
+        if false then  -- v7.49: auto-rejoin DIMATIIN (ganti loop grafis)
             lastAutoRejoin = now
             -- refresh mapping tiap 10 menit (akun bisa ganti kalau setup ulang client)
             if (now - lastMapRefresh) >= 600 then refresh_map(); lastMapRefresh = now end
@@ -7249,6 +7249,54 @@ local function run(cfg)
         if hit and (now - lastJagaDepan) >= 3 then
             lastJagaDepan = now
             jaga_depan(cfg, mapLink, cacheRun)   -- v4.63: pakai cache, gak dumpsys ulang
+        end
+
+        -- ============================================================
+        -- v7.49: LOOP GRAFIS -- SATU-SATUNYA deteksi "out" sekarang. Semua jalur
+        -- lama (mati-bareng, diem, nyangkut-home, auto-rejoin, cek-captcha) UDAH
+        -- DIMATIIN. Logika: cek tiap client URUT, satu-satu:
+        --   grafis >= 30MB (di game) -> lanjut client berikutnya
+        --   grafis < 30MB (out/home) -> force-stop + tembak, cek grafis 30s
+        -- Muter terus tiap ronde. Skip client yang cookie mati/ban (mati:).
+        -- Cuma jalan pas FORCE (hit) & client udah pernah dibuka (lastOpen > 0).
+        if hit and lastOpen > 0 and lisensiAda then
+            for _, pkg in ipairs(split(cfg.pkgs or "")) do
+                -- cek batal (STANDBY/STOP nyerobot) tiap client
+                if cek_batal and cek_batal() then break end
+                local akun = mapAkun and mapAkun[pkg]
+                -- skip cookie mati/ban (percuma ditembak)
+                if akun and KICK_DIURUS["mati:" .. akun] then
+                    -- skip diam
+                else
+                    local g = grafis_kb(pkg) or 0
+                    if g >= GAME_AMBANG_KB then
+                        -- udah di game -> lanjut (gak usah ngapa-ngapain)
+                    else
+                        -- OUT (grafis rendah) -> force-stop + tembak + cek 30s
+                        local nama = pkg:gsub("com%.roblox%.", "")
+                        tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
+                            akun or nama, g/1024))
+                        -- force-stop dulu (am start no-op kalau app udah hidup/nyangkut)
+                        if pkg_hidup(pkg) then
+                            sh_silent("am force-stop " .. pkg)
+                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                            os.execute("sleep 2")
+                        end
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                        TERAKHIR_BUKA[pkg] = os.time()
+                        jaga_depan(cfg, mapLink)
+                        -- cek grafis 30s (pastiin masuk sebelum lanjut client berikutnya)
+                        local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
+                        if masukG then
+                            tambahLog(("[grafis] %s MASUK (grafis %.0f MB)"):format(akun or nama, mbG or 0))
+                        else
+                            tambahLog(("[grafis] %s belum masuk (grafis %.0f MB) -> coba ronde berikutnya"):format(akun or nama, mbG or 0))
+                        end
+                        refresh_status(); lastStatusCek = os.time()
+                        gambar_tabel(isi)
+                    end
+                end
+            end
         end
 
         -- v7.31: LOGCAT STREAMING (kayak Pandora). Baca baris BARU dari stream
