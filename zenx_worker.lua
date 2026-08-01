@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.38-cf"
+local VERSION = "7.39-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4009,6 +4009,35 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
     if lisensiAda and not only and not fast then
         info(">> MODE TEMBAK BARENGAN (lisensi ok / auto_key mati) -- buka cepet, gak tutup dulu")
     end
+
+    -- v7.39: PRA-HITUNG berapa client yang PERLU DIBUKA (yang keluar/gak jalan).
+    -- Biar nomor progress bener: kalau cuma 3 yang keluar dari 10, tampil "1/3,
+    -- 2/3, 3/3" (bukan "1/10" yang bikin bingung). Yang udah jalan & lapor sehat
+    -- di-skip, gak masuk hitungan. Pakai saringan yang SAMA kayak di loop.
+    local perluBuka = 0
+    do
+        local panelBuram0 = (ambil_num(stat0, "skrg") == nil)
+        for _, pkg in ipairs(list) do
+            if (not only) or (pkg == only) then
+                local akun = mapAkun and mapAkun[pkg]
+                local baruDisentuh = TERAKHIR_BUKA[pkg] and
+                                     (os.time() - TERAKHIR_BUKA[pkg]) < (cfg.konfirmasi_sec or 90)
+                local lagiJalan = potretJalan and potretJalan[pkg]
+                if lagiJalan == nil then lagiJalan = pkg_running(pkg) end
+                local diLewat = lagiJalan and (panelBuram0 or not akun
+                                or bridge_fresh(stat0, akun) or baruDisentuh)
+                local diCaptcha = akun and KICK_DIURUS["captcha:" .. pkg]
+                local diMati = akun and KICK_DIURUS["mati:" .. akun]
+                if not diLewat and not diCaptcha and not diMati then
+                    perluBuka = perluBuka + 1
+                end
+            end
+        end
+        if perluBuka > 0 and perluBuka < #list then
+            info(("Perlu buka %d client (dari %d) -- sisanya udah jalan"):format(perluBuka, #list))
+        end
+    end
+    local urutBuka = 0   -- nomor progress khusus yang DIBUKA (1/perluBuka)
     for _, pkg in ipairs(list) do
         if (not only) or (pkg == only) then
             urut = urut + 1
@@ -4085,13 +4114,15 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             else
                 local sukses, lama, sebab = false, 0, nil
                 local maxc = cfg.max_coba or 5
+                urutBuka = urutBuka + 1   -- v7.39: nomor khusus yang DIBUKA
+                local totalBuka = perluBuka > 0 and perluBuka or #list
                 for coba = 1, maxc do
                     local link_c = mapLink and mapLink[pkg] or nil
-                    setAksi(string.format("buka client %d/%d: %s%s", urut, #list,
+                    setAksi(string.format("buka client %d/%d: %s%s", urutBuka, totalBuka,
                         (mapAkun and mapAkun[pkg]) or pkg:gsub("com%.roblox%.",""),
                         coba > 1 and (" (ulang "..coba.."/"..maxc..")") or ""))
                     io.write(string.format("[%d/%d] %s — buka%s...\n",
-                        urut, #list, pkg, coba > 1 and (" (ulang ke-"..coba.."/"..maxc..")") or ""))
+                        urutBuka, totalBuka, pkg, coba > 1 and (" (ulang ke-"..coba.."/"..maxc..")") or ""))
                     -- v4.17: catat ts SEBELUM buka -> nanti tunggu lapor BARU (ts naik)
                     local ts0 = (akun and not fast) and bridge_ts(api_get(cfg, "/stat"), akun) or nil
                     -- v4.58: kalau prosesnya UDAH JALAN, TUTUP DULU. 'am start' ke
