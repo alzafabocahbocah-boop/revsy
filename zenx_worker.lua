@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.65-cf"
+local VERSION = "7.68-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1368,6 +1368,14 @@ local function tap_jendela(cfg, pkg, fx, fy, kali, kotak)
     if lebarK > 1000 then
         return nil, ("jendela masih fullscreen (%d) -- tap DITOLAK biar gak nyasar ke app lain"):format(lebarK)
     end
+    -- v7.67: CEK LAYAR/JENDELA BENER dulu (user minta). Pastiin ukuran jendela
+    -- WAJAR (bukan kekecilan/nol -- tanda jendela belum settle di posisi grid).
+    -- Kalau jendela belum pas (lagi pindah/loading), tap ditunda -> gak hempas
+    -- titik nyasar. Petak 10 client ~200-230px; kalau <100 berarti belum settle.
+    local tinggiK = (kotak.B or 0) - (kotak.T or 0)
+    if lebarK < 100 or tinggiK < 100 then
+        return nil, ("jendela belum settle (%dx%d) -- tap DITUNDA (nunggu posisi grid)"):format(lebarK, tinggiK)
+    end
     -- v6.13: VERIFIKASI client BENERAN DI DEPAN tepat sebelum tap. Bahaya:
     -- antara ukur & tap, Termux bisa nyelonong ke depan (abis baca clipboard,
     -- Termux layar penuh nutupin petak). Kalau tap jalan pas Termux di depan,
@@ -1641,8 +1649,8 @@ local function tap_muat()
         ["610x653"] = { fx = 0.844, fy = 0.713 },   -- 2 client (1 baris)
         ["396x293"] = { fx = 0.823, fy = 0.723 },   -- 2 baris
         ["348x173"] = { fx = 0.833, fy = 0.808 },   -- 3 baris
-        ["226x293"] = { fx = 0.826, fy = 0.706 },   -- 10 client (5x2) v7.58 (bener)
-        ["226x330"] = { fx = 0.826, fy = 0.706 },   -- 10 client (5x2) v7.58 (bener)
+        ["226x293"] = { fx = 0.853, fy = 0.668 },   -- 10 client (5x2) v7.68 (tested KENA)
+        ["226x330"] = { fx = 0.853, fy = 0.668 },   -- 10 client (5x2) v7.68 (tested KENA)
     }
     -- v7.53: JANGAN baca zenx_tap.txt lagi (user minta). Dulu file NIMPA bawaan
     -- (kalibrasi manual per-RF menang), TAPI zenx catat gampang salah pencet ->
@@ -4255,9 +4263,14 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- stop client INI DULU (cuma dia, bukan semua), baru open_one
                     -- biar fresh masuk. Cuma pas hidup+nyangkut (bukan yg udah di
                     -- game). Ini gak bikin mati-bareng (cuma 1 client bermasalah).
-                    -- v7.52: TANPA FORCE-STOP. open_one pakai cmp Activity
-                    -- ProtocolLaunch (cara Pandora) -> join di-trigger langsung
-                    -- walau app hidup (gak no-op). Gak perlu kill dulu.
+                    -- v7.66: KILL DULU baru tembak (user minta -- fresh dari awal
+                    -- Start). Aman -- isolasi Pandora (open_one cmp ActivityProtocol
+                    -- Launch) bikin client lain gak keganggu pas force-stop.
+                    if pkg_hidup(pkg) then
+                        sh_silent("am force-stop " .. pkg)
+                        sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                        os.execute("sleep 2")
+                    end
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 30s.
