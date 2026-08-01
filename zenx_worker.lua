@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.41-cf"
+local VERSION = "7.42-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6437,21 +6437,41 @@ local function run(cfg)
                 end
             end
             if #matiBareng >= 3 then
-                -- BANYAK mati bareng (crash massal / RF nge-lag / RAM). Masukin
-                -- lagi satu-satu dengan DELAY 12 detik per client (user minta) --
-                -- biar RF gak keteteran buka barengan. Yang nyangkut ketangkep
-                -- cek berkala. Delay 12s kasih napas RAM tiap client.
-                tambahLog(("MATI BARENGAN: %d client keluar bareng -> masukin lagi (delay 12s per client)"):format(#matiBareng))
+                -- v7.42: BANYAK mati bareng -> masukin SATU-SATU, PASTIIN MASUK
+                -- dulu (cek grafis) baru lanjut client berikutnya. JANGAN tembak
+                -- bareng (RAM lonjak/Delta keteteran). Tiap client: tembak -> cek
+                -- grafis 20s -> masuk? lanjut : tembak lagi (maks 3x) -> skip kalau
+                -- gak masuk (ketangkep ronde berikutnya).
+                tambahLog(("MATI BARENGAN: %d client keluar -> masukin SATU-SATU (pastiin masuk dulu)"):format(#matiBareng))
                 for _, pkg in ipairs(matiBareng) do
-                    RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-bareng")
-                    open_one(cfg, pkg, mapLink[pkg], "mati-bareng")
-                    jaga_depan(cfg, mapLink)   -- munculin jendela tiap abis buka
-                    refresh_status()
-                    gambar_tabel(isi)
-                    -- cek standby di tengah (biar bisa diinterupsi)
-                    local pNow = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
-                    if pNow:upper():find("STANDBY") or pNow:upper():find("STOP") then break end
-                    os.execute("sleep 12")   -- delay 12s per client
+                    -- skip captcha/ban
+                    local akM = mapAkun[pkg]
+                    if KICK_DIURUS["captcha:" .. pkg] or (akM and KICK_DIURUS["mati:" .. akM]) then
+                        tambahLog("  skip " .. (akM or pkg:gsub("com%.roblox%.","")) .. " (captcha/ban)")
+                    else
+                        local masuk = false
+                        for coba = 1, 3 do
+                            RIW.catat("REJOIN", akM or pkg, "karena=mati-bareng")
+                            open_one(cfg, pkg, mapLink[pkg], "mati-bareng")
+                            jaga_depan(cfg, mapLink)
+                            refresh_status(); gambar_tabel(isi)
+                            -- cek standby di tengah (interupsi)
+                            local pNow = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+                            if pNow:upper():find("STANDBY") or pNow:upper():find("STOP") then break end
+                            -- PASTIIN MASUK: cek grafis 20s
+                            if cek_masuk_game(pkg, 20, cek_batal) then
+                                masuk = true
+                                tambahLog("  " .. (akM or pkg:gsub("com%.roblox%.","")) .. " MASUK (percobaan " .. coba .. ")")
+                                break
+                            else
+                                tambahLog("  " .. (akM or pkg:gsub("com%.roblox%.","")) .. " belum masuk (percobaan " .. coba .. "/3), tembak lagi")
+                            end
+                        end
+                        if not masuk then
+                            tambahLog("  " .. (akM or pkg:gsub("com%.roblox%.","")) .. " gagal 3x -> skip (coba ronde berikutnya)")
+                        end
+                        refresh_status(); gambar_tabel(isi)
+                    end
                 end
                 lastStatusCek = os.time()
             else
