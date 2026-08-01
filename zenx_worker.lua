@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.39-cf"
+local VERSION = "7.40-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2522,6 +2522,26 @@ local function grafis_kb(pkg)
     return tonumber(n)
 end
 
+-- v7.40: cek client udah MASUK GAME via grafis MB, tungguin sampai BATAS detik.
+-- Balik true begitu grafis >= ambang (di game), atau false kalau batas lewat
+-- (masih out/home). Ambang 30 MB (game ~30-49, home ~15, loading <2).
+-- Dipakai di loop buka: tembak -> cek 20s -> masuk? lanjut : tembak lagi.
+GAME_AMBANG_KB = 30 * 1024   -- 30 MB
+function cek_masuk_game(pkg, batas, cek_batal)
+    batas = batas or 20
+    local mulai = os.time()
+    while (os.time() - mulai) < batas do
+        if cek_batal and cek_batal() then return false end
+        local g = grafis_kb(pkg) or 0
+        if g >= GAME_AMBANG_KB then return true end   -- udah di game
+        os.execute("sleep 3")
+    end
+    -- cek terakhir sekali lagi (jaga-jaga masuk pas detik akhir)
+    local g = grafis_kb(pkg) or 0
+    return g >= GAME_AMBANG_KB
+end
+
+
 -- Tungguin client bener-bener masuk game. Balik: true/false, lama, sebab.
 --
 -- v5.63 FIX: nilai awal WAJIB stabil dulu, gak boleh langsung dipakai.
@@ -4113,7 +4133,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 info("   " .. (akun or pkg:gsub("com%.roblox%.","")) .. " KENA CAPTCHA -> gak dibuka (solve manual dulu)")
             else
                 local sukses, lama, sebab = false, 0, nil
-                local maxc = cfg.max_coba or 5
+                -- v7.40: mode barengan maks 3x tembak (user minta). Kalau 3x gak
+                -- masuk game -> skip client ini (ketangkep ronde berikutnya).
+                -- Mode lain (lisensi habis) tetep pakai max_coba config.
+                local maxc = lisensiAda and 3 or (cfg.max_coba or 5)
                 urutBuka = urutBuka + 1   -- v7.39: nomor khusus yang DIBUKA
                 local totalBuka = perluBuka > 0 and perluBuka or #list
                 for coba = 1, maxc do
@@ -4150,12 +4173,19 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     end
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
-                    -- v7.29: MODE TEMBAK BARENGAN -- skip tunggu masuk game (grafis).
-                    -- JANGAN jaga_depan tiap client di sini -- jaga_depan monkey
-                    -- LAUNCHER = tembak LAGI (keliatan "tembak 2x"). Cukup open_one
-                    -- sekali. jaga_depan berkala (3s di loop utama) yang urus jendela.
+                    -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 20s.
+                    -- Kalau udah di game (grafis >= 30MB) -> SUKSES, lanjut client
+                    -- berikutnya. Kalau belum (masih out/home) -> tembak LAGI,
+                    -- tunggu 20s lagi. Maks 3x. Kalau 3x gak masuk -> skip client
+                    -- ini (ketangkep ronde berikutnya). jaga_depan berkala (3s)
+                    -- yang urus jendela, JANGAN di sini (tembak 2x).
                     if lisensiAda then
-                        sukses, lama, sebab = true, 0, nil   -- anggap sukses, lanjut
+                        if cek_masuk_game(pkg, 20, cek_batal) then
+                            sukses, lama, sebab = true, 0, nil   -- udah di game
+                        else
+                            -- belum masuk -> loop tembak ulang di blok bawah (coba++)
+                            sukses, lama, sebab = false, 0, "belum masuk game (grafis rendah)"
+                        end
                     else
                         -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
                         jaga_depan(cfg, mapLink)
