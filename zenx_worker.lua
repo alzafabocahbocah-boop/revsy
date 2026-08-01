@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.62-cf"
+local VERSION = "7.65-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5790,13 +5790,15 @@ local function run(cfg)
             lastBanner = os.time()
             local d = dev_id() or "?"
             local dn = devnama_now() or ""
-            local garis = string.rep("=", 44)
+            local garis = string.rep("#", 50)
             print("")
-            print(C.Y .. garis .. C.N)
-            print(C.Y .. "  ##   DEVICE: " .. d .. C.N)
-            if dn ~= "" then print(C.Y .. "  ##   NAMA  : " .. dn .. C.N) end
-            print(C.Y .. "  ##   ZENX v" .. VERSION .. "   |   " .. os.date("%H:%M:%S") .. C.N)
-            print(C.Y .. garis .. C.N)
+            print(C.BOLD .. C.Y .. garis .. C.N)
+            print(C.BOLD .. C.Y .. "##" .. C.N)
+            print(C.BOLD .. C.G .. "##   DEVICE >>  " .. C.BOLD .. C.C .. d .. C.N)
+            if dn ~= "" then print(C.BOLD .. C.G .. "##   NAMA   >>  " .. C.BOLD .. C.C .. dn .. C.N) end
+            print(C.BOLD .. C.G .. "##   ZENX   >>  v" .. VERSION .. "   |   " .. os.date("%H:%M:%S") .. C.N)
+            print(C.BOLD .. C.Y .. "##" .. C.N)
+            print(C.BOLD .. C.Y .. garis .. C.N)
             print("")
         end
 
@@ -7141,9 +7143,16 @@ local function run(cfg)
                     -- (solve manual). Kalau BUKAN captcha (script mati/nyangkut) ->
                     -- FORCE-STOP + masukin lagi (aman sekarang -- isolasi Pandora,
                     -- gak bikin client lain keluar). Cuma sekali per sesi off.
-                    if diem and diem >= 180 and pkg_running(pkg)
-                       and not KICK_DIURUS["diag:" .. pkg] then
-                        KICK_DIURUS["diag:" .. pkg] = now
+                    -- v7.65: SCRIPT OFF >= 3 MENIT -> masukin lagi. FIX: dulu pakai
+                    -- flag diag: yang cuma DISET SEKALI -> client off lama cuma dicoba
+                    -- 1x, gagal, terus DIEM SELAMANYA (keluhan: off 1 jam gak dimasukin).
+                    -- Sekarang: simpen KAPAN terakhir dicoba (diag: = timestamp).
+                    -- Boleh coba LAGI kalau udah lewat 180s dari coba terakhir. Jadi
+                    -- client yang gagal masuk dicoba ulang tiap 3 menit sampai masuk.
+                    local terakhirCoba = KICK_DIURUS["diag:" .. pkg]
+                    local bolehCoba = (not terakhirCoba) or (now - terakhirCoba) >= 180
+                    if diem and diem >= 180 and pkg_running(pkg) and bolehCoba then
+                        KICK_DIURUS["diag:" .. pkg] = now   -- catat kapan dicoba
                         local akD = mapAkun and mapAkun[pkg] or pkg:gsub("com%.roblox%.","")
                         local isCap, nWeb = cek_captcha_webview(pkg)
                         if isCap then
@@ -7381,24 +7390,27 @@ local function run(cfg)
                             if akun then KICK_DIURUS["captcha:" .. pkg] = akun end
                             -- lewati tembak, lanjut client berikutnya
                         else
-                        -- OUT (grafis rendah) -> tembak
+                        -- OUT (grafis rendah) -> KILL dulu baru tembak
                         local nama = pkg:gsub("com%.roblox%.", "")
-                        tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
+                        tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> kill + masukin"):format(
                             akun or nama, g/1024))
-                        -- v7.54: coba 1: tembak TANPA force-stop (ActivityProtocol
-                        -- Launch re-join, cara Pandora). Kalau app fresh/loading,
-                        -- ini cukup.
+                        -- v7.64: FORCE-STOP DULU (user minta -- kill client dulu biar
+                        -- fresh). Aman sekarang -- isolasi Pandora (open_one cmp
+                        -- ActivityProtocolLaunch) bikin client lain gak keganggu.
+                        -- Terus grid + tembak.
+                        if pkg_hidup(pkg) then
+                            sh_silent("am force-stop " .. pkg)
+                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                            os.execute("sleep 2")
+                        end
                         grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         TERAKHIR_BUKA[pkg] = os.time()
                         jaga_depan(cfg, mapLink)
                         local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
                         if not masukG and not (cek_batal and cek_batal()) then
-                            -- coba 2: masih nyangkut (Home keras kepala) -> FORCE-STOP
-                            -- client INI aja (isolated -- aman, gak ganggu lain karena
-                            -- buka udah cara Pandora), baru tembak lagi biar fresh.
-                            -- Pandora pun force-stop buat kasus nyangkut (dari logcat).
-                            tambahLog(("[grafis] %s masih nyangkut (%.0f MB) -> force-stop + tembak ulang"):format(
+                            -- coba 2: masih belum masuk -> kill + tembak lagi
+                            tambahLog(("[grafis] %s masih belum masuk (%.0f MB) -> kill + tembak ulang"):format(
                                 akun or nama, mbG or 0))
                             sh_silent("am force-stop " .. pkg)
                             sh_silent("su -c 'am force-stop " .. pkg .. "'")
