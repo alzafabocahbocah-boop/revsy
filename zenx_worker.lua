@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.42-cf"
+local VERSION = "7.43-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2523,22 +2523,31 @@ local function grafis_kb(pkg)
 end
 
 -- v7.40: cek client udah MASUK GAME via grafis MB, tungguin sampai BATAS detik.
--- Balik true begitu grafis >= ambang (di game), atau false kalau batas lewat
--- (masih out/home). Ambang 30 MB (game ~30-49, home ~15, loading <2).
--- Dipakai di loop buka: tembak -> cek 20s -> masuk? lanjut : tembak lagi.
+-- Balik: masuk(true/false), mb(angka MB grafis). Ambang 30 MB (game ~30-49,
+-- home ~15, loading <2). Dipakai di loop buka + mati-bareng.
 GAME_AMBANG_KB = 30 * 1024   -- 30 MB
 function cek_masuk_game(pkg, batas, cek_batal)
     batas = batas or 20
     local mulai = os.time()
+    local nama = pkg:gsub("com%.roblox%.", "")
     while (os.time() - mulai) < batas do
-        if cek_batal and cek_batal() then return false end
+        if cek_batal and cek_batal() then return false, 0 end
         local g = grafis_kb(pkg) or 0
-        if g >= GAME_AMBANG_KB then return true end   -- udah di game
+        if g >= GAME_AMBANG_KB then
+            local mb = g / 1024
+            info(("   %s UDAH DI GAME (grafis %.0f MB)"):format(nama, mb))
+            return true, mb   -- udah di game
+        end
         os.execute("sleep 3")
     end
     -- cek terakhir sekali lagi (jaga-jaga masuk pas detik akhir)
     local g = grafis_kb(pkg) or 0
-    return g >= GAME_AMBANG_KB
+    local mb = g / 1024
+    if g >= GAME_AMBANG_KB then
+        info(("   %s UDAH DI GAME (grafis %.0f MB)"):format(nama, mb))
+        return true, mb
+    end
+    return false, mb   -- belum masuk (kasih tau MB terakhir)
 end
 
 
@@ -4180,11 +4189,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- ini (ketangkep ronde berikutnya). jaga_depan berkala (3s)
                     -- yang urus jendela, JANGAN di sini (tembak 2x).
                     if lisensiAda then
-                        if cek_masuk_game(pkg, 20, cek_batal) then
+                        local masukG, mbG = cek_masuk_game(pkg, 20, cek_batal)
+                        if masukG then
                             sukses, lama, sebab = true, 0, nil   -- udah di game
                         else
                             -- belum masuk -> loop tembak ulang di blok bawah (coba++)
-                            sukses, lama, sebab = false, 0, "belum masuk game (grafis rendah)"
+                            sukses, lama, sebab = false, 0, ("belum masuk game (grafis %.0f MB)"):format(mbG or 0)
                         end
                     else
                         -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
@@ -6458,13 +6468,16 @@ local function run(cfg)
                             -- cek standby di tengah (interupsi)
                             local pNow = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
                             if pNow:upper():find("STANDBY") or pNow:upper():find("STOP") then break end
-                            -- PASTIIN MASUK: cek grafis 20s
-                            if cek_masuk_game(pkg, 20, cek_batal) then
+                            -- PASTIIN MASUK: cek grafis 20s (log MB pas masuk)
+                            local masukG, mbG = cek_masuk_game(pkg, 20, cek_batal)
+                            if masukG then
                                 masuk = true
-                                tambahLog("  " .. (akM or pkg:gsub("com%.roblox%.","")) .. " MASUK (percobaan " .. coba .. ")")
+                                tambahLog(("  %s MASUK GAME (grafis %.0f MB, percobaan %d)"):format(
+                                    akM or pkg:gsub("com%.roblox%.",""), mbG or 0, coba))
                                 break
                             else
-                                tambahLog("  " .. (akM or pkg:gsub("com%.roblox%.","")) .. " belum masuk (percobaan " .. coba .. "/3), tembak lagi")
+                                tambahLog(("  %s belum masuk (grafis %.0f MB, percobaan %d/3), tembak lagi"):format(
+                                    akM or pkg:gsub("com%.roblox%.",""), mbG or 0, coba))
                             end
                         end
                         if not masuk then
