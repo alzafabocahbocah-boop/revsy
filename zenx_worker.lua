@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.57-cf"
+local VERSION = "7.58-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1641,8 +1641,8 @@ local function tap_muat()
         ["610x653"] = { fx = 0.844, fy = 0.713 },   -- 2 client (1 baris)
         ["396x293"] = { fx = 0.823, fy = 0.723 },   -- 2 baris
         ["348x173"] = { fx = 0.833, fy = 0.808 },   -- 3 baris
-        ["226x293"] = { fx = 0.819, fy = 0.771 },   -- 10 client (5x2) v7.53
-        ["226x330"] = { fx = 0.819, fy = 0.771 },   -- 10 client (5x2) v7.55 (ukuran nyata)
+        ["226x293"] = { fx = 0.826, fy = 0.706 },   -- 10 client (5x2) v7.58 (bener)
+        ["226x330"] = { fx = 0.826, fy = 0.706 },   -- 10 client (5x2) v7.58 (bener)
     }
     -- v7.53: JANGAN baca zenx_tap.txt lagi (user minta). Dulu file NIMPA bawaan
     -- (kalibrasi manual per-RF menang), TAPI zenx catat gampang salah pencet ->
