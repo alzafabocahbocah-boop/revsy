@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.74-cf"
+local VERSION = "7.76-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8217,25 +8217,54 @@ if PERINTAH == "buka" then
     end
     local pkg = target:find("^com%.roblox%.") and target or ("com.roblox." .. target)
     local nama = pkg:gsub("com%.roblox%.", "")
-    local url = build_url(cfg, nil)
 
-    -- daftar CARA MASUKIN (dicoba satu-satu, jeda 10s)
+    -- v7.76: ambil AKUN + LINK PS client ini (biar masuk GAG 2 beneran, bukan
+    -- tembak kosong). akun dari baca_username, link PS dari /ps-list backend.
+    local akun = baca_username(pkg) or ""
+    local linkClient = nil
+    if akun ~= "" then
+        local r = api_get(cfg, "/ps-list") or ""
+        for obj in r:gmatch('{.-}') do
+            local a = obj:match('"akun"%s*:%s*"(.-)"')
+            local psl = obj:match('"ps_link"%s*:%s*"(.-)"')
+            if a == akun and psl and psl ~= "" then linkClient = psl break end
+        end
+    end
+    local url = build_url(cfg, linkClient)
+    info(("Akun: %s  |  link: %s"):format(akun ~= "" and akun or "(gak kebaca)",
+        linkClient or "public/default"))
+
+    -- daftar CARA MASUKIN (dicoba satu-satu, jeda 10s). Fokus variasi CARA
+    -- PANDORA (cmp ActivityProtocolLaunch + flag beda) + beberapa alternatif.
+    -- am start -S (stop activity) DIBUANG -- ngerusak (user konfirmasi).
     local cara = {
-        { n = "A", ket = "ActivityProtocolLaunch + flag NEW_TASK (0x10000000) [cara Pandora]",
+        -- === VARIASI CARA PANDORA (cmp ActivityProtocolLaunch, flag beda) ===
+        { n = "A1", ket = "Pandora asli: cmp ActivityProtocolLaunch + NEW_TASK (0x10000000)",
           cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
-        { n = "B", ket = "am start biasa -d roblox:// -p pkg (cara lama ZenX)",
+        { n = "A2", ket = "cmp ActivityProtocolLaunch TANPA flag (biar Android atur)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch" },
+        { n = "A3", ket = "cmp ActivityProtocolLaunch + NEW_TASK|MULTIPLE_TASK (0x08000000|0x10000000)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x18000000" },
+        { n = "A4", ket = "cmp ActivityProtocolLaunch + NEW_TASK|BROUGHT_TO_FRONT (0x00400000|0x10000000)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10400000" },
+        { n = "A5", ket = "cmp ActivityProtocolLaunch + NEW_TASK|RESET_IF_NEEDED (0x00200000|0x10000000)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10200000" },
+        -- === PAKAI --user 0 (eksplisit, kadang bantu App Cloner) ===
+        { n = "A6", ket = "cmp ActivityProtocolLaunch + NEW_TASK + --user 0",
+          cmd = "am start --user 0 -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
+        -- === TANPA cmp (biar Android pilih activity, tapi tetep NEW_TASK) ===
+        { n = "B1", ket = "am start -p pkg + NEW_TASK (tanpa cmp, Android routing)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -f 0x10000000" },
+        { n = "B2", ket = "am start -p pkg polos (cara lama ZenX, tanpa flag)",
           cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg },
-        { n = "C", ket = "am start -S (stop activity dulu, baru start)",
-          cmd = "am start -S -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch" },
-        { n = "D", ket = "monkey (launch app via launcher)",
+        -- === MONKEY (launch app biasa, ke Home) ===
+        { n = "D1", ket = "monkey launcher (buka app ke Home, gak langsung join)",
           cmd = "monkey -p "..pkg.." -c android.intent.category.LAUNCHER 1" },
-        { n = "E", ket = "am start flag NEW_TASK|CLEAR_TOP (0x14000000)",
-          cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x14000000" },
     }
 
     info("=== TES CARA MASUKIN: " .. nama .. " ===")
-    info("Tiap cara dicoba, jeda 10s. LIAT SENDIRI: masuk gak? client lain aman gak?")
-    info("URL: " .. url)
+    info("9 cara (fokus variasi Pandora). Jeda 10s. LIAT: masuk gak? client lain aman?")
+    info("am start -S DIBUANG (ngerusak). URL: " .. url)
     info("")
     for _, c in ipairs(cara) do
         local gSeb = grafis_kb(pkg) or 0
