@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.58-cf"
+local VERSION = "7.62-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2585,6 +2585,24 @@ function cek_masuk_game(pkg, batas, cek_batal)
     return false, mb   -- belum masuk (kasih tau MB terakhir)
 end
 
+-- v7.59: DETEKSI CAPTCHA via WEBVIEW FD (temuan lapangan). FunCaptcha/Arkose
+-- render pakai WebView -> client buka BANYAK file descriptor app_webview. Game
+-- normal cuma 0-1. Captcha = 17-18. Ambang 10 (jarak jauh, reliable). Ini GAK
+-- pakai uiautomator (lambat) / screenshot (ribet) / grafis (gugur: captcha =
+-- background). Cukup hitung fd app_webview di /proc/PID/fd.
+-- Balik: true kalau captcha (webview >= ambang), + jumlah webview.
+CAPTCHA_WEBVIEW_AMBANG = 10
+function cek_captcha_webview(pkg)
+    -- ambil PID dulu
+    local pid = sh("su -c 'pidof " .. pkg .. "' 2>/dev/null") or ""
+    pid = pid:match("%d+")
+    if not pid then return false, 0 end   -- proses mati -> bukan captcha
+    -- hitung fd app_webview
+    local out = sh("su -c 'ls /proc/" .. pid .. "/fd -la 2>/dev/null | grep -c app_webview'") or "0"
+    local n = tonumber(out:match("%d+")) or 0
+    return n >= CAPTCHA_WEBVIEW_AMBANG, n
+end
+
 
 -- Tungguin client bener-bener masuk game. Balik: true/false, lama, sebab.
 --
@@ -3112,6 +3130,22 @@ local function tata_satu(pkg, kotak)
     os.remove(tmp)
     if out:match("%S") then return false, "gagal nulis: " .. out:gsub("%s+", " "):sub(1, 60) end
     return true, "ditulis"
+end
+
+-- v7.61: tata grid 1 CLIENT aja (buat dipanggil sebelum masukin per client).
+-- Hitung grid semua (grid_hitung) -> ambil kotak client ini -> tulis prefs.
+-- Ringan (cuma tulis prefs 1 client, gak force-stop). Dipanggil sebelum open_one
+-- di jalur masukin (grafis-out / script-off) biar client masuk langsung di posisi.
+GRID_CACHE = nil   -- cache peta grid (biar gak hitung ulang tiap client)
+function grid_satu(cfg, pkg)
+    if cfg.auto_grid ~= true then return end   -- grid mati -> lewat
+    if not GRID_CACHE then
+        local p = grid_hitung(cfg)
+        if p then GRID_CACHE = p end
+    end
+    if GRID_CACHE and GRID_CACHE[pkg] then
+        tata_satu(pkg, GRID_CACHE[pkg])   -- tulis prefs posisi (gak force-stop)
+    end
 end
 
 local function atur_grid_lama(cfg)
@@ -5740,11 +5774,30 @@ local function run(cfg)
         lastStatus = os.time()
     end
 
+    -- v7.62: banner device sekali di awal (langsung keliatan, gak nunggu 60s)
+    local lastBanner = 0
+
     while true do
         -- ===== v4.2: pintu keluar =====
         if ada_stop() then
             bersih(cfg, "diminta stop")
             return
+        end
+
+        -- v7.62: BANNER DEVICE berkala (tiap 60s) -- teks GEDE biar keliatan RF
+        -- mana yang lagi jalan (user minta). Nampilin device ID + nama + versi.
+        if (os.time() - (lastBanner or 0)) >= 60 then
+            lastBanner = os.time()
+            local d = dev_id() or "?"
+            local dn = devnama_now() or ""
+            local garis = string.rep("=", 44)
+            print("")
+            print(C.Y .. garis .. C.N)
+            print(C.Y .. "  ##   DEVICE: " .. d .. C.N)
+            if dn ~= "" then print(C.Y .. "  ##   NAMA  : " .. dn .. C.N) end
+            print(C.Y .. "  ##   ZENX v" .. VERSION .. "   |   " .. os.date("%H:%M:%S") .. C.N)
+            print(C.Y .. garis .. C.N)
+            print("")
         end
 
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
@@ -6361,6 +6414,7 @@ local function run(cfg)
             if jadiForce then
                 info("FORCE dari panel -- mulai fresh (nata tempat + buka client dari awal)")
                 SUDAH_GRID = false   -- nata grid/tiling ulang
+                GRID_CACHE = nil     -- v7.61: hitung grid fresh sesi baru
                 lastOpen = 0         -- buka client dari 1/8 lagi (gak nunggu reopen_sec)
             end
             lastIsi = isi
@@ -6518,6 +6572,7 @@ local function run(cfg)
                                     os.execute("sleep 2")
                                 end
                             end
+                            grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
                             open_one(cfg, pkg, mapLink[pkg], "mati-bareng")
                             jaga_depan(cfg, mapLink)
                             refresh_status(); gambar_tabel(isi)
@@ -7080,28 +7135,36 @@ local function run(cfg)
                     if diem then KICK_DIURUS["offlama:" .. pkg] = diem
                     else KICK_DIURUS["offlama:" .. pkg] = nil end
 
-                    -- v7.41: SCRIPT OFF >= 5 MENIT -> DIAGNOSA (dump client SEKALI).
-                    -- Ini SATU-SATUNYA tempat dump uiautomator yang disisain (user
-                    -- minta). Yang lain (buka/nyangkut-home/guard/dump-all) UDAH
-                    -- DIHAPUS -- gantinya langsung rejoin/tembak. Dump di sini cuma
-                    -- buat client yang bener-bener off lama (kemungkinan captcha).
-                    -- Cuma sekali per "sesi off" (penanda diag:) biar gak spam.
-                    if diem and diem >= 300 and pkg_running(pkg)
+                    -- v7.60: SCRIPT OFF >= 3 MENIT -> masukin lagi (aktif lagi).
+                    -- Dulu 5 menit + dump uiautomator. Sekarang: cek CAPTCHA via
+                    -- WEBVIEW FD (ringan, gak uiautomator). Kalau captcha -> skip
+                    -- (solve manual). Kalau BUKAN captcha (script mati/nyangkut) ->
+                    -- FORCE-STOP + masukin lagi (aman sekarang -- isolasi Pandora,
+                    -- gak bikin client lain keluar). Cuma sekali per sesi off.
+                    if diem and diem >= 180 and pkg_running(pkg)
                        and not KICK_DIURUS["diag:" .. pkg] then
                         KICK_DIURUS["diag:" .. pkg] = now
                         local akD = mapAkun and mapAkun[pkg] or pkg:gsub("com%.roblox%.","")
-                        info(("DIAGNOSA %s (off %dm) -- cek nyangkut/verif/error..."):format(akD, math.floor(diem/60)))
-                        local g = grafis_kb(pkg) or 0
-                        local ceD = cek_captcha_paksa(pkg)
-                        if ceD and ceD:find("CAPTCHA", 1, true) then
-                            warn(("  -> %s KENA CAPTCHA (verif bot). Solve manual."):format(akD))
+                        local isCap, nWeb = cek_captcha_webview(pkg)
+                        if isCap then
+                            warn(("SCRIPT OFF %s (off %dm) -> CAPTCHA (webview %d fd). Solve manual."):format(akD, math.floor(diem/60), nWeb))
                             KICK_DIURUS["captcha:" .. pkg] = akD
-                        elseif ceD == "REJOIN" then
-                            warn(("  -> %s KENA ERROR KICK (save data/disconnect/teleport)."):format(akD))
-                        elseif g < 30000 then
-                            warn(("  -> %s NYANGKUT HOME (grafis %.0fMB, belum masuk game)."):format(akD, g/1024))
                         else
-                            info(("  -> %s di game (grafis %.0fMB) tapi script diem -- mungkin script mati."):format(akD, g/1024))
+                            -- bukan captcha -> script mati/nyangkut -> MASUKIN LAGI
+                            info(("SCRIPT OFF %s (off %dm) -> force-stop + masukin lagi (aktifin script)"):format(akD, math.floor(diem/60)))
+                            RIW.catat("REJOIN", akD, "karena=script-off-3menit")
+                            sh_silent("am force-stop " .. pkg)
+                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                            os.execute("sleep 2")
+                            grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "script-off-3menit")
+                            TERAKHIR_BUKA[pkg] = os.time()
+                            jaga_depan(cfg, mapLink)
+                            local msk, mbk = cek_masuk_game(pkg, 30, cek_batal)
+                            if msk then info(("  -> %s MASUK lagi (grafis %.0f MB)"):format(akD, mbk or 0))
+                            else info(("  -> %s belum masuk (grafis %.0f MB) -> coba ronde berikutnya"):format(akD, mbk or 0)) end
+                            refresh_status(); lastStatusCek = os.time()
+                            gambar_tabel(isi)
                         end
                     end
                     -- reset penanda diag kalau script udah jalan lagi (diem = nil)
@@ -7307,6 +7370,17 @@ local function run(cfg)
                     if g >= GAME_AMBANG_KB then
                         -- udah di game -> lanjut (gak usah ngapa-ngapain)
                     else
+                        -- v7.59: OUT tapi cek CAPTCHA dulu (webview fd). Kalau
+                        -- captcha -> JANGAN tembak (percuma, butuh solve manual) ->
+                        -- tandai skip + badge panel. Cuma tembak kalau BUKAN captcha.
+                        local nama = pkg:gsub("com%.roblox%.", "")
+                        local isCaptcha, nWeb = cek_captcha_webview(pkg)
+                        if isCaptcha then
+                            tambahLog(("[grafis] %s CAPTCHA (webview %d fd) -> skip (solve manual)"):format(
+                                akun or nama, nWeb))
+                            if akun then KICK_DIURUS["captcha:" .. pkg] = akun end
+                            -- lewati tembak, lanjut client berikutnya
+                        else
                         -- OUT (grafis rendah) -> tembak
                         local nama = pkg:gsub("com%.roblox%.", "")
                         tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
@@ -7314,6 +7388,7 @@ local function run(cfg)
                         -- v7.54: coba 1: tembak TANPA force-stop (ActivityProtocol
                         -- Launch re-join, cara Pandora). Kalau app fresh/loading,
                         -- ini cukup.
+                        grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         TERAKHIR_BUKA[pkg] = os.time()
                         jaga_depan(cfg, mapLink)
@@ -7340,6 +7415,7 @@ local function run(cfg)
                         end
                         refresh_status(); lastStatusCek = os.time()
                         gambar_tabel(isi)
+                        end   -- v7.59: tutup else (bukan captcha)
                     end
                 end
             end
