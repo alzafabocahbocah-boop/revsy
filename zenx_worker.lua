@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.52-cf"
+local VERSION = "7.53-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1626,15 +1626,12 @@ local function tap_muat()
         ["610x653"] = { fx = 0.844, fy = 0.713 },   -- 2 client (1 baris)
         ["396x293"] = { fx = 0.823, fy = 0.723 },   -- 2 baris
         ["348x173"] = { fx = 0.833, fy = 0.808 },   -- 3 baris
+        ["226x293"] = { fx = 0.819, fy = 0.771 },   -- 10 client (5x2) v7.53
     }
-    local f = io.open(TAP_FILE, "r")
-    if not f then return t end
-    -- file NIMPA bawaan (kalibrasi manual per-RF menang)
-    for baris in f:lines() do
-        local k, fx, fy = baris:match("^(%d+x%d+)%s+([%d.]+)%s+([%d.]+)")
-        if k then t[k] = { fx = tonumber(fx), fy = tonumber(fy) } end
-    end
-    f:close()
+    -- v7.53: JANGAN baca zenx_tap.txt lagi (user minta). Dulu file NIMPA bawaan
+    -- (kalibrasi manual per-RF menang), TAPI zenx catat gampang salah pencet ->
+    -- kesimpen X ngaco (mis. 226x293 -> 0.661 harusnya 0.819). Sekarang PAKAI
+    -- BAWAAN AJA (X stabil ~0.82, udah kebukti). zenx_tap.txt diabaikan total.
     return t
 end
 
@@ -7662,6 +7659,9 @@ if PERINTAH == "catat" then
         err("Gagal nyimpen ke " .. TAP_FILE)
     end
     print()
+    warn("CATATAN v7.53: zenx_tap.txt GAK DIBACA lagi -- worker pakai tabel BAWAAN.")
+    warn("Kalibrasi ini kesimpen tapi GAK KEPAKAI. Kalau titik bawaan meleset,")
+    warn("kabarin buat diupdate di kode (biar gak kena salah-pencet zenx catat).")
     info("Uji balik:  zenx tap " .. target .. (" %.3f %.3f 2 5"):format(rx, ry))
     info("Ukuran lain:  zenx catat " .. target .. " 6")
     info("Liat semua:  cat ~/" .. TAP_FILE)
