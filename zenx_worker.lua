@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.88-cf"
+local VERSION = "7.89-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8229,6 +8229,17 @@ if PERINTAH == "grafis" then
     local pkgs = split(cfg.pkgs or "")
     if #pkgs == 0 then err("Gak ada client di config.") return end
     info("=== CEK GRAFIS SEMUA CLIENT (1 su call) ===")
+    -- v7.89: delay dulu (user minta) -- pas ketik command, Termux ke depan ->
+    -- client ke Home. Delay 8s biar ada waktu, terus jaga_depan munculin client
+    -- balik ke depan sebelum cek. (Grafis MB sebenernya kebaca walau background,
+    -- tapi delay + jaga_depan bikin lebih akurat + client balik keliatan.)
+    local jeda = math.floor(tonumber(arg and arg[2] or "") or 8)
+    if jeda > 0 then
+        info(("Tunggu %ds (biar client balik ke depan)..."):format(jeda))
+        os.execute("sleep " .. jeda)
+    end
+    pcall(function() jaga_depan(cfg, nil) end)   -- munculin client ke depan
+    os.execute("sleep 2")
     info("Ambang di game: >= 30 MB (game ~30-49, home ~15, out <2)")
     print("")
     local peta = grafis_semua(pkgs)
