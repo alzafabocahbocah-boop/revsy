@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.54-cf"
+local VERSION = "7.57-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1344,7 +1344,22 @@ local function tap_jendela(cfg, pkg, fx, fy, kali, kotak)
     -- PETUNJUK; kotak asli tetep diukur ulang di sini.
     local ukur = jendela_kotak(pkg)
     if not ukur then
-        return nil, "gagal ukur jendela sebelum tap -- tap dibatalin (gak nebak koordinat)"
+        -- v7.55: uiautomator dump GAGAL (sering pas di DALAM GAME -- game render
+        -- pakai surface, gak ada view hierarchy). Fallback: baca posisi window
+        -- dari PREFS App Cloner (app_cloner_current_window_*) -- reliable, gak
+        -- butuh uiautomator. Ini yang bikin sapu key gagal di 10 client.
+        local ppath = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+        local isiP = sh("su -c 'cat " .. ppath .. " 2>/dev/null'") or ""
+        local L = tonumber(isiP:match('<int name="app_cloner_current_window_left" value="(%-?%d+)"'))
+        local T = tonumber(isiP:match('<int name="app_cloner_current_window_top" value="(%-?%d+)"'))
+        local R = tonumber(isiP:match('<int name="app_cloner_current_window_right" value="(%-?%d+)"'))
+        local B = tonumber(isiP:match('<int name="app_cloner_current_window_bottom" value="(%-?%d+)"'))
+        if L and T and R and B and (R - L) > 50 then
+            ukur = { L = L, T = T, R = R, B = B }
+            info(("   ukur jendela dari prefs App Cloner (%dx%d) -- uiautomator gagal"):format(R-L, B-T))
+        else
+            return nil, "gagal ukur jendela sebelum tap -- tap dibatalin (gak nebak koordinat)"
+        end
     end
     kotak = ukur
     -- PENGAMAN: TOLAK tap kalau kotak FULLSCREEN (lebar > 1000). Jendela belum
@@ -1627,6 +1642,7 @@ local function tap_muat()
         ["396x293"] = { fx = 0.823, fy = 0.723 },   -- 2 baris
         ["348x173"] = { fx = 0.833, fy = 0.808 },   -- 3 baris
         ["226x293"] = { fx = 0.819, fy = 0.771 },   -- 10 client (5x2) v7.53
+        ["226x330"] = { fx = 0.819, fy = 0.771 },   -- 10 client (5x2) v7.55 (ukuran nyata)
     }
     -- v7.53: JANGAN baca zenx_tap.txt lagi (user minta). Dulu file NIMPA bawaan
     -- (kalibrasi manual per-RF menang), TAPI zenx catat gampang salah pencet ->
@@ -1751,6 +1767,13 @@ local function cari_tombol_key(cfg, pkg)
         -- tap BATAL sendiri. Gak perlu paksa-depan (yang goyangin fokus).
         io.write(("\r   titik %d/%d  (%.2f, %.2f) ...          "):format(i, #urut, t[1], t[2]))
         io.flush()
+        -- v7.57: JEDA SEBELUM TAP = 15 detik (user minta). Kasih waktu jendela +
+        -- dialog key bener-bener settle sebelum tap (biar gak keburu-buru pas
+        -- dialog belum pas / masih loading). Bisa dibatalin di tengah.
+        for _ = 1, 15 do
+            if ada_stop() then return nil, nil, nil, "dihentikan (zenx stop)" end
+            os.execute("sleep 1")
+        end
         local tok, tsebab = tap_jendela(cfg, pkg, t[1], t[2], 2)   -- ukur fresh sendiri
         if not tok then
             -- tap dibatalin tap_jendela (fullscreen / Termux di depan / gagal ukur).
@@ -1759,9 +1782,11 @@ local function cari_tombol_key(cfg, pkg)
             io.write("\n")
             info("  tap batal: " .. tostring(tsebab))
             -- kasih jeda dikit, jangan langsung hajar titik berikut
-            os.execute("sleep 2")
+            os.execute("sleep 3")
         else
-            os.execute("sleep 2")
+            -- v7.56: jeda setelah tap dinaikin (kasih waktu "Copied link" +
+            -- clipboard kebaca sebelum cek klip).
+            os.execute("sleep 3")
         end
 
         local link = klip_link_key(baca_klip())
