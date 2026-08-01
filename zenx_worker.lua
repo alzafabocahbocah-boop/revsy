@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.43-cf"
+local VERSION = "7.45-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5855,28 +5855,10 @@ local function run(cfg)
                     end
                 end
             end
-            -- kumpulin SEMUA kandidat (idup + gak lapor + belum ketandai captcha)
-            local kandidat = {}
-            for _, pkgX in ipairs(split(cfg.pkgs or "")) do
-                local akX = mapAkun and mapAkun[pkgX]
-                local lapor = akX and bridge_fresh(statCap, akX)
-                if pkg_running(pkgX) and not lapor and not KICK_DIURUS["captcha:" .. pkgX] then
-                    kandidat[#kandidat+1] = pkgX
-                end
-            end
-            tambahLog(("[tembak-nolapor] %d kandidat: %s"):format(#kandidat,
-                #kandidat > 0 and table.concat((function() local t={} for _,k in ipairs(kandidat) do t[#t+1]=k:gsub("com%.roblox%.","") end return t end)(), ", ") or "gak ada"))
-            -- v7.41: DUMP CAPTCHA per kandidat DIHAPUS (uiautomator lambat).
-            -- Client hidup + gak lapor -> LANGSUNG tembak masuk (open_one). Captcha
-            -- ketangkep di jalur diem (off >= 5 menit) yang masih dump sekali.
-            for _, kand in ipairs(kandidat) do
-                -- skip kalau udah ketandai captcha (nunggu solve manual)
-                if not KICK_DIURUS["captcha:" .. kand] then
-                    local akKand = mapAkun and mapAkun[kand] or kand:gsub("com%.roblox%.","")
-                    tambahLog("TEMBAK MASUK: " .. akKand .. " (gak lapor -> masuk lagi)")
-                    open_one(cfg, kand, mapLink and mapLink[kand] or nil, "dump-tembak")
-                end
-            end
+            -- v7.45: TEMBAK-NOLAPOR DIHAPUS (user minta). Client hidup + gak lapor
+            -- gak ditembak dari sini lagi -- biarin, ketangkep jalur lain (mati
+            -- bareng / diem / nyangkut-home). Blok ini sekarang CUMA clear captcha
+            -- (di atas) buat client yang udah masuk game.
         end
 
         -- v6.48: CEK GANTI AKUN. Buat tiap client yang abis di-LOGIN (target
