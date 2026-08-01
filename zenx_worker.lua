@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.89-cf"
+local VERSION = "7.90-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8344,6 +8344,19 @@ if PERINTAH == "buka" then
         os.execute("sleep 5")   -- v7.80: delay 5s sebelum aktivasi (user minta)
         sh_silent("su -c \"" .. ketemu.cmd .. "\"")
         print(C.D .. "  << ditembak -- LIAT LAYAR RF: masuk gak? client lain aman? >>" .. C.N)
+        return
+    end
+    -- v7.90: DEFAULT (tanpa argumen cara) = pakai open_one (CARA PANDORA PERSIS
+    -- v7.85 -- cara production). Cuma tes 9 cara kalau argumen ke-3 = "tes".
+    if caraPilih ~= "TES" then
+        info("Buka " .. nama .. " pakai cara Pandora persis (production, open_one)...")
+        info("(mau tes 9 cara? ketik: zenx buka " .. nama .. " tes)")
+        open_one(cfg, pkg, linkClient, "manual-buka")
+        info("Ditembak. Cek grafis 30s (masuk gak)...")
+        local masuk, mb = cek_masuk_game(pkg, 30, nil)
+        if masuk then ok(("%s MASUK GAME (grafis %.0f MB)"):format(nama, mb or 0))
+        else warn(("%s belum masuk (grafis %.0f MB)"):format(nama, mb or 0)) end
+        info("<< LIAT LAYAR RF: client lain aman? >>")
         return
     end
     info("9 cara (fokus variasi Pandora). Jeda 10s. LIAT: masuk gak? client lain aman?")
