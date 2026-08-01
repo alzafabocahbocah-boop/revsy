@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.68-cf"
+local VERSION = "7.70-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1157,10 +1157,20 @@ local function lisensi_keadaan(cfg)
     -- Umur file GAK ANDAL (key_jam cuma tebakan) -- dan bikin positif palsu:
     -- lisensi sehat umur 1j45m dicurigai basi -> tutup semua + bypass percuma.
     -- Jadi: cek isinya. Ada key-nya = valid, titik. Gak usah nebak umur.
-    local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
-    -- key valid: ada string tipe "FREE_<hex>" atau minimal token panjang.
-    -- (format lain Delta juga ketangkep: apa aja yg bukan kosong & cukup panjang)
-    local adaKey = isi:match("FREE_%x+") or isi:match("[%w_]-%x%x%x%x%x%x%x%x%x%x")
+    -- v7.69: CEK 3X (user minta). 'su -c cat' kadang GAGAL (su lambat/timeout di
+    -- RF) -> balik kosong -> dikira "hilang" padahal ADA -> bypass percuma /
+    -- mode salah. Sekarang: coba baca sampai 3x, begitu dapet isi valid -> pakai.
+    -- Cuma nyerah "hilang" kalau 3x tetep kosong (beneran gak ada).
+    local isi = ""
+    local adaKey = nil
+    for coba = 1, 3 do
+        isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+        adaKey = isi:match("FREE_%x+") or isi:match("[%w_]-%x%x%x%x%x%x%x%x%x%x")
+        if adaKey and #isi:gsub("%s", "") >= 20 then
+            break   -- dapet key valid -> stop retry
+        end
+        if coba < 3 then os.execute("sleep 1") end   -- jeda sebelum coba lagi
+    end
     if adaKey and #isi:gsub("%s", "") >= 20 then
         -- masih hitung umur buat INFO (ditampilin), tapi BUKAN penentu basi.
         local o = sh("su -c 'stat -c %Y " .. path .. " 2>/dev/null'") or ""
@@ -1168,7 +1178,7 @@ local function lisensi_keadaan(cfg)
         local umur = ts and (os.time() - ts) or nil
         return "ada", umur
     end
-    -- isi kosong / file hilang / key gak kebentuk -> beneran habis
+    -- isi kosong / file hilang / key gak kebentuk -> beneran habis (setelah 3x)
     return "hilang", nil
 end
 
@@ -6092,9 +6102,13 @@ local function run(cfg)
         -- (file kosong = key habis), langsung bypass -- gak nunggu ronde buka
         -- client (reopen_sec 5 menit). Jadi begitu key habis, key baru diambil
         -- dalam <1 menit, bukan nunggu 5 menit. auto_key harus ON.
-        if cfg.auto_key == true and (now - lastLisensiCek) >= 60 then
+        -- v7.70: cek lisensi berkala TIAP 10 MENIT (user minta, dulu 60 detik).
+        -- Kalau KEY API HILANG -> mulai dari awal LAGI (kayak Start): bypass key
+        -- dulu, terus buka semua client (open_all fast=false = jalur bypass +
+        -- buka ulang, persis start).
+        if cfg.auto_key == true and (now - lastLisensiCek) >= 600 then
             lastLisensiCek = now
-            local kd = lisensi_keadaan(cfg)
+            local kd = lisensi_keadaan(cfg)   -- v7.69: udah retry 3x di dalam
             if kd == "hilang" and (now - (BYPASS_TERAKHIR or 0)) > 300 then
                 if mati then
                     -- v6.83: STANDBY -> cek lisensi & AMBIL KEY doang (bypass_kunci),
@@ -6110,9 +6124,12 @@ local function run(cfg)
                         warn("Bypass key gagal (standby): " .. tostring(pesanB))
                     end
                 else
-                    warn("Lisensi HILANG (cek berkala) -- ambil key baru sekarang")
-                    -- open_all dgn fast=false biar blok bypass di dalamnya jalan.
-                    -- only=nil (semua). Ini nutup semua client + bypass + buka ulang.
+                    -- v7.70: KEY HILANG pas jalan -> MULAI DARI AWAL LAGI (kayak
+                    -- Start). open_all fast=false = jalur bypass key + buka semua
+                    -- client ulang. SUDAH_GRID reset biar grid keset ulang juga.
+                    warn("Lisensi HILANG (cek berkala 10menit) -- MULAI DARI AWAL (bypass key + buka ulang)")
+                    SUDAH_GRID = false
+                    GRID_CACHE = nil
                     open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false)
                     refresh_status(); lastStatusCek = os.time()
                 end
