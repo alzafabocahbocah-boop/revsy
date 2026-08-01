@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.70-cf"
+local VERSION = "7.71-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4277,6 +4277,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- Start). Aman -- isolasi Pandora (open_one cmp ActivityProtocol
                     -- Launch) bikin client lain gak keganggu pas force-stop.
                     if pkg_hidup(pkg) then
+                        io.write(("      kill %s dulu (fresh)...\n"):format(pkg:gsub("com%.roblox%.","")))
                         sh_silent("am force-stop " .. pkg)
                         sh_silent("su -c 'am force-stop " .. pkg .. "'")
                         os.execute("sleep 2")
