@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.53-cf"
+local VERSION = "7.54-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7282,19 +7282,32 @@ local function run(cfg)
                     if g >= GAME_AMBANG_KB then
                         -- udah di game -> lanjut (gak usah ngapa-ngapain)
                     else
-                        -- OUT (grafis rendah) -> tembak (TANPA force-stop)
+                        -- OUT (grafis rendah) -> tembak
                         local nama = pkg:gsub("com%.roblox%.", "")
                         tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
                             akun or nama, g/1024))
-                        -- v7.52: TANPA FORCE-STOP (user minta). open_one sekarang
-                        -- pakai cmp ActivityProtocolLaunch (cara Pandora) -> Activity
-                        -- join di-trigger LANGSUNG, walau app hidup dia join ulang
-                        -- (gak no-op kayak am start biasa). Jadi gak perlu kill dulu.
+                        -- v7.54: coba 1: tembak TANPA force-stop (ActivityProtocol
+                        -- Launch re-join, cara Pandora). Kalau app fresh/loading,
+                        -- ini cukup.
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         TERAKHIR_BUKA[pkg] = os.time()
                         jaga_depan(cfg, mapLink)
-                        -- cek grafis 30s (pastiin masuk sebelum lanjut client berikutnya)
                         local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
+                        if not masukG and not (cek_batal and cek_batal()) then
+                            -- coba 2: masih nyangkut (Home keras kepala) -> FORCE-STOP
+                            -- client INI aja (isolated -- aman, gak ganggu lain karena
+                            -- buka udah cara Pandora), baru tembak lagi biar fresh.
+                            -- Pandora pun force-stop buat kasus nyangkut (dari logcat).
+                            tambahLog(("[grafis] %s masih nyangkut (%.0f MB) -> force-stop + tembak ulang"):format(
+                                akun or nama, mbG or 0))
+                            sh_silent("am force-stop " .. pkg)
+                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                            os.execute("sleep 2")
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                            TERAKHIR_BUKA[pkg] = os.time()
+                            jaga_depan(cfg, mapLink)
+                            masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
+                        end
                         if masukG then
                             tambahLog(("[grafis] %s MASUK (grafis %.0f MB)"):format(akun or nama, mbG or 0))
                         else
