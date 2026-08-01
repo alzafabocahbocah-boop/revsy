@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.40-cf"
+local VERSION = "7.41-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4535,30 +4535,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
             -- -- worker udah akses client ini. Cuma buat client yang HIDUP tapi
             -- cookie ALIVE (bukan mati/ban) -- karena captcha kejadian pas cookie
             -- valid tapi kena verif bot pas join. Kalau kena -> tandai + badge.
-            -- v6.67: cek captcha DI SINI cuma kalau BELUM ketandai captcha.
-            -- Kalau UDAH ketandai -> SKIP (gak usah cek dump lagi tiap putaran,
-            -- buang waktu). Penanda captcha CUMA di-clear pas client beneran RUN
-            -- (masuk game) -- di tempat lapor, BUKAN dari cek "bukan captcha"
-            -- (captcha bolak-balik loading, cek pas loading bisa salah clear ->
-            -- kejadian di-rejoin lagi). Jadi sekali kena captcha, TETAP skip
-            -- sampai user solve (client run).
-            if pkg_running(pkg) and ckC ~= "" and ckC:find("_|WARNING")
-               and not KICK_DIURUS["captcha:" .. pkg] then
-                local statC = api_get(cfg, "/stat") or ""
-                local lapor = ak and bridge_fresh(statC, ak)
-                info("[cc-cookie] " .. (ak or "?") .. " running, lapor=" .. tostring(lapor))
-                if not lapor then   -- gak lapor = mungkin nyangkut captcha
-                    local hasilCap = cek_captcha_paksa(pkg)
-                    if hasilCap and hasilCap:find("CAPTCHA", 1, true) then
-                        info("CAPTCHA: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip (solve manual)")
-                        KICK_DIURUS["captcha:" .. pkg] = ak or pkg
-                    elseif hasilCap == "REJOIN" then
-                        -- v6.73: error kick (save data/disconnect) -> masuk lagi
-                        info("KICK: " .. (ak or pkg:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
-                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "diagnosa-kick")
-                    end
-                end
-            end
+            -- v7.41: DUMP CAPTCHA pas buka DIHAPUS (uiautomator lambat). Deteksi
+            -- captcha sekarang cuma pas client OFF LAMA (>= 5 menit) di jalur diem.
+            -- Client yang gak lapor tapi hidup -> biarin, ketangkep jalur diem/
+            -- logcat. Gak dump tiap buka (buang waktu).
         end
     end
 
@@ -5874,23 +5854,16 @@ local function run(cfg)
                     kandidat[#kandidat+1] = pkgX
                 end
             end
-            tambahLog(("[dump-all] %d kandidat: %s"):format(#kandidat,
+            tambahLog(("[tembak-nolapor] %d kandidat: %s"):format(#kandidat,
                 #kandidat > 0 and table.concat((function() local t={} for _,k in ipairs(kandidat) do t[#t+1]=k:gsub("com%.roblox%.","") end return t end)(), ", ") or "gak ada"))
-            -- DUMP SEMUA satu-satu (cek captcha/error tiap kandidat)
+            -- v7.41: DUMP CAPTCHA per kandidat DIHAPUS (uiautomator lambat).
+            -- Client hidup + gak lapor -> LANGSUNG tembak masuk (open_one). Captcha
+            -- ketangkep di jalur diem (off >= 5 menit) yang masih dump sekali.
             for _, kand in ipairs(kandidat) do
-                local ceC = cek_captcha_paksa(kand)
-                local akKand = baca_username(kand) or kand:gsub("com%.roblox%.","")
-                tambahLog("[dump-all] " .. akKand .. ": " .. (ceC or "nil/gak kebaca"))
-                if ceC and ceC:find("CAPTCHA", 1, true) then
-                    -- CUMA captcha yang di-skip (solve manual)
-                    tambahLog("CAPTCHA: " .. akKand .. " kena verif bot -> skip (solve manual)")
-                    KICK_DIURUS["captcha:" .. kand] = akKand
-                else
-                    -- selain captcha (error kick/nyangkut/gak kebaca) -> TEMBAK MASUK
-                    local sebabT = (ceC == "REJOIN") and "error kick (save data/disconnect)"
-                                   or (ceC == "" and "nyangkut (bukan captcha)")
-                                   or "off gak jelas"
-                    tambahLog("TEMBAK MASUK: " .. akKand .. " (" .. sebabT .. ")")
+                -- skip kalau udah ketandai captcha (nunggu solve manual)
+                if not KICK_DIURUS["captcha:" .. kand] then
+                    local akKand = mapAkun and mapAkun[kand] or kand:gsub("com%.roblox%.","")
+                    tambahLog("TEMBAK MASUK: " .. akKand .. " (gak lapor -> masuk lagi)")
                     open_one(cfg, kand, mapLink and mapLink[kand] or nil, "dump-tembak")
                 end
             end
@@ -6562,20 +6535,11 @@ local function run(cfg)
                                           kead:upper() .. " -> GAK direjoin (perbaiki cookie dulu)")
                                 if ak then KICK_DIURUS["mati:" .. ak] = true end
                             else
-                                -- v6.54: SEBELUM rejoin, CEK CAPTCHA dulu. fifinx yang
-                                -- nyangkut Home + cookie ON bisa jadi lagi KENA CAPTCHA
-                                -- (verif bot). Kalau iya -> JANGAN rejoin (percuma,
-                                -- captcha butuh solve manual) -> tandai + skip.
-                                local ce = cek_captcha_paksa(pkg)
-                                if ce and ce:find("CAPTCHA", 1, true) then
-                                    tambahLog("CAPTCHA: " .. namaP .. " kena verif bot -> skip (solve manual)")
-                                    KICK_DIURUS["captcha:" .. pkg] = ak or namaP
-                                elseif kead == "dead" or kead == "ban" then
-                                    -- (udah dihandle di atas, jaga-jaga)
-                                    if ak then KICK_DIURUS["mati:" .. ak] = true end
-                                else
-                                -- cookie hidup/gak kebaca & bukan captcha -> rejoin
-                                KICK_DIURUS["captcha:" .. pkg] = nil   -- clear kalau ada
+                                -- v7.41: DUMP CAPTCHA di nyangkut-home DIHAPUS
+                                -- (uiautomator lambat). Nyangkut Home (grafis
+                                -- rendah) = belum di game -> LANGSUNG rejoin.
+                                -- Kalau ternyata captcha, ketangkep jalur diem
+                                -- (off >= 5 menit) yang masih dump sekali.
                                 tambahLog("NYANGKUT Home (" .. string.format("%.0f", g/1024)
                                           .. "MB): " .. namaP .. " cookie " ..
                                           (kead == "alive" and "ON" or kead) .. " -> masukin game")
@@ -6585,7 +6549,6 @@ local function run(cfg)
                                 os.execute("sleep 3")
                                 refresh_status(); lastStatusCek = os.time()
                                 gambar_tabel(isi)
-                                end   -- v6.54: tutup else (bukan captcha/mati)
                             end
                         end
                         -- kalau grafis >= 30MB = di game (lagi loading script) -> biarin
@@ -6904,22 +6867,12 @@ local function run(cfg)
                 -- cacheRun bisa true padahal nyangkut captcha -> guard gak jalan
                 -- -> tetep tembak link PS). bridge_fresh = client lapor beneran
                 -- apa nggak. Gak lapor + hidup = kandidat captcha -> cek dump.
+                -- v7.41: DUMP CAPTCHA di guard DIHAPUS (uiautomator lambat). Cuma
+                -- cek PENANDA captcha (dari jalur diem 5menit). Kalau udah ketandai
+                -- captcha -> skip. Kalau belum -> lanjut jalur diem di bawah.
                 local lewatiCaptcha = false
                 if KICK_DIURUS["captcha:" .. pkg] then
-                    lewatiCaptcha = true   -- udah kena captcha -> skip, gak cek ulang
-                elseif pkg_running(pkg) and akun and not bridge_fresh(stat, akun) then
-                    local ceR = cek_captcha_paksa(pkg)
-                    if ceR and ceR:find("CAPTCHA", 1, true) then
-                        tambahLog("CAPTCHA: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " kena verif bot -> skip auto-rejoin (solve manual)")
-                        KICK_DIURUS["captcha:" .. pkg] = akun or pkg
-                        lewatiCaptcha = true
-                    elseif ceR == "REJOIN" then
-                        -- v6.73: error kick (save data/disconnect/teleport) -> masuk
-                        -- lagi LANGSUNG, gak usah lewat jalur diem/nudge yang lama.
-                        tambahLog("KICK: " .. (akun or pkg:gsub("com%.roblox%.","")) .. " (save data/disconnect) -> masuk kembali")
-                        open_one(cfg, pkg, mapLink[pkg], "rejoin-diagnosa")
-                        lewatiCaptcha = true   -- udah ditangani, skip sisa
-                    end
+                    lewatiCaptcha = true   -- udah kena captcha -> skip auto-rejoin
                 end
                 if akun and not lewatiCaptcha then
                     -- cari "ts" akun ini di /stat. format: ..."nama":"fifinx_5"...,"ts":123...
@@ -7038,11 +6991,13 @@ local function run(cfg)
                     if diem then KICK_DIURUS["offlama:" .. pkg] = diem
                     else KICK_DIURUS["offlama:" .. pkg] = nil end
 
-                    -- v6.86: SCRIPT OFF >= 2 MENIT -> DIAGNOSA penyebab (dump client).
-                    -- Cek: nyangkut Home / kena captcha (verif) / kena error code.
-                    -- Cuma sekali per "sesi off" (penanda diag: <pkg>) biar gak dump
-                    -- tiap ronde. cek_captcha_paksa balikin CAPTCHA / REJOIN(error kick).
-                    if diem and diem >= 120 and pkg_running(pkg)
+                    -- v7.41: SCRIPT OFF >= 5 MENIT -> DIAGNOSA (dump client SEKALI).
+                    -- Ini SATU-SATUNYA tempat dump uiautomator yang disisain (user
+                    -- minta). Yang lain (buka/nyangkut-home/guard/dump-all) UDAH
+                    -- DIHAPUS -- gantinya langsung rejoin/tembak. Dump di sini cuma
+                    -- buat client yang bener-bener off lama (kemungkinan captcha).
+                    -- Cuma sekali per "sesi off" (penanda diag:) biar gak spam.
+                    if diem and diem >= 300 and pkg_running(pkg)
                        and not KICK_DIURUS["diag:" .. pkg] then
                         KICK_DIURUS["diag:" .. pkg] = now
                         local akD = mapAkun and mapAkun[pkg] or pkg:gsub("com%.roblox%.","")
