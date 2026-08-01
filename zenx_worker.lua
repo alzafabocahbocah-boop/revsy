@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.49-cf"
+local VERSION = "7.52-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2442,7 +2442,20 @@ local function open_one(cfg, pkg, link_client, alasan)
     local wm = tonumber(cfg.win_mode) or 0
 
     local function coba(pakai_wm)
-        local inner = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg
+        -- v7.51: CARA PANDORA (dari intip logcat ActivityTaskManager).
+        -- Pandora buka client dengan:
+        --   START {act=VIEW dat=https://... flg=0x10000000
+        --          cmp=com.roblox.clienX/com.roblox.client.ActivityProtocolLaunch}
+        -- Kunci ISOLASI (client lain gak keganggu):
+        --   1. cmp SPESIFIK per-package (ActivityProtocolLaunch) -- target
+        --      Activity join DI package itu, bukan biar Android routing global
+        --   2. flg=0x10000000 = FLAG_ACTIVITY_NEW_TASK doang (BUKAN CLEAR_TOP
+        --      0x04000000 yang bisa ganggu task client lain)
+        -- Dulu ZenX: 'am start -a VIEW -d roblox:// -p pkg' TANPA cmp -> Android
+        -- pilih routing sendiri -> bisa ganggu window/task clone lain.
+        local inner = "am start -a android.intent.action.VIEW -d '"..url.."'"
+            .. " -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch"
+            .. " -f 0x10000000"
         if pakai_wm and wm > 0 then
             inner = inner .. " --windowingMode " .. wm
         end
@@ -4186,16 +4199,9 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- stop client INI DULU (cuma dia, bukan semua), baru open_one
                     -- biar fresh masuk. Cuma pas hidup+nyangkut (bukan yg udah di
                     -- game). Ini gak bikin mati-bareng (cuma 1 client bermasalah).
-                    if pkg_hidup(pkg) then
-                        local gNyangkut = grafis_kb(pkg) or 0
-                        if gNyangkut < GAME_AMBANG_KB then
-                            info(("   %s nyangkut (grafis %.0f MB) -> force-stop dulu biar tembak ngefek"):format(
-                                pkg:gsub("com%.roblox%.",""), gNyangkut/1024))
-                            sh_silent("am force-stop " .. pkg)
-                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                            os.execute("sleep 2")
-                        end
-                    end
+                    -- v7.52: TANPA FORCE-STOP. open_one pakai cmp Activity
+                    -- ProtocolLaunch (cara Pandora) -> join di-trigger langsung
+                    -- walau app hidup (gak no-op). Gak perlu kill dulu.
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 30s.
@@ -4306,10 +4312,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
         end
     end
 
-    -- v4.59: KONFIRMASI BERSAMA. Semua client udah kebuka; sekarang tungguin
-    -- mereka lapor -- SEKALIGUS, bukan satu-satu. Satu jendela waktu dipakai
-    -- bareng, jadi total waktunya nyaris sama kayak nungguin SATU client.
-    if #tunda > 0 and not (cek_batal and cek_batal()) then
+    -- v7.50: KONFIRMASI BERSAMA (nunggu client lapor bareng) DIMATIIN. Gak guna
+    -- lagi -- sekarang cek masuk game via GRAFIS (cek_masuk_game) langsung pas
+    -- buka + loop grafis berkala. Gak perlu nunggu bridge lapor (yang bilang
+    -- "belum lapor -- auto-rejoin nangani", padahal auto-rejoin udah dimatiin).
+    if false and #tunda > 0 and not (cek_batal and cek_batal()) then
         local batas = cfg.konfirmasi_sec or 90
         setAksi(("nunggu %d client masuk game (bareng, %ds)"):format(#tunda, batas))
         io.write(("      nunggu %d client masuk game (bareng, maks %ds)...\n"):format(#tunda, batas))
@@ -5237,6 +5244,12 @@ end
 -- ============================================================
 local function run(cfg)
     cfg.reopen_sec  = cfg.reopen_sec or 300
+    -- v7.51: matiin logcat streaming yang mungkin masih jalan dari sesi lama
+    -- (nulis spam ke file). Loop grafis udah gantiin, gak perlu logcat streaming.
+    pcall(function()
+        os.execute("su -c 'pkill -f \"logcat -v threadtime\"' 2>/dev/null")
+        os.execute("rm -f /sdcard/zenx_logcat_live.log 2>/dev/null")
+    end)
     if cfg.auto_rejoin == nil then cfg.auto_rejoin = true end
     cfg.auto_rejoin_menit = cfg.auto_rejoin_menit or 8
     cfg.disconnect_menit  = cfg.disconnect_menit or 3   -- v4.38: ngintip dialog error
@@ -7272,16 +7285,14 @@ local function run(cfg)
                     if g >= GAME_AMBANG_KB then
                         -- udah di game -> lanjut (gak usah ngapa-ngapain)
                     else
-                        -- OUT (grafis rendah) -> force-stop + tembak + cek 30s
+                        -- OUT (grafis rendah) -> tembak (TANPA force-stop)
                         local nama = pkg:gsub("com%.roblox%.", "")
                         tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
                             akun or nama, g/1024))
-                        -- force-stop dulu (am start no-op kalau app udah hidup/nyangkut)
-                        if pkg_hidup(pkg) then
-                            sh_silent("am force-stop " .. pkg)
-                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                            os.execute("sleep 2")
-                        end
+                        -- v7.52: TANPA FORCE-STOP (user minta). open_one sekarang
+                        -- pakai cmp ActivityProtocolLaunch (cara Pandora) -> Activity
+                        -- join di-trigger LANGSUNG, walau app hidup dia join ulang
+                        -- (gak no-op kayak am start biasa). Jadi gak perlu kill dulu.
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         TERAKHIR_BUKA[pkg] = os.time()
                         jaga_depan(cfg, mapLink)
@@ -7299,10 +7310,10 @@ local function run(cfg)
             end
         end
 
-        -- v7.31: LOGCAT STREAMING (kayak Pandora). Baca baris BARU dari stream
-        -- file tiap 5s (ringan, cuma baca ekor file -- bukan spawn logcat -d).
-        -- Nemu disconnect -> REJOIN real-time. Nyalain stream sekali kalau belum.
-        if (now - lastRekamDc) >= 5 then
+        -- v7.51: LOGCAT STREAMING DIMATIIN. Dia nyalain `logcat > file` yang
+        -- nulis SEMUA log terus-menerus (spam, file membengkak). Gak guna lagi --
+        -- loop grafis (v7.49) udah gantiin deteksi out. Matiin biar gak spam.
+        if false then
             lastRekamDc = now
             pcall(function() mulai_logcat_stream() end)   -- idempotent
             -- PID tiap client (biar tau disconnect dari client mana)
