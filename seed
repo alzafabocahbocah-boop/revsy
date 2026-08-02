@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.34"
+local VERSI = "3.36"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -709,9 +709,12 @@ function Seed.plantOnce()
     -- v3.18d: TP SEKALI ke tanah, NETEP di situ. Tanam sebar pakai KOORDINAT
     -- (fire pos + offset spread), BUKAN mindahin karakter tiap seed (dulu bikin
     -- bolak-balik terus tiap loop). Karakter diem di tanah, gak balik ke asal.
+    -- v3.35: GESER dari tengah ke kanan 25 stud (user minta, biar gak numpuk
+    -- pas di tengah). offset di sumbu X (kanan = X+).
+    local GESER_X = 25
     local titikTengah = nil
     if areaC and areaX and areaZ and yTanah then
-        titikTengah = Vector3.new(areaC.X, yTanah + 3, areaC.Z)
+        titikTengah = Vector3.new(areaC.X + GESER_X, yTanah + 3, areaC.Z)
     end
     -- TP ke tengah tanah SEKALI (cuma kalau belum di kebun / masih jauh)
     if titikTengah then
@@ -2726,6 +2729,101 @@ end
 -- ============================================================
 -- v3.23: cek kenapa auto buy gear gak jalan. Panggil:
 --   getgenv().StarSeed.cekGear()
+-- v3.36: cek kenapa auto plant nanam semua jenis (padahal panel pilih Gold).
+-- Panggil: getgenv().StarSeed.cekPlant()
+function Seed.cekPlant()
+    local out = {}
+    local function c(s) out[#out+1] = tostring(s); print(s) end
+    c("===== CEK AUTO PLANT =====")
+    c("autoPlantOn = " .. tostring(state.autoPlantOn))
+    c("plantSemua  = " .. tostring(state.plantSemua))
+    if state.plantSemua then
+        c(">>> MASALAH: plantSemua NYALA -> nanam SEMUA jenis!")
+        c(">>> matiin 'Plant semua jenis' di panel, biar cuma yg dipilih.")
+    end
+    local pp = state.plantPilih or {}
+    local list = {}
+    for k, v in pairs(pp) do if v then list[#list+1] = tostring(k) end end
+    c("plantPilih = " .. #list .. " jenis: " .. table.concat(list, ", "))
+    c("")
+    c("-- SEED DI TAS (nama Tool + SeedTool attr) --")
+    local char = player.Character
+    local bp = player:FindFirstChildOfClass("Backpack")
+    local n = 0
+    for _, holder in ipairs({ char, bp }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local st = t:GetAttribute("SeedTool")
+                    local seedName = st or t.Name
+                    -- match sama plantPilih?
+                    local match = state.plantSemua or (pp[seedName] == true)
+                    n = n + 1
+                    if n <= 20 then
+                        c(("  Tool='%s' SeedTool=%s -> match=%s"):format(
+                            t.Name, tostring(st or "-"), tostring(match)))
+                    end
+                end
+            end
+        end
+    end
+    c("total Tool di tas: " .. n)
+    c("")
+    c(">>> filter: plantSemua ATAU plantPilih[namaTool]==true")
+    c(">>> kalau nama Tool GAK ADA di plantPilih -> harusnya GAK ditanam")
+    c(">>> kalau tetep nanam semua padahal plantSemua false -> nama gak match tapi lolos (bug)")
+    c("===== SELESAI =====")
+    local teks = table.concat(out, "\n")
+    if setclipboard then pcall(function() setclipboard(teks) end) end
+    -- GUI
+    pcall(function()
+        local host = (gethui and gethui()) or CoreGui
+        local old = host:FindFirstChild("CekPlantGUI")
+        if old then old:Destroy() end
+        local sg2 = Instance.new("ScreenGui"); sg2.Name = "CekPlantGUI"; sg2.ResetOnSpawn = false
+        sg2.Parent = host
+        local fr = Instance.new("Frame")
+        fr.Size = UDim2.new(0, 480, 0, 420); fr.Position = UDim2.new(0.5, -240, 0.06, 0)
+        fr.BackgroundColor3 = Color3.fromRGB(20, 22, 28); fr.Active = true; fr.Draggable = true; fr.Parent = sg2
+        Instance.new("UICorner").Parent = fr
+        local jd = Instance.new("TextLabel")
+        jd.Size = UDim2.new(1, 0, 0, 32); jd.BackgroundColor3 = Color3.fromRGB(40, 44, 54)
+        jd.Text = "  CEK AUTO PLANT"; jd.TextColor3 = Color3.fromRGB(140, 230, 160)
+        jd.Font = Enum.Font.GothamBold; jd.TextSize = 13
+        jd.TextXAlignment = Enum.TextXAlignment.Left; jd.Parent = fr
+        Instance.new("UICorner").Parent = jd
+        local tp = Instance.new("TextButton")
+        tp.Size = UDim2.new(0, 26, 0, 24); tp.Position = UDim2.new(1, -30, 0, 4)
+        tp.BackgroundColor3 = Color3.fromRGB(200, 60, 60); tp.Text = "X"
+        tp.TextColor3 = Color3.new(1,1,1); tp.Font = Enum.Font.GothamBold; tp.Parent = fr
+        Instance.new("UICorner").Parent = tp
+        tp.MouseButton1Click:Connect(function() sg2:Destroy() end)
+        local scr = Instance.new("ScrollingFrame")
+        scr.Size = UDim2.new(1, -16, 1, -78); scr.Position = UDim2.new(0, 8, 0, 38)
+        scr.BackgroundColor3 = Color3.fromRGB(14, 16, 20); scr.BorderSizePixel = 0
+        scr.ScrollBarThickness = 6; scr.CanvasSize = UDim2.new(0, 0, 0, 6000); scr.Parent = fr
+        Instance.new("UICorner").Parent = scr
+        local lb = Instance.new("TextLabel")
+        lb.Size = UDim2.new(1, -8, 1, 0); lb.Position = UDim2.new(0, 4, 0, 0)
+        lb.BackgroundTransparency = 1; lb.Text = teks
+        lb.TextColor3 = Color3.fromRGB(220, 220, 220); lb.Font = Enum.Font.Code; lb.TextSize = 11
+        lb.TextXAlignment = Enum.TextXAlignment.Left; lb.TextYAlignment = Enum.TextYAlignment.Top
+        lb.TextWrapped = true; lb.Parent = scr
+        local cp = Instance.new("TextButton")
+        cp.Size = UDim2.new(1, -16, 0, 30); cp.Position = UDim2.new(0, 8, 1, -36)
+        cp.BackgroundColor3 = Color3.fromRGB(70, 110, 200); cp.Text = "COPY"
+        cp.TextColor3 = Color3.new(1,1,1); cp.Font = Enum.Font.GothamBold; cp.TextSize = 13; cp.Parent = fr
+        Instance.new("UICorner").Parent = cp
+        cp.MouseButton1Click:Connect(function()
+            local ok = false
+            if setclipboard then pcall(function() setclipboard(teks); ok = true end) end
+            cp.Text = ok and "TERSALIN!" or "setclipboard GAGAL (baca manual)"
+            task.wait(1.5); cp.Text = "COPY"
+        end)
+    end)
+    return teks
+end
+
 function Seed.cekGear()
     local out = {}
     local function c(s) out[#out+1] = tostring(s); print(s) end
