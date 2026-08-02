@@ -238,9 +238,9 @@ local state = {
     -- remote: pkt("Plant","PlantSeed"):Fire(posisi, namaSeed, toolSeed).
     -- posisi = sekitar karakter (sebar radius plantSpread biar gak numpuk).
     autoPlantOn   = false,
-    plantSpread   = 4,     -- radius sebar tanam (0 = pas di posisi karakter)
-    plantSemua    = true,  -- v3.18: tanam semua jenis seed (false = cuma plantPilih)
-    plantPilih    = {},    -- { ["Carrot"]=true } seed yg mau ditanam (mode pilih)
+    plantSpread   = 3,     -- radius sebar tanam (0 = pas di posisi karakter)
+    plantSemua    = false, -- v3.18: default pilih jenis (Gold), bukan semua
+    plantPilih    = { Gold = true },   -- v3.18: default Gold kecentang
 
     -- v3.18: AUTO COLLECT (Collect All) + AUTO SELL. picker seed + mutasi + kg.
     collectAllOn  = false, -- panen buah di kebun (Garden.CollectFruit)
@@ -549,33 +549,33 @@ function Seed.plantOnce()
             end
         end
     end)
-    local posAsli = hrp.CFrame   -- simpen buat balik
-    local ditanam = 0
-    -- titik tanam: acak dalam area tanam (PlotSizeReference), Y = tanah
-    local function titikTanah()
-        if areaC and areaX and areaZ and yTanah then
-            return Vector3.new(
-                areaC.X + (math.random()*2-1) * areaX,
-                yTanah + 3,
-                areaC.Z + (math.random()*2-1) * areaZ)
-        end
-        return hrp.Position   -- fallback: posisi sekarang
+    -- v3.18d: TP SEKALI ke tanah, NETEP di situ. Tanam sebar pakai KOORDINAT
+    -- (fire pos + offset spread), BUKAN mindahin karakter tiap seed (dulu bikin
+    -- bolak-balik terus tiap loop). Karakter diem di tanah, gak balik ke asal.
+    local titikTengah = nil
+    if areaC and areaX and areaZ and yTanah then
+        titikTengah = Vector3.new(areaC.X, yTanah + 3, areaC.Z)
     end
+    -- TP ke tengah tanah SEKALI (cuma kalau belum di kebun / masih jauh)
+    if titikTengah then
+        local jauh = (hrp.Position - titikTengah).Magnitude
+        if jauh > 8 then   -- cuma TP kalau belum deket tanah (biar gak TP terus)
+            pcall(function() hrp.CFrame = CFrame.new(titikTengah) end)
+            task.wait(0.1)
+        end
+    end
+    local r = tonumber(state.plantSpread) or 3
+    local ditanam = 0
     for _, s in ipairs(seeds) do
         if not state.autoPlantOn then break end
-        -- TP karakter ke titik tanah
-        local titik = titikTanah()
-        pcall(function() hrp.CFrame = CFrame.new(titik) end)
-        task.wait(0.08)   -- kasih waktu posisi ke-register server
-        -- tanam DI POSISI KARAKTER (posisi kita sekarang)
+        -- tanam pakai KOORDINAT sebar (gak mindahin karakter)
         local pos = hrp.Position
+        if r > 0 then
+            pos = pos + Vector3.new((math.random()*2-1)*r, 0, (math.random()*2-1)*r)
+        end
         pcall(function() p:Fire(pos, s.name, s.tool) end)
         ditanam = ditanam + 1
         task.wait(0.05)
-    end
-    -- balik ke posisi asli
-    if posAsli and hrp and hrp.Parent then
-        pcall(function() hrp.CFrame = posAsli end)
     end
     return ditanam
 end
@@ -4351,7 +4351,7 @@ local kotakSpread = mk("TextBox", { Parent = kPlant,
     Position = UDim2.new(1, -128, 0, 60), Size = UDim2.new(0, 116, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
     Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
-    Text = tostring(state.plantSpread or 4) })
+    Text = tostring(state.plantSpread or 3) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakSpread })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSpread })
 -- baris "Plant seed [OFF]"
@@ -4701,7 +4701,7 @@ end)
 lblPickSeed(pickPlantSeed, state.plantSemua, state.plantPilih)
 kotakSpread.FocusLost:Connect(function()
     local n = tonumber(kotakSpread.Text)
-    state.plantSpread = (n and n >= 0) and n or 4
+    state.plantSpread = (n and n >= 0) and n or 3
     kotakSpread.Text = tostring(state.plantSpread)
     simpan()
 end)
