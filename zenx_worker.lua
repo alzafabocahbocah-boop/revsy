@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.02-cf"
+local VERSION = "8.05-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2456,7 +2456,7 @@ end
 --   0 = jangan minta apa-apa (kayak v4.0)
 local WIN_OK = nil   -- nil=belum dites, true=didukung, false=ditolak
 
-local function open_one(cfg, pkg, link_client, alasan)
+local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- v6.64: GUARD CAPTCHA. Kalau client kena captcha (penanda dari cek captcha),
     -- JANGAN rejoin -- percuma, captcha butuh solve manual, rejoin cuma mancing
     -- verif lagi. Semua jalur rejoin lewat sini, jadi cukup dijaga di satu titik.
@@ -2490,7 +2490,13 @@ local function open_one(cfg, pkg, link_client, alasan)
         --      task numpuk / kadang gak masuk. Pandora TANPA MULTIPLE_TASK)
         --   3. cmp ActivityProtocolLaunch (activity join)
         -- Isolasi Pandora BUKAN dari MULTIPLE_TASK, tapi dari -p+-n+cmp yg bener.
-        local inner = "am start -a android.intent.action.VIEW -d '"..url.."'"
+        -- v8.05: pakai_S -> tambah -S (STOP ACTIVITY dulu, start fresh). Ini cara
+        -- HIP HUB (dari intip ps-ef: am start -S ...) yang AMAN + selalu masuk.
+        -- -S cuma stop ACTIVITY (bukan force-stop app + service), jadi client
+        -- nyangkut Home bisa di-restart TANPA goyangin App Cloner service (gak
+        -- ngerusak client lain kayak force-stop). Buat client keras kepala.
+        local flagS = pakai_S and "-S " or ""
+        local inner = "am start " .. flagS .. "-a android.intent.action.VIEW -d '"..url.."'"
             .. " -p "..pkg
             .. " -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch"
             .. " -f 0x10000000"
@@ -3712,11 +3718,12 @@ local function close_all(cfg, only, mapLink, tanpaMunculin)
     -- v7.86: force-stop SATU-SATU + JEDA (kayak Pandora, dari logcat: tiap client
     -- jeda ~6-7s). Dulu force-stop SEMUA BARENG -> App Cloner service (Persistent
     -- AppService) keteteran -> NGERUSAK client lain. Pandora satu-satu biar service
-    -- restart bersih tiap client. Jeda 3s (kompromi -- 6-7s kelamaan buat 10 client).
+    -- restart bersih tiap client. v8.03: jeda 5s (naik dari 3s -- 3s kurang, service
+    -- belum bersih. 7s ideal tapi x10 client kelamaan, 5s kompromi).
     for _, pkg in ipairs(target) do
         sh_silent("su -c 'am force-stop " .. pkg .. "'")
         info("tutup paksa: " .. pkg)
-        os.execute("sleep 3")   -- jeda tiap client (App Cloner service napas)
+        os.execute("sleep 5")   -- jeda tiap client (App Cloner service napas)
     end
     -- v4.19: FASE 2 -> tungguin SEMUA beneran mati PARALEL (bukan per-client 8s).
     -- penting buat pindah server: am start pas app masih idup -> Roblox abaikan
@@ -4364,21 +4371,26 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         end
                         -- belum maxc -> CLOSE DULU (aman) + jeda 40s + tembak ulang
                         -- v8.00: tiap cycle retry -> force-stop client INI dulu
-                        -- (cara AMAN: su -c 'am force-stop pkg' SATU client, kayak
-                        -- Pandora dari logcat -- gak bareng, gak ngerusak lain).
-                        -- Terus jeda 40s (user minta beda tiap cycle), baru tembak.
-                        warn(string.format("[%d/%d] %s — %s, close + tunggu 40s + tembak lagi (%d/%d)...",
+                        -- v8.04: BUANG force-stop di retry (TERBUKTI biang rusak).
+                        -- Analisis user: retry udah close + tunggu 40s TAPI masih
+                        -- ganggu client lain -> berarti BUKAN jeda, tapi FORCE-STOP
+                        -- itu sendiri yg goyangin App Cloner service. Isolasi gacor
+                        -- (v7.84) pas TANPA force-stop. Jadi retry cuma tunggu 40s +
+                        -- tembak ulang (open_one cara Pandora re-join, TANPA close).
+                        warn(string.format("[%d/%d] %s — %s, tunggu 40s + tembak -S (%d/%d)...",
                             urut, totalBuka, pkg, sebab or "belum masuk", coba, maxc))
                         if lapor_fn then pcall(lapor_fn) end
                         if cek_batal and cek_batal() then break end
-                        -- CLOSE dulu (aman, 1 client)
-                        sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                        info("   " .. pkg:gsub("com%.roblox%.","") .. " di-close, tunggu 40s...")
+                        info("   " .. pkg:gsub("com%.roblox%.","") .. " tunggu 40s -> tembak -S (restart activity)...")
                         -- jeda 40s (cek batal tiap detik biar bisa distop)
                         for _ = 1, 40 do
                             if cek_batal and cek_batal() then break end
                             os.execute("sleep 1")
                         end
+                        -- v8.05: tembak pakai -S (restart activity, Hip Hub style,
+                        -- aman -- gak force-stop app/service). Buat client nyangkut.
+                        open_one(cfg, pkg, link_c, "buka-awal", true)  -- pakai_S=true
+                        TERAKHIR_BUKA[pkg] = os.time()
                     elseif nyangkut then
                         warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
                             urut, #list, pkg))
@@ -7507,16 +7519,13 @@ local function run(cfg)
                         jaga_depan(cfg, mapLink)
                         local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
                         if not masukG and not (cek_batal and cek_batal()) then
-                            -- coba 2: masih nyangkut (Home, am start no-op ke app
-                            -- hidup) -> FORCE-STOP 1 client ini dulu (AMAN sekarang:
-                            -- satu-satu kayak Pandora, gak bareng -> gak ngerusak),
-                            -- baru tembak fresh. Pandora pun force-stop tiap client
-                            -- sebelum buka (dari logcat: satu-satu jeda 6-7s).
-                            tambahLog(("[grafis] %s masih nyangkut (%.0f MB) -> force-stop + tembak fresh"):format(
+                            -- v8.05: coba 2 pakai -S (Hip Hub style: stop ACTIVITY
+                            -- + start fresh). Client nyangkut Home -> -S restart
+                            -- activity -> masuk. -S AMAN (cuma activity, bukan
+                            -- force-stop app+service) -> gak ngerusak client lain.
+                            tambahLog(("[grafis] %s belum masuk (%.0f MB) -> tembak -S (restart activity)"):format(
                                 akun or nama, mbG or 0))
-                            sh_silent("su -c 'am force-stop " .. pkg .. "'")
-                            os.execute("sleep 3")   -- jeda kayak Pandora (service napas)
-                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out", true)  -- pakai_S=true
                             TERAKHIR_BUKA[pkg] = os.time()
                             jaga_depan(cfg, mapLink)
                             masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
