@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.25"
+local VERSI = "3.27"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2740,6 +2740,26 @@ function Seed.cekGear()
         if #tgt == 0 then c("  KOSONG -> gearPilih gak cocok stok, atau stok kosong")
         else c("  " .. #tgt .. ": " .. table.concat(tgt, ", ")) end
     end
+    -- v3.26: cek remote beli gear (ADA gak?)
+    local rp = pkt("GearShop", "PurchaseGear") or pkt("GearShop", "Purchase")
+           or pkt("Gear", "Purchase") or pkt("Gear", "PurchaseGear")
+    c("remote beli gear: " .. (rp and rp.Fire and "ADA (GearShop.PurchaseGear)" or ">>> GAK ADA! (gak bisa beli)"))
+    -- v3.26: bandingin nama gearPilih vs nama stok (cocok gak?)
+    if not state.gearSemua and cnt > 0 then
+        c("--- cek nama gearPilih ADA di stok? ---")
+        pcall(function()
+            local sv = RS:FindFirstChild("StockValues")
+            local gs = sv and sv:FindFirstChild("GearShop")
+            local items = gs and gs:FindFirstChild("Items")
+            local stokNama = {}
+            if items then for _, it in ipairs(items:GetChildren()) do stokNama[it.Name] = true end end
+            for nm in pairs(state.gearPilih) do
+                if state.gearPilih[nm] then
+                    c("  '" .. nm .. "' -> " .. (stokNama[nm] and "ADA di stok" or "TIDAK ada di stok skrg"))
+                end
+            end
+        end)
+    end
     c("log gear: " .. tostring(Seed._logGear))
     c("leaves: " .. tostring(sheckles()))
     -- PET
@@ -2772,7 +2792,55 @@ function Seed.cekGear()
     c("log pet: " .. tostring(Seed._logPet))
     c("streaming: " .. tostring(workspace.StreamingEnabled) .. " radius=" .. tostring(workspace.StreamingTargetRadius))
     c("===== SELESAI =====")
-    if setclipboard then pcall(function() setclipboard(table.concat(out, "\n")) end) end
+    local teks = table.concat(out, "\n")
+    if setclipboard then pcall(function() setclipboard(teks) end) end
+    -- v3.26: TAMPIL DI GUI + tombol copy (kalau setclipboard gagal, tetep
+    -- bisa dibaca + copy manual). Standalone popup.
+    pcall(function()
+        local host = (gethui and gethui()) or CoreGui
+        local old = host:FindFirstChild("CekGearGUI")
+        if old then old:Destroy() end
+        local sg2 = Instance.new("ScreenGui"); sg2.Name = "CekGearGUI"; sg2.ResetOnSpawn = false
+        sg2.Parent = host
+        local fr = Instance.new("Frame")
+        fr.Size = UDim2.new(0, 500, 0, 440); fr.Position = UDim2.new(0.5, -250, 0.06, 0)
+        fr.BackgroundColor3 = Color3.fromRGB(20, 22, 28); fr.Active = true; fr.Draggable = true; fr.Parent = sg2
+        Instance.new("UICorner").Parent = fr
+        local jd = Instance.new("TextLabel")
+        jd.Size = UDim2.new(1, 0, 0, 32); jd.BackgroundColor3 = Color3.fromRGB(40, 44, 54)
+        jd.Text = "  CEK GEAR + PET"; jd.TextColor3 = Color3.fromRGB(255, 200, 120)
+        jd.Font = Enum.Font.GothamBold; jd.TextSize = 13
+        jd.TextXAlignment = Enum.TextXAlignment.Left; jd.Parent = fr
+        Instance.new("UICorner").Parent = jd
+        local tp = Instance.new("TextButton")
+        tp.Size = UDim2.new(0, 26, 0, 24); tp.Position = UDim2.new(1, -30, 0, 4)
+        tp.BackgroundColor3 = Color3.fromRGB(200, 60, 60); tp.Text = "X"
+        tp.TextColor3 = Color3.new(1,1,1); tp.Font = Enum.Font.GothamBold; tp.Parent = fr
+        Instance.new("UICorner").Parent = tp
+        tp.MouseButton1Click:Connect(function() sg2:Destroy() end)
+        local scr = Instance.new("ScrollingFrame")
+        scr.Size = UDim2.new(1, -16, 1, -78); scr.Position = UDim2.new(0, 8, 0, 38)
+        scr.BackgroundColor3 = Color3.fromRGB(14, 16, 20); scr.BorderSizePixel = 0
+        scr.ScrollBarThickness = 6; scr.CanvasSize = UDim2.new(0, 0, 0, 8000); scr.Parent = fr
+        Instance.new("UICorner").Parent = scr
+        local lb = Instance.new("TextLabel")
+        lb.Size = UDim2.new(1, -8, 1, 0); lb.Position = UDim2.new(0, 4, 0, 0)
+        lb.BackgroundTransparency = 1; lb.Text = teks
+        lb.TextColor3 = Color3.fromRGB(220, 220, 220); lb.Font = Enum.Font.Code; lb.TextSize = 11
+        lb.TextXAlignment = Enum.TextXAlignment.Left; lb.TextYAlignment = Enum.TextYAlignment.Top
+        lb.TextWrapped = true; lb.Parent = scr
+        local cp = Instance.new("TextButton")
+        cp.Size = UDim2.new(1, -16, 0, 30); cp.Position = UDim2.new(0, 8, 1, -36)
+        cp.BackgroundColor3 = Color3.fromRGB(70, 110, 200); cp.Text = "COPY"
+        cp.TextColor3 = Color3.new(1,1,1); cp.Font = Enum.Font.GothamBold; cp.TextSize = 13; cp.Parent = fr
+        Instance.new("UICorner").Parent = cp
+        cp.MouseButton1Click:Connect(function()
+            local ok = false
+            if setclipboard then pcall(function() setclipboard(teks); ok = true end) end
+            cp.Text = ok and "TERSALIN!" or "setclipboard GAGAL (baca manual)"
+            task.wait(1.5); cp.Text = "COPY"
+        end)
+    end)
     return table.concat(out, "\n")
 end
 
