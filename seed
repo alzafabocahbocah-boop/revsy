@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.17"
+local VERSI = "3.18"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -211,6 +211,7 @@ local state = {
     minRarity     = "Mythic", -- ambang buat beliBagus
     seedBaruAuto  = false,    -- v3.5: MATI bawaan (dulu true)
     seedDikenal   = {},       -- v1.2: seed yang udah pernah keliat (buat tau mana yg baru)
+    petDikenal    = {},       -- v3.18: jenis pet yang udah pernah keliat (auto-detect pet baru)
     maxPerSiklus  = 20,       -- batas fire per seed tiap siklus (jaga-jaga lag)
     jedaSiklus    = 3,        -- detik antar siklus
     sisaSheck     = 0,        -- berhenti beli kalau sheckles di bawah ini (0 = gak dibatesin)
@@ -232,6 +233,16 @@ local state = {
     -- v3.15b: setelah TP + fire prompt, TUNGGU delay ini (detik) biar seed
     -- beneran ke-ambil, BARU balik ke posisi asli. Bisa diatur dari panel.
     delayBalikSeed = 1.5,
+
+    -- v3.18: AUTO PLANT SEED. Tanam SEMUA seed di tas ke kebun otomatis.
+    -- remote: pkt("Plant","PlantSeed"):Fire(posisi, namaSeed, toolSeed).
+    -- posisi = sekitar karakter (sebar radius plantSpread biar gak numpuk).
+    autoPlantOn   = false,
+    plantSpread   = 4,     -- radius sebar tanam (0 = pas di posisi karakter)
+
+    -- v3.18: AUTO COLLECT (Collect All) + AUTO SELL (Sell All). Simpel, no filter.
+    collectAllOn  = false, -- panen SEMUA buah matang di kebun (Garden.CollectFruit)
+    sellAllOn     = false, -- jual SELURUH tas (NPCS.SellAll)
 
     -- v1.3: terima gift + jual pas harga lagi mahal
     terimaGift    = false,    -- v3.5: MATI bawaan (dulu true)
@@ -293,6 +304,7 @@ local function simpan()
             seedPilih = state.seedPilih, beliBagus = state.beliBagus,
             minRarity = state.minRarity, maxPerSiklus = state.maxPerSiklus,
             seedBaruAuto = state.seedBaruAuto, seedDikenal = state.seedDikenal,
+            petDikenal = state.petDikenal,
             jedaSiklus = state.jedaSiklus, sisaSheck = state.sisaSheck,
             autoAfk = state.autoAfk,
             terimaGift = state.terimaGift, jualOn = state.jualOn,
@@ -307,6 +319,8 @@ local function simpan()
             ringanOn = state.ringanOn, ringanSuara = state.ringanSuara,
             ringanKebun = state.ringanKebun,
             ambilSeedOn = state.ambilSeedOn, delayBalikSeed = state.delayBalikSeed,
+            autoPlantOn = state.autoPlantOn, plantSpread = state.plantSpread,
+            collectAllOn = state.collectAllOn, sellAllOn = state.sellAllOn,
             panelUrl = state.panelUrl, panelKunci = state.panelKunci,
         }))
     end)
@@ -446,6 +460,107 @@ function Seed.grabSeed()
     return diambil, nil
 end
 
+-- ============================================================
+-- AUTO PLANT SEED (v3.18) -- tanam semua seed di tas ke kebun
+-- remote: pkt("Plant","PlantSeed"):Fire(posisi, namaSeed, toolSeed)
+-- arg: posisi Vector3 (sekitar karakter, sebar radius plantSpread),
+--      namaSeed string, toolSeed Tool (dari Backpack/Character).
+-- ============================================================
+function Seed.plantOnce()
+    local p = pkt("Plant", "PlantSeed")
+    if not (p and p.Fire) then return 0 end
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not (char and hrp) then return 0 end
+    local bp = player:FindFirstChildOfClass("Backpack")
+    -- kumpulin Tool seed dari Backpack + Character
+    local seeds = {}
+    for _, holder in ipairs({ char, bp }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local seedName = t:GetAttribute("SeedTool") or t.Name
+                    if seedName then seeds[#seeds+1] = { tool = t, name = seedName } end
+                end
+            end
+        end
+    end
+    if #seeds == 0 then return 0 end
+    -- titik tanam: sekitar karakter, sebar radius plantSpread biar gak numpuk
+    local r = tonumber(state.plantSpread) or 4
+    local ditanam = 0
+    for _, s in ipairs(seeds) do
+        if not state.autoPlantOn then break end
+        local pos = hrp.Position
+        if r > 0 then
+            pos = pos + Vector3.new((math.random()*2-1)*r, 0, (math.random()*2-1)*r)
+        end
+        pcall(function() p:Fire(pos, s.name, s.tool) end)
+        ditanam = ditanam + 1
+    end
+    return ditanam
+end
+
+-- ============================================================
+-- AUTO COLLECT (Collect All) + AUTO SELL (Sell All) -- v3.18
+-- Struktur map baru (fall world):
+--   workspace.Gardens.<Plot>  (attr OwnerUserId = userId kita)
+--     .Plants.<userId_uuid>    (PlantId, SeedName)
+--       .Fruits.<fruit>        (FruitId, PlantGrowthReady)
+-- Collect: Garden.CollectFruit:Fire(plantId, fruitId)  -- panen SEMUA buah
+-- Sell   : NPCS.SellAll:Fire()                          -- jual SELURUH tas
+-- ============================================================
+function Seed.collectAllOnce()
+    local p = pkt("Garden", "CollectFruit")
+    if not (p and p.Fire) then return 0 end
+    local g = workspace:FindFirstChild("Gardens")
+    if not g then return 0 end
+    local uid = player.UserId
+    local difire = 0
+    for _, plot in ipairs(g:GetChildren()) do
+        -- cuma plot MILIK KITA (OwnerUserId / Owner = kita)
+        local own = plot:GetAttribute("OwnerUserId")
+        local ownNm = plot:GetAttribute("Owner")
+        if own == uid or ownNm == player.Name then
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local plantId = plant:GetAttribute("PlantId")
+                    if plantId then
+                        local fruits = plant:FindFirstChild("Fruits")
+                        if fruits then
+                            -- buah di folder Fruits -> fire tiap FruitId
+                            for _, fruit in ipairs(fruits:GetChildren()) do
+                                local fid = fruit:GetAttribute("FruitId")
+                                if fid ~= nil then
+                                    pcall(function() p:Fire(tostring(plantId), tostring(fid)) end)
+                                    difire = difire + 1
+                                    task.wait()
+                                end
+                            end
+                        end
+                        -- single-harvest: tanaman siap panen tanpa folder Fruits
+                        if plant:GetAttribute("PlantGrowthReady") == true then
+                            local pid = tostring(plantId)
+                            pcall(function() p:Fire(pid, pid) end)
+                            difire = difire + 1
+                            task.wait()
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return difire
+end
+
+function Seed.sellAllOnce()
+    local p = pkt("NPCS", "SellAll")
+    if not (p and p.Fire) then return false end
+    pcall(function() p:Fire() end)
+    return true
+end
+
 
 -- ============================================================
 -- DAFTAR SEED + RARITY (dari SeedData game)
@@ -523,14 +638,34 @@ local function muatDaftarSeed()
         for _, c in ipairs(sdd:GetChildren()) do tambah(c.Name) end
     end)
 
+    -- 5) v3.18: seed di TAS sekarang (pasti ADA di game map ini). Map baru
+    -- kadang StockValues/Assets beda tempat -> minimal seed yang lagi dipegang
+    -- pasti valid. Ambil Tool yg MainCategory=Seed / SeedTool (bukan buah).
+    pcall(function()
+        local holders = {}
+        local char = player.Character
+        if char then holders[#holders+1] = char end
+        local bp = player:FindFirstChildOfClass("Backpack")
+        if bp then holders[#holders+1] = bp end
+        for _, holder in ipairs(holders) do
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") and not t:GetAttribute("SizeMultiplier") then
+                    local cat = t:GetAttribute("MainCategory")
+                    if (cat and tostring(cat):lower():find("seed"))
+                       or t:GetAttribute("SeedTool") then
+                        tambah(t:GetAttribute("SeedName") or t.Name)
+                    end
+                end
+            end
+        end
+    end)
+
     if #list == 0 then
-        -- cadangan terakhir kalau semua sumber buntu
-        list = {"Acorn","Apple","Baby Cactus","Bamboo","Banana","Blueberry","Briar Rose","Cactus","Carrot",
-            "Cherry","Coconut","Corn","Dragon Fruit","Dragon's Breath","Ghost Pepper","Glow Mushroom",
-            "Gold","Grape","Green Bean","Horned Melon","Hypno Bloom","Mango","Mega","Moon Bloom","Mushroom",
-            "Pineapple","Poison Apple","Poison Ivy","Pomegranate","Rainbow","Romanesco","Strawberry",
-            "Sunflower","Tomato","Tulip","Venom Spitter","Venus Fly Trap"}
-        for _, n in ipairs(list) do seen[n] = true end
+        -- v3.18: JANGAN pakai fallback hardcode. User minta: HANYA seed yang
+        -- BENERAN ADA di game map ini (fall world). Kalau sumber game buntu
+        -- (StockValues/SeedData/Assets kosong), daftar KOSONG -- lebih baik
+        -- kosong daripada nampilin seed lama yang gak ada di map ini.
+        list = {}
     end
     table.sort(list)
     return list
@@ -587,9 +722,18 @@ end
 local function sheckles()
     local n = 0
     pcall(function()
+        -- 1. leaderstats.Sheckles / Cash (cara utama, sama kayak gag2 map baru)
         local ls = player:FindFirstChild("leaderstats")
-        local sh = ls and (ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Cash"))
-        if sh then n = tonumber(sh.Value) or 0 end
+        local sh = ls and (ls:FindFirstChild("Leaves") or ls:FindFirstChild("Sheckles")
+                   or ls:FindFirstChild("Cash") or ls:FindFirstChild("Money")
+                   or ls:FindFirstChild("Coins"))
+        if sh and sh.Value then n = tonumber(sh.Value) or 0 end
+        -- 2. fallback: atribut di player (map baru kadang taruh di sini)
+        if n == 0 then
+            local a = player:GetAttribute("Sheckles") or player:GetAttribute("Cash")
+                      or player:GetAttribute("Money")
+            if a then n = tonumber(a) or 0 end
+        end
     end)
     return n
 end
@@ -644,6 +788,96 @@ task.spawn(function()
                 pcall(Seed._gambarDaftar)   -- daftar di GUI ikut diperbarui
             end
         end)
+        task.wait(60)
+    end
+end)
+
+-- ============================================================
+-- v3.18: DAFTAR PET + AUTO-DETECT PET BARU
+-- Jenis pet yang ADA di map ini, dibaca dari:
+--   workspace.Map.WildPetRef.WildPet_*  (atribut PetName) -- pet liar aktif
+--   workspace.Map.WildPetSpawns.*       (atribut PetName) -- titik spawn
+-- Kalau ada jenis pet BARU (belum pernah keliat) -> catat + (opsional) auto-pilih.
+-- ============================================================
+Seed.petBaru = {}   -- jenis pet baru kedeteksi sesi ini
+Seed._petModulCache = nil   -- cache daftar pet dari game (PetModules)
+
+-- v3.18b: baca daftar pet dari SharedModules.PetModules -- MODUL GAME LANGSUNG
+-- (kayak seed dari SeedData). Ini list SEMUA pet yang ADA di game ini (fall
+-- world) -- bukan cuma yang lagi spawn. Jadi otomatis bedain pet fall world vs
+-- world lama: PetModules di game fall world = pet fall world doang.
+local function loadPetModul()
+    local list = {}
+    pcall(function()
+        local sm = RS:FindFirstChild("SharedModules")
+        local pm = sm and sm:FindFirstChild("PetModules")
+        if pm then
+            local ok, mod = pcall(require, pm)
+            if ok and type(mod) == "table" then
+                for k, v in pairs(mod) do
+                    -- entri pet = key string, value bukan fungsi, bukan "_privat"
+                    if type(k) == "string" and type(v) ~= "function" and not k:match("^_") then
+                        list[#list+1] = k
+                    end
+                end
+            end
+        end
+    end)
+    return list
+end
+
+local function daftarPet()
+    local seen, list = {}, {}
+    local function tambah(nm)
+        if type(nm) == "string" and nm ~= "" and not seen[nm] then
+            seen[nm] = true; list[#list+1] = nm
+        end
+    end
+    -- 1) PetModules (game langsung -- SUMBER UTAMA, semua pet fall world)
+    if not Seed._petModulCache then Seed._petModulCache = loadPetModul() end
+    for _, nm in ipairs(Seed._petModulCache) do tambah(nm) end
+    -- 2) WildPetRef + WildPetSpawns (pet yang lagi ada di map -- pelengkap)
+    pcall(function()
+        local map = workspace:FindFirstChild("Map")
+        if not map then return end
+        local ref = map:FindFirstChild("WildPetRef")
+        if ref then
+            for _, o in ipairs(ref:GetChildren()) do tambah(o:GetAttribute("PetName")) end
+        end
+        local spawns = map:FindFirstChild("WildPetSpawns")
+        if spawns then
+            for _, o in ipairs(spawns:GetChildren()) do tambah(o:GetAttribute("PetName")) end
+        end
+    end)
+    table.sort(list)
+    return list
+end
+
+local function pindaiPetBaru(pertamaKali)
+    local baru = {}
+    for _, nm in ipairs(daftarPet()) do
+        if not state.petDikenal[nm] then
+            state.petDikenal[nm] = true
+            if not pertamaKali then baru[#baru+1] = nm end
+        end
+    end
+    if #baru > 0 then
+        for _, nm in ipairs(baru) do
+            Seed.petBaru[#Seed.petBaru + 1] = nm
+            -- pet baru: auto-pilih kalau mode semua pet ATAU seedBaruAuto nyala
+            if state.petSemua then state.petPilih[nm] = true end
+        end
+        print(("[StarSeed] PET BARU (%d): %s"):format(#baru, table.concat(baru, ", ")))
+    end
+    if #baru > 0 or pertamaKali then simpan() end
+    return baru
+end
+-- scan pertama (kenalin yg udah ada, jangan dianggap "baru") + loop tiap 60s
+task.spawn(function()
+    task.wait(12)
+    pindaiPetBaru(true)   -- pertama kali: kenalin semua yg ada
+    while isCurrentGen() do
+        pcall(function() pindaiPetBaru(false) end)
         task.wait(60)
     end
 end)
@@ -2678,15 +2912,53 @@ local function namaSeedValid(nm)
     return Seed._setSeed[nm] == true
 end
 
+-- v3.18: cek apakah Tool ini SEED (biar SELALU kedetect, walau SeedData gagal
+-- load / map baru beda). Urutan cek:
+--   1. atribut seed-ish (SeedName / Seed / SeedTool / SeedType) -> pasti seed
+--   2. nama Tool cocok di SeedData (namaSeedValid)
+--   3. nama diakhiri "Seed" (contoh "Carrot Seed")
+-- BUKAN seed (di-skip): Tool gear (Trowel/Sprinkler/Shovel/Watering/Wrench).
+local function toolItuSeed(tool)
+    if not (tool and tool:IsA("Tool")) then return false end
+    local nm = tool.Name
+    -- v3.18b (map baru fall world): seed asli punya MainCategory="Seed" atau
+    -- atribut SeedTool. BUAH punya SizeMultiplier (contoh "Maple Carrot [Gold]
+    -- [0.80kg]") -> BUKAN seed, skip. Gear (Shovel/Build) gak punya SeedTool.
+    if tool:GetAttribute("SizeMultiplier") then return false end   -- itu BUAH
+    local cat = tool:GetAttribute("MainCategory")
+    if cat and tostring(cat):lower():find("seed") then return true end
+    if tool:GetAttribute("SeedTool") then return true end
+    -- skip gear jelas
+    local low = nm:lower()
+    if low:find("trowel") or low:find("sprinkler") or low:find("shovel")
+       or low:find("build") or low:find("watering") or low:find("wrench")
+       or low:find("can") or low:find("gear") then
+        return false
+    end
+    -- fallback lama: atribut seed-ish / SeedData / akhiran "Seed"
+    if tool:GetAttribute("SeedName") or tool:GetAttribute("Seed")
+       or tool:GetAttribute("SeedType") then
+        return true
+    end
+    if namaSeedValid(nm) then return true end
+    if nm:match("[Ss]eed%s*$") then return true end
+    return false
+end
+
 local function seedDiTas()
     local hitung, total = {}, 0
     pcall(function()
         for _, holder in ipairs(tasHolders()) do
             for _, tool in ipairs(holder:GetChildren()) do
-                if tool:IsA("Tool") and namaSeedValid(tool.Name) then
+                if toolItuSeed(tool) then
+                    -- nama seed: pakai atribut SeedName kalau ada, else nama Tool
+                    -- (map baru: nama Tool langsung "Carrot", tanpa " Seed")
+                    local nm = tool:GetAttribute("SeedName") or tool.Name
+                    nm = tostring(nm):gsub("%s*[Ss]eed%s*$", "")   -- buang " Seed" kalau ada
+                    if nm == "" then nm = tool.Name end
                     local n = tool:GetAttribute("Count") or 1
                     if n == 0 then n = 1 end   -- pet/seed kadang Count=0, artinya 1
-                    hitung[tool.Name] = (hitung[tool.Name] or 0) + n
+                    hitung[nm] = (hitung[nm] or 0) + n
                     total = total + n
                 end
             end
@@ -3769,6 +4041,65 @@ local lblGear = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
     Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Gear kebeli: 0" })
 
+-- ---------- Auto Plant Seed (v3.18) ----------
+local kPlant = kartu(104, tabFarm)
+mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
+    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Plant Seed" })
+mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -110, 0, 14),
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "tanam semua seed di tas ke kebun" })
+local tblPlant = mk("TextButton", { Parent = kPlant,
+    Position = UDim2.new(1, -84, 0, 12), Size = UDim2.new(0, 72, 0, 30),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblPlant })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
+mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 52), Size = UDim2.new(0, 130, 0, 26),
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Sebar tanam (radius)" })
+local kotakSpread = mk("TextBox", { Parent = kPlant,
+    Position = UDim2.new(0, 148, 0, 52), Size = UDim2.new(1, -160, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Text = tostring(state.plantSpread or 4) })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakSpread })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSpread })
+
+-- ---------- Auto Collect + Auto Sell (v3.18) ----------
+local kPanen = kartu(94, tabFarm)
+mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
+    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Collect" })
+mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -110, 0, 14),
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "panen semua buah di kebun (Collect All)" })
+local tblCollect = mk("TextButton", { Parent = kPanen,
+    Position = UDim2.new(1, -84, 0, 10), Size = UDim2.new(0, 72, 0, 30),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblCollect })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblCollect })
+mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 50), Size = UDim2.new(1, -110, 0, 18),
+    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Sell" })
+mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 69), Size = UDim2.new(1, -110, 0, 14),
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "jual seluruh tas (Sell All)" })
+local tblSell = mk("TextButton", { Parent = kPanen,
+    Position = UDim2.new(1, -84, 0, 51), Size = UDim2.new(0, 72, 0, 30),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblSell })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSell })
+
 -- ---------- gift + jual ----------
 local kGift = kartu(150, tabGift)
 mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
@@ -3991,6 +4322,31 @@ end)
 tblGrab.MouseButton1Click:Connect(function()
     state.ambilSeedOn = not state.ambilSeedOn
     catSaklar(tblGrab, state.ambilSeedOn)
+    simpan()
+end)
+
+-- v3.18: Auto Plant Seed toggle + sebar radius
+tblPlant.MouseButton1Click:Connect(function()
+    state.autoPlantOn = not state.autoPlantOn
+    catSaklar(tblPlant, state.autoPlantOn)
+    simpan()
+end)
+kotakSpread.FocusLost:Connect(function()
+    local n = tonumber(kotakSpread.Text)
+    state.plantSpread = (n and n >= 0) and n or 4
+    kotakSpread.Text = tostring(state.plantSpread)
+    simpan()
+end)
+
+-- v3.18: Auto Collect + Auto Sell toggle
+tblCollect.MouseButton1Click:Connect(function()
+    state.collectAllOn = not state.collectAllOn
+    catSaklar(tblCollect, state.collectAllOn)
+    simpan()
+end)
+tblSell.MouseButton1Click:Connect(function()
+    state.sellAllOn = not state.sellAllOn
+    catSaklar(tblSell, state.sellAllOn)
     simpan()
 end)
 kotakDelay.FocusLost:Connect(function()
@@ -4295,12 +4651,45 @@ task.spawn(function()
     end
 end)
 
+-- v3.18: loop AUTO PLANT SEED -- tanam semua seed di tas tiap 0.5s
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(0.5)
+        if state.autoPlantOn then
+            pcall(Seed.plantOnce)
+        end
+    end
+end)
+
+-- v3.18: loop AUTO COLLECT (Collect All) -- panen semua buah matang tiap 2s
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(2)
+        if state.collectAllOn then
+            local n = pcall(Seed.collectAllOnce)
+        end
+    end
+end)
+
+-- v3.18: loop AUTO SELL (Sell All) -- jual seluruh tas tiap 5s
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(5)
+        if state.sellAllOn then
+            pcall(Seed.sellAllOnce)
+        end
+    end
+end)
+
 -- ============================================================
 -- NYALAIN
 -- ============================================================
 catSaklar(tblSaklar, state.beliOn)
 catSaklar(tblAfk, state.autoAfk)
 catSaklar(tblGrab, state.ambilSeedOn)
+catSaklar(tblPlant, state.autoPlantOn)
+catSaklar(tblCollect, state.collectAllOn)
+catSaklar(tblSell, state.sellAllOn)
 catSaklar(tblBaru, state.seedBaruAuto,
     "Seed baru auto-beli: NYALA", "Seed baru auto-beli: MATI")
 catSaklar(tblGift, state.terimaGift,
