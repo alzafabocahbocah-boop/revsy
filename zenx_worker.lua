@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.11-cf"
+local VERSION = "8.12-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5882,7 +5882,7 @@ local function run(cfg)
     local lastRekamDc = 0       -- v7.29: kapan terakhir rekam disconnect dari logcat
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
-    local lastCekGrafis = 0    -- v8.01: kapan terakhir cek all grafis (tiap 2 menit)
+    local lastCekGrafis = 0    -- v8.12: kapan terakhir cek all grafis (tiap 90s)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
     local lastPendingLog = 0     -- v6.92: kapan terakhir log "nunggu ganti akun"
@@ -7504,7 +7504,7 @@ local function run(cfg)
             -- v8.01: interval cek all 2 MENIT (dulu tiap ronde). Cek grafis SEMUA
             -- client SEKALI (1 su call). Hitung PROGRESS: berapa di game / total.
             -- Counter dinamis -- kalau ada yang out lagi, "masuk" turun (balik).
-            if (os.time() - (lastCekGrafis or 0)) >= 120 then
+            if (os.time() - (lastCekGrafis or 0)) >= 90 then
                 lastCekGrafis = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 local petaGrafis = grafis_semua(pkgList)
@@ -7534,70 +7534,58 @@ local function run(cfg)
                             end
                         end
                     end
-                    -- interval berikutnya 1 menit (cek keluar lebih sering pas penuh).
-                    -- trik: mundurin lastCekGrafis 60s -> 120-60 = 60s lagi cek.
-                    lastCekGrafis = os.time() - 60
+                    -- interval berikutnya lebih cepet pas penuh (cek keluar sering).
+                    -- trik: mundurin lastCekGrafis 30s -> 90-30 = 60s lagi cek.
+                    lastCekGrafis = os.time() - 30
                 end
+            -- v8.12: TEMBAK SEMUA BARENG (user minta -- panel lain juga gitu).
+            -- Dulu: loop tembak satu-satu + cek_masuk_game 30s per client (LAMA,
+            -- 4 client out = 2 menit). Sekarang: kumpulin SEMUA yang OUT dulu,
+            -- tembak SEMUA bareng (open_one doang, TANPA nungguin masing-masing).
+            -- Yang belum masuk ketangkep ronde 90s berikutnya. Grafis map baru
+            -- kadang cuma 23MB -> jangan terlalu ngandelin ambang, tapi <30 = OUT.
+            local perluTembak = {}
             for _, pkg in ipairs(pkgList) do
-                -- cek batal (STANDBY/STOP nyerobot) tiap client
                 if cek_batal and cek_batal() then break end
                 local akun = mapAkun and mapAkun[pkg]
-                -- skip cookie mati/ban (percuma ditembak)
                 if akun and KICK_DIURUS["mati:" .. akun] then
-                    -- skip diam
+                    -- skip cookie mati/ban
                 else
-                    local g = petaGrafis[pkg] or 0   -- dari cek all (bukan per-client)
+                    local g = petaGrafis[pkg] or 0
                     if g >= GAME_AMBANG_KB then
-                        -- udah di game -> lanjut (gak usah ngapa-ngapain)
+                        -- udah di game -> aman
                     else
-                        -- v7.59: OUT tapi cek CAPTCHA dulu (webview fd). Kalau
-                        -- captcha -> JANGAN tembak (percuma, butuh solve manual) ->
-                        -- tandai skip + badge panel. Cuma tembak kalau BUKAN captcha.
+                        -- OUT -> cek captcha dulu (percuma tembak kalau captcha)
                         local nama = pkg:gsub("com%.roblox%.", "")
                         local isCaptcha, nWeb = cek_captcha_webview(pkg)
                         if isCaptcha then
                             tambahLog(("[grafis] %s CAPTCHA (webview %d fd) -> skip (solve manual)"):format(
                                 akun or nama, nWeb))
                             if akun then KICK_DIURUS["captcha:" .. pkg] = akun end
-                            -- lewati tembak, lanjut client berikutnya
                         else
-                        -- OUT (grafis rendah) -> tembak (TANPA kill)
-                        local nama = pkg:gsub("com%.roblox%.", "")
-                        tambahLog(("[grafis] %s OUT (grafis %.0f MB) -> masukin"):format(
-                            akun or nama, g/1024))
-                        -- coba 1: tembak TANPA kill (cara Pandora re-join). Cukup
-                        -- kalau client fresh/loading.
-                        grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
-                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
-                        TERAKHIR_BUKA[pkg] = os.time()
-                        jaga_depan(cfg, mapLink)
-                        local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
-                        if not masukG and not (cek_batal and cek_batal()) then
-                            -- v8.05: coba 2 pakai -S (Hip Hub style: stop ACTIVITY
-                            -- + start fresh). Client nyangkut Home -> -S restart
-                            -- activity -> masuk. -S AMAN (cuma activity, bukan
-                            -- force-stop app+service) -> gak ngerusak client lain.
-                            -- v8.08: re-join MURNI (open_one Pandora, TANPA -S/kill).
-                            -- -S/force-stop terbukti ngerusak client lain.
-                            tambahLog(("[grafis] %s belum masuk (%.0f MB) -> re-join murni"):format(
-                                akun or nama, mbG or 0))
-                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
-                            TERAKHIR_BUKA[pkg] = os.time()
-                            jaga_depan(cfg, mapLink)
-                            masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
+                            perluTembak[#perluTembak+1] = pkg
                         end
-                        if masukG then
-                            tambahLog(("[grafis] %s MASUK (grafis %.0f MB)"):format(akun or nama, mbG or 0))
-                        else
-                            tambahLog(("[grafis] %s belum masuk (grafis %.0f MB) -> coba ronde berikutnya"):format(akun or nama, mbG or 0))
-                        end
-                        refresh_status(); lastStatusCek = os.time()
-                        gambar_tabel(isi)
-                        end   -- v7.59: tutup else (bukan captcha)
                     end
                 end
             end
-            end   -- v8.01: tutup if interval 2 menit (cek all)
+            -- tembak SEMUA yang OUT bareng (open_one doang, gak nunggu per client)
+            if #perluTembak > 0 then
+                tambahLog(("[grafis] %d client OUT -> tembak SEMUA bareng"):format(#perluTembak))
+                for _, pkg in ipairs(perluTembak) do
+                    if cek_batal and cek_batal() then break end
+                    local akun = mapAkun and mapAkun[pkg]
+                    local nama = pkg:gsub("com%.roblox%.", "")
+                    tambahLog(("[grafis] %s OUT (%.0f MB) -> masukin"):format(
+                        akun or nama, (petaGrafis[pkg] or 0)/1024))
+                    grid_satu(cfg, pkg)
+                    open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                    TERAKHIR_BUKA[pkg] = os.time()
+                end
+                jaga_depan(cfg, mapLink)   -- munculin jendela SEKALI setelah tembak semua
+                refresh_status(); lastStatusCek = os.time()
+                gambar_tabel(isi)
+            end
+            end   -- v8.01: tutup if interval cek all
         end
 
         -- v7.51: LOGCAT STREAMING DIMATIIN. Dia nyalain `logcat > file` yang
