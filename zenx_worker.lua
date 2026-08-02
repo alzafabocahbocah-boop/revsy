@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.99-cf"
+local VERSION = "8.02-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4362,12 +4362,23 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                             -- sukses tetep false -> masuk hitungan gagal, tapi gak nyangkut
                             break
                         end
-                        -- belum maxc -> tembak ulang (jangan break, lanjut coba++)
-                        warn(string.format("[%d/%d] %s — %s, tembak lagi (%d/%d)...",
+                        -- belum maxc -> CLOSE DULU (aman) + jeda 40s + tembak ulang
+                        -- v8.00: tiap cycle retry -> force-stop client INI dulu
+                        -- (cara AMAN: su -c 'am force-stop pkg' SATU client, kayak
+                        -- Pandora dari logcat -- gak bareng, gak ngerusak lain).
+                        -- Terus jeda 40s (user minta beda tiap cycle), baru tembak.
+                        warn(string.format("[%d/%d] %s — %s, close + tunggu 40s + tembak lagi (%d/%d)...",
                             urut, totalBuka, pkg, sebab or "belum masuk", coba, maxc))
                         if lapor_fn then pcall(lapor_fn) end
                         if cek_batal and cek_batal() then break end
-                        os.execute("sleep 3")
+                        -- CLOSE dulu (aman, 1 client)
+                        sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                        info("   " .. pkg:gsub("com%.roblox%.","") .. " di-close, tunggu 40s...")
+                        -- jeda 40s (cek batal tiap detik biar bisa distop)
+                        for _ = 1, 40 do
+                            if cek_batal and cek_batal() then break end
+                            os.execute("sleep 1")
+                        end
                     elseif nyangkut then
                         warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
                             urut, #list, pkg))
@@ -5808,6 +5819,7 @@ local function run(cfg)
     local lastRekamDc = 0       -- v7.29: kapan terakhir rekam disconnect dari logcat
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
+    local lastCekGrafis = 0    -- v8.01: kapan terakhir cek all grafis (tiap 2 menit)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
     local lastPendingLog = 0     -- v6.92: kapan terakhir log "nunggu ganti akun"
@@ -7423,10 +7435,44 @@ local function run(cfg)
         -- Muter terus tiap ronde. Skip client yang cookie mati/ban (mati:).
         -- Cuma jalan pas FORCE (hit) & client udah pernah dibuka (lastOpen > 0).
         if hit and lastOpen > 0 and lisensiAda then
-            -- v7.87: cek grafis SEMUA client SEKALI (1 su call, cepet) di awal.
-            -- Dulu grafis_kb per client (10x su = ~60s). Sekarang 1x su buat semua.
-            local petaGrafis = grafis_semua(split(cfg.pkgs or ""))
-            for _, pkg in ipairs(split(cfg.pkgs or "")) do
+            -- v8.01: interval cek all 2 MENIT (dulu tiap ronde). Cek grafis SEMUA
+            -- client SEKALI (1 su call). Hitung PROGRESS: berapa di game / total.
+            -- Counter dinamis -- kalau ada yang out lagi, "masuk" turun (balik).
+            if (os.time() - (lastCekGrafis or 0)) >= 120 then
+                lastCekGrafis = os.time()
+                local pkgList = split(cfg.pkgs or "")
+                local petaGrafis = grafis_semua(pkgList)
+                -- hitung total yang PERLU diurus (bukan cookie mati) + berapa di game
+                local perlu, diGame = 0, 0
+                for _, pkg in ipairs(pkgList) do
+                    local ak = mapAkun and mapAkun[pkg]
+                    if not (ak and KICK_DIURUS["mati:" .. ak]) then
+                        perlu = perlu + 1
+                        if (petaGrafis[pkg] or 0) >= GAME_AMBANG_KB then diGame = diGame + 1 end
+                    end
+                end
+                tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
+                -- v8.02: kalau SEMUA udah masuk (10/10) -> sekalian cek CAPTCHA
+                -- (webview) tiap client + set interval berikutnya 1 MENIT (cek keluar
+                -- lebih cepet). Kalau belum penuh -> fokus buka, interval 2 menit.
+                if diGame >= perlu and perlu > 0 then
+                    tambahLog("[antrian] SEMUA masuk -- cek captcha + interval jadi 1 menit")
+                    for _, pkg in ipairs(pkgList) do
+                        if cek_batal and cek_batal() then break end
+                        local ak = mapAkun and mapAkun[pkg]
+                        if not (ak and KICK_DIURUS["mati:" .. ak]) then
+                            local isCap, nW = cek_captcha_webview(pkg)
+                            if isCap then
+                                tambahLog(("[antrian] %s CAPTCHA (webview %d) -> badge"):format(ak or pkg, nW))
+                                if ak then KICK_DIURUS["captcha:" .. pkg] = ak end
+                            end
+                        end
+                    end
+                    -- interval berikutnya 1 menit (cek keluar lebih sering pas penuh).
+                    -- trik: mundurin lastCekGrafis 60s -> 120-60 = 60s lagi cek.
+                    lastCekGrafis = os.time() - 60
+                end
+            for _, pkg in ipairs(pkgList) do
                 -- cek batal (STANDBY/STOP nyerobot) tiap client
                 if cek_batal and cek_batal() then break end
                 local akun = mapAkun and mapAkun[pkg]
@@ -7486,6 +7532,7 @@ local function run(cfg)
                     end
                 end
             end
+            end   -- v8.01: tutup if interval 2 menit (cek all)
         end
 
         -- v7.51: LOGCAT STREAMING DIMATIIN. Dia nyalain `logcat > file` yang
