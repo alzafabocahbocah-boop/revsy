@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.05-cf"
+local VERSION = "8.06-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6135,7 +6135,10 @@ local function run(cfg)
                             warn(("GANTI belum kelar: %s -> %s. Sebab: %s (coba lagi #%d)"):format(
                                 pkgPend, target, sebab, retry))
                             KICK_DIURUS["gantigagal:" .. pkgPend] = target .. "|" .. sebab .. " (coba #" .. retry .. ")"
-                            sh_silent("am force-stop " .. pkgC)
+                            -- v8.06: force-stop 1 client (pkgC) doang buat re-login
+                            -- akun baru. su -c biar konsisten. Cuma pas ganti akun
+                            -- (manual dari panel), bukan jalur otomatis.
+                            sh_silent("su -c 'am force-stop " .. pkgC .. "'")
                             os.execute("sleep 2")
                             os.execute(("timeout 120 %s login %s %s"):format(
                                 (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx",
