@@ -8452,6 +8452,22 @@ if PERINTAH == "buka" then
           cmd = "am start -a android.intent.action.VIEW -d '"..webShare.."' -p "..pkg.." -f 0x10000000" },
         { n = "WNP", ket = "WEB games/start + -n cmp + NEW_TASK (TANPA -S)",
           cmd = "am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
+        -- Reset activity Home TANPA -S: flag CLEAR_TOP(0x04000000) / CLEAR_TASK
+        -- (0x00008000, butuh NEW_TASK) / RESET_IF_NEEDED(0x00200000). Ini "nge-reset"
+        -- activity lama biar deep link ke-proses fresh, tapi BUKAN -S (gak stop
+        -- app), jadi harusnya gak goyangin client lain.
+        { n = "WC", ket = "WEB + NEW_TASK|CLEAR_TOP (0x14000000) TANPA -S -- reset activity",
+          cmd = "am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -f 0x14000000" },
+        { n = "WCT", ket = "WEB + NEW_TASK|CLEAR_TASK (0x10008000) TANPA -S -- task fresh",
+          cmd = "am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -f 0x10008000" },
+        { n = "WR", ket = "WEB + NEW_TASK|RESET_IF_NEEDED (0x10200000) TANPA -S",
+          cmd = "am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -f 0x10200000" },
+        { n = "WCC", ket = "WEB + -n cmp + NEW_TASK|CLEAR_TOP (0x14000000) TANPA -S",
+          cmd = "am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x14000000" },
+        -- Hapus task Home DULU (am task remove) baru web NEW_TASK -- TANPA -S,
+        -- TANPA force-stop. Task Home dibuang -> tembak web -> masuk fresh.
+        { n = "WT", ket = "hapus task DULU + WEB NEW_TASK (TANPA -S, TANPA force-stop)",
+          cmd = "for t in $(am stack list 2>/dev/null | grep -o 'taskId=[0-9]*' | grep -o '[0-9]*'); do am stack info $t 2>/dev/null | grep -q "..pkg.." && am task remove $t 2>/dev/null; done; sleep 3; am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -f 0x10000000" },
         { n = "W", ket = "WEB SHARE + -S (Hip Hub persis): share?code=...&type=Server",
           cmd = "am start -S -a android.intent.action.VIEW -d '"..webShare.."' -p "..pkg },
         { n = "WS", ket = "WEB games/start + -S: games/start?placeId=X&accessCode=Y",
