@@ -260,6 +260,12 @@ local state = {
     -- v3.18: hilangin visual pohon/buah + tembus (noclip tanaman). Ringanin RF.
     hideVisualOn  = false,
 
+    -- v3.18: GIFT MAIL (kirim seed/gear ke akun lain via mailbox, sekali kirim)
+    giftMailTarget = "",      -- nama akun tujuan
+    giftMailQty    = 100,     -- jumlah per jenis (bisa gede, 100k pun sekali kirim)
+    giftSeedPilih  = {},      -- { ["Gold"]=true } seed yg dikirim
+    giftGearPilih  = {},      -- { ["Sprinkler"]=true } gear yg dikirim
+
     -- v1.3: terima gift + jual pas harga lagi mahal
     terimaGift    = false,    -- v3.5: MATI bawaan (dulu true)
     jualOn        = false,    -- auto jual buah (sengaja MATI bawaan -- ini ngejual barang)
@@ -343,6 +349,8 @@ local function simpan()
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
             hideVisualOn = state.hideVisualOn,
+            giftMailTarget = state.giftMailTarget, giftMailQty = state.giftMailQty,
+            giftSeedPilih = state.giftSeedPilih, giftGearPilih = state.giftGearPilih,
             panelUrl = state.panelUrl, panelKunci = state.panelKunci,
         }))
     end)
@@ -709,6 +717,140 @@ function Seed.sellAllOnce()
     if not (p and p.Fire) then return false end
     pcall(function() p:Fire() end)
     return true
+end
+
+-- ============================================================
+-- GIFT MAIL (v3.18) -- kirim seed/gear ke akun lain via mailbox
+-- remote: pkt("Mailbox","SendBatch"):Fire(userId, items, "")
+--   Seed: { ItemKey=namaSeed, Count=n, Category="Seeds" }
+--   Gear: { ItemKey=namaGear, Count=n, Category="Gear" }
+-- sekali kirim, jumlah bisa gede (Count sesuai giftMailQty).
+-- ============================================================
+-- v3.18: tasHolders dipindah ke atas (dipakai gift mail + ESP + collect).
+-- Definisi lokal HARUS sebelum pemakaian (upvalue order).
+local function tasHolders()
+    local t = {}
+    local bp = player:FindFirstChildOfClass("Backpack"); if bp then t[#t+1] = bp end
+    local ch = player.Character; if ch then t[#t+1] = ch end
+    return t
+end
+
+Seed._giftUidCache = {}
+local function resolveTargetId(nama)
+    if Seed._giftUidCache[nama] then return Seed._giftUidCache[nama] end
+    local ok, id = pcall(function()
+        return Players:GetUserIdFromNameAsync(nama)
+    end)
+    if ok and id then Seed._giftUidCache[nama] = id; return id end
+    return nil
+end
+
+-- cek Tool = gear (bukan seed/buah/pet). gear: MainCategory=Gear, atau
+-- nama gear umum (Sprinkler/Watering/Trowel/Shovel/dll).
+local function toolItuGear(tool)
+    if not (tool and tool:IsA("Tool")) then return false end
+    if tool:GetAttribute("SizeMultiplier") then return false end   -- buah
+    local cat = tool:GetAttribute("MainCategory")
+    if cat and tostring(cat):lower():find("gear") then return true end
+    -- atribut gear khas (dari debug: gear punya .<TipeGear>=nama)
+    if tool:GetAttribute("Sprinkler") or tool:GetAttribute("WateringCan")
+       or tool:GetAttribute("Trowel") or tool:GetAttribute("Shovel")
+       or tool:GetAttribute("Build") then return true end
+    local low = tool.Name:lower()
+    if low:find("sprinkler") or low:find("watering") or low:find("trowel")
+       or low:find("shovel") or low:find("can") then return true end
+    return false
+end
+
+-- list gear di tas (buat picker)
+function Seed.gearDiTas()
+    local hitung = {}
+    pcall(function()
+        for _, holder in ipairs(tasHolders()) do
+            for _, t in ipairs(holder:GetChildren()) do
+                if toolItuGear(t) then
+                    local nm = t.Name
+                    local n = t:GetAttribute("Count") or 1
+                    if n == 0 then n = 1 end
+                    hitung[nm] = (hitung[nm] or 0) + n
+                end
+            end
+        end
+    end)
+    local arr = {}
+    for nm, n in pairs(hitung) do arr[#arr+1] = { n = nm, j = n } end
+    table.sort(arr, function(a, b) return a.n < b.n end)
+    return arr
+end
+local function namaGearDiTas()
+    local out = {}
+    for _, e in ipairs(Seed.gearDiTas()) do out[#out+1] = e.n end
+    return out
+end
+
+-- cek Tool = seed (buat gift mail). Cara ringkas map baru: seed asli punya
+-- MainCategory=Seed / SeedTool, BUAH punya SizeMultiplier (skip), gear ada
+-- atribut/nama gear. Sengaja LOKAL di sini biar gak kena urutan upvalue.
+local function giftToolSeed(t)
+    if not (t and t:IsA("Tool")) then return false end
+    if t:GetAttribute("SizeMultiplier") then return false end   -- buah
+    if toolItuGear(t) then return false end                     -- gear
+    local cat = t:GetAttribute("MainCategory")
+    if cat and tostring(cat):lower():find("seed") then return true end
+    if t:GetAttribute("SeedTool") or t:GetAttribute("SeedName") then return true end
+    if t.Name:match("[Ss]eed%s*$") then return true end
+    -- fallback: bukan buah + bukan gear -> anggap seed (tas seed map baru
+    -- namanya "Gold"/"Carrot" tanpa atribut jelas)
+    return true
+end
+
+-- kirim gift mail SEKALI. return: ok(bool), pesan(string)
+function Seed.kirimGiftMail()
+    local target = tostring(state.giftMailTarget or ""):gsub("%s+", "")
+    if target == "" then return false, "target kosong" end
+    local sb = pkt("Mailbox", "SendBatch")
+    if not (sb and sb.Fire) then return false, "SendBatch gak ada" end
+    local uid = resolveTargetId(target)
+    if not uid then return false, "user '" .. target .. "' gak ketemu" end
+    local qty = tonumber(state.giftMailQty) or 100
+    if qty < 1 then qty = 1 end
+    -- kumpulin item (seed + gear yg dipilih)
+    local items = {}
+    for _, holder in ipairs(tasHolders()) do
+        for _, t in ipairs(holder:GetChildren()) do
+            if t:IsA("Tool") and #items < 8 then
+                -- GEAR (cek dulu, karena giftToolSeed fallback true)
+                if toolItuGear(t) then
+                    if state.giftGearPilih[t.Name] then
+                        local punya = t:GetAttribute("Count") or 1
+                        local kirim = math.min(qty, punya)
+                        local cat = t:GetAttribute("MainCategory") or "Gear"
+                        if kirim > 0 then
+                            items[#items+1] = { ItemKey = t.Name, Count = kirim, Category = tostring(cat) }
+                        end
+                    end
+                -- SEED
+                elseif giftToolSeed(t) then
+                    local nm = t:GetAttribute("SeedName") or t.Name
+                    nm = tostring(nm):gsub("%s*[Ss]eed%s*$", "")
+                    if nm == "" then nm = t.Name end
+                    if state.giftSeedPilih[nm] or state.giftSeedPilih[t.Name] then
+                        local punya = t:GetAttribute("Count") or 1
+                        local kirim = math.min(qty, punya)
+                        if kirim > 0 then
+                            items[#items+1] = { ItemKey = nm, Count = kirim, Category = "Seeds" }
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #items == 0 then return false, "gak ada item kepilih di tas" end
+    local ok = pcall(function() sb:Fire(uid, items, "") end)
+    if ok then
+        return true, ("terkirim ke %s: %d jenis"):format(target, #items)
+    end
+    return false, "gagal kirim"
 end
 
 
@@ -3109,13 +3251,6 @@ end
 -- hitung seed di tas. Seed di tas namanya LANGSUNG "Bamboo"/"Tulip" -- tanpa
 -- atribut SeedName, tanpa akhiran "Seed". Jadi patokannya: Tool yang namanya
 -- ada di SeedData. Gear (Trowel, Sprinkler) otomatis keskip karena gak ada di situ.
-local function tasHolders()
-    local t = {}
-    local bp = player:FindFirstChildOfClass("Backpack"); if bp then t[#t+1] = bp end
-    local ch = player.Character; if ch then t[#t+1] = ch end
-    return t
-end
-
 -- v3.18: HARGA BUAH -- dari FruitValueCalc (eksak) / SellValueData (fallback)
 -- rumus: SellValueData[jenis] × SizeMultiplier^2.5 × mutMult
 Seed._fvc = nil          -- FruitValueCalc (fungsi)
@@ -4850,6 +4985,65 @@ local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
     Text = "pasar: belum kebaca" })
 
+-- ---------- Gift Mail (seed + gear) v3.18 ----------
+local kGiftMail = kartu(178, tabGift)
+mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
+    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Gift Mail (seed + gear)" })
+-- target
+mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 34), Size = UDim2.new(0, 60, 0, 24),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Ke akun" })
+local kotakTarget2 = mk("TextBox", { Parent = kGiftMail,
+    Position = UDim2.new(0, 76, 0, 32), Size = UDim2.new(1, -88, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    PlaceholderText = "nama akun", Text = tostring(state.giftMailTarget or "") })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakTarget2 })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakTarget2 })
+-- jumlah
+mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 64), Size = UDim2.new(0, 60, 0, 24),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Jumlah" })
+local kotakQty = mk("TextBox", { Parent = kGiftMail,
+    Position = UDim2.new(0, 76, 0, 62), Size = UDim2.new(1, -88, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Text = tostring(state.giftMailQty or 100) })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakQty })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakQty })
+-- picker seed + gear
+mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 94), Size = UDim2.new(0, 60, 0, 24),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed" })
+local pickGiftSeed = mk("TextButton", { Parent = kGiftMail,
+    Position = UDim2.new(0, 76, 0, 92), Size = UDim2.new(0.5, -44, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickGiftSeed })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGiftSeed })
+mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0.5, 40, 0, 94), Size = UDim2.new(0, 44, 0, 24),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Gear" })
+local pickGiftGear = mk("TextButton", { Parent = kGiftMail,
+    Position = UDim2.new(0.5, 84, 0, 92), Size = UDim2.new(0.5, -96, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickGiftGear })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGiftGear })
+-- tombol kirim
+local tblKirimMail = mk("TextButton", { Parent = kGiftMail,
+    Position = UDim2.new(0, 12, 0, 128), Size = UDim2.new(1, -24, 0, 34),
+    BackgroundColor3 = WARNA.aksenBg, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.aksenMuda, Text = "KIRIM" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblKirimMail })
+mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = tblKirimMail })
+
 -- ============================================================
 -- TAB 3: MISC
 -- ============================================================
@@ -5171,6 +5365,55 @@ tblBaru.MouseButton1Click:Connect(function()
     catSaklar(tblBaru, state.seedBaruAuto,
         "Seed baru auto-beli: NYALA", "Seed baru auto-beli: MATI")
     simpan()
+end)
+
+-- v3.18: Gift Mail handler
+kotakTarget2.FocusLost:Connect(function()
+    state.giftMailTarget = tostring(kotakTarget2.Text):gsub("%s+", "")
+    simpan()
+end)
+kotakQty.FocusLost:Connect(function()
+    local n = tonumber(kotakQty.Text)
+    state.giftMailQty = (n and n >= 1) and math.floor(n) or 100
+    kotakQty.Text = tostring(state.giftMailQty)
+    simpan()
+end)
+local function lblGiftPick(btn, tbl)
+    local n = 0; for _ in pairs(tbl) do n = n + 1 end
+    btn.Text = n > 0 and (n .. " dipilih") or "Pilih"
+end
+pickGiftSeed.MouseButton1Click:Connect(function()
+    local jml = {}
+    for _, e in ipairs(seedDiTas()) do jml[e.n] = e.j end
+    bukaPicker("Gift Seed",
+        function() return namaSeedDiTas() end,
+        state.giftSeedPilih,
+        function() return false end,   -- gak ada mode "semua" (pilih manual)
+        function() end,
+        function() lblGiftPick(pickGiftSeed, state.giftSeedPilih) end,
+        function(nm) return jml[nm] and tostring(jml[nm]) or "" end)
+end)
+pickGiftGear.MouseButton1Click:Connect(function()
+    local jml = {}
+    for _, e in ipairs(Seed.gearDiTas()) do jml[e.n] = e.j end
+    bukaPicker("Gift Gear",
+        function() return namaGearDiTas() end,
+        state.giftGearPilih,
+        function() return false end,
+        function() end,
+        function() lblGiftPick(pickGiftGear, state.giftGearPilih) end,
+        function(nm) return jml[nm] and tostring(jml[nm]) or "" end)
+end)
+lblGiftPick(pickGiftSeed, state.giftSeedPilih)
+lblGiftPick(pickGiftGear, state.giftGearPilih)
+tblKirimMail.MouseButton1Click:Connect(function()
+    tblKirimMail.Text = "KIRIM..."
+    task.spawn(function()
+        local ok, pesan = Seed.kirimGiftMail()
+        tblKirimMail.Text = ok and "TERKIRIM!" or ("GAGAL: " .. tostring(pesan))
+        task.wait(2)
+        tblKirimMail.Text = "KIRIM"
+    end)
 end)
 
 tblGift.MouseButton1Click:Connect(function()
