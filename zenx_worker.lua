@@ -2666,19 +2666,15 @@ end
 GAME_AMBANG_KB = 30 * 1024   -- 30 MB
 function cek_masuk_game(pkg, batas, cek_batal)
     batas = batas or 20
-    local mulai = os.time()
     local nama = pkg:gsub("com%.roblox%.", "")
-    while (os.time() - mulai) < batas do
+    -- v8.11: JANGAN dump berkali-kali (dumpsys meminfo BERAT + su lambat). WC
+    -- gacor -> client pasti masuk. Cukup TUNGGU `batas` detik (kasih waktu load),
+    -- BARU dump SEKALI di akhir. Cek batal tiap detik biar bisa distop.
+    for _ = 1, batas do
         if cek_batal and cek_batal() then return false, 0 end
-        local g = grafis_kb(pkg) or 0
-        if g >= GAME_AMBANG_KB then
-            local mb = g / 1024
-            info(("   %s UDAH DI GAME (grafis %.0f MB)"):format(nama, mb))
-            return true, mb   -- udah di game
-        end
-        os.execute("sleep 3")
+        os.execute("sleep 1")
     end
-    -- cek terakhir sekali lagi (jaga-jaga masuk pas detik akhir)
+    -- dump SEKALI setelah nunggu
     local g = grafis_kb(pkg) or 0
     local mb = g / 1024
     if g >= GAME_AMBANG_KB then
@@ -4423,21 +4419,21 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                             -- sukses tetep false -> masuk hitungan gagal, tapi gak nyangkut
                             break
                         end
-                        -- belum maxc -> CLOSE DULU (aman) + jeda 40s + tembak ulang
+                        -- belum maxc -> jeda 30s + re-join (v8.11: 40s->30s, user minta)
                         -- v8.00: tiap cycle retry -> force-stop client INI dulu
                         -- v8.04: BUANG force-stop di retry (TERBUKTI biang rusak).
-                        -- Analisis user: retry udah close + tunggu 40s TAPI masih
+                        -- Analisis user: retry udah close + tunggu TAPI masih
                         -- ganggu client lain -> berarti BUKAN jeda, tapi FORCE-STOP
                         -- itu sendiri yg goyangin App Cloner service. Isolasi gacor
-                        -- (v7.84) pas TANPA force-stop. Jadi retry cuma tunggu 40s +
-                        -- tembak ulang (open_one cara Pandora re-join, TANPA close).
-                        warn(string.format("[%d/%d] %s — %s, tunggu 40s + re-join (%d/%d)...",
+                        -- (v7.84) pas TANPA force-stop. Jadi retry cuma jeda 30s +
+                        -- tembak ulang (open_one cara WC re-join, TANPA close).
+                        warn(string.format("[%d/%d] %s — %s, tunggu 30s + re-join (%d/%d)...",
                             urut, totalBuka, pkg, sebab or "belum masuk", coba, maxc))
                         if lapor_fn then pcall(lapor_fn) end
                         if cek_batal and cek_batal() then break end
-                        info("   " .. pkg:gsub("com%.roblox%.","") .. " tunggu 40s -> re-join murni (tanpa -S/kill)...")
-                        -- jeda 40s (cek batal tiap detik biar bisa distop)
-                        for _ = 1, 40 do
+                        info("   " .. pkg:gsub("com%.roblox%.","") .. " tunggu 30s -> re-join murni (tanpa -S/kill)...")
+                        -- jeda 30s (cek batal tiap detik biar bisa distop)
+                        for _ = 1, 30 do
                             if cek_batal and cek_batal() then break end
                             os.execute("sleep 1")
                         end
