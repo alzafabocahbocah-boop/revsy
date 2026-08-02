@@ -4415,19 +4415,20 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         -- itu sendiri yg goyangin App Cloner service. Isolasi gacor
                         -- (v7.84) pas TANPA force-stop. Jadi retry cuma tunggu 40s +
                         -- tembak ulang (open_one cara Pandora re-join, TANPA close).
-                        warn(string.format("[%d/%d] %s — %s, tunggu 40s + tembak -S (%d/%d)...",
+                        warn(string.format("[%d/%d] %s — %s, tunggu 40s + re-join (%d/%d)...",
                             urut, totalBuka, pkg, sebab or "belum masuk", coba, maxc))
                         if lapor_fn then pcall(lapor_fn) end
                         if cek_batal and cek_batal() then break end
-                        info("   " .. pkg:gsub("com%.roblox%.","") .. " tunggu 40s -> tembak -S (restart activity)...")
+                        info("   " .. pkg:gsub("com%.roblox%.","") .. " tunggu 40s -> re-join murni (tanpa -S/kill)...")
                         -- jeda 40s (cek batal tiap detik biar bisa distop)
                         for _ = 1, 40 do
                             if cek_batal and cek_batal() then break end
                             os.execute("sleep 1")
                         end
-                        -- v8.05: tembak pakai -S (restart activity, Hip Hub style,
-                        -- aman -- gak force-stop app/service). Buat client nyangkut.
-                        open_one(cfg, pkg, link_c, "buka-awal")  -- v8.08: BUANG -S (masih rusak). re-join murni.
+                        -- v8.08: re-join MURNI (open_one cara Pandora, TANPA -S, TANPA
+                        -- force-stop). -S/kill terbukti ganggu client lain. Client
+                        -- nyangkut lama masuk tapi client lain PASTI aman.
+                        open_one(cfg, pkg, link_c, "buka-awal")
                         TERAKHIR_BUKA[pkg] = os.time()
                     elseif nyangkut then
                         warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
@@ -7564,9 +7565,11 @@ local function run(cfg)
                             -- + start fresh). Client nyangkut Home -> -S restart
                             -- activity -> masuk. -S AMAN (cuma activity, bukan
                             -- force-stop app+service) -> gak ngerusak client lain.
-                            tambahLog(("[grafis] %s belum masuk (%.0f MB) -> tembak -S (restart activity)"):format(
+                            -- v8.08: re-join MURNI (open_one Pandora, TANPA -S/kill).
+                            -- -S/force-stop terbukti ngerusak client lain.
+                            tambahLog(("[grafis] %s belum masuk (%.0f MB) -> re-join murni"):format(
                                 akun or nama, mbG or 0))
-                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")  -- v8.08: BUANG -S (masih rusak). re-join murni.
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                             TERAKHIR_BUKA[pkg] = os.time()
                             jaga_depan(cfg, mapLink)
                             masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
@@ -8438,6 +8441,17 @@ if PERINTAH == "buka" then
           cmd = "am stack remove "..pkg.." 2>/dev/null; sleep 1; am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x18000000" },
         -- === CARA PANDORA PERSIS (dari logcat: -p pkg + -n cmp + flag 0x10000000) ===
         -- === CARA WEB (Hip Hub/Pandora style: -S + web URL) ===
+        -- === CARA WEB TANPA -S (user gak mau -S/out) ===
+        -- Web URL (gacor, gak nyangkut Home) TAPI pakai NEW_TASK biasa, BUKAN -S.
+        -- -S = stop activity dulu (ada "out"). WN/WSN gak stop apa-apa: web URL
+        -- + NEW_TASK (one task) -> masuk fresh tanpa out. Client lain aman (gak
+        -- ada -S/force-stop yg goyangin service).
+        { n = "WN", ket = "WEB games/start + NEW_TASK (TANPA -S): -p pkg -f 0x10000000",
+          cmd = "am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -f 0x10000000" },
+        { n = "WSN", ket = "WEB share + NEW_TASK (TANPA -S): -p pkg -f 0x10000000",
+          cmd = "am start -a android.intent.action.VIEW -d '"..webShare.."' -p "..pkg.." -f 0x10000000" },
+        { n = "WNP", ket = "WEB games/start + -n cmp + NEW_TASK (TANPA -S)",
+          cmd = "am start -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
         { n = "W", ket = "WEB SHARE + -S (Hip Hub persis): share?code=...&type=Server",
           cmd = "am start -S -a android.intent.action.VIEW -d '"..webShare.."' -p "..pkg },
         { n = "WS", ket = "WEB games/start + -S: games/start?placeId=X&accessCode=Y",
