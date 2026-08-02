@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.18-cf"
+local VERSION = "8.19-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3124,7 +3124,7 @@ local function baris_grid(n, W, H)
     return math.ceil(math.sqrt(n))
 end
 
-local function grid_hitung(cfg)
+local function grid_hitung(cfg, pkgsPilih)
     local W, H = layar_ukuran()   -- udah nuker W/H kalau layar landscape
     if W == 0 or H == 0 then return nil, "gagal baca ukuran layar (wm size)" end
 
@@ -3137,7 +3137,10 @@ local function grid_hitung(cfg)
         W, H = H, W
     end
 
-    local pkgs = split(cfg.pkgs)
+    -- v8.19: kalau dikasih pkgsPilih (client yg MAU DIBUKA), grid dihitung buat
+    -- JUMLAH ITU -- bukan semua cfg.pkgs. Jadi start 2 client = grid 2 petak
+    -- lebar, bukan 10 petak kecil. Kalau nil -> semua (perilaku lama).
+    local pkgs = pkgsPilih or split(cfg.pkgs)
     local n = #pkgs
     if n == 0 then return nil, "gak ada client di config" end
 
@@ -4168,7 +4171,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     os.execute("sleep 1")
     local petaGrid = nil
     if cfg.auto_grid == true then
-        local p, sebabGrid = grid_hitung(cfg)
+        -- v8.19: kalau `only` daftar client (FORCE:akun1,akun2), grid dihitung
+        -- buat CLIENT ITU aja -> 2 client = 2 petak lebar, bukan 10 petak kecil.
+        local pkgsGrid = nil
+        if type(only) == "table" then
+            pkgsGrid = {}
+            for _, pkg in ipairs(split(cfg.pkgs)) do
+                if only[pkg] then pkgsGrid[#pkgsGrid+1] = pkg end
+            end
+            if #pkgsGrid == 0 then pkgsGrid = nil end
+        end
+        local p, sebabGrid = grid_hitung(cfg, pkgsGrid)
         if p then petaGrid = p
         else warn("tata jendela dilewat: " .. tostring(sebabGrid)) end
     end
