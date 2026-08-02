@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.14-cf"
+local VERSION = "8.16-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7164,6 +7164,10 @@ local function run(cfg)
                     tambahLog("BUTUH KEY: lisensi Delta HILANG -- tap tombolnya manual (2x), terus: zenx key")
                 end
             end
+            -- v8.16: SEMUA deteksi rejoin per-client (kick/script-off/home/
+            -- disconnect/diem/logcat) DIMATIIN (user minta). Intinya semua kasus
+            -- 'client keluar = grafis rendah' -> udah ketangkep LOOP GRAFIS 2 MENIT.
+            if false then
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 local akun = mapAkun[pkg]
                 -- v6.57: KALAU KENA CAPTCHA -> SKIP dari auto-rejoin. Jangan
@@ -7312,13 +7316,24 @@ local function run(cfg)
                     if diem and diem >= 180 and pkg_running(pkg) and bolehCoba then
                         KICK_DIURUS["diag:" .. pkg] = now   -- catat kapan dicoba
                         local akD = mapAkun and mapAkun[pkg] or pkg:gsub("com%.roblox%.","")
+                        -- v8.15: CEK GRAFIS DULU sebelum rejoin. Client bisa SEHAT di
+                        -- dalam game (grafis tinggi) tapi script-nya yg off (belum
+                        -- inject / map baru / dll). JANGAN rejoin client sehat! Cuma
+                        -- rejoin kalau grafis RENDAH (bener-bener keluar/Home).
+                        local gNow = grafis_kb(pkg) or 0
+                        if gNow >= GAME_AMBANG_KB then
+                            -- SEHAT di game, cuma script off -> JANGAN rejoin.
+                            info(("SCRIPT OFF %s (off %dm) TAPI grafis %.0f MB = DI GAME -> gak di-rejoin (client sehat)"):format(
+                                akD, math.floor(diem/60), gNow/1024))
+                            KICK_DIURUS["offlama:" .. pkg] = nil   -- reset (biar gak spam)
+                        else
                         local isCap, nWeb = cek_captcha_webview(pkg)
                         if isCap then
                             warn(("SCRIPT OFF %s (off %dm) -> CAPTCHA (webview %d fd). Solve manual."):format(akD, math.floor(diem/60), nWeb))
                             KICK_DIURUS["captcha:" .. pkg] = akD
                         else
-                            -- bukan captcha -> script mati/nyangkut -> MASUKIN LAGI
-                            info(("SCRIPT OFF %s (off %dm) -> force-stop + masukin lagi (aktifin script)"):format(akD, math.floor(diem/60)))
+                            -- bukan captcha + grafis rendah -> bener keluar -> MASUKIN LAGI
+                            info(("SCRIPT OFF %s (off %dm, grafis %.0f MB) -> masukin lagi"):format(akD, math.floor(diem/60), gNow/1024))
                             RIW.catat("REJOIN", akD, "karena=script-off-3menit")
                             -- v7.84: force-stop DIHAPUS (user minta). Langsung tembak.
                             grid_satu(cfg, pkg)   -- v7.61: tata grid client ini dulu
@@ -7331,6 +7346,7 @@ local function run(cfg)
                             refresh_status(); lastStatusCek = os.time()
                             gambar_tabel(isi)
                         end
+                        end   -- v8.15: tutup if grafis (di game -> gak rejoin)
                     end
                     -- reset penanda diag kalau script udah jalan lagi (diem = nil)
                     if not diem and KICK_DIURUS["diag:" .. pkg] then
@@ -7399,12 +7415,24 @@ local function run(cfg)
                                 -- Nembak link itu murah & gak ngilangin apa-apa; kalau
                                 -- 10x pun belum masuk, dibunuh juga gak bakal nolong
                                 -- (kasus layar key ditangani jalur bypass sendiri).
+                                -- v8.15: cek grafis dulu -- kalau grafis tinggi (di
+                                -- game), JANGAN tembak walau uiautomator bilang home
+                                -- (deteksi UI bisa salah baca). Client sehat jangan
+                                -- diganggu.
+                                local gHome = grafis_kb(pkg) or 0
+                                if gHome >= GAME_AMBANG_KB then
+                                    tambahLog(string.format("HOME? %s tapi grafis %.0f MB = DI GAME -> gak ditembak (sehat)",
+                                        akun, gHome/1024))
+                                    nudgeCnt[pkg] = nil
+                                    errUi = nil
+                                else
                                 nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
                                 tambahLog(string.format("HOME: %s %s -> rejoin ke PS (percobaan %d), GAK dibunuh",
                                     akun, errUi, nudgeCnt[pkg]))
                                 open_one(cfg, pkg, mapLink[pkg], "home-nudge")
                                 os.execute("sleep 5")   -- kasih waktu join
                                 errUi = nil             -- jangan jatuh ke blok bunuh
+                                end
                             end
                             if errUi then
                                 -- v4.83: kill DIJATAH. Kalau client ini udah dibunuh
@@ -7648,6 +7676,7 @@ local function run(cfg)
                 end
             end)
         end
+            end  -- v8.16: tutup if false (deteksi rejoin per-client dimatiin)
 
         end  -- v5.02: tutup 'if not lewatiRonde' (ronde bypass gak ngerjain sisanya)
 
