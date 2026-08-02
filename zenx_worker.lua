@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.06-cf"
+local VERSION = "8.07-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2495,13 +2495,23 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         -- -S cuma stop ACTIVITY (bukan force-stop app + service), jadi client
         -- nyangkut Home bisa di-restart TANPA goyangin App Cloner service (gak
         -- ngerusak client lain kayak force-stop). Buat client keras kepala.
-        local flagS = pakai_S and "-S " or ""
-        local inner = "am start " .. flagS .. "-a android.intent.action.VIEW -d '"..url.."'"
-            .. " -p "..pkg
-            .. " -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch"
-            .. " -f 0x10000000"
-        if pakai_wm and wm > 0 then
-            inner = inner .. " --windowingMode " .. wm
+        local inner
+        if pakai_S then
+            -- v8.07: kalau -S -> pakai CARA HIP HUB PERSIS (dari ps-ef):
+            --   am start -S -a VIEW -d URL -p pkg
+            -- CUMA -p pkg. TANPA -n cmp, TANPA flag. -S + -n cmp (yg kita pakai
+            -- sebelumnya) ternyata masih bikin client lain FF/keluar. Hip Hub
+            -- -S + -p DOANG (Android routing sendiri) = aman. Tiru persis.
+            inner = "am start -S -a android.intent.action.VIEW -d '"..url.."' -p "..pkg
+        else
+            -- normal (tanpa -S): cara Pandora persis (-p + -n + NEW_TASK)
+            inner = "am start -a android.intent.action.VIEW -d '"..url.."'"
+                .. " -p "..pkg
+                .. " -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch"
+                .. " -f 0x10000000"
+            if pakai_wm and wm > 0 then
+                inner = inner .. " --windowingMode " .. wm
+            end
         end
         local cmd = 'su -c "'..inner..'"'
         if DEBUG_OPEN then print("\n"..C.Y.."[DEBUG] "..C.N..cmd) end
