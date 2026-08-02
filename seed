@@ -503,15 +503,49 @@ function Seed.plantOnce()
         end
     end
     if #seeds == 0 then return 0 end
-    -- titik tanam: sekitar karakter, sebar radius plantSpread biar gak numpuk
+    -- v3.18: CARI POSISI SENDIRI -- sebar di AREA KEBUN (plot milik kita),
+    -- bukan cuma sekitar karakter. Ambil bounding box plot -> acak titik di
+    -- dalamnya. Fallback: sekitar karakter (kalau plot gak ketemu).
+    local plotPos, plotUk = nil, nil
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if not g then return end
+        local uid = player.UserId
+        for _, plot in ipairs(g:GetChildren()) do
+            local own = plot:GetAttribute("OwnerUserId")
+            local ownNm = plot:GetAttribute("Owner")
+            if own == uid or ownNm == player.Name then
+                if plot:IsA("Model") then
+                    local cf, size = plot:GetBoundingBox()
+                    plotPos, plotUk = cf.Position, size
+                end
+                break
+            end
+        end
+    end)
     local r = tonumber(state.plantSpread) or 4
     local ditanam = 0
-    for _, s in ipairs(seeds) do
-        if not state.autoPlantOn then break end
+    -- fungsi cari titik tanam
+    local function titikTanam()
+        if plotPos and plotUk then
+            -- acak dalam area plot (pakai 80% biar gak keluar pagar)
+            local sx = plotUk.X * 0.4
+            local sz = plotUk.Z * 0.4
+            return Vector3.new(
+                plotPos.X + (math.random()*2-1) * sx,
+                plotPos.Y + 5,
+                plotPos.Z + (math.random()*2-1) * sz)
+        end
+        -- fallback: sekitar karakter + sebar radius
         local pos = hrp.Position
         if r > 0 then
             pos = pos + Vector3.new((math.random()*2-1)*r, 0, (math.random()*2-1)*r)
         end
+        return pos
+    end
+    for _, s in ipairs(seeds) do
+        if not state.autoPlantOn then break end
+        local pos = titikTanam()
         pcall(function() p:Fire(pos, s.name, s.tool) end)
         ditanam = ditanam + 1
     end
@@ -4030,7 +4064,7 @@ end
 --   setSemua  : fungsi(bool) -- set mode semua
 --   onTutup   : fungsi (opsional) dipanggil pas tutup (buat update label)
 -- ============================================================
-local function bukaPicker(judul, ambilList, pilihTbl, getSemua, setSemua, onTutup)
+local function bukaPicker(judul, ambilList, pilihTbl, getSemua, setSemua, onTutup, getKanan)
     -- overlay gelap
     local ov = mk("Frame", { Parent = sg, Size = UDim2.new(1, 0, 1, 0),
         BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.4,
@@ -4089,6 +4123,16 @@ local function bukaPicker(judul, ambilList, pilihTbl, getSemua, setSemua, onTutu
                 TextColor3 = warnaBaris(nm), TextXAlignment = Enum.TextXAlignment.Left,
                 Text = "  " .. nm })
             mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
+            -- teks kanan (jumlah/rarity) kalau ada
+            if getKanan then
+                local kn = getKanan(nm)
+                if kn and kn ~= "" then
+                    mk("TextLabel", { Parent = b, BackgroundTransparency = 1, ZIndex = 53,
+                        Position = UDim2.new(1, -82, 0, 0), Size = UDim2.new(0, 76, 1, 0),
+                        Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+                        TextXAlignment = Enum.TextXAlignment.Right, Text = kn .. "  " })
+                end
+            end
             b.MouseButton1Click:Connect(function()
                 -- ketuk item -> matiin mode "semua", toggle item ini
                 if getSemua() then
@@ -4585,12 +4629,17 @@ local function lblPickSeed(btn, semua, tbl)
     end
 end
 pickPlantSeed.MouseButton1Click:Connect(function()
+    -- peta jumlah seed di tas (buat tampilin di kanan tiap baris)
+    local jml = {}
+    local arr = seedDiTas()
+    for _, e in ipairs(arr) do jml[e.n] = e.j end
     bukaPicker("Jenis seed (Plant)",
         function() return namaSeedDiTas() end,
         state.plantPilih,
         function() return state.plantSemua end,
         function(v) state.plantSemua = v end,
-        function() lblPickSeed(pickPlantSeed, state.plantSemua, state.plantPilih) end)
+        function() lblPickSeed(pickPlantSeed, state.plantSemua, state.plantPilih) end,
+        function(nm) return jml[nm] and tostring(jml[nm]) or "" end)
 end)
 lblPickSeed(pickPlantSeed, state.plantSemua, state.plantPilih)
 kotakSpread.FocusLost:Connect(function()
