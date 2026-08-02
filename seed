@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.19"
+local VERSI = "3.20"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -227,9 +227,13 @@ local state = {
     autoAfk       = true,
 
     -- v3.15: AUTO GRAB SEED. Gold Moon: gold seed + random seed jatuh di tanah.
-    -- Item jatuh di workspace.DroppedItems.DroppedItem_*.PromptAnchor.PickupPrompt.
+    -- v3.20: seed EVENT jatuh di Map.SeedPackSpawnClient (bukan DroppedItems).
     -- Ambil SEMUA: auto-TP ke tiap seed -> fire prompt -> kepungut. Bawaan NYALA.
     ambilSeedOn   = true,
+    -- v3.19: filter jenis seed jatuh (by ItemName). grabSemua=true = ambil semua,
+    -- false = cuma yg dicentang di grabPilih (contoh {["Gold"]=true,["Rainbow"]=true})
+    grabSemua     = true,
+    grabPilih     = {},
     -- v3.15b: setelah TP + fire prompt, TUNGGU delay ini (detik) biar seed
     -- beneran ke-ambil, BARU balik ke posisi asli. Bisa diatur dari panel.
     delayBalikSeed = 1.5,
@@ -237,7 +241,7 @@ local state = {
     -- v3.18: AUTO PLANT SEED. Tanam SEMUA seed di tas ke kebun otomatis.
     -- remote: pkt("Plant","PlantSeed"):Fire(posisi, namaSeed, toolSeed).
     -- posisi = sekitar karakter (sebar radius plantSpread biar gak numpuk).
-    autoPlantOn   = false,
+    autoPlantOn   = true,  -- v3.20: default SELALU ON (user minta)
     plantSpread   = 3,     -- radius sebar tanam (0 = pas di posisi karakter)
     plantSemua    = false, -- v3.18: default pilih jenis (Gold), bukan semua
     plantPilih    = { Gold = true },   -- v3.18: default Gold kecentang
@@ -341,6 +345,7 @@ local function simpan()
             ringanOn = state.ringanOn, ringanSuara = state.ringanSuara,
             ringanKebun = state.ringanKebun,
             ambilSeedOn = state.ambilSeedOn, delayBalikSeed = state.delayBalikSeed,
+            grabSemua = state.grabSemua, grabPilih = state.grabPilih,
             autoPlantOn = state.autoPlantOn, plantSpread = state.plantSpread,
             plantSemua = state.plantSemua, plantPilih = state.plantPilih,
             collectAllOn = state.collectAllOn, collectSemuaSeed = state.collectSemuaSeed,
@@ -431,63 +436,126 @@ end
 local Seed_ambilTerakhir = 0
 local Seed_posAsli = nil   -- simpen posisi asli buat balik setelah grab
 function Seed.grabSeed()
-    if not fireproximityprompt then return 0, "fireproximityprompt gak ada" end
-    local dropFolder = workspace:FindFirstChild("DroppedItems")
-    if not dropFolder then return 0, nil end
-    local items = dropFolder:GetChildren()
-    if #items == 0 then return 0, nil end
-
+    -- v3.20: seed EVENT (Gold Moon dll) jatuh di Map.SeedPackSpawnClient
+    -- (BUKAN DroppedItems -- itu drop pemain). Cara gag2: ClickPack (remote,
+    -- cepat) + firetouchinterest (touch part seed). Filter jenis via ObjectText.
+    local map = workspace:FindFirstChild("Map")
+    local folder = map and map:FindFirstChild("SeedPackSpawnClient")
+    if not folder then return 0, nil end
     local char = player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return 0, "karakter belum siap" end
 
-    -- simpen posisi asli SEKALI (buat balik setelah grab semua)
+    -- kumpulin seed part (Anchored BasePart di folder)
+    local seeds = {}
+    for _, o in ipairs(folder:GetDescendants()) do
+        if o:IsA("BasePart") then
+            -- v3.20: filter jenis (kalau gak grabSemua) via ObjectText prompt
+            local lolos = true
+            if not state.grabSemua then
+                local jenis = nil
+                for _, pp in ipairs(o.Parent:GetDescendants()) do
+                    if pp:IsA("ProximityPrompt") and pp.ObjectText ~= "" then
+                        jenis = tostring(pp.ObjectText):match("^([^%[]+)")
+                        if jenis then jenis = jenis:gsub("%s+$", "") end
+                        break
+                    end
+                end
+                -- fallback: atribut jenis di part/parent
+                jenis = jenis or o:GetAttribute("ItemName") or o:GetAttribute("SeedName")
+                    or o.Parent:GetAttribute("ItemName")
+                lolos = jenis ~= nil and (state.grabPilih[jenis]
+                    or (jenis:find("Gold") and state.grabPilih["Gold"])
+                    or (jenis:find("Rainbow") and state.grabPilih["Rainbow"]))
+            end
+            if lolos then seeds[#seeds+1] = o end
+        end
+    end
+    if #seeds == 0 then return 0, nil end
+
     Seed_posAsli = hrp.CFrame
-
     local diambil = 0
-    for _, item in ipairs(items) do
-        if not isCurrentGen() then break end
-        pcall(function()
-            -- cari prompt-nya
-            local anchor = item:FindFirstChild("PromptAnchor")
-            local prompt = anchor and anchor:FindFirstChild("PickupPrompt")
-            if not prompt then
-                for _, d in ipairs(item:GetDescendants()) do
-                    if d:IsA("ProximityPrompt") then prompt = d; break end
-                end
-            end
-            if not (prompt and prompt:IsA("ProximityPrompt")) then return end
 
-            -- cari posisi item (buat TP)
-            local target
-            if anchor and anchor:IsA("BasePart") then
-                target = anchor
-            else
-                for _, d in ipairs(item:GetDescendants()) do
-                    if d:IsA("BasePart") then target = d; break end
-                end
-            end
-
-            -- AUTO-TP ke seed (biar dalam radius prompt), terus fire
-            if target then
-                hrp.CFrame = CFrame.new(target.Position + Vector3.new(0, 3, 0))
-                task.wait(0.15)   -- kasih waktu prompt aktif
-            end
-            fireproximityprompt(prompt)
-            diambil = diambil + 1
-        end)
+    -- PASS 0: ClickPack (remote, cepat) -- cuma kalau grab semua (ClickPack
+    -- gak bisa filter jenis). Kalau filter jenis, langsung ke touch.
+    if state.grabSemua then
+        local cp = pkt("SeedPack", "ClickPack")
+        if cp and cp.Fire then
+            for _ = 1, 5 do pcall(function() cp:Fire("1") end) end
+        end
     end
 
-    -- v3.15b: TUNGGU delay dulu (biar seed beneran ke-ambil), BARU balik.
-    -- delayBalikSeed bisa diatur dari panel (bawaan 1.5 detik).
+    -- PASS 1: firetouchinterest tiap seed (tanpa pindah, cepat)
+    if firetouchinterest then
+        local pending = {}
+        for _, o in ipairs(seeds) do
+            local tries = o:GetAttribute("_zgrabN") or 0
+            if tries < 3 then
+                pcall(function()
+                    firetouchinterest(hrp, o, 0)
+                    firetouchinterest(hrp, o, 1)
+                end)
+                o:SetAttribute("_zgrabN", tries + 1)
+                pending[#pending+1] = o
+                diambil = diambil + 1
+            end
+        end
+        -- PASS 2: seed yg masih ada -> TP ke terdekat + touch
+        if #pending > 0 then
+            local nearest, bestD
+            for _, o in ipairs(pending) do
+                if o.Parent and o:IsDescendantOf(workspace) then
+                    local sp = o.Position
+                    if sp.Magnitude > 1 then
+                        local d = (sp - hrp.Position).Magnitude
+                        if d < 150 and (not bestD or d < bestD) then bestD, nearest = d, o end
+                    end
+                end
+            end
+            if nearest and nearest.Parent and nearest:IsDescendantOf(workspace) then
+                local sp = nearest.Position
+                if sp.Magnitude > 1 and (sp - hrp.Position).Magnitude < 150 then
+                    pcall(function() hrp.CFrame = CFrame.new(sp.X, hrp.Position.Y, sp.Z) end)
+                    pcall(function()
+                        firetouchinterest(hrp, nearest, 0)
+                        firetouchinterest(hrp, nearest, 1)
+                    end)
+                end
+            end
+        end
+    end
+
+    -- delay + balik ke posisi asli (kalau sempet TP di pass 2)
     local jeda = tonumber(state.delayBalikSeed) or 1.5
     if jeda > 0 then task.wait(jeda) end
-
-    -- balik ke posisi asli setelah grab semua
     if Seed_posAsli and hrp and hrp.Parent then
         pcall(function() hrp.CFrame = Seed_posAsli end)
     end
     return diambil, nil
+end
+
+-- v3.20: daftar jenis seed event yg lagi jatuh (buat picker filter grab).
+-- baca ObjectText prompt di Map.SeedPackSpawnClient.
+function Seed.jenisSeedJatuh()
+    local set = {}
+    pcall(function()
+        local map = workspace:FindFirstChild("Map")
+        local folder = map and map:FindFirstChild("SeedPackSpawnClient")
+        if not folder then return end
+        for _, o in ipairs(folder:GetDescendants()) do
+            if o:IsA("ProximityPrompt") and o.ObjectText ~= "" then
+                local nm = tostring(o.ObjectText):match("^([^%[]+)")
+                if nm then nm = nm:gsub("%s+$", ""); set[nm] = true end
+            end
+            local it = o:GetAttribute("ItemName") or o:GetAttribute("SeedName")
+            if it then set[tostring(it)] = true end
+        end
+    end)
+    set["Gold"] = true; set["Rainbow"] = true
+    local arr = {}
+    for nm in pairs(set) do arr[#arr+1] = nm end
+    table.sort(arr)
+    return arr
 end
 
 -- ============================================================
@@ -605,26 +673,24 @@ function Seed.plantOnce()
             task.wait(0.1)
         end
     end
-    local r = tonumber(state.plantSpread) or 3
+    -- v3.20: tanam di 1 TITIK TETAP (posisi karakter), JANGAN pindah/sebar.
+    -- User mau numpuk di 1 titik (butuh tembus pohon/buah biar bisa numpuk).
+    local titikTanam = hrp.Position
     local ditanam = 0
     -- hitung berjalan per tipe (kebun awal + yg baru ditanam sesi ini)
     local hitungTipe = {}
     for tipe, n in pairs(kebunPerTipe) do hitungTipe[tipe] = n end
     for _, s in ipairs(seeds) do
         if not state.autoPlantOn then break end
-        -- v3.18e: cek batas 200 per tipe. nama seed (s.name) dicocokin ke
-        -- hitungan kebun. kalau udah >= 200, SKIP (jangan tanam lebih).
+        -- v3.18e: batas 200 per tipe TEPAT. kalau udah 190, tanam 10 (sampai
+        -- pas 200), gak lebih. sudah = jumlah tipe ini di kebun + yg baru ditanam.
         local tipe = s.name
         local sudah = hitungTipe[tipe] or 0
         if sudah >= BATAS_TIPE then
-            -- tipe ini udah penuh (200) -> skip
+            -- tipe ini udah 200 -> skip (jangan tanam lebih)
         else
-            -- tanam pakai KOORDINAT sebar (gak mindahin karakter)
-            local pos = hrp.Position
-            if r > 0 then
-                pos = pos + Vector3.new((math.random()*2-1)*r, 0, (math.random()*2-1)*r)
-            end
-            pcall(function() p:Fire(pos, s.name, s.tool) end)
+            -- tanam di TITIK TETAP (gak nyebar, gak pindah)
+            pcall(function() p:Fire(titikTanam, s.name, s.tool) end)
             ditanam = ditanam + 1
             hitungTipe[tipe] = sudah + 1
             task.wait(0.05)
@@ -3516,26 +3582,32 @@ local function sapuTanaman(sembunyi, tembus)
     pcall(function()
         local g = workspace:FindFirstChild("Gardens")
         if not g then return end
+        local uid = player.UserId
         for _, plot in ipairs(g:GetChildren()) do
-            local plants = plot:FindFirstChild("Plants")
-            if plants then
-                for _, d in ipairs(plants:GetDescendants()) do
-                    if d:IsA("BasePart") then
-                        -- tembus: matiin collision
-                        if tembus and d.CanCollide then d.CanCollide = false end
-                        -- sembunyi: transparansi (simpen asli buat balikin)
-                        if sembunyi then
+            -- v3.20: CUMA kebun KITA (kebun lain di-destroy sama ringanKebun).
+            local own = plot:GetAttribute("OwnerUserId")
+            local ownNm = plot:GetAttribute("Owner")
+            if own == uid or ownNm == player.Name then
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, d in ipairs(plants:GetDescendants()) do
+                        if d:IsA("BasePart") then
+                            -- tembus: matiin collision
+                            if tembus and d.CanCollide then d.CanCollide = false end
+                            -- sembunyi: transparansi (simpen asli buat balikin)
+                            if sembunyi then
+                                if d:GetAttribute("StarOrigT") == nil then
+                                    d:SetAttribute("StarOrigT", d.Transparency)
+                                end
+                                d.Transparency = 1
+                            end
+                            n = n + 1
+                        elseif sembunyi and (d:IsA("Decal") or d:IsA("Texture")) then
                             if d:GetAttribute("StarOrigT") == nil then
                                 d:SetAttribute("StarOrigT", d.Transparency)
                             end
                             d.Transparency = 1
                         end
-                        n = n + 1
-                    elseif sembunyi and (d:IsA("Decal") or d:IsA("Texture")) then
-                        if d:GetAttribute("StarOrigT") == nil then
-                            d:SetAttribute("StarOrigT", d.Transparency)
-                        end
-                        d.Transparency = 1
                     end
                 end
             end
@@ -5080,7 +5152,7 @@ local tblEspGarden = mk("TextButton", { Parent = kEsp,
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblEspGarden })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblEspGarden })
 
-local kGrab = kartu(104, tabMisc)
+local kGrab = kartu(140, tabMisc)
 mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Transparency = 0.4, Parent = kGrab })
 mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
@@ -5107,6 +5179,17 @@ local kotakDelay = mk("TextBox", { Parent = kGrab,
     Text = tostring(state.delayBalikSeed or 1.5) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakDelay })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakDelay })
+-- v3.19: filter jenis seed (All / pilih Gold/Rainbow/dll)
+mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 86), Size = UDim2.new(0, 130, 0, 26),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
+local pickGrab = mk("TextButton", { Parent = kGrab,
+    Position = UDim2.new(0, 140, 0, 86), Size = UDim2.new(1, -152, 0, 28),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Semua" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickGrab })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGrab })
 
 -- ---------- pet ----------
 local kPet = kartu(150, tabMisc)
@@ -5362,6 +5445,29 @@ kotakDelay.FocusLost:Connect(function()
     kotakDelay.Text = tostring(state.delayBalikSeed)
     simpan()
 end)
+
+-- v3.19: picker jenis seed grab (Semua / pilih Gold/Rainbow/dll)
+pickGrab.MouseButton1Click:Connect(function()
+    bukaPicker("Jenis seed grab",
+        function() return Seed.jenisSeedJatuh() end,
+        state.grabPilih,
+        function() return state.grabSemua end,
+        function(v) state.grabSemua = v end,
+        function()
+            if state.grabSemua then pickGrab.Text = "Semua"
+            else
+                local n = 0; for _ in pairs(state.grabPilih) do n = n + 1 end
+                pickGrab.Text = n > 0 and (n .. " dipilih") or "Pilih"
+            end
+            simpan()
+        end, nil)
+end)
+-- label awal
+if state.grabSemua then pickGrab.Text = "Semua"
+else
+    local ng = 0; for _ in pairs(state.grabPilih) do ng = ng + 1 end
+    pickGrab.Text = ng > 0 and (ng .. " dipilih") or "Pilih"
+end
 
 tblBaru.MouseButton1Click:Connect(function()
     state.seedBaruAuto = not state.seedBaruAuto
@@ -5690,7 +5796,7 @@ end)
 
 -- ============================================================
 -- LOOP AUTO GRAB SEED (Gold Moon) -- v3.15
--- Cek workspace.DroppedItems tiap 2 detik. Ada seed jatuh -> TP ke tiap seed
+-- Cek Map.SeedPackSpawnClient tiap 2 detik. Ada seed jatuh -> TP ke tiap seed
 -- + fire prompt (ambil semua) -> balik posisi asli.
 -- Ringan: kalau folder kosong (bukan Gold Moon), langsung skip.
 -- ============================================================
@@ -5714,6 +5820,29 @@ task.spawn(function()
         if state.autoPlantOn then
             pcall(Seed.plantOnce)
         end
+    end
+end)
+
+-- v3.20: loop TEMBUS TANAMAN selalu ON -- matiin collision di Plants biar
+-- bisa tanam numpuk di 1 titik (gak ketahan pohon/buah yg udah ada). Cuma
+-- collision (CanCollide=false), TANPA sembunyiin visual (itu ikut Ringankan RAM).
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(2)
+        pcall(function()
+            local g = workspace:FindFirstChild("Gardens")
+            if not g then return end
+            for _, plot in ipairs(g:GetChildren()) do
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, d in ipairs(plants:GetDescendants()) do
+                        if d:IsA("BasePart") and d.CanCollide then
+                            d.CanCollide = false
+                        end
+                    end
+                end
+            end
+        end)
     end
 end)
 
