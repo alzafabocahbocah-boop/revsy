@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.14"
+local VERSI = "3.15"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -224,6 +224,11 @@ local state = {
     --               bisa nyalain apa-apa -- dan gak ada jalan buat mbenerin
     --               selain edit berkas config di HP satu-satu.
     autoAfk       = true,
+
+    -- v3.15: AUTO GRAB SEED. Gold Moon: gold seed + random seed jatuh di tanah.
+    -- Item jatuh di workspace.DroppedItems.DroppedItem_*.PromptAnchor.PickupPrompt.
+    -- Ambil SEMUA: auto-TP ke tiap seed -> fire prompt -> kepungut. Bawaan NYALA.
+    ambilSeedOn   = true,
 
     -- v1.3: terima gift + jual pas harga lagi mahal
     terimaGift    = false,    -- v3.5: MATI bawaan (dulu true)
@@ -367,6 +372,71 @@ local function pkt(grp, name)
     local g = NET[grp]
     return g and g[name] or nil
 end
+
+-- ============================================================
+-- AUTO GRAB SEED (Gold Moon: gold seed + random seed jatuh) -- v3.15
+-- Item jatuh di workspace.DroppedItems.DroppedItem_*.PromptAnchor.PickupPrompt
+-- (ActionText "Pick Up"). Ambil SEMUA seed jatuh: TP karakter ke tiap seed
+-- (biar prompt ke-fire walau jauh) -> fireproximityprompt -> kepungut.
+-- Ketemu dari scan ProximityPrompt map baru. fireproximityprompt kebukti ada.
+-- ============================================================
+local Seed_ambilTerakhir = 0
+local Seed_posAsli = nil   -- simpen posisi asli buat balik setelah grab
+function Seed.grabSeed()
+    if not fireproximityprompt then return 0, "fireproximityprompt gak ada" end
+    local dropFolder = workspace:FindFirstChild("DroppedItems")
+    if not dropFolder then return 0, nil end
+    local items = dropFolder:GetChildren()
+    if #items == 0 then return 0, nil end
+
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return 0, "karakter belum siap" end
+
+    -- simpen posisi asli SEKALI (buat balik setelah grab semua)
+    Seed_posAsli = hrp.CFrame
+
+    local diambil = 0
+    for _, item in ipairs(items) do
+        if not isCurrentGen() then break end
+        pcall(function()
+            -- cari prompt-nya
+            local anchor = item:FindFirstChild("PromptAnchor")
+            local prompt = anchor and anchor:FindFirstChild("PickupPrompt")
+            if not prompt then
+                for _, d in ipairs(item:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") then prompt = d; break end
+                end
+            end
+            if not (prompt and prompt:IsA("ProximityPrompt")) then return end
+
+            -- cari posisi item (buat TP)
+            local target
+            if anchor and anchor:IsA("BasePart") then
+                target = anchor
+            else
+                for _, d in ipairs(item:GetDescendants()) do
+                    if d:IsA("BasePart") then target = d; break end
+                end
+            end
+
+            -- AUTO-TP ke seed (biar dalam radius prompt), terus fire
+            if target then
+                hrp.CFrame = CFrame.new(target.Position + Vector3.new(0, 3, 0))
+                task.wait(0.15)   -- kasih waktu prompt aktif
+            end
+            fireproximityprompt(prompt)
+            diambil = diambil + 1
+        end)
+    end
+
+    -- balik ke posisi asli setelah grab semua
+    if Seed_posAsli and hrp and hrp.Parent then
+        pcall(function() hrp.CFrame = Seed_posAsli end)
+    end
+    return diambil, nil
+end
+
 
 -- ============================================================
 -- DAFTAR SEED + RARITY (dari SeedData game)
@@ -3971,6 +4041,25 @@ task.spawn(function()
         end)
         print("[StarSeed] skip tutorial dikirim (#" .. i .. ")")
         task.wait(1)
+    end
+end)
+
+-- ============================================================
+-- LOOP AUTO GRAB SEED (Gold Moon) -- v3.15
+-- Cek workspace.DroppedItems tiap 2 detik. Ada seed jatuh -> TP ke tiap seed
+-- + fire prompt (ambil semua) -> balik posisi asli.
+-- Ringan: kalau folder kosong (bukan Gold Moon), langsung skip.
+-- ============================================================
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(2)
+        if state.ambilSeedOn then
+            local n = Seed.grabSeed()
+            if n and n > 0 then
+                Seed_ambilTerakhir = os.time()
+                print(("[StarSeed] Auto Grab Seed: ambil %d seed jatuh"):format(n))
+            end
+        end
     end
 end)
 
