@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.12-cf"
+local VERSION = "8.13-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2663,7 +2663,9 @@ end
 -- v7.40: cek client udah MASUK GAME via grafis MB, tungguin sampai BATAS detik.
 -- Balik: masuk(true/false), mb(angka MB grafis). Ambang 30 MB (game ~30-49,
 -- home ~15, loading <2). Dipakai di loop buka + mati-bareng.
-GAME_AMBANG_KB = 30 * 1024   -- 30 MB
+GAME_AMBANG_KB = 25 * 1024   -- v8.13: 30->25 MB. Game map baru kadang stabil
+-- di 27-30 MB (dari log: di game 30-56, loading lewat 20-27). Home ~13-19.
+-- 25 = di atas Home, nangkep game yg grafisnya pas-pasan. Dulu 30 mepet.
 function cek_masuk_game(pkg, batas, cek_batal)
     batas = batas or 20
     local nama = pkg:gsub("com%.roblox%.", "")
@@ -4373,13 +4375,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- ini (ketangkep ronde berikutnya). jaga_depan berkala (3s)
                     -- yang urus jendela, JANGAN di sini (tembak 2x).
                     if lisensiAda then
-                        local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
-                        if masukG then
-                            sukses, lama, sebab = true, 0, nil   -- udah di game
-                        else
-                            -- belum masuk -> loop tembak ulang di blok bawah (coba++)
-                            sukses, lama, sebab = false, 0, ("belum masuk game (grafis %.0f MB)"):format(mbG or 0)
-                        end
+                        -- v8.13: TEMBAK BARENG (user minta) -- JANGAN cek_masuk_game
+                        -- 30s per client (bikin start lama: tiap client nunggu 30s +
+                        -- retry). Abis open_one, langsung anggap ditembak & lanjut
+                        -- client berikutnya (tembak cepet, gak nungguin). Yang belum
+                        -- masuk ketangkep LOOP BERKALA 90s (yg udah tembak bareng).
+                        sukses, lama, sebab = true, 0, nil
                     else
                         -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
                         jaga_depan(cfg, mapLink)
@@ -4485,10 +4486,20 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 -- v7.23: delay 5 detik antar tembak client (user minta) -- biar
                 -- RF gak keteteran buka barengan sekaligus. Normal (lisensi habis)
                 -- pakai stagger config.
-                local jedaStagger = lisensiAda and 16 or (cfg.stagger_sec or 0)
+                -- v8.13: jeda antar tembak KECIL (3s) -- dulu 16s (bikin start
+                -- lama, 10 client = 160s). Karena tembak bareng (gak nunggu masuk
+                -- per client), cukup jeda 3s biar RF gak keteteran buka barengan.
+                local jedaStagger = lisensiAda and 3 or (cfg.stagger_sec or 0)
                 if jedaStagger > 0 then os.execute("sleep " .. jedaStagger) end
             end
         end
+    end
+
+    -- v8.13: munculin SEMUA jendela SEKALI setelah tembak bareng (start).
+    -- Client belum tentu udah masuk game (gak dicek per client) -- verifikasi +
+    -- tembak ulang diurus loop berkala 90s. Ini cuma nata jendela biar keliatan.
+    if lisensiAda and not (cek_batal and cek_batal()) then
+        pcall(function() jaga_depan(cfg, mapLink) end)
     end
 
     -- v7.50: KONFIRMASI BERSAMA (nunggu client lapor bareng) DIMATIIN. Gak guna
