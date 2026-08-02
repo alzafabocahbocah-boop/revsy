@@ -289,6 +289,9 @@ local state = {
     gearPilih     = {},       -- { ["Super Sprinkler"]=true } gear yg dibeli
     gearMaxHarga  = 0,        -- harga maks (0 = bebas)
 
+    -- v3.24: NOCLIP karakter (tembus tembok/objek)
+    noclipOn      = false,
+
     -- v1.3: terima gift + jual pas harga lagi mahal
     terimaGift    = false,    -- v3.5: MATI bawaan (dulu true)
     jualOn        = false,    -- auto jual buah (sengaja MATI bawaan -- ini ngejual barang)
@@ -377,6 +380,7 @@ local function simpan()
             giftSeedPilih = state.giftSeedPilih, giftGearPilih = state.giftGearPilih,
             gearOn = state.gearOn, gearSemua = state.gearSemua,
             gearPilih = state.gearPilih, gearMaxHarga = state.gearMaxHarga,
+            noclipOn = state.noclipOn,
             panelUrl = state.panelUrl, panelKunci = state.panelKunci,
         }))
     end)
@@ -3723,11 +3727,33 @@ local function sapuTanaman(sembunyi, tembus)
         local g = workspace:FindFirstChild("Gardens")
         if not g then return end
         local uid = player.UserId
+        -- posisi karakter (buat fallback: kebun kita pasti deket)
+        local myPos = nil
+        pcall(function()
+            local ch = player.Character
+            local h = ch and ch:FindFirstChild("HumanoidRootPart")
+            if h then myPos = h.Position end
+        end)
         for _, plot in ipairs(g:GetChildren()) do
-            -- v3.20: CUMA kebun KITA (kebun lain di-destroy sama ringanKebun).
+            -- v3.24: kebun KITA = OwnerUserId cocok, ATAU (fallback) kebun paling
+            -- deket karakter kalau owner gak kebaca. Kebun lain di-destroy ringan.
             local own = plot:GetAttribute("OwnerUserId")
             local ownNm = plot:GetAttribute("Owner")
-            if own == uid or ownNm == player.Name then
+            local kita = (own == uid or ownNm == player.Name)
+            -- fallback: kalau owner GAK kebaca sama sekali, pakai jarak
+            if not kita and own == nil and ownNm == nil and myPos then
+                local ok2, jarak = pcall(function()
+                    local pr = plot:IsA("Model") and plot.PrimaryPart
+                    if not pr then
+                        for _, d in ipairs(plot:GetDescendants()) do
+                            if d:IsA("BasePart") then pr = d; break end
+                        end
+                    end
+                    return pr and (pr.Position - myPos).Magnitude or 9999
+                end)
+                if ok2 and jarak and jarak < 120 then kita = true end
+            end
+            if kita then
                 local plants = plot:FindFirstChild("Plants")
                 if plants then
                     for _, d in ipairs(plants:GetDescendants()) do
@@ -4154,7 +4180,7 @@ local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
                      "petOn","petSemua","giftPetOn","autoAfk",
                      "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow",
                      "ringanOn","ringanSuara","ringanKebun",
-                     "gearOn","gearSemua" }
+                     "gearOn","gearSemua","noclipOn","hideVisualOn" }
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
                      "maxPerSiklus","mutasiMaxKali","gearMaxHarga" }
 
@@ -4257,6 +4283,8 @@ function Seed.pakaiCfgPanel(r)
     for _, k in ipairs(BOOL_PANEL) do
         if type(c[k]) == "boolean" and state[k] ~= c[k] then
             state[k] = c[k]; ubah[#ubah+1] = k .. "=" .. tostring(c[k])
+            -- v3.24: hideVisualOn toggle mandiri -> restart loop hide visual
+            if k == "hideVisualOn" then pcall(Seed.jalanHideVisual) end
         end
     end
     for _, k in ipairs(NUM_PANEL) do
@@ -5714,8 +5742,10 @@ end)
 tblRingan.MouseButton1Click:Connect(function()
     state.ringanOn = not state.ringanOn
     catSaklar(tblRingan, state.ringanOn, "Ringankan RAM: NYALA", "Ringankan RAM: MATI")
-    -- v3.18: hilangin visual + tembus pohon/buah ikut ringanOn
-    state.hideVisualOn = state.ringanOn
+    -- v3.24: Ringankan RAM NYALAIN hilangin visual (kalau belum), tapi kalau
+    -- toggle mandiri "Hilangin visual" udah ON, biarin (jangan ke-reset pas
+    -- Ringankan RAM dimatiin). Cuma nyalain, gak maksa matiin.
+    if state.ringanOn then state.hideVisualOn = true end
     simpan()
     if state.ringanOn then
         -- langsung jalan sekali, gak usah nunggu 2 menit
@@ -6016,6 +6046,25 @@ task.spawn(function()
             end
         end)
     end
+end)
+
+-- v3.24: loop NOCLIP karakter (tembus tembok/objek). Toggle dari panel.
+-- Matiin CanCollide di semua part karakter tiap Heartbeat (biar konsisten,
+-- karena game kadang reset). Cuma jalan kalau noclipOn.
+task.spawn(function()
+    local RunS = game:GetService("RunService")
+    RunS.Stepped:Connect(function()
+        if not (state.noclipOn and isCurrentGen()) then return end
+        pcall(function()
+            local ch = player.Character
+            if not ch then return end
+            for _, d in ipairs(ch:GetDescendants()) do
+                if d:IsA("BasePart") and d.CanCollide then
+                    d.CanCollide = false
+                end
+            end
+        end)
+    end)
 end)
 
 -- v3.18: loop AUTO COLLECT -- panen buah (filter seed/mutasi/kg) tiap 2s
