@@ -836,6 +836,39 @@ function Seed.stok(nama)
     return nil
 end
 
+-- v3.18: singkat angka gede (1240500 -> 1.2M, 8500 -> 8.5K)
+local function ringkasAngka(n)
+    n = tonumber(n) or 0
+    if n >= 1e12 then return ("%.1fT"):format(n/1e12):gsub("%.0T","T")
+    elseif n >= 1e9 then return ("%.1fB"):format(n/1e9):gsub("%.0B","B")
+    elseif n >= 1e6 then return ("%.1fM"):format(n/1e6):gsub("%.0M","M")
+    elseif n >= 1e3 then return ("%.1fK"):format(n/1e3):gsub("%.0K","K")
+    else return tostring(math.floor(n)) end
+end
+
+-- v3.18: hitung jumlah tanaman di kebun kita (Gardens.<plot milik kita>.Plants)
+local function hitungSeedKebun()
+    local n = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if not g then return end
+        local uid = player.UserId
+        for _, plot in ipairs(g:GetChildren()) do
+            local own = plot:GetAttribute("OwnerUserId")
+            local ownNm = plot:GetAttribute("Owner")
+            if own == uid or ownNm == player.Name then
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        if plant:GetAttribute("PlantId") then n = n + 1 end
+                    end
+                end
+            end
+        end
+    end)
+    return n
+end
+
 local function sheckles()
     local n = 0
     pcall(function()
@@ -4255,23 +4288,19 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSisa })
 -- TAB 2: FARM
 -- ============================================================
 -- ---------- statistik ----------
-local kStat = kartu(82, tabFarm)
+local kStat = kartu(64, tabFarm)
 local lblSheck = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 10), Size = UDim2.new(1, -24, 0, 16),
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 16),
     Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Sheckles: —" })
 local lblSeed = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -24, 0, 16),
+    Position = UDim2.new(0, 12, 0, 26), Size = UDim2.new(0.5, -12, 0, 16),
     Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
-    TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed di tas: —" })
-local lblBeli = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 44), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.samar,
-    TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed kebeli: 0" })
-local lblGear = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 60), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.samar,
-    TextXAlignment = Enum.TextXAlignment.Left, Text = "Gear kebeli: 0" })
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed tas: —" })
+local lblKebun = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
+    Position = UDim2.new(0.5, 0, 0, 26), Size = UDim2.new(0.5, -12, 0, 16),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed kebun: —" })
 
 -- ---------- Auto Plant Seed (v3.18) ----------
 local kPlant = kartu(120, tabFarm)
@@ -4819,12 +4848,9 @@ task.spawn(function()
     while isCurrentGen() do
         pcall(function()
             local _, totSeed = seedDiTas()
-            lblSheck.Text = ("Sheckles: %s"):format(tostring(sheckles()))
-            lblSeed.Text  = ("Seed di tas: %d"):format(totSeed)
-            lblBeli.Text  = ("Seed kebeli: %d  ·  siklus %d  ·  %s")
-                :format(Seed.statTerbeli, Seed.statSiklus, Seed._logAkhir ~= "" and Seed._logAkhir or "-")
-            lblGear.Text  = ("Gear kebeli: %d  ·  %s")
-                :format(Seed.statGear, Seed._logGear ~= "" and Seed._logGear or "nunggu restock")
+            lblSheck.Text = ("Sheckles: %s"):format(ringkasAngka(sheckles()))
+            lblSeed.Text  = ("Seed tas: %d"):format(totSeed)
+            lblKebun.Text = ("Seed kebun: %d"):format(hitungSeedKebun())
 
             -- status pasar + gift/jual
             local best, nmBest = Seed.pengaliTertinggi()
