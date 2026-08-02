@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.27"
+local VERSI = "3.34"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -282,6 +282,9 @@ local state = {
     giftMailQty    = 100,     -- jumlah per jenis (bisa gede, 100k pun sekali kirim)
     giftSeedPilih  = {},      -- { ["Gold"]=true } seed yg dikirim
     giftGearPilih  = {},      -- { ["Sprinkler"]=true } gear yg dikirim
+    -- v3.31: AUTO KIRIM gift mail (dari panel). kirim berkala tiap giftMailJeda menit.
+    giftMailOn     = false,   -- auto kirim gift mail berkala
+    giftMailJeda   = 10,      -- menit antar kirim
 
     -- v3.20: AUTO BUY GEAR (dari panel)
     gearOn        = false,    -- auto beli gear
@@ -291,6 +294,10 @@ local state = {
 
     -- v3.24: NOCLIP karakter (tembus tembok/objek)
     noclipOn      = false,
+    -- v3.30: AUTO TELE ke fall world. Kalau akun nyasar di GAG 2 BIASA (world 1,
+    -- PlaceId beda), auto-TP ke fall world (129343810645058). Default MATI.
+    autoTele      = false,
+    telePlaceId   = 129343810645058,   -- fall world (target)
 
     -- v1.3: terima gift + jual pas harga lagi mahal
     terimaGift    = false,    -- v3.5: MATI bawaan (dulu true)
@@ -378,9 +385,11 @@ local function simpan()
             hideVisualOn = state.hideVisualOn,
             giftMailTarget = state.giftMailTarget, giftMailQty = state.giftMailQty,
             giftSeedPilih = state.giftSeedPilih, giftGearPilih = state.giftGearPilih,
+            giftMailOn = state.giftMailOn, giftMailJeda = state.giftMailJeda,
             gearOn = state.gearOn, gearSemua = state.gearSemua,
             gearPilih = state.gearPilih, gearMaxHarga = state.gearMaxHarga,
             noclipOn = state.noclipOn,
+            autoTele = state.autoTele, telePlaceId = state.telePlaceId,
             panelUrl = state.panelUrl, panelKunci = state.panelKunci,
         }))
     end)
@@ -461,9 +470,12 @@ end
 local Seed_ambilTerakhir = 0
 local Seed_posAsli = nil   -- simpen posisi asli buat balik setelah grab
 function Seed.grabSeed()
-    -- v3.20: seed EVENT (Gold Moon dll) jatuh di Map.SeedPackSpawnClient
-    -- (BUKAN DroppedItems -- itu drop pemain). Cara gag2: ClickPack (remote,
-    -- cepat) + firetouchinterest (touch part seed). Filter jenis via ObjectText.
+    -- v3.34: seed EVENT (Gold Moon dll) jatuh di Map.SeedPackSpawnClient.
+    -- FIX "nyamperin doang gak ke-claim": dulu TP terus fire touch KECEPETAN
+    -- (server belum ngakuin posisi baru -> touch ditolak diam-diam, persis bug
+    -- tame). Sekarang: TP deket -> TUNGGU bener-bener nyampe -> coba SEMUA cara
+    -- (touch + prompt + remote ClickPack) -> cek seed berkurang. Niru cara tame
+    -- yg udah kebukti works.
     local map = workspace:FindFirstChild("Map")
     local folder = map and map:FindFirstChild("SeedPackSpawnClient")
     if not folder then return 0, nil end
@@ -471,11 +483,10 @@ function Seed.grabSeed()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return 0, "karakter belum siap" end
 
-    -- kumpulin seed part (Anchored BasePart di folder)
+    -- kumpulin seed part (Anchored BasePart di folder) + prompt-nya
     local seeds = {}
     for _, o in ipairs(folder:GetDescendants()) do
         if o:IsA("BasePart") then
-            -- v3.20: filter jenis (kalau gak grabSemua) via ObjectText prompt
             local lolos = true
             if not state.grabSemua then
                 local jenis = nil
@@ -486,7 +497,6 @@ function Seed.grabSeed()
                         break
                     end
                 end
-                -- fallback: atribut jenis di part/parent
                 jenis = jenis or o:GetAttribute("ItemName") or o:GetAttribute("SeedName")
                     or o.Parent:GetAttribute("ItemName")
                 lolos = jenis ~= nil and (state.grabPilih[jenis]
@@ -501,58 +511,71 @@ function Seed.grabSeed()
     Seed_posAsli = hrp.CFrame
     local diambil = 0
 
-    -- PASS 0: ClickPack (remote, cepat) -- cuma kalau grab semua (ClickPack
-    -- gak bisa filter jenis). Kalau filter jenis, langsung ke touch.
-    if state.grabSemua then
-        local cp = pkt("SeedPack", "ClickPack")
-        if cp and cp.Fire then
-            for _ = 1, 5 do pcall(function() cp:Fire("1") end) end
-        end
+    -- remote ClickPack (cepat, coba dulu -- kadang langsung kena semua)
+    local cp = state.grabSemua and pkt("SeedPack", "ClickPack") or nil
+    if cp and cp.Fire then
+        for _ = 1, 5 do pcall(function() cp:Fire("1") end) end
+        task.wait(0.2)
     end
 
-    -- PASS 1: firetouchinterest tiap seed (tanpa pindah, cepat)
-    if firetouchinterest then
-        local pending = {}
-        for _, o in ipairs(seeds) do
-            local tries = o:GetAttribute("_zgrabN") or 0
-            if tries < 3 then
-                pcall(function()
-                    firetouchinterest(hrp, o, 0)
-                    firetouchinterest(hrp, o, 1)
-                end)
-                o:SetAttribute("_zgrabN", tries + 1)
-                pending[#pending+1] = o
-                diambil = diambil + 1
-            end
+    -- helper: cari prompt di dalam parent seed (buat fireproximityprompt)
+    local function promptDari(seedPart)
+        for _, pp in ipairs(seedPart.Parent:GetDescendants()) do
+            if pp:IsA("ProximityPrompt") then return pp end
         end
-        -- PASS 2: seed yg masih ada -> TP ke terdekat + touch
-        if #pending > 0 then
-            local nearest, bestD
-            for _, o in ipairs(pending) do
-                if o.Parent and o:IsDescendantOf(workspace) then
-                    local sp = o.Position
-                    if sp.Magnitude > 1 then
-                        local d = (sp - hrp.Position).Magnitude
-                        if d < 150 and (not bestD or d < bestD) then bestD, nearest = d, o end
-                    end
-                end
-            end
-            if nearest and nearest.Parent and nearest:IsDescendantOf(workspace) then
-                local sp = nearest.Position
-                if sp.Magnitude > 1 and (sp - hrp.Position).Magnitude < 150 then
-                    pcall(function() hrp.CFrame = CFrame.new(sp.X, hrp.Position.Y, sp.Z) end)
-                    pcall(function()
-                        firetouchinterest(hrp, nearest, 0)
-                        firetouchinterest(hrp, nearest, 1)
+        return nil
+    end
+
+    -- proses tiap seed: TP deket -> TUNGGU NYAMPE -> coba semua cara
+    for _, o in ipairs(seeds) do
+        if not (state.ambilSeedOn and isCurrentGen()) then break end
+        -- seed udah keburu ilang (ke-claim ClickPack)?
+        if not (o.Parent and o:IsDescendantOf(workspace)) then
+            diambil = diambil + 1
+        else
+            local sp = o.Position
+            if sp.Magnitude > 1 and (sp - hrp.Position).Magnitude < 200 then
+                -- TP ke seed
+                pcall(function() hrp.CFrame = CFrame.new(sp.X, hrp.Position.Y + 2, sp.Z) end)
+                -- TUNGGU bener-bener nyampe (jarak < 8 stud) -- ini yg dulu kelewat
+                local dekat = false
+                for _ = 1, 20 do
+                    task.wait(0.08)
+                    if not (o.Parent and o:IsDescendantOf(workspace)) then dekat = true break end
+                    local ok, jarak = pcall(function()
+                        return (hrp.Position - o.Position).Magnitude
                     end)
+                    if ok and jarak and jarak < 8 then dekat = true break end
+                end
+                task.wait(0.2)   -- kasih waktu posisi ke-replikasi ke server
+
+                -- COBA SEMUA CARA CLAIM (yg manapun works, kepake):
+                local prompt = promptDari(o)
+                for _ = 1, 4 do
+                    if not (o.Parent and o:IsDescendantOf(workspace)) then break end
+                    -- 1. touch
+                    if firetouchinterest then
+                        pcall(function()
+                            firetouchinterest(hrp, o, 0); firetouchinterest(hrp, o, 1)
+                        end)
+                    end
+                    -- 2. fire prompt E
+                    if prompt and fireproximityprompt then
+                        pcall(function() fireproximityprompt(prompt) end)
+                    end
+                    -- 3. ClickPack remote (kalau grab semua)
+                    if cp and cp.Fire then pcall(function() cp:Fire("1") end) end
+                    task.wait(0.2)
+                end
+                -- ke-claim? (seed ilang)
+                if not (o.Parent and o:IsDescendantOf(workspace)) then
+                    diambil = diambil + 1
                 end
             end
         end
     end
 
-    -- delay + balik ke posisi asli (kalau sempet TP di pass 2)
-    local jeda = tonumber(state.delayBalikSeed) or 1.5
-    if jeda > 0 then task.wait(jeda) end
+    -- balik ke posisi asli
     if Seed_posAsli and hrp and hrp.Parent then
         pcall(function() hrp.CFrame = Seed_posAsli end)
     end
@@ -4281,9 +4304,16 @@ local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
                      "petOn","petSemua","giftPetOn","autoAfk",
                      "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow",
                      "ringanOn","ringanSuara","ringanKebun",
-                     "gearOn","gearSemua" }
+                     "gearOn","gearSemua",
+                     -- v3.28: setelan FARM dari panel (tab Farm)
+                     "ambilSeedOn","grabSemua","autoPlantOn","plantSemua",
+                     "collectAllOn","collectSemuaSeed","collectSemuaMut",
+                     "sellBiasaOn","sellPenuhOn","espInvOn","espGardenOn","autoTele","giftMailOn",
+                     "hideVisualOn","noclipOn" }
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
-                     "maxPerSiklus","mutasiMaxKali","gearMaxHarga" }
+                     "maxPerSiklus","mutasiMaxKali","gearMaxHarga",
+                     -- v3.28: setelan FARM angka
+                     "delayBalikSeed","plantSpread","collectKgMin","giftMailQty","giftMailJeda" }
 
 -- v3.1: ringkasan filter pet yang BENERAN lagi dipakai. Perlu ditampilin
 -- karena kalau setelan panel gak nyampe, script diam-diam jalan pakai setelan
@@ -4384,12 +4414,14 @@ function Seed.pakaiCfgPanel(r)
     for _, k in ipairs(BOOL_PANEL) do
         if type(c[k]) == "boolean" and state[k] ~= c[k] then
             state[k] = c[k]; ubah[#ubah+1] = k .. "=" .. tostring(c[k])
-            -- v3.24: ringanOn nyalain hilangin visual + noclip sekalian
-            if k == "ringanOn" then
-                state.hideVisualOn = c[k]
-                state.noclipOn = c[k]
-                pcall(Seed.jalanHideVisual)
-            end
+            -- v3.32: ringanOn TIDAK LAGI maksa noclip + hilangin visual (itu
+            -- bikin ProximityPrompt E ke NPC/mailbox gak jalan). Sekarang
+            -- hideVisual + noclip toggle SENDIRI dari panel (hideVisualOn,
+            -- noclipOn), gak nempel ke ringanOn.
+            if k == "hideVisualOn" then pcall(Seed.jalanHideVisual) end
+            -- v3.28: ESP pakai gen-loop -> harus dipicu pas dinyalain/dimatiin
+            if k == "espInvOn" then pcall(Seed.jalanEspInv) end
+            if k == "espGardenOn" then pcall(Seed.jalanEspGarden) end
         end
     end
     for _, k in ipairs(NUM_PANEL) do
@@ -4403,6 +4435,12 @@ function Seed.pakaiCfgPanel(r)
         state.giftTarget = c.giftTarget
         Seed._uidCache = {}          -- tujuan ganti -> cache id lama gak berlaku
         ubah[#ubah+1] = "giftTarget=" .. c.giftTarget
+    end
+    -- v3.31: gift mail target dari panel
+    if type(c.giftMailTarget) == "string" and state.giftMailTarget ~= c.giftMailTarget then
+        state.giftMailTarget = c.giftMailTarget
+        Seed._giftUidCache = {}
+        ubah[#ubah+1] = "giftMailTarget=" .. c.giftMailTarget
     end
     if type(c.minRarity) == "string" and c.minRarity ~= "" then
         -- cuma terima yang beneran ada di daftar rarity, biar gak nyetel ke
@@ -4437,6 +4475,38 @@ function Seed.pakaiCfgPanel(r)
         local baru = {}
         for _, nm in ipairs(c.gearPilih) do if type(nm) == "string" then baru[nm] = true end end
         state.gearPilih = baru; ubah[#ubah+1] = "gearPilih(" .. #c.gearPilih .. ")"
+    end
+    -- v3.28: picker FARM (plant/collect/grab) dari panel tab Farm
+    if type(c.plantPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.plantPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.plantPilih = baru; ubah[#ubah+1] = "plantPilih(" .. #c.plantPilih .. ")"
+    end
+    if type(c.collectSeedPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.collectSeedPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.collectSeedPilih = baru; ubah[#ubah+1] = "collectSeedPilih(" .. #c.collectSeedPilih .. ")"
+    end
+    if type(c.collectMutPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.collectMutPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.collectMutPilih = baru; ubah[#ubah+1] = "collectMutPilih(" .. #c.collectMutPilih .. ")"
+    end
+    if type(c.grabPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.grabPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.grabPilih = baru; ubah[#ubah+1] = "grabPilih(" .. #c.grabPilih .. ")"
+    end
+    -- v3.31: picker gift mail (seed + gear yg dikirim) dari panel
+    if type(c.giftSeedPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.giftSeedPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.giftSeedPilih = baru; ubah[#ubah+1] = "giftSeedPilih(" .. #c.giftSeedPilih .. ")"
+    end
+    if type(c.giftGearPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.giftGearPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.giftGearPilih = baru; ubah[#ubah+1] = "giftGearPilih(" .. #c.giftGearPilih .. ")"
     end
 
     if #ubah > 0 then
@@ -4799,7 +4869,10 @@ function Seed.kirimKatalog()
         table.sort(gears)
     end)
 
-    local r = panelReq("/katalog", "POST", { pets = pets, seeds = seeds, gears = gears, detail = detail })
+    -- v3.28: daftar MUTASI (buat picker collect mutasi di panel tab Farm)
+    local muts = {}
+    pcall(function() muts = Seed.daftarMutasi() or {} end)
+    local r = panelReq("/katalog", "POST", { pets = pets, seeds = seeds, gears = gears, muts = muts, detail = detail })
     local body = r and (r.Body or r.body)
     if body then
         local ok, d = pcall(function() return HS:JSONDecode(body) end)
@@ -5561,6 +5634,25 @@ local tblAfk = mk("TextButton", { Parent = kAfk,
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblAfk })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblAfk })
 
+-- v3.30: Auto Tele ke fall world (numpang tabel Seed._el biar gak nambah lokal)
+Seed._el = Seed._el or {}
+Seed._el.kTele = kartu(64, tabMisc)
+mk("TextLabel", { Parent = Seed._el.kTele, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -90, 0, 18),
+    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Tele fall world" })
+mk("TextLabel", { Parent = Seed._el.kTele, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -90, 0, 26),
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
+    Text = "kalau nyasar di GAG 2 biasa, auto-TP ke fall world" })
+Seed._el.tblTele = mk("TextButton", { Parent = Seed._el.kTele,
+    Position = UDim2.new(1, -80, 0, 16), Size = UDim2.new(0, 68, 0, 28),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblTele })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblTele })
+
 -- ============================================================
 -- LOGIKA GUI
 -- ============================================================
@@ -5645,6 +5737,14 @@ tblAfk.MouseButton1Click:Connect(function()
     state.autoAfk = not state.autoAfk
     catSaklar(tblAfk, state.autoAfk)
     simpan()
+end)
+
+Seed._el.tblTele.MouseButton1Click:Connect(function()
+    state.autoTele = not state.autoTele
+    catSaklar(Seed._el.tblTele, state.autoTele)
+    simpan()
+    -- langsung cek pas dinyalain (gak nunggu loop 20s)
+    if state.autoTele then task.spawn(function() pcall(Seed.cekTele) end) end
 end)
 
 -- v3.15: Auto Grab Seed toggle + delay balik
@@ -5847,16 +5947,13 @@ end)
 tblRingan.MouseButton1Click:Connect(function()
     state.ringanOn = not state.ringanOn
     catSaklar(tblRingan, state.ringanOn, "Ringankan RAM: NYALA", "Ringankan RAM: MATI")
-    -- v3.24: hilangin visual + noclip IKUT Ringankan RAM (digabung, satu toggle).
-    -- Nyalain Ringankan RAM = visual tanaman hilang + noclip nyala sekalian.
-    state.hideVisualOn = state.ringanOn
-    state.noclipOn = state.ringanOn
+    -- v3.32: TIDAK LAGI maksa noclip + hilangin visual (bikin E ke NPC/mailbox
+    -- gak jalan). Ringankan RAM cuma buang Sound + kebun orang lain (aman).
+    -- Noclip & hilangin visual toggle sendiri (di kartu terpisah).
     simpan()
     if state.ringanOn then
-        -- langsung jalan sekali, gak usah nunggu 2 menit
         task.spawn(function() pcall(Seed.ringankan) end)
     end
-    Seed.jalanHideVisual()   -- nyala/mati ikut ringanOn
 end)
 
 tblPet.MouseButton1Click:Connect(function()
@@ -5882,6 +5979,7 @@ end)
 function Seed._segarkanGUI()
     catSaklar(tblSaklar, state.beliOn)
     catSaklar(tblAfk, state.autoAfk)
+    catSaklar(Seed._el.tblTele, state.autoTele)
     catSaklar(tblBaru, state.seedBaruAuto,
         "Seed baru auto-beli: NYALA", "Seed baru auto-beli: MATI")
     catSaklar(tblGift, state.terimaGift,
@@ -6153,23 +6251,92 @@ task.spawn(function()
     end
 end)
 
--- v3.24: loop NOCLIP karakter (tembus tembok/objek). Toggle dari panel.
--- Matiin CanCollide di semua part karakter tiap Heartbeat (biar konsisten,
--- karena game kadang reset). Cuma jalan kalau noclipOn.
-task.spawn(function()
-    local RunS = game:GetService("RunService")
-    RunS.Stepped:Connect(function()
-        if not (state.noclipOn and isCurrentGen()) then return end
-        pcall(function()
-            local ch = player.Character
-            if not ch then return end
-            for _, d in ipairs(ch:GetDescendants()) do
-                if d:IsA("BasePart") and d.CanCollide then
-                    d.CanCollide = false
-                end
-            end
-        end)
+-- v3.30: AUTO TELE ke fall world. Kalau akun nyasar di GAG 2 BIASA (world 1),
+-- PlaceId-nya BEDA dari fall world (129343810645058). Deteksi: PlaceId sekarang
+-- != target -> TeleportService:Teleport ke fall world. Cegah spam: cuma TP
+-- sekali per 60 detik (TP butuh waktu, loading). Default MATI.
+Seed._teleTerakhir = 0
+Seed._logTele = ""
+function Seed.cekTele()
+    if not state.autoTele then return end
+    local target = tonumber(state.telePlaceId) or 129343810645058
+    local skrg = tonumber(game.PlaceId) or 0
+    -- udah di fall world -> gak perlu TP
+    if skrg == target then Seed._logTele = "udah di fall world"; return end
+    if skrg == 0 then return end   -- PlaceId belum kebaca
+    -- cegah spam: 1 TP per 60 detik (TP + loading butuh waktu)
+    local now = os.time()
+    if (now - Seed._teleTerakhir) < 60 then return end
+    Seed._teleTerakhir = now
+    Seed._logTele = ("nyasar di place %d -> TP ke fall world"):format(skrg)
+    print("[StarSeed] " .. Seed._logTele)
+    pcall(function()
+        local TS = game:GetService("TeleportService")
+        TS:Teleport(target, player)
     end)
+end
+task.spawn(function()
+    task.wait(15)   -- kasih waktu game kebaca dulu (PlaceId)
+    while isCurrentGen() do
+        if state.autoTele then pcall(Seed.cekTele) end
+        task.wait(20)
+    end
+end)
+
+-- v3.31: AUTO KIRIM GIFT MAIL. Kalau giftMailOn nyala, kirim seed/gear yg
+-- dipilih ke giftMailTarget tiap giftMailJeda menit. Sekali kirim (kirimGiftMail
+-- udah ada). Cegah spam: patuhi jeda menit.
+Seed._giftMailAkhir = 0
+task.spawn(function()
+    task.wait(25)
+    while isCurrentGen() do
+        if state.giftMailOn then
+            local jedaMin = tonumber(state.giftMailJeda) or 10
+            if jedaMin < 1 then jedaMin = 1 end
+            local now = os.time()
+            if (now - Seed._giftMailAkhir) >= (jedaMin * 60) then
+                Seed._giftMailAkhir = now
+                local ok, pesan = Seed.kirimGiftMail()
+                if ok then print("[StarSeed] auto gift mail: " .. tostring(pesan)) end
+            end
+        end
+        task.wait(30)
+    end
+end)
+
+-- v3.32: NOCLIP cara star_farm (yg BENER, gak bug E). DULU matiin CanCollide
+-- SEMUA part KARAKTER tiap Stepped -> karakter tembus segala -> ProximityPrompt
+-- (E ke NPC/mailbox) keganggu. SEKARANG: karakter DIBIARIN NORMAL (napak tanah),
+-- yg dimatiin collision-nya = TANAMAN (folder Plants) doang. Bisa tembus
+-- pohon/buah, TAPI E ke NPC/mailbox tetep jalan + gak jatuh nembus tanah.
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(1.5)
+        if state.noclipOn then
+            pcall(function()
+                -- balikin karakter ke normal (jaga-jaga kalau sempet dimatiin)
+                local ch = player.Character
+                if ch then
+                    local h = ch:FindFirstChild("HumanoidRootPart")
+                    if h then h.CanCollide = true end
+                end
+                -- matiin collision TANAMAN aja (folder Plants), lantai plot aman
+                local g = workspace:FindFirstChild("Gardens")
+                if g then
+                    for _, plot in ipairs(g:GetChildren()) do
+                        local pls = plot:FindFirstChild("Plants")
+                        if pls then
+                            for _, d in ipairs(pls:GetDescendants()) do
+                                if d:IsA("BasePart") and d.CanCollide then
+                                    d.CanCollide = false
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
 end)
 
 -- v3.18: loop AUTO COLLECT -- panen buah (filter seed/mutasi/kg) tiap 2s
@@ -6216,6 +6383,7 @@ end)
 -- ============================================================
 catSaklar(tblSaklar, state.beliOn)
 catSaklar(tblAfk, state.autoAfk)
+catSaklar(Seed._el.tblTele, state.autoTele)
 catSaklar(tblGrab, state.ambilSeedOn)
 catSaklar(tblEspInv, state.espInvOn)
 catSaklar(tblEspGarden, state.espGardenOn)
