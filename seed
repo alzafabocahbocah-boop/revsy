@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.23"
+local VERSI = "3.24"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -197,6 +197,19 @@ local function isCurrentGen() return genv.StarSeedGen == MY_GEN end
 
 local Seed = {}
 genv.StarSeed = Seed
+
+-- v3.24: STREAMING nyala di game ini -> objek jauh (pet liar, dll) gak ke-load
+-- di client, jadi dianggap hilang. Perbesar radius streaming SEKALI di awal
+-- biar area lebih luas ke-load (pet liar lebih jauh tetep kebaca). Aman: cuma
+-- naikin target radius, gak ngubah gameplay.
+task.spawn(function()
+    pcall(function()
+        if workspace.StreamingEnabled then
+            pcall(function() workspace.StreamingTargetRadius = 2048 end)
+            pcall(function() workspace.StreamingMinRadius = 512 end)
+        end
+    end)
+end)
 
 -- ============================================================
 -- SETELAN + SIMPAN
@@ -2902,6 +2915,27 @@ end
 function Seed.tamePetSekali()
     local p = pkt("Pets", "WildPetTame")
     if not p or not p.Fire then Seed._logPet = "packet WildPetTame gak ada"; return 0 end
+
+    -- v3.24: STREAMING nyala -> pet liar jauh gak ke-load di client (dianggap
+    -- hilang). Paksa load area sekitar biar pet jauh ke-stream masuk:
+    --  1) perbesar radius streaming (semua objek lebih jauh ke-load)
+    --  2) RequestStreamAroundAsync ke posisi karakter (paksa load sekitar)
+    pcall(function()
+        if workspace.StreamingEnabled then
+            -- perbesar radius sekali (biar objek lebih jauh ke-load)
+            pcall(function()
+                if (workspace.StreamingTargetRadius or 0) < 1024 then
+                    workspace.StreamingTargetRadius = 1024
+                end
+            end)
+            -- paksa stream area sekitar karakter
+            local ch = player.Character
+            local h = ch and ch:FindFirstChild("HumanoidRootPart")
+            if h and workspace.RequestStreamAroundAsync then
+                pcall(function() workspace:RequestStreamAroundAsync(h.Position) end)
+            end
+        end
+    end)
 
     local char = player.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
