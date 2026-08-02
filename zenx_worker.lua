@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.97-cf"
+local VERSION = "7.99-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5638,6 +5638,11 @@ local function run(cfg)
     -- Kalau akun punya ps_link (accessCode=UUID dari zenx getps), pakai itu buat
     -- masuk PS pribadi akun. Prioritas: assign-ps panel > ps_link getps > public.
     local function refresh_ps_getps()
+        -- v7.98: map baru GAG 2 (129343810645058 Panen Musim Gugur) GAK ADA PS
+        -- (event map, cuma public). Skip ambil ps_link -> mapLink kosong ->
+        -- build_url join PUBLIC (gak coba PS lama yg invalid di map baru).
+        -- Juga hormatin cfg.pakai_ps == false (manual matiin PS).
+        if cfg.place_id == "129343810645058" or cfg.pakai_ps == false then return end
         local r = api_get(cfg, "/ps-list") or ""
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
@@ -6461,6 +6466,16 @@ local function run(cfg)
 
         if isi ~= lastIsi and isi ~= "" then
             info("perintah baru: " .. isi)
+            -- v7.99: PLACE:<id> dari panel -> ganti place_id (pindah world/map).
+            -- Fill server = pindah ke world baru (129343810645058). build_url pakai
+            -- place_id baru -> client join world baru. Simpen ke config biar tetep.
+            local placeBaruDari = isi:match("PLACE:(%d+)")
+            if placeBaruDari then
+                cfg.place_id = placeBaruDari
+                pcall(function() save_config(cfg) end)
+                info("Place diganti ke " .. placeBaruDari .. " (pindah world) -- rejoin buat masuk")
+                SUDAH_GRID = false; GRID_CACHE = nil
+            end
             -- v7.03: FORCE dari panel = MULAI FRESH kayak worker baru. Reset
             -- SUDAH_GRID (nata tempat/tiling ULANG) + lastOpen (buka client dari
             -- 1/8 lagi). User minta: pencet Start/FORCE -> ngulang semua dari awal
