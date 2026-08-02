@@ -239,10 +239,19 @@ local state = {
     -- posisi = sekitar karakter (sebar radius plantSpread biar gak numpuk).
     autoPlantOn   = false,
     plantSpread   = 4,     -- radius sebar tanam (0 = pas di posisi karakter)
+    plantSemua    = true,  -- v3.18: tanam semua jenis seed (false = cuma plantPilih)
+    plantPilih    = {},    -- { ["Carrot"]=true } seed yg mau ditanam (mode pilih)
 
-    -- v3.18: AUTO COLLECT (Collect All) + AUTO SELL (Sell All). Simpel, no filter.
-    collectAllOn  = false, -- panen SEMUA buah matang di kebun (Garden.CollectFruit)
-    sellAllOn     = false, -- jual SELURUH tas (NPCS.SellAll)
+    -- v3.18: AUTO COLLECT (Collect All) + AUTO SELL. picker seed + mutasi + kg.
+    collectAllOn  = false, -- panen buah di kebun (Garden.CollectFruit)
+    collectSemuaSeed = true,  -- collect semua jenis seed (false = cuma collectSeedPilih)
+    collectSeedPilih = {},    -- { ["Carrot"]=true } jenis buah yg dipanen
+    collectSemuaMut  = true,  -- collect semua mutasi (false = cuma collectMutPilih)
+    collectMutPilih  = {},    -- { ["Gold"]=true } mutasi yg dipanen
+    collectKgMin     = 0,     -- threshold kg minimum (0 = semua)
+    -- AUTO SELL: 2 mode
+    sellPenuhOn   = false, -- sell pas backpack full (SellAll)
+    sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
 
     -- v1.3: terima gift + jual pas harga lagi mahal
     terimaGift    = false,    -- v3.5: MATI bawaan (dulu true)
@@ -320,7 +329,11 @@ local function simpan()
             ringanKebun = state.ringanKebun,
             ambilSeedOn = state.ambilSeedOn, delayBalikSeed = state.delayBalikSeed,
             autoPlantOn = state.autoPlantOn, plantSpread = state.plantSpread,
-            collectAllOn = state.collectAllOn, sellAllOn = state.sellAllOn,
+            plantSemua = state.plantSemua, plantPilih = state.plantPilih,
+            collectAllOn = state.collectAllOn, collectSemuaSeed = state.collectSemuaSeed,
+            collectSeedPilih = state.collectSeedPilih, collectSemuaMut = state.collectSemuaMut,
+            collectMutPilih = state.collectMutPilih, collectKgMin = state.collectKgMin,
+            sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             panelUrl = state.panelUrl, panelKunci = state.panelKunci,
         }))
     end)
@@ -480,7 +493,11 @@ function Seed.plantOnce()
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") then
                     local seedName = t:GetAttribute("SeedTool") or t.Name
-                    if seedName then seeds[#seeds+1] = { tool = t, name = seedName } end
+                    if seedName then
+                        -- filter jenis: plantSemua ON = semua, else cuma yg dicentang
+                        local ok = state.plantSemua or (state.plantPilih[seedName] == true)
+                        if ok then seeds[#seeds+1] = { tool = t, name = seedName } end
+                    end
                 end
             end
         end
@@ -510,6 +527,18 @@ end
 -- Collect: Garden.CollectFruit:Fire(plantId, fruitId)  -- panen SEMUA buah
 -- Sell   : NPCS.SellAll:Fire()                          -- jual SELURUH tas
 -- ============================================================
+-- baca mutasi buah (dari atribut). nil = polos/normal.
+local MUT_ATTR = { "Mutation", "Mutations", "Variant", "Type", "Modifier" }
+local function getMutasiBuah(obj)
+    for _, k in ipairs(MUT_ATTR) do
+        local v = obj:GetAttribute(k)
+        if type(v) == "string" and v ~= "" and v:lower() ~= "none" and v:lower() ~= "normal" then
+            return v
+        end
+    end
+    return nil
+end
+
 function Seed.collectAllOnce()
     local p = pkt("Garden", "CollectFruit")
     if not (p and p.Fire) then return 0 end
@@ -526,20 +555,34 @@ function Seed.collectAllOnce()
             if plants then
                 for _, plant in ipairs(plants:GetChildren()) do
                     local plantId = plant:GetAttribute("PlantId")
-                    if plantId then
+                    -- filter jenis seed (nama tanaman)
+                    local seedName = plant:GetAttribute("SeedName")
+                    local okSeed = state.collectSemuaSeed
+                        or (seedName and state.collectSeedPilih[seedName] == true)
+                    if plantId and okSeed then
                         local fruits = plant:FindFirstChild("Fruits")
                         if fruits then
-                            -- buah di folder Fruits -> fire tiap FruitId
                             for _, fruit in ipairs(fruits:GetChildren()) do
                                 local fid = fruit:GetAttribute("FruitId")
                                 if fid ~= nil then
-                                    pcall(function() p:Fire(tostring(plantId), tostring(fid)) end)
-                                    difire = difire + 1
-                                    task.wait()
+                                    -- filter mutasi
+                                    local mut = getMutasiBuah(fruit)
+                                    local okMut = state.collectSemuaMut
+                                        or (mut and state.collectMutPilih[mut] == true)
+                                    -- filter kg (threshold)
+                                    local kg = fruit:GetAttribute("Weight")
+                                        or fruit:GetAttribute("SizeMultiplier") or 0
+                                    local okKg = (state.collectKgMin or 0) <= 0
+                                        or (tonumber(kg) or 0) >= state.collectKgMin
+                                    if okMut and okKg then
+                                        pcall(function() p:Fire(tostring(plantId), tostring(fid)) end)
+                                        difire = difire + 1
+                                        task.wait()
+                                    end
                                 end
                             end
                         end
-                        -- single-harvest: tanaman siap panen tanpa folder Fruits
+                        -- single-harvest (tanpa filter kg/mutasi -- gak ada buah dibaca)
                         if plant:GetAttribute("PlantGrowthReady") == true then
                             local pid = tostring(plantId)
                             pcall(function() p:Fire(pid, pid) end)
@@ -695,6 +738,41 @@ end
 function Seed.rank(nama)
     local r = Seed.rarity(nama)
     return (r and RARITY_RANK[r]) or 0
+end
+
+-- ============================================================
+-- v3.18: DAFTAR MUTASI (dari MutationData game -- fall world)
+-- ============================================================
+Seed._daftarMutasi = nil
+local function muatDaftarMutasi()
+    local seen, list = {}, {}
+    local function tambah(nm)
+        if type(nm) == "string" and nm ~= "" and not seen[nm]
+           and nm:lower() ~= "none" and nm:lower() ~= "normal" then
+            seen[nm] = true; list[#list+1] = nm
+        end
+    end
+    pcall(function()
+        local sm = RS:FindFirstChild("SharedModules")
+        local md = sm and sm:FindFirstChild("MutationData")
+        if md then
+            local ok, data = pcall(require, md)
+            if ok and type(data) == "table" then
+                for k, v in pairs(data) do
+                    if type(k) == "string" and not k:match("^_")
+                       and type(v) ~= "function" then
+                        tambah(k)
+                    end
+                end
+            end
+        end
+    end)
+    table.sort(list)
+    return list
+end
+function Seed.daftarMutasi()
+    if not Seed._daftarMutasi then Seed._daftarMutasi = muatDaftarMutasi() end
+    return Seed._daftarMutasi
 end
 
 -- ============================================================
@@ -3936,6 +4014,103 @@ local function kartu(tinggi, tab)
 end
 
 -- ============================================================
+-- v3.18: POPUP PICKER reusable -- daftar item + centang + tombol "All"
+--   judul     : teks judul popup
+--   ambilList : fungsi -> array nama item
+--   pilihTbl  : state tabel { [nama]=true }
+--   getSemua  : fungsi -> bool (mode "semua" lagi nyala?)
+--   setSemua  : fungsi(bool) -- set mode semua
+--   onTutup   : fungsi (opsional) dipanggil pas tutup (buat update label)
+-- ============================================================
+local function bukaPicker(judul, ambilList, pilihTbl, getSemua, setSemua, onTutup)
+    -- overlay gelap
+    local ov = mk("Frame", { Parent = sg, Size = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.4,
+        BorderSizePixel = 0, ZIndex = 50, Active = true })
+    local pop = mk("Frame", { Parent = ov, Size = UDim2.new(0, 300, 0, 340),
+        Position = UDim2.new(0.5, -150, 0.5, -170), BackgroundColor3 = WARNA.kartu,
+        BorderSizePixel = 0, ZIndex = 51, Active = true, Draggable = true })
+    mk("UICorner", { CornerRadius = UDim.new(0, 10), Parent = pop })
+    mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = pop })
+    mk("TextLabel", { Parent = pop, BackgroundTransparency = 1, ZIndex = 52,
+        Position = UDim2.new(0, 14, 0, 10), Size = UDim2.new(1, -90, 0, 22),
+        Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.teks,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = judul })
+    -- tombol All (centang/lepas semua)
+    local tblAll = mk("TextButton", { Parent = pop, ZIndex = 52,
+        Position = UDim2.new(1, -128, 0, 8), Size = UDim2.new(0, 58, 0, 26),
+        BackgroundColor3 = WARNA.aksenBg, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "All" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblAll })
+    mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = tblAll })
+    -- tombol tutup
+    local tblX = mk("TextButton", { Parent = pop, ZIndex = 52,
+        Position = UDim2.new(1, -62, 0, 8), Size = UDim2.new(0, 52, 0, 26),
+        BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.teks, Text = "OK" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblX })
+    -- scroll daftar
+    local sc = mk("ScrollingFrame", { Parent = pop, ZIndex = 52,
+        Position = UDim2.new(0, 10, 0, 42), Size = UDim2.new(1, -20, 1, -52),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ScrollBarThickness = 4,
+        ScrollBarImageColor3 = WARNA.garis, CanvasSize = UDim2.new(0, 0, 0, 0) })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = sc })
+    local ly = mk("UIListLayout", { Parent = sc, Padding = UDim.new(0, 3),
+        SortOrder = Enum.SortOrder.LayoutOrder })
+    mk("UIPadding", { Parent = sc, PaddingTop = UDim.new(0, 4),
+        PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) })
+
+    local baris = {}
+    local function warnaBaris(nm)
+        -- kalau mode semua nyala -> semua keliatan aktif
+        local aktif = getSemua() or pilihTbl[nm] == true
+        return aktif and WARNA.aksen or WARNA.redup
+    end
+    local function refreshSemua()
+        tblAll.BackgroundColor3 = getSemua() and WARNA.aksen or WARNA.aksenBg
+        tblAll.TextColor3 = getSemua() and WARNA.bg or WARNA.aksenMuda
+    end
+    local function gambar()
+        for _, b in pairs(baris) do b:Destroy() end
+        baris = {}
+        local list = ambilList() or {}
+        for i, nm in ipairs(list) do
+            local b = mk("TextButton", { Parent = sc, LayoutOrder = i, ZIndex = 52,
+                Size = UDim2.new(1, -4, 0, 26), BackgroundColor3 = WARNA.kartu,
+                BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 11,
+                TextColor3 = warnaBaris(nm), TextXAlignment = Enum.TextXAlignment.Left,
+                Text = "  " .. nm })
+            mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
+            b.MouseButton1Click:Connect(function()
+                -- ketuk item -> matiin mode "semua", toggle item ini
+                if getSemua() then
+                    setSemua(false)
+                    refreshSemua()
+                    for _, bb in pairs(baris) do end   -- warna di-refresh di bawah
+                end
+                pilihTbl[nm] = (not pilihTbl[nm]) or nil
+                b.TextColor3 = warnaBaris(nm)
+                simpan()
+            end)
+            baris[nm] = b
+        end
+        sc.CanvasSize = UDim2.new(0, 0, 0, ly.AbsoluteContentSize.Y + 8)
+    end
+    tblAll.MouseButton1Click:Connect(function()
+        setSemua(not getSemua())
+        refreshSemua()
+        for nm, b in pairs(baris) do b.TextColor3 = warnaBaris(nm) end
+        simpan()
+    end)
+    tblX.MouseButton1Click:Connect(function()
+        ov:Destroy()
+        if onTutup then pcall(onTutup) end
+    end)
+    refreshSemua()
+    gambar()
+end
+
+-- ============================================================
 -- TAB 1: AUTO BUY
 -- ============================================================
 -- ---------- saklar utama ----------
@@ -4042,63 +4217,126 @@ local lblGear = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Gear kebeli: 0" })
 
 -- ---------- Auto Plant Seed (v3.18) ----------
-local kPlant = kartu(104, tabFarm)
+local kPlant = kartu(120, tabFarm)
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Plant Seed" })
+-- baris "Jenis seed [picker]"
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -110, 0, 14),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
-    TextXAlignment = Enum.TextXAlignment.Left, Text = "tanam semua seed di tas ke kebun" })
-local tblPlant = mk("TextButton", { Parent = kPlant,
-    Position = UDim2.new(1, -84, 0, 12), Size = UDim2.new(0, 72, 0, 30),
-    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
-mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblPlant })
-mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
+    Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(0, 120, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
+local pickPlantSeed = mk("TextButton", { Parent = kPlant,
+    Position = UDim2.new(1, -128, 0, 30), Size = UDim2.new(0, 116, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickPlantSeed })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickPlantSeed })
+-- baris "Sebar tanam [input]"
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 52), Size = UDim2.new(0, 130, 0, 26),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
-    TextXAlignment = Enum.TextXAlignment.Left, Text = "Sebar tanam (radius)" })
+    Position = UDim2.new(0, 12, 0, 62), Size = UDim2.new(0, 120, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Sebar tanam" })
 local kotakSpread = mk("TextBox", { Parent = kPlant,
-    Position = UDim2.new(0, 148, 0, 52), Size = UDim2.new(1, -160, 0, 26),
+    Position = UDim2.new(1, -128, 0, 60), Size = UDim2.new(0, 116, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
     Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
     Text = tostring(state.plantSpread or 4) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakSpread })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSpread })
+-- baris "Plant seed [OFF]"
+mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 92), Size = UDim2.new(0, 120, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Plant seed" })
+local tblPlant = mk("TextButton", { Parent = kPlant,
+    Position = UDim2.new(1, -84, 0, 90), Size = UDim2.new(0, 72, 0, 26),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblPlant })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
 
--- ---------- Auto Collect + Auto Sell (v3.18) ----------
-local kPanen = kartu(94, tabFarm)
-mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
+-- ---------- Auto Collect (v3.18) ----------
+local kColl = kartu(152, tabFarm)
+mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Collect" })
-mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -110, 0, 14),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
-    TextXAlignment = Enum.TextXAlignment.Left, Text = "panen semua buah di kebun (Collect All)" })
-local tblCollect = mk("TextButton", { Parent = kPanen,
-    Position = UDim2.new(1, -84, 0, 10), Size = UDim2.new(0, 72, 0, 30),
+-- Jenis seed
+mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(0, 120, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
+local pickCollSeed = mk("TextButton", { Parent = kColl,
+    Position = UDim2.new(1, -128, 0, 30), Size = UDim2.new(0, 116, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickCollSeed })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickCollSeed })
+-- Jenis mutasi
+mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 62), Size = UDim2.new(0, 120, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis mutasi" })
+local pickCollMut = mk("TextButton", { Parent = kColl,
+    Position = UDim2.new(1, -128, 0, 60), Size = UDim2.new(0, 116, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickCollMut })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickCollMut })
+-- Threshold kg
+mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 92), Size = UDim2.new(0, 120, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Threshold kg" })
+local kotakKg = mk("TextBox", { Parent = kColl,
+    Position = UDim2.new(1, -128, 0, 90), Size = UDim2.new(0, 116, 0, 26),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Text = tostring(state.collectKgMin or 0) })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakKg })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakKg })
+-- Collect toggle
+mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 122), Size = UDim2.new(0, 120, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Collect" })
+local tblCollect = mk("TextButton", { Parent = kColl,
+    Position = UDim2.new(1, -84, 0, 120), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
     Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblCollect })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblCollect })
-mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 50), Size = UDim2.new(1, -110, 0, 18),
+
+-- ---------- Auto Sell (v3.18) ----------
+local kSell = kartu(96, tabFarm)
+mk("TextLabel", { Parent = kSell, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Sell" })
-mk("TextLabel", { Parent = kPanen, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 69), Size = UDim2.new(1, -110, 0, 14),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
-    TextXAlignment = Enum.TextXAlignment.Left, Text = "jual seluruh tas (Sell All)" })
-local tblSell = mk("TextButton", { Parent = kPanen,
-    Position = UDim2.new(1, -84, 0, 51), Size = UDim2.new(0, 72, 0, 30),
+-- Sell backpack full
+mk("TextLabel", { Parent = kSell, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 34), Size = UDim2.new(0, 160, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Sell backpack full" })
+local tblSellPenuh = mk("TextButton", { Parent = kSell,
+    Position = UDim2.new(1, -84, 0, 32), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
     Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
-mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblSell })
-mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSell })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblSellPenuh })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSellPenuh })
+-- Sell biasa
+mk("TextLabel", { Parent = kSell, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 64), Size = UDim2.new(0, 160, 0, 22),
+    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Sell biasa" })
+local tblSellBiasa = mk("TextButton", { Parent = kSell,
+    Position = UDim2.new(1, -84, 0, 62), Size = UDim2.new(0, 72, 0, 26),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblSellBiasa })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSellBiasa })
 
 -- ---------- gift + jual ----------
 local kGift = kartu(150, tabGift)
@@ -4331,6 +4569,22 @@ tblPlant.MouseButton1Click:Connect(function()
     catSaklar(tblPlant, state.autoPlantOn)
     simpan()
 end)
+-- picker jenis seed (plant)
+local function lblPickSeed(btn, semua, tbl)
+    if semua then btn.Text = "Semua" else
+        local n = 0; for _ in pairs(tbl) do n = n + 1 end
+        btn.Text = n > 0 and (n .. " dipilih") or "Pilih"
+    end
+end
+pickPlantSeed.MouseButton1Click:Connect(function()
+    bukaPicker("Jenis seed (Plant)",
+        function() return Seed.daftar or muatDaftarSeed() end,
+        state.plantPilih,
+        function() return state.plantSemua end,
+        function(v) state.plantSemua = v end,
+        function() lblPickSeed(pickPlantSeed, state.plantSemua, state.plantPilih) end)
+end)
+lblPickSeed(pickPlantSeed, state.plantSemua, state.plantPilih)
 kotakSpread.FocusLost:Connect(function()
     local n = tonumber(kotakSpread.Text)
     state.plantSpread = (n and n >= 0) and n or 4
@@ -4338,15 +4592,46 @@ kotakSpread.FocusLost:Connect(function()
     simpan()
 end)
 
--- v3.18: Auto Collect + Auto Sell toggle
+-- v3.18: Auto Collect
 tblCollect.MouseButton1Click:Connect(function()
     state.collectAllOn = not state.collectAllOn
     catSaklar(tblCollect, state.collectAllOn)
     simpan()
 end)
-tblSell.MouseButton1Click:Connect(function()
-    state.sellAllOn = not state.sellAllOn
-    catSaklar(tblSell, state.sellAllOn)
+pickCollSeed.MouseButton1Click:Connect(function()
+    bukaPicker("Jenis seed (Collect)",
+        function() return Seed.daftar or muatDaftarSeed() end,
+        state.collectSeedPilih,
+        function() return state.collectSemuaSeed end,
+        function(v) state.collectSemuaSeed = v end,
+        function() lblPickSeed(pickCollSeed, state.collectSemuaSeed, state.collectSeedPilih) end)
+end)
+pickCollMut.MouseButton1Click:Connect(function()
+    bukaPicker("Jenis mutasi",
+        function() return Seed.daftarMutasi() end,
+        state.collectMutPilih,
+        function() return state.collectSemuaMut end,
+        function(v) state.collectSemuaMut = v end,
+        function() lblPickSeed(pickCollMut, state.collectSemuaMut, state.collectMutPilih) end)
+end)
+lblPickSeed(pickCollSeed, state.collectSemuaSeed, state.collectSeedPilih)
+lblPickSeed(pickCollMut, state.collectSemuaMut, state.collectMutPilih)
+kotakKg.FocusLost:Connect(function()
+    local n = tonumber(kotakKg.Text)
+    state.collectKgMin = (n and n >= 0) and n or 0
+    kotakKg.Text = tostring(state.collectKgMin)
+    simpan()
+end)
+
+-- v3.18: Auto Sell (2 mode)
+tblSellPenuh.MouseButton1Click:Connect(function()
+    state.sellPenuhOn = not state.sellPenuhOn
+    catSaklar(tblSellPenuh, state.sellPenuhOn)
+    simpan()
+end)
+tblSellBiasa.MouseButton1Click:Connect(function()
+    state.sellBiasaOn = not state.sellBiasaOn
+    catSaklar(tblSellBiasa, state.sellBiasaOn)
     simpan()
 end)
 kotakDelay.FocusLost:Connect(function()
@@ -4661,22 +4946,41 @@ task.spawn(function()
     end
 end)
 
--- v3.18: loop AUTO COLLECT (Collect All) -- panen semua buah matang tiap 2s
+-- v3.18: loop AUTO COLLECT -- panen buah (filter seed/mutasi/kg) tiap 2s
 task.spawn(function()
     while isCurrentGen() do
         task.wait(2)
         if state.collectAllOn then
-            local n = pcall(Seed.collectAllOnce)
+            pcall(Seed.collectAllOnce)
         end
     end
 end)
 
--- v3.18: loop AUTO SELL (Sell All) -- jual seluruh tas tiap 5s
+-- v3.18: loop AUTO SELL -- 2 mode: penuh (backpack full) / biasa (terus)
 task.spawn(function()
     while isCurrentGen() do
-        task.wait(5)
-        if state.sellAllOn then
+        task.wait(4)
+        -- sell biasa: jual terus tiap ronde
+        if state.sellBiasaOn then
             pcall(Seed.sellAllOnce)
+        elseif state.sellPenuhOn then
+            -- sell pas backpack penuh (cek jumlah item tas > ambang)
+            local penuh = false
+            pcall(function()
+                local bp = player:FindFirstChildOfClass("Backpack")
+                local char = player.Character
+                local n = 0
+                for _, holder in ipairs({ char, bp }) do
+                    if holder then
+                        for _, t in ipairs(holder:GetChildren()) do
+                            if t:IsA("Tool") then n = n + 1 end
+                        end
+                    end
+                end
+                -- backpack GAG biasanya 200 slot -> jual kalau >= 190
+                if n >= 190 then penuh = true end
+            end)
+            if penuh then pcall(Seed.sellAllOnce) end
         end
     end
 end)
@@ -4689,7 +4993,8 @@ catSaklar(tblAfk, state.autoAfk)
 catSaklar(tblGrab, state.ambilSeedOn)
 catSaklar(tblPlant, state.autoPlantOn)
 catSaklar(tblCollect, state.collectAllOn)
-catSaklar(tblSell, state.sellAllOn)
+catSaklar(tblSellPenuh, state.sellPenuhOn)
+catSaklar(tblSellBiasa, state.sellBiasaOn)
 catSaklar(tblBaru, state.seedBaruAuto,
     "Seed baru auto-beli: NYALA", "Seed baru auto-beli: MATI")
 catSaklar(tblGift, state.terimaGift,
