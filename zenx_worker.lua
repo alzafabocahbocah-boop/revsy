@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "7.94-cf"
+local VERSION = "7.97-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4875,8 +4875,8 @@ end
 --     config tanpa client itu gak ada gunanya.
 -- ============================================================
 local PRESET = {
-    farm   = { place = "97598239454123",  game = "GAG 2",        sc = "STAR FARM", url = "gag2"   },
-    seed   = { place = "97598239454123",  game = "GAG 2",        sc = "STAR SEED", url = "seed"   },
+    farm   = { place = "129343810645058", game = "GAG 2",        sc = "STAR FARM", url = "gag2"   },   -- v7.97: map baru Panen Musim Gugur
+    seed   = { place = "129343810645058", game = "GAG 2",        sc = "STAR SEED", url = "seed"   },   -- v7.97: map baru Panen Musim Gugur
     market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
     gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
 }
@@ -5107,7 +5107,7 @@ local function setup_wizard()
     cfg.targets="FORCE"
     -- v4.5: pilih game -> otomatis isi Place ID (gak usah ketik manual)
     print(C.D.."  Pilih game buat tim ini:"..C.N)
-    print(C.D.."    1) GAG 2  (farm/garden)      -> 97598239454123"..C.N)
+    print(C.D.."    1) GAG 2  (farm/garden)      -> 129343810645058"..C.N)
     print(C.D.."    2) GAG 1  (garden)           -> 126884695634066"..C.N)
     print(C.D.."    3) GAG 1 MARKET (TradeWorld) -> 129954712878723"..C.N)
     -- v5.51: bawaan ikut game yang SEKARANG, bukan "1" mati. Masalahnya sama
@@ -5124,7 +5124,7 @@ local function setup_wizard()
     elseif pil == "3" then
         cfg.place_id = "129954712878723"; cfg.game_label = "GAG 1 MARKET"
     else
-        cfg.place_id = "97598239454123"; cfg.game_label = "GAG 2"
+        cfg.place_id = "129343810645058"; cfg.game_label = "GAG 2"
     end
     print(C.G.."  -> "..cfg.game_label.." (place "..cfg.place_id..")"..C.N)
 
@@ -8299,6 +8299,20 @@ if PERINTAH == "buka" then
     info(("Akun: %s  |  link: %s"):format(akun ~= "" and akun or "(gak kebaca)",
         linkClient or "public/default"))
 
+    -- v7.96: ekstrak accessCode/code dari linkClient (buat coba format WEB link
+    -- kayak Hip Hub/Pandora: https://roblox.com/share?code=... atau games/start).
+    local pid = cfg.place_id or "129343810645058"
+    local kode = nil
+    if linkClient then
+        kode = linkClient:match("accessCode=([%w%-]+)")
+            or linkClient:match("privateServerLinkCode=([%w%-]+)")
+            or linkClient:match("code=([%w%-]+)")
+            or linkClient:match("([%x][%x][%x][%x][%x][%x][%x][%x]+)")
+    end
+    local webShare = kode and ("https://www.roblox.com/share?code="..kode.."&type=Server") or ("https://www.roblox.com/games/"..pid)
+    local webStart = kode and ("https://www.roblox.com/games/start?placeId="..pid.."&accessCode="..kode) or ("https://www.roblox.com/games/"..pid)
+    local webPriv  = kode and ("https://www.roblox.com/games/"..pid.."?privateServerLinkCode="..kode) or ("https://www.roblox.com/games/"..pid)
+
     -- daftar CARA MASUKIN (dicoba satu-satu, jeda 10s). Fokus variasi CARA
     -- PANDORA (cmp ActivityProtocolLaunch + flag beda) + beberapa alternatif.
     -- am start -S (stop activity) DIBUANG -- ngerusak (user konfirmasi).
@@ -8311,6 +8325,21 @@ if PERINTAH == "buka" then
         { n = "T2", ket = "am stack remove pkg + A3 MULTIPLE_TASK (cara lain hapus task)",
           cmd = "am stack remove "..pkg.." 2>/dev/null; sleep 1; am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x18000000" },
         -- === CARA PANDORA PERSIS (dari logcat: -p pkg + -n cmp + flag 0x10000000) ===
+        -- === CARA WEB (Hip Hub/Pandora style: -S + web URL) ===
+        { n = "W", ket = "WEB SHARE + -S (Hip Hub persis): share?code=...&type=Server",
+          cmd = "am start -S -a android.intent.action.VIEW -d '"..webShare.."' -p "..pkg },
+        { n = "WS", ket = "WEB games/start + -S: games/start?placeId=X&accessCode=Y",
+          cmd = "am start -S -a android.intent.action.VIEW -d '"..webStart.."' -p "..pkg },
+        { n = "WP", ket = "WEB privateServerLinkCode + -S: games/X?privateServerLinkCode=Y",
+          cmd = "am start -S -a android.intent.action.VIEW -d '"..webPriv.."' -p "..pkg },
+        -- === CARA HIP HUB (dari intip ps-ef panel Hip Hub -- AMAN + selalu masuk) ===
+        -- am start -S -a VIEW -d URL -p pkg. Kunci: -S (stop activity lama, start
+        -- fresh -> gak no-op ke Home, gak numpuk task). Simpel, tanpa cmp/flag,
+        -- Android routing sendiri. URL web share (kayak Pandora).
+        { n = "H", ket = "HIP HUB: -S + -p pkg (stop activity, deeplink kita)",
+          cmd = "am start -S -a android.intent.action.VIEW -d '"..url.."' -p "..pkg },
+        { n = "HN", ket = "HIP HUB + -n cmp: -S + -p + -n ActivityProtocolLaunch",
+          cmd = "am start -S -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch" },
         { n = "P", ket = "PANDORA PERSIS: -p pkg + -n cmp + NEW_TASK (deeplink)",
           cmd = "am start -a android.intent.action.VIEW -d '"..url.."' -p "..pkg.." -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch -f 0x10000000" },
         { n = "PW", ket = "PANDORA + WEB URL (kalau ada share link) -p + -n + NEW_TASK",
@@ -10143,7 +10172,7 @@ end
 -- Balikin: accessCode string, atau nil + alasan.
 function getps_akun(cfg, cookie)
     if not cookie or cookie == "" then return nil, "cookie kosong" end
-    local place = cfg.place_id or "97598239454123"
+    local place = cfg.place_id or "129343810645058"
     local tmp = (os.getenv("HOME") or ".") .. "/nx_getps.txt"
     os.remove(tmp)
     local hf = io.open(tmp, "w")
