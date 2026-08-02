@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.13-cf"
+local VERSION = "8.14-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3844,7 +3844,7 @@ end
 -- cek_batal: dipanggil di sela-sela client. Buka 10 client bisa makan
 -- 5-10 menit; tanpa ini, STANDBY dari panel gak kebaca sampe semuanya kelar.
 local TERAKHIR_BUKA = {}   -- v4.68: pkg -> kapan terakhir dibuka worker
-local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
+local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, paksaMasuk)
     local list = split(cfg.pkgs)
     local hasil = { ok = 0, gagal = 0, lewat = 0, nama_gagal = {} }
     local urut = 0
@@ -4319,7 +4319,9 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                 -- v7.40: mode barengan maks 3x tembak (user minta). Kalau 3x gak
                 -- masuk game -> skip client ini (ketangkep ronde berikutnya).
                 -- Mode lain (lisensi habis) tetep pakai max_coba config.
-                local maxc = lisensiAda and 3 or (cfg.max_coba or 5)
+                -- v8.14: paksaMasuk (lisensi baru abis bypass) = 5x tiap 30s
+                -- (client HARUS masuk). start biasa = 3x. auto_key mati = cfg/5.
+                local maxc = paksaMasuk and 5 or (lisensiAda and 3 or (cfg.max_coba or 5))
                 urutBuka = urutBuka + 1   -- v7.39: nomor khusus yang DIBUKA
                 local totalBuka = perluBuka > 0 and perluBuka or #list
                 for coba = 1, maxc do
@@ -4375,12 +4377,21 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                     -- ini (ketangkep ronde berikutnya). jaga_depan berkala (3s)
                     -- yang urus jendela, JANGAN di sini (tembak 2x).
                     if lisensiAda then
-                        -- v8.13: TEMBAK BARENG (user minta) -- JANGAN cek_masuk_game
-                        -- 30s per client (bikin start lama: tiap client nunggu 30s +
-                        -- retry). Abis open_one, langsung anggap ditembak & lanjut
-                        -- client berikutnya (tembak cepet, gak nungguin). Yang belum
-                        -- masuk ketangkep LOOP BERKALA 90s (yg udah tembak bareng).
-                        sukses, lama, sebab = true, 0, nil
+                        if paksaMasuk then
+                            -- v8.14: LISENSI BARU (abis bypass) -- client HARUS
+                            -- beneran masuk game. cek grafis 30s. Kalau belum masuk,
+                            -- loop retry di blok bawah tembak ulang (maks 5x tiap 30s).
+                            local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
+                            if masukG then
+                                sukses, lama, sebab = true, 0, nil
+                            else
+                                sukses, lama, sebab = false, 0, ("belum masuk game (grafis %.0f MB)"):format(mbG or 0)
+                            end
+                        else
+                            -- v8.13: START BIASA -- WC gacor, tembak bareng (gak nunggu
+                            -- 30s per client). Yang belum masuk ketangkep loop 120s.
+                            sukses, lama, sebab = true, 0, nil
+                        end
                     else
                         -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
                         jaga_depan(cfg, mapLink)
@@ -6250,7 +6261,7 @@ local function run(cfg)
                     warn("Lisensi HILANG (cek berkala 10menit) -- MULAI DARI AWAL (bypass key + buka ulang)")
                     SUDAH_GRID = false
                     GRID_CACHE = nil
-                    open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false)
+                    open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false, true)
                     refresh_status(); lastStatusCek = os.time()
                 end
             end
@@ -7515,7 +7526,7 @@ local function run(cfg)
             -- v8.01: interval cek all 2 MENIT (dulu tiap ronde). Cek grafis SEMUA
             -- client SEKALI (1 su call). Hitung PROGRESS: berapa di game / total.
             -- Counter dinamis -- kalau ada yang out lagi, "masuk" turun (balik).
-            if (os.time() - (lastCekGrafis or 0)) >= 90 then
+            if (os.time() - (lastCekGrafis or 0)) >= 120 then
                 lastCekGrafis = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 local petaGrafis = grafis_semua(pkgList)
@@ -7547,7 +7558,7 @@ local function run(cfg)
                     end
                     -- interval berikutnya lebih cepet pas penuh (cek keluar sering).
                     -- trik: mundurin lastCekGrafis 30s -> 90-30 = 60s lagi cek.
-                    lastCekGrafis = os.time() - 30
+                    lastCekGrafis = os.time() - 40
                 end
             -- v8.12: TEMBAK SEMUA BARENG (user minta -- panel lain juga gitu).
             -- Dulu: loop tembak satu-satu + cek_masuk_game 30s per client (LAMA,
