@@ -507,34 +507,57 @@ function Seed.plantOnce()
     -- (plot milik kita), lalu tanam DI POSISI KARAKTER. Jadi karakter yang
     -- pindah ke tanah, seed ditanam pas di posisi kita. Nyebar karena tiap seed
     -- TP ke titik acak. Simpen posisi asli, balik setelah selesai.
-    local plotPos, plotUk = nil, nil
+    -- v3.18c: dari debug -- BoundingBox Y ketinggian (642, ada objek tinggi).
+    -- Pakai PlotSizeReference (area tanam asli: center + size X/Z) + Y tanah
+    -- dari SpawnPoint / tanaman yg ada (~143-146). BUKAN bounding box.
+    local areaC, areaX, areaZ, yTanah = nil, nil, nil, nil
     pcall(function()
         local g = workspace:FindFirstChild("Gardens")
         if not g then return end
         local uid = player.UserId
-        for _, plot in ipairs(g:GetChildren()) do
-            local own = plot:GetAttribute("OwnerUserId")
-            local ownNm = plot:GetAttribute("Owner")
-            if own == uid or ownNm == player.Name then
-                if plot:IsA("Model") then
-                    local cf, size = plot:GetBoundingBox()
-                    plotPos, plotUk = cf.Position, size
+        local plot = nil
+        for _, pl in ipairs(g:GetChildren()) do
+            local own = pl:GetAttribute("OwnerUserId")
+            local ownNm = pl:GetAttribute("Owner")
+            if own == uid or ownNm == player.Name then plot = pl; break end
+        end
+        if not plot then return end
+        -- area tanam dari PlotSizeReference (paling akurat)
+        local ref = plot:FindFirstChild("PlotSizeReference")
+        if ref and ref:IsA("BasePart") then
+            areaC = ref.Position
+            areaX = ref.Size.X * 0.45   -- 90% area biar gak keluar pagar
+            areaZ = ref.Size.Z * 0.45
+            yTanah = ref.Position.Y
+        end
+        -- Y tanah PALING akurat: dari tanaman yg udah ada
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if plant:GetAttribute("PlantId") then
+                    local ok, piv = pcall(function() return plant:GetPivot().Position end)
+                    if ok and piv then yTanah = piv.Y; break end
                 end
-                break
+            end
+        end
+        -- fallback area: SpawnPoint
+        if not areaC then
+            local sp = plot:FindFirstChild("SpawnPoint")
+            if sp and sp:IsA("BasePart") then
+                areaC = sp.Position; areaX = 40; areaZ = 15
+                yTanah = yTanah or sp.Position.Y
             end
         end
     end)
     local posAsli = hrp.CFrame   -- simpen buat balik
     local ditanam = 0
-    -- cari titik di tanah kebun (acak dalam area plot)
+    -- titik tanam: acak dalam area tanam (PlotSizeReference), Y = tanah
     local function titikTanah()
-        if plotPos and plotUk then
-            local sx = plotUk.X * 0.4
-            local sz = plotUk.Z * 0.4
+        if areaC and areaX and areaZ and yTanah then
             return Vector3.new(
-                plotPos.X + (math.random()*2-1) * sx,
-                plotPos.Y + 3,
-                plotPos.Z + (math.random()*2-1) * sz)
+                areaC.X + (math.random()*2-1) * areaX,
+                yTanah + 3,
+                areaC.Z + (math.random()*2-1) * areaZ)
         end
         return hrp.Position   -- fallback: posisi sekarang
     end
