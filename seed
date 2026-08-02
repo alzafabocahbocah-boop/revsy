@@ -503,9 +503,10 @@ function Seed.plantOnce()
         end
     end
     if #seeds == 0 then return 0 end
-    -- v3.18: CARI POSISI SENDIRI -- sebar di AREA KEBUN (plot milik kita),
-    -- bukan cuma sekitar karakter. Ambil bounding box plot -> acak titik di
-    -- dalamnya. Fallback: sekitar karakter (kalau plot gak ketemu).
+    -- v3.18: AUTO TP KE TANAH -- tiap tanam, TP karakter ke titik di area kebun
+    -- (plot milik kita), lalu tanam DI POSISI KARAKTER. Jadi karakter yang
+    -- pindah ke tanah, seed ditanam pas di posisi kita. Nyebar karena tiap seed
+    -- TP ke titik acak. Simpen posisi asli, balik setelah selesai.
     local plotPos, plotUk = nil, nil
     pcall(function()
         local g = workspace:FindFirstChild("Gardens")
@@ -523,31 +524,35 @@ function Seed.plantOnce()
             end
         end
     end)
-    local r = tonumber(state.plantSpread) or 4
+    local posAsli = hrp.CFrame   -- simpen buat balik
     local ditanam = 0
-    -- fungsi cari titik tanam
-    local function titikTanam()
+    -- cari titik di tanah kebun (acak dalam area plot)
+    local function titikTanah()
         if plotPos and plotUk then
-            -- acak dalam area plot (pakai 80% biar gak keluar pagar)
             local sx = plotUk.X * 0.4
             local sz = plotUk.Z * 0.4
             return Vector3.new(
                 plotPos.X + (math.random()*2-1) * sx,
-                plotPos.Y + 5,
+                plotPos.Y + 3,
                 plotPos.Z + (math.random()*2-1) * sz)
         end
-        -- fallback: sekitar karakter + sebar radius
-        local pos = hrp.Position
-        if r > 0 then
-            pos = pos + Vector3.new((math.random()*2-1)*r, 0, (math.random()*2-1)*r)
-        end
-        return pos
+        return hrp.Position   -- fallback: posisi sekarang
     end
     for _, s in ipairs(seeds) do
         if not state.autoPlantOn then break end
-        local pos = titikTanam()
+        -- TP karakter ke titik tanah
+        local titik = titikTanah()
+        pcall(function() hrp.CFrame = CFrame.new(titik) end)
+        task.wait(0.08)   -- kasih waktu posisi ke-register server
+        -- tanam DI POSISI KARAKTER (posisi kita sekarang)
+        local pos = hrp.Position
         pcall(function() p:Fire(pos, s.name, s.tool) end)
         ditanam = ditanam + 1
+        task.wait(0.05)
+    end
+    -- balik ke posisi asli
+    if posAsli and hrp and hrp.Parent then
+        pcall(function() hrp.CFrame = posAsli end)
     end
     return ditanam
 end
