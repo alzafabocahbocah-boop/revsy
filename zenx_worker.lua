@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.10-cf"
+local VERSION = "8.11-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2532,11 +2532,27 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
             -- -S + -p DOANG (Android routing sendiri) = aman. Tiru persis.
             inner = "am start -S -a android.intent.action.VIEW -d '"..url.."' -p "..pkg
         else
-            -- normal (tanpa -S): cara Pandora persis (-p + -n + NEW_TASK)
-            inner = "am start -a android.intent.action.VIEW -d '"..url.."'"
+            -- v8.10: CARA WC (JACKPOT). Web URL + NEW_TASK|CLEAR_TOP (0x14000000),
+            -- TANPA -S, TANPA force-stop. Terbukti: masuk game + bisa rejoin DARI
+            -- DALAM game, client lain AMAN (gak keluar). Deep link roblox:// nyangkut
+            -- Home; web URL + CLEAR_TOP nge-reset activity Home tanpa stop app.
+            -- Konversi ke web URL inline (gak bikin fungsi baru -- batas 200 lokal):
+            local pid_w = cfg.place_id or "129343810645058"
+            local kode_w = (url:match("accessCode=([%w%-]+)")
+                or url:match("linkCode=([%w%-]+)")
+                or url:match("privateServerLinkCode=([%w%-]+)")
+                or url:match("code=([%w%-]+)"))
+            local url_web
+            if url:find("share%?code=") or url:find("/share%?") then
+                url_web = url   -- link share -> pakai apa adanya (udah http)
+            elseif kode_w then
+                url_web = "https://www.roblox.com/games/start?placeId="..pid_w.."&accessCode="..kode_w
+            else
+                url_web = "https://www.roblox.com/games/start?placeId="..pid_w
+            end
+            inner = "am start -a android.intent.action.VIEW -d '"..url_web.."'"
                 .. " -p "..pkg
-                .. " -n "..pkg.."/com.roblox.client.ActivityProtocolLaunch"
-                .. " -f 0x10000000"
+                .. " -f 0x14000000"
             if pakai_wm and wm > 0 then
                 inner = inner .. " --windowingMode " .. wm
             end
