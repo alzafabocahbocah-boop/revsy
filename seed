@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.20"
+local VERSI = "3.21"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -270,6 +270,12 @@ local state = {
     giftSeedPilih  = {},      -- { ["Gold"]=true } seed yg dikirim
     giftGearPilih  = {},      -- { ["Sprinkler"]=true } gear yg dikirim
 
+    -- v3.20: AUTO BUY GEAR (dari panel)
+    gearOn        = false,    -- auto beli gear
+    gearSemua     = false,    -- true = semua gear di stok, false = gearPilih
+    gearPilih     = {},       -- { ["Super Sprinkler"]=true } gear yg dibeli
+    gearMaxHarga  = 0,        -- harga maks (0 = bebas)
+
     -- v1.3: terima gift + jual pas harga lagi mahal
     terimaGift    = false,    -- v3.5: MATI bawaan (dulu true)
     jualOn        = false,    -- auto jual buah (sengaja MATI bawaan -- ini ngejual barang)
@@ -356,6 +362,8 @@ local function simpan()
             hideVisualOn = state.hideVisualOn,
             giftMailTarget = state.giftMailTarget, giftMailQty = state.giftMailQty,
             giftSeedPilih = state.giftSeedPilih, giftGearPilih = state.giftGearPilih,
+            gearOn = state.gearOn, gearSemua = state.gearSemua,
+            gearPilih = state.gearPilih, gearMaxHarga = state.gearMaxHarga,
             panelUrl = state.panelUrl, panelKunci = state.panelKunci,
         }))
     end)
@@ -1432,6 +1440,28 @@ local GEAR_KATA = {
 
 -- Nama gear dicocokin dari daftar ASLI di game (bukan hardcoded), biar tetep
 -- kena walau penulisannya beda ("Super Sprinkler" / "SuperSprinkler" / dsb).
+-- v3.20: harga gear dari GearShopData.Data (by ItemName)
+Seed._gearHarga = nil
+function Seed.hargaGear(nama)
+    if not Seed._gearHarga then
+        Seed._gearHarga = {}
+        pcall(function()
+            local sm = RS:FindFirstChild("SharedModules")
+            local mod = sm and sm:FindFirstChild("GearShopData")
+            if not mod then return end
+            local ok, data = pcall(require, mod)
+            if ok and type(data) == "table" and type(data.Data) == "table" then
+                for _, v in pairs(data.Data) do
+                    if type(v) == "table" and v.ItemName then
+                        Seed._gearHarga[tostring(v.ItemName)] = tonumber(v.Cost) or 0
+                    end
+                end
+            end
+        end)
+    end
+    return Seed._gearHarga[nama] or 0
+end
+
 function Seed.gearTarget()
     local out = {}
     pcall(function()
@@ -1440,14 +1470,26 @@ function Seed.gearTarget()
         local items = gs and gs:FindFirstChild("Items")
         if not items then return end
         for _, it in ipairs(items:GetChildren()) do
-            local ln = tostring(it.Name):lower()
-            for _, kata in ipairs(GEAR_KATA) do
-                local cocok = true
-                for _, k in ipairs(kata) do
-                    if not ln:find(k, 1, true) then cocok = false break end
+            local nm = it.Name
+            -- v3.20: pakai pilihan panel. gearSemua ON = semua gear di stok,
+            -- else cuma yg dicentang (gearPilih). fallback: GEAR_KATA lama.
+            local pilih = false
+            if state.gearSemua then
+                pilih = true
+            elseif state.gearPilih and next(state.gearPilih) then
+                pilih = state.gearPilih[nm] == true
+            else
+                -- fallback lama (Super WC/Sprinkler) kalau panel belum set
+                local ln = tostring(nm):lower()
+                for _, kata in ipairs(GEAR_KATA) do
+                    local cocok = true
+                    for _, k in ipairs(kata) do
+                        if not ln:find(k, 1, true) then cocok = false break end
+                    end
+                    if cocok then pilih = true break end
                 end
-                if cocok then out[#out+1] = it.Name break end
             end
+            if pilih then out[#out+1] = nm end
         end
     end)
     return out
@@ -1494,17 +1536,29 @@ function Seed.beliGearSekali()
 
     local fired = 0
     for _, nama in ipairs(target) do
-        if not (state.beliOn and isCurrentGen()) then break end
+        if not ((state.gearOn or state.beliOn) and isCurrentGen()) then break end
+        -- v3.20: batas harga gear (gearMaxHarga, 0 = bebas)
+        local maxH = tonumber(state.gearMaxHarga) or 0
+        if maxH > 0 then
+            local harga = Seed.hargaGear and Seed.hargaGear(nama) or 0
+            if harga > 0 and harga > maxH then
+                -- gear ini lebih mahal dari batas -> skip
+                goto lanjutGear
+            end
+        end
+        do
         local stok = Seed.stokGear(nama)
         if stok and stok > 0 then
             if stok > 20 then stok = 20 end
             for _ = 1, stok do
-                if not (state.beliOn and isCurrentGen()) then break end
+                if not ((state.gearOn or state.beliOn) and isCurrentGen()) then break end
                 pcall(function() p:Fire(nama) end)
                 fired = fired + 1
                 if fired % 5 == 0 then task.wait() end
             end
         end
+        end
+        ::lanjutGear::
     end
 
     if fired > 0 then
@@ -1523,7 +1577,7 @@ Seed._gearBeliAkhir = 0
 task.spawn(function()
     while isCurrentGen() do
         task.wait(5)
-        if isCurrentGen() and state.beliOn then
+        if isCurrentGen() and (state.gearOn or state.beliOn) then
             pcall(function()
                 local restock = nil
                 pcall(function()
@@ -4013,9 +4067,10 @@ local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
                      "terimaGift","jualOn","jualTanpaMult",
                      "petOn","petSemua","giftPetOn","autoAfk",
                      "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow",
-                     "ringanOn","ringanSuara","ringanKebun" }
+                     "ringanOn","ringanSuara","ringanKebun",
+                     "gearOn","gearSemua" }
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
-                     "maxPerSiklus","mutasiMaxKali" }
+                     "maxPerSiklus","mutasiMaxKali","gearMaxHarga" }
 
 -- v3.1: ringkasan filter pet yang BENERAN lagi dipakai. Perlu ditampilin
 -- karena kalau setelan panel gak nyampe, script diam-diam jalan pakai setelan
@@ -4158,6 +4213,11 @@ function Seed.pakaiCfgPanel(r)
         local baru = {}
         for _, nm in ipairs(c.petPilih) do if type(nm) == "string" then baru[nm] = true end end
         state.petPilih = baru; ubah[#ubah+1] = "petPilih(" .. #c.petPilih .. ")"
+    end
+    if type(c.gearPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.gearPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.gearPilih = baru; ubah[#ubah+1] = "gearPilih(" .. #c.gearPilih .. ")"
     end
 
     if #ubah > 0 then
@@ -4494,7 +4554,33 @@ function Seed.kirimKatalog()
 
     if #pets == 0 and #seeds == 0 then return end
 
-    local r = panelReq("/katalog", "POST", { pets = pets, seeds = seeds, detail = detail })
+    -- v3.20: daftar GEAR dari GearShopData.Data (ItemName + Cost + Rarity).
+    local gears = {}
+    pcall(function()
+        local sm = RS:FindFirstChild("SharedModules")
+        local mod = sm and sm:FindFirstChild("GearShopData")
+        if not mod then return end
+        local ok, data = pcall(require, mod)
+        if not (ok and type(data) == "table" and type(data.Data) == "table") then return end
+        for _, v in pairs(data.Data) do
+            if type(v) == "table" and v.ItemName then
+                local nm = tostring(v.ItemName)
+                -- skip yg disembunyiin dari shop (PetTeleporter dll)
+                if not v.HideFromShop then
+                    gears[#gears+1] = nm
+                    detail[nm] = {
+                        tampil = nm,
+                        harga  = tonumber(v.Cost) or 0,
+                        rarity = tostring(v.Rarity or "?"),
+                        rilis  = true,
+                    }
+                end
+            end
+        end
+        table.sort(gears)
+    end)
+
+    local r = panelReq("/katalog", "POST", { pets = pets, seeds = seeds, gears = gears, detail = detail })
     local body = r and (r.Body or r.body)
     if body then
         local ok, d = pcall(function() return HS:JSONDecode(body) end)
