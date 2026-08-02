@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.07-cf"
+local VERSION = "8.08-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4399,7 +4399,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast)
                         end
                         -- v8.05: tembak pakai -S (restart activity, Hip Hub style,
                         -- aman -- gak force-stop app/service). Buat client nyangkut.
-                        open_one(cfg, pkg, link_c, "buka-awal", true)  -- pakai_S=true
+                        open_one(cfg, pkg, link_c, "buka-awal")  -- v8.08: BUANG -S (masih rusak). re-join murni.
                         TERAKHIR_BUKA[pkg] = os.time()
                     elseif nyangkut then
                         warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
@@ -7538,7 +7538,7 @@ local function run(cfg)
                             -- force-stop app+service) -> gak ngerusak client lain.
                             tambahLog(("[grafis] %s belum masuk (%.0f MB) -> tembak -S (restart activity)"):format(
                                 akun or nama, mbG or 0))
-                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out", true)  -- pakai_S=true
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")  -- v8.08: BUANG -S (masih rusak). re-join murni.
                             TERAKHIR_BUKA[pkg] = os.time()
                             jaga_depan(cfg, mapLink)
                             masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
