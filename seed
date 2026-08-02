@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.22"
+local VERSI = "3.23"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2676,6 +2676,48 @@ end
 -- Gunanya: mastiin harga & nama field-nya bener, bukan tebakan. Kalau ada
 -- yang gak cocok, hasilnya tinggal ditempel biar kodenya disetel ke kenyataan.
 -- ============================================================
+-- v3.23: cek kenapa auto buy gear gak jalan. Panggil:
+--   getgenv().StarSeed.cekGear()
+function Seed.cekGear()
+    local out = {}
+    local function c(s) out[#out+1] = tostring(s); print(s) end
+    c("===== CEK GEAR BUY =====")
+    c("gearOn = " .. tostring(state.gearOn))
+    c("gearSemua = " .. tostring(state.gearSemua))
+    c("gearMaxHarga = " .. tostring(state.gearMaxHarga))
+    local gp = state.gearPilih or {}
+    local cnt, list = 0, {}
+    for k, v in pairs(gp) do if v then cnt = cnt + 1; list[#list+1] = tostring(k) end end
+    c("gearPilih = " .. cnt .. " gear: " .. table.concat(list, ", "))
+    if cnt == 0 and not state.gearSemua then
+        c(">>> MASALAH: gearPilih KOSONG + gearSemua OFF -> gak beli apa2!")
+        c(">>> pilih gear di panel, ATAU nyalain 'Beli semua jenis gear'")
+    end
+    -- stok toko sekarang
+    c("--- stok toko ---")
+    pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        local gs = sv and sv:FindFirstChild("GearShop")
+        local items = gs and gs:FindFirstChild("Items")
+        if not items then c("  GearShop.Items GAK ADA"); return end
+        for _, it in ipairs(items:GetChildren()) do
+            local stk = it:IsA("ValueBase") and it.Value or it:GetAttribute("Stock") or "?"
+            c("  '" .. it.Name .. "' stok=" .. tostring(stk))
+        end
+    end)
+    -- target
+    local ok, tgt = pcall(function() return Seed.gearTarget() end)
+    c("--- gearTarget (yg bakal dibeli) ---")
+    if ok and type(tgt) == "table" then
+        if #tgt == 0 then c("  KOSONG -> gearPilih gak cocok stok, atau stok kosong")
+        else c("  " .. #tgt .. ": " .. table.concat(tgt, ", ")) end
+    end
+    c("log terakhir: " .. tostring(Seed._logGear))
+    c("===== SELESAI =====")
+    if setclipboard then pcall(function() setclipboard(table.concat(out, "\n")) end) end
+    return table.concat(out, "\n")
+end
+
 function Seed.debug()
     print("========== STAR SEED DEBUG v" .. VERSI .. " ==========")
     -- v3.9: isi mailbox ikut didump di sini, biar sekali jalan dapet semua
@@ -2980,16 +3022,19 @@ function Seed.tamePetSekali()
             -- v3.0: TUNGGU SAMPAI BENERAN DEKET, bukan asal jeda 0.2 detik.
             -- Nembak sebelum server ngakuin posisi baru kita = ditolak diam2,
             -- dan itu yang keliatan sebagai "teleport-teleport doang".
+            -- v3.23: dari test coba_tame, M1(pin)+M2(TP+tunggu1s) dua-duanya
+            -- works. Kunci: BENER-BENER deket sebelum fire. Perpanjang tunggu
+            -- (25x0.08=2s) + threshold jarak 8 (lebih longgar, pin bikin deket).
             local dekat = false
-            for _ = 1, 15 do
-                task.wait(0.06)
+            for _ = 1, 25 do
+                task.wait(0.08)
                 if not o.Parent then break end
                 local ok2, jarak = pcall(function()
                     return (hrp.Position - o.Position).Magnitude
                 end)
-                if ok2 and jarak and jarak < 6 then dekat = true break end
+                if ok2 and jarak and jarak < 8 then dekat = true break end
             end
-            task.wait(0.25)   -- kasih waktu posisi itu ke-replikasi ke server
+            task.wait(0.3)   -- kasih waktu posisi ke-replikasi ke server
 
             -- v3.0: BERHASIL itu gak cuma "objeknya ilang".
             -- Pas pet dijinakin, entri di WildPetRef biasanya TETEP ADA --
