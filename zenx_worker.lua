@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.16-cf"
+local VERSION = "8.18-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3845,6 +3845,13 @@ end
 -- 5-10 menit; tanpa ini, STANDBY dari panel gak kebaca sampe semuanya kelar.
 local TERAKHIR_BUKA = {}   -- v4.68: pkg -> kapan terakhir dibuka worker
 local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, paksaMasuk)
+    -- v8.18: `only` bisa STRING (1 pkg, lama) ATAU TABLE {pkg=true,...} (banyak
+    -- client dari FORCE:akun1,akun2). Helper: pkg ini termasuk yang mau dibuka?
+    local function pilihPkg(pkg)
+        if not only then return true end            -- gak ada filter -> semua
+        if type(only) == "table" then return only[pkg] == true end
+        return pkg == only                          -- string tunggal (lama)
+    end
     local list = split(cfg.pkgs)
     local hasil = { ok = 0, gagal = 0, lewat = 0, nama_gagal = {} }
     local urut = 0
@@ -4221,7 +4228,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     do
         local panelBuram0 = (ambil_num(stat0, "skrg") == nil)
         for _, pkg in ipairs(list) do
-            if (not only) or (pkg == only) then
+            if pilihPkg(pkg) then
                 local akun = mapAkun and mapAkun[pkg]
                 local baruDisentuh = TERAKHIR_BUKA[pkg] and
                                      (os.time() - TERAKHIR_BUKA[pkg]) < (cfg.konfirmasi_sec or 90)
@@ -4242,7 +4249,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     end
     local urutBuka = 0   -- nomor progress khusus yang DIBUKA (1/perluBuka)
     for _, pkg in ipairs(list) do
-        if (not only) or (pkg == only) then
+        if pilihPkg(pkg) then
             urut = urut + 1
 
             if cek_batal and cek_batal() then
@@ -6922,7 +6929,25 @@ local function run(cfg)
         end
 
         if hit and not adaPendingGanti and cooldownJalan then
-            local only = isi:match("FORCE:([%w%.%_]+)")
+            -- v8.18: FORCE bisa FORCE:akun1,akun2 -> cuma buka client itu.
+            -- FORCE polos = semua. Parse daftar akun (koma) -> set pkg.
+            local only = nil
+            local daftarAkun = isi:match("FORCE:([%w%.%_,]+)")
+            if daftarAkun then
+                only = {}
+                for ak in daftarAkun:gmatch("[^,]+") do
+                    ak = ak:gsub("%s+", "")
+                    -- cocokin akun -> pkg (via mapAkun kebalik), atau pkg langsung
+                    local ketemu = false
+                    for pkg, u in pairs(mapAkun or {}) do
+                        if u == ak or pkg == ak or pkg:gsub("com%.roblox%.", "") == ak then
+                            only[pkg] = true; ketemu = true
+                        end
+                    end
+                    if not ketemu and ak:find("roblox") then only[ak] = true end
+                end
+                if not next(only) then only = nil end   -- gak ada yg cocok -> semua
+            end
             if (now - lastOpen) >= cfg.reopen_sec then
                 -- dipanggil di sela-sela client: STANDBY dari panel langsung kebaca,
                 -- gak nunggu 10 client kelar dulu
@@ -8393,6 +8418,123 @@ end
 -- v7.74: `zenx buka <client>` -- TES SEMUA CARA MASUKIN 1 client, jeda 10s tiap
 -- cara. Biar user liat sendiri cara mana yang BERHASIL masuk + GAK ganggu client
 -- lain. Tiap cara dikasih nomor + nama, jeda 10s biar sempet diliat.
+-- v8.17: `zenx grid` -- cek UKURAN JENDELA tiap client vs grid target. Nampilin
+-- mana yang meleset (masih besar / gak ke-grid). `zenx grid fix` -> perbaiki:
+-- tulis prefs + rejoin CUMA yang meleset (satu-satu, jeda) biar App Cloner
+-- re-baca prefs. Client yang udah pas GAK diganggu.
+--
+-- KENAPA perlu: grid awal cuma TULIS prefs (gak force-stop) -- App Cloner cuma
+-- baca prefs pas window DIBUKA. Client yang udah kebuka + gak pernah rejoin =
+-- prefs udah bener TAPI window belum re-baca -> tetep besar. Ini yang mancing
+-- "beberapa RF grid tetep besar". Fix = paksa client itu re-launch (rejoin)
+-- biar baca prefs baru.
+if PERINTAH == "grid" then
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
+    if cfg.auto_grid ~= true then
+        err("auto_grid MATI di config. Nyalain dulu (zenx set auto_grid).") return
+    end
+    local pkgs = split(cfg.pkgs or "")
+    if #pkgs == 0 then err("Gak ada client di config.") return end
+    local fixMode = (arg and arg[2] == "fix")
+    info("=== CEK GRID SEMUA CLIENT ===")
+    -- hitung grid target (kotak tiap client yg SEHARUSNYA)
+    local peta, sebabGrid, kol, bar, W, H = grid_hitung(cfg)
+    if not peta then err("gagal hitung grid: " .. tostring(sebabGrid)) return end
+    info(("Layar %sx%s, grid %sx%s. Target petak: %d x %d px")
+        :format(tostring(W), tostring(H), tostring(kol), tostring(bar),
+                math.floor((W or 0)/(kol or 1)), math.floor((H or 0)/(bar or 1))))
+    print("")
+    -- cuma cek client yang JALAN
+    local aktif = {}
+    for _, pkg in ipairs(pkgs) do if pkg_running(pkg) then aktif[#aktif+1] = pkg end end
+    if #aktif == 0 then err("gak ada client jalan.") return end
+    -- toleransi: window dianggap "meleset" kalau lebar/tinggi beda > 20% dari target
+    local TOLERANSI = 0.20
+    local meleset = {}
+    for _, pkg in ipairs(aktif) do
+        local nama = pkg:gsub("com%.roblox%.", "")
+        local tgt = peta[pkg]
+        if not tgt then
+            print(("  %s%-8s  (gak ada di peta grid)%s"):format(C.D, nama, C.N))
+        else
+            local tgtW = (tgt.R or 0) - (tgt.L or 0)
+            local tgtH = (tgt.B or 0) - (tgt.T or 0)
+            -- bawa client ke depan dulu (biar jendela_kotak ukur yg bener)
+            bawa_depan(pkg); os.execute("sleep 1")
+            local kotak, sebabK = jendela_kotak(pkg)
+            if not kotak then
+                print(("  %s%-8s  gak keukur (%s)%s"):format(C.Y, nama, tostring(sebabK or "?"), C.N))
+            else
+                local aktW = (kotak.R or 0) - (kotak.L or 0)
+                local aktH = (kotak.B or 0) - (kotak.T or 0)
+                -- beda relatif lebar/tinggi
+                local dW = tgtW > 0 and math.abs(aktW - tgtW) / tgtW or 1
+                local dH = tgtH > 0 and math.abs(aktH - tgtH) / tgtH or 1
+                if dW > TOLERANSI or dH > TOLERANSI then
+                    print(("  %s%-8s  aktual %dx%d  target %dx%d  <- MELESET%s")
+                        :format(C.R, nama, aktW, aktH, tgtW, tgtH, C.N))
+                    meleset[#meleset+1] = pkg
+                else
+                    print(("  %s%-8s  aktual %dx%d  target %dx%d  ok%s")
+                        :format(C.G, nama, aktW, aktH, tgtW, tgtH, C.N))
+                end
+            end
+        end
+    end
+    print("")
+    if #meleset == 0 then
+        info("Semua client grid-nya udah pas. Gak ada yang perlu diperbaiki.")
+        return
+    end
+    info(("%d client MELESET: %s"):format(#meleset,
+        table.concat((function() local t = {} for _, p in ipairs(meleset) do
+            t[#t+1] = p:gsub("com%.roblox%.", "") end return t end)(), ", ")))
+    if not fixMode then
+        print("")
+        info("Buat perbaiki (tulis prefs + rejoin yang meleset): `zenx grid fix`")
+        info("(Cuma yang meleset yang di-rejoin, satu-satu + jeda. Yang pas aman.)")
+        return
+    end
+    -- FIX: tulis prefs + rejoin yang meleset, SATU-SATU + jeda (biar gak mati bareng)
+    print("")
+    info("=== PERBAIKI GRID (rejoin yang meleset satu-satu) ===")
+    -- ambil link PS per client dari panel (biar rejoin masuk ke PS yg bener).
+    -- kalau gagal, open_one pakai link default cfg (tetep jalan -- link nil).
+    local mapLink = {}
+    pcall(function()
+        local akun2pkg = {}
+        for _, pkg in ipairs(aktif) do
+            local u = baca_username(pkg)
+            if u then akun2pkg[u] = pkg end
+        end
+        local r = api_get(cfg, "/assign-ps?tim=" .. cfg.tim)
+        if r then
+            for obj in tostring(r):gmatch("{(.-)}") do
+                local ak = obj:match('"akun"%s*:%s*"(.-)"')
+                local lk = obj:match('"link"%s*:%s*"(.-)"')
+                if ak and lk and akun2pkg[ak] then mapLink[akun2pkg[ak]] = lk end
+            end
+        end
+    end)
+    for i, pkg in ipairs(meleset) do
+        local nama = pkg:gsub("com%.roblox%.", "")
+        info(("[%d/%d] %s -> tulis prefs + rejoin"):format(i, #meleset, nama))
+        -- tulis prefs posisi grid dulu
+        if peta[pkg] then
+            local ok, ket = tata_satu(pkg, peta[pkg])
+            info(("   prefs: %s%s"):format(ok and "ok" or "GAGAL ", tostring(ket or "")))
+        end
+        -- rejoin client ini (open_one re-launch -> App Cloner baca prefs baru)
+        open_one(cfg, pkg, mapLink[pkg], "grid-fix")
+        info("   rejoin dikirim, jeda 8s...")
+        os.execute("sleep 8")   -- jeda antar client: hindari mati bareng
+    end
+    print("")
+    info("Selesai. Cek ulang: `zenx grid` (tunggu ~30s biar client kebuka penuh).")
+    return
+end
+
 -- v7.88: `zenx grafis` -- cek grafis SEMUA client sekaligus (1 su call). Nampilin
 -- grafis MB + status (di game / out) tiap client. Cepet (gak per-client).
 if PERINTAH == "grafis" then
