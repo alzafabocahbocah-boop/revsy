@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.69"
+local VERSI = "3.70"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -746,10 +746,12 @@ function Seed.plantOnce()
             task.wait(0.15)
         end
     end
-    -- v3.69: RADIUS = seluruh petak (biar tanam penuh 1 petak dari tengah).
-    -- Pakai areaX/areaZ (setengah-ukuran petak * 0.45). Ambil yg TERBESAR biar
-    -- nutup sudut petak. plantSpread jadi batas minimal (kalau petak kecil).
-    local RADIUS = math.max(areaX or 4, areaZ or 4, state.plantSpread or 4)
+    -- v3.70: RADIUS X & Z TERPISAH (petak persegi panjang, bukan lingkaran).
+    -- Dulu radius = max(X,Z) = lingkaran -> di petak 44x16, lingkaran R20 KELUAR
+    -- di Z (cuma 7 lebar) -> titik valid cuma sumbu X = keliatan di pinggir/pojok.
+    -- Sekarang: batas X = areaX, batas Z = areaZ (ikut kotak petak) -> isi PENUH.
+    local RADX = math.max(areaX or 4, state.plantSpread or 4)
+    local RADZ = math.max(areaZ or 4, state.plantSpread or 4)
     local RAPET = 1   -- jarak antar tanaman (rapet)
     local ditanam = 0
     local hitungTipe = {}
@@ -804,21 +806,21 @@ function Seed.plantOnce()
         task.wait(0.2)
         local yPakai = yTanah
         local pusat = areaC   -- pusat tanam = tengah petak
-        -- generate titik grid rapet dalam radius, pusat = TENGAH PETAK
+        -- generate titik grid rapet dalam KOTAK petak (X sampai RADX, Z sampai RADZ)
         local titik = {}
-        local n = math.floor(RADIUS / RAPET)
-        for ix = -n, n do
-            for iz = -n, n do
+        local nX = math.floor(RADX / RAPET)
+        local nZ = math.floor(RADZ / RAPET)
+        for ix = -nX, nX do
+            for iz = -nZ, nZ do
                 local px = pusat.X + ix * RAPET
                 local pz = pusat.Z + iz * RAPET
                 local dx = ix * RAPET
                 local dz = iz * RAPET
-                local jarak = math.sqrt(dx*dx + dz*dz)
-                -- cuma titik DALAM radius (lingkaran, bukan kotak)
-                if jarak <= RADIUS + 0.01 then
+                local jarak = math.sqrt(dx*dx + dz*dz)   -- buat urutan (jauh dulu)
+                do
                     local kunci = math.floor(px / RAPET + 0.5) .. "," .. math.floor(pz / RAPET + 0.5)
                     if not adaTanaman[kunci] then
-                        local sudut = math.atan2(dz, dx)   -- buat muter per ring
+                        local sudut = math.atan2(dz, dx)
                         titik[#titik+1] = { x = px, z = pz, r = jarak, a = sudut, k = kunci }
                     end
                 end
