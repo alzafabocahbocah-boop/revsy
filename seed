@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.03"
+local VERSI = "4.05"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -4690,14 +4690,30 @@ function Seed.cekKick()
         local kumpul, kode = {}, nil
         for _, d in ipairs(CoreGui:GetDescendants()) do
             if d:IsA("TextLabel") or d:IsA("TextButton") then
-                local t = tostring(d.Text or "")
-                if t:match("%S") then
-                    local l = t:lower()
-                    for _, k in ipairs(KICK_KATA) do
-                        if l:find(k, 1, true) then
-                            kumpul[#kumpul + 1] = t:gsub("%s+", " ")
-                            kode = kode or tonumber(t:match("[Ee]rror [Cc]ode:?%s*(%d+)"))
-                            break
+                -- v4.05: CUMA deteksi kalau text BENERAN KELIATAN di layar. Bug:
+                -- Roblox punya prompt disconnect bawaan yg SELALU ada di CoreGui
+                -- (hidden sampai beneran DC). cekKick baca text hidden -> rejoin
+                -- palsu terus. Fix: cek Visible + ancestor Visible + ukuran > 0.
+                local keliatan = d.Visible
+                if keliatan then
+                    -- cek semua ancestor Visible juga (kalau parent hidden, gak keliatan)
+                    local p = d.Parent
+                    for _ = 1, 8 do
+                        if not p or p == CoreGui then break end
+                        if p:IsA("GuiObject") and not p.Visible then keliatan = false; break end
+                        p = p.Parent
+                    end
+                end
+                if keliatan then
+                    local t = tostring(d.Text or "")
+                    if t:match("%S") then
+                        local l = t:lower()
+                        for _, k in ipairs(KICK_KATA) do
+                            if l:find(k, 1, true) then
+                                kumpul[#kumpul + 1] = t:gsub("%s+", " ")
+                                kode = kode or tonumber(t:match("[Ee]rror [Cc]ode:?%s*(%d+)"))
+                                break
+                            end
                         end
                     end
                 end
@@ -4707,17 +4723,14 @@ function Seed.cekKick()
         if #kumpul == 0 then return end
 
         local pesan = table.concat(kumpul, " | ")
-        -- sebab dibedain di SINI, di tempat pesannya kebaca. Worker gak bisa
-        -- bedain ini dari luar, jadi kalau gak dilakuin di sini ya gak
-        -- kejadian sama sekali.
         local l = pesan:lower()
         local sebab = "lain"
         if l:find("save data", 1, true) or l:find("didn't load", 1, true)
            or l:find("did not load", 1, true) then
-            sebab = "gagal-muat-data"      -- ngulang = obatnya
+            sebab = "gagal-muat-data"
         elseif l:find("banned", 1, true) or l:find("exploit", 1, true)
             or l:find("cheat", 1, true) then
-            sebab = "anti-cheat"           -- JANGAN diulang
+            sebab = "anti-cheat"
         elseif l:find("lost connection", 1, true) then
             sebab = "koneksi"
         end
@@ -4747,18 +4760,28 @@ function Seed.pantauKick()
                         place = tostring(game.PlaceId or ""),
                     })
                 end)
-                -- v4.03: AUTO-REJOIN kalau disconnect/kick APAPUN sebabnya
-                -- (termasuk anti-cheat -- user: gapapa rejoin aja).
+                -- v4.04: AUTO-REJOIN + COOLDOWN GLOBAL (tahan re-exec). BUG: tiap
+                -- rejoin = generasi baru = pantauKick baru -> kalau loading screen
+                -- masih ada text "rejoin"/"lost connection" -> deteksi LAGI -> rejoin
+                -- LAGI = LOOP. Fix: cooldown 90s pakai genv (persist antar generasi).
+                -- Rejoin cuma 1x per 90 detik, gak peduli berapa kali script re-exec.
                 if state.autoRejoinSeed then
-                    task.spawn(function()
-                        task.wait(2)   -- kasih jeda dikit
-                        local target = tonumber(state.telePlaceId) or 129343810645058
-                        warn(("[StarSeed] AUTO-REJOIN (%s) -> place %d"):format(k.sebab, target))
-                        pcall(function()
-                            local TS = game:GetService("TeleportService")
-                            TS:Teleport(target, player)
+                    local now = os.time()
+                    local lastRejoin = (getgenv and getgenv().ZenxRejoinLast) or 0
+                    if (now - lastRejoin) >= 90 then
+                        if getgenv then getgenv().ZenxRejoinLast = now end
+                        task.spawn(function()
+                            task.wait(2)
+                            local target = tonumber(state.telePlaceId) or 129343810645058
+                            warn(("[StarSeed] AUTO-REJOIN (%s) -> place %d"):format(k.sebab, target))
+                            pcall(function()
+                                local TS = game:GetService("TeleportService")
+                                TS:Teleport(target, player)
+                            end)
                         end)
-                    end)
+                    else
+                        warn(("[StarSeed] rejoin di-SKIP (cooldown, %ds lalu)"):format(now - lastRejoin))
+                    end
                 end
             end
             -- 3 detik: cukup rapat buat nangkep jendela sebelum DataModel
@@ -4895,7 +4918,9 @@ end
 if panelAktif() then Seed.startPanel() end
 -- v3.12: pemantau kick jalan TERPISAH dari startPanel -- dia perlu jalan walau
 -- panelnya belum siap, karena kick bisa kejadian kapan aja termasuk pas loading.
-pcall(Seed.pantauKick)
+-- v4.04: jeda sebelum pantauKick mulai (biar loading screen kelar dulu -- text
+-- "rejoin"/"lost connection" di loading gak ke-deteksi jadi false-positive).
+task.spawn(function() task.wait(20); pcall(Seed.pantauKick) end)
 
 -- ============================================================
 -- v1.6: SETELAN DARI PANEL WEB
