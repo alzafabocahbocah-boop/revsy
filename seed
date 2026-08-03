@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.77"
+local VERSI = "3.79"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -197,6 +197,28 @@ local function isCurrentGen() return genv.StarSeedGen == MY_GEN end
 
 local Seed = {}
 genv.StarSeed = Seed
+
+-- v3.79: DENYUT FILE -- tulis file penanda tiap 20 detik selama script hidup.
+-- Script CUMA jalan kalau BENERAN di game (disconnect = script mati). Jadi file
+-- ini = bukti "beneran main". Worker baca file lokal (0 request CF): kalau file
+-- gak ke-update > 90 detik = script mati = disconnect -> rejoin. Lebih akurat
+-- dari grafis RAM / activity (yang gak bisa bedain di-game vs layar disconnect).
+-- File pakai NAMA AKUN biar gak ketimpa antar client (kalau share folder Delta):
+--   zenx_denyut_<username>.txt  isi: "<os.time()>"
+-- + file umum zenx_denyut.txt (client sendiri) buat cek cepat.
+task.spawn(function()
+    local nama = player.Name
+    while isCurrentGen() do
+        pcall(function()
+            if writefile then
+                local ts = tostring(os.time())
+                writefile("zenx_denyut_" .. nama .. ".txt", ts)
+                writefile("zenx_denyut.txt", nama .. " " .. ts)
+            end
+        end)
+        task.wait(20)
+    end
+end)
 
 -- v3.24: STREAMING nyala di game ini -> objek jauh (pet liar, dll) gak ke-load
 -- di client, jadi dianggap hilang. Perbesar radius streaming SEKALI di awal
@@ -506,18 +528,28 @@ function Seed.grabSeed()
     for _, o in ipairs(packs) do
         if not state.ambilSeedOn then break end
         if o.Parent and o:IsDescendantOf(workspace) then
-            -- TP ke pack (deket biar prompt kefire) -- TETEP di sini, gak balik
-            pcall(function()
-                root.CFrame = CFrame.new(o.Position.X, o.Position.Y + 3, o.Position.Z)
-            end)
-            task.wait(0.12)
+            -- TP ke pack (deket biar prompt kefire). Tetep pin di pack + fire
+            -- BERULANG sampai pack BENER-BENER keambil (part ilang), maks 8x.
+            -- v3.78: dulu fire 1x langsung pindah -- kadang gak keambil. Sekarang
+            -- fire, cek pack ilang, kalau masih ada fire lagi (tunggu tiap 0.4s).
             local pp = o:FindFirstChildWhichIsA("ProximityPrompt")
                 or (o.Parent and o.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
             if pp and fireproximityprompt then
-                pcall(function() fireproximityprompt(pp) end)
-                pcall(function() fireproximityprompt(pp, pp.HoldDuration or 0) end)
-                diambil = diambil + 1
-                task.wait(0.12)
+                for _ = 1, 8 do
+                    if not (o.Parent and o:IsDescendantOf(workspace)) then break end  -- udah keambil
+                    -- pin ke pack tiap fire (biar tetep deket, prompt kefire)
+                    pcall(function()
+                        root.CFrame = CFrame.new(o.Position.X, o.Position.Y + 3, o.Position.Z)
+                    end)
+                    task.wait(0.15)
+                    pcall(function() fireproximityprompt(pp) end)
+                    pcall(function() fireproximityprompt(pp, pp.HoldDuration or 0) end)
+                    task.wait(0.4)   -- tunggu server proses ambil
+                end
+                -- keambil = part ilang (destroyed)
+                if not (o.Parent and o:IsDescendantOf(workspace)) then
+                    diambil = diambil + 1
+                end
             end
         end
     end
