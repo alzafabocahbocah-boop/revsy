@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.27-cf"
+local VERSION = "8.29-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2795,7 +2795,7 @@ local function tunggu_masuk_game(pkg, batas, cek_batal)
         ("grafis cuma %.1f -> %.1f MB"):format(dasar / 1024, puncak / 1024)
 end
 
-local function tunggu_jalan(pkg, batas, cek_batal)
+local function tunggu_jalan(pkg, batas, cek_batal, cfg, link)
     local mulai = os.time()
     local lastKabar = 0   -- v4.72: kabarin tiap 15 detik, biar gak keliatan diem
     -- v4.31: kalau prosesnya UDAH IDUP tapi belum sampai layar game, itu artinya
@@ -2844,7 +2844,29 @@ local function tunggu_jalan(pkg, batas, cek_batal)
                 cobaMasuk = cobaMasuk + 1
                 io.write(("      %s — di Home (%.0fMB), tembak masuk #%d...\n"):format(
                     pkg:gsub("com%%.roblox%%.",""), g/1024, cobaMasuk))
-                sh_silent("su -c 'am start -a android.intent.action.VIEW -p " .. pkg .. " 2>/dev/null'")
+                -- v8.29: TEMBAK PAKAI WEB URL (cara WC), bukan cuma '-p pkg'.
+                -- Dulu 'am start -a VIEW -p pkg' TANPA link = cuma bawa app ke
+                -- depan, GAK nyuruh join game -> stuck Home (3MB). Sekarang tembak
+                -- web URL + CLEAR_TOP (0x14000000) = beneran join game.
+                if cfg and link and link ~= "" then
+                    local pid_w = cfg.place_id or "129343810645058"
+                    local kode_w = (link:match("accessCode=([%w%-]+)")
+                        or link:match("linkCode=([%w%-]+)")
+                        or link:match("privateServerLinkCode=([%w%-]+)")
+                        or link:match("code=([%w%-]+)"))
+                    local url_web
+                    if link:find("share%?code=") or link:find("/share%?") then
+                        url_web = link
+                    elseif kode_w then
+                        url_web = "https://www.roblox.com/games/start?placeId="..pid_w.."&accessCode="..kode_w
+                    else
+                        url_web = "https://www.roblox.com/games/start?placeId="..pid_w
+                    end
+                    sh_silent("su -c \"am start -a android.intent.action.VIEW -d '"..url_web.."' -p "..pkg.." -f 0x14000000\"")
+                else
+                    -- fallback lama (tanpa link) -- cuma bawa app ke depan
+                    sh_silent("su -c 'am start -a android.intent.action.VIEW -p " .. pkg .. " 2>/dev/null'")
+                end
                 os.execute("sleep 8")
                 if cek_batal and cek_batal() then return false, os.time()-mulai, "STANDBY" end
                 if not pkg_running(pkg) then
@@ -3866,6 +3888,16 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- pas cek lisensi di bawah.
     local lisensiAda = false
 
+    -- v8.28: CEK KEY juga di jalur FAST. Dulu lisensiAda cuma di-set di
+    -- `if not fast and not only` -- kalau FORCE masuk lewat fast=true,
+    -- lisensiAda tetep false -> masuk cabang "tutup dulu client" (close_all)
+    -- tiap FORCE, walau client udah jalan + key ada. Bikin client di-close
+    -- terus percuma. Fix: cek key langsung dari file di awal (lepas dari fast).
+    do
+        local kd = lisensi_keadaan(cfg)
+        if kd == "ada" or cfg.auto_key ~= true then lisensiAda = true end
+    end
+
     -- ============================================================
     -- v5.46: CEK LISENSI DELTA DULU, SEBELUM BUKA SEMUA CLIENT.
     --
@@ -3991,7 +4023,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     end
                     info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
                     open_one(cfg, pilih, mapLink and mapLink[pilih] or nil, "start-bypass")
-                    tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal)
+                    tunggu_jalan(pilih, tonumber(cfg.wait_sec) or 60, cek_batal, cfg, mapLink and mapLink[pilih] or nil)
                     -- v5.57: nunggu SINYAL, bukan nebak waktu. tunggu_jalan
                     -- cuma mastiin activity Roblox nongol -- dan itu udah kena
                     -- di halaman awal. Yang nandain beneran masuk game itu
@@ -4416,7 +4448,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
                         jaga_depan(cfg, mapLink)
                         local batasJalan = cfg.tunggu_sec or 45
-                        sukses, lama, sebab = tunggu_jalan(pkg, batasJalan, cek_batal)
+                        sukses, lama, sebab = tunggu_jalan(pkg, batasJalan, cek_batal, cfg, link_c)
                     end
                     -- v4.59: JANGAN blokir antrean buat nungguin bridge tiap client.
                     -- Dulu tiap client bisa makan 6+ menit (nunggu proses 3x batas +
