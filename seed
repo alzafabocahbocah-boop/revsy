@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.62"
+local VERSI = "3.63"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -476,37 +476,57 @@ end
 local Seed_ambilTerakhir = 0
 local Seed_posAsli = nil   -- simpen posisi asli buat balik setelah grab
 function Seed.grabSeed()
-    -- v3.57: ROMBAK TOTAL dari decompile SeedPackHandleController (kode game).
-    -- TEMUAN: seed pack fase bulan itu TOOL DI TAS (punya atribut "SeedPack"),
-    -- BUKAN objek di lapangan! Alur game:
-    --   IsTrackedTool(t) = t:GetAttribute("SeedPack") ~= nil
-    --   Tool.Activated -> OpenSeedPack:Fire(t:GetAttribute("SeedPack"))
-    -- Jadi ambil = cari Tool ber-attr SeedPack di tas -> fire OpenSeedPack(id).
-    -- GAK perlu TP/touch/prompt ke lapangan (folder SpawnClient cuma visual).
-    local open = pkt("SeedPack", "OpenSeedPack")
-    if not open then return 0, "OpenSeedPack remote gak ada" end
+    -- v3.63: FIX dari debug live. Pack fase bulan (Gold/Rainbow/Mega) jatuh di
+    -- Map.SeedPackSpawnServerLocations sbg BasePart {GoldSeed/RainbowSeed/
+    -- MegaSeed=true} + punya ProximityPrompt. Ambil = TP ke pack + fire prompt E.
+    -- (SeedPackSpawnClient cuma visual). Abis diambil -> jadi seed siap tanam.
+    local map = workspace:FindFirstChild("Map")
+    local folder = map and map:FindFirstChild("SeedPackSpawnServerLocations")
+    if not folder then return 0, nil end
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return 0, "karakter belum siap" end
 
-    local dibuka = 0
-    local holders = {}
-    local ch = player.Character
-    if ch then holders[#holders+1] = ch end
-    local bp = player:FindFirstChildOfClass("Backpack")
-    if bp then holders[#holders+1] = bp end
-
-    for _, holder in ipairs(holders) do
-        for _, t in ipairs(holder:GetChildren()) do
-            if t:IsA("Tool") then
-                local id = t:GetAttribute("SeedPack")
-                if id ~= nil then
-                    -- ini seed pack -> buka via remote (niru Tool.Activated game)
-                    pcall(function() open:Fire(id) end)
-                    dibuka = dibuka + 1
-                    task.wait(0.15)   -- jeda antar buka (game pakai loop 0.2s)
-                end
+    -- kumpulin pack yg ada (part ber-atribut seed + punya prompt)
+    local packs = {}
+    for _, o in ipairs(folder:GetDescendants()) do
+        if o:IsA("BasePart") then
+            local isSeed = o:GetAttribute("GoldSeed") or o:GetAttribute("RainbowSeed")
+                or o:GetAttribute("MegaSeed")
+            if isSeed and o.Position.Magnitude > 1 then
+                local pp = o:FindFirstChildWhichIsA("ProximityPrompt")
+                    or o.Parent:FindFirstChildWhichIsA("ProximityPrompt", true)
+                packs[#packs+1] = { part = o, prompt = pp }
             end
         end
     end
-    return dibuka, nil
+    if #packs == 0 then return 0, nil end
+
+    local diambil = 0
+    local posAsli = root.Position
+    for _, pk in ipairs(packs) do
+        if not state.ambilSeedOn then break end
+        if pk.part.Parent and pk.part:IsDescendantOf(workspace) then
+            -- TP ke pack (prompt butuh deket) -> fire prompt E
+            pcall(function()
+                root.CFrame = CFrame.new(pk.part.Position.X, root.Position.Y, pk.part.Position.Z)
+            end)
+            task.wait(0.12)
+            -- prompt bisa baru keload pas deket -> cari ulang
+            local pp = pk.prompt
+                or pk.part:FindFirstChildWhichIsA("ProximityPrompt")
+                or (pk.part.Parent and pk.part.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
+            if pp and fireproximityprompt then
+                pcall(function() fireproximityprompt(pp) end)
+                pcall(function() fireproximityprompt(pp, pp.HoldDuration or 0) end)
+                diambil = diambil + 1
+                task.wait(0.15)
+            end
+        end
+    end
+    -- balik ke posisi asli
+    pcall(function() root.CFrame = CFrame.new(posAsli) end)
+    return diambil, nil
 end
 
 -- v3.20: daftar jenis seed event yg lagi jatuh (buat picker filter grab).
