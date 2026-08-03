@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.67"
+local VERSI = "3.69"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -677,18 +677,39 @@ function Seed.plantOnce()
             if own == uid or ownNm == player.Name then plot = pl; break end
         end
         if not plot then return end
-        -- area tanam dari PlotSizeReference (paling akurat)
-        local ref = plot:FindFirstChild("PlotSizeReference")
-        if ref and ref:IsA("BasePart") then
-            areaC = ref.Position
-            areaX = ref.Size.X * 0.45   -- 90% area biar gak keluar pagar
-            areaZ = ref.Size.Z * 0.45
-            yTanah = ref.Position.Y
+        -- v3.68: AREA TANAM dari PlantAreaColumn (bukan PlotSizeReference yg SALAH).
+        -- Dari debug: ada 2 petak PlantAreaColumn1/2 (Y=143.6 permukaan asli),
+        -- terpisah (ada celah di tengah). PlotSizeReference nunjuk 1 area gabungan
+        -- 115x18 Y=147 -> center di CELAH kosong + Y kegedean 3.4 stud -> nanam di
+        -- atas + deteksi kebalik. Sekarang: pilih PlantArea TERDEKAT dari karakter,
+        -- pakai center + size + Y permukaan petak itu.
+        local petakArr = {}
+        for _, o in ipairs(plot:GetDescendants()) do
+            if o.Name:find("PlantArea") and o:IsA("BasePart") then
+                petakArr[#petakArr+1] = o
+            end
         end
-        -- v3.66: JANGAN pakai GetPivot tanaman buat yTanah. Dari debug tanah:
-        -- pivot tanaman = TENGAH batang (152.5), 6 stud DI ATAS tanah asli (146.5).
-        -- Bikin nanam di atas. Pakai PlotSizeReference.Y (146.5) = permukaan tanah
-        -- yg bener (sama dgn SpawnPoint). Kalau ref gak ada, baru fallback SpawnPoint.
+        if #petakArr > 0 then
+            -- pilih petak terdekat dari karakter (biar tanam di petak yg kita berdiri)
+            local terdekat, bestD
+            for _, pk in ipairs(petakArr) do
+                local d = math.abs(hrp.Position.X - pk.Position.X)
+                    + math.abs(hrp.Position.Z - pk.Position.Z)
+                if not bestD or d < bestD then bestD, terdekat = d, pk end
+            end
+            areaC = terdekat.Position
+            areaX = terdekat.Size.X * 0.45
+            areaZ = terdekat.Size.Z * 0.45
+            yTanah = terdekat.Position.Y + (terdekat.Size.Y / 2)  -- permukaan atas petak
+        end
+        -- fallback: PlotSizeReference kalau PlantArea gak ada
+        if not areaC then
+            local ref = plot:FindFirstChild("PlotSizeReference")
+            if ref and ref:IsA("BasePart") then
+                areaC = ref.Position; areaX = ref.Size.X * 0.45
+                areaZ = ref.Size.Z * 0.45; yTanah = ref.Position.Y
+            end
+        end
         -- fallback area: SpawnPoint
         if not areaC then
             local sp = plot:FindFirstChild("SpawnPoint")
@@ -725,7 +746,10 @@ function Seed.plantOnce()
             task.wait(0.15)
         end
     end
-    local RADIUS = state.plantSpread or 4   -- jarak MAX dari avatar (setting panel "Sebar tanam")
+    -- v3.69: RADIUS = seluruh petak (biar tanam penuh 1 petak dari tengah).
+    -- Pakai areaX/areaZ (setengah-ukuran petak * 0.45). Ambil yg TERBESAR biar
+    -- nutup sudut petak. plantSpread jadi batas minimal (kalau petak kecil).
+    local RADIUS = math.max(areaX or 4, areaZ or 4, state.plantSpread or 4)
     local RAPET = 1   -- jarak antar tanaman (rapet)
     local ditanam = 0
     local hitungTipe = {}
@@ -767,27 +791,26 @@ function Seed.plantOnce()
     -- + karakter mungkin MELAYANG (gak di tanah) -> game tanam di posisi karakter
     -- yg melayang. Sekarang: TP karakter TURUN ke yTanah dulu (napak tanah),
     -- terus tanam pas di yTanah (tanpa +3).
-    if yTanah then
-        local avatar0 = hrp.Position
-        -- v3.67: FIX LONCAT-LONCAT. Dulu (v3.65) PAKSA TP ke yTanah+3 TIAP loop
-        -- (0.5s) -> karakter di-set posisi terus = loncat. Sekarang: TP cuma kalau
-        -- karakter JAUH dari tanah (selisih > 5 stud). Kalau udah deket tanah
-        -- (kasus normal, selisih < 5), DIEM -- gak TP, gak loncat.
+    -- v3.69: TANAM MUTER dari TENGAH PETAK terdekat (bukan posisi karakter).
+    -- User mau tanam di tengah petak. Karakter TP ke tengah petak (areaC) dulu,
+    -- terus sebar muter dari situ. Pusat = areaC (center PlantArea terdekat),
+    -- Y = yTanah (permukaan petak, dari PlantArea.Y+size/2).
+    -- Urut titik: RING TERJAUH dulu -> muter -> makin rapet ke tengah terakhir.
+    if yTanah and areaC then
+        -- TP karakter ke TENGAH petak (biar tanam pas di tengah). +3 biar napak.
+        pcall(function()
+            hrp.CFrame = CFrame.new(areaC.X, yTanah + 3, areaC.Z)
+        end)
+        task.wait(0.2)
         local yPakai = yTanah
-        if math.abs(avatar0.Y - yTanah) > 5 then
-            pcall(function()
-                hrp.CFrame = CFrame.new(avatar0.X, yTanah + 3, avatar0.Z)
-            end)
-            task.wait(0.2)
-        end
-        local avatar = hrp.Position
-        -- generate titik grid rapet dalam radius, pusat avatar
+        local pusat = areaC   -- pusat tanam = tengah petak
+        -- generate titik grid rapet dalam radius, pusat = TENGAH PETAK
         local titik = {}
         local n = math.floor(RADIUS / RAPET)
         for ix = -n, n do
             for iz = -n, n do
-                local px = avatar.X + ix * RAPET
-                local pz = avatar.Z + iz * RAPET
+                local px = pusat.X + ix * RAPET
+                local pz = pusat.Z + iz * RAPET
                 local dx = ix * RAPET
                 local dz = iz * RAPET
                 local jarak = math.sqrt(dx*dx + dz*dz)
