@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.86"
+local VERSI = "3.87"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -3636,18 +3636,24 @@ function Seed.tamePetSekali()
             -- padahal masih perawan & masih harga dasar.
             -- Sekarang ditandai di BAWAH, dan cuma kalau jatah cobanya habis.
             local posisiAsal = hrp.CFrame
-            local nempel = true
-            local hb
-            pcall(function()
-                hb = game:GetService("RunService").Heartbeat:Connect(function()
-                    if nempel and o.Parent and hrp and hrp.Parent then
-                        pcall(function()
-                            hrp.CFrame = o.CFrame + Vector3.new(0, 2.5, 0)
-                            hrp.AssemblyLinearVelocity = Vector3.zero
-                        end)
-                    end
+            -- v3.87: GERAK HALUS ke pet (bukan PIN/TP loncat) -- kayak grabSeed.
+            -- User minta konsisten: gerak lerp ke pet, settle, baru fire. Gerak
+            -- halus bikin server update posisi (karakter beneran deket) -> tame
+            -- works. Gak pakai pin Heartbeat lagi.
+            local petPos = o.Position
+            local awalP = hrp.Position
+            local durasiP = 0.25
+            local tP = 0
+            while tP < durasiP do
+                if not o.Parent then break end
+                local dt = task.wait()
+                tP = tP + dt
+                local aP = math.min(tP / durasiP, 1)
+                pcall(function()
+                    hrp.CFrame = CFrame.new(awalP:Lerp(Vector3.new(petPos.X, petPos.Y + 2.5, petPos.Z), aP))
+                    hrp.AssemblyLinearVelocity = Vector3.zero
                 end)
-            end)
+            end
 
             -- v3.0: TUNGGU SAMPAI BENERAN DEKET, bukan asal jeda 0.2 detik.
             -- Nembak sebelum server ngakuin posisi baru kita = ditolak diam2,
@@ -3695,8 +3701,7 @@ function Seed.tamePetSekali()
                 task.wait(1.0)   -- jeda 1 detik (JANGAN spam, server nolak)
                 if udahKena() then kena = true break end
             end
-            nempel = false
-            pcall(function() if hb then hb:Disconnect() end end)
+            -- v3.87: gak ada pin/hb lagi (udah ganti gerak halus). balik ke asal.
             pcall(function() if hrp and hrp.Parent then hrp.CFrame = posisiAsal end end)
 
             -- v3.0: cek "direbut orang" LEPAS dari status kena. Dulu
