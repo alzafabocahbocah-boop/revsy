@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.49"
+local VERSI = "3.50"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -934,8 +934,21 @@ function Seed.shovelSeedOnce()
                 local ownerId = tonumber(plant.Name:match("^(%d+)_"))
                 local plantId = plant.Name
                 local seedName = plant:GetAttribute("SeedName") or "?"
-                local okType = state.shovelSemua or (state.shovelPilih[seedName] == true)
-                -- sisain min 1 per jenis
+                -- v3.50: deteksi mutasi tanaman -> key di shovelPilih bisa
+                -- "[MUT] <jenis>" (bermutasi) atau "<jenis>" (biasa). cocokin sesuai.
+                local mut = nil
+                for _, k in ipairs({ "Mutation", "Mutations", "Variant", "Variants" }) do
+                    local v = plant:GetAttribute(k)
+                    if type(v) == "string" and v ~= ""
+                       and v:lower() ~= "none" and v:lower() ~= "normal" then mut = v; break end
+                end
+                local low = tostring(seedName):lower()
+                if not mut and (low:find("gold") or low:find("rainbow") or low:find("mega")) then
+                    mut = "Mutasi"
+                end
+                local keyPilih = mut and ("[MUT] " .. seedName) or seedName
+                local okType = state.shovelSemua or (state.shovelPilih[keyPilih] == true)
+                -- sisain min 1 per jenis (pakai key yg sama biar konsisten)
                 local sisa = (typeCount[seedName] or 0) - (galiPerType[seedName] or 0)
                 local bolehGali = sisa > 1
                 if (not ownerId or ownerId == MY) and okType and #plantId >= 30 and bolehGali then
@@ -6163,11 +6176,14 @@ Seed._el.tblShovelAll.MouseButton1Click:Connect(function()
     end
 end)
 Seed._el.pickShovel.MouseButton1Click:Connect(function()
-    -- jenis seed dari tanaman di kebun kita (SeedName) + jumlah per jenis
+    -- jenis seed dari tanaman di kebun. PISAHIN: bermutasi (Gold/Rainbow/Mega/dll)
+    -- vs biasa. mutasi dibaca dari atribut Mutation/Variant tanaman. nama tampil:
+    -- "[MUT] <jenis>" buat yg bermutasi, "<jenis>" buat biasa. jumlah per grup.
     Seed._shovelJml = {}
     bukaPicker("Jenis seed shovel",
         function()
             local hitung = {}
+            local MUT_KEYS = { "Mutation", "Mutations", "Variant", "Variants" }
             pcall(function()
                 local g = workspace:FindFirstChild("Gardens")
                 local uid = player.UserId
@@ -6180,7 +6196,23 @@ Seed._el.pickShovel.MouseButton1Click:Connect(function()
                             if pls then
                                 for _, pl in ipairs(pls:GetChildren()) do
                                     local sn = pl:GetAttribute("SeedName")
-                                    if sn then hitung[sn] = (hitung[sn] or 0) + 1 end
+                                    if sn then
+                                        -- deteksi mutasi tanaman
+                                        local mut = nil
+                                        for _, k in ipairs(MUT_KEYS) do
+                                            local v = pl:GetAttribute(k)
+                                            if type(v) == "string" and v ~= ""
+                                               and v:lower() ~= "none" and v:lower() ~= "normal" then
+                                                mut = v; break
+                                            end
+                                        end
+                                        -- nama seed juga bisa nunjukin mutasi (Gold/Rainbow/Mega)
+                                        local low = tostring(sn):lower()
+                                        if not mut and (low:find("gold") or low:find("rainbow")
+                                           or low:find("mega")) then mut = "Mutasi" end
+                                        local key = mut and ("[MUT] " .. sn) or sn
+                                        hitung[key] = (hitung[key] or 0) + 1
+                                    end
                                 end
                             end
                         end
@@ -6188,10 +6220,13 @@ Seed._el.pickShovel.MouseButton1Click:Connect(function()
                 end
             end)
             Seed._shovelJml = hitung
-            -- urut by jumlah terbanyak (paling atas)
+            -- urut: bermutasi ([MUT]) dulu, terus by jumlah terbanyak
             local arr = {}
             for nm in pairs(hitung) do arr[#arr+1] = nm end
             table.sort(arr, function(a, b)
+                local am = a:find("^%[MUT%]") ~= nil
+                local bm = b:find("^%[MUT%]") ~= nil
+                if am ~= bm then return am end          -- bermutasi di atas
                 if hitung[a] ~= hitung[b] then return hitung[a] > hitung[b] end
                 return a < b
             end)
