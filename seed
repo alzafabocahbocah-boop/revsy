@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.57"
+local VERSI = "3.61"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -699,32 +699,105 @@ function Seed.plantOnce()
         -- di dalam kalau posisi X/Z masih dalam setengah-ukuran area (+ toleransi)
         if dx <= (areaX + 10) and dz <= (areaZ + 10) then diDalamKebun = true end
     end
+    -- v3.58: TANAM GRID RAPI dari POJOK. User mau tersusun: mulai dari pojok
+    -- kebun, grid 4 stud, sisir baris demi baris sampai deket avatar. GAK numpuk.
+    -- Titik yg udah ada tanaman di-SKIP (biar gak dobel). TP masuk kalau di luar.
     if not diDalamKebun and areaC and yTanah then
-        -- di LUAR kebun -> TP masuk SEKALI (ke center + geser). abis ini gak TP lagi.
-        local GESER_X = 25
-        local titikMasuk = Vector3.new(areaC.X + GESER_X, yTanah + 3, areaC.Z)
+        local titikMasuk = Vector3.new(areaC.X, yTanah + 3, areaC.Z)
         pcall(function() hrp.CFrame = CFrame.new(titikMasuk) end)
         task.wait(0.15)
     end
-    -- tanam di POSISI KARAKTER SEKARANG (di mana pun di kebun). gak pindah tiap seed.
-    local titikTanam = hrp.Position
+    local RADIUS = state.plantRadius or 4   -- jarak MAX dari avatar (setting user, default 4)
+    local RAPET = 1   -- jarak antar tanaman (rapet)
     local ditanam = 0
-    -- hitung berjalan per tipe (kebun awal + yg baru ditanam sesi ini)
     local hitungTipe = {}
     for tipe, n in pairs(kebunPerTipe) do hitungTipe[tipe] = n end
-    for _, s in ipairs(seeds) do
-        if not state.autoPlantOn then break end
-        -- v3.48: batas 200 per GRUP (Gold+Rainbow+Mega gabungan). sudah = jumlah
-        -- grup ini di kebun + yg baru ditanam sesi ini.
-        local grp = grupTipe(s.name)
-        local sudah = hitungTipe[grp] or 0
-        if sudah >= BATAS_TIPE then
-            -- grup ini udah 200 -> skip (jangan tanam lebih)
-        else
-            pcall(function() p:Fire(titikTanam, s.name, s.tool) end)
+
+    -- kumpulin posisi tanaman yg UDAH ada (biar titik yg keisi di-skip, gak dobel)
+    local adaTanaman = {}
+    pcall(function()
+        local gw = workspace:FindFirstChild("Gardens")
+        if gw then
+            local uid = player.UserId
+            for _, plot in ipairs(gw:GetChildren()) do
+                local own = plot:GetAttribute("OwnerUserId")
+                local ownNm = plot:GetAttribute("Owner")
+                if own == uid or ownNm == player.Name then
+                    local pls = plot:FindFirstChild("Plants")
+                    if pls then
+                        for _, pl in ipairs(pls:GetChildren()) do
+                            if pl:GetAttribute("PlantId") then
+                                local ok, piv = pcall(function() return pl:GetPivot().Position end)
+                                if ok and piv then
+                                    local kx = math.floor(piv.X / RAPET + 0.5)
+                                    local kz = math.floor(piv.Z / RAPET + 0.5)
+                                    adaTanaman[kx .. "," .. kz] = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- v3.60: TANAM MUTER ngelilingi AVATAR. Pusat = posisi karakter. Titik
+    -- rapet (grid RAPET stud) dalam radius MAX (setting user, default 4 stud).
+    -- Urut: RING TERJAUH dulu (deket radius max) -> muter penuh -> ring lebih
+    -- deket -> makin rapet ke avatar terakhir. Karakter DIEM.
+    if yTanah then
+        local yPakai = yTanah + 3
+        local avatar = hrp.Position
+        -- generate titik grid rapet dalam radius, pusat avatar
+        local titik = {}
+        local n = math.floor(RADIUS / RAPET)
+        for ix = -n, n do
+            for iz = -n, n do
+                local px = avatar.X + ix * RAPET
+                local pz = avatar.Z + iz * RAPET
+                local dx = ix * RAPET
+                local dz = iz * RAPET
+                local jarak = math.sqrt(dx*dx + dz*dz)
+                -- cuma titik DALAM radius (lingkaran, bukan kotak)
+                if jarak <= RADIUS + 0.01 then
+                    local kunci = math.floor(px / RAPET + 0.5) .. "," .. math.floor(pz / RAPET + 0.5)
+                    if not adaTanaman[kunci] then
+                        local sudut = math.atan2(dz, dx)   -- buat muter per ring
+                        titik[#titik+1] = { x = px, z = pz, r = jarak, a = sudut, k = kunci }
+                    end
+                end
+            end
+        end
+        -- urut: RING terjauh dulu (r besar->kecil), dalam ring sama muter by sudut
+        table.sort(titik, function(a, b)
+            if math.abs(a.r - b.r) > 0.01 then return a.r > b.r end
+            return a.a < b.a
+        end)
+
+        -- tanam tiap titik, terjauh dulu. v3.61: FIRE LANGSUNG tanpa wait per
+        -- seed (kayak gag2 "brutal") biar CEPET. task.wait cuma tiap 20 seed
+        -- (napas dikit biar gak freeze). Dulu wait 0.05 tiap seed -> super lambat.
+        for _, t in ipairs(titik) do
+            if not state.autoPlantOn then break end
+            if #seeds == 0 then break end
+            local dipakai = nil
+            for si = #seeds, 1, -1 do
+                local s = seeds[si]
+                local grp = grupTipe(s.name)
+                if (hitungTipe[grp] or 0) < BATAS_TIPE then
+                    dipakai = s; break
+                else
+                    table.remove(seeds, si)
+                end
+            end
+            if not dipakai then break end
+            local pos = Vector3.new(t.x, yPakai, t.z)
+            pcall(function() p:Fire(pos, dipakai.name, dipakai.tool) end)
+            local grp = grupTipe(dipakai.name)
+            hitungTipe[grp] = (hitungTipe[grp] or 0) + 1
+            adaTanaman[t.k] = true
             ditanam = ditanam + 1
-            hitungTipe[grp] = sudah + 1
-            task.wait(0.05)
+            if ditanam % 20 == 0 then task.wait() end   -- napas tiap 20, bukan tiap 1
         end
     end
     return ditanam
