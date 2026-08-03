@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.33-cf"
+local VERSION = "8.35-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6001,17 +6001,45 @@ local function run(cfg)
             if hitTop and (os.time() - (KICK_DIURUS["_grafisTop"] or 0)) >= 120 then
                 KICK_DIURUS["_grafisTop"] = os.time()
                 local pkgList = split(cfg.pkgs or "")
+                -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
+                -- semua 10). Parse daftar, cocokin sama mapAkun (pkg->username).
+                local daftarForce = isiTop:match("FORCE:([%w%.%_,]+)")
+                local setAkun = nil
+                if daftarForce then
+                    setAkun = {}
+                    for a in daftarForce:gmatch("[^,]+") do setAkun[a] = true end
+                end
                 local peta = grafis_semua(pkgList)
                 local perlu, diGame = 0, 0
+                local perluTembak = {}   -- v8.34: client OUT yg mau di-rejoin
                 for _, pkg in ipairs(pkgList) do
                     local ak = mapAkun and mapAkun[pkg]
-                    if not (ak and KICK_DIURUS["mati:" .. ak]) then
+                    -- skip cookie mati + (kalau FORCE:daftar) skip yg bukan di daftar
+                    local diForce = (not setAkun) or (ak and setAkun[ak])
+                    if diForce and not (ak and KICK_DIURUS["mati:" .. ak]) then
                         perlu = perlu + 1
-                        if (peta[pkg] or 0) >= GAME_AMBANG_KB then diGame = diGame + 1 end
+                        local g = peta[pkg] or 0
+                        if g >= GAME_AMBANG_KB then
+                            diGame = diGame + 1
+                        else
+                            -- OUT -> kumpulin buat ditembak (rejoin), kecuali kena captcha
+                            if not KICK_DIURUS["captcha:" .. pkg] then
+                                perluTembak[#perluTembak+1] = pkg
+                            end
+                        end
                     end
                 end
                 info(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
                 tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
+                -- v8.34: TEMBAK yang OUT (rejoin) -- open_one bareng, gak nunggu.
+                -- Dulu cuma lapor angka doang, yg out gak diurus. Sekarang tembak.
+                if #perluTembak > 0 then
+                    info(("[antrian] %d client OUT -> rejoin"):format(#perluTembak))
+                    for _, pkg in ipairs(perluTembak) do
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                    end
+                    pcall(function() jaga_depan(cfg, mapLink) end)
+                end
             end
         end
 
