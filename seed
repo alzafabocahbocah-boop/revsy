@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.05"
+local VERSI = "4.07"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -274,7 +274,7 @@ local state = {
     -- Ambil SEMUA: auto-TP ke tiap seed -> fire prompt -> kepungut. Bawaan NYALA.
     ambilSeedOn   = true,
     autoBalikGarden = true,   -- v3.96: auto balik garden kalau grab selesai + jauh
-    autoRejoinSeed = true,    -- v4.02: auto rejoin kalau disconnect (bukan anti-cheat)
+    autoRejoinSeed = true,    -- v4.06: rejoin pakai deteksi ANDAL (cekDisconnectAndal)
     -- v3.19: filter jenis seed jatuh (by ItemName). grabSemua=true = ambil semua,
     -- false = cuma yg dicentang di grabPilih (contoh {["Gold"]=true,["Rainbow"]=true})
     grabSemua     = true,
@@ -4683,6 +4683,53 @@ local KICK_KATA = {
     "lost connection", "disconnected", "please rejoin", "you were banned",
 }
 
+-- v4.06: DETEKSI DISCONNECT ANDAL buat AUTO-REJOIN (beda dari cekKick text-scan
+-- yg buat lapor panel). Pakai cara resmi Roblox:
+--   1. GuiService:GetErrorCode() -- kode error koneksi (0 = gak ada)
+--   2. ErrorPrompt resmi (CoreGui.RobloxPromptGui / ErrorPrompt) yg VISIBLE
+-- Ini cuma nyala pas DISCONNECT BENERAN (bukan text nyasar di UI game).
+function Seed.cekDisconnectAndal()
+    local dc = false
+    pcall(function()
+        local GuiService = game:GetService("GuiService")
+        -- cara 1: error code resmi (koneksi putus)
+        local ec = GuiService:GetErrorCode()
+        if ec and ec ~= Enum.ConnectionError.OK and ec ~= Enum.ConnectionError.None then
+            dc = true
+            return
+        end
+    end)
+    if dc then return true end
+    -- cara 2: ErrorPrompt resmi Roblox yg BENERAN tampil (Leave/Reconnect button)
+    pcall(function()
+        local CoreGui = game:GetService("CoreGui")
+        -- prompt disconnect resmi: RobloxPromptGui > promptOverlay > ErrorPrompt
+        local pg = CoreGui:FindFirstChild("RobloxPromptGui")
+        if pg then
+            local overlay = pg:FindFirstChild("promptOverlay")
+            if overlay then
+                for _, child in ipairs(overlay:GetChildren()) do
+                    -- ErrorPrompt / frame yg Visible = disconnect beneran tampil
+                    if child:IsA("GuiObject") and child.Visible
+                        and (child.Name:find("Error") or child.Name:find("Prompt")) then
+                        -- cek ada tombol Leave/Reconnect (ciri prompt disconnect)
+                        for _, d in ipairs(child:GetDescendants()) do
+                            if (d:IsA("TextButton") or d:IsA("TextLabel")) then
+                                local t = tostring(d.Text or ""):lower()
+                                if t:find("reconnect") or t:find("leave")
+                                    or t:find("disconnect") then
+                                    dc = true; return
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return dc
+end
+
 function Seed.cekKick()
     local hasil = nil
     pcall(function()
@@ -4760,33 +4807,38 @@ function Seed.pantauKick()
                         place = tostring(game.PlaceId or ""),
                     })
                 end)
-                -- v4.04: AUTO-REJOIN + COOLDOWN GLOBAL (tahan re-exec). BUG: tiap
-                -- rejoin = generasi baru = pantauKick baru -> kalau loading screen
-                -- masih ada text "rejoin"/"lost connection" -> deteksi LAGI -> rejoin
-                -- LAGI = LOOP. Fix: cooldown 90s pakai genv (persist antar generasi).
-                -- Rejoin cuma 1x per 90 detik, gak peduli berapa kali script re-exec.
-                if state.autoRejoinSeed then
-                    local now = os.time()
-                    local lastRejoin = (getgenv and getgenv().ZenxRejoinLast) or 0
-                    if (now - lastRejoin) >= 90 then
-                        if getgenv then getgenv().ZenxRejoinLast = now end
-                        task.spawn(function()
-                            task.wait(2)
-                            local target = tonumber(state.telePlaceId) or 129343810645058
-                            warn(("[StarSeed] AUTO-REJOIN (%s) -> place %d"):format(k.sebab, target))
-                            pcall(function()
-                                local TS = game:GetService("TeleportService")
-                                TS:Teleport(target, player)
-                            end)
-                        end)
-                    else
-                        warn(("[StarSeed] rejoin di-SKIP (cooldown, %ds lalu)"):format(now - lastRejoin))
-                    end
-                end
+                -- v4.06: rejoin DIPISAH ke loop sendiri (Seed.pantauRejoin) yg
+                -- pakai cekDisconnectAndal -- biar gak numpang cekKick text-scan
+                -- yg false-positive. Di sini cuma lapor panel.
             end
             -- 3 detik: cukup rapat buat nangkep jendela sebelum DataModel
             -- dibongkar, cukup jarang buat gak jadi beban.
             task.wait(3)
+        end
+    end)
+end
+
+-- v4.06: loop AUTO-REJOIN terpisah -- cuma pakai cekDisconnectAndal (GuiService
+-- error / ErrorPrompt resmi), gak numpang cekKick text-scan. Cooldown 90s.
+function Seed.pantauRejoin()
+    task.spawn(function()
+        task.wait(25)   -- jeda awal (biar loading kelar, gak false-positive)
+        while isCurrentGen() do
+            if state.autoRejoinSeed and Seed.cekDisconnectAndal() then
+                local now = os.time()
+                local lastRejoin = (getgenv and getgenv().ZenxRejoinLast) or 0
+                if (now - lastRejoin) >= 90 then
+                    if getgenv then getgenv().ZenxRejoinLast = now end
+                    local target = tonumber(state.telePlaceId) or 129343810645058
+                    warn(("[StarSeed] AUTO-REJOIN (DC andal) -> place %d"):format(target))
+                    pcall(function()
+                        local TS = game:GetService("TeleportService")
+                        TS:Teleport(target, player)
+                    end)
+                    task.wait(30)   -- kasih waktu teleport jalan
+                end
+            end
+            task.wait(5)
         end
     end)
 end
@@ -4921,6 +4973,7 @@ if panelAktif() then Seed.startPanel() end
 -- v4.04: jeda sebelum pantauKick mulai (biar loading screen kelar dulu -- text
 -- "rejoin"/"lost connection" di loading gak ke-deteksi jadi false-positive).
 task.spawn(function() task.wait(20); pcall(Seed.pantauKick) end)
+pcall(Seed.pantauRejoin)   -- v4.06: loop rejoin terpisah (deteksi andal)
 
 -- ============================================================
 -- v1.6: SETELAN DARI PANEL WEB
