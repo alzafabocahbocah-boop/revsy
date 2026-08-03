@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.19-cf"
+local VERSION = "8.21-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6249,6 +6249,30 @@ local function run(cfg)
         -- standby gak pernah jalan.
         local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
 
+        -- v8.21: SET DPI 900 sekali pas STANDBY. User minta pas awal standby DPI
+        -- diatur ke 900; kalau udah 900 gak usah diapa-apain lagi. Cek DPI dulu
+        -- (wm density) -- kalau udah 900, skip. Flag DPI_SUDAH biar gak cek tiap
+        -- ronde (cukup 1x per proses worker; kalau udah kebaca 900, gak ngulang).
+        if mati and not _G.ZENX_DPI_SUDAH then
+            (function()
+                local d = shell_jalan("wm density", 6) or ""
+                local cur = tonumber(d:match("Override density:%s*(%d+)"))
+                    or tonumber(d:match("Physical density:%s*(%d+)"))
+                if cur == 900 then
+                    _G.ZENX_DPI_SUDAH = true
+                else
+                    shell_jalan("wm density 900", 8)
+                    os.execute("sleep 1")
+                    if tonumber((shell_jalan("wm density", 6) or ""):match("Override density:%s*(%d+)")) == 900 then
+                        ok("DPI diset 900 (standby)")
+                        _G.ZENX_DPI_SUDAH = true
+                    else
+                        warn("Set DPI 900 gagal (cek root) -- coba lagi ronde depan")
+                    end
+                end
+            end)()
+        end
+
         -- v6.14: CEK LISENSI BERKALA tiap 60 detik. Kalau lisensi Delta HILANG
         -- (file kosong = key habis), langsung bypass -- gak nunggu ronde buka
         -- client (reopen_sec 5 menit). Jadi begitu key habis, key baru diambil
@@ -8441,6 +8465,54 @@ end
 -- prefs udah bener TAPI window belum re-baca -> tetep besar. Ini yang mancing
 -- "beberapa RF grid tetep besar". Fix = paksa client itu re-launch (rejoin)
 -- biar baca prefs baru.
+if PERINTAH == "dpi" then
+    -- v8.20: atur DPI cloud phone (wm density). Buat hemat RAM/enteng di banyak
+    -- VM. Pakai shell root persistent.
+    --   zenx dpi              -> baca DPI sekarang
+    --   zenx dpi <angka>      -> set DPI (mis 160/200/240). makin kecil = enteng
+    --   zenx dpi reset        -> balik ke DPI bawaan
+    --   zenx dpi auto         -> set ke 160 (hemat multi-VM)
+    if not shell_nyalakan() then
+        err("Shell root gak nyala. Cek RF udah rooted + izin su.") return
+    end
+    local sub = (arg and arg[2] or ""):lower()
+
+    if sub == "" then
+        local out = shell_jalan("wm density", 6) or ""
+        info("=== DPI CLOUD PHONE ===")
+        print(out ~= "" and ("  " .. out:gsub("\n", "\n  ")) or "  (gak kebaca)")
+        print("")
+        print("  set:   zenx dpi 160   (makin kecil = enteng)")
+        print("  reset: zenx dpi reset")
+        print("  auto:  zenx dpi auto  (= 160, hemat multi-VM)")
+        return
+
+    elseif sub == "reset" then
+        shell_jalan("wm density reset", 8)
+        os.execute("sleep 1")
+        local out = shell_jalan("wm density", 6) or ""
+        info("DPI di-reset ke bawaan.")
+        print("  " .. out:gsub("\n", "\n  "))
+        return
+
+    else
+        local nilai
+        if sub == "auto" then nilai = 160
+        else nilai = tonumber(sub) end
+        if not nilai or nilai < 80 or nilai > 640 then
+            err("DPI harus angka 80-640 (mis 160/200/240), atau 'reset'/'auto'.") return
+        end
+        shell_jalan("wm density " .. math.floor(nilai), 8)
+        os.execute("sleep 1")
+        local out = shell_jalan("wm density", 6) or ""
+        info("DPI diset ke " .. math.floor(nilai) .. ".")
+        print("  " .. out:gsub("\n", "\n  "))
+        print("")
+        print("  (kalau tampilan aneh, `zenx dpi reset` buat balikin)")
+        return
+    end
+end
+
 if PERINTAH == "grid" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
