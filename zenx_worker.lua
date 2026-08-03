@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.29-cf"
+local VERSION = "8.30-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7699,6 +7699,13 @@ local function run(cfg)
         -- (FORCE dari standby / re-inject), lisensiAda tetep false -> loop grafis
         -- skip selamanya. Padahal client udah jalan = lisensi PASTI ada. Jadi
         -- cukup syarat: FORCE + client udah kebuka.
+        -- v8.30 DEBUG: log SEBELUM cek hit (tau apakah loop nyampe sini + hit value)
+        if (os.time() - (KICK_DIURUS["_dbgSampai"] or 0)) >= 30 then
+            KICK_DIURUS["_dbgSampai"] = os.time()
+            info(("[grafis-dbg] pre-cek: hit=%s lastOpen=%d mati=%s")
+                :format(tostring(hit), lastOpen or -1, tostring(mati)))
+        end
+
         if hit and lastOpen > 0 then
             -- v8.01: interval cek all 2 MENIT (dulu tiap ronde). Cek grafis SEMUA
             -- client SEKALI (1 su call). Hitung PROGRESS: berapa di game / total.
