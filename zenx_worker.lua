@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.21-cf"
+local VERSION = "8.23-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6249,25 +6249,27 @@ local function run(cfg)
         -- standby gak pernah jalan.
         local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
 
-        -- v8.21: SET DPI 900 sekali pas STANDBY. User minta pas awal standby DPI
-        -- diatur ke 900; kalau udah 900 gak usah diapa-apain lagi. Cek DPI dulu
-        -- (wm density) -- kalau udah 900, skip. Flag DPI_SUDAH biar gak cek tiap
-        -- ronde (cukup 1x per proses worker; kalau udah kebaca 900, gak ngulang).
+        -- v8.23: AUTO-DPI 127 pas STANDBY (sekali). User nemu 127 = tampilan pas
+        -- (kecil, muat banyak). Set via `wm density 127` + broadcast refresh biar
+        -- UI langsung baca ulang (gak aneh/campur). Cek dulu -- kalau udah 127, skip.
         if mati and not _G.ZENX_DPI_SUDAH then
             (function()
                 local d = shell_jalan("wm density", 6) or ""
                 local cur = tonumber(d:match("Override density:%s*(%d+)"))
                     or tonumber(d:match("Physical density:%s*(%d+)"))
-                if cur == 900 then
+                if cur == 127 then
                     _G.ZENX_DPI_SUDAH = true
                 else
-                    shell_jalan("wm density 900", 8)
+                    -- set + refresh UI (broadcast config changed biar gak campur)
+                    shell_jalan("wm density 127", 8)
                     os.execute("sleep 1")
-                    if tonumber((shell_jalan("wm density", 6) or ""):match("Override density:%s*(%d+)")) == 900 then
-                        ok("DPI diset 900 (standby)")
+                    shell_jalan("am broadcast -a android.intent.action.CONFIGURATION_CHANGED", 6)
+                    os.execute("sleep 1")
+                    if tonumber((shell_jalan("wm density", 6) or ""):match("Override density:%s*(%d+)")) == 127 then
+                        ok("DPI diset 127 (standby)")
                         _G.ZENX_DPI_SUDAH = true
                     else
-                        warn("Set DPI 900 gagal (cek root) -- coba lagi ronde depan")
+                        warn("Set DPI 127 gagal (cek root) -- coba lagi ronde depan")
                     end
                 end
             end)()
@@ -8484,7 +8486,7 @@ if PERINTAH == "dpi" then
         print("")
         print("  set:   zenx dpi 160   (makin kecil = enteng)")
         print("  reset: zenx dpi reset")
-        print("  auto:  zenx dpi auto  (= 160, hemat multi-VM)")
+        print("  auto:  zenx dpi auto  (= 127, tampilan kecil)")
         return
 
     elseif sub == "reset" then
@@ -8497,7 +8499,7 @@ if PERINTAH == "dpi" then
 
     else
         local nilai
-        if sub == "auto" then nilai = 160
+        if sub == "auto" then nilai = 127
         else nilai = tonumber(sub) end
         if not nilai or nilai < 80 or nilai > 640 then
             err("DPI harus angka 80-640 (mis 160/200/240), atau 'reset'/'auto'.") return
