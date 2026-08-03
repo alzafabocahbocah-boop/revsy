@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.35-cf"
+local VERSION = "8.37-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3627,6 +3627,11 @@ function baca_logcat_stream(cfg, pidKe)
                 local inti = (baris:match("%[.*$") or baris):sub(1, 140)
                 fh:write(string.format("%s | %s | kode=%s | %s | %s\n",
                     waktu, nama, kode ~= "" and kode or "-", jenis ~= "" and jenis or "-", inti))
+                -- v8.36: LOG ke Termux tiap disconnect (user minta -- biar keliatan
+                -- MENIT berapa client disconnect, gampang di-copy buat debug).
+                info(("[DISCONNECT] %s | %s | kode=%s | %s")
+                    :format(os.date("%H:%M:%S"), nama,
+                        kode ~= "" and kode or "-", jenis ~= "" and jenis or "-"))
             end
             -- REJOIN: client yang kepetakan (bukan "?") + belum di batch ini.
             -- Kode 285 (DisconnectClientInitiated) = keluar sendiri/backgrounding.
@@ -5998,7 +6003,7 @@ local function run(cfg)
         do
             local isiTop = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
             local hitTop = isiTop:upper():find("FORCE") or isiTop:upper():find("REJOIN")
-            if hitTop and (os.time() - (KICK_DIURUS["_grafisTop"] or 0)) >= 120 then
+            if hitTop and (os.time() - (KICK_DIURUS["_grafisTop"] or 0)) >= 180 then
                 KICK_DIURUS["_grafisTop"] = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
@@ -6010,6 +6015,24 @@ local function run(cfg)
                     for a in daftarForce:gmatch("[^,]+") do setAkun[a] = true end
                 end
                 local peta = grafis_semua(pkgList)
+                -- v8.37: cek DENYUT FILE lokal (0 request CF). Script star_seed
+                -- v3.79 nulis /sdcard/Delta/Workspace/zenx_denyut_<akun>.txt tiap
+                -- 20s selama BENERAN di game (disconnect = script mati = file gak
+                -- ke-update). Logcat gak reliable (buffer log lama). File lokal =
+                -- akurat: grafis TINGGI tapi denyut MATI (>2 menit) = disconnect.
+                -- Baca SEMUA file denyut sekali (1 su call, gak makan CF).
+                local denyutSemua = {}   -- akun -> umur denyut (detik), nil kalau gak ada
+                do
+                    local sekarang = os.time()
+                    -- baca semua file denyut sekaligus (cat *, hemat su call)
+                    local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    for line in raw:gmatch("[^\n]+") do
+                        local nama, ts = line:match("zenx_denyut_(.-)%.txt|(%d+)")
+                        if nama and ts then
+                            denyutSemua[nama] = sekarang - tonumber(ts)
+                        end
+                    end
+                end
                 local perlu, diGame = 0, 0
                 local perluTembak = {}   -- v8.34: client OUT yg mau di-rejoin
                 for _, pkg in ipairs(pkgList) do
@@ -6019,12 +6042,31 @@ local function run(cfg)
                     if diForce and not (ak and KICK_DIURUS["mati:" .. ak]) then
                         perlu = perlu + 1
                         local g = peta[pkg] or 0
-                        if g >= GAME_AMBANG_KB then
+                        -- denyut fresh = file ke-update <= 120 detik (script hidup)
+                        local umur = ak and denyutSemua[ak]
+                        local denyutFresh = umur ~= nil and umur <= 120
+                        -- di game = grafis tinggi DAN denyut fresh (script masih nulis)
+                        if g >= GAME_AMBANG_KB and denyutFresh then
+                            diGame = diGame + 1
+                        elseif g >= GAME_AMBANG_KB and umur == nil then
+                            -- v8.37: grafis TINGGI tapi file denyut BELUM ADA.
+                            -- Mungkin client BARU masuk (script belum sempet nulis,
+                            -- butuh ~20s). JANGAN langsung rejoin -- kasih toleransi,
+                            -- anggap di game dulu. Kalau beneran disconnect, nanti
+                            -- file tetep gak ada + ronde berikutnya... tetep grafis
+                            -- turun (disconnect = RAM akhirnya turun) -> ketangkep.
                             diGame = diGame + 1
                         else
-                            -- OUT -> kumpulin buat ditembak (rejoin), kecuali kena captcha
+                            -- OUT: grafis rendah, ATAU grafis tinggi + denyut ADA
+                            -- tapi LAMA (>2 menit = script mati = disconnect beneran),
+                            -- kecuali kena captcha
                             if not KICK_DIURUS["captcha:" .. pkg] then
                                 perluTembak[#perluTembak+1] = pkg
+                                -- log alasan: grafis rendah apa denyut mati
+                                if g >= GAME_AMBANG_KB and not denyutFresh then
+                                    info(("[antrian] %s RAM tinggi tapi denyut MATI (%s) = disconnect")
+                                        :format(ak or pkg, umur and (umur.."s") or "gak ada file"))
+                                end
                             end
                         end
                     end
