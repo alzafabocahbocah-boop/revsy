@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.52"
+local VERSI = "3.53"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -701,23 +701,26 @@ function Seed.plantOnce()
     -- v3.18d: TP SEKALI ke tanah, NETEP di situ. Tanam sebar pakai KOORDINAT
     -- (fire pos + offset spread), BUKAN mindahin karakter tiap seed (dulu bikin
     -- bolak-balik terus tiap loop). Karakter diem di tanah, gak balik ke asal.
-    -- v3.35: GESER dari tengah ke kanan 25 stud (user minta, biar gak numpuk
-    -- pas di tengah). offset di sumbu X (kanan = X+).
-    local GESER_X = 25
-    local titikTengah = nil
-    if areaC and areaX and areaZ and yTanah then
-        titikTengah = Vector3.new(areaC.X + GESER_X, yTanah + 3, areaC.Z)
+    -- v3.53: FIX LONCAT-LONCAT. Dulu tiap loop TP ke areaC (center kebun). Kebun
+    -- bisa DIBESARIN -> center geser tiap kali -> TP ke titik baru terus = loncat.
+    -- Sekarang: cek apakah karakter UDAH DI DALAM area kebun (pakai PlotSizeReference
+    -- size). Kalau udah di dalam -> tanam DI POSISI SEKARANG (gak TP, gak loncat).
+    -- Cuma TP masuk kalau bener-bener DI LUAR kebun.
+    local diDalamKebun = false
+    if areaC and areaX and areaZ then
+        local dx = math.abs(hrp.Position.X - areaC.X)
+        local dz = math.abs(hrp.Position.Z - areaC.Z)
+        -- di dalam kalau posisi X/Z masih dalam setengah-ukuran area (+ toleransi)
+        if dx <= (areaX + 10) and dz <= (areaZ + 10) then diDalamKebun = true end
     end
-    -- TP ke tengah tanah SEKALI (cuma kalau belum di kebun / masih jauh)
-    if titikTengah then
-        local jauh = (hrp.Position - titikTengah).Magnitude
-        if jauh > 8 then   -- cuma TP kalau belum deket tanah (biar gak TP terus)
-            pcall(function() hrp.CFrame = CFrame.new(titikTengah) end)
-            task.wait(0.1)
-        end
+    if not diDalamKebun and areaC and yTanah then
+        -- di LUAR kebun -> TP masuk SEKALI (ke center + geser). abis ini gak TP lagi.
+        local GESER_X = 25
+        local titikMasuk = Vector3.new(areaC.X + GESER_X, yTanah + 3, areaC.Z)
+        pcall(function() hrp.CFrame = CFrame.new(titikMasuk) end)
+        task.wait(0.15)
     end
-    -- v3.20: tanam di 1 TITIK TETAP (posisi karakter), JANGAN pindah/sebar.
-    -- User mau numpuk di 1 titik (butuh tembus pohon/buah biar bisa numpuk).
+    -- tanam di POSISI KARAKTER SEKARANG (di mana pun di kebun). gak pindah tiap seed.
     local titikTanam = hrp.Position
     local ditanam = 0
     -- hitung berjalan per tipe (kebun awal + yg baru ditanam sesi ini)
