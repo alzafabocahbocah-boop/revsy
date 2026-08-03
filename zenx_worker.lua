@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.23-cf"
+local VERSION = "8.24-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7614,7 +7614,13 @@ local function run(cfg)
         --   grafis < 30MB (out/home) -> force-stop + tembak, cek grafis 30s
         -- Muter terus tiap ronde. Skip client yang cookie mati/ban (mati:).
         -- Cuma jalan pas FORCE (hit) & client udah pernah dibuka (lastOpen > 0).
-        if hit and lastOpen > 0 and lisensiAda then
+        -- v8.24: BUANG syarat lisensiAda. Dari log user: FORCE + client jalan tapi
+        -- loop grafis GAK MUNCUL -- karena lisensiAda cuma di-set di jalur
+        -- non-fast (if not fast and not only). Kalau masuk lewat jalur fast
+        -- (FORCE dari standby / re-inject), lisensiAda tetep false -> loop grafis
+        -- skip selamanya. Padahal client udah jalan = lisensi PASTI ada. Jadi
+        -- cukup syarat: FORCE + client udah kebuka.
+        if hit and lastOpen > 0 then
             -- v8.01: interval cek all 2 MENIT (dulu tiap ronde). Cek grafis SEMUA
             -- client SEKALI (1 su call). Hitung PROGRESS: berapa di game / total.
             -- Counter dinamis -- kalau ada yang out lagi, "masuk" turun (balik).
