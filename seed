@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.48"
+local VERSI = "3.49"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -4224,6 +4224,8 @@ local function seedDiTas()
         arr[#arr+1] = { n = nm, j = n, r = rar, rank = RARITY_RANK[rar] or 0 }
     end
     table.sort(arr, function(a, b)
+        -- v3.48: urut by JUMLAH terbanyak dulu (paling atas), baru rarity/nama
+        if a.j ~= b.j then return a.j > b.j end
         if a.rank ~= b.rank then return a.rank > b.rank end
         return a.n < b.n
     end)
@@ -6161,23 +6163,37 @@ Seed._el.tblShovelAll.MouseButton1Click:Connect(function()
     end
 end)
 Seed._el.pickShovel.MouseButton1Click:Connect(function()
-    -- jenis seed dari tanaman di kebun kita (SeedName)
+    -- jenis seed dari tanaman di kebun kita (SeedName) + jumlah per jenis
+    Seed._shovelJml = {}
     bukaPicker("Jenis seed shovel",
         function()
-            local set, arr = {}, {}
+            local hitung = {}
             pcall(function()
                 local g = workspace:FindFirstChild("Gardens")
+                local uid = player.UserId
                 if g then
                     for _, plot in ipairs(g:GetChildren()) do
-                        local pls = plot:FindFirstChild("Plants")
-                        if pls then
-                            for _, pl in ipairs(pls:GetChildren()) do
-                                local sn = pl:GetAttribute("SeedName")
-                                if sn and not set[sn] then set[sn] = true; arr[#arr+1] = sn end
+                        local own = plot:GetAttribute("OwnerUserId")
+                        local ownNm = plot:GetAttribute("Owner")
+                        if own == uid or ownNm == player.Name then
+                            local pls = plot:FindFirstChild("Plants")
+                            if pls then
+                                for _, pl in ipairs(pls:GetChildren()) do
+                                    local sn = pl:GetAttribute("SeedName")
+                                    if sn then hitung[sn] = (hitung[sn] or 0) + 1 end
+                                end
                             end
                         end
                     end
                 end
+            end)
+            Seed._shovelJml = hitung
+            -- urut by jumlah terbanyak (paling atas)
+            local arr = {}
+            for nm in pairs(hitung) do arr[#arr+1] = nm end
+            table.sort(arr, function(a, b)
+                if hitung[a] ~= hitung[b] then return hitung[a] > hitung[b] end
+                return a < b
             end)
             return arr
         end,
@@ -6185,7 +6201,7 @@ Seed._el.pickShovel.MouseButton1Click:Connect(function()
         function() return state.shovelSemua end,
         function(v) state.shovelSemua = v end,
         function() lblPickSeed(Seed._el.pickShovel, state.shovelSemua, state.shovelPilih) end,
-        function() return "" end)
+        function(nm) return (Seed._shovelJml[nm] and tostring(Seed._shovelJml[nm])) or "" end)
 end)
 lblPickSeed(Seed._el.pickShovel, state.shovelSemua, state.shovelPilih)
 catSaklar(Seed._el.tblShovel, state.shovelOn)
