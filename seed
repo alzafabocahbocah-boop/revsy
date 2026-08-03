@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.51"
+local VERSI = "3.52"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2874,14 +2874,17 @@ function Seed.cekPlant()
     c("===== CEK AUTO PLANT =====")
     c("autoPlantOn = " .. tostring(state.autoPlantOn))
     c("plantSemua  = " .. tostring(state.plantSemua))
-    if state.plantSemua then
-        c(">>> MASALAH: plantSemua NYALA -> nanam SEMUA jenis!")
-        c(">>> matiin 'Plant semua jenis' di panel, biar cuma yg dipilih.")
-    end
     local pp = state.plantPilih or {}
+    if state.plantSemua and next(pp) == nil then
+        c(">>> plantSemua NYALA + plantPilih kosong -> nanam SEMUA jenis!")
+    end
     local list = {}
     for k, v in pairs(pp) do if v then list[#list+1] = tostring(k) end end
     c("plantPilih = " .. #list .. " jenis: " .. table.concat(list, ", "))
+    local adaPilihan = next(pp) ~= nil
+    if adaPilihan then
+        c(">>> plantPilih ADA ISI -> plantSemua DIABAIKAN (cuma tanam yg dipilih)")
+    end
     c("")
     c("-- SEED DI TAS (nama Tool + SeedTool attr) --")
     local char = player.Character
@@ -2891,23 +2894,30 @@ function Seed.cekPlant()
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 if t:IsA("Tool") then
-                    local st = t:GetAttribute("SeedTool")
-                    local seedName = st or t.Name
-                    -- match sama plantPilih?
-                    local match = state.plantSemua or (pp[seedName] == true)
-                    n = n + 1
-                    if n <= 20 then
-                        c(("  Tool='%s' SeedTool=%s -> match=%s"):format(
-                            t.Name, tostring(st or "-"), tostring(match)))
+                    -- pakai logika PLANT ASLI: cuma Tool yg punya SeedTool/SeedName
+                    local seedName = t:GetAttribute("SeedTool") or t:GetAttribute("SeedName")
+                    if seedName then
+                        -- v3.51: plantPilih ada isi -> abaikan plantSemua
+                        local match
+                        if adaPilihan then match = (pp[seedName] == true)
+                        else match = state.plantSemua end
+                        n = n + 1
+                        if n <= 25 then
+                            c(("  Tool='%s' Seed=%s -> ketanam=%s"):format(
+                                t.Name, tostring(seedName), tostring(match)))
+                        end
                     end
                 end
             end
         end
     end
-    c("total Tool di tas: " .. n)
+    c("total seed di tas: " .. n)
     c("")
-    c(">>> filter: plantSemua ATAU plantPilih[namaTool]==true")
-    c(">>> kalau nama Tool GAK ADA di plantPilih -> harusnya GAK ditanam")
+    if adaPilihan then
+        c(">>> filter: CUMA yg ada di plantPilih (plantSemua diabaikan)")
+    else
+        c(">>> plantPilih KOSONG -> pakai plantSemua (" .. tostring(state.plantSemua) .. ")")
+    end
     c(">>> kalau tetep nanam semua padahal plantSemua false -> nama gak match tapi lolos (bug)")
     c("===== SELESAI =====")
     local teks = table.concat(out, "\n")
