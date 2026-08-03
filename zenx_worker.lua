@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.38-cf"
+local VERSION = "8.39-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6024,22 +6024,27 @@ local function run(cfg)
                 local denyutSemua = {}   -- akun -> umur denyut (detik), nil kalau gak ada
                 do
                     local sekarang = os.time()
-                    -- baca semua file denyut sekaligus (cat *, hemat su call)
-                    local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    -- baca isi (timestamp) + MTIME file (kapan file terakhir ditulis).
+                    -- format: nama|isi_timestamp|mtime_epoch
+                    local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    local ddetail = {}
                     for line in raw:gmatch("[^\n]+") do
-                        local nama, ts = line:match("zenx_denyut_(.-)%.txt|(%d+)")
+                        local nama, ts, mtime = line:match("zenx_denyut_(.-)%.txt|(%d+)|(%d+)")
                         if nama and ts then
-                            denyutSemua[nama] = sekarang - tonumber(ts)
+                            local umurIsi = sekarang - tonumber(ts)      -- dari timestamp DALAM file
+                            local umurMtime = mtime and (sekarang - tonumber(mtime)) or nil  -- dari mtime file
+                            denyutSemua[nama] = umurIsi
+                            if #ddetail < 6 then
+                                ddetail[#ddetail+1] = ("%s(isi=%ds mtime=%ss)"):format(
+                                    nama, umurIsi, umurMtime and tostring(umurMtime) or "?")
+                            end
                         end
                     end
-                    -- v8.38: log ringkas denyut kebaca (biar keliatan SD card ke-detect)
-                    local dcnt, ddetail = 0, {}
-                    for nm, um in pairs(denyutSemua) do
-                        dcnt = dcnt + 1
-                        if dcnt <= 6 then ddetail[#ddetail+1] = nm .. "=" .. um .. "s" end
-                    end
+                    local dcnt = 0
+                    for _ in pairs(denyutSemua) do dcnt = dcnt + 1 end
                     if dcnt > 0 then
-                        info(("[denyut] %d file kebaca: %s"):format(dcnt, table.concat(ddetail, " ")))
+                        info(("[denyut] jam_device=%s | %d file: %s"):format(
+                            os.date("%H:%M:%S"), dcnt, table.concat(ddetail, " ")))
                     else
                         info("[denyut] 0 file denyut kebaca (script belum nulis / path beda?)")
                     end
