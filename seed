@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.71"
+local VERSI = "3.76"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -476,10 +476,12 @@ end
 local Seed_ambilTerakhir = 0
 local Seed_posAsli = nil   -- simpen posisi asli buat balik setelah grab
 function Seed.grabSeed()
-    -- v3.63: FIX dari debug live. Pack fase bulan (Gold/Rainbow/Mega) jatuh di
-    -- Map.SeedPackSpawnServerLocations sbg BasePart {GoldSeed/RainbowSeed/
-    -- MegaSeed=true} + punya ProximityPrompt. Ambil = TP ke pack + fire prompt E.
-    -- (SeedPackSpawnClient cuma visual). Abis diambil -> jadi seed siap tanam.
+    -- v3.75: TP ke tiap pack (prompt BUTUH deket) tapi JANGAN bolak-balik +
+    -- JANGAN balik ke garden (user: ketinggalan di pack 10s gak masalah). Pack
+    -- muncul TERUS selama event (bisa 30 pack) -> grab jalan terus ambil pack
+    -- baru. Pack yg keambil ilang sendiri (part destroyed) -> loop berikutnya
+    -- gak nemu = gak diulang. Yg masih ada = belum keambil = dicoba lagi.
+    -- Karakter TETEP di pack terakhir (gak balik) -- collect nunggu bentar gpp.
     local map = workspace:FindFirstChild("Map")
     local folder = map and map:FindFirstChild("SeedPackSpawnServerLocations")
     if not folder then return 0, nil end
@@ -487,45 +489,38 @@ function Seed.grabSeed()
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return 0, "karakter belum siap" end
 
-    -- kumpulin pack yg ada (part ber-atribut seed + punya prompt)
+    -- kumpulin pack yg ada + belum ditandai keambil
     local packs = {}
     for _, o in ipairs(folder:GetDescendants()) do
         if o:IsA("BasePart") then
             local isSeed = o:GetAttribute("GoldSeed") or o:GetAttribute("RainbowSeed")
                 or o:GetAttribute("MegaSeed")
             if isSeed and o.Position.Magnitude > 1 then
-                local pp = o:FindFirstChildWhichIsA("ProximityPrompt")
-                    or o.Parent:FindFirstChildWhichIsA("ProximityPrompt", true)
-                packs[#packs+1] = { part = o, prompt = pp }
+                packs[#packs+1] = o
             end
         end
     end
     if #packs == 0 then return 0, nil end
 
     local diambil = 0
-    local posAsli = root.Position
-    for _, pk in ipairs(packs) do
+    for _, o in ipairs(packs) do
         if not state.ambilSeedOn then break end
-        if pk.part.Parent and pk.part:IsDescendantOf(workspace) then
-            -- TP ke pack (prompt butuh deket) -> fire prompt E
+        if o.Parent and o:IsDescendantOf(workspace) then
+            -- TP ke pack (deket biar prompt kefire) -- TETEP di sini, gak balik
             pcall(function()
-                root.CFrame = CFrame.new(pk.part.Position.X, root.Position.Y, pk.part.Position.Z)
+                root.CFrame = CFrame.new(o.Position.X, o.Position.Y + 3, o.Position.Z)
             end)
             task.wait(0.12)
-            -- prompt bisa baru keload pas deket -> cari ulang
-            local pp = pk.prompt
-                or pk.part:FindFirstChildWhichIsA("ProximityPrompt")
-                or (pk.part.Parent and pk.part.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
+            local pp = o:FindFirstChildWhichIsA("ProximityPrompt")
+                or (o.Parent and o.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
             if pp and fireproximityprompt then
                 pcall(function() fireproximityprompt(pp) end)
                 pcall(function() fireproximityprompt(pp, pp.HoldDuration or 0) end)
                 diambil = diambil + 1
-                task.wait(0.15)
+                task.wait(0.12)
             end
         end
     end
-    -- balik ke posisi asli
-    pcall(function() root.CFrame = CFrame.new(posAsli) end)
     return diambil, nil
 end
 
@@ -3626,12 +3621,15 @@ function Seed.tamePetSekali()
                 return false
             end
 
+            -- v3.76: FIRE JEDA 1 DETIK (bukan 0.22s spam). Dari test coba_tame2:
+            -- fire jeda 1s pas jarak deket (pin bikin jarak=2) = KETAME di fire 1.
+            -- Jeda 0.22s (spam) = server nolak = gagal. Fire 5x, stop kalau kena.
             local kena = false
             local direbutOrang = false
-            for _ = 1, 6 do
+            for _ = 1, 5 do
                 if udahKena() then kena = true break end
                 pcall(function() p:Fire(o) end)
-                task.wait(0.22)
+                task.wait(1.0)   -- jeda 1 detik (JANGAN spam, server nolak)
                 if udahKena() then kena = true break end
             end
             nempel = false
