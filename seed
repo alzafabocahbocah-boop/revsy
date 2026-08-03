@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.79"
+local VERSI = "3.86"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -495,15 +495,29 @@ end
 -- (biar prompt ke-fire walau jauh) -> fireproximityprompt -> kepungut.
 -- Ketemu dari scan ProximityPrompt map baru. fireproximityprompt kebukti ada.
 -- ============================================================
-local Seed_ambilTerakhir = 0
-local Seed_posAsli = nil   -- simpen posisi asli buat balik setelah grab
+-- v3.84: DETEKSI KEAMBIL PAKAI LOKASI (ide user). Kita TAU posisi seed
+-- (o.Position). Kunci posisi -> gerak kesitu -> fire. Cek keambil = di
+-- posisi itu masih ada seed gak (scan folder, radius <3 stud). HILANG dari
+-- posisi = keambil -> pindah. Lebih robust dari cek o.Parent (part bisa
+-- pindah/reset, tapi "posisi kosong" = pasti keambil).
+local function seedDiPosisi(folder, pos, radius)
+    -- true kalau MASIH ada seed di sekitar pos (belum keambil)
+    for _, o in ipairs(folder:GetDescendants()) do
+        if o:IsA("BasePart") then
+            local isSeed = o:GetAttribute("GoldSeed") or o:GetAttribute("RainbowSeed")
+                or o:GetAttribute("MegaSeed")
+            if isSeed and (o.Position - pos).Magnitude < (radius or 3) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 function Seed.grabSeed()
-    -- v3.75: TP ke tiap pack (prompt BUTUH deket) tapi JANGAN bolak-balik +
-    -- JANGAN balik ke garden (user: ketinggalan di pack 10s gak masalah). Pack
-    -- muncul TERUS selama event (bisa 30 pack) -> grab jalan terus ambil pack
-    -- baru. Pack yg keambil ilang sendiri (part destroyed) -> loop berikutnya
-    -- gak nemu = gak diulang. Yg masih ada = belum keambil = dicoba lagi.
-    -- Karakter TETEP di pack terakhir (gak balik) -- collect nunggu bentar gpp.
+    -- FAKTA user: fire prompt BISA kalau karakter DEKET via GERAK (bukan TP).
+    -- Deteksi keambil PAKAI LOKASI: kunci posisi seed, kalau posisi itu kosong
+    -- = keambil -> pindah. + PASS 0 ClickPack (dari decompile) buat bantu jauh.
     local map = workspace:FindFirstChild("Map")
     local folder = map and map:FindFirstChild("SeedPackSpawnServerLocations")
     if not folder then return 0, nil end
@@ -511,45 +525,62 @@ function Seed.grabSeed()
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return 0, "karakter belum siap" end
 
-    -- kumpulin pack yg ada + belum ditandai keambil
-    local packs = {}
+    -- kumpulin posisi seed (KUNCI lokasi -- simpan Vector3, bukan cuma part ref)
+    local titik = {}
     for _, o in ipairs(folder:GetDescendants()) do
         if o:IsA("BasePart") then
             local isSeed = o:GetAttribute("GoldSeed") or o:GetAttribute("RainbowSeed")
                 or o:GetAttribute("MegaSeed")
             if isSeed and o.Position.Magnitude > 1 then
-                packs[#packs+1] = o
+                titik[#titik+1] = o.Position   -- KUNCI posisi
             end
         end
     end
-    if #packs == 0 then return 0, nil end
+    if #titik == 0 then return 0, nil end
+
+    -- v3.86: ClickPack DIBUANG. M1 (fireproximityprompt) yang KEBUKTI works
+    -- (fakta user: deket via gerak + fire prompt = keambil). ClickPack (remote
+    -- Fire("1") dari decompile) belum kebukti di kasus ini -- fokus prompt aja.
+    -- Murni: kunci 1 lokasi -> gerak -> fire prompt -> pastiin kosong -> pindah.
 
     local diambil = 0
-    for _, o in ipairs(packs) do
+    for _, pos in ipairs(titik) do
         if not state.ambilSeedOn then break end
-        if o.Parent and o:IsDescendantOf(workspace) then
-            -- TP ke pack (deket biar prompt kefire). Tetep pin di pack + fire
-            -- BERULANG sampai pack BENER-BENER keambil (part ilang), maks 8x.
-            -- v3.78: dulu fire 1x langsung pindah -- kadang gak keambil. Sekarang
-            -- fire, cek pack ilang, kalau masih ada fire lagi (tunggu tiap 0.4s).
-            local pp = o:FindFirstChildWhichIsA("ProximityPrompt")
-                or (o.Parent and o.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
-            if pp and fireproximityprompt then
-                for _ = 1, 8 do
-                    if not (o.Parent and o:IsDescendantOf(workspace)) then break end  -- udah keambil
-                    -- pin ke pack tiap fire (biar tetep deket, prompt kefire)
-                    pcall(function()
-                        root.CFrame = CFrame.new(o.Position.X, o.Position.Y + 3, o.Position.Z)
-                    end)
-                    task.wait(0.15)
-                    pcall(function() fireproximityprompt(pp) end)
-                    pcall(function() fireproximityprompt(pp, pp.HoldDuration or 0) end)
-                    task.wait(0.4)   -- tunggu server proses ambil
+        -- cek lokasi ini masih ada seed gak (mungkin udah keambil PASS 0 / orang lain)
+        if seedDiPosisi(folder, pos, 3) then
+            -- GERAK HALUS ke posisi (bukan TP) -> server update posisi -> deket.
+            -- CEPET (durasi kecil) -- pack bisa keburu diambil orang lain.
+            local tujuan = Vector3.new(pos.X, pos.Y + 3, pos.Z)
+            local awal = root.Position
+            local durasi = 0.2   -- gerak cepet (pack rebutan sama orang)
+            local t = 0
+            while t < durasi do
+                if not seedDiPosisi(folder, pos, 3) then break end  -- keburu diambil -> cabut
+                local dt = task.wait()
+                t = t + dt
+                local a = math.min(t / durasi, 1)
+                pcall(function() root.CFrame = CFrame.new(awal:Lerp(tujuan, a)) end)
+            end
+            -- ambil: fire prompt + CEK CEPET tiap 0.1s. Begitu LOKASI KOSONG
+            -- (keambil, entah kita/orang) -> LANGSUNG pindah (gak nunggu delay).
+            -- maks ~1.5 detik (15x cek) per pack biar gak stuck.
+            for _ = 1, 15 do
+                if not seedDiPosisi(folder, pos, 3) then break end  -- KOSONG -> langsung cabut
+                -- fire prompt seed di posisi ini
+                for _, o in ipairs(folder:GetDescendants()) do
+                    if o:IsA("BasePart") and (o.Position - pos).Magnitude < 3 then
+                        local pp = o:FindFirstChildWhichIsA("ProximityPrompt")
+                            or (o.Parent and o.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
+                        if pp and fireproximityprompt then
+                            pcall(function() fireproximityprompt(pp) end)
+                        end
+                    end
                 end
-                -- keambil = part ilang (destroyed)
-                if not (o.Parent and o:IsDescendantOf(workspace)) then
-                    diambil = diambil + 1
-                end
+                task.wait(0.1)   -- cek cepet -- begitu kosong langsung pindah
+            end
+            -- konfirmasi: lokasi kosong = keambil (kita yg ambil)
+            if not seedDiPosisi(folder, pos, 3) then
+                diambil = diambil + 1
             end
         end
     end
