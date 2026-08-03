@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.40-cf"
+local VERSION = "8.42-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6058,9 +6058,20 @@ local function run(cfg)
                     if diForce and not (ak and KICK_DIURUS["mati:" .. ak]) then
                         perlu = perlu + 1
                         local g = peta[pkg] or 0
-                        -- denyut fresh = file ke-update <= 120 detik (script hidup)
                         local umur = ak and denyutSemua[ak]
+                        -- v8.41: denyut fresh <= 120s. Kalau umur nil (file gak
+                        -- ke-match akun), JANGAN langsung anggap di game selamanya --
+                        -- itu bug: 2 akun denyut mati tapi ak gak match file ->
+                        -- umur=nil -> toleransi -> gak pernah rejoin. Kasih toleransi
+                        -- TERBATAS: cuma anggap "baru masuk" kalau BELUM pernah ada
+                        -- denyut file sama sekali (gak ada file *_<ak>*). Kalau ADA
+                        -- file tapi gak match persis, tetep cek.
                         local denyutFresh = umur ~= nil and umur <= 120
+                        -- log diagnosa match (biar keliatan ak vs file)
+                        if ak then
+                            info(("[denyut-cek] %s: umur=%s grafis=%dKB")
+                                :format(ak, umur and (umur.."s") or "GAK MATCH FILE", g))
+                        end
                         -- di game = grafis tinggi DAN denyut fresh (script masih nulis)
                         if g >= GAME_AMBANG_KB and denyutFresh then
                             diGame = diGame + 1
