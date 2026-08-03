@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.30-cf"
+local VERSION = "8.32-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5567,29 +5567,10 @@ local function run(cfg)
     local list = split(cfg.pkgs)
     print(C.BOLD..C.G.."\n=== ZENX WORKER v"..VERSION.." — RUNNING ===\n"..C.N)
     info("Tim   : "..cfg.tim.." ("..#list.." client)")
-
-    -- v8.26: DETEKSI VERSI WORKER BARU. Simpan versi terakhir di file. Kalau
-    -- versi sekarang BEDA dari yang tersimpan = worker baru di-update -> kasih
-    -- tau versinya + tandai biar client di-OUT semua & dibuka ulang (biar pake
-    -- versi terbaru). Flag _G.ZENX_VERSI_BARU dibaca di loop utama.
-    do
-        local vfile = (os.getenv("HOME") or ".") .. "/.zenx_versi"
-        local vLama = nil
-        local f = io.open(vfile, "r")
-        if f then vLama = (f:read("*a") or ""):gsub("%s+", ""); f:close() end
-        if vLama and vLama ~= "" and vLama ~= VERSION then
-            print(C.BOLD..C.Y.."\n##  WORKER UPDATE: v"..vLama.." -> v"..VERSION..C.N)
-            print(C.BOLD..C.Y.."##  Restart semua client ke versi terbaru...\n"..C.N)
-            _G.ZENX_VERSI_BARU = true   -- dibaca loop utama -> out semua + buka ulang
-        elseif not vLama or vLama == "" then
-            info("Versi worker: v"..VERSION.." (pertama kali)")
-        else
-            info("Versi worker: v"..VERSION.." (sama, gak restart)")
-        end
-        -- tulis versi sekarang
-        local w = io.open(vfile, "w")
-        if w then w:write(VERSION); w:close() end
-    end
+    -- v8.31: DETEKSI VERSI BARU + auto-restart client DIBUANG (v8.26). User: auto-
+    -- update bikin error -- OUT semua client + buka ulang malah kacau (1/10 tiba2
+    -- jalan). Update worker gak usah auto-restart client; client dibiarin, FORCE
+    -- manual dari panel kalau mau nyalain versi baru.
     -- v5.21: peringatan "3 baris gak muat" DICABUT -- ternyata SALAH.
     -- Kalibrasi manual di 9 client emang gagal (tombolnya susah dilihat/dipencet
     -- tangan di jendela ~173px), tapi sapuan otomatis KENA: 0.833, 0.808.
@@ -6010,23 +5991,12 @@ local function run(cfg)
             return
         end
 
-        -- v8.26: VERSI WORKER BARU -> OUT semua client + buka ulang (sekali).
-        -- Flag di-set pas start kalau versi berubah. Biar client pake versi
-        -- script/worker terbaru: force-stop semua paket dulu, terus open_all
-        -- buka ulang. Flag di-clear biar cuma sekali.
-        if _G.ZENX_VERSI_BARU then
-            _G.ZENX_VERSI_BARU = false
-            print(C.BOLD..C.Y.."[versi baru] OUT semua client -> buka ulang ke v"..VERSION..C.N)
-            pcall(function()
-                for _, pkg in ipairs(split(cfg.pkgs or "")) do
-                    shell_jalan("am force-stop " .. pkg, 6)
-                end
-            end)
-            os.execute("sleep 2")
-            SUDAH_GRID = false; GRID_CACHE = nil
-            pcall(function()
-                open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false, true)
-            end)
+        -- v8.30 DEBUG (paling atas loop): konfirmasi iterasi jalan + baca perintah
+        if (os.time() - (KICK_DIURUS["_dbgTop"] or 0)) >= 20 then
+            KICK_DIURUS["_dbgTop"] = os.time()
+            local _r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+            local _i = ambil_str(_r, "isi") or "?"
+            info("[grafis-dbg] TOP iterasi -- isi='" .. _i .. "'")
         end
 
         -- v7.62: BANNER DEVICE berkala (tiap 60s) -- teks GEDE biar keliatan RF
