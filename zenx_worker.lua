@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.24-cf"
+local VERSION = "8.25-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6286,6 +6286,11 @@ local function run(cfg)
         if cfg.auto_key == true and (now - lastLisensiCek) >= 600 then
             lastLisensiCek = now
             local kd = lisensi_keadaan(cfg)   -- v7.69: udah retry 3x di dalam
+            -- v8.25: LOG status lisensi tiap 10 menit (user minta). Kalau key masih
+            -- ada -> tampilin "lisensi aktif" biar keliatan worker + key hidup.
+            if kd == "ada" then
+                ok("Lisensi Delta AKTIF (cek berkala 10 menit)")
+            end
             if kd == "hilang" and (now - (BYPASS_TERAKHIR or 0)) > 300 then
                 if mati then
                     -- v6.83: STANDBY -> cek lisensi & AMBIL KEY doang (bypass_kunci),
