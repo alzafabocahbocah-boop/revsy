@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.87"
+local VERSI = "3.97"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -265,6 +265,7 @@ local state = {
     -- v3.20: seed EVENT jatuh di Map.SeedPackSpawnClient (bukan DroppedItems).
     -- Ambil SEMUA: auto-TP ke tiap seed -> fire prompt -> kepungut. Bawaan NYALA.
     ambilSeedOn   = true,
+    autoBalikGarden = true,   -- v3.96: auto balik garden kalau grab selesai + jauh
     -- v3.19: filter jenis seed jatuh (by ItemName). grabSemua=true = ambil semua,
     -- false = cuma yg dicentang di grabPilih (contoh {["Gold"]=true,["Rainbow"]=true})
     grabSemua     = true,
@@ -546,29 +547,62 @@ function Seed.grabSeed()
     local diambil = 0
     for _, pos in ipairs(titik) do
         if not state.ambilSeedOn then break end
-        -- cek lokasi ini masih ada seed gak (mungkin udah keambil PASS 0 / orang lain)
-        if seedDiPosisi(folder, pos, 3) then
-            -- GERAK HALUS ke posisi (bukan TP) -> server update posisi -> deket.
-            -- CEPET (durasi kecil) -- pack bisa keburu diambil orang lain.
+        -- cek lokasi ini masih ada seed gak (mungkin udah keambil orang lain)
+        if seedDiPosisi(folder, pos, 5) then
+            -- v3.95: SETTING user (tes debug): STEP 55, durasi lerp 0.3s, jeda
+            -- antar segmen 5s. Kombinasi ini yg GAK ke-SNAP (anti-teleport server).
             local tujuan = Vector3.new(pos.X, pos.Y + 3, pos.Z)
-            local awal = root.Position
-            local durasi = 0.2   -- gerak cepet (pack rebutan sama orang)
-            local t = 0
-            while t < durasi do
-                if not seedDiPosisi(folder, pos, 3) then break end  -- keburu diambil -> cabut
-                local dt = task.wait()
-                t = t + dt
-                local a = math.min(t / durasi, 1)
-                pcall(function() root.CFrame = CFrame.new(awal:Lerp(tujuan, a)) end)
+            local STEP = 55   -- jarak per segmen (tes: 55 aman)
+            for _langkah = 1, 20 do   -- maks 20 segmen
+                if not seedDiPosisi(folder, pos, 5) then break end  -- keburu diambil
+                local kini = root.Position
+                local keTujuan = tujuan - kini
+                local sisa = keTujuan.Magnitude
+                if sisa <= 8 then break end   -- udah deket, stop
+                -- target segmen: max STEP ke arah tujuan
+                local langkah = math.min(STEP, sisa)
+                local targetSeg = kini + keTujuan.Unit * langkah
+                -- GERAK HALUS (lerp) ke target segmen, durasi 0.3s
+                local awalSeg = root.Position
+                local durasi = 0.3
+                local t = 0
+                while t < durasi do
+                    if not seedDiPosisi(folder, pos, 5) then break end
+                    local dt = task.wait()
+                    t = t + dt
+                    local a = math.min(t / durasi, 1)
+                    pcall(function() root.CFrame = CFrame.new(awalSeg:Lerp(targetSeg, a)) end)
+                end
+                pcall(function() root.CFrame = CFrame.new(targetSeg) end)
+                -- JEDA 5s antar segmen (server register posisi -- kunci gak snap)
+                if sisa - langkah > 8 then task.wait(5) end   -- jeda kalau masih ada segmen lagi
             end
-            -- ambil: fire prompt + CEK CEPET tiap 0.1s. Begitu LOKASI KOSONG
-            -- (keambil, entah kita/orang) -> LANGSUNG pindah (gak nunggu delay).
-            -- maks ~1.5 detik (15x cek) per pack biar gak stuck.
-            for _ = 1, 15 do
-                if not seedDiPosisi(folder, pos, 3) then break end  -- KOSONG -> langsung cabut
-                -- fire prompt seed di posisi ini
+            -- pastiin sampai persis di titik (biar prompt kebaca)
+            pcall(function() root.CFrame = CFrame.new(tujuan) end)
+            -- v3.90: VERIFIKASI karakter BENERAN deket + server update posisi
+            -- SEBELUM fire. Insight user: mungkin fire SEBELUM sampai (masih gerak)
+            -- -> prompt gagal (butuh deket). Tunggu sampai jarak < 6 (server ngakuin
+            -- posisi), maks 1 detik. Kayak tame pet (v3.23: bener2 deket sebelum fire).
+            local sampai = false
+            for _ = 1, 12 do
+                task.wait(0.08)
+                local ok, jarak = pcall(function()
+                    return (root.Position - Vector3.new(pos.X, pos.Y + 3, pos.Z)).Magnitude
+                end)
+                if ok and jarak and jarak < 6 then sampai = true break end
+                -- pin lagi kalau kegeser (kecemplung/kedorong)
+                pcall(function() root.CFrame = CFrame.new(tujuan) end)
+            end
+            task.wait(0.2)   -- settle ekstra (server replikasi posisi)
+            -- ambil: fire prompt + CEK tiap 0.15s. Begitu LOKASI KOSONG -> pindah.
+            -- maks ~2.5 detik (16x) per pack. TETEP DI SINI sampai keambil/kosong
+            -- (JANGAN pindah kalau belum -- itu bug "balik padahal belum keambil").
+            for _ = 1, 16 do
+                if not seedDiPosisi(folder, pos, 5) then break end  -- KOSONG -> cabut
+                -- pin ke pack tiap fire (biar tetep deket, prompt aktif)
+                pcall(function() root.CFrame = CFrame.new(tujuan) end)
                 for _, o in ipairs(folder:GetDescendants()) do
-                    if o:IsA("BasePart") and (o.Position - pos).Magnitude < 3 then
+                    if o:IsA("BasePart") and (o.Position - pos).Magnitude < 5 then
                         local pp = o:FindFirstChildWhichIsA("ProximityPrompt")
                             or (o.Parent and o.Parent:FindFirstChildWhichIsA("ProximityPrompt", true))
                         if pp and fireproximityprompt then
@@ -576,10 +610,10 @@ function Seed.grabSeed()
                         end
                     end
                 end
-                task.wait(0.1)   -- cek cepet -- begitu kosong langsung pindah
+                task.wait(0.15)
             end
-            -- konfirmasi: lokasi kosong = keambil (kita yg ambil)
-            if not seedDiPosisi(folder, pos, 3) then
+            -- konfirmasi: lokasi kosong = keambil
+            if not seedDiPosisi(folder, pos, 5) then
                 diambil = diambil + 1
             end
         end
@@ -3636,6 +3670,9 @@ function Seed.tamePetSekali()
             -- padahal masih perawan & masih harga dasar.
             -- Sekarang ditandai di BAWAH, dan cuma kalau jatah cobanya habis.
             local posisiAsal = hrp.CFrame
+            -- v3.97: TANDAI lagi tame pet -> auto-balik-garden SKIP (biar gak narik
+            -- karakter pas nyamperin pet). nyala lagi 10s setelah tame selesai.
+            Seed._lagiTame = os.time()
             -- v3.87: GERAK HALUS ke pet (bukan PIN/TP loncat) -- kayak grabSeed.
             -- User minta konsisten: gerak lerp ke pet, settle, baru fire. Gerak
             -- halus bikin server update posisi (karakter beneran deket) -> tame
@@ -3703,6 +3740,7 @@ function Seed.tamePetSekali()
             end
             -- v3.87: gak ada pin/hb lagi (udah ganti gerak halus). balik ke asal.
             pcall(function() if hrp and hrp.Parent then hrp.CFrame = posisiAsal end end)
+            Seed._lagiTame = os.time()   -- v3.97: patokan 10s (nyala balik-garden setelah)
 
             -- v3.0: cek "direbut orang" LEPAS dari status kena. Dulu
             -- pengecekan ini cuma jalan kalau kena=true -- padahal pas
@@ -6837,6 +6875,133 @@ task.spawn(function()
         end)
         print("[StarSeed] skip tutorial dikirim (#" .. i .. ")")
         task.wait(1)
+    end
+end)
+
+-- ============================================================
+-- AUTO BALIK GARDEN (v3.96) -- kalau grab selesai (jauh dr garden + gak ada
+-- pack), balik ke area garden pakai NYICIL (gak snap). Cek tiap 10s.
+-- MATI 1 menit sebelum gold/blood moon mulai (biar gak ganggu grab).
+-- NYALA lagi 20s setelah event selesai.
+-- ============================================================
+-- posisi center garden (PlantArea terdekat / fallback)
+function Seed.posisiGarden()
+    local hasil = nil
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if not g then return end
+        local uid = player.UserId
+        local plot = nil
+        for _, pl in ipairs(g:GetChildren()) do
+            local own = pl:GetAttribute("OwnerUserId")
+            local ownNm = pl:GetAttribute("Owner")
+            if own == uid or ownNm == player.Name then plot = pl; break end
+        end
+        if not plot then return end
+        local hrp2 = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local petakArr = {}
+        for _, o in ipairs(plot:GetDescendants()) do
+            if o.Name:find("PlantArea") and o:IsA("BasePart") then petakArr[#petakArr+1] = o end
+        end
+        if #petakArr > 0 and hrp2 then
+            local terdekat, bestD
+            for _, pk in ipairs(petakArr) do
+                local d = math.abs(hrp2.Position.X - pk.Position.X) + math.abs(hrp2.Position.Z - pk.Position.Z)
+                if not bestD or d < bestD then bestD, terdekat = d, pk end
+            end
+            hasil = Vector3.new(terdekat.Position.X, terdekat.Position.Y + (terdekat.Size.Y/2) + 3, terdekat.Position.Z)
+        end
+        if not hasil then
+            local ref = plot:FindFirstChild("PlotSizeReference") or plot:FindFirstChild("SpawnPoint")
+            if ref and ref:IsA("BasePart") then hasil = ref.Position + Vector3.new(0,3,0) end
+        end
+    end)
+    return hasil
+end
+
+-- gerak NYICIL ke tujuan (STEP 55, durasi 0.3s, jeda 5s antar segmen) -- gak snap
+function Seed.gerakNyicil(tujuan, cekBatal)
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    local STEP = 55
+    for _ = 1, 20 do
+        if cekBatal and cekBatal() then return false end
+        local kini = root.Position
+        local ke = tujuan - kini
+        local sisa = ke.Magnitude
+        if sisa <= 8 then break end
+        local langkah = math.min(STEP, sisa)
+        local targetSeg = kini + ke.Unit * langkah
+        local awalSeg = root.Position
+        local durasi = 0.3
+        local t = 0
+        while t < durasi do
+            if cekBatal and cekBatal() then return false end
+            local dt = task.wait()
+            t = t + dt
+            local a = math.min(t / durasi, 1)
+            pcall(function() root.CFrame = CFrame.new(awalSeg:Lerp(targetSeg, a)) end)
+        end
+        pcall(function() root.CFrame = CFrame.new(targetSeg) end)
+        if sisa - langkah > 8 then task.wait(5) end
+    end
+    return true
+end
+
+-- loop auto-balik-garden
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(10)   -- cek tiap 10s
+        local boleh = state.autoBalikGarden
+        -- v3.97: SKIP kalau lagi/baru tame pet (<10s dari tame terakhir)
+        if boleh and Seed._lagiTame and (os.time() - Seed._lagiTame) < 10 then
+            boleh = false
+        end
+        -- MATI kalau <1 menit sebelum gold/blood moon mulai
+        if boleh then
+            local moon = Seed.fetchMoonAPI()
+            if type(moon) == "table" then
+                for key, sisaDetik in pairs(moon) do
+                    if (key == "Goldmoon" or key == "Bloodmoon" or key == "Rainbow" or key == "Mega")
+                        and sisaDetik <= 60 then
+                        boleh = false; break
+                    end
+                end
+            end
+        end
+        -- cek: ada pack gak (kalau ada, lagi event -> jgn balik)
+        local map = workspace:FindFirstChild("Map")
+        local folderPack = map and map:FindFirstChild("SeedPackSpawnServerLocations")
+        if boleh and folderPack then
+            for _, o in ipairs(folderPack:GetDescendants()) do
+                if o:IsA("BasePart") and (o:GetAttribute("GoldSeed") or o:GetAttribute("RainbowSeed")
+                    or o:GetAttribute("MegaSeed")) and o.Position.Magnitude > 1 then
+                    boleh = false; break
+                end
+            end
+        end
+        -- gak ada pack + gak deket event -> cek jauh dr garden gak
+        if boleh then
+            local garden = Seed.posisiGarden()
+            local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            if garden and root then
+                local jauh = (Vector3.new(garden.X,0,garden.Z) - Vector3.new(root.Position.X,0,root.Position.Z)).Magnitude
+                if jauh > 40 then   -- jauh dr garden -> balik NYICIL
+                    print(("[StarSeed] Auto balik garden (jauh %.0f stud)"):format(jauh))
+                    Seed.gerakNyicil(garden, function()
+                        if not state.autoBalikGarden then return true end
+                        local m2 = map and map:FindFirstChild("SeedPackSpawnServerLocations")
+                        if m2 then
+                            for _, o in ipairs(m2:GetDescendants()) do
+                                if o:IsA("BasePart") and o:GetAttribute("GoldSeed") then return true end
+                            end
+                        end
+                        return false
+                    end)
+                end
+            end
+        end
     end
 end)
 
