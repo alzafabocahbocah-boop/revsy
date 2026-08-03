@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.32-cf"
+local VERSION = "8.33-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5991,12 +5991,28 @@ local function run(cfg)
             return
         end
 
-        -- v8.30 DEBUG (paling atas loop): konfirmasi iterasi jalan + baca perintah
-        if (os.time() - (KICK_DIURUS["_dbgTop"] or 0)) >= 20 then
-            KICK_DIURUS["_dbgTop"] = os.time()
-            local _r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
-            local _i = ambil_str(_r, "isi") or "?"
-            info("[grafis-dbg] TOP iterasi -- isi='" .. _i .. "'")
+        -- v8.33: CEK GRAFIS di TOP loop (level atas, PASTI jalan tiap iterasi).
+        -- Loop grafis lama ke-nest DALAM FORCE handler (depth 4) -> gak jalan
+        -- kalau client udah kebuka semua (alur gak nyampe). Taruh di sini biar
+        -- lepas dari buka-client. Cek tiap 2 menit: berapa client di game.
+        do
+            local isiTop = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+            local hitTop = isiTop:upper():find("FORCE") or isiTop:upper():find("REJOIN")
+            if hitTop and (os.time() - (KICK_DIURUS["_grafisTop"] or 0)) >= 120 then
+                KICK_DIURUS["_grafisTop"] = os.time()
+                local pkgList = split(cfg.pkgs or "")
+                local peta = grafis_semua(pkgList)
+                local perlu, diGame = 0, 0
+                for _, pkg in ipairs(pkgList) do
+                    local ak = mapAkun and mapAkun[pkg]
+                    if not (ak and KICK_DIURUS["mati:" .. ak]) then
+                        perlu = perlu + 1
+                        if (peta[pkg] or 0) >= GAME_AMBANG_KB then diGame = diGame + 1 end
+                    end
+                end
+                info(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
+                tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
+            end
         end
 
         -- v7.62: BANNER DEVICE berkala (tiap 60s) -- teks GEDE biar keliatan RF
@@ -7669,12 +7685,6 @@ local function run(cfg)
         -- (FORCE dari standby / re-inject), lisensiAda tetep false -> loop grafis
         -- skip selamanya. Padahal client udah jalan = lisensi PASTI ada. Jadi
         -- cukup syarat: FORCE + client udah kebuka.
-        -- v8.30 DEBUG: log SEBELUM cek hit (tau apakah loop nyampe sini + hit value)
-        if (os.time() - (KICK_DIURUS["_dbgSampai"] or 0)) >= 30 then
-            KICK_DIURUS["_dbgSampai"] = os.time()
-            info(("[grafis-dbg] pre-cek: hit=%s lastOpen=%d mati=%s")
-                :format(tostring(hit), lastOpen or -1, tostring(mati)))
-        end
 
         if hit and lastOpen > 0 then
             -- v8.01: interval cek all 2 MENIT (dulu tiap ronde). Cek grafis SEMUA
