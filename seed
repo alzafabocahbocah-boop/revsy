@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.00"
+local VERSI = "4.03"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -210,7 +210,15 @@ task.spawn(function()
     local nama = player.Name
     while isCurrentGen() do
         pcall(function()
-            if writefile then
+            -- v4.01: cuma nulis denyut kalau BENERAN DI GAME. isCurrentGen() cuma
+            -- cek generasi script (masih true walau keluar ke menu/loading). Bug:
+            -- client keluar tapi script hidup -> denyut tetep nulis -> worker anggap
+            -- di game. Fix: cek karakter + HRP ADA + di workspace (kalau keluar,
+            -- karakter despawn -> denyut BERHENTI -> worker deteksi OUT).
+            local ch = player.Character
+            local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+            local diGame = hrp and hrp:IsDescendantOf(workspace)
+            if writefile and diGame then
                 local ts = tostring(os.time())
                 writefile("zenx_denyut_" .. nama .. ".txt", ts)
                 writefile("zenx_denyut.txt", nama .. " " .. ts)
@@ -266,6 +274,7 @@ local state = {
     -- Ambil SEMUA: auto-TP ke tiap seed -> fire prompt -> kepungut. Bawaan NYALA.
     ambilSeedOn   = true,
     autoBalikGarden = true,   -- v3.96: auto balik garden kalau grab selesai + jauh
+    autoRejoinSeed = true,    -- v4.02: auto rejoin kalau disconnect (bukan anti-cheat)
     -- v3.19: filter jenis seed jatuh (by ItemName). grabSemua=true = ambil semua,
     -- false = cuma yg dicentang di grabPilih (contoh {["Gold"]=true,["Rainbow"]=true})
     grabSemua     = true,
@@ -4738,6 +4747,19 @@ function Seed.pantauKick()
                         place = tostring(game.PlaceId or ""),
                     })
                 end)
+                -- v4.03: AUTO-REJOIN kalau disconnect/kick APAPUN sebabnya
+                -- (termasuk anti-cheat -- user: gapapa rejoin aja).
+                if state.autoRejoinSeed then
+                    task.spawn(function()
+                        task.wait(2)   -- kasih jeda dikit
+                        local target = tonumber(state.telePlaceId) or 129343810645058
+                        warn(("[StarSeed] AUTO-REJOIN (%s) -> place %d"):format(k.sebab, target))
+                        pcall(function()
+                            local TS = game:GetService("TeleportService")
+                            TS:Teleport(target, player)
+                        end)
+                    end)
+                end
             end
             -- 3 detik: cukup rapat buat nangkep jendela sebelum DataModel
             -- dibongkar, cukup jarang buat gak jadi beban.
@@ -4904,7 +4926,7 @@ local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
                      "collectAllOn","collectSemuaSeed","collectSemuaMut",
                      "sellBiasaOn","sellPenuhOn","espInvOn","espGardenOn","autoTele","giftMailOn",
                      "hideVisualOn","noclipOn","shovelOn","shovelSemua",
-                     "destroyDaunOn","autoBalikGarden" }
+                     "destroyDaunOn","autoBalikGarden","autoRejoinSeed" }
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
                      "maxPerSiklus","mutasiMaxKali","gearMaxHarga",
                      -- v3.28: setelan FARM angka
