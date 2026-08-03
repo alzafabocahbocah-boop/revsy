@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.63"
+local VERSI = "3.66"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -685,16 +685,10 @@ function Seed.plantOnce()
             areaZ = ref.Size.Z * 0.45
             yTanah = ref.Position.Y
         end
-        -- Y tanah PALING akurat: dari tanaman yg udah ada
-        local plants = plot:FindFirstChild("Plants")
-        if plants then
-            for _, plant in ipairs(plants:GetChildren()) do
-                if plant:GetAttribute("PlantId") then
-                    local ok, piv = pcall(function() return plant:GetPivot().Position end)
-                    if ok and piv then yTanah = piv.Y; break end
-                end
-            end
-        end
+        -- v3.66: JANGAN pakai GetPivot tanaman buat yTanah. Dari debug tanah:
+        -- pivot tanaman = TENGAH batang (152.5), 6 stud DI ATAS tanah asli (146.5).
+        -- Bikin nanam di atas. Pakai PlotSizeReference.Y (146.5) = permukaan tanah
+        -- yg bener (sama dgn SpawnPoint). Kalau ref gak ada, baru fallback SpawnPoint.
         -- fallback area: SpawnPoint
         if not areaC then
             local sp = plot:FindFirstChild("SpawnPoint")
@@ -765,8 +759,23 @@ function Seed.plantOnce()
     -- rapet (grid RAPET stud) dalam radius MAX (setting user, default 4 stud).
     -- Urut: RING TERJAUH dulu (deket radius max) -> muter penuh -> ring lebih
     -- deket -> makin rapet ke avatar terakhir. Karakter DIEM.
+    -- v3.64: FIX nanam di ATAS karakter. Dulu yPakai = yTanah + 3 (naik 3 stud)
+    -- + karakter mungkin MELAYANG (gak di tanah) -> game tanam di posisi karakter
+    -- yg melayang. Sekarang: TP karakter TURUN ke yTanah dulu (napak tanah),
+    -- terus tanam pas di yTanah (tanpa +3).
     if yTanah then
-        local yPakai = yTanah + 3
+        local avatar0 = hrp.Position
+        -- v3.65b: debug -- cetak yTanah vs posisi karakter (lihat kenapa nanam di atas)
+        print(("[StarSeed plant] yTanah=%.1f | posKarakter Y=%.1f | selisih=%.1f")
+            :format(yTanah, avatar0.Y, avatar0.Y - yTanah))
+        -- v3.65: PAKSA TP turun ke tanah SELALU (dulu cuma kalau selisih >2 ->
+        -- kadang gak TP). yTanah dari tanaman existing = permukaan tanah.
+        -- +3 biar kaki napak (HRP di tengah badan, ~3 stud dari kaki).
+        pcall(function()
+            hrp.CFrame = CFrame.new(avatar0.X, yTanah + 3, avatar0.Z)
+        end)
+        task.wait(0.2)
+        local yPakai = yTanah   -- tanam PAS di tanah (bukan +3)
         local avatar = hrp.Position
         -- generate titik grid rapet dalam radius, pusat avatar
         local titik = {}
