@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.39-cf"
+local VERSION = "8.40-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -9231,6 +9231,51 @@ if PERINTAH == "rejoin-log" then
     print()
     info("Tempel ini ke chat -- biar tau baris mana yang bikin rejoin bareng.")
     info("Hapus: zenx rejoin-log clear")
+    return
+end
+
+if PERINTAH == "denyut" then
+    -- cek kapan TERAKHIR denyut tiap akun (isi timestamp + mtime file).
+    -- buat lihat: file di-update terus (script jalan) atau udah lama (mati).
+    print(C.BOLD .. C.C .. "\n=== ZENX DENYUT (kapan terakhir tiap akun) ===\n" .. C.N)
+    local sekarang = os.time()
+    local jamNow = os.date("%H:%M:%S")
+    info("Jam device sekarang: " .. jamNow .. "  (epoch " .. sekarang .. ")")
+    print()
+    -- baca semua file denyut: nama|isi|mtime
+    local raw = ""
+    local ph = io.popen("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null")
+    if ph then raw = ph:read("*all") or ""; ph:close() end
+    if raw == "" then
+        warn("Gak ada file denyut (script belum nulis / path beda).")
+        info("Path dicek: /sdcard/Delta/Workspace/zenx_denyut_*.txt")
+        return
+    end
+    local ada = 0
+    for line in raw:gmatch("[^\n]+") do
+        local nama, ts, mtime = line:match("zenx_denyut_(.-)%.txt|(%d+)|(%d+)")
+        if nama and ts then
+            ada = ada + 1
+            local umurIsi = sekarang - tonumber(ts)
+            local umurMtime = mtime and (sekarang - tonumber(mtime)) or nil
+            -- format umur jadi "Xm Ys"
+            local function fmt(d)
+                if not d then return "?" end
+                if d < 0 then d = 0 end
+                local m = math.floor(d/60); local s = d % 60
+                return m > 0 and ("%dm %ds"):format(m, s) or ("%ds"):format(s)
+            end
+            local jamIsi = os.date("%H:%M:%S", tonumber(ts))
+            local status = umurIsi <= 120 and (C.G .. "FRESH" .. C.N) or (C.R .. "MATI" .. C.N)
+            print(("  %-16s isi=%s (jam %s) | mtime=%s | %s"):format(
+                nama, fmt(umurIsi), jamIsi, fmt(umurMtime), status))
+        end
+    end
+    print()
+    if ada == 0 then warn("File ada tapi format isi gak kebaca (bukan angka?).") end
+    info("isi = umur dari timestamp DALAM file (yg script tulis)")
+    info("mtime = umur dari kapan file terakhir DIUBAH (metadata OS)")
+    info("FRESH = <2 menit (script jalan) | MATI = >2 menit (disconnect)")
     return
 end
 
