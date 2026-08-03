@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.99"
+local VERSI = "4.00"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -304,6 +304,7 @@ local state = {
 
     -- v3.18: hilangin visual pohon/buah + tembus (noclip tanaman). Ringanin RF.
     hideVisualOn  = false,
+    destroyDaunOn = false,   -- v4.00: destroy daun pohon (super ringan, sisain buah)
 
     -- v3.18: GIFT MAIL (kirim seed/gear ke akun lain via mailbox, sekali kirim)
     giftMailTarget = "",      -- nama akun tujuan
@@ -4350,6 +4351,71 @@ function Seed.jalanEspGarden()
 end
 
 -- ============================================================
+-- v4.00: DESTROY DAUN POHON (super ringan, sisain buah) -- dari star_farm v44.77.
+-- Buah nempel ke folder Fruits/FruitSpawnLocations + Base (BUKAN ke daun). Jadi
+-- destroy CUMA daun/badan tanaman (bisa 85+ part berat), SISAIN Fruits +
+-- FruitSpawnLocations + Base + PrimaryPart + atributnya. Buah tetep lahir &
+-- kedetect -> collect NORMAL. Daun berat ilang -> RAM enteng (destroy beneran,
+-- bukan cuma transparency).
+Seed._keepChild = { Fruits=true, FruitSpawnLocations=true, Base=true }
+function Seed.destroyDaunSatu(plant)
+    pcall(function()
+        local prim = plant.PrimaryPart
+        for _, child in ipairs(plant:GetChildren()) do
+            local keep = Seed._keepChild[child.Name]
+                or child == prim
+                or (child:IsA("Folder") and child:FindFirstChild("Fruits"))
+            if not keep and (child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder")) then
+                pcall(function() child:Destroy() end)   -- daun/badan berat -> hapus
+            end
+        end
+    end)
+end
+Seed._destroyDaunGen = 0
+function Seed.sapuDaunPohon()
+    local n = 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens")
+        if not g then return end
+        local uid = player.UserId
+        local myPos = nil
+        pcall(function()
+            local ch = player.Character
+            local h = ch and ch:FindFirstChild("HumanoidRootPart")
+            if h then myPos = h.Position end
+        end)
+        for _, plot in ipairs(g:GetChildren()) do
+            local own = plot:GetAttribute("OwnerUserId")
+            local ownNm = plot:GetAttribute("Owner")
+            local kita = (own == uid or ownNm == player.Name)
+            if not kita and own == nil and ownNm == nil and myPos then
+                local ok2, jarak = pcall(function()
+                    local pr = plot:IsA("Model") and plot.PrimaryPart
+                    if not pr then
+                        for _, d in ipairs(plot:GetDescendants()) do
+                            if d:IsA("BasePart") then pr = d; break end
+                        end
+                    end
+                    return pr and (pr.Position - myPos).Magnitude or 9999
+                end)
+                if ok2 and jarak and jarak < 120 then kita = true end
+            end
+            if kita then
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        if plant:IsA("Model") then
+                            Seed.destroyDaunSatu(plant)
+                            n = n + 1
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return n
+end
+
 -- v3.18: HILANGIN VISUAL POHON/BUAH + TEMBUS (noclip tanaman)
 -- Ringanin RF: sembunyiin visual tanaman+buah (Transparency=1) + matiin
 -- collision (CanCollide=false) di Plants -> karakter tembus, gak ketahan.
@@ -4446,6 +4512,21 @@ function Seed.jalanHideVisual()
         while state.hideVisualOn and Seed._hideVisGen == myGen and isCurrentGen() do
             sapuTanaman(true, true)   -- sembunyi + tembus
             task.wait(2)   -- ulang berkala (tanaman baru tumbuh ikut kena)
+        end
+    end)
+end
+
+-- v4.00: loop destroy daun pohon (super ringan). Ulang berkala biar tanaman
+-- baru tumbuh ikut ke-destroy daunnya. Buah disisain (collect tetep jalan).
+function Seed.jalanDestroyDaun()
+    Seed._destroyDaunGen = Seed._destroyDaunGen + 1
+    local myGen = Seed._destroyDaunGen
+    if not state.destroyDaunOn then return end
+    task.spawn(function()
+        while state.destroyDaunOn and Seed._destroyDaunGen == myGen and isCurrentGen() do
+            local n = Seed.sapuDaunPohon()
+            if n > 0 then print(("[StarSeed] destroy daun %d pohon (buah disisain)"):format(n)) end
+            task.wait(3)   -- ulang berkala (tanaman baru ikut kena)
         end
     end)
 end
@@ -4822,7 +4903,8 @@ local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
                      "ambilSeedOn","grabSemua","autoPlantOn","plantSemua",
                      "collectAllOn","collectSemuaSeed","collectSemuaMut",
                      "sellBiasaOn","sellPenuhOn","espInvOn","espGardenOn","autoTele","giftMailOn",
-                     "hideVisualOn","noclipOn","shovelOn","shovelSemua" }
+                     "hideVisualOn","noclipOn","shovelOn","shovelSemua",
+                     "destroyDaunOn","autoBalikGarden" }
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
                      "maxPerSiklus","mutasiMaxKali","gearMaxHarga",
                      -- v3.28: setelan FARM angka
@@ -4932,6 +5014,7 @@ function Seed.pakaiCfgPanel(r)
             -- hideVisual + noclip toggle SENDIRI dari panel (hideVisualOn,
             -- noclipOn), gak nempel ke ringanOn.
             if k == "hideVisualOn" then pcall(Seed.jalanHideVisual) end
+            if k == "destroyDaunOn" then pcall(Seed.jalanDestroyDaun) end
             -- v3.28: ESP pakai gen-loop -> harus dipicu pas dinyalain/dimatiin
             if k == "espInvOn" then pcall(Seed.jalanEspInv) end
             if k == "espGardenOn" then pcall(Seed.jalanEspGarden) end
