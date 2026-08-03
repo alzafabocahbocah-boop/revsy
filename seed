@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.70"
+local VERSI = "3.71"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -746,12 +746,10 @@ function Seed.plantOnce()
             task.wait(0.15)
         end
     end
-    -- v3.70: RADIUS X & Z TERPISAH (petak persegi panjang, bukan lingkaran).
-    -- Dulu radius = max(X,Z) = lingkaran -> di petak 44x16, lingkaran R20 KELUAR
-    -- di Z (cuma 7 lebar) -> titik valid cuma sumbu X = keliatan di pinggir/pojok.
-    -- Sekarang: batas X = areaX, batas Z = areaZ (ikut kotak petak) -> isi PENUH.
-    local RADX = math.max(areaX or 4, state.plantSpread or 4)
-    local RADZ = math.max(areaZ or 4, state.plantSpread or 4)
+    -- v3.71: RADIUS = lingkaran ngelilingi KARAKTER (setting plantSpread).
+    -- User mau tanam melingkar di sekitar karakter, radius = plantSpread.
+    -- BUKAN kotak petak. Karakter DIEM di posisinya, tanaman muter ngelilingi.
+    local RADIUS = state.plantSpread or 4
     local RAPET = 1   -- jarak antar tanaman (rapet)
     local ditanam = 0
     local hitungTipe = {}
@@ -798,26 +796,25 @@ function Seed.plantOnce()
     -- terus sebar muter dari situ. Pusat = areaC (center PlantArea terdekat),
     -- Y = yTanah (permukaan petak, dari PlantArea.Y+size/2).
     -- Urut titik: RING TERJAUH dulu -> muter -> makin rapet ke tengah terakhir.
-    if yTanah and areaC then
-        -- TP karakter ke TENGAH petak (biar tanam pas di tengah). +3 biar napak.
-        pcall(function()
-            hrp.CFrame = CFrame.new(areaC.X, yTanah + 3, areaC.Z)
-        end)
-        task.wait(0.2)
+    -- v3.71: TANAM MELINGKAR ngelilingi KARAKTER. Pusat = posisi karakter (DIEM,
+    -- gak TP ke tengah petak). Titik dalam LINGKARAN radius plantSpread. Urut:
+    -- ring terjauh dulu -> muter -> makin rapet ke karakter terakhir.
+    if yTanah then
+        local avatar = hrp.Position
         local yPakai = yTanah
-        local pusat = areaC   -- pusat tanam = tengah petak
-        -- generate titik grid rapet dalam KOTAK petak (X sampai RADX, Z sampai RADZ)
+        local pusat = avatar   -- pusat = posisi karakter, karakter DIEM
+        -- generate titik grid rapet dalam LINGKARAN radius (pusat karakter)
         local titik = {}
-        local nX = math.floor(RADX / RAPET)
-        local nZ = math.floor(RADZ / RAPET)
-        for ix = -nX, nX do
-            for iz = -nZ, nZ do
+        local n = math.floor(RADIUS / RAPET)
+        for ix = -n, n do
+            for iz = -n, n do
                 local px = pusat.X + ix * RAPET
                 local pz = pusat.Z + iz * RAPET
                 local dx = ix * RAPET
                 local dz = iz * RAPET
-                local jarak = math.sqrt(dx*dx + dz*dz)   -- buat urutan (jauh dulu)
-                do
+                local jarak = math.sqrt(dx*dx + dz*dz)
+                -- cuma titik DALAM lingkaran radius (bukan kotak)
+                if jarak <= RADIUS + 0.01 then
                     local kunci = math.floor(px / RAPET + 0.5) .. "," .. math.floor(pz / RAPET + 0.5)
                     if not adaTanaman[kunci] then
                         local sudut = math.atan2(dz, dx)
