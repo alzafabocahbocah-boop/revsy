@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "3.36"
+local VERSI = "3.43"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -266,6 +266,11 @@ local state = {
     collectSemuaMut  = true,  -- collect semua mutasi (false = cuma collectMutPilih)
     collectMutPilih  = {},    -- { ["Gold"]=true } mutasi yg dipanen
     collectKgMin     = 0,     -- threshold kg minimum (0 = semua)
+    -- v3.38: AUTO SHOVEL SEED (cabut tanaman). remote Shovel.UseShovel(plantId,
+    -- "", "Shovel", tool). butuh Tool Shovel di tas. sisain min 1 per jenis.
+    shovelOn         = false,  -- auto cabut tanaman
+    shovelSemua      = false,  -- true = semua jenis, false = cuma shovelPilih
+    shovelPilih      = {},     -- { ["Carrot"]=true } jenis yg dicabut
     -- AUTO SELL: 2 mode
     sellPenuhOn   = false, -- sell pas backpack full (SellAll)
     sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
@@ -380,6 +385,7 @@ local function simpan()
             collectAllOn = state.collectAllOn, collectSemuaSeed = state.collectSemuaSeed,
             collectSeedPilih = state.collectSeedPilih, collectSemuaMut = state.collectSemuaMut,
             collectMutPilih = state.collectMutPilih, collectKgMin = state.collectKgMin,
+            shovelOn = state.shovelOn, shovelSemua = state.shovelSemua, shovelPilih = state.shovelPilih,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
             hideVisualOn = state.hideVisualOn,
@@ -834,6 +840,139 @@ function Seed.sellAllOnce()
     if not (p and p.Fire) then return false end
     pcall(function() p:Fire() end)
     return true
+end
+
+-- v3.39: JADWAL FASE BULAN dari API WEB (kapan moon bakal TERJADI, bukan berhenti).
+-- Niru star_farm: GET https://api.gag2.gg/api/live/weather -> data.weather.upcomingMoons
+-- = [{name, boundary}]. boundary = timestamp UNIX kapan moon muncul. sisa = boundary-now.
+-- Fetch pakai request executor (syn.request/http_request/request). cache 30s.
+Seed._moonAPIUrl = "https://api.gag2.gg/api/live/weather"
+Seed._moonCache = nil
+Seed._moonAt = 0
+function Seed.fetchMoonAPI()
+    local now = os.clock()
+    if Seed._moonCache ~= nil and (now - Seed._moonAt) < 30 then
+        return Seed._moonCache or nil
+    end
+    local res = nil
+    pcall(function()
+        local req = (syn and syn.request) or (http and http.request) or http_request or request
+            or (fluxus and fluxus.request)
+        if not req then return end
+        local ok0, resp = pcall(function() return req({ Url = Seed._moonAPIUrl, Method = "GET" }) end)
+        if not ok0 then return end
+        local body = resp and (resp.Body or resp.body)
+        if not body then return end
+        local HS = game:GetService("HttpService")
+        local ok, data = pcall(function() return HS:JSONDecode(body) end)
+        if not ok or type(data) ~= "table" then return end
+        local w = data.weather
+        if not w or type(w.upcomingMoons) ~= "table" then return end
+        local nowTime = os.time()
+        local map = {
+            ["bloodmoon"]="Bloodmoon", ["blood moon"]="Bloodmoon",
+            ["goldmoon"]="Goldmoon", ["gold moon"]="Goldmoon",
+            ["rainbow moon"]="Rainbow", ["rainbow_moon"]="Rainbow",
+            ["mega moon"]="Mega", ["mega_moon"]="Mega", ["moon"]="Moon",
+        }
+        local nearest = {}
+        for _, mn in ipairs(w.upcomingMoons) do
+            local nm = tostring(mn.name or ""):lower()
+            local key = map[nm]
+            local bnd = tonumber(mn.boundary)
+            if key and bnd then
+                local left = bnd - nowTime
+                if left > 0 and (not nearest[key] or left < nearest[key]) then
+                    nearest[key] = left
+                end
+            end
+        end
+        if next(nearest) then res = nearest end
+    end)
+    Seed._moonCache = res or false; Seed._moonAt = now
+    return res
+end
+
+-- format sisa waktu (detik -> "5m 03s" / "1j 20m")
+function Seed.fmtSisa(sec)
+    if sec == nil then return "-" end
+    if sec < 0 then sec = 0 end
+    local m = math.floor(sec / 60); local s = math.floor(sec % 60)
+    if m > 60 then
+        local h = math.floor(m/60); m = m % 60
+        return string.format("%dj %dm", h, m)
+    end
+    return string.format("%dm %02ds", m, s)
+end
+
+-- v3.38: AUTO SHOVEL SEED (cabut tanaman). Niru star_farm:
+--   remote Shovel.UseShovel(plantId, "", "Shovel", tool)  -- arg2 "" = cabut tanaman
+--   butuh Tool Shovel di tas (equip dulu). SISAIN min 1 per jenis (game nolak
+--   cabut tanaman TERAKHIR: "You can't remove your only carrot!").
+--   plantId = plant.Name (userId_uuid, panjang >= 30). filter jenis via SeedName.
+function Seed.shovelSeedOnce()
+    local p = pkt("Shovel", "UseShovel")
+    if not (p and p.Fire) then Seed._logShovel = "remote Shovel.UseShovel gak ada"; return 0 end
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return 0 end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    -- cari Tool Shovel
+    local shovelTool
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then
+            for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+            end
+        end
+        if shovelTool then break end
+    end
+    if not shovelTool then Seed._logShovel = "Tool Shovel gak ada di tas"; return 0 end
+    if shovelTool.Parent ~= char and hum then
+        pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.1)
+    end
+
+    local MY = player.UserId
+    -- hitung tanaman KITA per jenis (buat aturan sisain 1)
+    local typeCount = {}
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                if (not ownerId or ownerId == MY) then
+                    local sn = plant:GetAttribute("SeedName") or "?"
+                    typeCount[sn] = (typeCount[sn] or 0) + 1
+                end
+            end
+        end
+    end
+
+    local removed = 0
+    local galiPerType = {}
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if not (state.shovelOn and isCurrentGen()) then break end
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                local plantId = plant.Name
+                local seedName = plant:GetAttribute("SeedName") or "?"
+                local okType = state.shovelSemua or (state.shovelPilih[seedName] == true)
+                -- sisain min 1 per jenis
+                local sisa = (typeCount[seedName] or 0) - (galiPerType[seedName] or 0)
+                local bolehGali = sisa > 1
+                if (not ownerId or ownerId == MY) and okType and #plantId >= 30 and bolehGali then
+                    pcall(function() p:Fire(plantId, "", shovelTool.Name, shovelTool) end)
+                    removed = removed + 1
+                    galiPerType[seedName] = (galiPerType[seedName] or 0) + 1
+                    if removed % 30 == 0 then task.wait() end
+                end
+            end
+        end
+    end
+    Seed._logShovel = removed > 0 and (removed .. " tanaman dicabut") or "gak ada yg dicabut"
+    return removed
 end
 
 -- ============================================================
@@ -4407,7 +4546,7 @@ local BOOL_PANEL = { "beliOn","borongSemua","beliBagus","seedBaruAuto",
                      "ambilSeedOn","grabSemua","autoPlantOn","plantSemua",
                      "collectAllOn","collectSemuaSeed","collectSemuaMut",
                      "sellBiasaOn","sellPenuhOn","espInvOn","espGardenOn","autoTele","giftMailOn",
-                     "hideVisualOn","noclipOn" }
+                     "hideVisualOn","noclipOn","shovelOn","shovelSemua" }
 local NUM_PANEL  = { "jualMinMult","sisaSheck","petMaxHarga","jedaSiklus",
                      "maxPerSiklus","mutasiMaxKali","gearMaxHarga",
                      -- v3.28: setelan FARM angka
@@ -4605,6 +4744,11 @@ function Seed.pakaiCfgPanel(r)
         local baru = {}
         for _, nm in ipairs(c.giftGearPilih) do if type(nm) == "string" then baru[nm] = true end end
         state.giftGearPilih = baru; ubah[#ubah+1] = "giftGearPilih(" .. #c.giftGearPilih .. ")"
+    end
+    if type(c.shovelPilih) == "table" then
+        local baru = {}
+        for _, nm in ipairs(c.shovelPilih) do if type(nm) == "string" then baru[nm] = true end end
+        state.shovelPilih = baru; ubah[#ubah+1] = "shovelPilih(" .. #c.shovelPilih .. ")"
     end
 
     if #ubah > 0 then
@@ -5041,7 +5185,7 @@ mk("UIStroke", { Color = WARNA.aksen, Thickness = 1.5, Parent = logo })
 mk("TextLabel", { Parent = logo, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
     Font = Enum.Font.GothamBold, TextSize = 24, TextColor3 = WARNA.aksen, Text = "S" })
 
-local W, H = 540, 380
+local W, H = 600, 440
 local main = mk("Frame", {
     Name = "Main", Parent = sg, Active = true, Draggable = true,
     Size = UDim2.new(0, W, 0, H),
@@ -5051,6 +5195,46 @@ local main = mk("Frame", {
 })
 mk("UICorner", { CornerRadius = UDim.new(0, 12), Parent = main })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = main })
+
+-- v3.37: RESIZE HANDLE pojok kanan-bawah -- drag buat besarin/kecilin GUI.
+do
+    local gripResize = mk("TextButton", {
+        Name = "Resize", Parent = main, Text = "⟋",
+        Size = UDim2.new(0, 22, 0, 22),
+        Position = UDim2.new(1, -24, 1, -24),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0, AutoButtonColor = false,
+        Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.redup,
+        ZIndex = 10,
+    })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = gripResize })
+    local UIS = game:GetService("UserInputService")
+    local resizing, startPos, startSize = false, nil, nil
+    gripResize.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+           or inp.UserInputType == Enum.UserInputType.Touch then
+            resizing = true
+            startPos = inp.Position
+            startSize = main.AbsoluteSize
+            main.Draggable = false
+        end
+    end)
+    UIS.InputChanged:Connect(function(inp)
+        if resizing and (inp.UserInputType == Enum.UserInputType.MouseMovement
+           or inp.UserInputType == Enum.UserInputType.Touch) then
+            local delta = inp.Position - startPos
+            local nw = math.clamp(startSize.X + delta.X, 380, 1000)
+            local nh = math.clamp(startSize.Y + delta.Y, 280, 800)
+            main.Size = UDim2.new(0, nw, 0, nh)
+        end
+    end)
+    UIS.InputEnded:Connect(function(inp)
+        if (inp.UserInputType == Enum.UserInputType.MouseButton1
+           or inp.UserInputType == Enum.UserInputType.Touch) and resizing then
+            resizing = false
+            main.Draggable = true
+        end
+    end)
+end
 
 -- klik logo -> buka GUI (sembunyiin logo). Nanti tombol tutup/minimize GUI
 -- balik ke logo (dihandle di bawah, di tblMin).
@@ -5067,20 +5251,20 @@ mk("Frame", { Parent = judul, Size = UDim2.new(1, 0, 0, 12), Position = UDim2.ne
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0 })
 mk("TextLabel", { Parent = judul, BackgroundTransparency = 1,
     Position = UDim2.new(0, 14, 0, 0), Size = UDim2.new(0, 120, 1, 0),
-    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "STAR SEED" })
 mk("TextLabel", { Parent = judul, BackgroundTransparency = 1,
     Position = UDim2.new(0, 96, 0, 0), Size = UDim2.new(0, 50, 1, 0),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "v" .. VERSI })
 local tblMin = mk("TextButton", { Parent = judul, BackgroundTransparency = 1,
     Position = UDim2.new(1, -66, 0, 0), Size = UDim2.new(0, 32, 1, 0),
-    Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WARNA.redup, Text = "—" })
+    Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = WARNA.redup, Text = "—" })
 -- v3.17: tombol X -> TUTUP TOTAL (hilangin SEMUA GUI, logo + main). Termasuk
 -- yang lagi ON. Script tetep jalan di belakang, cuma GUI-nya yang ilang.
 local tblTutup = mk("TextButton", { Parent = judul, BackgroundTransparency = 1,
     Position = UDim2.new(1, -32, 0, 0), Size = UDim2.new(0, 32, 1, 0),
-    Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = WARNA.redup, Text = "X" })
+    Font = Enum.Font.GothamBold, TextSize = 17, TextColor3 = WARNA.redup, Text = "X" })
 
 -- ===== badan: sidebar + konten =====
 local badan = mk("Frame", { Parent = main, BackgroundTransparency = 1,
@@ -5131,7 +5315,7 @@ local function bikinTabBtn(teks, sf, urutan)
     -- label teks (tanpa emoji -- Roblox render gak konsisten)
     local lblTeks = mk("TextLabel", { Parent = b, BackgroundTransparency = 1,
         Position = UDim2.new(0, 8, 0, 0), Size = UDim2.new(1, -10, 1, 0),
-        Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.redup,
+        Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.redup,
         TextXAlignment = Enum.TextXAlignment.Left, Text = teks })
     local rec = { btn = b, sf = sf, garis = garisAksen, teks = lblTeks }
     daftarTab[#daftarTab+1] = rec
@@ -5191,20 +5375,20 @@ local function bukaPicker(judul, ambilList, pilihTbl, getSemua, setSemua, onTutu
     mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = pop })
     mk("TextLabel", { Parent = pop, BackgroundTransparency = 1, ZIndex = 52,
         Position = UDim2.new(0, 14, 0, 10), Size = UDim2.new(1, -90, 0, 22),
-        Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.teks,
+        Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = WARNA.teks,
         TextXAlignment = Enum.TextXAlignment.Left, Text = judul })
     -- tombol All (centang/lepas semua)
     local tblAll = mk("TextButton", { Parent = pop, ZIndex = 52,
         Position = UDim2.new(1, -128, 0, 8), Size = UDim2.new(0, 58, 0, 26),
         BackgroundColor3 = WARNA.aksenBg, BorderSizePixel = 0,
-        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "All" })
+        Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.aksenMuda, Text = "All" })
     mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblAll })
     mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = tblAll })
     -- tombol tutup
     local tblX = mk("TextButton", { Parent = pop, ZIndex = 52,
         Position = UDim2.new(1, -62, 0, 8), Size = UDim2.new(0, 52, 0, 26),
         BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-        Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.teks, Text = "OK" })
+        Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.teks, Text = "OK" })
     mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblX })
     -- scroll daftar
     local sc = mk("ScrollingFrame", { Parent = pop, ZIndex = 52,
@@ -5234,7 +5418,7 @@ local function bukaPicker(judul, ambilList, pilihTbl, getSemua, setSemua, onTutu
         for i, nm in ipairs(list) do
             local b = mk("TextButton", { Parent = sc, LayoutOrder = i, ZIndex = 52,
                 Size = UDim2.new(1, -4, 0, 26), BackgroundColor3 = WARNA.kartu,
-                BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 11,
+                BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 13,
                 TextColor3 = warnaBaris(nm), TextXAlignment = Enum.TextXAlignment.Left,
                 Text = "  " .. nm })
             mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
@@ -5244,7 +5428,7 @@ local function bukaPicker(judul, ambilList, pilihTbl, getSemua, setSemua, onTutu
                 if kn and kn ~= "" then
                     mk("TextLabel", { Parent = b, BackgroundTransparency = 1, ZIndex = 53,
                         Position = UDim2.new(1, -82, 0, 0), Size = UDim2.new(0, 76, 1, 0),
-                        Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+                        Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
                         TextXAlignment = Enum.TextXAlignment.Right, Text = kn .. "  " })
                 end
             end
@@ -5284,17 +5468,17 @@ end
 local kSaklar = kartu(58, tabAutoBuy)
 mk("TextLabel", { Parent = kSaklar, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto beli seed + gear" })
 local lblStatus = mk("TextLabel", { Parent = kSaklar, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 29), Size = UDim2.new(1, -110, 0, 16),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "mati" })
 -- tombol ON/OFF gaya C4: kotak + titik + teks. Isi (titik/teks/warna) diatur catSaklar.
 local tblSaklar = mk("TextButton", { Parent = kSaklar,
     Position = UDim2.new(1, -84, 0, 14), Size = UDim2.new(0, 72, 0, 30),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblSaklar })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSaklar })
 
@@ -5302,28 +5486,28 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSaklar })
 local kMode = kartu(128, tabAutoBuy)
 mk("TextLabel", { Parent = kMode, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Mode" })
 local tblBorong = mk("TextButton", { Parent = kMode,
     Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(0.5, -16, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.teks, Text = "Borong semua" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.teks, Text = "Borong semua" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblBorong })
 local tblPilih = mk("TextButton", { Parent = kMode,
     Position = UDim2.new(0.5, 4, 0, 30), Size = UDim2.new(0.5, -16, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup, Text = "Pilih jenis" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup, Text = "Pilih jenis" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblPilih })
 local tblBagus = mk("TextButton", { Parent = kMode,
     Position = UDim2.new(0, 12, 0, 62), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     Text = "Ikut samber seed bagus: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblBagus })
 local tblBaru = mk("TextButton", { Parent = kMode,
     Position = UDim2.new(0, 12, 0, 94), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     Text = "Seed baru auto-beli: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblBaru })
 
@@ -5331,11 +5515,11 @@ mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblBaru })
 local kDaftar = kartu(190, tabAutoBuy)
 mk("TextLabel", { Parent = kDaftar, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
 local lblHint = mk("TextLabel", { Parent = kDaftar, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 24), Size = UDim2.new(1, -24, 0, 14),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "cuma kepakai di mode Pilih jenis" })
 local gulir = mk("ScrollingFrame", { Parent = kDaftar, BackgroundTransparency = 1,
     Position = UDim2.new(0, 8, 0, 42), Size = UDim2.new(1, -16, 1, -50),
@@ -5347,16 +5531,16 @@ mk("UIListLayout", { Parent = gulir, Padding = UDim.new(0, 3), SortOrder = Enum.
 local kSet = kartu(76, tabAutoBuy)
 mk("TextLabel", { Parent = kSet, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Sisa sheckles" })
 mk("TextLabel", { Parent = kSet, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 24), Size = UDim2.new(1, -24, 0, 14),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "berhenti beli kalau saldo di bawah ini (0 = bebas)" })
 local kotakSisa = mk("TextBox", { Parent = kSet,
     Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     Text = tostring(state.sisaSheck or 0) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakSisa })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSisa })
@@ -5368,55 +5552,55 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSisa })
 local kStat = kartu(64, tabFarm)
 local lblSheck = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Sheckles: —" })
 local lblSeed = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 26), Size = UDim2.new(0.5, -12, 0, 16),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed tas: —" })
 local lblKebun = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
     Position = UDim2.new(0.5, 0, 0, 26), Size = UDim2.new(0.5, -12, 0, 16),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed kebun: —" })
 
 -- ---------- Auto Plant Seed (v3.18) ----------
 local kPlant = kartu(120, tabFarm)
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Plant Seed" })
 -- baris "Jenis seed [picker]"
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(0, 120, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
 local pickPlantSeed = mk("TextButton", { Parent = kPlant,
     Position = UDim2.new(1, -128, 0, 30), Size = UDim2.new(0, 116, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickPlantSeed })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickPlantSeed })
 -- baris "Sebar tanam [input]"
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 62), Size = UDim2.new(0, 120, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Sebar tanam" })
 local kotakSpread = mk("TextBox", { Parent = kPlant,
     Position = UDim2.new(1, -128, 0, 60), Size = UDim2.new(0, 116, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     Text = tostring(state.plantSpread or 3) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakSpread })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakSpread })
 -- baris "Plant seed [OFF]"
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 92), Size = UDim2.new(0, 120, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Plant seed" })
 local tblPlant = mk("TextButton", { Parent = kPlant,
     Position = UDim2.new(1, -84, 0, 90), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblPlant })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
 
@@ -5424,51 +5608,51 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
 local kColl = kartu(152, tabFarm)
 mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Collect" })
 -- Jenis seed
 mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(0, 120, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
 local pickCollSeed = mk("TextButton", { Parent = kColl,
     Position = UDim2.new(1, -128, 0, 30), Size = UDim2.new(0, 116, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickCollSeed })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickCollSeed })
 -- Jenis mutasi
 mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 62), Size = UDim2.new(0, 120, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis mutasi" })
 local pickCollMut = mk("TextButton", { Parent = kColl,
     Position = UDim2.new(1, -128, 0, 60), Size = UDim2.new(0, 116, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickCollMut })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickCollMut })
 -- Threshold kg
 mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 92), Size = UDim2.new(0, 120, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Threshold kg" })
 local kotakKg = mk("TextBox", { Parent = kColl,
     Position = UDim2.new(1, -128, 0, 90), Size = UDim2.new(0, 116, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     Text = tostring(state.collectKgMin or 0) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakKg })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakKg })
 -- Collect toggle
 mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 122), Size = UDim2.new(0, 120, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Collect" })
 local tblCollect = mk("TextButton", { Parent = kColl,
     Position = UDim2.new(1, -84, 0, 120), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblCollect })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblCollect })
 
@@ -5476,28 +5660,28 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblCollect })
 local kSell = kartu(96, tabFarm)
 mk("TextLabel", { Parent = kSell, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Sell" })
 -- Sell backpack full
 mk("TextLabel", { Parent = kSell, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 34), Size = UDim2.new(0, 160, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Sell backpack full" })
 local tblSellPenuh = mk("TextButton", { Parent = kSell,
     Position = UDim2.new(1, -84, 0, 32), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblSellPenuh })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSellPenuh })
 -- Sell biasa
 mk("TextLabel", { Parent = kSell, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 64), Size = UDim2.new(0, 160, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Sell biasa" })
 local tblSellBiasa = mk("TextButton", { Parent = kSell,
     Position = UDim2.new(1, -84, 0, 62), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblSellBiasa })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSellBiasa })
 
@@ -5505,34 +5689,34 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblSellBiasa })
 local kGift = kartu(150, tabGift)
 mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Gift & jual" })
 local tblGift = mk("TextButton", { Parent = kGift,
     Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     Text = "Terima gift otomatis: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblGift })
 local tblJual = mk("TextButton", { Parent = kGift,
     Position = UDim2.new(0, 12, 0, 58), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     Text = "Auto jual pas mahal: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblJual })
 mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(0, 108, 0, 26),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Jual kalau >=" })
 local kotakMult = mk("TextBox", { Parent = kGift,
     Position = UDim2.new(0, 120, 0, 88), Size = UDim2.new(1, -132, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     Text = tostring(state.jualMinMult or 4) .. "x" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakMult })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakMult })
 local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 118), Size = UDim2.new(1, -24, 0, 26),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
     Text = "pasar: belum kebaca" })
 
@@ -5540,58 +5724,58 @@ local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
 local kGiftMail = kartu(178, tabGift)
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Gift Mail (seed + gear)" })
 -- target
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 34), Size = UDim2.new(0, 60, 0, 24),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Ke akun" })
 local kotakTarget2 = mk("TextBox", { Parent = kGiftMail,
     Position = UDim2.new(0, 76, 0, 32), Size = UDim2.new(1, -88, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     PlaceholderText = "nama akun", Text = tostring(state.giftMailTarget or "") })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakTarget2 })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakTarget2 })
 -- jumlah
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 64), Size = UDim2.new(0, 60, 0, 24),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Jumlah" })
 local kotakQty = mk("TextBox", { Parent = kGiftMail,
     Position = UDim2.new(0, 76, 0, 62), Size = UDim2.new(1, -88, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     Text = tostring(state.giftMailQty or 100) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakQty })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakQty })
 -- picker seed + gear
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 94), Size = UDim2.new(0, 60, 0, 24),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed" })
 local pickGiftSeed = mk("TextButton", { Parent = kGiftMail,
     Position = UDim2.new(0, 76, 0, 92), Size = UDim2.new(0.5, -44, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickGiftSeed })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGiftSeed })
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0.5, 40, 0, 94), Size = UDim2.new(0, 44, 0, 24),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Gear" })
 local pickGiftGear = mk("TextButton", { Parent = kGiftMail,
     Position = UDim2.new(0.5, 84, 0, 92), Size = UDim2.new(0.5, -96, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickGiftGear })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGiftGear })
 -- tombol kirim
 local tblKirimMail = mk("TextButton", { Parent = kGiftMail,
     Position = UDim2.new(0, 12, 0, 128), Size = UDim2.new(1, -24, 0, 34),
     BackgroundColor3 = WARNA.aksenBg, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.aksenMuda, Text = "KIRIM" })
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.aksenMuda, Text = "KIRIM" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblKirimMail })
 mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = tblKirimMail })
 
@@ -5603,28 +5787,28 @@ mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = tblKirimMail })
 local kEsp = kartu(96, tabMisc)
 mk("TextLabel", { Parent = kEsp, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "ESP Fruit (harga)" })
 -- ESP in inventory
 mk("TextLabel", { Parent = kEsp, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 34), Size = UDim2.new(0, 180, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Fruit in inventory" })
 local tblEspInv = mk("TextButton", { Parent = kEsp,
     Position = UDim2.new(1, -84, 0, 32), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblEspInv })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblEspInv })
 -- ESP in garden
 mk("TextLabel", { Parent = kEsp, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 64), Size = UDim2.new(0, 180, 0, 22),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Fruit in garden" })
 local tblEspGarden = mk("TextButton", { Parent = kEsp,
     Position = UDim2.new(1, -84, 0, 62), Size = UDim2.new(0, 72, 0, 26),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblEspGarden })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblEspGarden })
 
@@ -5632,38 +5816,38 @@ local kGrab = kartu(140, tabMisc)
 mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Transparency = 0.4, Parent = kGrab })
 mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Grab Seed" })
 mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -110, 0, 14),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Gold Moon: ambil seed jatuh" })
 local tblGrab = mk("TextButton", { Parent = kGrab,
     Position = UDim2.new(1, -84, 0, 12), Size = UDim2.new(0, 72, 0, 30),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblGrab })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblGrab })
 mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 52), Size = UDim2.new(0, 130, 0, 26),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Delay balik (detik)" })
 local kotakDelay = mk("TextBox", { Parent = kGrab,
     Position = UDim2.new(0, 140, 0, 52), Size = UDim2.new(1, -152, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     Text = tostring(state.delayBalikSeed or 1.5) })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakDelay })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakDelay })
 -- v3.19: filter jenis seed (All / pilih Gold/Rainbow/dll)
 mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 86), Size = UDim2.new(0, 130, 0, 26),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.redup,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
 local pickGrab = mk("TextButton", { Parent = kGrab,
     Position = UDim2.new(0, 140, 0, 86), Size = UDim2.new(1, -152, 0, 28),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.aksenMuda, Text = "Semua" })
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.aksenMuda, Text = "Semua" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickGrab })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGrab })
 
@@ -5671,28 +5855,28 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGrab })
 local kPet = kartu(150, tabMisc)
 mk("TextLabel", { Parent = kPet, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Pet" })
 local tblPet = mk("TextButton", { Parent = kPet,
     Position = UDim2.new(0, 12, 0, 28), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     Text = "Jinakin pet liar: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblPet })
 local tblKirim = mk("TextButton", { Parent = kPet,
     Position = UDim2.new(0, 12, 0, 58), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     Text = "Kirim pet ke akun lain: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblKirim })
 local lblFilter = mk("TextLabel", { Parent = kPet, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(1, -24, 0, 26),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Text = "filter: -" })
 local kotakTarget = mk("TextBox", { Parent = kPet,
     Position = UDim2.new(0, 12, 0, 116), Size = UDim2.new(1, -24, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.teks,
     PlaceholderText = "nama akun tujuan kirim",
     Text = tostring(state.giftTarget or "") })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakTarget })
@@ -5702,33 +5886,33 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakTarget })
 local kRingan = kartu(96, tabMisc)
 mk("TextLabel", { Parent = kRingan, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Ringankan RAM" })
 mk("TextLabel", { Parent = kRingan, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 24), Size = UDim2.new(1, -24, 0, 14),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "buang barang yang gak dibaca akun ini" })
 local tblRingan = mk("TextButton", { Parent = kRingan,
     Position = UDim2.new(0, 12, 0, 42), Size = UDim2.new(1, -24, 0, 24),
     BackgroundColor3 = WARNA.garis, BorderSizePixel = 0,
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.redup,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.redup,
     Text = "Ringankan RAM: MATI" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tblRingan })
 local lblRingan = mk("TextLabel", { Parent = kRingan, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 70), Size = UDim2.new(1, -24, 0, 20),
-    Font = Enum.Font.GothamMedium, TextSize = 11.5, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13.5, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Text = "belum jalan" })
 
 -- ---------- anti-afk ----------
 local kAfk = kartu(44, tabMisc)
 mk("TextLabel", { Parent = kAfk, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 0), Size = UDim2.new(1, -90, 1, 0),
-    Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamMedium, TextSize = 14, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Anti-AFK" })
 local tblAfk = mk("TextButton", { Parent = kAfk,
     Position = UDim2.new(1, -80, 0, 8), Size = UDim2.new(0, 68, 0, 28),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "ON" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "ON" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblAfk })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblAfk })
 
@@ -5737,17 +5921,17 @@ Seed._el = Seed._el or {}
 Seed._el.kTele = kartu(64, tabMisc)
 mk("TextLabel", { Parent = Seed._el.kTele, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -90, 0, 18),
-    Font = Enum.Font.GothamBold, TextSize = 12.5, TextColor3 = WARNA.teks,
+    Font = Enum.Font.GothamBold, TextSize = 14.5, TextColor3 = WARNA.teks,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Tele fall world" })
 mk("TextLabel", { Parent = Seed._el.kTele, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -90, 0, 26),
-    Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+    Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true,
     Text = "kalau nyasar di GAG 2 biasa, auto-TP ke fall world" })
 Seed._el.tblTele = mk("TextButton", { Parent = Seed._el.kTele,
     Position = UDim2.new(1, -80, 0, 16), Size = UDim2.new(0, 68, 0, 28),
     BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = WARNA.redup, Text = "OFF" })
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblTele })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblTele })
 
@@ -5776,13 +5960,13 @@ local function gambarDaftarSeed()
         local rar = Seed.rarity(nama) or "?"
         local b = mk("TextButton", { Parent = gulir, LayoutOrder = i,
             Size = UDim2.new(1, 0, 0, 24), BackgroundColor3 = WARNA.bg,
-            BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 11,
+            BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 13,
             TextColor3 = state.seedPilih[nama] and WARNA.aksen or WARNA.redup,
             TextXAlignment = Enum.TextXAlignment.Left, Text = "  " .. nama })
         mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
         mk("TextLabel", { Parent = b, BackgroundTransparency = 1,
             Position = UDim2.new(1, -74, 0, 0), Size = UDim2.new(0, 70, 1, 0),
-            Font = Enum.Font.GothamMedium, TextSize = 11, TextColor3 = WARNA.samar,
+            Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = WARNA.samar,
             TextXAlignment = Enum.TextXAlignment.Right, Text = rar .. "  " })
         b.MouseButton1Click:Connect(function()
             state.seedPilih[nama] = (not state.seedPilih[nama]) or nil
@@ -6247,7 +6431,7 @@ do
     local lbl = Instance.new("TextLabel")
     lbl.Size = UDim2.new(1, -16, 1, 0); lbl.Position = UDim2.new(0, 8, 0, 0)
     lbl.BackgroundTransparency = 1
-    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 12
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 14
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.RichText = true
     lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -6443,6 +6627,76 @@ task.spawn(function()
         task.wait(2)
         if state.collectAllOn then
             pcall(Seed.collectAllOnce)
+        end
+    end
+end)
+
+-- v3.39: WIDGET JADWAL FASE BULAN di POJOK KANAN ATAS layar (ScreenGui terpisah,
+-- BUKAN di GUI script). Ambil dari API web api.gag2.gg -> countdown kapan tiap
+-- moon (Bloodmoon/Goldmoon/Rainbow/dll) bakal MUNCUL. Update tiap 5s.
+-- dibungkus task.spawn biar var lokalnya gak nambah ke main (batas 200).
+task.spawn(function()
+    local host = (gethui and gethui()) or game:GetService("CoreGui")
+    local old = host:FindFirstChild("StarMoonWidget")
+    if old then old:Destroy() end
+    local wsg = Instance.new("ScreenGui")
+    wsg.Name = "StarMoonWidget"; wsg.ResetOnSpawn = false; wsg.IgnoreGuiInset = true
+    wsg.DisplayOrder = 50
+    pcall(function() wsg.Parent = host end)
+    local box = Instance.new("Frame")
+    box.Size = UDim2.new(0, 210, 0, 96); box.Position = UDim2.new(1, -220, 0, 8)
+    box.BackgroundColor3 = Color3.fromRGB(18, 20, 26); box.BackgroundTransparency = 0.1
+    box.BorderSizePixel = 0; box.Parent = wsg
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+    local st = Instance.new("UIStroke", box); st.Color = Color3.fromRGB(90, 70, 40); st.Thickness = 1
+    -- judul kecil
+    local jd = Instance.new("TextLabel")
+    jd.Size = UDim2.new(1, -16, 0, 18); jd.Position = UDim2.new(0, 8, 0, 5)
+    jd.BackgroundTransparency = 1; jd.Text = "Jadwal Fase Bulan"
+    jd.TextColor3 = Color3.fromRGB(255, 210, 120); jd.Font = Enum.Font.GothamBold
+    jd.TextSize = 12; jd.TextXAlignment = Enum.TextXAlignment.Left; jd.Parent = box
+    -- daftar moon (1 baris per moon) -- tiap moon punya label sendiri
+    -- urutan + ikon + nama tampil
+    local MOON = {
+        { key = "Bloodmoon", nama = "Bulan Merah" },
+        { key = "Rainbow",   nama = "Bulan Pelangi" },
+        { key = "Goldmoon",  nama = "Bulan Kuning" },
+        { key = "Mega",      nama = "Bulan Mega" },
+        { key = "Moon",      nama = "Bulan" },
+    }
+    local labelMoon = {}
+    for i, m in ipairs(MOON) do
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(1, -16, 0, 16); l.Position = UDim2.new(0, 8, 0, 24 + (i-1)*16)
+        l.BackgroundTransparency = 1
+        l.Text = m.nama .. ":  -"
+        l.TextColor3 = Color3.fromRGB(230, 230, 230); l.Font = Enum.Font.GothamMedium
+        l.TextSize = 12; l.TextXAlignment = Enum.TextXAlignment.Left; l.Parent = box
+        labelMoon[m.key] = l
+    end
+    while isCurrentGen() do
+        pcall(function()
+            local data = Seed.fetchMoonAPI()
+            for _, m in ipairs(MOON) do
+                local l = labelMoon[m.key]
+                if data and data[m.key] then
+                    l.Text = m.nama .. ":  " .. Seed.fmtSisa(data[m.key])
+                else
+                    l.Text = m.nama .. ":  -"
+                end
+            end
+        end)
+        task.wait(5)
+    end
+end)
+
+-- v3.38: loop AUTO SHOVEL SEED -- cabut tanaman (filter jenis) tiap 5s
+task.spawn(function()
+    task.wait(20)
+    while isCurrentGen() do
+        task.wait(5)
+        if state.shovelOn then
+            pcall(Seed.shovelSeedOnce)
         end
     end
 end)
