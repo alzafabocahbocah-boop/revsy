@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.66-cf"
+local VERSION = "8.68-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3230,7 +3230,7 @@ local function grid_hitung(cfg, pkgsPilih)
             B = (r + 1) * tinggi - SELA,
         }
     end
-    return peta, nil, kol, bar, W, H
+    return peta, nil, kol, bar, W, H, lebar, tinggi
 end
 
 local function prefs_path(pkg)
@@ -3239,13 +3239,20 @@ end
 
 -- tulis koordinat 1 client. balikin: berhasil, keterangan
 -- keterangan "udah pas" = gak ada yang ditulis (hemat 1 panggilan su)
-local function tata_satu(pkg, kotak)
+local function tata_satu(pkg, kotak, hapusDulu)
     local path = prefs_path(pkg)
     -- stderr digabung DI DALAM su -- kalau dibuang, penolakan ROM ikut kebuang
     -- dan kodenya ngira sukses padahal gagal.
     local isi = sh("su -c 'cat " .. path .. " 2>&1'") or ""
     if not isi:find("<map", 1, true) then
         return false, "prefs belum ada (client belum pernah dibuka)"
+    end
+
+    -- v8.67: HAPUS SEMUA key posisi window LAMA dulu (user minta bener2 bersih).
+    -- Buang semua <int name="app_cloner_*window*"> yg ada -> gak ada sisa posisi
+    -- lama nyangkut (beda format/nilai basi). Baru tulis yg baru di bawah.
+    if hapusDulu then
+        isi = isi:gsub('%s*<int name="app_cloner_[%w_]*window[%w_]*"[^/]*/>', "")
     end
 
     local mau = {}
@@ -3259,12 +3266,15 @@ local function tata_satu(pkg, kotak)
     end
 
     -- udah pas? lewatin nulisnya -- hemat 1 su per client tiap ronde
-    local udahPas = true
-    for k, v in pairs(mau) do
-        local ada = tonumber(isi:match('<int name="' .. k .. '" value="(%-?%d+)"'))
-        if ada ~= v then udahPas = false break end
+    -- (SKIP cek ini kalau hapusDulu -- posisi lama udah dibuang, WAJIB tulis ulang)
+    if not hapusDulu then
+        local udahPas = true
+        for k, v in pairs(mau) do
+            local ada = tonumber(isi:match('<int name="' .. k .. '" value="(%-?%d+)"'))
+            if ada ~= v then udahPas = false break end
+        end
+        if udahPas then return true, "udah pas" end
     end
-    if udahPas then return true, "udah pas" end
 
     local baru = isi
     for k, v in pairs(mau) do
@@ -4320,7 +4330,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 -- TULIS prefs posisi (tata_satu udah nulis ke shared_prefs).
                 -- Client nyusul posisi pas restart NATURAL (rejoin/crash/buka).
                 -- Yang lagi main gak keganggu -> gak ada mati bareng.
-                tata_satu(pkg, petaGrid[pkg])
+                tata_satu(pkg, petaGrid[pkg], true)   -- v8.67: hapus posisi lama dulu
             end
         end
         os.execute("sleep 1")
@@ -6108,7 +6118,14 @@ local function run(cfg)
                     if baru ~= (tonumber(cfg.grid_kolom) or 0) then
                         cfg.grid_kolom = baru
                         pcall(function() save_config(cfg) end)
-                        info("Grid diset " .. (baru > 0 and (baru .. " kolom") or "otomatis") .. " (dari denyut-loop)")
+                        -- v8.68: log detail kolom x baris + ukuran per client
+                        local pk, _, gk, gb, _, _, gl, gt = grid_hitung(cfg)
+                        if pk then
+                            info(string.format("Grid diset: %d kolom x %d baris, layar per client %dx%d px (dari denyut-loop)",
+                                gk or 0, gb or 0, gl or 0, gt or 0))
+                        else
+                            info("Grid diset " .. (baru > 0 and (baru .. " kolom") or "otomatis") .. " (dari denyut-loop)")
+                        end
                         SUDAH_GRID = false; GRID_CACHE = nil
                     end
                 end
@@ -6238,6 +6255,21 @@ local function run(cfg)
                     -- kosong -> join PUBLIC. Refresh di sini biar accessCode terbaru
                     -- kepakai -> join PS-access per akun.
                     pcall(refresh_ps); pcall(refresh_ps_getps)
+                    -- v8.68 FIX: CEK LISENSI DULU sebelum rejoin. Bug user: rejoin
+                    -- denyut buka client TANPA cek lisensi -> client kebuka nyangkut
+                    -- di layar "Enter key" (lisensi hilang) -> baru ketahuan pas FORCE
+                    -- di tengah sesi. Sekarang: lisensi hilang -> SKIP rejoin (jangan
+                    -- buka client percuma). Bypass diurus pas FORCE/open_all (yg emang
+                    -- buka 1 client buat ambil key dengan bener).
+                    do
+                        local kd = lisensi_keadaan(cfg)
+                        if kd ~= "ada" then
+                            warn(("[antrian] Lisensi Delta %s -- SKIP rejoin (client bakal nyangkut layar key). Pencet Start/FORCE buat bypass dulu."):format(
+                                kd == "hilang" and "HILANG" or "BASI"))
+                            perluTembak = {}   -- kosongin -> gak rejoin ronde ini
+                        end
+                    end
+                    if #perluTembak > 0 then
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
                     for idx, pkg in ipairs(perluTembak) do
                         if cek_batal and cek_batal() then break end
@@ -6258,7 +6290,8 @@ local function run(cfg)
                             end
                         end
                     end
-                end
+                    end
+                    end
             end
         end
 
@@ -6880,13 +6913,18 @@ local function run(cfg)
                 -- jadi nulis ke client yang lagi jalan itu percuma dua kali.
                 -- Alurnya: tutup semua -> tulis semua -> buka satu-satu.
                 setAksi("nata jendela (tutup -> tulis posisi -> buka)")
-                local peta, sebabGrid, kol, bar, W, H = grid_hitung(cfg)
+                local peta, sebabGrid, kol, bar, W, H, lebarC, tinggiC = grid_hitung(cfg)
                 if not peta then
                     tambahLog("GRID gagal: " .. tostring(sebabGrid))
                     warn("GRID gagal: " .. tostring(sebabGrid))
                 else
-                    tambahLog(string.format("GRID: nata %dx%d di layar %dx%d -- client ditutup dulu",
-                        kol or 0, bar or 0, W or 0, H or 0))
+                    -- v8.68: log detail -- grid berapa kolom x baris + ukuran layar
+                    -- PER CLIENT (biar user bisa cek bener apa nggak).
+                    local nC = #split(cfg.pkgs)
+                    tambahLog(string.format("GRID: %d kolom x %d baris (%d client) -- layar per client %dx%d px [layar total %dx%d]",
+                        kol or 0, bar or 0, nC, lebarC or 0, tinggiC or 0, W or 0, H or 0))
+                    info(string.format("GRID diset: %dx%d, per client %dx%d px",
+                        kol or 0, bar or 0, lebarC or 0, tinggiC or 0))
                     -- v8.61: pakai close_all_cepat (tutup barengan) bukan close_all
                     -- lama (5s/client). GRID gak perlu jeda App Cloner per-client --
                     -- toh langsung tulis prefs + buka ulang.
@@ -6895,7 +6933,9 @@ local function run(cfg)
 
                     local nTulis, nGagal = 0, 0
                     for _, pkg in ipairs(split(cfg.pkgs)) do
-                        local tok, tket = tata_satu(pkg, peta[pkg])
+                        -- v8.67: hapusDulu=true -> buang posisi window LAMA dulu,
+                        -- baru tulis grid baru (user minta bener2 bersih, gak nyangkut)
+                        local tok, tket = tata_satu(pkg, peta[pkg], true)
                         if tok then nTulis = nTulis + 1
                         else
                             nGagal = nGagal + 1
