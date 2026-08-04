@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.64-cf"
+local VERSION = "8.65-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6236,6 +6236,11 @@ local function run(cfg)
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
                     for idx, pkg in ipairs(perluTembak) do
                         if cek_batal and cek_batal() then break end
+                        -- v8.65: TULIS GRID posisi SEBELUM buka client. Bug: blok
+                        -- denyut buka client TANPA nulis prefs grid dulu -> posisi
+                        -- window pakai default/lama (bukan 3x2 yg diset). grid_satu
+                        -- nulis prefs posisi client ini (App Cloner baca pas buka).
+                        pcall(function() grid_satu(cfg, pkg) end)
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         pcall(function() jaga_depan(cfg, mapLink) end)
                         -- v8.44: jeda 30s antar rejoin (tembak 1-1, bukan barengan).
