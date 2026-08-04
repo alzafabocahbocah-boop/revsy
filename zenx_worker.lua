@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.58-cf"
+local VERSION = "8.60-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3816,7 +3816,7 @@ end
 -- nunggu verifikasi mati sendiri-sendiri -> lambat banget kalau banyak.
 -- v8.49: TUTUP CEPAT BARENGAN (buat STOP). GLOBAL (bukan local) biar gak nambah
 -- local di main chunk (udah mepet 200). force-stop semua barengan (& bg) -> cepet.
-function close_all_cepat(cfg)
+function close_all_cepat(cfg, skipVerif)
     local list = split(cfg.pkgs)
     if #list == 0 then return 0 end
     setAksi("STOP -- nutup semua client barengan")
@@ -3825,6 +3825,10 @@ function close_all_cepat(cfg)
     cmd = cmd .. "wait'"
     sh_silent(cmd)
     info(("STOP: %d client ditembak tutup barengan"):format(#list))
+    -- v8.59: skipVerif -> langsung balik (gak nunggu loop verifikasi 5s). Buat
+    -- GRID: toh langsung buka ulang, gak perlu mastiin mati 100% dulu. STOP tetep
+    -- verifikasi (mastiin bener-bener tutup).
+    if skipVerif then return #list end
     local belum = {}
     for _, pkg in ipairs(list) do belum[pkg] = true end
     for _ = 1, 5 do
@@ -6918,11 +6922,21 @@ local function run(cfg)
                 cfg.grid_kolom = (k and k >= 1) and k or 0
                 pcall(function() save_config(cfg) end)
                 SUDAH_GRID = false; GRID_CACHE = nil
-                -- tutup semua client -> buka ulang fresh (grid baru kepakai)
-                local ditutup = 0
-                pcall(function() ditutup = close_all_cepat(cfg) end)
-                info("Grid diatur: " .. (cfg.grid_kolom > 0 and (cfg.grid_kolom .. " kolom") or "otomatis")
-                     .. " -- " .. tostring(ditutup) .. " client ditutup, buka ulang dgn grid baru")
+                -- v8.60: kalau lagi STANDBY (belum Start), JANGAN tutup/buka client.
+                -- Cuma SIMPEN setelan grid -> kepakai pas Start nanti. User minta:
+                -- set grid pas standby = client tetep ketutup, gak kebuka sendiri.
+                local lagiStandby = isi:upper():find("STANDBY") ~= nil
+                    or (not isi:upper():find("FORCE") and not isi:upper():find("REJOIN"))
+                if lagiStandby then
+                    info("Grid diset " .. (cfg.grid_kolom > 0 and (cfg.grid_kolom .. " kolom") or "otomatis")
+                         .. " (STANDBY -- disimpen, kepakai pas Start)")
+                else
+                    -- lagi jalan -> tutup cepet + buka ulang dgn grid baru
+                    local ditutup = 0
+                    pcall(function() ditutup = close_all_cepat(cfg, true) end)
+                    info("Grid diatur: " .. (cfg.grid_kolom > 0 and (cfg.grid_kolom .. " kolom") or "otomatis")
+                         .. " -- " .. tostring(ditutup) .. " client ditutup, buka ulang dgn grid baru")
+                end
             end
             -- v7.03: FORCE dari panel = MULAI FRESH kayak worker baru. Reset
             -- SUDAH_GRID (nata tempat/tiling ULANG) + lastOpen (buka client dari
