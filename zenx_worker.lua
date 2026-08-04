@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.46-cf"
+local VERSION = "8.48-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5993,11 +5993,16 @@ local function run(cfg)
         -- v8.33: CEK GRAFIS di TOP loop (level atas, PASTI jalan tiap iterasi).
         -- Loop grafis lama ke-nest DALAM FORCE handler (depth 4) -> gak jalan
         -- kalau client udah kebuka semua (alur gak nyampe). Taruh di sini biar
-        -- lepas dari buka-client. Cek DENYUT tiap 2 menit (120s): client di game via denyut SD card.
+        -- lepas dari buka-client. Cek DENYUT tiap 30s: denyut mati >2 menit -> langsung rejoin (gak nunggu siklus lama).
         do
             local isiTop = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
             local hitTop = isiTop:upper():find("FORCE") or isiTop:upper():find("REJOIN")
-            if hitTop and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 120 then
+            -- v8.47: CEK denyut tiap 30s (bukan 2 menit). Ambang mati tetap 2 menit
+            -- (120s). Bedanya: begitu denyut LEWAT 2 menit, cek berikutnya (max 30s
+            -- lagi) LANGSUNG rejoin -- gak nunggu siklus cek 2 menit (yg bikin telat
+            -- jadi ~4 menit). Baca denyut murah (file lokal 1 su call), jadi cek
+            -- sering gak boros.
+            if hitTop and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 30 then
                 KICK_DIURUS["_denyutTop"] = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
@@ -6065,6 +6070,14 @@ local function run(cfg)
                         if umur ~= nil and umur <= 120 then
                             -- denyut fresh (<=2 menit) = script nulis = DI GAME
                             diGame = diGame + 1
+                            -- v8.47: denyut fresh = client masuk game = CAPTCHA SOLVED.
+                            -- Clear flag captcha (dulu clear di loop grafis lama yg
+                            -- OFF -> captcha stuck selamanya). Sekarang clear di sini.
+                            if KICK_DIURUS["captcha:" .. pkg] then
+                                info(("[antrian] %s CAPTCHA kelar (denyut fresh = masuk game)")
+                                    :format(ak or pkg))
+                                KICK_DIURUS["captcha:" .. pkg] = nil
+                            end
                         elseif umur == nil then
                             -- belum ada file denyut = client BARU masuk (script belum
                             -- sempet nulis, butuh ~20s). Toleransi: anggap di game
@@ -6073,12 +6086,26 @@ local function run(cfg)
                             -- ini cuma buat client yg baru dibuka.
                             diGame = diGame + 1
                         else
-                            -- umur > 120s = denyut MATI >2 menit = WAJIB REJOIN
-                            -- (kecuali kena captcha)
-                            if not KICK_DIURUS["captcha:" .. pkg] then
-                                perluTembak[#perluTembak+1] = pkg
-                                info(("[antrian] %s denyut MATI (%ss) = WAJIB REJOIN")
-                                    :format(ak or pkg, umur))
+                            -- umur > 120s = denyut MATI >2 menit. Cek CAPTCHA dulu
+                            -- (v8.47: captcha check pindah ke sini dari loop grafis
+                            -- lama yg udah OFF). Kalau kena captcha -> JANGAN rejoin
+                            -- (percuma, solve manual) + set badge. Kalau bukan ->
+                            -- WAJIB REJOIN.
+                            if KICK_DIURUS["captcha:" .. pkg] then
+                                -- udah ketandai captcha sebelumnya -> skip
+                                info(("[antrian] %s CAPTCHA (skip rejoin, solve manual)")
+                                    :format(ak or pkg))
+                            else
+                                local isCap, nWeb = cek_captcha_webview(pkg)
+                                if isCap then
+                                    if ak then KICK_DIURUS["captcha:" .. pkg] = ak end
+                                    info(("[antrian] %s CAPTCHA (webview %d fd) -> skip rejoin, solve manual")
+                                        :format(ak or pkg, nWeb or 0))
+                                else
+                                    perluTembak[#perluTembak+1] = pkg
+                                    info(("[antrian] %s denyut MATI (%ss) = WAJIB REJOIN")
+                                        :format(ak or pkg, umur))
+                                end
                             end
                         end
                     end
