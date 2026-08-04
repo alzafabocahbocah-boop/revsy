@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.78-cf"
+local VERSION = "8.79-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4140,7 +4140,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     for _, p in ipairs(list) do if potretAwal[p] then nyala = nyala + 1 end end
                     if nyala > 0 then
                         info(("  tutup %d client yang nyala biar RAM lega buat bypass..."):format(nyala))
-                        close_all(cfg, nil, mapLink, true)
+                        -- v8.79: pakai close_all_cepat (tembak barengan, cepet) bukan
+                        -- close_all (satu-satu 5s/client -- lama). User: tutup paksa pas
+                        -- bypass lama banget beda 5s, gak kayak STOP yg cepet barengan.
+                        close_all_cepat(cfg)
                         os.execute("sleep 3")
                     end
                 end
