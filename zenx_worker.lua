@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.79-cf"
+local VERSION = "8.80-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3354,11 +3354,20 @@ end
 -- Ringan (cuma tulis prefs 1 client, gak force-stop). Dipanggil sebelum open_one
 -- di jalur masukin (grafis-out / script-off) biar client masuk langsung di posisi.
 GRID_CACHE = nil   -- cache peta grid (biar gak hitung ulang tiap client)
+GRID_CACHE_KOLOM = nil   -- v8.80: grid_kolom yg dipakai pas cache dibikin
 function grid_satu(cfg, pkg)
     if cfg.auto_grid ~= true then return end   -- grid mati -> lewat
+    -- v8.80 FIX: cache basi bikin grid "kumat" (pakai grid lama). Kalau grid_kolom
+    -- BERUBAH (misal 0->3 dari panel) tapi GRID_CACHE masih nilai lama -> client
+    -- ditata pakai grid lama. Sekarang: reset cache kalau grid_kolom beda dari
+    -- yg dipakai pas cache dibikin.
+    local kolonSkrg = tonumber(cfg.grid_kolom) or 0
+    if GRID_CACHE_KOLOM ~= kolonSkrg then
+        GRID_CACHE = nil   -- grid_kolom berubah -> cache basi, hitung ulang
+    end
     if not GRID_CACHE then
         local p = grid_hitung(cfg)
-        if p then GRID_CACHE = p end
+        if p then GRID_CACHE = p; GRID_CACHE_KOLOM = kolonSkrg end
     end
     if GRID_CACHE and GRID_CACHE[pkg] then
         tata_satu(pkg, GRID_CACHE[pkg])   -- tulis prefs posisi (gak force-stop)
