@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.65-cf"
+local VERSION = "8.66-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3999,7 +3999,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- peringatannya tetep muncul DI DEPAN, bukan setelah 4 client nyangkut.
     -- Itu sendiri udah nolong: dulu gejalanya cuma "client kebuka tapi diem".
     -- ============================================================
-    if not fast and not only then
+    -- v8.66 FIX: cek lisensi jalan walau `only` ada isinya (FORCE:daftar-akun =
+    -- start sebagian client). Dulu syarat "not only" bikin cek lisensi DI-SKIP pas
+    -- start sebagian -> client kebuka DULUAN (0/6...) tanpa cek lisensi -> nyangkut
+    -- di layar key -> baru bypass di TENGAH sesi. Lisensi Delta itu per-DEVICE
+    -- (semua client share), jadi HARUS dicek dulu apapun modenya (full/sebagian).
+    if not fast then
         local kead, umur = lisensi_keadaan(cfg)
         -- v7.14: tembak barengan kalau GAK PERLU BYPASS KEY. Itu berarti:
         -- lisensi ADA, ATAU auto_key MATI (worker gak ngurus key -> gak ada
