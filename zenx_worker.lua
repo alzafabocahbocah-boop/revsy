@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.52-cf"
+local VERSION = "8.53-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6684,7 +6684,7 @@ local function run(cfg)
                         nm = nm:gsub("%s+", "")
                         if nm ~= "" then daftarAkun[#daftarAkun+1] = nm end
                     end
-                    refresh_ps()   -- ambil PS terbaru sekali di awal
+                    refresh_ps(); pcall(refresh_ps_getps)   -- v8.53: getps juga (accessCode per akun ke-refresh)
                     -- v4.61: kumpulin dulu, TUTUP BARENGAN, baru buka bertahap.
                     -- Perintah dari panel jadi kerasa langsung -- bukan nunggu
                     -- client 1 kelar dulu baru nyentuh client 2.
@@ -6723,7 +6723,7 @@ local function run(cfg)
                         local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
                         return (ambil_str(r, "isi") or ""):upper():find("STANDBY") ~= nil
                     end
-                    refresh_ps()
+                    refresh_ps(); pcall(refresh_ps_getps)
                     local function lapor_rejoin()
                         refresh_status(); lastStatusCek = os.time()
                         gambar_tabel(isi)
@@ -6821,7 +6821,7 @@ local function run(cfg)
                     tambahLog(("GRID: posisi ketulis %d client%s"):format(
                         nTulis, nGagal > 0 and (", " .. nGagal .. " gagal") or ""))
 
-                    refresh_ps()
+                    refresh_ps(); pcall(refresh_ps_getps)
                     local function batal_g()
                         if ada_stop() then return true end
                         local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
@@ -7426,7 +7426,7 @@ local function run(cfg)
                 -- v4.23: PS pindah? -> rejoin client itu doang, biar masuk PS baru.
                 local psLama = {}
                 for k, v in pairs(mapPsNama) do psLama[k] = v end
-                refresh_ps()
+                refresh_ps(); pcall(refresh_ps_getps)
                 lastPsRefresh = now
                 -- v4.61: KUMPULIN dulu semua yang pindah, TUTUP BARENGAN, baru
                 -- buka satu-satu. Dulu tiap client ditutup+dibuka sendiri-sendiri
