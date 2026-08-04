@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.56-cf"
+local VERSION = "8.58-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3192,13 +3192,21 @@ local function grid_hitung(cfg, pkgsPilih)
     if n == 0 then return nil, "gak ada client di config" end
 
     local kol, bar
-    local s = SUSUNAN[n]
-    if s then
-        kol, bar = s[1], s[2]
-    elseif W >= H then
-        kol = math.ceil(math.sqrt(n)); bar = math.ceil(n / kol)
+    -- v8.57: OVERRIDE dari panel. cfg.grid_kolom di-set (>0) -> pakai kolom itu,
+    -- baris dihitung dari jumlah client. Kalau 0/nil -> otomatis (SUSUNAN).
+    local kolPaksa = tonumber(cfg.grid_kolom)
+    if kolPaksa and kolPaksa >= 1 then
+        kol = math.min(kolPaksa, n)
+        bar = math.ceil(n / kol)
     else
-        bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
+        local s = SUSUNAN[n]
+        if s then
+            kol, bar = s[1], s[2]
+        elseif W >= H then
+            kol = math.ceil(math.sqrt(n)); bar = math.ceil(n / kol)
+        else
+            bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
+        end
     end
     -- v6.71: JARING PENGAMAN landscape. Layar landscape (W>=H) HARUS punya kolom
     -- >= baris (lebih lebar). Kalau kebalik (kol < bar -> jendela jadi tinggi
@@ -6896,6 +6904,25 @@ local function run(cfg)
                 pcall(function() save_config(cfg) end)
                 info("Place diganti ke " .. placeBaruDari .. " (pindah world) -- rejoin buat masuk")
                 SUDAH_GRID = false; GRID_CACHE = nil
+            end
+            -- v8.57: GRID:<kolom> dari panel -> atur jumlah kolom grid manual.
+            -- GRID:0 / GRID:auto -> balik otomatis (SUSUNAN). Reset grid biar
+            -- ke-nata ulang pakai kolom baru.
+            -- v8.58: FORCE-STOP client dulu. Grid cuma kepakai pas client dibuka
+            -- FRESH (prefs dibaca App Cloner saat buka). Kalau client udah jalan,
+            -- posisi lama (di memori) tetep kepakai -> bug bekas lama. Tutup semua
+            -- -> denyut rejoin buka ulang dgn prefs grid baru.
+            local gridDari = isi:match("GRID:(%w+)")
+            if gridDari then
+                local k = tonumber(gridDari)
+                cfg.grid_kolom = (k and k >= 1) and k or 0
+                pcall(function() save_config(cfg) end)
+                SUDAH_GRID = false; GRID_CACHE = nil
+                -- tutup semua client -> buka ulang fresh (grid baru kepakai)
+                local ditutup = 0
+                pcall(function() ditutup = close_all_cepat(cfg) end)
+                info("Grid diatur: " .. (cfg.grid_kolom > 0 and (cfg.grid_kolom .. " kolom") or "otomatis")
+                     .. " -- " .. tostring(ditutup) .. " client ditutup, buka ulang dgn grid baru")
             end
             -- v7.03: FORCE dari panel = MULAI FRESH kayak worker baru. Reset
             -- SUDAH_GRID (nata tempat/tiling ULANG) + lastOpen (buka client dari
