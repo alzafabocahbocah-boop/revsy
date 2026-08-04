@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.61-cf"
+local VERSION = "8.62-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4998,17 +4998,17 @@ local function lapor(cfg, isi_perintah, cache)
     local body = string.format(
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
-        '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s}',
+        '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s,'..
+        '"place":%s,"grid":%d}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
         jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id()), jstr(devnama_now()),
-        -- v5.66: laporin SCRIPT yang dijalanin RF ini. Panel butuh ini buat
-        -- misahin tab "GAG 2 farm" dari "GAG 2 seed" -- dan pakai info per-TIM
-        -- lebih andal daripada penanda per-akun: satu sumber (config RF),
-        -- langsung berlaku buat semua akun tim itu, dan akun yang belum pernah
-        -- lapor pun ikut keklasifikasi.
-        jstr(cfg.script_label or "")
+        jstr(cfg.script_label or ""),
+        -- v8.62: lapor place_id + grid_kolom yang lagi KESET di worker. Panel pakai
+        -- ini buat CEK setelan udah nyampe sebelum Start (tulis PS+grid -> cek ->
+        -- baru buka client). Biar gak Start pakai setelan lama.
+        jstr(cfg.place_id or ""), math.floor(tonumber(cfg.grid_kolom) or 0)
     )
 
     -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
