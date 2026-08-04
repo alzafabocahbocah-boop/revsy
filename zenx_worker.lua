@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.84-cf"
+local VERSION = "8.86-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -9549,6 +9549,70 @@ function getps_akun(cfg, cookie)
         if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
         elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
     end
+
+    -- v8.85: akun BELUM PUNYA PS -> BIKIN BARU (free private server, GAG gratis).
+    -- User: PS GAG gratis, dulu pencet private server auto-kebuat. Cara:
+    --   1. placeId -> universeId (apis.roblox.com/universes)
+    --   2. POST games.roblox.com/v1/games/vip-servers/{universeId} (butuh CSRF)
+    -- accessCode balik dari response -> join pakai placeId aktif (W2).
+    if sebabAkhir == "akun belum punya PS" then
+        -- ambil universeId dari placeId W1 (universe sama W2)
+        local uniUrl = "https://apis.roblox.com/universes/v1/places/" .. W1 .. "/universe"
+        local uh = io.popen(("curl -s -m 20 \"%s\" 2>&1"):format(uniUrl))
+        local uout = uh and uh:read("*all") or ""
+        if uh then uh:close() end
+        local universeId = uout:match('"universeId"%s*:%s*(%d+)')
+        -- fallback: universeId GAG udah ketauan (dari request asli). Kalau query
+        -- gagal, pakai ini langsung.
+        if not universeId then universeId = "10200395747" end
+        if universeId then
+            -- ambil CSRF token dulu (POST kosong -> header x-csrf-token)
+            local csrfCmd = ("curl -s -m 20 -i -X POST -H \"Cookie: $(cat %s)\" "
+                .. "\"https://auth.roblox.com/v2/logout\" 2>&1"):format(shq(tmp))
+            local ch = io.popen(csrfCmd)
+            local cout = ch and ch:read("*all") or ""
+            if ch then ch:close() end
+            local csrf = cout:match("[xX]%-[cC][sS][rR][fF]%-[tT][oO][kK][eE][nN]:%s*([%w%+/=]+)")
+            if csrf then
+                -- POST bikin VIP server (free). Body WAJIB: name, expectedPrice:0
+                -- (0 = gratis), idempotencyKey (UUID unik). Format dari request asli
+                -- yg berhasil 200 OK. Tanpa expectedPrice+idempotencyKey -> ditolak.
+                -- idempotencyKey: bikin UUID acak (biar tiap request unik).
+                local function uuid()
+                    local t = "0123456789abcdef"
+                    local s = ""
+                    for i = 1, 32 do
+                        local r = math.random(1, 16)
+                        s = s .. t:sub(r, r)   -- 1 char (bukan range)
+                        if i == 8 or i == 12 or i == 16 or i == 20 then s = s .. "-" end
+                    end
+                    return s
+                end
+                math.randomseed(os.time() + os.clock()*1000)
+                local idem = uuid()
+                local bikinUrl = "https://games.roblox.com/v1/games/vip-servers/" .. universeId
+                local body = string.format('{"name":"zenx","expectedPrice":0,"idempotencyKey":"%s"}', idem)
+                local bikinCmd = ("curl -s -m 25 -X POST -H \"Cookie: $(cat %s)\" "
+                    .. "-H \"X-CSRF-TOKEN: %s\" -H \"Content-Type: application/json\" "
+                    .. "-d '%s' \"%s\" 2>&1"):format(shq(tmp), csrf, body, bikinUrl)
+                local bh = io.popen(bikinCmd)
+                local bout = bh and bh:read("*all") or ""
+                if bh then bh:close() end
+                -- accessCode dari response
+                local kode = bout:match('"accessCode"%s*:%s*"([%w%-]+)"')
+                if kode then
+                    os.remove(tmp)
+                    return kode, "PS BARU dibikin (gratis)"
+                end
+                sebabAkhir = "bikin PS gagal: " .. (bout:match('"message"%s*:%s*"([^"]*)"') or bout:sub(1,80))
+            else
+                sebabAkhir = "CSRF token gak dapet (bikin PS)"
+            end
+        else
+            sebabAkhir = "universeId gak dapet (bikin PS)"
+        end
+    end
+
     os.remove(tmp)
     return nil, sebabAkhir
 end
