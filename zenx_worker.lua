@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.89-cf"
+local VERSION = "8.91-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3354,25 +3354,17 @@ end
 -- Ringan (cuma tulis prefs 1 client, gak force-stop). Dipanggil sebelum open_one
 -- di jalur masukin (grafis-out / script-off) biar client masuk langsung di posisi.
 GRID_CACHE = nil   -- cache peta grid (biar gak hitung ulang tiap client)
-GRID_CACHE_KOLOM = nil   -- v8.80: grid_kolom yg dipakai pas cache dibikin
 PKGS_AKTIF = nil   -- v8.88: client yg aktif dibuka (FORCE:daftar) -> grid pakai ini
+-- v8.90: grid_satu BUANG CACHE. Cache (GRID_CACHE) sumber utama "grid nyangkut
+-- lama" -- nilai basi kesimpen, gak ke-reset di semua jalur. Sekarang: hitung
+-- grid FRESH tiap panggil, dari PKGS_AKTIF (client yg panel pilih). grid_hitung
+-- murah (baca ukuran layar 1x), gak perlu cache. Fresh = gak akan nyangkut.
 function grid_satu(cfg, pkg)
     if cfg.auto_grid ~= true then return end   -- grid mati -> lewat
-    local kolonSkrg = tonumber(cfg.grid_kolom) or 0
-    -- v8.88: cache invalid kalau grid_kolom ATAU jumlah client aktif berubah
-    local nAktif = PKGS_AKTIF and #PKGS_AKTIF or 0
-    if GRID_CACHE_KOLOM ~= (kolonSkrg .. ":" .. nAktif) then
-        GRID_CACHE = nil
-    end
-    if not GRID_CACHE then
-        -- v8.88: hitung grid buat CLIENT AKTIF (yg dibuka), bukan semua 10.
-        -- Bug: 6 client grid 3 kolom -> jadi 4x3 (dihitung 10 client). Pakai
-        -- PKGS_AKTIF -> 6 client 3 kolom = 3x2 (bener).
-        local p = grid_hitung(cfg, PKGS_AKTIF)   -- nil PKGS_AKTIF = semua (perilaku lama)
-        if p then GRID_CACHE = p; GRID_CACHE_KOLOM = (kolonSkrg .. ":" .. nAktif) end
-    end
-    if GRID_CACHE and GRID_CACHE[pkg] then
-        tata_satu(pkg, GRID_CACHE[pkg], true)   -- v8.81: hapus lama dulu
+    -- hitung grid FRESH buat client aktif (PKGS_AKTIF). nil = semua client.
+    local peta = grid_hitung(cfg, PKGS_AKTIF)
+    if peta and peta[pkg] then
+        tata_satu(pkg, peta[pkg], true)   -- hapus posisi lama + tulis fresh
     end
 end
 
@@ -4159,8 +4151,39 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     end
                 end
 
-                -- semua ketutup -> selalu buka dari nol. Ambil client pertama.
-                local pilih = list[1]
+                -- v8.91: pilih client yg COOKIE-nya NORMAL buat ambil key. Bug user:
+                -- bypass ambil list[1] asal -- kalau cookie-nya ke-BAN/mati, client
+                -- gak bisa masuk game -> gak bisa ambil key. Cek cookie tiap client,
+                -- pilih yg PERTAMA normal (alive). Kalau semua gagal cek -> list[1].
+                local pilih = nil
+                do
+                    local function cookie_pkg(pkg)
+                        local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                        local q = ("su -c \"sqlite3 %s \\\"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\\\"\" 2>/dev/null"):format(db)
+                        local h = io.popen(q)
+                        local c = h and h:read("*all") or ""
+                        if h then h:close() end
+                        return cookie_terpanjang(c or "")
+                    end
+                    for _, pkg in ipairs(list) do
+                        local ck = cookie_pkg(pkg)
+                        if ck and ck ~= "" then
+                            local kead = cek_cookie_roblox(ck)
+                            if kead == "alive" then
+                                pilih = pkg
+                                info("  pakai " .. pkg:gsub("com%.roblox%.","") .. " buat ambil key (cookie normal)")
+                                break
+                            else
+                                info("  " .. pkg:gsub("com%.roblox%.","") .. " cookie " .. tostring(kead) .. " -> skip, cari yg normal...")
+                            end
+                        end
+                    end
+                    -- gak ada yg kebukti normal -> pakai list[1] (fallback)
+                    if not pilih then
+                        pilih = list[1]
+                        info("  gak ada cookie kebukti normal -> pakai " .. pilih:gsub("com%.roblox%.","") .. " (fallback)")
+                    end
+                end
 
                 -- v8.76: PAKSA tutup client pilihan dulu (walau kira udah mati).
                 -- Bug user: client bypass masih UKURAN LAMA (6-client, 533x360)
@@ -4257,7 +4280,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 -- gak kepakai -> tebakan baris meleset -> sapu belasan titik.
                 -- Fix: tunggu + tata ke petak, cek ukuran settle dulu.
                 do
-                    local petaP = grid_hitung(cfg)
+                    local petaP = grid_hitung(cfgBypass, split(cfg.pkgs))   -- v8.91: layout 10 client (sama kayak 4221)
                     if petaP and petaP[pilih] then
                         for coba = 1, 4 do
                             local k = jendela_kotak(pilih)
