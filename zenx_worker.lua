@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.53-cf"
+local VERSION = "8.54-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5856,23 +5856,21 @@ local function run(cfg)
     -- Kalau akun punya ps_link (accessCode=UUID dari zenx getps), pakai itu buat
     -- masuk PS pribadi akun. Prioritas: assign-ps panel > ps_link getps > public.
     local function refresh_ps_getps()
-        -- v7.98: map baru GAG 2 (129343810645058 Panen Musim Gugur) GAK ADA PS
-        -- (event map, cuma public). Skip ambil ps_link -> mapLink kosong ->
-        -- build_url join PUBLIC (gak coba PS lama yg invalid di map baru).
-        -- Juga hormatin cfg.pakai_ps == false (manual matiin PS).
         if cfg.place_id == "129343810645058" or cfg.pakai_ps == false then return end
         local r = api_get(cfg, "/ps-list") or ""
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
+        local nDapet = 0
         for obj in r:gmatch('{.-}') do
             local akun = obj:match('"akun"%s*:%s*"(.-)"')
             local psl  = obj:match('"ps_link"%s*:%s*"(.-)"')
             if akun and akun2pkg[akun] and psl and psl ~= "" then
                 local pkg = akun2pkg[akun]
-                -- cuma isi kalau BELUM ada dari assign-ps (assign-ps prioritas)
-                if not mapLink[pkg] then mapLink[pkg] = psl end
+                if not mapLink[pkg] then mapLink[pkg] = psl; nDapet = nDapet + 1 end
             end
         end
+        -- v8.53: log berapa akun dapet accessCode (biar keliatan ps_link ada/kosong)
+        info(("[ps-getps] %d akun dapet ps_link (place=%s)"):format(nDapet, cfg.place_id or "?"))
     end
     pcall(refresh_ps_getps)
     local lastPsRefresh = os.time()
