@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.82-cf"
+local VERSION = "8.83-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -9511,6 +9511,48 @@ end
 -- Cara: ambil PID tiap client -> filter logcat by PID -> cari baris disconnect/
 -- kick/reason. Kode 285=DisconnectClientInitiated (keluar sendiri/backgrounding),
 -- 267=kicked (game/experience Kick), 264=dobel login, 277=lost connection, dll.
+function getps_akun(cfg, cookie)
+    if not cookie or cookie == "" then return nil, "cookie kosong" end
+    -- v8.72: PS per akun. Coba ambil dari place AKTIF (W2 fall) dulu. Kalau kosong
+    -- (akun belum punya PS di W2), fallback ke W1 (world lama, biasanya udah punya
+    -- PS). accessCode UNIVERSE-level -> bisa join W2 pakai placeId W2. User insight:
+    -- "PS-nya sama, tinggal ganti id place ke world 2".
+    local W1 = "129343810645058"
+    local aktif = cfg.place_id or W1
+    -- daftar place yg dicoba: aktif dulu (W2), baru W1
+    local coba = {}
+    coba[#coba+1] = aktif
+    if aktif ~= W1 then coba[#coba+1] = W1 end
+
+    local tmp = (os.getenv("HOME") or ".") .. "/nx_getps.txt"
+    os.remove(tmp)
+    local hf = io.open(tmp, "w")
+    if not hf then return nil, "gak bisa nulis tmp" end
+    hf:write(".ROBLOSECURITY=" .. cookie)
+    hf:close()
+
+    -- v8.72: coba tiap place (aktif/W2 dulu, W1 fallback). Begitu dapet accessCode
+    -- -> pakai. accessCode dari W1 tetep bisa join W2 (universe sama).
+    local sebabAkhir = "accessCode gak ketemu"
+    for _, place in ipairs(coba) do
+        local url = "https://games.roblox.com/v1/games/" .. place .. "/private-servers?cursor="
+        local cmd = ("curl -s -m 20 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), url)
+        local h = io.popen(cmd)
+        local out = h and h:read("*all") or ""
+        if h then h:close() end
+        local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
+        if code then
+            os.remove(tmp)
+            local nama = out:match('"name"%s*:%s*"([^"]*)"')
+            return code, (nama or "PS") .. (place ~= aktif and " (dari W1)" or "")
+        end
+        if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
+        elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
+    end
+    os.remove(tmp)
+    return nil, sebabAkhir
+end
+
 if PERINTAH == "getps" then
     -- v7.36: GET PS LINK per akun (kayak Pandora). Loop semua akun tim, fetch
     -- accessCode dari API Roblox private-servers (pake cookie akun), simpen ke
@@ -11174,47 +11216,6 @@ end
 -- Endpoint: games.roblox.com/v1/games/PLACE/private-servers?cursor=
 -- Response: data[].accessCode. Akun harus UDAH punya PS (VIP server).
 -- Balikin: accessCode string, atau nil + alasan.
-function getps_akun(cfg, cookie)
-    if not cookie or cookie == "" then return nil, "cookie kosong" end
-    -- v8.72: PS per akun. Coba ambil dari place AKTIF (W2 fall) dulu. Kalau kosong
-    -- (akun belum punya PS di W2), fallback ke W1 (world lama, biasanya udah punya
-    -- PS). accessCode UNIVERSE-level -> bisa join W2 pakai placeId W2. User insight:
-    -- "PS-nya sama, tinggal ganti id place ke world 2".
-    local W1 = "129343810645058"
-    local aktif = cfg.place_id or W1
-    -- daftar place yg dicoba: aktif dulu (W2), baru W1
-    local coba = {}
-    coba[#coba+1] = aktif
-    if aktif ~= W1 then coba[#coba+1] = W1 end
-
-    local tmp = (os.getenv("HOME") or ".") .. "/nx_getps.txt"
-    os.remove(tmp)
-    local hf = io.open(tmp, "w")
-    if not hf then return nil, "gak bisa nulis tmp" end
-    hf:write(".ROBLOSECURITY=" .. cookie)
-    hf:close()
-
-    -- v8.72: coba tiap place (aktif/W2 dulu, W1 fallback). Begitu dapet accessCode
-    -- -> pakai. accessCode dari W1 tetep bisa join W2 (universe sama).
-    local sebabAkhir = "accessCode gak ketemu"
-    for _, place in ipairs(coba) do
-        local url = "https://games.roblox.com/v1/games/" .. place .. "/private-servers?cursor="
-        local cmd = ("curl -s -m 20 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), url)
-        local h = io.popen(cmd)
-        local out = h and h:read("*all") or ""
-        if h then h:close() end
-        local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
-        if code then
-            os.remove(tmp)
-            local nama = out:match('"name"%s*:%s*"([^"]*)"')
-            return code, (nama or "PS") .. (place ~= aktif and " (dari W1)" or "")
-        end
-        if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
-        elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
-    end
-    os.remove(tmp)
-    return nil, sebabAkhir
-end
 
 -- v6.37: dari hasil query (bisa MULTI-BARIS kalau ada beberapa .ROBLOSECURITY
 -- beda domain/path), pilih baris cookie yang PALING PANJANG = paling lengkap.
