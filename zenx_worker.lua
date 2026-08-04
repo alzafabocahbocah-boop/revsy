@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.50-cf"
+local VERSION = "8.51-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2487,6 +2487,16 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         end)
     end
     local url = build_url(cfg, link_client)
+    -- v8.51: LOG url join (biar keliatan pakai link PS apa public). Kalau ada
+    -- privateServerLinkCode -> PS. Kalau cuma placeId -> public.
+    do
+        local jenisJoin = url:find("privateServerLinkCode") and "PS-fall"
+            or (url:find("linkCode") and "PS-linkcode")
+            or (url:find("accessCode") and "PS-access")
+            or "PUBLIC"
+        info(("   [join] %s -> %s | url=%s"):format(
+            pkg:gsub("com%.roblox%.",""), jenisJoin, url:sub(1, 90)))
+    end
     local wm = tonumber(cfg.win_mode) or 0
 
     -- v8.09: HAPUS TASK DULU sebelum tembak (user minta). Cuma `am task remove`
