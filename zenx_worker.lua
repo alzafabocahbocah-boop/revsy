@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.60-cf"
+local VERSION = "8.61-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6044,6 +6044,13 @@ local function run(cfg)
     local lastCooldownLog = 0    -- v6.95: kapan terakhir log cooldown 3 menit
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
+    -- v8.61: MODE_JALAN = state persisten (true=lagi jalan/FORCE, false=standby).
+    -- BUG yg difix: PLACE:/GRID: NIMPA perintah STANDBY di `isi`. `mati` dicek dari
+    -- `isi` sekarang doang -> pas isi jadi "PLACE:..." (bukan STANDBY), mati=false
+    -- -> worker anggap JALAN -> buka client walau harusnya standby. Sekarang
+    -- MODE_JALAN cuma berubah pas FORCE (->true) / STANDBY/STOP (->false). PLACE/
+    -- GRID gak ubah -> standby tetep standby.
+    local MODE_JALAN = false
 
     -- v6.83: LAPOR AWAL sebelum loop -- scan client + akun, kirim ke panel
     -- LANGSUNG (gak nunggu 20 detik lapor rutin / gak nunggu FORCE). Biar panel
@@ -6529,7 +6536,16 @@ local function run(cfg)
         -- biar cek lisensi & cek cookie standby (di bawah) bisa tau lagi standby
         -- apa nggak. Dulu `mati` didefinisi SETELAH cek lisensi -> nil -> cek
         -- standby gak pernah jalan.
-        local mati = isi:upper():find("STANDBY") or isi:upper():find("STOP")
+        -- v8.61: update MODE_JALAN dari perintah EKSPLISIT (FORCE/STANDBY/STOP).
+        -- PLACE:/GRID: gak nyentuh MODE_JALAN -> gak ngubah standby jadi jalan.
+        do
+            local u = isi:upper()
+            if u:find("FORCE") or u:find("REJOIN") then MODE_JALAN = true
+            elseif u:find("STANDBY") or u:find("STOP") then MODE_JALAN = false end
+        end
+        -- mati = kebalikan MODE_JALAN. Dulu dicek dari `isi` sekarang doang -> PLACE/
+        -- GRID (yg nimpa STANDBY) bikin mati=false salah. Sekarang dari state.
+        local mati = not MODE_JALAN
 
         -- v8.23: AUTO-DPI 127 pas STANDBY (sekali). User nemu 127 = tampilan pas
         -- (kecil, muat banyak). Set via `wm density 127` + broadcast refresh biar
@@ -6822,7 +6838,16 @@ local function run(cfg)
             end
             skip_sisa = true
         elseif U:find("GRID") then
-            if isi ~= lastIsi then
+            -- v8.61: blok GRID LAMA (nata jendela + buka client). SKIP kalau:
+            -- (1) "GRID:<kolom>" -- itu diproses blok baru (set grid_kolom, hormatin
+            --     STANDBY). Blok lama cuma buat "GRID" polos (nata ulang manual).
+            -- (2) lagi STANDBY -- jangan buka client pas standby.
+            if isi:find(":") or not MODE_JALAN then
+                -- GRID:kolom / standby -> jangan jalanin nata-buka lama.
+                -- (blok baru di bawah yg handle GRID:kolom; standby = diem)
+                lastIsi = isi
+                skip_sisa = false   -- biarin lanjut ke blok gridDari
+            elseif isi ~= lastIsi then
                 lastIsi = isi
                 -- v4.82: nata ulang HARUS lewat restart client. App Cloner cuma
                 -- baca posisi pas app MULAI, dan nimpa balik pas app DITUTUP --
@@ -6836,7 +6861,10 @@ local function run(cfg)
                 else
                     tambahLog(string.format("GRID: nata %dx%d di layar %dx%d -- client ditutup dulu",
                         kol or 0, bar or 0, W or 0, H or 0))
-                    close_all(cfg)
+                    -- v8.61: pakai close_all_cepat (tutup barengan) bukan close_all
+                    -- lama (5s/client). GRID gak perlu jeda App Cloner per-client --
+                    -- toh langsung tulis prefs + buka ulang.
+                    close_all_cepat(cfg, true)
                     os.execute("sleep 2")
 
                     local nTulis, nGagal = 0, 0
@@ -6871,7 +6899,7 @@ local function run(cfg)
                     lastStatus = 0
                 end
             end
-            skip_sisa = true
+            if not isi:find(":") and MODE_JALAN then skip_sisa = true end
         elseif U:find("CLOSE") then
             if isi ~= lastIsi then
                 warn("CLOSE dari panel -> tutup semua client")
