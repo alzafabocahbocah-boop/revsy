@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.28"
+local VERSI = "4.30"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -6262,7 +6262,7 @@ local lblKebun = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed kebun: —" })
 
 -- ---------- Auto Plant Seed (v3.18) ----------
-local kPlant = kartu(180, tabFarm)
+local kPlant = kartu(210, tabFarm)
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -6304,7 +6304,7 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
 -- v4.19: label debug plant (kenapa gak nanem) -- pakai Seed._el (hindari batas 200)
 Seed._el = Seed._el or {}
 Seed._el.lblPlantDbg = mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 118), Size = UDim2.new(1, -24, 0, 56),
+    Position = UDim2.new(0, 12, 0, 116), Size = UDim2.new(1, -24, 0, 88),
     Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Text = "" })
@@ -7569,13 +7569,19 @@ task.spawn(function()
         pcall(function()
             local _, _, swc, sspr = gearDiTas()   -- isi Seed._gearDbg
             local _, totSeed = seedDiTas()          -- isi Seed._seedDbg (fall)
-            if Seed._el and Seed._el.lblPlantDbg and not state.autoPlantOn then
-                Seed._el.lblPlantDbg.Text = ("syrupWC=%d syrupSpr=%d | totSeed=%d\nGEAR: %s\nFALL: %s"):format(
+            if Seed._el and Seed._el.lblPlantDbg then
+                local baris = ("syrupWC=%d syrupSpr=%d | totSeed=%d\nGEAR: %s\nFALL: %s"):format(
                     swc or 0, sspr or 0, totSeed or 0,
                     (Seed._gearDbg and #Seed._gearDbg > 0)
                         and table.concat(Seed._gearDbg, ", ") or "(kosong)",
                     (Seed._seedDbg and #Seed._seedDbg > 0)
                         and table.concat(Seed._seedDbg, " | ") or "(gak ada seed fall di tas)")
+                -- kalau plant ON, gabung sama plant debug. Kalau OFF, gear/fall aja.
+                if state.autoPlantOn and Seed._plantDbg then
+                    Seed._el.lblPlantDbg.Text = Seed._plantDbg .. "\n" .. baris
+                else
+                    Seed._el.lblPlantDbg.Text = baris
+                end
             end
         end)
     end
@@ -7739,8 +7745,26 @@ task.spawn(function()
         l.TextSize = 24; l.TextXAlignment = Enum.TextXAlignment.Left; l.Parent = box
         labelMoon[m.key] = l
     end
+    -- v4.30: AUTO-HIDE pas TAP. User minta: pas lagi tap game, widget jadwal
+    -- HILANG (biar gak nutupin). Muncul lagi 20 detik setelah tap terakhir.
+    -- Deteksi tap via UserInputService (touch/klik). _tapTerakhir = waktu tap.
+    local UIS = game:GetService("UserInputService")
+    Seed._tapTerakhir = 0
+    pcall(function()
+        UIS.InputBegan:Connect(function(input, gpe)
+            local it = input.UserInputType
+            if it == Enum.UserInputType.Touch
+               or it == Enum.UserInputType.MouseButton1 then
+                Seed._tapTerakhir = os.clock()
+            end
+        end)
+    end)
+
     while isCurrentGen() do
         pcall(function()
+            -- sembunyiin box kalau ada tap < 20 detik terakhir (biar gak nutupin)
+            local sejakTap = os.clock() - (Seed._tapTerakhir or 0)
+            box.Visible = (sejakTap >= 20)
             local data = Seed.fetchMoonAPI()
             for _, m in ipairs(MOON) do
                 local l = labelMoon[m.key]
@@ -7751,7 +7775,7 @@ task.spawn(function()
                 end
             end
         end)
-        task.wait(5)
+        task.wait(1)   -- cek tiap 1s (biar hide/show responsif, dulu 5s)
     end
 end)
 
