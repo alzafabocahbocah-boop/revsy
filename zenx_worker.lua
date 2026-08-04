@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.83-cf"
+local VERSION = "8.84-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -9561,15 +9561,23 @@ if PERINTAH == "getps" then
     if not cfg then err("Config gak ada."); return end
     print(C.BOLD .. C.C .. "\n=== ZENX GETPS (ambil PS link per akun) ===\n" .. C.N)
 
-    -- daftar akun: dari cookie-list backend (semua akun yang punya cookie)
-    local resp = api_get(cfg, "/cookie-list") or ""
+    -- v8.84 FIX: ambil akun TIM DEVICE INI aja (dari client cfg.pkgs), BUKAN
+    -- semua akun fleet (/cookie-list = 285 akun seluruh fleet -> boros + query
+    -- akun yg bukan punya device ini). Baca username tiap client di device ini.
     local akunList = {}
-    for a in resp:gmatch('"akun"%s*:%s*"([^"]+)"') do akunList[#akunList+1] = a end
+    local seen = {}
+    for _, pkg in ipairs(split(cfg.pkgs or "")) do
+        local u = baca_username(pkg)
+        if u and u ~= "" and u ~= "?" and not seen[u] then
+            seen[u] = true
+            akunList[#akunList+1] = u
+        end
+    end
     if #akunList == 0 then
-        warn("Gak ada akun di backend. Setor cookie dulu.")
+        warn("Gak ada akun kebaca di client device ini (prefs username kosong?).")
         return
     end
-    info(("%d akun -- ambil PS link satu-satu..."):format(#akunList))
+    info(("%d akun (tim device ini) -- ambil PS link satu-satu..."):format(#akunList))
     print()
 
     local dapet, gagal = 0, 0
