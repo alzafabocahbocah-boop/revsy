@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.92-cf"
+local VERSION = "8.96-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1661,6 +1661,7 @@ local function tap_muat()
         ["348x173"] = { fx = 0.833, fy = 0.808 },   -- 3 baris
         ["226x293"] = { fx = 0.853, fy = 0.668 },   -- 10 client (5x2) v7.68 (tested KENA)
         ["226x330"] = { fx = 0.853, fy = 0.668 },   -- 10 client (5x2) v7.68 (tested KENA)
+        ["396x330"] = { fx = 0.833, fy = 0.675 },   -- 6 client (3x2) v8.94 (zenx catat, rata2 14 titik)
     }
     -- v7.53: JANGAN baca zenx_tap.txt lagi (user minta). Dulu file NIMPA bawaan
     -- (kalibrasi manual per-RF menang), TAPI zenx catat gampang salah pencet ->
@@ -2495,6 +2496,16 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- verif lagi. Semua jalur rejoin lewat sini, jadi cukup dijaga di satu titik.
     if KICK_DIURUS["captcha:" .. pkg] then
         return   -- di-skip, nunggu user solve manual
+    end
+    -- v8.93: SET GRID posisi SEBELUM buka (semua jalur open_one otomatis kebagian).
+    -- Bug user: sebagian client grid gak keatur -- karena banyak jalur open_one
+    -- (ganti-akun/mati-mendadak/nudge/dll) buka client TANPA grid_satu dulu ->
+    -- posisi lama/default. Taruh di sini (1 titik, semua jalur lewat) -> gak ada
+    -- yg kelewat. App Cloner baca prefs pas app MULAI, jadi tulis dulu baru buka.
+    -- KECUALI bypass: posisi 10-client udah diatur khusus (petaK) sebelum open_one
+    -- -> jangan ketimpa grid biasa (3x2). Titik kalibrasi bypass butuh 10-layout.
+    if alasan ~= "start-bypass" then
+        pcall(function() grid_satu(cfg, pkg) end)
     end
     -- v7.34: LOG SETIAP REJOIN dengan ALASAN yang jelas (label dari pemanggil,
     -- gak ngandelin traceback yg suka salah). Tiap jalur open_one kasih `alasan`.
@@ -4159,8 +4170,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 do
                     local function cookie_pkg(pkg)
                         local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
-                        local q = ("su -c \"sqlite3 %s \\\"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\\\"\" 2>/dev/null"):format(db)
-                        local h = io.popen(q)
+                        -- v8.93: path sqlite3 LENGKAP (Termux). Bug: cuma "sqlite3"
+                        -- gagal di su (PATH gak include) -> cookie kosong -> skip cek
+                        -- -> fallback list[1] (cookie ban). Path lengkap = kebaca.
+                        local cmd = ("su -c %s 2>/dev/null"):format(shq(
+                            "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
+                            " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\""))
+                        local h = io.popen(cmd)
                         local c = h and h:read("*all") or ""
                         if h then h:close() end
                         return cookie_terpanjang(c or "")
@@ -4209,21 +4225,18 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     -- harus nyapu ulang -- padahal gak perlu.
                     -- Jendela penuh tetep dipakai, TAPI cuma kalau deteksi di
                     -- ukuran grid gagal (lihat di bawah).
-                    -- v8.75: pas BYPASS, PAKSA grid 10 client (layout default 5x2),
-                    -- BUKAN grid aktif (misal grid 3 = 6 client). User: titik lokasi
-                    -- bypass udah ketemu/kalibrasi buat layout 10 CLIENT. Kalau client
-                    -- bypass diposisikan pakai grid aktif (3 kolom/6 client), ukuran+
-                    -- posisi beda -> titik bypass gak ketemu (tap nyasar). Jadi: hitung
-                    -- grid buat SEMUA 10 client tanpa override kolom (grid_kolom=nil).
-                    local cfgBypass = {}
-                    for k, v in pairs(cfg) do cfgBypass[k] = v end
-                    cfgBypass.grid_kolom = nil   -- layout default (5x2 buat 10 client)
-                    local petaK = grid_hitung(cfgBypass, split(cfg.pkgs))
+                    -- v8.94: pakai grid AKTIF (PKGS_AKTIF) buat posisi client bypass,
+                    -- BUKAN paksa 10 client. User udah kalibrasi titik key buat layout
+                    -- aktif (mis. 6 client = 396x330 = 0.833,0.675). Titik key dibaca
+                    -- dari tap_muat()[ukuran] -> asal client diposisikan di grid aktif,
+                    -- ukuran jendela match kalibrasi -> titik kena. Konsisten sama grid
+                    -- yg keliatan (open_all). Gak perlu paksa 10 lagi.
+                    local petaK = grid_hitung(cfg, PKGS_AKTIF)
                     if petaK and petaK[pilih] then
-                        -- hapusDulu=true: buang posisi lama biar bener2 pas layout 10
+                        -- hapusDulu=true: buang posisi lama biar bener2 pas di grid aktif
                         local tok, tket = tata_satu(pilih, petaK[pilih], true)
                         if tok and tket ~= "udah pas" then
-                            info("  posisi jendela " .. pilih:gsub("com%.roblox%.", "") .. " (layout 10-client): " .. tket)
+                            info("  posisi jendela " .. pilih:gsub("com%.roblox%.", "") .. " (grid aktif): " .. tket)
                         end
                     end
                     info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
@@ -4280,7 +4293,9 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 -- gak kepakai -> tebakan baris meleset -> sapu belasan titik.
                 -- Fix: tunggu + tata ke petak, cek ukuran settle dulu.
                 do
-                    local petaP = grid_hitung(cfgBypass, split(cfg.pkgs))   -- v8.91: layout 10 client (sama kayak 4221)
+                    -- v8.95: pakai grid AKTIF (PKGS_AKTIF), sama kayak posisi bypass
+                    -- di atas. cfgBypass (paksa 10 client) udah DIBUANG -- logika lama.
+                    local petaP = grid_hitung(cfg, PKGS_AKTIF)
                     if petaP and petaP[pilih] then
                         for coba = 1, 4 do
                             local k = jendela_kotak(pilih)
@@ -4445,6 +4460,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             end
         end
         os.execute("sleep 1")
+    elseif lisensiAda and petaGrid then
+        -- v8.95: PENGAMAN EKSTRA. Walau SUDAH_GRID (grid udah keset sekali),
+        -- tetep tulis ulang prefs posisi buat client yg mau dibuka. Bug user:
+        -- kadang grid gak rapi -- prefs bisa ketimpa App Cloner pas client
+        -- ditutup. Tulis lagi sebelum buka = jaminan posisi bener. Murah (tulis
+        -- prefs, gak force-stop), gak ganggu yg lagi main.
+        for _, pkg in ipairs(list) do
+            if petaGrid[pkg] and not pkg_hidup(pkg) then   -- cuma yg mau dibuka (mati)
+                tata_satu(pkg, petaGrid[pkg], true)
+            end
+        end
     end
     local stat0Ts = os.time()   -- v4.67: kapan potret /stat itu diambil
     local potretJalan = pkg_running_semua(list)   -- v4.71: sekali dumpsys buat semua
@@ -7752,7 +7778,13 @@ local function run(cfg)
                 psGantiKerjakan = psGantiPeek
                 tambahLog("PANEL: ada perubahan server -> langsung dikerjain")
             end
-            if psBaruDariPanel or (now - lastPsRefresh) >= 60 then
+            if (psBaruDariPanel or (now - lastPsRefresh) >= 60) and MODE_JALAN then
+                -- v8.96: TAMBAH guard MODE_JALAN. Bug user (curiga grid nyangkut pas
+                -- standby): loop PS-pindah rejoin client walau STANDBY -> open_one ->
+                -- grid_satu pakai PKGS_AKTIF yg BASI (pas standby hitTop=false, PKGS_
+                -- AKTIF gak ke-update) -> grid salah/nyangkut. Pas standby JANGAN
+                -- rejoin sama sekali (client emang gak jalan). Refresh PS aja boleh,
+                -- rejoin-nya nanti pas FORCE.
                 -- v4.23: PS pindah? -> rejoin client itu doang, biar masuk PS baru.
                 local psLama = {}
                 for k, v in pairs(mapPsNama) do psLama[k] = v end
