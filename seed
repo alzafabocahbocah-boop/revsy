@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.09"
+local VERSI = "4.11"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1837,8 +1837,11 @@ end)
 --   * kalau gak kebaca -> mundur ke jeda aman 60 detik, bukan spam
 -- ============================================================
 local GEAR_KATA = {
-    { "super", "watering" },   -- Super Watering Can
-    { "super", "sprinkler" },  -- Super Sprinkler
+    -- v4.10: "super"+"watering" nangkep Super Watering Can + Super Syrup Watering
+    -- Can. "super"+"sprinkler" nangkep Super Sprinkler + Super Syrup Sprinkler.
+    -- Jadi 2 entry ini = 4 gear (biasa + syrup) kebeli semua.
+    { "super", "watering" },
+    { "super", "sprinkler" },
 }
 
 -- Nama gear dicocokin dari daftar ASLI di game (bukan hardcoded), biar tetep
@@ -4629,11 +4632,12 @@ local function namaSeedDiTas()
     return out
 end
 
--- v1.2: hitung Super Watering Can & Super Sprinkler di tas. Panel punya kolom
--- khusus buat dua ini di ringkasan fleet (superWC / superSpr), jadi sekalian
--- dilapor -- biar keliatan stok gear se-armada tanpa buka satu-satu.
+-- v4.11: hitung gear di tas -- PISAH biasa vs syrup. Balikin 4 angka:
+-- wc (Super Watering Can), spr (Super Sprinkler), swc (Super Syrup Watering
+-- Can), sspr (Super Syrup Sprinkler). Dulu digabung (syrup + biasa jadi 1),
+-- jadi di ringkas cuma keliatan 2. User minta pisah 4.
 local function gearDiTas()
-    local wc, spr = 0, 0
+    local wc, spr, swc, sspr = 0, 0, 0, 0
     pcall(function()
         for _, holder in ipairs(tasHolders()) do
             for _, tool in ipairs(holder:GetChildren()) do
@@ -4641,14 +4645,18 @@ local function gearDiTas()
                     local ln = tostring(tool.Name):lower()
                     local n = tool:GetAttribute("Count") or 1
                     if ln:find("super", 1, true) then
-                        if ln:find("watering", 1, true) then wc = wc + n
-                        elseif ln:find("sprinkler", 1, true) then spr = spr + n end
+                        local syrup = ln:find("syrup", 1, true)
+                        if ln:find("watering", 1, true) then
+                            if syrup then swc = swc + n else wc = wc + n end
+                        elseif ln:find("sprinkler", 1, true) then
+                            if syrup then sspr = sspr + n else spr = spr + n end
+                        end
                     end
                 end
             end
         end
     end)
-    return wc, spr
+    return wc, spr, swc, sspr
 end
 
 local PANEL_CEK, PANEL_DENYUT = 20, 120
@@ -4945,21 +4953,19 @@ function Seed.startPanel()
         while hidup() do
             pcall(function()
                 local arr, total = seedDiTas()
-                local wcR, sprR = gearDiTas()
+                local wcR, sprR, swcR, ssprR = gearDiTas()
                 local t = {}
                 for _, e in ipairs(arr) do t[#t+1] = e.n .. ":" .. e.j end
-                -- gear ikut masuk patokan: kalau cuma seed yang dibanding, nambah
-                -- Super WC/Sprinkler gak keitung "berubah" -> panel telat 5 menit.
-                t[#t+1] = "wc:" .. wcR .. ",spr:" .. sprR
+                t[#t+1] = ("wc:%d,spr:%d,swc:%d,sspr:%d"):format(wcR, sprR, swcR, ssprR)
                 local ringkas = table.concat(t, ",")
                 local skrg = os.time()
                 if ringkas ~= ringkasLama or (skrg - kirimAkhir) >= 300 then
                     local bersih = {}
                     for _, e in ipairs(arr) do bersih[#bersih+1] = { n = e.n, j = e.j, r = e.r } end
-                    local wc, spr = gearDiTas()
                     panelReq("/inv", "POST", {
                         akun = player.Name, seeds = bersih, pets = {},
-                        totSeed = total, superWC = wc, superSpr = spr,
+                        totSeed = total, superWC = wcR, superSpr = sprR,
+                        superSyrupWC = swcR, superSyrupSpr = ssprR,
                     })
                     ringkasLama, kirimAkhir = ringkas, skrg
                 end
