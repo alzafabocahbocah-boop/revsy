@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.68-cf"
+local VERSION = "8.73-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2718,6 +2718,20 @@ end
 -- background). Cukup hitung fd app_webview di /proc/PID/fd.
 -- Balik: true kalau captcha (webview >= ambang), + jumlah webview.
 CAPTCHA_WEBVIEW_AMBANG = 10
+-- v8.73: cek captcha dari LOGCAT on-demand. Logcat STREAMING dimatiin (v7.51,
+-- spam file). Jadi cek pakai `logcat -d` (dump sekali, buffer terakhir) + grep
+-- arkose/captcha buat PID client ini. Ringan (1 command, gak streaming terus).
+-- Balik true kalau ada event arkose/funcaptcha/captcha di log terakhir client ini.
+function cek_captcha_logcat(pkg)
+    -- ambil PID client
+    local pid = sh("su -c 'pidof " .. pkg .. "' 2>/dev/null") or ""
+    pid = pid:match("%d+")
+    if not pid then return false end
+    -- dump logcat buffer terakhir, filter PID client + kata captcha.
+    -- -d = dump & keluar (gak streaming). -t 500 = 500 baris terakhir (cukup).
+    local out = sh(("su -c 'logcat -d -t 500 2>/dev/null | grep -i -E \"arkose|funcaptcha|captcha|challenge-container|bot verification\" | grep \" %s \"'"):format(pid)) or ""
+    return out:match("%S") ~= nil
+end
 function cek_captcha_webview(pkg)
     -- ambil PID dulu
     local pid = sh("su -c 'pidof " .. pkg .. "' 2>/dev/null") or ""
@@ -5898,6 +5912,13 @@ local function run(cfg)
         end
         -- v8.53: log berapa akun dapet accessCode (biar keliatan ps_link ada/kosong)
         info(("[ps-getps] %d akun dapet ps_link (place=%s)"):format(nDapet, cfg.place_id or "?"))
+        -- v8.71: kalau 0 dapet PS + place FALL (bukan public/W1) -> WARNING jelas.
+        -- Akun belum punya PS fall -> bakal fallback PUBLIC (rawan di-steal).
+        -- Saran: jalanin `zenx getps` di RF ini buat ambil accessCode PS akun.
+        if nDapet == 0 and cfg.place_id ~= "129343810645058" and cfg.pakai_ps ~= false then
+            warn("[ps-getps] 0 akun punya PS fall -> client bakal masuk PUBLIC (rawan)!")
+            warn("[ps-getps] Jalanin 'zenx getps' di RF ini dulu, atau assign PS di panel.")
+        end
     end
     pcall(refresh_ps_getps)
     local lastPsRefresh = os.time()
@@ -6118,14 +6139,10 @@ local function run(cfg)
                     if baru ~= (tonumber(cfg.grid_kolom) or 0) then
                         cfg.grid_kolom = baru
                         pcall(function() save_config(cfg) end)
-                        -- v8.68: log detail kolom x baris + ukuran per client
-                        local pk, _, gk, gb, _, _, gl, gt = grid_hitung(cfg)
-                        if pk then
-                            info(string.format("Grid diset: %d kolom x %d baris, layar per client %dx%d px (dari denyut-loop)",
-                                gk or 0, gb or 0, gl or 0, gt or 0))
-                        else
-                            info("Grid diset " .. (baru > 0 and (baru .. " kolom") or "otomatis") .. " (dari denyut-loop)")
-                        end
+                        -- v8.71: log CUKUP kolom yang diset (jangan grid_hitung -- dia
+                        -- ngitung buat SEMUA client & bisa nampilin baris yang bikin
+                        -- bingung sebelum client dibuka). Detail ukuran pas GRID nata.
+                        info("Grid diset " .. (baru > 0 and (baru .. " kolom") or "otomatis") .. " (dari denyut-loop, kepakai pas nata)")
                         SUDAH_GRID = false; GRID_CACHE = nil
                     end
                 end
@@ -6226,19 +6243,37 @@ local function run(cfg)
                             -- (percuma, solve manual) + set badge. Kalau bukan ->
                             -- WAJIB REJOIN.
                             if KICK_DIURUS["captcha:" .. pkg] then
-                                -- udah ketandai captcha sebelumnya -> skip
-                                info(("[antrian] %s CAPTCHA (skip rejoin, solve manual)")
-                                    :format(ak or pkg))
+                                -- v8.70: RE-CEK pakai logcat doang. Logcat masih ada
+                                -- captcha fresh (<120s) -> masih captcha. Kalau udah
+                                -- bersih -> udah solved / false positive -> lepas + rejoin.
+                                if cek_captcha_logcat(pkg) then
+                                    info(("[antrian] %s CAPTCHA (logcat masih fresh, skip rejoin, solve manual)")
+                                        :format(ak or pkg))
+                                else
+                                    KICK_DIURUS["captcha:" .. pkg] = nil
+                                    perluTembak[#perluTembak+1] = pkg
+                                    info(("[antrian] %s captcha udah kelar (logcat bersih) = REJOIN"):format(ak or pkg))
+                                end
                             else
                                 local isCap, nWeb = cek_captcha_webview(pkg)
-                                if isCap then
+                                -- v8.70: CUMA logcat (uiautomator dibuang -- berat +
+                                -- ganggu client lain). Captcha = logcat ada arkose.
+                                -- fd webview tinggi TAPI logcat bersih = false positive
+                                -- -> REJOIN normal (bukan skip).
+                                local capLog = cek_captcha_logcat(pkg)
+                                if capLog then
                                     if ak then KICK_DIURUS["captcha:" .. pkg] = ak end
-                                    info(("[antrian] %s CAPTCHA (webview %d fd) -> skip rejoin, solve manual")
+                                    info(("[antrian] %s CAPTCHA (logcat arkose, webview %d fd) -> skip rejoin, solve manual")
                                         :format(ak or pkg, nWeb or 0))
                                 else
                                     perluTembak[#perluTembak+1] = pkg
-                                    info(("[antrian] %s denyut MATI (%ss) = WAJIB REJOIN")
-                                        :format(ak or pkg, umur))
+                                    if isCap then
+                                        info(("[antrian] %s denyut MATI (%ss) -- %d fd webview tapi logcat BERSIH (bukan captcha) = REJOIN")
+                                            :format(ak or pkg, umur, nWeb or 0))
+                                    else
+                                        info(("[antrian] %s denyut MATI (%ss) = WAJIB REJOIN")
+                                            :format(ak or pkg, umur))
+                                    end
                                 end
                             end
                         end
@@ -11059,29 +11094,44 @@ end
 -- Balikin: accessCode string, atau nil + alasan.
 function getps_akun(cfg, cookie)
     if not cookie or cookie == "" then return nil, "cookie kosong" end
-    local place = cfg.place_id or "129343810645058"
+    -- v8.72: PS per akun. Coba ambil dari place AKTIF (W2 fall) dulu. Kalau kosong
+    -- (akun belum punya PS di W2), fallback ke W1 (world lama, biasanya udah punya
+    -- PS). accessCode UNIVERSE-level -> bisa join W2 pakai placeId W2. User insight:
+    -- "PS-nya sama, tinggal ganti id place ke world 2".
+    local W1 = "129343810645058"
+    local aktif = cfg.place_id or W1
+    -- daftar place yg dicoba: aktif dulu (W2), baru W1
+    local coba = {}
+    coba[#coba+1] = aktif
+    if aktif ~= W1 then coba[#coba+1] = W1 end
+
     local tmp = (os.getenv("HOME") or ".") .. "/nx_getps.txt"
     os.remove(tmp)
     local hf = io.open(tmp, "w")
     if not hf then return nil, "gak bisa nulis tmp" end
     hf:write(".ROBLOSECURITY=" .. cookie)
     hf:close()
-    local url = "https://games.roblox.com/v1/games/" .. place .. "/private-servers?cursor="
-    local cmd = ("curl -s -m 20 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), url)
-    local h = io.popen(cmd)
-    local out = h and h:read("*all") or ""
-    if h then h:close() end
-    os.remove(tmp)
-    -- ambil accessCode pertama dari response
-    local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
-    if code then
-        local nama = out:match('"name"%s*:%s*"([^"]*)"')
-        return code, (nama or "PS")
+
+    -- v8.72: coba tiap place (aktif/W2 dulu, W1 fallback). Begitu dapet accessCode
+    -- -> pakai. accessCode dari W1 tetep bisa join W2 (universe sama).
+    local sebabAkhir = "accessCode gak ketemu"
+    for _, place in ipairs(coba) do
+        local url = "https://games.roblox.com/v1/games/" .. place .. "/private-servers?cursor="
+        local cmd = ("curl -s -m 20 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), url)
+        local h = io.popen(cmd)
+        local out = h and h:read("*all") or ""
+        if h then h:close() end
+        local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
+        if code then
+            os.remove(tmp)
+            local nama = out:match('"name"%s*:%s*"([^"]*)"')
+            return code, (nama or "PS") .. (place ~= aktif and " (dari W1)" or "")
+        end
+        if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
+        elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
     end
-    -- gak ada PS
-    if out:find('"data"%s*:%s*%[%s*%]') then return nil, "akun belum punya PS" end
-    if out:lower():find("unauthorized") or out:find('"errors"') then return nil, "cookie invalid/error" end
-    return nil, "accessCode gak ketemu di response"
+    os.remove(tmp)
+    return nil, sebabAkhir
 end
 
 -- v6.37: dari hasil query (bisa MULTI-BARIS kalau ada beberapa .ROBLOSECURITY
