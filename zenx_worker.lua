@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.63-cf"
+local VERSION = "8.64-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6092,6 +6092,20 @@ local function run(cfg)
                     pcall(function() save_config(cfg) end)
                     info("Place diganti ke " .. placeTop .. " (dari denyut-loop, sebelum rejoin)")
                     SUDAH_GRID = false; GRID_CACHE = nil
+                end
+                -- v8.64: proses GRID juga di denyut loop (bareng PLACE). Biar grid
+                -- keset walau PLACE+GRID berebut cepet dari panel (Start flow). Cuma
+                -- SET grid_kolom (gak tutup/buka client -- itu urusan blok utama).
+                local gridTop = isiTop:match("GRID:(%w+)")
+                if gridTop then
+                    local kG = tonumber(gridTop)
+                    local baru = (kG and kG >= 1) and kG or 0
+                    if baru ~= (tonumber(cfg.grid_kolom) or 0) then
+                        cfg.grid_kolom = baru
+                        pcall(function() save_config(cfg) end)
+                        info("Grid diset " .. (baru > 0 and (baru .. " kolom") or "otomatis") .. " (dari denyut-loop)")
+                        SUDAH_GRID = false; GRID_CACHE = nil
+                    end
                 end
             end
             local hitTop = isiTop:upper():find("FORCE") or isiTop:upper():find("REJOIN")
