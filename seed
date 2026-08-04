@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.11"
+local VERSI = "4.13"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -318,6 +318,7 @@ local state = {
 
     -- v3.18: GIFT MAIL (kirim seed/gear ke akun lain via mailbox, sekali kirim)
     giftMailTarget = "",      -- nama akun tujuan
+    giftMailPengirim = "",    -- v4.12: akun pengirim ("" / "all" = semua akun kirim; nama spesifik = cuma akun itu)
     giftMailQty    = 100,     -- jumlah per jenis (bisa gede, 100k pun sekali kirim)
     giftSeedPilih  = {},      -- { ["Gold"]=true } seed yg dikirim
     giftGearPilih  = {},      -- { ["Sprinkler"]=true } gear yg dikirim
@@ -424,6 +425,7 @@ local function simpan()
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
             hideVisualOn = state.hideVisualOn,
             giftMailTarget = state.giftMailTarget, giftMailQty = state.giftMailQty,
+            giftMailPengirim = state.giftMailPengirim,
             giftSeedPilih = state.giftSeedPilih, giftGearPilih = state.giftGearPilih,
             giftMailOn = state.giftMailOn, giftMailJeda = state.giftMailJeda,
             gearOn = state.gearOn, gearSemua = state.gearSemua,
@@ -1215,10 +1217,22 @@ end
 Seed._giftUidCache = {}
 local function resolveTargetId(nama)
     if Seed._giftUidCache[nama] then return Seed._giftUidCache[nama] end
-    local ok, id = pcall(function()
-        return Players:GetUserIdFromNameAsync(nama)
-    end)
-    if ok and id then Seed._giftUidCache[nama] = id; return id end
+    -- v4.13: GetUserIdFromNameAsync itu WEB REQUEST -- sering rate-limit/timeout,
+    -- makanya kadang "user gak ketemu" (padahal username bener), kadang baru
+    -- ketemu setelah nunggu. Fix: RETRY 3x dgn jeda naik (1s, 2s, 3s). Sekali
+    -- dapet -> cache permanen (gak request lagi). Gagal semua -> nil (coba lagi
+    -- nanti, gak di-cache negatif).
+    for percobaan = 1, 3 do
+        local ok, id = pcall(function()
+            return Players:GetUserIdFromNameAsync(nama)
+        end)
+        if ok and id and id > 0 then
+            Seed._giftUidCache[nama] = id
+            return id
+        end
+        -- gagal (rate-limit/timeout) -> jeda sebelum coba lagi
+        if percobaan < 3 then task.wait(percobaan) end
+    end
     return nil
 end
 
@@ -1283,6 +1297,15 @@ end
 
 -- kirim gift mail SEKALI. return: ok(bool), pesan(string)
 function Seed.kirimGiftMail()
+    -- v4.12: cek PENGIRIM. Kalau giftMailPengirim diisi spesifik (bukan kosong/
+    -- "all"), cuma akun ITU yang boleh kirim. Akun lain skip (bukan pengirim).
+    local pengirim = tostring(state.giftMailPengirim or ""):gsub("%s+", ""):lower()
+    if pengirim ~= "" and pengirim ~= "all" then
+        local akuIni = tostring(player.Name or ""):lower()
+        if pengirim ~= akuIni then
+            return false, "bukan akun pengirim (pengirim=" .. pengirim .. ")"
+        end
+    end
     local target = tostring(state.giftMailTarget or ""):gsub("%s+", "")
     if target == "" then return false, "target kosong" end
     local sb = pkt("Mailbox", "SendBatch")
@@ -3846,10 +3869,17 @@ Seed._uidCache = {}
 
 local function cariUserId(nama)
     if Seed._uidCache[nama] then return Seed._uidCache[nama] end
-    local ok, id = pcall(function()
-        return Players:GetUserIdFromNameAsync(nama)
-    end)
-    if ok and id then Seed._uidCache[nama] = id; return id end
+    -- v4.13: retry 3x (GetUserIdFromNameAsync sering rate-limit/timeout)
+    for percobaan = 1, 3 do
+        local ok, id = pcall(function()
+            return Players:GetUserIdFromNameAsync(nama)
+        end)
+        if ok and id and id > 0 then
+            Seed._uidCache[nama] = id
+            return id
+        end
+        if percobaan < 3 then task.wait(percobaan) end
+    end
     return nil
 end
 
