@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.22"
+local VERSI = "4.23"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -865,23 +865,24 @@ function Seed.plantOnce()
     -- size). Kalau udah di dalam -> tanam DI POSISI SEKARANG (gak TP, gak loncat).
     -- Cuma TP masuk kalau bener-bener DI LUAR kebun.
     local diDalamKebun = false
+    local avatar = hrp.Position   -- v4.23: deklarasi awal, diupdate kalau TP
     if areaC and areaX and areaZ then
         local dx = math.abs(hrp.Position.X - areaC.X)
         local dz = math.abs(hrp.Position.Z - areaC.Z)
         -- di dalam kalau posisi X/Z masih dalam setengah-ukuran area (+ toleransi)
         if dx <= (areaX + 10) and dz <= (areaZ + 10) then diDalamKebun = true end
     end
-    -- v3.67: TP masuk kebun CUMA kalau JAUH banget (di luar area + margin gede).
-    -- Dulu TP tiap loop kalau di luar toleransi 10 -> bareng TP tanah = loncat.
-    -- Sekarang toleransi lebih longgar (30) + gak +3 (biar gak naik).
+    -- v4.23: FIX GAK NANEM. Masalah user: karakter di DEPAN garden (agak di luar
+    -- area), TAPI syarat TP lama "jauh > areaX+30" gak kepenuhi -> karakter NYANGKUT
+    -- (gak dianggap di dalam, gak TP juga) -> Fire dari depan garden -> game NOLAK.
+    -- Sekarang: kalau GAK di dalam kebun -> LANGSUNG TP ke tengah petak (tanah).
+    -- Karakter napak tanah dulu, baru nanem. Ini yg user maksud "TP ke tanah".
     if not diDalamKebun and areaC and yTanah then
-        local jauhX = math.abs(hrp.Position.X - areaC.X)
-        local jauhZ = math.abs(hrp.Position.Z - areaC.Z)
-        if jauhX > (areaX + 30) or jauhZ > (areaZ + 30) then
-            local titikMasuk = Vector3.new(areaC.X, yTanah + 3, areaC.Z)
-            pcall(function() hrp.CFrame = CFrame.new(titikMasuk) end)
-            task.wait(0.15)
-        end
+        local titikMasuk = Vector3.new(areaC.X, yTanah + 5, areaC.Z)
+        pcall(function() hrp.CFrame = CFrame.new(titikMasuk) end)
+        task.wait(0.2)
+        -- update posisi avatar setelah TP (biar tanam dari posisi baru di tanah)
+        avatar = hrp.Position
     end
     -- v3.71: RADIUS = lingkaran ngelilingi KARAKTER (setting plantSpread).
     -- User mau tanam melingkar di sekitar karakter, radius = plantSpread.
@@ -938,7 +939,6 @@ function Seed.plantOnce()
     -- gak TP ke tengah petak). Titik dalam LINGKARAN radius plantSpread. Urut:
     -- ring terjauh dulu -> muter -> makin rapet ke karakter terakhir.
     if yTanah then
-        local avatar = hrp.Position
         local yPakai = yTanah
         local pusat = avatar   -- pusat = posisi karakter, karakter DIEM
         -- generate titik grid rapet dalam LINGKARAN radius (pusat karakter)
