@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.75-cf"
+local VERSION = "8.78-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1718,9 +1718,17 @@ local function cari_tombol_key(cfg, pkg)
     -- urutan coba: yang UDAH KEINGET buat ukuran ini duluan, baru sapuan
     local urut = {}
     local tebakX, tebakY = nil, nil   -- v5.47: tebakan dari jumlah baris grid
+    local adaKalibrasi = false
     local inget = tap_muat()[kunci]
     if inget then
-        urut[#urut+1] = { inget.fx, inget.fy, ingetan = true }
+        -- v8.78: ukuran ini UDAH DIKALIBRASI (tested KENA, misal 226x293 = 10
+        -- client -> 0.853,0.668). Titik ini PASTI kena. User minta konsisten:
+        -- ULANG titik yang SAMA 10x, JANGAN sapu titik lain (yg melesat). Dialog
+        -- kadang belum settle di tap pertama -> ulang di titik yg sama sampai kena.
+        adaKalibrasi = true
+        for _ = 1, 10 do
+            urut[#urut+1] = { inget.fx, inget.fy, ingetan = true }
+        end
     end
 
     -- v5.47: kalau ukuran ini BELUM pernah dikalibrasi, tebak dari JUMLAH BARIS
@@ -1753,8 +1761,21 @@ local function cari_tombol_key(cfg, pkg)
             tebakX, tebakY = 0.83, 0.723
             urut[#urut+1] = { tebakX, tebakY, tebakan = 0 }
         end
+        -- v8.77: ULANG titik 1 (tebakan) 8x -- KONSISTEN di titik yang SAMA.
+        -- User: titik 1 SELALU kena, titik 2+ (TITIK_SAPU) melesat jauh. Jadi
+        -- tap titik 1 berulang (dialog kadang belum settle di tap pertama), gak
+        -- lompat ke titik lain. TITIK_SAPU tetep ditambahin di BELAKANG sebagai
+        -- cadangan kalau 8x titik 1 bener-bener gagal.
+        if tebakX and tebakY then
+            for _ = 1, 7 do
+                urut[#urut+1] = { tebakX, tebakY, tebakan = -1 }   -- ulang titik 1
+            end
+        end
     end
 
+    -- v8.78: SKIP sapu titik lain kalau ukuran udah dikalibrasi (titik pasti kena,
+    -- diulang 10x di atas). Sapu titik lain cuma buat ukuran yg BELUM dikalibrasi.
+    if not adaKalibrasi then
     for _, t in ipairs(TITIK_SAPU) do
         -- v5.47 FIX: bandingin ke tebakan yang DISIMPEN, bukan ke urut[#urut].
         -- Dulu urut[#urut] udah bukan tebakan lagi begitu titik sapuan pertama
@@ -1768,6 +1789,7 @@ local function cari_tombol_key(cfg, pkg)
             urut[#urut+1] = { t[1], t[2] }
         end
     end
+    end   -- tutup 'if not adaKalibrasi' (v8.78)
 
     for i, t in ipairs(urut) do
         -- v5.14: bisa DIHENTIKAN. Dulu perintah panjang kayak gini gak pernah
@@ -1788,7 +1810,10 @@ local function cari_tombol_key(cfg, pkg)
         -- v7.57: JEDA SEBELUM TAP = 15 detik (user minta). Kasih waktu jendela +
         -- dialog key bener-bener settle sebelum tap (biar gak keburu-buru pas
         -- dialog belum pas / masih loading). Bisa dibatalin di tengah.
-        for _ = 1, 15 do
+        -- v8.77: titik ULANG (tebakan=-1) jeda lebih pendek (5s) -- dialog udah
+        -- settle dari tap pertama, gak perlu nunggu 15s tiap ulang.
+        local jedaTap = (t.tebakan == -1) and 5 or 15
+        for _ = 1, jedaTap do
             if ada_stop() then return nil, nil, nil, "dihentikan (zenx stop)" end
             os.execute("sleep 1")
         end
@@ -4122,6 +4147,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
 
                 -- semua ketutup -> selalu buka dari nol. Ambil client pertama.
                 local pilih = list[1]
+
+                -- v8.76: PAKSA tutup client pilihan dulu (walau kira udah mati).
+                -- Bug user: client bypass masih UKURAN LAMA (6-client, 533x360)
+                -- padahal prefs 10-client udah ditulis. Sebabnya: App Cloner cuma
+                -- baca prefs posisi pas app START DARI MATI TOTAL. Kalau proses masih
+                -- nyangkut (kedeteksi "mati" tapi sebenernya idup), open_one cuma
+                -- bawa depan -> posisi lama kepakai. Tutup paksa dulu -> pasti fresh.
+                pcall(function()
+                    sh_silent("su -c 'am force-stop " .. pilih .. "'")
+                end)
+                os.execute("sleep 2")
 
                 -- buka dia sendirian biar layar key-nya nongol.
                 -- (v5.58: gak ada lagi cabang "udah jalan" -- semua udah
