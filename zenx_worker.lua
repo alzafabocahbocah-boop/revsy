@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.54-cf"
+local VERSION = "8.55-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6180,6 +6180,12 @@ local function run(cfg)
                 -- v8.34: TEMBAK yang OUT (rejoin) -- open_one bareng, gak nunggu.
                 -- Dulu cuma lapor angka doang, yg out gak diurus. Sekarang tembak.
                 if #perluTembak > 0 then
+                    -- v8.54: REFRESH mapLink (+ accessCode per akun) SEBELUM tembak.
+                    -- Bug: blok denyut ini pakai mapLink dari refresh terakhir, kalau
+                    -- accessCode di-set SETELAH itu (klik World 2 Private) -> mapLink
+                    -- kosong -> join PUBLIC. Refresh di sini biar accessCode terbaru
+                    -- kepakai -> join PS-access per akun.
+                    pcall(refresh_ps); pcall(refresh_ps_getps)
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
                     for idx, pkg in ipairs(perluTembak) do
                         if cek_batal and cek_batal() then break end
