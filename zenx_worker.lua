@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.48-cf"
+local VERSION = "8.49-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3781,6 +3781,48 @@ end
 -- (beberapa paket sekaligus). Nutup itu murah -- nutup 3 client barengan
 -- makan waktu sama kayak nutup 1. Dulu dipanggil satu-satu -> tiap panggilan
 -- nunggu verifikasi mati sendiri-sendiri -> lambat banget kalau banyak.
+-- v8.49: TUTUP CEPAT BARENGAN (buat STOP). GLOBAL (bukan local) biar gak nambah
+-- local di main chunk (udah mepet 200). force-stop semua barengan (& bg) -> cepet.
+function close_all_cepat(cfg)
+    local list = split(cfg.pkgs)
+    if #list == 0 then return 0 end
+    setAksi("STOP -- nutup semua client barengan")
+    local cmd = "su -c '"
+    for _, pkg in ipairs(list) do cmd = cmd .. "am force-stop " .. pkg .. " & " end
+    cmd = cmd .. "wait'"
+    sh_silent(cmd)
+    info(("STOP: %d client ditembak tutup barengan"):format(#list))
+    local belum = {}
+    for _, pkg in ipairs(list) do belum[pkg] = true end
+    for _ = 1, 5 do
+        os.execute("sleep 1")
+        local adaHidup = false
+        for pkg in pairs(belum) do
+            local o = sh("su -c 'pidof " .. pkg .. "'")
+            if not o:match("%d") then belum[pkg] = nil
+            else adaHidup = true; sh_silent("su -c 'am force-stop " .. pkg .. "'") end
+        end
+        if not adaHidup then break end
+    end
+    return #list
+end
+
+-- v8.49: CEK STOP dari panel (deteksi cepet, dipanggil awal loop). Tutup client
+-- barengan. Return true kalau STOP baru diproses. GLOBAL (gak nambah local main).
+function cek_stop_panel(cfg, isi)
+    if not isi or not isi:upper():find("STOP") then return false end
+    if KICK_DIURUS["stop_killed"] then return false end
+    warn("STOP dari panel -> tutup SEMUA client BARENGAN (cepet)")
+    ok("STOP: " .. close_all_cepat(cfg) .. " client ditutup. Pencet Start buat mulai fresh.")
+    KICK_DIURUS["stop_killed"] = true
+    SUDAH_GRID = false
+    for _, p in ipairs(split(cfg.pkgs or "")) do
+        KICK_DIURUS["offlama:" .. p] = nil
+        KICK_DIURUS["diag:" .. p] = nil
+    end
+    return true
+end
+
 local function close_all(cfg, only, mapLink, tanpaMunculin)
     local list = split(cfg.pkgs)
     local mau = nil
@@ -6162,6 +6204,12 @@ local function run(cfg)
         if isi == "" or isi == "-" then
             isi = "STANDBY"
         end
+        -- v8.49: CEK STOP PRIORITAS (deteksi cepet + tutup barengan). STOP baru ->
+        -- reset lastOpen + anggap sisa loop standby (gak buka client).
+        if cek_stop_panel(cfg, isi) then
+            lastOpen = 0
+            isi = "STANDBY"
+        end
         -- v6.29: LOGIN tertunda (kesimpen pas cek_batal) diproses DULUAN, biar
         -- gak keburu ketimpa FORCE. Ambil & bersihin penanda.
         if KICK_DIURUS["login_tertunda"] then
@@ -6874,14 +6922,11 @@ local function run(cfg)
             -- stop_killed) biar gak kill tiap ronde. STANDBY biasa gak kill (client
             -- dibiarin, cuma gak buka baru).
             local isiStop = isi:upper():find("STOP")
-            info(("[STOP-DBG] isi='%s' isiStop=%s stop_killed=%s"):format(
-                isi, tostring(isiStop), tostring(KICK_DIURUS["stop_killed"])))
             if isiStop and not KICK_DIURUS["stop_killed"] then
-                warn("STOP dari panel -> tutup SEMUA client (balik awal)")
-                local n = close_all(cfg)
+                warn("STOP dari panel -> tutup SEMUA client BARENGAN (cepet)")
+                local n = close_all_cepat(cfg)
                 ok("STOP: " .. n .. " client ditutup. Pencet Start buat mulai fresh.")
                 KICK_DIURUS["stop_killed"] = true
-                -- reset kondisi biar Force nanti mulai fresh
                 SUDAH_GRID = false
                 lastOpen = 0
             end
