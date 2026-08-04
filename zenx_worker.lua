@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.51-cf"
+local VERSION = "8.52-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2495,7 +2495,7 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
             or (url:find("accessCode") and "PS-access")
             or "PUBLIC"
         info(("   [join] %s -> %s | url=%s"):format(
-            pkg:gsub("com%.roblox%.",""), jenisJoin, url:sub(1, 90)))
+            pkg:gsub("com%.roblox%.",""), jenisJoin, url))
     end
     local wm = tonumber(cfg.win_mode) or 0
 
@@ -2556,17 +2556,24 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
             -- Home; web URL + CLEAR_TOP nge-reset activity Home tanpa stop app.
             -- Konversi ke web URL inline (gak bikin fungsi baru -- batas 200 lokal):
             local pid_w = cfg.place_id or "129343810645058"
-            local kode_w = (url:match("accessCode=([%w%-]+)")
-                or url:match("linkCode=([%w%-]+)")
-                or url:match("privateServerLinkCode=([%w%-]+)")
-                or url:match("code=([%w%-]+)"))
             local url_web
             if url:find("share%?code=") or url:find("/share%?") then
                 url_web = url   -- link share -> pakai apa adanya (udah http)
-            elseif kode_w then
-                url_web = "https://www.roblox.com/games/start?placeId="..pid_w.."&accessCode="..kode_w
+            elseif url:find("privateServerLinkCode=") then
+                -- v8.51: link PS fall (privateServerLinkCode) -> PAKAI APA ADANYA.
+                -- JANGAN konversi ke accessCode (itu format BEDA -> Roblox tolak
+                -- "no permission"). URL https lengkap = persis link manual (works).
+                url_web = url:sub(1,4) == "http" and url
+                    or ("https://www.roblox.com/games/"..pid_w.."/x?"..url:match("(privateServerLinkCode=[%w]+)"))
             else
-                url_web = "https://www.roblox.com/games/start?placeId="..pid_w
+                local kode_w = (url:match("accessCode=([%w%-]+)")
+                    or url:match("linkCode=([%w%-]+)")
+                    or url:match("code=([%w%-]+)"))
+                if kode_w then
+                    url_web = "https://www.roblox.com/games/start?placeId="..pid_w.."&accessCode="..kode_w
+                else
+                    url_web = "https://www.roblox.com/games/start?placeId="..pid_w
+                end
             end
             inner = "am start -a android.intent.action.VIEW -d '"..url_web.."'"
                 .. " -p "..pkg
