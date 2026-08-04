@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.62-cf"
+local VERSION = "8.63-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6845,7 +6845,9 @@ local function run(cfg)
             if isi:find(":") or not MODE_JALAN then
                 -- GRID:kolom / standby -> jangan jalanin nata-buka lama.
                 -- (blok baru di bawah yg handle GRID:kolom; standby = diem)
-                lastIsi = isi
+                -- v8.63 FIX: JANGAN set lastIsi di sini! Dulu set lastIsi=isi ->
+                -- blok baru (gridDari) cek "isi ~= lastIsi" jadi FALSE -> grid_kolom
+                -- GAK ke-set -> worker lapor grid 0. Biarin blok baru yg set lastIsi.
                 skip_sisa = false   -- biarin lanjut ke blok gridDari
             elseif isi ~= lastIsi then
                 lastIsi = isi
