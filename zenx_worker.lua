@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.87-cf"
+local VERSION = "8.89-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3355,26 +3355,24 @@ end
 -- di jalur masukin (grafis-out / script-off) biar client masuk langsung di posisi.
 GRID_CACHE = nil   -- cache peta grid (biar gak hitung ulang tiap client)
 GRID_CACHE_KOLOM = nil   -- v8.80: grid_kolom yg dipakai pas cache dibikin
+PKGS_AKTIF = nil   -- v8.88: client yg aktif dibuka (FORCE:daftar) -> grid pakai ini
 function grid_satu(cfg, pkg)
     if cfg.auto_grid ~= true then return end   -- grid mati -> lewat
-    -- v8.80 FIX: cache basi bikin grid "kumat" (pakai grid lama). Kalau grid_kolom
-    -- BERUBAH (misal 0->3 dari panel) tapi GRID_CACHE masih nilai lama -> client
-    -- ditata pakai grid lama. Sekarang: reset cache kalau grid_kolom beda dari
-    -- yg dipakai pas cache dibikin.
     local kolonSkrg = tonumber(cfg.grid_kolom) or 0
-    if GRID_CACHE_KOLOM ~= kolonSkrg then
-        GRID_CACHE = nil   -- grid_kolom berubah -> cache basi, hitung ulang
+    -- v8.88: cache invalid kalau grid_kolom ATAU jumlah client aktif berubah
+    local nAktif = PKGS_AKTIF and #PKGS_AKTIF or 0
+    if GRID_CACHE_KOLOM ~= (kolonSkrg .. ":" .. nAktif) then
+        GRID_CACHE = nil
     end
     if not GRID_CACHE then
-        local p = grid_hitung(cfg)
-        if p then GRID_CACHE = p; GRID_CACHE_KOLOM = kolonSkrg end
+        -- v8.88: hitung grid buat CLIENT AKTIF (yg dibuka), bukan semua 10.
+        -- Bug: 6 client grid 3 kolom -> jadi 4x3 (dihitung 10 client). Pakai
+        -- PKGS_AKTIF -> 6 client 3 kolom = 3x2 (bener).
+        local p = grid_hitung(cfg, PKGS_AKTIF)   -- nil PKGS_AKTIF = semua (perilaku lama)
+        if p then GRID_CACHE = p; GRID_CACHE_KOLOM = (kolonSkrg .. ":" .. nAktif) end
     end
     if GRID_CACHE and GRID_CACHE[pkg] then
-        -- v8.81: hapusDulu=true -- buang posisi window LAMA dulu sebelum tulis
-        -- grid baru. Bug user: grid "kadang nyangkut di lama" -- karena tata_satu
-        -- di sini (jalur rejoin utama, sering jalan) cuma GANTI nilai, gak hapus.
-        -- Kalau ada key posisi lama beda/basi, gak ke-clear -> posisi lama kepakai.
-        tata_satu(pkg, GRID_CACHE[pkg], true)   -- tulis prefs posisi (gak force-stop)
+        tata_satu(pkg, GRID_CACHE[pkg], true)   -- v8.81: hapus lama dulu
     end
 end
 
@@ -6246,6 +6244,29 @@ local function run(cfg)
                     setAkun = {}
                     for a in daftarForce:gmatch("[^,]+") do setAkun[a] = true end
                 end
+                -- v8.88: SET client aktif buat grid LANGSUNG dari perintah panel.
+                -- Panel udah kasih tau 6 client mana (FORCE:daftar) -> grid dihitung
+                -- buat 6 itu (3 kolom = 3x2), bukan semua 10 (yg bikin 4x3).
+                -- FORCE polos (tanpa daftar) = semua client.
+                do
+                    local aktifBaru = nil
+                    if setAkun then
+                        aktifBaru = {}
+                        for pkg, u in pairs(mapAkun or {}) do
+                            local nm = pkg:gsub("com%.roblox%.", "")
+                            if setAkun[u] or setAkun[pkg] or setAkun[nm] then
+                                aktifBaru[#aktifBaru+1] = pkg
+                            end
+                        end
+                        if #aktifBaru == 0 then aktifBaru = nil end
+                    end
+                    -- kalau berubah -> reset cache grid
+                    local sigBaru = aktifBaru and (#aktifBaru) or 0
+                    if (PKGS_AKTIF and #PKGS_AKTIF or 0) ~= sigBaru then
+                        GRID_CACHE = nil
+                    end
+                    PKGS_AKTIF = aktifBaru
+                end
                 -- v8.44: grafis_semua DIBUANG (gak dipake lagi -- deteksi udah
                 -- pindah ke DENYUT doang). Dulu ambil grafis semua client (mahal,
                 -- su call per client) tapi hasilnya gak kepake. Hemat.
@@ -7511,6 +7532,17 @@ local function run(cfg)
                 end
                 if not next(only) then only = nil end   -- gak ada yg cocok -> semua
             end
+            -- v8.88: simpen daftar client AKTIF (yg dibuka) jadi global -> grid_hitung
+            -- pakai JUMLAH INI, bukan semua 10 client. Bug user: pakai 6 client grid
+            -- 3 kolom, tapi grid jadi 4x3 (dihitung buat 10 client). Sekarang grid
+            -- dihitung buat jumlah client yg beneran dibuka (6 -> 3x2).
+            if only then
+                PKGS_AKTIF = {}
+                for pkg in pairs(only) do PKGS_AKTIF[#PKGS_AKTIF+1] = pkg end
+            else
+                PKGS_AKTIF = nil   -- FORCE polos = semua client
+            end
+            GRID_CACHE = nil   -- client aktif berubah -> grid hitung ulang
             if (now - lastOpen) >= cfg.reopen_sec then
                 -- dipanggil di sela-sela client: STANDBY dari panel langsung kebaca,
                 -- gak nunggu 10 client kelar dulu
