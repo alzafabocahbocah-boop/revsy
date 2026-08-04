@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.73-cf"
+local VERSION = "8.75-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2906,8 +2906,17 @@ local function tunggu_jalan(pkg, batas, cek_batal, cfg, link)
                     -- fallback lama (tanpa link) -- cuma bawa app ke depan
                     sh_silent("su -c 'am start -a android.intent.action.VIEW -p " .. pkg .. " 2>/dev/null'")
                 end
-                os.execute("sleep 8")
-                if cek_batal and cek_batal() then return false, os.time()-mulai, "STANDBY" end
+                -- v8.74: tembak masuk tiap 40s (napas buat client masuk). Sleep
+                -- dipecah 5s biar STANDBY + proses-mati tetep responsif.
+                local sebabPecah = nil
+                for _ = 1, 8 do
+                    os.execute("sleep 5")
+                    if cek_batal and cek_batal() then sebabPecah = "STANDBY" break end
+                    if not pkg_running(pkg) then sebabPecah = "mati pas masuk game" break end
+                end
+                if sebabPecah then
+                    return false, os.time()-mulai, sebabPecah
+                end
                 if not pkg_running(pkg) then
                     return false, os.time() - mulai, "mati pas masuk game"
                 end
@@ -4127,11 +4136,21 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     -- harus nyapu ulang -- padahal gak perlu.
                     -- Jendela penuh tetep dipakai, TAPI cuma kalau deteksi di
                     -- ukuran grid gagal (lihat di bawah).
-                    local petaK = grid_hitung(cfg)
+                    -- v8.75: pas BYPASS, PAKSA grid 10 client (layout default 5x2),
+                    -- BUKAN grid aktif (misal grid 3 = 6 client). User: titik lokasi
+                    -- bypass udah ketemu/kalibrasi buat layout 10 CLIENT. Kalau client
+                    -- bypass diposisikan pakai grid aktif (3 kolom/6 client), ukuran+
+                    -- posisi beda -> titik bypass gak ketemu (tap nyasar). Jadi: hitung
+                    -- grid buat SEMUA 10 client tanpa override kolom (grid_kolom=nil).
+                    local cfgBypass = {}
+                    for k, v in pairs(cfg) do cfgBypass[k] = v end
+                    cfgBypass.grid_kolom = nil   -- layout default (5x2 buat 10 client)
+                    local petaK = grid_hitung(cfgBypass, split(cfg.pkgs))
                     if petaK and petaK[pilih] then
-                        local tok, tket = tata_satu(pilih, petaK[pilih])
+                        -- hapusDulu=true: buang posisi lama biar bener2 pas layout 10
+                        local tok, tket = tata_satu(pilih, petaK[pilih], true)
                         if tok and tket ~= "udah pas" then
-                            info("  posisi jendela " .. pilih:gsub("com%.roblox%.", "") .. ": " .. tket)
+                            info("  posisi jendela " .. pilih:gsub("com%.roblox%.", "") .. " (layout 10-client): " .. tket)
                         end
                     end
                     info("  buka " .. pilih:gsub("com%.roblox%.", "") .. " buat ambil link key...")
