@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.13"
+local VERSI = "4.14"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -4121,6 +4121,54 @@ local function relayReq(opts)
     return nil
 end
 
+-- v4.14: SEARCH username Roblox (autocomplete penerima gift, dari star_farm).
+-- Pakai users.roblox.com search API -> return array {name, id, display}. Retry
+-- 3x kalau rate-limit. Seed._searchErr = pesan error terakhir (buat debug GUI).
+Seed._usernameCache = Seed._usernameCache or {}
+Seed._searchErr = ""
+function Seed.searchUsername(keyword)
+    if not keyword or keyword == "" then Seed._searchErr = "keyword kosong"; return nil end
+    local kw = tostring(keyword):lower()
+    if Seed._usernameCache[kw] ~= nil then return Seed._usernameCache[kw] end
+    local req = (syn and syn.request) or (http and http.request) or http_request or request
+        or (fluxus and fluxus.request)
+    if not req then Seed._searchErr = "executor gak punya HTTP request"; return nil end
+    local url = "https://users.roblox.com/v1/users/search?keyword=" .. HS:UrlEncode(keyword) .. "&limit=25"
+    local out = nil
+    for attempt = 1, 3 do
+        local ok, resp = pcall(function() return req({ Url = url, Method = "GET" }) end)
+        if not ok then
+            Seed._searchErr = ("percobaan %d: request error (%s)"):format(attempt, tostring(resp):sub(1,50))
+        else
+            local body = resp and (resp.Body or resp.body)
+            local status = resp and (resp.StatusCode or resp.Status or resp.status)
+            if status == 429 then
+                Seed._searchErr = ("percobaan %d: rate-limit (429), tunggu..."):format(attempt)
+            elseif status and status ~= 200 then
+                Seed._searchErr = ("percobaan %d: HTTP %s"):format(attempt, tostring(status))
+            elseif body then
+                local okJ, data = pcall(function() return HS:JSONDecode(body) end)
+                if okJ and type(data) == "table" and type(data.data) == "table" then
+                    out = {}
+                    for _, u in ipairs(data.data) do
+                        if u.name then out[#out+1] = { name = u.name, id = u.id, display = u.displayName } end
+                    end
+                    if #out == 0 then Seed._searchErr = "user gak ketemu (0 hasil)"
+                    else Seed._searchErr = "" end
+                    break
+                else
+                    Seed._searchErr = ("percobaan %d: balasan gak valid (JSON gagal)"):format(attempt)
+                end
+            else
+                Seed._searchErr = ("percobaan %d: balasan kosong"):format(attempt)
+            end
+        end
+        if attempt < 3 then task.wait(attempt * 1.5) end   -- 1.5s, 3s
+    end
+    if out ~= nil then Seed._usernameCache[kw] = out end
+    return out
+end
+
 local function panelAktif()
     return type(state.panelUrl) == "string" and state.panelUrl ~= ""
         and type(state.panelKunci) == "string" and state.panelKunci ~= ""
@@ -6277,7 +6325,21 @@ local kotakTarget2 = mk("TextBox", { Parent = kGiftMail,
     PlaceholderText = "nama akun", Text = tostring(state.giftMailTarget or "") })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakTarget2 })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakTarget2 })
--- jumlah
+-- v4.14: dropdown hasil search user (autocomplete) -- muncul pas ketik + Enter.
+-- Pakai Seed._el.* (bukan local) biar gak kena batas 200 lokal main chunk.
+Seed._el.ddSearch = mk("ScrollingFrame", { Parent = kGiftMail,
+    Position = UDim2.new(0, 76, 0, 58), Size = UDim2.new(1, -88, 0, 0),
+    BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, Visible = false,
+    ScrollBarThickness = 4, CanvasSize = UDim2.new(0, 0, 0, 0),
+    ZIndex = 50 })
+mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.ddSearch })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.ddSearch })
+mk("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Seed._el.ddSearch })
+Seed._el.lblSearchErr = mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 76, 0, 58), Size = UDim2.new(1, -88, 0, 16),
+    Font = Enum.Font.Gotham, TextSize = 14.5, TextColor3 = Color3.fromRGB(230, 130, 60),
+    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Visible = false,
+    Text = "" })
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 64), Size = UDim2.new(0, 60, 0, 24),
     Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
@@ -6784,9 +6846,54 @@ tblBaru.MouseButton1Click:Connect(function()
 end)
 
 -- v3.18: Gift Mail handler
-kotakTarget2.FocusLost:Connect(function()
+kotakTarget2.FocusLost:Connect(function(enterPressed)
     state.giftMailTarget = tostring(kotakTarget2.Text):gsub("%s+", "")
     simpan()
+    -- v4.14: Enter -> SEARCH user Roblox, tampil pilihan (autocomplete) + debug error
+    if enterPressed then
+        local kw = tostring(kotakTarget2.Text):gsub("^%s+", ""):gsub("%s+$", "")
+        if kw == "" then Seed._el.ddSearch.Visible = false; Seed._el.lblSearchErr.Visible = false; return end
+        Seed._el.lblSearchErr.Visible = true
+        Seed._el.lblSearchErr.Text = "nyari user..."
+        Seed._el.lblSearchErr.TextColor3 = WARNA.samar
+        Seed._el.ddSearch.Visible = false
+        task.spawn(function()
+            local list = Seed.searchUsername(kw)
+            -- bersihin dropdown lama
+            for _, c in ipairs(Seed._el.ddSearch:GetChildren()) do
+                if c:IsA("TextButton") then c:Destroy() end
+            end
+            if list and #list > 0 then
+                Seed._el.lblSearchErr.Visible = false
+                local n = math.min(#list, 8)
+                for i = 1, n do
+                    local u = list[i]
+                    local b = mk("TextButton", { Parent = Seed._el.ddSearch, LayoutOrder = i,
+                        Size = UDim2.new(1, -6, 0, 26), BackgroundColor3 = WARNA.garis,
+                        BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 16,
+                        TextColor3 = WARNA.teks, TextXAlignment = Enum.TextXAlignment.Left,
+                        Text = "  " .. u.name .. (u.display and u.display ~= u.name and ("  (" .. u.display .. ")") or "") })
+                    mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
+                    b.MouseButton1Click:Connect(function()
+                        kotakTarget2.Text = u.name
+                        state.giftMailTarget = u.name
+                        kotakTarget2.TextColor3 = Color3.fromRGB(120, 220, 120)
+                        simpan()
+                        Seed._el.ddSearch.Visible = false
+                    end)
+                end
+                Seed._el.ddSearch.Size = UDim2.new(1, -88, 0, n * 28 + 4)
+                Seed._el.ddSearch.Visible = true
+            else
+                -- gagal / kosong -> tampil DEBUG error (kenapa)
+                Seed._el.ddSearch.Visible = false
+                Seed._el.lblSearchErr.Visible = true
+                Seed._el.lblSearchErr.TextColor3 = Color3.fromRGB(230, 130, 60)
+                local err = Seed._searchErr or "gagal"
+                Seed._el.lblSearchErr.Text = "gagal cari: " .. err
+            end
+        end)
+    end
 end)
 kotakQty.FocusLost:Connect(function()
     local n = tonumber(kotakQty.Text)
@@ -6826,7 +6933,15 @@ tblKirimMail.MouseButton1Click:Connect(function()
     tblKirimMail.Text = "KIRIM..."
     task.spawn(function()
         local ok, pesan = Seed.kirimGiftMail()
-        tblKirimMail.Text = ok and "TERKIRIM!" or ("GAGAL: " .. tostring(pesan))
+        tblKirimMail.Text = ok and "TERKIRIM!" or "GAGAL"
+        -- v4.14: tampil error DETAIL di label (persist, bukan cuma 2s di tombol)
+        if not ok then
+            Seed._el.lblSearchErr.Visible = true
+            Seed._el.lblSearchErr.TextColor3 = Color3.fromRGB(230, 130, 60)
+            Seed._el.lblSearchErr.Text = "kirim gagal: " .. tostring(pesan)
+        else
+            Seed._el.lblSearchErr.Visible = false
+        end
         task.wait(2)
         tblKirimMail.Text = "KIRIM"
     end)
