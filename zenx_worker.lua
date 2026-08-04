@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.91-cf"
+local VERSION = "8.92-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4421,6 +4421,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
         local p, sebabGrid = grid_hitung(cfg, pkgsGrid)
         if p then petaGrid = p
         else warn("tata jendela dilewat: " .. tostring(sebabGrid)) end
+        -- v8.92: SET PKGS_AKTIF = pkgsGrid biar grid_satu (rejoin) pakai layout
+        -- SAMA. Bug user: grid CAMPUR (ada normal ada nggak) -- karena open_all
+        -- pakai pkgsGrid tapi grid_satu pakai PKGS_AKTIF, kalau beda -> layout
+        -- beda per client. Sekarang 1 sumber: pkgsGrid = PKGS_AKTIF.
+        PKGS_AKTIF = pkgsGrid   -- nil (FORCE polos) = semua, sama kayak grid_hitung
     end
     -- v7.25: set grid CUMA kalau belum pernah (SUDAH_GRID false). Dulu jalan
     -- TIAP open_all -> force-stop SEMUA client tiap ronde FORCE -> semua keluar
