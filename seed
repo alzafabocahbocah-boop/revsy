@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.26"
+local VERSI = "4.28"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -4747,9 +4747,25 @@ end
 
 local function seedDiTas()
     local hitung, total = {}, 0
+    Seed._seedDbg = {}   -- v4.28: debug SEMUA tool (nama + seed? + atribut)
     pcall(function()
         for _, holder in ipairs(tasHolders()) do
             for _, tool in ipairs(holder:GetChildren()) do
+                if tool:IsA("Tool") then
+                    -- catat tiap tool: nama, kedeteksi seed?, atribut kunci
+                    local isSeed = toolItuSeed(tool)
+                    local low = tool.Name:lower()
+                    -- cuma catat yang MIRIP fall (Maple/Conifer/dll) atau gak kedeteksi
+                    if low:find("maple") or low:find("conifer") or low:find("cranberry")
+                       or low:find("honeysuckle") or low:find("amber") then
+                        local sz = tool:GetAttribute("SizeMultiplier")
+                        local cat = tool:GetAttribute("MainCategory")
+                        Seed._seedDbg[#Seed._seedDbg+1] = tool.Name
+                            .. " [seed=" .. tostring(isSeed)
+                            .. " sz=" .. tostring(sz ~= nil)
+                            .. " cat=" .. tostring(cat or "-") .. "]"
+                    end
+                end
                 if toolItuSeed(tool) then
                     -- nama seed: pakai atribut SeedName kalau ada, else nama Tool
                     -- (map baru: nama Tool langsung "Carrot", tanpa " Seed")
@@ -4792,6 +4808,7 @@ end
 -- jadi di ringkas cuma keliatan 2. User minta pisah 4.
 local function gearDiTas()
     local wc, spr, swc, sspr = 0, 0, 0, 0
+    Seed._gearDbg = {}   -- v4.27: kumpulin nama gear 'super' buat debug
     pcall(function()
         for _, holder in ipairs(tasHolders()) do
             for _, tool in ipairs(holder:GetChildren()) do
@@ -4799,6 +4816,7 @@ local function gearDiTas()
                     local ln = tostring(tool.Name):lower()
                     local n = tool:GetAttribute("Count") or 1
                     if ln:find("super", 1, true) then
+                        Seed._gearDbg[#Seed._gearDbg+1] = tool.Name .. " x" .. tostring(n)
                         local syrup = ln:find("syrup", 1, true)
                         if ln:find("watering", 1, true) then
                             if syrup then swc = swc + n else wc = wc + n end
@@ -6244,7 +6262,7 @@ local lblKebun = mk("TextLabel", { Parent = kStat, BackgroundTransparency = 1,
     TextXAlignment = Enum.TextXAlignment.Left, Text = "Seed kebun: —" })
 
 -- ---------- Auto Plant Seed (v3.18) ----------
-local kPlant = kartu(145, tabFarm)
+local kPlant = kartu(180, tabFarm)
 mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -6286,9 +6304,10 @@ mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
 -- v4.19: label debug plant (kenapa gak nanem) -- pakai Seed._el (hindari batas 200)
 Seed._el = Seed._el or {}
 Seed._el.lblPlantDbg = mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 120), Size = UDim2.new(1, -24, 0, 16),
-    Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = WARNA.samar,
-    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Text = "" })
+    Position = UDim2.new(0, 12, 0, 118), Size = UDim2.new(1, -24, 0, 56),
+    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Text = "" })
 mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -7532,15 +7551,35 @@ task.spawn(function()
             pcall(function()
                 if Seed._el and Seed._el.lblPlantDbg and Seed._plantDbg then
                     Seed._el.lblPlantDbg.Text = Seed._plantDbg
+                        .. (Seed._gearDbg and #Seed._gearDbg > 0
+                            and ("\nGEAR super: " .. table.concat(Seed._gearDbg, ", "))
+                            or "\nGEAR super: (kosong)")
                 end
             end)
         end
     end
 end)
 
--- v3.20: loop TEMBUS TANAMAN selalu ON -- matiin collision di Plants biar
--- bisa tanam numpuk di 1 titik (gak ketahan pohon/buah yg udah ada). Cuma
--- collision (CanCollide=false), TANPA sembunyiin visual (itu ikut Ringankan RAM).
+-- v4.27: loop DEBUG GEAR -- panggil gearDiTas tiap 3s (isi Seed._gearDbg) +
+-- tampil nama gear 'super' di label plant. Buat tau nama asli Super Syrup gear
+-- (kenapa syrup 0 di panel -- mungkin nama beda dari deteksi).
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(3)
+        pcall(function()
+            local _, _, swc, sspr = gearDiTas()   -- isi Seed._gearDbg
+            local _, totSeed = seedDiTas()          -- isi Seed._seedDbg (fall)
+            if Seed._el and Seed._el.lblPlantDbg and not state.autoPlantOn then
+                Seed._el.lblPlantDbg.Text = ("syrupWC=%d syrupSpr=%d | totSeed=%d\nGEAR: %s\nFALL: %s"):format(
+                    swc or 0, sspr or 0, totSeed or 0,
+                    (Seed._gearDbg and #Seed._gearDbg > 0)
+                        and table.concat(Seed._gearDbg, ", ") or "(kosong)",
+                    (Seed._seedDbg and #Seed._seedDbg > 0)
+                        and table.concat(Seed._seedDbg, " | ") or "(gak ada seed fall di tas)")
+            end
+        end)
+    end
+end)
 task.spawn(function()
     while isCurrentGen() do
         task.wait(2)
