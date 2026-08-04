@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.49-cf"
+local VERSION = "8.50-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2433,15 +2433,23 @@ local function build_url(cfg, link_client)
         -- pastikan pakai https lengkap, biar am start buka lewat Roblox app
         if lc:sub(1,4) ~= "http" then lc = "https://www.roblox.com/" .. lc:gsub("^/", "") end
         return lc   -- buka URL share apa adanya -> Roblox resolve sendiri
+    elseif lc:find("privateServerLinkCode=") and lc:sub(1,4) == "http" then
+        -- v8.50: link PS FULL URL (https://roblox.com/games/ID/nama?privateServerLinkCode=X)
+        -- BUKA LANGSUNG apa adanya -- biar Roblox app resolve+join sendiri. Dulu
+        -- di-ubah ke "roblox://...&linkCode=X" -> Roblox TOLAK ("no permission to
+        -- join this room") karena deep link linkCode kadang gak di-handle bener.
+        -- URL https lengkap = persis yg dipakai user manual (kebukti bisa join).
+        return lc
     elseif lc:find("accessCode=") then
         -- v7.36: PRIVATE SERVER via accessCode (dari zenx getps -- API Roblox
         -- private-servers). Format: "accessCode=UUID". Join langsung ke PS akun.
         local code = lc:match("accessCode=([%w%-]+)")
         return code and ("roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code) or lc
     elseif lc:find("privateServerLinkCode=") then
-        -- format lama: linkCode asli beneran ada di sini
+        -- format lama (code doang, bukan full URL): bikin full URL biar Roblox
+        -- resolve sendiri (bukan roblox:// yg ditolak).
         local code = lc:match("privateServerLinkCode=([^&]+)")
-        return code and ("roblox://placeId="..cfg.place_id.."&linkCode="..code) or lc
+        return code and ("https://www.roblox.com/games/"..cfg.place_id.."/x?privateServerLinkCode="..code) or lc
     elseif lc:sub(1,4)=="http" then return lc
     elseif lc~="" then return "roblox://placeId="..cfg.place_id.."&linkCode="..lc
     else return "roblox://placeId="..cfg.place_id end
