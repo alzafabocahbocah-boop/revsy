@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.15"
+local VERSI = "4.19"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -827,6 +827,35 @@ function Seed.plantOnce()
             end
         end
     end)
+    -- v4.19: DEBUG plant + FALLBACK. Kalau areaC/yTanah gak ketemu (PlantArea nama
+    -- beda di fall world), plant CUMA DIEM (yTanah nil -> skip tanam). Fallback:
+    -- pakai POSISI KARAKTER sebagai pusat + Y karakter sebagai tanah. Biar tetep
+    -- nanem walau petak gak ke-detect. Debug ke GUI biar tau kenapa.
+    do
+        local g = workspace:FindFirstChild("Gardens")
+        local adaGarden = g ~= nil
+        local plotKetemu = false
+        if g then
+            local uid = player.UserId
+            for _, pl in ipairs(g:GetChildren()) do
+                local own = pl:GetAttribute("OwnerUserId")
+                local ownNm = pl:GetAttribute("Owner")
+                if own == uid or ownNm == player.Name then plotKetemu = true; break end
+            end
+        end
+        Seed._plantDbg = ("garden=%s plot=%s areaC=%s yTanah=%s seeds=%d"):format(
+            tostring(adaGarden), tostring(plotKetemu),
+            areaC and "ADA" or "NIL", yTanah and tostring(math.floor(yTanah)) or "NIL", #seeds)
+    end
+    -- FALLBACK: areaC/yTanah nil -> pakai posisi karakter (biar tetep nanem)
+    if not areaC then
+        areaC = hrp.Position
+        areaX = 30; areaZ = 30
+    end
+    if not yTanah then
+        -- Y tanah = kaki karakter (turun dikit dari HRP center)
+        yTanah = hrp.Position.Y - 2.5
+    end
     -- v3.18d: TP SEKALI ke tanah, NETEP di situ. Tanam sebar pakai KOORDINAT
     -- (fire pos + offset spread), BUKAN mindahin karakter tiap seed (dulu bikin
     -- bolak-balik terus tiap loop). Karakter diem di tanah, gak balik ke asal.
@@ -1296,7 +1325,7 @@ local function giftToolSeed(t)
 end
 
 -- kirim gift mail SEKALI. return: ok(bool), pesan(string)
-function Seed.kirimGiftMail()
+function Seed.kirimGiftMail(onProgress)
     -- v4.12: cek PENGIRIM. Kalau giftMailPengirim diisi spesifik (bukan kosong/
     -- "all"), cuma akun ITU yang boleh kirim. Akun lain skip (bukan pengirim).
     local pengirim = tostring(state.giftMailPengirim or ""):gsub("%s+", ""):lower()
@@ -1306,20 +1335,25 @@ function Seed.kirimGiftMail()
             return false, "bukan akun pengirim (pengirim=" .. pengirim .. ")"
         end
     end
-    local target = tostring(state.giftMailTarget or ""):gsub("%s+", "")
-    if target == "" then return false, "target kosong" end
+    -- v4.17: MULTI-TARGET. giftMailTarget bisa banyak akun (dipisah koma):
+    -- "akunA, akunB, akunC" -> kirim ke SEMUA. Parse jadi daftar.
+    local targetRaw = tostring(state.giftMailTarget or "")
+    local daftarTarget = {}
+    for t in targetRaw:gmatch("[^,]+") do
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        if t ~= "" then daftarTarget[#daftarTarget+1] = t end
+    end
+    if #daftarTarget == 0 then return false, "target kosong" end
     local sb = pkt("Mailbox", "SendBatch")
     if not (sb and sb.Fire) then return false, "SendBatch gak ada" end
-    local uid = resolveTargetId(target)
-    if not uid then return false, "user '" .. target .. "' gak ketemu" end
     local qty = tonumber(state.giftMailQty) or 100
     if qty < 1 then qty = 1 end
-    -- kumpulin item (seed + gear yg dipilih)
+    -- kumpulin item SEKALI (sama buat semua target)
     local items = {}
+    local rincianItem = {}   -- v4.17: buat notif detail (nama + jumlah)
     for _, holder in ipairs(tasHolders()) do
         for _, t in ipairs(holder:GetChildren()) do
             if t:IsA("Tool") and #items < 8 then
-                -- GEAR (cek dulu, karena giftToolSeed fallback true)
                 if toolItuGear(t) then
                     if state.giftGearPilih[t.Name] then
                         local punya = t:GetAttribute("Count") or 1
@@ -1327,9 +1361,9 @@ function Seed.kirimGiftMail()
                         local cat = t:GetAttribute("MainCategory") or "Gear"
                         if kirim > 0 then
                             items[#items+1] = { ItemKey = t.Name, Count = kirim, Category = tostring(cat) }
+                            rincianItem[#rincianItem+1] = ("%d %s"):format(kirim, t.Name)
                         end
                     end
-                -- SEED
                 elseif giftToolSeed(t) then
                     local nm = t:GetAttribute("SeedName") or t.Name
                     nm = tostring(nm):gsub("%s*[Ss]eed%s*$", "")
@@ -1339,6 +1373,7 @@ function Seed.kirimGiftMail()
                         local kirim = math.min(qty, punya)
                         if kirim > 0 then
                             items[#items+1] = { ItemKey = nm, Count = kirim, Category = "Seeds" }
+                            rincianItem[#rincianItem+1] = ("%d %s"):format(kirim, nm)
                         end
                     end
                 end
@@ -1346,11 +1381,39 @@ function Seed.kirimGiftMail()
         end
     end
     if #items == 0 then return false, "gak ada item kepilih di tas" end
-    local ok = pcall(function() sb:Fire(uid, items, "") end)
-    if ok then
-        return true, ("terkirim ke %s: %d jenis"):format(target, #items)
+    -- v4.17: kirim ke SEMUA target (loop). Catat sukses/gagal per akun.
+    local sukses, gagal = {}, {}
+    for idx, target in ipairs(daftarTarget) do
+        -- v4.18: kabarin progress live (kirim ke akun idx dari total)
+        if onProgress then
+            pcall(onProgress, ("kirim ke %s (%d/%d)..."):format(target, idx, #daftarTarget))
+        end
+        local uid = resolveTargetId(target)
+        if not uid then
+            gagal[#gagal+1] = target .. " (gak ketemu)"
+        else
+            local okK = pcall(function() sb:Fire(uid, items, "") end)
+            if okK then
+                sukses[#sukses+1] = target
+                if onProgress then
+                    pcall(onProgress, ("done %s (%d/%d)"):format(target, idx, #daftarTarget))
+                end
+            else gagal[#gagal+1] = target .. " (gagal fire)" end
+            task.wait(0.5)   -- jeda antar target (done akun ini, baru pindah)
+        end
     end
-    return false, "gagal kirim"
+    -- v4.17: notif DONE detail -- "done kirim <item> ke <akun-akun>"
+    local isiItem = table.concat(rincianItem, ", ")
+    if #sukses > 0 then
+        Seed.statGiftMail = (Seed.statGiftMail or 0) + #sukses
+        local pesan = ("done kirim [%s] ke %d akun: %s"):format(
+            isiItem, #sukses, table.concat(sukses, ", "))
+        if #gagal > 0 then
+            pesan = pesan .. (" | GAGAL %d: %s"):format(#gagal, table.concat(gagal, ", "))
+        end
+        return true, pesan
+    end
+    return false, ("gagal kirim ke semua (%d): %s"):format(#gagal, table.concat(gagal, ", "))
 end
 
 
@@ -5051,6 +5114,36 @@ function Seed.startPanel()
             task.wait(30)
         end
     end)
+
+    -- v4.16: LOOP CEK SINYAL "minta inventory fresh" tiap 5 DETIK (bukan nunggu
+    -- /stat 120s). Panel set flag via /inv-minta -> loop ini cek /inv-minta-cek
+    -- (ringan, cuma cek flag akun ini). Kalau ada -> KIRIM inventory langsung ->
+    -- panel dapet "done" cepet (~5 detik, bukan 2 menit). Cek murah (1 GET kecil).
+    task.spawn(function()
+        while hidup() do
+            pcall(function()
+                local r = panelReq("/inv-minta-cek?akun=" .. player.Name, "GET")
+                local body = r and (r.Body or r.body)
+                if body then
+                    local ok, d = pcall(function() return HS:JSONDecode(body) end)
+                    if ok and type(d) == "table" and d.minta == true then
+                        -- ada sinyal -> kirim inventory FRESH sekarang
+                        local arr, total = seedDiTas()
+                        local wcR, sprR, swcR, ssprR = gearDiTas()
+                        local bersih = {}
+                        for _, e in ipairs(arr) do bersih[#bersih+1] = { n = e.n, j = e.j, r = e.r } end
+                        panelReq("/inv", "POST", {
+                            akun = player.Name, seeds = bersih, pets = {},
+                            totSeed = total, superWC = wcR, superSpr = sprR,
+                            superSyrupWC = swcR, superSyrupSpr = ssprR,
+                            invFresh = true,   -- penanda: ini hasil minta fresh (done)
+                        })
+                    end
+                end
+            end)
+            task.wait(5)   -- cek tiap 5 detik (ringan)
+        end
+    end)
 end
 if panelAktif() then Seed.startPanel() end
 -- v3.12: pemantau kick jalan TERPISAH dari startPanel -- dia perlu jalan walau
@@ -6164,9 +6257,12 @@ local tblPlant = mk("TextButton", { Parent = kPlant,
     Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblPlant })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblPlant })
-
--- ---------- Auto Collect (v3.18) ----------
-local kColl = kartu(152, tabFarm)
+-- v4.19: label debug plant (kenapa gak nanem) -- pakai Seed._el (hindari batas 200)
+Seed._el = Seed._el or {}
+Seed._el.lblPlantDbg = mk("TextLabel", { Parent = kPlant, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 120), Size = UDim2.new(1, -24, 0, 16),
+    Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true, Text = "" })
 mk("TextLabel", { Parent = kColl, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -6339,7 +6435,7 @@ local kotakTarget2 = mk("TextBox", { Parent = kGiftMail,
     Position = UDim2.new(0, 76, 0, 32), Size = UDim2.new(1, -88, 0, 26),
     BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
     Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.teks,
-    PlaceholderText = "nama akun", Text = tostring(state.giftMailTarget or "") })
+    PlaceholderText = "nama akun (bisa banyak, pisah koma)", Text = tostring(state.giftMailTarget or "") })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = kotakTarget2 })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = kotakTarget2 })
 -- v4.14: dropdown hasil search user (autocomplete) -- muncul pas ketik + Enter.
@@ -6919,8 +7015,24 @@ kotakQty.FocusLost:Connect(function()
     simpan()
 end)
 local function lblGiftPick(btn, tbl)
-    local n = 0; for _ in pairs(tbl) do n = n + 1 end
-    btn.Text = n > 0 and (n .. " dipilih") or "Pilih"
+    -- v4.18: tampil NAMA + JUMLAH stok tiap seed yg dipilih (bukan cuma "N dipilih").
+    -- Contoh: "Gold: 250, Carrot: 50". Biar keliatan stok pas mau kirim.
+    local jml = {}
+    for _, e in ipairs(seedDiTas()) do jml[e.n] = e.j end
+    for _, e in ipairs(Seed.gearDiTas()) do jml[e.n] = e.j end   -- gear juga
+    local bagian = {}
+    for nm in pairs(tbl) do
+        local stok = jml[nm]
+        bagian[#bagian+1] = stok and (nm .. ": " .. stok) or (nm .. ": 0")
+    end
+    table.sort(bagian)
+    if #bagian == 0 then
+        btn.Text = "Pilih"
+    elseif #bagian <= 2 then
+        btn.Text = table.concat(bagian, ", ")
+    else
+        btn.Text = ("%s +%d lagi"):format(table.concat(bagian, ", ", 1, 2), #bagian - 2)
+    end
 end
 pickGiftSeed.MouseButton1Click:Connect(function()
     local jml = {}
@@ -6949,17 +7061,19 @@ lblGiftPick(pickGiftGear, state.giftGearPilih)
 tblKirimMail.MouseButton1Click:Connect(function()
     tblKirimMail.Text = "KIRIM..."
     task.spawn(function()
-        local ok, pesan = Seed.kirimGiftMail()
-        tblKirimMail.Text = ok and "TERKIRIM!" or "GAGAL"
-        -- v4.14: tampil error DETAIL di label (persist, bukan cuma 2s di tombol)
-        if not ok then
+        -- v4.18: callback progress -> update label live (kirim ke akun 1, done,
+        -- pindah akun 2, dst). Biar keliatan urutannya.
+        local ok, pesan = Seed.kirimGiftMail(function(progres)
             Seed._el.lblSearchErr.Visible = true
-            Seed._el.lblSearchErr.TextColor3 = Color3.fromRGB(230, 130, 60)
-            Seed._el.lblSearchErr.Text = "kirim gagal: " .. tostring(pesan)
-        else
-            Seed._el.lblSearchErr.Visible = false
-        end
-        task.wait(2)
+            Seed._el.lblSearchErr.TextColor3 = Color3.fromRGB(200, 200, 120)
+            Seed._el.lblSearchErr.Text = progres
+        end)
+        tblKirimMail.Text = ok and "TERKIRIM!" or "GAGAL"
+        Seed._el.lblSearchErr.Visible = true
+        Seed._el.lblSearchErr.TextColor3 = ok
+            and Color3.fromRGB(120, 220, 120) or Color3.fromRGB(230, 130, 60)
+        Seed._el.lblSearchErr.Text = tostring(pesan)
+        task.wait(ok and 6 or 4)
         tblKirimMail.Text = "KIRIM"
     end)
 end)
@@ -7388,6 +7502,12 @@ task.spawn(function()
         task.wait(0.5)
         if state.autoPlantOn then
             pcall(Seed.plantOnce)
+            -- v4.19: update label debug (kenapa nanem/gak)
+            pcall(function()
+                if Seed._el and Seed._el.lblPlantDbg and Seed._plantDbg then
+                    Seed._el.lblPlantDbg.Text = Seed._plantDbg
+                end
+            end)
         end
     end
 end)
