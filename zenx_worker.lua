@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.55-cf"
+local VERSION = "8.56-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6061,6 +6061,20 @@ local function run(cfg)
         -- lepas dari buka-client. Cek DENYUT tiap 30s: denyut mati >2 menit -> langsung rejoin (gak nunggu siklus lama).
         do
             local isiTop = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+            -- v8.56: PROSES PLACE dari isiTop DI SINI (sebelum rejoin denyut). Bug:
+            -- PLACE diproses jauh di bawah (setelah rejoin denyut) -> rejoin pakai
+            -- place LAMA, PLACE fall baru kebaca 1-2 menit kemudian. Fix: cek PLACE
+            -- di awal, update cfg.place_id SEBELUM rejoin -> rejoin langsung pakai
+            -- place fall.
+            do
+                local placeTop = isiTop:match("PLACE:(%d+)")
+                if placeTop and placeTop ~= cfg.place_id then
+                    cfg.place_id = placeTop
+                    pcall(function() save_config(cfg) end)
+                    info("Place diganti ke " .. placeTop .. " (dari denyut-loop, sebelum rejoin)")
+                    SUDAH_GRID = false; GRID_CACHE = nil
+                end
+            end
             local hitTop = isiTop:upper():find("FORCE") or isiTop:upper():find("REJOIN")
             -- v8.47: CEK denyut tiap 30s (bukan 2 menit). Ambang mati tetap 2 menit
             -- (120s). Bedanya: begitu denyut LEWAT 2 menit, cek berikutnya (max 30s
