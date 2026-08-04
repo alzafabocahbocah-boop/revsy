@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.30"
+local VERSI = "4.31"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -197,6 +197,44 @@ local function isCurrentGen() return genv.StarSeedGen == MY_GEN end
 
 local Seed = {}
 genv.StarSeed = Seed
+
+-- v4.31: BLOCK REJOIN dari server. GAG dev suka mindahin/rejoin pemain sendiri
+-- (TeleportService dari server-side). SC lain block total dengan hook Teleport
+-- Service -> teleport server ditolak, pemain gak pernah keluar. Kita hook juga.
+-- KUNCI: jangan block teleport SCRIPT KITA sendiri (auto-rejoin DC, auto-tele
+-- fall world). Pakai flag Seed._teleSendiri: kalau true = teleport kita (izinin),
+-- kalau false = teleport server (BLOCK). Default state.blockRejoin MATI (opt-in
+-- lewat panel). Hook sekali (idempoten via getgenv flag).
+Seed._teleSendiri = false
+do
+    local ok = pcall(function()
+        if getgenv().ZenxTeleHooked then return end   -- udah di-hook -> skip
+        local TS = game:GetService("TeleportService")
+        local function bolehTele()
+            -- izinin kalau: block mati, ATAU ini teleport script kita sendiri
+            if not (state and state.blockRejoin) then return true end
+            return Seed._teleSendiri == true
+        end
+        -- daftar method teleport yang di-hook
+        local methodTele = { "Teleport", "TeleportToPlaceInstance", "TeleportToPrivateServer", "TeleportPartyAsync" }
+        for _, m in ipairs(methodTele) do
+            local asli = TS[m]
+            if type(asli) == "function" and hookfunction then
+                local baru
+                baru = hookfunction(asli, function(...)
+                    if bolehTele() then return baru and asli(...) or asli(...) end
+                    -- BLOCK: teleport server ditolak
+                    if Seed then Seed._logBlockTele = "block rejoin server: " .. m .. " (" .. os.date("%H:%M:%S") .. ")" end
+                    warn("[StarSeed] BLOCK rejoin server (" .. m .. ")")
+                    return nil
+                end)
+            end
+        end
+        getgenv().ZenxTeleHooked = true
+        warn("[StarSeed] Hook TeleportService pasang (block rejoin server siap)")
+    end)
+    if not ok then warn("[StarSeed] Hook teleport gagal (executor gak dukung hookfunction?)") end
+end
 
 -- v3.79: DENYUT FILE -- tulis file penanda tiap 20 detik selama script hidup.
 -- Script CUMA jalan kalau BENERAN di game (disconnect = script mati). Jadi file
@@ -275,6 +313,7 @@ local state = {
     ambilSeedOn   = true,
     autoBalikGarden = true,   -- v3.96: auto balik garden kalau grab selesai + jauh
     autoRejoinSeed = true,    -- v4.06: rejoin pakai deteksi ANDAL (cekDisconnectAndal)
+    blockRejoin   = false,    -- v4.31: block rejoin dari server (hook TeleportService). Default MATI.
     skipTutorialOn = true,    -- v4.08: auto skip tutorial akun baru (default ON)
     -- v3.19: filter jenis seed jatuh (by ItemName). grabSemua=true = ambil semua,
     -- false = cuma yg dicentang di grabPilih (contoh {["Gold"]=true,["Rainbow"]=true})
@@ -5014,7 +5053,9 @@ function Seed.pantauRejoin()
                     warn(("[StarSeed] AUTO-REJOIN (DC andal) -> place %d"):format(target))
                     pcall(function()
                         local TS = game:GetService("TeleportService")
+                        Seed._teleSendiri = true    -- v4.31: izinin (teleport kita)
                         TS:Teleport(target, player)
+                        Seed._teleSendiri = false
                     end)
                     task.wait(30)   -- kasih waktu teleport jalan
                 end
@@ -7627,7 +7668,9 @@ function Seed.cekTele()
     print("[StarSeed] " .. Seed._logTele)
     pcall(function()
         local TS = game:GetService("TeleportService")
+        Seed._teleSendiri = true    -- v4.31: izinin (teleport kita, gak keblock)
         TS:Teleport(target, player)
+        Seed._teleSendiri = false
     end)
 end
 task.spawn(function()
