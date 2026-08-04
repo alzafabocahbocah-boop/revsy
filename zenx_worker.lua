@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.42-cf"
+local VERSION = "8.46-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4434,21 +4434,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     -- ini (ketangkep ronde berikutnya). jaga_depan berkala (3s)
                     -- yang urus jendela, JANGAN di sini (tembak 2x).
                     if lisensiAda then
-                        if paksaMasuk then
-                            -- v8.14: LISENSI BARU (abis bypass) -- client HARUS
-                            -- beneran masuk game. cek grafis 30s. Kalau belum masuk,
-                            -- loop retry di blok bawah tembak ulang (maks 5x tiap 30s).
-                            local masukG, mbG = cek_masuk_game(pkg, 30, cek_batal)
-                            if masukG then
-                                sukses, lama, sebab = true, 0, nil
-                            else
-                                sukses, lama, sebab = false, 0, ("belum masuk game (grafis %.0f MB)"):format(mbG or 0)
-                            end
-                        else
-                            -- v8.13: START BIASA -- WC gacor, tembak bareng (gak nunggu
-                            -- 30s per client). Yang belum masuk ketangkep loop 120s.
-                            sukses, lama, sebab = true, 0, nil
-                        end
+                        -- v8.43: BUANG paksaMasuk cek-grafis-30s+retry (cara lama,
+                        -- lambat + banyak gagal). Setelah bypass SAMA kayak start
+                        -- biasa: tembak sekali, ANGGAP sukses. Deteksi di-game
+                        -- diurus loop denyut (kalau 2 menit gak denyut -> rejoin).
+                        -- Gak perlu nunggu grafis per client -> cepet.
+                        sukses, lama, sebab = true, 0, nil
                     else
                         -- v4.73: munculin SEMUA jendela SETELAH buka, bukan sebelum.
                         jaga_depan(cfg, mapLink)
@@ -4551,14 +4542,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 if cek_batal and cek_batal() then break end   -- v4.16: STANDBY sebelum jeda
                 -- v7.12: mode tembak barengan -> jeda KECIL (2s) biar cepet.
                 -- Normal (lisensi habis / hati2) -> stagger penuh.
-                -- v7.23: delay 5 detik antar tembak client (user minta) -- biar
-                -- RF gak keteteran buka barengan sekaligus. Normal (lisensi habis)
-                -- pakai stagger config.
-                -- v8.13: jeda antar tembak KECIL (3s) -- dulu 16s (bikin start
-                -- lama, 10 client = 160s). Karena tembak bareng (gak nunggu masuk
-                -- per client), cukup jeda 3s biar RF gak keteteran buka barengan.
-                local jedaStagger = lisensiAda and 3 or (cfg.stagger_sec or 0)
-                if jedaStagger > 0 then os.execute("sleep " .. jedaStagger) end
+                -- v8.44: JEDA 30s antar tembak client (user minta: tiap 30s tembak
+                -- 1 client, BUKAN barengan). Biar RF gak keteteran + tiap client
+                -- dapet jatah resource pas masuk. Deteksi di-game via denyut (kalau
+                -- 2 menit gak denyut -> rejoin), jadi gak perlu tembak barengan.
+                local jedaStagger = lisensiAda and 30 or (cfg.stagger_sec or 0)
+                if jedaStagger > 0 then
+                    for _ = 1, jedaStagger do
+                        if cek_batal and cek_batal() then break end
+                        os.execute("sleep 1")
+                    end
+                end
             end
         end
     end
@@ -5999,12 +5993,12 @@ local function run(cfg)
         -- v8.33: CEK GRAFIS di TOP loop (level atas, PASTI jalan tiap iterasi).
         -- Loop grafis lama ke-nest DALAM FORCE handler (depth 4) -> gak jalan
         -- kalau client udah kebuka semua (alur gak nyampe). Taruh di sini biar
-        -- lepas dari buka-client. Cek tiap 2 menit: berapa client di game.
+        -- lepas dari buka-client. Cek DENYUT tiap 2 menit (120s): client di game via denyut SD card.
         do
             local isiTop = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
             local hitTop = isiTop:upper():find("FORCE") or isiTop:upper():find("REJOIN")
-            if hitTop and (os.time() - (KICK_DIURUS["_grafisTop"] or 0)) >= 180 then
-                KICK_DIURUS["_grafisTop"] = os.time()
+            if hitTop and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 120 then
+                KICK_DIURUS["_denyutTop"] = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
                 -- semua 10). Parse daftar, cocokin sama mapAkun (pkg->username).
@@ -6014,7 +6008,9 @@ local function run(cfg)
                     setAkun = {}
                     for a in daftarForce:gmatch("[^,]+") do setAkun[a] = true end
                 end
-                local peta = grafis_semua(pkgList)
+                -- v8.44: grafis_semua DIBUANG (gak dipake lagi -- deteksi udah
+                -- pindah ke DENYUT doang). Dulu ambil grafis semua client (mahal,
+                -- su call per client) tapi hasilnya gak kepake. Hemat.
                 -- v8.37: cek DENYUT FILE lokal (0 request CF). Script star_seed
                 -- v3.79 nulis /sdcard/Delta/Workspace/zenx_denyut_<akun>.txt tiap
                 -- 20s selama BENERAN di game (disconnect = script mati = file gak
@@ -6057,43 +6053,32 @@ local function run(cfg)
                     local diForce = (not setAkun) or (ak and setAkun[ak])
                     if diForce and not (ak and KICK_DIURUS["mati:" .. ak]) then
                         perlu = perlu + 1
-                        local g = peta[pkg] or 0
+                        -- v8.43: DETEKSI PAKAI DENYUT DOANG (buang cek grafis game).
+                        -- User: rejoin cek dari denyut SD card. Kalau 2 menit gak
+                        -- ngirim denyut = client WAJIB rejoin. Grafis RAM gak dipake
+                        -- lagi (gak bisa bedain di-game vs layar disconnect).
                         local umur = ak and denyutSemua[ak]
-                        -- v8.41: denyut fresh <= 120s. Kalau umur nil (file gak
-                        -- ke-match akun), JANGAN langsung anggap di game selamanya --
-                        -- itu bug: 2 akun denyut mati tapi ak gak match file ->
-                        -- umur=nil -> toleransi -> gak pernah rejoin. Kasih toleransi
-                        -- TERBATAS: cuma anggap "baru masuk" kalau BELUM pernah ada
-                        -- denyut file sama sekali (gak ada file *_<ak>*). Kalau ADA
-                        -- file tapi gak match persis, tetep cek.
-                        local denyutFresh = umur ~= nil and umur <= 120
-                        -- log diagnosa match (biar keliatan ak vs file)
                         if ak then
-                            info(("[denyut-cek] %s: umur=%s grafis=%dKB")
-                                :format(ak, umur and (umur.."s") or "GAK MATCH FILE", g))
+                            info(("[denyut-cek] %s: umur=%s")
+                                :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
                         end
-                        -- di game = grafis tinggi DAN denyut fresh (script masih nulis)
-                        if g >= GAME_AMBANG_KB and denyutFresh then
+                        if umur ~= nil and umur <= 120 then
+                            -- denyut fresh (<=2 menit) = script nulis = DI GAME
                             diGame = diGame + 1
-                        elseif g >= GAME_AMBANG_KB and umur == nil then
-                            -- v8.37: grafis TINGGI tapi file denyut BELUM ADA.
-                            -- Mungkin client BARU masuk (script belum sempet nulis,
-                            -- butuh ~20s). JANGAN langsung rejoin -- kasih toleransi,
-                            -- anggap di game dulu. Kalau beneran disconnect, nanti
-                            -- file tetep gak ada + ronde berikutnya... tetep grafis
-                            -- turun (disconnect = RAM akhirnya turun) -> ketangkep.
+                        elseif umur == nil then
+                            -- belum ada file denyut = client BARU masuk (script belum
+                            -- sempet nulis, butuh ~20s). Toleransi: anggap di game
+                            -- dulu, JANGAN rejoin. Kalau beneran DC, file tetep gak
+                            -- muncul -> ronde berikutnya masih nil... tapi toleransi
+                            -- ini cuma buat client yg baru dibuka.
                             diGame = diGame + 1
                         else
-                            -- OUT: grafis rendah, ATAU grafis tinggi + denyut ADA
-                            -- tapi LAMA (>2 menit = script mati = disconnect beneran),
-                            -- kecuali kena captcha
+                            -- umur > 120s = denyut MATI >2 menit = WAJIB REJOIN
+                            -- (kecuali kena captcha)
                             if not KICK_DIURUS["captcha:" .. pkg] then
                                 perluTembak[#perluTembak+1] = pkg
-                                -- log alasan: grafis rendah apa denyut mati
-                                if g >= GAME_AMBANG_KB and not denyutFresh then
-                                    info(("[antrian] %s RAM tinggi tapi denyut MATI (%s) = disconnect")
-                                        :format(ak or pkg, umur and (umur.."s") or "gak ada file"))
-                                end
+                                info(("[antrian] %s denyut MATI (%ss) = WAJIB REJOIN")
+                                    :format(ak or pkg, umur))
                             end
                         end
                     end
@@ -6103,11 +6088,21 @@ local function run(cfg)
                 -- v8.34: TEMBAK yang OUT (rejoin) -- open_one bareng, gak nunggu.
                 -- Dulu cuma lapor angka doang, yg out gak diurus. Sekarang tembak.
                 if #perluTembak > 0 then
-                    info(("[antrian] %d client OUT -> rejoin"):format(#perluTembak))
-                    for _, pkg in ipairs(perluTembak) do
+                    info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
+                    for idx, pkg in ipairs(perluTembak) do
+                        if cek_batal and cek_batal() then break end
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                        pcall(function() jaga_depan(cfg, mapLink) end)
+                        -- v8.44: jeda 30s antar rejoin (tembak 1-1, bukan barengan).
+                        -- User: kalau 5 client keluar, tembak 1-1 selama 30s. Client
+                        -- terakhir gak perlu jeda.
+                        if idx < #perluTembak then
+                            for _ = 1, 30 do
+                                if cek_batal and cek_batal() then break end
+                                os.execute("sleep 1")
+                            end
+                        end
                     end
-                    pcall(function() jaga_depan(cfg, mapLink) end)
                 end
             end
         end
@@ -7787,7 +7782,12 @@ local function run(cfg)
             -- v8.01: interval cek all 2 MENIT (dulu tiap ronde). Cek grafis SEMUA
             -- client SEKALI (1 su call). Hitung PROGRESS: berapa di game / total.
             -- Counter dinamis -- kalau ada yang out lagi, "masuk" turun (balik).
-            if (os.time() - (lastCekGrafis or 0)) >= 120 then
+            -- v8.44: LOOP GRAFIS LAMA DINONAKTIFIN. Deteksi client udah pindah ke
+            -- DENYUT (loop lain, tiap 180s). Dulu loop ini (grafis, 120s) jalan
+            -- BERBARENGAN -> dobel deteksi + konflik (grafis bilang OUT, denyut
+            -- bilang in-game) + tembak barengan (padahal user mau 1-1 30s). Matiin
+            -- dgn kondisi false biar gak jalan tapi struktur utuh.
+            if false and (os.time() - (lastCekGrafis or 0)) >= 120 then
                 lastCekGrafis = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 local petaGrafis = grafis_semua(pkgList)
