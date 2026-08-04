@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "8.80-cf"
+local VERSION = "8.82-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3370,7 +3370,11 @@ function grid_satu(cfg, pkg)
         if p then GRID_CACHE = p; GRID_CACHE_KOLOM = kolonSkrg end
     end
     if GRID_CACHE and GRID_CACHE[pkg] then
-        tata_satu(pkg, GRID_CACHE[pkg])   -- tulis prefs posisi (gak force-stop)
+        -- v8.81: hapusDulu=true -- buang posisi window LAMA dulu sebelum tulis
+        -- grid baru. Bug user: grid "kadang nyangkut di lama" -- karena tata_satu
+        -- di sini (jalur rejoin utama, sering jalan) cuma GANTI nilai, gak hapus.
+        -- Kalau ada key posisi lama beda/basi, gak ke-clear -> posisi lama kepakai.
+        tata_satu(pkg, GRID_CACHE[pkg], true)   -- tulis prefs posisi (gak force-stop)
     end
 end
 
@@ -4582,7 +4586,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                             os.execute("sleep 2")
                         end
                         if petaGrid and petaGrid[pkg] then
-                            local tok, tket = tata_satu(pkg, petaGrid[pkg])
+                            local tok, tket = tata_satu(pkg, petaGrid[pkg], true)   -- v8.81: hapus lama dulu
                             if tok and tket ~= "udah pas" then
                                 info("   posisi jendela " .. pkg:gsub("com%.roblox%.","") .. ": " .. tket)
                             end
@@ -6195,6 +6199,17 @@ local function run(cfg)
                     pcall(function() save_config(cfg) end)
                     info("Place diganti ke " .. placeTop .. " (dari denyut-loop, sebelum rejoin)")
                     SUDAH_GRID = false; GRID_CACHE = nil
+                    -- v8.82: AUTO GETPS pas pindah ke place FALL (W2). User: sekali
+                    -- pencet W2 PS -> otomatis get link dulu -> baru client jalan.
+                    -- Jalanin `zenx getps` (ambil accessCode per akun, simpen ke
+                    -- backend) SEBELUM rejoin. Biar client masuk PS (bukan public).
+                    -- Cuma buat place FALL (bukan W1 default), sekali per pindah.
+                    if placeTop ~= "129343810645058" then
+                        info("  AUTO GETPS -- ambil PS link semua akun dulu (biar gak public)...")
+                        os.execute(((os.getenv("PREFIX") or "/data/data/com.termux/files/usr")
+                            .. "/bin/zenx") .. " getps")
+                        pcall(refresh_ps_getps)   -- muat ulang ps_link yg baru ke-ambil
+                    end
                 end
                 -- v8.64: proses GRID juga di denyut loop (bareng PLACE). Biar grid
                 -- keset walau PLACE+GRID berebut cepet dari panel (Start flow). Cuma
@@ -9131,7 +9146,7 @@ if PERINTAH == "grid" then
         info(("[%d/%d] %s -> tulis prefs + rejoin"):format(i, #meleset, nama))
         -- tulis prefs posisi grid dulu
         if peta[pkg] then
-            local ok, ket = tata_satu(pkg, peta[pkg])
+            local ok, ket = tata_satu(pkg, peta[pkg], true)   -- v8.81: hapus lama dulu
             info(("   prefs: %s%s"):format(ok and "ok" or "GAGAL ", tostring(ket or "")))
         end
         -- rejoin client ini (open_one re-launch -> App Cloner baca prefs baru)
