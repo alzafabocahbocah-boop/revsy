@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.17-cf"
+local VERSION = "9.19-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3215,24 +3215,44 @@ local KUNCI_JENDELA = {
 function bersihin_grid_semua(cfg)
     local n = 0
     for _, pkg in ipairs(split(cfg.pkgs)) do
-        local path = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
-        local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
-        if isi:find("<map", 1, true) then
-            local bersih = isi:gsub('%s*<int name="app_cloner_[%w_]*window[%w_]*"[^/]*/>', "")
-            if bersih ~= isi then
-                -- tulis balik prefs tanpa key window (posisi lama dibuang).
-                -- tmp file di HOME (pasti ada), terus cat ke prefs via su.
-                local tmp = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/.gridbersih.tmp"
-                local f = io.open(tmp, "w")
-                if f then
-                    f:write(bersih); f:close()
-                    sh_silent("su -c 'cat " .. tmp .. " > " .. path .. "'")
-                    n = n + 1
+        local nm = pkg:gsub("com%.roblox%.", "")
+        -- v9.19: bersihin KEDUA prefs file per client (App Cloner + Roblox/Delta).
+        -- User: hapus SEMUA bekas grid dari mana pun. Grid position utama di
+        -- App Cloner (_preferences.xml), tapi jaga-jaga bersihin prefs.xml juga.
+        local paths = {
+            "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml",
+            "/data/data/" .. pkg .. "/shared_prefs/prefs.xml",
+        }
+        local adaHapus = false
+        for _, path in ipairs(paths) do
+            local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+            if isi:find("<map", 1, true) then
+                local bersih = isi
+                local kena = 0
+                for _ in isi:gmatch('name="app_cloner_[%w_]*window[%w_]*"') do kena = kena + 1 end
+                -- buang SEMUA <int> app_cloner window/position/geometry
+                bersih = bersih:gsub('%s*<int name="app_cloner_[%w_]*window[%w_]*"[^/]*/>', "")
+                bersih = bersih:gsub('%s*<int name="app_cloner_[%w_]*position[%w_]*"[^/]*/>', "")
+                bersih = bersih:gsub('%s*<int name="app_cloner_[%w_]*geometry[%w_]*"[^/]*/>', "")
+                if bersih ~= isi then
+                    local tmp = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/.gridbersih.tmp"
+                    local f = io.open(tmp, "w")
+                    if f then
+                        f:write(bersih); f:close()
+                        sh_silent("su -c 'cat " .. tmp .. " > " .. path .. "'")
+                        adaHapus = true
+                        if kena > 0 then
+                            info(("  grid lama %s dihapus (%d key window, %s)"):format(
+                                nm, kena, path:find("_preferences") and "AppCloner" or "prefs"))
+                        end
+                    end
                 end
             end
         end
+        if adaHapus then n = n + 1
+        else info(("  grid %s: gak ada key window (bersih / format beda?)"):format(nm)) end
     end
-    if n > 0 then info(("Grid lama dihapus dari %d client (bersih sebelum timpa baru)"):format(n)) end
+    if n > 0 then info(("Grid lama dihapus dari %d client (kedua prefs, bersih total)"):format(n)) end
     return n
 end
 
