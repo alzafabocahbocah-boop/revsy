@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.45-cf"
+local VERSION = "9.49-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6648,6 +6648,16 @@ local function run(cfg)
                 if daftarForce then
                     setAkun = {}
                     for a in daftarForce:gmatch("[^,]+") do setAkun[a] = true end
+                elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                    -- v9.47: FORCE polos tapi PKGS_AKTIF ada (jalan 6) -> filter pakai
+                    -- PKGS_AKTIF (pkg-based). Bug: FORCE polos pas jalan 6 -> antrian
+                    -- cek/rejoin 10. Sekarang cuma client aktif yg dicek.
+                    setAkun = {}
+                    for _, pkg in ipairs(PKGS_AKTIF) do
+                        setAkun[pkg] = true
+                        local u = mapAkun and mapAkun[pkg]
+                        if u then setAkun[u] = true end
+                    end
                 end
                 -- v8.88: SET client aktif buat grid LANGSUNG dari perintah panel.
                 -- Panel udah kasih tau 6 client mana (FORCE:daftar) -> grid dihitung
@@ -6717,7 +6727,8 @@ local function run(cfg)
                 for _, pkg in ipairs(pkgList) do
                     local ak = mapAkun and mapAkun[pkg]
                     -- skip cookie mati + (kalau FORCE:daftar) skip yg bukan di daftar
-                    local diForce = (not setAkun) or (ak and setAkun[ak])
+                    -- v9.47: cek akun ATAU pkg (PKGS_AKTIF pkg-based, FORCE:daftar akun-based)
+                    local diForce = (not setAkun) or (ak and setAkun[ak]) or setAkun[pkg]
                     if diForce and not (ak and KICK_DIURUS["mati:" .. ak]) then
                         perlu = perlu + 1
                         -- v8.43: DETEKSI PAKAI DENYUT DOANG (buang cek grafis game).
@@ -6922,7 +6933,23 @@ local function run(cfg)
             -- (MODE_JALAN=true, udah Start) -> FORCE (lanjut jalan, gak berhenti).
             -- Kalau BELUM start (standby) -> STANDBY (gak buka client sendiri).
             -- User: setelah Start gak boleh balik STANDBY sendiri.
-            local balikGanti = MODE_JALAN and "FORCE" or "STANDBY"
+            -- v9.46: FORCE dgn DAFTAR client (dari PKGS_AKTIF) biar gak buka semua 10.
+            local balikGanti
+            if MODE_JALAN then
+                -- pertahankan client yg lagi jalan (PKGS_AKTIF -> FORCE:akun,...)
+                if PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                    local akunAktif = {}
+                    for _, pkg in ipairs(PKGS_AKTIF) do
+                        local u = mapAkun[pkg]
+                        if u and tostring(u) ~= "" then akunAktif[#akunAktif+1] = u end
+                    end
+                    balikGanti = (#akunAktif > 0) and ("FORCE:" .. table.concat(akunAktif, ",")) or "FORCE"
+                else
+                    balikGanti = "FORCE"
+                end
+            else
+                balikGanti = "STANDBY"
+            end
             pcall(function()
                 api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), balikGanti), "PUT")
             end)
@@ -7365,7 +7392,9 @@ local function run(cfg)
                     else
                         warn("Lisensi HILANG (terverifikasi) -- MULAI DARI AWAL (bypass key + buka ulang)")
                         SUDAH_GRID = false; GRID_CACHE = nil
-                        open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false, true)
+                        -- v9.47: pertahankan PKGS_AKTIF (jalan 6 -> buka ulang 6, bukan 10)
+                        local onlyLis = (PKGS_AKTIF and #PKGS_AKTIF > 0) and PKGS_AKTIF or nil
+                        open_all(cfg, onlyLis, ada_stop, nil, mapLink, mapAkun, false, true)
                         refresh_status(); lastStatusCek = os.time()
                     end
                 end
@@ -7517,8 +7546,14 @@ local function run(cfg)
                         notify("ZenX "..cfg.tim, "rejoin " .. #pkgRejoin .. " akun")
                     end
                 else
-                    warn("REJOIN dari panel -> tutup semua, buka lagi")
-                    close_all(cfg)
+                    -- v9.46: REJOIN polos -- kalau lagi jalan N client (PKGS_AKTIF),
+                    -- cuma rejoin ITU (bukan semua 10). Bug user: jalan 6 client,
+                    -- REJOIN polos -> buka semua 10. only = PKGS_AKTIF kalau ada.
+                    local onlyRejoin = (PKGS_AKTIF and #PKGS_AKTIF > 0) and PKGS_AKTIF or nil
+                    warn(onlyRejoin
+                        and ("REJOIN dari panel -> tutup+buka " .. #onlyRejoin .. " client aktif")
+                        or "REJOIN dari panel -> tutup semua, buka lagi")
+                    close_all(cfg, onlyRejoin, mapLink)
                     os.execute("sleep 3")
                     local function batal_r()
                         if ada_stop() then return true end
@@ -7531,7 +7566,7 @@ local function run(cfg)
                         gambar_tabel(isi)
                         lapor(cfg, isi, cacheRun)
                     end
-                    local h = open_all(cfg, nil, batal_r, lapor_rejoin, mapLink, mapAkun, true)
+                    local h = open_all(cfg, onlyRejoin, batal_r, lapor_rejoin, mapLink, mapAkun, true)
                     ok(string.format("REJOIN kelar: %d jalan, %d gagal", h.ok, h.gagal))
                     notify("ZenX "..cfg.tim, "REJOIN -> "..h.ok.." client")
                     lastOpen = os.time()
@@ -7612,7 +7647,9 @@ local function run(cfg)
                 -- jadi nulis ke client yang lagi jalan itu percuma dua kali.
                 -- Alurnya: tutup semua -> tulis semua -> buka satu-satu.
                 setAksi("nata jendela (tutup -> tulis posisi -> buka)")
-                local peta, sebabGrid, kol, bar, W, H, lebarC, tinggiC = grid_hitung(cfg)
+                -- v9.47: grid buat PKGS_AKTIF (jalan 6 -> grid 6 petak, bukan 10)
+                local pkgsGridManual = (PKGS_AKTIF and #PKGS_AKTIF > 0) and PKGS_AKTIF or nil
+                local peta, sebabGrid, kol, bar, W, H, lebarC, tinggiC = grid_hitung(cfg, pkgsGridManual)
                 if not peta then
                     tambahLog("GRID gagal: " .. tostring(sebabGrid))
                     warn("GRID gagal: " .. tostring(sebabGrid))
@@ -7657,7 +7694,9 @@ local function run(cfg)
                         gambar_tabel(isi)
                         lapor(cfg, isi, cacheRun)
                     end
-                    local h = open_all(cfg, nil, batal_g, lapor_g, mapLink, mapAkun, true)
+                    -- v9.47: pertahankan PKGS_AKTIF (jalan 6 -> buka 6, bukan 10)
+                    local onlyGrid = (PKGS_AKTIF and #PKGS_AKTIF > 0) and PKGS_AKTIF or nil
+                    local h = open_all(cfg, onlyGrid, batal_g, lapor_g, mapLink, mapAkun, true)
                     tambahLog(("GRID: kelar -- %d client kebuka lagi"):format(h.ok))
                     notify("ZenX "..cfg.tim, "grid: " .. nTulis .. " jendela ditata")
                     lastOpen = os.time()
@@ -7789,7 +7828,17 @@ local function run(cfg)
             os.execute(((os.getenv("PREFIX") or "/data/data/com.termux/files/usr")
                 .. "/bin/zenx") .. " cekcookie")
             pcall(function()
-                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                -- v9.46: FORCE dgn DAFTAR (dari PKGS_AKTIF) biar gak buka semua 10
+                local isiBalik = "FORCE"
+                if PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                    local akunAktif = {}
+                    for _, pkg in ipairs(PKGS_AKTIF) do
+                        local u = mapAkun[pkg]
+                        if u and tostring(u) ~= "" then akunAktif[#akunAktif+1] = u end
+                    end
+                    if #akunAktif > 0 then isiBalik = "FORCE:" .. table.concat(akunAktif, ",") end
+                end
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiBalik), "PUT")
             end)
             lastIsi = "FORCE"
             skip_sisa = true
@@ -8128,7 +8177,14 @@ local function run(cfg)
                     if only[pkg] then PKGS_AKTIF[#PKGS_AKTIF+1] = pkg end
                 end
             else
-                PKGS_AKTIF = nil   -- FORCE polos = semua client
+                -- v9.45: FORCE polos -- kalau PKGS_AKTIF UDAH ada (lagi jalan N
+                -- client dari RESTART:daftar sebelumnya), PERTAHANKAN. Bug user:
+                -- lagi jalan 6 client, FORCE polos (dari expire/cekcookie) -> buka
+                -- SEMUA 10. Cuma reset ke semua kalau PKGS_AKTIF belum ada (fresh).
+                if not (PKGS_AKTIF and #PKGS_AKTIF > 0) then
+                    PKGS_AKTIF = nil   -- fresh FORCE polos = semua client
+                end
+                -- kalau PKGS_AKTIF udah ada -> biarin (cuma client itu yg diurus)
             end
             GRID_CACHE = nil   -- client aktif berubah -> grid hitung ulang
             if (now - lastOpen) >= cfg.reopen_sec then
@@ -8328,11 +8384,17 @@ local function run(cfg)
                 -- buka satu-satu. Dulu tiap client ditutup+dibuka sendiri-sendiri
                 -- -> 3 client bisa makan semenit lebih cuma buat nutup.
                 local pindahPkg = {}
+                -- v9.48: filter PKGS_AKTIF (jalan 6 -> cuma cek pindah PS 6, bukan 10)
+                local aktifPS = nil
+                if PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                    aktifPS = {}
+                    for _, p in ipairs(PKGS_AKTIF) do aktifPS[p] = true end
+                end
                 for _, pkg in ipairs(split(cfg.pkgs)) do
                     local baru = mapPsNama[pkg] or ""
                     local lama = psLama[pkg]
                     -- lama == nil = baru pertama kali kebaca (jangan rejoin, itu bukan pindah)
-                    if lama ~= nil and baru ~= lama then
+                    if (not aktifPS or aktifPS[pkg]) and lama ~= nil and baru ~= lama then
                         tambahLog(string.format("PINDAH SERVER: %s  %s -> %s",
                             (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")),
                             (lama ~= "" and lama or "public"),
@@ -8786,9 +8848,17 @@ local function run(cfg)
                 local petaGrafis = grafis_semua(pkgList)
                 -- hitung total yang PERLU diurus (bukan cookie mati) + berapa di game
                 local perlu, diGame = 0, 0
+                -- v9.47: filter PKGS_AKTIF (jalan 6 -> cek 6, bukan 10). Bug user:
+                -- jalan 6 tapi antrian "4/10 di game". pkgList semua tanpa filter.
+                local aktifSet = nil
+                if PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                    aktifSet = {}
+                    for _, p in ipairs(PKGS_AKTIF) do aktifSet[p] = true end
+                end
                 for _, pkg in ipairs(pkgList) do
                     local ak = mapAkun and mapAkun[pkg]
-                    if not (ak and KICK_DIURUS["mati:" .. ak]) then
+                    local diAktif = (not aktifSet) or aktifSet[pkg]
+                    if diAktif and not (ak and KICK_DIURUS["mati:" .. ak]) then
                         perlu = perlu + 1
                         if (petaGrafis[pkg] or 0) >= GAME_AMBANG_KB then diGame = diGame + 1 end
                     end
@@ -8824,6 +8894,10 @@ local function run(cfg)
             local perluTembak = {}
             for _, pkg in ipairs(pkgList) do
                 if cek_batal and cek_batal() then break end
+                -- v9.47: skip client yg gak aktif (PKGS_AKTIF). Bug: jalan 6, tembak 10.
+                if aktifSet and not aktifSet[pkg] then
+                    -- gak aktif -> skip
+                else
                 local akun = mapAkun and mapAkun[pkg]
                 if akun and KICK_DIURUS["mati:" .. akun] then
                     -- skip cookie mati/ban
@@ -8843,6 +8917,7 @@ local function run(cfg)
                             perluTembak[#perluTembak+1] = pkg
                         end
                     end
+                end
                 end
             end
             -- tembak SEMUA yang OUT bareng (open_one doang, gak nunggu per client)
