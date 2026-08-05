@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.60-cf"
+local VERSION = "9.61-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1766,6 +1766,33 @@ local function cari_tombol_key(cfg, pkg)
         end
         if inget then
             info(("    ukuran %s ~ kalibrasi terdekat (beda %dpx) -> pakai titik itu"):format(kunci, beda_terkecil))
+        end
+    end
+    -- v9.60: FALLBACK MATEMATIS. Kalau gak ada exact match + gak ada yg deket 8px,
+    -- HITUNG titik dari interpolasi. User: worker sesuain titik pakai matematika
+    -- buat ukuran BARU. fx stabil ~0.836 (rata2 semua kalibrasi). fy tergantung
+    -- TINGGI window (makin pendek jendela, tombol makin ke bawah) -> interpolasi
+    -- linear dari anchor: 173px->0.808, 293->0.723, 330->0.675, 653->0.713.
+    if not inget then
+        local anchor = {
+            {h = 173, fy = 0.808}, {h = 293, fy = 0.723},
+            {h = 330, fy = 0.675}, {h = 653, fy = 0.713},
+        }
+        local fyHit
+        if tinggi <= anchor[1].h then fyHit = anchor[1].fy
+        elseif tinggi >= anchor[#anchor].h then fyHit = anchor[#anchor].fy
+        else
+            for i = 1, #anchor - 1 do
+                if tinggi >= anchor[i].h and tinggi <= anchor[i+1].h then
+                    local t = (tinggi - anchor[i].h) / (anchor[i+1].h - anchor[i].h)
+                    fyHit = anchor[i].fy + t * (anchor[i+1].fy - anchor[i].fy)
+                    break
+                end
+            end
+        end
+        if fyHit then
+            inget = { fx = 0.836, fy = fyHit }
+            info(("    ukuran %s BARU -> titik dihitung matematis (fx=0.836 fy=%.3f)"):format(kunci, fyHit))
         end
     end
     if inget then
