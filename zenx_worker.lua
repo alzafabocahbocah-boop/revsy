@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.26-cf"
+local VERSION = "9.27-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4749,6 +4749,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     -- 'am force-stop' + langsung open_one yang ganggu window clone
                     -- lain (App Cloner share window manager). ActivityProtocolLaunch
                     -- re-join tanpa kill -> cukup, gak ganggu.
+                    -- v9.27: PENGAMAN GRID -- tulis grid client INI persis sebelum open_one
+                    -- (kedua mode, termasuk tembak barengan). User: masih ada client ukuran
+                    -- beda -> pengaman atur grid di sini. Grid ditulis 2x di awal, tapi App
+                    -- Cloner kadang gak baca -> tulis ulang persis sebelum buka = fresh.
+                    if petaGrid and petaGrid[pkg] then
+                        pcall(function() tata_satu(pkg, petaGrid[pkg], true) end)
+                    end
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
                     -- v7.40: MODE TEMBAK BARENGAN -- tembak -> CEK GRAFIS 30s.
