@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.19-cf"
+local VERSION = "9.20-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5841,6 +5841,52 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
     ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
     os.execute("sleep 3")   -- proses bener2 mati (App Cloner baca prefs pas mati total)
+    -- v9.20: MINTA info server (place) ke panel BERULANG sampai DAPET. User:
+    -- worker harus kekeuh minta place, jangan buru-buru buka pakai place lama.
+    -- Loop minta: tiap 2s poll perintah panel + LAPOR status (biar panel tau
+    -- worker lagi nungguin place -> bisa kirim ulang). Berhenti kalau: (1) dapet
+    -- PLACE baru, ATAU (2) udah 60x (2 menit) biar gak nyangkut selamanya.
+    do
+        info("Nunggu info server (place) dari panel -- minta sampai dapet...")
+        local dapet = false
+        for putaran = 1, 60 do
+            local rP = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+            local isiP = ambil_str(rP, "isi") or ""
+            local placeP = isiP:match("PLACE:(%d+)")
+            if placeP then
+                if placeP ~= cfg.place_id then
+                    cfg.place_id = placeP
+                    pcall(function() save_config(cfg) end)
+                    info("Place KESET ke " .. placeP .. " (dari panel)")
+                    SUDAH_GRID = false; GRID_CACHE = nil
+                    if placeP == "126987765280963" then   -- W2 FALL -> auto getps
+                        pcall(function()
+                            os.execute(("timeout 120 %s getps"):format(
+                                (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
+                        end)
+                    end
+                end
+                dapet = true
+                break
+            end
+            -- belum dapet -> LAPOR ke panel (worker nungguin place) + minta lagi
+            if putaran % 3 == 0 then
+                info(("...belum dapet info server (putaran %d) -- minta lagi ke panel"):format(putaran))
+                pcall(function() refresh_status() end)   -- lapor worker idup + nungguin
+            end
+            -- kalau ada STOP/STANDBY di tengah nunggu -> batal
+            if ada_stop() then info("dibatalin (stop) pas nunggu place"); return nil end
+            local isiCek = (isiP or ""):upper()
+            if isiCek:find("STANDBY") or isiCek:find("STOP") then
+                info("STANDBY/STOP pas nunggu place -- batal buka client"); return nil
+            end
+            os.execute("sleep 2")
+        end
+        if not dapet then
+            warn("Gak dapet info server dari panel setelah 2 menit -- pakai place terakhir: " .. tostring(cfg.place_id))
+        end
+        info("Place final: " .. tostring(cfg.place_id) .. " -- lanjut buka client")
+    end
     -- v9.17: HAPUS posisi grid LAMA semua client DULU (client udah mati, prefs
     -- aman ditimpa) -> gak ada sisa kolom lama nyangkut pas grid baru ditulis.
     pcall(function() bersihin_grid_semua(cfg) end)
