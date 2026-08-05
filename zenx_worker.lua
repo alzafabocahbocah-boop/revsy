@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.09-cf"
+local VERSION = "9.12-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8532,20 +8532,40 @@ end
 
 -- v9.05: home sebagian client (GLOBAL). Force-stop + set grid.
 function jalankan_home(cfg, pkgMau)
-    -- v9.08: HOME = tembak client ke BROOKHAVEN (game normal) 1x per client.
-    -- User: tembak id game aja, nanti out sendiri manual. Tembak 1x (gak diulang).
-    -- Tanpa grid (user: gak perlu).
+    -- v9.10: HOME = tembak client ke BROOKHAVEN (game normal) 1x per client +
+    -- grid diatur UKURAN 4 CLIENT (walau total 10, window jadi gede kayak 4
+    -- client). User minta: home selalu layout 4 client biar keliatan gede/enak.
+    -- Caranya: PKGS_AKTIF isi pkgMau + PAD pakai pkg cfg lain sampai minimal 4
+    -- (grid_hitung pakai n>=4 -> petak ukuran 4). pkgMau tetap ADA di peta
+    -- (posisi kebaca), pad cuma buat naikin jumlah biar petak segede 4-client.
     local BROOKHAVEN = "4924922222"
     local url = "roblox://placeId=" .. BROOKHAVEN
-    info(("HOME: %d client -> tembak ke Brookhaven (1x/client). Out manual sendiri."):format(#pkgMau))
+    info(("HOME: %d client -> tembak Brookhaven (1x) + grid ukuran 4 client. Out manual."):format(#pkgMau))
+    -- bikin PKGS_AKTIF = pkgMau + pad (pkg cfg lain) sampai >=4
+    local semuaPkg = split(cfg.pkgs)
+    local aktif = {}
+    local udah = {}
+    for _, p in ipairs(pkgMau) do aktif[#aktif+1] = p; udah[p] = true end
+    for _, p in ipairs(semuaPkg) do
+        if #aktif >= 4 then break end
+        if not udah[p] then aktif[#aktif+1] = p; udah[p] = true end
+    end
+    PKGS_AKTIF = aktif   -- >=4 -> grid_hitung petak ukuran 4 client
+    GRID_CACHE = nil
     for _, p in ipairs(pkgMau) do
-        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven")
+        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven + grid(4)")
+        -- v9.12: urutan BENER -> force-stop DULU (app mati), baru tulis grid
+        -- (prefs fresh), baru launch (App Cloner baca prefs pas start = posisi
+        -- grid kepakai). Dulu grid ditulis SEBELUM force-stop -> force-stop
+        -- reset/timpa posisi -> grid gak kepakai.
         sh_silent("su -c 'am force-stop " .. p .. "'")
+        os.execute("sleep 1")
+        pcall(function() grid_satu(cfg, p) end)   -- tulis grid SETELAH force-stop
         os.execute("sleep 1")
         sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
         os.execute("sleep 1")
     end
-    ok(("HOME selesai: %d client ditembak ke Brookhaven. Out manual sendiri kalau mau."):format(#pkgMau))
+    ok(("HOME selesai: %d client ditembak Brookhaven + grid ukuran 4. Out manual kalau mau."):format(#pkgMau))
 end
 
 local PERINTAH = (arg and arg[1] or ""):lower()
@@ -8619,15 +8639,11 @@ if PERINTAH == "masuk" then
         ok("Semua client udah ada akun. Gak ada yg perlu ditembak.")
         return
     end
-    info(("%d client belum ada akun -> tembak ke Brookhaven biar bisa login..."):format(#kosong))
-    for _, p in ipairs(kosong) do
-        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven (buat login)")
-        sh_silent("su -c 'am force-stop " .. p .. "'")
-        os.execute("sleep 1")
-        sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
-        os.execute("sleep 1")
-    end
-    ok(("CEK selesai: %d client ditembak ke Brookhaven. Masukin akun ke client itu sekarang."):format(#kosong))
+    info(("%d client belum ada akun -> tembak Brookhaven + grid ukuran 4 (biar bisa login)..."):format(#kosong))
+    -- v9.11: pakai jalankan_home (tembak Brookhaven + grid ukuran 4 client) biar
+    -- SAMA kayak zenx home. Window client kosong jadi gede (ukuran 4) enak buat login.
+    jalankan_home(cfg, kosong)
+    ok(("MASUK selesai: %d client ditembak Brookhaven. Masukin akun ke client itu sekarang."):format(#kosong))
     return
 end
 
