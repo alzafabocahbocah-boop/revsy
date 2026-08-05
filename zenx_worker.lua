@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.35-cf"
+local VERSION = "9.36-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7174,7 +7174,33 @@ local function run(cfg)
                         os.execute(("timeout 120 %s getps"):format(
                             (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
                     end)
-                    pcall(function() refresh_ps_getps() end)   -- muat ulang mapLink dari ps_link baru
+                    -- v9.35: RETRY refresh_ps_getps. Bug user: getps dapet 8 PS TAPI
+                    -- [ps-getps] 0 dapet -> PUBLIC. Sebab: getps simpan ke backend
+                    -- (/ps-simpan) async, refresh baca /ps-list cuma 1 detik kemudian
+                    -- (data belum ke-commit). Fix: tunggu + retry max 5x (jeda 2s)
+                    -- sampai mapLink keisi. mapLink[pkg] persist antar retry (nDapet
+                    -- naik pas ps_link akhirnya kebaca).
+                    do
+                        local dapet = false
+                        for cobaPs = 1, 5 do
+                            os.execute("sleep 2")
+                            pcall(function() refresh_ps_getps() end)
+                            -- cek mapLink udah keisi buat client yg ada akun
+                            local ada = 0
+                            for _, pkg in ipairs(split(cfg.pkgs)) do
+                                if mapLink[pkg] and mapLink[pkg] ~= "" then ada = ada + 1 end
+                            end
+                            if ada > 0 then
+                                info(("  [ps-getps] retry #%d: %d client dapet PS link"):format(cobaPs, ada))
+                                dapet = true
+                                break
+                            end
+                            info(("  [ps-getps] retry #%d: belum ada PS link, tunggu..."):format(cobaPs))
+                        end
+                        if not dapet then
+                            warn("  [ps-getps] 5x retry tetep 0 PS link -> sebagian client bakal PUBLIC")
+                        end
+                    end
                 end
                 -- RESTART sendiri: tutup semua + grid 2x + buka fresh pakai setting baru
                 MODE_JALAN = true
