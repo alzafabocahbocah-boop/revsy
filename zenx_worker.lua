@@ -636,8 +636,8 @@
 --        semua akun keliatan bisu -> lisensi sehat dicurigai basi -> semua
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
-local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "9.03-cf"
+local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
+local VERSION = "9.04-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
