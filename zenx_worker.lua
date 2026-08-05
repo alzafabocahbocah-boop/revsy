@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.04-cf"
+local VERSION = "9.05-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -745,10 +745,29 @@ end
 -- config
 -- ============================================================
 local function load_config()
-    local f=io.open(CONFIG_FILE,"r"); if not f then return nil end
-    local s=f:read("*all"); f:close()
-    local fn=load("return "..s); if not fn then return nil end
-    local o,cfg=pcall(fn); if o then return cfg end; return nil
+    -- v9.05: coba beberapa path (HOME absolut, relatif, Termux default) biar
+    -- config kebaca dari cwd mana pun. CONFIG_PATHS di dalam fungsi (bukan main
+    -- chunk lokal) biar gak makan slot batas-200 lokal.
+    local paths = {
+        CONFIG_FILE,
+        "zenx_worker_config.lua",
+        "/data/data/com.termux/files/home/zenx_worker_config.lua",
+    }
+    for _, path in ipairs(paths) do
+        local f = io.open(path, "r")
+        if f then
+            local s = f:read("*all"); f:close()
+            local fn = load("return " .. s)
+            if fn then
+                local o, cfg = pcall(fn)
+                if o and type(cfg) == "table" then
+                    CONFIG_FILE = path
+                    return cfg
+                end
+            end
+        end
+    end
+    return nil
 end
 
 local function save_config(cfg)
@@ -8461,6 +8480,71 @@ end
 --   v4.78: key [link|refresh]       -> bypass key Delta lewat api.bypass.vip
 --   v4.79: key set <APIKEY>         -> isi kunci API ke config (tanpa setup ulang)
 -- ============================================================
+-- v9.05: parse range "1-5"/"3"/"1,3,5" -> daftar pkg (GLOBAL, hemat lokal di
+-- main chunk buat command home/game). cfg.pkgs urut, index 1-based.
+function pkg_dari_range(cfg, rng)
+    local semuaPkg = split(cfg.pkgs)
+    local idxMau = {}
+    local a, b = rng:match("^(%d+)%-(%d+)$")
+    if a and b then
+        for i = tonumber(a), tonumber(b) do idxMau[i] = true end
+    elseif rng:find(",") then
+        for n in rng:gmatch("%d+") do idxMau[tonumber(n)] = true end
+    else
+        local n = tonumber(rng)
+        if n then idxMau[n] = true end
+    end
+    local pkgMau = {}
+    for i, p in ipairs(semuaPkg) do
+        if idxMau[i] then pkgMau[#pkgMau+1] = p end
+    end
+    return pkgMau, #semuaPkg
+end
+
+-- v9.05: jalanin muter game normal (GLOBAL, hemat lokal). Client di pkgMau muter
+-- join game GAMES 5 menit tiap game -> akun tahan verif bot.
+function jalankan_game_muter(pkgMau)
+    local GAMES = {
+        { id = "4924922222",      nama = "Brookhaven RP" },
+        { id = "132678066262863", nama = "My Daycare" },
+        { id = "13967668166",     nama = "LifeTogether RP" },
+    }
+    info(("GAME: %d client muter %d game normal (5menit/game). Ctrl+C buat stop."):format(#pkgMau, #GAMES))
+    for gi, g in ipairs(GAMES) do
+        info(("=== [%d/%d] %s (placeId=%s) -- tembak %d client, tahan 5 menit ==="):format(
+            gi, #GAMES, g.nama, g.id, #pkgMau))
+        local url = "roblox://placeId=" .. g.id
+        for _, p in ipairs(pkgMau) do
+            info("  " .. p:gsub("com%.roblox%.", "") .. " -> " .. g.nama)
+            sh_silent("su -c 'am force-stop " .. p .. "'")
+        end
+        os.execute("sleep 2")
+        for _, p in ipairs(pkgMau) do
+            sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
+            os.execute("sleep 1")
+        end
+        ok(("  %d client ditembak ke %s. Tahan 5 menit..."):format(#pkgMau, g.nama))
+        for _ = 1, 60 do os.execute("sleep 5") end
+    end
+    ok("GAME selesai: udah muter semua game. Balik ke GAG -> pencet Start/FORCE.")
+end
+
+-- v9.05: home sebagian client (GLOBAL). Force-stop + set grid.
+function jalankan_home(cfg, pkgMau)
+    info(("HOME: %d client -> balik home (tutup game) + grid diatur"):format(#pkgMau))
+    for _, p in ipairs(pkgMau) do
+        info("  " .. p:gsub("com%.roblox%.", "") .. " -> home (force-stop)")
+        sh_silent("su -c 'am force-stop " .. p .. "'")
+    end
+    os.execute("sleep 2")
+    PKGS_AKTIF = pkgMau
+    GRID_CACHE = nil
+    for _, p in ipairs(pkgMau) do
+        pcall(function() grid_satu(cfg, p) end)
+    end
+    ok(("HOME selesai: %d client balik home + grid keset. Pencet Start/FORCE buat buka lagi."):format(#pkgMau))
+end
+
 local PERINTAH = (arg and arg[1] or ""):lower()
 
 -- v4.78: `zenx key` -- salin link key-system Delta, terus jalanin ini.
@@ -8508,113 +8592,34 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- Gunanya buat NGUJI: set ukuran lain, terus tembak pakai pecahan yang udah
 -- ada (`zenx tap`). Kalau kena juga, berarti satu angka cukup buat semua ukuran.
 if PERINTAH == "game" then
-    -- v9.03: zenx game 1-5 -> client ke-1..5 muter join GAME NORMAL (Brookhaven,
-    -- Daycare, LifeTogether) 5 menit tiap game. Tujuan: akun keliatan main game
-    -- variatif (bukan cuma GAG) -> lebih tahan verif bot. Gak masalah kalau gak
-    -- berhasil masuk -- pokoknya NEMBAK ke placeId game itu 5 menit, terus next.
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local rng = arg and arg[2] or ""
     if rng == "" then
         err("Cara pakai:  zenx game <range>")
         info("   contoh:  zenx game 1-5   -> client ke-1..5 muter game normal 5menit/game")
-        info("            zenx game 3     -> client ke-3 doang")
         return
     end
-    -- daftar game normal (placeId + nama). Muter urut.
-    local GAMES = {
-        { id = "4924922222",     nama = "Brookhaven RP" },
-        { id = "132678066262863", nama = "My Daycare" },
-        { id = "13967668166",    nama = "LifeTogether RP" },
-    }
-    local semuaPkg = split(cfg.pkgs)
-    local idxMau = {}
-    do
-        local a, b = rng:match("^(%d+)%-(%d+)$")
-        if a and b then for i = tonumber(a), tonumber(b) do idxMau[i] = true end
-        elseif rng:find(",") then for n in rng:gmatch("%d+") do idxMau[tonumber(n)] = true end
-        else local n = tonumber(rng); if n then idxMau[n] = true end end
-    end
-    local pkgMau = {}
-    for i, p in ipairs(semuaPkg) do if idxMau[i] then pkgMau[#pkgMau+1] = p end end
-    if #pkgMau == 0 then
-        err("Gak ada client di range '" .. rng .. "'. Total: " .. #semuaPkg)
-        return
-    end
-    info(("GAME: %d client muter %d game normal (5menit/game). Ctrl+C buat stop."):format(#pkgMau, #GAMES))
-    -- muter tiap game: launch semua client ke game itu, tunggu 5 menit, next game
-    for gi, g in ipairs(GAMES) do
-        info(("=== [%d/%d] %s (placeId=%s) -- tembak %d client, tahan 5 menit ==="):format(
-            gi, #GAMES, g.nama, g.id, #pkgMau))
-        local url = "roblox://placeId=" .. g.id
-        for _, p in ipairs(pkgMau) do
-            info("  " .. p:gsub("com%.roblox%.", "") .. " -> " .. g.nama)
-            -- tutup dulu (biar fresh masuk game baru), terus launch
-            sh_silent("su -c 'am force-stop " .. p .. "'")
-        end
-        os.execute("sleep 2")
-        for _, p in ipairs(pkgMau) do
-            -- tembak masuk (gak masalah kalau gagal -- pokoknya nembak)
-            sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
-            os.execute("sleep 1")   -- jeda antar client biar gak numpuk
-        end
-        ok(("  %d client ditembak ke %s. Tahan 5 menit..."):format(#pkgMau, g.nama))
-        -- tahan 5 menit (300s), cek Ctrl+C tiap 5s
-        for _ = 1, 60 do
-            os.execute("sleep 5")
-        end
-    end
-    ok("GAME selesai: udah muter semua game. Balik ke GAG -> pencet Start/FORCE di panel.")
+    local pkgMau, total = pkg_dari_range(cfg, rng)
+    if #pkgMau == 0 then err("Gak ada client di range '" .. rng .. "'. Total: " .. total); return end
+    jalankan_game_muter(pkgMau)
     return
 end
 
 if PERINTAH == "home" then
-    -- v9.02: zenx home 1-5 -> client ke-1 sampai ke-5 (urutan cfg.pkgs) BALIK
-    -- HOME (tutup game/force-stop) + grid diatur. Buat manual reset sebagian
-    -- client. Format range: "1-5" atau "3" (satu) atau "1,3,5" (pilih).
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
     local rng = arg and arg[2] or ""
     if rng == "" then
         err("Cara pakai:  zenx home <range>")
-        info("   contoh:  zenx home 1-5   -> client ke-1..5 balik home + grid diatur")
+        info("   contoh:  zenx home 1-5   -> client ke-1..5 balik home + grid")
         info("            zenx home 3     -> client ke-3 doang")
         info("            zenx home 1,3,5 -> client ke-1,3,5")
         return
     end
-    local semuaPkg = split(cfg.pkgs)
-    local idxMau = {}
-    do
-        local a, b = rng:match("^(%d+)%-(%d+)$")
-        if a and b then
-            for i = tonumber(a), tonumber(b) do idxMau[i] = true end
-        elseif rng:find(",") then
-            for n in rng:gmatch("%d+") do idxMau[tonumber(n)] = true end
-        else
-            local n = tonumber(rng)
-            if n then idxMau[n] = true end
-        end
-    end
-    local pkgMau = {}
-    for i, p in ipairs(semuaPkg) do
-        if idxMau[i] then pkgMau[#pkgMau+1] = p end
-    end
-    if #pkgMau == 0 then
-        err("Gak ada client di range '" .. rng .. "'. Total client: " .. #semuaPkg)
-        return
-    end
-    info(("HOME: %d client -> balik home (tutup game) + grid diatur"):format(#pkgMau))
-    for _, p in ipairs(pkgMau) do
-        info("  " .. p:gsub("com%.roblox%.", "") .. " -> home (force-stop)")
-        sh_silent("su -c 'am force-stop " .. p .. "'")
-    end
-    os.execute("sleep 2")
-    PKGS_AKTIF = pkgMau
-    GRID_CACHE = nil
-    for _, p in ipairs(pkgMau) do
-        pcall(function() grid_satu(cfg, p) end)
-    end
-    ok(("HOME selesai: %d client balik home + grid keset. Pencet Start/FORCE buat buka lagi."):format(#pkgMau))
+    local pkgMau, total = pkg_dari_range(cfg, rng)
+    if #pkgMau == 0 then err("Gak ada client di range '" .. rng .. "'. Total: " .. total); return end
+    jalankan_home(cfg, pkgMau)
     return
 end
 
