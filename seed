@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.35"
+local VERSI = "4.36"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -4290,38 +4290,67 @@ pcall(function()
     end)
 end)
 
--- v4.35: ANTI-AFK GAG (BEDA dari Roblox 20min). Debug nunjukin GAG punya
--- AntiAfkController SENDIRI yang pantau UserInputService.InputBegan (keyboard/
--- mouse/gamepad) -> kalau gak ada input > IdleSeconds -> "[Warn] You got warning!"
--- -> KICK/REJOIN. player.Idled (di atas) cuma reset idle ROBLOX, GAK reset timer
--- GAG. Fix: kirim FAKE INPUT berkala (VirtualInputManager) biar InputBegan GAG
--- ke-trigger -> markActivity() jalan -> timer reset -> gak kena warning/kick.
--- Ini penyebab UTAMA rejoin (akun otomatis gak ada input asli). Tiap 30s cukup
--- (IdleSeconds biasanya jauh lebih lama). Fake input: key kecil yg gak ganggu.
+-- v4.36: ANTI-AFK GAG (DIPASTIIN). Debug: AntiAfkController reset timer pas
+-- UserInputService.InputBegan (Keyboard/Mouse1/2/3/Gamepad) ATAU InputChanged
+-- (MouseMovement+MouseButton2 / Thumbstick). Akun otomatis gak ada input asli ->
+-- warning -> kick. Fix v4.35 (VIM SendKeyEvent) BELUM PASTI trigger InputBegan di
+-- semua executor. v4.36: TEMBAK 4 CARA sekaligus tiap 25s biar SALAH SATU pasti
+-- reset timer controller:
+--   (A) firesignal LANGSUNG ke UserInputService.InputBegan (paling andal --
+--       langsung panggil listener controller, gak lewat sandbox input)
+--   (B) VirtualInputManager SendKeyEvent (LeftControl)
+--   (C) VirtualInputManager mouse move + Button2
+--   (D) VirtualUser CaptureController + ClickButton2
 task.spawn(function()
-    task.wait(25)
-    local VIM = nil
+    task.wait(20)
+    local UIS = game:GetService("UserInputService")
+    local VIM, VU
     pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    pcall(function() VU = game:GetService("VirtualUser") end)
     while isCurrentGen() do
         if state.autoAfk then
+            local adaYgKena = false
+            -- (A) firesignal LANGSUNG ke InputBegan -- paling andal. Bikin
+            -- InputObject palsu (Keyboard) -> firesignal listener controller
+            -- langsung panggil markActivity(). Butuh executor dukung firesignal.
             pcall(function()
-                if VIM then
-                    -- tekan+lepas tombol yg gak ngefek apa-apa (misal LeftControl)
-                    -- -> UserInputService.InputBegan ke-trigger -> anti-afk GAG reset
-                    VIM:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game)
-                    task.wait(0.1)
-                    VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
+                if firesignal then
+                    -- coba pakai InputObject asli kalau ada, atau tabel tiruan
+                    local fakeInput = {
+                        UserInputType = Enum.UserInputType.Keyboard,
+                        KeyCode = Enum.KeyCode.LeftControl,
+                        UserInputState = Enum.UserInputState.Begin,
+                    }
+                    firesignal(UIS.InputBegan, fakeInput, false)
+                    adaYgKena = true
                 end
             end)
-            -- backup: VirtualUser (kalau VIM gak ada/gagal)
+            -- (B) VIM key event
             pcall(function()
-                local VU = game:GetService("VirtualUser")
-                VU:CaptureController()
-                VU:ClickButton2(Vector2.new())
+                if VIM then
+                    VIM:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game)
+                    task.wait(0.05)
+                    VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
+                    adaYgKena = true
+                end
             end)
-            Seed._logAfk = "fake input kirim (" .. os.date("%H:%M:%S") .. ")"
+            -- (C) VIM mouse move (InputChanged MouseMovement)
+            pcall(function()
+                if VIM then
+                    VIM:SendMouseMoveEvent(math.random(100, 300), math.random(100, 300), game)
+                end
+            end)
+            -- (D) VU backup
+            pcall(function()
+                if VU then
+                    VU:CaptureController()
+                    VU:ClickButton2(Vector2.new())
+                end
+            end)
+            Seed._logAfk = (adaYgKena and "fake input OK" or "fake input (VU only)")
+                .. " (" .. os.date("%H:%M:%S") .. ")"
         end
-        task.wait(30)   -- tiap 30s -- jauh di bawah IdleSeconds GAG
+        task.wait(25)   -- tiap 25s -- di bawah IdleSeconds GAG
     end
 end)
 
