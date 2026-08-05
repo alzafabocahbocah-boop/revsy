@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.16-cf"
+local VERSION = "9.17-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3207,6 +3207,35 @@ local KUNCI_JENDELA = {
     "app_cloner_original_window_left",  "app_cloner_original_window_top",
     "app_cloner_original_window_right", "app_cloner_original_window_bottom",
 }
+
+-- v9.17: HAPUS SEMUA posisi window dari prefs SEMUA client (bener2 bersih).
+-- User: sebelum Start, pastiin posisi kolom LAMA hilang SEMUA dulu, baru timpa
+-- yg baru -> gak campur (ada 5 kolom ada 3 kolom nyangkut). Dipanggil di awal
+-- RESTART sebelum tulis grid. Buang key app_cloner_*window* dari tiap prefs.
+function bersihin_grid_semua(cfg)
+    local n = 0
+    for _, pkg in ipairs(split(cfg.pkgs)) do
+        local path = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+        local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+        if isi:find("<map", 1, true) then
+            local bersih = isi:gsub('%s*<int name="app_cloner_[%w_]*window[%w_]*"[^/]*/>', "")
+            if bersih ~= isi then
+                -- tulis balik prefs tanpa key window (posisi lama dibuang).
+                -- tmp file di HOME (pasti ada), terus cat ke prefs via su.
+                local tmp = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/.gridbersih.tmp"
+                local f = io.open(tmp, "w")
+                if f then
+                    f:write(bersih); f:close()
+                    sh_silent("su -c 'cat " .. tmp .. " > " .. path .. "'")
+                    n = n + 1
+                end
+            end
+        end
+    end
+    if n > 0 then info(("Grid lama dihapus dari %d client (bersih sebelum timpa baru)"):format(n)) end
+    return n
+end
+
 
 -- balikin: peta pkg -> {L,T,R,B}, sebab, kol, bar, W, H
 -- v5.06: hitung petak buat JUMLAH CLIENT SEMBARANG (bukan cuma yang kepasang).
@@ -5792,6 +5821,9 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
     ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
     os.execute("sleep 3")   -- proses bener2 mati (App Cloner baca prefs pas mati total)
+    -- v9.17: HAPUS posisi grid LAMA semua client DULU (client udah mati, prefs
+    -- aman ditimpa) -> gak ada sisa kolom lama nyangkut pas grid baru ditulis.
+    pcall(function() bersihin_grid_semua(cfg) end)
     local daftarR = isi:match("RESTART:([%w%.%_,]+)")
     if daftarR then
         local onlyR = {}
