@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.34-cf"
+local VERSION = "9.35-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6443,7 +6443,7 @@ local function run(cfg)
     local lastRekamDc = 0       -- v7.29: kapan terakhir rekam disconnect dari logcat
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
-    local lastSettingCek = 0   -- v9.26: kapan terakhir cek /setting-tim (tiap 15s)
+    local lastSettingCek = 0   -- v9.34: kapan terakhir cek /setting-tim (tiap 5s)
     local lastCekGrafis = 0    -- v8.12: kapan terakhir cek all grafis (tiap 90s)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
@@ -6528,6 +6528,20 @@ local function run(cfg)
                 lewatiDenyutRejoin = true
             else
                 lewatiDenyutRejoin = false
+            end
+            -- v9.34: CEK SETTING BERUBAH di TOP loop juga (ringan, cuma ts). User:
+            -- start dari panel config kolom baru pas worker LAGI SIBUK (buka client/
+            -- rejoin) -> setting telat kebaca (dicek jauh di bawah). Fix: kalau ts
+            -- setting beda dari baseline -> paksa lewatiDenyutRejoin=true biar skip
+            -- kerjaan iterasi ini, langsung nyampe handler setting di bawah.
+            do
+                local rSTop = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
+                local tsSTop = ambil_num(rSTop, "ts") or 0
+                if tsSTop > 0 and tsSTop ~= (SETTING_TS_TERAKHIR or 0) then
+                    info("SETTING PANEL berubah (ts baru) -- skip rejoin, langsung proses setting")
+                    lewatiDenyutRejoin = true
+                    lastSettingCek = 0   -- paksa handler setting di bawah jalan iterasi ini
+                end
             end
             -- v8.56: PROSES PLACE dari isiTop DI SINI (sebelum rejoin denyut). Bug:
             -- PLACE diproses jauh di bawah (setelah rejoin denyut) -> rejoin pakai
@@ -7119,11 +7133,13 @@ local function run(cfg)
         -- (file kosong = key habis), langsung bypass -- gak nunggu ronde buka
         -- client (reopen_sec 5 menit). Jadi begitu key habis, key baru diambil
         -- dalam <1 menit, bukan nunggu 5 menit. auto_key harus ON.
-        -- v9.26: CEK SETTING PANEL tiap 15s. User: kadang perintah RESTART telat/
+        -- v9.26: CEK SETTING PANEL. User: kadang perintah RESTART telat/
         -- ke-nimpa perintah lain. Fix: worker cek /setting-tim sendiri -- kalau ts
         -- BERUBAH (panel ganti place/grid) -> RESTART SENDIRI pakai setting baru.
         -- Gak perlu nunggu perintah RESTART terpisah (yg bisa telat/ke-nimpa).
-        if (now - lastSettingCek) >= 15 then
+        -- v9.34: interval 15s -> 5s (tiap poll). User: start dari panel config
+        -- kolom baru, worker telat nangkep (nunggu 15s). Sekarang tiap poll cek.
+        if (now - lastSettingCek) >= 5 then
             lastSettingCek = now
             local rS = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
             local tsBaru = ambil_num(rS, "ts") or 0
