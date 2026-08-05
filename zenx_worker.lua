@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.49-cf"
+local VERSION = "9.52-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4278,7 +4278,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         if h then h:close() end
                         return cookie_terpanjang(c or "")
                     end
-                    for _, pkg in ipairs(list) do
+                    -- v9.50: pilih dari client AKTIF (only/PKGS_AKTIF), bukan semua 10.
+                    -- Bug: bisa pilih client 7-10 (gak aktif) buat ambil key.
+                    local listBypass = list
+                    if only and type(only) == "table" then
+                        listBypass = {}
+                        for _, p in ipairs(list) do if only[p] then listBypass[#listBypass+1] = p end end
+                        if #listBypass == 0 then listBypass = list end
+                    elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                        listBypass = PKGS_AKTIF
+                    end
+                    for _, pkg in ipairs(listBypass) do
                         local ck = cookie_pkg(pkg)
                         if ck and ck ~= "" then
                             local kead = cek_cookie_roblox(ck)
@@ -4291,9 +4301,9 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                             end
                         end
                     end
-                    -- gak ada yg kebukti normal -> pakai list[1] (fallback)
+                    -- gak ada yg kebukti normal -> pakai listBypass[1] (fallback)
                     if not pilih then
-                        pilih = list[1]
+                        pilih = listBypass[1]
                         info("  gak ada cookie kebukti normal -> pakai " .. pilih:gsub("com%.roblox%.","") .. " (fallback)")
                     end
                 end
@@ -4328,7 +4338,22 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     -- dari tap_muat()[ukuran] -> asal client diposisikan di grid aktif,
                     -- ukuran jendela match kalibrasi -> titik kena. Konsisten sama grid
                     -- yg keliatan (open_all). Gak perlu paksa 10 lagi.
-                    local petaK = grid_hitung(cfg, PKGS_AKTIF)
+                    -- v9.49: grid bypass pakai 'only' (param open_all, client yg
+                    -- MAU dibuka) konversi ke list, BUKAN PKGS_AKTIF global (bisa
+                    -- stale/nil -> grid dihitung buat 10 = 4x3, client bypass kecil).
+                    -- Bug user: pas bypass client jadi 4x3 padahal 6. Fix: pakai only.
+                    local pkgsBypass = nil
+                    if only and type(only) == "table" then
+                        pkgsBypass = {}
+                        for _, p in ipairs(split(cfg.pkgs)) do
+                            if only[p] then pkgsBypass[#pkgsBypass+1] = p end
+                        end
+                        if #pkgsBypass == 0 then pkgsBypass = nil end
+                    end
+                    if not pkgsBypass and PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                        pkgsBypass = PKGS_AKTIF
+                    end
+                    local petaK = grid_hitung(cfg, pkgsBypass)
                     if petaK and petaK[pilih] then
                         -- hapusDulu=true: buang posisi lama biar bener2 pas di grid aktif
                         local tok, tket = tata_satu(pilih, petaK[pilih], true)
@@ -4392,7 +4417,21 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 do
                     -- v8.95: pakai grid AKTIF (PKGS_AKTIF), sama kayak posisi bypass
                     -- di atas. cfgBypass (paksa 10 client) udah DIBUANG -- logika lama.
-                    local petaP = grid_hitung(cfg, PKGS_AKTIF)
+                    -- v9.51: pakai 'only' (client aktif) konsisten sama petaK, BUKAN
+                    -- PKGS_AKTIF global (bisa stale -> grid 10 = 4x3). Bug user: pas
+                    -- bypass client jadi 4x3 (grid 10) padahal 6.
+                    local pkgsPetaP = nil
+                    if only and type(only) == "table" then
+                        pkgsPetaP = {}
+                        for _, p in ipairs(split(cfg.pkgs)) do
+                            if only[p] then pkgsPetaP[#pkgsPetaP+1] = p end
+                        end
+                        if #pkgsPetaP == 0 then pkgsPetaP = nil end
+                    end
+                    if not pkgsPetaP and PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                        pkgsPetaP = PKGS_AKTIF
+                    end
+                    local petaP = grid_hitung(cfg, pkgsPetaP)
                     if petaP and petaP[pilih] then
                         for coba = 1, 4 do
                             local k = jendela_kotak(pilih)
@@ -7361,21 +7400,20 @@ local function run(cfg)
             -- ada -> tampilin "lisensi aktif" biar keliatan worker + key hidup.
             if kd == "ada" then
                 ok("Lisensi Delta AKTIF (cek berkala 10 menit)")
+                KICK_DIURUS["lisensi_standby_warned"] = nil   -- v9.50: reset biar info standby muncul lagi kalau hilang lagi
             end
             if kd == "hilang" and (now - (BYPASS_TERAKHIR or 0)) > 300 then
                 if mati then
-                    -- v6.83: STANDBY -> cek lisensi & AMBIL KEY doang (bypass_kunci),
-                    -- TANPA buka client (open_all). User minta: pas standby cek
-                    -- lisensi sekalian biar pas start langsung siap -- tapi jangan
-                    -- buka client (standby = gak buka). Jadi key udah siap nunggu FORCE.
-                    warn("Lisensi HILANG (standby) -- ambil key doang (client gak dibuka)")
-                    local okB, pesanB = bypass_kunci(cfg, nil, false)
-                    if okB then
-                        ok("Key Delta siap (standby) -- pas start langsung jalan")
-                        BYPASS_TERAKHIR = now
-                    else
-                        warn("Bypass key gagal (standby): " .. tostring(pesanB))
+                    -- v9.50: STANDBY = gak buka client. bypass_kunci butuh LINK key
+                    -- dari LAYAR (tombol "Copy link" di Delta) -- yg cuma ada kalau
+                    -- client KEBUKA. Jadi bypass pas standby SELALU gagal "link kosong"
+                    -- (warning percuma tiap 5 menit). Skip -- bypass beneran jalan pas
+                    -- FORCE/Start (buka client -> ambil link -> API bypass). Info sekali.
+                    if not KICK_DIURUS["lisensi_standby_warned"] then
+                        KICK_DIURUS["lisensi_standby_warned"] = true
+                        info("Lisensi Delta hilang (standby) -- bypass jalan pas Start (buka client dulu)")
                     end
+                    BYPASS_TERAKHIR = now   -- tandai biar gak spam cek tiap ronde
                 else
                     -- v8.98: GUARD false-alarm. Bug user: lisensi Delta MASIH ADA
                     -- tapi worker rejoin SEMUA client RF bareng (lisensi per-HWID,
