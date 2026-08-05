@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.15-cf"
+local VERSION = "9.16-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -799,6 +799,10 @@ local function save_config(cfg)
     f:write(string.format("  orientasi=%q,\n",cfg.orientasi or ""))
     f:write(string.format("  keep_alive=%s,\n",tostring(cfg.keep_alive ~= false)))
     f:write(string.format("  auto_grid=%s,\n",tostring(cfg.auto_grid == true)))
+    -- v9.16: SIMPAN grid_kolom biar persist antar restart. Bug: grid_kolom gak
+    -- ditulis -> tiap worker restart hilang -> balik auto (SUSUNAN). User set 5
+    -- kolom, restart -> balik 3 kolom (auto buat jumlah client aktif).
+    f:write(string.format("  grid_kolom=%d,\n",math.floor(tonumber(cfg.grid_kolom) or 0)))
     f:write(string.format("  deteksi_longgar=%s,\n",tostring(cfg.deteksi_longgar == true)))
     f:write(string.format("  disconnect_menit=%d,\n",cfg.disconnect_menit or 3))
     f:write(string.format("  jaga_depan_sec=%d,\n",cfg.jaga_depan_sec or 15))  -- v5.91: JANGAN 0 -- 0 matiin jaga_depan (jendela gak balik ke depan). Default aman 15.
