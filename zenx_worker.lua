@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.40-cf"
+local VERSION = "9.42-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2039,13 +2039,17 @@ function RIW.http.kirim_cmd(kunci, alamat, metode, berkas, detik)
     if RIW.http.pilih() == "wget" then
         -- wget: PUT/DELETE lewat --method (butuh wget yang agak baru).
         -- --body-file buat kirim isi berkas.
+        -- v9.40: header X-Panel-Versi=worker -> backend kecualiin worker dari guard
+        -- versi panel (guard cuma buat panel lama, bukan worker).
         return string.format(
-            "wget -qO- -4 --timeout=%d --method=%s --header=%s --header=%s --body-file=%s %s",
+            "wget -qO- -4 --timeout=%d --method=%s --header=%s --header=%s --header=%s --body-file=%s %s",
             detik, metode, shq("X-Kunci: " .. kunci),
+            shq("X-Panel-Versi: worker"),
             shq("Content-Type: application/json"), berkas, shq(alamat))
     end
-    return string.format("curl -s -4 -m %d -X %s -H %s -H %s -d @%s %s",
+    return string.format("curl -s -4 -m %d -X %s -H %s -H %s -H %s -d @%s %s",
         detik, metode, shq("X-Kunci: " .. kunci),
+        shq("X-Panel-Versi: worker"),
         shq("Content-Type: application/json"), berkas, shq(alamat))
 end
 
@@ -6450,6 +6454,19 @@ local function run(cfg)
     local lastPendingLog = 0     -- v6.92: kapan terakhir log "nunggu ganti akun"
     local waktuAktivitas = 0     -- v6.95: kapan terakhir ada aktivitas ganti akun/LOGIN
     local lastCooldownLog = 0    -- v6.95: kapan terakhir log cooldown 3 menit
+    -- v9.41: track ts RESTART terakhir diproses. Inisialisasi dari ts perintah AWAL
+    -- biar RESTART BASI (bekas di DB, ts lama) pas worker baru jalan GAK keproses --
+    -- cuma RESTART BARU (ts naik = pencet Start baru) yg jalan. Fix loop restart.
+    local lastRestartTs = 0
+    do
+        local rAwal = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+        local iAwal = (ambil_str(rAwal, "isi") or ""):upper()
+        -- kalau perintah awal udah RESTART (bekas) -> catat ts-nya biar gak keproses
+        if iAwal:find("RESTART") then
+            lastRestartTs = ambil_num(rAwal, "ts") or 0
+            info("RESTART lama di DB (ts=" .. lastRestartTs .. ") -- diabaikan (bukan restart baru)")
+        end
+    end
     local nudgeCnt = {}   -- v4.21: berapa kali client di-nudge (bangunin) tanpa sembuh
     local lastIsi = nil
     -- v8.61: MODE_JALAN = state persisten (true=lagi jalan/FORCE, false=standby).
@@ -7604,16 +7621,23 @@ local function run(cfg)
             -- v9.01: RESTART = tutup SEMUA client -> buka fresh dari nol (setting
             -- baru kepakai bersih). Logic dipindah ke fungsi GLOBAL restart_kerjakan
             -- biar lokal-nya gak masuk hitungan run(cfg) (batas 200 lokal).
-            if isi ~= lastIsi then
+            -- v9.41: bedain RESTART pakai TS (bukan isi). Bug user: netralin ke
+            -- FORCE bikin bingung "kalau mau ganti setting gimana". Sekarang: RESTART
+            -- keproses kalau TS BARU (tiap pencet Start = ts naik). RESTART yg SAMA
+            -- (ts sama, bekas di DB) -> gak keproses (anti-loop). Restart kapan aja
+            -- bisa (pencet Start / ganti setting = ts baru), loop dicegah via ts.
+            local tsRestart = ambil_num(respTop, "ts") or 0
+            if tsRestart ~= (lastRestartTs or 0) then
+                lastRestartTs = tsRestart
                 lastIsi = isi
                 MODE_JALAN = true
                 SUDAH_GRID = false; GRID_CACHE = nil
                 PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                 refresh_status(); lastStatusCek = os.time()
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
+                info("RESTART selesai (ts=" .. tsRestart .. ") -- nunggu perintah berikutnya")
             end
             skip_sisa = true
-        elseif U:find("CLOSE") then
             if isi ~= lastIsi then
                 warn("CLOSE dari panel -> tutup semua client")
                 lastIsi = isi
