@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.52-cf"
+local VERSION = "9.56-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6870,9 +6870,18 @@ local function run(cfg)
                     do
                         local kd = lisensi_keadaan(cfg)
                         if kd ~= "ada" then
-                            warn(("[antrian] Lisensi Delta %s -- SKIP rejoin (client bakal nyangkut layar key). Pencet Start/FORCE buat bypass dulu."):format(
-                                kd == "hilang" and "HILANG" or "BASI"))
                             perluTembak = {}   -- kosongin -> gak rejoin ronde ini
+                            -- v9.55: paksa bypass CUMA kalau udah Start (MODE_JALAN).
+                            -- Belum Start = config belum tau (grid) -> tunda. Antrian
+                            -- ini umumnya cuma jalan pas udah Start, tapi eksplisit.
+                            if MODE_JALAN and (now - (BYPASS_TERAKHIR or 0)) > 300 then
+                                warn(("[antrian] Lisensi Delta %s -- SKIP rejoin, PAKSA bypass pulihin lisensi..."):format(
+                                    kd == "hilang" and "HILANG" or "BASI"))
+                                lastLisensiCek = 0   -- paksa bypass ronde berikutnya (gak nunggu 10 menit)
+                            else
+                                warn(("[antrian] Lisensi Delta %s -- SKIP rejoin (client bakal nyangkut layar key)."):format(
+                                    kd == "hilang" and "HILANG" or "BASI"))
+                            end
                         end
                     end
                     if #perluTembak > 0 then
@@ -7403,38 +7412,29 @@ local function run(cfg)
                 KICK_DIURUS["lisensi_standby_warned"] = nil   -- v9.50: reset biar info standby muncul lagi kalau hilang lagi
             end
             if kd == "hilang" and (now - (BYPASS_TERAKHIR or 0)) > 300 then
-                if mati then
-                    -- v9.50: STANDBY = gak buka client. bypass_kunci butuh LINK key
-                    -- dari LAYAR (tombol "Copy link" di Delta) -- yg cuma ada kalau
-                    -- client KEBUKA. Jadi bypass pas standby SELALU gagal "link kosong"
-                    -- (warning percuma tiap 5 menit). Skip -- bypass beneran jalan pas
-                    -- FORCE/Start (buka client -> ambil link -> API bypass). Info sekali.
+                -- v9.55: lisensi hilang -> bypass CUMA kalau UDAH pernah Start
+                -- (MODE_JALAN=true). User: STANDBY SEBELUM Start belum tau config
+                -- (grid/jumlah client) -- bypass butuh grid (ukuran window buat titik
+                -- tap key). Jadi belum Start -> jgn bypass (nunggu Start biar tau grid
+                -- dulu). UDAH Start (config keset) -> lisensi hilang -> LANGSUNG bypass
+                -- (pulihin, gak nunggu pencet Start lagi).
+                if not MODE_JALAN then
+                    -- belum pernah Start -> config belum tau -> tunda bypass. Info sekali.
                     if not KICK_DIURUS["lisensi_standby_warned"] then
                         KICK_DIURUS["lisensi_standby_warned"] = true
-                        info("Lisensi Delta hilang (standby) -- bypass jalan pas Start (buka client dulu)")
+                        info("Lisensi Delta hilang -- bypass nunggu Start (config grid belum keset)")
                     end
-                    BYPASS_TERAKHIR = now   -- tandai biar gak spam cek tiap ronde
+                    BYPASS_TERAKHIR = now   -- tandai biar gak spam
+                elseif lisensi_false_alarm(cfg) then
+                    warn("Lisensi kebaca 'hilang' TAPI terverifikasi masih ADA -> FALSE ALARM, SKIP")
                 else
-                    -- v8.98: GUARD false-alarm. Bug user: lisensi Delta MASIH ADA
-                    -- tapi worker rejoin SEMUA client RF bareng (lisensi per-HWID,
-                    -- 1 device -> semua client kena). Sebab: `su -c cat` GAGAL baca
-                    -- file lisensi pas RF lagi berat (walau retry 3x) -> false
-                    -- "hilang" -> open_all rejoin semua percuma. SEBELUM rejoin all:
-                    --   (1) VERIFIKASI ULANG lisensi 1x lagi (jeda 3s, RF mungkin
-                    --       lagi sibuk pas cek pertama)
-                    --   (2) CEK DENYUT: kalau ada client denyut FRESH (<90s) =
-                    --       client BENERAN DI GAME = lisensi PASTI ADA (gak mungkin
-                    --       main tanpa key). Itu bukti kuat -> false alarm -> SKIP.
-                    if lisensi_false_alarm(cfg) then
-                        warn("Lisensi kebaca 'hilang' TAPI terverifikasi masih ADA -> FALSE ALARM, SKIP rejoin")
-                    else
-                        warn("Lisensi HILANG (terverifikasi) -- MULAI DARI AWAL (bypass key + buka ulang)")
-                        SUDAH_GRID = false; GRID_CACHE = nil
-                        -- v9.47: pertahankan PKGS_AKTIF (jalan 6 -> buka ulang 6, bukan 10)
-                        local onlyLis = (PKGS_AKTIF and #PKGS_AKTIF > 0) and PKGS_AKTIF or nil
-                        open_all(cfg, onlyLis, ada_stop, nil, mapLink, mapAkun, false, true)
-                        refresh_status(); lastStatusCek = os.time()
-                    end
+                    warn("Lisensi HILANG -- FOKUS PULIHIN (bypass key + buka client)")
+                    SUDAH_GRID = false; GRID_CACHE = nil
+                    -- udah Start -> PKGS_AKTIF keset (grid tau). pertahankan (jalan 6 -> 6).
+                    local onlyLis = (PKGS_AKTIF and #PKGS_AKTIF > 0) and PKGS_AKTIF or nil
+                    open_all(cfg, onlyLis, ada_stop, nil, mapLink, mapAkun, false, true)
+                    refresh_status(); lastStatusCek = os.time()
+                    BYPASS_TERAKHIR = now
                 end
             end
         end
@@ -9134,24 +9134,25 @@ function jalankan_home(cfg, pkgMau)
     -- retry 3x -> sleep -> tembak (4-6s/client x6 = 30s+). Sekarang: (1) force-stop
     -- semua, (2) tulis grid semua (retry per client tapi tanpa tembak di antaranya),
     -- (3) tembak semua barengan. Lebih cepet + grid pasti kepasang sebelum tembak.
-    -- STEP 1: force-stop semua client yg mau di-home (barengan)
+    -- v9.53: BALIK ke PER-CLIENT (force-stop -> tulis grid -> tembak, satu-satu).
+    -- User: grid ditulis TEPAT sebelum open lebih bagus -- App Cloner baca prefs
+    -- FRESH pas app MULAI. Batch (tulis semua dulu, baru tembak semua) bikin grid
+    -- gak keatur (prefs ketimpa/ke-cache sebelum app mulai). Per-client = grid pas.
     for _, p in ipairs(pkgMau) do
+        local nmp = p:gsub("com%.roblox%.", "")
+        -- 1. force-stop client ini (App Cloner baca prefs pas MATI/mulai)
         sh_silent("su -c 'am force-stop " .. p .. "'")
-    end
-    os.execute("sleep 2")   -- tunggu semua mati (App Cloner baca prefs pas mati)
-    -- STEP 2: tulis grid SEMUA client SEKALI (client udah mati, prefs aman ditimpa)
-    for _, p in ipairs(pkgMau) do
+        os.execute("sleep 1")
+        -- 2. tulis grid TEPAT sebelum open (prefs fresh)
         if petaGrid and petaGrid[p] then
-            grid_pasti(p, petaGrid[p])   -- v9.39: tulis sekali, gak retry
+            grid_pasti(p, petaGrid[p])
         else
-            info("    (grid: " .. p:gsub("com%.roblox%.", "") .. " gak dapet posisi)")
+            info("    (grid: " .. nmp .. " gak dapet posisi)")
         end
-    end
-    -- STEP 3: tembak SEMUA client ke Brookhaven (grid udah ditulis)
-    for _, p in ipairs(pkgMau) do
-        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven")
+        -- 3. LANGSUNG tembak ke Brookhaven (App Cloner baca grid yg baru ditulis)
+        info("  " .. nmp .. " -> Brookhaven")
         sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
-        os.execute("sleep 1")   -- jeda antar buka (biar gak numpuk)
+        os.execute("sleep 1")   -- jeda antar client
     end
     ok(("HOME selesai: %d client ditembak Brookhaven + grid ukuran 6. Out manual kalau mau."):format(#pkgMau))
 end
@@ -11632,7 +11633,7 @@ end
 -- masuk cfg.pkgs, jadi worker gak tau ada client itu. `zenx update` pindai
 -- ulang + simpen. Beda dari `zenx download` (yang UNDUH APK) -- ini cuma
 -- DAFTAR ULANG yang udah kepasang.
-if PERINTAH == "update" or PERINTAH == "scan" then
+if (PERINTAH == "update" or PERINTAH == "scan") and not (arg and arg[2] == "mercy") then
     print(C.BOLD .. C.C .. "\n=== ZENX UPDATE -- scan client kepasang ===\n" .. C.N)
     local cfg = load_config()
     if not cfg then
@@ -11685,6 +11686,101 @@ end
 -- Tiga nama, satu tempat: `download` yang dipakai sehari-hari, `dl` buat yang
 -- males ngetik, `apk` DIPERTAHANIN karena RF yang udah kepasang mungkin masih
 -- pakai itu. Nambah nama lain gak ada ongkosnya; ngilangin yang lama ada.
+if PERINTAH == "update" and (arg and arg[2] == "mercy") then
+    -- v9.53: UPDATE DELTA NO MERCY ke versi baru. Tag sama (worker_64), versi
+    -- APK beda (dari arg[3]). Cek versi terpasang tiap client -> SKIP yg udah
+    -- versi target, download+pasang yg BELUM. Beda dari `download mercy` (pasang
+    -- semua dari nol). `zenx update mercy 2.741.0` = update semua yg <2.741.0.
+    local versiBaru = arg and arg[3]
+    if not versiBaru or versiBaru == "" then
+        err("Kasih versi: zenx update mercy <versi>\n" ..
+            "   contoh: zenx update mercy 2.741.0\n" ..
+            "   (tag GitHub worker_64, versi APK beda)")
+        return
+    end
+    local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
+    local HOME = os.getenv("HOME") or "."
+    print(C.BOLD .. C.C .. ("\n=== UPDATE MERCY ke v%s (GitHub worker_64) ===\n"):format(versiBaru) .. C.N)
+
+    -- daftar client dari config (com.roblox.clienp dst)
+    local pkgs = split(cfg and cfg.pkgs or "")
+    if #pkgs == 0 then
+        err("Gak ada client di config. Jalanin `zenx` dulu.")
+        return
+    end
+
+    -- helper: baca versi Delta terpasang di pkg (versionName). "" kalau gak ada.
+    local function versi_terpasang(pkg)
+        local out = sh(("su -c 'dumpsys package %s 2>/dev/null | grep -m1 versionName' 2>/dev/null"):format(pkg)) or ""
+        -- format: "    versionName=2.731.944"
+        return (out:match("versionName=([%w%.%-]+)") or "")
+    end
+
+    -- daftar nama file APK (01 beda, 02-10 pola sama) buat versi target
+    local files = {
+        ("NO.MERCY.DELTA.LITE.64BIT.01-%s.apk.1.apk"):format(versiBaru),
+    }
+    for n = 2, 10 do
+        files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-%s.apk.apk"):format(n, versiBaru)
+    end
+
+    local TMPAPK = HOME .. "/mercy_update.apk"
+    local sukses, gagal, dilewat = 0, 0, 0
+    for i, pkg in ipairs(pkgs) do
+        local nama = pkg:gsub("com%.roblox%.", "")
+        local vNow = versi_terpasang(pkg)
+        if vNow == versiBaru then
+            print(C.D .. ("[%d/%d] %s -- udah v%s, SKIP"):format(i, #pkgs, nama, versiBaru) .. C.N)
+            dilewat = dilewat + 1
+        else
+            local fileAPK = files[i]
+            if not fileAPK then
+                print(C.R .. ("[%d/%d] %s -- gak ada APK ke-%d"):format(i, #pkgs, nama, i) .. C.N)
+                gagal = gagal + 1
+            else
+                print(C.C .. ("[%d/%d] %s "):format(i, #pkgs, nama) .. C.N ..
+                    (vNow ~= "" and ("v" .. vNow) or "(blm ada)") .. " -> v" .. versiBaru)
+                os.remove(TMPAPK)
+                os.execute(("timeout 900 curl -# --fail -L -o %s %s"):format(
+                    shq(TMPAPK), shq(BASE .. fileAPK)))
+                local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+                if sz < 1000000 then
+                    print(C.R .. ("  GAGAL download (%d byte)"):format(sz) .. C.N)
+                    local awal = sh(("head -c 120 %s 2>/dev/null"):format(shq(TMPAPK))) or ""
+                    if awal:match("%S") then info("    " .. awal:gsub("%s+"," "):sub(1,80)) end
+                    gagal = gagal + 1
+                else
+                    print(("  pasang (%.0f MB)..."):format(sz / 1024 / 1024))
+                    local outf = HOME .. "/mercy_upd_pm.txt"
+                    os.remove(outf)
+                    os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(
+                        shq(TMPAPK), shq(outf)))
+                    local hasil = ""
+                    for _ = 1, 150 do
+                        os.execute("sleep 2")
+                        local hf = io.open(outf, "r")
+                        if hf then hasil = hf:read("*all") or ""; hf:close()
+                            if hasil:find("Success") or hasil:find("Failure") then break end
+                        end
+                    end
+                    os.remove(outf)
+                    if tostring(hasil):find("Success") then
+                        print(C.G .. "  OK" .. C.N); sukses = sukses + 1
+                    else
+                        print(C.R .. "  GAGAL pasang" .. C.N)
+                        info("    " .. tostring(hasil):gsub("%s+", " "):sub(1, 90))
+                        gagal = gagal + 1
+                    end
+                end
+            end
+        end
+    end
+    os.remove(TMPAPK)
+    print("")
+    ok(("Selesai: %d update, %d skip (udah v%s), %d gagal"):format(sukses, dilewat, versiBaru, gagal))
+    return
+end
+
 if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     -- v6.79: DOWNLOAD DELTA NO MERCY dari GITHUB RELEASES (tag worker_64).
     -- github.com di-whitelist -> pasti jalan (beda dari gofile yg kena premium).
