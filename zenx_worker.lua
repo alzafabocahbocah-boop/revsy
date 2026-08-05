@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = "zenx_worker_config.lua"
-local VERSION = "9.00-cf"
+local VERSION = "9.01-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5725,6 +5725,49 @@ end
 -- ============================================================
 -- jalan
 -- ============================================================
+-- v9.01: verifikasi false-alarm lisensi (GLOBAL, hemat lokal run). Return true
+-- kalau lisensi "hilang" ternyata FALSE ALARM (masih ada). Cek: (1) baca ulang
+-- lisensi (jeda 3s), (2) denyut fresh (client di game = key pasti ada).
+function lisensi_false_alarm(cfg)
+    os.execute("sleep 3")
+    if lisensi_keadaan(cfg) == "ada" then return true end
+    local now2 = os.time()
+    local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+    for tsStr in raw:gmatch("(%d+)") do
+        local ts = tonumber(tsStr)
+        if ts and (now2 - ts) <= 90 then return true end   -- denyut fresh = di game = key ada
+    end
+    return false
+end
+
+-- v9.01: RESTART logic (dipindah ke GLOBAL biar lokal gak masuk hitungan run(cfg)
+-- batas 200). Tutup semua client -> buka fresh dari nol dengan setting baru.
+-- Return: daftar PKGS_AKTIF (client yg dibuka) buat grid, atau nil (semua).
+function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
+    warn("RESTART dari panel -> tutup SEMUA client, mulai dari nol")
+    local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
+    ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
+    os.execute("sleep 3")   -- proses bener2 mati (App Cloner baca prefs pas mati total)
+    local daftarR = isi:match("RESTART:([%w%.%_,]+)")
+    if daftarR then
+        local onlyR = {}
+        for a in daftarR:gmatch("[^,]+") do onlyR[a] = true end
+        local pkgsR = {}
+        for pkg, u in pairs(mapAkun or {}) do
+            local nm = pkg:gsub("com%.roblox%.", "")
+            if onlyR[u] or onlyR[pkg] or onlyR[nm] then pkgsR[#pkgsR+1] = pkg end
+        end
+        if #pkgsR > 0 then
+            open_all(cfg, pkgsR, ada_stop, nil, mapLink, mapAkun, false, true)
+            notify("ZenX "..cfg.tim, "RESTART -> buka ulang fresh")
+            return pkgsR
+        end
+    end
+    open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false, true)
+    notify("ZenX "..cfg.tim, "RESTART -> buka ulang fresh")
+    return nil   -- semua client
+end
+
 local function run(cfg)
     cfg.reopen_sec  = cfg.reopen_sec or 300
     -- v7.51: matiin logcat streaming yang mungkin masih jalan dari sesi lama
@@ -6863,31 +6906,11 @@ local function run(cfg)
                     --   (2) CEK DENYUT: kalau ada client denyut FRESH (<90s) =
                     --       client BENERAN DI GAME = lisensi PASTI ADA (gak mungkin
                     --       main tanpa key). Itu bukti kuat -> false alarm -> SKIP.
-                    os.execute("sleep 3")
-                    local kd2 = lisensi_keadaan(cfg)
-                    local adaDenyutFresh = false
-                    do
-                        local now2 = os.time()
-                        -- baca semua denyut file via su (path: /sdcard/Delta/Workspace)
-                        local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
-                        for tsStr in raw:gmatch("(%d+)") do
-                            local ts = tonumber(tsStr)
-                            if ts and (now2 - ts) <= 90 then
-                                adaDenyutFresh = true
-                                break
-                            end
-                        end
-                    end
-                    if kd2 == "ada" or adaDenyutFresh then
-                        warn(("Lisensi kebaca 'hilang' TAPI %s -> FALSE ALARM, SKIP rejoin (client gak diganggu)"):format(
-                            kd2 == "ada" and "cek ulang lisensi ADA" or "ada client denyut fresh (di game = key pasti ada)"))
+                    if lisensi_false_alarm(cfg) then
+                        warn("Lisensi kebaca 'hilang' TAPI terverifikasi masih ADA -> FALSE ALARM, SKIP rejoin")
                     else
-                        -- v7.70: KEY HILANG pas jalan -> MULAI DARI AWAL LAGI (kayak
-                        -- Start). open_all fast=false = jalur bypass key + buka semua
-                        -- client ulang. SUDAH_GRID reset biar grid keset ulang juga.
-                        warn("Lisensi HILANG (cek berkala 10menit, terverifikasi) -- MULAI DARI AWAL (bypass key + buka ulang)")
-                        SUDAH_GRID = false
-                        GRID_CACHE = nil
+                        warn("Lisensi HILANG (terverifikasi) -- MULAI DARI AWAL (bypass key + buka ulang)")
+                        SUDAH_GRID = false; GRID_CACHE = nil
                         open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false, true)
                         refresh_status(); lastStatusCek = os.time()
                     end
@@ -7189,47 +7212,16 @@ local function run(cfg)
             end
             if not isi:find(":") and MODE_JALAN then skip_sisa = true end
         elseif U:find("RESTART") then
-            -- v8.99: RESTART = tutup SEMUA client dulu -> mulai dari nol (buka
-            -- fresh). User: pas ubah setting grid/client di panel (misal 4 kolom
-            -- 8 client -> 5 kolom 10 client), Start harus stop all + keluarin
-            -- semua + mulai nol biar setting baru kepakai bersih (gak nyampur
-            -- layout lama). RESTART:daftar = restart client tertentu, RESTART
-            -- polos = semua. Setelah tutup, lanjut ke blok FORCE (buka ulang).
+            -- v9.01: RESTART = tutup SEMUA client -> buka fresh dari nol (setting
+            -- baru kepakai bersih). Logic dipindah ke fungsi GLOBAL restart_kerjakan
+            -- biar lokal-nya gak masuk hitungan run(cfg) (batas 200 lokal).
             if isi ~= lastIsi then
                 lastIsi = isi
-                warn("RESTART dari panel -> tutup SEMUA client, mulai dari nol")
-                local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
-                ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
-                os.execute("sleep 3")   -- kasih waktu proses bener2 mati (App Cloner baca prefs pas mati total)
-                -- reset grid biar keset ulang dengan setting BARU
-                SUDAH_GRID = false
-                GRID_CACHE = nil
-                -- ambil daftar client (RESTART:daftar) buat FORCE ulang
-                local daftarR = isi:match("RESTART:([%w%.%_,]+)")
                 MODE_JALAN = true
-                if daftarR then
-                    -- restart client tertentu -> perlakuin kayak FORCE:daftar
-                    local onlyR = {}
-                    for a in daftarR:gmatch("[^,]+") do onlyR[a] = true end
-                    local pkgsR = {}
-                    for pkg, u in pairs(mapAkun or {}) do
-                        local nm = pkg:gsub("com%.roblox%.", "")
-                        if onlyR[u] or onlyR[pkg] or onlyR[nm] then pkgsR[#pkgsR+1] = pkg end
-                    end
-                    if #pkgsR > 0 then
-                        PKGS_AKTIF = pkgsR
-                        local onlyTbl = {}
-                        for _, p in ipairs(pkgsR) do onlyTbl[#onlyTbl+1] = p end
-                        open_all(cfg, onlyTbl, ada_stop, nil, mapLink, mapAkun, false, true)
-                    end
-                else
-                    PKGS_AKTIF = nil   -- semua client
-                    open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false, true)
-                end
+                SUDAH_GRID = false; GRID_CACHE = nil
+                PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                 refresh_status(); lastStatusCek = os.time()
-                notify("ZenX "..cfg.tim, "RESTART -> buka ulang fresh")
-                lapor(cfg, isi, cacheRun)
-                lastStatus = os.time()
+                lapor(cfg, isi, cacheRun); lastStatus = os.time()
             end
             skip_sisa = true
         elseif U:find("CLOSE") then
