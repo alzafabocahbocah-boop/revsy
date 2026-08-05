@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.43-cf"
+local VERSION = "9.44-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6290,6 +6290,31 @@ local function run(cfg)
         -- v8.71: kalau 0 dapet PS + place FALL (bukan public/W1) -> WARNING jelas.
         -- Akun belum punya PS fall -> bakal fallback PUBLIC (rawan di-steal).
         -- Saran: jalanin `zenx getps` di RF ini buat ambil accessCode PS akun.
+        if nDapet == 0 and cfg.place_id ~= "129343810645058" and cfg.pakai_ps ~= false then
+            -- v9.43: AUTO jalanin `zenx getps` kalau 0 ps_link (tapi cookie ADA).
+            -- Bug user: cookie ada 4 tapi getps 0 -> PUBLIC. Sebab: refresh_ps_getps
+            -- cuma BACA ps_link dari DB (kosong kalau belum pernah `zenx getps`).
+            -- Sekarang: kalau 0, jalanin getps sekali (ambil PS link dari API pakai
+            -- cookie), baru baca ulang. Guard penanda biar gak getps tiap ronde
+            -- (berat) -- cuma sekali per restart / per 5 menit.
+            if not KICK_DIURUS["getps_jalan"] or (os.time() - (KICK_DIURUS["getps_jalan"] or 0)) > 300 then
+                KICK_DIURUS["getps_jalan"] = os.time()
+                info("[ps-getps] 0 ps_link tapi cookie ada -> AUTO jalanin 'zenx getps' dulu...")
+                os.execute(("timeout 180 %s getps"):format(
+                    (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
+                -- baca ulang ps_link yg baru ke-ambil
+                local r2 = api_get(cfg, "/ps-list") or ""
+                for obj in r2:gmatch('{.-}') do
+                    local akun = obj:match('"akun"%s*:%s*"(.-)"')
+                    local psl  = obj:match('"ps_link"%s*:%s*"(.-)"')
+                    if akun and akun2pkg[akun] and psl and psl ~= "" then
+                        local pkg = akun2pkg[akun]
+                        if not mapLink[pkg] then mapLink[pkg] = psl; nDapet = nDapet + 1 end
+                    end
+                end
+                info(("[ps-getps] setelah auto-getps: %d akun dapet ps_link"):format(nDapet))
+            end
+        end
         if nDapet == 0 and cfg.place_id ~= "129343810645058" and cfg.pakai_ps ~= false then
             warn("[ps-getps] 0 akun punya PS fall -> client bakal masuk PUBLIC (rawan)!")
             warn("[ps-getps] Jalanin 'zenx getps' di RF ini dulu, atau assign PS di panel.")
