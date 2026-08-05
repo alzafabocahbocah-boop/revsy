@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.36-cf"
+local VERSION = "9.37-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7210,12 +7210,17 @@ local function run(cfg)
                 -- Kalau pilih ada -> RESTART:akun1,akun2,... Kalau kosong -> semua.
                 local isiRestart = "RESTART"
                 do
+                    -- v9.37: /start-pilih return ARRAY ("pilih":["a","b"]) BUKAN
+                    -- string. ambil_str (cari "pilih":"...") GAGAL -> pilihStr kosong
+                    -- -> fallback ADA AKUN -> buka SEMUA (10 akun = 10 client). Bug
+                    -- user: "selalu gitu kalau 10 akun". Fix: ambil isi dalam [...]
+                    -- langsung dari JSON array, parse nama akun di dalamnya.
                     local rP = api_get(cfg, "/start-pilih?tim=" .. cfg.tim)
-                    local pilihStr = ambil_str(rP, "pilih")   -- JSON array string
-                    if pilihStr and pilihStr ~= "" and pilihStr ~= "null" then
-                        -- parse nama akun dari JSON array (["a","b",...])
+                    local arrIsi = tostring(rP or ""):match('"pilih"%s*:%s*%[(.-)%]')
+                    if arrIsi and arrIsi ~= "" then
+                        -- parse nama akun dari isi array ("a","b","c")
                         local daftar = {}
-                        for nm in pilihStr:gmatch('"([^"]+)"') do daftar[#daftar+1] = nm end
+                        for nm in arrIsi:gmatch('"([^"]+)"') do daftar[#daftar+1] = nm end
                         if #daftar > 0 then
                             isiRestart = "RESTART:" .. table.concat(daftar, ",")
                             info(("  client dipilih di panel: %d client -> %s"):format(#daftar, table.concat(daftar, ",")))
