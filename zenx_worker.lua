@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.58-cf"
+local VERSION = "9.60-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1745,6 +1745,29 @@ local function cari_tombol_key(cfg, pkg)
     local tebakX, tebakY = nil, nil   -- v5.47: tebakan dari jumlah baris grid
     local adaKalibrasi = false
     local inget = tap_muat()[kunci]
+    -- v9.59: TOLERANSI ±8px. Bug user: ukuran window 290x327 gak match "290x330"
+    -- (beda 3px, App Cloner kadang geser dikit) -> gak nemu kalibrasi -> tebak
+    -- nyasar. Cari ukuran TERDEKAT di tabel (dalam 8px lebar & tinggi) -> pakai
+    -- kalibrasi itu. Ukuran udah kita tau: 610x330=4, 396x330=6, 290x330=8,
+    -- 226x330=10 client. Titik nyesuain ukuran aktual (yg user minta).
+    if not inget then
+        local tabel = tap_muat()
+        local beda_terkecil = 9
+        for uk, titik in pairs(tabel) do
+            local w, h = uk:match("(%d+)x(%d+)")
+            w, h = tonumber(w), tonumber(h)
+            if w and h then
+                local dw, dh = math.abs(w - lebar), math.abs(h - tinggi)
+                if dw <= 8 and dh <= 8 and (dw + dh) < beda_terkecil then
+                    beda_terkecil = dw + dh
+                    inget = titik
+                end
+            end
+        end
+        if inget then
+            info(("    ukuran %s ~ kalibrasi terdekat (beda %dpx) -> pakai titik itu"):format(kunci, beda_terkecil))
+        end
+    end
     if inget then
         -- v8.78: ukuran ini UDAH DIKALIBRASI (tested KENA, misal 226x293 = 10
         -- client -> 0.853,0.668). Titik ini PASTI kena. User minta konsisten:
@@ -6879,7 +6902,7 @@ local function run(cfg)
                             -- v9.55: paksa bypass CUMA kalau udah Start (MODE_JALAN).
                             -- Belum Start = config belum tau (grid) -> tunda. Antrian
                             -- ini umumnya cuma jalan pas udah Start, tapi eksplisit.
-                            if MODE_JALAN and (now - (BYPASS_TERAKHIR or 0)) > 300 then
+                            if MODE_JALAN and (os.time() - (BYPASS_TERAKHIR or 0)) > 300 then
                                 warn(("[antrian] Lisensi Delta %s -- SKIP rejoin, PAKSA bypass pulihin lisensi..."):format(
                                     kd == "hilang" and "HILANG" or "BASI"))
                                 lastLisensiCek = 0   -- paksa bypass ronde berikutnya (gak nunggu 10 menit)
