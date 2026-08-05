@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.08-cf"
+local VERSION = "9.09-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8594,6 +8594,43 @@ local PERINTAH = (arg and arg[1] or ""):lower()
 -- petak N client, terus buka ulang. Gak nyapu, gak minta tap.
 -- Gunanya buat NGUJI: set ukuran lain, terus tembak pakai pecahan yang udah
 -- ada (`zenx tap`). Kalau kena juga, berarti satu angka cukup buat semua ukuran.
+if PERINTAH == "masuk" then
+    -- v9.09: zenx masuk -> scan SEMUA client, yang BELUM ADA AKUN (username kosong
+    -- di prefs.xml) ditembak ke Brookhaven biar masuk Roblox (login screen).
+    -- Terus user bisa masukin akun ke client itu manual. (nama 'cek'/'login' udah
+    -- kepakai, jadi command ini namanya 'masuk'.)
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+    local BROOKHAVEN = "4924922222"
+    local url = "roblox://placeId=" .. BROOKHAVEN
+    local semuaPkg = split(cfg.pkgs)
+    local kosong = {}
+    info(("Cek %d client -- cari yang belum ada akun..."):format(#semuaPkg))
+    for i, p in ipairs(semuaPkg) do
+        local u = baca_username(p)
+        if not u or u == "" then
+            kosong[#kosong+1] = p
+            info(("  #%d %s -> BELUM ADA AKUN"):format(i, p:gsub("com%.roblox%.", "")))
+        else
+            info(("  #%d %s -> ada (%s)"):format(i, p:gsub("com%.roblox%.", ""), u))
+        end
+    end
+    if #kosong == 0 then
+        ok("Semua client udah ada akun. Gak ada yg perlu ditembak.")
+        return
+    end
+    info(("%d client belum ada akun -> tembak ke Brookhaven biar bisa login..."):format(#kosong))
+    for _, p in ipairs(kosong) do
+        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven (buat login)")
+        sh_silent("su -c 'am force-stop " .. p .. "'")
+        os.execute("sleep 1")
+        sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
+        os.execute("sleep 1")
+    end
+    ok(("CEK selesai: %d client ditembak ke Brookhaven. Masukin akun ke client itu sekarang."):format(#kosong))
+    return
+end
+
 if PERINTAH == "game" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
