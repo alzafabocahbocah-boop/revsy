@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.25-cf"
+local VERSION = "9.26-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6389,6 +6389,7 @@ local function run(cfg)
     local lastRekamDc = 0       -- v7.29: kapan terakhir rekam disconnect dari logcat
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
+    local lastSettingCek = 0   -- v9.26: kapan terakhir cek /setting-tim (tiap 15s)
     local lastCekGrafis = 0    -- v8.12: kapan terakhir cek all grafis (tiap 90s)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
     local lastCookieStandby = 0  -- v6.84: kapan terakhir cek cookie pas standby
@@ -6426,6 +6427,7 @@ local function run(cfg)
         local rS = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
         local sPlace = ambil_str(rS, "place") or ""
         local sGrid = ambil_num(rS, "grid") or 0
+        SETTING_TS_TERAKHIR = ambil_num(rS, "ts") or 0   -- v9.26: baseline ts
         local berubah = false
         if sPlace ~= "" and sPlace ~= cfg.place_id then
             info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
@@ -7063,6 +7065,32 @@ local function run(cfg)
         -- (file kosong = key habis), langsung bypass -- gak nunggu ronde buka
         -- client (reopen_sec 5 menit). Jadi begitu key habis, key baru diambil
         -- dalam <1 menit, bukan nunggu 5 menit. auto_key harus ON.
+        -- v9.26: CEK SETTING PANEL tiap 15s. User: kadang perintah RESTART telat/
+        -- ke-nimpa perintah lain. Fix: worker cek /setting-tim sendiri -- kalau ts
+        -- BERUBAH (panel ganti place/grid) -> RESTART SENDIRI pakai setting baru.
+        -- Gak perlu nunggu perintah RESTART terpisah (yg bisa telat/ke-nimpa).
+        if (now - lastSettingCek) >= 15 then
+            lastSettingCek = now
+            local rS = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
+            local tsBaru = ambil_num(rS, "ts") or 0
+            if tsBaru > 0 and tsBaru ~= (SETTING_TS_TERAKHIR or 0) then
+                local sPlace = ambil_str(rS, "place") or ""
+                local sGrid = ambil_num(rS, "grid") or 0
+                warn("SETTING PANEL BERUBAH (ts baru) -> RESTART sendiri pakai setting baru")
+                SETTING_TS_TERAKHIR = tsBaru
+                if sPlace ~= "" then cfg.place_id = sPlace end
+                if sGrid > 0 then cfg.grid_kolom = sGrid end
+                pcall(function() save_config(cfg) end)
+                info(("  setting baru: place=%s grid=%d kolom"):format(tostring(cfg.place_id), tonumber(cfg.grid_kolom) or 0))
+                -- RESTART sendiri: tutup semua + grid 2x + buka fresh pakai setting baru
+                MODE_JALAN = true
+                SUDAH_GRID = false; GRID_CACHE = nil
+                PKGS_AKTIF = restart_kerjakan(cfg, "RESTART", mapAkun, mapLink, ada_stop)
+                refresh_status(); lastStatusCek = os.time()
+                lapor(cfg, "RESTART", cacheRun); lastStatus = os.time()
+            end
+        end
+
         -- v7.70: cek lisensi berkala TIAP 10 MENIT (user minta, dulu 60 detik).
         -- Kalau KEY API HILANG -> mulai dari awal LAGI (kayak Start): bypass key
         -- dulu, terus buka semua client (open_all fast=false = jalur bypass +
