@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.42-cf"
+local VERSION = "9.43-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6716,12 +6716,22 @@ local function run(cfg)
                                 KICK_DIURUS["captcha:" .. pkg] = nil
                             end
                         elseif umur == nil then
-                            -- belum ada file denyut = client BARU masuk (script belum
-                            -- sempet nulis, butuh ~20s). Toleransi: anggap di game
-                            -- dulu, JANGAN rejoin. Kalau beneran DC, file tetep gak
-                            -- muncul -> ronde berikutnya masih nil... tapi toleransi
-                            -- ini cuma buat client yg baru dibuka.
-                            diGame = diGame + 1
+                            -- belum ada file denyut. BEDAIN 2 kasus (v9.42):
+                            -- (a) proses HIDUP = client baru dibuka, script belum
+                            --     sempet nulis denyut (~20s) -> toleransi, anggap di
+                            --     game, JANGAN rejoin (nunggu denyut nyusul).
+                            -- (b) proses MATI = client BELUM PERNAH dibuka (Start
+                            --     pertama, semua mati) -> WAJIB REJOIN (buka!).
+                            -- Bug user: Start gak pernah mulai -- dulu SEMUA umur==nil
+                            -- dianggap di game -> 6/6 -> worker gak buka client sama
+                            -- sekali. Sekarang cek cacheHidup: mati = buka.
+                            if cacheHidup[pkg] then
+                                diGame = diGame + 1   -- proses hidup, denyut nyusul
+                            else
+                                perluTembak[#perluTembak+1] = pkg   -- proses mati = buka
+                                info(("[antrian] %s proses MATI + belum ada denyut = WAJIB BUKA")
+                                    :format(ak or pkg))
+                            end
                         else
                             -- umur > 120s = denyut MATI >2 menit. Cek CAPTCHA dulu
                             -- (v8.47: captcha check pindah ke sini dari loop grafis
