@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.07-cf"
+local VERSION = "9.08-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8532,24 +8532,20 @@ end
 
 -- v9.05: home sebagian client (GLOBAL). Force-stop + set grid.
 function jalankan_home(cfg, pkgMau)
-    info(("HOME: %d client -> balik ke Roblox HOME (keluar game, app tetep jalan) + grid"):format(#pkgMau))
-    -- v9.07: BUKAN force-stop (itu tutup app TOTAL). User mau: keluar game -> balik
-    -- ke Roblox HOME SCREEN (app tetep idup). Caranya: launch MainGameActivity
-    -- TANPA -d (tanpa placeId) -> Roblox buka ke home, keluar dari game.
-    -- set grid DULU (App Cloner baca prefs pas activity mulai), baru launch.
-    PKGS_AKTIF = pkgMau
-    GRID_CACHE = nil
+    -- v9.08: HOME = tembak client ke BROOKHAVEN (game normal) 1x per client.
+    -- User: tembak id game aja, nanti out sendiri manual. Tembak 1x (gak diulang).
+    -- Tanpa grid (user: gak perlu).
+    local BROOKHAVEN = "4924922222"
+    local url = "roblox://placeId=" .. BROOKHAVEN
+    info(("HOME: %d client -> tembak ke Brookhaven (1x/client). Out manual sendiri."):format(#pkgMau))
     for _, p in ipairs(pkgMau) do
-        pcall(function() grid_satu(cfg, p) end)   -- tulis posisi grid dulu
-    end
-    for _, p in ipairs(pkgMau) do
-        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Roblox home")
-        -- MainGameActivity tanpa link = home screen (keluar game, gak tutup app)
-        sh_silent("su -c 'am start -f 0x20000000 -n " .. p ..
-                  "/com.roblox.client.startup.MainGameActivity'")
+        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven")
+        sh_silent("su -c 'am force-stop " .. p .. "'")
+        os.execute("sleep 1")
+        sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
         os.execute("sleep 1")
     end
-    ok(("HOME selesai: %d client balik ke Roblox home + grid keset."):format(#pkgMau))
+    ok(("HOME selesai: %d client ditembak ke Brookhaven. Out manual sendiri kalau mau."):format(#pkgMau))
 end
 
 local PERINTAH = (arg and arg[1] or ""):lower()
