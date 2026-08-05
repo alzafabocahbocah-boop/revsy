@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.27-cf"
+local VERSION = "9.28-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4754,7 +4754,20 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     -- beda -> pengaman atur grid di sini. Grid ditulis 2x di awal, tapi App
                     -- Cloner kadang gak baca -> tulis ulang persis sebelum buka = fresh.
                     if petaGrid and petaGrid[pkg] then
-                        pcall(function() tata_satu(pkg, petaGrid[pkg], true) end)
+                        local k = petaGrid[pkg]
+                        local gok, gket = pcall(function() return tata_satu(pkg, k, true) end)
+                        local nmp = pkg:gsub("com%.roblox%.", "")
+                        if gok then
+                            info(("   [grid] %s -> (%d,%d - %d,%d) %s"):format(
+                                nmp, k.L, k.T, k.R, k.B,
+                                (gket == "udah pas") and "udah pas" or "ketulis"))
+                        else
+                            warn(("   [grid] %s GAGAL: %s"):format(nmp, tostring(gket)))
+                        end
+                    else
+                        info(("   [grid] %s -> gak dapet posisi (peta %s)"):format(
+                            pkg:gsub("com%.roblox%.", ""),
+                            petaGrid and "ada tapi pkg gak ada" or "KOSONG"))
                     end
                     open_one(cfg, pkg, link_c, "buka-awal")
                     TERAKHIR_BUKA[pkg] = os.time()   -- v4.68: buat rem di atas
@@ -5890,11 +5903,15 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
         if petaG then
             for ronde = 1, 2 do
                 info(("Atur grid ronde %d/2 (semua client, sebelum open)..."):format(ronde))
+                local nOk, nGagal = 0, 0
                 for _, pkg in ipairs(split(cfg.pkgs)) do
                     if petaG[pkg] then
-                        pcall(function() tata_satu(pkg, petaG[pkg], true) end)
+                        local gok = pcall(function() tata_satu(pkg, petaG[pkg], true) end)
+                        if gok then nOk = nOk + 1 else nGagal = nGagal + 1 end
                     end
                 end
+                info(("  ronde %d: %d client grid ketulis%s"):format(
+                    ronde, nOk, nGagal > 0 and (", " .. nGagal .. " gagal") or ""))
                 if ronde == 1 then
                     info("Grid ronde 1 kelar -- jeda 10s sebelum ronde 2...")
                     os.execute("sleep 10")
