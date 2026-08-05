@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.28-cf"
+local VERSION = "9.30-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5899,19 +5899,48 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     -- 2x (ronde 1 -> jeda 10s -> ronde 2) biar bener2 kepasang sebelum client
     -- dibuka. Pakai grid_hitung (grid_kolom=5 dari panel) -> peta posisi.
     do
-        local petaG = grid_hitung(cfg, PKGS_AKTIF)
+        -- v9.29: grid dihitung dari JUMLAH CLIENT DIMINTA (PKGS_AKTIF kalau ada,
+        -- atau SEMUA cfg.pkgs). 2 PENGAMAN: (1) jumlah client dari yg diminta,
+        -- (2) client BARU (prefs belum ada) dibuka bentar dulu biar prefs kebentuk,
+        -- baru grid ditulis. Bug user: client baru prefs belum ada -> tata_satu
+        -- gagal -> "6 ketulis" (bukan 10) -> 4 client fullscreen.
+        local pkgsBuatGrid = PKGS_AKTIF or split(cfg.pkgs)
+        -- cek client yg prefs-nya BELUM ADA (client baru) -> buka bentar dulu
+        do
+            local perluBuka = {}
+            for _, pkg in ipairs(pkgsBuatGrid) do
+                local path = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+                local ada = sh("su -c 'test -f " .. path .. " && echo ADA'") or ""
+                if not ada:find("ADA") then perluBuka[#perluBuka+1] = pkg end
+            end
+            if #perluBuka > 0 then
+                info(("%d client baru (prefs belum ada) -> buka bentar biar prefs kebentuk..."):format(#perluBuka))
+                for _, pkg in ipairs(perluBuka) do
+                    sh_silent("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1'")
+                    os.execute("sleep 2")
+                    sh_silent("su -c 'am force-stop " .. pkg .. "'")
+                    info("   " .. pkg:gsub("com%.roblox%.", "") .. " dibuka+tutup (prefs kebentuk)")
+                end
+                os.execute("sleep 2")
+            end
+        end
+        local petaG = grid_hitung(cfg, pkgsBuatGrid)
         if petaG then
             for ronde = 1, 2 do
-                info(("Atur grid ronde %d/2 (semua client, sebelum open)..."):format(ronde))
+                info(("Atur grid ronde %d/2 (%d client diminta, sebelum open)..."):format(ronde, #pkgsBuatGrid))
                 local nOk, nGagal = 0, 0
-                for _, pkg in ipairs(split(cfg.pkgs)) do
+                for _, pkg in ipairs(pkgsBuatGrid) do
                     if petaG[pkg] then
-                        local gok = pcall(function() tata_satu(pkg, petaG[pkg], true) end)
-                        if gok then nOk = nOk + 1 else nGagal = nGagal + 1 end
+                        local gok, gket = pcall(function() return tata_satu(pkg, petaG[pkg], true) end)
+                        if gok then nOk = nOk + 1
+                        else
+                            nGagal = nGagal + 1
+                            if ronde == 2 then warn("   grid " .. pkg:gsub("com%.roblox%.", "") .. " GAGAL: " .. tostring(gket)) end
+                        end
                     end
                 end
                 info(("  ronde %d: %d client grid ketulis%s"):format(
-                    ronde, nOk, nGagal > 0 and (", " .. nGagal .. " gagal") or ""))
+                    ronde, nOk, nGagal > 0 and (", " .. nGagal .. " GAGAL") or ""))
                 if ronde == 1 then
                     info("Grid ronde 1 kelar -- jeda 10s sebelum ronde 2...")
                     os.execute("sleep 10")
@@ -8765,57 +8794,65 @@ end
 
 -- v9.05: home sebagian client (GLOBAL). Force-stop + set grid.
 function jalankan_home(cfg, pkgMau)
-    -- v9.10: HOME = tembak client ke BROOKHAVEN (game normal) 1x per client +
-    -- grid diatur UKURAN 4 CLIENT (walau total 10, window jadi gede kayak 4
-    -- client). User minta: home selalu layout 4 client biar keliatan gede/enak.
-    -- Caranya: PKGS_AKTIF isi pkgMau + PAD pakai pkg cfg lain sampai minimal 4
-    -- (grid_hitung pakai n>=4 -> petak ukuran 4). pkgMau tetap ADA di peta
-    -- (posisi kebaca), pad cuma buat naikin jumlah biar petak segede 4-client.
+    -- v9.30: HOME = tembak client ke BROOKHAVEN + grid ukuran 6 CLIENT + CEK
+    -- GRID BERULANG sampai pasti kepasang. User: home grid jadi ukuran 6 client,
+    -- dan pastiin 6 client grid-nya (cek berulang sampai pasti). Caranya:
+    -- PKGS_AKTIF isi pkgMau + PAD sampai minimal 6 -> grid_hitung petak ukuran 6.
     local BROOKHAVEN = "4924922222"
     local url = "roblox://placeId=" .. BROOKHAVEN
-    info(("HOME: %d client -> tembak Brookhaven (1x) + grid ukuran 4 client. Out manual."):format(#pkgMau))
-    -- bikin PKGS_AKTIF = pkgMau + pad (pkg cfg lain) sampai >=4
+    info(("HOME: %d client -> tembak Brookhaven (1x) + grid ukuran 6 client. Out manual."):format(#pkgMau))
+    -- bikin PKGS_AKTIF = pkgMau + pad (pkg cfg lain) sampai >=6
     local semuaPkg = split(cfg.pkgs)
     local aktif = {}
     local udah = {}
     for _, p in ipairs(pkgMau) do aktif[#aktif+1] = p; udah[p] = true end
     for _, p in ipairs(semuaPkg) do
-        if #aktif >= 4 then break end
+        if #aktif >= 6 then break end
         if not udah[p] then aktif[#aktif+1] = p; udah[p] = true end
     end
-    PKGS_AKTIF = aktif   -- >=4 -> grid_hitung petak ukuran 4 client
+    PKGS_AKTIF = aktif   -- >=6 -> grid_hitung petak ukuran 6 client
     GRID_CACHE = nil
-    -- v9.13: hitung peta grid SEKALI (ukuran 4) + LOG kalau gagal. tata_satu
-    -- LANGSUNG (gak lewat grid_satu yg ke-block auto_grid) -> grid PAKSA jalan.
     local petaGrid, gerr, gkol, gbar = grid_hitung(cfg, aktif)
     if not petaGrid then
         warn("GRID GAGAL dihitung: " .. tostring(gerr) .. " -- client tetep ditembak, grid dilewat")
     else
         info(("grid dihitung: %dx%d (ukuran %d client)"):format(gkol or 0, gbar or 0, #aktif))
     end
+    -- v9.30: fungsi tulis+CEK grid 1 client sampai PASTI pas (max 3x).
+    local function grid_pasti(pkg, kotak)
+        local nmp = pkg:gsub("com%.roblox%.", "")
+        for coba = 1, 3 do
+            pcall(function() tata_satu(pkg, kotak, true) end)
+            -- baca balik prefs, cek posisi udah pas?
+            local path = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+            local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+            local L = tonumber(isi:match('app_cloner_current_window_left" value="(%-?%d+)"'))
+            local T = tonumber(isi:match('app_cloner_current_window_top" value="(%-?%d+)"'))
+            if L == kotak.L and T == kotak.T then
+                info(("    [grid] %s -> (%d,%d) PAS (coba %d)"):format(nmp, kotak.L, kotak.T, coba))
+                return true
+            end
+            info(("    [grid] %s -> belum pas (coba %d/3, baca L=%s T=%s) -- tulis ulang"):format(
+                nmp, coba, tostring(L), tostring(T)))
+            os.execute("sleep 1")
+        end
+        warn(("    [grid] %s GAGAL pas setelah 3x"):format(nmp))
+        return false
+    end
     for _, p in ipairs(pkgMau) do
-        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven + grid(4)")
-        -- urutan BENER: force-stop DULU (app mati) -> tulis grid (prefs fresh) ->
-        -- launch (App Cloner baca prefs pas start = posisi grid kepakai).
+        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven + grid(6)")
         sh_silent("su -c 'am force-stop " .. p .. "'")
         os.execute("sleep 1")
         if petaGrid and petaGrid[p] then
-            local gok, gket = pcall(function() return tata_satu(p, petaGrid[p], true) end)
-            if gok then
-                info(("    grid ketulis (%d,%d - %d,%d)"):format(
-                    petaGrid[p].L, petaGrid[p].T, petaGrid[p].R, petaGrid[p].B))
-            else
-                info("    grid GAGAL: " .. tostring(gket))
-            end
+            grid_pasti(p, petaGrid[p])   -- cek berulang sampai pasti
         else
-            info("    (grid: " .. p:gsub("com%.roblox%.", "") .. " gak dapet posisi -- peta="
-                .. (petaGrid and "ada tapi pkg gak ada" or "KOSONG/nil") .. ")")
+            info("    (grid: " .. p:gsub("com%.roblox%.", "") .. " gak dapet posisi)")
         end
         os.execute("sleep 1")
         sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
         os.execute("sleep 1")
     end
-    ok(("HOME selesai: %d client ditembak Brookhaven + grid ukuran 4. Out manual kalau mau."):format(#pkgMau))
+    ok(("HOME selesai: %d client ditembak Brookhaven + grid ukuran 6. Out manual kalau mau."):format(#pkgMau))
 end
 
 local PERINTAH = (arg and arg[1] or ""):lower()
