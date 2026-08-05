@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.22-cf"
+local VERSION = "9.23-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6473,6 +6473,17 @@ local function run(cfg)
         -- lepas dari buka-client. Cek DENYUT tiap 30s: denyut mati >2 menit -> langsung rejoin (gak nunggu siklus lama).
         do
             local isiTop = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+            -- v9.23: RESTART PRIORITAS. Bug user: pencet Start (RESTART) tapi worker
+            -- lagi rejoin denyut 1-1 (10 client x 30s = lama) -> RESTART antri di
+            -- belakang, grid 2x telat/gak jalan. Fix: kalau ada RESTART baru (beda
+            -- dari lastIsi), SKIP rejoin denyut iterasi ini -> command handler di
+            -- bawah langsung proses RESTART (tutup + grid 2x + buka fresh).
+            if isiTop:upper():find("RESTART") and isiTop ~= lastIsi then
+                info("RESTART kedeteksi -- skip rejoin denyut, langsung proses RESTART")
+                lewatiDenyutRejoin = true
+            else
+                lewatiDenyutRejoin = false
+            end
             -- v8.56: PROSES PLACE dari isiTop DI SINI (sebelum rejoin denyut). Bug:
             -- PLACE diproses jauh di bawah (setelah rejoin denyut) -> rejoin pakai
             -- place LAMA, PLACE fall baru kebaca 1-2 menit kemudian. Fix: cek PLACE
@@ -6677,7 +6688,7 @@ local function run(cfg)
                 tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
                 -- v8.34: TEMBAK yang OUT (rejoin) -- open_one bareng, gak nunggu.
                 -- Dulu cuma lapor angka doang, yg out gak diurus. Sekarang tembak.
-                if #perluTembak > 0 then
+                if #perluTembak > 0 and not lewatiDenyutRejoin then
                     -- v8.54: REFRESH mapLink (+ accessCode per akun) SEBELUM tembak.
                     -- Bug: blok denyut ini pakai mapLink dari refresh terakhir, kalau
                     -- accessCode di-set SETELAH itu (klik World 2 Private) -> mapLink
