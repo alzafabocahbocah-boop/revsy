@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.20-cf"
+local VERSION = "9.22-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5890,6 +5890,54 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     -- v9.17: HAPUS posisi grid LAMA semua client DULU (client udah mati, prefs
     -- aman ditimpa) -> gak ada sisa kolom lama nyangkut pas grid baru ditulis.
     pcall(function() bersihin_grid_semua(cfg) end)
+    -- v9.21: WAJIB reset SUDAH_GRID + cache SETELAH bersihin. Bug user: grid
+    -- kehapus semua (bersihin) TAPI SUDAH_GRID masih true -> open_all SKIP tulis
+    -- grid -> client FULLSCREEN (posisi kehapus, gak ditulis ulang, gak ada grid).
+    -- Reset -> open_all pasti tulis grid 5 kolom fresh.
+    SUDAH_GRID = false
+    GRID_CACHE = nil
+    -- v9.22: set PKGS_AKTIF dari daftar DULU (sebelum grid) biar grid 2x pakai
+    -- jumlah client yg bener. RESTART:daftar -> client tertentu. RESTART polos ->
+    -- nil (semua client).
+    do
+        local dR = isi:match("RESTART:([%w%.%_,]+)")
+        if dR then
+            local onlyR = {}
+            for a in dR:gmatch("[^,]+") do onlyR[a] = true end
+            local pkgsR = {}
+            for _, pkg in ipairs(split(cfg.pkgs)) do
+                local u = (mapAkun or {})[pkg]
+                local nm = pkg:gsub("com%.roblox%.", "")
+                if onlyR[u] or onlyR[pkg] or onlyR[nm] then pkgsR[#pkgsR+1] = pkg end
+            end
+            PKGS_AKTIF = (#pkgsR > 0) and pkgsR or nil
+        else
+            PKGS_AKTIF = nil
+        end
+    end
+    -- keset (App Cloner belum baca prefs / timing). Tulis grid ke semua client
+    -- 2x (ronde 1 -> jeda 10s -> ronde 2) biar bener2 kepasang sebelum client
+    -- dibuka. Pakai grid_hitung (grid_kolom=5 dari panel) -> peta posisi.
+    do
+        local petaG = grid_hitung(cfg, PKGS_AKTIF)
+        if petaG then
+            for ronde = 1, 2 do
+                info(("Atur grid ronde %d/2 (semua client, sebelum open)..."):format(ronde))
+                for _, pkg in ipairs(split(cfg.pkgs)) do
+                    if petaG[pkg] then
+                        pcall(function() tata_satu(pkg, petaG[pkg], true) end)
+                    end
+                end
+                if ronde == 1 then
+                    info("Grid ronde 1 kelar -- jeda 10s sebelum ronde 2...")
+                    os.execute("sleep 10")
+                end
+            end
+            ok("Grid diatur 2x (5 kolom) -- lanjut open client")
+        else
+            warn("Grid gagal dihitung (peta nil) -- open client tanpa pre-grid")
+        end
+    end
     local daftarR = isi:match("RESTART:([%w%.%_,]+)")
     if daftarR then
         local onlyR = {}
