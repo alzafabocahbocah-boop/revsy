@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.44-cf"
+local VERSION = "9.45-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6877,7 +6877,15 @@ local function run(cfg)
         -- di panel. Dulu (v6.82) default FORCE -> worker langsung buka client
         -- sendiri, padahal user mau nunggu perintah panel.
         if isi == "" or isi == "-" then
-            isi = "STANDBY"
+            -- v9.44: kalau UDAH jalan (MODE_JALAN=true, udah pencet Start) -> perintah
+            -- kosong = tetep FORCE (lanjut jalan). User: setelah Start gak boleh balik
+            -- STANDBY sendiri. Cuma kalau BELUM start (MODE_JALAN false) -> STANDBY
+            -- awal (nunggu Start). Cuma STOP dari panel yg matiin.
+            if MODE_JALAN then
+                isi = "FORCE"
+            else
+                isi = "STANDBY"
+            end
         end
         -- v8.49: CEK STOP PRIORITAS (deteksi cepet + tutup barengan). STOP baru ->
         -- reset lastOpen + anggap sisa loop standby (gak buka client).
@@ -6910,8 +6918,13 @@ local function run(cfg)
             -- ganti akun worker buka semua client + bypass lisensi tutup semua.
             -- Sekarang: ganti akun -> balik STANDBY. FORCE cuma jalan kalau user
             -- PENCET START sendiri (bukan warisan FORCE lama).
+            -- v9.44: ganti akun -> balik ke mode SEKARANG. Kalau UDAH jalan
+            -- (MODE_JALAN=true, udah Start) -> FORCE (lanjut jalan, gak berhenti).
+            -- Kalau BELUM start (standby) -> STANDBY (gak buka client sendiri).
+            -- User: setelah Start gak boleh balik STANDBY sendiri.
+            local balikGanti = MODE_JALAN and "FORCE" or "STANDBY"
             pcall(function()
-                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"STANDBY"}', jstr(cfg.tim)), "PUT")
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), balikGanti), "PUT")
             end)
             -- v6.47: dedup DALAM antrean ini aja (biar kalau backend kebetulan
             -- gabung 2x client sama, gak diproses dobel). GAK ada penanda
