@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.31-cf"
+local VERSION = "9.33-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5946,7 +5946,8 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                     os.execute("sleep 10")
                 end
             end
-            ok("Grid diatur 2x (5 kolom) -- lanjut open client")
+            ok(("Grid diatur 2x (%s) -- lanjut open client"):format(
+                (tonumber(cfg.grid_kolom) or 0) > 0 and (cfg.grid_kolom .. " kolom") or "otomatis"))
         else
             warn("Grid gagal dihitung (peta nil) -- open client tanpa pre-grid")
         end
@@ -7147,12 +7148,41 @@ local function run(cfg)
                 if sGrid > 0 then cfg.grid_kolom = sGrid end
                 pcall(function() save_config(cfg) end)
                 info(("  setting baru: place=%s grid=%d kolom"):format(tostring(cfg.place_id), tonumber(cfg.grid_kolom) or 0))
+                -- v9.31: kalau place W2 FALL, AMBIL GETPS (PS link) DULU sebelum
+                -- restart. Bug user: restart dari setting kejadian SEBELUM denyut
+                -- sempet auto-getps -> ps_link kosong -> client masuk PUBLIC (bukan
+                -- private). Ambil getps di sini biar accessCode siap pas buka.
+                if cfg.place_id == "126987765280963" then
+                    info("  W2 FALL -> ambil PS link (getps) dulu sebelum restart...")
+                    pcall(function()
+                        os.execute(("timeout 120 %s getps"):format(
+                            (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
+                    end)
+                    pcall(function() refresh_ps_getps() end)   -- muat ulang mapLink dari ps_link baru
+                end
                 -- RESTART sendiri: tutup semua + grid 2x + buka fresh pakai setting baru
                 MODE_JALAN = true
                 SUDAH_GRID = false; GRID_CACHE = nil
-                PKGS_AKTIF = restart_kerjakan(cfg, "RESTART", mapAkun, mapLink, ada_stop)
+                -- v9.32: baca /start-pilih (client yg DICENTANG di panel) -> restart
+                -- CUMA client itu. Bug user: setting 6 client tapi worker buka 10.
+                -- Kalau pilih ada -> RESTART:akun1,akun2,... Kalau kosong -> semua.
+                local isiRestart = "RESTART"
+                do
+                    local rP = api_get(cfg, "/start-pilih?tim=" .. cfg.tim)
+                    local pilihStr = ambil_str(rP, "pilih")   -- JSON array string
+                    if pilihStr and pilihStr ~= "" and pilihStr ~= "null" then
+                        -- parse nama akun dari JSON array (["a","b",...])
+                        local daftar = {}
+                        for nm in pilihStr:gmatch('"([^"]+)"') do daftar[#daftar+1] = nm end
+                        if #daftar > 0 then
+                            isiRestart = "RESTART:" .. table.concat(daftar, ",")
+                            info(("  client dipilih di panel: %d client -> %s"):format(#daftar, table.concat(daftar, ",")))
+                        end
+                    end
+                end
+                PKGS_AKTIF = restart_kerjakan(cfg, isiRestart, mapAkun, mapLink, ada_stop)
                 refresh_status(); lastStatusCek = os.time()
-                lapor(cfg, "RESTART", cacheRun); lastStatus = os.time()
+                lapor(cfg, isiRestart, cacheRun); lastStatus = os.time()
                 ::lewatSetting::
             end
         end
