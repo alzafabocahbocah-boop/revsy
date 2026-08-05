@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.37"
+local VERSI = "4.38"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -219,7 +219,30 @@ task.spawn(function()
             local ch = player.Character
             local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
             local diGame = hrp and hrp:IsDescendantOf(workspace)
-            if writefile and diGame then
+            -- v4.38: TAMBAH cek GAME BENER-BENER SIAP (bukan cuma HRP ada). Bug
+            -- user: client NYANGKUT di loading (mau masuk game) tapi HRP udah
+            -- ke-spawn -> diGame true -> denyut ke-tulis FRESH -> worker kira udah
+            -- masuk game, padahal masih loading/nyangkut. Fix: denyut cuma nulis
+            -- kalau game LOADED + Humanoid HIDUP (Health>0). Loading blm kelar ->
+            -- IsLoaded false / Humanoid blm ada -> denyut BERHENTI -> worker tau
+            -- masih nyangkut -> rejoin. Denyut = tanda BENERAN MAIN, bukan loading.
+            local siapMain = false
+            if diGame then
+                local okS = pcall(function()
+                    local loaded = game:IsLoaded()
+                    local hum = ch:FindFirstChildOfClass("Humanoid")
+                    local hidup = hum and hum.Health > 0
+                    siapMain = loaded and hidup and true or false
+                end)
+                if not okS then siapMain = false end
+            end
+            -- v4.37: cek DISCONNECT (server putus tapi karakter blm despawn).
+            local dc = false
+            if Seed and Seed.cekDisconnectAndal then
+                local okc, hasil = pcall(Seed.cekDisconnectAndal)
+                dc = okc and hasil == true
+            end
+            if writefile and siapMain and not dc then
                 local ts = tostring(os.time())
                 writefile("zenx_denyut_" .. nama .. ".txt", ts)
                 writefile("zenx_denyut.txt", nama .. " " .. ts)
