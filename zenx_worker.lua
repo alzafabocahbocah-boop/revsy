@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.39-cf"
+local VERSION = "9.40-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6517,14 +6517,19 @@ local function run(cfg)
         -- kalau client udah kebuka semua (alur gak nyampe). Taruh di sini biar
         -- lepas dari buka-client. Cek DENYUT tiap 30s: denyut mati >2 menit -> langsung rejoin (gak nunggu siklus lama).
         do
-            local isiTop = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+            local respTop = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+            local isiTop = ambil_str(respTop, "isi") or ""
+            -- v9.40: log SIAPA yg kirim perintah (versi panel + IP dari backend).
+            -- Buat lacak restart tiba-tiba -> ketauan dari panel versi berapa / IP mana.
+            local pengirimTop = ambil_str(respTop, "pengirim") or ""
             -- v9.23: RESTART PRIORITAS. Bug user: pencet Start (RESTART) tapi worker
             -- lagi rejoin denyut 1-1 (10 client x 30s = lama) -> RESTART antri di
             -- belakang, grid 2x telat/gak jalan. Fix: kalau ada RESTART baru (beda
             -- dari lastIsi), SKIP rejoin denyut iterasi ini -> command handler di
             -- bawah langsung proses RESTART (tutup + grid 2x + buka fresh).
             if isiTop:upper():find("RESTART") and isiTop ~= lastIsi then
-                info("RESTART kedeteksi -- skip rejoin denyut, langsung proses RESTART")
+                info(("RESTART kedeteksi (dari: %s) -- skip rejoin denyut, langsung proses"):format(
+                    pengirimTop ~= "" and pengirimTop or "?"))
                 lewatiDenyutRejoin = true
             else
                 lewatiDenyutRejoin = false
@@ -8929,24 +8934,15 @@ function jalankan_home(cfg, pkgMau)
     end
     -- v9.30: fungsi tulis+CEK grid 1 client sampai PASTI pas (max 3x).
     local function grid_pasti(pkg, kotak)
+        -- v9.39: SIMPEL. User: gak masalah grid pas atau belum kebentuk, yg penting
+        -- tembak. Dulu retry 3x + cek prefs berulang (baca L/T) -> client baru prefs
+        -- kosong (L=nil) -> retry mubazir bermenit-menit. Sekarang tulis grid SEKALI
+        -- aja (tata_satu), gak cek, gak retry. Kalau kepasang bagus, kalau nggak ya
+        -- fullscreen (gak masalah -- client tetep kebuka).
         local nmp = pkg:gsub("com%.roblox%.", "")
-        for coba = 1, 3 do
-            pcall(function() tata_satu(pkg, kotak, true) end)
-            -- baca balik prefs, cek posisi udah pas?
-            local path = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
-            local isi = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
-            local L = tonumber(isi:match('app_cloner_current_window_left" value="(%-?%d+)"'))
-            local T = tonumber(isi:match('app_cloner_current_window_top" value="(%-?%d+)"'))
-            if L == kotak.L and T == kotak.T then
-                info(("    [grid] %s -> (%d,%d) PAS (coba %d)"):format(nmp, kotak.L, kotak.T, coba))
-                return true
-            end
-            info(("    [grid] %s -> belum pas (coba %d/3, baca L=%s T=%s) -- tulis ulang"):format(
-                nmp, coba, tostring(L), tostring(T)))
-            os.execute("sleep 1")
-        end
-        warn(("    [grid] %s GAGAL pas setelah 3x"):format(nmp))
-        return false
+        pcall(function() tata_satu(pkg, kotak, true) end)
+        info(("    [grid] %s -> ditulis (%d,%d)"):format(nmp, kotak.L, kotak.T))
+        return true
     end
     -- v9.37: TULIS GRID SEMUA CLIENT DULU (batch), BARU tembak. Fix user: home/
     -- masuk delay LAMA + ada yg belum ke-grid. Dulu per-client: force-stop -> grid
@@ -8958,24 +8954,15 @@ function jalankan_home(cfg, pkgMau)
         sh_silent("su -c 'am force-stop " .. p .. "'")
     end
     os.execute("sleep 2")   -- tunggu semua mati (App Cloner baca prefs pas mati)
-    -- STEP 2: tulis grid SEMUA client (client udah mati, prefs aman ditimpa)
-    local gridGagal = {}
+    -- STEP 2: tulis grid SEMUA client SEKALI (client udah mati, prefs aman ditimpa)
     for _, p in ipairs(pkgMau) do
         if petaGrid and petaGrid[p] then
-            if not grid_pasti(p, petaGrid[p]) then gridGagal[#gridGagal+1] = p end
+            grid_pasti(p, petaGrid[p])   -- v9.39: tulis sekali, gak retry
         else
             info("    (grid: " .. p:gsub("com%.roblox%.", "") .. " gak dapet posisi)")
         end
     end
-    -- STEP 2b: retry grid yg gagal SEKALI lagi (kadang prefs telat kebaca)
-    if #gridGagal > 0 then
-        info(("  %d client grid belum pas -> retry sekali lagi..."):format(#gridGagal))
-        os.execute("sleep 1")
-        for _, p in ipairs(gridGagal) do
-            if petaGrid and petaGrid[p] then grid_pasti(p, petaGrid[p]) end
-        end
-    end
-    -- STEP 3: tembak SEMUA client ke Brookhaven (grid udah kepasang)
+    -- STEP 3: tembak SEMUA client ke Brookhaven (grid udah ditulis)
     for _, p in ipairs(pkgMau) do
         info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven")
         sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
