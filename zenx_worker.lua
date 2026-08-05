@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.24-cf"
+local VERSION = "9.25-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6415,6 +6415,35 @@ local function run(cfg)
         local ia = ambil_str(isiAwal, "isi") or ""
         lapor(cfg, ia, cacheRun)   -- kirim daftar client + akun ke panel
         lastStatus = os.time()
+    end
+
+    -- v9.25: AMBIL SETTING PERSISTEN dari panel (place/grid/client). User: worker
+    -- pas mulai harusnya cek panel -- setting PS/kolom/client berubah gak. Simpan
+    -- persisten di backend (/setting-tim), gak cuma perintah 1-slot yg ke-nimpa.
+    -- Kalau setting BERUBAH dari config lokal -> set + tandain perlu RESTART biar
+    -- kepakai bersih. Kalau SAMA -> jalan biasa (gak ganggu client jalan).
+    do
+        local rS = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
+        local sPlace = ambil_str(rS, "place") or ""
+        local sGrid = ambil_num(rS, "grid") or 0
+        local berubah = false
+        if sPlace ~= "" and sPlace ~= cfg.place_id then
+            info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
+            cfg.place_id = sPlace
+            berubah = true
+        end
+        if sGrid > 0 and sGrid ~= (tonumber(cfg.grid_kolom) or 0) then
+            info(("Setting panel: grid %d kolom (beda dari %d) -- kepakai"):format(sGrid, tonumber(cfg.grid_kolom) or 0))
+            cfg.grid_kolom = sGrid
+            berubah = true
+        end
+        if berubah then
+            pcall(function() save_config(cfg) end)
+            SUDAH_GRID = false; GRID_CACHE = nil
+            info("Setting dari panel BERUBAH -> kepakai pas Start (grid/place fresh)")
+        else
+            info("Setting panel sama kayak config -- gak ada perubahan")
+        end
     end
 
     -- v7.62: banner device sekali di awal (langsung keliatan, gak nunggu 60s)
