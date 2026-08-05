@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.57-cf"
+local VERSION = "9.58-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7436,7 +7436,30 @@ local function run(cfg)
                     warn("Lisensi HILANG -- FOKUS PULIHIN (bypass key + buka client)")
                     SUDAH_GRID = false; GRID_CACHE = nil
                     -- udah Start -> PKGS_AKTIF keset (grid tau). pertahankan (jalan 6 -> 6).
+                    -- v9.57: kalau PKGS_AKTIF nil (worker re-exec, belum ke-set dari
+                    -- RESTART), INFER client aktif dari perintah DB (FORCE/RESTART:daftar).
+                    -- Bug user: bypass grid 10 (4x3) pas PKGS_AKTIF nil -> grid salah.
                     local onlyLis = (PKGS_AKTIF and #PKGS_AKTIF > 0) and PKGS_AKTIF or nil
+                    if not onlyLis then
+                        local rP = api_get(cfg, "/perintah?tim=" .. cfg.tim) or ""
+                        local isiP = ambil_str(rP, "isi") or ""
+                        local daftarP = isiP:match("FORCE:([%w%.%_,]+)") or isiP:match("RESTART:([%w%.%_,]+)")
+                        if daftarP then
+                            local setP = {}
+                            for a in daftarP:gmatch("[^,]+") do setP[a] = true end
+                            local pkgsP = {}
+                            for _, pkg in ipairs(split(cfg.pkgs)) do
+                                local u = mapAkun and mapAkun[pkg]
+                                local nm = pkg:gsub("com%.roblox%.", "")
+                                if setP[u] or setP[pkg] or setP[nm] then pkgsP[#pkgsP+1] = pkg end
+                            end
+                            if #pkgsP > 0 then
+                                onlyLis = pkgsP
+                                PKGS_AKTIF = pkgsP   -- set sekalian biar grid konsisten
+                                info(("  (bypass: %d client aktif dari perintah DB)"):format(#pkgsP))
+                            end
+                        end
+                    end
                     open_all(cfg, onlyLis, ada_stop, nil, mapLink, mapAkun, false, true)
                     refresh_status(); lastStatusCek = os.time()
                     BYPASS_TERAKHIR = now
