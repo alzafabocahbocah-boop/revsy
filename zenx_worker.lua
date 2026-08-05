@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.56-cf"
+local VERSION = "9.57-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6672,6 +6672,11 @@ local function run(cfg)
                 end
             end
             local hitTop = isiTop:upper():find("FORCE") or isiTop:upper():find("REJOIN") or isiTop:upper():find("RESTART")
+            -- v9.56: kalau perintah DB = FORCE/RESTART (hitTop), berarti UDAH START
+            -- (config keset). Set MODE_JALAN=true. Bug user: worker re-exec (up) ->
+            -- MODE_JALAN reset false, tapi perintah DB masih FORCE -> lisensi hilang
+            -- dianggap "belum start" -> bypass ketunda. Infer dari perintah aktif.
+            if hitTop then MODE_JALAN = true end
             -- v8.47: CEK denyut tiap 30s (bukan 2 menit). Ambang mati tetap 2 menit
             -- (120s). Bedanya: begitu denyut LEWAT 2 menit, cek berikutnya (max 30s
             -- lagi) LANGSUNG rejoin -- gak nunggu siklus cek 2 menit (yg bikin telat
