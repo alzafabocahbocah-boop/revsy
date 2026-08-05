@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.12-cf"
+local VERSION = "9.15-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3269,6 +3269,17 @@ local function grid_hitung(cfg, pkgsPilih)
     local pkgs = pkgsPilih or split(cfg.pkgs)
     local n = #pkgs
     if n == 0 then return nil, "gak ada client di config" end
+    -- v9.14: DETEKSI duplikat pkg (sebab grid nimpa). Kalau ada pkg dobel di
+    -- daftar -> log warning (biar user tau config-nya ada dobel).
+    do
+        local ce = {}
+        for _, p in ipairs(pkgs) do
+            ce[p] = (ce[p] or 0) + 1
+            if ce[p] == 2 then
+                warn("[grid] DUPLIKAT pkg: " .. p:gsub("com%.roblox%.", "") .. " (config ada dobel -> bisa bikin nimpa, di-dedup)")
+            end
+        end
+    end
 
     local kol, bar
     -- v8.57: OVERRIDE dari panel. cfg.grid_kolom di-set (>0) -> pakai kolom itu,
@@ -3299,15 +3310,24 @@ local function grid_hitung(cfg, pkgsPilih)
 
     local lebar, tinggi = math.floor(W / kol), math.floor(H / bar)
     local peta = {}
-    for i, pkg in ipairs(pkgs) do   -- URUTAN CONFIG, jangan urutan buka
-        local c = (i - 1) % kol
-        local r = math.floor((i - 1) / kol)
-        peta[pkg] = {
-            L = c * lebar + SELA,
-            T = r * tinggi + SELA,
-            R = (c + 1) * lebar - SELA,
-            B = (r + 1) * tinggi - SELA,
-        }
+    -- v9.14: DEDUP -- kalau pkgs ada duplikat, skip yg udah ke-assign (biar 2
+    -- client gak dapet index sama = posisi NIMPA). Pakai idx terpisah yg cuma
+    -- naik buat pkg UNIK. Bug user: 2 client posisi persis sama (numpuk penuh).
+    local idxUnik = 0
+    local udahAssign = {}
+    for _, pkg in ipairs(pkgs) do   -- URUTAN CONFIG, jangan urutan buka
+        if not udahAssign[pkg] then
+            udahAssign[pkg] = true
+            local c = idxUnik % kol
+            local r = math.floor(idxUnik / kol)
+            peta[pkg] = {
+                L = c * lebar + SELA,
+                T = r * tinggi + SELA,
+                R = (c + 1) * lebar - SELA,
+                B = (r + 1) * tinggi - SELA,
+            }
+            idxUnik = idxUnik + 1
+        end
     end
     return peta, nil, kol, bar, W, H, lebar, tinggi
 end
@@ -5773,7 +5793,8 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
         local onlyR = {}
         for a in daftarR:gmatch("[^,]+") do onlyR[a] = true end
         local pkgsR = {}
-        for pkg, u in pairs(mapAkun or {}) do
+        for _, pkg in ipairs(split(cfg.pkgs)) do   -- v9.15: urutan config (bukan pairs acak)
+            local u = (mapAkun or {})[pkg]
             local nm = pkg:gsub("com%.roblox%.", "")
             if onlyR[u] or onlyR[pkg] or onlyR[nm] then pkgsR[#pkgsR+1] = pkg end
         end
@@ -6368,8 +6389,11 @@ local function run(cfg)
                 do
                     local aktifBaru = nil
                     if setAkun then
+                        -- v9.15: URUTAN CONFIG (split cfg.pkgs), bukan pairs(mapAkun)
+                        -- yg ACAK -> grid mulai kiri-atas urut, gak acak.
                         aktifBaru = {}
-                        for pkg, u in pairs(mapAkun or {}) do
+                        for _, pkg in ipairs(split(cfg.pkgs)) do
+                            local u = (mapAkun or {})[pkg]
                             local nm = pkg:gsub("com%.roblox%.", "")
                             if setAkun[u] or setAkun[pkg] or setAkun[nm] then
                                 aktifBaru[#aktifBaru+1] = pkg
@@ -7677,8 +7701,15 @@ local function run(cfg)
             -- 3 kolom, tapi grid jadi 4x3 (dihitung buat 10 client). Sekarang grid
             -- dihitung buat jumlah client yg beneran dibuka (6 -> 3x2).
             if only then
+                -- v9.15: PKGS_AKTIF pakai URUTAN CONFIG (split cfg.pkgs), BUKAN
+                -- pairs(only) yg ACAK. Bug user: grid posisi acak, gak mulai dari
+                -- kiri atas. pairs() di Lua gak terurut -> PKGS_AKTIF isinya acak ->
+                -- grid_hitung kasih posisi ikut urutan acak. Fix: iterasi cfg.pkgs
+                -- (urutan 01-10), ambil yg ada di `only` -> urut kiri-atas dulu.
                 PKGS_AKTIF = {}
-                for pkg in pairs(only) do PKGS_AKTIF[#PKGS_AKTIF+1] = pkg end
+                for _, pkg in ipairs(split(cfg.pkgs)) do
+                    if only[pkg] then PKGS_AKTIF[#PKGS_AKTIF+1] = pkg end
+                end
             else
                 PKGS_AKTIF = nil   -- FORCE polos = semua client
             end
@@ -8552,15 +8583,32 @@ function jalankan_home(cfg, pkgMau)
     end
     PKGS_AKTIF = aktif   -- >=4 -> grid_hitung petak ukuran 4 client
     GRID_CACHE = nil
+    -- v9.13: hitung peta grid SEKALI (ukuran 4) + LOG kalau gagal. tata_satu
+    -- LANGSUNG (gak lewat grid_satu yg ke-block auto_grid) -> grid PAKSA jalan.
+    local petaGrid, gerr, gkol, gbar = grid_hitung(cfg, aktif)
+    if not petaGrid then
+        warn("GRID GAGAL dihitung: " .. tostring(gerr) .. " -- client tetep ditembak, grid dilewat")
+    else
+        info(("grid dihitung: %dx%d (ukuran %d client)"):format(gkol or 0, gbar or 0, #aktif))
+    end
     for _, p in ipairs(pkgMau) do
         info("  " .. p:gsub("com%.roblox%.", "") .. " -> Brookhaven + grid(4)")
-        -- v9.12: urutan BENER -> force-stop DULU (app mati), baru tulis grid
-        -- (prefs fresh), baru launch (App Cloner baca prefs pas start = posisi
-        -- grid kepakai). Dulu grid ditulis SEBELUM force-stop -> force-stop
-        -- reset/timpa posisi -> grid gak kepakai.
+        -- urutan BENER: force-stop DULU (app mati) -> tulis grid (prefs fresh) ->
+        -- launch (App Cloner baca prefs pas start = posisi grid kepakai).
         sh_silent("su -c 'am force-stop " .. p .. "'")
         os.execute("sleep 1")
-        pcall(function() grid_satu(cfg, p) end)   -- tulis grid SETELAH force-stop
+        if petaGrid and petaGrid[p] then
+            local gok, gket = pcall(function() return tata_satu(p, petaGrid[p], true) end)
+            if gok then
+                info(("    grid ketulis (%d,%d - %d,%d)"):format(
+                    petaGrid[p].L, petaGrid[p].T, petaGrid[p].R, petaGrid[p].B))
+            else
+                info("    grid GAGAL: " .. tostring(gket))
+            end
+        else
+            info("    (grid: " .. p:gsub("com%.roblox%.", "") .. " gak dapet posisi -- peta="
+                .. (petaGrid and "ada tapi pkg gak ada" or "KOSONG/nil") .. ")")
+        end
         os.execute("sleep 1")
         sh_silent("su -c \"am start -a android.intent.action.VIEW -d '" .. url .. "' -p " .. p .. "\"")
         os.execute("sleep 1")
