@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.05-cf"
+local VERSION = "9.07-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -744,15 +744,16 @@ end
 -- ============================================================
 -- config
 -- ============================================================
+_config_paths_dicoba = ""   -- global (bukan local -- hemat slot batas-200)
 local function load_config()
-    -- v9.05: coba beberapa path (HOME absolut, relatif, Termux default) biar
-    -- config kebaca dari cwd mana pun. CONFIG_PATHS di dalam fungsi (bukan main
-    -- chunk lokal) biar gak makan slot batas-200 lokal.
+    -- v9.06: coba banyak path + INGET yg dicoba (buat debug kalau gagal).
     local paths = {
         CONFIG_FILE,
         "zenx_worker_config.lua",
         "/data/data/com.termux/files/home/zenx_worker_config.lua",
+        (os.getenv("PWD") or ".") .. "/zenx_worker_config.lua",
     }
+    _config_paths_dicoba = table.concat(paths, " | ")
     for _, path in ipairs(paths) do
         local f = io.open(path, "r")
         if f then
@@ -8531,18 +8532,24 @@ end
 
 -- v9.05: home sebagian client (GLOBAL). Force-stop + set grid.
 function jalankan_home(cfg, pkgMau)
-    info(("HOME: %d client -> balik home (tutup game) + grid diatur"):format(#pkgMau))
-    for _, p in ipairs(pkgMau) do
-        info("  " .. p:gsub("com%.roblox%.", "") .. " -> home (force-stop)")
-        sh_silent("su -c 'am force-stop " .. p .. "'")
-    end
-    os.execute("sleep 2")
+    info(("HOME: %d client -> balik ke Roblox HOME (keluar game, app tetep jalan) + grid"):format(#pkgMau))
+    -- v9.07: BUKAN force-stop (itu tutup app TOTAL). User mau: keluar game -> balik
+    -- ke Roblox HOME SCREEN (app tetep idup). Caranya: launch MainGameActivity
+    -- TANPA -d (tanpa placeId) -> Roblox buka ke home, keluar dari game.
+    -- set grid DULU (App Cloner baca prefs pas activity mulai), baru launch.
     PKGS_AKTIF = pkgMau
     GRID_CACHE = nil
     for _, p in ipairs(pkgMau) do
-        pcall(function() grid_satu(cfg, p) end)
+        pcall(function() grid_satu(cfg, p) end)   -- tulis posisi grid dulu
     end
-    ok(("HOME selesai: %d client balik home + grid keset. Pencet Start/FORCE buat buka lagi."):format(#pkgMau))
+    for _, p in ipairs(pkgMau) do
+        info("  " .. p:gsub("com%.roblox%.", "") .. " -> Roblox home")
+        -- MainGameActivity tanpa link = home screen (keluar game, gak tutup app)
+        sh_silent("su -c 'am start -f 0x20000000 -n " .. p ..
+                  "/com.roblox.client.startup.MainGameActivity'")
+        os.execute("sleep 1")
+    end
+    ok(("HOME selesai: %d client balik ke Roblox home + grid keset."):format(#pkgMau))
 end
 
 local PERINTAH = (arg and arg[1] or ""):lower()
@@ -8608,7 +8615,11 @@ end
 
 if PERINTAH == "home" then
     local cfg = load_config()
-    if not cfg then err("Config belum ada. Jalanin `zenx` dulu."); return end
+    if not cfg then
+        err("Config belum ada. Path dicoba: " .. _config_paths_dicoba)
+        info("  cwd sekarang: " .. (os.getenv("PWD") or "?") .. " | HOME: " .. (os.getenv("HOME") or "?"))
+        return
+    end
     local rng = arg and arg[2] or ""
     if rng == "" then
         err("Cara pakai:  zenx home <range>")
