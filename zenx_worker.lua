@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.33-cf"
+local VERSION = "9.34-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7177,6 +7177,25 @@ local function run(cfg)
                         if #daftar > 0 then
                             isiRestart = "RESTART:" .. table.concat(daftar, ",")
                             info(("  client dipilih di panel: %d client -> %s"):format(#daftar, table.concat(daftar, ",")))
+                        end
+                    end
+                    -- v9.34: kalau /start-pilih KOSONG -> jangan pakai SEMUA cfg.pkgs
+                    -- (bisa 10 client hasil scan, padahal cuma 6 punya akun). Fallback
+                    -- ke client yg ADA AKUNnya (mapAkun). Bug user: 6 akun ke-assign
+                    -- tapi cfg.pkgs=10 -> restart buka 10 (4 client kosong tanpa akun).
+                    if isiRestart == "RESTART" and mapAkun then
+                        local akunClient = {}
+                        for _, pkg in ipairs(split(cfg.pkgs)) do
+                            local u = mapAkun[pkg]
+                            if u and tostring(u) ~= "" then
+                                local nm = pkg:gsub("com%.roblox%.", "")
+                                akunClient[#akunClient+1] = nm
+                            end
+                        end
+                        if #akunClient > 0 and #akunClient < #split(cfg.pkgs) then
+                            isiRestart = "RESTART:" .. table.concat(akunClient, ",")
+                            info(("  /start-pilih kosong -> pakai %d client yg ADA AKUN (dari %d total scan)"):format(
+                                #akunClient, #split(cfg.pkgs)))
                         end
                     end
                 end
