@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.32"
+local VERSI = "4.35"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -380,42 +380,107 @@ local state = {
     panelKunci    = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb",
 }
 
--- v4.31: BLOCK REJOIN dari server. GAG dev suka mindahin/rejoin pemain sendiri
--- (TeleportService dari server-side). SC lain block total dengan hook Teleport
--- Service -> teleport server ditolak, pemain gak pernah keluar. Kita hook juga.
--- KUNCI: jangan block teleport SCRIPT KITA sendiri (auto-rejoin DC, auto-tele
--- fall world). Pakai flag Seed._teleSendiri: kalau true = teleport kita (izinin),
--- kalau false = teleport server (BLOCK). Default state.blockRejoin MATI (opt-in
--- lewat panel). Hook sekali (idempoten via getgenv flag).
+-- v4.34: BLOCK REJOIN -- DIKERASIN (5 lapis). Debug nunjukin: rejoin di PS JUGA
+-- (bukan server shutdown public), TeleportService per-method GAK ke-hook pas
+-- rejoin kejadian -> berarti rejoin lewat jalur LAIN. Kemungkinan: __namecall
+-- Teleport, RemoteEvent FireServer (game suruh server mindahin), Kick, atau
+-- DisconnectFromServer. Sekarang block SEMUA jalur + logger catat tiap percobaan.
+--   L1: hookfunction TeleportService method
+--   L2: __namecall (nangkep :Teleport, :Kick, :FireServer ke remote teleport)
+--   L3: LocalPlayer:Kick
+--   L4: TeleportService:SetTeleportGui / DisconnectFromServer (via namecall)
+--   L5: __namecall FireServer ke RemoteEvent yg namanya bau teleport/rejoin
+-- KUNCI: izinin teleport SCRIPT KITA (flag Seed._teleSendiri).
 Seed._teleSendiri = false
+Seed._rejoinLog = {}   -- riwayat percobaan rejoin (buat debug)
 do
     local ok = pcall(function()
-        if getgenv().ZenxTeleHooked then return end   -- udah di-hook -> skip
+        if getgenv().ZenxTeleHooked then return end
         local TS = game:GetService("TeleportService")
         local function bolehTele()
-            -- izinin kalau: block mati, ATAU ini teleport script kita sendiri
             if not (state and state.blockRejoin) then return true end
             return Seed._teleSendiri == true
         end
-        -- daftar method teleport yang di-hook
-        local methodTele = { "Teleport", "TeleportToPlaceInstance", "TeleportToPrivateServer", "TeleportPartyAsync" }
-        for _, m in ipairs(methodTele) do
+        local function catatBlok(sumber)
+            Seed._logBlockTele = "BLOCK " .. sumber .. " (" .. os.date("%H:%M:%S") .. ")"
+            table.insert(Seed._rejoinLog, 1, Seed._logBlockTele)
+            while #Seed._rejoinLog > 8 do table.remove(Seed._rejoinLog) end
+            warn("[StarSeed] " .. Seed._logBlockTele)
+        end
+        -- method teleport/rejoin yang di-block
+        local namaBlok = {
+            Teleport = true, TeleportToPlaceInstance = true,
+            TeleportToPrivateServer = true, TeleportPartyAsync = true,
+            TeleportToSpawnByName = true, TeleportToPrivateServerAsync = true,
+        }
+        -- kata kunci remote yg kalau di-FireServer = minta server rejoin/teleport
+        local remoteBau = { "teleport", "rejoin", "kick", "hop", "serverhop", "reconnect", "leave", "boot" }
+
+        -- LAPIS 1: hookfunction TeleportService method
+        for m in pairs(namaBlok) do
             local asli = TS[m]
             if type(asli) == "function" and hookfunction then
                 local baru
                 baru = hookfunction(asli, function(...)
-                    if bolehTele() then return baru and asli(...) or asli(...) end
-                    -- BLOCK: teleport server ditolak
-                    if Seed then Seed._logBlockTele = "block rejoin server: " .. m .. " (" .. os.date("%H:%M:%S") .. ")" end
-                    warn("[StarSeed] BLOCK rejoin server (" .. m .. ")")
+                    if bolehTele() then return asli(...) end
+                    catatBlok("L1 " .. m)
                     return nil
                 end)
             end
         end
+
+        -- LAPIS 2+3+4+5: __namecall -- nangkep SEMUA :Method() call
+        if hookmetamethod and getnamecallmethod then
+            local oldNamecall
+            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                if not bolehTele() then
+                    local metode = getnamecallmethod()
+                    if metode then
+                        -- L2/L4: teleport/disconnect method
+                        if namaBlok[metode] or metode == "DisconnectFromServer" then
+                            catatBlok("L2 namecall " .. metode)
+                            return nil
+                        end
+                        -- L3: Kick
+                        if metode == "Kick" then
+                            catatBlok("L3 namecall Kick")
+                            return nil
+                        end
+                        -- L5: FireServer ke RemoteEvent yg namanya bau teleport/rejoin
+                        if metode == "FireServer" or metode == "InvokeServer" then
+                            local ok2, nm = pcall(function() return self.Name:lower() end)
+                            if ok2 and nm then
+                                for _, k in ipairs(remoteBau) do
+                                    if nm:find(k) then
+                                        catatBlok("L5 " .. metode .. " -> " .. self.Name)
+                                        return nil
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                return oldNamecall(self, ...)
+            end)
+        end
+
+        -- LAPIS 3 (backup, kalau namecall gak dukung): hookfunction Kick langsung
+        pcall(function()
+            local lpp = game:GetService("Players").LocalPlayer
+            if lpp and hookfunction then
+                local kickAsli
+                kickAsli = hookfunction(lpp.Kick, function(...)
+                    if bolehTele() then return kickAsli(...) end
+                    catatBlok("L3 Kick(fn)")
+                    return nil
+                end)
+            end
+        end)
+
         getgenv().ZenxTeleHooked = true
-        warn("[StarSeed] Hook TeleportService pasang (block rejoin server siap)")
+        warn("[StarSeed] Hook block rejoin PASANG (5 lapis: method+namecall+kick+disconnect+FireServer)")
     end)
-    if not ok then warn("[StarSeed] Hook teleport gagal (executor gak dukung hookfunction?)") end
+    if not ok then warn("[StarSeed] Hook block rejoin gagal (executor gak dukung hook?)") end
 end
 
 local CFG_VERSI = 3.6
@@ -4223,6 +4288,41 @@ pcall(function()
             VU:ClickButton2(Vector2.new())
         end)
     end)
+end)
+
+-- v4.35: ANTI-AFK GAG (BEDA dari Roblox 20min). Debug nunjukin GAG punya
+-- AntiAfkController SENDIRI yang pantau UserInputService.InputBegan (keyboard/
+-- mouse/gamepad) -> kalau gak ada input > IdleSeconds -> "[Warn] You got warning!"
+-- -> KICK/REJOIN. player.Idled (di atas) cuma reset idle ROBLOX, GAK reset timer
+-- GAG. Fix: kirim FAKE INPUT berkala (VirtualInputManager) biar InputBegan GAG
+-- ke-trigger -> markActivity() jalan -> timer reset -> gak kena warning/kick.
+-- Ini penyebab UTAMA rejoin (akun otomatis gak ada input asli). Tiap 30s cukup
+-- (IdleSeconds biasanya jauh lebih lama). Fake input: key kecil yg gak ganggu.
+task.spawn(function()
+    task.wait(25)
+    local VIM = nil
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    while isCurrentGen() do
+        if state.autoAfk then
+            pcall(function()
+                if VIM then
+                    -- tekan+lepas tombol yg gak ngefek apa-apa (misal LeftControl)
+                    -- -> UserInputService.InputBegan ke-trigger -> anti-afk GAG reset
+                    VIM:SendKeyEvent(true, Enum.KeyCode.LeftControl, false, game)
+                    task.wait(0.1)
+                    VIM:SendKeyEvent(false, Enum.KeyCode.LeftControl, false, game)
+                end
+            end)
+            -- backup: VirtualUser (kalau VIM gak ada/gagal)
+            pcall(function()
+                local VU = game:GetService("VirtualUser")
+                VU:CaptureController()
+                VU:ClickButton2(Vector2.new())
+            end)
+            Seed._logAfk = "fake input kirim (" .. os.date("%H:%M:%S") .. ")"
+        end
+        task.wait(30)   -- tiap 30s -- jauh di bawah IdleSeconds GAG
+    end
 end)
 
 -- ============================================================
