@@ -10871,12 +10871,24 @@ if PERINTAH == "getps" then
             if code then
                 -- simpen ke backend: ps_link = "accessCode=CODE"
                 local psLink = "accessCode=" .. code
+                local simpanOk, resp = false, ""
                 pcall(function()
-                    api_post(cfg, "/ps-simpan",
-                        string.format('{"akun":%s,"ps_link":%s}', jstr(akun), jstr(psLink)), "POST")
+                    resp = api_post(cfg, "/ps-simpan",
+                        string.format('{"akun":%s,"ps_link":%s}', jstr(akun), jstr(psLink)), "POST") or ""
+                    -- v9.73: cek respon simpan. backend return {"ok":true} kalau
+                    -- sukses. kalau kolom ps_link belum ada -> {"ok":false}.
+                    simpanOk = resp:find('"ok"%s*:%s*true') ~= nil
                 end)
-                ok(("%s -> PS dapet (%s)"):format(akun, ket or "PS"))
-                dapet = dapet + 1
+                if simpanOk then
+                    ok(("%s -> PS dapet + kesimpen (%s)"):format(akun, ket or "PS"))
+                    dapet = dapet + 1
+                else
+                    -- v9.73: PS dapet dari Roblox TAPI GAGAL simpan ke backend.
+                    -- Ini sebab "10 dapet PS tapi ps-list 0 -> public". Log jelas.
+                    warn(("%s -> PS dapet TAPI GAGAL SIMPAN: %s"):format(
+                        akun, resp ~= "" and resp:sub(1, 80) or "respon kosong"))
+                    gagal = gagal + 1
+                end
             else
                 warn(("%s -> gagal: %s"):format(akun, ket or "?"))
                 gagal = gagal + 1
