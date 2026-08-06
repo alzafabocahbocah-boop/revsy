@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.72-cf"
+local VERSION = "9.73-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5996,16 +5996,7 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     -- dapet -> nyangkut "minta terus". Sekarang langsung pakai cfg.place_id yg
     -- udah keset. Kalau W2 FALL, PS link udah diambil (auto getps di denyut).
     info("Place kepakai: " .. tostring(cfg.place_id) .. " (udah keset dari denyut)")
-    -- v9.17: HAPUS posisi grid LAMA semua client DULU (client udah mati, prefs
-    -- aman ditimpa) -> gak ada sisa kolom lama nyangkut pas grid baru ditulis.
-    pcall(function() bersihin_grid_semua(cfg) end)
-    -- v9.21: WAJIB reset SUDAH_GRID + cache SETELAH bersihin. Bug user: grid
-    -- kehapus semua (bersihin) TAPI SUDAH_GRID masih true -> open_all SKIP tulis
-    -- grid -> client FULLSCREEN (posisi kehapus, gak ditulis ulang, gak ada grid).
-    -- Reset -> open_all pasti tulis grid 5 kolom fresh.
-    SUDAH_GRID = false
-    GRID_CACHE = nil
-    -- v9.22: set PKGS_AKTIF dari daftar DULU (sebelum grid) biar grid 2x pakai
+    -- v9.22: set PKGS_AKTIF dari daftar DULU (sebelum cek/atur grid) biar pakai
     -- jumlah client yg bener. RESTART:daftar -> client tertentu. RESTART polos ->
     -- nil (semua client).
     do
@@ -6024,6 +6015,51 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
             PKGS_AKTIF = nil
         end
     end
+    -- v9.73: CEK GRID DI DEPAN (setelah PKGS_AKTIF keset). User: kalau grid udah
+    -- bener (kolom sesuai target), GAK PERLU hapus + tulis ulang -- langsung open.
+    -- Baca prefs semua client vs target; kalau SEMUA pas (toleransi 3px) -> skip
+    -- bersihin + ronde tulis grid (hemat waktu banyak). SUDAH_GRID tetep true.
+    local gridUdahPas = false
+    do
+        local pkgsCek = PKGS_AKTIF or split(cfg.pkgs)
+        local petaCek = grid_hitung(cfg, pkgsCek)
+        if petaCek then
+            local semua, pas = 0, 0
+            for _, pkg in ipairs(pkgsCek) do
+                if petaCek[pkg] then
+                    semua = semua + 1
+                    local path = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+                    local isiP = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+                    local L = tonumber(isiP:match('<int name="app_cloner_current_window_left" value="(%-?%d+)"'))
+                    local T = tonumber(isiP:match('<int name="app_cloner_current_window_top" value="(%-?%d+)"'))
+                    local R = tonumber(isiP:match('<int name="app_cloner_current_window_right" value="(%-?%d+)"'))
+                    local B = tonumber(isiP:match('<int name="app_cloner_current_window_bottom" value="(%-?%d+)"'))
+                    local t = petaCek[pkg]
+                    if L and T and R and B
+                       and math.abs(L - t.L) <= 3 and math.abs(T - t.T) <= 3
+                       and math.abs(R - t.R) <= 3 and math.abs(B - t.B) <= 3 then
+                        pas = pas + 1
+                    end
+                end
+            end
+            if semua > 0 and pas == semua then
+                gridUdahPas = true
+                info(("[cek-grid] %d/%d client grid UDAH PAS (%s kolom) -- skip hapus+tulis, langsung open"):format(
+                    pas, semua, (tonumber(cfg.grid_kolom) or 0) > 0 and tostring(cfg.grid_kolom) or "auto"))
+                SUDAH_GRID = true   -- grid udah bener -> open_all gak perlu tulis lagi
+            else
+                info(("[cek-grid] %d/%d client grid pas -- ada yg meleset, atur ulang"):format(pas, semua))
+            end
+        end
+    end
+    if not gridUdahPas then
+    -- v9.17: HAPUS posisi grid LAMA semua client DULU (client udah mati, prefs
+    -- aman ditimpa) -> gak ada sisa kolom lama nyangkut pas grid baru ditulis.
+    pcall(function() bersihin_grid_semua(cfg) end)
+    -- v9.21: reset SUDAH_GRID + cache SETELAH bersihin. Bug user: grid kehapus
+    -- (bersihin) TAPI SUDAH_GRID masih true -> open_all SKIP tulis -> fullscreen.
+    SUDAH_GRID = false
+    GRID_CACHE = nil
     -- keset (App Cloner belum baca prefs / timing). Tulis grid ke semua client
     -- 2x (ronde 1 -> jeda 10s -> ronde 2) biar bener2 kepasang sebelum client
     -- dibuka. Pakai grid_hitung (grid_kolom=5 dari panel) -> peta posisi.
@@ -6081,6 +6117,7 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
             warn("Grid gagal dihitung (peta nil) -- open client tanpa pre-grid")
         end
     end
+    end -- v9.73: tutup 'if not gridUdahPas' (skip bersihin+tulis kalau grid udah pas)
     local daftarR = isi:match("RESTART:([%w%.%_,]+)")
     if daftarR then
         local onlyR = {}
@@ -7433,6 +7470,11 @@ local function run(cfg)
                         os.execute(("timeout 120 %s getps"):format(
                             (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
                     end)
+                    -- v9.72: tandai getps BARU jalan -> refresh_ps_getps JANGAN auto-
+                    -- getps lagi (dobel). Bug user: pindah PS lama -- getps #1 di sini,
+                    -- terus refresh_ps_getps baca 0 -> auto-getps #2 -> ~40s+ percuma.
+                    -- Set getps_jalan biar refresh cuma BACA /ps-list (getps udah jalan).
+                    KICK_DIURUS["getps_jalan"] = os.time()
                     -- v9.35: RETRY refresh_ps_getps. Bug user: getps dapet 8 PS TAPI
                     -- [ps-getps] 0 dapet -> PUBLIC. Sebab: getps simpan ke backend
                     -- (/ps-simpan) async, refresh baca /ps-list cuma 1 detik kemudian
