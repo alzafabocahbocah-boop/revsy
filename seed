@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.38"
+local VERSI = "4.43"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1486,6 +1486,19 @@ function Seed.kirimGiftMail(onProgress)
         if t ~= "" then daftarTarget[#daftarTarget+1] = t end
     end
     if #daftarTarget == 0 then return false, "target kosong" end
+    -- v4.41: COUNTER GIFT HARIAN + guard EscrowCap. Dari debug game: MagicMail
+    -- EscrowCap=50 (max 50 mail pending). User: limit 50 gift/hari. Hitung mail
+    -- terkirim hari ini -> warning kalau mendekati/mentok 50. Reset tiap ganti hari.
+    local hariIni = os.date("%Y-%m-%d")
+    if Seed._giftHari ~= hariIni then
+        Seed._giftHari = hariIni
+        Seed._giftCountHari = 0   -- reset counter hari baru
+    end
+    local ESCROW_CAP = 50
+    if (Seed._giftCountHari or 0) >= ESCROW_CAP then
+        return false, ("LIMIT HARIAN: udah kirim %d/%d mail hari ini (EscrowCap). Tunggu besok / penerima claim dulu."):format(
+            Seed._giftCountHari, ESCROW_CAP)
+    end
     local sb = pkt("Mailbox", "SendBatch")
     if not (sb and sb.Fire) then return false, "SendBatch gak ada" end
     local qty = tonumber(state.giftMailQty) or 100
@@ -1548,10 +1561,15 @@ function Seed.kirimGiftMail(onProgress)
     local isiItem = table.concat(rincianItem, ", ")
     if #sukses > 0 then
         Seed.statGiftMail = (Seed.statGiftMail or 0) + #sukses
-        local pesan = ("done kirim [%s] ke %d akun: %s"):format(
-            isiItem, #sukses, table.concat(sukses, ", "))
+        Seed._giftCountHari = (Seed._giftCountHari or 0) + #sukses   -- v4.41: counter harian
+        local sisa = 50 - (Seed._giftCountHari or 0)
+        local pesan = ("done kirim [%s] ke %d akun: %s [kuota harian: %d/50, sisa %d]"):format(
+            isiItem, #sukses, table.concat(sukses, ", "), Seed._giftCountHari, math.max(0, sisa))
         if #gagal > 0 then
             pesan = pesan .. (" | GAGAL %d: %s"):format(#gagal, table.concat(gagal, ", "))
+        end
+        if sisa <= 5 and sisa > 0 then
+            pesan = pesan .. (" | ⚠ HAMPIR LIMIT (sisa %d)"):format(sisa)
         end
         return true, pesan
     end
@@ -2746,22 +2764,25 @@ function Seed.bukaMailbox()
 end
 
 function Seed.terimaGiftSekali()
-    -- v1.9: game punya Mailbox.ClaimAll (kekonfirmasi dari star_debug).
-    -- Satu tembakan buat semua, jauh lebih enteng daripada claim satu-satu
-    -- (yang tiap gift-nya pakai task.wait(0.1)).
+    -- v4.42: game punya Mailbox.ClaimAll. FIRE LANGSUNG tiap dipanggil, TANPA
+    -- cek jumlahGift dulu. Bug user: auto-claim "kadang jalan kadang enggak" --
+    -- sebab: jumlahGift() baca RecieveFrame yg CUMA keisi kalau mailbox pernah
+    -- KEBUKA. Akun yg mailbox-nya belum kebuka -> jumlahGift=0 -> ClaimAll gak
+    -- di-fire (walau ADA gift). Fix: ClaimAll aman di-fire walau kosong (server
+    -- abaikan) -> fire tiap loop, gak nunggu jumlahGift. Gak ada gift ketinggalan.
     local semua = pkt("Mailbox", "ClaimAll")
     if semua and semua.Fire then
+        -- coba baca jumlah buat statistik (kalau kebaca), TAPI tetep fire walau 0
         local n = Seed.jumlahGift()
+        pcall(function() semua:Fire() end)
         if n > 0 then
-            pcall(function() semua:Fire() end)
             Seed.statGift = Seed.statGift + n
             print("[StarSeed] terima gift (ClaimAll): " .. n)
-            return n
         end
-        return 0
+        return n
     end
 
-    -- cadangan: claim satu-satu
+    -- cadangan: claim satu-satu (kalau ClaimAll gak ada)
     local cl = pkt("Mailbox", "Claim")
     if not cl or not cl.Fire then return 0 end
     local pg = player:FindFirstChildOfClass("PlayerGui")
@@ -2791,7 +2812,22 @@ end
 task.spawn(function()
     while isCurrentGen() do
         task.wait(2)
-        if isCurrentGen() and state.terimaGift then pcall(Seed.terimaGiftSekali) end
+        if isCurrentGen() and state.terimaGift then
+            pcall(Seed.terimaGiftSekali)
+        end
+    end
+end)
+-- v4.42: PAKSA BUKA MAILBOX berkala (tiap 20s) biar RecieveFrame kebangun ->
+-- jumlahGift kebaca (statistik) + cadangan claim satu-satu jalan. Bug user:
+-- auto-claim intermiten karena mailbox belum pernah kebuka. ClaimAll di atas
+-- udah fire tiap 2s tanpa tergantung ini, tapi buka mailbox bantu akun yg
+-- ClaimAll-nya gak ada (fallback) + biar angka mail di panel akurat.
+task.spawn(function()
+    while isCurrentGen() do
+        task.wait(20)
+        if isCurrentGen() and state.terimaGift then
+            pcall(Seed.bukaMailbox)
+        end
     end
 end)
 -- ============================================================
@@ -5203,8 +5239,13 @@ function Seed.pantauRejoin()
                 local lastRejoin = (getgenv and getgenv().ZenxRejoinLast) or 0
                 if (now - lastRejoin) >= 90 then
                     if getgenv then getgenv().ZenxRejoinLast = now end
-                    local target = tonumber(state.telePlaceId) or 129343810645058
-                    warn(("[StarSeed] AUTO-REJOIN (DC andal) -> place %d"):format(target))
+                    -- v4.39: target = PlaceId GAME SEKARANG (game.PlaceId), bukan
+                    -- telePlaceId statis (W1). Bug user: main W2 (FALL) tapi rejoin
+                    -- ke W1 -> nyasar server, "gak kuat". Rejoin ke game yg lagi
+                    -- dimainin = balik ke server yg sama (W2 kalau di W2). Fallback
+                    -- ke telePlaceId kalau game.PlaceId gak kebaca.
+                    local target = tonumber(game.PlaceId) or tonumber(state.telePlaceId) or 129343810645058
+                    warn(("[StarSeed] AUTO-REJOIN (DC andal) -> place %d (game skrg)"):format(target))
                     pcall(function()
                         local TS = game:GetService("TeleportService")
                         Seed._teleSendiri = true    -- v4.31: izinin (teleport kita)
@@ -6661,7 +6702,7 @@ local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     Text = "pasar: belum kebaca" })
 
 -- ---------- Gift Mail (seed + gear) v3.18 ----------
-local kGiftMail = kartu(178, tabGift)
+local kGiftMail = kartu(200, tabGift)
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -6732,6 +6773,14 @@ local tblKirimMail = mk("TextButton", { Parent = kGiftMail,
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.aksenMuda, Text = "KIRIM" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblKirimMail })
 mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = tblKirimMail })
+
+-- v4.42: label countdown kirim berikutnya (di bawah tombol KIRIM). Diupdate
+-- tiap detik oleh loop auto gift mail. Nampilin sisa waktu / status / kuota.
+Seed._el.lblGiftCountdown = mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 166), Size = UDim2.new(1, -24, 0, 20),
+    Font = Enum.Font.GothamMedium, TextSize = 15.5, TextColor3 = WARNA.samar,
+    TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = false,
+    Text = "auto kirim: mati" })
 
 -- ============================================================
 -- TAB 3: MISC
@@ -7842,17 +7891,50 @@ Seed._giftMailAkhir = 0
 task.spawn(function()
     task.wait(25)
     while isCurrentGen() do
+        local jedaMin = tonumber(state.giftMailJeda) or 10
+        if jedaMin < 1 then jedaMin = 1 end
         if state.giftMailOn then
-            local jedaMin = tonumber(state.giftMailJeda) or 10
-            if jedaMin < 1 then jedaMin = 1 end
             local now = os.time()
-            if (now - Seed._giftMailAkhir) >= (jedaMin * 60) then
+            local lewat = now - Seed._giftMailAkhir
+            if lewat >= (jedaMin * 60) then
                 Seed._giftMailAkhir = now
                 local ok, pesan = Seed.kirimGiftMail()
-                if ok then print("[StarSeed] auto gift mail: " .. tostring(pesan)) end
+                -- v4.40: print SUKSES DAN GAGAL. Bug user: gift kadang gagal tapi
+                -- gak keliatan error -> dulu cuma print kalau ok=true, gagal
+                -- ketelan. Sekarang gagal JUGA di-print + disimpen buat lapor panel.
+                Seed._giftMailStatus = (ok and "OK: " or "GAGAL: ") .. tostring(pesan)
+                Seed._giftMailStatusTs = now
+                if ok then
+                    print("[StarSeed] auto gift mail OK: " .. tostring(pesan))
+                else
+                    warn("[StarSeed] auto gift mail GAGAL: " .. tostring(pesan))
+                end
             end
         end
-        task.wait(30)
+        -- v4.42: update label countdown tiap detik (kirim berikutnya kapan)
+        pcall(function()
+            local lbl = Seed._el and Seed._el.lblGiftCountdown
+            if not lbl then return end
+            if not state.giftMailOn then
+                lbl.Text = "auto kirim: mati"
+                lbl.TextColor3 = WARNA.samar
+                return
+            end
+            local target = tostring(state.giftMailTarget or ""):gsub("%s+", "")
+            if target == "" then
+                lbl.Text = "auto ON -- tapi target kosong"
+                lbl.TextColor3 = Color3.fromRGB(230, 130, 60)
+                return
+            end
+            local sisa = (jedaMin * 60) - (os.time() - Seed._giftMailAkhir)
+            if sisa < 0 then sisa = 0 end
+            local mm = math.floor(sisa / 60)
+            local ss = sisa % 60
+            local kuota = Seed._giftCountHari or 0
+            lbl.Text = ("kirim berikutnya: %d:%02d  (kuota %d/50)"):format(mm, ss, kuota)
+            lbl.TextColor3 = (sisa <= 10) and Color3.fromRGB(120, 230, 120) or WARNA.aksenMuda
+        end)
+        task.wait(1)
     end
 end)
 
