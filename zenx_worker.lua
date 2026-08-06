@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.67-cf"
+local VERSION = "9.68-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1264,18 +1264,30 @@ end
 -- yg lagi diproses. Buat NYELA loop panjang (rejoin/tembak 1-1). User: Start Paksa
 -- harus langsung berhentiin loop apapun -> skip -> urus perintah baru. PAKSA/RESTART
 -- baru di DB -> loop berhenti -> ronde utama proses perintah baru.
+_apb_cache = false
+_apb_waktu = 0
 function ada_perintah_baru(cfg, isiLagiJalan)
     if ada_stop() then return true end
+    -- v9.68: throttle 2 detik. Biar bisa dipanggil SESERING apapun di loop panjang
+    -- tanpa spam API (tiap call = 1 request ~300ms = berat kalau tiap titik). Cek
+    -- API max tiap 2s, sisanya pakai cache. Responsif (max 2s telat) tapi ringan.
+    -- User: worker block all buat perintah panel -> cek sering tanpa lemot.
+    local skrg = os.time()
+    if (skrg - _apb_waktu) < 2 then return _apb_cache end
+    _apb_waktu = skrg
     local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
+    local nyela = false
     -- STANDBY/STOP/CLOSE selalu nyela (berhenti)
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") then return true end
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") then nyela = true
     -- PAKSA/RESTART BARU (beda dari yg lagi jalan) -> nyela biar diproses fresh
-    if (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
-        return true
+    elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then nyela = true end
+    if nyela then
+        info("<< PERINTAH PANEL MASUK: " .. isi:sub(1, 40) .. " -- STOP loop, urus ini >>")
     end
-    return false
+    _apb_cache = nyela
+    return nyela
 end
 
 -- v4.89: BAWA JENDELA KE DEPAN TANPA LINK JOIN.
@@ -7884,6 +7896,7 @@ local function run(cfg)
                         api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
                     end)
                     info("PAKSA -> FORCE dikirim (client bakal kebuka ronde ini)")
+                    _apb_waktu = 0   -- reset cek perintah (fresh ronde depan)
                 end
                 skip_sisa = true   -- ronde ini skip (baru tutup+grid), ronde depan FORCE buka
             end
@@ -7921,6 +7934,7 @@ local function run(cfg)
                         api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
                     end)
                     info("RESTART -> FORCE dikirim (client bakal kebuka)")
+                    _apb_waktu = 0   -- reset cek perintah (fresh ronde depan)
                 end
                 skip_sisa = true   -- ronde ini skip (baru tutup+grid), ronde depan FORCE buka
             end
