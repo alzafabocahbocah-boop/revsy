@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.61-cf"
+local VERSION = "9.62-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6658,8 +6658,10 @@ local function run(cfg)
             -- belakang, grid 2x telat/gak jalan. Fix: kalau ada RESTART baru (beda
             -- dari lastIsi), SKIP rejoin denyut iterasi ini -> command handler di
             -- bawah langsung proses RESTART (tutup + grid 2x + buka fresh).
-            if isiTop:upper():find("RESTART") and isiTop ~= lastIsi then
-                info(("RESTART kedeteksi (dari: %s) -- skip rejoin denyut, langsung proses"):format(
+            if (isiTop:upper():find("RESTART") or isiTop:upper():find("PAKSA")) and isiTop ~= lastIsi then
+                info((isiTop:upper():find("PAKSA")
+                    and "START PAKSA kedeteksi (dari: %s) -- langsung proses"
+                    or "RESTART kedeteksi (dari: %s) -- skip rejoin denyut, langsung proses"):format(
                     pengirimTop ~= "" and pengirimTop or "?"))
                 lewatiDenyutRejoin = true
             else
@@ -7820,6 +7822,25 @@ local function run(cfg)
                 end
             end
             if not isi:find(":") and MODE_JALAN then skip_sisa = true end
+        elseif U:find("PAKSA") then
+            -- v9.62: START PAKSA -- SELALU restart, GAK cek ts/apapun (pasti jalan).
+            -- User: RESTART biasa kadang kehalang ts (Start gak jalan). PAKSA pasti
+            -- restart tiap dikirim. Perintah BARU yg panel lama gak kenal -> guard
+            -- natural (panel lama gak bisa trigger PAKSA). Proses kalau isi BEDA dari
+            -- lastIsi (biar gak loop tiap ronde -- sekali proses per kirim).
+            if isi ~= lastIsi then
+                lastIsi = isi
+                MODE_JALAN = true
+                SUDAH_GRID = false; GRID_CACHE = nil
+                info("START PAKSA dari panel -- restart pasti (gak kehalang ts)")
+                -- restart_kerjakan baca daftar dari "PAKSA:akun,akun" (sama kayak RESTART:)
+                local isiRestart = isi:gsub("^PAKSA", "RESTART")
+                PKGS_AKTIF = restart_kerjakan(cfg, isiRestart, mapAkun, mapLink, ada_stop)
+                refresh_status(); lastStatusCek = os.time()
+                lapor(cfg, isi, cacheRun); lastStatus = os.time()
+                info("START PAKSA selesai -- client kebuka")
+            end
+            skip_sisa = true
         elseif U:find("RESTART") then
             -- v9.01: RESTART = tutup SEMUA client -> buka fresh dari nol (setting
             -- baru kepakai bersih). Logic dipindah ke fungsi GLOBAL restart_kerjakan
