@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.63-cf"
+local VERSION = "9.67-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1257,6 +1257,24 @@ local STOP_FILE = "zenx_worker.stop"
 local function ada_stop()
     local f = io.open(STOP_FILE, "r")
     if f then f:close(); return true end
+    return false
+end
+
+-- v9.63: cek ada perintah NYELA (PAKSA/RESTART/STANDBY/STOP/CLOSE) yg BEDA dari
+-- yg lagi diproses. Buat NYELA loop panjang (rejoin/tembak 1-1). User: Start Paksa
+-- harus langsung berhentiin loop apapun -> skip -> urus perintah baru. PAKSA/RESTART
+-- baru di DB -> loop berhenti -> ronde utama proses perintah baru.
+function ada_perintah_baru(cfg, isiLagiJalan)
+    if ada_stop() then return true end
+    local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+    local isi = (ambil_str(r, "isi") or "")
+    local u = isi:upper()
+    -- STANDBY/STOP/CLOSE selalu nyela (berhenti)
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") then return true end
+    -- PAKSA/RESTART BARU (beda dari yg lagi jalan) -> nyela biar diproses fresh
+    if (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
+        return true
+    end
     return false
 end
 
@@ -7684,9 +7702,8 @@ local function run(cfg)
                     close_all(cfg, onlyRejoin, mapLink)
                     os.execute("sleep 3")
                     local function batal_r()
-                        if ada_stop() then return true end
-                        local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
-                        return (ambil_str(r, "isi") or ""):upper():find("STANDBY") ~= nil
+                        -- v9.63: PAKSA/RESTART/STANDBY baru -> nyela loop rejoin
+                        return ada_perintah_baru(cfg, isi)
                     end
                     refresh_ps(); pcall(refresh_ps_getps)
                     local function lapor_rejoin()
@@ -7811,11 +7828,8 @@ local function run(cfg)
 
                     refresh_ps(); pcall(refresh_ps_getps)
                     local function batal_g()
-                        if ada_stop() then return true end
-                        local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
-                        local i = (ambil_str(r, "isi") or ""):upper()
-                        return i:find("STANDBY") ~= nil or i:find("STOP") ~= nil
-                            or i:find("KILL") ~= nil or i:find("CLOSE") ~= nil
+                        -- v9.63: PAKSA/RESTART/STANDBY baru -> nyela loop grid
+                        return ada_perintah_baru(cfg, isi)
                     end
                     local function lapor_g()
                         refresh_status(); lastStatusCek = os.time()
@@ -7834,23 +7848,50 @@ local function run(cfg)
             if not isi:find(":") and MODE_JALAN then skip_sisa = true end
         elseif U:find("PAKSA") then
             -- v9.62: START PAKSA -- SELALU restart, GAK cek ts/apapun (pasti jalan).
-            -- User: RESTART biasa kadang kehalang ts (Start gak jalan). PAKSA pasti
-            -- restart tiap dikirim. Perintah BARU yg panel lama gak kenal -> guard
-            -- natural (panel lama gak bisa trigger PAKSA). Proses kalau isi BEDA dari
-            -- lastIsi (biar gak loop tiap ronde -- sekali proses per kirim).
+            -- Perintah BARU yg panel lama gak kenal -> guard natural.
             if isi ~= lastIsi then
                 lastIsi = isi
                 MODE_JALAN = true
-                SUDAH_GRID = false; GRID_CACHE = nil
-                info("START PAKSA dari panel -- restart pasti (gak kehalang ts)")
+                -- v9.66: RESET STATE PENUH -- kayak worker BARU jalan. User: tiap
+                -- Start Paksa harus proses BENER2 BARU, buang proses lama total.
+                -- Reset: client aktif, cache grid, penanda proses. JANGAN reset
+                -- status akun (mati/captcha/ban) + device info (biar gak ilang).
+                SUDAH_GRID = false; GRID_CACHE = nil; PKGS_AKTIF = nil
+                BYPASS_TERAKHIR = 0
+                for k in pairs(KICK_DIURUS) do
+                    -- buang penanda PROSES, simpen status akun + device
+                    if k == "getps_jalan" or k == "login_tertunda"
+                       or k == "lisensi_standby_warned"
+                       or k:find("^captcha:") or k:find("^offlama:") or k:find("^diag:") then
+                        KICK_DIURUS[k] = nil
+                    end
+                end
+                info("START PAKSA dari panel -- RESET FRESH (kayak worker baru) + restart")
                 -- restart_kerjakan baca daftar dari "PAKSA:akun,akun" (sama kayak RESTART:)
                 local isiRestart = isi:gsub("^PAKSA", "RESTART")
                 PKGS_AKTIF = restart_kerjakan(cfg, isiRestart, mapAkun, mapLink, ada_stop)
                 refresh_status(); lastStatusCek = os.time()
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
-                info("START PAKSA selesai -- client kebuka")
+                info("START PAKSA selesai -- lanjut buka client")
+                -- v9.65: kirim FORCE:daftar ke DB sendiri biar ronde depan buka client.
+                -- User: setelah start paksa dia GAK FORCE -> client gak kebuka. Dulu
+                -- andelin backend expire RESTART->FORCE, tapi PAKSA gak ke-expire.
+                do
+                    local daftarForce = isi:match("PAKSA:(.+)")
+                    local isiForce = daftarForce and ("FORCE:" .. daftarForce) or "FORCE"
+                    lastIsi = isiForce   -- update biar gak ke-PAKSA-handler lagi
+                    pcall(function()
+                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                    end)
+                    info("PAKSA -> FORCE dikirim (client bakal kebuka ronde ini)")
+                end
+                skip_sisa = true   -- ronde ini skip (baru tutup+grid), ronde depan FORCE buka
             end
-            skip_sisa = true
+            -- v9.64: kalau PAKSA udah diproses (isi==lastIsi, nyangkut di DB), JANGAN
+            -- skip_sisa -> biarin loop antrian jalan (buka client + rejoin). Bug user:
+            -- PAKSA "selesai" tapi client gak kebuka -- restart_kerjakan cuma tutup+
+            -- grid, client kebuka di LOOP ANTRIAN. Dulu skip_sisa=true tiap ronde ->
+            -- loop antrian gak pernah jalan -> client nyangkut ketutup.
         elseif U:find("RESTART") then
             -- v9.01: RESTART = tutup SEMUA client -> buka fresh dari nol (setting
             -- baru kepakai bersih). Logic dipindah ke fungsi GLOBAL restart_kerjakan
@@ -7869,9 +7910,24 @@ local function run(cfg)
                 PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                 refresh_status(); lastStatusCek = os.time()
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
-                info("RESTART selesai (ts=" .. tsRestart .. ") -- nunggu perintah berikutnya")
+                info("RESTART selesai (ts=" .. tsRestart .. ") -- lanjut buka client")
+                -- v9.65: kirim FORCE:daftar ke DB sendiri biar pasti buka client
+                -- (gak tergantung backend expire RESTART->FORCE).
+                do
+                    local daftarForce = isi:match("RESTART:(.+)")
+                    local isiForce = daftarForce and ("FORCE:" .. daftarForce) or "FORCE"
+                    lastIsi = isiForce
+                    pcall(function()
+                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                    end)
+                    info("RESTART -> FORCE dikirim (client bakal kebuka)")
+                end
+                skip_sisa = true   -- ronde ini skip (baru tutup+grid), ronde depan FORCE buka
             end
-            skip_sisa = true
+            -- v9.64: RESTART nyangkut (ts sama, udah diproses) -> JANGAN skip_sisa ->
+            -- biarin loop antrian buka client. Dulu skip_sisa=true di luar if -> loop
+            -- antrian gak jalan -> client kebuka cuma kalau backend expire RESTART->
+            -- FORCE. Sekarang gak tergantung backend (worker sendiri buka).
             if isi ~= lastIsi then
                 warn("CLOSE dari panel -> tutup semua client")
                 lastIsi = isi
@@ -8390,6 +8446,7 @@ local function run(cfg)
                         or i:find("KILL") ~= nil
                         or i:find("REJOIN") ~= nil
                         or i:find("CLOSE") ~= nil
+                        or i:find("PAKSA") ~= nil   -- v9.63: Start Paksa langsung nyela loop
                 end
                 -- v4.33: tabel ikut ke-update PAS lagi buka client. Dulu redraw
                 -- cuma di loop utama, sedangkan open_all ngeblok bermenit-menit ->
