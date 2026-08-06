@@ -1260,35 +1260,10 @@ local function ada_stop()
     return false
 end
 
--- v9.63: cek ada perintah NYELA (PAKSA/RESTART/STANDBY/STOP/CLOSE) yg BEDA dari
--- yg lagi diproses. Buat NYELA loop panjang (rejoin/tembak 1-1). User: Start Paksa
--- harus langsung berhentiin loop apapun -> skip -> urus perintah baru. PAKSA/RESTART
--- baru di DB -> loop berhenti -> ronde utama proses perintah baru.
+-- v9.63: helper ada_perintah_baru dipindah ke SETELAH api_get didefinisiin
+-- (v9.69 fix: dulu di sini -> api_get masih nil -> worker crash baris 1278).
 _apb_cache = false
 _apb_waktu = 0
-function ada_perintah_baru(cfg, isiLagiJalan)
-    if ada_stop() then return true end
-    -- v9.68: throttle 2 detik. Biar bisa dipanggil SESERING apapun di loop panjang
-    -- tanpa spam API (tiap call = 1 request ~300ms = berat kalau tiap titik). Cek
-    -- API max tiap 2s, sisanya pakai cache. Responsif (max 2s telat) tapi ringan.
-    -- User: worker block all buat perintah panel -> cek sering tanpa lemot.
-    local skrg = os.time()
-    if (skrg - _apb_waktu) < 2 then return _apb_cache end
-    _apb_waktu = skrg
-    local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
-    local isi = (ambil_str(r, "isi") or "")
-    local u = isi:upper()
-    local nyela = false
-    -- STANDBY/STOP/CLOSE selalu nyela (berhenti)
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") then nyela = true
-    -- PAKSA/RESTART BARU (beda dari yg lagi jalan) -> nyela biar diproses fresh
-    elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then nyela = true end
-    if nyela then
-        info("<< PERINTAH PANEL MASUK: " .. isi:sub(1, 40) .. " -- STOP loop, urus ini >>")
-    end
-    _apb_cache = nyela
-    return nyela
-end
 
 -- v4.89: BAWA JENDELA KE DEPAN TANPA LINK JOIN.
 -- Dulu munculinnya pakai 'am start -d <link>'. Itu aman kalau client UDAH di
@@ -2162,6 +2137,29 @@ local function jstr(s)
     s = s:gsub('\n','\n'):gsub('\r','\\r'):gsub('\t','\\t')
     s = s:gsub('%c', ' ')   -- sisa karakter kontrol lain -> spasi
     return '"'..s..'"'
+end
+
+-- v9.69: ada_perintah_baru dipindah KE SINI (setelah api_get + ambil_str
+-- didefinisiin). Bug user: dulu di baris ~1269 -> api_get masih nil (local
+-- didefinisiin di 2113) -> worker crash "attempt to call nil value api_get".
+-- Cek ada perintah NYELA (PAKSA/RESTART/STANDBY/STOP/CLOSE) beda dari yg lagi
+-- jalan. Buat NYELA loop panjang. Throttle 2s (cache) biar gak spam API.
+function ada_perintah_baru(cfg, isiLagiJalan)
+    if ada_stop() then return true end
+    local skrg = os.time()
+    if (skrg - _apb_waktu) < 2 then return _apb_cache end
+    _apb_waktu = skrg
+    local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+    local isi = (ambil_str(r, "isi") or "")
+    local u = isi:upper()
+    local nyela = false
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") then nyela = true
+    elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then nyela = true end
+    if nyela then
+        info("<< PERINTAH PANEL MASUK: " .. isi:sub(1, 40) .. " -- STOP loop, urus ini >>")
+    end
+    _apb_cache = nyela
+    return nyela
 end
 
 -- ============================================================
