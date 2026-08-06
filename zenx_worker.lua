@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.62-cf"
+local VERSION = "9.63-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6613,6 +6613,7 @@ local function run(cfg)
         local sPlace = ambil_str(rS, "place") or ""
         local sGrid = ambil_num(rS, "grid") or 0
         SETTING_TS_TERAKHIR = ambil_num(rS, "ts") or 0   -- v9.26: baseline ts
+        SERVER_TERAKHIR = ambil_str(rS, "server") or ""   -- v9.62: baseline server
         local berubah = false
         if sPlace ~= "" and sPlace ~= cfg.place_id then
             info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
@@ -7348,17 +7349,26 @@ local function run(cfg)
             if tsBaru > 0 and tsBaru ~= (SETTING_TS_TERAKHIR or 0) then
                 local sPlace = ambil_str(rS, "place") or ""
                 local sGrid = ambil_num(rS, "grid") or 0
+                local sServer = ambil_str(rS, "server") or ""
                 -- v9.31: cek place/grid BENERAN beda dari yg dipakai (bukan cuma
                 -- ts naik). Bug user: panel PUT place & grid TERPISAH -> ts naik
                 -- 2x -> worker restart 2x (backup nabrak). Sekarang update ts
                 -- diam2 kalau nilai sama, restart CUMA kalau place/grid beneran beda.
                 local placeBeda = (sPlace ~= "" and sPlace ~= cfg.place_id)
                 local gridBeda = (sGrid > 0 and sGrid ~= (tonumber(cfg.grid_kolom) or 0))
+                -- v9.62: cek SERVER beda juga (PS/public/world mode). User: ubah
+                -- server ke public (place sama) -> setting beda -> harus restart.
+                -- Dulu cuma cek place/grid -> server beda gak ke-detect -> gak restart.
+                local serverBeda = (sServer ~= "" and sServer ~= (SERVER_TERAKHIR or ""))
                 SETTING_TS_TERAKHIR = tsBaru   -- update ts (biar gak cek ulang terus)
-                if not (placeBeda or gridBeda) then
+                if sServer ~= "" then SERVER_TERAKHIR = sServer end
+                if not (placeBeda or gridBeda or serverBeda) then
                     -- ts naik tapi nilai sama (mis. panel set field lain) -> gak restart
-                    info("Setting-tim ts naik tapi place/grid sama -- gak restart")
+                    info("Setting-tim ts naik tapi place/grid/server sama -- gak restart")
                     goto lewatSetting
+                end
+                if serverBeda then
+                    info("Server BEDA (" .. tostring(SERVER_TERAKHIR) .. " -> " .. sServer .. ") -- restart pakai server baru")
                 end
                 warn("SETTING PANEL BERUBAH (place/grid beda) -> RESTART sendiri pakai setting baru")
                 SETTING_TS_TERAKHIR = tsBaru
