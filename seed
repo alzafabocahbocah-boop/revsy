@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.43"
+local VERSI = "4.44"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -7622,19 +7622,32 @@ end
 -- TutorialRunner + module Networking. Cuma fire kalau masih false (gak spam).
 -- ============================================================
 task.spawn(function()
-    if not state.skipTutorialOn then return end   -- v4.08: toggle (default ON)
-    for i = 1, 5 do
-        if not state.skipTutorialOn then break end
-        if player:GetAttribute("TutorialCompleted") == true then
-            if i > 1 then print("[StarSeed] tutorial selesai (skip berhasil)") end
-            break
+    -- v4.43: retry TERUS tiap 1 menit (bukan cuma 5x di awal). Bug user: tutorial
+    -- "kadang nyangkut" -- sebab: dulu cuma 5x percobaan (5 detik total), kalau
+    -- akun masuk lambat/lag/remote belum ready, 5 detik gak cukup -> nyerah ->
+    -- nyangkut. Sekarang: cek tiap 1 menit sampai TutorialCompleted true, gak nyerah.
+    -- Percobaan awal cepet (tiap 1s, 5x) biar akun normal langsung skip.
+    local awal = 0
+    while isCurrentGen() do
+        if state.skipTutorialOn then
+            if player:GetAttribute("TutorialCompleted") == true then
+                -- udah selesai -> diem (cek lagi tiap 1 menit kalau-kalau reset)
+            else
+                pcall(function()
+                    local C = pkt("Tutorial", "Complete")
+                    if C then C:Fire() end
+                end)
+                awal = awal + 1
+                print("[StarSeed] skip tutorial dikirim (#" .. awal .. ")")
+                -- cek berhasil abis sebentar
+                task.wait(2)
+                if player:GetAttribute("TutorialCompleted") == true then
+                    print("[StarSeed] tutorial selesai (skip berhasil)")
+                end
+            end
         end
-        pcall(function()
-            local C = pkt("Tutorial", "Complete")
-            if C then C:Fire() end
-        end)
-        print("[StarSeed] skip tutorial dikirim (#" .. i .. ")")
-        task.wait(1)
+        -- 5 percobaan pertama cepet (tiap 1s), sesudah itu tiap 1 menit
+        if awal < 5 then task.wait(1) else task.wait(60) end
     end
 end)
 
