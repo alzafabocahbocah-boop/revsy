@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.71-cf"
+local VERSION = "9.72-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2553,6 +2553,14 @@ local function build_url(cfg, link_client)
     --   1. link_client (assign per akun dari panel) -- kalau dikasih
     --   2. cfg._ps_override (PS tim dari panel, lama)
     --   3. cfg.link_code (diketik di Termux)
+    -- v9.72: TAPI kalau panel EKSPLISIT set PUBLIC (_ps_override == "", bukan nil),
+    -- ABAIKAN link_client -> join PUBLIC. Bug user: ganti server ke public tapi
+    -- worker tetep join PS -- sebab link_client (dari ps-getps, ps_link per akun)
+    -- prioritas #1 ngalahin public. Public dari panel = niat eksplisit, menang.
+    if cfg._ps_override == "" then
+        -- panel mau PUBLIC -> gak pakai PS apapun (link_client/override/link_code)
+        return "roblox://placeId=" .. cfg.place_id
+    end
     local lc = link_client
     if lc == nil or lc == "" then lc = cfg._ps_override end
     if lc == nil then lc = cfg.link_code or "" end
