@@ -637,13 +637,15 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.75-cf"
+local VERSION = "9.76-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
 -- kedua bakal dilewat dan client-nya nyangkut.
 local KICK_DIURUS = {}
-local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
+local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
+    -- coklat karamel (ANSI 256): KRML muda, KOP tua, KRMBG background
+    KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m", KRMBG="\27[48;5;180m\27[38;5;236m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
 -- warn() ikut kecatet (ditandain "!") supaya ERROR keliatan di panel juga.
@@ -2333,6 +2335,42 @@ function devnama_now()
     else nama = "RedFinger" end
     KICK_DIURUS["_devnama"] = nama
     return nama
+end
+
+-- v9.76: banner header COKLAT KARAMEL (versi + device + id device).
+-- border kotak rapi. Dicetak sekali di awal + tiap loop biar NETEP.
+function banner_karamel()
+    local ver = "v"..VERSION
+    local dnama = devnama_now() or "?"
+    local did = dev_id() or "?"
+    local isi = {
+        { "ZENX WORKER", ver },
+        { "device", dnama },
+        { "id", did },
+    }
+    -- lebar kolom: label terpanjang + nilai terpanjang
+    local wLbl, wVal = 0, 0
+    for _, b in ipairs(isi) do
+        if #b[1] > wLbl then wLbl = #b[1] end
+        if #b[2] > wVal then wVal = #b[2] end
+    end
+    local dalam = wLbl + wVal + 5      -- " label : value "
+    local KR, N = C.KRML, C.N
+    local function garis(kiri, kanan)
+        return KR..kiri..string.rep("─", dalam)..kanan..N
+    end
+    io.write("\n")
+    io.write(garis("┌", "┐").."\n")
+    for i, b in ipairs(isi) do
+        local lbl = b[1]..string.rep(" ", wLbl - #b[1])
+        local val = b[2]..string.rep(" ", wVal - #b[2])
+        local sep = (i == 1) and " " or ":"    -- baris judul tanpa titik dua
+        io.write(KR.."│ "..N..C.BOLD..lbl..N..KR.." "..sep.." "..N..C.KOP..val..N..KR.." │"..N.."\n")
+        if i == 1 then io.write(garis("├", "┤").."\n") end
+    end
+    io.write(garis("└", "┘").."\n")
+    io.write("\n")
+    io.flush()
 end
 
 -- ============================================================
@@ -6211,7 +6249,7 @@ local function run(cfg)
     end
 
     local list = split(cfg.pkgs)
-    print(C.BOLD..C.G.."\n=== ZENX WORKER v"..VERSION.." — RUNNING ===\n"..C.N)
+    banner_karamel()
     info("Tim   : "..cfg.tim.." ("..#list.." client)")
     -- v8.31: DETEKSI VERSI BARU + auto-restart client DIBUANG (v8.26). User: auto-
     -- update bikin error -- OUT semua client + buka ulang malah kacau (1/10 tiba2
@@ -6710,9 +6748,16 @@ local function run(cfg)
     end
 
     -- v7.62: banner device sekali di awal (langsung keliatan, gak nunggu 60s)
-    local lastBanner = 0
+    -- v9.76: cetak ulang banner karamel tiap 60s biar NETEP (gak ilang ketimbun log)
+    local lastBanner = os.time()
 
     while true do
+        -- v9.76: banner karamel netep -- cetak ulang tiap 60s
+        if os.time() - lastBanner >= 60 then
+            banner_karamel()
+            lastBanner = os.time()
+        end
+
         -- ===== v4.2: pintu keluar =====
         if ada_stop() then
             bersih(cfg, "diminta stop")
