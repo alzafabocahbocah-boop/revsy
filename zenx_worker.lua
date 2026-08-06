@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.68-cf"
+local VERSION = "9.69-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6975,7 +6975,10 @@ local function run(cfg)
                     if #perluTembak > 0 then
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
                     for idx, pkg in ipairs(perluTembak) do
-                        if cek_batal and cek_batal() then break end
+                        -- v9.68: cek perintah panel -> nyela. Loop rejoin jalan pas
+                        -- FORCE, jadi PAKSA/RESTART/STANDBY/CLOSE baru = nyela.
+                        -- isiLagiJalan="FORCE" biar PAKSA/RESTART ke-detect beda.
+                        if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                         -- v8.65: TULIS GRID posisi SEBELUM buka client. Bug: blok
                         -- denyut buka client TANPA nulis prefs grid dulu -> posisi
                         -- window pakai default/lama (bukan 3x2 yg diset). grid_satu
@@ -6988,7 +6991,8 @@ local function run(cfg)
                         -- terakhir gak perlu jeda.
                         if idx < #perluTembak then
                             for _ = 1, 30 do
-                                if cek_batal and cek_batal() then break end
+                                -- v9.68: cek perintah panel tiap detik -> nyela cepet
+                                if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                                 os.execute("sleep 1")
                             end
                         end
