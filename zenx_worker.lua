@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.70-cf"
+local VERSION = "9.71-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7392,6 +7392,13 @@ local function run(cfg)
                 -- server ke public (place sama) -> setting beda -> harus restart.
                 -- Dulu cuma cek place/grid -> server beda gak ke-detect -> gak restart.
                 local serverBeda = (sServer ~= "" and sServer ~= (SERVER_TERAKHIR or ""))
+                -- v9.71: DEBUG -- log server kebaca dari backend + baseline (biar
+                -- keliatan kenapa "server sama"). User: ganti private->public tapi
+                -- worker bilang server sama.
+                info(("[debug-server] backend='%s' | terakhir='%s' | beda=%s"):format(
+                    sServer ~= "" and sServer or "(kosong)",
+                    SERVER_TERAKHIR ~= "" and SERVER_TERAKHIR or "(kosong)",
+                    tostring(serverBeda)))
                 SETTING_TS_TERAKHIR = tsBaru   -- update ts (biar gak cek ulang terus)
                 if sServer ~= "" then SERVER_TERAKHIR = sServer end
                 if not (placeBeda or gridBeda or serverBeda) then
