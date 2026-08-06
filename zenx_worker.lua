@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.74-cf"
+local VERSION = "9.75-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2553,12 +2553,14 @@ local function build_url(cfg, link_client)
     --   1. link_client (assign per akun dari panel) -- kalau dikasih
     --   2. cfg._ps_override (PS tim dari panel, lama)
     --   3. cfg.link_code (diketik di Termux)
-    -- v9.72: TAPI kalau panel EKSPLISIT set PUBLIC (_ps_override == "", bukan nil),
-    -- ABAIKAN link_client -> join PUBLIC. Bug user: ganti server ke public tapi
-    -- worker tetep join PS -- sebab link_client (dari ps-getps, ps_link per akun)
-    -- prioritas #1 ngalahin public. Public dari panel = niat eksplisit, menang.
-    if cfg._ps_override == "" then
-        -- panel mau PUBLIC -> gak pakai PS apapun (link_client/override/link_code)
+    -- v9.74: paksa PUBLIC HANYA kalau server mode dari panel = PUBLIC (dropdown
+    -- server "w2-public"). Bug user: mau PRIVATE tapi masuk public. Sebab: v9.72
+    -- paksa public kalau _ps_override=="" -- TAPI _ps_override="" itu dari /ps
+    -- endpoint KOSONG (gak ada PS tim manual), BUKAN berarti mau public. Sekarang
+    -- cek SERVER_TERAKHIR (field server dari setting-tim): cuma "public" yg maksa.
+    local serverMode = (SERVER_TERAKHIR or ""):lower()
+    if serverMode:find("public") then
+        -- panel pilih server PUBLIC -> gak pakai PS apapun (link_client/override)
         return "roblox://placeId=" .. cfg.place_id
     end
     local lc = link_client
