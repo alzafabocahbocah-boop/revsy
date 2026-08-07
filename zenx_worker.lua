@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.96-cf"
+local VERSION = "9.97-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2645,9 +2645,17 @@ local function build_url(cfg, link_client)
         -- panel pilih server PUBLIC -> gak pakai PS apapun (link_client/override)
         return "roblox://placeId=" .. cfg.place_id
     end
-    local lc = link_client
-    if lc == nil or lc == "" then lc = cfg._ps_override end
-    if lc == nil then lc = cfg.link_code or "" end
+    -- v9.97: SERVER CUSTOM -> semua akun ke SATU server yg SAMA (link custom lo).
+    -- Pakai _ps_override (link dari /ps) DULUAN, ABAIKAN link_client (getps per-akun
+    -- yg accessCode-nya beda tiap akun). User sengaja set 1 link -> semua harus kesitu.
+    local lc
+    if serverMode == "custom" and cfg._ps_override and cfg._ps_override ~= "" then
+        lc = cfg._ps_override
+    else
+        lc = link_client
+        if lc == nil or lc == "" then lc = cfg._ps_override end
+        if lc == nil then lc = cfg.link_code or "" end
+    end
     lc = lc or ""
     -- v4.16: LINK SHARE MODERN (share?code=XXX&type=Server) -> code itu BUKAN
     -- linkCode! itu kode share yg harus di-RESOLVE Roblox dulu. dulu worker
@@ -6669,6 +6677,11 @@ local function run(cfg)
     -- masuk PS pribadi akun. Prioritas: assign-ps panel > ps_link getps > public.
     local function refresh_ps_getps()
         if cfg.place_id == "129343810645058" or cfg.pakai_ps == false then return end
+        -- v9.97: mode SERVER CUSTOM -> semua akun ke 1 link (_ps_override), gak perlu
+        -- getps per-akun. Skip biar gak buang waktu ambil accessCode yg gak kepakai.
+        if (SERVER_TERAKHIR or ""):lower() == "custom" and cfg._ps_override and cfg._ps_override ~= "" then
+            return
+        end
         local r = api_get(cfg, "/ps-list") or ""
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
