@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.97-cf"
+local VERSION = "9.99-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -12493,12 +12493,31 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     for n = 2, 10 do
         files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-2.731.944.apk.apk"):format(n)
     end
+    -- v9.98: client 11-15 nama pola BEDA (nomercy11.apk .. nomercy15.apk),
+    -- di-upload manual ke Releases worker_64. Ikut di-download biar RF bisa
+    -- 15 client. Kalau file-nya gak ada di Releases -> ke-skip (gagal size).
+    for n = 11, 15 do
+        files[#files+1] = ("nomercy%d.apk"):format(n)
+    end
 
-    ok(("%d APK dari GitHub Releases. Download + pasang...\n"):format(#files))
+    ok(("%d APK dari GitHub Releases. Download + pasang (skip yg udah keinstall)...\n"):format(#files))
+    -- v9.99: map APK -> package client (urut: file 1 -> pkgs[1], dst). Cek udah
+    -- keinstall belum -> kalau udah, SKIP (gak download ulang, hemat kuota+waktu).
+    local pkgsList = split(cfg and cfg.pkgs or "")
     local TMPAPK = HOME .. "/mercy_unduh.apk"
-    local sukses, gagal = 0, 0
+    local sukses, gagal, dilewat = 0, 0, 0
     for i, nama in ipairs(files) do
         print(C.C .. ("[%d/%d] "):format(i, #files) .. C.N .. nama:sub(1,40) .. "...")
+        -- cek client ke-i udah keinstall? (package dari config, urut sama file)
+        local pkgIni = pkgsList[i]
+        if pkgIni and pkgIni ~= "" then
+            local ada = sh(("su -c 'pm list packages %s 2>/dev/null' 2>/dev/null"):format(pkgIni)) or ""
+            if ada:find("package:" .. pkgIni, 1, true) then
+                print(C.G .. "  udah keinstall (" .. pkgIni .. ") -> SKIP" .. C.N)
+                dilewat = dilewat + 1
+                goto lanjut_mercy
+            end
+        end
         os.remove(TMPAPK)
         -- v6.80: SAMAIN dengan curl node-x biar progress bar (garis-garis) muncul.
         -- KUNCI: stderr JANGAN dibuang (2>/dev/null) -- curl nulis bilah progress
@@ -12537,10 +12556,57 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
                 gagal = gagal + 1
             end
         end
+        ::lanjut_mercy::
     end
     os.remove(TMPAPK)
     print("")
-    ok(("Selesai: %d pasang, %d gagal"):format(sukses, gagal))
+    ok(("Selesai: %d pasang, %d gagal, %d dilewat (udah keinstall)"):format(sukses, gagal, dilewat))
+    return
+end
+
+if PERINTAH == "download" and (arg and arg[2] == "vpn") then
+    -- v9.98: DOWNLOAD + PASANG Cloudflare WARP (1.1.1.1) VPN dari GitHub Releases
+    -- (tag worker_64). Buat RF yang butuh VPN (ganti IP / region). 1 APK doang.
+    local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
+    local NAMA = "com-cloudflare-onedotonedotonedotone-3837-66752135-ef8b2f5f382404189163d4d14c3128a8.apk"
+    local HOME = os.getenv("HOME") or "."
+    print(C.BOLD .. C.C .. "\n=== DOWNLOAD VPN (Cloudflare WARP 1.1.1.1) ===\n" .. C.N)
+    local TMPAPK = HOME .. "/vpn_unduh.apk"
+    os.remove(TMPAPK)
+    print(C.C .. "[1/1] " .. C.N .. "Cloudflare WARP...")
+    -- stderr JANGAN dibuang -> bilah progress curl muncul. -# ringkas, --fail biar
+    -- gagal kalau HTTP error, -L ikutin redirect GitHub->CDN, timeout 900.
+    os.execute(("timeout 900 curl -# --fail -L -o %s %s"):format(
+        shq(TMPAPK), shq(BASE .. NAMA)))
+    local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+    if sz < 1000000 then
+        print(C.R .. ("  GAGAL download (%d byte)"):format(sz) .. C.N)
+        local awal = sh(("head -c 120 %s 2>/dev/null"):format(shq(TMPAPK))) or ""
+        if awal:match("%S") then info("    " .. awal:gsub("%s+"," "):sub(1,80)) end
+        os.remove(TMPAPK)
+        return
+    end
+    print(("  pasang (%.0f MB)..."):format(sz / 1024 / 1024))
+    local outf = HOME .. "/vpn_pm.txt"
+    os.remove(outf)
+    os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(
+        shq(TMPAPK), shq(outf)))
+    local hasil = ""
+    for _ = 1, 150 do
+        os.execute("sleep 2")
+        local hf = io.open(outf, "r")
+        if hf then hasil = hf:read("*all") or ""; hf:close()
+            if hasil:find("Success") or hasil:find("Failure") then break end
+        end
+    end
+    os.remove(outf); os.remove(TMPAPK)
+    print("")
+    if tostring(hasil):find("Success") then
+        ok("Cloudflare WARP kepasang. Buka appnya, sambungin VPN-nya manual sekali.")
+    else
+        print(C.R .. "GAGAL pasang" .. C.N)
+        info(tostring(hasil):gsub("%s+", " "):sub(1, 90))
+    end
     return
 end
 
