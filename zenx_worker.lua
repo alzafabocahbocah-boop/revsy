@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.83-cf"
+local VERSION = "9.84-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3609,6 +3609,7 @@ end
 -- di jalur masukin (grafis-out / script-off) biar client masuk langsung di posisi.
 GRID_CACHE = nil   -- cache peta grid (biar gak hitung ulang tiap client)
 PKGS_AKTIF = nil   -- v8.88: client yg aktif dibuka (FORCE:daftar) -> grid pakai ini
+PKGS_AKTIF_PULIH = false   -- v9.84: udah coba pulihin PKGS_AKTIF dari start-pilih (sekali per boot)
 -- v8.90: grid_satu BUANG CACHE. Cache (GRID_CACHE) sumber utama "grid nyangkut
 -- lama" -- nilai basi kesimpen, gak ke-reset di semua jalur. Sekarang: hitung
 -- grid FRESH tiap panggil, dari PKGS_AKTIF (client yg panel pilih). grid_hitung
@@ -6911,6 +6912,48 @@ local function run(cfg)
             -- MODE_JALAN reset false, tapi perintah DB masih FORCE -> lisensi hilang
             -- dianggap "belum start" -> bypass ketunda. Infer dari perintah aktif.
             if hitTop then MODE_JALAN = true end
+            -- v9.84: PULIHIN PKGS_AKTIF ABIS REBOOT. Bug user: RF reboot -> worker
+            -- fresh -> PKGS_AKTIF=nil (gak persist), perintah DB=FORCE polos ->
+            -- setAkun nil -> buka SEMUA (10) padahal cuma 6 dipilih. Grid ikut 10
+            -- (petak beda ukuran, campur sama prefs lama 6). Fix: kalau FORCE aktif
+            -- + PKGS_AKTIF belum ada -> baca /start-pilih (client dicentang panel),
+            -- fallback ke client yg ADA AKUN (mapAkun). Sekali per boot (flag).
+            if hitTop and (not PKGS_AKTIF or #PKGS_AKTIF == 0) and not PKGS_AKTIF_PULIH then
+                local pilihArr = {}
+                local rP = api_get(cfg, "/start-pilih?tim=" .. cfg.tim)
+                local arrIsi = tostring(rP or ""):match('"pilih"%s*:%s*%[(.-)%]')
+                if arrIsi and arrIsi ~= "" then
+                    local setNm = {}
+                    for nm in arrIsi:gmatch('"([^"]+)"') do setNm[nm] = true end
+                    for _, pkg in ipairs(split(cfg.pkgs)) do
+                        local u = (mapAkun or {})[pkg]
+                        local nm = pkg:gsub("com%.roblox%.", "")
+                        if (u and setNm[u]) or setNm[nm] or setNm[pkg] then pilihArr[#pilihArr+1] = pkg end
+                    end
+                end
+                -- fallback: client yg ADA AKUN (kalau start-pilih kosong)
+                if #pilihArr == 0 and mapAkun then
+                    for _, pkg in ipairs(split(cfg.pkgs)) do
+                        local u = mapAkun[pkg]
+                        if u and tostring(u) ~= "" then pilihArr[#pilihArr+1] = pkg end
+                    end
+                end
+                if #pilihArr > 0 and #pilihArr < #split(cfg.pkgs) then
+                    PKGS_AKTIF = pilihArr
+                    GRID_CACHE = nil
+                    PKGS_AKTIF_PULIH = true   -- BERHASIL -> jangan ulang
+                    info(("[boot] pulihin %d client aktif (dari %d config) -> grid + buka cuma ini"):format(
+                        #pilihArr, #split(cfg.pkgs)))
+                else
+                    -- data belum siap (mapAkun/start-pilih kosong) -> JANGAN set flag,
+                    -- retry ronde depan. Kalau emang semua client aktif (pilih=total),
+                    -- gak masalah biarin nil.
+                    if #pilihArr >= #split(cfg.pkgs) then
+                        PKGS_AKTIF_PULIH = true   -- emang semua aktif, gak usah retry
+                    end
+                    info("[boot] start-pilih/akun belum nyaring (data belum siap / semua aktif) -- coba lagi nanti")
+                end
+            end
             -- v8.47: CEK denyut tiap 30s (bukan 2 menit). Ambang mati tetap 2 menit
             -- (120s). Bedanya: begitu denyut LEWAT 2 menit, cek berikutnya (max 30s
             -- lagi) LANGSUNG rejoin -- gak nunggu siklus cek 2 menit (yg bikin telat
