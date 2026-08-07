@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.46"
+local VERSI = "4.47"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1329,18 +1329,31 @@ function Seed.shovelSeedOnce()
         end
     end
 
-    local removed = 0
+    -- v4.47: METODE 1-1 (tunggu-ilang). Dulu fire semua barengan -> banyak kebuang
+    -- (server drop / blm cukup umur), lemot + gak efektif. Sekarang: KUMPULIN daftar
+    -- dulu (filter sisain-1 + jenis + mutasi), terus fire SATU-SATU, tiap fire TUNGGU
+    -- sampai plant ilang baru lanjut. Gak buang fire, tiap cabut dipastiin berhasil.
+
+    -- helper: plant masih ada gak (udah kecabut belum)
+    local function plantMasihAda(pid)
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants and plants:FindFirstChild(pid) then return true end
+        end
+        return false
+    end
+
+    -- PASS 1: kumpulin daftar plantId yg boleh dicabut (filter lengkap)
+    local target = {}
     local galiPerType = {}
     for _, plot in ipairs(gardens:GetChildren()) do
         local plants = plot:FindFirstChild("Plants")
         if plants then
             for _, plant in ipairs(plants:GetChildren()) do
-                if not (state.shovelOn and isCurrentGen()) then break end
                 local ownerId = tonumber(plant.Name:match("^(%d+)_"))
                 local plantId = plant.Name
                 local seedName = plant:GetAttribute("SeedName") or "?"
-                -- v3.50: deteksi mutasi tanaman -> key di shovelPilih bisa
-                -- "[MUT] <jenis>" (bermutasi) atau "<jenis>" (biasa). cocokin sesuai.
+                -- deteksi mutasi -> key "[MUT] <jenis>" atau "<jenis>"
                 local mut = nil
                 for _, k in ipairs({ "Mutation", "Mutations", "Variant", "Variants" }) do
                     local v = plant:GetAttribute(k)
@@ -1353,19 +1366,34 @@ function Seed.shovelSeedOnce()
                 end
                 local keyPilih = mut and ("[MUT] " .. seedName) or seedName
                 local okType = state.shovelSemua or (state.shovelPilih[keyPilih] == true)
-                -- sisain min 1 per jenis (pakai key yg sama biar konsisten)
+                -- sisain min 1 per jenis
                 local sisa = (typeCount[seedName] or 0) - (galiPerType[seedName] or 0)
                 local bolehGali = sisa > 1
                 if (not ownerId or ownerId == MY) and okType and #plantId >= 30 and bolehGali then
-                    pcall(function() p:Fire(plantId, "", shovelTool.Name, shovelTool) end)
-                    removed = removed + 1
+                    target[#target+1] = plantId
                     galiPerType[seedName] = (galiPerType[seedName] or 0) + 1
-                    if removed % 30 == 0 then task.wait() end
                 end
             end
         end
     end
-    Seed._logShovel = removed > 0 and (removed .. " tanaman dicabut") or "gak ada yg dicabut"
+
+    -- PASS 2: fire SATU-SATU, tunggu tiap plant ilang baru lanjut
+    local removed = 0
+    for _, plantId in ipairs(target) do
+        if not (state.shovelOn and isCurrentGen()) then break end
+        pcall(function() p:Fire(plantId, "", shovelTool.Name, shovelTool) end)
+        -- tunggu sampai ilang (maks ~2 detik, cek tiap 0.05s). Begitu ilang -> lanjut
+        -- (biasanya <0.3s, jadi jauh lebih cepet dari nunggu full 2s).
+        local ilang = false
+        for _ = 1, 40 do
+            task.wait(0.05)
+            if not plantMasihAda(plantId) then ilang = true; break end
+            if not (state.shovelOn and isCurrentGen()) then break end
+        end
+        if ilang then removed = removed + 1 end
+        -- kalau GAK ilang 2s (blm cukup umur / server nolak) -> skip, lanjut berikutnya
+    end
+    Seed._logShovel = removed > 0 and (removed .. " tanaman dicabut (1-1)") or "gak ada yg dicabut"
     return removed
 end
 
