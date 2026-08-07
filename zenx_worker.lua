@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.77-cf"
+local VERSION = "9.78-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4352,9 +4352,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         or ("BASI (" .. umur_ringkas(umur) .. ")")
             warn("Lisensi Delta " .. ket .. " -- client bakal nyangkut di layar key.")
 
-            if cfg.auto_key == true and (os.time() - (BYPASS_TERAKHIR or 0)) > 300 then
+            -- v9.77: lisensi HILANG -> bypass WAJIB diutamain. Buang throttle 300s
+            -- (dulu: bypass baru <5menit lalu -> SKIP -> langsung buka client ->
+            -- nyangkut di layar key). Sekarang: lisensi ilang = bypass DULU, titik.
+            local bypassSukses = false
+            if cfg.auto_key == true then
                 BYPASS_TERAKHIR = os.time()
-                info("  bypass DULU -- semua client ditutup, mulai dari nol")
+                info("  bypass DULU (diutamain) -- semua client ditutup, mulai dari nol")
 
                 -- ============================================================
                 -- v5.58: TUTUP SEMUA CLIENT DULU, baru bypass.
@@ -4648,6 +4652,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         if wok then
                             ok("  BYPASS BERES -- kunci ketulis, kepakai SEMUA client")
                             lisensiAda = true   -- v7.16: key udah ada -> sisa client TEMBAK BARENGAN (cepet)
+                            bypassSukses = true   -- v9.77: tandai sukses -> boleh lanjut buka client
                             -- v5.49: client yang dipakai buat ambil key DITUTUP.
                             -- Dia kebuka SEBELUM lisensinya ada, jadi sekarang
                             -- nyangkut di layar key -- lisensi baru gak kebaca
@@ -4679,6 +4684,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     info("  auto_key MATI -> bypass gak dijalanin sendiri.")
                     info("  Jalanin sekarang:  zenx key      (atau: auto_key=true di config)")
                 end
+            end
+            -- v9.77: lisensi ilang + bypass GAK SUKSES -> JANGAN buka client (bakal
+            -- nyangkut di layar key). Return early -> loop depan tembak bypass lagi.
+            -- User: loop bypass wajib diutamain.
+            if cfg.auto_key == true and not bypassSukses then
+                warn("  bypass belum sukses -> TUNDA buka client (biar gak nyangkut layar key). Ronde depan bypass lagi.")
+                return hasil
             end
         end
     end
