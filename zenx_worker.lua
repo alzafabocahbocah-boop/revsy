@@ -637,13 +637,15 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.75-cf"
+local VERSION = "9.77-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
 -- kedua bakal dilewat dan client-nya nyangkut.
 local KICK_DIURUS = {}
-local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m" }
+RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
+local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
+    KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
 -- warn() ikut kecatet (ditandain "!") supaya ERROR keliatan di panel juga.
@@ -2154,7 +2156,12 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local u = isi:upper()
     local nyela = false
     if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") then nyela = true
-    elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then nyela = true end
+    elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
+        -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
+        -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
+        local tsR = ambil_num(r, "ts") or 0
+        if tsR ~= (RESTART_TS_PROSES or 0) then nyela = true end
+    end
     if nyela then
         info("<< PERINTAH PANEL MASUK: " .. isi:sub(1, 40) .. " -- STOP loop, urus ini >>")
     end
@@ -2333,6 +2340,34 @@ function devnama_now()
     else nama = "RedFinger" end
     KICK_DIURUS["_devnama"] = nama
     return nama
+end
+
+-- v9.76: banner header COKLAT KARAMEL (versi + device + id device). border kotak rapi.
+function banner_karamel()
+    local ver = "v"..VERSION
+    local dnama = devnama_now() or "?"
+    local did = dev_id() or "?"
+    local isi = { { "ZENX WORKER", ver }, { "device", dnama }, { "id", did } }
+    local wLbl, wVal = 0, 0
+    for _, b in ipairs(isi) do
+        if #b[1] > wLbl then wLbl = #b[1] end
+        if #b[2] > wVal then wVal = #b[2] end
+    end
+    local dalam = wLbl + wVal + 5
+    local KR, N = C.KRML, C.N
+    local function garis(kiri, kanan) return KR..kiri..string.rep("─", dalam)..kanan..N end
+    io.write("\n")
+    io.write(garis("┌", "┐").."\n")
+    for i, b in ipairs(isi) do
+        local lbl = b[1]..string.rep(" ", wLbl - #b[1])
+        local val = b[2]..string.rep(" ", wVal - #b[2])
+        local sep = (i == 1) and " " or ":"
+        io.write(KR.."│ "..N..C.BOLD..lbl..N..KR.." "..sep.." "..N..C.KOP..val..N..KR.." │"..N.."\n")
+        if i == 1 then io.write(garis("├", "┤").."\n") end
+    end
+    io.write(garis("└", "┘").."\n")
+    io.write("\n")
+    io.flush()
 end
 
 -- ============================================================
@@ -6217,7 +6252,8 @@ local function run(cfg)
     end
 
     local list = split(cfg.pkgs)
-    print(C.BOLD..C.G.."\n=== ZENX WORKER v"..VERSION.." — RUNNING ===\n"..C.N)
+    print(C.BOLD..C.G.."\n"..C.N)
+    banner_karamel()
     info("Tim   : "..cfg.tim.." ("..#list.." client)")
     -- v8.31: DETEKSI VERSI BARU + auto-restart client DIBUANG (v8.26). User: auto-
     -- update bikin error -- OUT semua client + buka ulang malah kacau (1/10 tiba2
@@ -6659,6 +6695,7 @@ local function run(cfg)
         -- kalau perintah awal udah RESTART (bekas) -> catat ts-nya biar gak keproses
         if iAwal:find("RESTART") then
             lastRestartTs = ambil_num(rAwal, "ts") or 0
+            RESTART_TS_PROSES = lastRestartTs   -- v9.77: tandai udah diproses
             info("RESTART lama di DB (ts=" .. lastRestartTs .. ") -- diabaikan (bukan restart baru)")
         end
     end
@@ -7053,22 +7090,11 @@ local function run(cfg)
             end
         end
 
-        -- v7.62: BANNER DEVICE berkala (tiap 60s) -- teks GEDE biar keliatan RF
-        -- mana yang lagi jalan (user minta). Nampilin device ID + nama + versi.
+        -- v9.76: BANNER KARAMEL berkala (tiap 60s) -- netep, biar keliatan RF mana
+        -- yang lagi jalan. Kotak coklat karamel (versi + device + id).
         if (os.time() - (lastBanner or 0)) >= 60 then
             lastBanner = os.time()
-            local d = dev_id() or "?"
-            local dn = devnama_now() or ""
-            local garis = string.rep("#", 50)
-            print("")
-            print(C.BOLD .. C.Y .. garis .. C.N)
-            print(C.BOLD .. C.Y .. "##" .. C.N)
-            print(C.BOLD .. C.G .. "##   DEVICE >>  " .. C.BOLD .. C.C .. d .. C.N)
-            if dn ~= "" then print(C.BOLD .. C.G .. "##   NAMA   >>  " .. C.BOLD .. C.C .. dn .. C.N) end
-            print(C.BOLD .. C.G .. "##   ZENX   >>  v" .. VERSION .. "   |   " .. os.date("%H:%M:%S") .. C.N)
-            print(C.BOLD .. C.Y .. "##" .. C.N)
-            print(C.BOLD .. C.Y .. garis .. C.N)
-            print("")
+            banner_karamel()
         end
 
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
@@ -7998,6 +8024,7 @@ local function run(cfg)
             local tsRestart = ambil_num(respTop, "ts") or 0
             if tsRestart ~= (lastRestartTs or 0) then
                 lastRestartTs = tsRestart
+                RESTART_TS_PROSES = tsRestart   -- v9.77: tandai ts ini udah diproses
                 lastIsi = isi
                 MODE_JALAN = true
                 SUDAH_GRID = false; GRID_CACHE = nil
