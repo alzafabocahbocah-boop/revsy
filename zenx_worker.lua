@@ -4627,7 +4627,22 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 -- ukuran jendela.
 
                 if link then
-                    local kunci, sebab = bypass_kunci(cfg, link, false)
+                    -- v9.77: RETRY bypass sampai 5x kalau gagal. User: kalau API
+                    -- bypass gagal (mis. "Unknown error while bypassing"), JANGAN
+                    -- lanjut loop lain -- tembak terus sampai 5x baru nyerah.
+                    local kunci, sebab
+                    for percobaan = 1, 5 do
+                        kunci, sebab = bypass_kunci(cfg, link, percobaan > 1)  -- retry pakai refresh
+                        if kunci then
+                            if percobaan > 1 then ok("  BYPASS sukses di percobaan ke-" .. percobaan) end
+                            break
+                        end
+                        warn(("  API bypass gagal (percobaan %d/5): %s"):format(percobaan, tostring(sebab)))
+                        if percobaan < 5 then
+                            info("  tunggu 8s -> tembak bypass lagi...")
+                            os.execute("sleep 8")
+                        end
+                    end
                     if kunci then
                         local wok, wket = tulis_lisensi(cfg, kunci)
                         if wok then
@@ -4652,7 +4667,8 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                             warn("  kunci dapet tapi gagal nulis: " .. tostring(wket))
                         end
                     else
-                        warn("  API bypass gagal: " .. tostring(sebab))
+                        warn("  API bypass NYERAH setelah 5x gagal: " .. tostring(sebab))
+                        info("  coba manual: zenx key")
                     end
                 else
                     warn("  gagal nemu tombol key: " .. tostring(ketLink))
