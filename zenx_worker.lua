@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.87-cf"
+local VERSION = "9.88-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6103,6 +6103,10 @@ end
 -- Return: daftar PKGS_AKTIF (client yg dibuka) buat grid, atau nil (semua).
 function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     warn("RESTART dari panel -> tutup SEMUA client, mulai dari nol")
+    -- v9.87: cek batal pas buka client = ada_perintah_baru (bukan cuma ada_stop).
+    -- Biar UPDATE/REBOOT/STOP dari panel MOTONG buka-client di tengah (kayak FORCE).
+    -- RESTART/FORCE yg lagi jalan gak self-interrupt (ada_perintah_baru cek isi).
+    local function batal_buka() return ada_perintah_baru(cfg, isi) end
     local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
     ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
     os.execute("sleep 3")   -- proses bener2 mati (App Cloner baca prefs pas mati total)
@@ -6251,12 +6255,12 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
             if onlyR[u] or onlyR[pkg] or onlyR[nm] then pkgsR[#pkgsR+1] = pkg end
         end
         if #pkgsR > 0 then
-            open_all(cfg, pkgsR, ada_stop, nil, mapLink, mapAkun, false, true)
+            open_all(cfg, pkgsR, batal_buka, nil, mapLink, mapAkun, false, true)
             notify("ZenX "..cfg.tim, "RESTART -> buka ulang fresh")
             return pkgsR
         end
     end
-    open_all(cfg, nil, ada_stop, nil, mapLink, mapAkun, false, true)
+    open_all(cfg, nil, batal_buka, nil, mapLink, mapAkun, false, true)
     notify("ZenX "..cfg.tim, "RESTART -> buka ulang fresh")
     return nil   -- semua client
 end
@@ -7774,7 +7778,7 @@ local function run(cfg)
                             end
                         end
                     end
-                    open_all(cfg, onlyLis, ada_stop, nil, mapLink, mapAkun, false, true)
+                    open_all(cfg, onlyLis, function() return ada_perintah_baru(cfg, isi) end, nil, mapLink, mapAkun, false, true)
                     refresh_status(); lastStatusCek = os.time()
                     BYPASS_TERAKHIR = now
                 end
