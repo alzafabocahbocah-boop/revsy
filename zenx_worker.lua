@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.90-cf"
+local VERSION = "9.91-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6200,6 +6200,20 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
         else
             PKGS_AKTIF = nil
         end
+        -- v9.90: JANGAN PERNAH buka SEMUA. Kalau PKGS_AKTIF nil (RESTART polos /
+        -- 0 match) -> pakai client yg ADA AKUN sebagai daftar. Harus selalu ada
+        -- daftar dulu, gak pernah polos (buka 10 termasuk clone kosong).
+        if (not PKGS_AKTIF or #PKGS_AKTIF == 0) and mapAkun then
+            local pk = {}
+            for _, pkg in ipairs(split(cfg.pkgs)) do
+                local u = mapAkun[pkg]
+                if u and tostring(u) ~= "" then pk[#pk+1] = pkg end
+            end
+            if #pk > 0 then
+                PKGS_AKTIF = pk
+                info(("[restart-daftar] polos/0-match -> pakai %d client yg ADA AKUN (gak buka semua)"):format(#pk))
+            end
+        end
     end
     -- v9.73: CEK GRID DI DEPAN (setelah PKGS_AKTIF keset). User: kalau grid udah
     -- bener (kolom sesuai target), GAK PERLU hapus + tulis ulang -- langsung open.
@@ -6974,6 +6988,7 @@ local function run(cfg)
                     pcall(function() save_config(cfg) end)
                     info("Place diganti ke " .. placeTop .. " (dari denyut-loop, sebelum rejoin)")
                     SUDAH_GRID = false; GRID_CACHE = nil
+                    pcall(function() simpan_aktif(cfg) end)   -- v9.90: state ke-timpa (server baru)
                     -- v8.82: AUTO GETPS pas pindah ke place FALL (W2). User: sekali
                     -- pencet W2 PS -> otomatis get link dulu -> baru client jalan.
                     -- Jalanin `zenx getps` (ambil accessCode per akun, simpen ke
@@ -7001,6 +7016,7 @@ local function run(cfg)
                         -- bingung sebelum client dibuka). Detail ukuran pas GRID nata.
                         info("Grid diset " .. (baru > 0 and (baru .. " kolom") or "otomatis") .. " (dari denyut-loop, kepakai pas nata)")
                         SUDAH_GRID = false; GRID_CACHE = nil
+                        pcall(function() simpan_aktif(cfg) end)   -- v9.90: state ke-timpa (grid baru)
                     end
                 end
             end
@@ -7076,6 +7092,22 @@ local function run(cfg)
                         setAkun[pkg] = true
                         local u = mapAkun and mapAkun[pkg]
                         if u then setAkun[u] = true end
+                    end
+                end
+                -- v9.90: JANGAN PERNAH buka SEMUA (daftar polos). Kalau sampai sini
+                -- setAkun masih nil (FORCE polos + PKGS_AKTIF kosong) -> pakai client
+                -- yg ADA AKUN (mapAkun) sebagai daftar. User: harus SELALU ada daftar
+                -- dulu, gak pernah polos. Cuma kalau BENER2 gak ada akun -> biarin nil
+                -- (gak ada yg dibuka, bukan buka semua kosong).
+                if not setAkun and mapAkun then
+                    local s, ada = {}, 0
+                    for _, pkg in ipairs(split(cfg.pkgs)) do
+                        local u = mapAkun[pkg]
+                        if u and tostring(u) ~= "" then s[pkg] = true; s[u] = true; ada = ada + 1 end
+                    end
+                    if ada > 0 then
+                        setAkun = s
+                        info(("[daftar] FORCE polos -> pakai %d client yg ADA AKUN (gak buka semua)"):format(ada))
                     end
                 end
                 -- v8.88: SET client aktif buat grid LANGSUNG dari perintah panel.
