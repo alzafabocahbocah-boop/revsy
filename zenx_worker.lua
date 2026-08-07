@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.86-cf"
+local VERSION = "9.87-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8325,24 +8325,56 @@ local function run(cfg)
                 end)
                 lapor(cfg, "UPDATE-BATAL", cacheRun)
             else
-            info("UPDATE dari panel -- tarik worker terbaru, terus REBOOT RF")
+            info("UPDATE dari panel -- tarik worker terbaru (proses TERPISAH), terus REBOOT RF")
             local PFX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
-            os.execute(PFX .. "/bin/up")   -- stop + download + validasi + ganti file
-            ok("Worker keupdate -- RF di-reboot, versi baru jalan abis nyala")
-            tambahLog("UPDATE: worker baru ditarik -> reboot RF")
-            notify("ZenX "..cfg.tim, "update -> reboot, worker baru abis nyala")
-            -- reset perintah ke FORCE biar pas boot worker BARU langsung buka client
-            -- (gak ke-UPDATE lagi -> gak loop update-reboot).
+            local HOME = os.getenv("HOME") or "/data/data/com.termux/files/home"
+            -- reset perintah + lapor DULU, selagi worker MASIH IDUP (biar kekirim).
+            -- Kalau nunggu updater, worker udah mati -> gak kekirim.
             pcall(function()
                 api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
             end)
             lapor(cfg, "UPDATE", cacheRun)
-            os.execute("sleep 2")   -- kasih waktu reset perintah + lapor kekirim
-            -- reboot: worker baru jalan lagi via Termux:Boot abis nyala
-            os.execute("su -c 'svc power reboot' >/dev/null 2>&1 &")
-            os.execute("sleep 8")
-            os.execute("su -c 'reboot' >/dev/null 2>&1 &")
-            os.execute("sleep 30")   -- nunggu HP mati
+            tambahLog("UPDATE: tarik worker baru (terpisah) -> reboot")
+            notify("ZenX "..cfg.tim, "update -> reboot, worker baru abis nyala")
+            -- v9.87 FIX 'Killed': DULU worker jalanin `up` LANGSUNG. `up` bunuh worker
+            -- (zenx stop) -> `up` (ANAK worker) ikut ke-KILL sebelum sempet reboot ->
+            -- worker keupdate tapi GAK reboot. FIX: tulis skrip updater TERPISAH,
+            -- jalanin DETACHED (setsid) -> lepas dari proses worker. Worker exit,
+            -- updater lanjut sendiri di sesi lain: download -> reboot. Gak ke-kill.
+            local upd = HOME .. "/.zenx_update_now.sh"
+            local f = io.open(upd, "w")
+            if f then
+                f:write(table.concat({
+                    "#!" .. PFX .. "/bin/sh",
+                    "sleep 2",
+                    "zenx stop >/dev/null 2>&1",
+                    'URL="' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)"',
+                    'if curl --version >/dev/null 2>&1; then',
+                    '  curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" "$URL" -o "$HOME/zenx_worker.baru"',
+                    'else',
+                    '  wget -q --no-cache -O "$HOME/zenx_worker.baru" "$URL"',
+                    'fi',
+                    'if head -5 "$HOME/zenx_worker.baru" 2>/dev/null | grep -q "ZENX WORKER"; then',
+                    '  mv "$HOME/zenx_worker.baru" "$HOME/zenx_worker.lua"',
+                    '  echo "OK $(grep -m1 \'local VERSION\' "$HOME/zenx_worker.lua")" > "$HOME/.zenx_update.hasil"',
+                    'else',
+                    '  echo "GAGAL download (belum di-push?)" > "$HOME/.zenx_update.hasil"',
+                    'fi',
+                    "sleep 1",
+                    -- reboot: beberapa cara, salah satu pasti jalan
+                    "su -c reboot >/dev/null 2>&1",
+                    "su -c 'svc power reboot' >/dev/null 2>&1",
+                    "sleep 8",
+                    "su -c reboot >/dev/null 2>&1",
+                    "",
+                }, "\n"))
+                f:close()
+                os.execute("chmod +x " .. upd)
+            end
+            -- lepas DETACHED: setsid (sesi baru) + nohup + & -> gak mati sama worker.
+            os.execute("setsid nohup sh " .. upd .. " </dev/null >" .. HOME .. "/.zenx_update.log 2>&1 &")
+            ok("Updater dilepas (terpisah) -- worker berhenti, RF reboot bentar lagi")
+            os.execute("sleep 1")
             os.exit(0)
             end
         end
