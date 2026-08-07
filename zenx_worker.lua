@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.100-cf"
+local VERSION = "9.101-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -12444,7 +12444,7 @@ function update_delta_ke(cfg, versiBaru)
     -- file 1-10 pola versi, 11-15 nama tetap (nomercyNN.apk, versi ikut yg diupload)
     local files = { ("NO.MERCY.DELTA.LITE.64BIT.01-%s.apk.1.apk"):format(versiBaru) }
     for n = 2, 10 do files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-%s.apk.apk"):format(n, versiBaru) end
-    for n = 11, 15 do files[#files+1] = ("nomercy%d.apk"):format(n) end
+    for n = 11, 15 do files[#files+1] = ("nomercy%d-%s.apk"):format(n, versiBaru) end
     local TMPAPK = HOME .. "/mercy_update.apk"
     local sukses, gagal, dilewat = 0, 0, 0
     for i, pkg in ipairs(pkgs) do
@@ -12548,7 +12548,7 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     -- di-upload manual ke Releases worker_64. Ikut di-download biar RF bisa
     -- 15 client. Kalau file-nya gak ada di Releases -> ke-skip (gagal size).
     for n = 11, 15 do
-        files[#files+1] = ("nomercy%d.apk"):format(n)
+        files[#files+1] = ("nomercy%d-2.731.944.apk"):format(n)
     end
 
     ok(("%d APK dari GitHub Releases. Download + pasang (skip yg udah keinstall)...\n"):format(#files))
