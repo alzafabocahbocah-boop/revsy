@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.78-cf"
+local VERSION = "9.83-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2005,6 +2005,28 @@ end
 local function hapus(f) os.remove(f) end
 
 -- dipanggil pas keluar baik-baik: beresin semua yang nyangkut
+-- v9.83: cek RF SIAP di-reboot -- Termux:Boot kepasang + boot script ada.
+-- GLOBAL (bukan local) biar gak makan slot 200 lokal main chunk.
+function boot_siap()
+    local RUMAH = os.getenv("HOME") or "/data/data/com.termux/files/home"
+    -- 1) boot script ada?
+    local f = io.open(RUMAH .. "/.termux/boot/zenx", "r")
+    if not f then
+        return false, "boot script ~/.termux/boot/zenx GAK ADA (jalanin: zenx pasang)"
+    end
+    f:close()
+    -- 2) app Termux:Boot kepasang? (cek folder data / pm list)
+    local ada = sh("su -c 'pm list packages com.termux.boot 2>/dev/null' 2>/dev/null") or ""
+    if not ada:find("com.termux.boot") then
+        -- fallback cek folder data
+        local ada2 = sh("su -c 'ls -d /data/data/com.termux.boot 2>/dev/null' 2>/dev/null") or ""
+        if not ada2:find("com.termux.boot") then
+            return false, "app Termux:Boot BELUM kepasang (install dari F-Droid + buka sekali)"
+        end
+    end
+    return true, ""
+end
+
 local function bersih(cfg, sebab)
     print()
     info("Beres-beres (" .. (sebab or "?") .. ")...")
@@ -2156,7 +2178,7 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") then nyela = true
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
@@ -6811,7 +6833,14 @@ local function run(cfg)
             -- belakang, grid 2x telat/gak jalan. Fix: kalau ada RESTART baru (beda
             -- dari lastIsi), SKIP rejoin denyut iterasi ini -> command handler di
             -- bawah langsung proses RESTART (tutup + grid 2x + buka fresh).
-            if (isiTop:upper():find("RESTART") or isiTop:upper():find("PAKSA")) and isiTop ~= lastIsi then
+            -- v9.78 FIX LOOP: cek ts juga. RESTART yg ts-nya UDAH diproses
+            -- (== RESTART_TS_PROSES) -> JANGAN skip rejoin denyut. Bug: RESTART
+            -- netep di DB (ts sama, udah diproses) -> isiTop~=lastIsi true terus ->
+            -- skip rejoin SELAMANYA -> client gak pernah dibuka (0/6 di game loop).
+            local tsTop = ambil_num(respTop, "ts") or 0
+            local restartBaru = (tsTop ~= (RESTART_TS_PROSES or 0))
+            if (isiTop:upper():find("RESTART") or isiTop:upper():find("PAKSA"))
+               and isiTop ~= lastIsi and restartBaru then
                 info((isiTop:upper():find("PAKSA")
                     and "START PAKSA kedeteksi (dari: %s) -- langsung proses"
                     or "RESTART kedeteksi (dari: %s) -- skip rejoin denyut, langsung proses"):format(
@@ -7859,6 +7888,45 @@ local function run(cfg)
                 end
             end
             skip_sisa = true
+        elseif U:find("REBOOT") then
+            -- v9.80: REBOOT RF dari panel. Lapor dulu ke panel (biar keliatan lagi
+            -- reboot), reset perintah ke FORCE (biar pas nyala lagi worker langsung
+            -- buka client, gak nyangkut REBOOT), baru reboot. Worker auto-jalan lagi
+            -- abis nyala via Termux:Boot (~/.termux/boot/zenx).
+            if isi ~= lastIsi then
+                lastIsi = isi
+                -- v9.83: CEK boot siap dulu. Kalau Termux:Boot belum kepasang,
+                -- reboot = worker gak nyala lagi = RF MATI. Batal + lapor ke panel.
+                local siap, alasan = boot_siap()
+                if not siap then
+                    warn("REBOOT DIBATALIN -- " .. alasan)
+                    tambahLog("REBOOT batal: " .. alasan .. " (RF bakal mati kalau tetep reboot)")
+                    notify("ZenX "..cfg.tim, "REBOOT batal: " .. alasan)
+                    -- balik FORCE biar lanjut normal (gak nyangkut REBOOT)
+                    pcall(function()
+                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                    end)
+                    lapor(cfg, "REBOOT-BATAL", cacheRun)
+                    skip_sisa = true
+                    goto lewatReboot
+                end
+                warn("REBOOT dari panel -> RF di-restart, worker jalan lagi abis nyala")
+                tambahLog("REBOOT: RF di-restart dari panel")
+                notify("ZenX "..cfg.tim, "RF reboot -- worker balik abis nyala")
+                -- reset perintah ke FORCE biar pas boot worker langsung lanjut (gak REBOOT lagi)
+                pcall(function()
+                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                end)
+                lapor(cfg, "REBOOT", cacheRun)
+                os.execute("sleep 2")   -- kasih waktu lapor + reset perintah kekirim
+                -- reboot: svc power reboot (halus) dulu, 8s, fallback reboot biasa
+                os.execute("su -c 'svc power reboot' >/dev/null 2>&1 &")
+                os.execute("sleep 8")
+                os.execute("su -c 'reboot' >/dev/null 2>&1 &")
+                os.execute("sleep 30")   -- nunggu HP mati
+            end
+            ::lewatReboot::
+            skip_sisa = true
         elseif U:find("FRONT") then
             if isi ~= lastIsi then
                 lastIsi = isi
@@ -8080,6 +8148,21 @@ local function run(cfg)
                     _apb_waktu = 0   -- reset cek perintah (fresh ronde depan)
                 end
                 skip_sisa = true   -- ronde ini skip (baru tutup+grid), ronde depan FORCE buka
+            else
+                -- v9.79: RESTART bekas (ts SAMA, udah diproses) -> JANGAN skip_sisa.
+                -- Bug: skip_sisa=true di sini -> denyut rejoin gak jalan -> client
+                -- gak kebuka -> "0/6 di game" loop selamanya. Sekarang: biarin loop
+                -- antrian/denyut jalan buka client. + kirim ulang FORCE ke DB biar
+                -- RESTART bekas keganti (gak ke-detect terus).
+                local daftarForce = isi:match("RESTART:(.+)")
+                local isiForce = daftarForce and ("FORCE:" .. daftarForce) or "FORCE"
+                if lastIsi ~= isiForce then
+                    lastIsi = isiForce
+                    pcall(function()
+                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                    end)
+                    info("RESTART bekas (ts=" .. tsRestart .. ", udah diproses) -> kirim FORCE, lanjut buka client")
+                end
             end
             -- v9.64: RESTART nyangkut (ts sama, udah diproses) -> JANGAN skip_sisa ->
             -- biarin loop antrian buka client. Dulu skip_sisa=true di luar if -> loop
@@ -8088,7 +8171,8 @@ local function run(cfg)
             -- v9.77: blok CLOSE yg dulu di sini (isi~=lastIsi -> close_all) DIBUANG --
             -- itu bikin RESTART bekas (isi=RESTART, lastIsi=FORCE) nutup 10 client
             -- liar. CLOSE sekarang handler sendiri di atas.
-            skip_sisa = true
+            -- v9.79: skip_sisa DIBUANG dari sini -> RESTART bekas biarin denyut rejoin
+            -- jalan (buka client). skip_sisa cuma pas RESTART BARU keproses (di atas).
         end
 
         if not skip_sisa then
@@ -8161,17 +8245,41 @@ local function run(cfg)
             lastIsi = isi
         end
 
-        -- v6.04: UPDATE dari panel. Tarik worker terbaru (skrip `up`) + exit.
-        -- Worker gak auto-restart -- user FORCE lagi dari panel buat nyalain
-        -- worker baru (mekanisme restart diserahin ke user, lebih aman drpd
-        -- nebak exec/loop yang belum tentu ada di RF ini).
+        -- v9.81: UPDATE lewat REBOOT. Tarik worker terbaru (skrip `up`) -> reboot
+        -- RF -> worker versi BARU auto-jalan abis nyala (via Termux:Boot). User:
+        -- update = reboot aja, biar gak perlu FORCE manual + pasti fresh.
         if isi:upper():find("^UPDATE") then
-            info("UPDATE dari panel -- tarik worker terbaru")
+            -- v9.83: update lewat reboot -> cek boot siap dulu (cegah brick RF)
+            local siapU, alasanU = boot_siap()
+            if not siapU then
+                warn("UPDATE DIBATALIN -- " .. alasanU .. " (reboot bakal matiin RF)")
+                tambahLog("UPDATE batal: " .. alasanU)
+                notify("ZenX "..cfg.tim, "UPDATE batal: " .. alasanU)
+                pcall(function()
+                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                end)
+                lapor(cfg, "UPDATE-BATAL", cacheRun)
+            else
+            info("UPDATE dari panel -- tarik worker terbaru, terus REBOOT RF")
             local PFX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
             os.execute(PFX .. "/bin/up")   -- stop + download + validasi + ganti file
-            ok("Worker keupdate. FORCE dari panel buat nyalain versi baru.")
-            info("(worker lama berhenti sekarang -- file udah versi baru)")
+            ok("Worker keupdate -- RF di-reboot, versi baru jalan abis nyala")
+            tambahLog("UPDATE: worker baru ditarik -> reboot RF")
+            notify("ZenX "..cfg.tim, "update -> reboot, worker baru abis nyala")
+            -- reset perintah ke FORCE biar pas boot worker BARU langsung buka client
+            -- (gak ke-UPDATE lagi -> gak loop update-reboot).
+            pcall(function()
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+            end)
+            lapor(cfg, "UPDATE", cacheRun)
+            os.execute("sleep 2")   -- kasih waktu reset perintah + lapor kekirim
+            -- reboot: worker baru jalan lagi via Termux:Boot abis nyala
+            os.execute("su -c 'svc power reboot' >/dev/null 2>&1 &")
+            os.execute("sleep 8")
+            os.execute("su -c 'reboot' >/dev/null 2>&1 &")
+            os.execute("sleep 30")   -- nunggu HP mati
             os.exit(0)
+            end
         end
 
         -- v5.99: CEKCOOKIE dari panel. Panel kirim "CEKCOOKIE" ke tim ini ->
