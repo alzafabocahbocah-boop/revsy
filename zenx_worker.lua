@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.88-cf"
+local VERSION = "9.90-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -690,6 +690,11 @@ do
     local w = io.open(jalur, "w")
     if w then w:write(VERSION); w:close() end
 end
+
+-- v9.89: BOOT_TS = kapan worker ini NYALA (unix time). Dikirim ke panel tiap
+-- lapor. Panel pin baris "device baru nyala HH:MM (X menit lalu)" kalau masih
+-- fresh (<10 menit). Muncul TIAP reboot/update -- gak tergantung versi berubah.
+BOOT_TS = os.time()
 
 local function warn(m)
     log("!   "..m,C.Y)
@@ -3629,6 +3634,59 @@ end
 GRID_CACHE = nil   -- cache peta grid (biar gak hitung ulang tiap client)
 PKGS_AKTIF = nil   -- v8.88: client yg aktif dibuka (FORCE:daftar) -> grid pakai ini
 PKGS_AKTIF_PULIH = false   -- v9.84: udah coba pulihin PKGS_AKTIF dari start-pilih (sekali per boot)
+AKTIF_SIG = ""     -- v9.89: signature state aktif terakhir yg disimpen (biar gak nulis-nulis)
+
+-- v9.89: SIMPAN STATE AKTIF (server + grid + daftar client) ke file lokal.
+-- Biar abis UPDATE/REBOOT, worker buka PERSIS yg tadi jalan -- gak balik ke 10
+-- client / grid campur. place_id & grid_kolom sebenernya udah di config, tapi
+-- daftar client (PKGS_AKTIF) ilang tiap restart. File ini nyimpen ketiganya.
+-- Format 1 baris:  <place_id>|<grid_kolom>|<pkg1,pkg2,...>
+function simpan_aktif(cfg)
+    local daftar = ""
+    if PKGS_AKTIF and #PKGS_AKTIF > 0 then daftar = table.concat(PKGS_AKTIF, ",") end
+    local sig = string.format("%s|%s|%s", tostring(cfg.place_id or ""),
+        tostring(cfg.grid_kolom or 0), daftar)
+    if sig == AKTIF_SIG then return end   -- gak berubah -> gak usah nulis
+    AKTIF_SIG = sig
+    local jalur = (os.getenv("HOME") or ".") .. "/.zenx_aktif"
+    local f = io.open(jalur, "w")
+    if f then f:write(sig); f:close() end
+end
+
+-- v9.89: PULIHIN state aktif dari file pas boot. Set cfg.place_id + grid_kolom +
+-- PKGS_AKTIF. Dipanggil SEBELUM loop utama -> open pertama pakai state bener.
+function pulih_aktif(cfg)
+    local jalur = (os.getenv("HOME") or ".") .. "/.zenx_aktif"
+    local f = io.open(jalur, "r")
+    if not f then return false end
+    local baris = (f:read("*l") or ""); f:close()
+    local place, grid, daftar = baris:match("^(.-)|(.-)|(.*)$")
+    if not place then return false end
+    -- server (place_id) + grid_kolom -> ke config kalau ada isinya
+    if place ~= "" and place ~= tostring(cfg.place_id or "") then
+        cfg.place_id = place
+        pcall(function() save_config(cfg) end)
+    end
+    local gk = tonumber(grid)
+    if gk and gk ~= (tonumber(cfg.grid_kolom) or 0) then
+        cfg.grid_kolom = gk
+        pcall(function() save_config(cfg) end)
+    end
+    -- daftar client -> PKGS_AKTIF (cocokin sama cfg.pkgs biar valid)
+    if daftar and daftar ~= "" then
+        local adaCfg = {}
+        for _, p in ipairs(split(cfg.pkgs)) do adaCfg[p] = true end
+        local pk = {}
+        for p in daftar:gmatch("[^,]+") do if adaCfg[p] then pk[#pk+1] = p end end
+        if #pk > 0 and #pk <= #split(cfg.pkgs) then
+            PKGS_AKTIF = pk
+            AKTIF_SIG = baris
+            return true, #pk, place, gk
+        end
+    end
+    return false
+end
+
 -- v8.90: grid_satu BUANG CACHE. Cache (GRID_CACHE) sumber utama "grid nyangkut
 -- lama" -- nilai basi kesimpen, gak ke-reset di semua jalur. Sekarang: hitung
 -- grid FRESH tiap panggil, dari PKGS_AKTIF (client yg panel pilih). grid_hitung
@@ -5506,7 +5564,7 @@ local function lapor(cfg, isi_perintah, cache)
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
         '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s,'..
-        '"place":%s,"grid":%d,"wnaik":%s}',
+        '"place":%s,"grid":%d,"wnaik":%s,"wboot":%d}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
@@ -5518,7 +5576,9 @@ local function lapor(cfg, isi_perintah, cache)
         jstr(cfg.place_id or ""), math.floor(tonumber(cfg.grid_kolom) or 0),
         -- v9.85: wnaik = versi LAMA kalau worker BARU NAIK versi (abis update).
         -- Panel pin baris "naik ke vX" di log. null kalau gak naik (boot biasa).
-        WVER_NAIK and jstr(WVER_NAIK) or "null"
+        WVER_NAIK and jstr(WVER_NAIK) or "null",
+        -- v9.89: wboot = kapan worker nyala (unix). Panel pin "baru nyala X lalu".
+        BOOT_TS or 0
     )
 
     -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
@@ -6792,6 +6852,18 @@ local function run(cfg)
     -- GRID gak ubah -> standby tetep standby.
     local MODE_JALAN = false
 
+    -- v9.89: PULIHIN state aktif (server + grid + daftar client) dari file lokal
+    -- SEBELUM lapor awal + loop. Biar abis UPDATE/REBOOT worker buka PERSIS yg
+    -- tadi jalan (6 client), gak balik ke semua (10) + grid campur.
+    do
+        local ok2, n, place, gk = pulih_aktif(cfg)
+        if ok2 then
+            PKGS_AKTIF_PULIH = true   -- udah pulih dari file -> gak usah baca start-pilih lagi
+            info(("[boot] pulih state aktif: %d client, place=%s, grid=%s kolom"):format(
+                n, tostring(place ~= "" and place or cfg.place_id), gk and gk > 0 and tostring(gk) or "auto"))
+        end
+    end
+
     -- v6.83: LAPOR AWAL sebelum loop -- scan client + akun, kirim ke panel
     -- LANGSUNG (gak nunggu 20 detik lapor rutin / gak nunggu FORCE). Biar panel
     -- gak KOSONG pas worker baru jalan / standby -> user bisa langsung ganti akun.
@@ -7031,6 +7103,7 @@ local function run(cfg)
                         GRID_CACHE = nil
                     end
                     PKGS_AKTIF = aktifBaru
+                    if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
                 end
                 -- v8.44: grafis_semua DIBUANG (gak dipake lagi -- deteksi udah
                 -- pindah ke DENYUT doang). Dulu ambil grafis semua client (mahal,
@@ -7715,6 +7788,7 @@ local function run(cfg)
                     end
                 end
                 PKGS_AKTIF = restart_kerjakan(cfg, isiRestart, mapAkun, mapLink, ada_stop)
+                if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
                 refresh_status(); lastStatusCek = os.time()
                 lapor(cfg, isiRestart, cacheRun); lastStatus = os.time()
                 ::lewatSetting::
@@ -8147,6 +8221,7 @@ local function run(cfg)
                 -- restart_kerjakan baca daftar dari "PAKSA:akun,akun" (sama kayak RESTART:)
                 local isiRestart = isi:gsub("^PAKSA", "RESTART")
                 PKGS_AKTIF = restart_kerjakan(cfg, isiRestart, mapAkun, mapLink, ada_stop)
+                if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
                 refresh_status(); lastStatusCek = os.time()
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
                 info("START PAKSA selesai -- lanjut buka client")
@@ -8201,6 +8276,7 @@ local function run(cfg)
                 MODE_JALAN = true
                 SUDAH_GRID = false; GRID_CACHE = nil
                 PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
+                if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
                 refresh_status(); lastStatusCek = os.time()
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
                 info("RESTART selesai (ts=" .. tsRestart .. ") -- lanjut buka client")
