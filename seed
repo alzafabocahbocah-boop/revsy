@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.45"
+local VERSI = "4.46"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -4942,9 +4942,12 @@ end
 function Seed.jalanDestroyDaun()
     Seed._destroyDaunGen = Seed._destroyDaunGen + 1
     local myGen = Seed._destroyDaunGen
+    -- v4.46: destroy daun IKUT Ringankan RAM. Ringankan RAM MATI -> gak destroy.
+    -- (dulu jalan sendiri walau ringanOn mati -> pohon tetep ke-destroy.)
     if not state.destroyDaunOn then return end
+    if not state.ringanOn then return end
     task.spawn(function()
-        while state.destroyDaunOn and Seed._destroyDaunGen == myGen and isCurrentGen() do
+        while state.destroyDaunOn and state.ringanOn and Seed._destroyDaunGen == myGen and isCurrentGen() do
             local n = Seed.sapuDaunPohon()
             if n > 0 then print(("[StarSeed] destroy daun %d pohon (buah disisain)"):format(n)) end
             task.wait(3)   -- ulang berkala (tanaman baru ikut kena)
@@ -5605,6 +5608,14 @@ function Seed.pakaiCfgPanel(r)
             -- noclipOn), gak nempel ke ringanOn.
             if k == "hideVisualOn" then pcall(Seed.jalanHideVisual) end
             if k == "destroyDaunOn" then pcall(Seed.jalanDestroyDaun) end
+            -- v4.46: ringanOn diubah dari panel -> destroy daun IKUT start/stop
+            if k == "ringanOn" then
+                if state.ringanOn then
+                    if state.destroyDaunOn then pcall(Seed.jalanDestroyDaun) end
+                else
+                    Seed._destroyDaunGen = (Seed._destroyDaunGen or 0) + 1   -- stop loop
+                end
+            end
             -- v3.28: ESP pakai gen-loop -> harus dipicu pas dinyalain/dimatiin
             if k == "espInvOn" then pcall(Seed.jalanEspInv) end
             if k == "espGardenOn" then pcall(Seed.jalanEspGarden) end
@@ -7418,6 +7429,11 @@ tblRingan.MouseButton1Click:Connect(function()
     simpan()
     if state.ringanOn then
         task.spawn(function() pcall(Seed.ringankan) end)
+        -- v4.46: destroy daun IKUT ringankan RAM -> nyala bareng
+        if state.destroyDaunOn then pcall(Seed.jalanDestroyDaun) end
+    else
+        -- ringankan RAM MATI -> destroy daun ikut BERHENTI (loop cek ringanOn -> stop)
+        Seed._destroyDaunGen = (Seed._destroyDaunGen or 0) + 1
     end
 end)
 
@@ -8151,7 +8167,7 @@ catSaklar(tblEspGarden, state.espGardenOn)
 if state.espInvOn then Seed.jalanEspInv() end
 if state.espGardenOn then Seed.jalanEspGarden() end
 if state.hideVisualOn then Seed.jalanHideVisual() end
-if state.destroyDaunOn then Seed.jalanDestroyDaun() end   -- v4.09: auto ringan pas start
+if state.destroyDaunOn and state.ringanOn then Seed.jalanDestroyDaun() end   -- v4.46: destroy daun IKUT ringankan RAM
 catSaklar(tblPlant, state.autoPlantOn)
 catSaklar(tblCollect, state.collectAllOn)
 catSaklar(tblSellPenuh, state.sellPenuhOn)
