@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.95-cf"
+local VERSION = "9.96-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6909,6 +6909,18 @@ local function run(cfg)
             info(("[boot] pulih state aktif: %d client, place=%s, grid=%s kolom"):format(
                 n, tostring(place ~= "" and place or cfg.place_id), gk and gk > 0 and tostring(gk) or "auto"))
         end
+    end
+
+    -- v9.96: BOOT PAKAI LOGIKA START PAKSA. User: abis UPDATE/REBOOT, pas awal
+    -- nyala harus se-anti-gagal Start Paksa -- PS/grid/client PASTI bener, gak
+    -- kadang public / grid campur. Reset fresh (kayak PAKSA handler): grid cache
+    -- kosong (grid dihitung ulang buat daftar bener) + getps guard dibuang (getps
+    -- JALAN FRESH -> ps_link ke-ambil ulang -> PS private, gak fallback public).
+    -- PKGS_AKTIF (daftar client) TETEP dari pulih_aktif -> buka PERSIS yg tadi.
+    do
+        SUDAH_GRID = false; GRID_CACHE = nil
+        if KICK_DIURUS then KICK_DIURUS["getps_jalan"] = nil end   -- getps jalan fresh pas boot
+        info("[boot] mode START PAKSA -- grid fresh + getps ulang (PS/grid pasti bener)")
     end
 
     -- v6.83: LAPOR AWAL sebelum loop -- scan client + akun, kirim ke panel
