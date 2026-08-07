@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.84-cf"
+local VERSION = "9.85-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -671,6 +671,25 @@ end
 local function ok(m) log("OK  "..m,C.G) end
 local function err(m) log("ERR "..m,C.R) end
 local function info(m) log("--  "..m,C.C) end
+
+-- v9.85: DETEKSI NAIK VERSI. Simpen versi ke file tiap nyala. Pas boot,
+-- bandingin file (versi lama) vs VERSION (sekarang). Kalau BEDA + file ADA =
+-- baru naik (abis update) -> set WVER_NAIK = versi lama. Panel pin baris
+-- "naik ke vX (dari vY)" di log. Netep sepanjang proses worker ini (gak
+-- ke-scroll keluar kayak log buffer), reset pas worker restart lagi.
+WVER_NAIK = nil   -- global: versi LAMA kalau baru naik (nil = boot biasa)
+do
+    local jalur = (os.getenv("HOME") or ".") .. "/.zenx_version"
+    local lama = nil
+    local f = io.open(jalur, "r")
+    if f then lama = (f:read("*l") or ""):gsub("%s+", ""); f:close() end
+    if lama and lama ~= "" and lama ~= VERSION then
+        WVER_NAIK = lama   -- naik dari `lama` ke VERSION
+    end
+    -- tulis versi sekarang (buat perbandingan boot berikutnya)
+    local w = io.open(jalur, "w")
+    if w then w:write(VERSION); w:close() end
+end
 
 local function warn(m)
     log("!   "..m,C.Y)
@@ -5487,7 +5506,7 @@ local function lapor(cfg, isi_perintah, cache)
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
         '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s,'..
-        '"place":%s,"grid":%d}',
+        '"place":%s,"grid":%d,"wnaik":%s}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
@@ -5496,7 +5515,10 @@ local function lapor(cfg, isi_perintah, cache)
         -- v8.62: lapor place_id + grid_kolom yang lagi KESET di worker. Panel pakai
         -- ini buat CEK setelan udah nyampe sebelum Start (tulis PS+grid -> cek ->
         -- baru buka client). Biar gak Start pakai setelan lama.
-        jstr(cfg.place_id or ""), math.floor(tonumber(cfg.grid_kolom) or 0)
+        jstr(cfg.place_id or ""), math.floor(tonumber(cfg.grid_kolom) or 0),
+        -- v9.85: wnaik = versi LAMA kalau worker BARU NAIK versi (abis update).
+        -- Panel pin baris "naik ke vX" di log. null kalau gak naik (boot biasa).
+        WVER_NAIK and jstr(WVER_NAIK) or "null"
     )
 
     -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
