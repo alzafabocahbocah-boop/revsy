@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.85-cf"
+local VERSION = "9.86-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2197,7 +2197,7 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") then nyela = true
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
