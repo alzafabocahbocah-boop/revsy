@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.94-cf"
+local VERSION = "9.95-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7424,17 +7424,9 @@ local function run(cfg)
             -- v9.46: FORCE dgn DAFTAR client (dari PKGS_AKTIF) biar gak buka semua 10.
             local balikGanti
             if MODE_JALAN then
-                -- pertahankan client yg lagi jalan (PKGS_AKTIF -> FORCE:akun,...)
-                if PKGS_AKTIF and #PKGS_AKTIF > 0 then
-                    local akunAktif = {}
-                    for _, pkg in ipairs(PKGS_AKTIF) do
-                        local u = mapAkun[pkg]
-                        if u and tostring(u) ~= "" then akunAktif[#akunAktif+1] = u end
-                    end
-                    balikGanti = (#akunAktif > 0) and ("FORCE:" .. table.concat(akunAktif, ",")) or "FORCE"
-                else
-                    balikGanti = "FORCE"
-                end
+                -- v9.95: pakai force_str (FORCE:daftar dari PKGS_AKTIF) -- konsisten,
+                -- gak pernah polos kalau ada daftar.
+                balikGanti = force_str(cfg, mapAkun)
             else
                 balikGanti = "STANDBY"
             end
@@ -8295,7 +8287,7 @@ local function run(cfg)
                 -- andelin backend expire RESTART->FORCE, tapi PAKSA gak ke-expire.
                 do
                     local daftarForce = isi:match("PAKSA:(.+)")
-                    local isiForce = daftarForce and ("FORCE:" .. daftarForce) or "FORCE"
+                    local isiForce = daftarForce and ("FORCE:" .. daftarForce) or force_str(cfg, mapAkun)
                     lastIsi = isiForce   -- update biar gak ke-PAKSA-handler lagi
                     pcall(function()
                         api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
@@ -8349,7 +8341,7 @@ local function run(cfg)
                 -- (gak tergantung backend expire RESTART->FORCE).
                 do
                     local daftarForce = isi:match("RESTART:(.+)")
-                    local isiForce = daftarForce and ("FORCE:" .. daftarForce) or "FORCE"
+                    local isiForce = daftarForce and ("FORCE:" .. daftarForce) or force_str(cfg, mapAkun)
                     lastIsi = isiForce
                     pcall(function()
                         api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
@@ -8365,7 +8357,7 @@ local function run(cfg)
                 -- antrian/denyut jalan buka client. + kirim ulang FORCE ke DB biar
                 -- RESTART bekas keganti (gak ke-detect terus).
                 local daftarForce = isi:match("RESTART:(.+)")
-                local isiForce = daftarForce and ("FORCE:" .. daftarForce) or "FORCE"
+                local isiForce = daftarForce and ("FORCE:" .. daftarForce) or force_str(cfg, mapAkun)
                 if lastIsi ~= isiForce then
                     lastIsi = isiForce
                     pcall(function()
