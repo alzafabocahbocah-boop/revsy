@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.49"
+local VERSI = "4.51"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1589,27 +1589,37 @@ function Seed.kirimGiftMail(onProgress)
         end
     end
     if #items == 0 then return false, "gak ada item kepilih di tas" end
+    -- v4.51: teks debug kecil di GUI -- jalan buat manual DAN auto gift mail.
+    -- Nunjukin lagi kirim apa ke siapa. Set langsung (bukan cuma via onProgress
+    -- yg cuma dipasang tombol manual).
+    local ringkasItem = table.concat(rincianItem, ", ")
+    Seed._logMail = ("kirim [%s] ke %d akun..."):format(ringkasItem ~= "" and ringkasItem or "?", #daftarTarget)
     -- v4.17: kirim ke SEMUA target (loop). Catat sukses/gagal per akun.
     local sukses, gagal = {}, {}
     for idx, target in ipairs(daftarTarget) do
         -- v4.18: kabarin progress live (kirim ke akun idx dari total)
+        Seed._logMail = ("→ %s (%d/%d): %s"):format(target, idx, #daftarTarget, ringkasItem)
         if onProgress then
             pcall(onProgress, ("kirim ke %s (%d/%d)..."):format(target, idx, #daftarTarget))
         end
         local uid = resolveTargetId(target)
         if not uid then
             gagal[#gagal+1] = target .. " (gak ketemu)"
+            Seed._logMail = ("✗ %s gak ketemu"):format(target)
         else
             local okK = pcall(function() sb:Fire(uid, items, "") end)
             if okK then
                 sukses[#sukses+1] = target
+                Seed._logMail = ("✓ done %s (%d/%d)"):format(target, idx, #daftarTarget)
                 if onProgress then
                     pcall(onProgress, ("done %s (%d/%d)"):format(target, idx, #daftarTarget))
                 end
-            else gagal[#gagal+1] = target .. " (gagal fire)" end
+            else gagal[#gagal+1] = target .. " (gagal fire)"; Seed._logMail = ("✗ %s gagal fire"):format(target) end
             task.wait(0.5)   -- jeda antar target (done akun ini, baru pindah)
         end
     end
+    Seed._logMail = ("selesai: %d terkirim%s [%s]"):format(#sukses,
+        #gagal > 0 and (", " .. #gagal .. " gagal") or "", ringkasItem)
     -- v4.17: notif DONE detail -- "done kirim <item> ke <akun-akun>"
     local isiItem = table.concat(rincianItem, ", ")
     if #sukses > 0 then
@@ -6773,7 +6783,7 @@ local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     Text = "pasar: belum kebaca" })
 
 -- ---------- Gift Mail (seed + gear) v3.18 ----------
-local kGiftMail = kartu(200, tabGift)
+local kGiftMail = kartu(226, tabGift)
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -6852,6 +6862,23 @@ Seed._el.lblGiftCountdown = mk("TextLabel", { Parent = kGiftMail, BackgroundTran
     Font = Enum.Font.GothamMedium, TextSize = 15.5, TextColor3 = WARNA.samar,
     TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = false,
     Text = "auto kirim: mati" })
+
+-- v4.51: TEKS DEBUG kecil gift mail -- nunjukin lagi kirim apa ke siapa (live).
+-- Jalan buat manual DAN auto gift mail (baca Seed._logMail). Ijo pas aktif.
+Seed._el.lblMailDbg = mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 188), Size = UDim2.new(1, -24, 0, 30),
+    Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = Color3.fromRGB(120, 200, 130),
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Text = "" })
+task.spawn(function()
+    while true do
+        task.wait(0.4)
+        local lbl = Seed._el and Seed._el.lblMailDbg
+        if lbl and lbl.Parent then
+            lbl.Text = Seed._logMail and ("📬 " .. tostring(Seed._logMail)) or ""
+        end
+    end
+end)
 
 -- ============================================================
 -- TAB 3: MISC
@@ -7517,6 +7544,20 @@ function Seed._segarkanGUI()
     catSaklar(tblRingan, state.ringanOn, "Ringankan RAM: NYALA", "Ringankan RAM: MATI")
     catSaklar(tblKirim, state.giftPetOn,
         "Kirim pet ke akun lain: NYALA", "Kirim pet ke akun lain: MATI")
+    -- v4.50: LENGKAPIN refresh SEMUA toggle (kayak gag2 _refreshAllToggles). Dulu
+    -- Plant/Collect/Sell/Shovel/Grab/ESP GAK di-refresh -> pas panel ubah, teks GUI
+    -- nyangkut (keliatan gak berubah walau state udah ganti).
+    pcall(function()
+        catSaklar(tblPlant, state.autoPlantOn)
+        catSaklar(tblCollect, state.collectAllOn)
+        catSaklar(tblSellPenuh, state.sellPenuhOn)
+        catSaklar(tblSellBiasa, state.sellBiasaOn)
+        catSaklar(tblGrab, state.ambilSeedOn)
+        catSaklar(tblEspInv, state.espInvOn)
+        catSaklar(tblEspGarden, state.espGardenOn)
+        if Seed._el.tblShovel then catSaklar(Seed._el.tblShovel, state.shovelOn) end
+        if Seed._el.tblShovelAll then catSaklar(Seed._el.tblShovelAll, state.shovelSemua) end
+    end)
     kotakMult.Text = tostring(state.jualMinMult or 4) .. "x"
     kotakSisa.Text = tostring(state.sisaSheck or 0)
     kotakTarget.Text = tostring(state.giftTarget or "")
