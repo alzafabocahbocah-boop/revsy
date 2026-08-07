@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.91-cf"
+local VERSION = "9.94-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3643,7 +3643,12 @@ AKTIF_SIG = ""     -- v9.89: signature state aktif terakhir yg disimpen (biar ga
 -- Format 1 baris:  <place_id>|<grid_kolom>|<pkg1,pkg2,...>
 function simpan_aktif(cfg)
     local daftar = ""
-    if PKGS_AKTIF and #PKGS_AKTIF > 0 then daftar = table.concat(PKGS_AKTIF, ",") end
+    -- v9.94: JANGAN simpen daftar kalau = SEMUA client (racun). Itu bukan pilihan
+    -- asli (biasanya fallback polos yg ke-save). Simpen HANYA kalau subset (< total).
+    -- Kalau semua -> daftar kosong -> pulih gak restore semua (biar gak buka 10).
+    if PKGS_AKTIF and #PKGS_AKTIF > 0 and #PKGS_AKTIF < #split(cfg.pkgs) then
+        daftar = table.concat(PKGS_AKTIF, ",")
+    end
     local sig = string.format("%s|%s|%s", tostring(cfg.place_id or ""),
         tostring(cfg.grid_kolom or 0), daftar)
     if sig == AKTIF_SIG then return end   -- gak berubah -> gak usah nulis
@@ -3651,6 +3656,22 @@ function simpan_aktif(cfg)
     local jalur = (os.getenv("HOME") or ".") .. "/.zenx_aktif"
     local f = io.open(jalur, "w")
     if f then f:write(sig); f:close() end
+end
+
+-- v9.93: string perintah FORCE dari PKGS_AKTIF (client aktif). "FORCE:akun1,..."
+-- kalau ada daftar, "FORCE" polos kalau nil. Dipakai UPDATE/REBOOT reset perintah
+-- DB -> abis reboot worker baca FORCE:daftar -> buka PERSIS client yg tadi aktif
+-- (6), GAK tergantung file state / pulih / mapAkun (yg bisa 10 akun).
+function force_str(cfg, mapAkun)
+    if PKGS_AKTIF and #PKGS_AKTIF > 0 then
+        local nm = {}
+        for _, pkg in ipairs(PKGS_AKTIF) do
+            local u = mapAkun and mapAkun[pkg]
+            nm[#nm+1] = (u and tostring(u) ~= "") and tostring(u) or pkg:gsub("com%.roblox%.", "")
+        end
+        if #nm > 0 then return "FORCE:" .. table.concat(nm, ",") end
+    end
+    return "FORCE"
 end
 
 -- v9.89: PULIHIN state aktif dari file pas boot. Set cfg.place_id + grid_kolom +
@@ -3674,11 +3695,20 @@ function pulih_aktif(cfg)
     end
     -- daftar client -> PKGS_AKTIF (cocokin sama cfg.pkgs biar valid)
     if daftar and daftar ~= "" then
+        local total = #split(cfg.pkgs)
         local adaCfg = {}
         for _, p in ipairs(split(cfg.pkgs)) do adaCfg[p] = true end
         local pk = {}
         for p in daftar:gmatch("[^,]+") do if adaCfg[p] then pk[#pk+1] = p end end
-        if #pk > 0 and #pk <= #split(cfg.pkgs) then
+        -- v9.94: RACUN = daftar >= SEMUA client. Itu bukan pilihan asli (fallback
+        -- polos ke-save). Buang file OTOMATIS + jangan restore -> worker gak buka 10.
+        if #pk >= total then
+            os.remove(jalur)
+            AKTIF_SIG = ""
+            info(("[boot] file state RACUN (daftar %d = semua) -> DIBUANG, gak restore daftar"):format(#pk))
+            return false
+        end
+        if #pk > 0 and #pk < total then
             PKGS_AKTIF = pk
             AKTIF_SIG = baris
             return true, #pk, place, gk
@@ -5564,7 +5594,7 @@ local function lapor(cfg, isi_perintah, cache)
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
         '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s,'..
-        '"place":%s,"grid":%d,"wnaik":%s,"wboot":%d}',
+        '"place":%s,"grid":%d,"wnaik":%s,"wboot":%d,"wnaktif":%d}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
@@ -5578,7 +5608,10 @@ local function lapor(cfg, isi_perintah, cache)
         -- Panel pin baris "naik ke vX" di log. null kalau gak naik (boot biasa).
         WVER_NAIK and jstr(WVER_NAIK) or "null",
         -- v9.89: wboot = kapan worker nyala (unix). Panel pin "baru nyala X lalu".
-        BOOT_TS or 0
+        BOOT_TS or 0,
+        -- v9.92: wnaktif = jumlah client AKTIF (PKGS_AKTIF). Panel nampilin setelan
+        -- "N client · K kolom · server X" pas boot. Kalau nil -> #list (semua).
+        (PKGS_AKTIF and #PKGS_AKTIF > 0) and #PKGS_AKTIF or #list
     )
 
     -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
@@ -8079,7 +8112,7 @@ local function run(cfg)
                     notify("ZenX "..cfg.tim, "REBOOT batal: " .. alasan)
                     -- balik FORCE biar lanjut normal (gak nyangkut REBOOT)
                     pcall(function()
-                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
                     end)
                     lapor(cfg, "REBOOT-BATAL", cacheRun)
                     skip_sisa = true
@@ -8090,7 +8123,7 @@ local function run(cfg)
                 notify("ZenX "..cfg.tim, "RF reboot -- worker balik abis nyala")
                 -- reset perintah ke FORCE biar pas boot worker langsung lanjut (gak REBOOT lagi)
                 pcall(function()
-                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
                 end)
                 lapor(cfg, "REBOOT", cacheRun)
                 os.execute("sleep 2")   -- kasih waktu lapor + reset perintah kekirim
@@ -8433,7 +8466,7 @@ local function run(cfg)
                 tambahLog("UPDATE batal: " .. alasanU)
                 notify("ZenX "..cfg.tim, "UPDATE batal: " .. alasanU)
                 pcall(function()
-                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
                 end)
                 lapor(cfg, "UPDATE-BATAL", cacheRun)
             else
@@ -8443,7 +8476,7 @@ local function run(cfg)
             -- reset perintah + lapor DULU, selagi worker MASIH IDUP (biar kekirim).
             -- Kalau nunggu updater, worker udah mati -> gak kekirim.
             pcall(function()
-                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"FORCE"}', jstr(cfg.tim)), "PUT")
+                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
             end)
             lapor(cfg, "UPDATE", cacheRun)
             tambahLog("UPDATE: tarik worker baru (terpisah) -> reboot")
