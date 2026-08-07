@@ -644,6 +644,7 @@ local VERSION = "9.77-cf"
 -- kedua bakal dilewat dan client-nya nyangkut.
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
+DENYUT_UMUR = {}        -- v9.77: akun -> umur denyut (detik) terakhir. lapor kirim ke panel biak on/off akurat
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
     KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m" }
 local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
@@ -5418,8 +5419,13 @@ local function lapor(cfg, isi_perintah, cache)
         -- Clear captcha dipindah ke LOOP UTAMA (yang punya /stat buat bridge_fresh)
         -- -- badge ilang cuma pas client beneran udah main (solved).
         local capt = KICK_DIURUS["captcha:" .. pkg] and true or false
-        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d,"captcha":%s}',
-            jstr(pkg), tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0), tostring(capt))
+        -- v9.77: kirim umur denyut akun (detik). Panel pakai ini buat on/off:
+        -- run=proses hidup (bisa nyangkut loading), denyut=beneran di game. Denyut
+        -- >150s = akun gak lapor = OFF di panel (walau proses masih jalan).
+        local denyutU = akunPkg ~= "" and DENYUT_UMUR[akunPkg] or nil
+        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d,"captcha":%s,"denyut":%s}',
+            jstr(pkg), tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0), tostring(capt),
+            denyutU and tostring(math.floor(denyutU)) or "null")
     end
 
     -- v4.24: ikut kirim "lagi ngapain" + log terakhir
@@ -6930,6 +6936,7 @@ local function run(cfg)
                     end
                     local dcnt = 0
                     for _ in pairs(denyutSemua) do dcnt = dcnt + 1 end
+                    DENYUT_UMUR = denyutSemua   -- v9.77: simpen global biar lapor kirim ke panel
                     if dcnt > 0 then
                         info(("[denyut] jam_device=%s | %d file: %s"):format(
                             os.date("%H:%M:%S"), dcnt, table.concat(ddetail, " ")))
