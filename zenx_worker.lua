@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.99-cf"
+local VERSION = "9.100-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -695,6 +695,7 @@ end
 -- lapor. Panel pin baris "device baru nyala HH:MM (X menit lalu)" kalau masih
 -- fresh (<10 menit). Muncul TIAP reboot/update -- gak tergantung versi berubah.
 BOOT_TS = os.time()
+DELTA_CEK_TS = 0        -- v9.100: ts terakhir cek delta_versi.txt (auto-update 10 menit)
 
 local function warn(m)
     log("!   "..m,C.Y)
@@ -6989,6 +6990,30 @@ local function run(cfg)
             return
         end
 
+        -- v9.100: AUTO-UPDATE DELTA tiap 10 menit. Baca delta_versi.txt di GitHub,
+        -- bandingin sama versi Delta client pertama. Kalau BEDA -> blok loop, update
+        -- SEMUA client ke versi terbaru, terus lanjut. User gak perlu update manual.
+        if os.time() - DELTA_CEK_TS >= 600 then
+            DELTA_CEK_TS = os.time()
+            local target = cek_delta_versi(cfg)
+            if target and target ~= "" then
+                -- versi terpasang di client pertama
+                local pkg1 = split(cfg.pkgs or "")[1]
+                local vNow = ""
+                if pkg1 then
+                    local out = sh(("su -c 'dumpsys package %s 2>/dev/null | grep -m1 versionName' 2>/dev/null"):format(pkg1)) or ""
+                    vNow = out:match("versionName=([%w%.%-]+)") or ""
+                end
+                if vNow ~= "" and vNow ~= target then
+                    info(("[delta] versi baru di GitHub: v%s (sekarang v%s) -> auto-update"):format(target, vNow))
+                    pcall(function() update_delta_ke(cfg, target) end)
+                    info("[delta] auto-update selesai -> client bakal rejoin fresh")
+                    -- abis update, tandai perlu rejoin (Delta ke-reinstall, client mati)
+                    SUDAH_GRID = false; GRID_CACHE = nil
+                end
+            end
+        end
+
         -- v8.33: CEK GRAFIS di TOP loop (level atas, PASTI jalan tiap iterasi).
         -- Loop grafis lama ke-nest DALAM FORCE handler (depth 4) -> gak jalan
         -- kalau client udah kebuka semua (alur gak nyampe). Taruh di sini biar
@@ -8327,6 +8352,25 @@ local function run(cfg)
             -- PAKSA "selesai" tapi client gak kebuka -- restart_kerjakan cuma tutup+
             -- grid, client kebuka di LOOP ANTRIAN. Dulu skip_sisa=true tiap ronde ->
             -- loop antrian gak pernah jalan -> client nyangkut ketutup.
+        elseif U:find("UPDATE%-DELTA") or U:find("UPDATEDELTA") then
+            -- v9.100: UPDATE-DELTA dari panel -> cek delta_versi.txt + update SEMUA
+            -- client ke versi terbaru (manual trigger, gak nunggu 10 menit).
+            if isi ~= lastIsi then
+                lastIsi = isi
+                warn("UPDATE-DELTA dari panel -> cek versi + update semua client")
+                local target = cek_delta_versi(cfg)
+                if target and target ~= "" then
+                    info(("[delta] target versi: v%s -> update semua client"):format(target))
+                    pcall(function() update_delta_ke(cfg, target) end)
+                    ok("UPDATE-DELTA selesai ke v" .. target)
+                    notify("ZenX "..cfg.tim, "Delta diupdate ke v"..target)
+                else
+                    err("[delta] gak bisa baca delta_versi.txt di GitHub")
+                end
+                DELTA_CEK_TS = os.time()   -- reset timer auto-cek
+                lapor(cfg, isi, cacheRun); lastStatus = os.time()
+            end
+            skip_sisa = true
         elseif U:find("CLOSE") then
             -- v9.77: CLOSE = tutup semua client (worker tetep jalan). Handler
             -- TERPISAH -- dulu nyasar di blok RESTART (bikin RESTART bekas ke-CLOSE
@@ -12382,44 +12426,25 @@ end
 -- Tiga nama, satu tempat: `download` yang dipakai sehari-hari, `dl` buat yang
 -- males ngetik, `apk` DIPERTAHANIN karena RF yang udah kepasang mungkin masih
 -- pakai itu. Nambah nama lain gak ada ongkosnya; ngilangin yang lama ada.
-if PERINTAH == "update" and (arg and arg[2] == "mercy") then
-    -- v9.53: UPDATE DELTA NO MERCY ke versi baru. Tag sama (worker_64), versi
-    -- APK beda (dari arg[3]). Cek versi terpasang tiap client -> SKIP yg udah
-    -- versi target, download+pasang yg BELUM. Beda dari `download mercy` (pasang
-    -- semua dari nol). `zenx update mercy 2.741.0` = update semua yg <2.741.0.
-    local versiBaru = arg and arg[3]
-    if not versiBaru or versiBaru == "" then
-        err("Kasih versi: zenx update mercy <versi>\n" ..
-            "   contoh: zenx update mercy 2.741.0\n" ..
-            "   (tag GitHub worker_64, versi APK beda)")
-        return
-    end
+-- v9.100: FUNGSI GLOBAL update Delta ke versi target. Dipakai command
+-- `zenx update mercy <versi>`, auto-cek 10-menit di loop, + perintah UPDATE-DELTA
+-- dari panel. Return sukses, dilewat, gagal. Global (bukan local) biar run() loop
+-- bisa manggil + gak makan jatah 200 lokal.
+function update_delta_ke(cfg, versiBaru)
+    if not versiBaru or versiBaru == "" then return 0, 0, 0 end
     local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
     local HOME = os.getenv("HOME") or "."
-    print(C.BOLD .. C.C .. ("\n=== UPDATE MERCY ke v%s (GitHub worker_64) ===\n"):format(versiBaru) .. C.N)
-
-    -- daftar client dari config (com.roblox.clienp dst)
+    print(C.BOLD .. C.C .. ("\n=== UPDATE DELTA ke v%s (GitHub worker_64) ===\n"):format(versiBaru) .. C.N)
     local pkgs = split(cfg and cfg.pkgs or "")
-    if #pkgs == 0 then
-        err("Gak ada client di config. Jalanin `zenx` dulu.")
-        return
-    end
-
-    -- helper: baca versi Delta terpasang di pkg (versionName). "" kalau gak ada.
+    if #pkgs == 0 then err("Gak ada client di config. Jalanin `zenx` dulu."); return 0, 0, 0 end
     local function versi_terpasang(pkg)
         local out = sh(("su -c 'dumpsys package %s 2>/dev/null | grep -m1 versionName' 2>/dev/null"):format(pkg)) or ""
-        -- format: "    versionName=2.731.944"
         return (out:match("versionName=([%w%.%-]+)") or "")
     end
-
-    -- daftar nama file APK (01 beda, 02-10 pola sama) buat versi target
-    local files = {
-        ("NO.MERCY.DELTA.LITE.64BIT.01-%s.apk.1.apk"):format(versiBaru),
-    }
-    for n = 2, 10 do
-        files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-%s.apk.apk"):format(n, versiBaru)
-    end
-
+    -- file 1-10 pola versi, 11-15 nama tetap (nomercyNN.apk, versi ikut yg diupload)
+    local files = { ("NO.MERCY.DELTA.LITE.64BIT.01-%s.apk.1.apk"):format(versiBaru) }
+    for n = 2, 10 do files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-%s.apk.apk"):format(n, versiBaru) end
+    for n = 11, 15 do files[#files+1] = ("nomercy%d.apk"):format(n) end
     local TMPAPK = HOME .. "/mercy_update.apk"
     local sukses, gagal, dilewat = 0, 0, 0
     for i, pkg in ipairs(pkgs) do
@@ -12442,8 +12467,6 @@ if PERINTAH == "update" and (arg and arg[2] == "mercy") then
                 local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
                 if sz < 1000000 then
                     print(C.R .. ("  GAGAL download (%d byte)"):format(sz) .. C.N)
-                    local awal = sh(("head -c 120 %s 2>/dev/null"):format(shq(TMPAPK))) or ""
-                    if awal:match("%S") then info("    " .. awal:gsub("%s+"," "):sub(1,80)) end
                     gagal = gagal + 1
                 else
                     print(("  pasang (%.0f MB)..."):format(sz / 1024 / 1024))
@@ -12463,9 +12486,7 @@ if PERINTAH == "update" and (arg and arg[2] == "mercy") then
                     if tostring(hasil):find("Success") then
                         print(C.G .. "  OK" .. C.N); sukses = sukses + 1
                     else
-                        print(C.R .. "  GAGAL pasang" .. C.N)
-                        info("    " .. tostring(hasil):gsub("%s+", " "):sub(1, 90))
-                        gagal = gagal + 1
+                        print(C.R .. "  GAGAL pasang" .. C.N); gagal = gagal + 1
                     end
                 end
             end
@@ -12474,6 +12495,36 @@ if PERINTAH == "update" and (arg and arg[2] == "mercy") then
     os.remove(TMPAPK)
     print("")
     ok(("Selesai: %d update, %d skip (udah v%s), %d gagal"):format(sukses, dilewat, versiBaru, gagal))
+    return sukses, dilewat, gagal
+end
+
+-- v9.100: baca delta_versi.txt dari GitHub (versi Delta terbaru yg mau dipasang).
+-- Return versi string (trimmed) atau nil kalau gagal/kosong.
+function cek_delta_versi(cfg)
+    local URL = "https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/delta_versi.txt?v=" .. os.time()
+    local HOME = os.getenv("HOME") or "."
+    local tmp = HOME .. "/.delta_versi_cek"
+    os.remove(tmp)
+    os.execute(("timeout 20 curl -fsSL %s -o %s 2>/dev/null"):format(shq(URL), shq(tmp)))
+    local r = nil
+    local f = io.open(tmp, "r")
+    if f then r = f:read("*a"); f:close() end
+    os.remove(tmp)
+    if not r then return nil end
+    local v = tostring(r):gsub("%s+", "")   -- buang spasi/newline
+    if v == "" or #v > 20 then return nil end
+    return v
+end
+
+if PERINTAH == "update" and (arg and arg[2] == "mercy") then
+    -- v9.53: UPDATE DELTA ke versi baru (manual). `zenx update mercy 2.741.0`.
+    local versiBaru = arg and arg[3]
+    if not versiBaru or versiBaru == "" then
+        err("Kasih versi: zenx update mercy <versi>\n" ..
+            "   contoh: zenx update mercy 2.741.0")
+        return
+    end
+    update_delta_ke(cfg, versiBaru)
     return
 end
 
