@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.125-cf"
+local VERSION = "9.127-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7501,8 +7501,11 @@ local function run(cfg)
                         -- v8.44: jeda 30s antar rejoin (tembak 1-1, bukan barengan).
                         -- User: kalau 5 client keluar, tembak 1-1 selama 30s. Client
                         -- terakhir gak perlu jeda.
-                        if idx < #perluTembak then
-                            for _ = 1, 30 do
+                        -- v9.127: ROTASI nyala -> tim 1 tembak BARENGAN (jeda 0), biar
+                        -- awal restart 10 client buka cepet sekaligus (kayak tim 2).
+                        local jedaAntar = cfg.rotasi_on and 0 or 30
+                        if idx < #perluTembak and jedaAntar > 0 then
+                            for _ = 1, jedaAntar do
                                 -- v9.68: cek perintah panel tiap detik -> nyela cepet
                                 if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                                 os.execute("sleep 1")
@@ -12794,27 +12797,35 @@ function jalankan_rotasi(cfg, barang, mapLink)
     info("[rotasi] close all tim 1 (client 1-10)")
     pcall(function() close_all(cfg, pkgs_slot(cfg, 1, 10), mapLink, true) end)
     os.execute("sleep 2")
-    -- v9.118: grid tim 2 = 10-client layout (bukan 20). Set PKGS_AKTIF = tim 2 penuh
-    -- (11-20) SEBELUM buka -> grid_satu ngitung layout 10 slot, tim 2 penuhin layar.
-    PKGS_AKTIF = pkgs_slot(cfg, 11, 20)
-    -- buka 11-15 (grid + server)
-    -- v9.125: tim 2 TEMBAK 10 SEKALIGUS (11-20), gak dipecah 5-5 + jeda 60s.
-    info("[rotasi] buka client 11-20 SEKALIGUS (grid+server, layout 10-client)")
-    buka_grup_rotasi(cfg, pkgs_slot(cfg, 11, 20), mapLink)
-    -- kasih waktu tim 2 beli (90s) sebelum balik
-    info("[rotasi] tim 2 beli... (90s)")
-    os.execute("sleep 90")
-    -- BALIK LOOP UTAMA: close tim 2 + buka tim 1
-    warn("[rotasi] === BALIK LOOP UTAMA ===")
+    -- v9.126: GENERAL N-TIM. Jumlah tim ikut jumlah client (20=2 tim, 30=3 tim).
+    -- tim 1 udah beli (di game). Sekarang gantian tim 2, 3, ... tiap 10 client:
+    -- buka 10 sekaligus -> beli 90s -> close -> lanjut tim berikutnya.
+    local total = #split(cfg.pkgs or "")
+    local nTim = math.ceil(total / 10)
+    for t = 2, nTim do
+        local dari = (t - 1) * 10 + 1
+        local sampai = math.min(t * 10, total)
+        -- grid layout 10-client buat tim ini (set PKGS_AKTIF SEBELUM buka)
+        PKGS_AKTIF = pkgs_slot(cfg, dari, sampai)
+        info(("[rotasi] buka TIM %d (client %d-%d) SEKALIGUS (grid+server)"):format(t, dari, sampai))
+        tambahLog_rotasi(cfg, ("tim %d (%d-%d) borong"):format(t, dari, sampai))
+        buka_grup_rotasi(cfg, pkgs_slot(cfg, dari, sampai), mapLink)
+        info(("[rotasi] tim %d beli... (90s)"):format(t))
+        os.execute("sleep 90")
+        -- close tim ini sebelum lanjut tim berikutnya (atau balik)
+        info(("[rotasi] close tim %d (client %d-%d)"):format(t, dari, sampai))
+        pcall(function() close_all(cfg, pkgs_slot(cfg, dari, sampai), mapLink, true) end)
+        os.execute("sleep 2")
+    end
+    -- BALIK LOOP UTAMA: buka tim 1 lagi
+    warn("[rotasi] === BALIK LOOP UTAMA (tim 1) ===")
     tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
-    pcall(function() close_all(cfg, pkgs_slot(cfg, 11, 20), mapLink, true) end)
-    os.execute("sleep 2")
-    PKGS_AKTIF = pkgs_slot(cfg, 1, 10)   -- v9.118: grid tim 1 = 10-client layout
+    PKGS_AKTIF = pkgs_slot(cfg, 1, 10)   -- grid tim 1 = 10-client layout
     buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, 10), mapLink)
     ROTASI_STATE = "idle"
     ROTASI_TS = os.time()
-    ROTASI_SIAP_TS = 0   -- v9.116: tim 1 baru dibuka lagi -> tunggu lengkap+60s sebelum rotasi lagi
-    ok("[rotasi] selesai -> tim 1 loop normal lagi")
+    ROTASI_SIAP_TS = 0   -- tim 1 baru dibuka lagi -> tunggu lengkap+60s sebelum rotasi lagi
+    ok(("[rotasi] selesai (%d tim) -> tim 1 loop normal lagi"):format(nTim))
 end
 
 -- log rotasi ke panel (via /perintah-log atau tambahLog kalau in-scope). Simpel:
