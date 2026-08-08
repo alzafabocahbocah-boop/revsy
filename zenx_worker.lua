@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.129-cf"
+local VERSION = "9.130-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8312,6 +8312,21 @@ local function run(cfg)
                 end
                 tambahLog("perintah aktif: " .. (isi ~= "" and isi or "-"))
                 notify("ZenX "..cfg.tim, "laporan tugas siap")
+            end
+            skip_sisa = true
+        elseif U:find("ROTASI%-TEST") then
+            -- v9.130: SINYAL PALSU dari panel -> paksa jalanin rotasi (test sensitif
+            -- worker tanpa nunggu restock beneran). Bypass cek API + gate + cooldown.
+            if isi ~= lastIsi then
+                lastIsi = isi
+                warn("[rotasi] >>> SINYAL TEST dari panel <<< paksa jalanin rotasi")
+                tambahLog("Rotasi TEST: sinyal palsu dari panel")
+                if ROTASI_STATE == "idle" then
+                    pcall(function() jalankan_rotasi(cfg, "TEST-PALSU", mapLink) end)
+                else
+                    warn("[rotasi] rotasi lagi jalan -> skip test")
+                end
+                lapor(cfg, isi, cacheRun); lastStatus = os.time()
             end
             skip_sisa = true
         elseif U:find("ROTASI") then
