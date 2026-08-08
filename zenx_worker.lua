@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.134-cf"
+local VERSION = "9.136-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -849,6 +849,8 @@ local function save_config(cfg)
     -- v9.115: rotasi tim (borong stock). rotasi_on + daftar seed incaran.
     f:write(string.format("  rotasi_on=%s,\n",tostring(cfg.rotasi_on == true)))
     f:write(string.format("  rotasi_barang=%q,\n",cfg.rotasi_barang or ""))
+    f:write(string.format("  rotasi_batch=%d,\n",math.floor(tonumber(cfg.rotasi_batch) or 5)))
+    f:write(string.format("  rotasi_open_sec=%d,\n",math.floor(tonumber(cfg.rotasi_open_sec) or 55)))
     f:write(string.format("  deteksi_longgar=%s,\n",tostring(cfg.deteksi_longgar == true)))
     f:write(string.format("  disconnect_menit=%d,\n",cfg.disconnect_menit or 3))
     f:write(string.format("  jaga_depan_sec=%d,\n",cfg.jaga_depan_sec or 15))  -- v5.91: JANGAN 0 -- 0 matiin jaga_depan (jendela gak balik ke depan). Default aman 15.
@@ -8430,10 +8432,19 @@ local function run(cfg)
                     warn("ROTASI dimatiin dari panel")
                     tambahLog("Rotasi tim: MATI")
                 else
+                    -- v9.136: format "seeds|batch|opensec". batch+opensec opsional.
+                    local seeds, bt, os2 = isiRot:match("^(.-)|(%d+)|(%d+)$")
+                    if seeds then
+                        cfg.rotasi_barang = seeds
+                        cfg.rotasi_batch = tonumber(bt)
+                        cfg.rotasi_open_sec = tonumber(os2)
+                    else
+                        cfg.rotasi_barang = isiRot
+                    end
                     cfg.rotasi_on = true
-                    cfg.rotasi_barang = isiRot
-                    warn("ROTASI nyala -> seed incaran: " .. isiRot)
-                    tambahLog("Rotasi tim: NYALA (" .. isiRot .. ")")
+                    warn(("ROTASI nyala -> seed: %s | batch=%s open=%ss"):format(
+                        cfg.rotasi_barang, tostring(cfg.rotasi_batch or 5), tostring(cfg.rotasi_open_sec or 55)))
+                    tambahLog("Rotasi tim: NYALA (" .. cfg.rotasi_barang .. ")")
                 end
                 pcall(function() save_config(cfg) end)
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
@@ -12825,6 +12836,17 @@ function pkgs_slot(cfg, dari, sampai)
 end
 
 -- buka GRUP client: set grid + join server. GAK dimanage (no denyut/lisensi/rejoin).
+-- v9.136: close GRUP client spesifik BARENGAN (am force-stop & ... wait dalam 1 su
+-- call) -- INSTANT, gak 1-1 lambat ~5-6s/client kayak close_all. Buat rotasi cepet.
+function close_grup_cepat(cfg, pkgs)
+    if not pkgs or #pkgs == 0 then return 0 end
+    local cmd = "su -c '"
+    for _, pkg in ipairs(pkgs) do cmd = cmd .. "am force-stop " .. pkg .. " & " end
+    cmd = cmd .. "wait'"
+    sh_silent(cmd)
+    return #pkgs
+end
+
 function buka_grup_rotasi(cfg, pkgs, mapLink)
     for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
     os.execute("sleep 1")
@@ -12913,30 +12935,34 @@ function jalankan_rotasi(cfg, barang, mapLink)
     warn(("[rotasi] STOCK '%s' MUNCUL -> tunggu 10s (tim 1 beli habis dulu)"):format(barang))
     tambahLog_rotasi(cfg, ("STOCK %s muncul -> rotasi mulai"):format(barang))
     os.execute("sleep 10")
-    -- close all tim 1 (1-10) CEPET
-    info("[rotasi] close all tim 1 (client 1-10)")
-    pcall(function() close_all(cfg, pkgs_slot(cfg, 1, 10), mapLink, true) end)
-    os.execute("sleep 2")
-    -- v9.126: GENERAL N-TIM. Jumlah tim ikut jumlah client (20=2 tim, 30=3 tim).
-    -- tim 1 udah beli (di game). Sekarang gantian tim 2, 3, ... tiap 10 client:
-    -- buka 10 sekaligus -> beli 90s -> close -> lanjut tim berikutnya.
+    -- close all tim 1 (1-10) INSTANT (barengan, gak 1-1 lambat)
+    info("[rotasi] close all tim 1 (client 1-10) -- barengan cepet")
+    pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, 1, 10)) end)
+    os.execute("sleep 1")
+    -- v9.135/136: TIM 2 = ROLLING BATCH. Batch size + durasi bisa diatur panel.
+    -- buka batch -> beli OPEN_SEC detik -> close batch (INSTANT) -> langsung batch
+    -- berikutnya (gak nunggu 1 menit -- user minta cepet). Contoh 15 client = 3 batch.
     local total = #split(cfg.pkgs or "")
-    local nTim = math.ceil(total / 10)
-    for t = 2, nTim do
-        local dari = (t - 1) * 10 + 1
-        local sampai = math.min(t * 10, total)
-        -- grid layout 10-client buat tim ini (set PKGS_AKTIF SEBELUM buka)
+    local BATCH = math.max(1, tonumber(cfg.rotasi_batch) or 5)
+    local OPEN_SEC = math.max(5, tonumber(cfg.rotasi_open_sec) or 55)
+    local dari = 11
+    local nBatch = 0
+    while dari <= total do
+        local sampai = math.min(dari + BATCH - 1, total)
+        nBatch = nBatch + 1
         PKGS_AKTIF = pkgs_slot(cfg, dari, sampai)
-        info(("[rotasi] buka TIM %d (client %d-%d) SEKALIGUS (grid+server)"):format(t, dari, sampai))
-        tambahLog_rotasi(cfg, ("tim %d (%d-%d) borong"):format(t, dari, sampai))
+        info(("[rotasi] BATCH %d: buka client %d-%d (borong)"):format(nBatch, dari, sampai))
+        tambahLog_rotasi(cfg, ("batch %d (%d-%d) borong"):format(nBatch, dari, sampai))
         buka_grup_rotasi(cfg, pkgs_slot(cfg, dari, sampai), mapLink)
-        info(("[rotasi] tim %d beli... (90s)"):format(t))
-        os.execute("sleep 90")
-        -- close tim ini sebelum lanjut tim berikutnya (atau balik)
-        info(("[rotasi] close tim %d (client %d-%d)"):format(t, dari, sampai))
-        pcall(function() close_all(cfg, pkgs_slot(cfg, dari, sampai), mapLink, true) end)
-        os.execute("sleep 2")
+        info(("[rotasi] batch %d beli... (%ds)"):format(nBatch, OPEN_SEC))
+        os.execute("sleep " .. OPEN_SEC)
+        -- close batch INSTANT + langsung batch berikutnya (gak jeda 1 menit)
+        info(("[rotasi] close batch %d (client %d-%d) -- barengan cepet"):format(nBatch, dari, sampai))
+        pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, dari, sampai)) end)
+        os.execute("sleep 1")
+        dari = sampai + 1
     end
+    os.execute("sleep 1")
     -- BALIK LOOP UTAMA: buka tim 1 lagi
     warn("[rotasi] === BALIK LOOP UTAMA (tim 1) ===")
     tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
