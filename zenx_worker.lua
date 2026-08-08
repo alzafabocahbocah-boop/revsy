@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.118-cf"
+local VERSION = "9.119-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -12638,7 +12638,11 @@ function cek_worker_versi(cfg)
     local vBaru = (sh(("grep -m1 'local VERSION' %s 2>/dev/null"):format(shq(baru))) or ""):match('"([^"]+)"')
     if not vBaru or vBaru == "" or vBaru == VERSION then os.remove(baru); return false end
     local LUA = punya_perintah("lua5.4") and "lua5.4" or "lua"
-    local okLua = os.execute(("%s -e 'assert(loadfile(%s))' 2>/dev/null"):format(LUA, shq(baru)))
+    -- v9.119: FIX kutip. Dulu 'assert(loadfile(%s))' + shq(baru) -> kutip Lua jadi
+    -- kutip shell, path telanjang -> SELALU gagal cek (walau file bener). Sekarang
+    -- chunk pakai %q (kutip Lua) terus shq SELURUH chunk.
+    local chunkCek = ("assert(loadfile(%q))"):format(baru)
+    local okLua = os.execute(LUA .. " -e " .. shq(chunkCek) .. " 2>/dev/null")
     if okLua ~= true and okLua ~= 0 then
         err("[auto-update] file baru RUSAK (gak lolos cek lua) -> batal"); os.remove(baru); return false
     end
