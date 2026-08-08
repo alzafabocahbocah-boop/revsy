@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.57"
+local VERSI = "4.59"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -330,7 +330,7 @@ local state = {
     shovelSemua      = false,  -- true = semua jenis, false = cuma shovelPilih
     shovelPilih      = {},     -- { ["Carrot"]=true } jenis yg dicabut
     -- v4.54: AUTO REROLL GIANT PUMPKIN. Baca SizeMulti buah pas spawn -> konversi
-    -- ke KG (kg = 0.158 * SizeMulti^2.5, terkalibrasi dari 13.78=111kg). Shovel
+    -- ke KG (kg = SizeMulti * rasio 8.055, LINEAR -- dari gag2 ref). Shovel
     -- kalau kg < pumpkinMinKg biar re-roll dapet yg gede/giant. Loop terus.
     pumpkinRerollOn  = false,  -- auto reroll pumpkin (shovel yg kecil)
     pumpkinMinKg     = 30,     -- simpen kalau berat >= ini (kg), shovel kalau < ini
@@ -1414,6 +1414,35 @@ function Seed.shovelSeedOnce()
 end
 
 -- ============================================================
+-- v4.59: RUMUS BERAT PUMPKIN (dari gag2 ref -- LINEAR, bukan pangkat!)
+--   kg = SizeMulti * rasio.  rasio Atlantic Giant Pumpkin = 8.055 (kalibrasi
+--   13.78=111kg). Auto-kalibrasi dari buah PANEN di tas (Weight/SizeMulti) biar
+--   presisi -- sekali panen 1 pumpkin, rasio ke-set exact.
+-- ============================================================
+Seed._pkRatio = 8.055
+function Seed.kalibrasiPkRatio()
+    pcall(function()
+        for _, h in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if h then
+                for _, t in ipairs(h:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local nm = (t:GetAttribute("CorePartName") or t.Name or ""):lower()
+                        if nm:find("pumpkin") then
+                            local w = t:GetAttribute("Weight")
+                            local sm = t:GetAttribute("SizeMulti") or t:GetAttribute("SizeMultiplier")
+                            if type(w) == "number" and type(sm) == "number" and sm > 0 then
+                                Seed._pkRatio = w / sm   -- rasio exact dari buah asli
+                                return
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- ============================================================
 -- v4.53: AUTO REROLL GIANT PUMPKIN
 -- Buah pumpkin spawn pas plant mateng (plant Age = MaxAge), dengan attribute
 -- SizeMulti (di-roll dari PlantSeed). SizeMulti gede = buah berat/giant.
@@ -1446,8 +1475,8 @@ function Seed.rerollPumpkinOnce()
 
     local MY = player.UserId
     local minKg = tonumber(state.pumpkinMinKg) or 30
-    local PK_BASE = 0.158   -- base kg Atlantic Giant Pumpkin (kalibrasi 13.78=111kg)
-    local function smToKg(sm) return PK_BASE * (sm ^ 2.5) end
+    Seed.kalibrasiPkRatio()   -- auto-kalibrasi rasio dari buah panen (kalau ada di tas)
+    local function smToKg(sm) return sm * (Seed._pkRatio or 8.055) end
 
     -- kumpulin pumpkin yg buahnya udah spawn + SizeMulti KECIL
     local target = {}   -- { {id=plantId, sm=sizeMulti} }
@@ -1562,7 +1591,8 @@ end
 -- v4.56b: hitung pumpkin >= minKg DI GARDEN (buah udah spawn, gak dishovel karena
 -- gede). Baca SizeMulti buah -> konversi kg. Ini yg jadi stop condition sprinkler.
 function Seed.hitungPumpkinBerat(minKg)
-    local PK_BASE = 0.158
+    Seed.kalibrasiPkRatio()
+    local ratio = Seed._pkRatio or 8.055
     local n = 0
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
@@ -1580,8 +1610,7 @@ function Seed.hitungPumpkinBerat(minKg)
                             for _, fruit in ipairs(fr:GetChildren()) do
                                 local sm = fruit:GetAttribute("SizeMulti")
                                 if type(sm) == "number" then
-                                    local kg = PK_BASE * (sm ^ 2.5)
-                                    if kg >= minKg then n = n + 1 end
+                                    if sm * ratio >= minKg then n = n + 1 end
                                 end
                             end
                         end
@@ -6533,6 +6562,7 @@ local tabAutoBuy = bikinTabScroll()
 local tabFarm    = bikinTabScroll()
 local tabGift    = bikinTabScroll()   -- v3.17: tab Auto Gift baru
 local tabMisc    = bikinTabScroll()
+tabMetod = bikinTabScroll()   -- v4.58: GLOBAL (hindari 200-local limit)
 tabAutoBuy.Visible = true   -- default tab pertama
 
 -- tombol tab di sidebar. Posisi MANUAL (bukan UIListLayout -- lebih andal, gak
@@ -6572,6 +6602,7 @@ local tbAB = bikinTabBtn("Auto Buy", tabAutoBuy, 1)
 local tbFM = bikinTabBtn("Farm", tabFarm, 2)
 local tbGF = bikinTabBtn("Auto Gift", tabGift, 3)
 local tbMS = bikinTabBtn("Misc", tabMisc, 4)
+bikinTabBtn("Metod", tabMetod, 5)   -- v4.58 (gak disimpen: hemat local)
 -- set tab pertama aktif tampilannya
 do
     tbAB.garis.Visible = true
@@ -6580,7 +6611,7 @@ do
 end
 
 -- ===== helper kartu (masuk ke tab tertentu) =====
-local urutTab = { [tabAutoBuy]=0, [tabFarm]=0, [tabGift]=0, [tabMisc]=0 }
+local urutTab = { [tabAutoBuy]=0, [tabFarm]=0, [tabGift]=0, [tabMisc]=0, [tabMetod]=0 }
 local function kartu(tinggi, tab)
     tab = tab or tabAutoBuy
     urutTab[tab] = urutTab[tab] + 1
@@ -6975,7 +7006,7 @@ end
 
 -- ---------- Auto Reroll Giant Pumpkin (v4.53) ----------
 do
-    local kPk = kartu(120, tabFarm)
+    local kPk = kartu(120, tabMetod)
     mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -7011,7 +7042,7 @@ end
 
 -- ---------- Auto Place Sprinkler (v4.55) ----------
 do
-    local kSpr = kartu(150, tabFarm)
+    local kSpr = kartu(150, tabMetod)
     mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
