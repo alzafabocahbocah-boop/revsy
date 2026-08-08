@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.140-cf"
+local VERSION = "9.143-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -850,7 +850,7 @@ local function save_config(cfg)
     f:write(string.format("  rotasi_on=%s,\n",tostring(cfg.rotasi_on == true)))
     f:write(string.format("  rotasi_barang=%q,\n",cfg.rotasi_barang or ""))
     f:write(string.format("  rotasi_batch=%d,\n",math.floor(tonumber(cfg.rotasi_batch) or 5)))
-    f:write(string.format("  rotasi_open_sec=%d,\n",math.floor(tonumber(cfg.rotasi_open_sec) or 55)))
+    f:write(string.format("  rotasi_open_sec=%d,\n",math.floor(tonumber(cfg.rotasi_open_sec) or 100)))
     f:write(string.format("  deteksi_longgar=%s,\n",tostring(cfg.deteksi_longgar == true)))
     f:write(string.format("  disconnect_menit=%d,\n",cfg.disconnect_menit or 3))
     f:write(string.format("  jaga_depan_sec=%d,\n",cfg.jaga_depan_sec or 15))  -- v5.91: JANGAN 0 -- 0 matiin jaga_depan (jendela gak balik ke depan). Default aman 15.
@@ -5032,7 +5032,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
         end
         if #perluRot > 0 then
             info(("[rotasi] tembak BARENGAN %d client (bukan open_one 1-1)"):format(#perluRot))
-            pcall(function() buka_grup_rotasi(cfg, perluRot, mapLink) end)
+            pcall(function() buka_grup_rotasi(cfg, perluRot, mapLink, 90) end)
         else
             info("[rotasi] semua client tim aktif udah jalan -- skip open")
         end
@@ -7586,7 +7586,7 @@ local function run(cfg)
                     -- bikin open_one lambat ~5s/client). 10 client buka detik-detikan.
                     if cfg.rotasi_on then
                         info(("[antrian] %d client OUT -> ROTASI: tembak BARENGAN (bukan 1-1)"):format(#perluTembak))
-                        pcall(function() buka_grup_rotasi(cfg, perluTembak, mapLink) end)
+                        pcall(function() buka_grup_rotasi(cfg, perluTembak, mapLink, 90) end)
                     else
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
                     for idx, pkg in ipairs(perluTembak) do
@@ -12865,7 +12865,14 @@ function close_grup_cepat(cfg, pkgs)
     return #pkgs
 end
 
-function buka_grup_rotasi(cfg, pkgs, mapLink)
+function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap)
+    -- v9.142: chunkGap = jeda antar chunk 5. Default 2s (tim 2 cepet). Tim 1 (loop
+    -- utama) pakai 90s (buka 5 -> tunggu 90s -> buka 5 lagi).
+    chunkGap = tonumber(chunkGap) or 2
+    -- v9.141: grid BASIS = semua pkgs yg dibuka (set PKGS_AKTIF dulu). Biar chunk 1
+    -- & chunk 2 pakai layout SAMA (grid_satu -> grid_hitung(PKGS_AKTIF)). Dulu grid
+    -- ngandelin PKGS_AKTIF caller -> bisa beda antar chunk -> grid tim 1 gak konsisten.
+    PKGS_AKTIF = pkgs
     for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
     os.execute("sleep 1")
     -- v9.138: buka dalam CHUNK 5 (biar 10 client tim 1 = 5+5 staggered, gak overload
@@ -12893,7 +12900,10 @@ function buka_grup_rotasi(cfg, pkgs, mapLink)
             end
         end
         i = i + CHUNK
-        if i <= #pkgs then os.execute("sleep 2") end   -- gap antar chunk (5+5)
+        if i <= #pkgs then
+            info(("[buka] tunggu %ds sebelum chunk berikutnya..."):format(chunkGap))
+            os.execute("sleep " .. chunkGap)
+        end   -- gap antar chunk (5+5)
     end
 end
 
@@ -12993,7 +13003,7 @@ function jalankan_rotasi(cfg, barang, mapLink)
     -- berikutnya (gak nunggu 1 menit -- user minta cepet). Contoh 15 client = 3 batch.
     local total = #split(cfg.pkgs or "")
     local BATCH = math.max(1, tonumber(cfg.rotasi_batch) or 5)
-    local OPEN_SEC = math.max(5, tonumber(cfg.rotasi_open_sec) or 55)
+    local OPEN_SEC = math.max(5, tonumber(cfg.rotasi_open_sec) or 100)
     local dari = 11
     local nBatch = 0
     while dari <= total do
@@ -13016,7 +13026,7 @@ function jalankan_rotasi(cfg, barang, mapLink)
     warn("[rotasi] === BALIK LOOP UTAMA (tim 1) ===")
     tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
     PKGS_AKTIF = pkgs_slot(cfg, 1, 10)   -- grid tim 1 = 10-client layout
-    buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, 10), mapLink)
+    buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, 10), mapLink, 90)
     ROTASI_STATE = "idle"
     ROTASI_TS = os.time()
     ROTASI_SIAP_TS = 0   -- tim 1 baru dibuka lagi -> tunggu lengkap+60s sebelum rotasi lagi
