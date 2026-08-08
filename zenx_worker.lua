@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.127-cf"
+local VERSION = "9.128-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7485,6 +7485,13 @@ local function run(cfg)
                         end
                     end
                     if #perluTembak > 0 then
+                    -- v9.128: ROTASI nyala -> tim 1 tembak BARENGAN pakai buka_grup_rotasi
+                    -- (grid all + am start all, TANPA task-remove+sleep5 per client yg
+                    -- bikin open_one lambat ~5s/client). 10 client buka detik-detikan.
+                    if cfg.rotasi_on then
+                        info(("[antrian] %d client OUT -> ROTASI: tembak BARENGAN (bukan 1-1)"):format(#perluTembak))
+                        pcall(function() buka_grup_rotasi(cfg, perluTembak, mapLink) end)
+                    else
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
                     for idx, pkg in ipairs(perluTembak) do
                         -- v9.68: cek perintah panel -> nyela. Loop rejoin jalan pas
@@ -7501,16 +7508,14 @@ local function run(cfg)
                         -- v8.44: jeda 30s antar rejoin (tembak 1-1, bukan barengan).
                         -- User: kalau 5 client keluar, tembak 1-1 selama 30s. Client
                         -- terakhir gak perlu jeda.
-                        -- v9.127: ROTASI nyala -> tim 1 tembak BARENGAN (jeda 0), biar
-                        -- awal restart 10 client buka cepet sekaligus (kayak tim 2).
-                        local jedaAntar = cfg.rotasi_on and 0 or 30
-                        if idx < #perluTembak and jedaAntar > 0 then
-                            for _ = 1, jedaAntar do
+                        if idx < #perluTembak then
+                            for _ = 1, 30 do
                                 -- v9.68: cek perintah panel tiap detik -> nyela cepet
                                 if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                                 os.execute("sleep 1")
                             end
                         end
+                    end
                     end
                     end
                     end
@@ -12724,10 +12729,15 @@ end
 function buka_grup_rotasi(cfg, pkgs, mapLink)
     for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
     os.execute("sleep 1")
+    -- v9.128: tembak SEMUA am start dalam 1 su command (jeda 1s internal), bukan
+    -- 10 su call + 2s gap. 10 client: ~21s -> ~9s.
+    local cmds = {}
     for _, pkg in ipairs(pkgs) do
         local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
-        sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
-        os.execute("sleep 2")
+        cmds[#cmds+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. " >/dev/null 2>&1"
+    end
+    if #cmds > 0 then
+        sh_silent("su -c \"" .. table.concat(cmds, "; sleep 1; ") .. "\"")
     end
 end
 
