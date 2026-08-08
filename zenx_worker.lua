@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.106-cf"
+local VERSION = "9.108-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8179,12 +8179,14 @@ local function run(cfg)
                     skip_sisa = true
                     goto lewatReboot
                 end
-                warn("REBOOT dari panel -> RF di-restart, worker jalan lagi abis nyala")
-                tambahLog("REBOOT: RF di-restart dari panel")
-                notify("ZenX "..cfg.tim, "RF reboot -- worker balik abis nyala")
-                -- reset perintah ke FORCE biar pas boot worker langsung lanjut (gak REBOOT lagi)
+                warn("REBOOT dari panel -> RF di-restart, worker STANDBY abis nyala (nunggu Start)")
+                tambahLog("REBOOT: RF di-restart dari panel -> standby (pencet Start buat buka client)")
+                notify("ZenX "..cfg.tim, "RF reboot -- STANDBY, pencet Start buat mulai")
+                -- v9.108: abis REBOOT dari panel -> STANDBY (JANGAN auto-buka client).
+                -- User: pas reboot jangan langsung nyala, nunggu Start dari panel.
+                -- Dulu di-set FORCE (langsung buka). Sekarang STANDBY -> nunggu.
                 pcall(function()
-                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
+                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"STANDBY"}', jstr(cfg.tim)), "PUT")
                 end)
                 lapor(cfg, "REBOOT", cacheRun)
                 os.execute("sleep 2")   -- kasih waktu lapor + reset perintah kekirim
@@ -8372,19 +8374,24 @@ local function run(cfg)
             -- grid, client kebuka di LOOP ANTRIAN. Dulu skip_sisa=true tiap ronde ->
             -- loop antrian gak pernah jalan -> client nyangkut ketutup.
         elseif U:find("DOWNLOAD%-APK") then
-            -- v9.105: DOWNLOAD-APK:<namafile> dari panel -> download+install apk
-            -- generik (VPN, Termux:Boot, dll). Panel kirim nama dari daftar GitHub.
+            -- v9.107: DOWNLOAD-APK:<file1>|<file2>|... dari panel -> download+install
+            -- SEMUA file yg dicentang (Delta client + VPN + Termux:Boot) sekaligus.
             if isi ~= lastIsi then
                 lastIsi = isi
-                local nama = isi:match("DOWNLOAD%-APK:(.+)$") or ""
-                nama = nama:gsub("^%s+", ""):gsub("%s+$", "")
-                warn("DOWNLOAD-APK dari panel: " .. (nama ~= "" and nama or "(kosong)"))
-                if nama ~= "" then
-                    pcall(function() download_apk_url(cfg, nama, nama) end)
-                    ok("DOWNLOAD-APK selesai: " .. nama)
-                else
-                    err("[apk] nama file kosong")
+                local daftar = isi:match("DOWNLOAD%-APK:(.+)$") or ""
+                local files = {}
+                for nm in daftar:gmatch("[^|]+") do
+                    nm = nm:gsub("^%s+", ""):gsub("%s+$", "")
+                    if nm ~= "" then files[#files+1] = nm end
                 end
+                warn(("DOWNLOAD-APK dari panel: %d file"):format(#files))
+                local sk, gg = 0, 0
+                for _, nm in ipairs(files) do
+                    local ok2 = false
+                    pcall(function() ok2 = download_apk_url(cfg, nm, nm) end)
+                    if ok2 then sk = sk + 1 else gg = gg + 1 end
+                end
+                ok(("DOWNLOAD-APK selesai: %d pasang, %d gagal"):format(sk, gg))
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
             end
             skip_sisa = true
