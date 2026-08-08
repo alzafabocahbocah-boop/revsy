@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.130-cf"
+local VERSION = "9.131-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -3414,6 +3414,40 @@ local KUNCI_JENDELA = {
 -- yg baru -> gak campur (ada 5 kolom ada 3 kolom nyangkut). Dipanggil di awal
 -- RESTART sebelum tulis grid. Buang key app_cloner_*window* dari tiap prefs.
 function bersihin_grid_semua(cfg)
+    -- v9.131: BATCH -- tulis 1 shell script (sed -i semua prefs file), jalanin
+    -- sekali via su. Dulu per-client (su cat + gsub + su write) x40 operasi ~13s.
+    -- Sekarang 1 su call, semua client sekaligus. Pakai '.' di regex buat match
+    -- tanda kutip (biar gak ribet escape " di dalem sed).
+    local pkgs = split(cfg.pkgs or "")
+    if #pkgs == 0 then return 0 end
+    local files = {}
+    for _, pkg in ipairs(pkgs) do
+        files[#files+1] = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+        files[#files+1] = "/data/data/" .. pkg .. "/shared_prefs/prefs.xml"
+    end
+    local HOME = os.getenv("HOME") or "/data/data/com.termux/files/home"
+    local script = HOME .. "/.gridbersih.sh"
+    local f = io.open(script, "w")
+    if not f then
+        warn("[grid] gagal tulis script bersih -- skip")
+        return 0
+    end
+    f:write("#!/system/bin/sh\n")
+    local sedExpr = "s|<int name=.app_cloner_[a-zA-Z0-9_]*window[a-zA-Z0-9_]*.[^/]*/>||g; "
+                 .. "s|<int name=.app_cloner_[a-zA-Z0-9_]*position[a-zA-Z0-9_]*.[^/]*/>||g; "
+                 .. "s|<int name=.app_cloner_[a-zA-Z0-9_]*geometry[a-zA-Z0-9_]*.[^/]*/>||g"
+    for _, path in ipairs(files) do
+        f:write('[ -f "' .. path .. '" ] && sed -i -E \'' .. sedExpr .. '\' "' .. path .. '" 2>/dev/null\n')
+    end
+    f:close()
+    sh_silent("su -c 'sh " .. script .. "'")
+    local n = #pkgs
+    info(("Grid lama dihapus dari %d client SEKALIGUS (sed batch, bersih total)"):format(n))
+    return n
+end
+
+-- (fungsi lama per-client di bawah diganti batch di atas -- disimpen buat referensi)
+function bersihin_grid_semua_LAMA(cfg)
     local n = 0
     for _, pkg in ipairs(split(cfg.pkgs)) do
         local nm = pkg:gsub("com%.roblox%.", "")
@@ -8052,7 +8086,11 @@ local function run(cfg)
         -- panel. Jadi SEBELUM start, udah ketauan cookie mana yang mati (badge
         -- panel) -> bisa langsung ganti. Cuma pas standby (pas jalan, cek cookie
         -- udah ada di jalur lain). zenx cekcookie = cek semua akun tim, setor CF.
-        if mati and (now - lastCookieStandby) >= 300 then
+        -- v9.131: CEK COOKIE STANDBY DIBUANG (user minta). Dulu tiap 5 menit pas
+        -- standby jalanin 'zenx cekcookie' (timeout 180 = block 3 menit) -> bikin
+        -- START lama (nunggu cek cookie dulu sebelum buka client). Sekarang skip.
+        -- Cookie tetep kecek di jalur lain pas client jalan.
+        if false and mati and (now - lastCookieStandby) >= 300 then
             lastCookieStandby = now
             info("Cek cookie akun lama (standby) -- mastiin masih hidup...")
             os.execute(("timeout 180 %s cekcookie"):format(
