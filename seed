@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.59"
+local VERSI = "4.60"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -337,11 +337,15 @@ local state = {
     -- v4.55: AUTO PLACE SPRINKLER (sprinkler naikin SizeMulti buah). Rekam posisi
     -- manual -> auto re-place tiap expired. STOP kalau pumpkin >= sprStopKg udah
     -- sebanyak sprStopCount di inventory (goal kecapai).
+    -- v4.60: AUTO PLACE SPRINKLER (sprinkler naikin SizeMulti buah). Posisi
+    -- AUTO-DETECT dari pumpkin di kebun (nyebar), gak rekam manual. Pilih jenis
+    -- sprinkler. STOP kalau pumpkin >= sprStopKg udah sprStopCount di GARDEN.
     autoSprinkler    = false,  -- auto place sprinkler
-    sprRecording     = false,  -- rekam posisi sprinkler yg di-place manual
-    sprCoords        = {},     -- list {x,y,z,name}
+    sprType          = "",     -- jenis sprinkler dipilih ("" = pakai apa aja di tas)
     sprStopKg        = 80,     -- pumpkin >= ini (kg) dihitung
     sprStopCount     = 300,    -- kalau udah sebanyak ini -> STOP sprinkler
+    sprRecording     = false,  -- (lama, gak dipake -- posisi auto sekarang)
+    sprCoords        = {},     -- (lama)
     -- AUTO SELL: 2 mode
     sellPenuhOn   = false, -- sell pas backpack full (SellAll)
     sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
@@ -564,7 +568,7 @@ local function simpan()
             collectMutPilih = state.collectMutPilih, collectKgMin = state.collectKgMin,
             shovelOn = state.shovelOn, shovelSemua = state.shovelSemua, shovelPilih = state.shovelPilih,
             pumpkinRerollOn = state.pumpkinRerollOn, pumpkinMinKg = state.pumpkinMinKg,
-            autoSprinkler = state.autoSprinkler, sprCoords = state.sprCoords,
+            autoSprinkler = state.autoSprinkler, sprType = state.sprType,
             sprStopKg = state.sprStopKg, sprStopCount = state.sprStopCount,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
@@ -1622,34 +1626,89 @@ function Seed.hitungPumpkinBerat(minKg)
     return n
 end
 
+-- v4.60: AUTO-DETECT posisi dari pumpkin di kebun (nyebar, dedupe jarak biar
+-- sprinkler gak numpuk). Gak perlu rekam manual.
+Seed._SPR_SPREAD = 18   -- jarak min antar sprinkler (AoE) -- biar nyebar
+function Seed.sprAutoPos()
+    local pts = {}
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local MY = player.UserId
+        for _, plot in ipairs(gardens:GetChildren()) do
+            if plot:GetAttribute("OwnerUserId") == MY or plot:GetAttribute("Owner") == player.Name then
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        local sn = (plant:GetAttribute("SeedName") or ""):lower()
+                        if sn:find("pumpkin") then
+                            local pos
+                            if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position
+                            else pcall(function() pos = plant:GetPivot().Position end) end
+                            if pos then
+                                local dekat = false
+                                for _, q in ipairs(pts) do
+                                    if (q - pos).Magnitude < Seed._SPR_SPREAD then dekat = true; break end
+                                end
+                                if not dekat then pts[#pts+1] = pos end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return pts
+end
+
+-- raycast titik ke TANAH (biar sprinkler gak melayang di pohon)
+function Seed.sprGroundY(pos)
+    local y = pos.Y
+    pcall(function()
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        local ex = {}
+        if player.Character then ex[#ex+1] = player.Character end
+        local gardens = workspace:FindFirstChild("Gardens")
+        if gardens then ex[#ex+1] = gardens end
+        rp.FilterDescendantsInstances = ex
+        local hit = workspace:Raycast(Vector3.new(pos.X, pos.Y + 50, pos.Z), Vector3.new(0, -300, 0), rp)
+        if hit then y = hit.Position.Y end
+    end)
+    return y
+end
+
 function Seed.placeSprinklerOnce()
     local p = pkt("Place", "PlaceSprinkler")
     if not (p and p.Fire) then Seed._logSpr = "remote PlaceSprinkler gak ada"; return 0 end
-    if #state.sprCoords == 0 then Seed._logSpr = "belum ada posisi (place manual + Rekam dulu)"; return 0 end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not char then return 0 end
+    -- jenis sprinkler dipilih (state.sprType), atau apa aja
+    local wantName = state.sprType and state.sprType ~= "" and state.sprType or nil
+    local tool = Seed.findSprinklerTool(wantName) or Seed.findSprinklerTool(nil)
+    if not tool then Seed._logSpr = "sprinkler gak ada di tas (jenis: " .. (wantName or "apa aja") .. ")"; return 0 end
+    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
+
+    local positions = Seed.sprAutoPos()
+    if #positions == 0 then Seed._logSpr = "gak ada pumpkin buat ditaro sprinkler"; return 0 end
+
     local placed = 0
-    for _, c in ipairs(state.sprCoords) do
+    for _, pos in ipairs(positions) do
         if not (state.autoSprinkler and isCurrentGen()) then break end
-        local label = Seed.sprLabel(c)
-        local last = Seed._sprPlacedAt[label]
+        local key = string.format("%d,%d", math.floor(pos.X), math.floor(pos.Z))
+        local last = Seed._sprPlacedAt[key]
         if not last or (tick() - last) >= Seed._SPR_COOLDOWN then
-            local tool = Seed.findSprinklerTool(c.name) or Seed.findSprinklerTool(nil)
-            if tool then
-                if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
-                Seed._sprAutoPlacing = true
-                pcall(function() p:Fire(Vector3.new(c.x, c.y, c.z), tool.Name, tool, 1) end)
-                Seed._sprAutoPlacing = false
-                Seed._sprPlacedAt[label] = tick()
-                placed = placed + 1
-                task.wait(0.2)
-            else
-                Seed._logSpr = "stok sprinkler habis"; break
-            end
+            local y = Seed.sprGroundY(pos)
+            Seed._sprAutoPlacing = true
+            pcall(function() p:Fire(Vector3.new(pos.X, y, pos.Z), tool.Name, tool, 1) end)
+            Seed._sprAutoPlacing = false
+            Seed._sprPlacedAt[key] = tick()
+            placed = placed + 1
+            task.wait(0.2)
         end
     end
-    if placed > 0 then Seed._logSpr = "place " .. placed .. " sprinkler" end
+    if placed > 0 then Seed._logSpr = ("place %d sprinkler (%s)"):format(placed, tool.Name) end
     return placed
 end
 
@@ -7050,18 +7109,19 @@ do
     mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
         Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Place manual + Rekam -> auto re-place. Stop di target." })
-    -- baris "Rekam posisi [OFF]"
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Posisi auto dari pumpkin. Stop di target." })
+    -- baris "Jenis sprinkler [picker]"
     mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 54), Size = UDim2.new(0, 160, 0, 22),
+        Position = UDim2.new(0, 12, 0, 54), Size = UDim2.new(0, 140, 0, 22),
         Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Rekam posisi (place manual)" })
-    Seed._el.tblSprRec = mk("TextButton", { Parent = kSpr,
-        Position = UDim2.new(1, -84, 0, 52), Size = UDim2.new(0, 72, 0, 26),
-        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
-        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
-    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblSprRec })
-    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblSprRec })
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis sprinkler" })
+    Seed._el.pickSprType = mk("TextButton", { Parent = kSpr,
+        Position = UDim2.new(1, -128, 0, 52), Size = UDim2.new(0, 116, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium, TextSize = 17, TextColor3 = WARNA.aksenMuda,
+        Text = (state.sprType ~= "" and state.sprType) or "Apa aja" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.pickSprType })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.pickSprType })
     -- baris "Stop kalau >=80kg ada [300]"
     mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 84), Size = UDim2.new(0, 150, 0, 22),
@@ -7632,10 +7692,27 @@ if Seed._el.tblSprinkler then
         simpan()
     end)
 end
-if Seed._el.tblSprRec then
-    Seed._el.tblSprRec.MouseButton1Click:Connect(function()
-        state.sprRecording = not state.sprRecording
-        catSaklar(Seed._el.tblSprRec, state.sprRecording)
+if Seed._el.pickSprType then
+    Seed._el.pickSprType.MouseButton1Click:Connect(function()
+        -- kumpulin jenis sprinkler yg ADA di tas + "Apa aja" ("")
+        local opsi = { "" }
+        local seen = {}
+        for _, h in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if h then
+                for _, t in ipairs(h:GetChildren()) do
+                    if t:IsA("Tool") and t.Name:lower():find("sprinkler") and not seen[t.Name] then
+                        seen[t.Name] = true; opsi[#opsi+1] = t.Name
+                    end
+                end
+            end
+        end
+        local cur = state.sprType or ""
+        local idx = 1
+        for i, o in ipairs(opsi) do if o == cur then idx = i; break end end
+        idx = (idx % #opsi) + 1   -- next (cycle)
+        state.sprType = opsi[idx]
+        Seed._el.pickSprType.Text = (state.sprType ~= "" and state.sprType) or "Apa aja"
+        simpan()
     end)
 end
 if Seed._el.inpSprCount then
@@ -7952,7 +8029,7 @@ function Seed._segarkanGUI()
         if Seed._el.tblPkReroll then catSaklar(Seed._el.tblPkReroll, state.pumpkinRerollOn) end
         if Seed._el.inpPkMin then Seed._el.inpPkMin.Text = tostring(state.pumpkinMinKg or 30) end
         if Seed._el.tblSprinkler then catSaklar(Seed._el.tblSprinkler, state.autoSprinkler) end
-        if Seed._el.tblSprRec then catSaklar(Seed._el.tblSprRec, state.sprRecording) end
+        if Seed._el.pickSprType then Seed._el.pickSprType.Text = (state.sprType ~= "" and state.sprType) or "Apa aja" end
         if Seed._el.inpSprCount then Seed._el.inpSprCount.Text = tostring(state.sprStopCount or 300) end
     end)
     kotakMult.Text = tostring(state.jualMinMult or 4) .. "x"
