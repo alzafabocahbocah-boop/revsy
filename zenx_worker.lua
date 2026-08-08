@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.116-cf"
+local VERSION = "9.117-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6278,7 +6278,20 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
             end
         end
     end
-    -- v9.73: CEK GRID DI DEPAN (setelah PKGS_AKTIF keset). User: kalau grid udah
+    -- v9.117: ROTASI -> buka CUMA tim 1 (1-10). Panel kirim semua 20 (biar tim 2
+    -- tetep kecentang di UI), tapi worker batesin ke tim 1. Tim 2 (11-20) standby,
+    -- baru kebuka pas rotasi trigger (buka_grup_rotasi).
+    if cfg.rotasi_on and PKGS_AKTIF and #PKGS_AKTIF > 0 then
+        local list = split(cfg.pkgs)
+        local set1 = {}
+        for i = 1, math.min(10, #list) do set1[list[i]] = true end
+        local tim1 = {}
+        for _, pkg in ipairs(PKGS_AKTIF) do if set1[pkg] then tim1[#tim1+1] = pkg end end
+        if #tim1 > 0 then
+            PKGS_AKTIF = tim1
+            info(("[rotasi] rotasi_on -> buka cuma TIM 1 (%d client), tim 2 standby"):format(#tim1))
+        end
+    end
     -- bener (kolom sesuai target), GAK PERLU hapus + tulis ulang -- langsung open.
     -- Baca prefs semua client vs target; kalau SEMUA pas (toleransi 3px) -> skip
     -- bersihin + ronde tulis grid (hemat waktu banyak). SUDAH_GRID tetep true.
