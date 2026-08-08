@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.51"
+local VERSI = "4.57"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -329,6 +329,19 @@ local state = {
     shovelOn         = false,  -- auto cabut tanaman
     shovelSemua      = false,  -- true = semua jenis, false = cuma shovelPilih
     shovelPilih      = {},     -- { ["Carrot"]=true } jenis yg dicabut
+    -- v4.54: AUTO REROLL GIANT PUMPKIN. Baca SizeMulti buah pas spawn -> konversi
+    -- ke KG (kg = 0.158 * SizeMulti^2.5, terkalibrasi dari 13.78=111kg). Shovel
+    -- kalau kg < pumpkinMinKg biar re-roll dapet yg gede/giant. Loop terus.
+    pumpkinRerollOn  = false,  -- auto reroll pumpkin (shovel yg kecil)
+    pumpkinMinKg     = 30,     -- simpen kalau berat >= ini (kg), shovel kalau < ini
+    -- v4.55: AUTO PLACE SPRINKLER (sprinkler naikin SizeMulti buah). Rekam posisi
+    -- manual -> auto re-place tiap expired. STOP kalau pumpkin >= sprStopKg udah
+    -- sebanyak sprStopCount di inventory (goal kecapai).
+    autoSprinkler    = false,  -- auto place sprinkler
+    sprRecording     = false,  -- rekam posisi sprinkler yg di-place manual
+    sprCoords        = {},     -- list {x,y,z,name}
+    sprStopKg        = 80,     -- pumpkin >= ini (kg) dihitung
+    sprStopCount     = 300,    -- kalau udah sebanyak ini -> STOP sprinkler
     -- AUTO SELL: 2 mode
     sellPenuhOn   = false, -- sell pas backpack full (SellAll)
     sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
@@ -550,6 +563,9 @@ local function simpan()
             collectSeedPilih = state.collectSeedPilih, collectSemuaMut = state.collectSemuaMut,
             collectMutPilih = state.collectMutPilih, collectKgMin = state.collectKgMin,
             shovelOn = state.shovelOn, shovelSemua = state.shovelSemua, shovelPilih = state.shovelPilih,
+            pumpkinRerollOn = state.pumpkinRerollOn, pumpkinMinKg = state.pumpkinMinKg,
+            autoSprinkler = state.autoSprinkler, sprCoords = state.sprCoords,
+            sprStopKg = state.sprStopKg, sprStopCount = state.sprStopCount,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
             hideVisualOn = state.hideVisualOn,
@@ -1395,6 +1411,217 @@ function Seed.shovelSeedOnce()
     end
     Seed._logShovel = removed > 0 and (removed .. " tanaman dicabut (1-1)") or "gak ada yg dicabut"
     return removed
+end
+
+-- ============================================================
+-- v4.53: AUTO REROLL GIANT PUMPKIN
+-- Buah pumpkin spawn pas plant mateng (plant Age = MaxAge), dengan attribute
+-- SizeMulti (di-roll dari PlantSeed). SizeMulti gede = buah berat/giant.
+-- Metode: scan pumpkin yg buahnya UDAH spawn -> baca SizeMulti -> kalau KECIL
+-- (< pumpkinMinKg, dikonversi dari SizeMulti) shovel (re-roll). Reuse remote Shovel.UseShovel.
+-- Replant slot kosong diurus loop auto-plant biasa (set seed = Atlantic Giant Pumpkin).
+-- ============================================================
+function Seed.rerollPumpkinOnce()
+    if not state.pumpkinRerollOn then return 0 end
+    local p = pkt("Shovel", "UseShovel")
+    if not (p and p.Fire) then Seed._logPumpkin = "remote Shovel.UseShovel gak ada"; return 0 end
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return 0 end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    -- cari + equip Shovel
+    local shovelTool
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then
+            for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("shovel") then shovelTool = t; break end
+            end
+        end
+        if shovelTool then break end
+    end
+    if not shovelTool then Seed._logPumpkin = "Tool Shovel gak ada di tas"; return 0 end
+    if shovelTool.Parent ~= char and hum then
+        pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.1)
+    end
+
+    local MY = player.UserId
+    local minKg = tonumber(state.pumpkinMinKg) or 30
+    local PK_BASE = 0.158   -- base kg Atlantic Giant Pumpkin (kalibrasi 13.78=111kg)
+    local function smToKg(sm) return PK_BASE * (sm ^ 2.5) end
+
+    -- kumpulin pumpkin yg buahnya udah spawn + SizeMulti KECIL
+    local target = {}   -- { {id=plantId, sm=sizeMulti} }
+    local totalPk, siapPk = 0, 0
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                local sn = (plant:GetAttribute("SeedName") or ""):lower()
+                if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
+                    totalPk = totalPk + 1
+                    local fr = plant:FindFirstChild("Fruits")
+                    if fr and #fr:GetChildren() > 0 then
+                        siapPk = siapPk + 1
+                        -- ambil SizeMulti terbesar di antara buah (buah utama)
+                        local smMax = nil
+                        for _, fruit in ipairs(fr:GetChildren()) do
+                            local sm = fruit:GetAttribute("SizeMulti")
+                            if type(sm) == "number" then
+                                if not smMax or sm > smMax then smMax = sm end
+                            end
+                        end
+                        if smMax and smToKg(smMax) < minKg and #plant.Name >= 30 then
+                            target[#target+1] = { id = plant.Name, sm = smMax, kg = smToKg(smMax) }
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- helper: plant masih ada gak
+    local function ada(pid)
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local pl = plot:FindFirstChild("Plants")
+            if pl and pl:FindFirstChild(pid) then return true end
+        end
+        return false
+    end
+
+    -- fire SATU-SATU, tunggu ilang (kayak shovelSeedOnce)
+    local removed = 0
+    for _, t in ipairs(target) do
+        if not (state.pumpkinRerollOn and isCurrentGen()) then break end
+        pcall(function() p:Fire(t.id, "", shovelTool.Name, shovelTool) end)
+        for _ = 1, 40 do
+            task.wait(0.05)
+            if not ada(t.id) then removed = removed + 1; break end
+            if not (state.pumpkinRerollOn and isCurrentGen()) then break end
+        end
+    end
+    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d dishovel (< %.0f kg)"):format(
+        totalPk, siapPk, removed, minKg)
+    return removed
+end
+
+-- ============================================================
+-- v4.55: AUTO PLACE SPRINKLER (sprinkler naikin SizeMulti buah)
+-- Format: pkt("Place","PlaceSprinkler"):Fire(Vector3(x,y,z), name, tool, 1)
+-- Rekam posisi manual (hook Fire) -> auto re-place tiap expired (cooldown 90s).
+-- STOP kalau pumpkin >= sprStopKg udah sprStopCount biji di inventory.
+-- ============================================================
+Seed._sprPlacedAt = {}       -- [label] = tick() terakhir place
+Seed._sprAutoPlacing = false
+Seed._SPR_COOLDOWN = 90
+
+function Seed.sprLabel(c)
+    return string.format("%s (%d,%d)", tostring(c.name), math.floor(c.x), math.floor(c.z))
+end
+
+-- HOOK PlaceSprinkler: rekam tiap place MANUAL (pas sprRecording ON)
+do
+    local p = pkt("Place", "PlaceSprinkler")
+    if p and p.Fire then
+        local orig = p.Fire
+        p.Fire = function(self, pos, name, tool, num, ...)
+            if state.sprRecording and not Seed._sprAutoPlacing and typeof(pos) == "Vector3" then
+                local dup = false
+                for _, c in ipairs(state.sprCoords) do
+                    if c.name == tostring(name)
+                       and math.abs(c.x - pos.X) < 3 and math.abs(c.z - pos.Z) < 3 then dup = true; break end
+                end
+                if not dup then
+                    state.sprCoords[#state.sprCoords+1] = { x = pos.X, y = pos.Y, z = pos.Z, name = tostring(name) }
+                    pcall(simpan)
+                    Seed._logSpr = "sprinkler DIREKAM: " .. Seed.sprLabel(state.sprCoords[#state.sprCoords])
+                end
+            end
+            return orig(self, pos, name, tool, num, ...)
+        end
+    end
+end
+
+function Seed.findSprinklerTool(wantName)
+    local char = player.Character
+    local anySpr
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then
+            for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("sprinkler") then
+                    if wantName and t.Name == wantName then return t end
+                    anySpr = anySpr or t
+                end
+            end
+        end
+    end
+    return anySpr
+end
+
+-- hitung pumpkin >= kg di inventory (buah tas punya SizeMultiplier + Weight)
+-- v4.56b: hitung pumpkin >= minKg DI GARDEN (buah udah spawn, gak dishovel karena
+-- gede). Baca SizeMulti buah -> konversi kg. Ini yg jadi stop condition sprinkler.
+function Seed.hitungPumpkinBerat(minKg)
+    local PK_BASE = 0.158
+    local n = 0
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local MY = player.UserId
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                    local sn = (plant:GetAttribute("SeedName") or ""):lower()
+                    if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
+                        local fr = plant:FindFirstChild("Fruits")
+                        if fr then
+                            for _, fruit in ipairs(fr:GetChildren()) do
+                                local sm = fruit:GetAttribute("SizeMulti")
+                                if type(sm) == "number" then
+                                    local kg = PK_BASE * (sm ^ 2.5)
+                                    if kg >= minKg then n = n + 1 end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return n
+end
+
+function Seed.placeSprinklerOnce()
+    local p = pkt("Place", "PlaceSprinkler")
+    if not (p and p.Fire) then Seed._logSpr = "remote PlaceSprinkler gak ada"; return 0 end
+    if #state.sprCoords == 0 then Seed._logSpr = "belum ada posisi (place manual + Rekam dulu)"; return 0 end
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not char then return 0 end
+    local placed = 0
+    for _, c in ipairs(state.sprCoords) do
+        if not (state.autoSprinkler and isCurrentGen()) then break end
+        local label = Seed.sprLabel(c)
+        local last = Seed._sprPlacedAt[label]
+        if not last or (tick() - last) >= Seed._SPR_COOLDOWN then
+            local tool = Seed.findSprinklerTool(c.name) or Seed.findSprinklerTool(nil)
+            if tool then
+                if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
+                Seed._sprAutoPlacing = true
+                pcall(function() p:Fire(Vector3.new(c.x, c.y, c.z), tool.Name, tool, 1) end)
+                Seed._sprAutoPlacing = false
+                Seed._sprPlacedAt[label] = tick()
+                placed = placed + 1
+                task.wait(0.2)
+            else
+                Seed._logSpr = "stok sprinkler habis"; break
+            end
+        end
+    end
+    if placed > 0 then Seed._logSpr = "place " .. placed .. " sprinkler" end
+    return placed
 end
 
 -- ============================================================
@@ -4377,14 +4604,13 @@ local function ringanKebun()
 end
 
 function Seed.ringankan()
-    if state.ringanSuara then
-        local ok, n = pcall(ringanSuara)
-        if ok then Seed.statRingan.suara = Seed.statRingan.suara + n end
-    end
-    if state.ringanKebun then
-        local ok, n = pcall(ringanKebun)
-        if ok then Seed.statRingan.kebun = Seed.statRingan.kebun + n end
-    end
+    -- v4.56: jalanin dua-duanya kalau ringanOn (gak ngandelin sub-flag lagi -- dulu
+    -- ringanOn nyala tapi sub-flag mati -> gak ngefek. Robust buat state kesimpen).
+    if not state.ringanOn then return end
+    local ok1, n1 = pcall(ringanSuara)
+    if ok1 and type(n1) == "number" then Seed.statRingan.suara = Seed.statRingan.suara + n1 end
+    local ok2, n2 = pcall(ringanKebun)
+    if ok2 and type(n2) == "number" then Seed.statRingan.kebun = Seed.statRingan.kebun + n2 end
 end
 
 -- Jalan berkala, bukan sekali doang: Sound & tanaman baru terus muncul
@@ -6747,6 +6973,89 @@ do
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblShovel })
 end
 
+-- ---------- Auto Reroll Giant Pumpkin (v4.53) ----------
+do
+    local kPk = kartu(120, tabFarm)
+    mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
+        Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "🎃 Auto Reroll Pumpkin" })
+    mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Shovel pumpkin < Min KG -> reroll dapet giant" })
+    -- baris "Min SizeMulti [input]"
+    mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 56), Size = UDim2.new(0, 140, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Min KG (simpen)" })
+    Seed._el.inpPkMin = mk("TextBox", { Parent = kPk,
+        Position = UDim2.new(1, -84, 0, 54), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.aksenMuda,
+        Text = tostring(state.pumpkinMinKg or 30) })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpPkMin })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpPkMin })
+    -- baris "Auto reroll [OFF]"
+    mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(0, 160, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto reroll" })
+    Seed._el.tblPkReroll = mk("TextButton", { Parent = kPk,
+        Position = UDim2.new(1, -84, 0, 86), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblPkReroll })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblPkReroll })
+end
+
+-- ---------- Auto Place Sprinkler (v4.55) ----------
+do
+    local kSpr = kartu(150, tabFarm)
+    mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
+        Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "💧 Auto Sprinkler" })
+    mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Place manual + Rekam -> auto re-place. Stop di target." })
+    -- baris "Rekam posisi [OFF]"
+    mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 54), Size = UDim2.new(0, 160, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Rekam posisi (place manual)" })
+    Seed._el.tblSprRec = mk("TextButton", { Parent = kSpr,
+        Position = UDim2.new(1, -84, 0, 52), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblSprRec })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblSprRec })
+    -- baris "Stop kalau >=80kg ada [300]"
+    mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 84), Size = UDim2.new(0, 150, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Stop kalau >=80kg ada" })
+    Seed._el.inpSprCount = mk("TextBox", { Parent = kSpr,
+        Position = UDim2.new(1, -84, 0, 82), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.aksenMuda,
+        Text = tostring(state.sprStopCount or 300) })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpSprCount })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpSprCount })
+    -- baris "Auto sprinkler [OFF]"
+    mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 116), Size = UDim2.new(0, 160, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto sprinkler" })
+    Seed._el.tblSprinkler = mk("TextButton", { Parent = kSpr,
+        Position = UDim2.new(1, -84, 0, 114), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblSprinkler })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblSprinkler })
+end
+
 -- ---------- gift + jual ----------
 local kGift = kartu(150, tabGift)
 mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
@@ -6783,7 +7092,7 @@ local lblPasar = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
     Text = "pasar: belum kebaca" })
 
 -- ---------- Gift Mail (seed + gear) v3.18 ----------
-local kGiftMail = kartu(226, tabGift)
+local kGiftMail = kartu(250, tabGift)
 mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
     Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -6866,7 +7175,7 @@ Seed._el.lblGiftCountdown = mk("TextLabel", { Parent = kGiftMail, BackgroundTran
 -- v4.51: TEKS DEBUG kecil gift mail -- nunjukin lagi kirim apa ke siapa (live).
 -- Jalan buat manual DAN auto gift mail (baca Seed._logMail). Ijo pas aktif.
 Seed._el.lblMailDbg = mk("TextLabel", { Parent = kGiftMail, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 12, 0, 188), Size = UDim2.new(1, -24, 0, 30),
+    Position = UDim2.new(0, 12, 0, 186), Size = UDim2.new(1, -24, 0, 52),
     Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = Color3.fromRGB(120, 200, 130),
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Text = "" })
@@ -6875,7 +7184,19 @@ task.spawn(function()
         task.wait(0.4)
         local lbl = Seed._el and Seed._el.lblMailDbg
         if lbl and lbl.Parent then
-            lbl.Text = Seed._logMail and ("📬 " .. tostring(Seed._logMail)) or ""
+            -- v4.52: debug GEAR -- tampilin apa yg Seed.gearDiTas() deteksi (buat
+            -- tau kenapa gear gak kelaporan). Kalau kosong = toolItuGear gak ngenalin.
+            local okG, gears = pcall(Seed.gearDiTas)
+            local gearTxt
+            if okG and gears and #gears > 0 then
+                local nama = {}
+                for i = 1, math.min(4, #gears) do nama[#nama+1] = gears[i].n .. "x" .. gears[i].j end
+                gearTxt = ("🔧 gear(%d): %s"):format(#gears, table.concat(nama, ", "))
+            else
+                gearTxt = "🔧 gear: 0 (gak kedeteksi di tas)"
+            end
+            local mailTxt = Seed._logMail and ("📬 " .. tostring(Seed._logMail)) or ""
+            lbl.Text = gearTxt .. (mailTxt ~= "" and ("\n" .. mailTxt) or "")
         end
     end
 end)
@@ -7256,6 +7577,44 @@ Seed._el.tblShovelAll.MouseButton1Click:Connect(function()
         lblPickSeed(Seed._el.pickShovel, state.shovelSemua, state.shovelPilih)
     end
 end)
+-- v4.53: handler reroll pumpkin (toggle + threshold)
+if Seed._el.tblPkReroll then
+    Seed._el.tblPkReroll.MouseButton1Click:Connect(function()
+        state.pumpkinRerollOn = not state.pumpkinRerollOn
+        catSaklar(Seed._el.tblPkReroll, state.pumpkinRerollOn)
+        simpan()
+    end)
+end
+if Seed._el.inpPkMin then
+    Seed._el.inpPkMin.FocusLost:Connect(function()
+        local n = tonumber(Seed._el.inpPkMin.Text)
+        state.pumpkinMinKg = (n and n > 0) and n or 30
+        Seed._el.inpPkMin.Text = tostring(state.pumpkinMinKg)
+        simpan()
+    end)
+end
+-- v4.55: handler sprinkler
+if Seed._el.tblSprinkler then
+    Seed._el.tblSprinkler.MouseButton1Click:Connect(function()
+        state.autoSprinkler = not state.autoSprinkler
+        catSaklar(Seed._el.tblSprinkler, state.autoSprinkler)
+        simpan()
+    end)
+end
+if Seed._el.tblSprRec then
+    Seed._el.tblSprRec.MouseButton1Click:Connect(function()
+        state.sprRecording = not state.sprRecording
+        catSaklar(Seed._el.tblSprRec, state.sprRecording)
+    end)
+end
+if Seed._el.inpSprCount then
+    Seed._el.inpSprCount.FocusLost:Connect(function()
+        local n = tonumber(Seed._el.inpSprCount.Text)
+        state.sprStopCount = (n and n > 0) and math.floor(n) or 300
+        Seed._el.inpSprCount.Text = tostring(state.sprStopCount)
+        simpan()
+    end)
+end
 Seed._el.pickShovel.MouseButton1Click:Connect(function()
     -- jenis seed dari tanaman di kebun. PISAHIN: bermutasi (Gold/Rainbow/Mega/dll)
     -- vs biasa. mutasi dibaca dari atribut Mutation/Variant tanaman. nama tampil:
@@ -7495,10 +7854,12 @@ end)
 
 tblRingan.MouseButton1Click:Connect(function()
     state.ringanOn = not state.ringanOn
+    -- v4.56: FIX -- saklar utama sekarang OTOMATIS nyalain dua anaknya (ringanSuara +
+    -- ringanKebun). Dulu nyala tapi dua anak MATI -> Seed.ringankan() gak ngapa2in
+    -- (cuma jalan per-bagian). Sekarang pencet = beneran ngurangin RAM.
+    state.ringanSuara = state.ringanOn
+    state.ringanKebun = state.ringanOn
     catSaklar(tblRingan, state.ringanOn, "Ringankan RAM: NYALA", "Ringankan RAM: MATI")
-    -- v3.32: TIDAK LAGI maksa noclip + hilangin visual (bikin E ke NPC/mailbox
-    -- gak jalan). Ringankan RAM cuma buang Sound + kebun orang lain (aman).
-    -- Noclip & hilangin visual toggle sendiri (di kartu terpisah).
     simpan()
     if state.ringanOn then
         task.spawn(function() pcall(Seed.ringankan) end)
@@ -7557,6 +7918,11 @@ function Seed._segarkanGUI()
         catSaklar(tblEspGarden, state.espGardenOn)
         if Seed._el.tblShovel then catSaklar(Seed._el.tblShovel, state.shovelOn) end
         if Seed._el.tblShovelAll then catSaklar(Seed._el.tblShovelAll, state.shovelSemua) end
+        if Seed._el.tblPkReroll then catSaklar(Seed._el.tblPkReroll, state.pumpkinRerollOn) end
+        if Seed._el.inpPkMin then Seed._el.inpPkMin.Text = tostring(state.pumpkinMinKg or 30) end
+        if Seed._el.tblSprinkler then catSaklar(Seed._el.tblSprinkler, state.autoSprinkler) end
+        if Seed._el.tblSprRec then catSaklar(Seed._el.tblSprRec, state.sprRecording) end
+        if Seed._el.inpSprCount then Seed._el.inpSprCount.Text = tostring(state.sprStopCount or 300) end
     end)
     kotakMult.Text = tostring(state.jualMinMult or 4) .. "x"
     kotakSisa.Text = tostring(state.sisaSheck or 0)
@@ -8209,6 +8575,39 @@ task.spawn(function()
         task.wait(5)
         if state.shovelOn then
             pcall(Seed.shovelSeedOnce)
+        end
+    end
+end)
+
+-- v4.53: loop AUTO REROLL PUMPKIN -- shovel pumpkin SizeMulti kecil tiap 5s
+task.spawn(function()
+    task.wait(22)
+    while isCurrentGen() do
+        task.wait(5)
+        if state.pumpkinRerollOn then
+            pcall(Seed.rerollPumpkinOnce)
+        end
+    end
+end)
+
+-- v4.55: loop AUTO SPRINKLER -- place tiap 3s + STOP kalau goal kecapai
+task.spawn(function()
+    task.wait(24)
+    while isCurrentGen() do
+        task.wait(3)
+        if state.autoSprinkler then
+            -- cek stop condition: pumpkin >= sprStopKg udah sprStopCount biji
+            local n = Seed.hitungPumpkinBerat(tonumber(state.sprStopKg) or 80)
+            Seed._sprGiant = n
+            if n >= (tonumber(state.sprStopCount) or 300) then
+                state.autoSprinkler = false
+                pcall(simpan)
+                Seed._logSpr = ("STOP: %d pumpkin >=%.0fkg di garden (target %d kecapai)"):format(
+                    n, tonumber(state.sprStopKg) or 80, tonumber(state.sprStopCount) or 300)
+                if Seed._el and Seed._el.tblSprinkler then pcall(function() catSaklar(Seed._el.tblSprinkler, false) end) end
+            else
+                pcall(Seed.placeSprinklerOnce)
+            end
         end
     end
 end)
