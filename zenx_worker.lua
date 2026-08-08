@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.110-cf"
+local VERSION = "9.111-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7034,17 +7034,9 @@ local function run(cfg)
             end
         end
 
-        -- v9.106: AUTO-UPDATE WORKER tiap 15 menit. Download worker GitHub, cek
-        -- versi. Kalau baru + valid -> ganti + restart SESI (bukan reboot RF, bukan
-        -- stop Termux). Launcher loop jalanin worker baru. Client tetep jalan.
-        if os.time() - WORKER_CEK_TS >= 900 then
-            WORKER_CEK_TS = os.time()
-            local naik, vBaru = cek_worker_versi(cfg)
-            if naik then
-                info("[auto-update] exit worker -> launcher loop jalanin v" .. tostring(vBaru))
-                os.exit(0)   -- client GAK ketutup (app kepisah). Launcher re-run worker baru.
-            end
-        end
+        -- v9.111: AUTO-UPDATE WORKER DIMATIIN (beresiko: 1 bug matiin semua RF
+        -- sekaligus). Ganti pakai tombol UPDATE-WORKER dari panel (manual, bisa
+        -- test 1 RF dulu). cek_worker_versi tetep ada -> dipanggil dari handler panel.
 
         -- v8.33: CEK GRAFIS di TOP loop (level atas, PASTI jalan tiap iterasi).
         -- Loop grafis lama ke-nest DALAM FORCE handler (depth 4) -> gak jalan
@@ -8392,6 +8384,26 @@ local function run(cfg)
             -- PAKSA "selesai" tapi client gak kebuka -- restart_kerjakan cuma tutup+
             -- grid, client kebuka di LOOP ANTRIAN. Dulu skip_sisa=true tiap ronde ->
             -- loop antrian gak pernah jalan -> client nyangkut ketutup.
+        elseif U:find("UPDATE%-WORKER") then
+            -- v9.111: UPDATE-WORKER dari panel (manual, aman). Download worker versi
+            -- baru dari GitHub, validasi, ganti file, restart SESI (launcher loop).
+            -- Termux tetep idup, client tetep jalan. Bisa test 1 RF dulu.
+            if isi ~= lastIsi then
+                lastIsi = isi
+                warn("UPDATE-WORKER dari panel -> cek versi GitHub + restart sesi")
+                pcall(tulis_launcher_loop)   -- pastiin launcher loop dulu
+                local naik, vBaru = cek_worker_versi(cfg)
+                if naik then
+                    lapor(cfg, "UPDATE-WORKER", cacheRun)
+                    info("[update] worker -> v" .. tostring(vBaru) .. ", restart sesi...")
+                    os.execute("sleep 1")
+                    os.exit(0)   -- launcher loop jalanin worker baru
+                else
+                    ok("[update] worker udah versi terbaru (v" .. VERSION .. ") atau gagal cek")
+                    lapor(cfg, isi, cacheRun); lastStatus = os.time()
+                end
+            end
+            skip_sisa = true
         elseif U:find("DOWNLOAD%-APK") then
             -- v9.107: DOWNLOAD-APK:<file1>|<file2>|... dari panel -> download+install
             -- SEMUA file yg dicentang (Delta client + VPN + Termux:Boot) sekaligus.
