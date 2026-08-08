@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.64"
+local VERSI = "4.65"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1783,13 +1783,10 @@ function Seed.trowelOnce()
     end
     if not tool then Seed._logTrowel = "Trowel gak ada di tas"; return 0 end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
-    -- v4.64: TP karakter ke CENTER dulu -- MovePlant kemungkinan ada batas jarak.
+    -- v4.65: STEP-WISE -- MovePlant ada batas jarak (~8-15 stud). Geser tiap
+    -- plant 8 stud/step ke arah target, karakter ngikutin, sampe nyampe (<6 stud).
     local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        pcall(function() hrp.CFrame = CFrame.new(target.X, target.Y + 3, target.Z) end)
-        task.wait(0.2)
-    end
-    -- pindahin seed terpilih yg BELUM di tengah (jarak > 5) ke target
+    local STEP = 8
     local moved = 0
     for _, plot in ipairs(gardens:GetChildren()) do
         local plants = plot:FindFirstChild("Plants")
@@ -1799,25 +1796,40 @@ function Seed.trowelOnce()
                 if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
                     local sn = plant:GetAttribute("SeedName") or "?"
                     if Seed.trowelBoleh(sn) then
-                        local pos
-                        pcall(function()
-                            if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position
-                            else pos = plant:GetPivot().Position end
-                        end)
-                        if not pos or (pos - target).Magnitude > 5 then
-                            -- v4.63 FIX: pake nama LENGKAP {userId}_{uuid}. Dari hook
-                            -- trowel manual: game minta nama penuh, BUKAN uuid doang
-                            -- (gag2 ref motong userId -> salah buat versi game ini).
-                            local uuid = plant.Name
-                            -- v4.62: pastiin Trowel masih dipegang (loop lain bisa nyuri
-                            -- tool). kalau kecuri -> re-equip dulu baru MovePlant.
+                        -- geser step-by-step sampe nyampe target (maks 25 step)
+                        local sudahGerak = false
+                        for _ = 1, 25 do
+                            if not (state.autoTrowel and isCurrentGen()) then break end
+                            local pos
+                            pcall(function()
+                                if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position
+                                else pos = plant:GetPivot().Position end
+                            end)
+                            if not pos then break end
+                            local flat = Vector3.new(target.X, pos.Y, target.Z)
+                            local dist = (flat - pos).Magnitude
+                            if dist < 6 then break end   -- udah di lokasi
+                            local dir = (flat - pos).Unit
+                            local d = math.min(STEP, dist)
+                            local t = pos + dir * d
+                            -- TP karakter ke titik step (MovePlant butuh deket)
+                            if hrp then pcall(function() hrp.CFrame = CFrame.new(t.X, t.Y + 3, t.Z) end); task.wait(0.12) end
+                            -- pastiin Trowel masih dipegang
                             if tool.Parent ~= char and hum then
                                 pcall(function() hum:EquipTool(tool) end); task.wait(0.1)
                             end
-                            pcall(function() p:Fire(uuid, target, 90) end)
-                            moved = moved + 1
-                            task.wait(0.1)
+                            pcall(function() p:Fire(plant.Name, t, 90) end)
+                            task.wait(0.22)
+                            -- cek gerak; kalau mentok (gak gerak) -> stop plant ini
+                            local pos2
+                            pcall(function()
+                                if plant:IsA("Model") and plant.PrimaryPart then pos2 = plant.PrimaryPart.Position
+                                else pos2 = plant:GetPivot().Position end
+                            end)
+                            if not pos2 or (pos2 - pos).Magnitude < 1 then break end
+                            sudahGerak = true
                         end
+                        if sudahGerak then moved = moved + 1 end
                     end
                 end
             end
