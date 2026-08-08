@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.149-cf"
+local VERSION = "9.150-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -10365,26 +10365,20 @@ if PERINTAH == "masuk" then
         ok("Semua client udah ada akun. Gak ada yg perlu ditembak.")
         return
     end
-    -- v9.149: BATCH 6 per sesi (grid selalu ukuran 6). Kalau >6, bikin sesi
-    -- terpisah, jeda 3 menit antar-sesi (biar gak berat + rapi buat login).
+    -- v9.150: BUKA 6 DOANG per jalan (grid selalu ukuran 6). Sisanya MANUAL:
+    -- login dulu ke 6 ini -> username keisi -> `zenx masuk` lagi otomatis nemu
+    -- yg masih kosong berikutnya. Gak auto-sesi (user minta manual re-run).
     local BATCH = 6
-    local JEDA  = 180   -- 3 menit
-    local totalSesi = math.ceil(#kosong / BATCH)
-    info(("%d client belum ada akun -> %d sesi (%d/sesi, grid ukuran 6, jeda 3 menit)."):format(
-        #kosong, totalSesi, BATCH))
-    local sesi = 0
-    for i = 1, #kosong, BATCH do
-        sesi = sesi + 1
-        local batch = {}
-        for j = i, math.min(i + BATCH - 1, #kosong) do batch[#batch+1] = kosong[j] end
-        info(("=== SESI %d/%d: %d client -> Brookhaven + grid ==="):format(sesi, totalSesi, #batch))
-        jalankan_home(cfg, batch)   -- pad ke min 6 -> grid selalu ukuran 6
-        if i + BATCH <= #kosong then
-            info(("Nunggu 3 menit sebelum sesi %d/%d..."):format(sesi + 1, totalSesi))
-            os.execute("sleep " .. JEDA)
-        end
+    local batch = {}
+    for i = 1, math.min(BATCH, #kosong) do batch[#batch+1] = kosong[i] end
+    info(("Buka %d client (grid ukuran 6) -> Brookhaven..."):format(#batch))
+    jalankan_home(cfg, batch)   -- pad ke min 6 -> grid selalu ukuran 6
+    local sisa = #kosong - #batch
+    if sisa > 0 then
+        ok(("MASUK: %d client dibuka. Login ke 6 ini dulu, terus JALANIN `zenx masuk` LAGI buat %d sisanya."):format(#batch, sisa))
+    else
+        ok(("MASUK selesai: %d client dibuka (semua yg kosong)."):format(#batch))
     end
-    ok(("MASUK selesai: %d client ditembak (%d sesi). Masukin akun ke tiap client."):format(#kosong, totalSesi))
     return
 end
 
