@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.123-cf"
+local VERSION = "9.125-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7077,7 +7077,16 @@ local function run(cfg)
             -- v9.116: GATE KESIAPAN. Rotasi cuma boleh kalau tim 1 (1-10) LENGKAP
             -- nembak server (proses idup) + 1 menit. Biar pas awal start, stock yg
             -- lagi ada GAK langsung motong tim 1 yg belum kebentuk.
-            if cfg.rotasi_on and ROTASI_STATE == "idle" and (os.time() - ROTASI_TS) > 120 then
+            -- v9.124: SELALU poll stock (catat baseline nextBoundary) tiap 8s SELAMA
+            -- rotasi_on -- gak nunggu gate. Dulu poll cuma pas gate siap -> restock
+            -- PERTAMA abis gate siap kelewat (cuma jadi baseline) -> nunggu 1 siklus
+            -- (~5 menit) baru trigger. Sekarang baseline selalu fresh -> begitu gate
+            -- siap, restock berikutnya langsung ke-trigger (gak kelewat).
+            if cfg.rotasi_on and (os.time() - ROTASI_CEK_TS) >= 8 then
+                ROTASI_CEK_TS = os.time()
+                -- 1) SELALU poll (update ROTASI_NB_LAST) -> baseline gak pernah basi
+                local barang = cek_stock_rotasi(cfg)
+                -- 2) update gate kesiapan tim 1
                 local tim1 = pkgs_slot(cfg, 1, 10)
                 local idup = 0
                 for _, pkg in ipairs(tim1) do if cacheHidup[pkg] then idup = idup + 1 end end
@@ -7088,12 +7097,11 @@ local function run(cfg)
                     end
                 end
                 local siap = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 60
-                if siap and (os.time() - ROTASI_CEK_TS) >= 8 then
-                    ROTASI_CEK_TS = os.time()
-                    local barang = cek_stock_rotasi(cfg)
-                    if barang then
-                        pcall(function() jalankan_rotasi(cfg, barang, mapLink) end)
-                    end
+                -- 3) trigger cuma kalau idle + cooldown + gate siap
+                if barang and ROTASI_STATE == "idle" and (os.time() - ROTASI_TS) > 120 and siap then
+                    pcall(function() jalankan_rotasi(cfg, barang, mapLink) end)
+                elseif barang and not siap then
+                    info(("[rotasi] stock '%s' kedeteksi tapi tim 1 belum siap -> baseline dicatat, nunggu siap"):format(barang))
                 end
             end
 
@@ -12790,13 +12798,9 @@ function jalankan_rotasi(cfg, barang, mapLink)
     -- (11-20) SEBELUM buka -> grid_satu ngitung layout 10 slot, tim 2 penuhin layar.
     PKGS_AKTIF = pkgs_slot(cfg, 11, 20)
     -- buka 11-15 (grid + server)
-    info("[rotasi] buka client 11-15 (grid+server, layout 10-client)")
-    buka_grup_rotasi(cfg, pkgs_slot(cfg, 11, 15), mapLink)
-    info("[rotasi] jeda 1 menit sebelum 16-20...")
-    os.execute("sleep 60")
-    -- buka 16-20
-    info("[rotasi] buka client 16-20 (grid+server)")
-    buka_grup_rotasi(cfg, pkgs_slot(cfg, 16, 20), mapLink)
+    -- v9.125: tim 2 TEMBAK 10 SEKALIGUS (11-20), gak dipecah 5-5 + jeda 60s.
+    info("[rotasi] buka client 11-20 SEKALIGUS (grid+server, layout 10-client)")
+    buka_grup_rotasi(cfg, pkgs_slot(cfg, 11, 20), mapLink)
     -- kasih waktu tim 2 beli (90s) sebelum balik
     info("[rotasi] tim 2 beli... (90s)")
     os.execute("sleep 90")
