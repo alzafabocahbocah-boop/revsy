@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.128-cf"
+local VERSION = "9.129-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6745,29 +6745,11 @@ local function run(cfg)
         -- Akun belum punya PS fall -> bakal fallback PUBLIC (rawan di-steal).
         -- Saran: jalanin `zenx getps` di RF ini buat ambil accessCode PS akun.
         if nDapet == 0 and cfg.place_id ~= "129343810645058" and cfg.pakai_ps ~= false then
-            -- v9.43: AUTO jalanin `zenx getps` kalau 0 ps_link (tapi cookie ADA).
-            -- Bug user: cookie ada 4 tapi getps 0 -> PUBLIC. Sebab: refresh_ps_getps
-            -- cuma BACA ps_link dari DB (kosong kalau belum pernah `zenx getps`).
-            -- Sekarang: kalau 0, jalanin getps sekali (ambil PS link dari API pakai
-            -- cookie), baru baca ulang. Guard penanda biar gak getps tiap ronde
-            -- (berat) -- cuma sekali per restart / per 5 menit.
-            if not KICK_DIURUS["getps_jalan"] or (os.time() - (KICK_DIURUS["getps_jalan"] or 0)) > 300 then
-                KICK_DIURUS["getps_jalan"] = os.time()
-                info("[ps-getps] 0 ps_link tapi cookie ada -> AUTO jalanin 'zenx getps' dulu...")
-                os.execute(("timeout 180 %s getps"):format(
-                    (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
-                -- baca ulang ps_link yg baru ke-ambil
-                local r2 = api_get(cfg, "/ps-list") or ""
-                for obj in r2:gmatch('{.-}') do
-                    local akun = obj:match('"akun"%s*:%s*"(.-)"')
-                    local psl  = obj:match('"ps_link"%s*:%s*"(.-)"')
-                    if akun and akun2pkg[akun] and psl and psl ~= "" then
-                        local pkg = akun2pkg[akun]
-                        if not mapLink[pkg] then mapLink[pkg] = psl; nDapet = nDapet + 1 end
-                    end
-                end
-                info(("[ps-getps] setelah auto-getps: %d akun dapet ps_link"):format(nDapet))
-            end
+            -- v9.129: AUTO-getps DIBUANG dari loop utama (user minta getps MANUAL).
+            -- Dulu di sini auto jalanin 'zenx getps' (timeout 180 = block 3 menit)
+            -- tiap 5 menit kalau 0 PS -> bikin loop utama macet + ganggu rotasi.
+            -- Sekarang cuma BACA /ps-list. Kalau 0 PS -> warning, user getps manual.
+            warn("[ps-getps] 0 ps_link -> jalanin 'zenx getps' MANUAL di RF ini dulu (auto-getps udah dimatiin).")
         end
         if nDapet == 0 and cfg.place_id ~= "129343810645058" and cfg.pakai_ps ~= false then
             warn("[ps-getps] 0 akun punya PS fall -> client bakal masuk PUBLIC (rawan)!")
@@ -7923,41 +7905,28 @@ local function run(cfg)
                 -- sempet auto-getps -> ps_link kosong -> client masuk PUBLIC (bukan
                 -- private). Ambil getps di sini biar accessCode siap pas buka.
                 if cfg.place_id == "126987765280963" then
-                    info("  W2 FALL -> ambil PS link (getps) dulu sebelum restart...")
-                    pcall(function()
-                        os.execute(("timeout 120 %s getps"):format(
-                            (os.getenv("PREFIX") or "/data/data/com.termux/files/usr") .. "/bin/zenx"))
-                    end)
-                    -- v9.72: tandai getps BARU jalan -> refresh_ps_getps JANGAN auto-
-                    -- getps lagi (dobel). Bug user: pindah PS lama -- getps #1 di sini,
-                    -- terus refresh_ps_getps baca 0 -> auto-getps #2 -> ~40s+ percuma.
-                    -- Set getps_jalan biar refresh cuma BACA /ps-list (getps udah jalan).
-                    KICK_DIURUS["getps_jalan"] = os.time()
-                    -- v9.35: RETRY refresh_ps_getps. Bug user: getps dapet 8 PS TAPI
-                    -- [ps-getps] 0 dapet -> PUBLIC. Sebab: getps simpan ke backend
-                    -- (/ps-simpan) async, refresh baca /ps-list cuma 1 detik kemudian
-                    -- (data belum ke-commit). Fix: tunggu + retry max 5x (jeda 2s)
-                    -- sampai mapLink keisi. mapLink[pkg] persist antar retry (nDapet
-                    -- naik pas ps_link akhirnya kebaca).
+                    -- v9.129: AUTO-getps DIBUANG (user minta manual). Dulu di sini
+                    -- jalanin 'zenx getps' (block 2 menit) sebelum restart. Sekarang
+                    -- cuma BACA /ps-list (PS link dari getps MANUAL yg udah lo ketik).
+                    info("  W2 FALL -> baca PS link yg udah ada (getps manual)...")
+                    KICK_DIURUS["getps_jalan"] = os.time()   -- tandai: refresh cuma baca
                     do
                         local dapet = false
-                        for cobaPs = 1, 5 do
-                            os.execute("sleep 2")
+                        for cobaPs = 1, 3 do
                             pcall(function() refresh_ps_getps() end)
-                            -- cek mapLink udah keisi buat client yg ada akun
                             local ada = 0
                             for _, pkg in ipairs(split(cfg.pkgs)) do
                                 if mapLink[pkg] and mapLink[pkg] ~= "" then ada = ada + 1 end
                             end
                             if ada > 0 then
-                                info(("  [ps-getps] retry #%d: %d client dapet PS link"):format(cobaPs, ada))
+                                info(("  [ps-getps] %d client dapet PS link (dari getps manual)"):format(ada))
                                 dapet = true
                                 break
                             end
-                            info(("  [ps-getps] retry #%d: belum ada PS link, tunggu..."):format(cobaPs))
+                            os.execute("sleep 1")
                         end
                         if not dapet then
-                            warn("  [ps-getps] 5x retry tetep 0 PS link -> sebagian client bakal PUBLIC")
+                            warn("  [ps-getps] 0 PS link -> jalanin 'zenx getps' MANUAL dulu, atau client PUBLIC")
                         end
                     end
                 end
@@ -11549,7 +11518,33 @@ if PERINTAH == "getps" then
         warn("Gak ada akun kebaca di client device ini (prefs username kosong?).")
         return
     end
-    info(("%d akun (tim device ini) -- ambil PS link satu-satu..."):format(#akunList))
+    -- v9.129: SKIP akun yg UDAH punya PS (server). Baca /ps-list dulu -> buang akun
+    -- yg ps_link-nya udah ada. Cuma getps akun yg BELUM punya server (hemat waktu +
+    -- gak rate-limit Roblox buat yg gak perlu). Pakai 'zenx getps ulang' buat paksa semua.
+    if (arg and arg[2] or ""):lower() ~= "ulang" then
+        local punyaPs = {}
+        local rList = api_get(cfg, "/ps-list") or ""
+        for obj in rList:gmatch('{.-}') do
+            local ak = obj:match('"akun"%s*:%s*"(.-)"')
+            local psl = obj:match('"ps_link"%s*:%s*"(.-)"')
+            if ak and psl and psl ~= "" then punyaPs[ak] = true end
+        end
+        local sisa = {}
+        local nSkip = 0
+        for _, ak in ipairs(akunList) do
+            if punyaPs[ak] then nSkip = nSkip + 1
+            else sisa[#sisa+1] = ak end
+        end
+        if nSkip > 0 then
+            info(("%d akun udah punya server -> SKIP (getps cuma yg belum)."):format(nSkip))
+        end
+        akunList = sisa
+        if #akunList == 0 then
+            ok("Semua akun udah punya server. Gak ada yg perlu getps. (pakai 'zenx getps ulang' buat paksa semua)")
+            return
+        end
+    end
+    info(("%d akun BELUM punya server -- ambil PS link satu-satu..."):format(#akunList))
     print()
 
     local dapet, gagal = 0, 0
