@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.119-cf"
+local VERSION = "9.120-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7235,7 +7235,18 @@ local function run(cfg)
                 -- semua 10). Parse daftar, cocokin sama mapAkun (pkg->username).
                 local daftarForce = isiTop:match("FORCE:([%w%.%_,]+)") or isiTop:match("RESTART:([%w%.%_,]+)")
                 local setAkun = nil
-                if daftarForce then
+                if cfg.rotasi_on then
+                    -- v9.120: ROTASI nyala -> denyut/rejoin CUMA tim 1 (10 pkg pertama),
+                    -- LANGSUNG dari cfg.pkgs (gak ngandelin PKGS_AKTIF yg bisa ke-reset).
+                    -- Tanpa ini, denyut ngurus 19 (rejoin tim 2 yg harusnya standby).
+                    setAkun = {}
+                    for i = 1, math.min(10, #pkgList) do
+                        local pkg = pkgList[i]
+                        setAkun[pkg] = true
+                        local u = mapAkun and mapAkun[pkg]
+                        if u then setAkun[u] = true end
+                    end
+                elseif daftarForce then
                     setAkun = {}
                     for a in daftarForce:gmatch("[^,]+") do setAkun[a] = true end
                 elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
@@ -9771,7 +9782,11 @@ local function run(cfg)
                 -- v9.47: filter PKGS_AKTIF (jalan 6 -> cek 6, bukan 10). Bug user:
                 -- jalan 6 tapi antrian "4/10 di game". pkgList semua tanpa filter.
                 local aktifSet = nil
-                if PKGS_AKTIF and #PKGS_AKTIF > 0 then
+                if cfg.rotasi_on then
+                    -- v9.120: ROTASI -> cuma hitung/urus tim 1 (10 pkg pertama).
+                    aktifSet = {}
+                    for i = 1, math.min(10, #pkgList) do aktifSet[pkgList[i]] = true end
+                elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
                     aktifSet = {}
                     for _, p in ipairs(PKGS_AKTIF) do aktifSet[p] = true end
                 end
