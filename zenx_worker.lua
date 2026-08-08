@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.102-cf"
+local VERSION = "9.103-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2203,7 +2203,7 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
@@ -5603,24 +5603,19 @@ local function lapor(cfg, isi_perintah, cache)
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
         '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s,'..
-        '"place":%s,"grid":%d,"wnaik":%s,"wboot":%d,"wnaktif":%d}',
+        '"place":%s,"grid":%d,"wnaik":%s,"wboot":%d,"wnaktif":%d,"ninstall":%d}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
         jstr(AKSI_SKRG), table.concat(logParts, ","), jstr(VERSION), jstr(dev_id()), jstr(devnama_now()),
         jstr(cfg.script_label or ""),
-        -- v8.62: lapor place_id + grid_kolom yang lagi KESET di worker. Panel pakai
-        -- ini buat CEK setelan udah nyampe sebelum Start (tulis PS+grid -> cek ->
-        -- baru buka client). Biar gak Start pakai setelan lama.
         jstr(cfg.place_id or ""), math.floor(tonumber(cfg.grid_kolom) or 0),
-        -- v9.85: wnaik = versi LAMA kalau worker BARU NAIK versi (abis update).
-        -- Panel pin baris "naik ke vX" di log. null kalau gak naik (boot biasa).
         WVER_NAIK and jstr(WVER_NAIK) or "null",
-        -- v9.89: wboot = kapan worker nyala (unix). Panel pin "baru nyala X lalu".
         BOOT_TS or 0,
-        -- v9.92: wnaktif = jumlah client AKTIF (PKGS_AKTIF). Panel nampilin setelan
-        -- "N client · K kolom · server X" pas boot. Kalau nil -> #list (semua).
-        (PKGS_AKTIF and #PKGS_AKTIF > 0) and #PKGS_AKTIF or #list
+        (PKGS_AKTIF and #PKGS_AKTIF > 0) and #PKGS_AKTIF or #list,
+        -- v9.103: ninstall = TOTAL client keinstall (dari config pkgs). Panel pakai
+        -- buat checklist download: slot 1..ninstall = ijo (ada), sisanya = bisa download.
+        #split(cfg.pkgs or "")
     )
 
     -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
@@ -8352,6 +8347,23 @@ local function run(cfg)
             -- PAKSA "selesai" tapi client gak kebuka -- restart_kerjakan cuma tutup+
             -- grid, client kebuka di LOOP ANTRIAN. Dulu skip_sisa=true tiap ronde ->
             -- loop antrian gak pernah jalan -> client nyangkut ketutup.
+        elseif U:find("DOWNLOAD%-DELTA") then
+            -- v9.103: DOWNLOAD-DELTA:19,20 dari panel -> download+install client slot
+            -- tsb doang (checklist panel). Format "DOWNLOAD-DELTA:19,20".
+            if isi ~= lastIsi then
+                lastIsi = isi
+                local slotStr = isi:match("DOWNLOAD%-DELTA:([%d,]+)") or ""
+                warn("DOWNLOAD-DELTA dari panel -> slot: " .. (slotStr ~= "" and slotStr or "(kosong)"))
+                if slotStr ~= "" then
+                    local ver = cek_delta_versi(cfg) or "2.731.944"
+                    pcall(function() download_delta_slot(cfg, slotStr, ver) end)
+                    ok("DOWNLOAD-DELTA slot selesai: " .. slotStr)
+                else
+                    err("[download-slot] format salah, harusnya DOWNLOAD-DELTA:19,20")
+                end
+                lapor(cfg, isi, cacheRun); lastStatus = os.time()
+            end
+            skip_sisa = true
         elseif U:find("UPDATE%-DELTA") or U:find("UPDATEDELTA") then
             -- v9.100: UPDATE-DELTA dari panel -> cek delta_versi.txt + update SEMUA
             -- client ke versi terbaru (manual trigger, gak nunggu 10 menit).
@@ -12496,6 +12508,57 @@ function update_delta_ke(cfg, versiBaru)
     print("")
     ok(("Selesai: %d update, %d skip (udah v%s), %d gagal"):format(sukses, dilewat, versiBaru, gagal))
     return sukses, dilewat, gagal
+end
+
+-- v9.103: download+install client SLOT tertentu (dari panel, checklist). slotStr =
+-- "19,20" -> download nomercy19, nomercy20 doang. Buat nambah client baru tanpa
+-- download ulang semua. Global biar run() loop bisa manggil.
+function download_delta_slot(cfg, slotStr, versi)
+    versi = (versi and versi ~= "") and versi or "2.731.944"
+    local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
+    local HOME = os.getenv("HOME") or "."
+    local slots = {}
+    for s in tostring(slotStr or ""):gmatch("%d+") do slots[#slots+1] = tonumber(s) end
+    if #slots == 0 then err("[download-slot] gak ada slot"); return 0, 0 end
+    local function namaFile(n)
+        if n == 1 then return ("NO.MERCY.DELTA.LITE.64BIT.01-%s.apk.1.apk"):format(versi) end
+        if n <= 10 then return ("NO.MERCY.DELTA.LITE.64BIT.%02d-%s.apk.apk"):format(n, versi) end
+        return ("nomercy%d-%s.apk"):format(n, versi)
+    end
+    print(C.BOLD .. C.C .. ("\n=== DOWNLOAD CLIENT SLOT: %s ===\n"):format(table.concat(slots, ",")) .. C.N)
+    local TMPAPK = HOME .. "/mercy_slot.apk"
+    local sukses, gagal = 0, 0
+    for _, n in ipairs(slots) do
+        local nama = namaFile(n)
+        print(C.C .. ("[slot %d] "):format(n) .. C.N .. nama:sub(1, 40) .. "...")
+        os.remove(TMPAPK)
+        os.execute(("timeout 900 curl -# --fail -L -o %s %s"):format(shq(TMPAPK), shq(BASE .. nama)))
+        local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+        if sz < 1000000 then
+            print(C.R .. ("  GAGAL download (%d byte) -- cek nama/versi di Releases"):format(sz) .. C.N)
+            gagal = gagal + 1
+        else
+            print(("  pasang (%.0f MB)..."):format(sz / 1024 / 1024))
+            local outf = HOME .. "/mercy_slot_pm.txt"
+            os.remove(outf)
+            os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(shq(TMPAPK), shq(outf)))
+            local hasil = ""
+            for _ = 1, 150 do
+                os.execute("sleep 2")
+                local hf = io.open(outf, "r")
+                if hf then hasil = hf:read("*all") or ""; hf:close()
+                    if hasil:find("Success") or hasil:find("Failure") then break end
+                end
+            end
+            os.remove(outf)
+            if tostring(hasil):find("Success") then print(C.G .. "  OK" .. C.N); sukses = sukses + 1
+            else print(C.R .. "  GAGAL pasang" .. C.N); gagal = gagal + 1 end
+        end
+    end
+    os.remove(TMPAPK)
+    print("")
+    ok(("Selesai slot: %d pasang, %d gagal"):format(sukses, gagal))
+    return sukses, gagal
 end
 
 -- v9.100: baca delta_versi.txt dari GitHub (versi Delta terbaru yg mau dipasang).
