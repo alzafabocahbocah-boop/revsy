@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.103-cf"
+local VERSION = "9.106-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -696,6 +696,8 @@ end
 -- fresh (<10 menit). Muncul TIAP reboot/update -- gak tergantung versi berubah.
 BOOT_TS = os.time()
 DELTA_CEK_TS = 0        -- v9.100: ts terakhir cek delta_versi.txt (auto-update 10 menit)
+DELTA_SLOT_DL = {}      -- v9.104: set slot Delta yg BARU didownload (panel tandai ijo langsung)
+WORKER_CEK_TS = 0       -- v9.106: ts terakhir cek versi worker (auto-update worker)
 
 local function warn(m)
     log("!   "..m,C.Y)
@@ -5603,7 +5605,7 @@ local function lapor(cfg, isi_perintah, cache)
         '{"tim":%s,"cpu":%d,"ram_used":%.1f,"ram_free":%.1f,"ram_total":%.1f,'..
         '"jalan":%d,"total":%d,"sticky":%s,"sig":%s,"clients":[%s],'..
         '"aksi":%s,"log":[%s],"ver":%s,"dev":%s,"devnama":%s,"sc":%s,'..
-        '"place":%s,"grid":%d,"wnaik":%s,"wboot":%d,"wnaktif":%d,"ninstall":%d}',
+        '"place":%s,"grid":%d,"wnaik":%s,"wboot":%d,"wnaktif":%d,"ninstall":%d,"dslot":%s}',
         jstr(cfg.tim), baca_cpu(), used, free, total,
         jalan, #list, tostring((isi_perintah or ""):upper():find("FORCE") ~= nil),
         jstr(isi_perintah), table.concat(parts, ","),
@@ -5613,9 +5615,17 @@ local function lapor(cfg, isi_perintah, cache)
         WVER_NAIK and jstr(WVER_NAIK) or "null",
         BOOT_TS or 0,
         (PKGS_AKTIF and #PKGS_AKTIF > 0) and #PKGS_AKTIF or #list,
-        -- v9.103: ninstall = TOTAL client keinstall (dari config pkgs). Panel pakai
-        -- buat checklist download: slot 1..ninstall = ijo (ada), sisanya = bisa download.
-        #split(cfg.pkgs or "")
+        #split(cfg.pkgs or ""),
+        -- v9.104: dslot = daftar slot Delta terinstall (1..#pkgs BASE contiguous +
+        -- slot yg baru didownload lewat DOWNLOAD-DELTA). Panel tandai ijo yg PERSIS.
+        (function()
+            local ada = {}
+            for i = 1, #split(cfg.pkgs or "") do ada[i] = true end
+            for n, _ in pairs(DELTA_SLOT_DL) do ada[n] = true end
+            local arr = {}
+            for n = 1, 30 do if ada[n] then arr[#arr+1] = n end end
+            return jstr(table.concat(arr, ","))
+        end)()
     )
 
     -- v5.30: HASIL LAPORAN DICATAT. Dulu `api_post(...)` nilai baliknya
@@ -6930,6 +6940,8 @@ local function run(cfg)
         SUDAH_GRID = false; GRID_CACHE = nil
         if KICK_DIURUS then KICK_DIURUS["getps_jalan"] = nil end   -- getps jalan fresh pas boot
         info("[boot] mode START PAKSA -- grid fresh + getps ulang (PS/grid pasti bener)")
+        -- v9.106: pastiin launcher zenx mode LOOP (buat RF lama) -> auto-update mulus
+        pcall(tulis_launcher_loop)
     end
 
     -- v6.83: LAPOR AWAL sebelum loop -- scan client + akun, kirim ke panel
@@ -7006,6 +7018,18 @@ local function run(cfg)
                     -- abis update, tandai perlu rejoin (Delta ke-reinstall, client mati)
                     SUDAH_GRID = false; GRID_CACHE = nil
                 end
+            end
+        end
+
+        -- v9.106: AUTO-UPDATE WORKER tiap 15 menit. Download worker GitHub, cek
+        -- versi. Kalau baru + valid -> ganti + restart SESI (bukan reboot RF, bukan
+        -- stop Termux). Launcher loop jalanin worker baru. Client tetep jalan.
+        if os.time() - WORKER_CEK_TS >= 900 then
+            WORKER_CEK_TS = os.time()
+            local naik, vBaru = cek_worker_versi(cfg)
+            if naik then
+                info("[auto-update] exit worker -> launcher loop jalanin v" .. tostring(vBaru))
+                os.exit(0)   -- client GAK ketutup (app kepisah). Launcher re-run worker baru.
             end
         end
 
@@ -8347,6 +8371,23 @@ local function run(cfg)
             -- PAKSA "selesai" tapi client gak kebuka -- restart_kerjakan cuma tutup+
             -- grid, client kebuka di LOOP ANTRIAN. Dulu skip_sisa=true tiap ronde ->
             -- loop antrian gak pernah jalan -> client nyangkut ketutup.
+        elseif U:find("DOWNLOAD%-APK") then
+            -- v9.105: DOWNLOAD-APK:<namafile> dari panel -> download+install apk
+            -- generik (VPN, Termux:Boot, dll). Panel kirim nama dari daftar GitHub.
+            if isi ~= lastIsi then
+                lastIsi = isi
+                local nama = isi:match("DOWNLOAD%-APK:(.+)$") or ""
+                nama = nama:gsub("^%s+", ""):gsub("%s+$", "")
+                warn("DOWNLOAD-APK dari panel: " .. (nama ~= "" and nama or "(kosong)"))
+                if nama ~= "" then
+                    pcall(function() download_apk_url(cfg, nama, nama) end)
+                    ok("DOWNLOAD-APK selesai: " .. nama)
+                else
+                    err("[apk] nama file kosong")
+                end
+                lapor(cfg, isi, cacheRun); lastStatus = os.time()
+            end
+            skip_sisa = true
         elseif U:find("DOWNLOAD%-DELTA") then
             -- v9.103: DOWNLOAD-DELTA:19,20 dari panel -> download+install client slot
             -- tsb doang (checklist panel). Format "DOWNLOAD-DELTA:19,20".
@@ -12102,8 +12143,19 @@ if PERINTAH == "pasang" then
     local LUA = ada_perintah("lua5.4") and "lua5.4" or "lua"
     local f1 = io.open(PREFIX .. "/bin/zenx", "w")
     if f1 then
+        -- v9.106: launcher LOOP (bukan exec). Worker exit + flag ~/.zenx_restart ada
+        -- -> loop jalanin worker LAGI (versi baru). Termux TETEP idup, gak ke prompt $.
+        -- Auto-update worker pakai ini: download versi baru -> set flag -> exit -> loop.
         f1:write("#!" .. PREFIX .. "/bin/sh\n")
-        f1:write('cd "$HOME" && exec ' .. LUA .. ' zenx_worker.lua "$@"\n')
+        f1:write('cd "$HOME"\n')
+        f1:write('while true; do\n')
+        f1:write('  ' .. LUA .. ' zenx_worker.lua "$@"\n')
+        f1:write('  if [ -f "$HOME/.zenx_restart" ]; then\n')
+        f1:write('    rm -f "$HOME/.zenx_restart"\n')
+        f1:write('    echo "[zenx] restart sesi (update versi baru)..."; sleep 1; continue\n')
+        f1:write('  fi\n')
+        f1:write('  break\n')
+        f1:write('done\n')
         f1:close()
         jalan("chmod +x " .. PREFIX .. "/bin/zenx")
     end
@@ -12438,6 +12490,63 @@ end
 -- Tiga nama, satu tempat: `download` yang dipakai sehari-hari, `dl` buat yang
 -- males ngetik, `apk` DIPERTAHANIN karena RF yang udah kepasang mungkin masih
 -- pakai itu. Nambah nama lain gak ada ongkosnya; ngilangin yang lama ada.
+-- v9.106: tulis launcher `zenx` versi LOOP (buat RF lama yg launchernya masih
+-- `exec`). Dipanggil pas boot. Loop = worker exit + flag ~/.zenx_restart -> jalan
+-- lagi (Termux tetep idup, gak ke prompt $).
+function tulis_launcher_loop()
+    local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
+    local LUA = ada_perintah("lua5.4") and "lua5.4" or "lua"
+    local jalur = PREFIX .. "/bin/zenx"
+    local cur = io.open(jalur, "r")
+    if cur then local isi = cur:read("*a") or ""; cur:close()
+        if isi:find("while true", 1, true) then return end   -- udah loop
+    end
+    local f = io.open(jalur, "w")
+    if f then
+        f:write("#!" .. PREFIX .. "/bin/sh\n")
+        f:write('cd "$HOME"\n')
+        f:write('while true; do\n')
+        f:write('  ' .. LUA .. ' zenx_worker.lua "$@"\n')
+        f:write('  if [ -f "$HOME/.zenx_restart" ]; then\n')
+        f:write('    rm -f "$HOME/.zenx_restart"\n')
+        f:write('    echo "[zenx] restart sesi (update versi baru)..."; sleep 1; continue\n')
+        f:write('  fi\n')
+        f:write('  break\n')
+        f:write('done\n')
+        f:close()
+        os.execute("chmod +x " .. shq(jalur))
+        info("[boot] launcher zenx di-upgrade ke mode LOOP (auto-update mulus)")
+    end
+end
+
+-- v9.106: AUTO-UPDATE WORKER. Download worker dari GitHub, cek versinya. Kalau BEDA
+-- + valid -> ganti file + set flag restart + return true (caller exit -> launcher
+-- loop jalanin worker BARU). Termux GAK stop, cuma sesi worker yg restart.
+function cek_worker_versi(cfg)
+    local HOME = os.getenv("HOME") or "."
+    local baru = HOME .. "/zenx_worker.cek"
+    local URL = REPO_WORKER .. "/zenx_worker.lua?v=" .. os.time()
+    os.remove(baru)
+    os.execute(("timeout 90 curl -fsSL -H 'Cache-Control: no-cache' %s -o %s 2>/dev/null"):format(
+        shq(URL), shq(baru)))
+    local f = io.open(baru, "r")
+    if not f then return false end
+    local head = f:read(3000) or ""
+    f:close()
+    if not head:find("ZENX WORKER") then os.remove(baru); return false end
+    local vBaru = (sh(("grep -m1 'local VERSION' %s 2>/dev/null"):format(shq(baru))) or ""):match('"([^"]+)"')
+    if not vBaru or vBaru == "" or vBaru == VERSION then os.remove(baru); return false end
+    local LUA = ada_perintah("lua5.4") and "lua5.4" or "lua"
+    local okLua = os.execute(("%s -e 'assert(loadfile(%s))' 2>/dev/null"):format(LUA, shq(baru)))
+    if okLua ~= true and okLua ~= 0 then
+        err("[auto-update] file baru RUSAK (gak lolos cek lua) -> batal"); os.remove(baru); return false
+    end
+    os.execute(("mv %s %s"):format(shq(baru), shq(HOME .. "/zenx_worker.lua")))
+    local rf = io.open(HOME .. "/.zenx_restart", "w"); if rf then rf:write("1"); rf:close() end
+    info(("[auto-update] WORKER versi baru v%s (dari v%s) -> restart sesi (Termux tetep idup)"):format(vBaru, VERSION))
+    return true, vBaru
+end
+
 -- v9.100: FUNGSI GLOBAL update Delta ke versi target. Dipakai command
 -- `zenx update mercy <versi>`, auto-cek 10-menit di loop, + perintah UPDATE-DELTA
 -- dari panel. Return sukses, dilewat, gagal. Global (bukan local) biar run() loop
@@ -12552,6 +12661,7 @@ function download_delta_slot(cfg, slotStr, versi)
             end
             os.remove(outf)
             if tostring(hasil):find("Success") then print(C.G .. "  OK" .. C.N); sukses = sukses + 1
+                DELTA_SLOT_DL[n] = true   -- v9.104: catat slot ini udah didownload
             else print(C.R .. "  GAGAL pasang" .. C.N); gagal = gagal + 1 end
         end
     end
@@ -12676,6 +12786,43 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     print("")
     ok(("Selesai: %d pasang, %d gagal, %d dilewat (udah keinstall)"):format(sukses, gagal, dilewat))
     return
+end
+
+-- v9.105: download+install SATU apk dari Releases worker_64 by NAMA FILE (generik).
+-- Dipakai panel DOWNLOAD-APK:<nama> -> VPN, Termux:Boot, apapun. Global.
+function download_apk_url(cfg, namaFile, label)
+    if not namaFile or namaFile == "" then err("[apk] nama file kosong"); return false end
+    local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
+    local HOME = os.getenv("HOME") or "."
+    print(C.BOLD .. C.C .. ("\n=== DOWNLOAD %s ===\n"):format(label or namaFile) .. C.N)
+    local TMPAPK = HOME .. "/apk_unduh.apk"
+    os.remove(TMPAPK)
+    print(C.C .. namaFile:sub(1, 50) .. C.N .. "...")
+    os.execute(("timeout 900 curl -# --fail -L -o %s %s"):format(shq(TMPAPK), shq(BASE .. namaFile)))
+    local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
+    if sz < 10000 then
+        print(C.R .. ("  GAGAL download (%d byte) -- cek nama di Releases"):format(sz) .. C.N)
+        os.remove(TMPAPK); return false
+    end
+    print(("  pasang (%.2f MB)..."):format(sz / 1024 / 1024))
+    local outf = HOME .. "/apk_pm.txt"
+    os.remove(outf)
+    os.execute(("(timeout 300 su -c 'pm install -r %s' > %s 2>&1) &"):format(shq(TMPAPK), shq(outf)))
+    local hasil = ""
+    for _ = 1, 150 do
+        os.execute("sleep 2")
+        local hf = io.open(outf, "r")
+        if hf then hasil = hf:read("*all") or ""; hf:close()
+            if hasil:find("Success") or hasil:find("Failure") then break end
+        end
+    end
+    os.remove(outf); os.remove(TMPAPK)
+    if tostring(hasil):find("Success") then
+        ok((label or namaFile) .. " kepasang."); return true
+    else
+        print(C.R .. "GAGAL pasang" .. C.N)
+        info(tostring(hasil):gsub("%s+", " "):sub(1, 90)); return false
+    end
 end
 
 if PERINTAH == "download" and (arg and arg[2] == "vpn") then
