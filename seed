@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.63"
+local VERSI = "4.64"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1783,6 +1783,12 @@ function Seed.trowelOnce()
     end
     if not tool then Seed._logTrowel = "Trowel gak ada di tas"; return 0 end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
+    -- v4.64: TP karakter ke CENTER dulu -- MovePlant kemungkinan ada batas jarak.
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        pcall(function() hrp.CFrame = CFrame.new(target.X, target.Y + 3, target.Z) end)
+        task.wait(0.2)
+    end
     -- pindahin seed terpilih yg BELUM di tengah (jarak > 5) ke target
     local moved = 0
     for _, plot in ipairs(gardens:GetChildren()) do
@@ -8870,13 +8876,20 @@ task.spawn(function()
     end
 end)
 
+-- v4.64: TOOL LOCK global -- cuma 1 operasi pegang-tool jalan sekaligus (shovel/
+-- reroll/sprinkler/trowel). Dulu rebutan: pas sekop jalan, sprinkler nyela equip
+-- Sprinkler -> sekop pegang tool salah -> gagal. Lock bikin gantian, gak tabrakan.
+Seed._toolBusy = false
+
 -- v3.38: loop AUTO SHOVEL SEED -- cabut tanaman (filter jenis) tiap 5s
 task.spawn(function()
     task.wait(20)
     while isCurrentGen() do
         task.wait(5)
-        if state.shovelOn then
+        if state.shovelOn and not Seed._toolBusy then
+            Seed._toolBusy = true
             pcall(Seed.shovelSeedOnce)
+            Seed._toolBusy = false
         end
     end
 end)
@@ -8886,8 +8899,10 @@ task.spawn(function()
     task.wait(22)
     while isCurrentGen() do
         task.wait(5)
-        if state.pumpkinRerollOn then
+        if state.pumpkinRerollOn and not Seed._toolBusy then
+            Seed._toolBusy = true
             pcall(Seed.rerollPumpkinOnce)
+            Seed._toolBusy = false
         end
     end
 end)
@@ -8907,8 +8922,10 @@ task.spawn(function()
                 Seed._logSpr = ("STOP: %d pumpkin >=%.0fkg di garden (target %d kecapai)"):format(
                     n, tonumber(state.sprStopKg) or 80, tonumber(state.sprStopCount) or 300)
                 if Seed._el and Seed._el.tblSprinkler then pcall(function() catSaklar(Seed._el.tblSprinkler, false) end) end
-            else
+            elseif not Seed._toolBusy then
+                Seed._toolBusy = true
                 pcall(Seed.placeSprinklerOnce)
+                Seed._toolBusy = false
             end
         end
     end
@@ -8919,8 +8936,10 @@ task.spawn(function()
     task.wait(26)
     while isCurrentGen() do
         task.wait(8)
-        if state.autoTrowel then
+        if state.autoTrowel and not Seed._toolBusy then
+            Seed._toolBusy = true
             pcall(Seed.trowelOnce)
+            Seed._toolBusy = false
         end
     end
 end)
