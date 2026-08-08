@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.113-cf"
+local VERSION = "9.116-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -846,6 +846,9 @@ local function save_config(cfg)
     -- ditulis -> tiap worker restart hilang -> balik auto (SUSUNAN). User set 5
     -- kolom, restart -> balik 3 kolom (auto buat jumlah client aktif).
     f:write(string.format("  grid_kolom=%d,\n",math.floor(tonumber(cfg.grid_kolom) or 0)))
+    -- v9.115: rotasi tim (borong stock). rotasi_on + daftar seed incaran.
+    f:write(string.format("  rotasi_on=%s,\n",tostring(cfg.rotasi_on == true)))
+    f:write(string.format("  rotasi_barang=%q,\n",cfg.rotasi_barang or ""))
     f:write(string.format("  deteksi_longgar=%s,\n",tostring(cfg.deteksi_longgar == true)))
     f:write(string.format("  disconnect_menit=%d,\n",cfg.disconnect_menit or 3))
     f:write(string.format("  jaga_depan_sec=%d,\n",cfg.jaga_depan_sec or 15))  -- v5.91: JANGAN 0 -- 0 matiin jaga_depan (jendela gak balik ke depan). Default aman 15.
@@ -2218,7 +2221,7 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") or u:find("ROTASI") then nyela = true
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
@@ -6953,6 +6956,7 @@ local function run(cfg)
         SUDAH_GRID = false; GRID_CACHE = nil
         if KICK_DIURUS then KICK_DIURUS["getps_jalan"] = nil end   -- getps jalan fresh pas boot
         info("[boot] mode START PAKSA -- grid fresh + getps ulang (PS/grid pasti bener)")
+        ROTASI_SIAP_TS = 0   -- v9.116: tim 1 belum kebentuk -> tunggu lagi sebelum rotasi
         -- v9.106: pastiin launcher zenx mode LOOP (buat RF lama) -> auto-update mulus
         pcall(tulis_launcher_loop)
     end
@@ -7047,13 +7051,26 @@ local function run(cfg)
             local isiTop = ambil_str(respTop, "isi") or ""
             -- v9.113: ROTASI TIM. Kalau rotasi_on + idle + cooldown lewat -> cek API
             -- stock tiap 8s. Ada barang keinginan -> jalankan sequence rotasi.
-            if cfg.rotasi_on and ROTASI_STATE == "idle"
-               and (os.time() - ROTASI_TS) > 120
-               and (os.time() - ROTASI_CEK_TS) >= 8 then
-                ROTASI_CEK_TS = os.time()
-                local barang = cek_stock_rotasi(cfg)
-                if barang then
-                    pcall(function() jalankan_rotasi(cfg, barang, mapLink) end)
+            -- v9.116: GATE KESIAPAN. Rotasi cuma boleh kalau tim 1 (1-10) LENGKAP
+            -- nembak server (proses idup) + 1 menit. Biar pas awal start, stock yg
+            -- lagi ada GAK langsung motong tim 1 yg belum kebentuk.
+            if cfg.rotasi_on and ROTASI_STATE == "idle" and (os.time() - ROTASI_TS) > 120 then
+                local tim1 = pkgs_slot(cfg, 1, 10)
+                local idup = 0
+                for _, pkg in ipairs(tim1) do if cacheHidup[pkg] then idup = idup + 1 end end
+                if #tim1 > 0 and idup >= #tim1 then
+                    if ROTASI_SIAP_TS == 0 then
+                        ROTASI_SIAP_TS = os.time()
+                        info("[rotasi] tim 1 lengkap nembak server -> tunggu 60s baru rotasi aktif")
+                    end
+                end
+                local siap = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 60
+                if siap and (os.time() - ROTASI_CEK_TS) >= 8 then
+                    ROTASI_CEK_TS = os.time()
+                    local barang = cek_stock_rotasi(cfg)
+                    if barang then
+                        pcall(function() jalankan_rotasi(cfg, barang, mapLink) end)
+                    end
                 end
             end
 
@@ -8273,6 +8290,27 @@ local function run(cfg)
                 end
                 tambahLog("perintah aktif: " .. (isi ~= "" and isi or "-"))
                 notify("ZenX "..cfg.tim, "laporan tugas siap")
+            end
+            skip_sisa = true
+        elseif U:find("ROTASI") then
+            -- v9.115: ROTASI:<seed1,seed2> dari panel -> nyalain rotasi + set seed
+            -- incaran. "ROTASI:off" -> matiin. Set cfg + save (persist antar restart).
+            if isi ~= lastIsi then
+                lastIsi = isi
+                local isiRot = isi:match("ROTASI:(.*)$") or ""
+                isiRot = isiRot:gsub("^%s+", ""):gsub("%s+$", "")
+                if isiRot == "" or isiRot:lower() == "off" then
+                    cfg.rotasi_on = false
+                    warn("ROTASI dimatiin dari panel")
+                    tambahLog("Rotasi tim: MATI")
+                else
+                    cfg.rotasi_on = true
+                    cfg.rotasi_barang = isiRot
+                    warn("ROTASI nyala -> seed incaran: " .. isiRot)
+                    tambahLog("Rotasi tim: NYALA (" .. isiRot .. ")")
+                end
+                pcall(function() save_config(cfg) end)
+                lapor(cfg, isi, cacheRun); lastStatus = os.time()
             end
             skip_sisa = true
         elseif U:find("GRID") then
@@ -12607,6 +12645,7 @@ end
 ROTASI_STATE = "idle"    -- idle / jalan
 ROTASI_CEK_TS = 0        -- ts terakhir cek API stock
 ROTASI_TS = 0            -- ts terakhir rotasi selesai (cooldown)
+ROTASI_SIAP_TS = 0       -- v9.116: kapan tim 1 (1-10) LENGKAP nembak server (proses idup). Rotasi baru aktif 60s setelah ini.
 
 -- ambil pkg berdasar rentang slot (idx 1-based di cfg.pkgs)
 function pkgs_slot(cfg, dari, sampai)
@@ -12627,9 +12666,31 @@ function buka_grup_rotasi(cfg, pkgs, mapLink)
     end
 end
 
--- cek API stock: return NAMA barang yg match daftar keinginan, atau nil.
--- cfg.rotasi_barang = daftar nama barang (pisah koma) yg lo pilih di panel.
--- !! PARSER JSON masih STUB -- perlu format JSON asli dari api.gag2.gg biar akurat.
+-- v9.114: cek API stock akurat. Format: items.{crate,gear,seed}[].{key,name,
+-- nextBoundary,upcoming}. Trigger = nextBoundary barang keinginan BERUBAH naik
+-- (restock baru terjadi). cfg.rotasi_barang = daftar key/name (pisah koma).
+ROTASI_NB_LAST = {}    -- key barang -> nextBoundary terakhir keliat (deteksi restock)
+
+function esc_pola(s)
+    return (tostring(s):gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1"))
+end
+
+-- ambil nextBoundary barang (cari by key dulu, terus name). nil kalau gak ketemu.
+function nb_barang(body, barang)
+    local be = esc_pola(barang)
+    local p = body:find('"key":"' .. be .. '"')
+    if not p then p = body:find('"name":"' .. be .. '"') end
+    if not p then
+        -- coba lower-case name (barang bisa ditulis beda case)
+        local bl = esc_pola(barang:lower())
+        local bodyL = body:lower()
+        p = bodyL:find('"name":"' .. bl .. '"')
+    end
+    if not p then return nil end
+    local nb = body:match('"nextBoundary":(%d+)', p)
+    return nb and tonumber(nb) or nil
+end
+
 function cek_stock_rotasi(cfg)
     local mau = cfg.rotasi_barang or ""
     if mau == "" then return nil end
@@ -12642,13 +12703,20 @@ function cek_stock_rotasi(cfg)
     local body = f:read("*all") or ""
     f:close()
     os.remove(tmp)
-    if body == "" then return nil end
-    -- STUB: cek tiap barang keinginan muncul di JSON (substring). Ganti sama parser
-    -- akurat pas format JSON ketauan (cek field "in_stock"/"predicted" dll).
+    if body == "" or not body:find("nextBoundary", 1, true) then return nil end
     for barang in mau:gmatch("[^,]+") do
         barang = barang:gsub("^%s+", ""):gsub("%s+$", "")
-        if barang ~= "" and body:lower():find(barang:lower(), 1, true) then
-            return barang
+        if barang ~= "" then
+            local nb = nb_barang(body, barang)
+            if nb then
+                local last = ROTASI_NB_LAST[barang]
+                ROTASI_NB_LAST[barang] = nb
+                -- restock terjadi kalau nextBoundary NAIK (boundary lama lewat,
+                -- API majuin ke restock berikutnya). Skip poll pertama (last=nil).
+                if last and nb > last then
+                    return barang
+                end
+            end
         end
     end
     return nil
@@ -12683,6 +12751,7 @@ function jalankan_rotasi(cfg, barang, mapLink)
     buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, 10), mapLink)
     ROTASI_STATE = "idle"
     ROTASI_TS = os.time()
+    ROTASI_SIAP_TS = 0   -- v9.116: tim 1 baru dibuka lagi -> tunggu lengkap+60s sebelum rotasi lagi
     ok("[rotasi] selesai -> tim 1 loop normal lagi")
 end
 
