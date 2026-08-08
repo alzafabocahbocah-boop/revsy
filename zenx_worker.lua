@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.117-cf"
+local VERSION = "9.118-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -12745,8 +12745,11 @@ function jalankan_rotasi(cfg, barang, mapLink)
     info("[rotasi] close all tim 1 (client 1-10)")
     pcall(function() close_all(cfg, pkgs_slot(cfg, 1, 10), mapLink, true) end)
     os.execute("sleep 2")
+    -- v9.118: grid tim 2 = 10-client layout (bukan 20). Set PKGS_AKTIF = tim 2 penuh
+    -- (11-20) SEBELUM buka -> grid_satu ngitung layout 10 slot, tim 2 penuhin layar.
+    PKGS_AKTIF = pkgs_slot(cfg, 11, 20)
     -- buka 11-15 (grid + server)
-    info("[rotasi] buka client 11-15 (grid+server)")
+    info("[rotasi] buka client 11-15 (grid+server, layout 10-client)")
     buka_grup_rotasi(cfg, pkgs_slot(cfg, 11, 15), mapLink)
     info("[rotasi] jeda 1 menit sebelum 16-20...")
     os.execute("sleep 60")
@@ -12761,6 +12764,7 @@ function jalankan_rotasi(cfg, barang, mapLink)
     tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
     pcall(function() close_all(cfg, pkgs_slot(cfg, 11, 20), mapLink, true) end)
     os.execute("sleep 2")
+    PKGS_AKTIF = pkgs_slot(cfg, 1, 10)   -- v9.118: grid tim 1 = 10-client layout
     buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, 10), mapLink)
     ROTASI_STATE = "idle"
     ROTASI_TS = os.time()
