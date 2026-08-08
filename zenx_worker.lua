@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.138-cf"
+local VERSION = "9.139-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2223,7 +2223,8 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") or u:find("ROTASI") then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD")
+       or (u:find("ROTASI") and not u:find("ROTASI%-GO") and not u:find("ROTASI%-TEST")) then nyela = true
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
@@ -7153,6 +7154,20 @@ local function run(cfg)
                     warn("[rotasi] rotasi lagi jalan -> skip test")
                 end
             end
+            -- v9.139: SINYAL STOCK dari PANEL (real-time detect di browser). Panel
+            -- deteksi seed restock -> kirim ROTASI-GO -> worker langsung rotasi (respect
+            -- gate tim 1 siap + cooldown). Lebih cepet dari worker poll sendiri.
+            if isiTop:upper():find("ROTASI%-GO") and isiTop ~= ROTASI_GO_LAST then
+                ROTASI_GO_LAST = isiTop
+                local siapNow = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 60
+                if ROTASI_STATE == "idle" and siapNow and (os.time() - ROTASI_TS) > 120 then
+                    warn("[rotasi] >>> STOCK dari PANEL (real-time) <<< langsung rotasi")
+                    tambahLog("Rotasi: stock dari panel (real-time)")
+                    pcall(function() jalankan_rotasi(cfg, "PANEL-STOCK", mapLink) end)
+                else
+                    warn("[rotasi] stock panel tapi tim 1 belum siap / cooldown -> skip")
+                end
+            end
             -- v9.113: ROTASI TIM. Kalau rotasi_on + idle + cooldown lewat -> cek API
             -- stock tiap 8s. Ada barang keinginan -> jalankan sequence rotasi.
             -- v9.116: GATE KESIAPAN. Rotasi cuma boleh kalau tim 1 (1-10) LENGKAP
@@ -8417,9 +8432,9 @@ local function run(cfg)
                 notify("ZenX "..cfg.tim, "laporan tugas siap")
             end
             skip_sisa = true
-        elseif U:find("ROTASI%-TEST") then
-            -- v9.137: udah diproses di TOP-LOOP (langsung, cepet). Di sini cuma skip
-            -- biar gak jatuh ke handler ROTASI (yg bakal matiin rotasi). Gak dobel.
+        elseif U:find("ROTASI%-TEST") or U:find("ROTASI%-GO") then
+            -- v9.137/139: udah diproses di TOP-LOOP (langsung). Di sini cuma skip biar
+            -- gak jatuh ke handler ROTASI (yg bakal matiin rotasi). Gak dobel.
             skip_sisa = true
         elseif U:find("ROTASI") then
             -- v9.115: ROTASI:<seed1,seed2> dari panel -> nyalain rotasi + set seed
@@ -12828,6 +12843,7 @@ ROTASI_CEK_TS = 0        -- ts terakhir cek API stock
 ROTASI_TS = 0            -- ts terakhir rotasi selesai (cooldown)
 ROTASI_SIAP_TS = 0       -- v9.116: kapan tim 1 (1-10) LENGKAP nembak server (proses idup). Rotasi baru aktif 60s setelah ini.
 ROTASI_TEST_LAST = ""    -- v9.137: dedup sinyal TEST (diproses di top-loop biar cepet)
+ROTASI_GO_LAST = ""      -- v9.139: dedup sinyal STOCK dari panel (real-time detect)
 
 -- ambil pkg berdasar rentang slot (idx 1-based di cfg.pkgs)
 function pkgs_slot(cfg, dari, sampai)
