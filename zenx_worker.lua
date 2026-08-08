@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.111-cf"
+local VERSION = "9.113-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5567,7 +5567,7 @@ local function lapor(cfg, isi_perintah, cache)
     local parts, jalan = {}, 0
     local semua = cache
     if not semua then semua = pkg_running_semua(list) end   -- cadangan: sekali dump
-    for _, pkg in ipairs(list) do
+    for idxPkg, pkg in ipairs(list) do
         local run = semua[pkg] and true or false
         if run then jalan = jalan + 1 end
         -- v6.03: ikut kirim NAMA AKUN tiap client biar panel bisa nunjukin
@@ -5605,8 +5605,8 @@ local function lapor(cfg, isi_perintah, cache)
         -- run=proses hidup (bisa nyangkut loading), denyut=beneran di game. Denyut
         -- >150s = akun gak lapor = OFF di panel (walau proses masih jalan).
         local denyutU = akunPkg ~= "" and DENYUT_UMUR[akunPkg] or nil
-        parts[#parts+1] = string.format('{"pkg":%s,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d,"captcha":%s,"denyut":%s}',
-            jstr(pkg), tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0), tostring(capt),
+        parts[#parts+1] = string.format('{"pkg":%s,"idx":%d,"run":%s,"akun":%s,"gantigagal":%s,"offlama":%d,"captcha":%s,"denyut":%s}',
+            jstr(pkg), idxPkg, tostring(run), jstr(akunPkg), jstr(gg or ""), math.floor(tonumber(offL) or 0), tostring(capt),
             denyutU and tostring(math.floor(denyutU)) or "null")
     end
 
@@ -7045,6 +7045,18 @@ local function run(cfg)
         do
             local respTop = api_get(cfg, "/perintah?tim=" .. cfg.tim)
             local isiTop = ambil_str(respTop, "isi") or ""
+            -- v9.113: ROTASI TIM. Kalau rotasi_on + idle + cooldown lewat -> cek API
+            -- stock tiap 8s. Ada barang keinginan -> jalankan sequence rotasi.
+            if cfg.rotasi_on and ROTASI_STATE == "idle"
+               and (os.time() - ROTASI_TS) > 120
+               and (os.time() - ROTASI_CEK_TS) >= 8 then
+                ROTASI_CEK_TS = os.time()
+                local barang = cek_stock_rotasi(cfg)
+                if barang then
+                    pcall(function() jalankan_rotasi(cfg, barang, mapLink) end)
+                end
+            end
+
             -- v9.109: PUSH LOG ke panel tiap 60 detik (dijamin log RF lengkap sampai
             -- panel tiap menit walau gak ada event). wlog (LOG_KIRIM = semua log) ikut.
             if os.time() - LOG_PUSH_TS >= 60 then
@@ -12583,6 +12595,102 @@ function cek_worker_versi(cfg)
     local rf = io.open(HOME .. "/.zenx_restart", "w"); if rf then rf:write("1"); rf:close() end
     info(("[auto-update] WORKER versi baru v%s (dari v%s) -> restart sesi (Termux tetep idup)"):format(vBaru, VERSION))
     return true, vBaru
+end
+
+-- ============================================================
+-- v9.113: ROTASI TIM (borong stock langka pakai 2 tim gantian)
+-- Tim 1 (client 1-10) loop normal. Pas API stock munculin barang yg dipilih:
+-- tunggu 10s -> close tim 1 -> buka 11-15 -> jeda 60s -> buka 16-20 (grid+server
+-- doang, GAK dimanage) -> balik loop utama (close tim 2 + buka tim 1). Global
+-- semua biar gak makan jatah 200 lokal main-chunk.
+-- ============================================================
+ROTASI_STATE = "idle"    -- idle / jalan
+ROTASI_CEK_TS = 0        -- ts terakhir cek API stock
+ROTASI_TS = 0            -- ts terakhir rotasi selesai (cooldown)
+
+-- ambil pkg berdasar rentang slot (idx 1-based di cfg.pkgs)
+function pkgs_slot(cfg, dari, sampai)
+    local list = split(cfg.pkgs or "")
+    local out = {}
+    for i = dari, math.min(sampai, #list) do out[#out+1] = list[i] end
+    return out
+end
+
+-- buka GRUP client: set grid + join server. GAK dimanage (no denyut/lisensi/rejoin).
+function buka_grup_rotasi(cfg, pkgs, mapLink)
+    for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
+    os.execute("sleep 1")
+    for _, pkg in ipairs(pkgs) do
+        local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
+        sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
+        os.execute("sleep 2")
+    end
+end
+
+-- cek API stock: return NAMA barang yg match daftar keinginan, atau nil.
+-- cfg.rotasi_barang = daftar nama barang (pisah koma) yg lo pilih di panel.
+-- !! PARSER JSON masih STUB -- perlu format JSON asli dari api.gag2.gg biar akurat.
+function cek_stock_rotasi(cfg)
+    local mau = cfg.rotasi_barang or ""
+    if mau == "" then return nil end
+    local HOME = os.getenv("HOME") or "."
+    local tmp = HOME .. "/.stock_cek"
+    os.remove(tmp)
+    os.execute(("timeout 15 curl -fsSL 'https://api.gag2.gg/api/live/predictions/items' -o %s 2>/dev/null"):format(shq(tmp)))
+    local f = io.open(tmp, "r")
+    if not f then return nil end
+    local body = f:read("*all") or ""
+    f:close()
+    os.remove(tmp)
+    if body == "" then return nil end
+    -- STUB: cek tiap barang keinginan muncul di JSON (substring). Ganti sama parser
+    -- akurat pas format JSON ketauan (cek field "in_stock"/"predicted" dll).
+    for barang in mau:gmatch("[^,]+") do
+        barang = barang:gsub("^%s+", ""):gsub("%s+$", "")
+        if barang ~= "" and body:lower():find(barang:lower(), 1, true) then
+            return barang
+        end
+    end
+    return nil
+end
+
+-- SEQUENCE rotasi lengkap (blocking -- sengaja, biar dedicated).
+function jalankan_rotasi(cfg, barang, mapLink)
+    ROTASI_STATE = "jalan"
+    warn(("[rotasi] STOCK '%s' MUNCUL -> tunggu 10s (tim 1 beli habis dulu)"):format(barang))
+    tambahLog_rotasi(cfg, ("STOCK %s muncul -> rotasi mulai"):format(barang))
+    os.execute("sleep 10")
+    -- close all tim 1 (1-10) CEPET
+    info("[rotasi] close all tim 1 (client 1-10)")
+    pcall(function() close_all(cfg, pkgs_slot(cfg, 1, 10), mapLink, true) end)
+    os.execute("sleep 2")
+    -- buka 11-15 (grid + server)
+    info("[rotasi] buka client 11-15 (grid+server)")
+    buka_grup_rotasi(cfg, pkgs_slot(cfg, 11, 15), mapLink)
+    info("[rotasi] jeda 1 menit sebelum 16-20...")
+    os.execute("sleep 60")
+    -- buka 16-20
+    info("[rotasi] buka client 16-20 (grid+server)")
+    buka_grup_rotasi(cfg, pkgs_slot(cfg, 16, 20), mapLink)
+    -- kasih waktu tim 2 beli (90s) sebelum balik
+    info("[rotasi] tim 2 beli... (90s)")
+    os.execute("sleep 90")
+    -- BALIK LOOP UTAMA: close tim 2 + buka tim 1
+    warn("[rotasi] === BALIK LOOP UTAMA ===")
+    tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
+    pcall(function() close_all(cfg, pkgs_slot(cfg, 11, 20), mapLink, true) end)
+    os.execute("sleep 2")
+    buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, 10), mapLink)
+    ROTASI_STATE = "idle"
+    ROTASI_TS = os.time()
+    ok("[rotasi] selesai -> tim 1 loop normal lagi")
+end
+
+-- log rotasi ke panel (via /perintah-log atau tambahLog kalau in-scope). Simpel:
+-- pakai lapor biasa, log udah ikut wlog (v9.109).
+function tambahLog_rotasi(cfg, msg)
+    -- info() udah masuk LOG_KIRIM (v9.109) -> keliatan di panel. Cukup ini.
+    info("[rotasi] " .. msg)
 end
 
 -- v9.100: FUNGSI GLOBAL update Delta ke versi target. Dipakai command
