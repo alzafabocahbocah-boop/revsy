@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.120-cf"
+local VERSION = "9.122-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4406,7 +4406,17 @@ local TERAKHIR_BUKA = {}   -- v4.68: pkg -> kapan terakhir dibuka worker
 local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, paksaMasuk)
     -- v8.18: `only` bisa STRING (1 pkg, lama) ATAU TABLE {pkg=true,...} (banyak
     -- client dari FORCE:akun1,akun2). Helper: pkg ini termasuk yang mau dibuka?
+    -- v9.121: ROTASI nyala -> loop buka/restart CUMA tim 1 (10 pkg pertama). Tim 2
+    -- (11-20) dibuka via buka_grup_rotasi (am start langsung, bypass pilihPkg ini).
+    -- Tanpa ini, loop "buka client belum jalan" periodik buka tim 2 (harusnya standby).
+    local rotTim1 = nil
+    if cfg.rotasi_on then
+        rotTim1 = {}
+        local lRot = split(cfg.pkgs)
+        for i = 1, math.min(10, #lRot) do rotTim1[lRot[i]] = true end
+    end
     local function pilihPkg(pkg)
+        if rotTim1 and not rotTim1[pkg] then return false end   -- rotasi: skip tim 2
         if not only then return true end            -- gak ada filter -> semua
         if type(only) == "table" then return only[pkg] == true end
         return pkg == only                          -- string tunggal (lama)
@@ -4631,7 +4641,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     if only and type(only) == "table" then
                         pkgsBypass = {}
                         for _, p in ipairs(split(cfg.pkgs)) do
-                            if only[p] then pkgsBypass[#pkgsBypass+1] = p end
+                            if only[p] and not rotasi_lewat(cfg, p) then pkgsBypass[#pkgsBypass+1] = p end
                         end
                         if #pkgsBypass == 0 then pkgsBypass = nil end
                     end
@@ -4709,7 +4719,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     if only and type(only) == "table" then
                         pkgsPetaP = {}
                         for _, p in ipairs(split(cfg.pkgs)) do
-                            if only[p] then pkgsPetaP[#pkgsPetaP+1] = p end
+                            if only[p] and not rotasi_lewat(cfg, p) then pkgsPetaP[#pkgsPetaP+1] = p end
                         end
                         if #pkgsPetaP == 0 then pkgsPetaP = nil end
                     end
@@ -7197,14 +7207,16 @@ local function run(cfg)
                     for _, pkg in ipairs(split(cfg.pkgs)) do
                         local u = (mapAkun or {})[pkg]
                         local nm = pkg:gsub("com%.roblox%.", "")
-                        if (u and setNm[u]) or setNm[nm] or setNm[pkg] then pilihArr[#pilihArr+1] = pkg end
+                        -- v9.122: rotasi_on -> pulihin cuma tim 1
+                        if ((u and setNm[u]) or setNm[nm] or setNm[pkg]) and not rotasi_lewat(cfg, pkg) then pilihArr[#pilihArr+1] = pkg end
                     end
                 end
                 -- fallback: client yg ADA AKUN (kalau start-pilih kosong)
                 if #pilihArr == 0 and mapAkun then
                     for _, pkg in ipairs(split(cfg.pkgs)) do
                         local u = mapAkun[pkg]
-                        if u and tostring(u) ~= "" then pilihArr[#pilihArr+1] = pkg end
+                        -- v9.122: rotasi_on -> cuma tim 1
+                        if u and tostring(u) ~= "" and not rotasi_lewat(cfg, pkg) then pilihArr[#pilihArr+1] = pkg end
                     end
                 end
                 if #pilihArr > 0 and #pilihArr < #split(cfg.pkgs) then
@@ -8033,7 +8045,8 @@ local function run(cfg)
                             for _, pkg in ipairs(split(cfg.pkgs)) do
                                 local u = mapAkun and mapAkun[pkg]
                                 local nm = pkg:gsub("com%.roblox%.", "")
-                                if setP[u] or setP[pkg] or setP[nm] then pkgsP[#pkgsP+1] = pkg end
+                                -- v9.122: rotasi_on -> cuma tim 1 (tim 2 standby)
+                                if (setP[u] or setP[pkg] or setP[nm]) and not rotasi_lewat(cfg, pkg) then pkgsP[#pkgsP+1] = pkg end
                             end
                             if #pkgsP > 0 then
                                 onlyLis = pkgsP
@@ -8378,6 +8391,8 @@ local function run(cfg)
 
                     local nTulis, nGagal = 0, 0
                     for _, pkg in ipairs(split(cfg.pkgs)) do
+                        -- v9.122: rotasi_on -> jangan tata grid tim 2 (standby)
+                        if rotasi_lewat(cfg, pkg) then goto lanjutTata end
                         -- v8.67: hapusDulu=true -> buang posisi window LAMA dulu,
                         -- baru tulis grid baru (user minta bener2 bersih, gak nyangkut)
                         local tok, tket = tata_satu(pkg, peta[pkg], true)
@@ -8386,6 +8401,7 @@ local function run(cfg)
                             nGagal = nGagal + 1
                             tambahLog("   " .. pkg:gsub("com%.roblox%.","") .. ": " .. tostring(tket))
                         end
+                        ::lanjutTata::
                     end
                     tambahLog(("GRID: posisi ketulis %d client%s"):format(
                         nTulis, nGagal > 0 and (", " .. nGagal .. " gagal") or ""))
@@ -8866,7 +8882,8 @@ local function run(cfg)
             -- v7.13: kumpulin SEMUA yang mati mendadak DULU, baru putusin cara buka.
             local matiBareng = {}
             for _, pkg in ipairs(split(cfg.pkgs)) do
-                if runSebelum[pkg] == true and cacheRun[pkg] == false then
+                -- v9.122: rotasi_on -> tim 2 dilewat (standby, jangan masuk mati-bareng)
+                if runSebelum[pkg] == true and cacheRun[pkg] == false and not rotasi_lewat(cfg, pkg) then
                     matiBareng[#matiBareng+1] = pkg
                 end
             end
@@ -8950,8 +8967,9 @@ local function run(cfg)
                 -- sama sekali sampai cookie diperbaiki. Client-nya DIBIARIN (gak
                 -- di-kick) -- cuma diabaikan worker. Sekali ditandai mati (di cek
                 -- nyangkut / auto-setor), lewati terus.
-                if akCk and KICK_DIURUS["mati:" .. akCk] then
+                if (akCk and KICK_DIURUS["mati:" .. akCk]) or rotasi_lewat(cfg, pkg) then
                     -- lewati -- akun ini dianggap gak ada sampai cookie beres
+                    -- v9.122: ATAU tim 2 pas rotasi (standby, jangan disentuh)
                 else
                 -- cuma cek client yang JALAN tapi script gak lapor. Yang MATI
                 -- (script off) dilewat -- sesuai permintaan user.
@@ -9104,7 +9122,8 @@ local function run(cfg)
                 -- (urutan 01-10), ambil yg ada di `only` -> urut kiri-atas dulu.
                 PKGS_AKTIF = {}
                 for _, pkg in ipairs(split(cfg.pkgs)) do
-                    if only[pkg] then PKGS_AKTIF[#PKGS_AKTIF+1] = pkg end
+                    -- v9.122: rotasi_on -> PKGS_AKTIF cuma tim 1 (walau only=semua 20).
+                    if only[pkg] and not rotasi_lewat(cfg, pkg) then PKGS_AKTIF[#PKGS_AKTIF+1] = pkg end
                 end
             else
                 -- v9.45: FORCE polos -- kalau PKGS_AKTIF UDAH ada (lagi jalan N
@@ -9325,7 +9344,8 @@ local function run(cfg)
                     local baru = mapPsNama[pkg] or ""
                     local lama = psLama[pkg]
                     -- lama == nil = baru pertama kali kebaca (jangan rejoin, itu bukan pindah)
-                    if (not aktifPS or aktifPS[pkg]) and lama ~= nil and baru ~= lama then
+                    -- v9.122: rotasi_on -> tim 2 dilewat (standby, jangan pindah-server-rejoin)
+                    if (not aktifPS or aktifPS[pkg]) and lama ~= nil and baru ~= lama and not rotasi_lewat(cfg, pkg) then
                         tambahLog(string.format("PINDAH SERVER: %s  %s -> %s",
                             (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")),
                             (lama ~= "" and lama or "public"),
@@ -12796,6 +12816,19 @@ end
 function tambahLog_rotasi(cfg, msg)
     -- info() udah masuk LOG_KIRIM (v9.109) -> keliatan di panel. Cukup ini.
     info("[rotasi] " .. msg)
+end
+
+-- v9.122: helper -- pas rotasi_on, pkg tim 2 (11-20) HARUS dilewat (standby).
+-- return true = LEWAT (jangan sentuh). Cache tim1 set per cfg.pkgs.
+ROT_TIM1 = nil
+function rotasi_lewat(cfg, pkg)
+    if not cfg.rotasi_on then return false end
+    if not ROT_TIM1 or ROT_TIM1._src ~= (cfg.pkgs or "") then
+        ROT_TIM1 = { _src = cfg.pkgs or "" }
+        local l = split(cfg.pkgs or "")
+        for i = 1, math.min(10, #l) do ROT_TIM1[l[i]] = true end
+    end
+    return not ROT_TIM1[pkg]
 end
 
 -- v9.100: FUNGSI GLOBAL update Delta ke versi target. Dipakai command
