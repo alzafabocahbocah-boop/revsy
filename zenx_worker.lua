@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.139-cf"
+local VERSION = "9.140-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -12881,6 +12881,7 @@ function buka_grup_rotasi(cfg, pkgs, mapLink)
             cmds[#cmds+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. " >/dev/null 2>&1"
         end
         if #cmds > 0 then
+            info(("[buka] CHUNK client %d-%d (%d client barengan)"):format(i, math.min(i + CHUNK - 1, #pkgs), #cmds))
             local batch = "su -c \"" .. table.concat(cmds, "; sleep 1; ") .. "\""
             local tmo = #cmds + 12
             local done = false
