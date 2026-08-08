@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.60"
+local VERSI = "4.61"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -346,6 +346,11 @@ local state = {
     sprStopCount     = 300,    -- kalau udah sebanyak ini -> STOP sprinkler
     sprRecording     = false,  -- (lama, gak dipake -- posisi auto sekarang)
     sprCoords        = {},     -- (lama)
+    -- v4.61: AUTO TROWEL -- numpuk seed jenis terpilih ke tengah plot (1 titik).
+    -- remote Trowel.MovePlant(uuid,pos,rot). jenis dipilih dari yg ADA di garden.
+    autoTrowel       = false,  -- auto pindahin seed ke tengah
+    trowelSemua      = false,  -- true = semua jenis di garden
+    trowelPilih      = {},     -- { ["Atlantic Giant Pumpkin"]=true } jenis dipilih
     -- AUTO SELL: 2 mode
     sellPenuhOn   = false, -- sell pas backpack full (SellAll)
     sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
@@ -570,6 +575,8 @@ local function simpan()
             pumpkinRerollOn = state.pumpkinRerollOn, pumpkinMinKg = state.pumpkinMinKg,
             autoSprinkler = state.autoSprinkler, sprType = state.sprType,
             sprStopKg = state.sprStopKg, sprStopCount = state.sprStopCount,
+            autoTrowel = state.autoTrowel, trowelSemua = state.trowelSemua,
+            trowelPilih = state.trowelPilih,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
             hideVisualOn = state.hideVisualOn,
@@ -1710,6 +1717,96 @@ function Seed.placeSprinklerOnce()
     end
     if placed > 0 then Seed._logSpr = ("place %d sprinkler (%s)"):format(placed, tool.Name) end
     return placed
+end
+
+-- ============================================================
+-- v4.61: AUTO TROWEL -- numpuk seed jenis terpilih ke TENGAH plot (dari gag2
+-- Farm 2). Tengah = rata-rata posisi seed terpilih. remote Trowel.MovePlant.
+-- fire: p:Fire(uuid, targetVector3, rotasi). uuid = nama plant stlh "userId_".
+-- ============================================================
+function Seed.trowelBoleh(sn)
+    if state.trowelSemua then return true end
+    return state.trowelPilih and state.trowelPilih[sn] == true
+end
+function Seed.trowelCenter()
+    local sx, sy, sz, cnt = 0, 0, 0, 0
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local MY = player.UserId
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, pl in ipairs(plants:GetChildren()) do
+                    if tonumber(pl.Name:match("^(%d+)_")) == MY then
+                        local sn = pl:GetAttribute("SeedName") or "?"
+                        if Seed.trowelBoleh(sn) then
+                            local pos
+                            pcall(function()
+                                if pl:IsA("Model") and pl.PrimaryPart then pos = pl.PrimaryPart.Position
+                                else pos = pl:GetPivot().Position end
+                            end)
+                            if pos then sx=sx+pos.X; sy=sy+pos.Y; sz=sz+pos.Z; cnt=cnt+1 end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    if cnt > 0 then return Vector3.new(sx/cnt, sy/cnt, sz/cnt) end
+    return nil
+end
+
+function Seed.trowelOnce()
+    if not state.autoTrowel then return 0 end
+    local p = pkt("Trowel", "MovePlant")
+    if not (p and p.Fire) then Seed._logTrowel = "remote Trowel.MovePlant gak ada"; return 0 end
+    local target = Seed.trowelCenter()
+    if not target then Seed._logTrowel = "gak ada seed terpilih di garden"; return 0 end
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return 0 end
+    -- equip trowel
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local tool
+    for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
+        if h then
+            for _, t in ipairs(h:GetChildren()) do
+                if t:IsA("Tool") and t.Name:lower():find("trowel") then tool = t; break end
+            end
+        end
+        if tool then break end
+    end
+    if not tool then Seed._logTrowel = "Trowel gak ada di tas"; return 0 end
+    if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
+    -- pindahin seed terpilih yg BELUM di tengah (jarak > 5) ke target
+    local moved = 0
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if not (state.autoTrowel and isCurrentGen()) then break end
+                if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
+                    local sn = plant:GetAttribute("SeedName") or "?"
+                    if Seed.trowelBoleh(sn) then
+                        local pos
+                        pcall(function()
+                            if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position
+                            else pos = plant:GetPivot().Position end
+                        end)
+                        if not pos or (pos - target).Magnitude > 5 then
+                            local uuid = plant.Name:match("^%d+_(.+)$") or plant.Name
+                            pcall(function() p:Fire(uuid, target, 90) end)
+                            moved = moved + 1
+                            task.wait(0.1)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if moved > 0 then Seed._logTrowel = moved .. " seed ditumpuk ke tengah" end
+    return moved
 end
 
 -- ============================================================
@@ -7063,6 +7160,41 @@ do
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblShovel })
 end
 
+-- ---------- Auto Trowel (v4.61) -- numpuk seed ke tengah plot ----------
+do
+    local kTrowel = kartu(120, tabFarm)
+    mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
+        Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto Trowel" })
+    mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Numpuk seed terpilih ke tengah plot" })
+    -- baris "Jenis seed [picker]"
+    mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 56), Size = UDim2.new(0, 120, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
+    Seed._el.pickTrowel = mk("TextButton", { Parent = kTrowel,
+        Position = UDim2.new(1, -128, 0, 54), Size = UDim2.new(0, 116, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium, TextSize = 19, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.pickTrowel })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.pickTrowel })
+    -- baris "Auto trowel [OFF]"
+    mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 90), Size = UDim2.new(0, 160, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto trowel" })
+    Seed._el.tblTrowel = mk("TextButton", { Parent = kTrowel,
+        Position = UDim2.new(1, -84, 0, 88), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblTrowel })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblTrowel })
+end
+
 -- ---------- Auto Reroll Giant Pumpkin (v4.53) ----------
 do
     local kPk = kartu(120, tabMetod)
@@ -7723,6 +7855,54 @@ if Seed._el.inpSprCount then
         simpan()
     end)
 end
+if Seed._el.tblTrowel then
+    Seed._el.tblTrowel.MouseButton1Click:Connect(function()
+        state.autoTrowel = not state.autoTrowel
+        catSaklar(Seed._el.tblTrowel, state.autoTrowel)
+        simpan()
+    end)
+end
+-- v4.61: picker jenis seed trowel (dari garden + jumlah)
+if Seed._el.pickTrowel then
+    Seed._el.pickTrowel.MouseButton1Click:Connect(function()
+        Seed._trowelJml = {}
+        bukaPicker("Jenis seed trowel",
+            function()
+                local hitung = {}
+                pcall(function()
+                    local g = workspace:FindFirstChild("Gardens")
+                    local uid = player.UserId
+                    if g then
+                        for _, plot in ipairs(g:GetChildren()) do
+                            if plot:GetAttribute("OwnerUserId") == uid or plot:GetAttribute("Owner") == player.Name then
+                                local pls = plot:FindFirstChild("Plants")
+                                if pls then
+                                    for _, pl in ipairs(pls:GetChildren()) do
+                                        local sn = pl:GetAttribute("SeedName")
+                                        if sn then hitung[sn] = (hitung[sn] or 0) + 1 end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+                Seed._trowelJml = hitung
+                local arr = {}
+                for nm in pairs(hitung) do arr[#arr+1] = nm end
+                table.sort(arr, function(a, b)
+                    if hitung[a] ~= hitung[b] then return hitung[a] > hitung[b] end
+                    return a < b
+                end)
+                return arr
+            end,
+            state.trowelPilih,
+            function() return state.trowelSemua end,
+            function(v) state.trowelSemua = v end,
+            function() lblPickSeed(Seed._el.pickTrowel, state.trowelSemua, state.trowelPilih) end,
+            function(nm) return (Seed._trowelJml[nm] and tostring(Seed._trowelJml[nm])) or "" end)
+    end)
+    lblPickSeed(Seed._el.pickTrowel, state.trowelSemua, state.trowelPilih)
+end
 Seed._el.pickShovel.MouseButton1Click:Connect(function()
     -- jenis seed dari tanaman di kebun. PISAHIN: bermutasi (Gold/Rainbow/Mega/dll)
     -- vs biasa. mutasi dibaca dari atribut Mutation/Variant tanaman. nama tampil:
@@ -8030,6 +8210,8 @@ function Seed._segarkanGUI()
         if Seed._el.inpPkMin then Seed._el.inpPkMin.Text = tostring(state.pumpkinMinKg or 30) end
         if Seed._el.tblSprinkler then catSaklar(Seed._el.tblSprinkler, state.autoSprinkler) end
         if Seed._el.pickSprType then Seed._el.pickSprType.Text = (state.sprType ~= "" and state.sprType) or "Apa aja" end
+        if Seed._el.tblTrowel then catSaklar(Seed._el.tblTrowel, state.autoTrowel) end
+        if Seed._el.pickTrowel then lblPickSeed(Seed._el.pickTrowel, state.trowelSemua, state.trowelPilih) end
         if Seed._el.inpSprCount then Seed._el.inpSprCount.Text = tostring(state.sprStopCount or 300) end
     end)
     kotakMult.Text = tostring(state.jualMinMult or 4) .. "x"
@@ -8716,6 +8898,17 @@ task.spawn(function()
             else
                 pcall(Seed.placeSprinklerOnce)
             end
+        end
+    end
+end)
+
+-- v4.61: loop AUTO TROWEL -- numpuk pumpkin ke tengah tiap 8s
+task.spawn(function()
+    task.wait(26)
+    while isCurrentGen() do
+        task.wait(8)
+        if state.autoTrowel then
+            pcall(Seed.trowelOnce)
         end
     end
 end)
