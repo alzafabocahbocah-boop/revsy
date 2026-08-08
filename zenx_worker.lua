@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.108-cf"
+local VERSION = "9.110-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -647,10 +647,16 @@ RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loo
 DENYUT_UMUR = {}        -- v9.77: akun -> umur denyut (detik) terakhir. lapor kirim ke panel biak on/off akurat
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
     KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m" }
-local function log(m,c) print((c or "")..os.date("%H:%M:%S").." "..m..C.N) end
+local LOG_KIRIM = {}          -- v9.109: SEMUA baris log (buat dikirim ke panel), maks 60
+local function log(m,c)
+    print((c or "")..os.date("%H:%M:%S").." "..m..C.N)
+    -- v9.109: catat SEMUA log (info/warn/ok/err lewat sini) -> dikirim ke panel
+    -- tiap status. Biar bisa liat log RF lengkap dari panel tanpa buka Termux.
+    LOG_KIRIM[#LOG_KIRIM+1] = os.date("%H:%M:%S").." "..m
+    while #LOG_KIRIM > 60 do table.remove(LOG_KIRIM, 1) end
+end
 -- v4.24/4.26: log + "lagi ngapain" dikirim ke panel, biar gak usah pantengin Termux.
 -- warn() ikut kecatet (ditandain "!") supaya ERROR keliatan di panel juga.
-local LOG_KIRIM = {}          -- baris log terakhir (maks 20)
 -- v5.30: status laporan ke panel. Dipakai buat nampilin kalau lapor GAGAL --
 -- dulu gagalnya diem dan panel keliatan kosong tanpa sebab yang jelas.
 local LAPOR_OK, LAPOR_SEBAB, LAPOR_WARN, LAPOR_TS = nil, nil, nil, 0
@@ -698,6 +704,7 @@ BOOT_TS = os.time()
 DELTA_CEK_TS = 0        -- v9.100: ts terakhir cek delta_versi.txt (auto-update 10 menit)
 DELTA_SLOT_DL = {}      -- v9.104: set slot Delta yg BARU didownload (panel tandai ijo langsung)
 WORKER_CEK_TS = 0       -- v9.106: ts terakhir cek versi worker (auto-update worker)
+LOG_PUSH_TS = 0         -- v9.109: ts terakhir push log ke panel (tiap 60 detik)
 
 local function warn(m)
     log("!   "..m,C.Y)
@@ -719,6 +726,12 @@ end
 -- yang gak peduli sama `?t=`.
 -- ============================================================
 local REPO_WORKER = "https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main"
+-- v9.110: cek command ada gak (GLOBAL biar gak makan jatah 200 lokal main-chunk +
+-- keliatan dari fungsi global auto-update). ada_perintah asli nested -> nil.
+function punya_perintah(nama)
+    local ok2 = os.execute("command -v " .. nama .. " >/dev/null 2>&1")
+    return ok2 == true or ok2 == 0
+end
 
 local function tulis_skrip_up(diam)
     local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
@@ -7040,6 +7053,12 @@ local function run(cfg)
         do
             local respTop = api_get(cfg, "/perintah?tim=" .. cfg.tim)
             local isiTop = ambil_str(respTop, "isi") or ""
+            -- v9.109: PUSH LOG ke panel tiap 60 detik (dijamin log RF lengkap sampai
+            -- panel tiap menit walau gak ada event). wlog (LOG_KIRIM = semua log) ikut.
+            if os.time() - LOG_PUSH_TS >= 60 then
+                LOG_PUSH_TS = os.time()
+                pcall(function() lapor(cfg, isiTop, cacheRun) end)
+            end
             -- v9.40: log SIAPA yg kirim perintah (versi panel + IP dari backend).
             -- Buat lacak restart tiba-tiba -> ketauan dari panel versi berapa / IP mana.
             local pengirimTop = ambil_str(respTop, "pengirim") or ""
@@ -12502,7 +12521,7 @@ end
 -- lagi (Termux tetep idup, gak ke prompt $).
 function tulis_launcher_loop()
     local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
-    local LUA = ada_perintah("lua5.4") and "lua5.4" or "lua"
+    local LUA = punya_perintah("lua5.4") and "lua5.4" or "lua"
     local jalur = PREFIX .. "/bin/zenx"
     local cur = io.open(jalur, "r")
     if cur then local isi = cur:read("*a") or ""; cur:close()
@@ -12543,7 +12562,7 @@ function cek_worker_versi(cfg)
     if not head:find("ZENX WORKER") then os.remove(baru); return false end
     local vBaru = (sh(("grep -m1 'local VERSION' %s 2>/dev/null"):format(shq(baru))) or ""):match('"([^"]+)"')
     if not vBaru or vBaru == "" or vBaru == VERSION then os.remove(baru); return false end
-    local LUA = ada_perintah("lua5.4") and "lua5.4" or "lua"
+    local LUA = punya_perintah("lua5.4") and "lua5.4" or "lua"
     local okLua = os.execute(("%s -e 'assert(loadfile(%s))' 2>/dev/null"):format(LUA, shq(baru)))
     if okLua ~= true and okLua ~= 0 then
         err("[auto-update] file baru RUSAK (gak lolos cek lua) -> batal"); os.remove(baru); return false
