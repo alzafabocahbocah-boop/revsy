@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.146-cf"
+local VERSION = "9.149-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -1072,6 +1072,19 @@ local function sh(cmd)
         -- shell_jalan udah matiin dirinya kalau bermasalah -> lanjut ke cara lama
     end
     return sh_lama(cmd)
+end
+-- v9.147: sh dengan timeout custom (buat command yg skala jumlah client, mis.
+-- deteksi running 20 client -- default 8s kepotong -> client terakhir gak kebaca).
+-- GLOBAL (bukan local) biar gak nambah slot batas-200.
+function sh_tmo(cmd, tmo)
+    tmo = tmo or 8
+    if SHELL_AKTIF then
+        local o = shell_jalan(buka_bungkus_su(cmd), tmo)
+        if o then return o end
+    end
+    local h = io.popen("timeout " .. tmo .. " " .. cmd .. " 2>/dev/null")
+    if not h then return "" end
+    local o = h:read("*all") or ""; h:close(); return o
 end
 local function sh_silent(cmd)
     if SHELL_AKTIF then
@@ -2393,7 +2406,7 @@ local function pkg_running_semua(pkgs)
     for _, p in ipairs(pkgs) do
         bagian[#bagian+1] = 'echo "@PID ' .. p .. ' $(pidof ' .. p .. ')"'
     end
-    local o = sh("su -c '" .. table.concat(bagian, "; ") .. "'") or ""
+    local o = sh_tmo("su -c '" .. table.concat(bagian, "; ") .. "'", #pkgs + 15) or ""
 
     for baris in o:gmatch("[^\r\n]+") do
         local pkgPid, pidnya = baris:match("^@PID%s+(%S+)%s*(.*)$")
@@ -5790,8 +5803,10 @@ end
 -- ============================================================
 -- v6.25: GLOBAL (bukan local) -- dipanggil dari open_all (lebih awal di file)
 function pindai_pkgs()
-    local out = sh("su -c 'pm list packages'")
-    if out == "" then out = sh("pm list packages") end
+    -- v9.148: timeout 20s (pm list bisa lambat di device banyak app -> kepotong
+    -- 8s = sebagian roblox pkg ilang -> client 19-20 gak masuk config).
+    local out = sh_tmo("su -c 'pm list packages'", 20)
+    if out == "" then out = sh_tmo("pm list packages", 20) end
     local t = {}
     for baris in out:gmatch("[^\n]+") do
         local p = baris:match("^package:(%S+)")
@@ -10350,11 +10365,26 @@ if PERINTAH == "masuk" then
         ok("Semua client udah ada akun. Gak ada yg perlu ditembak.")
         return
     end
-    info(("%d client belum ada akun -> tembak Brookhaven + grid ukuran 4 (biar bisa login)..."):format(#kosong))
-    -- v9.11: pakai jalankan_home (tembak Brookhaven + grid ukuran 4 client) biar
-    -- SAMA kayak zenx home. Window client kosong jadi gede (ukuran 4) enak buat login.
-    jalankan_home(cfg, kosong)
-    ok(("MASUK selesai: %d client ditembak Brookhaven. Masukin akun ke client itu sekarang."):format(#kosong))
+    -- v9.149: BATCH 6 per sesi (grid selalu ukuran 6). Kalau >6, bikin sesi
+    -- terpisah, jeda 3 menit antar-sesi (biar gak berat + rapi buat login).
+    local BATCH = 6
+    local JEDA  = 180   -- 3 menit
+    local totalSesi = math.ceil(#kosong / BATCH)
+    info(("%d client belum ada akun -> %d sesi (%d/sesi, grid ukuran 6, jeda 3 menit)."):format(
+        #kosong, totalSesi, BATCH))
+    local sesi = 0
+    for i = 1, #kosong, BATCH do
+        sesi = sesi + 1
+        local batch = {}
+        for j = i, math.min(i + BATCH - 1, #kosong) do batch[#batch+1] = kosong[j] end
+        info(("=== SESI %d/%d: %d client -> Brookhaven + grid ==="):format(sesi, totalSesi, #batch))
+        jalankan_home(cfg, batch)   -- pad ke min 6 -> grid selalu ukuran 6
+        if i + BATCH <= #kosong then
+            info(("Nunggu 3 menit sebelum sesi %d/%d..."):format(sesi + 1, totalSesi))
+            os.execute("sleep " .. JEDA)
+        end
+    end
+    ok(("MASUK selesai: %d client ditembak (%d sesi). Masukin akun ke tiap client."):format(#kosong, totalSesi))
     return
 end
 
