@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.131-cf"
+local VERSION = "9.134-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -5018,6 +5018,22 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
         end
     end
     local urutBuka = 0   -- nomor progress khusus yang DIBUKA (1/perluBuka)
+    -- v9.133: ROTASI -> tembak SEMUA client yg perlu buka BARENGAN (buka_grup_rotasi),
+    -- SKIP loop open_one 1-1 yg lambat (~70s/client: task-remove+sleep5+cek game).
+    -- buka_grup_rotasi = grid all + am start batch (1 su call, jeda 1s) -> ~9s.
+    if cfg.rotasi_on then
+        local jalanMap = pkg_running_semua(list) or {}
+        local perluRot = {}
+        for _, pkg in ipairs(list) do
+            if pilihPkg(pkg) and not jalanMap[pkg] then perluRot[#perluRot+1] = pkg end
+        end
+        if #perluRot > 0 then
+            info(("[rotasi] tembak BARENGAN %d client (bukan open_one 1-1)"):format(#perluRot))
+            pcall(function() buka_grup_rotasi(cfg, perluRot, mapLink) end)
+        else
+            info("[rotasi] semua client tim aktif udah jalan -- skip open")
+        end
+    else
     for _, pkg in ipairs(list) do
         if pilihPkg(pkg) then
             urut = urut + 1
@@ -5296,6 +5312,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             end
         end
     end
+    end -- v9.133: tutup else (loop open manual cuma pas rotasi OFF)
 
     -- v8.13: munculin SEMUA jendela SEKALI setelah tembak bareng (start).
     -- Client belum tentu udah masuk game (gak dicek per client) -- verifikasi +
@@ -6411,8 +6428,12 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
         end
         local petaG = grid_hitung(cfg, pkgsBuatGrid)
         if petaG then
-            for ronde = 1, 2 do
-                info(("Atur grid ronde %d/2 (%d client diminta, sebelum open)..."):format(ronde, #pkgsBuatGrid))
+            -- v9.132: ronde 1+2 wajib, terus CEK posisi aktual. Kalau masih ada yg
+            -- meleset -> ronde lagi (sampai semua pas / max 5 ronde). Biar grid bener
+            -- bener rapi sebelum open.
+            local MAX_RONDE = 5
+            for ronde = 1, MAX_RONDE do
+                info(("Atur grid ronde %d (%d client diminta, sebelum open)..."):format(ronde, #pkgsBuatGrid))
                 local nOk, nGagal = 0, 0
                 for _, pkg in ipairs(pkgsBuatGrid) do
                     if petaG[pkg] then
@@ -6420,19 +6441,49 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                         if gok then nOk = nOk + 1
                         else
                             nGagal = nGagal + 1
-                            if ronde == 2 then warn("   grid " .. pkg:gsub("com%.roblox%.", "") .. " GAGAL: " .. tostring(gket)) end
+                            if ronde >= 2 then warn("   grid " .. pkg:gsub("com%.roblox%.", "") .. " GAGAL: " .. tostring(gket)) end
                         end
                     end
                 end
                 info(("  ronde %d: %d client grid ketulis%s"):format(
                     ronde, nOk, nGagal > 0 and (", " .. nGagal .. " GAGAL") or ""))
+                -- ronde 1: jeda 10s lanjut ronde 2 (gak cek dulu)
                 if ronde == 1 then
                     info("Grid ronde 1 kelar -- jeda 10s sebelum ronde 2...")
                     os.execute("sleep 10")
+                else
+                    -- v9.132: ronde >=2 -> CEK posisi aktual vs target. Pas semua -> stop.
+                    os.execute("sleep 2")   -- kasih waktu prefs ke-flush sebelum baca
+                    local pasN, semuaN = 0, 0
+                    for _, pkg in ipairs(pkgsBuatGrid) do
+                        local t = petaG[pkg]
+                        if t then
+                            semuaN = semuaN + 1
+                            local path = "/data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml"
+                            local isiP = sh("su -c 'cat " .. path .. " 2>/dev/null'") or ""
+                            local L = tonumber(isiP:match('<int name="app_cloner_current_window_left" value="(%-?%d+)"'))
+                            local T = tonumber(isiP:match('<int name="app_cloner_current_window_top" value="(%-?%d+)"'))
+                            local R = tonumber(isiP:match('<int name="app_cloner_current_window_right" value="(%-?%d+)"'))
+                            local B = tonumber(isiP:match('<int name="app_cloner_current_window_bottom" value="(%-?%d+)"'))
+                            if L and T and R and B
+                               and math.abs(L - t.L) <= 3 and math.abs(T - t.T) <= 3
+                               and math.abs(R - t.R) <= 3 and math.abs(B - t.B) <= 3 then
+                                pasN = pasN + 1
+                            end
+                        end
+                    end
+                    info(("  [cek-grid ronde %d] %d/%d client grid pas"):format(ronde, pasN, semuaN))
+                    if semuaN > 0 and pasN == semuaN then
+                        ok(("Grid RAPI semua (%d/%d) setelah %d ronde -- lanjut open"):format(pasN, semuaN, ronde))
+                        break
+                    elseif ronde < MAX_RONDE then
+                        warn(("  masih %d meleset -> atur grid ronde lagi..."):format(semuaN - pasN))
+                        os.execute("sleep 3")
+                    else
+                        warn(("  %d client grid tetep meleset setelah %d ronde -- lanjut open apa adanya"):format(semuaN - pasN, MAX_RONDE))
+                    end
                 end
             end
-            ok(("Grid diatur 2x (%s) -- lanjut open client"):format(
-                (tonumber(cfg.grid_kolom) or 0) > 0 and (cfg.grid_kolom .. " kolom") or "otomatis"))
         else
             warn("Grid gagal dihitung (peta nil) -- open client tanpa pre-grid")
         end
@@ -12785,7 +12836,18 @@ function buka_grup_rotasi(cfg, pkgs, mapLink)
         cmds[#cmds+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. " >/dev/null 2>&1"
     end
     if #cmds > 0 then
-        sh_silent("su -c \"" .. table.concat(cmds, "; sleep 1; ") .. "\"")
+        -- v9.134: JANGAN pakai sh_silent (timeout 8 -> batch ~9s ke-cut, cuma 8/10
+        -- client kefire). Pakai timeout dinamis = #client + buffer. Lewat persistent
+        -- shell kalau ada, else os.execute langsung.
+        local batch = "su -c \"" .. table.concat(cmds, "; sleep 1; ") .. "\""
+        local tmo = #cmds + 12   -- 10 am start + 9 sleep ~9s -> timeout 22
+        local done = false
+        if SHELL_AKTIF then
+            done = shell_jalan(buka_bungkus_su(batch), tmo)
+        end
+        if not done then
+            os.execute(("timeout %d %s >/dev/null 2>&1"):format(tmo, batch))
+        end
     end
 end
 
