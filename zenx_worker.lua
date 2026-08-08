@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.136-cf"
+local VERSION = "9.138-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7141,6 +7141,18 @@ local function run(cfg)
         do
             local respTop = api_get(cfg, "/perintah?tim=" .. cfg.tim)
             local isiTop = ambil_str(respTop, "isi") or ""
+            -- v9.137: SINYAL TEST diproses LANGSUNG di top-loop (gak nunggu dispatch di
+            -- bawah yg telat kalau worker sibuk denyut/open). Jadi test langsung masuk.
+            if isiTop:upper():find("ROTASI%-TEST") and isiTop ~= ROTASI_TEST_LAST then
+                ROTASI_TEST_LAST = isiTop
+                warn("[rotasi] >>> SINYAL TEST (top-loop, LANGSUNG) <<<")
+                tambahLog("Rotasi TEST: sinyal palsu (langsung)")
+                if ROTASI_STATE == "idle" then
+                    pcall(function() jalankan_rotasi(cfg, "TEST-PALSU", mapLink) end)
+                else
+                    warn("[rotasi] rotasi lagi jalan -> skip test")
+                end
+            end
             -- v9.113: ROTASI TIM. Kalau rotasi_on + idle + cooldown lewat -> cek API
             -- stock tiap 8s. Ada barang keinginan -> jalankan sequence rotasi.
             -- v9.116: GATE KESIAPAN. Rotasi cuma boleh kalau tim 1 (1-10) LENGKAP
@@ -8406,19 +8418,8 @@ local function run(cfg)
             end
             skip_sisa = true
         elseif U:find("ROTASI%-TEST") then
-            -- v9.130: SINYAL PALSU dari panel -> paksa jalanin rotasi (test sensitif
-            -- worker tanpa nunggu restock beneran). Bypass cek API + gate + cooldown.
-            if isi ~= lastIsi then
-                lastIsi = isi
-                warn("[rotasi] >>> SINYAL TEST dari panel <<< paksa jalanin rotasi")
-                tambahLog("Rotasi TEST: sinyal palsu dari panel")
-                if ROTASI_STATE == "idle" then
-                    pcall(function() jalankan_rotasi(cfg, "TEST-PALSU", mapLink) end)
-                else
-                    warn("[rotasi] rotasi lagi jalan -> skip test")
-                end
-                lapor(cfg, isi, cacheRun); lastStatus = os.time()
-            end
+            -- v9.137: udah diproses di TOP-LOOP (langsung, cepet). Di sini cuma skip
+            -- biar gak jatuh ke handler ROTASI (yg bakal matiin rotasi). Gak dobel.
             skip_sisa = true
         elseif U:find("ROTASI") then
             -- v9.115: ROTASI:<seed1,seed2> dari panel -> nyalain rotasi + set seed
@@ -12826,6 +12827,7 @@ ROTASI_STATE = "idle"    -- idle / jalan
 ROTASI_CEK_TS = 0        -- ts terakhir cek API stock
 ROTASI_TS = 0            -- ts terakhir rotasi selesai (cooldown)
 ROTASI_SIAP_TS = 0       -- v9.116: kapan tim 1 (1-10) LENGKAP nembak server (proses idup). Rotasi baru aktif 60s setelah ini.
+ROTASI_TEST_LAST = ""    -- v9.137: dedup sinyal TEST (diproses di top-loop biar cepet)
 
 -- ambil pkg berdasar rentang slot (idx 1-based di cfg.pkgs)
 function pkgs_slot(cfg, dari, sampai)
@@ -12850,8 +12852,38 @@ end
 function buka_grup_rotasi(cfg, pkgs, mapLink)
     for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
     os.execute("sleep 1")
-    -- v9.128: tembak SEMUA am start dalam 1 su command (jeda 1s internal), bukan
-    -- 10 su call + 2s gap. 10 client: ~21s -> ~9s.
+    -- v9.138: buka dalam CHUNK 5 (biar 10 client tim 1 = 5+5 staggered, gak overload
+    -- + gak ke-cut). Tiap chunk 1 su call (am start batch, jeda 1s internal), gap 2s
+    -- antar chunk. Client TETEP kebuka (gak di-close) -- ini cuma cara buka bertahap.
+    local CHUNK = 5
+    local i = 1
+    while i <= #pkgs do
+        local cmds = {}
+        for j = i, math.min(i + CHUNK - 1, #pkgs) do
+            local pkg = pkgs[j]
+            local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
+            cmds[#cmds+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. " >/dev/null 2>&1"
+        end
+        if #cmds > 0 then
+            local batch = "su -c \"" .. table.concat(cmds, "; sleep 1; ") .. "\""
+            local tmo = #cmds + 12
+            local done = false
+            if SHELL_AKTIF then
+                done = shell_jalan(buka_bungkus_su(batch), tmo)
+            end
+            if not done then
+                os.execute(("timeout %d %s >/dev/null 2>&1"):format(tmo, batch))
+            end
+        end
+        i = i + CHUNK
+        if i <= #pkgs then os.execute("sleep 2") end   -- gap antar chunk (5+5)
+    end
+end
+
+-- (buka_grup_rotasi versi lama single-batch diganti chunk di atas)
+function buka_grup_rotasi_LAMA(cfg, pkgs, mapLink)
+    for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
+    os.execute("sleep 1")
     local cmds = {}
     for _, pkg in ipairs(pkgs) do
         local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
