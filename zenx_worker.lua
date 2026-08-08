@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.122-cf"
+local VERSION = "9.123-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -746,7 +746,7 @@ local function tulis_skrip_up(diam)
         -- dari jauh -- harus pegang HP-nya satu-satu.
         'URL="' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)"',
         'if curl --version >/dev/null 2>&1; then',
-        '    curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" \\',
+        '    curl -fsSL --compressed -H "Cache-Control: no-cache" -H "Pragma: no-cache" \\',
         '      "$URL" -o "$HOME/zenx_worker.baru"',
         'elif wget --version >/dev/null 2>&1; then',
         '    echo "curl rusak -> pakai wget"',
@@ -12663,7 +12663,9 @@ function cek_worker_versi(cfg)
     local baru = HOME .. "/zenx_worker.cek"
     local URL = REPO_WORKER .. "/zenx_worker.lua?v=" .. os.time()
     os.remove(baru)
-    os.execute(("timeout 90 curl -fsSL -H 'Cache-Control: no-cache' %s -o %s 2>/dev/null"):format(
+    -- v9.123: --compressed -> GitHub kirim gzip (source Lua kompres ~5:1, 784K->~150K)
+    -- -> download jauh lebih cepet di RF (koneksi mobile), tanpa buang komentar.
+    os.execute(("timeout 90 curl -fsSL --compressed -H 'Cache-Control: no-cache' %s -o %s 2>/dev/null"):format(
         shq(URL), shq(baru)))
     local f = io.open(baru, "r")
     if not f then return false end
