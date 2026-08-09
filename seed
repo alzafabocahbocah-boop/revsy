@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.69"
+local VERSI = "4.71"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1606,6 +1606,45 @@ end
 -- hitung pumpkin >= kg di inventory (buah tas punya SizeMultiplier + Weight)
 -- v4.56b: hitung pumpkin >= minKg DI GARDEN (buah udah spawn, gak dishovel karena
 -- gede). Baca SizeMulti buah -> konversi kg. Ini yg jadi stop condition sprinkler.
+-- v4.71: STATS pumpkin -- total buah + ≥80kg + distribusi range (buat header Metod)
+function Seed.pumpkinStats()
+    local ratio = Seed._pkRatio or 8.055
+    local total, g80 = 0, 0
+    local r80, r100, r120, r150 = 0, 0, 0, 0
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local MY = player.UserId
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                    local sn = (plant:GetAttribute("SeedName") or ""):lower()
+                    if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
+                        local fr = plant:FindFirstChild("Fruits")
+                        if fr then
+                            for _, fruit in ipairs(fr:GetChildren()) do
+                                local sm = fruit:GetAttribute("SizeMulti")
+                                if type(sm) == "number" then
+                                    total = total + 1
+                                    local kg = sm * ratio
+                                    if kg >= 80 then g80 = g80 + 1 end
+                                    if kg >= 150 then r150 = r150 + 1
+                                    elseif kg >= 120 then r120 = r120 + 1
+                                    elseif kg >= 100 then r100 = r100 + 1
+                                    elseif kg >= 80 then r80 = r80 + 1 end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return total, g80, r80, r100, r120, r150
+end
+
 function Seed.hitungPumpkinBerat(minKg)
     Seed.kalibrasiPkRatio()
     local ratio = Seed._pkRatio or 8.055
@@ -1760,9 +1799,9 @@ function Seed.placeSprinklerOnce()
     local placed = 0
     for _, pos in ipairs(positions) do
         if not (state.autoSprinkler and isCurrentGen()) then break end
-        local key = string.format("%d,%d", math.floor(pos.X), math.floor(pos.Z))
-        local last = Seed._sprPlacedAt[key]
-        if not last or (tick() - last) >= Seed._SPR_COOLDOWN then
+        -- v4.70: SKIP kalau udah ADA sprinkler deket sini -> gak pindah, gak place
+        -- (biar gak bolak-balik. Cuma gerak+place kalau sprinkler-nya udah ilang/expired).
+        if not Seed.sprinklerAt(pos, 14) then
             local y = (state.sprMode == "save") and pos.Y or Seed.sprGroundY(pos)
             local titik = Vector3.new(pos.X, y, pos.Z)
             -- v4.67: GERAK HALUS ke deket titik (anti-snap) -- TP instant ke-snap
@@ -1774,13 +1813,64 @@ function Seed.placeSprinklerOnce()
             Seed._sprAutoPlacing = true
             pcall(function() p:Fire(titik, tool.Name, tool, 1) end)
             Seed._sprAutoPlacing = false
-            Seed._sprPlacedAt[key] = tick()
             placed = placed + 1
             task.wait(0.2)
         end
     end
     if placed > 0 then Seed._logSpr = ("place %d sprinkler (%s)"):format(placed, tool.Name) end
     return placed
+end
+
+-- v4.70: cek ada sprinkler deket pos (di Plot.Sprinklers) -- buat skip re-place
+function Seed.sprinklerAt(pos, radius)
+    radius = radius or 14
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return false end
+    local ada = false
+    pcall(function()
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local fol = plot:FindFirstChild("Sprinklers")
+            if fol then
+                for _, s in ipairs(fol:GetChildren()) do
+                    local sp
+                    pcall(function()
+                        if s:IsA("Model") and s.PrimaryPart then sp = s.PrimaryPart.Position
+                        elseif s:IsA("Model") then sp = s:GetPivot().Position
+                        elseif s:IsA("BasePart") then sp = s.Position end
+                    end)
+                    if sp and math.abs(sp.X - pos.X) < radius and math.abs(sp.Z - pos.Z) < radius then
+                        ada = true; return
+                    end
+                end
+            end
+        end
+    end)
+    return ada
+end
+
+-- v4.70: baca teks timer sprinkler (dari SprinklerTimerUI) -- brp lama lagi
+function Seed.sprTimerText()
+    local gardens = workspace:FindFirstChild("Gardens")
+    if not gardens then return "" end
+    local hasil = ""
+    pcall(function()
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local fol = plot:FindFirstChild("Sprinklers")
+            if fol then
+                for _, s in ipairs(fol:GetChildren()) do
+                    local ui = s:FindFirstChild("SprinklerTimerUI", true)
+                    if ui then
+                        for _, d in ipairs(ui:GetDescendants()) do
+                            if d:IsA("TextLabel") and d.Text and d.Text:match("%d") then
+                                hasil = d.Text; return
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return hasil
 end
 
 -- ============================================================
@@ -7285,6 +7375,42 @@ do
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblTrowel })
 end
 
+-- ---------- Summary Giant Pumpkin (v4.71) -- header paling atas ----------
+do
+    local kSum = kartu(126, tabMetod)
+    mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Transparency = 0.3, Parent = kSum })
+    mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 18),
+        Font = Enum.Font.GothamBold, TextSize = 20, TextColor3 = WARNA.teks,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "🎃 Giant Pumpkin" })
+    -- baris besar: ≥80kg X / total (persen)
+    Seed._el.lblSumMain = mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(1, -24, 0, 26),
+        Font = Enum.Font.GothamBold, TextSize = 23, TextColor3 = WARNA.aksenMuda,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "≥80kg: 0 / 0" })
+    -- distribusi range
+    Seed._el.lblSumR1 = mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 62), Size = UDim2.new(0.5, -12, 0, 18),
+        Font = Enum.Font.GothamMedium, TextSize = 17, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "80–100 : 0" })
+    Seed._el.lblSumR2 = mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(0.5, 0, 0, 62), Size = UDim2.new(0.5, -12, 0, 18),
+        Font = Enum.Font.GothamMedium, TextSize = 17, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "100–120 : 0" })
+    Seed._el.lblSumR3 = mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 84), Size = UDim2.new(0.5, -12, 0, 18),
+        Font = Enum.Font.GothamMedium, TextSize = 17, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "120–150 : 0" })
+    Seed._el.lblSumR4 = mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(0.5, 0, 0, 84), Size = UDim2.new(0.5, -12, 0, 18),
+        Font = Enum.Font.GothamBold, TextSize = 17, TextColor3 = Color3.fromRGB(240, 200, 120),
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "150+ : 0" })
+    Seed._el.lblSumJack = mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 104), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = WARNA.samar,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "update tiap 4 detik" })
+end
+
 -- ---------- Auto Reroll Giant Pumpkin (v4.53) ----------
 do
     local kPk = kartu(120, tabMetod)
@@ -7958,25 +8084,57 @@ if Seed._el.tblSprinkler then
 end
 if Seed._el.pickSprType then
     Seed._el.pickSprType.MouseButton1Click:Connect(function()
-        -- kumpulin jenis sprinkler yg ADA di tas + "Apa aja" ("")
-        local opsi = { "" }
+        -- v4.70: POPUP pilih jenis sprinkler (bukan cycle) -- list sprinkler di tas
+        local opsi = { { "", "Apa aja" } }
         local seen = {}
         for _, h in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
             if h then
                 for _, t in ipairs(h:GetChildren()) do
                     if t:IsA("Tool") and t.Name:lower():find("sprinkler") and not seen[t.Name] then
-                        seen[t.Name] = true; opsi[#opsi+1] = t.Name
+                        seen[t.Name] = true; opsi[#opsi+1] = { t.Name, t.Name }
                     end
                 end
             end
         end
-        local cur = state.sprType or ""
-        local idx = 1
-        for i, o in ipairs(opsi) do if o == cur then idx = i; break end end
-        idx = (idx % #opsi) + 1   -- next (cycle)
-        state.sprType = opsi[idx]
-        Seed._el.pickSprType.Text = (state.sprType ~= "" and state.sprType) or "Apa aja"
-        simpan()
+        local ov = mk("Frame", { Parent = sg, Size = UDim2.new(1, 0, 1, 0),
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.4,
+            BorderSizePixel = 0, ZIndex = 60, Active = true })
+        local tinggi = math.min(64 + #opsi * 40, 360)
+        local pop = mk("Frame", { Parent = ov, Size = UDim2.new(0, 280, 0, tinggi),
+            Position = UDim2.new(0.5, -140, 0.5, -tinggi / 2), BackgroundColor3 = WARNA.kartu,
+            BorderSizePixel = 0, ZIndex = 61, Active = true, Draggable = true })
+        mk("UICorner", { CornerRadius = UDim.new(0, 10), Parent = pop })
+        mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = pop })
+        mk("TextLabel", { Parent = pop, BackgroundTransparency = 1, ZIndex = 62,
+            Position = UDim2.new(0, 14, 0, 10), Size = UDim2.new(1, -56, 0, 24),
+            Font = Enum.Font.GothamBold, TextSize = 20, TextColor3 = WARNA.teks,
+            TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis sprinkler" })
+        local tX = mk("TextButton", { Parent = pop, ZIndex = 62,
+            Position = UDim2.new(1, -38, 0, 8), Size = UDim2.new(0, 28, 0, 28),
+            BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, Font = Enum.Font.GothamBold,
+            TextSize = 18, TextColor3 = WARNA.redup, Text = "✕" })
+        mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = tX })
+        tX.MouseButton1Click:Connect(function() ov:Destroy() end)
+        local sf = mk("ScrollingFrame", { Parent = pop, BackgroundTransparency = 1,
+            Position = UDim2.new(0, 10, 0, 44), Size = UDim2.new(1, -20, 1, -54), ZIndex = 62,
+            BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = WARNA.garis,
+            CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y })
+        mk("UIListLayout", { Parent = sf, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder })
+        for i, o in ipairs(opsi) do
+            local kepilih = (o[1] == (state.sprType or ""))
+            local b = mk("TextButton", { Parent = sf, Size = UDim2.new(1, 0, 0, 34), ZIndex = 62,
+                BackgroundColor3 = kepilih and WARNA.aksenBg or WARNA.bg, BorderSizePixel = 0,
+                Font = Enum.Font.GothamMedium, TextSize = 18,
+                TextColor3 = kepilih and WARNA.aksenMuda or WARNA.teks, Text = o[2], LayoutOrder = i })
+            mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = b })
+            if kepilih then mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Parent = b }) end
+            b.MouseButton1Click:Connect(function()
+                state.sprType = o[1]
+                if Seed._el.pickSprType then Seed._el.pickSprType.Text = (o[1] ~= "" and o[1]) or "Apa aja" end
+                simpan()
+                ov:Destroy()
+            end)
+        end
     end)
 end
 -- v4.67: handler SAVE POS + mode + hapus
@@ -7985,11 +8143,13 @@ function Seed._updSprSave()
     if Seed._el.btnSprClear then Seed._el.btnSprClear.Text = "Hapus (" .. #(state.sprSavedPos or {}) .. ")" end
     if Seed._el.lblSprPos then
         local sp = state.sprSavedPos or {}
+        local tm = Seed.sprTimerText and Seed.sprTimerText() or ""
+        local tmTxt = (tm ~= "") and ("  ⏱ " .. tm) or ""
         if #sp == 0 then
-            Seed._el.lblSprPos.Text = "belum ada posisi"
+            Seed._el.lblSprPos.Text = "belum ada posisi" .. tmTxt
         else
             local last = sp[#sp]
-            Seed._el.lblSprPos.Text = ("#%d terakhir: (%.0f, %.0f, %.0f)"):format(#sp, last.x, last.y, last.z)
+            Seed._el.lblSprPos.Text = ("#%d: (%.0f,%.0f,%.0f)%s"):format(#sp, last.x, last.y, last.z, tmTxt)
         end
     end
 end
@@ -9037,6 +9197,25 @@ end)
 -- Sprinkler -> sekop pegang tool salah -> gagal. Lock bikin gantian, gak tabrakan.
 Seed._toolBusy = false
 
+-- v4.71: update kartu summary Giant Pumpkin tiap 4s
+function Seed._updSummary()
+    if not (Seed._el and Seed._el.lblSumMain) then return end
+    local total, g80, r80, r100, r120, r150 = Seed.pumpkinStats()
+    local pct = (total > 0) and math.floor(g80 / total * 100 + 0.5) or 0
+    Seed._el.lblSumMain.Text = ("≥80kg: %d / %d  (%d%%)"):format(g80, total, pct)
+    if Seed._el.lblSumR1 then Seed._el.lblSumR1.Text = "80–100 : " .. r80 end
+    if Seed._el.lblSumR2 then Seed._el.lblSumR2.Text = "100–120 : " .. r100 end
+    if Seed._el.lblSumR3 then Seed._el.lblSumR3.Text = "120–150 : " .. r120 end
+    if Seed._el.lblSumR4 then Seed._el.lblSumR4.Text = "150+ : " .. r150 end
+end
+task.spawn(function()
+    task.wait(18)
+    while isCurrentGen() do
+        pcall(Seed._updSummary)
+        task.wait(4)
+    end
+end)
+
 -- v4.66: AUTO-UNEQUIP pas idle -- kalau SEMUA fitur tool mati (shovel/reroll/
 -- sprinkler/trowel) & gak lagi sibuk, lepas Shovel/Trowel/Sprinkler yg kepegang.
 task.spawn(function()
@@ -9092,6 +9271,8 @@ task.spawn(function()
     task.wait(24)
     while isCurrentGen() do
         task.wait(3)
+        -- v4.70: update teks timer sprinkler di label (biar keliatan sisa waktu)
+        if Seed._updSprSave then pcall(Seed._updSprSave) end
         if state.autoSprinkler then
             -- cek stop condition: pumpkin >= sprStopKg udah sprStopCount biji
             local n = Seed.hitungPumpkinBerat(tonumber(state.sprStopKg) or 80)
