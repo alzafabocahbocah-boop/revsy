@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.81"
+local VERSI = "4.83"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -297,7 +297,7 @@ local state = {
     -- v3.20: seed EVENT jatuh di Map.SeedPackSpawnClient (bukan DroppedItems).
     -- Ambil SEMUA: auto-TP ke tiap seed -> fire prompt -> kepungut. Bawaan NYALA.
     ambilSeedOn   = true,
-    autoBalikGarden = true,   -- v3.96: auto balik garden kalau grab selesai + jauh
+    autoBalikGarden = false,   -- v4.82: OFF (gak perlu TP balik garden)
     autoRejoinSeed = true,    -- v4.06: rejoin pakai deteksi ANDAL (cekDisconnectAndal)
     blockRejoin   = false,    -- v4.37: DEFAULT OFF. Debug nunjukin penyebab rejoin BUKAN teleport (hook gak nangkep pas rejoin). Block gak perlu + bisa ganggu. Paksa OFF.
     skipTutorialOn = true,    -- v4.08: auto skip tutorial akun baru (default ON)
@@ -361,6 +361,9 @@ local state = {
     autoTrowel       = false,  -- auto pindahin seed ke tengah
     trowelSemua      = false,  -- true = semua jenis di garden
     trowelPilih      = {},     -- { ["Atlantic Giant Pumpkin"]=true } jenis dipilih
+    -- v4.83: AUTO SELL DAILY DEAL -- jual pas value tas >= dailyDealMin
+    autoDailyDeal    = false,
+    dailyDealMin     = 1000000000,  -- 1B -- jual daily deal kalau value tas >= ini
     -- AUTO SELL: 2 mode
     sellPenuhOn   = false, -- sell pas backpack full (SellAll)
     sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
@@ -590,6 +593,7 @@ local function simpan()
             collectMatangKg = state.collectMatangKg, collectMatangPct = state.collectMatangPct,
             autoTrowel = state.autoTrowel, trowelSemua = state.trowelSemua,
             trowelPilih = state.trowelPilih,
+            autoDailyDeal = state.autoDailyDeal, dailyDealMin = state.dailyDealMin,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
             hideVisualOn = state.hideVisualOn,
@@ -2109,11 +2113,7 @@ function Seed.trowelOnce()
     end
     if not tool then Seed._logTrowel = "Trowel gak ada di tas"; return 0 end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
-    -- pindah karakter ke target (petak) dulu -- server terima kalau char deket target
-    if hrp and Seed.gerakHalus then
-        pcall(function() Seed.gerakHalus(Vector3.new(target.X, target.Y + 3, target.Z), 6) end)
-        if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
-    end
+    -- v4.82: GAK TP char. Fire langsung ke petak (target valid = server terima).
     -- fire tiap plant yg belum di target (SEKALI ke petak)
     local moved = 0
     for _, plant in ipairs(perlu) do
@@ -2139,6 +2139,30 @@ function Seed.trowelOnce()
     end
     if moved > 0 then Seed._logTrowel = moved .. " seed dipindah ke petak (sisa " .. (#perlu - moved) .. ")" end
     return moved
+end
+
+-- ============================================================
+-- v4.83: AUTO SELL DAILY DEAL -- jual semua item cocok deal (bonus harga) pas
+-- value tas >= dailyDealMin. remote: NPCS.PreviewSellAll + NPCS.UseDailyDealAll
+-- (no arg). Trigger threshold biar numpuk dulu baru jual sekaligus.
+-- ============================================================
+function Seed.sellDailyDealOnce()
+    if not state.autoDailyDeal then return false end
+    local nilai = Seed.nilaiTas and Seed.nilaiTas() or 0
+    Seed._nilaiTas = nilai
+    local minV = tonumber(state.dailyDealMin) or 1000000000
+    if nilai < minV then
+        Seed._logDeal = ("tas %s / %s -- nunggu"):format(
+            Seed._singkatHarga(nilai), Seed._singkatHarga(minV))
+        return false
+    end
+    local prev = pkt("NPCS", "PreviewSellAll")
+    local use = pkt("NPCS", "UseDailyDealAll")
+    if not (use and use.Fire) then Seed._logDeal = "remote UseDailyDealAll gak ada"; return false end
+    if prev and prev.Fire then pcall(function() prev:Fire() end); task.wait(0.4) end
+    pcall(function() use:Fire() end)
+    Seed._logDeal = ("JUAL daily deal (tas tadi %s)"):format(Seed._singkatHarga(nilai))
+    return true
 end
 
 -- ============================================================
@@ -5378,6 +5402,28 @@ local function singkatHarga(n)
     else return tostring(math.floor(n)) end
 end
 
+-- v4.83: total value semua buah di tas (buat trigger auto sell daily deal)
+function Seed.nilaiTas()
+    local total = 0
+    pcall(function()
+        for _, h in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if h then
+                for _, t in ipairs(h:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local v = hargaBuah(t)
+                        if type(v) == "number" then
+                            local cnt = tonumber(t:GetAttribute("Count") or t:GetAttribute("Amount")) or 1
+                            total = total + v * cnt
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return total
+end
+Seed._singkatHarga = singkatHarga
+
 -- ============================================================
 -- v3.18: ESP FRUIT IN INVENTORY -- label harga nempel di slot buah UI tas
 -- (cara gag2: cari sel ToolName+ToolCount di BackpackGui, cocokin berat,
@@ -7531,6 +7577,44 @@ do
         TextXAlignment = Enum.TextXAlignment.Left, Text = "petak tujuan: (426, 144, -163)" })
 end
 
+-- ---------- Auto Sell Daily Deal (v4.83) ----------
+do
+    local kDeal = kartu(128, tabFarm)
+    mk("TextLabel", { Parent = kDeal, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
+        Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "🛒 Auto Sell Daily Deal" })
+    mk("TextLabel", { Parent = kDeal, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Jual daily deal kalau value tas >= minimal" })
+    mk("TextLabel", { Parent = kDeal, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 54), Size = UDim2.new(0, 130, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Min value tas" })
+    Seed._el.inpDealMin = mk("TextBox", { Parent = kDeal,
+        Position = UDim2.new(1, -128, 0, 52), Size = UDim2.new(0, 116, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = WARNA.aksenMuda,
+        Text = "1B" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpDealMin })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpDealMin })
+    mk("TextLabel", { Parent = kDeal, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 86), Size = UDim2.new(0, 160, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto sell deal" })
+    Seed._el.tblDeal = mk("TextButton", { Parent = kDeal,
+        Position = UDim2.new(1, -84, 0, 84), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblDeal })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblDeal })
+    Seed._el.lblDeal = mk("TextLabel", { Parent = kDeal, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 110), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.Code, TextSize = 14, TextColor3 = Color3.fromRGB(150, 220, 160),
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "value tas: -" })
+end
+
 -- ---------- Summary Giant Pumpkin (v4.71) -- header paling atas ----------
 do
     local kSum = kartu(126, tabMetod)
@@ -8465,6 +8549,34 @@ if Seed._el.tblTrowel then
         simpan()
     end)
 end
+-- v4.83: handler auto sell daily deal
+local function parseAngka(s)
+    s = tostring(s):upper():gsub(" ", "")
+    local num = tonumber((s:gsub("[BMKT]", "")))
+    if not num then return nil end
+    if s:find("T") then return num * 1e12
+    elseif s:find("B") then return num * 1e9
+    elseif s:find("M") then return num * 1e6
+    elseif s:find("K") then return num * 1e3
+    else return num end
+end
+if Seed._el.inpDealMin then
+    -- set teks awal dari state
+    Seed._el.inpDealMin.Text = Seed._singkatHarga(tonumber(state.dailyDealMin) or 1e9)
+    Seed._el.inpDealMin.FocusLost:Connect(function()
+        local n = parseAngka(Seed._el.inpDealMin.Text)
+        state.dailyDealMin = (n and n > 0) and n or 1e9
+        Seed._el.inpDealMin.Text = Seed._singkatHarga(state.dailyDealMin)
+        simpan()
+    end)
+end
+if Seed._el.tblDeal then
+    Seed._el.tblDeal.MouseButton1Click:Connect(function()
+        state.autoDailyDeal = not state.autoDailyDeal
+        catSaklar(Seed._el.tblDeal, state.autoDailyDeal)
+        simpan()
+    end)
+end
 -- v4.61: picker jenis seed trowel (dari garden + jumlah)
 if Seed._el.pickTrowel then
     Seed._el.pickTrowel.MouseButton1Click:Connect(function()
@@ -8813,6 +8925,7 @@ function Seed._segarkanGUI()
         if Seed._el.inpPkMin then Seed._el.inpPkMin.Text = tostring(state.pumpkinMinKg or 30) end
         if Seed._el.tblSprinkler then catSaklar(Seed._el.tblSprinkler, state.autoSprinkler) end
         if Seed._el.tblColMatang then catSaklar(Seed._el.tblColMatang, state.autoCollectMatang) end
+        if Seed._el.tblDeal then catSaklar(Seed._el.tblDeal, state.autoDailyDeal) end
         if Seed._el.pickSprType then Seed._el.pickSprType.Text = (state.sprType ~= "" and state.sprType) or "Apa aja" end
         if Seed._el.tblTrowel then catSaklar(Seed._el.tblTrowel, state.autoTrowel) end
         if Seed._el.pickTrowel then lblPickSeed(Seed._el.pickTrowel, state.trowelSemua, state.trowelPilih) end
@@ -9606,6 +9719,26 @@ task.spawn(function()
         task.wait(6)
         if state.autoCollectMatang then
             pcall(Seed.collectMatangOnce)
+        end
+    end
+end)
+
+-- v4.83: loop AUTO SELL DAILY DEAL -- jual pas value tas >= min, cek tiap 10s
+task.spawn(function()
+    task.wait(34)
+    while isCurrentGen() do
+        task.wait(10)
+        -- update label value tas (walau auto off)
+        if Seed._el and Seed._el.lblDeal then
+            local nv = Seed.nilaiTas and Seed.nilaiTas() or 0
+            Seed._nilaiTas = nv
+            local minV = tonumber(state.dailyDealMin) or 1e9
+            Seed._el.lblDeal.Text = ("value tas: %s / %s%s"):format(
+                Seed._singkatHarga(nv), Seed._singkatHarga(minV),
+                (nv >= minV) and "  ✓ jual" or "")
+        end
+        if state.autoDailyDeal then
+            pcall(Seed.sellDailyDealOnce)
         end
     end
 end)
