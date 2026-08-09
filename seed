@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "5.4"
+local VERSI = "5.5"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1525,36 +1525,39 @@ function Seed.rerollPumpkinOnce()
 
     local MY = player.UserId
     local minKg = tonumber(state.sprStopKg) or 80   -- v4.75: pake Goal kg (satu setting)
-    Seed.kalibrasiPkRatio()   -- auto-kalibrasi rasio dari buah panen (kalau ada di tas)
+    Seed.kalibrasiPkRatio()
     local function smToKg(sm) return sm * (Seed._pkRatio or 8.055) end
 
-    -- kumpulin pumpkin yg buahnya udah spawn + SizeMulti KECIL
-    local target = {}   -- { {id=plantId, sm=sizeMulti} }
-    local totalPk, siapPk = 0, 0
-    for _, plot in ipairs(gardens:GetChildren()) do
-        local plants = plot:FindFirstChild("Plants")
-        if plants then
-            for _, plant in ipairs(plants:GetChildren()) do
-                local ownerId = tonumber(plant.Name:match("^(%d+)_"))
-                local sn = (plant:GetAttribute("SeedName") or ""):lower()
-                if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
-                    totalPk = totalPk + 1
-                    local fr = plant:FindFirstChild("Fruits")
-                    if fr and #fr:GetChildren() > 0 then
-                        siapPk = siapPk + 1
-                        -- v5.4: skip plant yg BARU di-shovel (<5s) -> kasih buah baru
-                        -- waktu spawn+settle, gak langsung di-shovel lagi.
-                        local cdOk = not (Seed._pkCd and Seed._pkCd[plant.Name]
-                            and (os.clock() - Seed._pkCd[plant.Name]) < 5)
-                        if cdOk then
-                            -- v4.74: target tiap BUAH kecil (< minKg) buat di-shovel (re-roll
-                            -- buah). Plant tetep -> spawn buah baru dgn SizeMulti baru.
-                            for _, fruit in ipairs(fr:GetChildren()) do
-                                local sm = fruit:GetAttribute("SizeMulti")
-                                -- v5.4: skip buah yg UDAH di-pending (udah di-shovel, nunggu ilang)
-                                local udah = Seed._pkPending and Seed._pkPending[fruit.Name]
-                                if not udah and type(sm) == "number" and smToKg(sm) < minKg and #plant.Name >= 30 then
-                                    target[#target+1] = { plant = plant.Name, fruit = fruit.Name, sm = sm, kg = smToKg(sm) }
+    Seed._pkQueue = Seed._pkQueue or {}
+    Seed._pkPending = Seed._pkPending or {}
+    Seed._pkCd = Seed._pkCd or {}
+    Seed._pkRerollTotal = Seed._pkRerollTotal or 0
+
+    -- v5.5: ANTRIAN -- scan garden CUMA pas antrian kosong (habisin bekas dulu).
+    -- jadi gak re-scan tiap 2s; buah yg udah ke-scan diproses sampe habis dulu.
+    if #Seed._pkQueue == 0 then
+        local totalPk, siapPk = 0, 0
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                    local sn = (plant:GetAttribute("SeedName") or ""):lower()
+                    if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
+                        totalPk = totalPk + 1
+                        local fr = plant:FindFirstChild("Fruits")
+                        if fr and #fr:GetChildren() > 0 then
+                            siapPk = siapPk + 1
+                            local cdOk = not (Seed._pkCd[plant.Name]
+                                and (os.clock() - Seed._pkCd[plant.Name]) < 5)
+                            if cdOk then
+                                for _, fruit in ipairs(fr:GetChildren()) do
+                                    local sm = fruit:GetAttribute("SizeMulti")
+                                    if not Seed._pkPending[fruit.Name]
+                                       and type(sm) == "number" and smToKg(sm) < minKg
+                                       and #plant.Name >= 30 then
+                                        Seed._pkQueue[#Seed._pkQueue+1] = { plant = plant.Name, fruit = fruit.Name }
+                                    end
                                 end
                             end
                         end
@@ -1562,30 +1565,29 @@ function Seed.rerollPumpkinOnce()
                 end
             end
         end
+        Seed._pkScanTot = totalPk
+        Seed._pkScanSiap = siapPk
     end
 
-    -- v5.3: CAP batch 60 per call (async count -> gak nunggu, bisa banyak)
-    if #target > 60 then
-        local potong = {}
-        for i = 1, 60 do potong[i] = target[i] end
-        target = potong
-    end
-
-    -- v5.3: FIRE ngebut (0.02s apart) + catat PENDING. GAK cek buah pas fire.
-    -- counter async (loop terpisah) cek ID buah yg ilang.
-    Seed._pkRerollTotal = Seed._pkRerollTotal or 0
-    Seed._pkPending = Seed._pkPending or {}
-    Seed._pkCd = Seed._pkCd or {}
-    for _, t in ipairs(target) do
+    -- shovel sampe 60 dari ANTRIAN (bekas lama diproses dulu, 0.02s apart)
+    local n = 0
+    while #Seed._pkQueue > 0 and n < 60 do
         if not (state.pumpkinRerollOn and isCurrentGen()) then break end
-        pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
-        Seed._pkPending[t.fruit] = { plant = t.plant, fruit = t.fruit, t = os.clock() }
-        Seed._pkCd[t.plant] = os.clock()   -- v5.4: cooldown plant biar gak langsung re-shovel
-        task.wait(0.02)
+        local t = table.remove(Seed._pkQueue, 1)
+        if t and not Seed._pkPending[t.fruit] then
+            if shovelTool.Parent ~= char and hum then
+                pcall(function() hum:EquipTool(shovelTool) end); task.wait(0.05)
+            end
+            pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
+            Seed._pkPending[t.fruit] = { plant = t.plant, fruit = t.fruit, t = os.clock() }
+            Seed._pkCd[t.plant] = os.clock()
+            n = n + 1
+            task.wait(0.02)
+        end
     end
-    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d ditembak (< %.0f kg) | total reroll: %d"):format(
-        totalPk, siapPk, #target, minKg, Seed._pkRerollTotal)
-    return removed
+    Seed._logPumpkin = ("pumpkin: %d total, %d siap | %d ditembak, antre %d | total reroll: %d"):format(
+        Seed._pkScanTot or 0, Seed._pkScanSiap or 0, n, #Seed._pkQueue, Seed._pkRerollTotal)
+    return n
 end
 
 -- ============================================================
