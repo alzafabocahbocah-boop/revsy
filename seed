@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.75"
+local VERSI = "4.78"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -350,6 +350,12 @@ local state = {
     -- dipake gantiin auto-detect. sprMode: "auto" (dari pumpkin) / "save" (posisi disave)
     sprSavedPos      = {},     -- list {x,y,z}
     sprMode          = "auto", -- "auto" atau "save"
+    -- v4.77: AUTO COLLECT MATANG -- panen buah pumpkin yg udah MATANG (Age==MaxAge,
+    -- full grown = berat penuh), cuma pas udah numpuk >= collectMatangMin biji.
+    autoCollectMatang = false,
+    collectMatangMin  = 50,    -- collect pas buah matang udah >= ini
+    collectMatangKg   = 80,    -- v4.78: cuma collect buah >= ini (kg)
+    collectMatangPct  = 95,    -- v4.78: dianggap "matang" kalau Age >= ini % dari MaxAge
     -- v4.61: AUTO TROWEL -- numpuk seed jenis terpilih ke tengah plot (1 titik).
     -- remote Trowel.MovePlant(uuid,pos,rot). jenis dipilih dari yg ADA di garden.
     autoTrowel       = false,  -- auto pindahin seed ke tengah
@@ -580,6 +586,8 @@ local function simpan()
             autoSprinkler = state.autoSprinkler, sprType = state.sprType,
             sprStopKg = state.sprStopKg, sprStopCount = state.sprStopCount,
             sprSavedPos = state.sprSavedPos, sprMode = state.sprMode,
+            autoCollectMatang = state.autoCollectMatang, collectMatangMin = state.collectMatangMin,
+            collectMatangKg = state.collectMatangKg, collectMatangPct = state.collectMatangPct,
             autoTrowel = state.autoTrowel, trowelSemua = state.trowelSemua,
             trowelPilih = state.trowelPilih,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
@@ -1436,6 +1444,7 @@ end
 --   presisi -- sekali panen 1 pumpkin, rasio ke-set exact.
 -- ============================================================
 Seed._pkRatio = 8.055
+Seed._pkRerollTotal = 0   -- v4.76: kumulatif buah di-reroll
 function Seed.kalibrasiPkRatio()
     pcall(function()
         for _, h in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
@@ -1538,17 +1547,22 @@ function Seed.rerollPumpkinOnce()
 
     -- fire SATU-SATU (arg1=PLANT, arg2=BUAH), tunggu BUAH ilang (plant tetep)
     local removed = 0
+    Seed._pkRerollTotal = Seed._pkRerollTotal or 0
     for _, t in ipairs(target) do
         if not (state.pumpkinRerollOn and isCurrentGen()) then break end
         pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
         for _ = 1, 40 do
             task.wait(0.05)
-            if not buahAda(t.plant, t.fruit) then removed = removed + 1; break end
+            if not buahAda(t.plant, t.fruit) then
+                removed = removed + 1
+                Seed._pkRerollTotal = Seed._pkRerollTotal + 1   -- kumulatif
+                break
+            end
             if not (state.pumpkinRerollOn and isCurrentGen()) then break end
         end
     end
-    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d BUAH di-reroll (< %.0f kg)"):format(
-        totalPk, siapPk, removed, minKg)
+    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d BUAH di-reroll (< %.0f kg) | total: %d"):format(
+        totalPk, siapPk, removed, minKg, Seed._pkRerollTotal)
     return removed
 end
 
@@ -1689,6 +1703,96 @@ function Seed.pumpkinStats(goalKg)
         end
     end)
     return total, berbuah, gGoal, r80, r100, r120, r150, nilai
+end
+
+-- v4.77: hitung buah SIAP COLLECT (matang >= pct% + kg >= min) milik kita
+function Seed.hitungMatang()
+    local n = 0
+    local ratio = Seed._pkRatio or 8.055
+    local pct = (tonumber(state.collectMatangPct) or 95) / 100
+    local minKg = tonumber(state.collectMatangKg) or 0
+    pcall(function()
+        local g = workspace:FindFirstChild("Gardens"); if not g then return end
+        local MY = player.UserId
+        for _, plot in ipairs(g:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, pl in ipairs(plants:GetChildren()) do
+                    local own = tonumber(pl.Name:match("^(%d+)_"))
+                    local sn = (pl:GetAttribute("SeedName") or ""):lower()
+                    if (not own or own == MY) and sn:find("pumpkin") then
+                        local fr = pl:FindFirstChild("Fruits")
+                        if fr then
+                            for _, fruit in ipairs(fr:GetChildren()) do
+                                local age = fruit:GetAttribute("Age")
+                                local maxAge = fruit:GetAttribute("MaxAge")
+                                local sm = fruit:GetAttribute("SizeMulti")
+                                if type(age) == "number" and type(maxAge) == "number" and maxAge > 0
+                                   and age >= maxAge * pct
+                                   and (minKg <= 0 or (type(sm) == "number" and sm * ratio >= minKg)) then
+                                    n = n + 1
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return n
+end
+
+-- v4.77: panen buah MATANG (full grown). Cuma jalan kalau matang udah >= min.
+function Seed.collectMatangOnce()
+    if not state.autoCollectMatang then return 0 end
+    local p = pkt("Garden", "CollectFruit")
+    if not (p and p.Fire) then Seed._logCollectM = "remote CollectFruit gak ada"; return 0 end
+    local matang = Seed.hitungMatang()
+    Seed._matangCount = matang
+    local minC = tonumber(state.collectMatangMin) or 50
+    if matang < minC then
+        Seed._logCollectM = ("matang %d/%d -- nunggu"):format(matang, minC)
+        return 0
+    end
+    -- collect semua buah SIAP (matang >= pct% + kg >= min)
+    local g = workspace:FindFirstChild("Gardens"); if not g then return 0 end
+    local MY = player.UserId
+    local ratio = Seed._pkRatio or 8.055
+    local pct = (tonumber(state.collectMatangPct) or 95) / 100
+    local minKg = tonumber(state.collectMatangKg) or 0
+    local collected = 0
+    for _, plot in ipairs(g:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, pl in ipairs(plants:GetChildren()) do
+                if not (state.autoCollectMatang and isCurrentGen()) then break end
+                local own = tonumber(pl.Name:match("^(%d+)_"))
+                local sn = (pl:GetAttribute("SeedName") or ""):lower()
+                if (not own or own == MY) and sn:find("pumpkin") then
+                    local plantId = pl:GetAttribute("PlantId")
+                    local fr = pl:FindFirstChild("Fruits")
+                    if plantId and fr then
+                        for _, fruit in ipairs(fr:GetChildren()) do
+                            local age = fruit:GetAttribute("Age")
+                            local maxAge = fruit:GetAttribute("MaxAge")
+                            local sm = fruit:GetAttribute("SizeMulti")
+                            local fid = fruit:GetAttribute("FruitId")
+                            if fid ~= nil and type(age) == "number" and type(maxAge) == "number" and maxAge > 0
+                               and age >= maxAge * pct
+                               and (minKg <= 0 or (type(sm) == "number" and sm * ratio >= minKg)) then
+                                pcall(function() p:Fire(tostring(plantId), tostring(fid)) end)
+                                collected = collected + 1
+                                task.wait(0.05)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    Seed._pkCollectTotal = (Seed._pkCollectTotal or 0) + collected
+    Seed._logCollectM = ("panen %d buah matang | total: %d"):format(collected, Seed._pkCollectTotal)
+    return collected
 end
 
 function Seed.hitungPumpkinBerat(minKg)
@@ -7471,7 +7575,7 @@ end
 
 -- ---------- Auto Reroll Giant Pumpkin (v4.53) ----------
 do
-    local kPk = kartu(120, tabMetod)
+    local kPk = kartu(144, tabMetod)
     mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -7496,6 +7600,11 @@ do
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
     mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblPkReroll })
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblPkReroll })
+    -- v4.76: counter kumulatif buah yg udah di-reroll
+    Seed._el.lblPkCount = mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 118), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.Code, TextSize = 14, TextColor3 = Color3.fromRGB(240, 200, 120),
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "total di-reroll: 0 buah" })
 end
 
 -- ---------- Auto Place Sprinkler (v4.55) ----------
@@ -7573,6 +7682,67 @@ do
         Font = Enum.Font.Code, TextSize = 14, TextColor3 = WARNA.samar,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
         Text = "belum ada posisi" })
+end
+
+-- ---------- Auto Collect Matang (v4.77) ----------
+do
+    local kCol = kartu(168, tabMetod)
+    mk("TextLabel", { Parent = kCol, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
+        Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "🧺 Auto Collect Matang" })
+    mk("TextLabel", { Parent = kCol, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Panen buah MATANG (full grown) pas udah numpuk" })
+    mk("TextLabel", { Parent = kCol, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 54), Size = UDim2.new(0, 150, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Collect kalau matang ≥" })
+    Seed._el.inpColMin = mk("TextBox", { Parent = kCol,
+        Position = UDim2.new(1, -84, 0, 52), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.aksenMuda,
+        Text = tostring(state.collectMatangMin or 50) })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpColMin })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpColMin })
+    -- v4.78: Min kg + Matang % (dua input sejajar)
+    mk("TextLabel", { Parent = kCol, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 84), Size = UDim2.new(0, 54, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 17, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Min kg" })
+    Seed._el.inpColKg = mk("TextBox", { Parent = kCol,
+        Position = UDim2.new(0, 66, 0, 82), Size = UDim2.new(0, 60, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = WARNA.aksenMuda,
+        Text = tostring(state.collectMatangKg or 80) })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpColKg })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpColKg })
+    mk("TextLabel", { Parent = kCol, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 140, 0, 84), Size = UDim2.new(0, 70, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 17, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Matang%" })
+    Seed._el.inpColPct = mk("TextBox", { Parent = kCol,
+        Position = UDim2.new(1, -72, 0, 82), Size = UDim2.new(0, 60, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = WARNA.aksenMuda,
+        Text = tostring(state.collectMatangPct or 95) })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpColPct })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpColPct })
+    mk("TextLabel", { Parent = kCol, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 116), Size = UDim2.new(0, 160, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto collect matang" })
+    Seed._el.tblColMatang = mk("TextButton", { Parent = kCol,
+        Position = UDim2.new(1, -84, 0, 114), Size = UDim2.new(0, 72, 0, 26),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblColMatang })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblColMatang })
+    Seed._el.lblColMatang = mk("TextLabel", { Parent = kCol, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 144), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.Code, TextSize = 14, TextColor3 = Color3.fromRGB(150, 220, 160),
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "siap: 0 | dipanen: 0" })
 end
 
 -- ---------- gift + jual ----------
@@ -8250,6 +8420,38 @@ if Seed._el.inpGoalKg then
         if Seed._updSummary then pcall(Seed._updSummary) end
     end)
 end
+-- v4.77: handler auto collect matang
+if Seed._el.tblColMatang then
+    Seed._el.tblColMatang.MouseButton1Click:Connect(function()
+        state.autoCollectMatang = not state.autoCollectMatang
+        catSaklar(Seed._el.tblColMatang, state.autoCollectMatang)
+        simpan()
+    end)
+end
+if Seed._el.inpColMin then
+    Seed._el.inpColMin.FocusLost:Connect(function()
+        local n = tonumber(Seed._el.inpColMin.Text)
+        state.collectMatangMin = (n and n > 0) and math.floor(n) or 50
+        Seed._el.inpColMin.Text = tostring(state.collectMatangMin)
+        simpan()
+    end)
+end
+if Seed._el.inpColKg then
+    Seed._el.inpColKg.FocusLost:Connect(function()
+        local n = tonumber(Seed._el.inpColKg.Text)
+        state.collectMatangKg = (n and n >= 0) and math.floor(n) or 80
+        Seed._el.inpColKg.Text = tostring(state.collectMatangKg)
+        simpan()
+    end)
+end
+if Seed._el.inpColPct then
+    Seed._el.inpColPct.FocusLost:Connect(function()
+        local n = tonumber(Seed._el.inpColPct.Text)
+        state.collectMatangPct = (n and n > 0 and n <= 100) and math.floor(n) or 95
+        Seed._el.inpColPct.Text = tostring(state.collectMatangPct)
+        simpan()
+    end)
+end
 if Seed._el.tblTrowel then
     Seed._el.tblTrowel.MouseButton1Click:Connect(function()
         state.autoTrowel = not state.autoTrowel
@@ -8604,6 +8806,7 @@ function Seed._segarkanGUI()
         if Seed._el.tblPkReroll then catSaklar(Seed._el.tblPkReroll, state.pumpkinRerollOn) end
         if Seed._el.inpPkMin then Seed._el.inpPkMin.Text = tostring(state.pumpkinMinKg or 30) end
         if Seed._el.tblSprinkler then catSaklar(Seed._el.tblSprinkler, state.autoSprinkler) end
+        if Seed._el.tblColMatang then catSaklar(Seed._el.tblColMatang, state.autoCollectMatang) end
         if Seed._el.pickSprType then Seed._el.pickSprType.Text = (state.sprType ~= "" and state.sprType) or "Apa aja" end
         if Seed._el.tblTrowel then catSaklar(Seed._el.tblTrowel, state.autoTrowel) end
         if Seed._el.pickTrowel then lblPickSeed(Seed._el.pickTrowel, state.trowelSemua, state.trowelPilih) end
@@ -9276,6 +9479,13 @@ function Seed._updSummary()
     if Seed._el.lblPkGoal then
         Seed._el.lblPkGoal.Text = ("Target: buah ≥ %d kg (atur di Goal kg atas)"):format(goal)
     end
+    if Seed._el.lblPkCount then
+        Seed._el.lblPkCount.Text = ("total di-reroll: %d buah"):format(Seed._pkRerollTotal or 0)
+    end
+    if Seed._el.lblColMatang then
+        Seed._el.lblColMatang.Text = ("siap: %d | dipanen: %d"):format(
+            Seed.hitungMatang and Seed.hitungMatang() or 0, Seed._pkCollectTotal or 0)
+    end
 end
 -- singkat angka (buat value)
 function Seed._singkat(n)
@@ -9379,6 +9589,17 @@ task.spawn(function()
             Seed._toolBusy = true
             pcall(Seed.trowelOnce)
             Seed._toolBusy = false
+        end
+    end
+end)
+
+-- v4.77: loop AUTO COLLECT MATANG -- panen buah full grown tiap 6s (batch >= min)
+task.spawn(function()
+    task.wait(30)
+    while isCurrentGen() do
+        task.wait(6)
+        if state.autoCollectMatang then
+            pcall(Seed.collectMatangOnce)
         end
     end
 end)
