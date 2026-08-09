@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.85"
+local VERSI = "4.86"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -9857,3 +9857,65 @@ end
 if not panelAktif() then
     print("[StarSeed] panel gak aktif (url/kunci kosong) -- jalan lokal aja")
 end
+
+-- v4.86: HUD TOTAL VALUE INVENTORY -- badge di window tas (tiru gag2). Dibungkus
+-- task.spawn biar local-nya GAK ngitung ke 200-local main chunk.
+task.spawn(function()
+    local host = (gethui and gethui()) or game:GetService("CoreGui")
+    pcall(function() local old = host:FindFirstChild("ZenxInvTotal"); if old then old:Destroy() end end)
+    local sgui = Instance.new("ScreenGui")
+    sgui.Name = "ZenxInvTotal"; sgui.ResetOnSpawn = false; sgui.IgnoreGuiInset = true
+    sgui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; sgui.DisplayOrder = 999
+    sgui.Parent = host
+    local box = Instance.new("Frame", sgui)
+    box.Size = UDim2.new(0, 0, 0, 32); box.AutomaticSize = Enum.AutomaticSize.X
+    box.BackgroundColor3 = Color3.fromRGB(28, 24, 10); box.BorderSizePixel = 0; box.Visible = false
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+    local strk = Instance.new("UIStroke", box); strk.Color = Color3.fromRGB(240, 200, 70); strk.Thickness = 1.5
+    local lab = Instance.new("TextLabel", box)
+    lab.Size = UDim2.new(0, 0, 1, 0); lab.AutomaticSize = Enum.AutomaticSize.X
+    lab.BackgroundTransparency = 1
+    lab.Font = Enum.Font.GothamBold; lab.TextSize = 14; lab.TextColor3 = Color3.fromRGB(255, 215, 80)
+    lab.TextXAlignment = Enum.TextXAlignment.Center; lab.TextYAlignment = Enum.TextYAlignment.Center
+    lab.Text = ""
+    local pad = Instance.new("UIPadding", lab)
+    pad.PaddingLeft = UDim.new(0, 14); pad.PaddingRight = UDim.new(0, 14)
+    local function isShown(g)
+        local node = g
+        while node and node:IsA("GuiObject") do
+            if not node.Visible then return false end
+            node = node.Parent
+        end
+        if node and node:IsA("ScreenGui") then return node.Enabled end
+        return true
+    end
+    local function findInvWindow()
+        local pg = player:FindFirstChild("PlayerGui")
+        local bgui = pg and pg:FindFirstChild("BackpackGui")
+        if not bgui then return nil end
+        local best
+        for _, d in ipairs(bgui:GetDescendants()) do
+            if d:IsA("GuiObject") and d.Visible
+               and d.AbsoluteSize.X > 300 and d.AbsoluteSize.Y > 200
+               and d:FindFirstChild("ToolName", true) and isShown(d) then
+                local area = d.AbsoluteSize.X * d.AbsoluteSize.Y
+                if not best or area > (best.AbsoluteSize.X * best.AbsoluteSize.Y) then best = d end
+            end
+        end
+        return best
+    end
+    while sgui.Parent do
+        local win
+        pcall(function() win = findInvWindow() end)
+        if win and Seed.nilaiTas then
+            local val, n = Seed.nilaiTas()
+            lab.Text = string.format("$ %s  .  %d buah", Seed._singkatHarga(val), n)
+            local ax, ay, aw = win.AbsolutePosition.X, win.AbsolutePosition.Y, win.AbsoluteSize.X
+            box.Position = UDim2.fromOffset(ax + aw - box.AbsoluteSize.X, ay - box.AbsoluteSize.Y - 6)
+            box.Visible = true
+        else
+            box.Visible = false
+        end
+        task.wait(1)
+    end
+end)
