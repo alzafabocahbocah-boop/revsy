@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.96"
+local VERSI = "4.98"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1549,13 +1549,22 @@ function Seed.rerollPumpkinOnce()
         return false
     end
 
+    -- v4.97: CAP batch 20 per call -- biar reroll gak megang tool-lock kelamaan
+    -- (dulu mroses SEMUA buah sekali jalan = ngunci menit-an -> trowel keblok).
+    -- sisanya call berikutnya (5s lagi). kasih giliran trowel.
+    if #target > 20 then
+        local potong = {}
+        for i = 1, 20 do potong[i] = target[i] end
+        target = potong
+    end
+
     -- fire SATU-SATU (arg1=PLANT, arg2=BUAH), tunggu BUAH ilang (plant tetep)
     local removed = 0
     Seed._pkRerollTotal = Seed._pkRerollTotal or 0
     for _, t in ipairs(target) do
         if not (state.pumpkinRerollOn and isCurrentGen()) then break end
         pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
-        for _ = 1, 40 do
+        for _ = 1, 24 do   -- v4.97: max 1.2s per buah (dulu 2s)
             task.wait(0.05)
             if not buahAda(t.plant, t.fruit) then
                 removed = removed + 1
@@ -10003,7 +10012,9 @@ pcall(function()
             shovelOn      = state.shovelOn,
             autoDailyDeal = state.autoDailyDeal,
             toggleTrowel  = (Seed._el and Seed._el.tblTrowel and Seed._el.tblTrowel.Text) or "?",
+            togglePkReroll = (Seed._el and Seed._el.tblPkReroll and Seed._el.tblPkReroll.Text) or "?",
             logTrowel     = Seed._logTrowel or "(blm jalan)",
+            logPumpkin    = Seed._logPumpkin or "(blm jalan)",
             toolBusy      = Seed._toolBusy or false,
         }
     end
