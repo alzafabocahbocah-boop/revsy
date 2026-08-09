@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.72"
+local VERSI = "4.75"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1490,7 +1490,7 @@ function Seed.rerollPumpkinOnce()
     end
 
     local MY = player.UserId
-    local minKg = tonumber(state.pumpkinMinKg) or 30
+    local minKg = tonumber(state.sprStopKg) or 80   -- v4.75: pake Goal kg (satu setting)
     Seed.kalibrasiPkRatio()   -- auto-kalibrasi rasio dari buah panen (kalau ada di tas)
     local function smToKg(sm) return sm * (Seed._pkRatio or 8.055) end
 
@@ -1508,16 +1508,13 @@ function Seed.rerollPumpkinOnce()
                     local fr = plant:FindFirstChild("Fruits")
                     if fr and #fr:GetChildren() > 0 then
                         siapPk = siapPk + 1
-                        -- ambil SizeMulti terbesar di antara buah (buah utama)
-                        local smMax = nil
+                        -- v4.74: target tiap BUAH kecil (< minKg) buat di-shovel (re-roll
+                        -- buah). Plant tetep -> spawn buah baru dgn SizeMulti baru.
                         for _, fruit in ipairs(fr:GetChildren()) do
                             local sm = fruit:GetAttribute("SizeMulti")
-                            if type(sm) == "number" then
-                                if not smMax or sm > smMax then smMax = sm end
+                            if type(sm) == "number" and smToKg(sm) < minKg and #plant.Name >= 30 then
+                                target[#target+1] = { plant = plant.Name, fruit = fruit.Name, sm = sm, kg = smToKg(sm) }
                             end
-                        end
-                        if smMax and smToKg(smMax) < minKg and #plant.Name >= 30 then
-                            target[#target+1] = { id = plant.Name, sm = smMax, kg = smToKg(smMax) }
                         end
                     end
                 end
@@ -1525,27 +1522,32 @@ function Seed.rerollPumpkinOnce()
         end
     end
 
-    -- helper: plant masih ada gak
-    local function ada(pid)
+    -- helper: buah masih ada gak (cek di plant.Fruits)
+    local function buahAda(plantName, fruitName)
         for _, plot in ipairs(gardens:GetChildren()) do
             local pl = plot:FindFirstChild("Plants")
-            if pl and pl:FindFirstChild(pid) then return true end
+            local pp = pl and pl:FindFirstChild(plantName)
+            if pp then
+                local fr = pp:FindFirstChild("Fruits")
+                if fr and fr:FindFirstChild(fruitName) then return true end
+                return false
+            end
         end
         return false
     end
 
-    -- fire SATU-SATU, tunggu ilang (kayak shovelSeedOnce)
+    -- fire SATU-SATU (arg1=PLANT, arg2=BUAH), tunggu BUAH ilang (plant tetep)
     local removed = 0
     for _, t in ipairs(target) do
         if not (state.pumpkinRerollOn and isCurrentGen()) then break end
-        pcall(function() p:Fire(t.id, "", shovelTool.Name, shovelTool) end)
+        pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
         for _ = 1, 40 do
             task.wait(0.05)
-            if not ada(t.id) then removed = removed + 1; break end
+            if not buahAda(t.plant, t.fruit) then removed = removed + 1; break end
             if not (state.pumpkinRerollOn and isCurrentGen()) then break end
         end
     end
-    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d dishovel (< %.0f kg)"):format(
+    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d BUAH di-reroll (< %.0f kg)"):format(
         totalPk, siapPk, removed, minKg)
     return removed
 end
@@ -1606,12 +1608,47 @@ end
 -- hitung pumpkin >= kg di inventory (buah tas punya SizeMultiplier + Weight)
 -- v4.56b: hitung pumpkin >= minKg DI GARDEN (buah udah spawn, gak dishovel karena
 -- gede). Baca SizeMulti buah -> konversi kg. Ini yg jadi stop condition sprinkler.
--- v4.71: STATS pumpkin -- total TANAMAN + berbuah + ≥80kg + distribusi range.
--- Per-tanaman (buah terbaik). Tanaman blm berbuah tetep kehitung di total.
-function Seed.pumpkinStats()
+-- v4.73: harga 1 buah pumpkin dari SizeMulti (FVC eksak / SellValueData × sm^2.5)
+function Seed._hargaPk(jenis, sm)
+    if type(sm) ~= "number" then return 0 end
+    -- FVC eksak
+    if Seed._fvc == nil then
+        Seed._fvc = false
+        pcall(function()
+            local RS2 = game:GetService("ReplicatedStorage")
+            local smm = RS2:FindFirstChild("SharedModules")
+            local m = smm and smm:FindFirstChild("FruitValueCalc")
+            if m then local ok, f = pcall(require, m); if ok and type(f) == "function" then Seed._fvc = f end end
+        end)
+    end
+    if Seed._fvc then
+        local ok, v = pcall(Seed._fvc, jenis, sm, nil)
+        if ok and type(v) == "number" and v > 0 then return v end
+    end
+    -- fallback SellValueData × sm^2.5
+    if not Seed._sellBase then
+        Seed._sellBase = {}
+        pcall(function()
+            local RS2 = game:GetService("ReplicatedStorage")
+            local smm = RS2:FindFirstChild("SharedModules")
+            local m = smm and smm:FindFirstChild("SellValueData")
+            if m then local ok, d = pcall(require, m); if ok and type(d) == "table" then Seed._sellBase = d end end
+        end)
+    end
+    local b = Seed._sellBase and (Seed._sellBase[jenis] or Seed._sellBase["Pumpkin"])
+    if type(b) == "number" then return b * (sm ^ 2.5) end
+    return 0
+end
+
+-- v4.71: STATS pumpkin -- total TANAMAN + berbuah + ≥goalKg + range + total value.
+-- kg predicted dari SizeMulti (math): kg = SizeMulti × ratio -- FINAL kg walau
+-- buah masih muda (SizeMulti udah fix pas spawn, gak nunggu gede).
+function Seed.pumpkinStats(goalKg)
+    goalKg = goalKg or 80
     local ratio = Seed._pkRatio or 8.055
-    local total, berbuah, g80 = 0, 0, 0
+    local total, berbuah, gGoal = 0, 0, 0
     local r80, r100, r120, r150 = 0, 0, 0, 0
+    local nilai = 0
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
         if not gardens then return end
@@ -1624,21 +1661,23 @@ function Seed.pumpkinStats()
                     local sn = (plant:GetAttribute("SeedName") or ""):lower()
                     if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
                         total = total + 1
-                        -- buah TERBAIK dari tanaman ini (SizeMulti terbesar)
-                        local bestKg = 0
+                        local bestKg, bestSm = 0, 0
                         local fr = plant:FindFirstChild("Fruits")
                         if fr then
                             for _, fruit in ipairs(fr:GetChildren()) do
                                 local sm = fruit:GetAttribute("SizeMulti")
                                 if type(sm) == "number" then
-                                    local kg = sm * ratio
-                                    if kg > bestKg then bestKg = kg end
+                                    local kg = sm * ratio    -- FINAL kg (math)
+                                    if kg > bestKg then bestKg = kg; bestSm = sm end
                                 end
                             end
                         end
                         if bestKg > 0 then
                             berbuah = berbuah + 1
-                            if bestKg >= 80 then g80 = g80 + 1 end
+                            if bestKg >= goalKg then
+                                gGoal = gGoal + 1
+                                nilai = nilai + Seed._hargaPk(plant:GetAttribute("SeedName") or "Atlantic Giant Pumpkin", bestSm)
+                            end
                             if bestKg >= 150 then r150 = r150 + 1
                             elseif bestKg >= 120 then r120 = r120 + 1
                             elseif bestKg >= 100 then r100 = r100 + 1
@@ -1649,7 +1688,7 @@ function Seed.pumpkinStats()
             end
         end
     end)
-    return total, berbuah, g80, r80, r100, r120, r150
+    return total, berbuah, gGoal, r80, r100, r120, r150, nilai
 end
 
 function Seed.hitungPumpkinBerat(minKg)
@@ -7387,9 +7426,21 @@ do
     local kSum = kartu(126, tabMetod)
     mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Transparency = 0.3, Parent = kSum })
     mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -24, 0, 18),
+        Position = UDim2.new(0, 12, 0, 8), Size = UDim2.new(1, -140, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20, TextColor3 = WARNA.teks,
         TextXAlignment = Enum.TextXAlignment.Left, Text = "🎃 Giant Pumpkin" })
+    -- v4.73: input Goal KG (= sprStopKg, threshold ≥Xkg)
+    mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
+        Position = UDim2.new(1, -132, 0, 8), Size = UDim2.new(0, 62, 0, 20),
+        Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Right, Text = "Goal kg" })
+    Seed._el.inpGoalKg = mk("TextBox", { Parent = kSum,
+        Position = UDim2.new(1, -64, 0, 6), Size = UDim2.new(0, 52, 0, 24),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
+        Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = WARNA.aksenMuda,
+        Text = tostring(state.sprStopKg or 80) })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpGoalKg })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpGoalKg })
     -- baris besar: ≥80kg X / total (persen)
     Seed._el.lblSumMain = mk("TextLabel", { Parent = kSum, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(1, -24, 0, 26),
@@ -7428,19 +7479,12 @@ do
     mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
         Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Shovel pumpkin < Min KG -> reroll dapet giant" })
-    -- baris "Min SizeMulti [input]"
-    mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 56), Size = UDim2.new(0, 140, 0, 22),
-        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Min KG (simpen)" })
-    Seed._el.inpPkMin = mk("TextBox", { Parent = kPk,
-        Position = UDim2.new(1, -84, 0, 54), Size = UDim2.new(0, 72, 0, 26),
-        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-        Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.aksenMuda,
-        Text = tostring(state.pumpkinMinKg or 30) })
-    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpPkMin })
-    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpPkMin })
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Shovel BUAH < Goal kg (plant tetep) -> loop re-roll" })
+    -- info: pake Goal kg (dari kartu summary)
+    Seed._el.lblPkGoal = mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 56), Size = UDim2.new(1, -24, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 18, TextColor3 = WARNA.samar,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Target: buah ≥ 80 kg (atur di Goal kg atas)" })
     -- baris "Auto reroll [OFF]"
     mk("TextLabel", { Parent = kPk, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 88), Size = UDim2.new(0, 160, 0, 22),
@@ -8194,6 +8238,16 @@ if Seed._el.inpSprCount then
         state.sprStopCount = (n and n > 0) and math.floor(n) or 300
         Seed._el.inpSprCount.Text = tostring(state.sprStopCount)
         simpan()
+    end)
+end
+-- v4.73: input Goal KG (set sprStopKg -- threshold summary + stop sprinkler)
+if Seed._el.inpGoalKg then
+    Seed._el.inpGoalKg.FocusLost:Connect(function()
+        local n = tonumber(Seed._el.inpGoalKg.Text)
+        state.sprStopKg = (n and n > 0) and math.floor(n) or 80
+        Seed._el.inpGoalKg.Text = tostring(state.sprStopKg)
+        simpan()
+        if Seed._updSummary then pcall(Seed._updSummary) end
     end)
 end
 if Seed._el.tblTrowel then
@@ -9207,16 +9261,30 @@ Seed._toolBusy = false
 -- v4.71: update kartu summary Giant Pumpkin tiap 4s
 function Seed._updSummary()
     if not (Seed._el and Seed._el.lblSumMain) then return end
-    local total, berbuah, g80, r80, r100, r120, r150 = Seed.pumpkinStats()
-    local pct = (total > 0) and math.floor(g80 / total * 100 + 0.5) or 0
-    Seed._el.lblSumMain.Text = ("≥80kg: %d / %d  (%d%%)"):format(g80, total, pct)
+    local goal = tonumber(state.sprStopKg) or 80
+    local total, berbuah, gGoal, r80, r100, r120, r150, nilai = Seed.pumpkinStats(goal)
+    local pct = (total > 0) and math.floor(gGoal / total * 100 + 0.5) or 0
+    Seed._el.lblSumMain.Text = ("≥%dkg: %d / %d  (%d%%)"):format(goal, gGoal, total, pct)
     if Seed._el.lblSumR1 then Seed._el.lblSumR1.Text = "80–100 : " .. r80 end
     if Seed._el.lblSumR2 then Seed._el.lblSumR2.Text = "100–120 : " .. r100 end
     if Seed._el.lblSumR3 then Seed._el.lblSumR3.Text = "120–150 : " .. r120 end
     if Seed._el.lblSumR4 then Seed._el.lblSumR4.Text = "150+ : " .. r150 end
     if Seed._el.lblSumJack then
-        Seed._el.lblSumJack.Text = ("berbuah: %d dari %d tanaman"):format(berbuah, total)
+        local vTxt = (nilai > 0) and ("  💰 " .. Seed._singkat(nilai)) or ""
+        Seed._el.lblSumJack.Text = ("berbuah %d/%d%s"):format(berbuah, total, vTxt)
     end
+    if Seed._el.lblPkGoal then
+        Seed._el.lblPkGoal.Text = ("Target: buah ≥ %d kg (atur di Goal kg atas)"):format(goal)
+    end
+end
+-- singkat angka (buat value)
+function Seed._singkat(n)
+    if not n or n <= 0 then return "0" end
+    if n >= 1e12 then return ("%.2fT"):format(n / 1e12)
+    elseif n >= 1e9 then return ("%.2fB"):format(n / 1e9)
+    elseif n >= 1e6 then return ("%.2fM"):format(n / 1e6)
+    elseif n >= 1e3 then return ("%.1fK"):format(n / 1e3)
+    else return tostring(math.floor(n)) end
 end
 task.spawn(function()
     task.wait(18)
