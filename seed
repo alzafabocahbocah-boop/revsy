@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "5.0"
+local VERSI = "5.2"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1484,6 +1484,22 @@ end
 -- (< pumpkinMinKg, dikonversi dari SizeMulti) shovel (re-roll). Reuse remote Shovel.UseShovel.
 -- Replant slot kosong diurus loop auto-plant biasa (set seed = Atlantic Giant Pumpkin).
 -- ============================================================
+-- v5.2: cek buah masih ada gak (by ID/nama) -- dipakai counter reroll async
+function Seed.buahAda(plantName, fruitName)
+    local g = workspace:FindFirstChild("Gardens")
+    if not g then return false end
+    for _, plot in ipairs(g:GetChildren()) do
+        local pl = plot:FindFirstChild("Plants")
+        local pp = pl and pl:FindFirstChild(plantName)
+        if pp then
+            local fr = pp:FindFirstChild("Fruits")
+            if fr and fr:FindFirstChild(fruitName) then return true end
+            return false
+        end
+    end
+    return false
+end
+
 function Seed.rerollPumpkinOnce()
     if not state.pumpkinRerollOn then return 0 end
     local p = pkt("Shovel", "UseShovel")
@@ -1540,48 +1556,25 @@ function Seed.rerollPumpkinOnce()
         end
     end
 
-    -- helper: buah masih ada gak (cek di plant.Fruits)
-    local function buahAda(plantName, fruitName)
-        for _, plot in ipairs(gardens:GetChildren()) do
-            local pl = plot:FindFirstChild("Plants")
-            local pp = pl and pl:FindFirstChild(plantName)
-            if pp then
-                local fr = pp:FindFirstChild("Fruits")
-                if fr and fr:FindFirstChild(fruitName) then return true end
-                return false
-            end
-        end
-        return false
-    end
-
-    -- v5.0: CAP batch 30 per call (dipercepat, bisa lebih banyak)
-    if #target > 30 then
+    -- v5.2: CAP batch 40 per call (async count -> gak nunggu, bisa lebih banyak)
+    if #target > 40 then
         local potong = {}
-        for i = 1, 30 do potong[i] = target[i] end
+        for i = 1, 40 do potong[i] = target[i] end
         target = potong
     end
 
-    -- v5.0: FIRE CEPET -- tembak semua shovel beruntun (0.06s apart), GAK nunggu
-    -- tiap buah ilang. Abis itu tunggu server proses, baru hitung yg kena.
-    -- (dulu nunggu tiap buah sampe 1.2s = lambat banget kalau banyak).
-    local removed = 0
+    -- v5.2: FIRE cepet (0.04s apart) + catat PENDING (plant+fruit+waktu). GAK
+    -- nunggu/hitung inline. Counter async cek ID buah: ID ilang = ke-reroll.
     Seed._pkRerollTotal = Seed._pkRerollTotal or 0
+    Seed._pkPending = Seed._pkPending or {}
     for _, t in ipairs(target) do
         if not (state.pumpkinRerollOn and isCurrentGen()) then break end
         pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
-        task.wait(0.06)
+        Seed._pkPending[t.fruit] = { plant = t.plant, fruit = t.fruit, t = os.clock() }
+        task.wait(0.04)
     end
-    -- kasih server waktu proses semua shovel
-    task.wait(0.7)
-    -- hitung buah yg beneran ilang
-    for _, t in ipairs(target) do
-        if not buahAda(t.plant, t.fruit) then
-            removed = removed + 1
-            Seed._pkRerollTotal = Seed._pkRerollTotal + 1
-        end
-    end
-    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d BUAH di-reroll (< %.0f kg) | total: %d"):format(
-        totalPk, siapPk, removed, minKg, Seed._pkRerollTotal)
+    Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d ditembak (< %.0f kg) | total reroll: %d"):format(
+        totalPk, siapPk, #target, minKg, Seed._pkRerollTotal)
     return removed
 end
 
@@ -6543,6 +6536,11 @@ function Seed.pakaiCfgPanel(r)
         local n = tonumber(c[k])
         if n and state[k] ~= n then state[k] = n; ubah[#ubah+1] = k .. "=" .. n end
     end
+    -- v5.1: nama template aktif dari panel -> tampil di kiri toggle Panel
+    if type(c._tpl) == "string" and Seed._tplName ~= c._tpl then
+        Seed._tplName = c._tpl
+        if Seed._updTpl then pcall(Seed._updTpl) end
+    end
     -- v3.2: field TEKS dari panel. Dulu cuma giftTarget yang ditangani; minRarity
     -- kelewat, jadi "Ikut samber seed bagus" bisa dinyalain dari panel tapi
     -- ambangnya gak bisa diubah -- nyangkut di nilai lokal.
@@ -7146,6 +7144,21 @@ Seed._el.tblPanel = mk("TextButton", { Parent = judul, BackgroundColor3 = WARNA.
     Text = state.ikutPanel and "Panel: ON" or "Panel: OFF" })
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblPanel })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblPanel })
+-- v5.1: label template aktif (dari panel) -- di KIRI toggle Panel, cuma pas Panel ON
+Seed._el.lblTpl = mk("TextLabel", { Parent = judul, BackgroundTransparency = 1,
+    Position = UDim2.new(1, -298, 0, 8), Size = UDim2.new(0, 122, 0, 26),
+    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WARNA.aksenMuda,
+    TextXAlignment = Enum.TextXAlignment.Right, TextYAlignment = Enum.TextYAlignment.Center,
+    Text = "" })
+function Seed._updTpl()
+    if not Seed._el.lblTpl then return end
+    if state.ikutPanel and Seed._tplName and Seed._tplName ~= "" then
+        Seed._el.lblTpl.Text = "📋 " .. Seed._tplName
+    else
+        Seed._el.lblTpl.Text = ""
+    end
+end
+Seed._updTpl()
 -- handler dipasang di AKHIR GUI (v4.25) -- biar tbl*/catSaklar udah ada.
 -- JANGAN pasang handler di sini (dulu ada duplikat -> klik 1x = toggle 2x = batal).
 local tblMin = mk("TextButton", { Parent = judul, BackgroundTransparency = 1,
@@ -9764,6 +9777,26 @@ task.spawn(function()
     end
 end)
 
+-- v5.2: loop COUNTER REROLL ASYNC -- buah pending yg ID-nya ILANG = ke-reroll.
+-- gak nunggu inline pas fire (biar fire cepet). timeout 10s (gak ilang = gagal).
+task.spawn(function()
+    task.wait(12)
+    while isCurrentGen() do
+        task.wait(2)
+        local pend = Seed._pkPending
+        if pend then
+            for nm, e in pairs(pend) do
+                if not Seed.buahAda(e.plant, e.fruit) then
+                    Seed._pkRerollTotal = (Seed._pkRerollTotal or 0) + 1   -- ID ilang = ke-reroll
+                    pend[nm] = nil
+                elseif (os.clock() - (e.t or 0)) > 10 then
+                    pend[nm] = nil   -- 10s masih ada = gagal, buang dari pending
+                end
+            end
+        end
+    end
+end)
+
 -- v4.99: loop RE-SYNC visual toggle metod ke state -- biar toggle gak mismatch
 -- (visual ON tapi state OFF / sebaliknya). Tiap 2s samain visual ke state asli.
 task.spawn(function()
@@ -9918,6 +9951,7 @@ if Seed._el and Seed._el.tblPanel then
         state.ikutPanel = not state.ikutPanel
         Seed._el.tblPanel.Text = state.ikutPanel and "Panel: ON" or "Panel: OFF"
         Seed._el.tblPanel.TextColor3 = state.ikutPanel and WARNA.aksenMuda or WARNA.redup
+        if Seed._updTpl then pcall(Seed._updTpl) end   -- v5.1: label template
         if not state.ikutPanel then
             for _, k in ipairs(BOOL_PANEL) do state[k] = false end
             pcall(function()
