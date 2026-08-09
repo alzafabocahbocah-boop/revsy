@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.65"
+local VERSI = "4.67"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -346,6 +346,10 @@ local state = {
     sprStopCount     = 300,    -- kalau udah sebanyak ini -> STOP sprinkler
     sprRecording     = false,  -- (lama, gak dipake -- posisi auto sekarang)
     sprCoords        = {},     -- (lama)
+    -- v4.67: save posisi manual (dari posisi karakter) buat sprinkler. Kalau ada,
+    -- dipake gantiin auto-detect. sprMode: "auto" (dari pumpkin) / "save" (posisi disave)
+    sprSavedPos      = {},     -- list {x,y,z}
+    sprMode          = "auto", -- "auto" atau "save"
     -- v4.61: AUTO TROWEL -- numpuk seed jenis terpilih ke tengah plot (1 titik).
     -- remote Trowel.MovePlant(uuid,pos,rot). jenis dipilih dari yg ADA di garden.
     autoTrowel       = false,  -- auto pindahin seed ke tengah
@@ -575,6 +579,7 @@ local function simpan()
             pumpkinRerollOn = state.pumpkinRerollOn, pumpkinMinKg = state.pumpkinMinKg,
             autoSprinkler = state.autoSprinkler, sprType = state.sprType,
             sprStopKg = state.sprStopKg, sprStopCount = state.sprStopCount,
+            sprSavedPos = state.sprSavedPos, sprMode = state.sprMode,
             autoTrowel = state.autoTrowel, trowelSemua = state.trowelSemua,
             trowelPilih = state.trowelPilih,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
@@ -1685,20 +1690,72 @@ function Seed.sprGroundY(pos)
     return y
 end
 
+-- v4.67: GERAK HALUS (lerp, anti-snap) -- TP instant ke-snap server (karakter
+-- gak beneran nyampe -> placement ditolak). Kayak grabSeed. Gak balik ke asal.
+function Seed.gerakHalus(target, tol)
+    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    tol = tol or 15
+    local STEP = 55
+    for _ = 1, 20 do
+        if not isCurrentGen() then break end
+        local kini = root.Position
+        local ke = target - kini
+        local sisa = ke.Magnitude
+        if sisa <= tol then break end
+        local d = math.min(STEP, sisa)
+        local seg = kini + ke.Unit * d
+        local awal = root.Position
+        local t = 0
+        while t < 0.3 do
+            local dt = task.wait()
+            t = t + dt
+            pcall(function() root.CFrame = CFrame.new(awal:Lerp(seg, math.min(t / 0.3, 1))) end)
+        end
+        pcall(function() root.CFrame = CFrame.new(seg) end)
+        if sisa - d > tol then task.wait(1.2) end   -- jeda anti-snap
+    end
+end
+
+-- v4.67: save posisi KARAKTER sekarang jadi titik sprinkler
+function Seed.sprSavePos()
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then Seed._logSpr = "karakter belum siap"; return end
+    local pos = hrp.Position
+    local y = pos.Y
+    pcall(function()
+        local rp = RaycastParams.new()
+        rp.FilterType = Enum.RaycastFilterType.Exclude
+        rp.FilterDescendantsInstances = { player.Character }
+        local hit = workspace:Raycast(Vector3.new(pos.X, pos.Y, pos.Z), Vector3.new(0, -50, 0), rp)
+        if hit then y = hit.Position.Y end
+    end)
+    state.sprSavedPos = state.sprSavedPos or {}
+    state.sprSavedPos[#state.sprSavedPos + 1] = { x = pos.X, y = y, z = pos.Z }
+    state.sprMode = "save"
+    simpan()
+    Seed._logSpr = ("SAVE #%d: (%.0f,%.0f,%.0f)"):format(#state.sprSavedPos, pos.X, y, pos.Z)
+end
+
 function Seed.placeSprinklerOnce()
     local p = pkt("Place", "PlaceSprinkler")
     if not (p and p.Fire) then Seed._logSpr = "remote PlaceSprinkler gak ada"; return 0 end
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if not char then return 0 end
-    -- jenis sprinkler dipilih (state.sprType), atau apa aja
     local wantName = state.sprType and state.sprType ~= "" and state.sprType or nil
     local tool = Seed.findSprinklerTool(wantName) or Seed.findSprinklerTool(nil)
     if not tool then Seed._logSpr = "sprinkler gak ada di tas (jenis: " .. (wantName or "apa aja") .. ")"; return 0 end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
 
-    local positions = Seed.sprAutoPos()
-    if #positions == 0 then Seed._logSpr = "gak ada pumpkin buat ditaro sprinkler"; return 0 end
+    -- v4.67: pilih posisi -- SAVE (dari posisi disave) atau AUTO (dari pumpkin)
+    local positions = {}
+    if state.sprMode == "save" and state.sprSavedPos and #state.sprSavedPos > 0 then
+        for _, s in ipairs(state.sprSavedPos) do positions[#positions+1] = Vector3.new(s.x, s.y, s.z) end
+    else
+        positions = Seed.sprAutoPos()
+    end
+    if #positions == 0 then Seed._logSpr = "gak ada posisi sprinkler (save dulu / gak ada pumpkin)"; return 0 end
 
     local placed = 0
     for _, pos in ipairs(positions) do
@@ -1706,13 +1763,16 @@ function Seed.placeSprinklerOnce()
         local key = string.format("%d,%d", math.floor(pos.X), math.floor(pos.Z))
         local last = Seed._sprPlacedAt[key]
         if not last or (tick() - last) >= Seed._SPR_COOLDOWN then
-            local y = Seed.sprGroundY(pos)
-            -- v4.62: pastiin sprinkler masih dipegang (loop lain bisa nyuri tool)
+            local y = (state.sprMode == "save") and pos.Y or Seed.sprGroundY(pos)
+            local titik = Vector3.new(pos.X, y, pos.Z)
+            -- v4.67: GERAK HALUS ke deket titik (anti-snap) -- TP instant ke-snap
+            -- server, karakter gak beneran nyampe -> placement ditolak.
+            Seed.gerakHalus(titik, 15)
             if tool.Parent ~= char and hum then
                 pcall(function() hum:EquipTool(tool) end); task.wait(0.1)
             end
             Seed._sprAutoPlacing = true
-            pcall(function() p:Fire(Vector3.new(pos.X, y, pos.Z), tool.Name, tool, 1) end)
+            pcall(function() p:Fire(titik, tool.Name, tool, 1) end)
             Seed._sprAutoPlacing = false
             Seed._sprPlacedAt[key] = tick()
             placed = placed + 1
@@ -7263,7 +7323,7 @@ end
 
 -- ---------- Auto Place Sprinkler (v4.55) ----------
 do
-    local kSpr = kartu(150, tabMetod)
+    local kSpr = kartu(184, tabMetod)
     mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -7307,6 +7367,29 @@ do
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
     mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblSprinkler })
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblSprinkler })
+    -- v4.67: baris "Posisi" -> tombol MODE (Auto/Save) + SAVE POS + jumlah
+    mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 148), Size = UDim2.new(0, 60, 0, 26),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Posisi" })
+    Seed._el.tblSprMode = mk("TextButton", { Parent = kSpr,
+        Position = UDim2.new(0, 74, 0, 148), Size = UDim2.new(0, 74, 0, 26),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WARNA.aksenMuda,
+        Text = (state.sprMode == "save") and "Save" or "Auto" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.tblSprMode })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblSprMode })
+    Seed._el.btnSprSave = mk("TextButton", { Parent = kSpr,
+        Position = UDim2.new(0, 156, 0, 148), Size = UDim2.new(0, 92, 0, 26),
+        BackgroundColor3 = Color3.fromRGB(150, 200, 130), BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WARNA.bg, Text = "SAVE POS" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.btnSprSave })
+    Seed._el.btnSprClear = mk("TextButton", { Parent = kSpr,
+        Position = UDim2.new(1, -96, 0, 148), Size = UDim2.new(0, 84, 0, 26),
+        BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup, Text = "Hapus (0)" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.btnSprClear })
+    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.btnSprClear })
 end
 
 -- ---------- gift + jual ----------
@@ -7487,7 +7570,7 @@ local tblEspGarden = mk("TextButton", { Parent = kEsp,
 mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblEspGarden })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblEspGarden })
 
-local kGrab = kartu(140, tabMisc)
+local kGrab = kartu(178, tabMisc)
 mk("UIStroke", { Color = WARNA.aksen, Thickness = 1, Transparency = 0.4, Parent = kGrab })
 mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
     Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -110, 0, 18),
@@ -7525,6 +7608,23 @@ local pickGrab = mk("TextButton", { Parent = kGrab,
     Font = Enum.Font.GothamMedium, TextSize = 19, TextColor3 = WARNA.aksenMuda, Text = "Semua" })
 mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = pickGrab })
 mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = pickGrab })
+-- v4.66: toggle Balik Garden (auto balik ke kebun abis grab)
+mk("TextLabel", { Parent = kGrab, BackgroundTransparency = 1,
+    Position = UDim2.new(0, 12, 0, 122), Size = UDim2.new(0, 160, 0, 26),
+    Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+    TextXAlignment = Enum.TextXAlignment.Left, Text = "Balik garden abis grab" })
+local tblBalik = mk("TextButton", { Parent = kGrab,
+    Position = UDim2.new(1, -84, 0, 120), Size = UDim2.new(0, 72, 0, 30),
+    BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
+mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = tblBalik })
+mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = tblBalik })
+catSaklar(tblBalik, state.autoBalikGarden)
+tblBalik.MouseButton1Click:Connect(function()
+    state.autoBalikGarden = not state.autoBalikGarden
+    catSaklar(tblBalik, state.autoBalikGarden)
+    simpan()
+end)
 
 -- ---------- pet ----------
 local kPet = kartu(150, tabMisc)
@@ -7877,6 +7977,29 @@ if Seed._el.pickSprType then
         simpan()
     end)
 end
+-- v4.67: handler SAVE POS + mode + hapus
+function Seed._Seed._updSprSave()
+    if Seed._el.tblSprMode then Seed._el.tblSprMode.Text = (state.sprMode == "save") and "Save" or "Auto" end
+    if Seed._el.btnSprClear then Seed._el.btnSprClear.Text = "Hapus (" .. #(state.sprSavedPos or {}) .. ")" end
+end
+if Seed._el.btnSprSave then
+    Seed._el.btnSprSave.MouseButton1Click:Connect(function()
+        Seed.sprSavePos(); Seed._updSprSave()
+    end)
+end
+if Seed._el.tblSprMode then
+    Seed._el.tblSprMode.MouseButton1Click:Connect(function()
+        state.sprMode = (state.sprMode == "save") and "auto" or "save"
+        Seed._updSprSave(); simpan()
+    end)
+end
+if Seed._el.btnSprClear then
+    Seed._el.btnSprClear.MouseButton1Click:Connect(function()
+        state.sprSavedPos = {}; Seed._updSprSave(); simpan()
+        Seed._logSpr = "posisi sprinkler dihapus"
+    end)
+end
+Seed._updSprSave()
 if Seed._el.inpSprCount then
     Seed._el.inpSprCount.FocusLost:Connect(function()
         local n = tonumber(Seed._el.inpSprCount.Text)
@@ -8892,6 +9015,30 @@ end)
 -- reroll/sprinkler/trowel). Dulu rebutan: pas sekop jalan, sprinkler nyela equip
 -- Sprinkler -> sekop pegang tool salah -> gagal. Lock bikin gantian, gak tabrakan.
 Seed._toolBusy = false
+
+-- v4.66: AUTO-UNEQUIP pas idle -- kalau SEMUA fitur tool mati (shovel/reroll/
+-- sprinkler/trowel) & gak lagi sibuk, lepas Shovel/Trowel/Sprinkler yg kepegang.
+task.spawn(function()
+    task.wait(28)
+    while isCurrentGen() do
+        task.wait(4)
+        if not Seed._toolBusy and not state.shovelOn and not state.pumpkinRerollOn
+           and not state.autoSprinkler and not state.autoTrowel then
+            local char = player.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum and char then
+                for _, t in ipairs(char:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local ln = t.Name:lower()
+                        if ln:find("shovel") or ln:find("trowel") or ln:find("sprinkler") then
+                            pcall(function() hum:UnequipTools() end); break
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
 
 -- v3.38: loop AUTO SHOVEL SEED -- cabut tanaman (filter jenis) tiap 5s
 task.spawn(function()
