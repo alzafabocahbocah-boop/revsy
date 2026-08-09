@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "5.5"
+local VERSI = "5.6"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -343,7 +343,7 @@ local state = {
     autoSprinkler    = false,  -- auto place sprinkler
     sprType          = "",     -- jenis sprinkler dipilih ("" = pakai apa aja di tas)
     sprStopKg        = 80,     -- pumpkin >= ini (kg) dihitung
-    sprStopCount     = 300,    -- kalau udah sebanyak ini -> STOP sprinkler
+    sprStopCount     = 50,     -- v5.6: BUFFER -- stop kalau reached >= total - ini
     sprRecording     = false,  -- (lama, gak dipake -- posisi auto sekarang)
     sprCoords        = {},     -- (lama)
     -- v4.67: save posisi manual (dari posisi karakter) buat sprinkler. Kalau ada,
@@ -1817,6 +1817,44 @@ function Seed.collectMatangOnce()
     Seed._pkCollectTotal = (Seed._pkCollectTotal or 0) + collected
     Seed._logCollectM = ("panen %d buah matang | total: %d"):format(collected, Seed._pkCollectTotal)
     return collected
+end
+
+-- v5.6: hitung TOTAL pumpkin (berbuah) + berapa yg >= goal, per-TANAMAN (best buah).
+-- buat stop dinamis sprinkler: stop kalau reached >= total - buffer.
+function Seed.pumpkinTotalReached(goal)
+    Seed.kalibrasiPkRatio()
+    local ratio = Seed._pkRatio or 8.055
+    local total, reached = 0, 0
+    pcall(function()
+        local gardens = workspace:FindFirstChild("Gardens")
+        if not gardens then return end
+        local MY = player.UserId
+        for _, plot in ipairs(gardens:GetChildren()) do
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local ownerId = tonumber(plant.Name:match("^(%d+)_"))
+                    local sn = (plant:GetAttribute("SeedName") or ""):lower()
+                    if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
+                        local fr = plant:FindFirstChild("Fruits")
+                        if fr and #fr:GetChildren() > 0 then
+                            total = total + 1
+                            local bestKg = 0
+                            for _, fruit in ipairs(fr:GetChildren()) do
+                                local sm = fruit:GetAttribute("SizeMulti")
+                                if type(sm) == "number" then
+                                    local kg = sm * ratio
+                                    if kg > bestKg then bestKg = kg end
+                                end
+                            end
+                            if bestKg >= goal then reached = reached + 1 end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    return total, reached
 end
 
 function Seed.hitungPumpkinBerat(minKg)
@@ -7840,12 +7878,12 @@ do
     mk("TextLabel", { Parent = kSpr, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 84), Size = UDim2.new(0, 150, 0, 22),
         Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Stop kalau >=80kg ada" })
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Stop kalau sisa <=" })
     Seed._el.inpSprCount = mk("TextBox", { Parent = kSpr,
         Position = UDim2.new(1, -84, 0, 82), Size = UDim2.new(0, 72, 0, 26),
         BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.aksenMuda,
-        Text = tostring(state.sprStopCount or 300) })
+        Text = tostring(state.sprStopCount or 50) })
     mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpSprCount })
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpSprCount })
     -- baris "Auto sprinkler [OFF]"
@@ -8611,7 +8649,7 @@ end
 if Seed._el.inpSprCount then
     Seed._el.inpSprCount.FocusLost:Connect(function()
         local n = tonumber(Seed._el.inpSprCount.Text)
-        state.sprStopCount = (n and n > 0) and math.floor(n) or 300
+        state.sprStopCount = (n and n > 0) and math.floor(n) or 50
         Seed._el.inpSprCount.Text = tostring(state.sprStopCount)
         simpan()
     end)
@@ -9859,14 +9897,18 @@ task.spawn(function()
         -- v4.70: update teks timer sprinkler di label (biar keliatan sisa waktu)
         if Seed._updSprSave then pcall(Seed._updSprSave) end
         if state.autoSprinkler then
-            -- cek stop condition: pumpkin >= sprStopKg udah sprStopCount biji
-            local n = Seed.hitungPumpkinBerat(tonumber(state.sprStopKg) or 80)
-            Seed._sprGiant = n
-            if n >= (tonumber(state.sprStopCount) or 300) then
+            -- v5.6: STOP DINAMIS -- stop kalau reached >= total - buffer. buffer =
+            -- sprStopCount (default 50). Jadi 300 seed -> stop di 250, 400 -> 350.
+            -- (biar gak rugi ngasih sprinkler pas sisa dikit yg butuh.)
+            local goal = tonumber(state.sprStopKg) or 80
+            local total, reached = Seed.pumpkinTotalReached(goal)
+            Seed._sprGiant = reached
+            local buffer = tonumber(state.sprStopCount) or 50
+            if total > buffer and reached >= (total - buffer) then
                 state.autoSprinkler = false
                 pcall(simpan)
-                Seed._logSpr = ("STOP: %d pumpkin >=%.0fkg di garden (target %d kecapai)"):format(
-                    n, tonumber(state.sprStopKg) or 80, tonumber(state.sprStopCount) or 300)
+                Seed._logSpr = ("STOP: %d/%d pumpkin >=%.0fkg (sisa %d <= buffer %d)"):format(
+                    reached, total, goal, total - reached, buffer)
                 if Seed._el and Seed._el.tblSprinkler then pcall(function() catSaklar(Seed._el.tblSprinkler, false) end) end
             elseif not Seed._toolBusy then
                 Seed._toolBusy = true
