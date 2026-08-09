@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.71"
+local VERSI = "4.72"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1606,10 +1606,11 @@ end
 -- hitung pumpkin >= kg di inventory (buah tas punya SizeMultiplier + Weight)
 -- v4.56b: hitung pumpkin >= minKg DI GARDEN (buah udah spawn, gak dishovel karena
 -- gede). Baca SizeMulti buah -> konversi kg. Ini yg jadi stop condition sprinkler.
--- v4.71: STATS pumpkin -- total buah + ≥80kg + distribusi range (buat header Metod)
+-- v4.71: STATS pumpkin -- total TANAMAN + berbuah + ≥80kg + distribusi range.
+-- Per-tanaman (buah terbaik). Tanaman blm berbuah tetep kehitung di total.
 function Seed.pumpkinStats()
     local ratio = Seed._pkRatio or 8.055
-    local total, g80 = 0, 0
+    local total, berbuah, g80 = 0, 0, 0
     local r80, r100, r120, r150 = 0, 0, 0, 0
     pcall(function()
         local gardens = workspace:FindFirstChild("Gardens")
@@ -1622,27 +1623,33 @@ function Seed.pumpkinStats()
                     local ownerId = tonumber(plant.Name:match("^(%d+)_"))
                     local sn = (plant:GetAttribute("SeedName") or ""):lower()
                     if (not ownerId or ownerId == MY) and sn:find("pumpkin") then
+                        total = total + 1
+                        -- buah TERBAIK dari tanaman ini (SizeMulti terbesar)
+                        local bestKg = 0
                         local fr = plant:FindFirstChild("Fruits")
                         if fr then
                             for _, fruit in ipairs(fr:GetChildren()) do
                                 local sm = fruit:GetAttribute("SizeMulti")
                                 if type(sm) == "number" then
-                                    total = total + 1
                                     local kg = sm * ratio
-                                    if kg >= 80 then g80 = g80 + 1 end
-                                    if kg >= 150 then r150 = r150 + 1
-                                    elseif kg >= 120 then r120 = r120 + 1
-                                    elseif kg >= 100 then r100 = r100 + 1
-                                    elseif kg >= 80 then r80 = r80 + 1 end
+                                    if kg > bestKg then bestKg = kg end
                                 end
                             end
+                        end
+                        if bestKg > 0 then
+                            berbuah = berbuah + 1
+                            if bestKg >= 80 then g80 = g80 + 1 end
+                            if bestKg >= 150 then r150 = r150 + 1
+                            elseif bestKg >= 120 then r120 = r120 + 1
+                            elseif bestKg >= 100 then r100 = r100 + 1
+                            elseif bestKg >= 80 then r80 = r80 + 1 end
                         end
                     end
                 end
             end
         end
     end)
-    return total, g80, r80, r100, r120, r150
+    return total, berbuah, g80, r80, r100, r120, r150
 end
 
 function Seed.hitungPumpkinBerat(minKg)
@@ -9200,13 +9207,16 @@ Seed._toolBusy = false
 -- v4.71: update kartu summary Giant Pumpkin tiap 4s
 function Seed._updSummary()
     if not (Seed._el and Seed._el.lblSumMain) then return end
-    local total, g80, r80, r100, r120, r150 = Seed.pumpkinStats()
+    local total, berbuah, g80, r80, r100, r120, r150 = Seed.pumpkinStats()
     local pct = (total > 0) and math.floor(g80 / total * 100 + 0.5) or 0
     Seed._el.lblSumMain.Text = ("≥80kg: %d / %d  (%d%%)"):format(g80, total, pct)
     if Seed._el.lblSumR1 then Seed._el.lblSumR1.Text = "80–100 : " .. r80 end
     if Seed._el.lblSumR2 then Seed._el.lblSumR2.Text = "100–120 : " .. r100 end
     if Seed._el.lblSumR3 then Seed._el.lblSumR3.Text = "120–150 : " .. r120 end
     if Seed._el.lblSumR4 then Seed._el.lblSumR4.Text = "150+ : " .. r150 end
+    if Seed._el.lblSumJack then
+        Seed._el.lblSumJack.Text = ("berbuah: %d dari %d tanaman"):format(berbuah, total)
+    end
 end
 task.spawn(function()
     task.wait(18)
