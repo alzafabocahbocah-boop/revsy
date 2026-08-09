@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.98"
+local VERSI = "4.99"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -552,6 +552,7 @@ local SAKLAR_RESET = {
     "mutasiSikat","mutasiBig","mutasiHuge","mutasiRainbow",
     "ringanOn","ringanSuara","ringanKebun",
     "blockRejoin",   -- v4.37: paksa OFF (penyebab rejoin bukan teleport)
+    "pumpkinRerollOn","autoTrowel",  -- v4.99: metod mulai OFF tiap start (anti nyangkut)
 }
 
 local function simpan()
@@ -659,6 +660,10 @@ local function muat()
     end)
 end
 muat()
+-- v4.99: metod (reroll/trowel) SELALU mulai OFF tiap start -- anti nyangkut ON
+-- dari config lama (dulu reroll ke-load TRUE tapi visual OFF = mismatch, jalan diem2).
+state.pumpkinRerollOn = false
+state.autoTrowel = false
 
 -- ============================================================
 -- AKSES PACKET (sistem Packet GAG 2)
@@ -9755,6 +9760,27 @@ task.spawn(function()
             pcall(Seed.rerollPumpkinOnce)
             Seed._toolBusy = false
         end
+    end
+end)
+
+-- v4.99: loop RE-SYNC visual toggle metod ke state -- biar toggle gak mismatch
+-- (visual ON tapi state OFF / sebaliknya). Tiap 2s samain visual ke state asli.
+task.spawn(function()
+    task.wait(6)
+    while isCurrentGen() do
+        task.wait(2)
+        pcall(function()
+            if Seed._el then
+                if Seed._el.tblTrowel then
+                    local mau = state.autoTrowel and "ON" or "OFF"
+                    if Seed._el.tblTrowel.Text ~= mau then catSaklar(Seed._el.tblTrowel, state.autoTrowel) end
+                end
+                if Seed._el.tblPkReroll then
+                    local mau = state.pumpkinRerollOn and "ON" or "OFF"
+                    if Seed._el.tblPkReroll.Text ~= mau then catSaklar(Seed._el.tblPkReroll, state.pumpkinRerollOn) end
+                end
+            end
+        end)
     end
 end)
 
