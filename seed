@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.78"
+local VERSI = "4.80"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -361,6 +361,7 @@ local state = {
     autoTrowel       = false,  -- auto pindahin seed ke tengah
     trowelSemua      = false,  -- true = semua jenis di garden
     trowelPilih      = {},     -- { ["Atlantic Giant Pumpkin"]=true } jenis dipilih
+    trowelSavedPos   = { x = 426.5, y = 143.7, z = -163.2 },  -- v4.80: petak tujuan default
     -- AUTO SELL: 2 mode
     sellPenuhOn   = false, -- sell pas backpack full (SellAll)
     sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
@@ -589,7 +590,7 @@ local function simpan()
             autoCollectMatang = state.autoCollectMatang, collectMatangMin = state.collectMatangMin,
             collectMatangKg = state.collectMatangKg, collectMatangPct = state.collectMatangPct,
             autoTrowel = state.autoTrowel, trowelSemua = state.trowelSemua,
-            trowelPilih = state.trowelPilih,
+            trowelPilih = state.trowelPilih, trowelSavedPos = state.trowelSavedPos,
             sellPenuhOn = state.sellPenuhOn, sellBiasaOn = state.sellBiasaOn,
             espInvOn = state.espInvOn, espGardenOn = state.espGardenOn,
             hideVisualOn = state.hideVisualOn,
@@ -2065,13 +2066,45 @@ function Seed.trowelOnce()
     if not state.autoTrowel then return 0 end
     local p = pkt("Trowel", "MovePlant")
     if not (p and p.Fire) then Seed._logTrowel = "remote Trowel.MovePlant gak ada"; return 0 end
-    local target = Seed.trowelCenter()
-    if not target then Seed._logTrowel = "gak ada seed terpilih di garden"; return 0 end
+    -- v4.80: target = POSISI SAVE (default petak depan). numpuk semua ke sini.
+    local target
+    if state.trowelSavedPos and state.trowelSavedPos.x then
+        target = Vector3.new(state.trowelSavedPos.x, state.trowelSavedPos.y, state.trowelSavedPos.z)
+    else
+        target = Seed.trowelCenter()
+    end
+    if not target then Seed._logTrowel = "gak ada target (SAVE POS dulu)"; return 0 end
     local gardens = workspace:FindFirstChild("Gardens")
     if not gardens then return 0 end
+    -- v4.80: kumpulin plant yg BELUM di target (>3 stud). kalau kosong -> udah numpuk
+    -- semua -> gak ngapa2in (char diem, gak trowel ulang).
+    local perlu = {}
+    for _, plot in ipairs(gardens:GetChildren()) do
+        local plants = plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
+                    local sn = plant:GetAttribute("SeedName") or "?"
+                    if Seed.trowelBoleh(sn) then
+                        local pos
+                        pcall(function()
+                            if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position
+                            else pos = plant:GetPivot().Position end
+                        end)
+                        if pos then
+                            local flat = Vector3.new(target.X, pos.Y, target.Z)
+                            if (flat - pos).Magnitude > 3 then perlu[#perlu+1] = plant end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #perlu == 0 then return 0 end   -- semua udah di petak -> diem
     -- equip trowel
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
     local tool
     for _, h in ipairs({ char, player:FindFirstChildOfClass("Backpack") }) do
         if h then
@@ -2083,59 +2116,35 @@ function Seed.trowelOnce()
     end
     if not tool then Seed._logTrowel = "Trowel gak ada di tas"; return 0 end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
-    -- v4.65: STEP-WISE -- MovePlant ada batas jarak (~8-15 stud). Geser tiap
-    -- plant 8 stud/step ke arah target, karakter ngikutin, sampe nyampe (<6 stud).
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local STEP = 8
+    -- pindah karakter ke target (petak) dulu -- server terima kalau char deket target
+    if hrp and Seed.gerakHalus then
+        pcall(function() Seed.gerakHalus(Vector3.new(target.X, target.Y + 3, target.Z), 6) end)
+        if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
+    end
+    -- fire tiap plant yg belum di target (SEKALI ke petak)
     local moved = 0
-    for _, plot in ipairs(gardens:GetChildren()) do
-        local plants = plot:FindFirstChild("Plants")
-        if plants then
-            for _, plant in ipairs(plants:GetChildren()) do
-                if not (state.autoTrowel and isCurrentGen()) then break end
-                if tonumber(plant.Name:match("^(%d+)_")) == player.UserId then
-                    local sn = plant:GetAttribute("SeedName") or "?"
-                    if Seed.trowelBoleh(sn) then
-                        -- geser step-by-step sampe nyampe target (maks 25 step)
-                        local sudahGerak = false
-                        for _ = 1, 25 do
-                            if not (state.autoTrowel and isCurrentGen()) then break end
-                            local pos
-                            pcall(function()
-                                if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position
-                                else pos = plant:GetPivot().Position end
-                            end)
-                            if not pos then break end
-                            local flat = Vector3.new(target.X, pos.Y, target.Z)
-                            local dist = (flat - pos).Magnitude
-                            if dist < 6 then break end   -- udah di lokasi
-                            local dir = (flat - pos).Unit
-                            local d = math.min(STEP, dist)
-                            local t = pos + dir * d
-                            -- TP karakter ke titik step (MovePlant butuh deket)
-                            if hrp then pcall(function() hrp.CFrame = CFrame.new(t.X, t.Y + 3, t.Z) end); task.wait(0.12) end
-                            -- pastiin Trowel masih dipegang
-                            if tool.Parent ~= char and hum then
-                                pcall(function() hum:EquipTool(tool) end); task.wait(0.1)
-                            end
-                            pcall(function() p:Fire(plant.Name, t, 90) end)
-                            task.wait(0.22)
-                            -- cek gerak; kalau mentok (gak gerak) -> stop plant ini
-                            local pos2
-                            pcall(function()
-                                if plant:IsA("Model") and plant.PrimaryPart then pos2 = plant.PrimaryPart.Position
-                                else pos2 = plant:GetPivot().Position end
-                            end)
-                            if not pos2 or (pos2 - pos).Magnitude < 1 then break end
-                            sudahGerak = true
-                        end
-                        if sudahGerak then moved = moved + 1 end
-                    end
-                end
-            end
+    for _, plant in ipairs(perlu) do
+        if not (state.autoTrowel and isCurrentGen()) then break end
+        local pos
+        pcall(function()
+            if plant:IsA("Model") and plant.PrimaryPart then pos = plant.PrimaryPart.Position
+            else pos = plant:GetPivot().Position end
+        end)
+        if pos then
+            if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.05) end
+            local rot = 0
+            pcall(function() local _, ry = plant:GetPivot():ToOrientation(); rot = ry end)
+            pcall(function() p:Fire(plant.Name, Vector3.new(target.X, target.Y, target.Z), rot) end)
+            task.wait(0.18)
+            local pos2
+            pcall(function()
+                if plant:IsA("Model") and plant.PrimaryPart then pos2 = plant.PrimaryPart.Position
+                else pos2 = plant:GetPivot().Position end
+            end)
+            if pos2 and (pos2 - pos).Magnitude > 1 then moved = moved + 1 end
         end
     end
-    if moved > 0 then Seed._logTrowel = moved .. " seed ditumpuk ke tengah" end
+    if moved > 0 then Seed._logTrowel = moved .. " seed dipindah ke petak (sisa " .. (#perlu - moved) .. ")" end
     return moved
 end
 
@@ -7492,7 +7501,7 @@ end
 
 -- ---------- Auto Trowel (v4.61) -- numpuk seed ke tengah plot ----------
 do
-    local kTrowel = kartu(120, tabFarm)
+    local kTrowel = kartu(158, tabFarm)
     mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -7500,29 +7509,43 @@ do
     mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
         Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Numpuk seed terpilih ke tengah plot" })
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Numpuk seed ke PETAK simpen (berdiri di petak, SAVE)" })
     -- baris "Jenis seed [picker]"
     mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 56), Size = UDim2.new(0, 120, 0, 22),
+        Position = UDim2.new(0, 12, 0, 54), Size = UDim2.new(0, 120, 0, 22),
         Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
         TextXAlignment = Enum.TextXAlignment.Left, Text = "Jenis seed" })
     Seed._el.pickTrowel = mk("TextButton", { Parent = kTrowel,
-        Position = UDim2.new(1, -128, 0, 54), Size = UDim2.new(0, 116, 0, 26),
+        Position = UDim2.new(1, -128, 0, 52), Size = UDim2.new(0, 116, 0, 26),
         BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
         Font = Enum.Font.GothamMedium, TextSize = 19, TextColor3 = WARNA.aksenMuda, Text = "Pilih" })
     mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.pickTrowel })
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.pickTrowel })
+    -- v4.80: baris SAVE POS petak
+    mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 86), Size = UDim2.new(0, 120, 0, 22),
+        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Petak tujuan" })
+    Seed._el.btnTrowelSave = mk("TextButton", { Parent = kTrowel,
+        Position = UDim2.new(1, -128, 0, 84), Size = UDim2.new(0, 116, 0, 26),
+        BackgroundColor3 = WARNA.aksen, BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = Color3.fromRGB(20, 20, 20), Text = "SAVE POS" })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.btnTrowelSave })
     -- baris "Auto trowel [OFF]"
     mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 90), Size = UDim2.new(0, 160, 0, 22),
+        Position = UDim2.new(0, 12, 0, 118), Size = UDim2.new(0, 160, 0, 22),
         Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
         TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto trowel" })
     Seed._el.tblTrowel = mk("TextButton", { Parent = kTrowel,
-        Position = UDim2.new(1, -84, 0, 88), Size = UDim2.new(0, 72, 0, 26),
+        Position = UDim2.new(1, -84, 0, 116), Size = UDim2.new(0, 72, 0, 26),
         BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
     mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblTrowel })
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblTrowel })
+    Seed._el.lblTrowelPos = mk("TextLabel", { Parent = kTrowel, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 142), Size = UDim2.new(1, -24, 0, 14),
+        Font = Enum.Font.Code, TextSize = 13, TextColor3 = WARNA.samar,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "petak: belum di-save" })
 end
 
 -- ---------- Summary Giant Pumpkin (v4.71) -- header paling atas ----------
@@ -8457,6 +8480,31 @@ if Seed._el.tblTrowel then
         state.autoTrowel = not state.autoTrowel
         catSaklar(Seed._el.tblTrowel, state.autoTrowel)
         simpan()
+    end)
+end
+-- v4.80: SAVE POS trowel (override petak tujuan pakai posisi karakter)
+local function updTrowelPos()
+    if Seed._el.lblTrowelPos then
+        local sp = state.trowelSavedPos
+        if sp and sp.x then
+            Seed._el.lblTrowelPos.Text = ("petak: (%.0f, %.0f, %.0f)"):format(sp.x, sp.y, sp.z)
+        else
+            Seed._el.lblTrowelPos.Text = "petak: belum di-save"
+        end
+    end
+end
+updTrowelPos()
+if Seed._el.btnTrowelSave then
+    Seed._el.btnTrowelSave.MouseButton1Click:Connect(function()
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local pp = hrp.Position
+            state.trowelSavedPos = { x = pp.X, y = pp.Y, z = pp.Z }
+            simpan()
+            updTrowelPos()
+            Seed._logTrowel = "petak tujuan disimpen"
+        end
     end)
 end
 -- v4.61: picker jenis seed trowel (dari garden + jumlah)
