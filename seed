@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.88"
+local VERSI = "4.91"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2114,7 +2114,7 @@ function Seed.trowelOnce()
     if not tool then Seed._logTrowel = "Trowel gak ada di tas"; return 0 end
     if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.15) end
     -- v4.82: GAK TP char. Fire langsung ke petak (target valid = server terima).
-    -- fire tiap plant yg belum di target (SEKALI ke petak)
+    -- fire tiap plant yg belum di target -- RETRY sampe 4x (kadang ketolak server)
     local moved = 0
     for _, plant in ipairs(perlu) do
         if not (state.autoTrowel and isCurrentGen()) then break end
@@ -2124,20 +2124,29 @@ function Seed.trowelOnce()
             else pos = plant:GetPivot().Position end
         end)
         if pos then
-            if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.05) end
             local rot = 0
             pcall(function() local _, ry = plant:GetPivot():ToOrientation(); rot = ry end)
-            pcall(function() p:Fire(plant.Name, Vector3.new(target.X, target.Y, target.Z), rot) end)
-            task.wait(0.18)
-            local pos2
-            pcall(function()
-                if plant:IsA("Model") and plant.PrimaryPart then pos2 = plant.PrimaryPart.Position
-                else pos2 = plant:GetPivot().Position end
-            end)
-            if pos2 and (pos2 - pos).Magnitude > 1 then moved = moved + 1 end
+            local sampai = false
+            for _ = 1, 4 do   -- retry
+                if not (state.autoTrowel and isCurrentGen()) then break end
+                if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.05) end
+                pcall(function() p:Fire(plant.Name, Vector3.new(target.X, target.Y, target.Z), rot) end)
+                task.wait(0.2)
+                local pos2
+                pcall(function()
+                    if plant:IsA("Model") and plant.PrimaryPart then pos2 = plant.PrimaryPart.Position
+                    else pos2 = plant:GetPivot().Position end
+                end)
+                if pos2 then
+                    local flat = Vector3.new(target.X, pos2.Y, target.Z)
+                    if (flat - pos2).Magnitude <= 3 then sampai = true; break end   -- udah nyampe target
+                    if (pos2 - pos).Magnitude > 1 then pos = pos2 end   -- gerak dikit, lanjut (step-wise)
+                end
+            end
+            if sampai then moved = moved + 1 end
         end
     end
-    if moved > 0 then Seed._logTrowel = moved .. " seed dipindah ke petak (sisa " .. (#perlu - moved) .. ")" end
+    if moved > 0 then Seed._logTrowel = moved .. " seed ke petak (sisa " .. (#perlu - moved) .. ")" end
     return moved
 end
 
@@ -5391,13 +5400,13 @@ local function jenisBuah(tool)
     nm = nm:gsub("^%s+", ""):gsub("%s+$", "")
     return nm
 end
-local function hargaBuah(tool)
+local function hargaBuah(tool, noMarket)
     local jenis = jenisBuah(tool)
     local sm = tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")
     if not jenis or type(sm) ~= "number" then return nil end
     local mut = getMutasiBuah(tool)
-    -- v4.84: pengali PASAR (Fruit Price Stock) -- biar match harga jual asli (kayak gag2)
-    local mkt = (Seed.pengali and Seed.pengali(jenis)) or 1
+    -- v4.89: harga NORMAL (noMarket) atau PASAR (× pengali). ESP inv = normal, badge = pasar.
+    local mkt = noMarket and 1 or ((Seed.pengali and Seed.pengali(jenis)) or 1)
     if type(mkt) ~= "number" or mkt <= 0 then mkt = 1 end
     -- coba FruitValueCalc (eksak)
     local fvc = getFVC()
@@ -5430,8 +5439,8 @@ local function singkatHarga(n)
     else return tostring(math.floor(n)) end
 end
 
--- v4.84: total value tas -- PERSIS calcInvTotal gag2. Buah = Tool yg punya atribut
--- Fruit/FruitName + Id. Value = hargaBuah tiap buah.
+-- v4.90: total value tas -- HARGA NORMAL (tanpa pasar). Iterasi Character (hotbar)
+-- + Backpack (inventory penuh). Buah = Tool punya Fruit/FruitName + Id.
 function Seed.nilaiTas()
     local n, val = 0, 0
     pcall(function()
@@ -5442,7 +5451,7 @@ function Seed.nilaiTas()
                     local fid = t:GetAttribute("Id")
                     if fj and fid then
                         n = n + 1
-                        val = val + (hargaBuah(t) or 0)
+                        val = val + (hargaBuah(t, true) or 0)   -- harga NORMAL
                     end
                 end
             end
@@ -5500,7 +5509,7 @@ function Seed.jalanEspInv()
                     local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
                     local w = t:GetAttribute("Weight")
                     if fj and type(w) == "number" then
-                        local pr = hargaBuah(t)
+                        local pr = hargaBuah(t, true)   -- v4.89: ESP inv = harga NORMAL (tanpa pasar)
                         if pr then
                             byNama[fj] = byNama[fj] or {}
                             byNama[t.Name] = byNama[t.Name] or {}
@@ -9745,11 +9754,11 @@ task.spawn(function()
     end
 end)
 
--- v4.61: loop AUTO TROWEL -- numpuk pumpkin ke tengah tiap 8s
+-- v4.61: loop AUTO TROWEL -- numpuk pumpkin ke petak tiap 4s (v4.91: dipercepat)
 task.spawn(function()
     task.wait(26)
     while isCurrentGen() do
-        task.wait(8)
+        task.wait(4)
         if state.autoTrowel and not Seed._toolBusy then
             Seed._toolBusy = true
             pcall(Seed.trowelOnce)
