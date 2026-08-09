@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.99"
+local VERSI = "5.0"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1554,29 +1554,30 @@ function Seed.rerollPumpkinOnce()
         return false
     end
 
-    -- v4.97: CAP batch 20 per call -- biar reroll gak megang tool-lock kelamaan
-    -- (dulu mroses SEMUA buah sekali jalan = ngunci menit-an -> trowel keblok).
-    -- sisanya call berikutnya (5s lagi). kasih giliran trowel.
-    if #target > 20 then
+    -- v5.0: CAP batch 30 per call (dipercepat, bisa lebih banyak)
+    if #target > 30 then
         local potong = {}
-        for i = 1, 20 do potong[i] = target[i] end
+        for i = 1, 30 do potong[i] = target[i] end
         target = potong
     end
 
-    -- fire SATU-SATU (arg1=PLANT, arg2=BUAH), tunggu BUAH ilang (plant tetep)
+    -- v5.0: FIRE CEPET -- tembak semua shovel beruntun (0.06s apart), GAK nunggu
+    -- tiap buah ilang. Abis itu tunggu server proses, baru hitung yg kena.
+    -- (dulu nunggu tiap buah sampe 1.2s = lambat banget kalau banyak).
     local removed = 0
     Seed._pkRerollTotal = Seed._pkRerollTotal or 0
     for _, t in ipairs(target) do
         if not (state.pumpkinRerollOn and isCurrentGen()) then break end
         pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
-        for _ = 1, 24 do   -- v4.97: max 1.2s per buah (dulu 2s)
-            task.wait(0.05)
-            if not buahAda(t.plant, t.fruit) then
-                removed = removed + 1
-                Seed._pkRerollTotal = Seed._pkRerollTotal + 1   -- kumulatif
-                break
-            end
-            if not (state.pumpkinRerollOn and isCurrentGen()) then break end
+        task.wait(0.06)
+    end
+    -- kasih server waktu proses semua shovel
+    task.wait(0.7)
+    -- hitung buah yg beneran ilang
+    for _, t in ipairs(target) do
+        if not buahAda(t.plant, t.fruit) then
+            removed = removed + 1
+            Seed._pkRerollTotal = Seed._pkRerollTotal + 1
         end
     end
     Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d BUAH di-reroll (< %.0f kg) | total: %d"):format(
@@ -9750,11 +9751,11 @@ task.spawn(function()
     end
 end)
 
--- v4.53: loop AUTO REROLL PUMPKIN -- shovel pumpkin SizeMulti kecil tiap 5s
+-- v4.53: loop AUTO REROLL PUMPKIN -- shovel pumpkin SizeMulti kecil tiap 3s (v5.0)
 task.spawn(function()
     task.wait(22)
     while isCurrentGen() do
-        task.wait(5)
+        task.wait(3)
         if state.pumpkinRerollOn and not Seed._toolBusy then
             Seed._toolBusy = true
             pcall(Seed.rerollPumpkinOnce)
