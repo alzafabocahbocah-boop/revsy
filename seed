@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.86"
+local VERSI = "4.88"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -5359,6 +5359,25 @@ local function getSellBase()
     end
     return Seed._sellBase
 end
+-- v4.88: pengali mutasi LIVE dari MutationData.ReturnPriceMultiplier (port gag2)
+function Seed._getMutMult(mut)
+    if not mut then return 1 end
+    if Seed._mutData == nil then
+        Seed._mutData = false
+        pcall(function()
+            local sm = RS:FindFirstChild("SharedModules")
+            local m = sm and sm:FindFirstChild("MutationData")
+            if m then local ok, d = pcall(require, m); if ok and type(d) == "table" then Seed._mutData = d end end
+        end)
+    end
+    local d = Seed._mutData
+    if not d or type(d.ReturnPriceMultiplier) ~= "function" then return 1 end
+    for _, args in ipairs({ { mut }, { d, mut }, { { mut } }, { d, { mut } } }) do
+        local ok, v = pcall(function() return d.ReturnPriceMultiplier(table.unpack(args)) end)
+        if ok and type(v) == "number" and v > 0 then return v end
+    end
+    return 1
+end
 -- jenis buah dari nama Tool "Maple Blueberry [1.44kg]" -> "Blueberry"
 -- (buang prefix "Maple " + suffix "[...]"), atau atribut Fruit/FruitName
 local function jenisBuah(tool)
@@ -5386,11 +5405,17 @@ local function hargaBuah(tool)
         local ok, v = pcall(fvc, jenis, sm, mut, tool, tool:GetAttribute("DecayAlpha"))
         if ok and type(v) == "number" and v > 0 then return math.floor(v * mkt) end
     end
-    -- fallback: SellValueData × sm^2.5
+    -- fallback: SellValueData × sm^2.5 × mutMult × decay × mkt (PERSIS gag2)
     local base = getSellBase()
     local b = base[jenis]
     if type(b) == "number" then
-        return math.floor(b * (sm ^ 2.5) * mkt)
+        local price = b * (sm ^ 2.5)
+        price = price * Seed._getMutMult(mut)
+        local decay = tool:GetAttribute("DecayAlpha")
+        if type(decay) == "number" and decay > 0 then
+            price = price * (1 - math.clamp(decay, 0, 1) * 0.8)
+        end
+        return math.floor(price * mkt)
     end
     return nil
 end
@@ -5467,29 +5492,42 @@ function Seed.jalanEspInv()
     if not state.espInvOn then espInvBersih(); return end
     task.spawn(function()
         while state.espInvOn and Seed._espInvGen == myGen and isCurrentGen() do
-            -- lookup buah di tas: jenis -> list {w, harga}
+            -- v4.87: tiru gag2 -- lookup jenis -> list {w, p, dec}. cocokin sel pake
+            -- nama + BERAT TERDEKAT (dari ToolCount), bukan nama doang (harga akurat).
             local byNama = {}
             for _, holder in ipairs(tasHolders()) do
                 for _, t in ipairs(holder:GetChildren()) do
-                    if t:IsA("Tool") and t:GetAttribute("SizeMultiplier") then
-                        local w = t:GetAttribute("Weight")
+                    local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                    local w = t:GetAttribute("Weight")
+                    if fj and type(w) == "number" then
                         local pr = hargaBuah(t)
-                        if pr and type(w) == "number" then
-                            local nm = t.Name
-                            byNama[nm] = byNama[nm] or {}
-                            table.insert(byNama[nm], { w = w, p = pr })
+                        if pr then
+                            byNama[fj] = byNama[fj] or {}
+                            byNama[t.Name] = byNama[t.Name] or {}
+                            local e = { w = w, p = pr, dec = t:GetAttribute("DecayAlpha") or 0 }
+                            table.insert(byNama[fj], e)
+                            if t.Name ~= fj then table.insert(byNama[t.Name], e) end
                         end
                     end
                 end
             end
-            -- tiap sel: baca ToolName, cocokin, tempel harga
+            -- tiap sel: baca ToolName + ToolCount(berat), cocokin berat terdekat
             for _, cell in ipairs(espInvCari()) do
                 local nameLbl = cell:FindFirstChild("ToolName", true)
+                local cntLbl = cell:FindFirstChild("ToolCount", true)
                 local nm = nameLbl and nameLbl.Text
-                local harga = nil
-                -- cocokin nama Tool (exact) atau jenis
+                local cw = cntLbl and tonumber(tostring(cntLbl.Text):match("([%d%.]+)"))
+                local harga, decay = nil, 0
                 if nm and byNama[nm] then
-                    harga = byNama[nm][1] and byNama[nm][1].p
+                    if cw then
+                        local best, bestD
+                        for _, e in ipairs(byNama[nm]) do
+                            local d = math.abs(e.w - cw)
+                            if not bestD or d < bestD then bestD = d; best = e end
+                        end
+                        if best and bestD and bestD < 0.5 then harga = best.p; decay = best.dec end
+                    end
+                    if not harga then harga = byNama[nm][1] and byNama[nm][1].p; decay = byNama[nm][1] and byNama[nm][1].dec or 0 end
                 end
                 local lbl = cell:FindFirstChild("StarEspPrice")
                 if harga then
@@ -5501,11 +5539,15 @@ function Seed.jalanEspInv()
                         lbl.BackgroundTransparency = 1
                         lbl.Font = Enum.Font.GothamBold
                         lbl.TextSize = 12
-                        lbl.TextColor3 = Color3.fromRGB(245, 245, 245)
                         lbl.TextStrokeTransparency = 0.4
                         lbl.ZIndex = 20
                         lbl.Parent = cell
                     end
+                    -- warna ikut freshness: putih fresh, kuning mulai basi, merah basi
+                    local col = Color3.fromRGB(245, 245, 245)
+                    if decay > 0.5 then col = Color3.fromRGB(235, 90, 90)
+                    elseif decay > 0.25 then col = Color3.fromRGB(245, 210, 70) end
+                    lbl.TextColor3 = col
                     lbl.Text = singkatHarga(harga)
                 elseif lbl then
                     lbl:Destroy()
