@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "5.2"
+local VERSI = "5.4"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1542,12 +1542,20 @@ function Seed.rerollPumpkinOnce()
                     local fr = plant:FindFirstChild("Fruits")
                     if fr and #fr:GetChildren() > 0 then
                         siapPk = siapPk + 1
-                        -- v4.74: target tiap BUAH kecil (< minKg) buat di-shovel (re-roll
-                        -- buah). Plant tetep -> spawn buah baru dgn SizeMulti baru.
-                        for _, fruit in ipairs(fr:GetChildren()) do
-                            local sm = fruit:GetAttribute("SizeMulti")
-                            if type(sm) == "number" and smToKg(sm) < minKg and #plant.Name >= 30 then
-                                target[#target+1] = { plant = plant.Name, fruit = fruit.Name, sm = sm, kg = smToKg(sm) }
+                        -- v5.4: skip plant yg BARU di-shovel (<5s) -> kasih buah baru
+                        -- waktu spawn+settle, gak langsung di-shovel lagi.
+                        local cdOk = not (Seed._pkCd and Seed._pkCd[plant.Name]
+                            and (os.clock() - Seed._pkCd[plant.Name]) < 5)
+                        if cdOk then
+                            -- v4.74: target tiap BUAH kecil (< minKg) buat di-shovel (re-roll
+                            -- buah). Plant tetep -> spawn buah baru dgn SizeMulti baru.
+                            for _, fruit in ipairs(fr:GetChildren()) do
+                                local sm = fruit:GetAttribute("SizeMulti")
+                                -- v5.4: skip buah yg UDAH di-pending (udah di-shovel, nunggu ilang)
+                                local udah = Seed._pkPending and Seed._pkPending[fruit.Name]
+                                if not udah and type(sm) == "number" and smToKg(sm) < minKg and #plant.Name >= 30 then
+                                    target[#target+1] = { plant = plant.Name, fruit = fruit.Name, sm = sm, kg = smToKg(sm) }
+                                end
                             end
                         end
                     end
@@ -1556,22 +1564,24 @@ function Seed.rerollPumpkinOnce()
         end
     end
 
-    -- v5.2: CAP batch 40 per call (async count -> gak nunggu, bisa lebih banyak)
-    if #target > 40 then
+    -- v5.3: CAP batch 60 per call (async count -> gak nunggu, bisa banyak)
+    if #target > 60 then
         local potong = {}
-        for i = 1, 40 do potong[i] = target[i] end
+        for i = 1, 60 do potong[i] = target[i] end
         target = potong
     end
 
-    -- v5.2: FIRE cepet (0.04s apart) + catat PENDING (plant+fruit+waktu). GAK
-    -- nunggu/hitung inline. Counter async cek ID buah: ID ilang = ke-reroll.
+    -- v5.3: FIRE ngebut (0.02s apart) + catat PENDING. GAK cek buah pas fire.
+    -- counter async (loop terpisah) cek ID buah yg ilang.
     Seed._pkRerollTotal = Seed._pkRerollTotal or 0
     Seed._pkPending = Seed._pkPending or {}
+    Seed._pkCd = Seed._pkCd or {}
     for _, t in ipairs(target) do
         if not (state.pumpkinRerollOn and isCurrentGen()) then break end
         pcall(function() p:Fire(t.plant, t.fruit, shovelTool.Name, shovelTool) end)
         Seed._pkPending[t.fruit] = { plant = t.plant, fruit = t.fruit, t = os.clock() }
-        task.wait(0.04)
+        Seed._pkCd[t.plant] = os.clock()   -- v5.4: cooldown plant biar gak langsung re-shovel
+        task.wait(0.02)
     end
     Seed._logPumpkin = ("pumpkin: %d total, %d siap, %d ditembak (< %.0f kg) | total reroll: %d"):format(
         totalPk, siapPk, #target, minKg, Seed._pkRerollTotal)
@@ -9764,11 +9774,11 @@ task.spawn(function()
     end
 end)
 
--- v4.53: loop AUTO REROLL PUMPKIN -- shovel pumpkin SizeMulti kecil tiap 3s (v5.0)
+-- v4.53: loop AUTO REROLL PUMPKIN -- shovel pumpkin kecil tiap 2s (v5.3 dipercepat)
 task.spawn(function()
     task.wait(22)
     while isCurrentGen() do
-        task.wait(3)
+        task.wait(2)
         if state.pumpkinRerollOn and not Seed._toolBusy then
             Seed._toolBusy = true
             pcall(Seed.rerollPumpkinOnce)
@@ -9777,20 +9787,41 @@ task.spawn(function()
     end
 end)
 
--- v5.2: loop COUNTER REROLL ASYNC -- buah pending yg ID-nya ILANG = ke-reroll.
--- gak nunggu inline pas fire (biar fire cepet). timeout 10s (gak ilang = gagal).
+-- v5.3: loop COUNTER REROLL -- EFISIEN: 1x pass garden bikin SET nama buah yg
+-- masih ada, terus banding pending. buah pending yg gak ada di set = ke-reroll.
+-- (dulu v5.2 manggil buahAda per-buah = iterasi 488 plant tiap buah = LAG.)
+-- cek tiap 6s (dulu 2s -- kesering).
 task.spawn(function()
     task.wait(12)
     while isCurrentGen() do
-        task.wait(2)
+        task.wait(6)
         local pend = Seed._pkPending
-        if pend then
+        if pend and next(pend) then
+            -- 1x pass: kumpulin nama semua buah yg MASIH ADA
+            local ada = {}
+            local g = workspace:FindFirstChild("Gardens")
+            if g then
+                for _, plot in ipairs(g:GetChildren()) do
+                    local plants = plot:FindFirstChild("Plants")
+                    if plants then
+                        for _, plant in ipairs(plants:GetChildren()) do
+                            local fr = plant:FindFirstChild("Fruits")
+                            if fr then
+                                for _, fruit in ipairs(fr:GetChildren()) do
+                                    ada[fruit.Name] = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            -- banding: pending yg gak ada di set = ilang = ke-reroll
             for nm, e in pairs(pend) do
-                if not Seed.buahAda(e.plant, e.fruit) then
-                    Seed._pkRerollTotal = (Seed._pkRerollTotal or 0) + 1   -- ID ilang = ke-reroll
+                if not ada[nm] then
+                    Seed._pkRerollTotal = (Seed._pkRerollTotal or 0) + 1
                     pend[nm] = nil
-                elseif (os.clock() - (e.t or 0)) > 10 then
-                    pend[nm] = nil   -- 10s masih ada = gagal, buang dari pending
+                elseif (os.clock() - (e.t or 0)) > 12 then
+                    pend[nm] = nil   -- 12s masih ada = gagal, buang
                 end
             end
         end
