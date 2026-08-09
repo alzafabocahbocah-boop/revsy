@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "4.83"
+local VERSI = "4.85"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -5377,17 +5377,20 @@ local function hargaBuah(tool)
     local sm = tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")
     if not jenis or type(sm) ~= "number" then return nil end
     local mut = getMutasiBuah(tool)
+    -- v4.84: pengali PASAR (Fruit Price Stock) -- biar match harga jual asli (kayak gag2)
+    local mkt = (Seed.pengali and Seed.pengali(jenis)) or 1
+    if type(mkt) ~= "number" or mkt <= 0 then mkt = 1 end
     -- coba FruitValueCalc (eksak)
     local fvc = getFVC()
     if fvc then
         local ok, v = pcall(fvc, jenis, sm, mut, tool, tool:GetAttribute("DecayAlpha"))
-        if ok and type(v) == "number" and v > 0 then return math.floor(v) end
+        if ok and type(v) == "number" and v > 0 then return math.floor(v * mkt) end
     end
     -- fallback: SellValueData × sm^2.5
     local base = getSellBase()
     local b = base[jenis]
     if type(b) == "number" then
-        return math.floor(b * (sm ^ 2.5))
+        return math.floor(b * (sm ^ 2.5) * mkt)
     end
     return nil
 end
@@ -5402,25 +5405,26 @@ local function singkatHarga(n)
     else return tostring(math.floor(n)) end
 end
 
--- v4.83: total value semua buah di tas (buat trigger auto sell daily deal)
+-- v4.84: total value tas -- PERSIS calcInvTotal gag2. Buah = Tool yg punya atribut
+-- Fruit/FruitName + Id. Value = hargaBuah tiap buah.
 function Seed.nilaiTas()
-    local total = 0
+    local n, val = 0, 0
     pcall(function()
-        for _, h in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
-            if h then
-                for _, t in ipairs(h:GetChildren()) do
-                    if t:IsA("Tool") then
-                        local v = hargaBuah(t)
-                        if type(v) == "number" then
-                            local cnt = tonumber(t:GetAttribute("Count") or t:GetAttribute("Amount")) or 1
-                            total = total + v * cnt
-                        end
+        for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+            if holder then
+                for _, t in ipairs(holder:GetChildren()) do
+                    local fj = t:GetAttribute("Fruit") or t:GetAttribute("FruitName")
+                    local fid = t:GetAttribute("Id")
+                    if fj and fid then
+                        n = n + 1
+                        val = val + (hargaBuah(t) or 0)
                     end
                 end
             end
         end
     end)
-    return total
+    Seed._nilaiTasJml = n
+    return val, n
 end
 Seed._singkatHarga = singkatHarga
 
@@ -9723,23 +9727,21 @@ task.spawn(function()
     end
 end)
 
--- v4.83: loop AUTO SELL DAILY DEAL -- jual pas value tas >= min, cek tiap 10s
+-- v4.83: loop AUTO SELL DAILY DEAL -- jual pas value tas >= min, cek tiap 5s
 task.spawn(function()
-    task.wait(34)
+    task.wait(8)
     while isCurrentGen() do
-        task.wait(10)
-        -- update label value tas (walau auto off)
         if Seed._el and Seed._el.lblDeal then
-            local nv = Seed.nilaiTas and Seed.nilaiTas() or 0
-            Seed._nilaiTas = nv
+            local nv, jml = Seed.nilaiTas()
             local minV = tonumber(state.dailyDealMin) or 1e9
-            Seed._el.lblDeal.Text = ("value tas: %s / %s%s"):format(
-                Seed._singkatHarga(nv), Seed._singkatHarga(minV),
-                (nv >= minV) and "  ✓ jual" or "")
+            Seed._el.lblDeal.Text = ("value tas: %s (%d buah) / %s%s"):format(
+                Seed._singkatHarga(nv), jml or 0, Seed._singkatHarga(minV),
+                (nv >= minV) and "  ✓" or "")
         end
         if state.autoDailyDeal then
             pcall(Seed.sellDailyDealOnce)
         end
+        task.wait(5)
     end
 end)
 
