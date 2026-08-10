@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "6.4"
+local VERSI = "6.9"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -353,7 +353,10 @@ local state = {
     -- v4.77: AUTO COLLECT MATANG -- panen buah pumpkin yg udah MATANG (Age==MaxAge,
     -- full grown = berat penuh), cuma pas udah numpuk >= collectMatangMin biji.
     autoGiftMail      = false,   -- v6.3: auto gift buah pumpkin ke target
-    giftPkTarget      = "",      -- v6.3: username target gift buah
+    giftPkTarget      = "",      -- v6.3: username target yg DI-ASSIGN panel (1 akun, no bentrok)
+    giftPkList        = "",      -- v6.5: antrian full (semua akun habis) dari panel
+    giftFarmList      = "",      -- v6.6: daftar farm (sorted) -- buat hitung slot assign
+    giftAmbang        = "",      -- v6.7: ambang yg diminta (misal "1b") -- dari panel, display
     autoCollectMatang = false,
     collectMatangMin  = 50,    -- collect pas buah matang udah >= ini
     collectMatangKg   = 80,    -- v6.2: collect buah DI BAWAH ini (kg). 0 = semua
@@ -592,7 +595,7 @@ local function simpan()
             autoSprinkler = state.autoSprinkler, sprType = state.sprType,
             sprStopKg = state.sprStopKg, sprStopCount = state.sprStopCount,
             sprSavedPos = state.sprSavedPos, sprMode = state.sprMode,
-            autoGiftMail = state.autoGiftMail, giftPkTarget = state.giftPkTarget,
+            autoGiftMail = state.autoGiftMail, giftPkList = state.giftPkList, giftFarmList = state.giftFarmList, giftAmbang = state.giftAmbang,
             autoCollectMatang = state.autoCollectMatang, collectMatangMin = state.collectMatangMin,
             collectMatangKg = state.collectMatangKg, collectMatangPct = state.collectMatangPct,
             autoTrowel = state.autoTrowel, trowelSemua = state.trowelSemua,
@@ -2505,54 +2508,113 @@ function Seed.kirimGiftMail(onProgress)
     return false, ("gagal kirim ke semua (%d): %s"):format(#gagal, table.concat(gagal, ", "))
 end
 
--- v6.3: AUTO GIFT MAIL BUAH -- gift buah pumpkin di tas ke target. Antrian
--- keliatan (Seed._giftPkQueue). Buat akun yg sheckles habis -> kirim buahnya.
+-- v6.6: hitung TARGET AKU (index-based) + KEKURANGAN target (1b - sheckles skrg).
+-- format giftPkList = "username:kekurangan, ..." (kekurangan = raw sheckles dari panel)
+function Seed.giftTargetKu()
+    local farms, habis, kurang = {}, {}, {}
+    for t in tostring(state.giftFarmList or ""):gmatch("[^,]+") do
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        if t ~= "" then farms[#farms+1] = t:lower() end
+    end
+    for t in tostring(state.giftPkList or ""):gmatch("[^,]+") do
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        if t ~= "" then
+            local nm, sf = t:match("^(.-):(.+)$")
+            if nm and nm ~= "" then
+                habis[#habis+1] = nm
+                kurang[#habis] = tonumber(sf) or 0
+            else
+                habis[#habis+1] = t
+                kurang[#habis] = 0
+            end
+        end
+    end
+    if #habis == 0 then return nil, 0, "antrian kosong" end
+    local me = tostring(player.Name or ""):lower()
+    local myIdx
+    for i, f in ipairs(farms) do if f == me then myIdx = i; break end end
+    if not myIdx then return nil, 0, "aku gak ada di daftar farm" end
+    if myIdx <= #habis then return habis[myIdx], kurang[myIdx] or 0 end
+    return nil, 0, ("idle (farm ke-%d, habis cuma %d)"):format(myIdx, #habis)
+end
+
+-- v6.3: AUTO GIFT MAIL BUAH -- gift buah pumpkin ke target (di-assign panel).
 function Seed.autoGiftMailOnce()
     if not state.autoGiftMail then return end
-    local target = (tostring(state.giftPkTarget or ""):match("[^,]+") or ""):gsub("%s+", "")
-    if target == "" then Seed._logGiftPk = "target kosong (isi username)"; return end
-    -- kumpulin buah pumpkin di tas -> ANTRIAN
-    local buah = {}
+    local target, kurang, alasan = Seed.giftTargetKu()
+    if not target then Seed._logGiftPk = alasan or "gak ada target"; return end
+    -- kumpulin buah pumpkin + total VALUE (harga jual pasar)
+    local buah, totalVal = {}, 0
     for _, holder in ipairs(tasHolders()) do
         for _, t in ipairs(holder:GetChildren()) do
             if t:IsA("Tool") and (t:GetAttribute("Fruit") or t:GetAttribute("FruitName")) and t:GetAttribute("Id") then
                 local fn = tostring(t:GetAttribute("FruitName") or t.Name):lower()
-                if fn:find("pumpkin") then buah[#buah+1] = t end
+                if fn:find("pumpkin") then
+                    buah[#buah+1] = t
+                    local v = 0
+                    pcall(function()
+                        local jn = t:GetAttribute("FruitName") or t:GetAttribute("SeedName") or "Atlantic Giant Pumpkin"
+                        local sm = t:GetAttribute("SizeMultiplier") or t:GetAttribute("SizeMulti")
+                        if type(sm) == "number" then v = Seed._hargaPk(tostring(jn), sm) or 0 end
+                    end)
+                    totalVal = totalVal + (tonumber(v) or 0)
+                end
             end
         end
     end
-    -- update antrian (nama buah) buat display
     Seed._giftPkQueue = {}
-    for _, t in ipairs(buah) do
-        Seed._giftPkQueue[#Seed._giftPkQueue+1] = tostring(t:GetAttribute("FruitName") or t.Name)
+    for _, t in ipairs(buah) do Seed._giftPkQueue[#Seed._giftPkQueue+1] = tostring(t:GetAttribute("FruitName") or t.Name) end
+    local N = #buah
+    if N == 0 then Seed._logGiftPk = "antre 0 -- gak ada buah pumpkin"; return end
+    -- v6.9 ATURAN: wajib kumpul 20 buah. KECUALI value buah udah cukup nutup
+    -- KEKURANGAN target (bikin dia tembus 1b) -> boleh walau < 20 (bahkan 1).
+    local cukupTembus = (kurang > 0 and totalVal >= kurang)
+    if N < 20 and not cukupTembus then
+        Seed._logGiftPk = ("nunggu 20 buah: ada %d | value %s / butuh %s -> %s"):format(
+            N, Seed._singkat(totalVal), kurang > 0 and Seed._singkat(kurang) or "?", target)
+        return
     end
-    if #buah == 0 then Seed._logGiftPk = "antre 0 -- gak ada buah pumpkin di tas"; return end
-    -- cek limit harian
+    -- limit harian
     local hariIni = os.date("%Y-%m-%d")
     if Seed._giftHari ~= hariIni then Seed._giftHari = hariIni; Seed._giftCountHari = 0 end
     if (Seed._giftCountHari or 0) >= 50 then
-        Seed._logGiftPk = ("LIMIT harian 50 -- antre %d nunggu besok"):format(#buah)
-        return
+        Seed._logGiftPk = ("LIMIT harian 50 -- antre %d nunggu besok"):format(N); return
     end
     local uid = resolveTargetId(target)
     if not uid then Seed._logGiftPk = "target gak ketemu: " .. target; return end
     local sb = pkt("Mailbox", "SendBatch")
     if not (sb and sb.Fire) then Seed._logGiftPk = "SendBatch gak ada"; return end
-    -- kirim batch 8 buah per fire
-    local items = {}
-    for i = 1, math.min(8, #buah) do
-        local t = buah[i]
-        local cat = t:GetAttribute("MainCategory") or "Holdables"
-        items[#items+1] = { ItemKey = t.Name, Count = 1, Category = tostring(cat) }
+    -- kirim CHUNK 8 buah per mail, sampe semua (cap 40/cycle) atau limit harian
+    local kirim = math.min(N, 40)
+    local terkirim, nmail, idx = 0, 0, 1
+    while idx <= kirim and (Seed._giftCountHari or 0) < 50 do
+        local items = {}
+        while idx <= kirim and #items < 8 do
+            local t = buah[idx]
+            local cat = t:GetAttribute("MainCategory") or "Holdables"
+            items[#items+1] = { ItemKey = t.Name, Count = 1, Category = tostring(cat) }
+            idx = idx + 1
+        end
+        if #items == 0 then break end
+        local ok = pcall(function() sb:Fire(uid, items, "") end)
+        if ok then
+            terkirim = terkirim + #items
+            nmail = nmail + 1
+            Seed._giftCountHari = (Seed._giftCountHari or 0) + 1
+        end
+        task.wait(0.3)
     end
-    local ok = pcall(function() sb:Fire(uid, items, "") end)
-    if ok then
-        Seed._giftCountHari = (Seed._giftCountHari or 0) + 1
-        Seed._giftPkTotal = (Seed._giftPkTotal or 0) + #items
-        Seed._logGiftPk = ("gift %d buah -> %s | antre %d | total %d [kuota %d/50]"):format(
-            #items, target, #buah - #items, Seed._giftPkTotal, Seed._giftCountHari)
+    if terkirim > 0 then
+        Seed._giftStat = Seed._giftStat or {}
+        local k = target:lower()
+        Seed._giftStat[k] = Seed._giftStat[k] or { buah = 0, mail = 0 }
+        Seed._giftStat[k].buah = Seed._giftStat[k].buah + terkirim
+        Seed._giftStat[k].mail = Seed._giftStat[k].mail + nmail
+        Seed._giftPkTotal = (Seed._giftPkTotal or 0) + terkirim
+        Seed._logGiftPk = ("gift %d buah (%dx mail) -> %s | ke dia: %d buah, %dx mail"):format(
+            terkirim, nmail, target, Seed._giftStat[k].buah, Seed._giftStat[k].mail)
     else
-        Seed._logGiftPk = ("gagal fire -> %s (antre %d)"):format(target, #buah)
+        Seed._logGiftPk = ("gagal kirim -> %s"):format(target)
     end
 end
 
@@ -6666,10 +6728,21 @@ function Seed.pakaiCfgPanel(r)
         Seed._giftUidCache = {}
         ubah[#ubah+1] = "giftMailTarget=" .. c.giftMailTarget
     end
-    -- v6.4: target gift buah pumpkin dari panel (daftar akun sheckles habis)
+    -- v6.4: target gift buah pumpkin dari panel (akun DI-ASSIGN, no bentrok)
     if type(c.giftPkTarget) == "string" and state.giftPkTarget ~= c.giftPkTarget then
         state.giftPkTarget = c.giftPkTarget
         ubah[#ubah+1] = "giftPkTarget=" .. c.giftPkTarget
+    end
+    -- v6.5: antrian habis + v6.6: daftar farm dari panel (buat assign index-based)
+    if type(c.giftPkList) == "string" and state.giftPkList ~= c.giftPkList then
+        state.giftPkList = c.giftPkList
+    end
+    if type(c.giftFarmList) == "string" and state.giftFarmList ~= c.giftFarmList then
+        state.giftFarmList = c.giftFarmList
+    end
+    if type(c.giftAmbang) == "string" and state.giftAmbang ~= c.giftAmbang then
+        state.giftAmbang = c.giftAmbang
+        Seed._giftListKey = nil   -- paksa rebuild list biar ambang baru ketampil
     end
     if type(c.minRarity) == "string" and c.minRarity ~= "" then
         -- cuma terima yang beneran ada di daftar rarity, biar gak nyetel ke
@@ -7999,9 +8072,9 @@ do
         Text = "belum ada posisi" })
 end
 
--- ---------- Auto Gift Mail Buah (v6.4) ----------
+-- ---------- Auto Gift Mail Buah (v6.5) ----------
 do
-    local kGift = kartu(130, tabMetod)
+    local kGift = kartu(224, tabMetod)
     mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -8009,34 +8082,44 @@ do
     mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
         Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto gift buah ke akun sheckles habis (target dari panel)." })
-    -- target dari panel (read-only display, gak perlu ketik username)
-    Seed._el.lblGiftTgt = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 52), Size = UDim2.new(1, -24, 0, 18),
-        Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = Color3.fromRGB(150, 200, 240),
-        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-        Text = "🎯 target: (nunggu dari panel)" })
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Gift buah ke akun sheckles habis (antrian dari panel, no bentrok)." })
+    -- label antrian
+    mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 50), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.GothamBold, TextSize = 15, TextColor3 = WARNA.redup,
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "📋 Antrian habis (dari panel):" })
+    -- kotak list antrian (scroll) di ATAS
+    local scrQ = mk("ScrollingFrame", { Parent = kGift,
+        Position = UDim2.new(0, 12, 0, 68), Size = UDim2.new(1, -24, 0, 92),
+        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0,
+        ScrollBarThickness = 4, ScrollBarImageColor3 = WARNA.garis,
+        CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = scrQ })
+    mk("UIListLayout", { Parent = scrQ, Padding = UDim.new(0, 2),
+        SortOrder = Enum.SortOrder.LayoutOrder })
+    mk("UIPadding", { Parent = scrQ, PaddingTop = UDim.new(0, 4), PaddingLeft = UDim.new(0, 6) })
+    Seed._el.qGift = scrQ
     -- toggle
     mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 80), Size = UDim2.new(0, 160, 0, 22),
+        Position = UDim2.new(0, 12, 0, 170), Size = UDim2.new(0, 160, 0, 22),
         Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
         TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto gift mail" })
     Seed._el.tblGiftPk = mk("TextButton", { Parent = kGift,
-        Position = UDim2.new(1, -84, 0, 78), Size = UDim2.new(0, 72, 0, 26),
+        Position = UDim2.new(1, -84, 0, 168), Size = UDim2.new(0, 72, 0, 26),
         BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
     mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblGiftPk })
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblGiftPk })
     Seed._el.tblGiftPk.MouseButton1Click:Connect(function()
         state.autoGiftMail = not state.autoGiftMail
-        catSaklar(Seed._el.tblGiftPk, state.autoGiftMail)   -- di CLICK, catSaklar udah ada
+        catSaklar(Seed._el.tblGiftPk, state.autoGiftMail)
         pcall(simpan)
     end)
     Seed._el.lblGiftPk = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 108), Size = UDim2.new(1, -24, 0, 16),
-        Font = Enum.Font.Code, TextSize = 14, TextColor3 = WARNA.samar,
+        Position = UDim2.new(0, 12, 0, 200), Size = UDim2.new(1, -24, 0, 16),
+        Font = Enum.Font.Code, TextSize = 14, TextColor3 = Color3.fromRGB(150, 200, 240),
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
-        Text = "antre: -" })
+        Text = "🎯 aku kirim ke: -" })
 end
 
 -- ---------- Auto Collect Matang (v4.77) ----------
@@ -9871,19 +9954,60 @@ function Seed._updSummary()
         Seed._el.lblColMatang.Text = ("siap: %d | dipanen: %d"):format(
             Seed.hitungMatang and Seed.hitungMatang() or 0, Seed._pkCollectTotal or 0)
     end
-    -- v6.3: antrian gift mail buah
+    -- v6.6: status + antrian gift mail buah (target dihitung index-based)
     if Seed._el.lblGiftPk then
-        local q = Seed._giftPkQueue or {}
-        if Seed._logGiftPk then
+        local myTgt = Seed.giftTargetKu()
+        if myTgt and Seed._logGiftPk then
             Seed._el.lblGiftPk.Text = Seed._logGiftPk
+        elseif myTgt then
+            local st = (Seed._giftStat or {})[myTgt:lower()]
+            local statTxt = st and (" | ke dia: %d buah, %dx mail"):format(st.buah, st.mail) or ""
+            Seed._el.lblGiftPk.Text = ("🎯 aku kirim ke: %s%s"):format(myTgt, statTxt)
         else
-            Seed._el.lblGiftPk.Text = ("antre: %d buah"):format(#q)
+            Seed._el.lblGiftPk.Text = "🎯 aku: (idle/nunggu panel)"
         end
     end
-    -- v6.4: target dari panel (giftPkTarget)
-    if Seed._el.lblGiftTgt then
-        local tgt = tostring(state.giftPkTarget or "")
-        Seed._el.lblGiftTgt.Text = (tgt ~= "") and ("🎯 target: " .. tgt) or "🎯 target: (nunggu dari panel)"
+    if Seed._el.qGift then
+        local list = {}
+        for t in tostring(state.giftPkList or ""):gmatch("[^,]+") do
+            t = t:gsub("^%s+", ""):gsub("%s+$", "")
+            local nm = t:match("^(.-):") or t   -- strip :kekurangan
+            if nm and nm ~= "" then list[#list+1] = nm end
+        end
+        local myTgt = Seed.giftTargetKu()
+        local key = table.concat(list, ",") .. "|" .. tostring(myTgt)
+        if Seed._giftListKey ~= key then
+            Seed._giftListKey = key
+            for _, c in ipairs(Seed._el.qGift:GetChildren()) do
+                if c:IsA("TextLabel") then c:Destroy() end
+            end
+            local mt = tostring(myTgt or ""):lower()
+            for i, nm in ipairs(list) do
+                local aku = (nm:lower() == mt and mt ~= "")
+                local lbl = Instance.new("TextLabel")
+                lbl.Parent = Seed._el.qGift
+                lbl.BackgroundTransparency = 1
+                lbl.Size = UDim2.new(1, -12, 0, 16)
+                lbl.LayoutOrder = i
+                lbl.Font = aku and Enum.Font.GothamBold or Enum.Font.Code
+                lbl.TextSize = 13
+                lbl.TextColor3 = aku and Color3.fromRGB(150, 220, 150) or WARNA.samar
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+                local amb = tostring(state.giftAmbang or "")
+                local mintaTxt = (amb ~= "") and ("  minta " .. amb) or ""
+                lbl.Text = (aku and "▶ " or "   ") .. i .. ". " .. nm .. mintaTxt .. (aku and "  ← aku" or "")
+            end
+            if #list == 0 then
+                local lbl = Instance.new("TextLabel")
+                lbl.Parent = Seed._el.qGift
+                lbl.BackgroundTransparency = 1
+                lbl.Size = UDim2.new(1, -12, 0, 16)
+                lbl.Font = Enum.Font.Code; lbl.TextSize = 13
+                lbl.TextColor3 = WARNA.samar
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+                lbl.Text = "(kosong -- nunggu panel)"
+            end
+        end
     end
 end
 -- singkat angka (buat value)
