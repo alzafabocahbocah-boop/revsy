@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.1"
+local VERSI = "7.2"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2021,20 +2021,33 @@ function Seed.placeSprinklerOnce()
     end
     if #positions == 0 then Seed._logSpr = "gak ada posisi sprinkler (save dulu / gak ada pumpkin)"; return 0 end
 
+    -- v7.2: gerak SEKALI ke TITIK TETAP (432,144,-143) kayak trowel, terus fire
+    -- PlaceSprinkler dari sini -- char GAK mondar-mandir ke tiap titik seed.
+    -- Sprinkler-nya tetep di-place ke titik seed (arg pos), char tetep di base.
+    local base = Vector3.new(432, 144, -143)
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        local dChar = (Vector3.new(base.X, hrp.Position.Y, base.Z) - hrp.Position).Magnitude
+        if dChar > 5 then
+            if Seed.gerakHalus then
+                pcall(function() Seed.gerakHalus(Vector3.new(base.X, base.Y + 3, base.Z), 4) end)
+            else
+                pcall(function() hrp.CFrame = CFrame.new(base.X, base.Y + 3, base.Z) end)
+                task.wait(0.3)
+            end
+            if tool.Parent ~= char and hum then pcall(function() hum:EquipTool(tool) end); task.wait(0.1) end
+        end
+    end
+
     local placed = 0
     for _, pos in ipairs(positions) do
         if not (state.autoSprinkler and isCurrentGen()) then break end
-        -- v4.70: SKIP kalau udah ADA sprinkler deket sini -> gak pindah, gak place
-        -- (biar gak bolak-balik. Cuma gerak+place kalau sprinkler-nya udah ilang/expired).
+        -- v4.70: SKIP kalau udah ADA sprinkler deket sini -> gak place ulang
         if not Seed.sprinklerAt(pos, 14) then
             local y = (state.sprMode == "save") and pos.Y or Seed.sprGroundY(pos)
             local titik = Vector3.new(pos.X, y, pos.Z)
-            -- v4.67: GERAK HALUS ke deket titik (anti-snap) -- TP instant ke-snap
-            -- server, karakter gak beneran nyampe -> placement ditolak.
-            Seed.gerakHalus(titik, 15)
-            if tool.Parent ~= char and hum then
-                pcall(function() hum:EquipTool(tool) end); task.wait(0.1)
-            end
+            -- v7.2: LANGSUNG fire dari base (gak gerakHalus ke titik seed). Char
+            -- diem di (432,144,-143), sprinkler di-place ke titik seed via arg.
             Seed._sprAutoPlacing = true
             pcall(function() p:Fire(titik, tool.Name, tool, 1) end)
             Seed._sprAutoPlacing = false
@@ -2042,7 +2055,7 @@ function Seed.placeSprinklerOnce()
             task.wait(0.2)
         end
     end
-    if placed > 0 then Seed._logSpr = ("place %d sprinkler (%s)"):format(placed, tool.Name) end
+    if placed > 0 then Seed._logSpr = ("place %d sprinkler (%s) dari base"):format(placed, tool.Name) end
     return placed
 end
 
