@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "6.9"
+local VERSI = "7.1"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2536,6 +2536,38 @@ function Seed.giftTargetKu()
     if not myIdx then return nil, 0, "aku gak ada di daftar farm" end
     if myIdx <= #habis then return habis[myIdx], kurang[myIdx] or 0 end
     return nil, 0, ("idle (farm ke-%d, habis cuma %d)"):format(myIdx, #habis)
+end
+
+-- v7.0: ANTRIAN AKU -- max 5 seed di-assign ke farm ini (round-robin cap 5).
+-- farm ke-N pegang habis[N], habis[N+F], habis[N+2F], ... sampe 5. Gift ke yg
+-- pertama (habis[N]). Kelar 5 -> panel kasih lagi (via broadcast).
+function Seed.giftQueueKu()
+    local farms, habis, kurang = {}, {}, {}
+    for t in tostring(state.giftFarmList or ""):gmatch("[^,]+") do
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        if t ~= "" then farms[#farms+1] = t:lower() end
+    end
+    for t in tostring(state.giftPkList or ""):gmatch("[^,]+") do
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        if t ~= "" then
+            local nm, sf = t:match("^(.-):(.+)$")
+            if nm and nm ~= "" then habis[#habis+1] = nm; kurang[#habis] = tonumber(sf) or 0
+            else habis[#habis+1] = t; kurang[#habis] = 0 end
+        end
+    end
+    local F = #farms
+    if F == 0 or #habis == 0 then return {} end
+    local me = tostring(player.Name or ""):lower()
+    local myIdx
+    for i, f in ipairs(farms) do if f == me then myIdx = i; break end end
+    if not myIdx then return {} end
+    local out = {}
+    for k = 0, 4 do   -- max 5
+        local idx = myIdx + k * F
+        if idx <= #habis then out[#out+1] = { nm = habis[idx], kurang = kurang[idx] or 0 }
+        else break end
+    end
+    return out
 end
 
 -- v6.3: AUTO GIFT MAIL BUAH -- gift buah pumpkin ke target (di-assign panel).
@@ -6399,6 +6431,8 @@ function Seed.startPanel()
                         -- Di akun beli-seed, yang setara "lagi kerja" = saklar beli.
                         farm2On = state.beliOn and true or false,
                         sheck = sheckles(),
+                        rerollOn = state.pumpkinRerollOn and true or false,  -- v7.1: reroll ON = FARM (bisa ambil tugas gift)
+                        giftOn = state.autoGiftMail and true or false,
                         -- v3.4: buah nunggu jual + isi mailbox. Panel pakai ini
                         -- buat "sheckles tertunda" -- akun yang barangnya udah
                         -- dateng tapi belum kejual (nunggu pengali nyampe ambang).
@@ -9968,22 +10002,20 @@ function Seed._updSummary()
         end
     end
     if Seed._el.qGift then
-        local list = {}
-        for t in tostring(state.giftPkList or ""):gmatch("[^,]+") do
-            t = t:gsub("^%s+", ""):gsub("%s+$", "")
-            local nm = t:match("^(.-):") or t   -- strip :kekurangan
-            if nm and nm ~= "" then list[#list+1] = nm end
-        end
+        local mine = Seed.giftQueueKu()   -- v7.0: cuma antrian AKU (max 5)
         local myTgt = Seed.giftTargetKu()
-        local key = table.concat(list, ",") .. "|" .. tostring(myTgt)
+        local key = ""
+        for _, e in ipairs(mine) do key = key .. e.nm .. "," end
+        key = key .. "|" .. tostring(myTgt)
         if Seed._giftListKey ~= key then
             Seed._giftListKey = key
             for _, c in ipairs(Seed._el.qGift:GetChildren()) do
                 if c:IsA("TextLabel") then c:Destroy() end
             end
             local mt = tostring(myTgt or ""):lower()
-            for i, nm in ipairs(list) do
-                local aku = (nm:lower() == mt and mt ~= "")
+            local amb = tostring(state.giftAmbang or "")
+            for i, e in ipairs(mine) do
+                local aku = (e.nm:lower() == mt and mt ~= "")
                 local lbl = Instance.new("TextLabel")
                 lbl.Parent = Seed._el.qGift
                 lbl.BackgroundTransparency = 1
@@ -9993,11 +10025,10 @@ function Seed._updSummary()
                 lbl.TextSize = 13
                 lbl.TextColor3 = aku and Color3.fromRGB(150, 220, 150) or WARNA.samar
                 lbl.TextXAlignment = Enum.TextXAlignment.Left
-                local amb = tostring(state.giftAmbang or "")
                 local mintaTxt = (amb ~= "") and ("  minta " .. amb) or ""
-                lbl.Text = (aku and "▶ " or "   ") .. i .. ". " .. nm .. mintaTxt .. (aku and "  ← aku" or "")
+                lbl.Text = (aku and "▶ " or "   ") .. i .. ". " .. e.nm .. mintaTxt .. (aku and "  ← gift skrg" or "")
             end
-            if #list == 0 then
+            if #mine == 0 then
                 local lbl = Instance.new("TextLabel")
                 lbl.Parent = Seed._el.qGift
                 lbl.BackgroundTransparency = 1
@@ -10005,7 +10036,7 @@ function Seed._updSummary()
                 lbl.Font = Enum.Font.Code; lbl.TextSize = 13
                 lbl.TextColor3 = WARNA.samar
                 lbl.TextXAlignment = Enum.TextXAlignment.Left
-                lbl.Text = "(kosong -- nunggu panel)"
+                lbl.Text = "(gak ada tugas -- nunggu panel)"
             end
         end
     end
