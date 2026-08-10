@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "6.3"
+local VERSI = "6.4"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -667,6 +667,7 @@ muat()
 -- dari config lama (dulu reroll ke-load TRUE tapi visual OFF = mismatch, jalan diem2).
 state.pumpkinRerollOn = false
 state.autoTrowel = false
+state.autoGiftMail = false   -- v6.4: gift mail mulai OFF (anti nyangkut)
 
 -- ============================================================
 -- AKSES PACKET (sistem Packet GAG 2)
@@ -6665,6 +6666,11 @@ function Seed.pakaiCfgPanel(r)
         Seed._giftUidCache = {}
         ubah[#ubah+1] = "giftMailTarget=" .. c.giftMailTarget
     end
+    -- v6.4: target gift buah pumpkin dari panel (daftar akun sheckles habis)
+    if type(c.giftPkTarget) == "string" and state.giftPkTarget ~= c.giftPkTarget then
+        state.giftPkTarget = c.giftPkTarget
+        ubah[#ubah+1] = "giftPkTarget=" .. c.giftPkTarget
+    end
     if type(c.minRarity) == "string" and c.minRarity ~= "" then
         -- cuma terima yang beneran ada di daftar rarity, biar gak nyetel ke
         -- nilai ngawur yang bikin saringan diam-diam gak pernah kena
@@ -7993,9 +7999,9 @@ do
         Text = "belum ada posisi" })
 end
 
--- ---------- Auto Gift Mail Buah (v6.3) ----------
+-- ---------- Auto Gift Mail Buah (v6.4) ----------
 do
-    local kGift = kartu(134, tabMetod)
+    local kGift = kartu(130, tabMetod)
     mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 9), Size = UDim2.new(1, -24, 0, 18),
         Font = Enum.Font.GothamBold, TextSize = 20.5, TextColor3 = WARNA.teks,
@@ -8003,40 +8009,31 @@ do
     mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
         Position = UDim2.new(0, 12, 0, 30), Size = UDim2.new(1, -24, 0, 16),
         Font = Enum.Font.GothamMedium, TextSize = 15, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Gift buah pumpkin di tas ke target (akun sheckles habis)." })
+        TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto gift buah ke akun sheckles habis (target dari panel)." })
+    -- target dari panel (read-only display, gak perlu ketik username)
+    Seed._el.lblGiftTgt = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
+        Position = UDim2.new(0, 12, 0, 52), Size = UDim2.new(1, -24, 0, 18),
+        Font = Enum.Font.GothamMedium, TextSize = 16, TextColor3 = Color3.fromRGB(150, 200, 240),
+        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+        Text = "🎯 target: (nunggu dari panel)" })
+    -- toggle
     mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 54), Size = UDim2.new(0, 76, 0, 22),
-        Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
-        TextXAlignment = Enum.TextXAlignment.Left, Text = "Kirim ke" })
-    Seed._el.inpGiftPk = mk("TextBox", { Parent = kGift,
-        Position = UDim2.new(0, 92, 0, 52), Size = UDim2.new(1, -104, 0, 26),
-        BackgroundColor3 = WARNA.bg, BorderSizePixel = 0, ClearTextOnFocus = false,
-        Font = Enum.Font.GothamBold, TextSize = 17, TextColor3 = WARNA.aksenMuda,
-        PlaceholderText = "username", Text = tostring(state.giftPkTarget or "") })
-    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = Seed._el.inpGiftPk })
-    mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.inpGiftPk })
-    Seed._el.inpGiftPk.FocusLost:Connect(function()
-        state.giftPkTarget = Seed._el.inpGiftPk.Text
-        pcall(simpan)
-    end)
-    mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 84), Size = UDim2.new(0, 160, 0, 22),
+        Position = UDim2.new(0, 12, 0, 80), Size = UDim2.new(0, 160, 0, 22),
         Font = Enum.Font.GothamMedium, TextSize = 19.5, TextColor3 = WARNA.redup,
         TextXAlignment = Enum.TextXAlignment.Left, Text = "Auto gift mail" })
     Seed._el.tblGiftPk = mk("TextButton", { Parent = kGift,
-        Position = UDim2.new(1, -84, 0, 82), Size = UDim2.new(0, 72, 0, 26),
+        Position = UDim2.new(1, -84, 0, 78), Size = UDim2.new(0, 72, 0, 26),
         BackgroundColor3 = WARNA.kartu, BorderSizePixel = 0,
         Font = Enum.Font.GothamBold, TextSize = 19, TextColor3 = WARNA.redup, Text = "OFF" })
     mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = Seed._el.tblGiftPk })
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblGiftPk })
     Seed._el.tblGiftPk.MouseButton1Click:Connect(function()
         state.autoGiftMail = not state.autoGiftMail
-        catSaklar(Seed._el.tblGiftPk, state.autoGiftMail)
+        catSaklar(Seed._el.tblGiftPk, state.autoGiftMail)   -- di CLICK, catSaklar udah ada
         pcall(simpan)
     end)
-    catSaklar(Seed._el.tblGiftPk, state.autoGiftMail)
     Seed._el.lblGiftPk = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
-        Position = UDim2.new(0, 12, 0, 112), Size = UDim2.new(1, -24, 0, 16),
+        Position = UDim2.new(0, 12, 0, 108), Size = UDim2.new(1, -24, 0, 16),
         Font = Enum.Font.Code, TextSize = 14, TextColor3 = WARNA.samar,
         TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
         Text = "antre: -" })
@@ -9882,6 +9879,11 @@ function Seed._updSummary()
         else
             Seed._el.lblGiftPk.Text = ("antre: %d buah"):format(#q)
         end
+    end
+    -- v6.4: target dari panel (giftPkTarget)
+    if Seed._el.lblGiftTgt then
+        local tgt = tostring(state.giftPkTarget or "")
+        Seed._el.lblGiftTgt.Text = (tgt ~= "") and ("🎯 target: " .. tgt) or "🎯 target: (nunggu dari panel)"
     end
 end
 -- singkat angka (buat value)
