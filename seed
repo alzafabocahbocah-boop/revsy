@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.2"
+local VERSI = "7.4"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1654,21 +1654,11 @@ end
 -- v4.73: harga 1 buah pumpkin dari SizeMulti (FVC eksak / SellValueData × sm^2.5)
 function Seed._hargaPk(jenis, sm)
     if type(sm) ~= "number" then return 0 end
-    -- FVC eksak
-    if Seed._fvc == nil then
-        Seed._fvc = false
-        pcall(function()
-            local RS2 = game:GetService("ReplicatedStorage")
-            local smm = RS2:FindFirstChild("SharedModules")
-            local m = smm and smm:FindFirstChild("FruitValueCalc")
-            if m then local ok, f = pcall(require, m); if ok and type(f) == "function" then Seed._fvc = f end end
-        end)
-    end
-    if Seed._fvc then
-        local ok, v = pcall(Seed._fvc, jenis, sm, nil)
-        if ok and type(v) == "number" and v > 0 then return v end
-    end
-    -- fallback SellValueData × sm^2.5
+    -- v7.4: FVC (FruitValueCalc) pake DIMINISHING RETURNS -- decompile nunjukin:
+    --   v29 = sm^exp  TAPI kalau sm > knee(5): knee^exp × (sm/knee)^min(tail,exp)
+    --   exp=2.5 (SizeExponent), knee=5, tail=1.5 (TailExponent). value = base × v29.
+    -- (dulu selalu sm^2.5 -> ketinggian: 55jt vs asli 34jt buat sm~8.)
+    -- FVC gak bisa dipanggil langsung (butuh arg p25 objek bonus), jadi reimplement.
     if not Seed._sellBase then
         Seed._sellBase = {}
         pcall(function()
@@ -1678,9 +1668,17 @@ function Seed._hargaPk(jenis, sm)
             if m then local ok, d = pcall(require, m); if ok and type(d) == "table" then Seed._sellBase = d end end
         end)
     end
-    local b = Seed._sellBase and (Seed._sellBase[jenis] or Seed._sellBase["Pumpkin"])
-    if type(b) == "number" then return b * (sm ^ 2.5) end
-    return 0
+    local base = Seed._sellBase and (Seed._sellBase[jenis] or Seed._sellBase["Pumpkin"])
+    if type(base) ~= "number" then base = 300000 end   -- fallback Atlantic Giant Pumpkin
+    local exp, knee, tail = 2.5, 5, 1.5
+    local sizeVal
+    if knee < sm then
+        local t = math.min(tail, exp)
+        sizeVal = (knee ^ exp) * ((sm / knee) ^ t)   -- diminishing returns
+    else
+        sizeVal = sm ^ exp
+    end
+    return base * sizeVal
 end
 
 -- v4.71: STATS pumpkin -- total TANAMAN + berbuah + ≥goalKg + range + total value.
@@ -8159,7 +8157,14 @@ do
     mk("UIStroke", { Color = WARNA.garis, Thickness = 1, Parent = Seed._el.tblGiftPk })
     Seed._el.tblGiftPk.MouseButton1Click:Connect(function()
         state.autoGiftMail = not state.autoGiftMail
-        catSaklar(Seed._el.tblGiftPk, state.autoGiftMail)
+        -- v7.3: set visual INLINE -- catSaklar belum ke-scope di titik build ini
+        -- (didefinisi line ~8550, kartu ini di ~8160), jadi manggil catSaklar = nil.
+        local on = state.autoGiftMail
+        Seed._el.tblGiftPk.Text = on and "ON" or "OFF"
+        Seed._el.tblGiftPk.BackgroundColor3 = on and WARNA.aksenBg or WARNA.kartu
+        Seed._el.tblGiftPk.TextColor3 = on and WARNA.aksenMuda or WARNA.redup
+        local st = Seed._el.tblGiftPk:FindFirstChildOfClass("UIStroke")
+        if st then st.Color = on and WARNA.aksen or WARNA.garis end
         pcall(simpan)
     end)
     Seed._el.lblGiftPk = mk("TextLabel", { Parent = kGift, BackgroundTransparency = 1,
