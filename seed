@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.7"
+local VERSI = "7.9"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2581,76 +2581,127 @@ function Seed.giftQueueKu()
 end
 
 -- v6.3: AUTO GIFT MAIL BUAH -- gift buah pumpkin ke target (di-assign panel).
+-- v7.9: HISTORY GIFT (persist ke file, kayak gag2). Max 60 entry, terbaru di atas.
+Seed._gfHistory = {}
+function Seed.gfHistLoad()
+    if type(readfile) ~= "function" then return end
+    if isfile and not isfile("star_gifthist.json") then return end
+    local ok, raw = pcall(readfile, "star_gifthist.json")
+    if ok and raw and raw ~= "" then
+        local ok2, d = pcall(function() return HS:JSONDecode(raw) end)
+        if ok2 and type(d) == "table" then Seed._gfHistory = d end
+    end
+end
+function Seed.gfHistAdd(entry)
+    entry.t = os.time()
+    table.insert(Seed._gfHistory, 1, entry)          -- terbaru di atas
+    while #Seed._gfHistory > 60 do table.remove(Seed._gfHistory) end
+    if type(writefile) == "function" then
+        pcall(function() writefile("star_gifthist.json", HS:JSONEncode(Seed._gfHistory)) end)
+    end
+end
+pcall(Seed.gfHistLoad)
+
 function Seed.autoGiftMailOnce()
     if not state.autoGiftMail then return end
     local target, kurang, alasan = Seed.giftTargetKu()
     if not target then Seed._logGiftPk = alasan or "gak ada target"; return end
-    -- kumpulin buah pumpkin + total VALUE (harga jual pasar)
-    local buah, totalVal = {}, 0
+    -- kumpulin buah pumpkin + VALUE (harga NORMAL, v7.4)
+    local elig, totalVal = {}, 0
     for _, holder in ipairs(tasHolders()) do
         for _, t in ipairs(holder:GetChildren()) do
-            -- v7.5: buah inventory (non-hotbar) = Configuration FruitProxy, bukan Tool.
-            -- scan DUA-DUANYA (Tool hotbar + Configuration inventory).
+            -- Tool (hotbar) + Configuration FruitProxy (inventory)
             if (t:IsA("Tool") or t:IsA("Configuration"))
                and (t:GetAttribute("Fruit") or t:GetAttribute("FruitName")) and t:GetAttribute("Id") then
                 local fn = tostring(t:GetAttribute("FruitName") or t.Name):lower()
                 if fn:find("pumpkin") then
-                    buah[#buah+1] = t
                     local v = 0
                     pcall(function()
-                        local jn = t:GetAttribute("FruitName") or t:GetAttribute("SeedName") or "Atlantic Giant Pumpkin"
+                        local jn = t:GetAttribute("FruitName") or "Atlantic Giant Pumpkin"
                         local sm = t:GetAttribute("SizeMultiplier") or t:GetAttribute("SizeMulti")
                         if type(sm) == "number" then v = Seed._hargaPk(tostring(jn), sm) or 0 end
                     end)
+                    elig[#elig+1] = { t = t, val = tonumber(v) or 0 }
                     totalVal = totalVal + (tonumber(v) or 0)
                 end
             end
         end
     end
+    local N = #elig
     Seed._giftPkQueue = {}
-    for _, t in ipairs(buah) do Seed._giftPkQueue[#Seed._giftPkQueue+1] = tostring(t:GetAttribute("FruitName") or "buah") end
-    local N = #buah
+    for i = 1, N do Seed._giftPkQueue[i] = "buah" end
     if N == 0 then Seed._logGiftPk = "antre 0 -- gak ada buah pumpkin"; return end
-    -- v6.9 ATURAN: wajib kumpul 20 buah. KECUALI value buah udah cukup nutup
-    -- KEKURANGAN target (bikin dia tembus 1b) -> boleh walau < 20 (bahkan 1).
-    local cukupTembus = (kurang > 0 and totalVal >= kurang)
-    if N < 20 and not cukupTembus then
-        Seed._logGiftPk = ("nunggu 20 buah: ada %d | value %s / butuh %s -> %s"):format(
-            N, Seed._singkat(totalVal), kurang > 0 and Seed._singkat(kurang) or "?", target)
+    if not (kurang and kurang > 0) then Seed._logGiftPk = "target sheck cukup: " .. target; return end
+
+    -- v7.9: PICK secukupnya buat NUTUP kurang (overshoot minimal, algoritma gag2).
+    -- 1. urut value TERBESAR dulu, ambil sampe sum >= kurang.
+    table.sort(elig, function(a, b) return a.val > b.val end)
+    local picked, sum = {}, 0
+    for _, e in ipairs(elig) do
+        if sum >= kurang then break end
+        picked[#picked+1] = e; sum = sum + e.val
+    end
+    if sum < kurang then
+        -- belum cukup buah buat nutup -> NUNGGU (jangan kirim setengah)
+        Seed._logGiftPk = ("nunggu: %d buah = %s / butuh %s -> %s"):format(
+            N, Seed._singkat(totalVal), Seed._singkat(kurang), target)
         return
     end
-    -- limit harian
+    -- 2. buang buah redundan (value <= overage) biar LEWAT setipis mungkin
+    while true do
+        local overage = sum - kurang
+        local bestIdx, bestVal
+        for i, e in ipairs(picked) do
+            if e.val <= overage and (not bestVal or e.val > bestVal) then bestVal = e.val; bestIdx = i end
+        end
+        if bestIdx then sum = sum - picked[bestIdx].val; table.remove(picked, bestIdx) else break end
+    end
+
+    -- LIMIT harian 50 mail (EscrowCap). Count by ACTUAL gift (buah hilang), bukan fire.
     local hariIni = os.date("%Y-%m-%d")
     if Seed._giftHari ~= hariIni then Seed._giftHari = hariIni; Seed._giftCountHari = 0 end
     if (Seed._giftCountHari or 0) >= 50 then
-        Seed._logGiftPk = ("LIMIT harian 50 -- antre %d nunggu besok"):format(N); return
+        Seed._logGiftPk = ("LIMIT 50/50 mail hari ini -- antre %d nunggu besok"):format(N); return
     end
+
     local uid = resolveTargetId(target)
     if not uid then Seed._logGiftPk = "target gak ketemu: " .. target; return end
     local sb = pkt("Mailbox", "SendBatch")
     if not (sb and sb.Fire) then Seed._logGiftPk = "SendBatch gak ada"; return end
-    -- kirim CHUNK 8 buah per mail, sampe semua (cap 40/cycle) atau limit harian
-    local kirim = math.min(N, 40)
-    local terkirim, nmail, idx = 0, 0, 1
-    while idx <= kirim and (Seed._giftCountHari or 0) < 50 do
-        local items = {}
-        while idx <= kirim and #items < 8 do
-            local t = buah[idx]
-            local cat = t:GetAttribute("MainCategory") or "Holdables"
-            -- v7.5: pake Id (UUID) -- Configuration Name-nya display, bukan UUID
-            local key = t:GetAttribute("Id") or t.Name
-            items[#items+1] = { ItemKey = tostring(key), Count = 1, Category = tostring(cat) }
+
+    -- kirim picked (chunk 8/mail). Category "HarvestedFruits". detect buah HILANG.
+    local terkirim, nmail, valTerkirim, idx = 0, 0, 0, 1
+    while idx <= #picked and (Seed._giftCountHari or 0) < 50 do
+        local items, sentIds = {}, {}
+        while idx <= #picked and #items < 8 do
+            local e = picked[idx]
+            local key = tostring(e.t:GetAttribute("Id") or e.t.Name)
+            items[#items+1] = { ItemKey = key, Count = 1, Category = "HarvestedFruits" }
+            sentIds[key] = e.val
             idx = idx + 1
         end
         if #items == 0 then break end
-        local ok = pcall(function() sb:Fire(uid, items, "") end)
-        if ok then
-            terkirim = terkirim + #items
-            nmail = nmail + 1
-            Seed._giftCountHari = (Seed._giftCountHari or 0) + 1
+        pcall(function() sb:Fire(uid, items, "") end)
+        nmail = nmail + 1
+        task.wait(0.6)   -- kasih server waktu proses + tas update
+        -- v7.8: buah HILANG dari tas = beneran ke-gift (fire bisa "ok" tapi gak masuk)
+        local masihAda = {}
+        for _, holder in ipairs(tasHolders()) do
+            for _, t in ipairs(holder:GetChildren()) do
+                local id = t:GetAttribute("Id")
+                if id and sentIds[tostring(id)] ~= nil then masihAda[tostring(id)] = true end
+            end
         end
-        task.wait(0.3)
+        local nHilang, valHilang = 0, 0
+        for key, val in pairs(sentIds) do
+            if not masihAda[key] then nHilang = nHilang + 1; valHilang = valHilang + val end
+        end
+        terkirim = terkirim + nHilang
+        valTerkirim = valTerkirim + valHilang
+        -- v7.9: limit count cuma mail yg BENERAN gift (ada buah hilang), bukan fire
+        if nHilang > 0 then Seed._giftCountHari = (Seed._giftCountHari or 0) + 1 end
     end
+
     if terkirim > 0 then
         Seed._giftStat = Seed._giftStat or {}
         local k = target:lower()
@@ -2658,10 +2709,12 @@ function Seed.autoGiftMailOnce()
         Seed._giftStat[k].buah = Seed._giftStat[k].buah + terkirim
         Seed._giftStat[k].mail = Seed._giftStat[k].mail + nmail
         Seed._giftPkTotal = (Seed._giftPkTotal or 0) + terkirim
-        Seed._logGiftPk = ("gift %d buah (%dx mail) -> %s | ke dia: %d buah, %dx mail"):format(
-            terkirim, nmail, target, Seed._giftStat[k].buah, Seed._giftStat[k].mail)
+        -- v7.9: catat ke HISTORY (persist)
+        pcall(Seed.gfHistAdd, { target = target, buah = terkirim, nilai = valTerkirim, mail = nmail })
+        Seed._logGiftPk = ("gift %d buah (%s) -> %s | limit %d/50"):format(
+            terkirim, Seed._singkat(valTerkirim), target, Seed._giftCountHari or 0)
     else
-        Seed._logGiftPk = ("gagal kirim -> %s"):format(target)
+        Seed._logGiftPk = ("FIRE %dx tapi 0 buah hilang -> %s (gift gak masuk?)"):format(nmail, target)
     end
 end
 
@@ -9329,6 +9382,7 @@ function Seed._segarkanGUI()
         if Seed._el.inpPkMin then Seed._el.inpPkMin.Text = tostring(state.pumpkinMinKg or 30) end
         if Seed._el.tblSprinkler then catSaklar(Seed._el.tblSprinkler, state.autoSprinkler) end
         if Seed._el.tblColMatang then catSaklar(Seed._el.tblColMatang, state.autoCollectMatang) end
+        if Seed._el.tblGiftPk then catSaklar(Seed._el.tblGiftPk, state.autoGiftMail) end   -- v7.7: sync gift toggle
         if Seed._el.tblDeal then catSaklar(Seed._el.tblDeal, state.autoDailyDeal) end
         if Seed._el.pickSprType then Seed._el.pickSprType.Text = (state.sprType ~= "" and state.sprType) or "Apa aja" end
         if Seed._el.tblTrowel then catSaklar(Seed._el.tblTrowel, state.autoTrowel) end
