@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "6.0"
+local VERSI = "6.1"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -1551,9 +1551,9 @@ function Seed.rerollPumpkinOnce()
                             -- v5.7: cooldown DIBUANG (bikin lemot). skip-pending aja
                             -- cukup buat gak dobel-nembak buah yg sama.
                             for _, fruit in ipairs(fr:GetChildren()) do
-                                local sm = fruit:GetAttribute("SizeMulti")
+                                local kg = Seed.buahKg(fruit)   -- v6.1: Weight asli
                                 if not Seed._pkPending[fruit.Name]
-                                   and type(sm) == "number" and smToKg(sm) < minKg
+                                   and kg > 0 and kg < minKg
                                    and #plant.Name >= 30 then
                                     Seed._pkQueue[#Seed._pkQueue+1] = { plant = plant.Name, fruit = fruit.Name }
                                 end
@@ -1679,6 +1679,17 @@ end
 -- v4.71: STATS pumpkin -- total TANAMAN + berbuah + ≥goalKg + range + total value.
 -- kg predicted dari SizeMulti (math): kg = SizeMulti × ratio -- FINAL kg walau
 -- buah masih muda (SizeMulti udah fix pas spawn, gak nunggu gede).
+-- v6.1: kg buah AKURAT -- pake atribut Weight (kg asli dari game) kalau ada,
+-- fallback ke SizeMulti × ratio cuma kalau Weight belum di-set (buah fresh).
+-- (dulu selalu sm×ratio -> ratio 8.055 ketinggian, 46kg ke-detect 50+.)
+function Seed.buahKg(fruit)
+    local w = fruit:GetAttribute("Weight")
+    if type(w) == "number" and w > 0 then return w end
+    local sm = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("SizeMultiplier")
+    if type(sm) == "number" then return sm * (Seed._pkRatio or 8.055) end
+    return 0
+end
+
 function Seed.pumpkinStats(goalKg)
     goalKg = goalKg or 80
     local ratio = Seed._pkRatio or 8.055
@@ -1701,10 +1712,9 @@ function Seed.pumpkinStats(goalKg)
                         local fr = plant:FindFirstChild("Fruits")
                         if fr then
                             for _, fruit in ipairs(fr:GetChildren()) do
-                                local sm = fruit:GetAttribute("SizeMulti")
-                                if type(sm) == "number" then
-                                    local kg = sm * ratio    -- FINAL kg (math)
-                                    if kg > bestKg then bestKg = kg; bestSm = sm end
+                                local kg = Seed.buahKg(fruit)   -- v6.1: Weight asli
+                                if kg > 0 then
+                                    if kg > bestKg then bestKg = kg; bestSm = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("SizeMultiplier") or bestSm end
                                 end
                             end
                         end
@@ -1840,11 +1850,8 @@ function Seed.pumpkinTotalReached(goal)
                             total = total + 1
                             local bestKg = 0
                             for _, fruit in ipairs(fr:GetChildren()) do
-                                local sm = fruit:GetAttribute("SizeMulti")
-                                if type(sm) == "number" then
-                                    local kg = sm * ratio
-                                    if kg > bestKg then bestKg = kg end
-                                end
+                                local kg = Seed.buahKg(fruit)   -- v6.1: Weight asli
+                                if kg > bestKg then bestKg = kg end
                             end
                             if bestKg >= goal then reached = reached + 1 end
                         end
