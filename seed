@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.25"
+local VERSI = "7.26"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2726,7 +2726,9 @@ function Seed.showGiftHist()
 end
 
 function Seed.autoGiftMailOnce()
-    if not state.autoGiftMail then return end
+    -- v7.26: gift buah jalan kalau autoGiftMail ON, ATAU pumpkinRerollOn ON (reroll =
+    -- farm -> otomatis gift, sesuai model user "reroll on = jadi farm").
+    if not (state.autoGiftMail or state.pumpkinRerollOn) then return end
     local target, kurang, alasan = Seed.giftTargetKu()
     if not target then Seed._logGiftPk = alasan or "gak ada target"; return end
     -- v7.14: TANDAI "udah di-gift" (bukan cooldown waktu). Setelah gift, skip target
@@ -6910,7 +6912,9 @@ end
 -- `cfg` yang isinya persis sama kayak yang dulu dikasih /seed-cfg.
 -- ============================================================
 function Seed.pakaiCfgPanel(r)
-    if not state.ikutPanel then return end
+    -- v7.26: cek ikutPanel DIPINDAH ke bawah (setelah decode + apply gift config).
+    -- Config GIFT SELALU diapply walau Panel OFF -> farm (rerollOn) tetep dapet
+    -- target + bisa gift. Config LAIN (beli/jual/dll) baru butuh Panel ON.
     local body = r and (r.Body or r.body)
     if not body then
         Seed._cfgLog = "GAGAL: panel gak jawab"
@@ -6942,6 +6946,19 @@ function Seed.pakaiCfgPanel(r)
         return
     end
     local c = d.cfg
+    -- v7.26: GIFT CONFIG SELALU diapply (walau Panel OFF) -> farm rerollOn tetep gift
+    if type(c.giftPkList) == "string" and state.giftPkList ~= c.giftPkList then
+        state.giftPkList = c.giftPkList
+    end
+    if type(c.giftFarmList) == "string" and state.giftFarmList ~= c.giftFarmList then
+        state.giftFarmList = c.giftFarmList
+    end
+    if type(c.giftAmbang) == "string" and state.giftAmbang ~= c.giftAmbang then
+        state.giftAmbang = c.giftAmbang
+        Seed._giftListKey = nil
+    end
+    -- config LAIN (beli/jual/collect/pet/dll) cuma kalau ikutPanel ON
+    if not state.ikutPanel then return end
     local ubah = {}
 
     -- v4.15: MINTA INVENTORY FRESH. Panel set flag (via /inv-minta) -> nyelip di
@@ -7012,17 +7029,7 @@ function Seed.pakaiCfgPanel(r)
         state.giftPkTarget = c.giftPkTarget
         ubah[#ubah+1] = "giftPkTarget=" .. c.giftPkTarget
     end
-    -- v6.5: antrian habis + v6.6: daftar farm dari panel (buat assign index-based)
-    if type(c.giftPkList) == "string" and state.giftPkList ~= c.giftPkList then
-        state.giftPkList = c.giftPkList
-    end
-    if type(c.giftFarmList) == "string" and state.giftFarmList ~= c.giftFarmList then
-        state.giftFarmList = c.giftFarmList
-    end
-    if type(c.giftAmbang) == "string" and state.giftAmbang ~= c.giftAmbang then
-        state.giftAmbang = c.giftAmbang
-        Seed._giftListKey = nil   -- paksa rebuild list biar ambang baru ketampil
-    end
+    -- v7.26: gift config udah diapply DI ATAS (sebelum cek ikutPanel), gak dobel di sini.
     -- v7.20: RESET dari panel (tombol restart). c.giftReset = {target: ts}. Pas
     -- reset BARU datang (ts > yg udah diproses), HAPUS entry riwayat user itu dari
     -- _gfHistory + file -> gift FRESH dari 0. Khusus user tersebut aja.
@@ -10518,7 +10525,7 @@ task.spawn(function()
     task.wait(28)
     while isCurrentGen() do
         task.wait(5)
-        if state.autoGiftMail then
+        if state.autoGiftMail or state.pumpkinRerollOn then   -- v7.26: reroll = farm -> gift
             pcall(Seed.autoGiftMailOnce)
         end
     end
