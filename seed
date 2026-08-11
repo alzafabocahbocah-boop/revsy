@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.20"
+local VERSI = "7.22"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2558,7 +2558,7 @@ function Seed.giftTargetKu()
             return habis[i], kurang[i] or 0
         end
     end
-    return nil, 0, "semua antrian udah cukup di-gift (nunggu recover)"
+    return nil, 0, "\240\159\147\164 semua antrian DONE -> minta akun baru ke panel"
 end
 
 -- v7.0: ANTRIAN AKU -- max 5 seed di-assign ke farm ini (round-robin cap 5).
@@ -2620,11 +2620,8 @@ pcall(Seed.gfHistLoad)
 -- memory ilang tapi riwayat masih ada, jadi gak re-gift akun yg udah dikirimin.
 function Seed.giftSudah(target)
     local pk = tostring(target):lower()
-    local resetTs = (Seed._giftReset and Seed._giftReset[pk]) or 0
     for _, en in ipairs(Seed._gfHistory or {}) do
-        if en.target and tostring(en.target):lower() == pk and en.t and en.t > resetTs then
-            return true
-        end
+        if en.target and tostring(en.target):lower() == pk then return true end
     end
     return false
 end
@@ -2634,12 +2631,12 @@ end
 -- kirim SISANYA doang (kurang - total). Gak dobel, gak over.
 function Seed.giftTotalRiwayat(target)
     local pk = tostring(target):lower()
-    -- v7.19: TANPA batas waktu. Reset lewat panel (tombol restart) -> _giftReset[pk]
-    -- = ts. Entry riwayat SEBELUM ts diabaikan (dianggap siklus lama, udah recover).
-    local resetTs = (Seed._giftReset and Seed._giftReset[pk]) or 0
+    -- v7.22: TOTAL SEMUA riwayat user ini. Gak perlu batas waktu / reset-aware --
+    -- pas restart dari panel, entry-nya UDAH DIHAPUS dari riwayat (lihat config
+    -- apply giftReset). Jadi total di sini = siklus sekarang doang.
     local total = 0
     for _, en in ipairs(Seed._gfHistory or {}) do
-        if en.target and tostring(en.target):lower() == pk and en.t and en.t > resetTs then
+        if en.target and tostring(en.target):lower() == pk then
             total = total + (en.nilai or 0)
         end
     end
@@ -6649,14 +6646,16 @@ function Seed.startPanel()
                         -- pake buat: (1) exclude dari giftPkList, (2) tampil di panel
                         -- tab "Udah diproses" -> "target · N buah · Xb".
                         giftDone = (function()
+                            -- v7.21: TOTAL semua riwayat (reset-aware), bukan cuma
+                            -- gift terakhir. Entry sebelum reset diabaikan.
                             local agg = {}
                             for _, en in ipairs(Seed._gfHistory or {}) do
-                                if en.target and en.t and (os.time() - en.t) < 600 then
+                                if en.target then
                                     local pk = tostring(en.target):lower()
                                     agg[pk] = agg[pk] or { n = en.target, b = 0, v = 0, t = 0 }
                                     agg[pk].b = agg[pk].b + (en.buah or 0)
                                     agg[pk].v = agg[pk].v + (en.nilai or 0)
-                                    agg[pk].t = math.max(agg[pk].t, en.t)
+                                    agg[pk].t = math.max(agg[pk].t, en.t or 0)
                                 end
                             end
                             local arr = {}
