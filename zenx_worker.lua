@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.150-cf"
+local VERSION = "9.160-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -12251,6 +12251,44 @@ end
 
 -- v4.34: `lua zenx_worker.lua cek` -> tunjukin APA yang worker liat per client.
 -- Buat nyari tau kenapa client kebaca "off" padahal game-nya jalan.
+if PERINTAH == "cek" and arg and arg[2] == "clien" then
+    -- v9.160: "zenx cek clien" -> daftar NO MERCY <-> client <-> akun + status.
+    -- Nomor no mercy = urutan client (pindai_pkgs, natural sort). Batch su:
+    -- 1x buat running (pkg_running_semua) + 1x buat username semua client.
+    print(C.BOLD..C.C.."\n=== ZENX CEK CLIEN (no mercy <-> akun) ===\n"..C.N)
+    local pkgs = pindai_pkgs()
+    if #pkgs == 0 then warn("Gak ada client Roblox kepasang."); return end
+    local hasil, hidup = pkg_running_semua(pkgs)
+    -- batch baca username semua client (1 su call, biar gak 20x ~6s)
+    local bagian = {}
+    for _, p in ipairs(pkgs) do
+        bagian[#bagian+1] = 'echo "@U ' .. p .. '"; cat /data/data/' .. p .. '/shared_prefs/prefs.xml 2>/dev/null'
+    end
+    local out = sh_tmo("su -c '" .. table.concat(bagian, "; ") .. "'", #pkgs + 15) or ""
+    local akunMap, curPkg = {}, nil
+    for baris in out:gmatch("[^\r\n]+") do
+        local up = baris:match("^@U%s+(%S+)")
+        if up then curPkg = up
+        elseif curPkg then
+            local u = baris:match('<string name="username">(.-)</string>')
+            if u then akunMap[curPkg] = u end
+        end
+    end
+    for i, pkg in ipairs(pkgs) do
+        local akun = akunMap[pkg] or "?"
+        local st
+        if hasil[pkg] then st = C.G.."[JALAN]"..C.N
+        elseif hidup[pkg] then st = C.Y.."[latar]"..C.N
+        else st = C.D.."[off]"..C.N end
+        print(("%sno mercy %-2d%s -> %s%-14s%s  akun: %s%-14s%s  %s"):format(
+            C.BOLD, i, C.N,
+            C.D, pkg:gsub("com%.roblox%.", ""), C.N,
+            C.C, akun, C.N, st))
+    end
+    print("")
+    return
+end
+
 if PERINTAH == "cek" then
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin setup dulu."); return end
