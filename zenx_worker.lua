@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.164-cf"
+local VERSION = "9.165-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2268,13 +2268,18 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD")
-       or (u:find("ROTASI") and not u:find("ROTASI%-GO") and not u:find("ROTASI%-TEST")) then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
         local tsR = ambil_num(r, "ts") or 0
         if tsR ~= (RESTART_TS_PROSES or 0) then nyela = true end
+    elseif u:find("ROTASI") and not u:find("ROTASI%-GO") and not u:find("ROTASI%-TEST") then
+        -- v9.165 FIX LOOP: ROTASI (toggle on/off) DULU nyela TANPA cek ts -> sticky
+        -- di DB -> nyela terus tiap 2s -> rejoin/loop panjang GAK PERNAH KELAR.
+        -- Sekarang cuma nyela sekali (ts baru), sama kayak PAKSA/RESTART.
+        local tsR = ambil_num(r, "ts") or 0
+        if tsR ~= (ROTASI_TS_PROSES or 0) then nyela = true; ROTASI_TS_PROSES = tsR end
     end
     if nyela then
         info("<< PERINTAH PANEL MASUK: " .. isi:sub(1, 40) .. " -- STOP loop, urus ini >>")
