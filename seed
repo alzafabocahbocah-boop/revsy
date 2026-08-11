@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.16"
+local VERSI = "7.17"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -6624,15 +6624,24 @@ function Seed.startPanel()
                         sheck = sheckles(),
                         rerollOn = state.pumpkinRerollOn and true or false,  -- v7.1: reroll ON = FARM (bisa ambil tugas gift)
                         giftOn = state.autoGiftMail and true or false,
-                        -- v7.14: LAPOR target yg udah di-gift (< 10 menit) -> backend
-                        -- exclude dari giftPkList biar farm gak nyangkut ke akun yg
-                        -- mailbox-nya udah keisi. String koma "target1,target2".
+                        -- v7.17: LAPOR DETAIL gift (target + jumlah buah + total nilai)
+                        -- dari RIWAYAT (< 10 menit), di-agregat per target. Backend
+                        -- pake buat: (1) exclude dari giftPkList, (2) tampil di panel
+                        -- tab "Udah diproses" -> "target · N buah · Xb".
                         giftDone = (function()
-                            local t = {}
-                            for tgt, ts in pairs(Seed._giftDone or {}) do
-                                if (os.time() - ts) < 600 then t[#t+1] = tgt end
+                            local agg = {}
+                            for _, en in ipairs(Seed._gfHistory or {}) do
+                                if en.target and en.t and (os.time() - en.t) < 600 then
+                                    local pk = tostring(en.target):lower()
+                                    agg[pk] = agg[pk] or { n = en.target, b = 0, v = 0, t = 0 }
+                                    agg[pk].b = agg[pk].b + (en.buah or 0)
+                                    agg[pk].v = agg[pk].v + (en.nilai or 0)
+                                    agg[pk].t = math.max(agg[pk].t, en.t)
+                                end
                             end
-                            return table.concat(t, ",")
+                            local arr = {}
+                            for _, x in pairs(agg) do arr[#arr+1] = x end
+                            return arr
                         end)(),
                         -- v3.4: buah nunggu jual + isi mailbox. Panel pakai ini
                         -- buat "sheckles tertunda" -- akun yang barangnya udah
