@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.22"
+local VERSI = "7.23"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2544,21 +2544,25 @@ function Seed.giftTargetKu()
     local myIdx
     for i, f in ipairs(farms) do if f == me then myIdx = i; break end end
     if not myIdx then return nil, 0, "aku gak ada di daftar farm" end
-    -- v7.16: ANTRIAN round-robin. farm ke-N pegang habis[N], habis[N+F], habis[N+2F]
-    -- ... (cap 5). Return yg PERTAMA BELUM di-gift -> abis antrian 1 kelar, pindah
-    -- ke antrian 2, dst. Gak nyangkut di antrian 1 (yg udah dikirimin).
+    -- v7.23: assign akun -> farm pake HASH NAMA (stabil), BUKAN index list. Cegah
+    -- 2 farm gift akun SAMA: tiap akun kepegang 1 farm doang (hash % F == myFarm).
+    -- Hash gak geser walau list berubah (ada yg done/recover) -> gak nabrak.
     local F = #farms
-    local nAntre = 0
-    for i = myIdx, #habis, F do
-        nAntre = nAntre + 1
-        if nAntre > 5 then break end          -- cap 5 seed per farm
-        -- v7.18: skip yg TOTAL riwayat udah >= kurang (udah cukup dikirim).
-        -- Yg belum cukup -> ini target-nya (nanti kirim sisanya).
-        if Seed.giftTotalRiwayat(habis[i]) < (kurang[i] or 0) then
-            return habis[i], kurang[i] or 0
+    local myFarm = myIdx - 1   -- 0-indexed
+    local function hashNama(s)
+        local hh = 5381
+        for i = 1, #s do hh = ((hh * 33) + s:byte(i)) % 2147483647 end
+        return hh
+    end
+    -- return akun PERTAMA (punya farm ini) yg belum cukup di-gift
+    for i, tgt in ipairs(habis) do
+        if (hashNama(tostring(tgt):lower()) % F) == myFarm then
+            if Seed.giftTotalRiwayat(tgt) < (kurang[i] or 0) then
+                return tgt, kurang[i] or 0
+            end
         end
     end
-    return nil, 0, "\240\159\147\164 semua antrian DONE -> minta akun baru ke panel"
+    return nil, 0, "\240\159\147\164 antrian farm ini DONE semua -> minta akun baru ke panel"
 end
 
 -- v7.0: ANTRIAN AKU -- max 5 seed di-assign ke farm ini (round-robin cap 5).
