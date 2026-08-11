@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.172-cf"
+local VERSION = "9.173-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4819,7 +4819,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     if petaP and petaP[pilih] then
                         local tgt = petaP[pilih]
                         local tgtW, tgtH = tgt.R - tgt.L, tgt.B - tgt.T
-                        for coba = 1, 6 do
+                        for coba = 1, 3 do
                             local k = jendela_kotak(pilih)
                             local lebar  = k and (k.R - k.L) or 0
                             local tinggi = k and (k.B - k.T) or 0
@@ -4828,10 +4828,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                                 info(("  jendela UDAH 3x2 (%dx%d) -- lanjut sapu"):format(lebar, tinggi))
                                 break
                             end
-                            info(("  jendela %dx%d BUKAN 3x2 (target %dx%d) -- PAKSA tata 3x2 (%d/6)..."):format(
+                            -- v9.173: SPAM tata_satu PERCUMA -- App Cloner baca posisi
+                            -- jendela cuma pas app OPEN (bukan pas jalan). Jadi harus:
+                            -- tulis prefs 3x2 -> FORCE CLOSE -> buka ulang -> delay ->
+                            -- cek ulang. Baru window pindah ke 3x2 beneran.
+                            info(("  jendela %dx%d BUKAN 3x2 (target %dx%d) -- FORCE CLOSE + buka ulang 3x2 (%d/3)..."):format(
                                 lebar, tinggi, tgtW, tgtH, coba))
-                            tata_satu(pilih, tgt, true)   -- hapusDulu=true -> tata fresh
-                            os.execute("sleep 3")
+                            tata_satu(pilih, tgt, true)              -- tulis prefs 3x2
+                            sh(("su -c 'am force-stop %s' 2>/dev/null"):format(pilih))   -- force close
+                            os.execute("sleep 3")                    -- kasih waktu bener2 mati
+                            open_one(cfg, pilih, mapLink and mapLink[pilih] or nil, "bypass-3x2")   -- buka ulang
+                            os.execute("sleep 8")                    -- App Cloner naruh jendela + mulai load
                             if cek_batal and cek_batal() then break end
                         end
                     end
