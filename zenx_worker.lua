@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.168-cf"
+local VERSION = "9.169-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -13246,6 +13246,10 @@ function update_delta_ke(cfg, versiBaru, force)
     local HOME = os.getenv("HOME") or "."
     print(C.BOLD .. C.C .. ("\n=== UPDATE DELTA ke v%s (GitHub worker_64) ===\n"):format(versiBaru) .. C.N)
     local pkgs = split(cfg and cfg.pkgs or "")
+    -- v9.169: catat client ASLI biar bisa deteksi client BARU yg ke-tambah pas
+    -- update (kalau package di APK beda -> pm install -r malah NAMBAH, bukan replace).
+    local pkgsAsli = {}
+    for _, p in ipairs(pkgs) do pkgsAsli[p] = true end
     if #pkgs == 0 then err("Gak ada client di config. Jalanin `zenx` dulu."); return 0, 0, 0 end
     local function versi_terpasang(pkg)
         local out = sh(("su -c 'dumpsys package %s 2>/dev/null | grep -m1 versionName' 2>/dev/null"):format(pkg)) or ""
@@ -13306,7 +13310,26 @@ function update_delta_ke(cfg, versiBaru, force)
     end
     os.remove(TMPAPK)
     print("")
-    ok(("Selesai: %d update, %d skip (udah v%s), %d gagal"):format(sukses, dilewat, versiBaru, gagal))
+    -- v9.169: DETEKSI client BARU yg ke-tambah (package di APK beda dari client asli
+    -- -> pm install -r malah masang package baru, bukan update client lama). Auto-hapus
+    -- biar gak numpuk client nyasar + warn client mana yg gak ke-update.
+    local sekarang = pindai_pkgs()
+    local nyasar = {}
+    for _, p in ipairs(sekarang) do
+        if not pkgsAsli[p] then nyasar[#nyasar+1] = p end
+    end
+    if #nyasar > 0 then
+        warn(("%d client BARU ke-tambah (package APK BEDA dari client asli) -> auto-hapus:"):format(#nyasar))
+        for _, p in ipairs(nyasar) do
+            print(C.Y .. "  hapus " .. p:gsub("com%.roblox%.", "") .. C.N)
+            sh(("timeout 60 su -c 'pm uninstall %s' 2>&1"):format(p))
+        end
+        warn("Client di config yg package-nya GAK match APK -> gak ke-update.")
+        warn("Solusi: upload APK dgn package SAMA ke Releases, ATAU sesuain urutan APK.")
+    end
+    ok(("Selesai: %d update, %d skip (udah v%s), %d gagal%s"):format(
+        sukses, dilewat, versiBaru, gagal,
+        #nyasar > 0 and (", " .. #nyasar .. " nyasar dihapus") or ""))
     return sukses, dilewat, gagal
 end
 
