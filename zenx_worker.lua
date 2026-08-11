@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.160-cf"
+local VERSION = "9.161-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -12814,7 +12814,27 @@ end
 -- masuk cfg.pkgs, jadi worker gak tau ada client itu. `zenx update` pindai
 -- ulang + simpen. Beda dari `zenx download` (yang UNDUH APK) -- ini cuma
 -- DAFTAR ULANG yang udah kepasang.
-if (PERINTAH == "update" or PERINTAH == "scan") and not (arg and arg[2] == "mercy") then
+if PERINTAH == "update" and arg and arg[2] == "clien" then
+    -- v9.161: FORCE update SEMUA client ke versi terbaru (delta_versi.txt di GitHub),
+    -- ABAIKAN cek versionName. Kenapa: nomercy = Roblox clone + Delta. Kalau Delta
+    -- di-update tapi Roblox-nya versi sama, versionName GAK berubah -> `update mercy`
+    -- salah bilang "udah terbaru". `update clien` maksa re-install (pm install -r).
+    -- Bisa kasih versi manual: `zenx update clien <versi>`.
+    local cfg = load_config()
+    if not cfg then err("Config gak ada. Jalanin `pasang <preset>` dulu."); return end
+    local target = arg[3]
+    if not target or target == "" then target = cek_delta_versi(cfg) end
+    if not target or target == "" then
+        err("Gak bisa baca versi terbaru (delta_versi.txt).\n" ..
+            "   Kasih manual: zenx update clien <versi>")
+        return
+    end
+    warn(("FORCE update SEMUA client ke v%s (abaikan cek versi terpasang)"):format(target))
+    update_delta_ke(cfg, target, true)
+    return
+end
+
+if (PERINTAH == "update" or PERINTAH == "scan") and not (arg and (arg[2] == "mercy" or arg[2] == "clien")) then
     print(C.BOLD .. C.C .. "\n=== ZENX UPDATE -- scan client kepasang ===\n" .. C.N)
     local cfg = load_config()
     if not cfg then
@@ -13160,7 +13180,7 @@ end
 -- `zenx update mercy <versi>`, auto-cek 10-menit di loop, + perintah UPDATE-DELTA
 -- dari panel. Return sukses, dilewat, gagal. Global (bukan local) biar run() loop
 -- bisa manggil + gak makan jatah 200 lokal.
-function update_delta_ke(cfg, versiBaru)
+function update_delta_ke(cfg, versiBaru, force)
     if not versiBaru or versiBaru == "" then return 0, 0, 0 end
     local BASE = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/"
     local HOME = os.getenv("HOME") or "."
@@ -13180,7 +13200,9 @@ function update_delta_ke(cfg, versiBaru)
     for i, pkg in ipairs(pkgs) do
         local nama = pkg:gsub("com%.roblox%.", "")
         local vNow = versi_terpasang(pkg)
-        if vNow == versiBaru then
+        if vNow == versiBaru and not force then
+            -- v9.161: force -> JANGAN skip walau versionName sama (Delta bisa beda
+            -- walau versi Roblox sama). Tanpa force, skip kayak biasa.
             print(C.D .. ("[%d/%d] %s -- udah v%s, SKIP"):format(i, #pkgs, nama, versiBaru) .. C.N)
             dilewat = dilewat + 1
         else
