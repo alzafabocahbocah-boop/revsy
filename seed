@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.19"
+local VERSI = "7.20"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -7008,13 +7008,30 @@ function Seed.pakaiCfgPanel(r)
         state.giftAmbang = c.giftAmbang
         Seed._giftListKey = nil   -- paksa rebuild list biar ambang baru ketampil
     end
-    -- v7.19: RESET dari panel (tombol restart). c.giftReset = {target: ts}. Entry
-    -- riwayat sebelum ts diabaikan -> akun balik ke antrian, di-gift fresh lagi.
+    -- v7.20: RESET dari panel (tombol restart). c.giftReset = {target: ts}. Pas
+    -- reset BARU datang (ts > yg udah diproses), HAPUS entry riwayat user itu dari
+    -- _gfHistory + file -> gift FRESH dari 0. Khusus user tersebut aja.
     if type(c.giftReset) == "table" then
         Seed._giftReset = Seed._giftReset or {}
+        local adaHapus = false
         for tgt, ts in pairs(c.giftReset) do
             local n = tonumber(ts)
-            if n and n > 0 then Seed._giftReset[tostring(tgt):lower()] = n end
+            local pk = tostring(tgt):lower()
+            if n and n > 0 and (Seed._giftReset[pk] or 0) < n then
+                Seed._giftReset[pk] = n
+                -- hapus riwayat user ini (entry <= reset ts) -- khusus dia aja
+                local baru = {}
+                for _, en in ipairs(Seed._gfHistory or {}) do
+                    if not (en.target and tostring(en.target):lower() == pk and en.t and en.t <= n) then
+                        baru[#baru+1] = en
+                    end
+                end
+                Seed._gfHistory = baru
+                adaHapus = true
+            end
+        end
+        if adaHapus and type(writefile) == "function" then
+            pcall(function() writefile("star_gifthist.json", HS:JSONEncode(Seed._gfHistory)) end)
         end
     end
     if type(c.minRarity) == "string" and c.minRarity ~= "" then
