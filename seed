@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.23"
+local VERSI = "7.24"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2521,7 +2521,7 @@ end
 -- v6.6: hitung TARGET AKU (index-based) + KEKURANGAN target (1b - sheckles skrg).
 -- format giftPkList = "username:kekurangan, ..." (kekurangan = raw sheckles dari panel)
 function Seed.giftTargetKu()
-    local farms, habis, kurang = {}, {}, {}
+    local farms, habis, kurang, owner = {}, {}, {}, {}
     for t in tostring(state.giftFarmList or ""):gmatch("[^,]+") do
         t = t:gsub("^%s+", ""):gsub("%s+$", "")
         if t ~= "" then farms[#farms+1] = t:lower() end
@@ -2529,13 +2529,14 @@ function Seed.giftTargetKu()
     for t in tostring(state.giftPkList or ""):gmatch("[^,]+") do
         t = t:gsub("^%s+", ""):gsub("%s+$", "")
         if t ~= "" then
-            local nm, sf = t:match("^(.-):(.+)$")
+            -- v7.24: format "nm:kurang:farm" (panel yg assign owner). Split pake ":".
+            local bagian = {}
+            for p in t:gmatch("[^:]+") do bagian[#bagian+1] = p end
+            local nm = bagian[1]
             if nm and nm ~= "" then
                 habis[#habis+1] = nm
-                kurang[#habis] = tonumber(sf) or 0
-            else
-                habis[#habis+1] = t
-                kurang[#habis] = 0
+                kurang[#habis] = tonumber(bagian[2]) or 0
+                owner[#habis] = bagian[3] and tostring(bagian[3]):lower() or nil
             end
         end
     end
@@ -2544,17 +2545,27 @@ function Seed.giftTargetKu()
     local myIdx
     for i, f in ipairs(farms) do if f == me then myIdx = i; break end end
     if not myIdx then return nil, 0, "aku gak ada di daftar farm" end
-    -- v7.23: assign akun -> farm pake HASH NAMA (stabil), BUKAN index list. Cegah
-    -- 2 farm gift akun SAMA: tiap akun kepegang 1 farm doang (hash % F == myFarm).
-    -- Hash gak geser walau list berubah (ada yg done/recover) -> gak nabrak.
+    -- v7.24: PANEL yg assign owner tiap akun (di giftPkList "nm:kurang:farm").
+    -- Aku gift CUMA akun yg owner-nya == aku. Jamin gak nabrak farm lain.
     local F = #farms
-    local myFarm = myIdx - 1   -- 0-indexed
+    local adaOwner = false
+    for _, o in ipairs(owner) do if o then adaOwner = true; break end end
+    if adaOwner then
+        -- pake assignment dari panel (owner). return akun aku yg belum cukup.
+        for i, tgt in ipairs(habis) do
+            if owner[i] == me and Seed.giftTotalRiwayat(tgt) < (kurang[i] or 0) then
+                return tgt, kurang[i] or 0
+            end
+        end
+        return nil, 0, "\240\159\147\164 antrian farm ini DONE -> minta akun baru ke panel"
+    end
+    -- fallback (format lama tanpa owner): hash nama sendiri
+    local myFarm = myIdx - 1
     local function hashNama(s)
         local hh = 5381
         for i = 1, #s do hh = ((hh * 33) + s:byte(i)) % 2147483647 end
         return hh
     end
-    -- return akun PERTAMA (punya farm ini) yg belum cukup di-gift
     for i, tgt in ipairs(habis) do
         if (hashNama(tostring(tgt):lower()) % F) == myFarm then
             if Seed.giftTotalRiwayat(tgt) < (kurang[i] or 0) then
@@ -2562,7 +2573,7 @@ function Seed.giftTargetKu()
             end
         end
     end
-    return nil, 0, "\240\159\147\164 antrian farm ini DONE semua -> minta akun baru ke panel"
+    return nil, 0, "\240\159\147\164 antrian farm ini DONE -> minta akun baru ke panel"
 end
 
 -- v7.0: ANTRIAN AKU -- max 5 seed di-assign ke farm ini (round-robin cap 5).
