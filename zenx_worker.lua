@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.170-cf"
+local VERSION = "9.172-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4797,29 +4797,25 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 -- gak kepakai -> tebakan baris meleset -> sapu belasan titik.
                 -- Fix: tunggu + tata ke petak, cek ukuran settle dulu.
                 do
-                    -- v8.95: pakai grid AKTIF (PKGS_AKTIF), sama kayak posisi bypass
-                    -- di atas. cfgBypass (paksa 10 client) udah DIBUANG -- logika lama.
-                    -- v9.51: pakai 'only' (client aktif) konsisten sama petaK, BUKAN
-                    -- PKGS_AKTIF global (bisa stale -> grid 10 = 4x3). Bug user: pas
-                    -- bypass client jadi 4x3 (grid 10) padahal 6.
-                    local pkgsPetaP = nil
-                    if only and type(only) == "table" then
-                        pkgsPetaP = {}
-                        for _, p in ipairs(split(cfg.pkgs)) do
-                            if only[p] and not rotasi_lewat(cfg, p) then pkgsPetaP[#pkgsPetaP+1] = p end
-                        end
-                        if #pkgsPetaP == 0 then pkgsPetaP = nil end
+                    -- v9.172: BYPASS paksa petak 3x2 buat 6 CLIENT. Config punya 20
+                    -- client -> grid_hitung 20 = banyak kolom = petak KEKECILAN
+                    -- (152x210, gak kalibrasi -> sapu meleset). Bikin list 6 client
+                    -- (pilih + 5 lain dari config), paksa 3 kolom -> petak 3x2 GEDE
+                    -- (kalibrasi 396x330 dst -> sapu kena). Client lain gak keganggu
+                    -- (cuma jendela bypass yg ditata sementara).
+                    local enam = { pilih }
+                    for _, p in ipairs(split(cfg.pkgs)) do
+                        if p ~= pilih and #enam < 6 then enam[#enam+1] = p end
                     end
-                    if not pkgsPetaP and PKGS_AKTIF and #PKGS_AKTIF > 0 then
-                        pkgsPetaP = PKGS_AKTIF
-                    end
-                    -- v9.170: BYPASS WAJIB 3x2. PAKSA grid 3 kolom (6 client -> 3x2)
-                    -- buat hitung petak. User: kalau ukuran window BUKAN 3x2, paksa
-                    -- tata ulang sampe 3x2 (ukuran petak pasti dikalibrasi -> sapu kena).
                     local kolAsli = cfg.grid_kolom
                     cfg.grid_kolom = 3
-                    local petaP = grid_hitung(cfg, pkgsPetaP)
+                    local petaP, _gh_err, kolP, barP, wLayar, hLayar = grid_hitung(cfg, enam)
                     cfg.grid_kolom = kolAsli   -- balikin (jangan ganggu grid utama)
+                    -- v9.171: LOG diagnosa -- layar + grid + jumlah client dipaksa
+                    do
+                        info(("  [bypass-grid] layar %dx%d | grid %dx%d | PAKSA 6 client 3x2"):format(
+                            wLayar or 0, hLayar or 0, kolP or 0, barP or 0))
+                    end
                     if petaP and petaP[pilih] then
                         local tgt = petaP[pilih]
                         local tgtW, tgtH = tgt.R - tgt.L, tgt.B - tgt.T
