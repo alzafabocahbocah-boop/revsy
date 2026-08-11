@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.12"
+local VERSI = "7.15"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2602,6 +2602,21 @@ function Seed.gfHistAdd(entry)
 end
 pcall(Seed.gfHistLoad)
 
+-- v7.15: cek akun udah di-gift belum. Dua sumber: _giftDone (memory, cepet) DAN
+-- RIWAYAT (persist ke file, SURVIVE REJOIN). Riwayat = sumber pasti -- abis rejoin
+-- memory ilang tapi riwayat masih ada, jadi gak re-gift akun yg udah dikirimin.
+function Seed.giftSudah(target)
+    local pk = tostring(target):lower()
+    local now = os.time()
+    if Seed._giftDone and Seed._giftDone[pk] and (now - Seed._giftDone[pk]) < 600 then return true end
+    for _, en in ipairs(Seed._gfHistory or {}) do
+        if en.target and tostring(en.target):lower() == pk and en.t and (now - en.t) < 600 then
+            return true
+        end
+    end
+    return false
+end
+
 -- v7.10: POPUP riwayat gift + limit harian. Pake Instance.new (bukan mk, biar
 -- gak butuh mk ke-scope di titik ini). Dibikin sekali, di-reuse.
 function Seed.showGiftHist()
@@ -2673,16 +2688,19 @@ function Seed.autoGiftMailOnce()
     if not state.autoGiftMail then return end
     local target, kurang, alasan = Seed.giftTargetKu()
     if not target then Seed._logGiftPk = alasan or "gak ada target"; return end
-    -- v7.12: COOLDOWN -- setelah gift, target nunggu claim+jual+lapor (~4 menit)
-    -- sebelum di-gift lagi. Cegah OVER-GIFT: kurang dari panel belum update
-    -- (buah masih di mailbox, target belum jual) -> tanpa cooldown kirim terus.
-    Seed._giftCooldown = Seed._giftCooldown or {}
+    -- v7.14: TANDAI "udah di-gift" (bukan cooldown waktu). Setelah gift, skip target
+    -- ini + LAPOR ke backend -> panel exclude dari broadcast. Skip diclear otomatis
+    -- kalau target keluar dari giftPkList (recover) ATAU safety 10 menit (kalau
+    -- gak recover, retry). Cegah over-gift TANPA cooldown 4 menit.
+    Seed._giftDone = Seed._giftDone or {}
     local pk = target:lower()
-    if Seed._giftCooldown[pk] and os.time() < Seed._giftCooldown[pk] then
-        Seed._logGiftPk = ("cooldown %ds -> %s (nunggu dia claim+jual dulu)"):format(
-            Seed._giftCooldown[pk] - os.time(), target)
+    -- v7.15: cek dari _giftDone (memory) DAN RIWAYAT (persist) -- biar abis rejoin
+    -- gak re-gift akun yg udah dikirimin (memory ilang, riwayat gak).
+    if Seed.giftSudah(target) then
+        Seed._logGiftPk = ("udah di-gift cukup -> %s (cek riwayat, nunggu recover)"):format(target)
         return
     end
+    if Seed._giftDone[pk] then Seed._giftDone[pk] = nil end   -- kelewat 10 menit -> boleh retry
     -- kumpulin buah pumpkin + VALUE (harga NORMAL, v7.4)
     local elig, totalVal = {}, 0
     for _, holder in ipairs(tasHolders()) do
@@ -2746,37 +2764,52 @@ function Seed.autoGiftMailOnce()
     local sb = pkt("Mailbox", "SendBatch")
     if not (sb and sb.Fire) then Seed._logGiftPk = "SendBatch gak ada"; return end
 
-    -- kirim picked (chunk 8/mail). Category "HarvestedFruits". detect buah HILANG.
+    -- v7.13: kirim + AUTO-COBA Category. Mailbox format bisa beda; pake yg terakhir
+    -- sukses (Seed._giftCat), kalau belum ketemu coba daftar sampe buah HILANG.
+    -- Kalau SEMUA cat 0 hilang -> mailbox target PENUH (bounce) / format salah.
+    local CATS = { "HarvestedFruits", "Holdables", "Fruits", "Harvested", "HarvestedFruit" }
     local terkirim, nmail, valTerkirim, idx = 0, 0, 0, 1
     while idx <= #picked and (Seed._giftCountHari or 0) < 50 do
-        local items, sentIds = {}, {}
-        while idx <= #picked and #items < 20 do   -- v7.12: 20 buah/mail (dulu 8)
-            local e = picked[idx]
-            local key = tostring(e.t:GetAttribute("Id") or e.t.Name)
-            items[#items+1] = { ItemKey = key, Count = 1, Category = "HarvestedFruits" }
-            sentIds[key] = e.val
-            idx = idx + 1
-        end
-        if #items == 0 then break end
-        pcall(function() sb:Fire(uid, items, "") end)
-        nmail = nmail + 1
-        task.wait(0.6)   -- kasih server waktu proses + tas update
-        -- v7.8: buah HILANG dari tas = beneran ke-gift (fire bisa "ok" tapi gak masuk)
-        local masihAda = {}
-        for _, holder in ipairs(tasHolders()) do
-            for _, t in ipairs(holder:GetChildren()) do
-                local id = t:GetAttribute("Id")
-                if id and sentIds[tostring(id)] ~= nil then masihAda[tostring(id)] = true end
-            end
-        end
+        local chunk = {}
+        while idx <= #picked and #chunk < 20 do chunk[#chunk+1] = picked[idx]; idx = idx + 1 end
+        if #chunk == 0 then break end
+        -- urutan cat: yg udah kekonfirmasi dulu, baru sisanya
+        local coba = {}
+        if Seed._giftCat then coba[1] = Seed._giftCat end
+        for _, c in ipairs(CATS) do if c ~= Seed._giftCat then coba[#coba+1] = c end end
         local nHilang, valHilang = 0, 0
-        for key, val in pairs(sentIds) do
-            if not masihAda[key] then nHilang = nHilang + 1; valHilang = valHilang + val end
+        for _, cat in ipairs(coba) do
+            local items, sentIds = {}, {}
+            for _, e in ipairs(chunk) do
+                if e.t.Parent then   -- skip yg udah hilang dari percobaan cat sebelumnya
+                    local key = tostring(e.t:GetAttribute("Id") or e.t.Name)
+                    items[#items+1] = { ItemKey = key, Count = 1, Category = cat }
+                    sentIds[key] = e.val
+                end
+            end
+            if #items == 0 then break end
+            pcall(function() sb:Fire(uid, items, "") end)
+            nmail = nmail + 1
+            task.wait(0.6)
+            local masihAda = {}
+            for _, holder in ipairs(tasHolders()) do
+                for _, t in ipairs(holder:GetChildren()) do
+                    local id = t:GetAttribute("Id")
+                    if id and sentIds[tostring(id)] ~= nil then masihAda[tostring(id)] = true end
+                end
+            end
+            local h2, v2 = 0, 0
+            for key, val in pairs(sentIds) do if not masihAda[key] then h2 = h2 + 1; v2 = v2 + val end end
+            if h2 > 0 then
+                nHilang = nHilang + h2; valHilang = valHilang + v2
+                Seed._giftCat = cat   -- inget format yg JALAN
+                break
+            end
         end
         terkirim = terkirim + nHilang
         valTerkirim = valTerkirim + valHilang
-        -- v7.9: limit count cuma mail yg BENERAN gift (ada buah hilang), bukan fire
         if nHilang > 0 then Seed._giftCountHari = (Seed._giftCountHari or 0) + 1 end
+        if nHilang == 0 then break end   -- gak ada cat jalan -> stop (mailbox penuh/format)
     end
 
     if terkirim > 0 then
@@ -2786,14 +2819,14 @@ function Seed.autoGiftMailOnce()
         Seed._giftStat[k].buah = Seed._giftStat[k].buah + terkirim
         Seed._giftStat[k].mail = Seed._giftStat[k].mail + nmail
         Seed._giftPkTotal = (Seed._giftPkTotal or 0) + terkirim
-        -- v7.12: set COOLDOWN 4 menit (target nunggu claim+jual+lapor sebelum di-gift lagi)
-        Seed._giftCooldown[pk] = os.time() + 240
-        -- v7.9: catat ke HISTORY (persist)
+        Seed._giftDone[pk] = os.time()   -- tandai udah di-gift (skip + lapor)
         pcall(Seed.gfHistAdd, { target = target, buah = terkirim, nilai = valTerkirim, mail = nmail })
-        Seed._logGiftPk = ("gift %d buah (%s) -> %s | limit %d/50"):format(
-            terkirim, Seed._singkat(valTerkirim), target, Seed._giftCountHari or 0)
+        Seed._logGiftPk = ("gift %d buah (%s) [%s] -> %s | limit %d/50"):format(
+            terkirim, Seed._singkat(valTerkirim), tostring(Seed._giftCat), target, Seed._giftCountHari or 0)
     else
-        Seed._logGiftPk = ("FIRE %dx tapi 0 buah hilang -> %s (gift gak masuk?)"):format(nmail, target)
+        -- 0 hilang -> COOLDOWN biar gak spam fire. Kemungkinan mailbox target PENUH.
+        Seed._giftDone[pk] = os.time()   -- mailbox penuh -> skip juga (retry nanti)
+        Seed._logGiftPk = ("FIRE %dx 0 buah hilang -> %s (mailbox PENUH? cek dia claim gift dulu)"):format(nmail, target)
     end
 end
 
@@ -6580,6 +6613,16 @@ function Seed.startPanel()
                         sheck = sheckles(),
                         rerollOn = state.pumpkinRerollOn and true or false,  -- v7.1: reroll ON = FARM (bisa ambil tugas gift)
                         giftOn = state.autoGiftMail and true or false,
+                        -- v7.14: LAPOR target yg udah di-gift (< 10 menit) -> backend
+                        -- exclude dari giftPkList biar farm gak nyangkut ke akun yg
+                        -- mailbox-nya udah keisi. String koma "target1,target2".
+                        giftDone = (function()
+                            local t = {}
+                            for tgt, ts in pairs(Seed._giftDone or {}) do
+                                if (os.time() - ts) < 600 then t[#t+1] = tgt end
+                            end
+                            return table.concat(t, ",")
+                        end)(),
                         -- v3.4: buah nunggu jual + isi mailbox. Panel pakai ini
                         -- buat "sheckles tertunda" -- akun yang barangnya udah
                         -- dateng tapi belum kejual (nunggu pengali nyampe ambang).
