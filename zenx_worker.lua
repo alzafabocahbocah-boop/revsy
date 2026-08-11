@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.165-cf"
+local VERSION = "9.166-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8524,8 +8524,13 @@ local function run(cfg)
                 end
                 pcall(function() save_config(cfg) end)
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
+                skip_sisa = true   -- v9.166: cuma ronde PERTAMA (baru toggle rotasi).
             end
-            skip_sisa = true
+            -- v9.166 FIX: skip_sisa DIPINDAH ke DALAM if (dulu di luar -> tiap ronde
+            -- skip). Bug: pas sticky command = "ROTASI:off", tiap ronde skip_sisa=true
+            -- -> blok buka+rejoin client (line ~8806) KE-SKIP -> client GAK PERNAH
+            -- kebuka. Sama persis bug RESTART yg difix v9.79. Sekarang ROTASI bekas
+            -- (sticky, udah diproses) -> skip_sisa=false -> loop antrian buka+rejoin.
         elseif U:find("GRID") then
             -- v8.61: blok GRID LAMA (nata jendela + buka client). SKIP kalau:
             -- (1) "GRID:<kolom>" -- itu diproses blok baru (set grid_kolom, hormatin
