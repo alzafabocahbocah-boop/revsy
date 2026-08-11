@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.161-cf"
+local VERSION = "9.162-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -13328,6 +13328,10 @@ if PERINTAH == "update" and (arg and arg[2] == "mercy") then
             "   contoh: zenx update mercy 2.741.0")
         return
     end
+    -- v9.162: FIX -- dulu pake `cfg` yg NIL (gak di-load) -> selalu "gak ada
+    -- client di config" walau scan berhasil. Load config dulu kayak handler lain.
+    local cfg = load_config()
+    if not cfg then err("Config gak ada. Jalanin `pasang <preset>` dulu."); return end
     update_delta_ke(cfg, versiBaru)
     return
 end
