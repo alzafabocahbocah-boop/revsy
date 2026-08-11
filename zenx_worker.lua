@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.169-cf"
+local VERSION = "9.170-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4813,20 +4813,29 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                     if not pkgsPetaP and PKGS_AKTIF and #PKGS_AKTIF > 0 then
                         pkgsPetaP = PKGS_AKTIF
                     end
+                    -- v9.170: BYPASS WAJIB 3x2. PAKSA grid 3 kolom (6 client -> 3x2)
+                    -- buat hitung petak. User: kalau ukuran window BUKAN 3x2, paksa
+                    -- tata ulang sampe 3x2 (ukuran petak pasti dikalibrasi -> sapu kena).
+                    local kolAsli = cfg.grid_kolom
+                    cfg.grid_kolom = 3
                     local petaP = grid_hitung(cfg, pkgsPetaP)
+                    cfg.grid_kolom = kolAsli   -- balikin (jangan ganggu grid utama)
                     if petaP and petaP[pilih] then
-                        for coba = 1, 4 do
+                        local tgt = petaP[pilih]
+                        local tgtW, tgtH = tgt.R - tgt.L, tgt.B - tgt.T
+                        for coba = 1, 6 do
                             local k = jendela_kotak(pilih)
-                            local lebar = k and (k.R - k.L) or 0
-                            -- fullscreen (lebar > 1000) = belum settle -> tata + tunggu
-                            if lebar > 0 and lebar <= 1000 then
-                                info(("  jendela udah di petak (%dx%d) -- lanjut sapu")
-                                    :format(lebar, k.B - k.T))
+                            local lebar  = k and (k.R - k.L) or 0
+                            local tinggi = k and (k.B - k.T) or 0
+                            -- match 3x2 (toleransi 15px, App Cloner kadang geser)
+                            if lebar > 0 and math.abs(lebar - tgtW) <= 15 and math.abs(tinggi - tgtH) <= 15 then
+                                info(("  jendela UDAH 3x2 (%dx%d) -- lanjut sapu"):format(lebar, tinggi))
                                 break
                             end
-                            info(("  jendela masih fullscreen (%d) -- tata ke petak, tunggu..."):format(lebar))
-                            tata_satu(pilih, petaP[pilih])
-                            os.execute("sleep 3")   -- kasih App Cloner waktu naruh
+                            info(("  jendela %dx%d BUKAN 3x2 (target %dx%d) -- PAKSA tata 3x2 (%d/6)..."):format(
+                                lebar, tinggi, tgtW, tgtH, coba))
+                            tata_satu(pilih, tgt, true)   -- hapusDulu=true -> tata fresh
+                            os.execute("sleep 3")
                             if cek_batal and cek_batal() then break end
                         end
                     end
