@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.15"
+local VERSI = "7.16"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2544,8 +2544,19 @@ function Seed.giftTargetKu()
     local myIdx
     for i, f in ipairs(farms) do if f == me then myIdx = i; break end end
     if not myIdx then return nil, 0, "aku gak ada di daftar farm" end
-    if myIdx <= #habis then return habis[myIdx], kurang[myIdx] or 0 end
-    return nil, 0, ("idle (farm ke-%d, habis cuma %d)"):format(myIdx, #habis)
+    -- v7.16: ANTRIAN round-robin. farm ke-N pegang habis[N], habis[N+F], habis[N+2F]
+    -- ... (cap 5). Return yg PERTAMA BELUM di-gift -> abis antrian 1 kelar, pindah
+    -- ke antrian 2, dst. Gak nyangkut di antrian 1 (yg udah dikirimin).
+    local F = #farms
+    local nAntre = 0
+    for i = myIdx, #habis, F do
+        nAntre = nAntre + 1
+        if nAntre > 5 then break end          -- cap 5 seed per farm
+        if not Seed.giftSudah(habis[i]) then   -- belum di-gift -> ini target-nya
+            return habis[i], kurang[i] or 0
+        end
+    end
+    return nil, 0, "semua antrian udah di-gift (nunggu recover)"
 end
 
 -- v7.0: ANTRIAN AKU -- max 5 seed di-assign ke farm ini (round-robin cap 5).
