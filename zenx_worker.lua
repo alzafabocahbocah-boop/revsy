@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.162-cf"
+local VERSION = "9.163-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -13176,6 +13176,40 @@ function rotasi_lewat(cfg, pkg)
     return not ROT_TIM1[pkg]
 end
 
+-- v9.163: AUTO-DETECT nama APK dari GitHub Releases API (tag worker_64). Return
+-- map idx(1..20) -> browser_download_url. Robust: nama file apa aja kedeteksi,
+-- gak nebak pola (yg dulu sering 404 gara-gara 64BIT vs 64.BIT / .apk.1.apk).
+function daftar_apk_release(versi)
+    local API = "https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64"
+    local HOME = os.getenv("HOME") or "."
+    local tmp = HOME .. "/.rel_apk.json"
+    os.remove(tmp)
+    os.execute(("timeout 30 curl -fsSL -H 'User-Agent: zenx' %s -o %s 2>/dev/null"):format(shq(API), shq(tmp)))
+    local f = io.open(tmp, "r")
+    if not f then return {} end
+    local j = f:read("*a") or ""; f:close()
+    os.remove(tmp)
+    local map = {}
+    for nama, url in j:gmatch('"name":%s*"([^"]+)".-"browser_download_url":%s*"([^"]+)"') do
+        if nama:find(versi, 1, true) and nama:lower():find("%.apk") then
+            -- ekstrak index: "...64.BIT.NN-..." atau "nomercyN-..."
+            local idx = nama:match("BIT%.(%d+)%-") or nama:match("[Nn]omercy(%d+)%-")
+            if idx then map[tonumber(idx)] = url end
+        end
+    end
+    return map
+end
+
+-- v9.163: pola nama file (FALLBACK kalau API gagal). Udah dibenerin sesuai
+-- Releases asli: 64.BIT (titik), file 10 = .apk.1.apk, sisanya .apk.apk.
+function pola_apk(i, versi)
+    if i <= 10 then
+        local suf = (i == 10) and "apk.1.apk" or "apk.apk"
+        return ("NO.MERCY.DELTA.LITE.64.BIT.%02d-%s.%s"):format(i, versi, suf)
+    end
+    return ("nomercy%d-%s.apk"):format(i, versi)
+end
+
 -- v9.100: FUNGSI GLOBAL update Delta ke versi target. Dipakai command
 -- `zenx update mercy <versi>`, auto-cek 10-menit di loop, + perintah UPDATE-DELTA
 -- dari panel. Return sukses, dilewat, gagal. Global (bukan local) biar run() loop
@@ -13191,10 +13225,12 @@ function update_delta_ke(cfg, versiBaru, force)
         local out = sh(("su -c 'dumpsys package %s 2>/dev/null | grep -m1 versionName' 2>/dev/null"):format(pkg)) or ""
         return (out:match("versionName=([%w%.%-]+)") or "")
     end
-    -- file 1-10 pola versi, 11-15 nama tetap (nomercyNN.apk, versi ikut yg diupload)
-    local files = { ("NO.MERCY.DELTA.LITE.64BIT.01-%s.apk.1.apk"):format(versiBaru) }
-    for n = 2, 10 do files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-%s.apk.apk"):format(n, versiBaru) end
-    for n = 11, 18 do files[#files+1] = ("nomercy%d-%s.apk"):format(n, versiBaru) end
+    -- v9.163: nama APK dari GitHub API (auto-detect), fallback pola kalau API gagal
+    local apkMap = daftar_apk_release(versiBaru)
+    local nApi = 0
+    for _ in pairs(apkMap) do nApi = nApi + 1 end
+    if nApi > 0 then info(("[api] %d APK v%s kedeteksi di Releases"):format(nApi, versiBaru))
+    else warn("[api] gagal baca Releases -> pakai pola nama file (fallback)") end
     local TMPAPK = HOME .. "/mercy_update.apk"
     local sukses, gagal, dilewat = 0, 0, 0
     for i, pkg in ipairs(pkgs) do
@@ -13206,16 +13242,14 @@ function update_delta_ke(cfg, versiBaru, force)
             print(C.D .. ("[%d/%d] %s -- udah v%s, SKIP"):format(i, #pkgs, nama, versiBaru) .. C.N)
             dilewat = dilewat + 1
         else
-            local fileAPK = files[i]
-            if not fileAPK then
-                print(C.R .. ("[%d/%d] %s -- gak ada APK ke-%d"):format(i, #pkgs, nama, i) .. C.N)
-                gagal = gagal + 1
-            else
+            -- v9.163: url dari API (auto-detect), fallback ke pola nama kalau kosong
+            local url = apkMap[i] or (BASE .. pola_apk(i, versiBaru))
+            do
                 print(C.C .. ("[%d/%d] %s "):format(i, #pkgs, nama) .. C.N ..
                     (vNow ~= "" and ("v" .. vNow) or "(blm ada)") .. " -> v" .. versiBaru)
                 os.remove(TMPAPK)
                 os.execute(("timeout 900 curl -# --fail -L -o %s %s"):format(
-                    shq(TMPAPK), shq(BASE .. fileAPK)))
+                    shq(TMPAPK), shq(url)))
                 local sz = tonumber(sh(("stat -c %%s %s 2>/dev/null"):format(shq(TMPAPK))) or "") or 0
                 if sz < 1000000 then
                     print(C.R .. ("  GAGAL download (%d byte)"):format(sz) .. C.N)
@@ -13260,11 +13294,8 @@ function download_delta_slot(cfg, slotStr, versi)
     local slots = {}
     for s in tostring(slotStr or ""):gmatch("%d+") do slots[#slots+1] = tonumber(s) end
     if #slots == 0 then err("[download-slot] gak ada slot"); return 0, 0 end
-    local function namaFile(n)
-        if n == 1 then return ("NO.MERCY.DELTA.LITE.64BIT.01-%s.apk.1.apk"):format(versi) end
-        if n <= 10 then return ("NO.MERCY.DELTA.LITE.64BIT.%02d-%s.apk.apk"):format(n, versi) end
-        return ("nomercy%d-%s.apk"):format(n, versi)
-    end
+    -- v9.163: pola udah dibenerin -> pakai pola_apk global (64.BIT, file 10 spesial)
+    local function namaFile(n) return pola_apk(n, versi) end
     print(C.BOLD .. C.C .. ("\n=== DOWNLOAD CLIENT SLOT: %s ===\n"):format(table.concat(slots, ",")) .. C.N)
     local TMPAPK = HOME .. "/mercy_slot.apk"
     local sukses, gagal = 0, 0
@@ -13345,19 +13376,11 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     local HOME = os.getenv("HOME") or "."
     print(C.BOLD .. C.C .. "\n=== DOWNLOAD MERCY (GitHub Releases worker_64) ===\n" .. C.N)
 
-    -- daftar nama file (01 beda, 02-10 pola sama)
-    local files = {
-        "NO.MERCY.DELTA.LITE.64BIT.01-2.731.944.apk.1.apk",
-    }
-    for n = 2, 10 do
-        files[#files+1] = ("NO.MERCY.DELTA.LITE.64BIT.%02d-2.731.944.apk.apk"):format(n)
-    end
-    -- v9.98: client 11-15 nama pola BEDA (nomercy11.apk .. nomercy15.apk),
-    -- di-upload manual ke Releases worker_64. Ikut di-download biar RF bisa
-    -- 15 client. Kalau file-nya gak ada di Releases -> ke-skip (gagal size).
-    for n = 11, 18 do
-        files[#files+1] = ("nomercy%d-2.731.944.apk"):format(n)
-    end
+    -- v9.163: pola udah dibenerin (64.BIT, file 10 = .apk.1.apk) + versi dari
+    -- delta_versi.txt (bukan hardcoded lama). client 1-20.
+    local versiDL = cek_delta_versi(cfg) or "2.733.988"
+    local files = {}
+    for n = 1, 20 do files[#files+1] = pola_apk(n, versiDL) end
 
     ok(("%d APK dari GitHub Releases. Download + pasang (skip yg udah keinstall)...\n"):format(#files))
     -- v9.99: map APK -> package client (urut: file 1 -> pkgs[1], dst). Cek udah
