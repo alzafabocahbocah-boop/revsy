@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.174-cf"
+local VERSION = "9.176-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7531,7 +7531,11 @@ local function run(cfg)
                     -- skip cookie mati + (kalau FORCE:daftar) skip yg bukan di daftar
                     -- v9.47: cek akun ATAU pkg (PKGS_AKTIF pkg-based, FORCE:daftar akun-based)
                     local diForce = (not setAkun) or (ak and setAkun[ak]) or setAkun[pkg]
-                    if diForce and not (ak and KICK_DIURUS["mati:" .. ak]) then
+                    -- v9.175: pas ROTASI ON, SKIP Tim 2 (client 11-20) di antrian.
+                    -- User: rotasi = Tim 1 (1-10) loop utama, Tim 2 (11-20) STANDBY
+                    -- (cuma kebuka pas ada stock via buka_grup_rotasi). Dulu antrian
+                    -- gak cek rotasi -> semua 20 kebuka. rotasi_lewat=true buat Tim 2.
+                    if diForce and not (ak and KICK_DIURUS["mati:" .. ak]) and not rotasi_lewat(cfg, pkg) then
                         perlu = perlu + 1
                         -- v8.43: DETEKSI PAKAI DENYUT DOANG (buang cek grafis game).
                         -- User: rejoin cek dari denyut SD card. Kalau 2 menit gak
@@ -7822,8 +7826,10 @@ local function run(cfg)
                     -- perintah SEKARANG (isiSekarang) standby apa nggak.
                     local isiSekarang = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
                     local lagiStandby = isiSekarang:upper():find("STANDBY") or isiSekarang:upper():find("STOP")
-                    if lagiStandby then
-                        info("STANDBY -- cookie disiapin, client DIBUKA pas FORCE nanti.")
+                    -- v9.176: pas ROTASI ON, Tim 2 (11-20) = STANDBY -> JANGAN buka via
+                    -- ganti-akun juga. Cukup suntik cookie (persiapan), buka pas rotasi.
+                    if lagiStandby or rotasi_lewat(cfg, pkgG) then
+                        info("STANDBY/tim2-rotasi -- cookie disiapin, client DIBUKA pas FORCE/rotasi nanti.")
                     else
                         -- v7.02: GAK perlu suntik ulang (spam). Cookie udah masuk
                         -- bener (creation_utc wajar -> Roblox terima, gak dihapus).
