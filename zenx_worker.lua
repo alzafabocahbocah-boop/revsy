@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.163-cf"
+local VERSION = "9.164-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7154,10 +7154,13 @@ local function run(cfg)
             return
         end
 
-        -- v9.100: AUTO-UPDATE DELTA tiap 10 menit. Baca delta_versi.txt di GitHub,
-        -- bandingin sama versi Delta client pertama. Kalau BEDA -> blok loop, update
-        -- SEMUA client ke versi terbaru, terus lanjut. User gak perlu update manual.
-        if os.time() - DELTA_CEK_TS >= 600 then
+        -- v9.164: AUTO-UPDATE DELTA DIMATIIN default. Dulu (v9.100) jalan tiap 10
+        -- menit -> download 6-20 client x110MB NGE-BLOK loop (client gak kebuka,
+        -- worker keliatan hang). Dulu ke-tutupin karena nama file salah -> 404 cepet.
+        -- Sekarang nama file udah bener (v9.163) -> download beneran jalan -> blok.
+        -- Update client pakai MANUAL: `zenx update clien`. Auto cuma kalau
+        -- cfg.auto_delta di-set (jarang).
+        if cfg.auto_delta and os.time() - DELTA_CEK_TS >= 600 then
             DELTA_CEK_TS = os.time()
             local target = cek_delta_versi(cfg)
             if target and target ~= "" then
