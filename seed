@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.17"
+local VERSI = "7.19"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2552,11 +2552,13 @@ function Seed.giftTargetKu()
     for i = myIdx, #habis, F do
         nAntre = nAntre + 1
         if nAntre > 5 then break end          -- cap 5 seed per farm
-        if not Seed.giftSudah(habis[i]) then   -- belum di-gift -> ini target-nya
+        -- v7.18: skip yg TOTAL riwayat udah >= kurang (udah cukup dikirim).
+        -- Yg belum cukup -> ini target-nya (nanti kirim sisanya).
+        if Seed.giftTotalRiwayat(habis[i]) < (kurang[i] or 0) then
             return habis[i], kurang[i] or 0
         end
     end
-    return nil, 0, "semua antrian udah di-gift (nunggu recover)"
+    return nil, 0, "semua antrian udah cukup di-gift (nunggu recover)"
 end
 
 -- v7.0: ANTRIAN AKU -- max 5 seed di-assign ke farm ini (round-robin cap 5).
@@ -2618,14 +2620,30 @@ pcall(Seed.gfHistLoad)
 -- memory ilang tapi riwayat masih ada, jadi gak re-gift akun yg udah dikirimin.
 function Seed.giftSudah(target)
     local pk = tostring(target):lower()
-    local now = os.time()
-    if Seed._giftDone and Seed._giftDone[pk] and (now - Seed._giftDone[pk]) < 600 then return true end
+    local resetTs = (Seed._giftReset and Seed._giftReset[pk]) or 0
     for _, en in ipairs(Seed._gfHistory or {}) do
-        if en.target and tostring(en.target):lower() == pk and en.t and (now - en.t) < 600 then
+        if en.target and tostring(en.target):lower() == pk and en.t and en.t > resetTs then
             return true
         end
     end
     return false
+end
+
+-- v7.18: TOTAL value yg udah dikirim ke target (dari RIWAYAT, < 10 menit). Dipakai
+-- buat cross-check: kalau udah kirim >= kurang (butuh) -> skip, kalau belum ->
+-- kirim SISANYA doang (kurang - total). Gak dobel, gak over.
+function Seed.giftTotalRiwayat(target)
+    local pk = tostring(target):lower()
+    -- v7.19: TANPA batas waktu. Reset lewat panel (tombol restart) -> _giftReset[pk]
+    -- = ts. Entry riwayat SEBELUM ts diabaikan (dianggap siklus lama, udah recover).
+    local resetTs = (Seed._giftReset and Seed._giftReset[pk]) or 0
+    local total = 0
+    for _, en in ipairs(Seed._gfHistory or {}) do
+        if en.target and tostring(en.target):lower() == pk and en.t and en.t > resetTs then
+            total = total + (en.nilai or 0)
+        end
+    end
+    return total
 end
 
 -- v7.10: POPUP riwayat gift + limit harian. Pake Instance.new (bukan mk, biar
@@ -2705,13 +2723,15 @@ function Seed.autoGiftMailOnce()
     -- gak recover, retry). Cegah over-gift TANPA cooldown 4 menit.
     Seed._giftDone = Seed._giftDone or {}
     local pk = target:lower()
-    -- v7.15: cek dari _giftDone (memory) DAN RIWAYAT (persist) -- biar abis rejoin
-    -- gak re-gift akun yg udah dikirimin (memory ilang, riwayat gak).
-    if Seed.giftSudah(target) then
-        Seed._logGiftPk = ("udah di-gift cukup -> %s (cek riwayat, nunggu recover)"):format(target)
+    -- v7.18: CROSS-CHECK TOTAL riwayat. Udah dikirim berapa ke akun ini?
+    local sudah = Seed.giftTotalRiwayat(target)
+    if kurang and kurang > 0 and sudah >= kurang then
+        Seed._logGiftPk = ("udah cukup -> %s (riwayat %s >= butuh %s, nunggu recover)"):format(
+            target, Seed._singkat(sudah), Seed._singkat(kurang))
         return
     end
-    if Seed._giftDone[pk] then Seed._giftDone[pk] = nil end   -- kelewat 10 menit -> boleh retry
+    -- kirim SISANYA doang (kurang - yg udah dikirim), bukan full kurang
+    if kurang and kurang > 0 then kurang = kurang - sudah end
     -- kumpulin buah pumpkin + VALUE (harga NORMAL, v7.4)
     local elig, totalVal = {}, 0
     for _, holder in ipairs(tasHolders()) do
@@ -6987,6 +7007,15 @@ function Seed.pakaiCfgPanel(r)
     if type(c.giftAmbang) == "string" and state.giftAmbang ~= c.giftAmbang then
         state.giftAmbang = c.giftAmbang
         Seed._giftListKey = nil   -- paksa rebuild list biar ambang baru ketampil
+    end
+    -- v7.19: RESET dari panel (tombol restart). c.giftReset = {target: ts}. Entry
+    -- riwayat sebelum ts diabaikan -> akun balik ke antrian, di-gift fresh lagi.
+    if type(c.giftReset) == "table" then
+        Seed._giftReset = Seed._giftReset or {}
+        for tgt, ts in pairs(c.giftReset) do
+            local n = tonumber(ts)
+            if n and n > 0 then Seed._giftReset[tostring(tgt):lower()] = n end
+        end
     end
     if type(c.minRarity) == "string" and c.minRarity ~= "" then
         -- cuma terima yang beneran ada di daftar rarity, biar gak nyetel ke
