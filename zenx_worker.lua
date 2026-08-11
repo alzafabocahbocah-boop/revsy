@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.167-cf"
+local VERSION = "9.168-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -13389,7 +13389,10 @@ if PERINTAH == "update" and (arg and arg[2] == "mercy") then
     -- client di config" walau scan berhasil. Load config dulu kayak handler lain.
     local cfg = load_config()
     if not cfg then err("Config gak ada. Jalanin `pasang <preset>` dulu."); return end
-    update_delta_ke(cfg, versiBaru)
+    -- v9.168: FORCE (param true) -> update walau versi sama. User: "walaupun udah
+    -- ke-update gpp update lagi aja". versionName Roblox gak berubah walau Delta
+    -- baru -> tanpa force ke-skip terus.
+    update_delta_ke(cfg, versiBaru, true)
     return
 end
 
