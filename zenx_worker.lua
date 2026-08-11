@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.166-cf"
+local VERSION = "9.167-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8523,6 +8523,19 @@ local function run(cfg)
                     tambahLog("Rotasi tim: NYALA (" .. cfg.rotasi_barang .. ")")
                 end
                 pcall(function() save_config(cfg) end)
+                -- v9.167: ROTASI cuma toggle rotasi, BUKAN stop. Kalau lagi FORCE
+                -- (MODE_JALAN), RESTORE command FORCE ke /perintah biar client TETEP
+                -- kebuka. ROOT CAUSE bug user: START PAKSA set /perintah=FORCE, tapi
+                -- panel NIMPA dgn ROTASI:off -> command FORCE ilang -> client gak
+                -- kebuka. Sama kayak CEKCOOKIE yg re-send FORCE abis diproses.
+                if MODE_JALAN then
+                    pcall(function()
+                        local isiForce = force_str(cfg, mapAkun)
+                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                        lastIsi = isiForce
+                    end)
+                    info("ROTASI diproses pas FORCE -> restore FORCE (client tetep kebuka)")
+                end
                 lapor(cfg, isi, cacheRun); lastStatus = os.time()
                 skip_sisa = true   -- v9.166: cuma ronde PERTAMA (baru toggle rotasi).
             end
