@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.173-cf"
+local VERSION = "9.174-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -11724,6 +11724,39 @@ function getps_akun(cfg, cookie)
     return nil, sebabAkhir
 end
 
+-- v9.174: copy cek_cookie_roblox (aslinya kedefinisi SETELAH handler getps, jadi
+-- gak kepake inline). Cek status cookie via API Roblox: alive/captcha/ban/dead.
+function cek_ck_getps(cookie)
+    if not cookie or cookie == "" then return "dead", "cookie kosong" end
+    local tmp = (os.getenv("HOME") or ".") .. "/nx_ckgetps.txt"
+    os.remove(tmp)
+    local hf = io.open(tmp, "w")
+    if not hf then return "error", "gak bisa nulis tmp" end
+    hf:write(".ROBLOSECURITY=" .. cookie); hf:close()
+    local alat = RIW and RIW.http and RIW.http.pilih() or "curl"
+    local cmd
+    if alat == "wget" then
+        cmd = ("wget -qO- --server-response --timeout=15 --header=\"Cookie: $(cat %s)\" " ..
+               "https://users.roblox.com/v1/users/authenticated 2>&1"):format(shq(tmp))
+    else
+        cmd = ("curl -s -4 -m 15 -w \"\nHTTP:%%{http_code}\" -H \"Cookie: $(cat %s)\" " ..
+               "https://users.roblox.com/v1/users/authenticated 2>&1"):format(shq(tmp))
+    end
+    local h = io.popen(cmd)
+    local out = h and h:read("*all") or ""
+    if h then h:close() end
+    os.remove(tmp)
+    local kode = out:match("HTTP:(%d+)") or out:match("HTTP/%d%.?%d?%s+(%d+)")
+    if kode == "200" and out:find('"name"') then
+        return "alive", out:match('"name"%s*:%s*"([^"]*)"')
+    end
+    local low = out:lower()
+    if low:find("captcha") or low:find("challenge") then return "captcha", nil end
+    if low:find("ban") or low:find("terminat") or low:find("moderat") then return "ban", nil end
+    if kode == "401" then return "dead", nil end
+    return "error", ("kode=%s"):format(kode or "?")
+end
+
 if PERINTAH == "getps" then
     -- v7.36: GET PS LINK per akun (kayak Pandora). Loop semua akun tim, fetch
     -- accessCode dari API Roblox private-servers (pake cookie akun), simpen ke
@@ -11737,11 +11770,13 @@ if PERINTAH == "getps" then
     -- akun yg bukan punya device ini). Baca username tiap client di device ini.
     local akunList = {}
     local seen = {}
+    local akunPkg = {}   -- v9.174: akun -> client, buat baca cookie kalau backend kosong
     for _, pkg in ipairs(split(cfg.pkgs or "")) do
         local u = baca_username(pkg)
         if u and u ~= "" and u ~= "?" and not seen[u] then
             seen[u] = true
             akunList[#akunList+1] = u
+            akunPkg[u] = pkg
         end
     end
     if #akunList == 0 then
@@ -11783,9 +11818,46 @@ if PERINTAH == "getps" then
         local ck = api_get(cfg, "/cookie-satu?akun=" .. akun) or ""
         local cookie = ck:match('"cookie"%s*:%s*"([^"]+)"')
         if not cookie or cookie == "" then
-            warn(("%s: cookie gak ada -> skip"):format(akun))
-            gagal = gagal + 1
-        else
+            -- v9.174: cookie KOSONG di backend -> LOGIN: baca cookie dari CLIENT yg
+            -- login akun ini + cek status. Hidup -> simpen + lanjut getps.
+            -- Captcha/ban/mati -> LAPOR ke panel (/cookie-status) + skip.
+            local pkgA = akunPkg[akun]
+            local ckClient = nil
+            if pkgA then
+                local db = "/data/data/" .. pkgA .. "/app_webview/Default/Cookies"
+                local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                    "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
+                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+                local raw = hC and hC:read("*all") or ""
+                if hC then hC:close() end
+                for baris in (raw .. "\n"):gmatch("(.-)\n") do
+                    baris = baris:gsub("%s+$", "")
+                    if baris:find("_|WARNING") and (not ckClient or #baris > #ckClient) then ckClient = baris end
+                end
+            end
+            if not ckClient then
+                warn(("%s: cookie kosong + client gak login akun ini -> skip"):format(akun))
+                gagal = gagal + 1
+            else
+                info(("%s: cookie kosong -> LOGIN (cek status dari client)..."):format(akun))
+                local keadaan, ketCk = cek_ck_getps(ckClient)
+                if keadaan == "alive" then
+                    cookie = ckClient
+                    pcall(function() api_post(cfg, "/cookie-simpan",
+                        string.format('{"akun":%s,"paket":%s,"cookie":%s}', jstr(akun), jstr(pkgA), jstr(cookie))) end)
+                    ok(("%s: cookie HIDUP -> disimpen + lanjut getps"):format(akun))
+                elseif keadaan == "captcha" or keadaan == "ban" or keadaan == "dead" then
+                    pcall(function() api_post(cfg, "/cookie-status",
+                        string.format('{"akun":%s,"status":%s}', jstr(akun), jstr(keadaan))) end)
+                    warn(("%s: cookie %s -> LAPOR ke panel + skip"):format(akun, keadaan))
+                    gagal = gagal + 1
+                else
+                    warn(("%s: cek cookie gagal (%s) -> skip"):format(akun, ketCk or "?"))
+                    gagal = gagal + 1
+                end
+            end
+        end
+        if cookie and cookie ~= "" then
             local code, ket = getps_akun(cfg, cookie)
             if code then
                 -- simpen ke backend: ps_link = "accessCode=CODE"
