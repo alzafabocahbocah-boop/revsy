@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.187-cf"
+local VERSION = "9.188-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2729,6 +2729,12 @@ local function build_url(cfg, link_client)
         if lc == nil then lc = cfg.link_code or "" end
     end
     lc = lc or ""
+    -- v9.187: format "psplc:CODE" = joinCode universe-level. Coba deep link pake param
+    -- privateServerLinkCode (BUKAN linkCode yg dulu ditolak). placeId nentuin dunia.
+    if lc:sub(1,6) == "psplc:" then
+        local jc = lc:sub(7)
+        return "roblox://placeId="..cfg.place_id.."&privateServerLinkCode="..jc
+    end
     -- v9.182: kalau ada _ps_override = privateServerLinkCode (UNIVERSE-level, kepake
     -- lintas dunia -- tinggal ganti placeId), PAKE ITU walau ada link_client (accessCode
     -- getps yg PLACE-SPECIFIC -> nyangkut dunia lama pas ganti dunia). Insight user:
@@ -11732,16 +11738,23 @@ function getps_akun(cfg, cookie)
         local h = io.popen(cmd)
         local out = h and h:read("*all") or ""
         if h then h:close() end
-        -- v9.186: BALIK ke accessCode. joinCode (v9.184) universe-level TAPI GAK
-        -- auto-join lewat am start (https buka Home, linkCode deep link ditolak Roblox).
-        -- accessCode = SATU-SATUNYA yg auto-join (deep link roblox://...&accessCode).
-        -- accessCode dari server BARU (POST /vip-servers/<universe>) = universe-level
-        -- juga (placeId nentuin dunia). Yg dulu nyangkut W2 = accessCode server W2 lama.
+        -- v9.187: TERBUKTI accessCode place-specific (URL placeId=W1 TAPI masuk W2 --
+        -- accessCode server W2 menang, placeId diabaikan). Balik ke joinCode (universe-
+        -- level -- kepake lintas dunia). build_url pake deep link privateServerLinkCode.
+        local vsid = out:match('"vipServerId"%s*:%s*(%d+)') or out:match('"id"%s*:%s*(%d+)')
         local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
+        if vsid then
+            local jc = getps_joincode(tmp, vsid)
+            if jc then
+                os.remove(tmp)
+                local nama = out:match('"name"%s*:%s*"([^"]*)"')
+                return ("psplc:"..jc), (nama or "PS") .. " [joinCode UNIVERSE]"
+            end
+        end
         if code then
             os.remove(tmp)
             local nama = out:match('"name"%s*:%s*"([^"]*)"')
-            return code, (nama or "PS") .. " [accessCode]" .. (place ~= aktif and " (dari W1)" or "")
+            return code, (nama or "PS") .. " [accessCode]"
         end
         if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
         elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
@@ -11950,9 +11963,10 @@ if PERINTAH == "getps" then
         if cookie and cookie ~= "" then
             local code, ket = getps_akun(cfg, cookie)
             if code then
-                -- v9.183: kalau getps balik FULL URL (privateServerLinkCode -- universe),
-                -- simpen apa adanya. Kalau accessCode (place-specific) -> prefix "accessCode=".
-                local psLink = (code:sub(1,4) == "http") and code or ("accessCode=" .. code)
+                -- v9.187: "psplc:CODE" = joinCode universe (simpen apa adanya). "http" =
+                -- full URL. else accessCode. build_url handle tiap format.
+                local psLink = (code:sub(1,6) == "psplc:" or code:sub(1,4) == "http")
+                    and code or ("accessCode=" .. code)
                 local simpanOk, resp = false, ""
                 pcall(function()
                     resp = api_post(cfg, "/ps-simpan",
