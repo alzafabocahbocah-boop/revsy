@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.182-cf"
+local VERSION = "9.183-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -11711,11 +11711,22 @@ function getps_akun(cfg, cookie)
         local h = io.popen(cmd)
         local out = h and h:read("*all") or ""
         if h then h:close() end
+        -- v9.183: UTAMAIN privateServerLinkCode/link (UNIVERSE-level -- kepake lintas
+        -- dunia tanpa getps ulang). Kalau API ngasih share link, return FULL URL
+        -- (build_url ganti placeId sendiri). Kalau gak ada -> fallback accessCode.
+        local plc = out:match('privateServerLinkCode=([%w]+)')
+                 or out:match('"linkCode"%s*:%s*"([%w]+)"')
+        if plc then
+            os.remove(tmp)
+            local nama = out:match('"name"%s*:%s*"([^"]*)"')
+            return ("https://www.roblox.com/games/"..place.."/x?privateServerLinkCode="..plc),
+                   (nama or "PS") .. " [linkCode UNIVERSE]"
+        end
         local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
         if code then
             os.remove(tmp)
             local nama = out:match('"name"%s*:%s*"([^"]*)"')
-            return code, (nama or "PS") .. (place ~= aktif and " (dari W1)" or "")
+            return code, (nama or "PS") .. " [accessCode]" .. (place ~= aktif and " (dari W1)" or "")
         end
         if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
         elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
@@ -11924,8 +11935,9 @@ if PERINTAH == "getps" then
         if cookie and cookie ~= "" then
             local code, ket = getps_akun(cfg, cookie)
             if code then
-                -- simpen ke backend: ps_link = "accessCode=CODE"
-                local psLink = "accessCode=" .. code
+                -- v9.183: kalau getps balik FULL URL (privateServerLinkCode -- universe),
+                -- simpen apa adanya. Kalau accessCode (place-specific) -> prefix "accessCode=".
+                local psLink = (code:sub(1,4) == "http") and code or ("accessCode=" .. code)
                 local simpanOk, resp = false, ""
                 pcall(function()
                     resp = api_post(cfg, "/ps-simpan",
