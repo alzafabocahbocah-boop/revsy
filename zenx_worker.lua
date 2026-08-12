@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.177-cf"
+local VERSION = "9.178-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8688,6 +8688,23 @@ local function run(cfg)
                 -- User: setelah start paksa dia GAK FORCE -> client gak kebuka. Dulu
                 -- andelin backend expire RESTART->FORCE, tapi PAKSA gak ke-expire.
                 do
+                    -- v9.178: SEBELUM nimpa /perintah dgn FORCE:daftar, TANGKEP ROTASI
+                    -- yg mungkin udah masuk dari panel (urutan START PAKSA -> ROTASI).
+                    -- Kalau gak, FORCE:daftar nimpa ROTASI -> ilang -> antrian ronde
+                    -- depan gak tau rotasi -> semua 20 kebuka. Set rotasi_on DI SINI.
+                    do
+                        local pR = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+                        local uR = pR:upper()
+                        if uR:find("ROTASI") and not uR:find("ROTASI%-") then
+                            local isiRot = (pR:match("ROTASI:(.*)$") or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                            if isiRot ~= "" and isiRot:lower() ~= "off" and not cfg.rotasi_on then
+                                cfg.rotasi_on = true
+                                cfg.rotasi_barang = isiRot:match("^(.-)|") or isiRot
+                                ROT_TIM1 = nil
+                                info("[start-paksa] ROTASI ketangkep sebelum FORCE -> rotasi_on=true (Tim 2 STANDBY)")
+                            end
+                        end
+                    end
                     local daftarForce = isi:match("PAKSA:(.+)")
                     local isiForce = daftarForce and ("FORCE:" .. daftarForce) or force_str(cfg, mapAkun)
                     lastIsi = isiForce   -- update biar gak ke-PAKSA-handler lagi
