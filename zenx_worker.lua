@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.200-cf"
+local VERSION = "9.201-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -13455,10 +13455,24 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
         tambahLog_rotasi(cfg, ("batch %d (%d-%d) borong"):format(nBatch, dari, sampai))
         buka_grup_rotasi(cfg, pkgs_slot(cfg, dari, sampai), mapLink)
         info(("[rotasi] batch %d beli... (%ds)"):format(nBatch, OPEN_SEC))
-        os.execute("sleep " .. OPEN_SEC)
+        -- v9.201: sleep OPEN_SEC TAPI cek STOCK BARU tiap detik. User: kalau ada stock
+        -- baru pas lagi borong -> ABORT, ulang buat stock baru (utamain yg baru).
+        local abortBaru = false
+        for _ = 1, OPEN_SEC do
+            os.execute("sleep 1")
+            if ada_rotasi_go_baru(cfg) then abortBaru = true; break end
+        end
         -- close batch INSTANT + langsung batch berikutnya (gak jeda 1 menit)
         info(("[rotasi] close batch %d (client %d-%d) -- barengan cepet"):format(nBatch, dari, sampai))
         pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, dari, sampai)) end)
+        if abortBaru then
+            warn("[rotasi] >>> STOCK BARU dari panel <<< ABORT rotasi ini -> ulang tim 2 buat stock baru")
+            tambahLog_rotasi(cfg, "ada stock baru -> abort, ulang tim 2")
+            if pindahTim2 then cfg.place_id = placeAsli end
+            ROTASI_STATE = "idle"
+            ROTASI_TS = 0   -- gak cooldown, biar stock baru langsung ke-proses top-loop
+            return
+        end
         os.execute("sleep 1")
         dari = sampai + 1
     end
