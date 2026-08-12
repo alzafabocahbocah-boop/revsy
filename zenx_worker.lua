@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.195-cf"
+local VERSION = "9.200-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2274,6 +2274,12 @@ function ada_perintah_baru(cfg, isiLagiJalan)
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
         local tsR = ambil_num(r, "ts") or 0
         if tsR ~= (RESTART_TS_PROSES or 0) then nyela = true end
+    elseif u:find("ROTASI%-GO") then
+        -- v9.198: ROTASI-GO (stock restock) = PRIORITAS -> NYELA loop biar borong
+        -- cepet, gak nunggu rejoin/denyut kelar (~35s). User: rotasi langsung, abaikan
+        -- yg lagi jalan. Dedup pakai ts (nyela sekali per sinyal, gak loop).
+        local tsR = ambil_num(r, "ts") or 0
+        if tsR ~= (ROTASI_GO_TS_PROSES or 0) then nyela = true; ROTASI_GO_TS_PROSES = tsR end
     elseif u:find("ROTASI") and not u:find("ROTASI%-GO") and not u:find("ROTASI%-TEST") then
         -- v9.165 FIX LOOP: ROTASI (toggle on/off) DULU nyela TANPA cek ts -> sticky
         -- di DB -> nyela terus tiap 2s -> rejoin/loop panjang GAK PERNAH KELAR.
@@ -2286,6 +2292,19 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     end
     _apb_cache = nyela
     return nyela
+end
+
+-- v9.199: tulis /perintah TAPI JAGA ROTASI-GO. Kalau ada ROTASI-GO yg BELUM diproses
+-- (isi != ROTASI_GO_LAST), JANGAN nimpa -- biar sinyal restock gak ilang ketimpa FORCE
+-- yg worker tulis sendiri. User curiga ROTASI-GO ke-block/ketimpa. Ini nutup celah itu.
+function tulis_perintah_jaga(cfg, bodyJson)
+    local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+    local nowIsi = ambil_str(r, "isi") or ""
+    if nowIsi:upper():find("ROTASI%-GO") and nowIsi ~= ROTASI_GO_LAST then
+        info("[jaga] ada ROTASI-GO belum diproses -> SKIP tulis FORCE (biar rotasi gak ilang)")
+        return false
+    end
+    return api_post(cfg, "/perintah", bodyJson, "PUT")
 end
 
 -- ============================================================
@@ -7241,14 +7260,16 @@ local function run(cfg)
                 -- v9.195: extract DUNIA (place) dari sinyal ROTASI-GO|seed|ts|place.
                 -- Panel kirim place sesuai dunia seed (Dunia1=W1, Dunia2=W2) -> tim 2
                 -- borong di dunia SEED, bukan dunia tim 1.
+                -- v9.200: extract SEED juga -> log tau stock APA (bukan cuma "PANEL-STOCK").
+                local seedGO = isiTop:match("ROTASI%-GO|([^|]*)|") or "?"
                 local placeGO = isiTop:match("ROTASI%-GO|[^|]*|[^|]*|(%d+)")
                 if ROTASI_STATE == "idle" then
-                    warn(("[rotasi] >>> STOCK dari PANEL <<< rotasi%s"):format(
-                        placeGO and (" (dunia seed: "..placeGO..")") or ""))
-                    tambahLog("Rotasi: stock dari panel (real-time)")
-                    pcall(function() jalankan_rotasi(cfg, "PANEL-STOCK", mapLink, placeGO) end)
+                    warn(("[rotasi] >>> STOCK dari PANEL: %s <<< rotasi%s"):format(
+                        seedGO, placeGO and (" (dunia "..placeGO..")") or ""))
+                    tambahLog(("Rotasi: stock dari panel -> %s"):format(seedGO))
+                    pcall(function() jalankan_rotasi(cfg, seedGO, mapLink, placeGO) end)
                 else
-                    warn("[rotasi] stock panel tapi rotasi lagi jalan -> skip")
+                    warn(("[rotasi] stock panel (%s) tapi rotasi lagi jalan -> skip"):format(seedGO))
                 end
             end
             -- v9.113: ROTASI TIM. Kalau rotasi_on + idle + cooldown lewat -> cek API
@@ -7278,7 +7299,15 @@ local function run(cfg)
                 local siap = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 60
                 -- 3) trigger cuma kalau idle + cooldown + gate siap
                 if barang and ROTASI_STATE == "idle" and (os.time() - ROTASI_TS) > 120 and siap then
-                    pcall(function() jalankan_rotasi(cfg, barang, mapLink) end)
+                    -- v9.197: cari dunia SEED dari peta (self-detect tau dunia, gak
+                    -- borong di cfg.place_id doang). User: stock W2 -> harus borong W2.
+                    local placeR = nil
+                    if cfg.rotasi_peta and barang and barang ~= "" then
+                        for s, p in cfg.rotasi_peta:gmatch("([^,:]+):(%d+)") do
+                            if s == barang then placeR = p; break end
+                        end
+                    end
+                    pcall(function() jalankan_rotasi(cfg, barang, mapLink, placeR) end)
                 elseif barang and not siap then
                     info(("[rotasi] stock '%s' kedeteksi tapi tim 1 belum siap -> baseline dicatat, nunggu siap"):format(barang))
                 end
@@ -8471,7 +8500,7 @@ local function run(cfg)
                     notify("ZenX "..cfg.tim, "REBOOT batal: " .. alasan)
                     -- balik FORCE biar lanjut normal (gak nyangkut REBOOT)
                     pcall(function()
-                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
+                        tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))))
                     end)
                     lapor(cfg, "REBOOT-BATAL", cacheRun)
                     skip_sisa = true
@@ -8568,6 +8597,13 @@ local function run(cfg)
                 else
                     -- v9.136: format "seeds|batch|opensec". batch+opensec opsional.
                     -- v9.144: +|dunia opsional (sama/w1/w2/gantian).
+                    -- v9.197: extract |PETA=seed:place,... (peta seed->dunia) buat
+                    -- worker self-detect tau dunia tiap seed. Buang dulu sebelum parse.
+                    local petaGO = isiRot:match("|PETA=(.+)$")
+                    if petaGO then
+                        cfg.rotasi_peta = petaGO
+                        isiRot = isiRot:gsub("|PETA=.+$", "")
+                    end
                     local seeds, bt, os2, dn = isiRot:match("^(.-)|(%d+)|(%d+)|(%w+)$")
                     if not seeds then
                         seeds, bt, os2 = isiRot:match("^(.-)|(%d+)|(%d+)$")
@@ -8594,7 +8630,7 @@ local function run(cfg)
                 if MODE_JALAN then
                     pcall(function()
                         local isiForce = force_str(cfg, mapAkun)
-                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                        tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce))
                         lastIsi = isiForce
                     end)
                     info("ROTASI diproses pas FORCE -> restore FORCE (client tetep kebuka)")
@@ -8736,7 +8772,7 @@ local function run(cfg)
                     local isiForce = daftarForce and ("FORCE:" .. daftarForce) or force_str(cfg, mapAkun)
                     lastIsi = isiForce   -- update biar gak ke-PAKSA-handler lagi
                     pcall(function()
-                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                        tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce))
                     end)
                     info("PAKSA -> FORCE dikirim (client bakal kebuka ronde ini)")
                     _apb_waktu = 0   -- reset cek perintah (fresh ronde depan)
@@ -8868,7 +8904,7 @@ local function run(cfg)
                     local isiForce = daftarForce and ("FORCE:" .. daftarForce) or force_str(cfg, mapAkun)
                     lastIsi = isiForce
                     pcall(function()
-                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                        tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce))
                     end)
                     info("RESTART -> FORCE dikirim (client bakal kebuka)")
                     _apb_waktu = 0   -- reset cek perintah (fresh ronde depan)
@@ -8885,7 +8921,7 @@ local function run(cfg)
                 if lastIsi ~= isiForce then
                     lastIsi = isiForce
                     pcall(function()
-                        api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce), "PUT")
+                        tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":"%s"}', jstr(cfg.tim), isiForce))
                     end)
                     info("RESTART bekas (ts=" .. tsRestart .. ", udah diproses) -> kirim FORCE, lanjut buka client")
                 end
@@ -8982,7 +9018,7 @@ local function run(cfg)
                 tambahLog("UPDATE batal: " .. alasanU)
                 notify("ZenX "..cfg.tim, "UPDATE batal: " .. alasanU)
                 pcall(function()
-                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
+                    tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))))
                 end)
                 lapor(cfg, "UPDATE-BATAL", cacheRun)
             else
@@ -8992,7 +9028,7 @@ local function run(cfg)
             -- reset perintah + lapor DULU, selagi worker MASIH IDUP (biar kekirim).
             -- Kalau nunggu updater, worker udah mati -> gak kekirim.
             pcall(function()
-                api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))), "PUT")
+                tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))))
             end)
             lapor(cfg, "UPDATE", cacheRun)
             tambahLog("UPDATE: tarik worker baru (terpisah) -> reboot")
@@ -13216,6 +13252,7 @@ ROTASI_TS = 0            -- ts terakhir rotasi selesai (cooldown)
 ROTASI_SIAP_TS = 0       -- v9.116: kapan tim 1 (1-10) LENGKAP nembak server (proses idup). Rotasi baru aktif 60s setelah ini.
 ROTASI_TEST_LAST = ""    -- v9.137: dedup sinyal TEST (diproses di top-loop biar cepet)
 ROTASI_GO_LAST = ""      -- v9.139: dedup sinyal STOCK dari panel (real-time detect)
+ROTASI_GO_TS_PROSES = 0  -- v9.198: ts ROTASI-GO terakhir yg nyela loop (dedup interrupt)
 ROTASI_GANTIAN = 0       -- v9.144: counter buat mode dunia "gantian" (W1/W2 selang-seling)
 
 -- ambil pkg berdasar rentang slot (idx 1-based di cfg.pkgs)
