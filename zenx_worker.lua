@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.181-cf"
+local VERSION = "9.182-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2729,6 +2729,14 @@ local function build_url(cfg, link_client)
         if lc == nil then lc = cfg.link_code or "" end
     end
     lc = lc or ""
+    -- v9.182: kalau ada _ps_override = privateServerLinkCode (UNIVERSE-level, kepake
+    -- lintas dunia -- tinggal ganti placeId), PAKE ITU walau ada link_client (accessCode
+    -- getps yg PLACE-SPECIFIC -> nyangkut dunia lama pas ganti dunia). Insight user:
+    -- link privateServerLinkCode SAMA lintas dunia, cuma ganti id game. accessCode
+    -- kepaku ke server 1 place -> gak bisa dipindah dunia.
+    if cfg._ps_override and cfg._ps_override:find("privateServerLinkCode") then
+        lc = cfg._ps_override
+    end
     -- v4.16: LINK SHARE MODERN (share?code=XXX&type=Server) -> code itu BUKAN
     -- linkCode! itu kode share yg harus di-RESOLVE Roblox dulu. dulu worker
     -- ambil code jadi linkCode langsung -> SALAH -> join gagal, nyangkut server
