@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.189-cf"
+local VERSION = "9.191-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2729,12 +2729,6 @@ local function build_url(cfg, link_client)
         if lc == nil then lc = cfg.link_code or "" end
     end
     lc = lc or ""
-    -- v9.187: format "psplc:CODE" = joinCode universe-level. Coba deep link pake param
-    -- privateServerLinkCode (BUKAN linkCode yg dulu ditolak). placeId nentuin dunia.
-    if lc:sub(1,6) == "psplc:" then
-        local jc = lc:sub(7)
-        return "roblox://placeId="..cfg.place_id.."&privateServerLinkCode="..jc
-    end
     -- v9.182: kalau ada _ps_override = privateServerLinkCode (UNIVERSE-level, kepake
     -- lintas dunia -- tinggal ganti placeId), PAKE ITU walau ada link_client (accessCode
     -- getps yg PLACE-SPECIFIC -> nyangkut dunia lama pas ganti dunia). Insight user:
@@ -8095,7 +8089,7 @@ local function run(cfg)
                 -- worker -> placeBeda=false -> gak restart -> client tetep W2). Fix:
                 -- derive place dari server (w1-* = W1 lama, w2-* = W2 FALL). Server yg
                 -- user pilih = dunia yg diinginkan, jadi place WAJIB ikut server.
-                if sServer:find("^w1") then sPlace = "129343810645058"
+                if sServer:find("^w1") then sPlace = "97598239454123"   -- v9.191: W1 ASLI (klasik)
                 elseif sServer:find("^w2") then sPlace = "126987765280963" end
                 -- v9.180: pakai_ps dari server -- "*-private" -> getps ambil PS, "*-public"
                 -- -> public. Bug user: w1-private tapi client masuk PUBLIC (getps di-skip
@@ -11715,7 +11709,7 @@ function getps_akun(cfg, cookie)
     -- (akun belum punya PS di W2), fallback ke W1 (world lama, biasanya udah punya
     -- PS). accessCode UNIVERSE-level -> bisa join W2 pakai placeId W2. User insight:
     -- "PS-nya sama, tinggal ganti id place ke world 2".
-    local W1 = "129343810645058"
+    local W1 = "97598239454123"    -- v9.191: W1 ASLI (Grow a Garden 2 klasik). 129343810645058 = redirect ke W2
     local W2 = "126987765280963"
     local aktif = cfg.place_id or W1
     -- v9.189: cek SEMUA dunia (aktif, W1, W2). Bug user: getps cuma cek dunia AKTIF
@@ -11743,23 +11737,15 @@ function getps_akun(cfg, cookie)
         local h = io.popen(cmd)
         local out = h and h:read("*all") or ""
         if h then h:close() end
-        -- v9.187: TERBUKTI accessCode place-specific (URL placeId=W1 TAPI masuk W2 --
-        -- accessCode server W2 menang, placeId diabaikan). Balik ke joinCode (universe-
-        -- level -- kepake lintas dunia). build_url pake deep link privateServerLinkCode.
-        local vsid = out:match('"vipServerId"%s*:%s*(%d+)') or out:match('"id"%s*:%s*(%d+)')
+        -- v9.191: FINAL -> accessCode. TERBUKTI (chat lama + debug): privateServerLinkCode/
+        -- joinCode CUMA jalan di BROWSER (Roblox terjemahin linkCode->accessCode di
+        -- belakang layar). Executor/am start GAK bisa terjemahin -> masuk PUBLIC.
+        -- accessCode dipake langsung executor -> join PRIVATE. Ini yg bener dari awal.
         local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
-        if vsid then
-            local jc = getps_joincode(tmp, vsid)
-            if jc then
-                os.remove(tmp)
-                local nama = out:match('"name"%s*:%s*"([^"]*)"')
-                return ("psplc:"..jc), (nama or "PS") .. " [joinCode UNIVERSE]"
-            end
-        end
         if code then
             os.remove(tmp)
             local nama = out:match('"name"%s*:%s*"([^"]*)"')
-            return code, (nama or "PS") .. " [accessCode]"
+            return code, (nama or "PS") .. " [accessCode PRIVATE]"
         end
         if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
         elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
@@ -11865,6 +11851,51 @@ function cek_ck_getps(cookie)
     return "error", ("kode=%s"):format(kode or "?")
 end
 
+if PERINTAH == "cekplace" then
+    local cfg = load_config()
+    if not cfg then err("Config gak ada."); return end
+    print(C.BOLD .. C.C .. "\n=== CEK PLACE (id game -> nama dunia) ===\n" .. C.N)
+    -- ambil cookie dari client pertama yg jalan
+    local pkg = nil
+    for _, p in ipairs(split(cfg.pkgs or "")) do
+        if pkg_running(p) then pkg = p; break end
+    end
+    if not pkg then err("Gak ada client jalan (buat baca cookie)."); return end
+    local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+    local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
+        "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
+        " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+    local raw = hC and hC:read("*all") or ""
+    if hC then hC:close() end
+    local cookie = nil
+    for baris in (raw .. "\n"):gmatch("(.-)\n") do
+        baris = baris:gsub("%s+$", "")
+        if baris:find("_|WARNING") and (not cookie or #baris > #cookie) then cookie = baris end
+    end
+    if not cookie then err("Cookie gak kebaca dari " .. pkg); return end
+    local tmp = (os.getenv("HOME") or ".") .. "/nx_cekplace.txt"
+    os.remove(tmp)
+    local hf = io.open(tmp, "w"); hf:write(".ROBLOSECURITY=" .. cookie); hf:close()
+    -- placeId yg dicek: arg kalau dikasih, else default (yg dipake selama ini)
+    local ids = {}
+    if arg and arg[2] then ids[#ids+1] = arg[2]
+    else ids = { "129343810645058", "126987765280963", "97598239454123" } end
+    for _, id in ipairs(ids) do
+        local url = "https://games.roblox.com/v1/games/multiget-place-details?placeIds=" .. id
+        local h = io.popen(("curl -s -4 -m 20 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), url))
+        local out = h and h:read("*all") or ""
+        if h then h:close() end
+        local nm = out:match('"name"%s*:%s*"([^"]*)"')
+        local uni = out:match('"universeId"%s*:%s*(%d+)')
+        info(id .. "  ->  " .. (nm and ('"' .. nm .. '"') or "?")
+            .. (uni and ("  (universe " .. uni .. ")") or ""))
+        if not nm then info("   respon mentah: " .. out:sub(1, 140)) end
+    end
+    os.remove(tmp)
+    print()
+    return
+end
+
 if PERINTAH == "getps" then
     -- v7.36: GET PS LINK per akun (kayak Pandora). Loop semua akun tim, fetch
     -- accessCode dari API Roblox private-servers (pake cookie akun), simpen ke
@@ -11968,10 +11999,8 @@ if PERINTAH == "getps" then
         if cookie and cookie ~= "" then
             local code, ket = getps_akun(cfg, cookie)
             if code then
-                -- v9.187: "psplc:CODE" = joinCode universe (simpen apa adanya). "http" =
-                -- full URL. else accessCode. build_url handle tiap format.
-                local psLink = (code:sub(1,6) == "psplc:" or code:sub(1,4) == "http")
-                    and code or ("accessCode=" .. code)
+                -- v9.191: accessCode (join PRIVATE via executor). prefix "accessCode=".
+                local psLink = (code:sub(1,4) == "http") and code or ("accessCode=" .. code)
                 local simpanOk, resp = false, ""
                 pcall(function()
                     resp = api_post(cfg, "/ps-simpan",
