@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.176-cf"
+local VERSION = "9.177-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7522,6 +7522,24 @@ local function run(cfg)
                             os.date("%H:%M:%S"), dcnt, table.concat(ddetail, " ")))
                     else
                         info("[denyut] 0 file denyut kebaca (script belum nulis / path beda?)")
+                    end
+                end
+                -- v9.177: FIX TIMING. Panel kirim START PAKSA -> FORCE -> ROTASI
+                -- (urutan). Antrian ini JALAN pas FORCE round (START PAKSA), SEBELUM
+                -- ROTASI kedispatch -> rotasi_on masih FALSE -> semua 20 kebuka
+                -- (v9.175/176 gak ngefek). Fix: RE-CEK /perintah -- kalau ROTASI udah
+                -- masuk (on), set rotasi_on SEKARANG biar antrian skip Tim 2.
+                do
+                    local pR = ambil_str(api_get(cfg, "/perintah?tim=" .. cfg.tim), "isi") or ""
+                    local uR = pR:upper()
+                    if uR:find("ROTASI") and not uR:find("ROTASI%-") then
+                        local isiRot = (pR:match("ROTASI:(.*)$") or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                        if isiRot ~= "" and isiRot:lower() ~= "off" and not cfg.rotasi_on then
+                            cfg.rotasi_on = true
+                            cfg.rotasi_barang = isiRot:match("^(.-)|") or isiRot
+                            ROT_TIM1 = nil   -- reset cache tim1 biar dihitung ulang
+                            info("[antrian] ROTASI kedeteksi di /perintah -> rotasi_on=true (Tim 2 STANDBY)")
+                        end
                     end
                 end
                 local perlu, diGame = 0, 0
