@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.188-cf"
+local VERSION = "9.189-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -11716,11 +11716,16 @@ function getps_akun(cfg, cookie)
     -- PS). accessCode UNIVERSE-level -> bisa join W2 pakai placeId W2. User insight:
     -- "PS-nya sama, tinggal ganti id place ke world 2".
     local W1 = "129343810645058"
+    local W2 = "126987765280963"
     local aktif = cfg.place_id or W1
-    -- daftar place yg dicoba: aktif dulu (W2), baru W1
+    -- v9.189: cek SEMUA dunia (aktif, W1, W2). Bug user: getps cuma cek dunia AKTIF
+    -- -> server yg udah ada di dunia LAIN (mis. W2) gak kedeteksi -> kira "belum punya"
+    -- -> bikin server BARU tiap kali. Karena joinCode UNIVERSE-level, server dari dunia
+    -- mana pun kepake buat dunia aktif (tinggal ganti placeId). Jadi cek semua, temu = pake.
     local coba = {}
     coba[#coba+1] = aktif
     if aktif ~= W1 then coba[#coba+1] = W1 end
+    if aktif ~= W2 then coba[#coba+1] = W2 end
 
     local tmp = (os.getenv("HOME") or ".") .. "/nx_getps.txt"
     os.remove(tmp)
