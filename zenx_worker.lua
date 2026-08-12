@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.180-cf"
+local VERSION = "9.181-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2738,12 +2738,13 @@ local function build_url(cfg, link_client)
         if lc:sub(1,4) ~= "http" then lc = "https://www.roblox.com/" .. lc:gsub("^/", "") end
         return lc   -- buka URL share apa adanya -> Roblox resolve sendiri
     elseif lc:find("privateServerLinkCode=") and lc:sub(1,4) == "http" then
-        -- v8.50: link PS FULL URL (https://roblox.com/games/ID/nama?privateServerLinkCode=X)
-        -- BUKA LANGSUNG apa adanya -- biar Roblox app resolve+join sendiri. Dulu
-        -- di-ubah ke "roblox://...&linkCode=X" -> Roblox TOLAK ("no permission to
-        -- join this room") karena deep link linkCode kadang gak di-handle bener.
-        -- URL https lengkap = persis yg dipakai user manual (kebukti bisa join).
-        return lc
+        -- v9.181: link PS FULL URL -> GANTI placeId ke cfg.place_id (dunia AKTIF).
+        -- User: privateServerLinkCode SAMA lintas dunia, tinggal ganti id game.
+        -- Jadi link W2 (place 126987765280963) OTOMATIS kepake buat W1 (129343810645058)
+        -- tanpa getps ulang. Dulu return apa adanya -> placeId lama -> nyangkut dunia
+        -- lama walau cfg.place_id udah ganti. Ambil code, rebuild pakai cfg.place_id.
+        local code = lc:match("privateServerLinkCode=([^&%s]+)")
+        return code and ("https://www.roblox.com/games/"..cfg.place_id.."/x?privateServerLinkCode="..code) or lc
     elseif lc:find("accessCode=") then
         -- v7.36: PRIVATE SERVER via accessCode (dari zenx getps -- API Roblox
         -- private-servers). Format: "accessCode=UUID". Join langsung ke PS akun.
