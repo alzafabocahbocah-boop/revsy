@@ -13372,9 +13372,14 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     local pindahTim2 = placeR and placeR ~= "" and placeR ~= cfg.place_id
     -- v9.194: TUNGGU 10s dulu -- biar loop utama (tim 1) beli stock-nya dulu, BARU
     -- tim 2 borong. User minta ini balik (v9.192 sempet dibuang, tapi perlu).
-    warn(("[rotasi] STOCK '%s' MUNCUL -> tunggu 10s (tim 1/loop utama beli dulu)"):format(barang))
-    tambahLog_rotasi(cfg, ("STOCK %s muncul -> rotasi (tunggu 10s tim 1)"):format(barang))
-    os.execute("sleep 10")
+    warn(("[rotasi] STOCK '%s' MUNCUL -> tim 1 beli dulu, tim 2 borong 10s lagi"):format(barang))
+    tambahLog_rotasi(cfg, ("STOCK %s muncul -> tim 2 dalam 10s"):format(barang))
+    -- v9.196: countdown REAL-TIME di log (10, 9, 8, ...) biar keliatan mundurnya.
+    -- User: tunggu 10s-nya mau real-time, bukan sleep diem.
+    for det = 10, 1, -1 do
+        info(("[rotasi] tim 2 borong dalam %ds..."):format(det))
+        os.execute("sleep 1")
+    end
     -- close all tim 1 (1-10) INSTANT (barengan, gak 1-1 lambat)
     info("[rotasi] close all tim 1 (client 1-10) -- barengan cepet")
     pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, 1, 10)) end)
