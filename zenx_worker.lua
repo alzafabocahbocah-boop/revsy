@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.179-cf"
+local VERSION = "9.180-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -6873,7 +6873,10 @@ local function run(cfg)
     -- Kalau akun punya ps_link (accessCode=UUID dari zenx getps), pakai itu buat
     -- masuk PS pribadi akun. Prioritas: assign-ps panel > ps_link getps > public.
     local function refresh_ps_getps()
-        if cfg.place_id == "129343810645058" or cfg.pakai_ps == false then return end
+        -- v9.180: skip getps CUMA kalau public (pakai_ps==false). Dulu skip W1
+        -- (place==129343810645058) SELALU -> W1 gak pernah ambil PS -> public. Skrg
+        -- W1 private (pakai_ps=true dari server) IKUT getps -> ambil W1 PS accessCode.
+        if cfg.pakai_ps == false then return end
         -- v9.97: mode SERVER CUSTOM -> semua akun ke 1 link (_ps_override), gak perlu
         -- getps per-akun. Skip biar gak buang waktu ambil accessCode yg gak kepakai.
         if (SERVER_TERAKHIR or ""):lower() == "custom" and cfg._ps_override and cfg._ps_override ~= "" then
@@ -6896,15 +6899,15 @@ local function run(cfg)
         -- v8.71: kalau 0 dapet PS + place FALL (bukan public/W1) -> WARNING jelas.
         -- Akun belum punya PS fall -> bakal fallback PUBLIC (rawan di-steal).
         -- Saran: jalanin `zenx getps` di RF ini buat ambil accessCode PS akun.
-        if nDapet == 0 and cfg.place_id ~= "129343810645058" and cfg.pakai_ps ~= false then
+        if nDapet == 0 and cfg.pakai_ps ~= false then
             -- v9.129: AUTO-getps DIBUANG dari loop utama (user minta getps MANUAL).
             -- Dulu di sini auto jalanin 'zenx getps' (timeout 180 = block 3 menit)
             -- tiap 5 menit kalau 0 PS -> bikin loop utama macet + ganggu rotasi.
             -- Sekarang cuma BACA /ps-list. Kalau 0 PS -> warning, user getps manual.
             warn("[ps-getps] 0 ps_link -> jalanin 'zenx getps' MANUAL di RF ini dulu (auto-getps udah dimatiin).")
         end
-        if nDapet == 0 and cfg.place_id ~= "129343810645058" and cfg.pakai_ps ~= false then
-            warn("[ps-getps] 0 akun punya PS fall -> client bakal masuk PUBLIC (rawan)!")
+        if nDapet == 0 and cfg.pakai_ps ~= false then
+            warn("[ps-getps] 0 akun punya PS -> client bakal masuk PUBLIC (rawan)!")
             warn("[ps-getps] Jalanin 'zenx getps' di RF ini dulu, atau assign PS di panel.")
         end
     end
