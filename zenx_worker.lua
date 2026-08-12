@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.201-cf"
+local VERSION = "9.202-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -13355,6 +13355,7 @@ end
 -- nextBoundary,upcoming}. Trigger = nextBoundary barang keinginan BERUBAH naik
 -- (restock baru terjadi). cfg.rotasi_barang = daftar key/name (pisah koma).
 ROTASI_NB_LAST = {}    -- key barang -> nextBoundary terakhir keliat (deteksi restock)
+ROTASI_LIVE_LAST = {}  -- v9.202: key barang -> qty LIVE terakhir (deteksi restock 0->>0)
 
 function esc_pola(s)
     return (tostring(s):gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1"))
@@ -13382,25 +13383,30 @@ function cek_stock_rotasi(cfg)
     local HOME = os.getenv("HOME") or "."
     local tmp = HOME .. "/.stock_cek"
     os.remove(tmp)
-    os.execute(("timeout 15 curl -fsSL 'https://api.gag2.gg/api/live/predictions/items' -o %s 2>/dev/null"):format(shq(tmp)))
+    -- v9.202: pakai /api/live/stock (qty LIVE BENERAN), BUKAN /predictions (prediksi
+    -- -> false trigger, mis. fire_fern "muncul" padahal gak ada). Struktur:
+    -- {stock:[{category,items:[{key,quantity}],restockedAt}]}.
+    os.execute(("timeout 15 curl -fsSL 'https://api.gag2.gg/api/live/stock' -o %s 2>/dev/null"):format(shq(tmp)))
     local f = io.open(tmp, "r")
     if not f then return nil end
     local body = f:read("*all") or ""
     f:close()
     os.remove(tmp)
-    if body == "" or not body:find("nextBoundary", 1, true) then return nil end
+    if body == "" or not body:find("quantity", 1, true) then return nil end
     for barang in mau:gmatch("[^,]+") do
         barang = barang:gsub("^%s+", ""):gsub("%s+$", "")
         if barang ~= "" then
-            local nb = nb_barang(body, barang)
-            if nb then
-                local last = ROTASI_NB_LAST[barang]
-                ROTASI_NB_LAST[barang] = nb
-                -- restock terjadi kalau nextBoundary NAIK (boundary lama lewat,
-                -- API majuin ke restock berikutnya). Skip poll pertama (last=nil).
-                if last and nb > last then
-                    return barang
-                end
+            -- cari "key":"<barang>" -> "quantity":N sesudahnya (item yg sama)
+            local be = esc_pola(barang)
+            local pos = body:find('"key":"' .. be .. '"')
+            local qty = 0
+            if pos then qty = tonumber(body:match('"quantity"%s*:%s*(%d+)', pos)) or 0 end
+            local last = ROTASI_LIVE_LAST[barang]   -- nil pas poll pertama
+            ROTASI_LIVE_LAST[barang] = qty
+            -- restock = qty naik dari 0 ke >0 (baru muncul). Poll pertama (last=nil)
+            -- gak fire (baseline). Yg udah keburu ada pas start -> gak fire (panel urus).
+            if qty > 0 and last == 0 then
+                return barang
             end
         end
     end
