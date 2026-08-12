@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.183-cf"
+local VERSION = "9.184-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -11682,6 +11682,27 @@ end
 -- Cara: ambil PID tiap client -> filter logcat by PID -> cari baris disconnect/
 -- kick/reason. Kode 285=DisconnectClientInitiated (keluar sendiri/backgrounding),
 -- 267=kicked (game/experience Kick), 264=dobel login, 277=lost connection, dll.
+-- v9.184: PATCH /v1/vip-servers/<id> {newJoinCode:true} -> joinCode (= privateServerLinkCode,
+-- UNIVERSE-level -- kepake lintas dunia tanpa getps ulang). User nemu endpoint ini.
+-- Balikin joinCode string atau nil. tmp = file cookie, vsid = vipServerId.
+function getps_joincode(tmp, vsid)
+    -- CSRF token dulu (POST kosong -> header x-csrf-token)
+    local ch = io.popen(("curl -s -4 -m 20 -i -X POST -H \"Cookie: $(cat %s)\" "
+        .. "\"https://auth.roblox.com/v2/logout\" 2>&1"):format(shq(tmp)))
+    local cout = ch and ch:read("*all") or ""
+    if ch then ch:close() end
+    local csrf = cout:match("[xX]%-[cC][sS][rR][fF]%-[tT][oO][kK][eE][nN]:%s*([%w%+/=]+)")
+    if not csrf then return nil, "csrf gak dapet" end
+    -- PATCH newJoinCode -> joinCode
+    local ph = io.popen(("curl -s -4 -m 20 -X PATCH -H \"Cookie: $(cat %s)\" "
+        .. "-H \"X-CSRF-TOKEN: %s\" -H \"Content-Type: application/json\" "
+        .. "-d '{\"newJoinCode\":true}' "
+        .. "\"https://games.roblox.com/v1/vip-servers/%s\" 2>&1"):format(shq(tmp), csrf, vsid))
+    local pout = ph and ph:read("*all") or ""
+    if ph then ph:close() end
+    return pout:match('"joinCode"%s*:%s*"([%w]+)"'), pout:sub(1, 60)
+end
+
 function getps_akun(cfg, cookie)
     if not cookie or cookie == "" then return nil, "cookie kosong" end
     -- v8.72: PS per akun. Coba ambil dari place AKTIF (W2 fall) dulu. Kalau kosong
@@ -11711,18 +11732,20 @@ function getps_akun(cfg, cookie)
         local h = io.popen(cmd)
         local out = h and h:read("*all") or ""
         if h then h:close() end
-        -- v9.183: UTAMAIN privateServerLinkCode/link (UNIVERSE-level -- kepake lintas
-        -- dunia tanpa getps ulang). Kalau API ngasih share link, return FULL URL
-        -- (build_url ganti placeId sendiri). Kalau gak ada -> fallback accessCode.
-        local plc = out:match('privateServerLinkCode=([%w]+)')
-                 or out:match('"linkCode"%s*:%s*"([%w]+)"')
-        if plc then
-            os.remove(tmp)
-            local nama = out:match('"name"%s*:%s*"([^"]*)"')
-            return ("https://www.roblox.com/games/"..place.."/x?privateServerLinkCode="..plc),
-                   (nama or "PS") .. " [linkCode UNIVERSE]"
-        end
+        -- v9.184: UTAMAIN joinCode (UNIVERSE-level). Ambil vipServerId dari response
+        -- -> PATCH newJoinCode -> joinCode = privateServerLinkCode. Kepake lintas dunia
+        -- (tinggal ganti placeId), gak perlu getps ulang tiap ganti dunia.
+        local vsid = out:match('"vipServerId"%s*:%s*(%d+)') or out:match('"id"%s*:%s*(%d+)')
         local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
+        if vsid then
+            local jc = getps_joincode(tmp, vsid)
+            if jc then
+                os.remove(tmp)
+                local nama = out:match('"name"%s*:%s*"([^"]*)"')
+                return ("https://www.roblox.com/games/"..place.."/x?privateServerLinkCode="..jc),
+                       (nama or "PS") .. " [joinCode UNIVERSE]"
+            end
+        end
         if code then
             os.remove(tmp)
             local nama = out:match('"name"%s*:%s*"([^"]*)"')
