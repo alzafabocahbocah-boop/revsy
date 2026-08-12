@@ -2307,6 +2307,14 @@ function tulis_perintah_jaga(cfg, bodyJson)
     return api_post(cfg, "/perintah", bodyJson, "PUT")
 end
 
+-- v9.201: cek ada ROTASI-GO BARU (beda dari yg lagi diproses ROTASI_GO_LAST). Dipake
+-- pas rotasi LAGI JALAN -> kalau ada stock baru, abort & ulang buat yg baru (utamain).
+function ada_rotasi_go_baru(cfg)
+    local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+    local isi = ambil_str(r, "isi") or ""
+    return isi:upper():find("ROTASI%-GO") ~= nil and isi ~= ROTASI_GO_LAST
+end
+
 -- ============================================================
 -- v5.31: KUNCI API bypass DIAMBIL DARI PANEL kalau config kosong.
 --
