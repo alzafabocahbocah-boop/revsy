@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.178-cf"
+local VERSION = "9.179-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -8072,6 +8072,13 @@ local function run(cfg)
                 local sPlace = ambil_str(rS, "place") or ""
                 local sGrid = ambil_num(rS, "grid") or 0
                 local sServer = ambil_str(rS, "server") or ""
+                -- v9.179: SERVER PREFIX NENTUIN DUNIA. Bug user: ganti server w1-private
+                -- tapi place nyangkut W2 (field place di backend ketimpa denyut/lapor
+                -- worker -> placeBeda=false -> gak restart -> client tetep W2). Fix:
+                -- derive place dari server (w1-* = W1 lama, w2-* = W2 FALL). Server yg
+                -- user pilih = dunia yg diinginkan, jadi place WAJIB ikut server.
+                if sServer:find("^w1") then sPlace = "129343810645058"
+                elseif sServer:find("^w2") then sPlace = "126987765280963" end
                 -- v9.31: cek place/grid BENERAN beda dari yg dipakai (bukan cuma
                 -- ts naik). Bug user: panel PUT place & grid TERPISAH -> ts naik
                 -- 2x -> worker restart 2x (backup nabrak). Sekarang update ts
