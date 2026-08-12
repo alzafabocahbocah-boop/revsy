@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.185-cf"
+local VERSION = "9.186-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -11732,20 +11732,12 @@ function getps_akun(cfg, cookie)
         local h = io.popen(cmd)
         local out = h and h:read("*all") or ""
         if h then h:close() end
-        -- v9.184: UTAMAIN joinCode (UNIVERSE-level). Ambil vipServerId dari response
-        -- -> PATCH newJoinCode -> joinCode = privateServerLinkCode. Kepake lintas dunia
-        -- (tinggal ganti placeId), gak perlu getps ulang tiap ganti dunia.
-        local vsid = out:match('"vipServerId"%s*:%s*(%d+)') or out:match('"id"%s*:%s*(%d+)')
+        -- v9.186: BALIK ke accessCode. joinCode (v9.184) universe-level TAPI GAK
+        -- auto-join lewat am start (https buka Home, linkCode deep link ditolak Roblox).
+        -- accessCode = SATU-SATUNYA yg auto-join (deep link roblox://...&accessCode).
+        -- accessCode dari server BARU (POST /vip-servers/<universe>) = universe-level
+        -- juga (placeId nentuin dunia). Yg dulu nyangkut W2 = accessCode server W2 lama.
         local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
-        if vsid then
-            local jc = getps_joincode(tmp, vsid)
-            if jc then
-                os.remove(tmp)
-                local nama = out:match('"name"%s*:%s*"([^"]*)"')
-                return ("https://www.roblox.com/games/"..place.."/x?privateServerLinkCode="..jc),
-                       (nama or "PS") .. " [joinCode UNIVERSE]"
-            end
-        end
         if code then
             os.remove(tmp)
             local nama = out:match('"name"%s*:%s*"([^"]*)"')
