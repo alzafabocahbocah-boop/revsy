@@ -8079,6 +8079,10 @@ local function run(cfg)
                 -- user pilih = dunia yg diinginkan, jadi place WAJIB ikut server.
                 if sServer:find("^w1") then sPlace = "129343810645058"
                 elseif sServer:find("^w2") then sPlace = "126987765280963" end
+                -- v9.180: pakai_ps dari server -- "*-private" -> getps ambil PS, "*-public"
+                -- -> public. Bug user: w1-private tapi client masuk PUBLIC (getps di-skip
+                -- buat W1). Sekarang server nentuin PS: private = getps, public = gak.
+                if sServer ~= "" then cfg.pakai_ps = (sServer:find("private") ~= nil) end
                 -- v9.31: cek place/grid BENERAN beda dari yg dipakai (bukan cuma
                 -- ts naik). Bug user: panel PUT place & grid TERPISAH -> ts naik
                 -- 2x -> worker restart 2x (backup nabrak). Sekarang update ts
