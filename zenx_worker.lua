@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.192-cf"
+local VERSION = "9.195-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7238,13 +7238,15 @@ local function run(cfg)
             -- gate tim 1 siap + cooldown). Lebih cepet dari worker poll sendiri.
             if isiTop:upper():find("ROTASI%-GO") and isiTop ~= ROTASI_GO_LAST then
                 ROTASI_GO_LAST = isiTop
-                -- v9.192: PANEL STOCK = INSTANT. Buang gate siap-60s + cooldown-120s.
-                -- User: rotasi perintah PALING PENTING -> langsung kejadian, abaikan
-                -- semua yg lagi jalan. Cuma cek idle (jangan overlap rotasi yg lagi jalan).
+                -- v9.195: extract DUNIA (place) dari sinyal ROTASI-GO|seed|ts|place.
+                -- Panel kirim place sesuai dunia seed (Dunia1=W1, Dunia2=W2) -> tim 2
+                -- borong di dunia SEED, bukan dunia tim 1.
+                local placeGO = isiTop:match("ROTASI%-GO|[^|]*|[^|]*|(%d+)")
                 if ROTASI_STATE == "idle" then
-                    warn("[rotasi] >>> STOCK dari PANEL (real-time) <<< INSTANT rotasi (no gate)")
+                    warn(("[rotasi] >>> STOCK dari PANEL <<< rotasi%s"):format(
+                        placeGO and (" (dunia seed: "..placeGO..")") or ""))
                     tambahLog("Rotasi: stock dari panel (real-time)")
-                    pcall(function() jalankan_rotasi(cfg, "PANEL-STOCK", mapLink) end)
+                    pcall(function() jalankan_rotasi(cfg, "PANEL-STOCK", mapLink, placeGO) end)
                 else
                     warn("[rotasi] stock panel tapi rotasi lagi jalan -> skip")
                 end
@@ -13361,17 +13363,29 @@ function cek_stock_rotasi(cfg)
 end
 
 -- SEQUENCE rotasi lengkap (blocking -- sengaja, biar dedicated).
-function jalankan_rotasi(cfg, barang, mapLink)
+function jalankan_rotasi(cfg, barang, mapLink, placeR)
     ROTASI_STATE = "jalan"
-    -- v9.192: INSTANT (no delay). User: rotasi = perintah paling penting, langsung
-    -- kejadian, abaikan semua. Dulu tunggu 10s (tim 1 beli) -> sekarang 1s doang.
-    warn(("[rotasi] STOCK '%s' MUNCUL -> INSTANT (langsung rotasi, no delay)"):format(barang))
-    tambahLog_rotasi(cfg, ("STOCK %s muncul -> rotasi INSTANT"):format(barang))
-    os.execute("sleep 1")
+    -- v9.195: tim 2 borong di DUNIA SEED (placeR), bukan dunia tim 1. Kalau seed dari
+    -- dunia LAIN (mis. tim 1 di W1, seed dari W2), pindah cfg.place_id sementara buat
+    -- tim 2 borong, restore sebelum tim 1 balik. User: seed W2 -> tim 2 harus ke W2.
+    local placeAsli = cfg.place_id
+    local pindahTim2 = placeR and placeR ~= "" and placeR ~= cfg.place_id
+    -- v9.194: TUNGGU 10s dulu -- biar loop utama (tim 1) beli stock-nya dulu, BARU
+    -- tim 2 borong. User minta ini balik (v9.192 sempet dibuang, tapi perlu).
+    warn(("[rotasi] STOCK '%s' MUNCUL -> tunggu 10s (tim 1/loop utama beli dulu)"):format(barang))
+    tambahLog_rotasi(cfg, ("STOCK %s muncul -> rotasi (tunggu 10s tim 1)"):format(barang))
+    os.execute("sleep 10")
     -- close all tim 1 (1-10) INSTANT (barengan, gak 1-1 lambat)
     info("[rotasi] close all tim 1 (client 1-10) -- barengan cepet")
     pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, 1, 10)) end)
     os.execute("sleep 1")
+    -- v9.195: PINDAH dunia tim 2 (kalau seed dari dunia lain). URL join tim 2 pakai
+    -- placeR (dunia seed). tim 1 udah ke-close, jadi aman ubah cfg.place_id sementara.
+    if pindahTim2 then
+        cfg.place_id = placeR
+        warn(("[rotasi] tim 2 borong di DUNIA SEED -> place=%s (tim 1 di %s)"):format(placeR, placeAsli))
+        tambahLog_rotasi(cfg, ("tim 2 pindah dunia seed: %s"):format(placeR))
+    end
     -- v9.135/136: TIM 2 = ROLLING BATCH. Batch size + durasi bisa diatur panel.
     -- buka batch -> beli OPEN_SEC detik -> close batch (INSTANT) -> langsung batch
     -- berikutnya (gak nunggu 1 menit -- user minta cepet). Contoh 15 client = 3 batch.
@@ -13399,6 +13413,11 @@ function jalankan_rotasi(cfg, barang, mapLink)
         dari = sampai + 1
     end
     os.execute("sleep 1")
+    -- v9.195: RESTORE dunia tim 1 sebelum tim 1 dibuka lagi
+    if pindahTim2 then
+        cfg.place_id = placeAsli
+        info(("[rotasi] tim 2 selesai -> balik dunia tim 1: place=%s"):format(placeAsli))
+    end
     -- BALIK LOOP UTAMA: buka tim 1 lagi
     warn("[rotasi] === BALIK LOOP UTAMA (tim 1) ===")
     tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
