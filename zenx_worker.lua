@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.191-cf"
+local VERSION = "9.192-cf"
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -7238,13 +7238,15 @@ local function run(cfg)
             -- gate tim 1 siap + cooldown). Lebih cepet dari worker poll sendiri.
             if isiTop:upper():find("ROTASI%-GO") and isiTop ~= ROTASI_GO_LAST then
                 ROTASI_GO_LAST = isiTop
-                local siapNow = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 60
-                if ROTASI_STATE == "idle" and siapNow and (os.time() - ROTASI_TS) > 120 then
-                    warn("[rotasi] >>> STOCK dari PANEL (real-time) <<< langsung rotasi")
+                -- v9.192: PANEL STOCK = INSTANT. Buang gate siap-60s + cooldown-120s.
+                -- User: rotasi perintah PALING PENTING -> langsung kejadian, abaikan
+                -- semua yg lagi jalan. Cuma cek idle (jangan overlap rotasi yg lagi jalan).
+                if ROTASI_STATE == "idle" then
+                    warn("[rotasi] >>> STOCK dari PANEL (real-time) <<< INSTANT rotasi (no gate)")
                     tambahLog("Rotasi: stock dari panel (real-time)")
                     pcall(function() jalankan_rotasi(cfg, "PANEL-STOCK", mapLink) end)
                 else
-                    warn("[rotasi] stock panel tapi tim 1 belum siap / cooldown -> skip")
+                    warn("[rotasi] stock panel tapi rotasi lagi jalan -> skip")
                 end
             end
             -- v9.113: ROTASI TIM. Kalau rotasi_on + idle + cooldown lewat -> cek API
@@ -13361,9 +13363,11 @@ end
 -- SEQUENCE rotasi lengkap (blocking -- sengaja, biar dedicated).
 function jalankan_rotasi(cfg, barang, mapLink)
     ROTASI_STATE = "jalan"
-    warn(("[rotasi] STOCK '%s' MUNCUL -> tunggu 10s (tim 1 beli habis dulu)"):format(barang))
-    tambahLog_rotasi(cfg, ("STOCK %s muncul -> rotasi mulai"):format(barang))
-    os.execute("sleep 10")
+    -- v9.192: INSTANT (no delay). User: rotasi = perintah paling penting, langsung
+    -- kejadian, abaikan semua. Dulu tunggu 10s (tim 1 beli) -> sekarang 1s doang.
+    warn(("[rotasi] STOCK '%s' MUNCUL -> INSTANT (langsung rotasi, no delay)"):format(barang))
+    tambahLog_rotasi(cfg, ("STOCK %s muncul -> rotasi INSTANT"):format(barang))
+    os.execute("sleep 1")
     -- close all tim 1 (1-10) INSTANT (barengan, gak 1-1 lambat)
     info("[rotasi] close all tim 1 (client 1-10) -- barengan cepet")
     pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, 1, 10)) end)
