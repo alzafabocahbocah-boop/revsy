@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.212-cf"
+local VERSION = "9.213-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13357,8 +13357,13 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap)
             -- v9.211: chunk yg buka client 11+ dikasih jeda LEBIH LAMA (180s), karena
             -- device udah nanggung 10 client jalan -> buka 5 lagi lebih berat. Cuma buat
             -- open lambat (chunkGap >= 90 = tim 1 / tes); tim 2 borong (gap 2s) gak keubah.
+            -- v9.213: chunk 16+ makin lama lagi (300s) -- udah 15 client jalan.
             local gap = chunkGap
-            if chunkGap >= 90 and i > 10 then gap = 180 end
+            if chunkGap >= 90 then
+                if     i > 15 then gap = 300   -- buka client 16-20
+                elseif i > 10 then gap = 180   -- buka client 11-15
+                end
+            end
             info(("[buka] tunggu %ds sebelum chunk berikutnya..."):format(gap))
             os.execute("sleep " .. gap)
         end   -- gap antar chunk (5+5)
