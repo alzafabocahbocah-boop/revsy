@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.28"
+local VERSI = "7.30"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -374,8 +374,8 @@ local state = {
     sellBiasaOn   = false, -- sell biasa terus-terusan (SellAll)
 
     -- v3.18: ESP fruit (harga buah)
-    espInvOn      = false, -- ESP fruit in inventory (label harga di slot tas)
-    espGardenOn   = false, -- ESP fruit in garden (label harga melayang di buah kebun)
+    espInvOn      = true,  -- v7.29 ALWAYS ON -- ESP fruit in inventory (label harga di slot tas)
+    espGardenOn   = true,  -- v7.29 ALWAYS ON -- ESP fruit in garden (label harga melayang di buah kebun)
 
     -- v3.18: hilangin visual pohon/buah + tembus (noclip tanaman). Ringanin RF.
     hideVisualOn  = false,
@@ -2274,6 +2274,36 @@ function Seed.sellDailyDealOnce()
     pcall(function() use:Fire() end)
     Seed._logDeal = ("JUAL daily deal (tas tadi %s)"):format(Seed._singkatHarga(nilai))
     return true
+end
+
+-- ============================================================
+-- v7.29: AUTO UNFAV -- unfav SEMUA item favorit (IsFavorite==true) biar bisa
+-- dijual (item favorit kekunci gak bisa SellAll/daily deal). ALWAYS ON.
+-- remote: Favorite_Item:Fire(tool) -> toggle. Cuma fire ke yg favorit (biar gak
+-- malah nge-fav yg belum). Cek attribute IsFavorite (dari market: cara game nandain).
+-- ============================================================
+function Seed.unfavAllOnce()
+    -- v7.30: pakai remote yg BENER dari gag2 -> Backpack.SetFruitFavorite:Fire(id, false).
+    -- unfav buah favorit (attr .Favorite/.Favorited) biar bisa dijual (daily deal/SellAll
+    -- skip yg favorit). Throttle (n%8) biar server gak nolak packet.
+    local p = pkt("Backpack", "SetFruitFavorite")
+    if not (p and p.Fire) then Seed._logUnfav = "remote SetFruitFavorite gak ada"; return false end
+    local n = 0
+    for _, holder in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+        if holder then
+            for _, t in ipairs(holder:GetChildren()) do
+                local fid = t:GetAttribute("Id")
+                local fav = t:GetAttribute("Favorite") or t:GetAttribute("Favorited")
+                if fid and fav then
+                    pcall(function() p:Fire(tostring(fid), false) end)
+                    n = n + 1
+                    if n % 8 == 0 then task.wait() end
+                end
+            end
+        end
+    end
+    Seed._logUnfav = (n > 0) and ("unfav " .. n .. " buah favorit") or "gak ada buah favorit"
+    return n > 0
 end
 
 -- ============================================================
@@ -10553,6 +10583,9 @@ task.spawn(function()
                 (nv >= minV) and "  ✓" or "")
         end
         if state.autoDailyDeal then
+            -- v7.30: unfav BARENG daily deal (user: daily deal nyala -> unfav nyala).
+            -- unfav dulu (biar buah favorit bisa kejual) baru jual daily deal.
+            pcall(Seed.unfavAllOnce)
             pcall(Seed.sellDailyDealOnce)
         end
         task.wait(5)
@@ -10597,6 +10630,10 @@ catSaklar(Seed._el.tblTele, state.autoTele)
 catSaklar(tblGrab, state.ambilSeedOn)
 catSaklar(tblEspInv, state.espInvOn)
 catSaklar(tblEspGarden, state.espGardenOn)
+-- v7.29: ESP fruit ALWAYS ON (user minta) -- force nyala tiap boot, override state
+-- tersimpan. Label harga buah selalu tampil (inventory + garden).
+state.espInvOn = true
+state.espGardenOn = true
 if state.espInvOn then Seed.jalanEspInv() end
 if state.espGardenOn then Seed.jalanEspGarden() end
 if state.hideVisualOn then Seed.jalanHideVisual() end
