@@ -1,4 +1,4 @@
-#!/usr/bin/env lua
+\#!/usr/bin/env lua
 -- ============================================================
 -- ZENX WORKER  v4.2  (Termux, Redfinger)
 -- 1 WORKER = 1 TIM = 1 RedFinger = 6-10 client Roblox.
@@ -637,7 +637,11 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.202-cf"
+local VERSION = "9.208-cf"
+-- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
+-- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
+-- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
+TIM1_AKHIR = 15
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -2309,10 +2313,16 @@ end
 
 -- v9.201: cek ada ROTASI-GO BARU (beda dari yg lagi diproses ROTASI_GO_LAST). Dipake
 -- pas rotasi LAGI JALAN -> kalau ada stock baru, abort & ulang buat yg baru (utamain).
-function ada_rotasi_go_baru(cfg)
+function ada_rotasi_go_baru(cfg, seedSkrg)
     local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
     local isi = ambil_str(r, "isi") or ""
-    return isi:upper():find("ROTASI%-GO") ~= nil and isi ~= ROTASI_GO_LAST
+    if not (isi:upper():find("ROTASI%-GO") ~= nil and isi ~= ROTASI_GO_LAST) then return false end
+    -- v9.203: cuma abort kalau seed BEDA. Seed SAMA (restock lagi) = JANGAN abort --
+    -- biar rotasi gak muter-muter (spam) buat seed yg sering restock (mis.
+    -- super_watering_can, gear common ~5 menit sedangkan rotasi ~8 menit).
+    local seedBaru = isi:match("ROTASI%-GO|([^|]*)|")
+    if seedBaru and seedSkrg and seedBaru == seedSkrg then return false end
+    return true
 end
 
 -- ============================================================
@@ -3489,6 +3499,11 @@ local SUSUNAN = {
     [1]={1,1}, [2]={2,1}, [3]={3,1},  [4]={2,2},
     [5]={3,2}, [6]={3,2}, [7]={4,2},  [8]={4,2},
     [9]={3,3}, [10]={5,2},[11]={4,3}, [12]={4,3},
+    -- v9.205: tim 1 = 15 client -> 5 kolom x 3 baris. Buka CHUNK 5 (5+5+5, 90s antar
+    -- chunk) -> tiap chunk = 1 baris 5 kolom. Device cuma nanggung 5 pas buka.
+    -- v9.208: 16-20 buat TES `zenx buka N` (semua 5 kolom, N/5 baris).
+    [13]={5,3},[14]={5,3},[15]={5,3},
+    [16]={5,4},[17]={5,4},[18]={5,4},[19]={5,4},[20]={5,4},
 }
 
 local KUNCI_JENDELA = {
@@ -7272,10 +7287,20 @@ local function run(cfg)
                 local seedGO = isiTop:match("ROTASI%-GO|([^|]*)|") or "?"
                 local placeGO = isiTop:match("ROTASI%-GO|[^|]*|[^|]*|(%d+)")
                 if ROTASI_STATE == "idle" then
-                    warn(("[rotasi] >>> STOCK dari PANEL: %s <<< rotasi%s"):format(
-                        seedGO, placeGO and (" (dunia "..placeGO..")") or ""))
-                    tambahLog(("Rotasi: stock dari panel -> %s"):format(seedGO))
-                    pcall(function() jalankan_rotasi(cfg, seedGO, mapLink, placeGO) end)
+                    -- v9.204: DEDUP per-seed cooldown (270s). Kalau seed ini baru
+                    -- dirotasi < 270s lalu (dari tab panel lain / sisa sinyal numpuk),
+                    -- SKIP -- cegah rotasi ulang walau banyak panel fire.
+                    local nowT = os.time()
+                    if ROTASI_SEED_TS[seedGO] and (nowT - ROTASI_SEED_TS[seedGO]) < 270 then
+                        warn(("[rotasi] SKIP '%s' -- baru dirotasi %ds lalu (dedup, cegah spam multi-panel/sisa sinyal)"):format(
+                            seedGO, nowT - ROTASI_SEED_TS[seedGO]))
+                    else
+                        ROTASI_SEED_TS[seedGO] = nowT
+                        warn(("[rotasi] >>> STOCK dari PANEL: %s <<< rotasi%s"):format(
+                            seedGO, placeGO and (" (dunia "..placeGO..")") or ""))
+                        tambahLog(("Rotasi: stock dari panel -> %s"):format(seedGO))
+                        pcall(function() jalankan_rotasi(cfg, seedGO, mapLink, placeGO) end)
+                    end
                 else
                     warn(("[rotasi] stock panel (%s) tapi rotasi lagi jalan -> skip"):format(seedGO))
                 end
@@ -7295,7 +7320,7 @@ local function run(cfg)
                 -- 1) SELALU poll (update ROTASI_NB_LAST) -> baseline gak pernah basi
                 local barang = cek_stock_rotasi(cfg)
                 -- 2) update gate kesiapan tim 1
-                local tim1 = pkgs_slot(cfg, 1, 10)
+                local tim1 = pkgs_slot(cfg, 1, TIM1_AKHIR)
                 local idup = 0
                 for _, pkg in ipairs(tim1) do if cacheHidup[pkg] then idup = idup + 1 end end
                 if #tim1 > 0 and idup >= #tim1 then
@@ -12726,6 +12751,17 @@ end
 --
 -- Sisanya (izin penyimpanan, paket lain, cek root, pintasan, kalibrasi tombol,
 -- kunci API, auto-jalan) dikerjain di sini.
+-- v9.208: `zenx buka N` -- TES buka N client sebagai TIM 1 (loop utama). Buat cek
+-- device kuat berapa client (mis. 10, 15, 20). Set TIM1_AKHIR = N, terus jalan
+-- persis kayak `zenx` biasa (pasang): buka CHUNK 5 (5+5+..., 90s antar chunk),
+-- grid otomatis (N = 5 kolom x ceil(N/5) baris), semua client jalan loop utama.
+-- Contoh: `zenx buka 15`  -> tim 1 = 1-15. `zenx buka 20` -> tim 1 = 1-20.
+if PERINTAH == "buka" then
+    local n = tonumber(arg and arg[2]) or 15
+    TIM1_AKHIR = math.max(1, math.min(20, n))
+    warn(("[TES] buka %d client sebagai LOOP UTAMA (tim 1 = 1-%d, chunk 5, staggered)"):format(TIM1_AKHIR, TIM1_AKHIR))
+    PERINTAH = "pasang"   -- lanjut ke main loop biasa (pasang)
+end
 if PERINTAH == "pasang" then
     -- v5.40: pakai konstanta yang sama kayak tulis_skrip_up -- biar gak ada
     -- dua alamat repo yang bisa beda diam-diam.
@@ -13261,6 +13297,9 @@ ROTASI_SIAP_TS = 0       -- v9.116: kapan tim 1 (1-10) LENGKAP nembak server (pr
 ROTASI_TEST_LAST = ""    -- v9.137: dedup sinyal TEST (diproses di top-loop biar cepet)
 ROTASI_GO_LAST = ""      -- v9.139: dedup sinyal STOCK dari panel (real-time detect)
 ROTASI_GO_TS_PROSES = 0  -- v9.198: ts ROTASI-GO terakhir yg nyela loop (dedup interrupt)
+ROTASI_SEED_TS = {}      -- v9.204: seed -> ts terakhir dirotasi. Cooldown per-seed (270s) --
+                         -- dedup SERVER-SIDE: berapapun tab panel yg fire, 1 seed = 1 rotasi
+                         -- per ~5 menit. Nutup "sisa sinyal panel numpuk" dari multi-tab.
 ROTASI_GANTIAN = 0       -- v9.144: counter buat mode dunia "gantian" (W1/W2 selang-seling)
 
 -- ambil pkg berdasar rentang slot (idx 1-based di cfg.pkgs)
@@ -13433,7 +13472,7 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     end
     -- close all tim 1 (1-10) INSTANT (barengan, gak 1-1 lambat)
     info("[rotasi] close all tim 1 (client 1-10) -- barengan cepet")
-    pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, 1, 10)) end)
+    pcall(function() close_grup_cepat(cfg, pkgs_slot(cfg, 1, TIM1_AKHIR)) end)
     os.execute("sleep 1")
     -- v9.195: PINDAH dunia tim 2 (kalau seed dari dunia lain). URL join tim 2 pakai
     -- placeR (dunia seed). tim 1 udah ke-close, jadi aman ubah cfg.place_id sementara.
@@ -13451,7 +13490,7 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     -- v9.145: rotasi SELURUHNYA di 1 dunia (cfg.place_id). Dunia dipilih dari panel
     -- lewat command PLACE (pindahin device). Dulu v9.144 split tim 2 ke dunia beda --
     -- salah, user mau semua (tim 1+2) di 1 dunia yg ada stocknya.
-    local dari = 11
+    local dari = TIM1_AKHIR + 1
     local nBatch = 0
     while dari <= total do
         local sampai = math.min(dari + BATCH - 1, total)
@@ -13466,7 +13505,7 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
         local abortBaru = false
         for _ = 1, OPEN_SEC do
             os.execute("sleep 1")
-            if ada_rotasi_go_baru(cfg) then abortBaru = true; break end
+            if ada_rotasi_go_baru(cfg, barang) then abortBaru = true; break end
         end
         -- close batch INSTANT + langsung batch berikutnya (gak jeda 1 menit)
         info(("[rotasi] close batch %d (client %d-%d) -- barengan cepet"):format(nBatch, dari, sampai))
@@ -13491,8 +13530,8 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     -- BALIK LOOP UTAMA: buka tim 1 lagi
     warn("[rotasi] === BALIK LOOP UTAMA (tim 1) ===")
     tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
-    PKGS_AKTIF = pkgs_slot(cfg, 1, 10)   -- grid tim 1 = 10-client layout
-    buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, 10), mapLink, 90)
+    PKGS_AKTIF = pkgs_slot(cfg, 1, TIM1_AKHIR)   -- grid tim 1 = TIM1_AKHIR-client layout
+    buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, TIM1_AKHIR), mapLink, 90)
     ROTASI_STATE = "idle"
     ROTASI_TS = os.time()
     ROTASI_SIAP_TS = 0   -- tim 1 baru dibuka lagi -> tunggu lengkap+60s sebelum rotasi lagi
@@ -13514,7 +13553,7 @@ function rotasi_lewat(cfg, pkg)
     if not ROT_TIM1 or ROT_TIM1._src ~= (cfg.pkgs or "") then
         ROT_TIM1 = { _src = cfg.pkgs or "" }
         local l = split(cfg.pkgs or "")
-        for i = 1, math.min(10, #l) do ROT_TIM1[l[i]] = true end
+        for i = 1, math.min(TIM1_AKHIR, #l) do ROT_TIM1[l[i]] = true end   -- v9.206: TIM1_AKHIR (bukan 10)
     end
     return not ROT_TIM1[pkg]
 end
