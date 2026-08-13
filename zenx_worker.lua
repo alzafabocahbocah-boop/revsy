@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.216-cf"
+local VERSION = "9.217-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13492,9 +13492,7 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     -- buka batch -> beli OPEN_SEC detik -> close batch (INSTANT) -> langsung batch
     -- berikutnya (gak nunggu 1 menit -- user minta cepet). Contoh 15 client = 3 batch.
     local total = #split(cfg.pkgs or "")
-    -- v9.216: batch borong tim 2 = 6 (user minta 6+6, dari 5+5). Panel rotasi_batch
-    -- di-override ke 6 di sini. Contoh tim 2 = 11-22 (12 client) -> 6+6 = 2 batch.
-    local BATCH = 6
+    local BATCH = math.max(1, tonumber(cfg.rotasi_batch) or 5)
     local OPEN_SEC = math.max(5, tonumber(cfg.rotasi_open_sec) or 100)
     -- v9.145: rotasi SELURUHNYA di 1 dunia (cfg.place_id). Dunia dipilih dari panel
     -- lewat command PLACE (pindahin device). Dulu v9.144 split tim 2 ke dunia beda --
