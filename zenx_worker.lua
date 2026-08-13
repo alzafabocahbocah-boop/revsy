@@ -12760,8 +12760,10 @@ end
 if PERINTAH == "buka" then
     local n = tonumber(arg and arg[2]) or 15
     TIM1_AKHIR = math.max(1, math.min(20, n))
+    TES_BUKA_N = true              -- v9.209: flag -> non-interaktif (skip prompt "Run sekarang?")
+    if arg then arg[2] = nil end   -- clear "15" biar gak kebaca sbg preset
     warn(("[TES] buka %d client sebagai LOOP UTAMA (tim 1 = 1-%d, chunk 5, staggered)"):format(TIM1_AKHIR, TIM1_AKHIR))
-    PERINTAH = "pasang"   -- lanjut ke main loop biasa (pasang)
+    PERINTAH = ""   -- v9.209: JALANIN main loop pakai config yg ADA (kayak `zenx` biasa), SKIP setup pasang
 end
 if PERINTAH == "pasang" then
     -- v5.40: pakai konstanta yang sama kayak tulis_skrip_up -- biar gak ada
