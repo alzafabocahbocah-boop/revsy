@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.32"
+local VERSI = "7.35"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -3152,8 +3152,17 @@ local function sheckles()
     return n
 end
 
--- ============================================================
--- v1.2: PEMINDAI SEED BARU
+-- v7.35: deteksi DUNIA dari NAMA currency di leaderstats. W1 pake "Sheckles",
+-- W2 FALL pake "Leaves" (dibuktiin via debug: nama beda per dunia). Lebih akurat
+-- dari wplace -- panel bedain sheckles W1/W2 dari sumbernya langsung.
+function Seed.sheckDunia()
+    local ls = player:FindFirstChild("leaderstats")
+    if ls then
+        if ls:FindFirstChild("Sheckles") then return "w1" end
+        if ls:FindFirstChild("Leaves")   then return "w2" end
+    end
+    return nil
+end
 -- Daftar seed di-refresh berkala. Nama yang belum pernah keliat = SEED BARU
 -- -> langsung dicentang biar kebeli, tanpa nunggu diurus manual.
 --
@@ -6699,6 +6708,7 @@ function Seed.startPanel()
                         -- Di akun beli-seed, yang setara "lagi kerja" = saklar beli.
                         farm2On = state.beliOn and true or false,
                         sheck = sheckles(),
+                        sheckW = Seed.sheckDunia(),   -- v7.35: dunia sheckles (w1=Sheckles, w2=Leaves)
                         rerollOn = state.pumpkinRerollOn and true or false,  -- v7.1: reroll ON = FARM (bisa ambil tugas gift)
                         giftOn = state.autoGiftMail and true or false,
                         -- v7.17: LAPOR DETAIL gift (target + jumlah buah + total nilai)
@@ -6856,6 +6866,30 @@ if panelAktif() then Seed.startPanel() end
 -- "rejoin"/"lost connection" di loading gak ke-deteksi jadi false-positive).
 task.spawn(function() task.wait(20); pcall(Seed.pantauKick) end)
 pcall(Seed.pantauRejoin)   -- v4.06: loop rejoin terpisah (deteksi andal)
+
+-- v7.34: MONITOR SHECKLES -- kalau BERUBAH >=100M (naik ATAU turun) dari terakhir
+-- panel (gak nunggu /stat periodik ~120s). Biar panel keliatan turunnya langsung
+-- (mis. abis beli mahal / gift). Naik -> update baseline (drop diukur dari puncak).
+task.spawn(function()
+    task.wait(10)   -- jeda biar leaderstats keload dulu
+    local last = nil
+    while isCurrentGen() do
+        local sk = sheckles()
+        if sk then
+            if last == nil then
+                last = sk
+            elseif math.abs(sk - last) >= 1e8 then   -- BERUBAH >= 100 juta (naik ATAU turun)
+                pcall(function()
+                    panelReq("/stat", "POST", { akun = player.Name, sc = "seed", sheck = sk, sheckW = Seed.sheckDunia() })
+                end)
+                local arah = (sk > last) and "+" or "-"
+                Seed._logSheckDrop = ("sheck " .. arah .. Seed._singkatHarga(math.abs(sk - last)) .. " -> lapor cepat")
+                last = sk
+            end
+        end
+        task.wait(2)
+    end
+end)
 
 -- ============================================================
 -- v1.6: SETELAN DARI PANEL WEB
