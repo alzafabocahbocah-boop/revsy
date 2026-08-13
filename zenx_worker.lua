@@ -637,11 +637,11 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.213-cf"
+local VERSION = "9.216-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
-TIM1_AKHIR = 15
+TIM1_AKHIR = 10
 -- v5.71: kick yang udah diurus, kunci = "<akun>:<kick_ts>".
 -- Pakai kick_ts, bukan cuma nama akun: satu akun bisa kena kick berkali-kali,
 -- dan tiap kejadian harus diurus sendiri. Kalau kuncinya nama doang, kick
@@ -4551,7 +4551,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     if cfg.rotasi_on then
         rotTim1 = {}
         local lRot = split(cfg.pkgs)
-        for i = 1, math.min(10, #lRot) do rotTim1[lRot[i]] = true end
+        for i = 1, math.min(TIM1_AKHIR, #lRot) do rotTim1[lRot[i]] = true end
     end
     local function pilihPkg(pkg)
         if rotTim1 and not rotTim1[pkg] then return false end   -- rotasi: skip tim 2
@@ -6463,7 +6463,7 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     if cfg.rotasi_on and PKGS_AKTIF and #PKGS_AKTIF > 0 then
         local list = split(cfg.pkgs)
         local set1 = {}
-        for i = 1, math.min(10, #list) do set1[list[i]] = true end
+        for i = 1, math.min(TIM1_AKHIR, #list) do set1[list[i]] = true end
         local tim1 = {}
         for _, pkg in ipairs(PKGS_AKTIF) do if set1[pkg] then tim1[#tim1+1] = pkg end end
         if #tim1 > 0 then
@@ -7501,7 +7501,7 @@ local function run(cfg)
                     -- LANGSUNG dari cfg.pkgs (gak ngandelin PKGS_AKTIF yg bisa ke-reset).
                     -- Tanpa ini, denyut ngurus 19 (rejoin tim 2 yg harusnya standby).
                     setAkun = {}
-                    for i = 1, math.min(10, #pkgList) do
+                    for i = 1, math.min(TIM1_AKHIR, #pkgList) do
                         local pkg = pkgList[i]
                         setAkun[pkg] = true
                         local u = mapAkun and mapAkun[pkg]
@@ -10148,7 +10148,7 @@ local function run(cfg)
                 if cfg.rotasi_on then
                     -- v9.120: ROTASI -> cuma hitung/urus tim 1 (10 pkg pertama).
                     aktifSet = {}
-                    for i = 1, math.min(10, #pkgList) do aktifSet[pkgList[i]] = true end
+                    for i = 1, math.min(TIM1_AKHIR, #pkgList) do aktifSet[pkgList[i]] = true end
                 elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
                     aktifSet = {}
                     for _, p in ipairs(PKGS_AKTIF) do aktifSet[p] = true end
@@ -13330,7 +13330,9 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap)
     -- v9.138: buka dalam CHUNK 5 (biar 10 client tim 1 = 5+5 staggered, gak overload
     -- + gak ke-cut). Tiap chunk 1 su call (am start batch, jeda 1s internal), gap 2s
     -- antar chunk. Client TETEP kebuka (gak di-close) -- ini cuma cara buka bertahap.
-    local CHUNK = 5
+    -- v9.214: kalau total <= 7 client, buka SEMUA sekaligus (1 chunk, gak staggered).
+    -- Mis. `zenx buka 6` / `zenx buka 7` -> langsung 1-7 barengan. > 7 = chunk 5.
+    local CHUNK = (#pkgs <= 7) and #pkgs or 5
     local i = 1
     while i <= #pkgs do
         local cmds = {}
@@ -13490,7 +13492,9 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     -- buka batch -> beli OPEN_SEC detik -> close batch (INSTANT) -> langsung batch
     -- berikutnya (gak nunggu 1 menit -- user minta cepet). Contoh 15 client = 3 batch.
     local total = #split(cfg.pkgs or "")
-    local BATCH = math.max(1, tonumber(cfg.rotasi_batch) or 5)
+    -- v9.216: batch borong tim 2 = 6 (user minta 6+6, dari 5+5). Panel rotasi_batch
+    -- di-override ke 6 di sini. Contoh tim 2 = 11-22 (12 client) -> 6+6 = 2 batch.
+    local BATCH = 6
     local OPEN_SEC = math.max(5, tonumber(cfg.rotasi_open_sec) or 100)
     -- v9.145: rotasi SELURUHNYA di 1 dunia (cfg.place_id). Dunia dipilih dari panel
     -- lewat command PLACE (pindahin device). Dulu v9.144 split tim 2 ke dunia beda --
