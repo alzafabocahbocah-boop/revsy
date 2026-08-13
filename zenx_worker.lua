@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.217-cf"
+local VERSION = "9.220-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -885,7 +885,7 @@ local function save_config(cfg)
     f:write(string.format("  rotasi_on=%s,\n",tostring(cfg.rotasi_on == true)))
     f:write(string.format("  rotasi_barang=%q,\n",cfg.rotasi_barang or ""))
     f:write(string.format("  rotasi_batch=%d,\n",math.floor(tonumber(cfg.rotasi_batch) or 5)))
-    f:write(string.format("  rotasi_open_sec=%d,\n",math.floor(tonumber(cfg.rotasi_open_sec) or 100)))
+    f:write(string.format("  rotasi_open_sec=%d,\n",math.floor(tonumber(cfg.rotasi_open_sec) or 80)))
     f:write(string.format("  rotasi_dunia=%q,\n",cfg.rotasi_dunia or "sama"))
     f:write(string.format("  deteksi_longgar=%s,\n",tostring(cfg.deteksi_longgar == true)))
     f:write(string.format("  disconnect_menit=%d,\n",cfg.disconnect_menit or 3))
@@ -7489,7 +7489,14 @@ local function run(cfg)
             -- lagi) LANGSUNG rejoin -- gak nunggu siklus cek 2 menit (yg bikin telat
             -- jadi ~4 menit). Baca denyut murah (file lokal 1 su call), jadi cek
             -- sering gak boros.
-            if hitTop and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 30 then
+            -- v9.219: TAMBAH `or cfg.rotasi_on`. Bug: pas rotasi_on, /perintah sering
+            -- ROTASI-GO (bukan FORCE) -> hitTop=false -> blok denyut SKIP -> DENYUT_UMUR
+            -- kosong -> panel bilang OFF walau client jalan + nulis denyut. Sekarang
+            -- rotasi_on JUGA jalanin blok denyut (rejoin/lapor tim 1).
+            -- v9.220: TAPI kalau lagi ADA STOCK (rotasi JALAN, ROTASI_STATE != idle) ->
+            -- SKIP denyut. User: pas ada stock, borong DIUTAMAIN, jangan ngurus denyut.
+            -- (tim 1 juga lagi ditutup pas rotasi, jadi emang gak perlu diurus.)
+            if (hitTop or cfg.rotasi_on) and ROTASI_STATE == "idle" and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 30 then
                 KICK_DIURUS["_denyutTop"] = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
@@ -8651,7 +8658,7 @@ local function run(cfg)
                     end
                     cfg.rotasi_on = true
                     warn(("ROTASI nyala -> seed: %s | batch=%s open=%ss dunia=%s"):format(
-                        cfg.rotasi_barang, tostring(cfg.rotasi_batch or 5), tostring(cfg.rotasi_open_sec or 100), cfg.rotasi_dunia or "sama"))
+                        cfg.rotasi_barang, tostring(cfg.rotasi_batch or 5), tostring(cfg.rotasi_open_sec or 80), cfg.rotasi_dunia or "sama"))
                     tambahLog("Rotasi tim: NYALA (" .. cfg.rotasi_barang .. ")")
                 end
                 pcall(function() save_config(cfg) end)
@@ -13493,7 +13500,7 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     -- berikutnya (gak nunggu 1 menit -- user minta cepet). Contoh 15 client = 3 batch.
     local total = #split(cfg.pkgs or "")
     local BATCH = math.max(1, tonumber(cfg.rotasi_batch) or 5)
-    local OPEN_SEC = math.max(5, tonumber(cfg.rotasi_open_sec) or 100)
+    local OPEN_SEC = 80   -- v9.218: waktu beli tim 2 per batch = 80s (dari 100). Override config.
     -- v9.145: rotasi SELURUHNYA di 1 dunia (cfg.place_id). Dunia dipilih dari panel
     -- lewat command PLACE (pindahin device). Dulu v9.144 split tim 2 ke dunia beda --
     -- salah, user mau semua (tim 1+2) di 1 dunia yg ada stocknya.
