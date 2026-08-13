@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.208-cf"
+local VERSION = "9.209-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -15911,6 +15911,7 @@ local cfg=load_config()
 -- yang harus dicari orangnya. Dan di RF yang dipasang borongan, satu prompt
 -- yang kelewat itu bikin RF-nya diem berjam-jam tanpa ada yang sadar.
 local NON_INTERAKTIF = (os.getenv("ZENX_AUTO") == "1")
+                       or TES_BUKA_N   -- v9.209: `zenx buka N` = langsung jalan, gak nunggu Enter
                        or ((arg and arg[1] or ""):lower() == "pasang"
                            and (arg and arg[2] or "") ~= "")
 
