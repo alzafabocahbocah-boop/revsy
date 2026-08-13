@@ -1,4 +1,4 @@
-\#!/usr/bin/env lua
+#!/usr/bin/env lua
 -- ============================================================
 -- ZENX WORKER  v4.2  (Termux, Redfinger)
 -- 1 WORKER = 1 TIM = 1 RedFinger = 6-10 client Roblox.
@@ -11446,14 +11446,15 @@ if PERINTAH == "grafis" then
     return
 end
 
-if PERINTAH == "buka" then
+if PERINTAH == "buka" and not tonumber(arg and arg[2] or "") then
+    -- (arg ANGKA -> tes buka N client, ditangani di blok `buka N` sebelum pasang)
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
     local target = arg and arg[2] or ""
     if target == "" then
-        err("Cara pakai:  zenx buka <client>")
+        err("Cara pakai:  zenx buka <client>   (buka 1 client, kalibrasi)")
+        info("      atau:  zenx buka <N>        (TES buka N client loop utama, mis: zenx buka 15)")
         info("   contoh:  zenx buka clienp")
-        info("   (coba SEMUA cara masukin 1 client, jeda 10s -- liat mana yg works)")
         return
     end
     local pkg = target:find("^com%.roblox%.") and target or ("com.roblox." .. target)
