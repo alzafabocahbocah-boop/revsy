@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.209-cf"
+local VERSION = "9.211-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -12757,14 +12757,6 @@ end
 -- persis kayak `zenx` biasa (pasang): buka CHUNK 5 (5+5+..., 90s antar chunk),
 -- grid otomatis (N = 5 kolom x ceil(N/5) baris), semua client jalan loop utama.
 -- Contoh: `zenx buka 15`  -> tim 1 = 1-15. `zenx buka 20` -> tim 1 = 1-20.
-if PERINTAH == "buka" then
-    local n = tonumber(arg and arg[2]) or 15
-    TIM1_AKHIR = math.max(1, math.min(20, n))
-    TES_BUKA_N = true              -- v9.209: flag -> non-interaktif (skip prompt "Run sekarang?")
-    if arg then arg[2] = nil end   -- clear "15" biar gak kebaca sbg preset
-    warn(("[TES] buka %d client sebagai LOOP UTAMA (tim 1 = 1-%d, chunk 5, staggered)"):format(TIM1_AKHIR, TIM1_AKHIR))
-    PERINTAH = ""   -- v9.209: JALANIN main loop pakai config yg ADA (kayak `zenx` biasa), SKIP setup pasang
-end
 if PERINTAH == "pasang" then
     -- v5.40: pakai konstanta yang sama kayak tulis_skrip_up -- biar gak ada
     -- dua alamat repo yang bisa beda diam-diam.
@@ -13362,8 +13354,13 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap)
         end
         i = i + CHUNK
         if i <= #pkgs then
-            info(("[buka] tunggu %ds sebelum chunk berikutnya..."):format(chunkGap))
-            os.execute("sleep " .. chunkGap)
+            -- v9.211: chunk yg buka client 11+ dikasih jeda LEBIH LAMA (150s), karena
+            -- device udah nanggung 10 client jalan -> buka 5 lagi lebih berat. Cuma buat
+            -- open lambat (chunkGap >= 90 = tim 1 / tes); tim 2 borong (gap 2s) gak keubah.
+            local gap = chunkGap
+            if chunkGap >= 90 and i > 10 then gap = 150 end
+            info(("[buka] tunggu %ds sebelum chunk berikutnya..."):format(gap))
+            os.execute("sleep " .. gap)
         end   -- gap antar chunk (5+5)
     end
 end
@@ -14885,6 +14882,27 @@ if PERINTAH == "login" then
     return
 end
 
+-- v9.210: `zenx buka N` (N=angka) -- TES buka N client LANGSUNG. TANPA main loop,
+-- TANPA FORCE panel, TANPA rotasi, TANPA pulih state. Cuma buka N client (chunk 5,
+-- grid otomatis, join place di config). Buat cek device kuat berapa client.
+-- Client tetep kebuka setelah command selesai -> tutup manual / matiin app Termux.
+-- Contoh: `zenx buka 10`, `zenx buka 15`, `zenx buka 20`.
+if PERINTAH == "buka" and tonumber(arg and arg[2] or "") then
+    local n = math.max(1, math.min(20, math.floor(tonumber(arg[2]))))
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu buat setup."); return end
+    local pkgs = pkgs_slot(cfg, 1, n)
+    if #pkgs == 0 then err("Gak ada client di config."); return end
+    TIM1_AKHIR = #pkgs   -- biar grid pas
+    local gk = (SUSUNAN[#pkgs] and SUSUNAN[#pkgs][1]) or 5
+    warn(("[TES] buka %d client LANGSUNG -- chunk 5, grid %d kolom. GAK nunggu FORCE, GAK ada rotasi."):format(#pkgs, gk))
+    info("   (buka 5 -> tunggu 90s -> buka 5 lagi ... sampe " .. #pkgs .. ". Sabar.)")
+    PKGS_AKTIF = pkgs
+    pcall(function() buka_grup_rotasi(cfg, pkgs, nil, 90) end)
+    ok(("Selesai -- %d client kebuka. Cek device kuat/RAM/lag. Tutup manual atau matiin app Termux."):format(#pkgs))
+    return
+end
+
 if PERINTAH == "pantaucookie" or PERINTAH == "catatakun" then
     -- v6.26: MODE PANTAU COOKIE -- cuma catat cookie akun baru ke panel, GAK buka
     -- client / masukin game. Buat pas bikin akun manual di RF: worker ngintip
@@ -15911,7 +15929,6 @@ local cfg=load_config()
 -- yang harus dicari orangnya. Dan di RF yang dipasang borongan, satu prompt
 -- yang kelewat itu bikin RF-nya diem berjam-jam tanpa ada yang sadar.
 local NON_INTERAKTIF = (os.getenv("ZENX_AUTO") == "1")
-                       or TES_BUKA_N   -- v9.209: `zenx buka N` = langsung jalan, gak nunggu Enter
                        or ((arg and arg[1] or ""):lower() == "pasang"
                            and (arg and arg[2] or "") ~= "")
 
