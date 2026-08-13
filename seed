@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.30"
+local VERSI = "7.31"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -2270,6 +2270,9 @@ function Seed.sellDailyDealOnce()
     local prev = pkt("NPCS", "PreviewSellAll")
     local use = pkt("NPCS", "UseDailyDealAll")
     if not (use and use.Fire) then Seed._logDeal = "remote UseDailyDealAll gak ada"; return false end
+    -- v7.31: UNFAV semua buah DULU (biar buah favorit kejual), tunggu server proses
+    pcall(Seed.unfavAllOnce)
+    task.wait(0.4)
     if prev and prev.Fire then pcall(function() prev:Fire() end); task.wait(0.4) end
     pcall(function() use:Fire() end)
     Seed._logDeal = ("JUAL daily deal (tas tadi %s)"):format(Seed._singkatHarga(nilai))
@@ -2283,9 +2286,9 @@ end
 -- malah nge-fav yg belum). Cek attribute IsFavorite (dari market: cara game nandain).
 -- ============================================================
 function Seed.unfavAllOnce()
-    -- v7.30: pakai remote yg BENER dari gag2 -> Backpack.SetFruitFavorite:Fire(id, false).
-    -- unfav buah favorit (attr .Favorite/.Favorited) biar bisa dijual (daily deal/SellAll
-    -- skip yg favorit). Throttle (n%8) biar server gak nolak packet.
+    -- v7.31: unfav SEMUA buah (fire SetFruitFavorite(id,false) ke tiap buah, kayak
+    -- gag2 favAllFruits(false)). GAK cek attr favorit -- set false ke yg gak favorit =
+    -- no-op, tapi mastiin yg favorit PASTI ke-unfav (cek attr sebelumnya sering meleset).
     local p = pkt("Backpack", "SetFruitFavorite")
     if not (p and p.Fire) then Seed._logUnfav = "remote SetFruitFavorite gak ada"; return false end
     local n = 0
@@ -2293,8 +2296,7 @@ function Seed.unfavAllOnce()
         if holder then
             for _, t in ipairs(holder:GetChildren()) do
                 local fid = t:GetAttribute("Id")
-                local fav = t:GetAttribute("Favorite") or t:GetAttribute("Favorited")
-                if fid and fav then
+                if fid then
                     pcall(function() p:Fire(tostring(fid), false) end)
                     n = n + 1
                     if n % 8 == 0 then task.wait() end
@@ -2302,7 +2304,7 @@ function Seed.unfavAllOnce()
             end
         end
     end
-    Seed._logUnfav = (n > 0) and ("unfav " .. n .. " buah favorit") or "gak ada buah favorit"
+    Seed._logUnfav = "unfav-all " .. n .. " buah"
     return n > 0
 end
 
@@ -10583,9 +10585,8 @@ task.spawn(function()
                 (nv >= minV) and "  ✓" or "")
         end
         if state.autoDailyDeal then
-            -- v7.30: unfav BARENG daily deal (user: daily deal nyala -> unfav nyala).
-            -- unfav dulu (biar buah favorit bisa kejual) baru jual daily deal.
-            pcall(Seed.unfavAllOnce)
+            -- v7.31: unfav udah di DALAM sellDailyDealOnce (sebelum jual). User: daily
+            -- deal nyala -> unfav ikut nyala.
             pcall(Seed.sellDailyDealOnce)
         end
         task.wait(5)
