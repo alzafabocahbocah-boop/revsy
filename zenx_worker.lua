@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.229-cf"
+local VERSION = "9.231-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7293,15 +7293,23 @@ local function run(cfg)
                 if tsGO and tsGO > 1e12 then tsGO = math.floor(tsGO/1000) end   -- ms -> s
                 local delayGO = tsGO and (os.time() - tsGO) or nil
                 if ROTASI_STATE == "idle" then
-                    -- v9.204: DEDUP per-seed cooldown (270s). Kalau seed ini baru
-                    -- dirotasi < 270s lalu (dari tab panel lain / sisa sinyal numpuk),
-                    -- SKIP -- cegah rotasi ulang walau banyak panel fire.
+                    -- v9.204: DEDUP per-seed cooldown (270s) pakai waktu proses.
+                    -- v9.230: TAMBAH dedup pakai ts ROTASI-GO. Bug 2x: ROTASI-GO ke-2
+                    -- dikirim panel PAS rotasi ke-1 jalan (ts cuma 101s dari ke-1), tapi
+                    -- baru diproses setelah rotasi ke-1 kelar (407s) -> cooldown waktu-proses
+                    -- udah lewat -> keproses 2x. Cek ts: 101s < 290 -> STALE, SKIP. 290s = mepet
+                    -- 1 siklus (300s): nutup SEMUA re-fire dalam siklus, restock baru (300s) lolos.
                     local nowT = os.time()
-                    if ROTASI_SEED_TS[seedGO] and (nowT - ROTASI_SEED_TS[seedGO]) < 270 then
-                        warn(("[rotasi] SKIP '%s' -- baru dirotasi %ds lalu (dedup, cegah spam multi-panel/sisa sinyal)"):format(
-                            seedGO, nowT - ROTASI_SEED_TS[seedGO]))
+                    local tsStale = tsGO and ROTASI_GO_TS_SEED[seedGO]
+                                    and (tsGO - ROTASI_GO_TS_SEED[seedGO]) < 290
+                    if tsStale or (ROTASI_SEED_TS[seedGO] and (nowT - ROTASI_SEED_TS[seedGO]) < 290) then
+                        warn(("[rotasi] SKIP '%s' -- dedup cegah 2x (ts-gap %ss, proses-gap %ss, batas 290)"):format(
+                            seedGO,
+                            (tsGO and ROTASI_GO_TS_SEED[seedGO]) and tostring(tsGO - ROTASI_GO_TS_SEED[seedGO]) or "-",
+                            ROTASI_SEED_TS[seedGO] and tostring(nowT - ROTASI_SEED_TS[seedGO]) or "-"))
                     else
                         ROTASI_SEED_TS[seedGO] = nowT
+                        if tsGO then ROTASI_GO_TS_SEED[seedGO] = tsGO end
                         warn(("[rotasi] >>> STOCK dari PANEL: %s <<< rotasi%s%s"):format(
                             seedGO,
                             placeGO and (" (dunia "..placeGO..")") or "",
@@ -7345,7 +7353,7 @@ local function run(cfg)
                     -- top-loop set ROTASI_SEED_TS. Kalau seed ini baru dirotasi < 270s
                     -- (dari panel ATAU self-detect) -> SKIP. Nutup stock 2x.
                     local nowSD = os.time()
-                    if ROTASI_SEED_TS[barang] and (nowSD - ROTASI_SEED_TS[barang]) < 270 then
+                    if ROTASI_SEED_TS[barang] and (nowSD - ROTASI_SEED_TS[barang]) < 290 then
                         info(("[rotasi] SKIP self-detect '%s' -- baru dirotasi %ds lalu (dedup sama panel, cegah 2x)"):format(
                             barang, nowSD - ROTASI_SEED_TS[barang]))
                     else
@@ -13335,6 +13343,9 @@ ROTASI_GO_TS_PROSES = 0  -- v9.198: ts ROTASI-GO terakhir yg nyela loop (dedup i
 ROTASI_SEED_TS = {}      -- v9.204: seed -> ts terakhir dirotasi. Cooldown per-seed (270s) --
                          -- dedup SERVER-SIDE: berapapun tab panel yg fire, 1 seed = 1 rotasi
                          -- per ~5 menit. Nutup "sisa sinyal panel numpuk" dari multi-tab.
+ROTASI_GO_TS_SEED = {}   -- v9.230: seed -> ts ROTASI-GO terakhir yg diproses. Dedup by ts
+                         -- (bukan waktu proses) -- ROTASI-GO ke-2 yg dikirim < 270s dari yg
+                         -- pertama TAPI baru diproses telat (worker sibuk) tetep ke-skip.
 ROTASI_GANTIAN = 0       -- v9.144: counter buat mode dunia "gantian" (W1/W2 selang-seling)
 
 -- ambil pkg berdasar rentang slot (idx 1-based di cfg.pkgs)
