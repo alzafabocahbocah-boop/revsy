@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.220-cf"
+local VERSION = "9.227-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7286,6 +7286,12 @@ local function run(cfg)
                 -- v9.200: extract SEED juga -> log tau stock APA (bukan cuma "PANEL-STOCK").
                 local seedGO = isiTop:match("ROTASI%-GO|([^|]*)|") or "?"
                 local placeGO = isiTop:match("ROTASI%-GO|[^|]*|[^|]*|(%d+)")
+                -- v9.226: extract ts panel (field ke-3) -> hitung DELAY (worker baca -
+                -- panel kirim). Delay tinggi = ke-BLOCK (worker sibuk). Delay rendah =
+                -- fresh (panel baru kirim). Buat diagnosa "stock telat" ke-block/panel-lambat.
+                local tsGO = tonumber(isiTop:match("ROTASI%-GO|[^|]*|(%d+)"))
+                if tsGO and tsGO > 1e12 then tsGO = math.floor(tsGO/1000) end   -- ms -> s
+                local delayGO = tsGO and (os.time() - tsGO) or nil
                 if ROTASI_STATE == "idle" then
                     -- v9.204: DEDUP per-seed cooldown (270s). Kalau seed ini baru
                     -- dirotasi < 270s lalu (dari tab panel lain / sisa sinyal numpuk),
@@ -7296,8 +7302,10 @@ local function run(cfg)
                             seedGO, nowT - ROTASI_SEED_TS[seedGO]))
                     else
                         ROTASI_SEED_TS[seedGO] = nowT
-                        warn(("[rotasi] >>> STOCK dari PANEL: %s <<< rotasi%s"):format(
-                            seedGO, placeGO and (" (dunia "..placeGO..")") or ""))
+                        warn(("[rotasi] >>> STOCK dari PANEL: %s <<< rotasi%s%s"):format(
+                            seedGO,
+                            placeGO and (" (dunia "..placeGO..")") or "",
+                            delayGO and ((" [delay %ds dari panel kirim]"):format(delayGO)) or ""))
                         tambahLog(("Rotasi: stock dari panel -> %s"):format(seedGO))
                         pcall(function() jalankan_rotasi(cfg, seedGO, mapLink, placeGO) end)
                     end
@@ -7332,15 +7340,25 @@ local function run(cfg)
                 local siap = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 60
                 -- 3) trigger cuma kalau idle + cooldown + gate siap
                 if barang and ROTASI_STATE == "idle" and (os.time() - ROTASI_TS) > 120 and siap then
-                    -- v9.197: cari dunia SEED dari peta (self-detect tau dunia, gak
-                    -- borong di cfg.place_id doang). User: stock W2 -> harus borong W2.
-                    local placeR = nil
-                    if cfg.rotasi_peta and barang and barang ~= "" then
-                        for s, p in cfg.rotasi_peta:gmatch("([^,:]+):(%d+)") do
-                            if s == barang then placeR = p; break end
+                    -- v9.222: cek cooldown PER-SEED (ROTASI_SEED_TS) -- biar self-detect
+                    -- GAK dobel sama panel. Panel (v223+) udah detect + kirim ROTASI-GO,
+                    -- top-loop set ROTASI_SEED_TS. Kalau seed ini baru dirotasi < 270s
+                    -- (dari panel ATAU self-detect) -> SKIP. Nutup stock 2x.
+                    local nowSD = os.time()
+                    if ROTASI_SEED_TS[barang] and (nowSD - ROTASI_SEED_TS[barang]) < 270 then
+                        info(("[rotasi] SKIP self-detect '%s' -- baru dirotasi %ds lalu (dedup sama panel, cegah 2x)"):format(
+                            barang, nowSD - ROTASI_SEED_TS[barang]))
+                    else
+                        ROTASI_SEED_TS[barang] = nowSD
+                        -- v9.197: cari dunia SEED dari peta (self-detect tau dunia).
+                        local placeR = nil
+                        if cfg.rotasi_peta and barang and barang ~= "" then
+                            for s, p in cfg.rotasi_peta:gmatch("([^,:]+):(%d+)") do
+                                if s == barang then placeR = p; break end
+                            end
                         end
+                        pcall(function() jalankan_rotasi(cfg, barang, mapLink, placeR) end)
                     end
-                    pcall(function() jalankan_rotasi(cfg, barang, mapLink, placeR) end)
                 elseif barang and not siap then
                     info(("[rotasi] stock '%s' kedeteksi tapi tim 1 belum siap -> baseline dicatat, nunggu siap"):format(barang))
                 end
@@ -7678,12 +7696,16 @@ local function run(cfg)
                                     :format(ak or pkg))
                             end
                         else
-                            -- umur > 120s = denyut MATI >2 menit. Cek CAPTCHA dulu
-                            -- (v8.47: captcha check pindah ke sini dari loop grafis
-                            -- lama yg udah OFF). Kalau kena captcha -> JANGAN rejoin
-                            -- (percuma, solve manual) + set badge. Kalau bukan ->
-                            -- WAJIB REJOIN.
-                            if KICK_DIURUS["captcha:" .. pkg] then
+                            -- umur > 120s = denyut MATI >2 menit.
+                            -- v9.221: GRACE -- kalau client BARU DIBUKA (< 180s lalu),
+                            -- JANGAN rejoin walau denyut basi (grace 240s = 4 menit, krn masuk PS ~3 menit). Dia masih loading/spawn
+                            -- (belum sempet nulis denyut fresh ~2 menit). Rejoin di sini =
+                            -- INTERRUPT loading -> client nyangkut di HOME -> loop terus.
+                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 240 then
+                                diGame = diGame + 1   -- anggap di game (lagi loading), tunggu denyut nyusul
+                                info(("[antrian] %s baru dibuka %ds lalu -> GRACE (loading, JANGAN rejoin)")
+                                    :format(ak or pkg, os.time() - KICK_DIURUS["tembak_ts:" .. pkg]))
+                            elseif KICK_DIURUS["captcha:" .. pkg] then
                                 -- v8.70: RE-CEK pakai logcat doang. Logcat masih ada
                                 -- captcha fresh (<120s) -> masih captcha. Kalau udah
                                 -- bersih -> udah solved / false positive -> lepas + rejoin.
@@ -7760,7 +7782,18 @@ local function run(cfg)
                     -- bikin open_one lambat ~5s/client). 10 client buka detik-detikan.
                     if cfg.rotasi_on then
                         info(("[antrian] %d client OUT -> ROTASI: tembak BARENGAN (bukan 1-1)"):format(#perluTembak))
-                        pcall(function() buka_grup_rotasi(cfg, perluTembak, mapLink, 90) end)
+                        -- v9.225: rejoin bisa di-ABORT sama stock. cekAbort baca /perintah,
+                        -- true kalau ada ROTASI-GO baru (stock) -> berhenti rejoin, top-loop
+                        -- proses rotasi. User: baca perintah panel itu UTAMA.
+                        pcall(function() buka_grup_rotasi(cfg, perluTembak, mapLink, 90, function()
+                            local cekP = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+                            local isiP = ambil_str(cekP, "isi") or ""
+                            return isiP:upper():find("ROTASI%-GO") ~= nil and isiP ~= ROTASI_GO_LAST
+                        end) end)
+                        -- v9.221: catat waktu buka tiap client -> GRACE 180s (jangan rejoin
+                        -- < 240s abis dibuka (~3 menit masuk PS + margin), biar loading gak ke-interrupt = nyangkut home)
+                        local tnowBuka = os.time()
+                        for _, pkg in ipairs(perluTembak) do KICK_DIURUS["tembak_ts:" .. pkg] = tnowBuka end
                     else
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
                     for idx, pkg in ipairs(perluTembak) do
@@ -13324,9 +13357,12 @@ function close_grup_cepat(cfg, pkgs)
     return #pkgs
 end
 
-function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap)
+function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort)
     -- v9.142: chunkGap = jeda antar chunk 5. Default 2s (tim 2 cepet). Tim 1 (loop
     -- utama) pakai 90s (buka 5 -> tunggu 90s -> buka 5 lagi).
+    -- v9.225: cekAbort (opsional) = fungsi yg dicek tiap 5s pas nunggu antar chunk.
+    -- Kalau return true (ada stock) -> ABORT buka sisa. Dipakai REJOIN biar stock
+    -- (perintah panel) gak ke-block sama rejoin yg lama. tim 1/tim 2 rotasi = nil.
     chunkGap = tonumber(chunkGap) or 2
     -- v9.141: grid BASIS = semua pkgs yg dibuka (set PKGS_AKTIF dulu). Biar chunk 1
     -- & chunk 2 pakai layout SAMA (grid_satu -> grid_hitung(PKGS_AKTIF)). Dulu grid
@@ -13374,7 +13410,17 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap)
                 end
             end
             info(("[buka] tunggu %ds sebelum chunk berikutnya..."):format(gap))
-            os.execute("sleep " .. gap)
+            -- v9.225: kalau cekAbort dikasih (REJOIN) -> cek tiap 1s (kayak borong/start
+            -- paksa, responsif). Ada stock -> ABORT buka sisa. Perintah panel = UTAMA.
+            local diAbort = false
+            for tw = 1, gap do
+                os.execute("sleep 1")
+                if cekAbort and cekAbort() then diAbort = true; break end
+            end
+            if diAbort then
+                warn("[buka] >>> ADA STOCK dari panel <<< ABORT buka sisa -> prioritas rotasi")
+                break
+            end
         end   -- gap antar chunk (5+5)
     end
 end
@@ -13546,6 +13592,11 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     tambahLog_rotasi(cfg, "balik loop utama (tim 1)")
     PKGS_AKTIF = pkgs_slot(cfg, 1, TIM1_AKHIR)   -- grid tim 1 = TIM1_AKHIR-client layout
     buka_grup_rotasi(cfg, pkgs_slot(cfg, 1, TIM1_AKHIR), mapLink, 90)
+    -- v9.224: set tembak_ts tim 1 (grace 240s). Abis rotasi (stock), tim 1 baru dibuka
+    -- lagi -> butuh ~3 menit masuk PS baru lapor denyut. Tanpa ini, cek denyut langsung
+    -- nge-rejoin tim 1 yg masih loading -> nyangkut. User: denyut nunggu loop utama 6-10.
+    local tBalik = os.time()
+    for _, pkg in ipairs(pkgs_slot(cfg, 1, TIM1_AKHIR)) do KICK_DIURUS["tembak_ts:" .. pkg] = tBalik end
     ROTASI_STATE = "idle"
     ROTASI_TS = os.time()
     ROTASI_SIAP_TS = 0   -- tim 1 baru dibuka lagi -> tunggu lengkap+60s sebelum rotasi lagi
