@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.35"
+local VERSI = "7.36"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -6873,14 +6873,22 @@ pcall(Seed.pantauRejoin)   -- v4.06: loop rejoin terpisah (deteksi andal)
 task.spawn(function()
     task.wait(10)   -- jeda biar leaderstats keload dulu
     local last = nil
+    local lastW = nil   -- v7.36: dunia terakhir yg dilapor (w1/w2)
     while isCurrentGen() do
         local sk = sheckles()
+        local w = Seed.sheckDunia()
         if sk then
-            if last == nil then
-                last = sk
+            if last == nil or w ~= lastW then
+                -- v7.36: read PERTAMA (baseline) ATAU PINDAH DUNIA (W1<->W2) -> LAPOR
+                -- langsung. Biar saldo dunia baru (mis. masuk W2 -> Leaves) kelapor,
+                -- gak nunggu berubah 100M (selisih bisa ~0 kalau saldo W1 & W2 mirip).
+                pcall(function()
+                    panelReq("/stat", "POST", { akun = player.Name, sc = "seed", sheck = sk, sheckW = w })
+                end)
+                last = sk; lastW = w
             elseif math.abs(sk - last) >= 1e8 then   -- BERUBAH >= 100 juta (naik ATAU turun)
                 pcall(function()
-                    panelReq("/stat", "POST", { akun = player.Name, sc = "seed", sheck = sk, sheckW = Seed.sheckDunia() })
+                    panelReq("/stat", "POST", { akun = player.Name, sc = "seed", sheck = sk, sheckW = w })
                 end)
                 local arah = (sk > last) and "+" or "-"
                 Seed._logSheckDrop = ("sheck " .. arah .. Seed._singkatHarga(math.abs(sk - last)) .. " -> lapor cepat")
