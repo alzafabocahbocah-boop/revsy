@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.231-cf"
+local VERSION = "9.235-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7331,7 +7331,7 @@ local function run(cfg)
             -- PERTAMA abis gate siap kelewat (cuma jadi baseline) -> nunggu 1 siklus
             -- (~5 menit) baru trigger. Sekarang baseline selalu fresh -> begitu gate
             -- siap, restock berikutnya langsung ke-trigger (gak kelewat).
-            if cfg.rotasi_on and (os.time() - ROTASI_CEK_TS) >= 8 then
+            if cfg.rotasi_on and (os.time() - ROTASI_CEK_TS) >= 1 then
                 ROTASI_CEK_TS = os.time()
                 -- 1) SELALU poll (update ROTASI_NB_LAST) -> baseline gak pernah basi
                 local barang = cek_stock_rotasi(cfg)
@@ -7342,12 +7342,15 @@ local function run(cfg)
                 if #tim1 > 0 and idup >= #tim1 then
                     if ROTASI_SIAP_TS == 0 then
                         ROTASI_SIAP_TS = os.time()
-                        info("[rotasi] tim 1 lengkap nembak server -> tunggu 60s baru rotasi aktif")
+                        info("[rotasi] tim 1 lengkap nembak server -> tunggu 15s baru rotasi aktif (GACOR)")
                     end
                 end
-                local siap = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 60
-                -- 3) trigger cuma kalau idle + cooldown + gate siap
-                if barang and ROTASI_STATE == "idle" and (os.time() - ROTASI_TS) > 120 and siap then
+                local siap = ROTASI_SIAP_TS > 0 and (os.time() - ROTASI_SIAP_TS) >= 15
+                -- v9.235: STOCK = PRIORITAS MUTLAK. Buang gate `siap` + cooldown antar
+                -- rotasi (ROTASI_TS). Begitu stock kedeteksi + gak lagi rotasi -> LANGSUNG
+                -- rotasi, gak nunggu tim 1 siap / gak nunggu jeda. User cuma mau 1 rotasi
+                -- utama tiap stock -> dijamin dedup per-seed (ROTASI_SEED_TS 290s) di bawah.
+                if barang and ROTASI_STATE == "idle" then
                     -- v9.222: cek cooldown PER-SEED (ROTASI_SEED_TS) -- biar self-detect
                     -- GAK dobel sama panel. Panel (v223+) udah detect + kirim ROTASI-GO,
                     -- top-loop set ROTASI_SEED_TS. Kalau seed ini baru dirotasi < 270s
@@ -7358,6 +7361,11 @@ local function run(cfg)
                             barang, nowSD - ROTASI_SEED_TS[barang]))
                     else
                         ROTASI_SEED_TS[barang] = nowSD
+                        -- v9.232: JUGA set ROTASI_GO_TS_SEED (ts) -- biar ROTASI-GO panel
+                        -- yg nyusul ke-dedup by TS (bukan waktu proses). Rotasi lama (~7
+                        -- menit) bikin cooldown waktu-proses expired -> 2x. tsStale pakai
+                        -- ini: panel-ts - self-ts < 290 -> SKIP. Self-detect + panel = 1x.
+                        ROTASI_GO_TS_SEED[barang] = nowSD
                         -- v9.197: cari dunia SEED dari peta (self-detect tau dunia).
                         local placeR = nil
                         if cfg.rotasi_peta and barang and barang ~= "" then
