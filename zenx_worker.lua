@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.227-cf"
+local VERSION = "9.229-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13357,6 +13357,22 @@ function close_grup_cepat(cfg, pkgs)
     return #pkgs
 end
 
+-- v9.229: konversi roblox:// -> WEB URL. Deep link roblox:// NYANGKUT HOME kalau app
+-- udah kebuka (rejoin). Web URL + CLEAR_TOP (0x14000000) nge-reset activity Home TANPA
+-- force-stop -> masuk game. Cara WC/JACKPOT dari open_one (terbukti aman, client lain OK).
+function ke_url_web(cfg, url)
+    local pid_w = cfg.place_id or "129343810645058"
+    if not url or url == "" then return "https://www.roblox.com/games/start?placeId="..pid_w end
+    if url:find("share%?code=") or url:find("/share%?") then return url end
+    if url:find("privateServerLinkCode=") then
+        return url:sub(1,4) == "http" and url
+            or ("https://www.roblox.com/games/"..pid_w.."/x?"..url:match("(privateServerLinkCode=[%w]+)"))
+    end
+    local kode_w = url:match("accessCode=([%w%-]+)") or url:match("linkCode=([%w%-]+)") or url:match("code=([%w%-]+)")
+    if kode_w then return "https://www.roblox.com/games/start?placeId="..pid_w.."&accessCode="..kode_w end
+    return "https://www.roblox.com/games/start?placeId="..pid_w
+end
+
 function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort)
     -- v9.142: chunkGap = jeda antar chunk 5. Default 2s (tim 2 cepet). Tim 1 (loop
     -- utama) pakai 90s (buka 5 -> tunggu 90s -> buka 5 lagi).
@@ -13382,8 +13398,9 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort)
         for j = i, math.min(i + CHUNK - 1, #pkgs) do
             local pkg = pkgs[j]
             local url = build_url(cfg, mapLink and mapLink[pkg] or nil)
-            if j == i then info("[buka] contoh URL join: " .. tostring(url):sub(1, 95)) end   -- v9.187: log 1 URL/chunk buat diagnosa dunia
-            cmds[#cmds+1] = "am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. " >/dev/null 2>&1"
+            local url_w = ke_url_web(cfg, url)   -- v9.229: web URL biar gak nyangkut home
+            if j == i then info("[buka] contoh URL join: " .. tostring(url_w):sub(1, 95)) end   -- v9.187: log 1 URL/chunk buat diagnosa dunia
+            cmds[#cmds+1] = "am start -a android.intent.action.VIEW -d '" .. url_w .. "' -p " .. pkg .. " -f 0x14000000 >/dev/null 2>&1"
         end
         if #cmds > 0 then
             info(("[buka] CHUNK client %d-%d (%d client barengan)"):format(i, math.min(i + CHUNK - 1, #pkgs), #cmds))
