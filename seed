@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.40"
+local VERSI = "7.42"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -6890,7 +6890,7 @@ end)
 -- panel (gak nunggu /stat periodik ~120s). Biar panel keliatan turunnya langsung
 -- (mis. abis beli mahal / gift). Naik -> update baseline (drop diukur dari puncak).
 task.spawn(function()
-    task.wait(3)   -- v7.41: 10s -> 3s, mulai cek lebih cepet
+    task.wait(1)   -- v7.43: 3s -> 1s, lapor SECEPET mungkin pas awal on
     local last = nil
     local lastW = nil   -- v7.36: dunia terakhir yg dilapor (w1/w2)
     while isCurrentGen() do
@@ -6906,6 +6906,21 @@ task.spawn(function()
                 -- gak nunggu berubah 100M (selisih bisa ~0 kalau saldo W1 & W2 mirip).
                 pcall(function()
                     panelReq("/stat", "POST", { akun = player.Name, sc = "seed", sheck = sk, sheckW = w })
+                end)
+                -- v7.42: LAPOR SEED bareng sheckles pas first-read (baseline), naik/turun/
+                -- gak berubah -> tetep kirim. Biar jumlah seed muncul di panel bareng
+                -- sheckles pas awal on, gak nunggu loop /inv (yg bisa telat / lapor kosong).
+                pcall(function()
+                    local arr, total = seedDiTas()
+                    local wcR, sprR, swcR, ssprR = gearDiTas()
+                    local bersih = {}
+                    for _, e in ipairs(arr) do bersih[#bersih+1] = { n = e.n, j = e.j, r = e.r } end
+                    panelReq("/inv", "POST", {
+                        akun = player.Name, seeds = bersih,
+                        gears = Seed.gearDiTas(), pets = Seed.petDiTas(),
+                        totSeed = total, superWC = wcR, superSpr = sprR,
+                        superSyrupWC = swcR, superSyrupSpr = ssprR,
+                    })
                 end)
                 last = sk; lastW = w
             elseif math.abs(sk - last) >= 1e8 then   -- BERUBAH >= 100 juta (naik ATAU turun)
