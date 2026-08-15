@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.235-cf"
+local VERSION = "9.241-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3601,7 +3601,7 @@ end
 -- Gunanya: satu client dipakai buat nyoba semua ukuran. Mau tau petaknya kalau
 -- nanti 10 client? Set jendela client ini ke ukuran itu, cari tombolnya,
 -- simpen. Gak usah beneran buka 10 client.
-local function petak_untuk(n, slot)
+local function petak_untuk(n, slot, cfg)
     local W, H = layar_ukuran()
     if W == 0 or H == 0 then return nil, "gagal baca ukuran layar" end
     if not n or n < 1 then return nil, "jumlah client gak masuk akal" end
@@ -3610,13 +3610,21 @@ local function petak_untuk(n, slot)
     if W < H then W, H = H, W end
 
     local kol, bar
-    local s = SUSUNAN[n]
-    if s then
-        kol, bar = s[1], s[2]
-    elseif W >= H then
-        kol = math.ceil(math.sqrt(n)); bar = math.ceil(n / kol)
+    -- v9.241: respect BARIS override dari panel (grid_kolom = baris) biar konsisten sama
+    -- grid utama (grid_hitung). Gak dikasih cfg / 0 -> auto SUSUNAN/sqrt.
+    local barPaksa = cfg and tonumber(cfg.grid_kolom)
+    if barPaksa and barPaksa >= 1 then
+        bar = math.min(barPaksa, n)
+        kol = math.ceil(n / bar)
     else
-        bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
+        local s = SUSUNAN[n]
+        if s then
+            kol, bar = s[1], s[2]
+        elseif W >= H then
+            kol = math.ceil(math.sqrt(n)); bar = math.ceil(n / kol)
+        else
+            bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
+        end
     end
 
     local lebar, tinggi = math.floor(W / kol), math.floor(H / bar)
@@ -3674,12 +3682,14 @@ local function grid_hitung(cfg, pkgsPilih)
     end
 
     local kol, bar
-    -- v8.57: OVERRIDE dari panel. cfg.grid_kolom di-set (>0) -> pakai kolom itu,
-    -- baris dihitung dari jumlah client. Kalau 0/nil -> otomatis (SUSUNAN).
-    local kolPaksa = tonumber(cfg.grid_kolom)
-    if kolPaksa and kolPaksa >= 1 then
-        kol = math.min(kolPaksa, n)
-        bar = math.ceil(n / kol)
+    -- v9.240: OVERRIDE dari panel = JUMLAH BARIS (bukan kolom lagi). User: set BARIS
+    -- lebih jelas + BENER buat bypass -- posisi tombol key ditentuin jumlah BARIS (1
+    -- baris Y0.713, 2 baris Y0.723, 3 baris Y0.808). Baris di-set -> kolom dihitung dari
+    -- jumlah client. (field-nya masih 'grid_kolom' biar gak mecah config lama, tapi ARTINYA baris.)
+    local barPaksa = tonumber(cfg.grid_kolom)
+    if barPaksa and barPaksa >= 1 then
+        bar = math.min(barPaksa, n)
+        kol = math.ceil(n / bar)
     else
         local s = SUSUNAN[n]
         if s then
@@ -3690,11 +3700,9 @@ local function grid_hitung(cfg, pkgsPilih)
             bar = math.ceil(math.sqrt(n)); kol = math.ceil(n / bar)
         end
     end
-    -- v6.71: JARING PENGAMAN landscape. Layar landscape (W>=H) HARUS punya kolom
-    -- >= baris (lebih lebar). Kalau kebalik (kol < bar -> jendela jadi tinggi
-    -- sempit / kadang 1 baris aneh), TUKER. Ini nangkep kasus grid kacau pas
-    -- ukuran layar kebaca nanggung. n>=2 aja (n=1 gak masalah).
-    if W >= H and n >= 2 and kol < bar then
+    -- v6.71: JARING PENGAMAN landscape. TAPI v9.240: JANGAN swap kalau user set BARIS
+    -- eksplisit (hormati pilihan user -- baris = yg nentuin tombol key). Auto aja yg di-swap.
+    if not (barPaksa and barPaksa >= 1) and W >= H and n >= 2 and kol < bar then
         kol, bar = bar, kol
     end
     -- pastiin kol*bar cukup nampung semua client (jangan ada yang kepotong)
@@ -4859,7 +4867,10 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         if p ~= pilih and #enam < 6 then enam[#enam+1] = p end
                     end
                     local kolAsli = cfg.grid_kolom
-                    cfg.grid_kolom = 3
+                    -- v9.241: grid_kolom sekarang = BARIS (bukan kolom). Bypass mau 6 client
+                    -- jadi 3x2 (3 kolom x 2 BARIS) biar tombol key di posisi 2-baris (Y 0.723).
+                    -- Jadi set BARIS=2 (bukan 3). 6 client / 2 baris = 3 kolom -> 3x2. Bener.
+                    cfg.grid_kolom = 2
                     local petaP, _gh_err, kolP, barP, wLayar, hLayar = grid_hitung(cfg, enam)
                     cfg.grid_kolom = kolAsli   -- balikin (jangan ganggu grid utama)
                     -- v9.171: LOG diagnosa -- layar + grid + jumlah client dipaksa
@@ -7114,6 +7125,7 @@ local function run(cfg)
     local lastRekamDc = 0       -- v7.29: kapan terakhir rekam disconnect dari logcat
     local lastSuplaiCek = 0     -- v4.54: kapan terakhir minta CF ngerencanain suplai
     local lastLisensiCek = 0   -- v6.14: kapan terakhir cek lisensi berkala
+    local LISENSI_CEK_TS = 0   -- v9.239: kapan terakhir cek lisensi PRIORITAS (top-loop, tiap 60s)
     local lastSettingCek = 0   -- v9.34: kapan terakhir cek /setting-tim (tiap 5s)
     local lastCekGrafis = 0    -- v8.12: kapan terakhir cek all grafis (tiap 90s)
     local lastCekCaptcha = 0   -- v6.55: kapan terakhir cek captcha berkala
@@ -7263,9 +7275,23 @@ local function run(cfg)
         do
             local respTop = api_get(cfg, "/perintah?tim=" .. cfg.tim)
             local isiTop = ambil_str(respTop, "isi") or ""
+            -- v9.239: LISENSI = PRIORITAS MUTLAK (di ATAS stock/apapun). Cek tiap 60s.
+            -- Kalau Delta HILANG -> paksa bypass LANGSUNG (reset gate) + SKIP proses stock
+            -- ronde ini. Percuma rotasi kalau client nyangkut layar key. Lisensi balik
+            -- dulu, baru urus stock. User: lisensi lebih utama dari perintah apapun.
+            local skipKarenaLisensi = false
+            if MODE_JALAN and (os.time() - (LISENSI_CEK_TS or 0)) >= 60 then
+                LISENSI_CEK_TS = os.time()
+                if lisensi_keadaan(cfg) ~= "ada" then
+                    warn("[LISENSI] Delta HILANG -- PRIORITAS MUTLAK: pulihin DULU, skip stock ronde ini")
+                    lastLisensiCek = 0        -- paksa cek+bypass lisensi di blok bawah (gak nunggu 10 menit)
+                    BYPASS_TERAKHIR = 0       -- reset gate 60s -> bypass boleh LANGSUNG
+                    skipKarenaLisensi = true
+                end
+            end
             -- v9.137: SINYAL TEST diproses LANGSUNG di top-loop (gak nunggu dispatch di
             -- bawah yg telat kalau worker sibuk denyut/open). Jadi test langsung masuk.
-            if isiTop:upper():find("ROTASI%-TEST") and isiTop ~= ROTASI_TEST_LAST then
+            if not skipKarenaLisensi and isiTop:upper():find("ROTASI%-TEST") and isiTop ~= ROTASI_TEST_LAST then
                 ROTASI_TEST_LAST = isiTop
                 warn("[rotasi] >>> SINYAL TEST (top-loop, LANGSUNG) <<<")
                 tambahLog("Rotasi TEST: sinyal palsu (langsung)")
@@ -7278,7 +7304,7 @@ local function run(cfg)
             -- v9.139: SINYAL STOCK dari PANEL (real-time detect di browser). Panel
             -- deteksi seed restock -> kirim ROTASI-GO -> worker langsung rotasi (respect
             -- gate tim 1 siap + cooldown). Lebih cepet dari worker poll sendiri.
-            if isiTop:upper():find("ROTASI%-GO") and isiTop ~= ROTASI_GO_LAST then
+            if not skipKarenaLisensi and isiTop:upper():find("ROTASI%-GO") and isiTop ~= ROTASI_GO_LAST then
                 ROTASI_GO_LAST = isiTop
                 -- v9.195: extract DUNIA (place) dari sinyal ROTASI-GO|seed|ts|place.
                 -- Panel kirim place sesuai dunia seed (Dunia1=W1, Dunia2=W2) -> tim 2
@@ -7782,8 +7808,12 @@ local function run(cfg)
                             -- v9.55: paksa bypass CUMA kalau udah Start (MODE_JALAN).
                             -- Belum Start = config belum tau (grid) -> tunda. Antrian
                             -- ini umumnya cuma jalan pas udah Start, tapi eksplisit.
-                            if MODE_JALAN and (os.time() - (BYPASS_TERAKHIR or 0)) > 300 then
-                                warn(("[antrian] Lisensi Delta %s -- SKIP rejoin, PAKSA bypass pulihin lisensi..."):format(
+                            -- v9.238: gate 300s -> 60s. Bug user: lisensi hilang tapi
+                            -- worker nunggu 5 MENIT tiap kali baru coba pulihin -> client
+                            -- nyangkut layar key ~28 menit. Sekarang tiap 60s langsung
+                            -- coba bypass pulihin lisensi (jangan nganggur "SKIP rejoin").
+                            if MODE_JALAN and (os.time() - (BYPASS_TERAKHIR or 0)) > 60 then
+                                warn(("[antrian] Lisensi Delta %s -- SKIP rejoin, PAKSA bypass pulihin lisensi (tiap 60s)..."):format(
                                     kd == "hilang" and "HILANG" or "BASI"))
                                 lastLisensiCek = 0   -- paksa bypass ronde berikutnya (gak nunggu 10 menit)
                             else
@@ -10668,7 +10698,7 @@ if PERINTAH == "set" then
         err("Client '" .. target .. "' gak ada di config."); info("Yang ada: " .. cfg.pkgs); return
     end
 
-    local petak, kol, bar, W, H = petak_untuk(jumlah, slot)
+    local petak, kol, bar, W, H = petak_untuk(jumlah, slot, cfg)
     if not petak then err("Gagal: " .. tostring(kol)); return end
 
     print(C.BOLD..C.C.."\n=== SET UKURAN buat " .. jumlah .. " CLIENT ==="..C.N)
@@ -10728,7 +10758,7 @@ if PERINTAH == "catat" then
         err("Client '" .. target .. "' gak ada di config."); info("Yang ada: " .. cfg.pkgs); return
     end
 
-    local petak, kol, bar, W, H = petak_untuk(jumlah, 1)
+    local petak, kol, bar, W, H = petak_untuk(jumlah, 1, cfg)
     if not petak then err("Gagal: " .. tostring(kol)); return end
 
     print(C.BOLD..C.C.."\n=== CATAT TOMBOL buat " .. jumlah .. " CLIENT ==="..C.N)
@@ -10984,7 +11014,7 @@ if PERINTAH == "ukur" then
         return
     end
 
-    local kotak, kol, bar, W, H = petak_untuk(jumlah, slot)
+    local kotak, kol, bar, W, H = petak_untuk(jumlah, slot, cfg)
     if not kotak then err("Gagal: " .. tostring(kol)); return end
     local lebar, tinggi = kotak.R - kotak.L, kotak.B - kotak.T
 
@@ -11976,7 +12006,12 @@ function cek_ck_getps(cookie)
     end
     local low = out:lower()
     if low:find("captcha") or low:find("challenge") then return "captcha", nil end
-    if low:find("ban") or low:find("terminat") or low:find("moderat") then return "ban", nil end
+    -- v9.237: ban = kata utuh "banned"/"terminated"/"moderated"/frasa ban, ATAU substring
+    -- "ban" (buat jaga-jaga response ban yg format-nya beda). Yg penting ban ASLI ke-catch.
+    if low:find("ban") or low:find("terminat") or low:find("moderat")
+       or low:find("account has been") or low:find("account status") then
+        return "ban", ("kode=%s"):format(kode or "?")
+    end
     if kode == "401" then return "dead", nil end
     return "error", ("kode=%s"):format(kode or "?")
 end
@@ -14538,7 +14573,12 @@ function cek_cookie_roblox(cookie)
     -- captcha / ban kebedain dari isi
     local low = out:lower()
     if low:find("captcha") or low:find("challenge") then return "captcha", nil end
-    if low:find("ban") or low:find("terminat") or low:find("moderat") then return "ban", nil end
+    -- v9.237: ban = kata utuh "banned"/"terminated"/"moderated"/frasa ban, ATAU substring
+    -- "ban" (buat jaga-jaga response ban yg format-nya beda). Yg penting ban ASLI ke-catch.
+    if low:find("ban") or low:find("terminat") or low:find("moderat")
+       or low:find("account has been") or low:find("account status") then
+        return "ban", ("kode=%s"):format(kode or "?")
+    end
     if kode == "401" then return "dead", nil end
     return "error", ("kode=%s"):format(kode or "?")
 end
