@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.242-cf"
+local VERSION = "9.243-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9744,8 +9744,17 @@ local function run(cfg)
         local adaTitahBaru = (psGantiPeek > 0 and psGantiPeek ~= psGantiKerjakan)
         if false then  -- v7.49: auto-rejoin DIMATIIN (ganti loop grafis)
             lastAutoRejoin = now
-            -- refresh mapping tiap 10 menit (akun bisa ganti kalau setup ulang client)
-            if (now - lastMapRefresh) >= 600 then refresh_map(); lastMapRefresh = now end
+            -- v9.243: refresh mapping 10 menit -> 90 DETIK. Dan kalau ada akun baru/ganti
+            -- (username berubah) -> auto_assign LANGSUNG (gak nunggu siklus). Akun baru
+            -- dibuat di client -> kedeteksi + keassign ke device cepet -> template bener.
+            if (now - lastMapRefresh) >= 90 then
+                local adaBaru = refresh_map()
+                lastMapRefresh = now
+                if adaBaru then
+                    warn("[map] akun baru/ganti kedeteksi -> auto-assign LANGSUNG")
+                    auto_assign_tim(); lastAssign = now
+                end
+            end
             if (now - lastAssign) >= 180 then auto_assign_tim(); lastAssign = now end   -- v9.242: 600s -> 180s (akun baru ke-assign lebih cepet -> template bener)
             -- v4.51: keputusan panel LANGSUNG dikerjain. psGanti dibaca dari
             -- /perintah yang emang udah di-poll tiap beberapa detik -- jadi begitu
