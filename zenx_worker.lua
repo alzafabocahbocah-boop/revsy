@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.243-cf"
+local VERSION = "9.244-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13611,11 +13611,11 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     local pindahTim2 = placeR and placeR ~= "" and placeR ~= cfg.place_id
     -- v9.194: TUNGGU 10s dulu -- biar loop utama (tim 1) beli stock-nya dulu, BARU
     -- tim 2 borong. User minta ini balik (v9.192 sempet dibuang, tapi perlu).
-    warn(("[rotasi] STOCK '%s' MUNCUL -> tim 1 beli dulu, tim 2 borong 10s lagi"):format(barang))
-    tambahLog_rotasi(cfg, ("STOCK %s muncul -> tim 2 dalam 10s"):format(barang))
+    warn(("[rotasi] STOCK '%s' MUNCUL -> tim 1 beli dulu, tim 2 borong 5s lagi"):format(barang))
+    tambahLog_rotasi(cfg, ("STOCK %s muncul -> tim 2 dalam 5s"):format(barang))
     -- v9.196: countdown REAL-TIME di log (10, 9, 8, ...) biar keliatan mundurnya.
     -- User: tunggu 10s-nya mau real-time, bukan sleep diem.
-    for det = 10, 1, -1 do
+    for det = 5, 1, -1 do   -- v9.244: countdown 10s -> 5s (tim 2 borong lebih cepet)
         info(("[rotasi] tim 2 borong dalam %ds..."):format(det))
         os.execute("sleep 1")
     end
