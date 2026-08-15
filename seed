@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.42"
+local VERSI = "7.46"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -6713,7 +6713,11 @@ function Seed.startPanel()
                         -- farm2On dipakai panel buat nentuin status "jalan"/"rejoin".
                         -- Di akun beli-seed, yang setara "lagi kerja" = saklar beli.
                         farm2On = state.beliOn and true or false,
-                        sheck = sheckles(),
+                        -- v7.46: sheck cuma dikirim kalau > 0. Sheckles akun REAL gak mungkin
+                        -- 0 -- kalau sheckles() balikin 0 = leaderstats belum ke-render. Jadi
+                        -- treat 0 = "belum siap" -> skip (nil = key gak dikirim -> panel
+                        -- pertahanin nilai terakhir yg bener, gak ketimpa 0).
+                        sheck = (function() local s = sheckles(); return (s and s > 0) and s or nil end)(),
                         sheckW = Seed.sheckDunia(),   -- v7.35: dunia sheckles (w1=Sheckles, w2=Leaves)
                         rerollOn = state.pumpkinRerollOn and true or false,  -- v7.1: reroll ON = FARM (bisa ambil tugas gift)
                         giftOn = state.autoGiftMail and true or false,
@@ -6900,7 +6904,11 @@ task.spawn(function()
         -- pertama walau w=nil -> panel dapet sheckW=nil -> nampil "—". Sekarang tunggu
         -- dunia kedeteksi (Sheckles/Leaves ada di leaderstats) baru lapor.
         if sk and w ~= nil then
-            if last == nil or w ~= lastW then
+            -- v7.45: first-read (last==nil) TUNGGU value ke-render (sk>0). Pas first-on,
+            -- leaderstats OBJEK bisa udah ada (w~=nil -> dunia kedeteksi) TAPI Value-nya
+            -- belum ke-render (masih 0) -> dulu lapor sheck:0 nimpa nilai bener. Sekarang
+            -- first-read cuma fire kalau sk>0 (angka udah muncul). Pindah dunia tetep fire.
+            if (last == nil and sk > 0) or (last ~= nil and w ~= lastW) then
                 -- v7.36: read PERTAMA (baseline) ATAU PINDAH DUNIA (W1<->W2) -> LAPOR
                 -- langsung. Biar saldo dunia baru (mis. masuk W2 -> Leaves) kelapor,
                 -- gak nunggu berubah 100M (selisih bisa ~0 kalau saldo W1 & W2 mirip).
@@ -6923,7 +6931,7 @@ task.spawn(function()
                     })
                 end)
                 last = sk; lastW = w
-            elseif math.abs(sk - last) >= 1e8 then   -- BERUBAH >= 100 juta (naik ATAU turun)
+            elseif last ~= nil and sk > 0 and math.abs(sk - last) >= 1e8 then   -- v7.46: sk>0 (skip glitch turun ke 0). BERUBAH >= 100 juta
                 pcall(function()
                     panelReq("/stat", "POST", { akun = player.Name, sc = "seed", sheck = sk, sheckW = w })
                 end)
@@ -6932,7 +6940,7 @@ task.spawn(function()
                 last = sk
             end
         end
-        task.wait(2)
+        task.wait(last == nil and 1 or 2)   -- v7.43: poll cepet (1s) sampe lapor PERTAMA, terus 2s
     end
 end)
 
