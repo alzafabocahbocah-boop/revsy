@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.241-cf"
+local VERSION = "9.242-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6830,6 +6830,8 @@ local function run(cfg)
     -- v4.62: baca username SEMUA client dalam SATU panggilan su. Dulu satu-satu
     -- (4 client = 4 x ~5 detik = ~20 detik tiap refresh).
     local function refresh_map()
+        local lama = {}
+        for pkg, u in pairs(mapAkun) do lama[pkg] = u end   -- v9.243: snapshot buat deteksi akun baru/ganti
         local pkgs = split(cfg.pkgs)
         local perintah = {}
         for _, pkg in ipairs(pkgs) do
@@ -6855,6 +6857,13 @@ local function run(cfg)
                 if u then mapAkun[pkg] = u end
             end
         end
+        -- v9.243: deteksi ada username yang BERUBAH (akun baru dibuat / ganti akun di client).
+        -- Kalau ada -> caller langsung auto_assign (gak nunggu siklus 3 menit).
+        local berubah = false
+        for pkg, u in pairs(mapAkun) do
+            if lama[pkg] ~= u then berubah = true; break end
+        end
+        return berubah
     end
     refresh_map()
     local lastMapRefresh = os.time()
@@ -9737,7 +9746,7 @@ local function run(cfg)
             lastAutoRejoin = now
             -- refresh mapping tiap 10 menit (akun bisa ganti kalau setup ulang client)
             if (now - lastMapRefresh) >= 600 then refresh_map(); lastMapRefresh = now end
-            if (now - lastAssign) >= 600 then auto_assign_tim(); lastAssign = now end
+            if (now - lastAssign) >= 180 then auto_assign_tim(); lastAssign = now end   -- v9.242: 600s -> 180s (akun baru ke-assign lebih cepet -> template bener)
             -- v4.51: keputusan panel LANGSUNG dikerjain. psGanti dibaca dari
             -- /perintah yang emang udah di-poll tiap beberapa detik -- jadi begitu
             -- panel mindahin/mulangin akun, worker nyusul dalam hitungan detik,
