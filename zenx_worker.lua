@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.248-cf"
+local VERSION = "9.249-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13509,7 +13509,7 @@ function ke_url_web(cfg, url)
     return "https://www.roblox.com/games/start?placeId="..pid_w
 end
 
-function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort)
+function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort, gridBasis)
     -- v9.142: chunkGap = jeda antar chunk 5. Default 2s (tim 2 cepet). Tim 1 (loop
     -- utama) pakai 90s (buka 5 -> tunggu 90s -> buka 5 lagi).
     -- v9.225: cekAbort (opsional) = fungsi yg dicek tiap 5s pas nunggu antar chunk.
@@ -13519,7 +13519,10 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort)
     -- v9.141: grid BASIS = semua pkgs yg dibuka (set PKGS_AKTIF dulu). Biar chunk 1
     -- & chunk 2 pakai layout SAMA (grid_satu -> grid_hitung(PKGS_AKTIF)). Dulu grid
     -- ngandelin PKGS_AKTIF caller -> bisa beda antar chunk -> grid tim 1 gak konsisten.
-    PKGS_AKTIF = pkgs
+    -- v9.249: gridBasis (opsional) = pkgs FULL tim (10) buat itung grid. Biar batch
+    -- 5+5 tetep di grid 10 PETAK (posisi konsisten), bukan 5 petak. Kalau gak dikasih
+    -- -> pakai pkgs (backward-compat: tim 1 kirim 10 sekaligus, grid 10 udah bener).
+    PKGS_AKTIF = gridBasis or pkgs
     for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
     os.execute("sleep 1")
     -- v9.138: buka dalam CHUNK 5 (biar 10 client tim 1 = 5+5 staggered, gak overload
@@ -13705,13 +13708,16 @@ function jalankan_rotasi(cfg, barang, mapLink, placeR)
     -- salah, user mau semua (tim 1+2) di 1 dunia yg ada stocknya.
     local dari = TIM1_AKHIR + 1
     local nBatch = 0
+    -- v9.249: FULL tim 2 (11..total) = basis grid. Batch buka 5+5, tapi grid tetep
+    -- ukuran full tim 2 (biar posisi client konsisten, gak 5 petak per batch).
+    local timDuaPenuh = pkgs_slot(cfg, TIM1_AKHIR + 1, total)
     while dari <= total do
         local sampai = math.min(dari + BATCH - 1, total)
         nBatch = nBatch + 1
-        PKGS_AKTIF = pkgs_slot(cfg, dari, sampai)
+        PKGS_AKTIF = timDuaPenuh   -- v9.249: grid basis = full tim 2 (bukan batch)
         info(("[rotasi] BATCH %d: buka client %d-%d (borong)"):format(nBatch, dari, sampai))
         tambahLog_rotasi(cfg, ("batch %d (%d-%d) borong"):format(nBatch, dari, sampai))
-        buka_grup_rotasi(cfg, pkgs_slot(cfg, dari, sampai), mapLink)
+        buka_grup_rotasi(cfg, pkgs_slot(cfg, dari, sampai), mapLink, nil, nil, timDuaPenuh)
         info(("[rotasi] batch %d beli... (%ds)"):format(nBatch, OPEN_SEC))
         -- v9.201: sleep OPEN_SEC TAPI cek STOCK BARU tiap detik. User: kalau ada stock
         -- baru pas lagi borong -> ABORT, ulang buat stock baru (utamain yg baru).
