@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.47"
+local VERSI = "7.50"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -3106,6 +3106,40 @@ function Seed.stok(nama)
     return nil
 end
 
+-- v7.49: DIAGNOSTIK STOCK -- dump struktur SeedShop biar tau ada field restock timer
+-- (UnixNextRestock/dll) gak + item apa yg lagi stock. Buat rencana star_seed lapor
+-- stock langsung ke worker (0 delay API). Cek STAT_AKUN.find(...).stockdebug
+function Seed._stockDebug()
+    local out = {}
+    pcall(function()
+        local sv = RS:FindFirstChild("StockValues")
+        if not sv then out[#out+1] = "NO-StockValues"; return end
+        local shop = sv:FindFirstChild("SeedShop")
+        if not shop then out[#out+1] = "NO-SeedShop"; return end
+        -- field LANGSUNG di SeedShop (selain Items) -> cari UnixNextRestock / timer
+        for _, c in ipairs(shop:GetChildren()) do
+            if c.Name ~= "Items" then
+                local v = c:IsA("ValueBase") and tostring(c.Value) or ("["..c.ClassName.."]")
+                out[#out+1] = "SS."..c.Name.."="..v
+            end
+        end
+        -- item yg qty > 0 (yg lagi stock skrg)
+        local items = shop:FindFirstChild("Items")
+        if items then
+            local kids = items:GetChildren()
+            local ada = 0
+            for _, it in ipairs(kids) do
+                if it:IsA("ValueBase") and (tonumber(it.Value) or 0) > 0 then
+                    out[#out+1] = it.Name.."="..tostring(it.Value); ada = ada + 1
+                end
+            end
+            out[#out+1] = ("(Items=%d, stock>0=%d)"):format(#kids, ada)
+        end
+    end)
+    local s = table.concat(out, " | ")
+    return (s ~= "" and s:sub(1, 900)) or "kosong"
+end
+
 -- v3.18: singkat angka gede (1240500 -> 1.2M, 8500 -> 8.5K)
 local function ringkasAngka(n)
     n = tonumber(n) or 0
@@ -3168,6 +3202,31 @@ function Seed.sheckDunia()
         if ls:FindFirstChild("Leaves")   then return "w2" end
     end
     return nil
+end
+-- v7.48: DIAGNOSTIK -- dump isi leaderstats (nama + value tiap child) + attribute
+-- currency di player. Buat cek: currency akun ini nama apa? Ada di leaderstats atau
+-- attribute? Dilapor ke panel (field lsdebug) -> cek STAT_AKUN.find(...).lsdebug
+function Seed._lsDebug()
+    local out = {}
+    pcall(function()
+        local ls = player:FindFirstChild("leaderstats")
+        if ls then
+            local kids = ls:GetChildren()
+            if #kids == 0 then out[#out+1] = "leaderstats-KOSONG" end
+            for _, c in ipairs(kids) do
+                out[#out+1] = c.Name .. "=" .. tostring(c.Value)
+            end
+        else
+            out[#out+1] = "NO-leaderstats-obj"
+        end
+        -- cek attribute umum
+        for _, an in ipairs({"Sheckles","Cash","Money","Leaves","Coins"}) do
+            local av = player:GetAttribute(an)
+            if av ~= nil then out[#out+1] = "attr:" .. an .. "=" .. tostring(av) end
+        end
+    end)
+    local s = table.concat(out, " | ")
+    return (s ~= "" and s) or "kosong"
 end
 -- Daftar seed di-refresh berkala. Nama yang belum pernah keliat = SEED BARU
 -- -> langsung dicentang biar kebeli, tanpa nunggu diurus manual.
@@ -6703,6 +6762,8 @@ function Seed.startPanel()
                     local r = panelReq("/stat", "POST", {
                         akun  = player.Name,
                         v = VERSI,   -- v7.47: lapor versi yang JALAN (buat cek akun mana masih versi lama)
+                        lsDebug = Seed._lsDebug(),   -- v7.48: dump leaderstats + attribute (diagnosa currency 0)
+                        stockDebug = Seed._stockDebug(),   -- v7.49: dump struktur SeedShop (restock timer + stock aktif)
                         -- v3.3: PENANDA SCRIPT. Panel butuh ini buat misahin
                         -- akun GAG 2 yang jalanin star_seed dari yang jalanin
                         -- star_farm -- tampilan kartunya beda (yang ini gak
@@ -6891,6 +6952,67 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- v7.50: MONITOR STOCK -> LAPOR WORKER LANGSUNG (0 delay API)
+-- Baca StockValues.SeedShop + GearShop LANGSUNG dari game. Kalau seed/gear
+-- INCARAN muncul pas restock -> kirim ROTASI-GO ke worker (/perintah?tim=X)
+-- SEBELUM auto-buy. Dedup 290s di worker handle biar gak dobel sama panel/self-detect.
+-- ============================================================
+-- daftar incaran (HARDCODE) -- key: lower + spasi->_ + apostrof->_
+Seed._seedIncaran = {
+    ["dragon_s_breath"]=true, ["hypno_bloom"]=true, ["moon_bloom"]=true,
+    ["star_fruit"]=true, ["sun_bloom"]=true, ["atlantic_giant_pumpkin"]=true,
+    ["super_sprinkler"]=true, ["super_watering_can"]=true,
+    ["super_syrup_sprinkler"]=true, ["super_syrup_watering_can"]=true,
+}
+function Seed._namaKeKey(nm)
+    return tostring(nm):lower():gsub("'", "_"):gsub(" ", "_")
+end
+-- cek 1 shop (SeedShop/GearShop): item incaran qty>0 -> kirim ROTASI-GO
+function Seed._cekShopLapor(shop)
+    if not shop then return end
+    local items = shop:FindFirstChild("Items")
+    if not items then return end
+    for _, it in ipairs(items:GetChildren()) do
+        if it:IsA("ValueBase") and (tonumber(it.Value) or 0) > 0 then
+            local key = Seed._namaKeKey(it.Name)
+            if Seed._seedIncaran[key] then
+                local sig = "ROTASI-GO|" .. key .. "|" .. os.time() .. "|" .. tostring(game.PlaceId)
+                pcall(function()
+                    panelReq("/perintah", "PUT", { tim = Seed._tim, isi = sig })
+                end)
+                Seed._logStockLapor = ("lapor STOCK: %s -> worker (%s)"):format(key, tostring(Seed._tim))
+            end
+        end
+    end
+end
+task.spawn(function()
+    task.wait(3)
+    local lastSeedR, lastGearR = nil, nil
+    while isCurrentGen() do
+        pcall(function()
+            if not Seed._tim then return end   -- belum tau tim -> skip (nunggu config)
+            local sv = RS:FindFirstChild("StockValues")
+            if not sv then return end
+            -- SeedShop: deteksi restock BARU (UnixNextRestock berubah) -> cek incaran
+            local ss = sv:FindFirstChild("SeedShop")
+            local snx = ss and ss:FindFirstChild("UnixNextRestock")
+            if snx and snx.Value ~= lastSeedR then
+                lastSeedR = snx.Value
+                Seed._cekShopLapor(ss)
+            end
+            -- GearShop: sama (buat gear incaran: super_sprinkler dll)
+            local gs = sv:FindFirstChild("GearShop")
+            local gnx = gs and gs:FindFirstChild("UnixNextRestock")
+            if gnx and gnx.Value ~= lastGearR then
+                lastGearR = gnx.Value
+                Seed._cekShopLapor(gs)
+            end
+        end)
+        task.wait(1)   -- cek tiap 1 detik (baca game langsung, ringan)
+    end
+end)
+
 -- v7.34: MONITOR SHECKLES -- kalau BERUBAH >=100M (naik ATAU turun) dari terakhir
 -- panel (gak nunggu /stat periodik ~120s). Biar panel keliatan turunnya langsung
 -- (mis. abis beli mahal / gift). Naik -> update baseline (drop diukur dari puncak).
@@ -7058,6 +7180,8 @@ function Seed.pakaiCfgPanel(r)
         Seed._cfgLog = "GAGAL: jawaban gak kebaca"
         return
     end
+    -- v7.50: simpen tim (buat kirim ROTASI-GO stock LANGSUNG ke worker /perintah?tim=X)
+    if type(d.tim) == "string" and d.tim ~= "" then Seed._tim = d.tim end
     -- v3.1: kalau backend belum di-deploy, CF balikin {"error":"jalur gak
     -- dikenal: /seed-cfg"}. Dulu ini diem-diem dianggap "gak ada perubahan"
     -- -- makanya setelan panel keliatan diabaikan tanpa ada tanda apa pun.
