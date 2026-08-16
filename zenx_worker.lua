@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.247-cf"
+local VERSION = "9.248-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5047,6 +5047,16 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             for _, pkg in ipairs(split(cfg.pkgs)) do
                 if only[pkg] then pkgsGrid[#pkgsGrid+1] = pkg end
             end
+            if #pkgsGrid == 0 then pkgsGrid = nil end
+        end
+        -- v9.248: kalau GAK ada 'only' spesifik -> grid buat TIM 1 (1..TIM1_AKHIR) aja,
+        -- BUKAN semua 20 client. Yang jalan di loop utama = tim 1 (10 client). Tim 2
+        -- (11-20) grid-nya diitung TERPISAH pas batch borong. Dulu nil -> grid_hitung
+        -- pake semua 20 -> grid 20 petak (kekecilan). Sekarang default 10 petak.
+        if not pkgsGrid then
+            local semua = split(cfg.pkgs)
+            pkgsGrid = {}
+            for i = 1, math.min(TIM1_AKHIR, #semua) do pkgsGrid[#pkgsGrid+1] = semua[i] end
             if #pkgsGrid == 0 then pkgsGrid = nil end
         end
         local p, sebabGrid = grid_hitung(cfg, pkgsGrid)
