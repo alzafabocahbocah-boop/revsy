@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.252-cf"
+local VERSION = "9.254-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5175,12 +5175,18 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     if cfg.rotasi_on then
         local jalanMap = pkg_running_semua(list) or {}
         local perluRot = {}
+        local aktifSemua = {}   -- v9.253: SEMUA client aktif (buat grid BASIS penuh)
         for _, pkg in ipairs(list) do
-            if pilihPkg(pkg) and not jalanMap[pkg] then perluRot[#perluRot+1] = pkg end
+            if pilihPkg(pkg) then
+                aktifSemua[#aktifSemua+1] = pkg
+                if not jalanMap[pkg] then perluRot[#perluRot+1] = pkg end
+            end
         end
         if #perluRot > 0 then
             info(("[rotasi] tembak BARENGAN %d client (bukan open_one 1-1)"):format(#perluRot))
-            pcall(function() buka_grup_rotasi(cfg, perluRot, mapLink, 90) end)
+            -- v9.253: gridBasis = aktifSemua (10) -> rejoin subset (7) TETEP grid 10-slot,
+            -- posisi konsisten. Dulu grid pakai perluRot (7) -> 7-slot (beda ukuran).
+            pcall(function() buka_grup_rotasi(cfg, perluRot, mapLink, 90, nil, aktifSemua) end)
         else
             info("[rotasi] semua client tim aktif udah jalan -- skip open")
         end
@@ -7733,17 +7739,38 @@ local function run(cfg)
                     -- format: nama|isi_timestamp|mtime_epoch
                     local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
                     local ddetail = {}
+                    local sheckDenyut = {}   -- v9.254: sheckles dari denyut file (nebeng)
                     for line in raw:gmatch("[^\n]+") do
-                        local nama, ts, mtime = line:match("zenx_denyut_(.-)%.txt|(%d+)|(%d+)")
+                        -- v9.254: isi denyut skrg "ts;sheck;sheckW" (dulu cuma ts). Match
+                        -- isi sbg [^|]* (bukan %d+), extract ts + sheckles dari situ.
+                        local nama, isi, mtime = line:match("zenx_denyut_(.-)%.txt|([^|]*)|(%d+)")
+                        local ts = isi and isi:match("^(%d+)")
                         if nama and ts then
                             local umurIsi = sekarang - tonumber(ts)      -- dari timestamp DALAM file
                             local umurMtime = mtime and (sekarang - tonumber(mtime)) or nil  -- dari mtime file
                             denyutSemua[nama] = umurIsi
+                            -- v9.254: extract sheckles (ts;sheck;sheckW). sheck>0 aja.
+                            local sk, sw = isi:match("^%d+;(%d+);(%a*)")
+                            if sk and (tonumber(sk) or 0) > 0 then
+                                sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "" }
+                            end
                             if #ddetail < 6 then
                                 ddetail[#ddetail+1] = ("%s(isi=%ds mtime=%ss)"):format(
                                     nama, umurIsi, umurMtime and tostring(umurMtime) or "?")
                             end
                         end
+                    end
+                    -- v9.254: kirim sheckles SEMUA akun sekaligus ke panel (nebeng denyut,
+                    -- 1 request). Gak ilang walau akun mati (file lokal tetep ada).
+                    if #sheckDenyut > 0 then
+                        local body = '{"akun":['
+                        for i, d in ipairs(sheckDenyut) do
+                            body = body .. '{"akun":"' .. d.nama .. '","sheck":' .. d.sheck ..
+                                   ',"sheckW":"' .. d.sheckW .. '"}'
+                            if i < #sheckDenyut then body = body .. "," end
+                        end
+                        body = body .. "]}"
+                        pcall(function() api_post(cfg, "/stat-batch", body) end)
                     end
                     local dcnt = 0
                     for _ in pairs(denyutSemua) do dcnt = dcnt + 1 end
