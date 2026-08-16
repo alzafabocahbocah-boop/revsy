@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.254-cf"
+local VERSION = "9.256-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6016,12 +6016,23 @@ local function setup_otomatis(namaPreset)
     end
 
     -- ---------- 3. game & script dari preset ----------
+    -- v9.255: PLACE BERUBAH? (mis. `pasang market` pas tadinya seed/GAG 2) -> CLOSE
+    -- semua client biar reopen di PLACE BARU (GAG 1). Kalau gak, client nyangkut di
+    -- world lama (GAG 2) padahal config udah GAG 1. Auto-pindah pas ganti preset.
+    local placeLama = cfg.place_id
     cfg.place_id     = pre.place
     cfg.game_label   = pre.game
     cfg.script_label = pre.sc
     cfg.script_url   = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/" .. pre.url
     ok("Game  : " .. cfg.game_label)
     ok("Script: " .. cfg.script_label .. "  (" .. pre.url .. ")")
+    if placeLama and tostring(placeLama) ~= tostring(pre.place) then
+        info(("Place BERUBAH (%s -> %s) -> close semua client, reopen di place baru"):format(
+            tostring(placeLama), tostring(pre.place)))
+        pcall(function() close_all_cepat(cfg) end)
+        ok("Client lama ditutup -- bakal reopen otomatis di " .. cfg.game_label)
+        _PAKSA_ASSIGN = true   -- v9.256: paksa auto_assign_tim LANGSUNG -> akun pindah tab (game baru) di panel seketika, gak nunggu 180s
+    end
 
     -- ---------- 4. paket client: dipindai ----------
     info("Mindai client Roblox di HP ini...")
@@ -9859,7 +9870,7 @@ local function run(cfg)
                     auto_assign_tim(); lastAssign = now
                 end
             end
-            if (now - lastAssign) >= 180 then auto_assign_tim(); lastAssign = now end   -- v9.242: 600s -> 180s (akun baru ke-assign lebih cepet -> template bener)
+            if (now - lastAssign) >= 180 or _PAKSA_ASSIGN then _PAKSA_ASSIGN = false; auto_assign_tim(); lastAssign = now end   -- v9.242: 600s -> 180s (akun baru ke-assign lebih cepet -> template bener). v9.256: _PAKSA_ASSIGN dari pasang (place berubah) -> assign SEKETIKA (pindah tab GAG 1)
             -- v4.51: keputusan panel LANGSUNG dikerjain. psGanti dibaca dari
             -- /perintah yang emang udah di-poll tiap beberapa detik -- jadi begitu
             -- panel mindahin/mulangin akun, worker nyusul dalam hitungan detik,
