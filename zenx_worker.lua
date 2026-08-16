@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.256-cf"
+local VERSION = "9.258-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -785,6 +785,33 @@ local function tulis_skrip_up(diam)
     os.execute("chmod +x " .. PREFIX .. "/bin/up")
     if not diam then ok("Skrip `up` diperbarui (anti-cache + repo terbaru)") end
     return true
+end
+
+-- v9.258: COMMAND PENDEK per preset. Ketik `seed` / `market` / `farm` / `gag1`
+-- langsung jalanin pasang.sh preset itu (gak usah curl panjang tiap kali).
+-- Ditulis ke $PREFIX/bin/<preset>, idempotent (cuma nulis kalau beda).
+local function tulis_skrip_preset(diam)
+    local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
+    local presets = { "seed", "market", "farm", "gag1" }
+    local nBaru = 0
+    for _, pre in ipairs(presets) do
+        local jalur = PREFIX .. "/bin/" .. pre
+        local isi = table.concat({
+            "#!" .. PREFIX .. "/bin/sh",
+            'curl -sL "' .. REPO_WORKER .. '/pasang.sh" | sh -s ' .. pre,
+            "",
+        }, "\n")
+        local lama = ""
+        local fr = io.open(jalur, "r")
+        if fr then lama = fr:read("*all") or ""; fr:close() end
+        if lama ~= isi then
+            local f = io.open(jalur, "w")
+            if f then f:write(isi); f:close(); os.execute("chmod +x " .. jalur); nBaru = nBaru + 1 end
+        end
+    end
+    if nBaru > 0 and not diam then
+        ok("Command pendek dibikin: ketik `seed` / `market` / `farm` / `gag1` langsung")
+    end
 end
 
 
@@ -6812,6 +6839,7 @@ local function run(cfg)
     -- nyangkut di versi tua: `up`-nya dibikin sekali pas pasang, terus gak
     -- pernah diperbarui -- dan dia bilang "OK", bukan gagal.
     pcall(tulis_skrip_up)
+    pcall(tulis_skrip_preset)
 
     -- v5.32: TARIK KUNCI API SEKARANG, bukan nanti pas dibutuhin.
     -- Alasannya: `zenx key` dipanggil justru pas lisensi Delta abis -- saat
@@ -13091,6 +13119,7 @@ if PERINTAH == "pasang" then
     -- `up`: dibikin lewat fungsi yang sama kayak yang dipanggil pas worker
     -- nyala -- biar isinya gak pernah beda antara RF baru dan RF lama.
     tulis_skrip_up(true)
+    pcall(tulis_skrip_preset, true)
     ok("Pintasan dibikin: zenx (jalanin) + up (update worker)")
 
     -- 6. kunci API bypass.vip. SENGAJA ditanya di sini, bukan ditulis di worker
@@ -14071,8 +14100,37 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     -- v9.163: pola udah dibenerin (64.BIT, file 10 = .apk.1.apk) + versi dari
     -- delta_versi.txt (bukan hardcoded lama). client 1-20.
     local versiDL = cek_delta_versi(cfg) or "2.733.988"
-    local files = {}
-    for n = 1, 20 do files[#files+1] = pola_apk(n, versiDL) end
+    -- v9.257: FIX -- dulu HARDCODE `for n=1,20` -> arg[3] ("1-6"/"1-10") DIABAIKAN,
+    -- selalu download SEMUA 20. Sekarang parse arg[3]: "1-6" / "1,2,3" / kosong=semua.
+    local function parseSlot(s, maks)
+        local set = {}
+        s = tostring(s or ""):gsub("%s+", "")
+        if s == "" then for n = 1, maks do set[n] = true end return set end   -- kosong = semua
+        for bagian in s:gmatch("[^,]+") do
+            local a, b = bagian:match("^(%d+)%-(%d+)$")
+            if a then
+                a, b = tonumber(a), tonumber(b)
+                for n = a, b do if n >= 1 and n <= maks then set[n] = true end end
+            else
+                local n = tonumber(bagian)
+                if n and n >= 1 and n <= maks then set[n] = true end
+            end
+        end
+        return set
+    end
+    local pilihan = parseSlot(arg[3], 20)
+    local files, slotMap = {}, {}   -- slotMap[i] = nomor slot asli (buat map package bener)
+    for n = 1, 20 do
+        if pilihan[n] then files[#files + 1] = pola_apk(n, versiDL); slotMap[#files] = n end
+    end
+    if #files == 0 then
+        err("Gak ada slot valid dari '" .. tostring(arg[3] or "") .. "'.")
+        info("Contoh: zenx download mercy 1-6   |   1,2,3   |   kosong = semua 20")
+        return
+    end
+    if arg[3] and arg[3] ~= "" then
+        info(("Slot dipilih: %s (%d client)"):format(tostring(arg[3]), #files))
+    end
 
     ok(("%d APK dari GitHub Releases. Download + pasang (skip yg udah keinstall)...\n"):format(#files))
     -- v9.99: map APK -> package client (urut: file 1 -> pkgs[1], dst). Cek udah
@@ -14083,7 +14141,9 @@ if PERINTAH == "download" and (arg and arg[2] == "mercy") then
     for i, nama in ipairs(files) do
         print(C.C .. ("[%d/%d] "):format(i, #files) .. C.N .. nama:sub(1,40) .. "...")
         -- cek client ke-i udah keinstall? (package dari config, urut sama file)
-        local pkgIni = pkgsList[i]
+        -- v9.257: pakai slotMap[i] (nomor slot ASLI), bukan i -- biar range "5-10"
+        -- gak ketuker package (files[1]=slot5 -> harus pkgsList[5], bukan pkgsList[1]).
+        local pkgIni = pkgsList[slotMap[i]]
         if pkgIni and pkgIni ~= "" then
             local ada = sh(("su -c 'pm list packages %s 2>/dev/null' 2>/dev/null"):format(pkgIni)) or ""
             if ada:find("package:" .. pkgIni, 1, true) then
