@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.250-cf"
+local VERSION = "9.251-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3900,6 +3900,9 @@ function grid_satu(cfg, pkg)
     local peta = grid_hitung(cfg, PKGS_AKTIF)
     if peta and peta[pkg] then
         tata_satu(pkg, peta[pkg], true)   -- hapus posisi lama + tulis fresh
+        -- v9.251: DIAGNOSTIK -- keliatan grid pakai basis berapa client. Kalau 6-10
+        -- keluar "basis 5" = PKGS_AKTIF ke-reset jadi 5 (bug). Harusnya "basis 10".
+        info(("[grid] %s -> grid basis %d client"):format(tostring(pkg):sub(-10), #(PKGS_AKTIF or {})))
     end
 end
 
