@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.251-cf"
+local VERSION = "9.252-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5061,6 +5061,17 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             pkgsGrid = {}
             for i = 1, math.min(TIM1_AKHIR, #semua) do pkgsGrid[#pkgsGrid+1] = semua[i] end
             if #pkgsGrid == 0 then pkgsGrid = nil end
+        end
+        -- v9.252: BATASI grid startup ke TIM 1 (10). FORCE kirim 20 (all) -> only=20 ->
+        -- pkgsGrid 20 -> grid 20-slot (kekecilan). "Set grid semua client" cuma buat
+        -- tim 1 (yg jalan loop utama). Ambil client tim 1 (1..TIM1_AKHIR) dari pkgsGrid.
+        if pkgsGrid and #pkgsGrid > TIM1_AKHIR then
+            local semua = split(cfg.pkgs)
+            local set1 = {}
+            for i = 1, math.min(TIM1_AKHIR, #semua) do set1[semua[i]] = true end
+            local t1 = {}
+            for _, pkg in ipairs(pkgsGrid) do if set1[pkg] then t1[#t1+1] = pkg end end
+            if #t1 > 0 then pkgsGrid = t1 end
         end
         local p, sebabGrid = grid_hitung(cfg, pkgsGrid)
         if p then petaGrid = p
