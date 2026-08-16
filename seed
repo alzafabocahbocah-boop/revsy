@@ -177,7 +177,7 @@
 --   loadstring(game:HttpGet("<raw github>/star_seed"))()
 -- ============================================================
 
-local VERSI = "7.50"
+local VERSI = "7.55"
 
 local Players    = game:GetService("Players")
 local RS         = game:GetService("ReplicatedStorage")
@@ -6762,6 +6762,8 @@ function Seed.startPanel()
                     local r = panelReq("/stat", "POST", {
                         akun  = player.Name,
                         v = VERSI,   -- v7.47: lapor versi yang JALAN (buat cek akun mana masih versi lama)
+                        seedTim = Seed._tim or "",   -- v7.53: DEBUG -- tim yg star_seed tau (kalau kosong=belum dapet, gak bisa lapor stock)
+                        stockLog = Seed._logStockLapor or "",   -- v7.53: DEBUG -- laporan stock terakhir (kalau ada=lapor jalan)
                         lsDebug = Seed._lsDebug(),   -- v7.48: dump leaderstats + attribute (diagnosa currency 0)
                         stockDebug = Seed._stockDebug(),   -- v7.49: dump struktur SeedShop (restock timer + stock aktif)
                         -- v3.3: PENANDA SCRIPT. Panel butuh ini buat misahin
@@ -6970,20 +6972,23 @@ function Seed._namaKeKey(nm)
 end
 -- cek 1 shop (SeedShop/GearShop): item incaran qty>0 -> kirim ROTASI-GO
 function Seed._cekShopLapor(shop)
-    if not shop then return end
+    -- v7.55: TULIS FILE LOKAL (bukan kirim /perintah). Star_seed & worker hidup di
+    -- DEVICE SAMA -> tulis zenx_stock.txt di /sdcard/Delta/Workspace/, worker baca
+    -- LANGSUNG (0 backend, 0 tim, instant). Worker filter pakai rotasi_barang-nya.
+    if not shop or not writefile then return end
     local items = shop:FindFirstChild("Items")
     if not items then return end
+    local ada = {}
     for _, it in ipairs(items:GetChildren()) do
         if it:IsA("ValueBase") and (tonumber(it.Value) or 0) > 0 then
-            local key = Seed._namaKeKey(it.Name)
-            if Seed._seedIncaran[key] then
-                local sig = "ROTASI-GO|" .. key .. "|" .. os.time() .. "|" .. tostring(game.PlaceId)
-                pcall(function()
-                    panelReq("/perintah", "PUT", { tim = Seed._tim, isi = sig })
-                end)
-                Seed._logStockLapor = ("lapor STOCK: %s -> worker (%s)"):format(key, tostring(Seed._tim))
-            end
+            ada[#ada+1] = Seed._namaKeKey(it.Name)
         end
+    end
+    if #ada > 0 then
+        -- format: seed1,seed2,seed3|<unix ts>|<placeId>
+        local isi = table.concat(ada, ",") .. "|" .. os.time() .. "|" .. tostring(game.PlaceId)
+        pcall(function() writefile("zenx_stock.txt", isi) end)
+        Seed._logStockLapor = ("tulis stock lokal: %d seed [%s]"):format(#ada, os.date("%H:%M:%S"))
     end
 end
 task.spawn(function()
@@ -6991,7 +6996,6 @@ task.spawn(function()
     local lastSeedR, lastGearR = nil, nil
     while isCurrentGen() do
         pcall(function()
-            if not Seed._tim then return end   -- belum tau tim -> skip (nunggu config)
             local sv = RS:FindFirstChild("StockValues")
             if not sv then return end
             -- SeedShop: deteksi restock BARU (UnixNextRestock berubah) -> cek incaran
