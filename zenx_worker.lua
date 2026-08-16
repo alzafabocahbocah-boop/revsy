@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.249-cf"
+local VERSION = "9.250-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13523,8 +13523,11 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort, gridBasis)
     -- 5+5 tetep di grid 10 PETAK (posisi konsisten), bukan 5 petak. Kalau gak dikasih
     -- -> pakai pkgs (backward-compat: tim 1 kirim 10 sekaligus, grid 10 udah bener).
     PKGS_AKTIF = gridBasis or pkgs
-    for _, pkg in ipairs(pkgs) do pcall(function() grid_satu(cfg, pkg) end) end
-    os.execute("sleep 1")
+    -- v9.250: grid DIPINDAH ke DALAM loop chunk (tepat sebelum tiap chunk buka),
+    -- BUKAN semua di awal. App Cloner ubah prefs window pas clone lain buka -> kalau
+    -- grid semua di awal, chunk ke-2 (6-10) prefs-nya ke-timpa jadi 5-slot pas dibuka
+    -- 90s kemudian. Tulis grid tepat sebelum buka -> posisi 10-slot fresh. PKGS_AKTIF
+    -- tetep FULL (gridBasis/pkgs) jadi grid_satu ngitung posisi di grid penuh.
     -- v9.138: buka dalam CHUNK 5 (biar 10 client tim 1 = 5+5 staggered, gak overload
     -- + gak ke-cut). Tiap chunk 1 su call (am start batch, jeda 1s internal), gap 2s
     -- antar chunk. Client TETEP kebuka (gak di-close) -- ini cuma cara buka bertahap.
@@ -13533,6 +13536,11 @@ function buka_grup_rotasi(cfg, pkgs, mapLink, chunkGap, cekAbort, gridBasis)
     local CHUNK = (#pkgs <= 7) and #pkgs or 5
     local i = 1
     while i <= #pkgs do
+        -- v9.250: grid chunk INI (posisi di grid PKGS_AKTIF penuh) tepat sebelum buka
+        for j = i, math.min(i + CHUNK - 1, #pkgs) do
+            pcall(function() grid_satu(cfg, pkgs[j]) end)
+        end
+        os.execute("sleep 1")
         local cmds = {}
         for j = i, math.min(i + CHUNK - 1, #pkgs) do
             local pkg = pkgs[j]
