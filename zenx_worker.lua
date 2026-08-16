@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.259-cf"
+local VERSION = "9.260-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -10652,6 +10652,14 @@ function jalankan_home(cfg, pkgMau)
 end
 
 local PERINTAH = (arg and arg[1] or ""):lower()
+-- v9.260: `zenx seed/market/farm/gag1` = alias `zenx pasang <preset>`. Biar bisa
+-- ketik `zenx market` (gak cuma `zenx pasang market`). Pasang bakal generate command
+-- pendek (`market`/`seed`/dll di PATH) via tulis_skrip_up -> abis itu ketik `market` doang jalan.
+if PERINTAH == "seed" or PERINTAH == "market" or PERINTAH == "farm" or PERINTAH == "gag1" then
+    if not arg then arg = {} end
+    arg[2] = PERINTAH   -- preset -> arg[2] (dibaca PRESET_ARG di handler pasang)
+    PERINTAH = "pasang"
+end
 
 -- v4.78: `zenx key` -- salin link key-system Delta, terus jalanin ini.
 --   zenx key                -> ambil link dari clipboard (termux-clipboard-get)
