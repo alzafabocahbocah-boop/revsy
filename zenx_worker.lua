@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.258-cf"
+local VERSION = "9.259-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -739,6 +739,19 @@ end
 
 local function tulis_skrip_up(diam)
     local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
+    -- v9.258: command pendek per preset (ketik `seed`/`market`/`farm`/`gag1` langsung).
+    -- Inline di sini (bukan fungsi terpisah) biar gak nambah local ke main chunk (limit 200).
+    for _, pre in ipairs({ "seed", "market", "farm", "gag1" }) do
+        local jp = PREFIX .. "/bin/" .. pre
+        local ip = "#!" .. PREFIX .. "/bin/sh\ncurl -sL \"" .. REPO_WORKER .. "/pasang.sh\" | sh -s " .. pre .. "\n"
+        local lp = ""
+        local frp = io.open(jp, "r")
+        if frp then lp = frp:read("*all") or ""; frp:close() end
+        if lp ~= ip then
+            local fp = io.open(jp, "w")
+            if fp then fp:write(ip); fp:close(); os.execute("chmod +x " .. jp) end
+        end
+    end
     local jalur = PREFIX .. "/bin/up"
     local isi = table.concat({
         "#!" .. PREFIX .. "/bin/sh",
@@ -787,32 +800,6 @@ local function tulis_skrip_up(diam)
     return true
 end
 
--- v9.258: COMMAND PENDEK per preset. Ketik `seed` / `market` / `farm` / `gag1`
--- langsung jalanin pasang.sh preset itu (gak usah curl panjang tiap kali).
--- Ditulis ke $PREFIX/bin/<preset>, idempotent (cuma nulis kalau beda).
-local function tulis_skrip_preset(diam)
-    local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
-    local presets = { "seed", "market", "farm", "gag1" }
-    local nBaru = 0
-    for _, pre in ipairs(presets) do
-        local jalur = PREFIX .. "/bin/" .. pre
-        local isi = table.concat({
-            "#!" .. PREFIX .. "/bin/sh",
-            'curl -sL "' .. REPO_WORKER .. '/pasang.sh" | sh -s ' .. pre,
-            "",
-        }, "\n")
-        local lama = ""
-        local fr = io.open(jalur, "r")
-        if fr then lama = fr:read("*all") or ""; fr:close() end
-        if lama ~= isi then
-            local f = io.open(jalur, "w")
-            if f then f:write(isi); f:close(); os.execute("chmod +x " .. jalur); nBaru = nBaru + 1 end
-        end
-    end
-    if nBaru > 0 and not diam then
-        ok("Command pendek dibikin: ketik `seed` / `market` / `farm` / `gag1` langsung")
-    end
-end
 
 
 -- ============================================================
@@ -5980,14 +5967,15 @@ end
 --   * daftar paket client -> dipindai dari HP. Kalau hasilnya nol, berhenti:
 --     config tanpa client itu gak ada gunanya.
 -- ============================================================
-local PRESET = {
-    farm   = { place = "129343810645058", game = "GAG 2",        sc = "STAR FARM", url = "gag2"   },   -- v7.97: map baru Panen Musim Gugur
-    seed   = { place = "129343810645058", game = "GAG 2",        sc = "STAR SEED", url = "seed"   },   -- v7.97: map baru Panen Musim Gugur
-    market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
-    gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
-}
-
 local function setup_otomatis(namaPreset)
+    -- v9.259: PRESET dipindah ke DALAM sini (dari main chunk) -- bebasin 1 slot
+    -- local di main chunk (worker mepet limit 200). PRESET cuma dipake di sini.
+    local PRESET = {
+        farm   = { place = "129343810645058", game = "GAG 2",        sc = "STAR FARM", url = "gag2"   },
+        seed   = { place = "129343810645058", game = "GAG 2",        sc = "STAR SEED", url = "seed"   },
+        market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
+        gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
+    }
     local pre = PRESET[(namaPreset or ""):lower()]
     if not pre then
         err("Preset '" .. tostring(namaPreset) .. "' gak dikenal.")
@@ -6839,7 +6827,6 @@ local function run(cfg)
     -- nyangkut di versi tua: `up`-nya dibikin sekali pas pasang, terus gak
     -- pernah diperbarui -- dan dia bilang "OK", bukan gagal.
     pcall(tulis_skrip_up)
-    pcall(tulis_skrip_preset)
 
     -- v5.32: TARIK KUNCI API SEKARANG, bukan nanti pas dibutuhin.
     -- Alasannya: `zenx key` dipanggil justru pas lisensi Delta abis -- saat
@@ -13119,7 +13106,6 @@ if PERINTAH == "pasang" then
     -- `up`: dibikin lewat fungsi yang sama kayak yang dipanggil pas worker
     -- nyala -- biar isinya gak pernah beda antara RF baru dan RF lama.
     tulis_skrip_up(true)
-    pcall(tulis_skrip_preset, true)
     ok("Pintasan dibikin: zenx (jalanin) + up (update worker)")
 
     -- 6. kunci API bypass.vip. SENGAJA ditanya di sini, bukan ditulis di worker
