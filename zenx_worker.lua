@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.244-cf"
+local VERSION = "9.247-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7327,6 +7327,12 @@ local function run(cfg)
                 local tsGO = tonumber(isiTop:match("ROTASI%-GO|[^|]*|(%d+)"))
                 if tsGO and tsGO > 1e12 then tsGO = math.floor(tsGO/1000) end   -- ms -> s
                 local delayGO = tsGO and (os.time() - tsGO) or nil
+                -- v9.245: extract SUMBER (field ke-5). star_seed kirim |SS, panel gak ada
+                -- penanda (=PANEL). Biar di log ketauan stock kedeteksi dari MANA.
+                local srcGO = isiTop:match("ROTASI%-GO|[^|]*|[^|]*|[^|]*|(%a+)")
+                local srcLabel = (srcGO == "SS" and "STAR_SEED")
+                              or (srcGO == "SELF" and "SELF-DETECT")
+                              or "PANEL"
                 if ROTASI_STATE == "idle" then
                     -- v9.204: DEDUP per-seed cooldown (270s) pakai waktu proses.
                     -- v9.230: TAMBAH dedup pakai ts ROTASI-GO. Bug 2x: ROTASI-GO ke-2
@@ -7345,15 +7351,59 @@ local function run(cfg)
                     else
                         ROTASI_SEED_TS[seedGO] = nowT
                         if tsGO then ROTASI_GO_TS_SEED[seedGO] = tsGO end
-                        warn(("[rotasi] >>> STOCK dari PANEL: %s <<< rotasi%s%s"):format(
+                        warn(("[rotasi] >>> STOCK dari %s: %s <<< rotasi%s%s"):format(
+                            srcLabel,
                             seedGO,
                             placeGO and (" (dunia "..placeGO..")") or "",
-                            delayGO and ((" [delay %ds dari panel kirim]"):format(delayGO)) or ""))
-                        tambahLog(("Rotasi: stock dari panel -> %s"):format(seedGO))
+                            delayGO and ((" [delay %ds dari %s kirim]"):format(delayGO, srcLabel)) or ""))
+                        tambahLog(("Rotasi: stock dari %s -> %s"):format(srcLabel, seedGO))
                         pcall(function() jalankan_rotasi(cfg, seedGO, mapLink, placeGO) end)
                     end
                 else
                     warn(("[rotasi] stock panel (%s) tapi rotasi lagi jalan -> skip"):format(seedGO))
+                end
+            end
+            -- v9.246: STOCK LOKAL dari STAR_SEED -- star_seed di device SAMA nulis
+            -- zenx_stock.txt (baca game langsung, 0 delay API). Worker baca file lokal
+            -- (0 backend, 0 tim, instant). Filter pakai rotasi_barang, dedup 290s.
+            -- v9.247: WINDOW -- restock SELALU di kelipatan 5 menit (unix % 300 == 0).
+            -- Worker CEK cuma 20 detik abis boundary (unix % 300 < 20). Selain itu SKIP
+            -- (hemat, gak spam). Ini PRIORITAS: dicek di atas (sebelum denyut/open),
+            -- cuma kalah sama lisensi/bypass (skipKarenaLisensi).
+            if not skipKarenaLisensi and ROTASI_STATE == "idle" and cfg.rotasi_on
+               and (os.time() % 300) < 20 then
+                local rawSL = sh("su -c 'cat /sdcard/Delta/Workspace/zenx_stock.txt 2>/dev/null'") or ""
+                rawSL = rawSL:gsub("%s+$", "")
+                if rawSL ~= "" and rawSL ~= STOCK_LOKAL_LAST then
+                    STOCK_LOKAL_LAST = rawSL
+                    local seedsSL, tsSL, placeSL = rawSL:match("^([^|]*)|(%d+)|(%d*)")
+                    local tsLok = tonumber(tsSL)
+                    if tsLok and (os.time() - tsLok) < 30 and seedsSL then   -- fresh (<30s)
+                        local barangL = cfg.rotasi_barang and cfg.rotasi_barang:lower() or ""
+                        for seed in seedsSL:gmatch("[^,]+") do
+                            if barangL ~= "" and (","..barangL..","):find(","..seed:lower()..",", 1, true) then
+                                local nowL = os.time()
+                                if not (ROTASI_SEED_TS[seed] and (nowL - ROTASI_SEED_TS[seed]) < 290) then
+                                    ROTASI_SEED_TS[seed] = nowL
+                                    ROTASI_GO_TS_SEED[seed] = nowL
+                                    local placeL = (placeSL and placeSL ~= "") and placeSL or nil
+                                    if not placeL and cfg.rotasi_peta then
+                                        for sN, pN in cfg.rotasi_peta:gmatch("([^,:]+):(%d+)") do
+                                            if sN == seed then placeL = pN; break end
+                                        end
+                                    end
+                                    local delayL = tsLok and (os.time() - tsLok) or nil
+                                    warn(("[rotasi] >>> STOCK dari STAR_SEED (file lokal): %s <<<%s%s"):format(
+                                        seed,
+                                        placeL and (" (dunia "..placeL..")") or "",
+                                        delayL and ((" [delay %ds]"):format(delayL)) or ""))
+                                    tambahLog(("Rotasi: stock dari star_seed lokal -> %s"):format(seed))
+                                    pcall(function() jalankan_rotasi(cfg, seed, mapLink, placeL) end)
+                                    break   -- 1 rotasi per putaran
+                                end
+                            end
+                        end
+                    end
                 end
             end
             -- v9.113: ROTASI TIM. Kalau rotasi_on + idle + cooldown lewat -> cek API
@@ -7408,6 +7458,9 @@ local function run(cfg)
                                 if s == barang then placeR = p; break end
                             end
                         end
+                        -- v9.245: penanda sumber -> worker deteksi sendiri (bukan panel/star_seed)
+                        warn(("[rotasi] >>> STOCK dari SELF-DETECT: %s <<< (worker poll API sendiri)"):format(barang))
+                        tambahLog(("Rotasi: stock dari self-detect -> %s"):format(barang))
                         pcall(function() jalankan_rotasi(cfg, barang, mapLink, placeR) end)
                     end
                 elseif barang and not siap then
@@ -13400,6 +13453,7 @@ ROTASI_TS = 0            -- ts terakhir rotasi selesai (cooldown)
 ROTASI_SIAP_TS = 0       -- v9.116: kapan tim 1 (1-10) LENGKAP nembak server (proses idup). Rotasi baru aktif 60s setelah ini.
 ROTASI_TEST_LAST = ""    -- v9.137: dedup sinyal TEST (diproses di top-loop biar cepet)
 ROTASI_GO_LAST = ""      -- v9.139: dedup sinyal STOCK dari panel (real-time detect)
+STOCK_LOKAL_LAST = ""    -- v9.246: dedup file stock lokal dari star_seed
 ROTASI_GO_TS_PROSES = 0  -- v9.198: ts ROTASI-GO terakhir yg nyela loop (dedup interrupt)
 ROTASI_SEED_TS = {}      -- v9.204: seed -> ts terakhir dirotasi. Cooldown per-seed (270s) --
                          -- dedup SERVER-SIDE: berapapun tab panel yg fire, 1 seed = 1 rotasi
