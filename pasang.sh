@@ -197,6 +197,30 @@ VER=$(grep -m1 'local VERSION' "$HOME/zenx_worker.lua" | cut -d'"' -f2)
 ok "Worker keunduh: ${VER:-?}"
 
 # ============================================================
+# v9.263: preset *-arceus -> tulis loader ke Autoexec Arceus SEKALI di sini.
+# Arceus auto-run file .lua di /sdcard/Arceus X/Autoexec/ tiap join (kebukti).
+# Isinya 1 baris: fetch market dari ronihub + loadstring. Statis, gak berubah.
+# ============================================================
+case "$PRESET" in
+    *-arceus)
+        printf "\n${B}[+] Tulis loader Arceus (auto-exe market)${N}\n"
+        AX_DIR="/sdcard/Arceus X/Autoexec"
+        AX_LOADER="$AX_DIR/zenx.lua"
+        MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/market"
+        su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
+        # cek beneran ketulis
+        AX_CEK=$(su -c "cat \"$AX_LOADER\" 2>/dev/null" 2>/dev/null)
+        if printf '%s' "$AX_CEK" | grep -q "HttpGet"; then
+            ok "Loader Arceus ketulis: $AX_LOADER"
+            info "Market auto-nyala tiap Arceus join."
+        else
+            warn "Loader Arceus GAGAL ketulis (cek akses su / folder Arceus X ada)."
+            info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
+        fi
+        ;;
+esac
+
+# ============================================================
 judul "Setup otomatis"
 # ============================================================
 info "Preset '$PRESET' -- nol pertanyaan."
