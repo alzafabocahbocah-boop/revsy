@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.263-cf"
+local VERSION = "9.264-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -855,6 +855,25 @@ local function load_config()
                         table.sort(arr, urut_alami)
                         cfg.pkgs = table.concat(arr, ",")
                     end
+                    -- v9.263: config lama gak punya workspace_dir -> derive biar gak nil.
+                    -- dari executor kalau ada, else auto-deteksi folder, else Delta default.
+                    -- NOTE: sh() belom in-scope di sini (didefinisiin belakangan), jadi pake io.popen.
+                    if not cfg.workspace_dir or cfg.workspace_dir == "" then
+                        if cfg.executor == "arceus" then
+                            cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
+                        else
+                            local ph = io.popen("su -c '[ -d \"/sdcard/Arceus X/Workspace\" ] && echo Y' 2>/dev/null")
+                            local r = ph and ph:read("*all") or ""
+                            if ph then ph:close() end
+                            if r:match("Y") then
+                                cfg.executor      = "arceus"
+                                cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
+                            else
+                                cfg.executor      = cfg.executor or "delta"
+                                cfg.workspace_dir = "/sdcard/Delta/Workspace"
+                            end
+                        end
+                    end
                     return cfg
                 end
             end
@@ -876,6 +895,8 @@ local function save_config(cfg)
     f:write(string.format("  script_label=%q,\n",cfg.script_label or ""))
     f:write(string.format("  link_code=%q,\n",cfg.link_code or ""))
     f:write(string.format("  autoexec_dir=%q,\n",cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"))
+    f:write(string.format("  executor=%q,\n",cfg.executor or "delta"))                             -- v9.263: persist executor
+    f:write(string.format("  workspace_dir=%q,\n",cfg.workspace_dir or "/sdcard/Delta/Workspace"))  -- v9.263: persist path denyut
     f:write(string.format("  autoexec_bersih=%s,\n",tostring(cfg.autoexec_bersih ~= false)))
     f:write(string.format("  curiga_jam=%s,\n",tostring(tonumber(cfg.curiga_jam) or 24)))  -- v5.96: 24j (samain key_jam). 1j kekecilan -> lisensi sehat dicurigai.
     f:write(string.format("  pkgs=%q,\n",cfg.pkgs))
@@ -3329,6 +3350,11 @@ end
 -- v5.29: url bisa DITIMPA panel (script per tim). Kalau urlPanel dikasih,
 -- itu yang dipakai; kalau nggak, jatuh ke cfg.script_url lokal RF kayak dulu.
 local function tulis_autoexec(cfg, urlPanel)
+    -- v9.263: Arceus -> loader udah ditulis pasang.sh (zenx.lua statis). Worker GAK usah
+    -- nulis zenx_loader.txt di sini (biar gak dobel loader + ilangin warning "GAGAL nulis").
+    if cfg.executor == "arceus" then
+        return true
+    end
     local url_script = (urlPanel and urlPanel ~= "") and urlPanel or cfg.script_url
     if not url_script or url_script == "" then
         warn("script_url kosong, autoexec dilewat")
