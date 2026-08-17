@@ -65,11 +65,11 @@ PRESET="$1"
 [ -z "$PRESET" ] && PRESET="seed"
 
 case "$PRESET" in
-    seed|farm|market|gag1) ;;
+    seed|farm|market|gag1|seed-arceus|farm-arceus|market-arceus|gag1-arceus) ;;
     *)
         gagal "Preset '$PRESET' gak dikenal." \
-              "Yang ada: seed / farm / market / gag1" \
-              "Contoh:  ... | sh -s seed"
+              "Yang ada: seed / farm / market / gag1  (+ suffix -arceus, mis: market-arceus)" \
+              "Contoh:  ... | sh -s market-arceus"
         ;;
 esac
 
