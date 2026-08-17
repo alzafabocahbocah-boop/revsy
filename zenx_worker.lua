@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.260-cf"
+local VERSION = "9.261-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3336,7 +3336,11 @@ local function tulis_autoexec(cfg, urlPanel)
     end
     local AUTOEXEC_DIR = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
     -- loader: narik script dari GitHub. update cukup di GitHub, file autoexec tetap.
-    local loader = 'loadstring(game:HttpGet("' .. url_script .. '"))()'
+    -- v9.261: HAPUS cache market DULU sebelum fetch. Bug: market.lua nyimpen
+    -- ZenxMarket_cache.lua (buat re-exec teleport) -- kalau cache lama, client
+    -- NYANGKUT di versi lama walau GitHub udah update / dihapus. delfile cache dulu
+    -- -> fresh join PASTI fetch versi baru. pcall + guard biar aman non-market.
+    local loader = 'pcall(function() if delfile then pcall(delfile,"ZenxMarket_cache.lua") pcall(delfile,"ZenxMarket_cache_time.txt") end end) loadstring(game:HttpGet("' .. url_script .. '"))()'
     -- ============================================================
     -- v5.61: LOADER = .txt DOANG.
     --
