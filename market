@@ -73,7 +73,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.341"
+local VERSION = "8.343"
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -141,6 +141,7 @@ task.spawn(function()
     -- total pet di inventory yang cocok SEMUA rule (gak dirinci)
     local function totalPetCocokRule()
         local total, nRule = 0, 0
+        local rincian = {}   -- v8.342: {{tipe, min, max, jml}, ...} per rule yg ada isinya
         pcall(function()
             local BH = getgenv().ZenxMarketBH or _G.BH
             -- BH lokal: coba ambil dari getgenv kalau di-expose, else skip
@@ -151,9 +152,17 @@ task.spawn(function()
                 nRule = nRule + 1
                 local c = BH.countMyPetsForRule(r) or 0
                 total = total + c
+                if c > 0 then
+                    rincian[#rincian+1] = {
+                        tipe = r.type or "(semua)",   -- jenis pet
+                        min = tonumber(r.min),        -- kg min
+                        max = tonumber(r.max),        -- kg max
+                        jml = c,                      -- berapa pet cocok
+                    }
+                end
             end
         end)
-        return total, nRule
+        return total, nRule, rincian
     end
 
     -- v8.336: BALIKIN sukses/gagal. dulu fire-and-forget -> gagal kirim gak
@@ -198,12 +207,15 @@ task.spawn(function()
     -- bikin loop macet -> panel liat "mati" walau akun idup. Sekarang:
     --   * lapor denyut tiap 20s (ringan: cuma baca token) -> panel tau idup
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
-    local petTerakhir, nRuleTerakhir = 0, 0
+    local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     task.spawn(function()
         while masihGuaYangAktif() do
             pcall(function()
-                local ok, p2, n2 = pcall(totalPetCocokRule)
-                if ok and type(p2) == "number" then petTerakhir, nRuleTerakhir = p2, n2 end
+                local ok, p2, n2, r2 = pcall(totalPetCocokRule)
+                if ok and type(p2) == "number" then
+                    petTerakhir, nRuleTerakhir = p2, n2
+                    if type(r2) == "table" then rincianTerakhir = r2 end
+                end
             end)
             task.wait(60)
         end
@@ -245,6 +257,7 @@ task.spawn(function()
                     tokens = tok,
                     petRule = petTerakhir,
                     nRule = nRuleTerakhir,
+                    rincianPet = rincianTerakhir,   -- v8.342: breakdown per jenis (tipe+kg+jml)
                     jual = jual,
                 }) then
                     lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
@@ -7945,6 +7958,7 @@ end)
     end)
 end)()
 
+do  -- v8.343: bungkus HOP lama (self-contained, gak dipanggil dari luar) -> bebasin 6 slot main-local (fix limit 200)
 -- ===== HOP SERVER =====
 -- v8.218: simple per-page fetcher dgn retry on fail
 local function getServerPage(cursor)
@@ -8842,6 +8856,8 @@ task.spawn(function()
         end
     end
 end)
+
+end  -- v8.343: tutup do HOP
 
 -- ===== UNLIST ALL v4 — no TP, smart cache, logical stream =====
 -- v8.32: Pakai BH.myBoothUuid kalo ada → langsung scan booth-mu, no TP
@@ -12785,7 +12801,7 @@ end)
 -- v8.339: TRADE TOKEN -- kumpulin token ke 1 akun. CUMA jalan di GARDEN
 -- (Workspace.TradeWorld == nil). Semua dalam do...end (aman limit 200 local Luau).
 -- ============================================================
-do
+;(function()   -- v8.343: IIFE (bukan do...end) -> ~15 local blok TRADE pindah ke scope fungsi, lepas dari limit 200 main
     local TPlayers = game:GetService("Players")
     local TRS      = game:GetService("ReplicatedStorage")
     local Tplr     = TPlayers.LocalPlayer
@@ -12953,4 +12969,4 @@ do
             Text="siap", TextColor3=Color3.fromRGB(200,210,220), Font=Enum.Font.Code, TextSize=12, TextWrapped=true, BorderSizePixel=0, Parent=Tpanel })
         Instance.new("UICorner", TstatusLbl).CornerRadius=UDim.new(0,6)
     end
-end
+end)()   -- v8.343: tutup IIFE blok TRADE
