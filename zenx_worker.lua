@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.266-cf"
+local VERSION = "9.268-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6789,6 +6789,14 @@ local function run(cfg)
     cfg.stagger_sec = cfg.stagger_sec or 15
     cfg.status_sec  = cfg.status_sec or 20
     cfg.win_mode    = cfg.win_mode or 0   -- config lama gak punya -> fullscreen, gak berubah perilaku
+    -- v9.268: Arceus PAKSA win_mode=0. Arceus udah auto-freeform sendiri. Kalau worker
+    -- ikut buka pake '--windowingMode 5', tiap activity (ProtocolLaunch + NativeMain)
+    -- dapet bingkai freeform sendiri -> KOTAK DOBEL (bug user: "bingkai double").
+    -- Arceus GAK butuh --windowingMode -- freeform-nya dari Arceus, bukan worker.
+    if cfg.executor == "arceus" and (tonumber(cfg.win_mode) or 0) ~= 0 then
+        cfg.win_mode = 0
+        warn("Arceus: win_mode dipaksa 0 (Arceus auto-freeform; --windowingMode bikin bingkai DOBEL)")
+    end
     -- v4.34: nyalain mode deteksi longgar kalau diminta di config
     if cfg.deteksi_longgar == true then
         DETEKSI_LONGGAR = true
