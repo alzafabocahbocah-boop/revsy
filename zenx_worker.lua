@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.261-cf"
+local VERSION = "9.263-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5980,10 +5980,19 @@ local function setup_otomatis(namaPreset)
         market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
         gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
     }
-    local pre = PRESET[(namaPreset or ""):lower()]
+    local pre_raw = (namaPreset or ""):lower()
+    -- v9.263: suffix "-arceus" di preset apapun -> PAKSA logika Arceus (skip auto-deteksi).
+    -- Contoh: "market-arceus" = market game + path Arceus dipaksa. Berguna buat RF baru
+    -- yg Arceus-nya belom pernah jalan (folder Workspace belom kebikin -> auto-deteksi meleset).
+    local paksaArceus = false
+    if pre_raw:match("%-arceus$") then
+        paksaArceus = true
+        pre_raw = pre_raw:gsub("%-arceus$", "")
+    end
+    local pre = PRESET[pre_raw]
     if not pre then
         err("Preset '" .. tostring(namaPreset) .. "' gak dikenal.")
-        info("Yang ada: farm / seed / market / gag1")
+        info("Yang ada: farm / seed / market / gag1  (+ suffix -arceus, mis: market-arceus)")
         return nil
     end
 
@@ -6045,6 +6054,13 @@ local function setup_otomatis(namaPreset)
     cfg.script_url   = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/" .. pre.url
     ok("Game  : " .. cfg.game_label)
     ok("Script: " .. cfg.script_label .. "  (" .. pre.url .. ")")
+    -- v9.263: preset -arceus -> paksa executor + path Arceus (override auto-deteksi di bawah)
+    if paksaArceus then
+        cfg.executor      = "arceus"
+        cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
+        cfg.autoexec_dir  = "/sdcard/Arceus X/Autoexec"
+        ok("Executor: ARCEUS X (dipaksa via preset -arceus)")
+    end
     if placeLama and tostring(placeLama) ~= tostring(pre.place) then
         info(("Place BERUBAH (%s -> %s) -> close semua client, reopen di place baru"):format(
             tostring(placeLama), tostring(pre.place)))
@@ -6085,6 +6101,18 @@ local function setup_otomatis(namaPreset)
     cfg.auto_key          = true
     cfg.disconnect_menit  = cfg.disconnect_menit or 3
     cfg.autoexec_dir      = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
+    -- v9.262: auto-deteksi executor per-RF (1 RF = 1 executor). Arceus X pake path beda
+    -- ("Arceus X" ADA SPASI + folder Workspace beda). Denyut mesti dibaca dari sini.
+    if not cfg.workspace_dir then
+        local adaArceus = (sh("su -c '[ -d \"/sdcard/Arceus X/Workspace\" ] && echo Y'") or ""):match("Y")
+        if adaArceus then
+            cfg.executor      = "arceus"
+            cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
+        else
+            cfg.executor      = "delta"
+            cfg.workspace_dir = "/sdcard/Delta/Workspace"
+        end
+    end
     if cfg.shell_tetap == nil then cfg.shell_tetap = true end
     if cfg.auto_grid == nil then cfg.auto_grid = true end
     if cfg.autoexec_bersih == nil then cfg.autoexec_bersih = true end
@@ -6463,7 +6491,7 @@ function lisensi_false_alarm(cfg)
     os.execute("sleep 3")
     if lisensi_keadaan(cfg) == "ada" then return true end
     local now2 = os.time()
-    local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+    local raw = sh("su -c 'for f in \"" .. cfg.workspace_dir .. "/\"zenx_denyut_*.txt; do echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
     for tsStr in raw:gmatch("(%d+)") do
         local ts = tonumber(tsStr)
         if ts and (now2 - ts) <= 90 then return true end   -- denyut fresh = di game = key ada
@@ -7767,7 +7795,7 @@ local function run(cfg)
                     local sekarang = os.time()
                     -- baca isi (timestamp) + MTIME file (kapan file terakhir ditulis).
                     -- format: nama|isi_timestamp|mtime_epoch
-                    local raw = sh("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    local raw = sh("su -c 'for f in \"" .. cfg.workspace_dir .. "/\"zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
                     local ddetail = {}
                     local sheckDenyut = {}   -- v9.254: sheckles dari denyut file (nebeng)
                     for line in raw:gmatch("[^\n]+") do
@@ -12417,11 +12445,11 @@ if PERINTAH == "denyut" then
     print()
     -- baca semua file denyut: nama|isi|mtime
     local raw = ""
-    local ph = io.popen("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null")
+    local ph = io.popen("su -c 'for f in /sdcard/Delta/Workspace/zenx_denyut_*.txt \"/sdcard/Arceus X/Workspace/\"zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null")
     if ph then raw = ph:read("*all") or ""; ph:close() end
     if raw == "" then
         warn("Gak ada file denyut (script belum nulis / path beda).")
-        info("Path dicek: /sdcard/Delta/Workspace/zenx_denyut_*.txt")
+        info("Path dicek: /sdcard/Delta/Workspace/ + /sdcard/Arceus X/Workspace/ zenx_denyut_*.txt")
         return
     end
     local ada = 0
