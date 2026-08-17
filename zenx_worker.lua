@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.264-cf"
+local VERSION = "9.266-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3710,7 +3710,19 @@ local function grid_hitung(cfg, pkgsPilih)
     -- v8.19: kalau dikasih pkgsPilih (client yg MAU DIBUKA), grid dihitung buat
     -- JUMLAH ITU -- bukan semua cfg.pkgs. Jadi start 2 client = grid 2 petak
     -- lebar, bukan 10 petak kecil. Kalau nil -> semua (perilaku lama).
-    local pkgs = pkgsPilih or split(cfg.pkgs)
+    -- v9.266: GRID PAKSA PENUH buat MARKET (2-tim 3+3) / Arceus. Bug user: kalau cuma
+    -- 1 tim (3 client) yg aktif, grid dihitung basis 3 -> jadi 2x2 (slot gede, layout
+    -- beda tiap tim). User mau layout 3x2 TETAP (basis 6), client aktif tinggal nempatin
+    -- slot-nya (0,1,2 = baris atas; 3,4,5 = baris bawah). Jadi dimensi + peta basis SEMUA
+    -- client, walau yg dibuka cuma subset. peta punya posisi semua 6 -> caller ambil yg perlu.
+    local pkgsFull = split(cfg.pkgs)
+    local paksaPenuh = (cfg.script_label == "MARKET") or (cfg.executor == "arceus")
+    local pkgs
+    if paksaPenuh then
+        pkgs = pkgsFull                    -- basis PENUH (6) -> 3x2 konsisten
+    else
+        pkgs = pkgsPilih or pkgsFull       -- perilaku lama: subset -> grid subset
+    end
     local n = #pkgs
     if n == 0 then return nil, "gak ada client di config" end
     -- v9.14: DETEKSI duplikat pkg (sebab grid nimpa). Kalau ada pkg dobel di
@@ -6517,7 +6529,7 @@ function lisensi_false_alarm(cfg)
     os.execute("sleep 3")
     if lisensi_keadaan(cfg) == "ada" then return true end
     local now2 = os.time()
-    local raw = sh("su -c 'for f in \"" .. cfg.workspace_dir .. "/\"zenx_denyut_*.txt; do echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+    local raw = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
     for tsStr in raw:gmatch("(%d+)") do
         local ts = tonumber(tsStr)
         if ts and (now2 - ts) <= 90 then return true end   -- denyut fresh = di game = key ada
@@ -7821,7 +7833,7 @@ local function run(cfg)
                     local sekarang = os.time()
                     -- baca isi (timestamp) + MTIME file (kapan file terakhir ditulis).
                     -- format: nama|isi_timestamp|mtime_epoch
-                    local raw = sh("su -c 'for f in \"" .. cfg.workspace_dir .. "/\"zenx_denyut_*.txt; do echo \"$(basename $f)|$(cat $f 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    local raw = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
                     local ddetail = {}
                     local sheckDenyut = {}   -- v9.254: sheckles dari denyut file (nebeng)
                     for line in raw:gmatch("[^\n]+") do
@@ -12085,15 +12097,25 @@ function getps_akun(cfg, cookie)
     -- "PS-nya sama, tinggal ganti id place ke world 2".
     local W1 = "97598239454123"    -- v9.191: W1 ASLI (Grow a Garden 2 klasik). 129343810645058 = redirect ke W2
     local W2 = "126987765280963"
+    local GARDEN1 = "126884695634066"  -- v9.264: GAG 1 garden
+    local MARKET1 = "129954712878723"  -- v9.264: GAG 1 market (TradeWorld)
     local aktif = cfg.place_id or W1
     -- v9.189: cek SEMUA dunia (aktif, W1, W2). Bug user: getps cuma cek dunia AKTIF
     -- -> server yg udah ada di dunia LAIN (mis. W2) gak kedeteksi -> kira "belum punya"
     -- -> bikin server BARU tiap kali. Karena joinCode UNIVERSE-level, server dari dunia
     -- mana pun kepake buat dunia aktif (tinggal ganti placeId). Jadi cek semua, temu = pake.
+    -- v9.264: place tambahan TERGANTUNG GAME. accessCode universe-level -> PS dari place
+    -- se-universe kepake. GAG 1 (garden+market = 1 universe) BEDA universe dari GAG 2 (W1/W2).
+    -- Dulu selalu cek W1/W2 -> buat GAG 1 percuma (universe beda) + bikin PS baru terus.
     local coba = {}
     coba[#coba+1] = aktif
-    if aktif ~= W1 then coba[#coba+1] = W1 end
-    if aktif ~= W2 then coba[#coba+1] = W2 end
+    if (cfg.game_label or ""):upper():find("GAG 1") then
+        if aktif ~= GARDEN1 then coba[#coba+1] = GARDEN1 end
+        if aktif ~= MARKET1 then coba[#coba+1] = MARKET1 end
+    else
+        if aktif ~= W1 then coba[#coba+1] = W1 end
+        if aktif ~= W2 then coba[#coba+1] = W2 end
+    end
 
     local tmp = (os.getenv("HOME") or ".") .. "/nx_getps.txt"
     os.remove(tmp)
@@ -12131,15 +12153,19 @@ function getps_akun(cfg, cookie)
     --   2. POST games.roblox.com/v1/games/vip-servers/{universeId} (butuh CSRF)
     -- accessCode balik dari response -> join pakai placeId aktif (W2).
     if sebabAkhir == "akun belum punya PS" then
-        -- ambil universeId dari placeId W1 (universe sama W2)
-        local uniUrl = "https://apis.roblox.com/universes/v1/places/" .. W1 .. "/universe"
+        -- v9.264: ambil universeId dari place AKTIF (dulu hardcode W1 = universe GAG 2).
+        -- pakai aktif -> GAG 1 dapet universe GAG 1, GAG 2 dapet universe GAG 2.
+        local uniUrl = "https://apis.roblox.com/universes/v1/places/" .. aktif .. "/universe"
         local uh = io.popen(("curl -s -4 -m 20 \"%s\" 2>&1"):format(uniUrl))
         local uout = uh and uh:read("*all") or ""
         if uh then uh:close() end
         local universeId = uout:match('"universeId"%s*:%s*(%d+)')
-        -- fallback: universeId GAG udah ketauan (dari request asli). Kalau query
-        -- gagal, pakai ini langsung.
-        if not universeId then universeId = "10200395747" end
+        -- fallback universeId: CUMA buat GAG 2 (universe-nya udah ketauan dari request asli).
+        -- GAG 1 -> ANDELIN query di atas (universe GAG 1 gak di-hardcode). Kalau query gagal
+        -- buat GAG 1, universeId tetep nil -> skip bikin (jgn bikin PS di universe salah).
+        if not universeId and not (cfg.game_label or ""):upper():find("GAG 1") then
+            universeId = "10200395747"
+        end
         if universeId then
             -- ambil CSRF token dulu (POST kosong -> header x-csrf-token)
             local csrfCmd = ("curl -s -4 -m 20 -i -X POST -H \"Cookie: $(cat %s)\" "
