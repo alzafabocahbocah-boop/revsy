@@ -11631,39 +11631,75 @@ if PERINTAH == "dpi" then
 end
 
 if PERINTAH == "cekwin" then
-    -- v9.270: DIAGNOSTIK WINDOW. Ketik `zenx cekwin` pas client udah masuk game ->
-    -- laporin support/resizable + windowing mode + BINGKAI DOBEL per client. Buat
-    -- ngejar bug bingkai dobel Arceus tanpa ngetik dumpsys manual bolak-balik.
+    -- v9.271: DIAGNOSTIK WINDOW LENGKAP + ANALISA. Ketik `zenx cekwin` pas SEMUA client
+    -- udah masuk game -> laporin support/resizable + mode + bingkai dobel per client,
+    -- TERUS worker simpulin sendiri biang-nya apa. Buat ngejar bug bingkai dobel Arceus.
     local cfg = load_config()
     if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
     local pkgs = split(cfg.pkgs or "")
     if #pkgs == 0 then err("Gak ada client di config.") return end
-    print(C.BOLD .. C.C .. "\n=== ZENX CEKWIN (diagnostik window) ===\n" .. C.N)
+    print(C.BOLD .. C.C .. "\n=== ZENX CEKWIN (diagnostik window lengkap) ===\n" .. C.N)
+
     -- 1) setting sistem
     local sup = (sh("su -c 'settings get global enable_freeform_support'") or ""):gsub("%s+","")
     local rez = (sh("su -c 'settings get global force_resizable_activities'") or ""):gsub("%s+","")
-    info(("executor = %s | win_mode = %s"):format(tostring(cfg.executor or "delta"), tostring(cfg.win_mode or 0)))
+    info(("executor = %s | win_mode = %s | auto_grid = %s")
+        :format(tostring(cfg.executor or "delta"), tostring(cfg.win_mode or 0), tostring(cfg.auto_grid)))
     info(("enable_freeform_support = %s | force_resizable = %s")
         :format(sup == "" and "null" or sup, rez == "" and "null" or rez))
-    if cfg.executor == "arceus" and sup == "1" then
-        warn("support=1 di Arceus -> INI biang bingkai DOBEL (Android + App Cloner freeform tabrakan)")
-        warn("Fix: settings put global enable_freeform_support 0  (atau restart worker v9.270+)")
-    end
     print()
-    -- 2) per client: windowing mode + bingkai dobel (ProtocolLaunch visible)
-    info("Per client (BINGKAI DOBEL kalau ProtocolLaunch visible=true):")
+
+    -- 2) per client: mode + bounds + bingkai dobel + prefs App Cloner
+    info("Per client:")
+    local nMati, nFreeform, nFull, nDobel, nPrefs = 0, 0, 0, 0, 0
     for _, pkg in ipairs(pkgs) do
         local nm = pkg:gsub("com%.roblox%.", "")
-        local mode = (sh("su -c 'dumpsys activity " .. pkg .. " 2>/dev/null | grep -oE \"mWindowingMode=[a-z]+\" | head -1'") or ""):match("mWindowingMode=(%a+)") or "?"
-        -- cek ProtocolLaunch visible (bingkai ke-2)
-        local plRaw = sh("su -c 'dumpsys window windows 2>/dev/null | grep -A3 \"" .. pkg .. "/com.roblox.client.ActivityProtocolLaunch\" | grep -oE \"visible=[a-z]+\" | head -1'") or ""
-        local plVis = plRaw:match("visible=(%a+)") or "?"
-        local dobel = (plVis == "true") and (C.Y .. "  <- DOBEL (ProtocolLaunch nampak)" .. C.N) or ""
-        info(("  %-10s mode=%-10s ProtocolLaunch.visible=%s%s"):format(nm, mode, plVis, dobel))
+        local pid = (sh("su -c 'pidof " .. pkg .. "'") or ""):match("%d+")
+        if not pid then
+            nMati = nMati + 1
+            warn(("  %-10s MATI (belum kebuka)"):format(nm))
+        else
+            local dump = sh("su -c 'dumpsys activity " .. pkg .. " 2>/dev/null | grep -m1 mWindowingMode'") or ""
+            local mode = dump:match("mWindowingMode=(%a+)") or "?"
+            local bounds = dump:match("mBounds=Rect%(([%d,%s%-]+)%)") or "?"
+            if mode == "freeform" then nFreeform = nFreeform + 1 elseif mode == "fullscreen" then nFull = nFull + 1 end
+            -- bingkai dobel: ProtocolLaunch visible
+            local plRaw = sh("su -c 'dumpsys window windows 2>/dev/null | grep -A3 \"" .. pkg .. "/com.roblox.client.ActivityProtocolLaunch\" | grep -oE \"visible=[a-z]+\" | head -1'") or ""
+            local plVis = plRaw:match("visible=(%a+)") or "?"
+            local dobel = (plVis == "true")
+            if dobel then nDobel = nDobel + 1 end
+            -- prefs App Cloner window ada?
+            local prefsN = tonumber((sh("su -c 'grep -c app_cloner.*window /data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml 2>/dev/null'") or ""):match("%d+")) or 0
+            if prefsN > 0 then nPrefs = nPrefs + 1 end
+            info(("  %-10s mode=%-10s bounds=(%s) PL.visible=%s prefs=%d%s")
+                :format(nm, mode, bounds, plVis, prefsN, dobel and (C.Y .. "  <- DOBEL" .. C.N) or ""))
+        end
     end
     print()
-    info("Kalau ada 'DOBEL': matiin support (0) + kill+buka ulang client itu.")
-    info("Delta = fullscreen (App Cloner gambar) normal. Arceus = fullscreen + support 0 = 1 bingkai.")
+
+    -- 3) ANALISA -- worker simpulin biang-nya
+    print(C.BOLD .. "── ANALISA ──" .. C.N)
+    info(("Ringkas: %d client | %d freeform | %d fullscreen | %d MATI | %d DOBEL | %d punya prefs window")
+        :format(#pkgs, nFreeform, nFull, nMati, nDobel, nPrefs))
+    if nMati > 0 then
+        warn(("%d client belum kebuka -> FORCE/Jalankan semua dulu, tunggu masuk, baru cekwin lagi."):format(nMati))
+    end
+    if nDobel == 0 and nMati == 0 then
+        ok("GAK ADA bingkai dobel. Window normal (1 bingkai per client).")
+    elseif nDobel > 0 then
+        warn(("%d client BINGKAI DOBEL. Penyebab paling mungkin:"):format(nDobel))
+        if cfg.executor == "arceus" and sup == "1" then
+            err("  >> enable_freeform_support = 1 <<  INI BIANG-NYA.")
+            info("  Arceus bikin freeform + Android JUGA freeform (support=1) -> 2 lapis = 2 bingkai.")
+            info("  FIX: settings put global enable_freeform_support 0 ; lalu kill+buka ulang client dobel.")
+        elseif cfg.executor == "arceus" and sup ~= "1" then
+            warn("  support BUKAN 1, tapi masih dobel. Kandidat lain:")
+            info("  - client dobel = SISA kebuka pas support masih 1 (belum di-reset). Kill+buka ulang.")
+            info("  - ATAU force_resizable=1 (skrg: " .. (rez == "" and "null" or rez) .. ")")
+        else
+            info("  Delta: bingkai dobel jarang. Cek win_mode (harusnya 0 buat App Cloner).")
+        end
+    end
     return
 end
 
