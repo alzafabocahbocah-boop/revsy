@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.268-cf"
+local VERSION = "9.269-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3795,6 +3795,11 @@ end
 -- tulis koordinat 1 client. balikin: berhasil, keterangan
 -- keterangan "udah pas" = gak ada yang ditulis (hemat 1 panggilan su)
 local function tata_satu(pkg, kotak, hapusDulu)
+    -- v9.269: ARCEUS -> JANGAN nulis prefs window App Cloner sama sekali. Arceus udah
+    -- bikin jendela freeform + nata posisi sendiri. Prefs App Cloner = lapis window ke-2
+    -- -> BINGKAI DOBEL. Ini 1 titik yg nutup SEMUA 14 pemanggil tata_satu (grid_satu,
+    -- batch, bypass, rotasi, dll). GRID_SKIP di-set di run() kalau executor=arceus.
+    if GRID_SKIP then return true, "skip-arceus (grid diurus Arceus)" end
     local path = prefs_path(pkg)
     -- stderr digabung DI DALAM su -- kalau dibuang, penolakan ROM ikut kebuang
     -- dan kodenya ngira sukses padahal gagal.
@@ -3952,6 +3957,14 @@ end
 -- murah (baca ukuran layar 1x), gak perlu cache. Fresh = gak akan nyangkut.
 function grid_satu(cfg, pkg)
     if cfg.auto_grid ~= true then return end   -- grid mati -> lewat
+    -- v9.269: ARCEUS -> JANGAN nulis grid prefs App Cloner. Arceus udah bikin tiap
+    -- client jendela freeform + nata posisi SENDIRI. Kalau worker ikut nulis
+    -- app_cloner_*window* prefs, App Cloner bikin lapis window ke-2 di atas freeform
+    -- Arceus -> BINGKAI DOBEL (bug user, kebukti: task Arceus [787,375] vs prefs [15,375]).
+    -- Biarin Arceus yg nata. Worker cukup urus join/denyut/report.
+    if cfg.executor == "arceus" then
+        return
+    end
     -- hitung grid FRESH buat client aktif (PKGS_AKTIF). nil = semua client.
     local peta = grid_hitung(cfg, PKGS_AKTIF)
     if peta and peta[pkg] then
@@ -6796,6 +6809,12 @@ local function run(cfg)
     if cfg.executor == "arceus" and (tonumber(cfg.win_mode) or 0) ~= 0 then
         cfg.win_mode = 0
         warn("Arceus: win_mode dipaksa 0 (Arceus auto-freeform; --windowingMode bikin bingkai DOBEL)")
+    end
+    -- v9.269: Arceus -> skip SEMUA grid prefs App Cloner (Arceus nata window sendiri;
+    -- prefs App Cloner nambah lapis window = bingkai dobel). GRID_SKIP dicek di tata_satu.
+    GRID_SKIP = (cfg.executor == "arceus")
+    if GRID_SKIP then
+        warn("Arceus: grid prefs App Cloner DIMATIIN (Arceus nata jendela sendiri, cegah bingkai dobel)")
     end
     -- v4.34: nyalain mode deteksi longgar kalau diminta di config
     if cfg.deteksi_longgar == true then
