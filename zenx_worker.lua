@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.270-cf"
+local VERSION = "9.271-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -11628,6 +11628,43 @@ if PERINTAH == "dpi" then
         print("  (kalau tampilan aneh, `zenx dpi reset` buat balikin)")
         return
     end
+end
+
+if PERINTAH == "cekwin" then
+    -- v9.270: DIAGNOSTIK WINDOW. Ketik `zenx cekwin` pas client udah masuk game ->
+    -- laporin support/resizable + windowing mode + BINGKAI DOBEL per client. Buat
+    -- ngejar bug bingkai dobel Arceus tanpa ngetik dumpsys manual bolak-balik.
+    local cfg = load_config()
+    if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
+    local pkgs = split(cfg.pkgs or "")
+    if #pkgs == 0 then err("Gak ada client di config.") return end
+    print(C.BOLD .. C.C .. "\n=== ZENX CEKWIN (diagnostik window) ===\n" .. C.N)
+    -- 1) setting sistem
+    local sup = (sh("su -c 'settings get global enable_freeform_support'") or ""):gsub("%s+","")
+    local rez = (sh("su -c 'settings get global force_resizable_activities'") or ""):gsub("%s+","")
+    info(("executor = %s | win_mode = %s"):format(tostring(cfg.executor or "delta"), tostring(cfg.win_mode or 0)))
+    info(("enable_freeform_support = %s | force_resizable = %s")
+        :format(sup == "" and "null" or sup, rez == "" and "null" or rez))
+    if cfg.executor == "arceus" and sup == "1" then
+        warn("support=1 di Arceus -> INI biang bingkai DOBEL (Android + App Cloner freeform tabrakan)")
+        warn("Fix: settings put global enable_freeform_support 0  (atau restart worker v9.270+)")
+    end
+    print()
+    -- 2) per client: windowing mode + bingkai dobel (ProtocolLaunch visible)
+    info("Per client (BINGKAI DOBEL kalau ProtocolLaunch visible=true):")
+    for _, pkg in ipairs(pkgs) do
+        local nm = pkg:gsub("com%.roblox%.", "")
+        local mode = (sh("su -c 'dumpsys activity " .. pkg .. " 2>/dev/null | grep -oE \"mWindowingMode=[a-z]+\" | head -1'") or ""):match("mWindowingMode=(%a+)") or "?"
+        -- cek ProtocolLaunch visible (bingkai ke-2)
+        local plRaw = sh("su -c 'dumpsys window windows 2>/dev/null | grep -A3 \"" .. pkg .. "/com.roblox.client.ActivityProtocolLaunch\" | grep -oE \"visible=[a-z]+\" | head -1'") or ""
+        local plVis = plRaw:match("visible=(%a+)") or "?"
+        local dobel = (plVis == "true") and (C.Y .. "  <- DOBEL (ProtocolLaunch nampak)" .. C.N) or ""
+        info(("  %-10s mode=%-10s ProtocolLaunch.visible=%s%s"):format(nm, mode, plVis, dobel))
+    end
+    print()
+    info("Kalau ada 'DOBEL': matiin support (0) + kill+buka ulang client itu.")
+    info("Delta = fullscreen (App Cloner gambar) normal. Arceus = fullscreen + support 0 = 1 bingkai.")
+    return
 end
 
 if PERINTAH == "grid" then
