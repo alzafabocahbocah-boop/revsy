@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.273-cf"
+local VERSION = "9.274-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9440,6 +9440,22 @@ local function run(cfg)
                 SUDAH_GRID = false   -- nata grid/tiling ulang
                 GRID_CACHE = nil     -- v7.61: hitung grid fresh sesi baru
                 lastOpen = 0         -- buka client dari 1/8 lagi (gak nunggu reopen_sec)
+                -- v9.274: ARCEUS -> pas FORCE (mulai fresh), TUTUP semua client + buang
+                -- task + matiin freeform-sistem DULU, baru boot buka ulang fresh. Biar
+                -- gak ada sisa BINGKAI DOBEL dari sesi lalu (freeform nyangkut di task/
+                -- client lama). User minta: start paksa = close semua + hapus freeform
+                -- double dulu. Cuma Arceus (Delta gak kena masalah ini).
+                if cfg.executor == "arceus" then
+                    info("Arceus FORCE: tutup semua client + buang task + bersihin freeform (cegah bingkai dobel sisa)")
+                    local pkgsAll = split(cfg.pkgs or "")
+                    local bersih = "su -c '"
+                    for _, pk in ipairs(pkgsAll) do bersih = bersih .. "am force-stop " .. pk .. " 2>/dev/null; " end
+                    bersih = bersih .. "for t in $(am stack list 2>/dev/null | grep roblox | grep -oE \"taskId=[0-9]+\" | grep -oE \"[0-9]+\" | sort -u); do am task remove-task $t 2>/dev/null; done; "
+                    bersih = bersih .. "settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'"
+                    sh_silent(bersih)
+                    ok("Arceus FORCE: semua ditutup + task dibuang + freeform sistem OFF -> boot buka ulang FRESH (1 bingkai)")
+                    CEKWIN_SUDAH = false   -- lapor cekwin lagi pas semua balik masuk
+                end
             end
             lastIsi = isi
         end
