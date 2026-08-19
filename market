@@ -2,6 +2,30 @@
 -- Left sidebar: Market | List Harga | Snipe
 -- Market sub-tabs: Listing | Rejoin | Misc
 
+-- v8.344: DENYUT UNCONDITIONAL di PALING ATAS. Tulis zenx_denyut_<akun>.txt tiap 20s
+-- APAPUN place-nya (market TradeWorld ATAU garden GAG 1, place ID beda). Bug user:
+-- pas client di server GARDEN (place 126884695634066, beda dari market 129954712878723),
+-- re-exec guard (<30s -> return) / bridge market gak jalan -> denyut gak ketulis ->
+-- worker kira MATI (7681) -> rejoin terus sia-sia. Writer ini INDEPENDEN dari bridge +
+-- guard + place: spawn coroutine sendiri, gate 1x per VM (_G flag). Jadi denyut SELALU
+-- idup di place manapun. Aman kalau bridge juga nulis (file sama, timpa-timpa murah).
+do
+    if not _G.__ZenxDenyutJalan then
+        _G.__ZenxDenyutJalan = true
+        task.spawn(function()
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    if plr and plr.Name and writefile then
+                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                    end
+                end)
+                task.wait(20)
+            end
+        end)
+    end
+end
+
 -- v8.309: AUTO RE-EXEC di PALING AWAL - daftarin queue_on_teleport sebelum apapun.
 -- v8.321: ANTI HTTP 429. cache lokal + guard: kalau kena 429, JANGAN spam retry.
 --   maks 1 HttpGet per re-exec. gagal -> pakai cache lama -> berhenti.
