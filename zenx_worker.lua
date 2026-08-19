@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.277-cf"
+local VERSION = "9.278-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9218,12 +9218,35 @@ local function run(cfg)
             -- v9.77: CLOSE = tutup semua client (worker tetep jalan). Handler
             -- TERPISAH -- dulu nyasar di blok RESTART (bikin RESTART bekas ke-CLOSE
             -- -> tutup 10 client liar). Sekarang cuma jalan kalau isi BENERAN CLOSE.
+            -- v9.278: CLOSE:daftar -> tutup CUMA client di daftar (buat pindah server
+            -- per-tim: force-stop client target biar FORCE buka ulang di server baru,
+            -- tim lain gak keganggu). CLOSE polos -> tutup semua (perilaku lama).
             if isi ~= lastIsi then
                 lastIsi = isi
-                warn("CLOSE dari panel -> tutup semua client")
-                local n = close_all(cfg)
-                ok("CLOSE: " .. n .. " client ditutup")
-                notify("ZenX "..cfg.tim, "CLOSE -> "..n.." client ditutup")
+                local daftarC = isi:match("CLOSE:([%w%.%_%-,]+)")
+                if daftarC then
+                    local onlyC = {}
+                    for a in daftarC:gmatch("[^,]+") do onlyC[a] = true end
+                    local pkgsC = {}
+                    for _, pkg in ipairs(split(cfg.pkgs)) do
+                        local u = (mapAkun or {})[pkg]
+                        local nm = pkg:gsub("com%.roblox%.", "")
+                        if onlyC[u] or onlyC[pkg] or onlyC[nm] then pkgsC[#pkgsC+1] = pkg end
+                    end
+                    if #pkgsC > 0 then
+                        warn("CLOSE daftar dari panel -> tutup " .. #pkgsC .. " client (target aja)")
+                        local n = close_all(cfg, pkgsC)
+                        ok("CLOSE: " .. n .. " client target ditutup")
+                        notify("ZenX "..cfg.tim, "CLOSE -> "..n.." client target ditutup")
+                    else
+                        warn("CLOSE daftar tapi 0 match -> gak nutup apa2 (cek nama akun)")
+                    end
+                else
+                    warn("CLOSE dari panel -> tutup semua client")
+                    local n = close_all(cfg)
+                    ok("CLOSE: " .. n .. " client ditutup")
+                    notify("ZenX "..cfg.tim, "CLOSE -> "..n.." client ditutup")
+                end
                 lapor(cfg, isi, cacheRun)
                 lastStatus = os.time()
             end
