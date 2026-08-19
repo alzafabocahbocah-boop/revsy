@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.275-cf"
+local VERSION = "9.276-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7941,8 +7941,11 @@ local function run(cfg)
                             info(("[denyut-cek] %s: umur=%s")
                                 :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
                         end
-                        if umur ~= nil and umur <= 120 then
-                            -- denyut fresh (<=2 menit) = script nulis = DI GAME
+                        if umur ~= nil and umur <= 180 then
+                            -- v9.276: toleransi denyut 120 -> 180s (3 menit). denyut fresh
+                            -- (<=3 menit) = script nulis = DI GAME. Dilonggarin biar transisi
+                            -- market<->garden (place beda, ada jeda denyut pas teleport) gak
+                            -- ke-rejoin sia-sia. denyut ditulis tiap 20s -> masih banyak margin.
                             diGame = diGame + 1
                             -- v8.47: denyut fresh = client masuk game = CAPTCHA SOLVED.
                             -- Clear flag captcha (dulu clear di loop grafis lama yg
@@ -12554,7 +12557,7 @@ if PERINTAH == "denyut" then
                 return m > 0 and ("%dm %ds"):format(m, s) or ("%ds"):format(s)
             end
             local jamIsi = os.date("%H:%M:%S", tonumber(ts))
-            local status = umurIsi <= 120 and (C.G .. "FRESH" .. C.N) or (C.R .. "MATI" .. C.N)
+            local status = umurIsi <= 180 and (C.G .. "FRESH" .. C.N) or (C.R .. "MATI" .. C.N)
             print(("  %-16s isi=%s (jam %s) | mtime=%s | %s"):format(
                 nama, fmt(umurIsi), jamIsi, fmt(umurMtime), status))
         end
