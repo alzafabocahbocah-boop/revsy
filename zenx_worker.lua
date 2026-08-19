@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.276-cf"
+local VERSION = "9.277-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9370,6 +9370,33 @@ local function run(cfg)
                 -- gak nutup semua. Freeform setting tetep dimatiin (murah, gak nutup client).
                 if cfg.executor == "arceus" then
                     sh_silent("su -c 'settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'")
+                end
+                -- v9.277: BLOKIR denyut-rejoin selama proses START PAKSA. Bug user: pas
+                -- FORCE, worker lagi sibuk BUKA client, tapi denyut-cek jalan barengan +
+                -- rejoin client yg denyutnya masih lama (baru ditutup, belum sempet nulis
+                -- denyut baru) -> FORCE + rejoin BENTROK. User minta: pas start paksa,
+                -- FOKUS buka client dulu, denyut-cek di-BLOCK, baru cek ulang 3 menit
+                -- SETELAH client masuk. Caranya: set grace (tembak_ts) buat SEMUA client
+                -- target FORCE DARI SEKARANG (bukan nunggu kebuka). Grace 240s nutup
+                -- proses buka + boot; pas tiap client beneran kebuka, tembak_ts di-refresh
+                -- lagi (8075) -> grace lanjut 3-4 menit dari kebuka. Jadi gak ke-rejoin
+                -- selama FORCE + 3 menit setelah masuk.
+                do
+                    local daftarF = isi:match("FORCE:([%w%.%_,]+)")
+                    local targetF = {}
+                    if daftarF then
+                        for nm in daftarF:gmatch("[^,]+") do targetF[nm:lower()] = true end
+                    end
+                    local tNow = os.time()
+                    for _, pk in ipairs(split(cfg.pkgs or "")) do
+                        -- FORCE polos (tanpa daftar) = semua; FORCE:daftar = cuma yg didaftar
+                        local akun = (mapAkun and mapAkun[pk] or ""):lower()
+                        local pkShort = pk:gsub("com%.roblox%.", ""):lower()
+                        if not daftarF or targetF[akun] or targetF[pkShort] then
+                            KICK_DIURUS["tembak_ts:" .. pk] = tNow
+                        end
+                    end
+                    info("START PAKSA: denyut-rejoin di-BLOCK (grace) -- fokus buka client dulu, cek denyut lagi setelah masuk")
                 end
             end
             lastIsi = isi
