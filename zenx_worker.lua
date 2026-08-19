@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.274-cf"
+local VERSION = "9.275-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6765,80 +6765,6 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     return nil   -- semua client
 end
 
--- v9.273: DIAGNOSTIK WINDOW jadi FUNGSI -- dipanggil dari `zenx cekwin` (manual) DAN
--- otomatis dari loop pas semua client masuk game (auto=true). Laporin support + mode +
--- bingkai dobel per client + analisa biang-nya. Buat ngejar bug bingkai dobel Arceus.
-local function cekwin_lapor(cfg, auto)
-    local pkgs = split(cfg.pkgs or "")
-    if #pkgs == 0 then return end
-    if auto then
-        print(C.BOLD .. C.C .. "\n=== CEKWIN OTOMATIS (semua client masuk) ===" .. C.N)
-    else
-        print(C.BOLD .. C.C .. "\n=== ZENX CEKWIN (diagnostik window lengkap) ===\n" .. C.N)
-    end
-    local sup = (sh("su -c 'settings get global enable_freeform_support'") or ""):gsub("%s+","")
-    local rez = (sh("su -c 'settings get global force_resizable_activities'") or ""):gsub("%s+","")
-    info(("executor = %s | win_mode = %s | auto_grid = %s")
-        :format(tostring(cfg.executor or "delta"), tostring(cfg.win_mode or 0), tostring(cfg.auto_grid)))
-    info(("enable_freeform_support = %s | force_resizable = %s")
-        :format(sup == "" and "null" or sup, rez == "" and "null" or rez))
-    info("Per client:")
-    local nMati, nFreeform, nFull, nDobel, nPrefs = 0, 0, 0, 0, 0
-    -- 1 dump am stack list dipake buat semua client (visible ProtocolLaunch ada di sini)
-    local stk = sh("su -c 'am stack list 2>/dev/null'") or ""
-    for _, pkg in ipairs(pkgs) do
-        local nm = pkg:gsub("com%.roblox%.", "")
-        local pid = (sh("su -c 'pidof " .. pkg .. "'") or ""):match("%d+")
-        if not pid then
-            nMati = nMati + 1
-            warn(("  %-10s MATI (belum kebuka)"):format(nm))
-        else
-            local dump = sh("su -c 'dumpsys activity " .. pkg .. " 2>/dev/null | grep -m1 mWindowingMode'") or ""
-            local mode = dump:match("mWindowingMode=(%a+)") or "?"
-            local bounds = dump:match("mBounds=Rect%(([%d,%s%-]+)%)") or "?"
-            if mode == "freeform" then nFreeform = nFreeform + 1 elseif mode == "fullscreen" then nFull = nFull + 1 end
-            -- BINGKAI DOBEL: ProtocolLaunch visible=true (dari am stack list, bukan dumpsys window)
-            local plVis = "?"
-            for baris in stk:gmatch("[^\r\n]+") do
-                if baris:find(pkg .. "/com.roblox.client.ActivityProtocolLaunch", 1, true) then
-                    plVis = baris:match("visible=(%a+)") or "?"; break
-                end
-            end
-            local dobel = (plVis == "true")
-            if dobel then nDobel = nDobel + 1 end
-            local prefsN = tonumber((sh("su -c 'grep -c app_cloner.*window /data/data/" .. pkg .. "/shared_prefs/" .. pkg .. "_preferences.xml 2>/dev/null'") or ""):match("%d+")) or 0
-            if prefsN > 0 then nPrefs = nPrefs + 1 end
-            info(("  %-10s mode=%-10s bounds=(%s) PL.visible=%s prefs=%d%s")
-                :format(nm, mode, bounds, plVis, prefsN, dobel and (C.Y .. "  <- DOBEL" .. C.N) or ""))
-        end
-    end
-    print(C.BOLD .. "── ANALISA ──" .. C.N)
-    info(("Ringkas: %d client | %d freeform | %d fullscreen | %d MATI | %d DOBEL | %d punya prefs window")
-        :format(#pkgs, nFreeform, nFull, nMati, nDobel, nPrefs))
-    if nMati > 0 then
-        warn(("%d client belum kebuka -> tunggu semua masuk dulu."):format(nMati))
-    end
-    if nDobel == 0 and nMati == 0 then
-        ok("GAK ADA bingkai dobel. Window normal (1 bingkai per client).")
-    elseif nDobel > 0 then
-        warn(("%d client BINGKAI DOBEL. Penyebab paling mungkin:"):format(nDobel))
-        if cfg.executor == "arceus" and sup == "1" then
-            err("  >> enable_freeform_support = 1 <<  INI BIANG-NYA.")
-            info("  Arceus bikin freeform + Android JUGA freeform (support=1) -> 2 lapis = 2 bingkai.")
-            info("  FIX: settings put global enable_freeform_support 0 ; kill+buka ulang client dobel.")
-        elseif cfg.executor == "arceus" and rez == "1" then
-            err("  >> force_resizable_activities = 1 <<  INI BIANG-NYA.")
-            info("  Tiap activity (ProtocolLaunch + NativeMain) dipaksa resizable -> 2 bingkai.")
-            info("  FIX: settings put global force_resizable_activities 0 ; kill+buka ulang.")
-        elseif cfg.executor == "arceus" then
-            warn("  support=0 & resizable=0 tapi masih DOBEL. Kandidat:")
-            info("  - client dobel = SISA kebuka pas support masih 1 (belum di-reset). Kill+buka ulang client itu.")
-            info("  - ProtocolLaunch nyangkut nampak -> kill total + remove-task client itu.")
-        else
-            info("  Delta: bingkai dobel jarang. Cek win_mode (harusnya 0 buat App Cloner).")
-        end
-    end
-end
 
 local function run(cfg)
     cfg.reopen_sec  = cfg.reopen_sec or 300
@@ -8092,20 +8018,6 @@ local function run(cfg)
                 end
                 info(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
                 tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
-                -- v9.273: CEKWIN OTOMATIS. Pas SEMUA client masuk game (diGame == perlu),
-                -- worker laporin diagnostik window (support/mode/bingkai dobel) SEKALI --
-                -- gak usah ketik `zenx cekwin` manual. Reset pas ada yg OUT lagi -> lapor
-                -- ulang tiap kali balik "semua masuk". Cuma buat Arceus (bug bingkai dobel).
-                if cfg.executor == "arceus" then
-                    if perlu > 0 and diGame >= perlu then
-                        if not CEKWIN_SUDAH then
-                            CEKWIN_SUDAH = true
-                            pcall(function() cekwin_lapor(cfg, true) end)
-                        end
-                    else
-                        CEKWIN_SUDAH = false   -- ada yg out -> nanti lapor lagi pas semua balik
-                    end
-                end
                 if #perluTembak > 0 and not lewatiDenyutRejoin then
                     -- v8.54: REFRESH mapLink (+ accessCode per akun) SEBELUM tembak.
                     -- Bug: blok denyut ini pakai mapLink dari refresh terakhir, kalau
@@ -9445,16 +9357,16 @@ local function run(cfg)
                 -- gak ada sisa BINGKAI DOBEL dari sesi lalu (freeform nyangkut di task/
                 -- client lama). User minta: start paksa = close semua + hapus freeform
                 -- double dulu. Cuma Arceus (Delta gak kena masalah ini).
+                -- v9.275: HAPUS force-stop-semua. Dulu (v9.274) pas FORCE Arceus
+                -- worker tutup SEMUA client + buang task, buat ngejar "bingkai dobel".
+                -- TAPI ternyata double-frame itu ARTEFAK TES (buka pakai am start TANPA
+                -- -S = double; worker pakai `am start -S` = 1 bingkai, aman). Jadi
+                -- bersih-bersih paksa GAK PERLU + malah nutup client yg lagi jalan
+                -- (user: "pas jalankan malah force close semua, harusnya tembak doang").
+                -- Sekarang FORCE = tembak client yg dipilih doang (open_all natural),
+                -- gak nutup semua. Freeform setting tetep dimatiin (murah, gak nutup client).
                 if cfg.executor == "arceus" then
-                    info("Arceus FORCE: tutup semua client + buang task + bersihin freeform (cegah bingkai dobel sisa)")
-                    local pkgsAll = split(cfg.pkgs or "")
-                    local bersih = "su -c '"
-                    for _, pk in ipairs(pkgsAll) do bersih = bersih .. "am force-stop " .. pk .. " 2>/dev/null; " end
-                    bersih = bersih .. "for t in $(am stack list 2>/dev/null | grep roblox | grep -oE \"taskId=[0-9]+\" | grep -oE \"[0-9]+\" | sort -u); do am task remove-task $t 2>/dev/null; done; "
-                    bersih = bersih .. "settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'"
-                    sh_silent(bersih)
-                    ok("Arceus FORCE: semua ditutup + task dibuang + freeform sistem OFF -> boot buka ulang FRESH (1 bingkai)")
-                    CEKWIN_SUDAH = false   -- lapor cekwin lagi pas semua balik masuk
+                    sh_silent("su -c 'settings put global enable_freeform_support 0; settings put global force_resizable_activities 0;'")
                 end
             end
             lastIsi = isi
@@ -11729,16 +11641,6 @@ if PERINTAH == "dpi" then
         print("  (kalau tampilan aneh, `zenx dpi reset` buat balikin)")
         return
     end
-end
-
-if PERINTAH == "cekwin" then
-    -- v9.273: panggil fungsi cekwin_lapor (dipake juga otomatis di loop pas semua masuk).
-    local cfg = load_config()
-    if not cfg then err("Config belum ada. Jalanin `zenx` dulu.") return end
-    local pkgs = split(cfg.pkgs or "")
-    if #pkgs == 0 then err("Gak ada client di config.") return end
-    cekwin_lapor(cfg, false)
-    return
 end
 
 if PERINTAH == "grid" then
