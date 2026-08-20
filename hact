@@ -1103,6 +1103,135 @@ config = {
 _G.HactTelurConfig = config
 _G.HactTelurPetDetect = PetDetect
 
+-- ============ CONFIG HACT (PRESET per-egg) v27.19 ============
+-- Pilih egg -> auto-set: egg + komposisi tim (Reduce/Hatch/Sell). Sell-rule nyusul.
+local PRESET_HACT = {
+    ["Rare Egg"] = {
+        egg = { "Rare Egg" },
+        komposisi = {
+            ["Reduce Tim"] = {
+                { tipe = "Mimic Octopus", jml = 7, sortir = "kg" },
+                { tipe = "Bald Eagle",    jml = 1, sortir = "kg", ganti = "Birb" },
+            },
+            ["Hatch Tim"] = {
+                { tipe = "Koi",          jml = 5, sortir = "koi" },
+                { tipe = "Brontosaurus", jml = 3, sortir = "bronto" },
+            },
+            ["Sell Tim"] = {
+                { tipe = "Seal", jml = 8, sortir = "seal" },
+            },
+        },
+        -- sellRules = {}   -- nyusul dari user
+    },
+}
+-- urutan preset di GUI (biar bisa nambah nanti)
+local PRESET_URUT = { "Rare Egg" }
+
+-- skor pet buat sortir (kg / koi% / bronto% / seal%)
+local function _skorPet(p, sortir)
+    local kg = p.dispKg or 0
+    if sortir == "koi" then
+        return PetDetect.koiPct(kg, p.mut)
+    elseif sortir == "bronto" then
+        return PetDetect.brontoPct(kg, p.mut)
+    elseif sortir == "seal" then
+        local bw = (p.age1Kg and p.age1Kg > 0) and (p.age1Kg / 1.1) or kg
+        return PetDetect.sealPct(bw, p.level or 1, p.mut)
+    else
+        return kg   -- default: KG
+    end
+end
+local function _cocokTipe(nm, tipe)
+    return (((nm or ""):lower()):find(tipe:lower(), 1, true)) ~= nil
+end
+
+-- auto-pick pet ke 1 tim sesuai komposisi (tipe + jumlah + sortir). balikin jumlah.
+local function autoPickTeam(tabName, spec)
+    local pets = PetDetect.listBackpackPets(true)
+    local selected = {}
+    for _, slot in ipairs(spec) do
+        local kandidat = {}
+        for _, p in ipairs(pets) do
+            if not selected[p.uuid] and _cocokTipe(p.name, slot.tipe) then
+                table.insert(kandidat, p)
+            end
+        end
+        -- fallback: tipe utama gak ada -> pakai 'ganti' (mis Bald Eagle -> Birb)
+        if #kandidat == 0 and slot.ganti then
+            for _, p in ipairs(pets) do
+                if not selected[p.uuid] and _cocokTipe(p.name, slot.ganti) then
+                    table.insert(kandidat, p)
+                end
+            end
+        end
+        table.sort(kandidat, function(a, b)
+            return _skorPet(a, slot.sortir) > _skorPet(b, slot.sortir)   -- skor tertinggi dulu
+        end)
+        for i = 1, math.min(slot.jml, #kandidat) do
+            selected[kandidat[i].uuid] = true
+        end
+    end
+    if teamData[tabName] then teamData[tabName].selected = selected end
+    local c = 0; for _ in pairs(selected) do c = c + 1 end
+    return c
+end
+
+-- terapin preset: egg + komposisi tim
+local function applyPresetHact(name)
+    local ps = PRESET_HACT[name]
+    if not ps then return false, 0 end
+    config.eggSelected = {}
+    for _, e in ipairs(ps.egg) do config.eggSelected[e] = true end
+    local total = 0
+    for tabName, spec in pairs(ps.komposisi) do
+        total = total + autoPickTeam(tabName, spec)
+    end
+    -- TODO sellRules (nyusul)
+    print(("[HactTelur] Preset '%s' diterapin: egg=%s | %d pet kepilih ke tim")
+        :format(name, table.concat(ps.egg, ","), total))
+    return true, total
+end
+_G.HactApplyPreset = applyPresetHact
+
+-- ---- GUI: Config Hact (tombol di titleBar + popup pilih egg) ----
+do
+    -- taruh di ruang kosong titleBar (setelah refresh ~410, sebelum min ~586)
+    local cfgBtn = mk("TextButton", {
+        Size = UDim2.new(0, 120, 0, 24), Position = UDim2.new(0, 424, 0, 10),
+        BackgroundColor3 = C.input, Text = "\u{2699} Config Hact \u{25BC}", Font = FONT,
+        TextSize = 11, TextColor3 = C.accent, AutoButtonColor = true, Parent = titleBar })
+    mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = cfgBtn })
+
+    local popup = mk("Frame", {
+        Size = UDim2.new(0, 180, 0, 12 + #PRESET_URUT*28 + 20),
+        Position = UDim2.new(0, 424, 0, 38),
+        BackgroundColor3 = C.panel, BorderSizePixel = 0, Visible = false,
+        ZIndex = 50, Parent = titleBar })
+    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = popup })
+    local judulP = lbl(popup, "Pilih Egg Config:", 10.5, C.textDim)
+    judulP.Position = UDim2.new(0, 10, 0, 6); judulP.Size = UDim2.new(1, -20, 0, 16)
+    judulP.ZIndex = 51
+
+    for i, nm in ipairs(PRESET_URUT) do
+        local b = mk("TextButton", {
+            Size = UDim2.new(1, -16, 0, 24), Position = UDim2.new(0, 8, 0, 24 + i*24),
+            BackgroundColor3 = C.card, Text = nm, Font = FONT, TextSize = 11,
+            TextColor3 = C.text, AutoButtonColor = true, ZIndex = 51, Parent = popup })
+        mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
+        b.MouseButton1Click:Connect(function()
+            popup.Visible = false
+            cfgBtn.Text = "\u{2699} "..nm.." \u{25BC}"
+            local ok, total = applyPresetHact(nm)
+        end)
+    end
+
+    cfgBtn.MouseButton1Click:Connect(function()
+        popup.Visible = not popup.Visible
+    end)
+end
+
+
+
 -- ============ SISTEM JUAL PET ============
 local GameEvents = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
 local SellSys = {}
