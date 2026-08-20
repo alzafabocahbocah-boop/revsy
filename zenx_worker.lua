@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.283-cf"
+local VERSION = "9.284-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9248,13 +9248,24 @@ local function run(cfg)
                         local tNowC = os.time()
                         for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = tNowC end
                         refresh_ps(); pcall(refresh_ps_getps)
-                        local function batal_c() return ada_perintah_baru(cfg, isi) end
+                        -- v9.284: batal_c JANGAN pakai ada_perintah_baru -- CLOSE ada di
+                        -- daftar nyela, jadi CLOSE yg lagi diproses ini di-anggap "perintah
+                        -- baru" -> open_all abort sendiri -> 0 jalan (bug user: "cuma standby").
+                        -- Sekarang: abort CUMA kalau STOP/STANDBY, atau perintah BEDA dari
+                        -- CLOSE ini (perintah baru beneran masuk).
+                        local function batal_c()
+                            if ada_stop() then return true end
+                            local rC = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+                            local isiNow = ambil_str(rC, "isi") or ""
+                            return isiNow ~= "" and isiNow ~= isi
+                        end
                         local function lapor_c()
                             refresh_status(); lastStatusCek = os.time()
                             gambar_tabel(isi); lapor(cfg, isi, cacheRun)
                         end
                         -- semua client tim? only=nil (semua); sebagian? only=pkgsC
                         local semuaC = (#pkgsC == #split(cfg.pkgs))
+                        MODE_JALAN = true   -- v9.284: CLOSE:daftar buka ulang client -> maintain (rejoin kalau crash)
                         local h = open_all(cfg, semuaC and nil or pkgsC, batal_c, lapor_c, mapLink, mapAkun, true)
                         ok(("CLOSE+BUKA: %d client tutup -> buka ulang FRESH (%d jalan) di server baru"):format(#pkgsC, h.ok))
                         notify("ZenX "..cfg.tim, "restart "..#pkgsC.." client (server baru)")
