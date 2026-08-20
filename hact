@@ -8,7 +8,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.18"
+local VERSION = "v27.19"
 
 -- ============ THEME ============
 local C = {
@@ -6169,3 +6169,84 @@ task.spawn(function()
 end)
 
 print("[HactTelur] UI loaded ("..VERSION..") — auto-AFK + save aktif")
+
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║  v27.19: AUTO-DESTROY POHON (RINGANIN GAG 1) — LANGSUNG ON     ║
+-- ║  Destroy semua pohon di SEMUA kebun (kita + orang lain) biar   ║
+-- ║  FPS naik. Pohon baru spawn -> auto-destroy. Jalan sendiri.    ║
+-- ╚══════════════════════════════════════════════════════════════╝
+do
+    if _G.__ZenxAutoDestroyPohon then return end   -- cegah dobel
+    _G.__ZenxAutoDestroyPohon = true
+
+    local WS = game:GetService("Workspace")
+    local RS = game:GetService("RunService")
+
+    local AKTIF = true   -- LANGSUNG ON. Set false kalau mau matiin.
+
+    -- cari SEMUA Plants_Physical (kebun kita + orang lain)
+    local function semuaFarm()
+        local roots = {}
+        local farm = WS:FindFirstChild("Farm")
+        if farm then
+            for _, f in ipairs(farm:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                    table.insert(roots, f)
+                end
+            end
+        end
+        if #roots == 0 then
+            for _, f in ipairs(WS:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                    table.insert(roots, f)
+                end
+            end
+        end
+        return roots
+    end
+
+    -- destroy semua pohon (Model) di semua kebun. balikin jumlah.
+    local function destroyPohonSemua()
+        if not AKTIF then return 0 end
+        local n = 0
+        for _, root in ipairs(semuaFarm()) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then
+                    pcall(function() c:Destroy() end)
+                    n = n + 1
+                end
+            end
+        end
+        return n
+    end
+
+    -- 1) SAPU AWAL: begitu jalan, destroy semua pohon yg ada (tunggu farm ke-load)
+    task.spawn(function()
+        task.wait(3)   -- kasih waktu Workspace.Farm ke-load
+        local n = destroyPohonSemua()
+        if n > 0 then print("[HactTelur] auto-destroy pohon: "..n.." pohon dibersihin (FPS up)") end
+    end)
+
+    -- 2) AUTO: pohon baru masuk kebun manapun -> langsung destroy
+    task.spawn(function()
+        local farm = WS:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if not AKTIF then return end
+            if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                task.wait(0.05)
+                pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+
+    -- 3) SAPU BERKALA (backup, tiap 30s) -- jaga2 kalau ada yg lolos listener
+    task.spawn(function()
+        while AKTIF do
+            task.wait(30)
+            destroyPohonSemua()
+        end
+    end)
+
+    print("[HactTelur] AUTO-DESTROY POHON: ON (semua kebun, ringanin GAG 1)")
+end
