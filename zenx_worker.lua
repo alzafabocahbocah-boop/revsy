@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.285-cf"
+local VERSION = "9.286-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2900,6 +2900,11 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- Cloner service GAK disentuh -> client lain aman. Terus jeda 5s biar task
     -- beneran kelar dibuang sebelum tembak masuk (fresh, gak nyangkut task lama).
     -- Tetep NEW_TASK (0x10000000, one task) -- BUKAN A3/multi task.
+    -- v9.286: SKIP task-remove buat ARCEUS. User tes manual: cara WC (am start web
+    -- URL + CLEAR_TOP 0x14000000) TANPA task-remove BISA join/ganti server, window
+    -- GAK ilang (gak keliatan "nutup 1 client dulu"). task-remove + sleep 5s bikin
+    -- window ilang bentar. Buat arceus -> murni WC tembak, gak buang window.
+    if cfg.executor ~= "arceus" then
     do
         pcall(function()
             local stk = sh("su -c 'am stack list 2>/dev/null'") or ""
@@ -2921,8 +2926,13 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
             end
         end)
     end
+    end
 
     local function coba(pakai_wm)
+        -- v9.286: ARCEUS -> PAKSA cara WC (web URL + CLEAR_TOP 0x14000000), BUKAN -S.
+        -- User tes manual: WC bisa join/ganti server tanpa nutup window. -S kadang
+        -- masih goyangin. Walau caller minta pakai_S, buat arceus tetep WC.
+        if cfg.executor == "arceus" then pakai_S = false end
         -- v7.85: CARA PANDORA PERSIS (dari logcat: START {dat=... flg=0x10000000
         -- pkg=com.roblox.clienX cmp=.../ActivityProtocolLaunch} from uid 0).
         -- Persis kayak Pandora:
