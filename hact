@@ -1007,13 +1007,14 @@ mk("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
     HorizontalAlignment = Enum.HorizontalAlignment.Left, Parent = tabBar })
 
-local tabs = { "Reduce Tim", "Hatch Tim", "Sell Tim", "Config", "Fruit", "All Stat" }
+local tabs = { "Reduce Tim", "Hatch Tim", "Sell Tim", "Config", "Fruit", "All Stat", "Manual" }
 local activeTab = "Reduce Tim"
 local tabBtns = {}
 local tabPanels = {}
 local tabLabel = {
     ["Reduce Tim"] = "Reduce", ["Hatch Tim"] = "Hatch", ["Sell Tim"] = "Sell",
     ["Config"] = "Config", ["Fruit"] = "Fruit", ["All Stat"] = "All Stat",
+    ["Manual"] = "Manual",
 }
 local NUM_TABS = #tabs
 
@@ -5212,6 +5213,138 @@ makeTeamPanel("Sell Tim")
 makeConfigPanel()
 makeFruitPanel()
 makeStatPanel()
+
+-- ============ TAB MANUAL (sell manual + picker backpack + konfirmasi) ============
+local function makeManualPanel()
+    local panel = mk("Frame", {
+        Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+        Visible = (activeTab == "Manual"), Parent = panelArea })
+
+    local judul = lbl(panel, "Manual Sell", 14, C.text)
+    judul.Font = FONT_B; judul.Position = UDim2.new(0,0,0,0); judul.Size = UDim2.new(1,-100,0,22)
+    local info = lbl(panel, "Pilih pet -> auto-unfav -> Sell Pet (ada konfirmasi)", 11, C.textDim)
+    info.Position = UDim2.new(0,0,0,22); info.Size = UDim2.new(1,-100,0,16)
+
+    local refBtn = mk("TextButton", {
+        Size = UDim2.new(0,90,0,26), Position = UDim2.new(1,-90,0,0),
+        BackgroundColor3 = C.input, Text = "\u{21BB} Refresh", Font = FONT, TextSize = 11,
+        TextColor3 = C.accent, AutoButtonColor = true, Parent = panel })
+    corner(refBtn, 6)
+
+    local list = mk("ScrollingFrame", {
+        Size = UDim2.new(1, 0, 1, -90), Position = UDim2.new(0,0,0,46),
+        BackgroundTransparency = 1, ScrollBarThickness = 4, ScrollBarImageColor3 = C.border,
+        CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = panel })
+    mk("UIListLayout", { Padding = UDim.new(0,4), Parent = list })
+
+    local dipilih = {}   -- {[tipe]=true} tipe pet yg mau dijual
+
+    local function refresh()
+        for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        -- group pet backpack by TIPE + hitung jumlah
+        local grup = {}
+        for _, p in ipairs(PetDetect.listBackpackPets(true)) do
+            local g = grup[p.name]
+            if not g then g = { count=0, fav=0, pets={} }; grup[p.name] = g end
+            g.count = g.count + 1
+            if p.fav then g.fav = g.fav + 1 end
+            table.insert(g.pets, p)
+        end
+        local names = {}
+        for nm in pairs(grup) do table.insert(names, nm) end
+        table.sort(names, function(a,b) return grup[a].count > grup[b].count end)  -- terbanyak dulu
+        for _, nm in ipairs(names) do
+            local g = grup[nm]
+            local on = dipilih[nm] == true
+            local b = mk("TextButton", {
+                Size = UDim2.new(1, 0, 0, 32),
+                BackgroundColor3 = on and C.accent or C.card,
+                Text = "", AutoButtonColor = true, Parent = list })
+            corner(b, 6)
+            local nmL = lbl(b, (on and "\u{2713} " or "")..nm, 12, on and Color3.fromRGB(17,17,17) or C.text)
+            nmL.Position = UDim2.new(0,10,0,0); nmL.Size = UDim2.new(0.65,-10,1,0); nmL.ZIndex = 3
+            local cnt = lbl(b, "x"..g.count..(g.fav>0 and ("  "..g.fav.."\u{2764}") or ""), 11,
+                on and Color3.fromRGB(17,17,17) or C.textDim, Enum.TextXAlignment.Right)
+            cnt.Position = UDim2.new(0.65,0,0,0); cnt.Size = UDim2.new(0.35,-12,1,0); cnt.ZIndex = 3
+            b.MouseButton1Click:Connect(function()
+                if dipilih[nm] then
+                    dipilih[nm] = nil
+                else
+                    dipilih[nm] = true
+                    -- AUTO-UNFAV semua pet tipe ini (biar bisa dijual)
+                    task.spawn(function()
+                        local uf = 0
+                        for _, p in ipairs(g.pets) do
+                            if p.fav and p.tool then pcall(function() favoritePet(p.tool) end); uf = uf + 1; task.wait(0.04) end
+                        end
+                        if uf > 0 then info.Text = nm..": "..uf.." pet di-unfav (siap jual)" end
+                    end)
+                end
+                refresh()
+            end)
+        end
+        if #names == 0 then
+            local e = lbl(list, "Gak ada pet di backpack.", 12, C.textDim)
+            e.Size = UDim2.new(1,0,0,30)
+        end
+    end
+    refBtn.MouseButton1Click:Connect(refresh)
+
+    -- tombol SELL PET (merah, bawah)
+    local sellBtn = mk("TextButton", {
+        Size = UDim2.new(1, 0, 0, 36), Position = UDim2.new(0,0,1,-36),
+        BackgroundColor3 = Color3.fromRGB(200,60,60), Text = "\u{1F4B0} Sell Pet", Font = FONT_B,
+        TextSize = 13, TextColor3 = Color3.fromRGB(255,255,255), AutoButtonColor = true, Parent = panel })
+    corner(sellBtn, 8)
+
+    sellBtn.MouseButton1Click:Connect(function()
+        local target = {}
+        for _, p in ipairs(PetDetect.listBackpackPets(true)) do
+            if dipilih[p.name] then table.insert(target, p) end
+        end
+        if #target == 0 then info.Text = "Pilih pet dulu buat dijual."; return end
+        -- MODAL KONFIRMASI (yakin / tidak)
+        local dim = mk("TextButton", { Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.new(0,0,0),
+            BackgroundTransparency=0.5, Text="", AutoButtonColor=false, ZIndex=60, Parent=panel })
+        local box = mk("Frame", { Size=UDim2.new(0,290,0,155), Position=UDim2.new(0.5,-145,0.5,-77),
+            BackgroundColor3=C.bg, ZIndex=61, Parent=dim })
+        corner(box,10); stroke(box,C.border,1.5)
+        local q = lbl(box, "Yakin jual "..#target.." pet?", 14, C.text)
+        q.Font=FONT_B; q.Position=UDim2.new(0,16,0,18); q.Size=UDim2.new(1,-32,0,24); q.ZIndex=62
+        local det = lbl(box, "Pet udah di-unfav, kalau dijual gak bisa balik.", 11, C.textDim)
+        det.Position=UDim2.new(0,16,0,46); det.Size=UDim2.new(1,-32,0,34); det.ZIndex=62; det.TextWrapped=true
+        local ya = mk("TextButton", { Size=UDim2.new(0.5,-20,0,34), Position=UDim2.new(0,16,1,-46),
+            BackgroundColor3=Color3.fromRGB(200,60,60), Text="Yakin, jual", Font=FONT_B, TextSize=12,
+            TextColor3=Color3.fromRGB(255,255,255), ZIndex=62, Parent=box }); corner(ya,7)
+        local tidak = mk("TextButton", { Size=UDim2.new(0.5,-20,0,34), Position=UDim2.new(0.5,4,1,-46),
+            BackgroundColor3=C.card, Text="Batal", Font=FONT, TextSize=12,
+            TextColor3=C.text, ZIndex=62, Parent=box }); corner(tidak,7)
+        tidak.MouseButton1Click:Connect(function() dim:Destroy() end)
+        dim.MouseButton1Click:Connect(function() dim:Destroy() end)
+        ya.MouseButton1Click:Connect(function()
+            dim:Destroy()
+            info.Text = "Jual "..#target.." pet..."
+            task.spawn(function()
+                local sold = 0
+                for _, p in ipairs(target) do
+                    if p.tool then
+                        if p.fav then pcall(function() favoritePet(p.tool) end); task.wait(0.05) end
+                        if sellOnePet(p.tool) then sold = sold + 1 end
+                        task.wait(0.1)
+                    end
+                end
+                info.Text = "Kelar: "..sold.." pet dijual."
+                for k in pairs(dipilih) do dipilih[k] = nil end
+                refresh()
+            end)
+        end)
+    end)
+
+    refresh()
+    tabPanels["Manual"] = panel
+end
+makeManualPanel()
+
 -- set default tab visible
 tabPanels["Reduce Tim"].Visible = true
 do
