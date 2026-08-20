@@ -950,9 +950,11 @@ local sideDiv = mk("Frame", {
     Size = UDim2.new(0, 1.5, 1, 0), Position = UDim2.new(1, 0, 0, 0),
     BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = sidebar })
 
-local sidebarItems = { "AUTO HACT", "MISC" }
+local sidebarItems = { "AUTO HACT", "MISC", "MANUAL" }
 local activeSide = "AUTO HACT"
 local showMiscFn  -- forward declare (diisi setelah miscContent dibuat)
+local showSideFn  -- forward declare 3-state (AUTO HACT / MISC / MANUAL)
+local manualContent  -- forward declare (area konten Manual)
 local statRefreshFn  -- forward declare (diisi di makeStatPanel)
 local sideBtns = {}
 
@@ -977,8 +979,10 @@ local function makeSideBtn(name, y)
             d.label.TextColor3 = on and C.text or C.textDim
             d.label.Font = on and FONT_B or FONT
         end
-        -- switch konten kiri (AUTO HACT vs MISC)
-        if showMiscFn then
+        -- switch konten kiri (AUTO HACT / MISC / MANUAL)
+        if showSideFn then
+            showSideFn(name)
+        elseif showMiscFn then
             showMiscFn(name == "MISC")
         end
     end)
@@ -986,6 +990,7 @@ local function makeSideBtn(name, y)
 end
 makeSideBtn("AUTO HACT", 14)
 makeSideBtn("MISC", 56)
+makeSideBtn("MANUAL", 98)
 -- set default active
 do
     local d = sideBtns["AUTO HACT"]
@@ -999,6 +1004,12 @@ local content = mk("Frame", {
     BackgroundTransparency = 1, Parent = main })
 pad(content, 16)
 
+-- area konten MANUAL (sidebar item ke-3). Visible pas sidebar "MANUAL" aktif.
+manualContent = mk("Frame", {
+    Size = UDim2.new(1, -141, 1, -45), Position = UDim2.new(0, 141, 0, 45),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(manualContent, 16)
+
 -- ---- Tab bar (rata penuh: 6 tab sama lebar) ----
 local tabBar = mk("Frame", {
     Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, Parent = content })
@@ -1007,14 +1018,13 @@ mk("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
     HorizontalAlignment = Enum.HorizontalAlignment.Left, Parent = tabBar })
 
-local tabs = { "Reduce Tim", "Hatch Tim", "Sell Tim", "Config", "Fruit", "All Stat", "Manual" }
+local tabs = { "Reduce Tim", "Hatch Tim", "Sell Tim", "Config", "Fruit", "All Stat" }
 local activeTab = "Reduce Tim"
 local tabBtns = {}
 local tabPanels = {}
 local tabLabel = {
     ["Reduce Tim"] = "Reduce", ["Hatch Tim"] = "Hatch", ["Sell Tim"] = "Sell",
     ["Config"] = "Config", ["Fruit"] = "Fruit", ["All Stat"] = "All Stat",
-    ["Manual"] = "Manual",
 }
 local NUM_TABS = #tabs
 
@@ -5214,11 +5224,11 @@ makeConfigPanel()
 makeFruitPanel()
 makeStatPanel()
 
--- ============ TAB MANUAL (sell manual + picker backpack + konfirmasi) ============
+-- ============ KONTEN MANUAL (sidebar item, sell manual) ============
 local function makeManualPanel()
     local panel = mk("Frame", {
         Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
-        Visible = (activeTab == "Manual"), Parent = panelArea })
+        Visible = true, Parent = manualContent })
 
     local judul = lbl(panel, "Manual Sell", 14, C.text)
     judul.Font = FONT_B; judul.Position = UDim2.new(0,0,0,0); judul.Size = UDim2.new(1,-100,0,22)
@@ -5323,8 +5333,18 @@ local function makeManualPanel()
         dim.MouseButton1Click:Connect(function() dim:Destroy() end)
         ya.MouseButton1Click:Connect(function()
             dim:Destroy()
-            info.Text = "Jual "..#target.." pet..."
+            info.Text = "Masukin tim Seal (egg-back) dulu..."
             task.spawn(function()
+                -- v27.20: MASUKIN 8 SEAL (Sell Tim) DULU biar pet yg dijual jadi egg.
+                -- equip pet Sell Tim ke garden + tunggu lengkap, baru jual.
+                pcall(function() equipTeam("Sell Tim") end)
+                local okSeal = false
+                pcall(function() okSeal = waitTeamInGarden("Sell Tim", 15) end)
+                if not okSeal then
+                    info.Text = "Tim Seal gak lengkap masuk garden — tetep jual (egg-back mungkin kurang)"
+                    task.wait(0.8)
+                end
+                info.Text = "Jual "..#target.." pet..."
                 local sold = 0
                 for _, p in ipairs(target) do
                     if p.tool then
@@ -5333,7 +5353,7 @@ local function makeManualPanel()
                         task.wait(0.1)
                     end
                 end
-                info.Text = "Kelar: "..sold.." pet dijual."
+                info.Text = "Kelar: "..sold.." pet dijual (via tim Seal)."
                 for k in pairs(dipilih) do dipilih[k] = nil end
                 refresh()
             end)
@@ -5341,7 +5361,6 @@ local function makeManualPanel()
     end)
 
     refresh()
-    tabPanels["Manual"] = panel
 end
 makeManualPanel()
 
@@ -6186,10 +6205,17 @@ do
     end
 end
 
--- toggle tampilan AUTO HACT vs MISC
+-- toggle tampilan AUTO HACT vs MISC vs MANUAL
 showMiscFn = function(on)
     miscContent.Visible = on
+    if manualContent then manualContent.Visible = false end
     content.Visible = not on
+end
+-- 3-state (dipakai sidebar): tampilin konten sesuai nama aktif
+showSideFn = function(name)
+    content.Visible      = (name == "AUTO HACT")
+    miscContent.Visible  = (name == "MISC")
+    if manualContent then manualContent.Visible = (name == "MANUAL") end
 end
 _G.HactTelurShowMisc = showMiscFn
 
