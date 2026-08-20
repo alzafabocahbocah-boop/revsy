@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.284-cf"
+local VERSION = "9.285-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9234,42 +9234,18 @@ local function run(cfg)
                         if onlyC[u] or onlyC[pkg] or onlyC[nm] then pkgsC[#pkgsC+1] = pkg end
                     end
                     if #pkgsC > 0 then
-                        -- v9.279: tutup target BARENGAN (paralel), bukan satu-satu 5s.
-                        warn("CLOSE daftar dari panel -> tutup " .. #pkgsC .. " client BARENGAN + buka ulang FRESH")
+                        -- v9.285: CLOSE:daftar = TUTUP target BARENGAN doang (paralel,
+                        -- cepet). Batch-reopen (v9.282-284) dibuang -- bikin "0 jalan"
+                        -- (open_all skip/return dini) + CLOSE udah gak dipake 2-tim
+                        -- (2-tim=RESTART, per-tim=TEMBAK). CLOSE murni buat tutup.
+                        warn("CLOSE daftar dari panel -> tutup " .. #pkgsC .. " client BARENGAN (target aja)")
                         local cmd = "su -c '"
                         for _, pk in ipairs(pkgsC) do cmd = cmd .. "am force-stop " .. pk .. " & " end
                         cmd = cmd .. "wait'"
                         sh_silent(cmd)
                         os.execute("sleep 2")
-                        -- v9.282: SET grace (tembak_ts) target -> denyut-rejoin JANGAN
-                        -- ikut buka (dulu clear grace -> denyut-rejoin buka 1-1 LAMBAT +
-                        -- FORCE buka lagi = DOBEL). Sekarang worker sendiri yg buka ulang
-                        -- BATCH (open_all) langsung -> cepet + gak dobel.
-                        local tNowC = os.time()
-                        for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = tNowC end
-                        refresh_ps(); pcall(refresh_ps_getps)
-                        -- v9.284: batal_c JANGAN pakai ada_perintah_baru -- CLOSE ada di
-                        -- daftar nyela, jadi CLOSE yg lagi diproses ini di-anggap "perintah
-                        -- baru" -> open_all abort sendiri -> 0 jalan (bug user: "cuma standby").
-                        -- Sekarang: abort CUMA kalau STOP/STANDBY, atau perintah BEDA dari
-                        -- CLOSE ini (perintah baru beneran masuk).
-                        local function batal_c()
-                            if ada_stop() then return true end
-                            local rC = api_get(cfg, "/perintah?tim=" .. cfg.tim)
-                            local isiNow = ambil_str(rC, "isi") or ""
-                            return isiNow ~= "" and isiNow ~= isi
-                        end
-                        local function lapor_c()
-                            refresh_status(); lastStatusCek = os.time()
-                            gambar_tabel(isi); lapor(cfg, isi, cacheRun)
-                        end
-                        -- semua client tim? only=nil (semua); sebagian? only=pkgsC
-                        local semuaC = (#pkgsC == #split(cfg.pkgs))
-                        MODE_JALAN = true   -- v9.284: CLOSE:daftar buka ulang client -> maintain (rejoin kalau crash)
-                        local h = open_all(cfg, semuaC and nil or pkgsC, batal_c, lapor_c, mapLink, mapAkun, true)
-                        ok(("CLOSE+BUKA: %d client tutup -> buka ulang FRESH (%d jalan) di server baru"):format(#pkgsC, h.ok))
-                        notify("ZenX "..cfg.tim, "restart "..#pkgsC.." client (server baru)")
-                        lastOpen = os.time()
+                        ok("CLOSE: " .. #pkgsC .. " client target ditutup (barengan)")
+                        notify("ZenX "..cfg.tim, "CLOSE -> "..#pkgsC.." client target ditutup")
                     else
                         warn("CLOSE daftar tapi 0 match -> gak nutup apa2 (cek nama akun)")
                     end
