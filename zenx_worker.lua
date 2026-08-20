@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.287-cf"
+local VERSION = "9.290-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9254,7 +9254,14 @@ local function run(cfg)
                         cmd = cmd .. "wait'"
                         sh_silent(cmd)
                         os.execute("sleep 2")
-                        ok("CLOSE: " .. #pkgsC .. " client target ditutup (barengan)")
+                        -- v9.290: SET grace (tembak_ts) semua yg ditutup -> denyut-rejoin
+                        -- ke-BLOCK. Bug user: abis CLOSE, denyut-rejoin buka client duluan
+                        -- (1-1 lambat), terus FORCE buka LAGI = DOBEL out-in. Grace bikin
+                        -- denyut-rejoin diem -> FORCE (dari panel, 8s nyusul) yg buka batch
+                        -- -> gak dobel. Grace 240s > 8s jeda CLOSE->FORCE, aman.
+                        local tNowC = os.time()
+                        for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = tNowC end
+                        ok("CLOSE: " .. #pkgsC .. " client target ditutup (barengan) -> denyut-rejoin di-BLOCK, tunggu FORCE")
                         notify("ZenX "..cfg.tim, "CLOSE -> "..#pkgsC.." client target ditutup")
                     else
                         warn("CLOSE daftar tapi 0 match -> gak nutup apa2 (cek nama akun)")
@@ -9292,9 +9299,9 @@ local function run(cfg)
                         warn(("TEMBAK dari panel -> tembak ulang %d client ke server baru (TANPA close)"):format(#pkgsT))
                         for i, pkg in ipairs(pkgsT) do
                             KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace (baru ditembak)
-                            open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC di open_one
-                            -- v9.286: jeda 30s antar client (user: buka 1, tunggu 30s,
-                            -- baru berikutnya). Arceus = 30; lain = stagger_sec.
+                            open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC
+                            -- v9.289: 1x per client + jeda 30s antar client (user minta
+                            -- 1x cukup). Arceus = 30; lain = stagger_sec.
                             if i < #pkgsT then
                                 local jedaT = (cfg.executor == "arceus") and 30 or (cfg.stagger_sec or 8)
                                 for _ = 1, jedaT do
