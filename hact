@@ -5249,13 +5249,28 @@ local function makeManualPanel()
 
     local dipilih = {}   -- {[tipe]=true} tipe pet yg mau dijual
 
+    -- jenis DASAR pet (buang prefix mutasi biar "Golden Newt" & "Newt" = 1 jenis)
+    local function jenisDasar(p)
+        local nm = p.name or "?"
+        local mut = p.mut
+        if mut and mut ~= "" then
+            local pre = (mut:lower()) .. " "
+            if nm:lower():sub(1, #pre) == pre then
+                nm = nm:sub(#pre + 1)   -- buang prefix mutasi di depan
+            end
+        end
+        nm = nm:gsub("^%s+", ""):gsub("%s+$", "")
+        return (nm ~= "" and nm) or (p.name or "?")
+    end
+
     local function refresh()
         for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-        -- group pet backpack by TIPE + hitung jumlah
+        -- group pet backpack by JENIS DASAR (mutasi diabaikan) + hitung jumlah
         local grup = {}
         for _, p in ipairs(PetDetect.listBackpackPets(true)) do
-            local g = grup[p.name]
-            if not g then g = { count=0, fav=0, pets={} }; grup[p.name] = g end
+            local jd = jenisDasar(p)
+            local g = grup[jd]
+            if not g then g = { count=0, fav=0, pets={} }; grup[jd] = g end
             g.count = g.count + 1
             if p.fav then g.fav = g.fav + 1 end
             table.insert(g.pets, p)
@@ -5310,7 +5325,7 @@ local function makeManualPanel()
     sellBtn.MouseButton1Click:Connect(function()
         local target = {}
         for _, p in ipairs(PetDetect.listBackpackPets(true)) do
-            if dipilih[p.name] then table.insert(target, p) end
+            if dipilih[jenisDasar(p)] then table.insert(target, p) end
         end
         if #target == 0 then info.Text = "Pilih pet dulu buat dijual."; return end
         -- MODAL KONFIRMASI (yakin / tidak)
