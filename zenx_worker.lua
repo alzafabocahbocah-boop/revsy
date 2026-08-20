@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.286-cf"
+local VERSION = "9.287-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9292,8 +9292,16 @@ local function run(cfg)
                         warn(("TEMBAK dari panel -> tembak ulang %d client ke server baru (TANPA close)"):format(#pkgsT))
                         for i, pkg in ipairs(pkgsT) do
                             KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace (baru ditembak)
-                            open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- pakai_S = am start -S
-                            if i < #pkgsT then os.execute("sleep " .. (cfg.stagger_sec or 8)) end
+                            open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC di open_one
+                            -- v9.286: jeda 30s antar client (user: buka 1, tunggu 30s,
+                            -- baru berikutnya). Arceus = 30; lain = stagger_sec.
+                            if i < #pkgsT then
+                                local jedaT = (cfg.executor == "arceus") and 30 or (cfg.stagger_sec or 8)
+                                for _ = 1, jedaT do
+                                    if ada_stop() then break end
+                                    os.execute("sleep 1")
+                                end
+                            end
                         end
                         ok(("TEMBAK: %d client ditembak ke server baru (langsung, tanpa close)"):format(#pkgsT))
                         notify("ZenX "..cfg.tim, "TEMBAK -> "..#pkgsT.." client ke server baru")
