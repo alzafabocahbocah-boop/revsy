@@ -65,11 +65,11 @@ PRESET="$1"
 [ -z "$PRESET" ] && PRESET="seed"
 
 case "$PRESET" in
-    seed|farm|market|gag1|seed-arceus|farm-arceus|market-arceus|gag1-arceus) ;;
+    seed|farm|market|gag1|hact|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus) ;;
     *)
         gagal "Preset '$PRESET' gak dikenal." \
-              "Yang ada: seed / farm / market / gag1  (+ suffix -arceus, mis: market-arceus)" \
-              "Contoh:  ... | sh -s market-arceus"
+              "Yang ada: seed / farm / market / gag1 / hact  (+ suffix -arceus, mis: hact-arceus)" \
+              "Contoh:  ... | sh -s hact-arceus"
         ;;
 esac
 
@@ -203,16 +203,21 @@ ok "Worker keunduh: ${VER:-?}"
 # ============================================================
 case "$PRESET" in
     *-arceus)
-        printf "\n${B}[+] Tulis loader Arceus (auto-exe market)${N}\n"
+        printf "\n${B}[+] Tulis loader Arceus (auto-exe script)${N}\n"
         AX_DIR="/sdcard/Arceus X/Autoexec"
         AX_LOADER="$AX_DIR/zenx.lua"
-        MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/market"
+        # v9.291: pilih script ronihub sesuai preset. hact-arceus -> hact, sisanya -> market.
+        case "$PRESET" in
+            hact-arceus) RONIHUB_SC="hact" ;;
+            *)           RONIHUB_SC="market" ;;
+        esac
+        MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/$RONIHUB_SC"
         su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
         # cek beneran ketulis
         AX_CEK=$(su -c "cat \"$AX_LOADER\" 2>/dev/null" 2>/dev/null)
         if printf '%s' "$AX_CEK" | grep -q "HttpGet"; then
-            ok "Loader Arceus ketulis: $AX_LOADER"
-            info "Market auto-nyala tiap Arceus join."
+            ok "Loader Arceus ketulis: $AX_LOADER ($RONIHUB_SC)"
+            info "$RONIHUB_SC auto-nyala tiap Arceus join."
         else
             warn "Loader Arceus GAGAL ketulis (cek akses su / folder Arceus X ada)."
             info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
