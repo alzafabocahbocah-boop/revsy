@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.290-cf"
+local VERSION = "9.291-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -741,7 +741,7 @@ local function tulis_skrip_up(diam)
     local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
     -- v9.258: command pendek per preset (ketik `seed`/`market`/`farm`/`gag1` langsung).
     -- Inline di sini (bukan fungsi terpisah) biar gak nambah local ke main chunk (limit 200).
-    for _, pre in ipairs({ "seed", "market", "farm", "gag1" }) do
+    for _, pre in ipairs({ "seed", "market", "farm", "gag1", "hact" }) do
         local jp = PREFIX .. "/bin/" .. pre
         local ip = "#!" .. PREFIX .. "/bin/sh\ncurl -sL \"" .. REPO_WORKER .. "/pasang.sh\" | sh -s " .. pre .. "\n"
         local lp = ""
@@ -6027,6 +6027,7 @@ local function setup_otomatis(namaPreset)
         seed   = { place = "129343810645058", game = "GAG 2",        sc = "STAR SEED", url = "seed"   },
         market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
         gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
+        hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
     }
     local pre_raw = (namaPreset or ""):lower()
     -- v9.263: suffix "-arceus" di preset apapun -> PAKSA logika Arceus (skip auto-deteksi).
