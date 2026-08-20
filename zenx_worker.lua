@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.282-cf"
+local VERSION = "9.283-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -10033,6 +10033,20 @@ local function run(cfg)
                     end
                 else
                     info("'"..isi.."' -> semua client udah jalan")
+                end
+                -- v9.283: REFRESH grace SEMUA client ke waktu SELESAI buka. Bug user:
+                -- grace di-set dari AWAL FORCE (v9.277), tapi buka semua butuh ~3 menit
+                -- (1-1). Pas client terakhir kebuka, grace dari awal (240s) udah mau abis
+                -- -> client yg denyutnya masih loading/stale langsung ke-flag MATI +
+                -- rejoin. User minta: nunggu ~3 menit dari client TERAKHIR kebuka. Set
+                -- tembak_ts = SEKARANG (waktu selesai) buat semua -> denyut-cek diem
+                -- 240s dari sini, kasih semua client waktu boot + nulis denyut.
+                do
+                    local tSelesai = os.time()
+                    for _, pk in ipairs(split(cfg.pkgs or "")) do
+                        KICK_DIURUS["tembak_ts:" .. pk] = tSelesai
+                    end
+                    info("Grace SEMUA client di-refresh -> denyut-cek nunggu ~3 menit dari sekarang (client terakhir kebuka)")
                 end
                 lastOpen = os.time()
                 lastStatus = 0   -- paksa lapor abis buka
