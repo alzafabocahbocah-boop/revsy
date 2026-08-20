@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.278-cf"
+local VERSION = "9.281-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2307,7 +2307,7 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("TEMBAK") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
@@ -8418,7 +8418,7 @@ local function run(cfg)
         -- PLACE:/GRID: gak nyentuh MODE_JALAN -> gak ngubah standby jadi jalan.
         do
             local u = isi:upper()
-            if u:find("FORCE") or u:find("REJOIN") then MODE_JALAN = true
+            if u:find("FORCE") or u:find("REJOIN") or u:find("TEMBAK") then MODE_JALAN = true
             elseif u:find("STANDBY") or u:find("STOP") then MODE_JALAN = false end
         end
         -- mati = kebalikan MODE_JALAN. Dulu dicek dari `isi` sekarang doang -> PLACE/
@@ -9234,10 +9234,22 @@ local function run(cfg)
                         if onlyC[u] or onlyC[pkg] or onlyC[nm] then pkgsC[#pkgsC+1] = pkg end
                     end
                     if #pkgsC > 0 then
-                        warn("CLOSE daftar dari panel -> tutup " .. #pkgsC .. " client (target aja)")
-                        local n = close_all(cfg, pkgsC)
-                        ok("CLOSE: " .. n .. " client target ditutup")
-                        notify("ZenX "..cfg.tim, "CLOSE -> "..n.." client target ditutup")
+                        -- v9.279: tutup target BARENGAN (paralel), bukan satu-satu 5s.
+                        -- Bug user: close_all nutup 1-1 jeda 5s -> 4 client = 20s (lambat).
+                        -- Paralel: am force-stop A & B & C & wait -> semua tutup ~1-2s.
+                        warn("CLOSE daftar dari panel -> tutup " .. #pkgsC .. " client BARENGAN (target aja)")
+                        local cmd = "su -c '"
+                        for _, pk in ipairs(pkgsC) do cmd = cmd .. "am force-stop " .. pk .. " & " end
+                        cmd = cmd .. "wait'"
+                        sh_silent(cmd)
+                        os.execute("sleep 2")   -- napas bentar biar service bersih
+                        -- v9.280: CLEAR grace (tembak_ts) target -> denyut-rejoin LANGSUNG
+                        -- angkat (buka ulang di server BARU), gak nunggu grace 240s. User:
+                        -- "out-in -> rejoin denyut -> pindah server". CLOSE = out paksa ->
+                        -- rejoin denyut buka di server baru (yg udah keset via start-market).
+                        for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = nil end
+                        ok("CLOSE: " .. #pkgsC .. " client target ditutup (barengan) -> denyut-rejoin buka ulang di server baru")
+                        notify("ZenX "..cfg.tim, "CLOSE -> "..#pkgsC.." client target ditutup")
                     else
                         warn("CLOSE daftar tapi 0 match -> gak nutup apa2 (cek nama akun)")
                     end
@@ -9246,6 +9258,43 @@ local function run(cfg)
                     local n = close_all(cfg)
                     ok("CLOSE: " .. n .. " client ditutup")
                     notify("ZenX "..cfg.tim, "CLOSE -> "..n.." client ditutup")
+                end
+                lapor(cfg, isi, cacheRun)
+                lastStatus = os.time()
+            end
+            skip_sisa = true
+        elseif U:find("TEMBAK") then
+            -- v9.281: TEMBAK:daftar = tembak ulang client target ke server BARU TANPA
+            -- close (am start -S -d URL, cuma restart ACTIVITY, app+service tetep idup).
+            -- User: "jalankan salah satu tim -> LANGSUNG TEMBAK aja, gakmau di-close".
+            -- Beda dari REJOIN (close+open) & CLOSE (tutup). Ini murni open_one (tembak)
+            -- ke server baru buat client target, walau lagi jalan -> Roblox teleport.
+            if isi ~= lastIsi then
+                lastIsi = isi
+                local daftarT = isi:match("TEMBAK:([%w%.%_%-,]+)")
+                if daftarT then
+                    local onlyT = {}
+                    for a in daftarT:gmatch("[^,]+") do onlyT[a] = true end
+                    local pkgsT = {}
+                    for _, pkg in ipairs(split(cfg.pkgs)) do
+                        local u = (mapAkun or {})[pkg]
+                        local nm = pkg:gsub("com%.roblox%.", "")
+                        if onlyT[u] or onlyT[pkg] or onlyT[nm] then pkgsT[#pkgsT+1] = pkg end
+                    end
+                    if #pkgsT > 0 then
+                        refresh_ps(); pcall(refresh_ps_getps)   -- server baru ke-refresh dulu
+                        warn(("TEMBAK dari panel -> tembak ulang %d client ke server baru (TANPA close)"):format(#pkgsT))
+                        for i, pkg in ipairs(pkgsT) do
+                            KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace (baru ditembak)
+                            open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- pakai_S = am start -S
+                            if i < #pkgsT then os.execute("sleep " .. (cfg.stagger_sec or 8)) end
+                        end
+                        ok(("TEMBAK: %d client ditembak ke server baru (langsung, tanpa close)"):format(#pkgsT))
+                        notify("ZenX "..cfg.tim, "TEMBAK -> "..#pkgsT.." client ke server baru")
+                        lastOpen = os.time()
+                    else
+                        warn("TEMBAK daftar tapi 0 match -> gak nembak apa2 (cek nama akun)")
+                    end
                 end
                 lapor(cfg, isi, cacheRun)
                 lastStatus = os.time()
