@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.281-cf"
+local VERSION = "9.282-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9235,21 +9235,30 @@ local function run(cfg)
                     end
                     if #pkgsC > 0 then
                         -- v9.279: tutup target BARENGAN (paralel), bukan satu-satu 5s.
-                        -- Bug user: close_all nutup 1-1 jeda 5s -> 4 client = 20s (lambat).
-                        -- Paralel: am force-stop A & B & C & wait -> semua tutup ~1-2s.
-                        warn("CLOSE daftar dari panel -> tutup " .. #pkgsC .. " client BARENGAN (target aja)")
+                        warn("CLOSE daftar dari panel -> tutup " .. #pkgsC .. " client BARENGAN + buka ulang FRESH")
                         local cmd = "su -c '"
                         for _, pk in ipairs(pkgsC) do cmd = cmd .. "am force-stop " .. pk .. " & " end
                         cmd = cmd .. "wait'"
                         sh_silent(cmd)
-                        os.execute("sleep 2")   -- napas bentar biar service bersih
-                        -- v9.280: CLEAR grace (tembak_ts) target -> denyut-rejoin LANGSUNG
-                        -- angkat (buka ulang di server BARU), gak nunggu grace 240s. User:
-                        -- "out-in -> rejoin denyut -> pindah server". CLOSE = out paksa ->
-                        -- rejoin denyut buka di server baru (yg udah keset via start-market).
-                        for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = nil end
-                        ok("CLOSE: " .. #pkgsC .. " client target ditutup (barengan) -> denyut-rejoin buka ulang di server baru")
-                        notify("ZenX "..cfg.tim, "CLOSE -> "..#pkgsC.." client target ditutup")
+                        os.execute("sleep 2")
+                        -- v9.282: SET grace (tembak_ts) target -> denyut-rejoin JANGAN
+                        -- ikut buka (dulu clear grace -> denyut-rejoin buka 1-1 LAMBAT +
+                        -- FORCE buka lagi = DOBEL). Sekarang worker sendiri yg buka ulang
+                        -- BATCH (open_all) langsung -> cepet + gak dobel.
+                        local tNowC = os.time()
+                        for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = tNowC end
+                        refresh_ps(); pcall(refresh_ps_getps)
+                        local function batal_c() return ada_perintah_baru(cfg, isi) end
+                        local function lapor_c()
+                            refresh_status(); lastStatusCek = os.time()
+                            gambar_tabel(isi); lapor(cfg, isi, cacheRun)
+                        end
+                        -- semua client tim? only=nil (semua); sebagian? only=pkgsC
+                        local semuaC = (#pkgsC == #split(cfg.pkgs))
+                        local h = open_all(cfg, semuaC and nil or pkgsC, batal_c, lapor_c, mapLink, mapAkun, true)
+                        ok(("CLOSE+BUKA: %d client tutup -> buka ulang FRESH (%d jalan) di server baru"):format(#pkgsC, h.ok))
+                        notify("ZenX "..cfg.tim, "restart "..#pkgsC.." client (server baru)")
+                        lastOpen = os.time()
                     else
                         warn("CLOSE daftar tapi 0 match -> gak nutup apa2 (cek nama akun)")
                     end
