@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.291-cf"
+local VERSION = "9.292-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -12482,6 +12482,25 @@ if PERINTAH == "getps" then
     if not cfg then err("Config gak ada."); return end
     print(C.BOLD .. C.C .. "\n=== ZENX GETPS (ambil PS link per akun) ===\n" .. C.N)
 
+    -- v9.292: OVERRIDE place lewat argumen (mis 'zenx getps gag1' -> ambil PS GAG 1
+    -- walau preset RF ini beda). Argumen: gag1/garden/hact, market, gag2/seed/farm.
+    -- "ulang" tetep bisa (di arg[2] atau arg[3]).
+    do
+        local a2 = (arg and arg[2] or ""):lower()
+        local a3 = (arg and arg[3] or ""):lower()
+        local pilihan = (a2 ~= "" and a2 ~= "ulang") and a2 or a3
+        if pilihan == "gag1" or pilihan == "garden" or pilihan == "hact" then
+            cfg.place_id = "126884695634066"; cfg.game_label = "GAG 1"
+            ok("getps override -> GAG 1 garden (126884695634066)")
+        elseif pilihan == "market" then
+            cfg.place_id = "129954712878723"; cfg.game_label = "GAG 1 MARKET"
+            ok("getps override -> GAG 1 MARKET (129954712878723)")
+        elseif pilihan == "gag2" or pilihan == "seed" or pilihan == "farm" then
+            cfg.place_id = "129343810645058"; cfg.game_label = "GAG 2"
+            ok("getps override -> GAG 2 (129343810645058)")
+        end
+    end
+
     -- v8.84 FIX: ambil akun TIM DEVICE INI aja (dari client cfg.pkgs), BUKAN
     -- semua akun fleet (/cookie-list = 285 akun seluruh fleet -> boros + query
     -- akun yg bukan punya device ini). Baca username tiap client di device ini.
@@ -12503,7 +12522,7 @@ if PERINTAH == "getps" then
     -- v9.129: SKIP akun yg UDAH punya PS (server). Baca /ps-list dulu -> buang akun
     -- yg ps_link-nya udah ada. Cuma getps akun yg BELUM punya server (hemat waktu +
     -- gak rate-limit Roblox buat yg gak perlu). Pakai 'zenx getps ulang' buat paksa semua.
-    if (arg and arg[2] or ""):lower() ~= "ulang" then
+    if (arg and arg[2] or ""):lower() ~= "ulang" and (arg and arg[3] or ""):lower() ~= "ulang" then
         local punyaPs = {}
         local rList = api_get(cfg, "/ps-list") or ""
         for obj in rList:gmatch('{.-}') do
