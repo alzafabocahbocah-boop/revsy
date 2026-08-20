@@ -1193,42 +1193,73 @@ local function applyPresetHact(name)
 end
 _G.HactApplyPreset = applyPresetHact
 
--- ---- GUI: Config Hact (tombol di titleBar + popup pilih egg) ----
+-- ---- GUI: Config Hact (tombol titleBar -> modal tengah layar + X) ----
 do
-    -- taruh di ruang kosong titleBar (setelah refresh ~410, sebelum min ~586)
     local cfgBtn = mk("TextButton", {
         Size = UDim2.new(0, 120, 0, 24), Position = UDim2.new(0, 424, 0, 10),
-        BackgroundColor3 = C.input, Text = "\u{2699} Config Hact \u{25BC}", Font = FONT,
+        BackgroundColor3 = C.input, Text = "\u{2699} Config Hact", Font = FONT,
         TextSize = 11, TextColor3 = C.accent, AutoButtonColor = true, Parent = titleBar })
     mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = cfgBtn })
 
-    local popup = mk("Frame", {
-        Size = UDim2.new(0, 180, 0, 12 + #PRESET_URUT*28 + 20),
-        Position = UDim2.new(0, 424, 0, 38),
-        BackgroundColor3 = C.panel, BorderSizePixel = 0, Visible = false,
-        ZIndex = 50, Parent = titleBar })
-    mk("UICorner", { CornerRadius = UDim.new(0, 6), Parent = popup })
-    local judulP = lbl(popup, "Pilih Egg Config:", 10.5, C.textDim)
-    judulP.Position = UDim2.new(0, 10, 0, 6); judulP.Size = UDim2.new(1, -20, 0, 16)
-    judulP.ZIndex = 51
+    -- backdrop gelap full-screen (klik buat nutup). parent ke gui (ScreenGui).
+    local backdrop = mk("TextButton", {
+        Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+        BackgroundColor3 = Color3.fromRGB(0,0,0), BackgroundTransparency = 0.5,
+        Text = "", AutoButtonColor = false, Visible = false, ZIndex = 100, Parent = gui })
 
-    for i, nm in ipairs(PRESET_URUT) do
+    -- modal kotak di TENGAH layar (agak lebar)
+    local modal = mk("Frame", {
+        Size = UDim2.new(0, 420, 0, 300),
+        Position = UDim2.new(0.5, -210, 0.5, -150),   -- center
+        BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 101, Parent = backdrop })
+    mk("UICorner", { CornerRadius = UDim.new(0, 10), Parent = modal })
+    mk("UIStroke", { Color = C.border, Thickness = 1.5, Parent = modal })
+
+    -- judul
+    local jm = lbl(modal, "Config Hact", 15, C.text)
+    jm.Position = UDim2.new(0, 18, 0, 14); jm.Size = UDim2.new(1, -70, 0, 24)
+    jm.Font = FONT_B; jm.ZIndex = 102
+    local sub = lbl(modal, "Pilih egg -> semua ke-set otomatis (tim + sell)", 11, C.textDim)
+    sub.Position = UDim2.new(0, 18, 0, 38); sub.Size = UDim2.new(1, -36, 0, 16); sub.ZIndex = 102
+
+    -- X pojok kanan atas
+    local xBtn = mk("TextButton", {
+        Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -38, 0, 12),
+        BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 15,
+        TextColor3 = C.textDim, AutoButtonColor = true, ZIndex = 102, Parent = modal })
+    mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = xBtn })
+
+    -- area tombol preset egg (scroll kalau banyak)
+    local list = mk("ScrollingFrame", {
+        Size = UDim2.new(1, -36, 1, -80), Position = UDim2.new(0, 18, 0, 66),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+        CanvasSize = UDim2.new(0, 0, 0, #PRESET_URUT*44 + 4), ZIndex = 102, Parent = modal })
+    local ly = mk("UIListLayout", { Padding = UDim.new(0, 8), Parent = list })
+
+    for _, nm in ipairs(PRESET_URUT) do
         local b = mk("TextButton", {
-            Size = UDim2.new(1, -16, 0, 24), Position = UDim2.new(0, 8, 0, 24 + i*24),
-            BackgroundColor3 = C.card, Text = nm, Font = FONT, TextSize = 11,
-            TextColor3 = C.text, AutoButtonColor = true, ZIndex = 51, Parent = popup })
-        mk("UICorner", { CornerRadius = UDim.new(0, 5), Parent = b })
+            Size = UDim2.new(1, -8, 0, 40), BackgroundColor3 = C.card,
+            Text = "\u{1F95A}  "..nm, Font = FONT, TextSize = 13,
+            TextColor3 = C.text, AutoButtonColor = true, ZIndex = 103, Parent = list })
+        mk("UICorner", { CornerRadius = UDim.new(0, 7), Parent = b })
         b.MouseButton1Click:Connect(function()
-            popup.Visible = false
-            cfgBtn.Text = "\u{2699} "..nm.." \u{25BC}"
             local ok, total = applyPresetHact(nm)
+            cfgBtn.Text = "\u{2699} "..nm
+            sub.Text = ok and (nm.." ke-set: "..total.." pet ke tim") or "gagal apply preset"
+            sub.TextColor3 = ok and C.accent or C.textDim
+            task.wait(0.8)
+            backdrop.Visible = false
+            sub.Text = "Pilih egg -> semua ke-set otomatis (tim + sell)"
+            sub.TextColor3 = C.textDim
         end)
     end
 
-    cfgBtn.MouseButton1Click:Connect(function()
-        popup.Visible = not popup.Visible
-    end)
+    local function tutup() backdrop.Visible = false end
+    xBtn.MouseButton1Click:Connect(tutup)
+    backdrop.MouseButton1Click:Connect(tutup)   -- klik luar modal = nutup
+    cfgBtn.MouseButton1Click:Connect(function() backdrop.Visible = true end)
 end
+
 
 
 
