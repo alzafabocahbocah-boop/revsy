@@ -65,11 +65,11 @@ PRESET="$1"
 [ -z "$PRESET" ] && PRESET="seed"
 
 case "$PRESET" in
-    seed|farm|market|gag1|hact|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus) ;;
+    seed|farm|market|gag1|hact|panen|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus|panen-arceus) ;;
     *)
         gagal "Preset '$PRESET' gak dikenal." \
-              "Yang ada: seed / farm / market / gag1 / hact  (+ suffix -arceus, mis: hact-arceus)" \
-              "Contoh:  ... | sh -s hact-arceus"
+              "Yang ada: seed / farm / market / gag1 / hact / panen  (+ suffix -arceus, mis: panen-arceus)" \
+              "Contoh:  ... | sh -s panen-arceus"
         ;;
 esac
 
@@ -206,10 +206,12 @@ case "$PRESET" in
         printf "\n${B}[+] Tulis loader Arceus (auto-exe script)${N}\n"
         AX_DIR="/sdcard/Arceus X/Autoexec"
         AX_LOADER="$AX_DIR/zenx.lua"
-        # v9.291: pilih script ronihub sesuai preset. hact-arceus -> hact, sisanya -> market.
+        # v9.291: pilih script ronihub sesuai preset. hact-arceus -> hact,
+        # panen-arceus -> panen, sisanya -> market.
         case "$PRESET" in
-            hact-arceus) RONIHUB_SC="hact" ;;
-            *)           RONIHUB_SC="market" ;;
+            hact-arceus)  RONIHUB_SC="hact" ;;
+            panen-arceus) RONIHUB_SC="panen" ;;
+            *)            RONIHUB_SC="market" ;;
         esac
         MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/$RONIHUB_SC"
         su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
