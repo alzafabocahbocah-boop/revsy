@@ -942,6 +942,157 @@ do
     task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
 end
 
+-- ============================================================
+-- AUTO ACCEPT GIFT + TRADE (SELALU ON) — port dari hact
+-- ============================================================
+do
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+    local function clickBtnByText(root, texts)
+        if not root then return false end
+        local hit = false
+        pcall(function()
+            for _, d in ipairs(root:GetDescendants()) do
+                if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                    local txt = (d:IsA("TextButton") and d.Text or ""):lower()
+                    for _, want in ipairs(texts) do
+                        if txt == want or txt:find(want, 1, true) then
+                            if firesignal then pcall(function() firesignal(d.Activated) end) end
+                            if getconnections then
+                                for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end
+                            end
+                            hit = true
+                        end
+                    end
+                end
+            end
+        end)
+        return hit
+    end
+
+    local function fireGuiButton(btn)
+        if not btn then return false end
+        local ok = false
+        if getconnections then
+            pcall(function()
+                for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
+                    if c.Fire then pcall(function() c:Fire() end)
+                    elseif c.Function then pcall(function() c.Function() end) end
+                    ok = true
+                end
+            end)
+        end
+        if firesignal then
+            pcall(function() firesignal(btn.MouseButton1Down) end)
+            pcall(function() firesignal(btn.MouseButton1Click) end)
+            ok = true
+        end
+        return ok
+    end
+
+    -- klik SEMUA tombol Accept di popup gift masuk (Gift_Notification)
+    local function acceptAllGiftPopups()
+        local clicked = 0
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            local gn = pg and pg:FindFirstChild("Gift_Notification")
+            if not gn then return end
+            local outer = gn:FindFirstChild("Frame")
+            local inner = outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
+            local container = inner or gn
+            for _, holder in ipairs(container:GetChildren()) do
+                local accept
+                local fr = holder:FindFirstChild("Frame")
+                if fr then accept = fr:FindFirstChild("Accept") end
+                if not accept then
+                    for _, dd in ipairs(holder:GetDescendants()) do
+                        if dd.Name == "Accept" and dd:IsA("GuiButton") then accept = dd break end
+                    end
+                end
+                if accept and accept:IsA("GuiButton") then
+                    local vis = true
+                    pcall(function() vis = accept.Visible end)
+                    if vis and fireGuiButton(accept) then clicked = clicked + 1 end
+                end
+            end
+        end)
+        return clicked
+    end
+
+    -- accept trade dari sisi kita (Accept + auto-YES popup unfair)
+    local function autoAcceptTrade()
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            if not pg then return end
+            local tui = pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts = lt:FindFirstChild("Options")
+                local acc = opts and opts:FindFirstChild("Accept")
+                if acc then
+                    if firesignal then pcall(function() firesignal(acc.Activated) end) end
+                    if getconnections then
+                        for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end
+                    end
+                end
+            end
+            clickBtnByText(pg, {"yes", "confirm", "continue", "lanjut"})
+            local te = ReplicatedStorage:FindFirstChild("GameEvents")
+            te = te and te:FindFirstChild("TradeEvents")
+            if te then
+                local a = te:FindFirstChild("Accept"); local c = te:FindFirstChild("Confirm")
+                if c then pcall(function() c:FireServer() end) end
+                if a then pcall(function() a:FireServer() end) end
+            end
+        end)
+    end
+
+    local ge = ReplicatedStorage:FindFirstChild("GameEvents")
+    if ge then
+        -- gift masuk: GiftPet.OnClientEvent -> klik Accept + fire remote
+        local giftRE = ge:FindFirstChild("GiftPet")
+        local acceptGiftRE = ge:FindFirstChild("AcceptPetGift")
+        if giftRE then
+            giftRE.OnClientEvent:Connect(function(petUUID)
+                if acceptGiftRE and type(petUUID) == "string" and #petUUID > 8 then
+                    pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
+                end
+                task.spawn(function()
+                    for _ = 1, 10 do
+                        local n = acceptAllGiftPopups()
+                        if n > 0 then task.wait(0.3) else task.wait(0.25) end
+                    end
+                end)
+            end)
+        end
+        -- loop pemindai gift (tangkap popup yg udah ada / tanpa event)
+        task.spawn(function()
+            while true do task.wait(0.8); pcall(acceptAllGiftPopups) end
+        end)
+        -- trade masuk: SendRequest.OnClientEvent -> RespondRequest(id, true) + spam accept
+        local te = ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE = te:FindFirstChild("SendRequest")
+            local respondRE = te:FindFirstChild("RespondRequest")
+            if sendReqRE and respondRE then
+                local lastTradeID = nil
+                sendReqRE.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("-") then
+                        lastTradeID = args[1]
+                    end
+                    if lastTradeID then
+                        pcall(function() respondRE:FireServer(lastTradeID, true) end)
+                        task.spawn(function()
+                            for _ = 1, 8 do autoAcceptTrade(); task.wait(0.5) end
+                        end)
+                    end
+                end)
+            end
+        end
+    end
+end
+
 -- ============ SCREEN GUI ============
 -- buang GUI lama kalau re-exec
 pcall(function()
