@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.292-cf"
+local VERSION = "9.293-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -12333,11 +12333,15 @@ function getps_akun(cfg, cookie)
         local uout = uh and uh:read("*all") or ""
         if uh then uh:close() end
         local universeId = uout:match('"universeId"%s*:%s*(%d+)')
-        -- fallback universeId: CUMA buat GAG 2 (universe-nya udah ketauan dari request asli).
-        -- GAG 1 -> ANDELIN query di atas (universe GAG 1 gak di-hardcode). Kalau query gagal
-        -- buat GAG 1, universeId tetep nil -> skip bikin (jgn bikin PS di universe salah).
-        if not universeId and not (cfg.game_label or ""):upper():find("GAG 1") then
-            universeId = "10200395747"
+        -- fallback universeId kalau lookup gagal (rate limit / error):
+        --   GAG 1 -> 7436755782 (dari API user: POST vip-servers/7436755782 -> accessCode OK)
+        --   GAG 2 -> 10200395747
+        if not universeId then
+            if (cfg.game_label or ""):upper():find("GAG 1") then
+                universeId = "7436755782"   -- v9.293: GAG 1 universe (fallback)
+            else
+                universeId = "10200395747"  -- GAG 2 universe (fallback)
+            end
         end
         if universeId then
             -- ambil CSRF token dulu (POST kosong -> header x-csrf-token)
