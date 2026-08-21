@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.298-cf"
+local VERSION = "9.299-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -12345,14 +12345,37 @@ function getps_akun(cfg, cookie)
             -- v9.297: ambil SHARE LINK (privateServerLinkCode, buat login PS dari HP).
             -- vipServerId dari LIST -> GET vip-servers/<id> -> field "link". BEDA dari
             -- accessCode: accessCode buat executor tembak, share link buat mobile/browser.
+            -- v9.299: kalau "link" KOSONG (share belom di-generate) -> PATCH
+            -- {newJoinCode:true} buat GENERATE share link (butuh CSRF). User nemu:
+            -- PATCH vip-servers/<id> body {newJoinCode:true} -> balikin "link" fresh.
             local vsid = out:match('"vipServerId"%s*:%s*(%d+)')
             local share = ""
             if vsid then
                 local su = "https://games.roblox.com/v1/vip-servers/" .. vsid
+                -- 1) GET link yg udah ada
                 local sh = io.popen(("curl -s -4 -m 15 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), su))
                 local so = sh and sh:read("*all") or ""
                 if sh then sh:close() end
                 share = so:match('"link"%s*:%s*"([^"]+)"') or ""
+                -- 2) kosong -> PATCH generate (ambil CSRF dulu)
+                if share == "" then
+                    local cc = io.popen(("curl -s -4 -m 20 -i -X POST -H \"Cookie: $(cat %s)\" \"https://auth.roblox.com/v2/logout\" 2>&1"):format(shq(tmp)))
+                    local co = cc and cc:read("*all") or ""
+                    if cc then cc:close() end
+                    local csrf = co:match("[xX]%-[cC][sS][rR][fF]%-[tT][oO][kK][eE][nN]:%s*([%w%+/=]+)")
+                    if csrf then
+                        local pc = io.popen((
+                            "curl -s -4 -m 20 -X PATCH "
+                            .. "-H \"Cookie: $(cat %s)\" "
+                            .. "-H \"X-CSRF-TOKEN: %s\" "
+                            .. "-H \"Content-Type: application/json\" "
+                            .. "-d '{\"newJoinCode\":true}' \"%s\" 2>&1"
+                        ):format(shq(tmp), csrf, su))
+                        local po = pc and pc:read("*all") or ""
+                        if pc then pc:close() end
+                        share = po:match('"link"%s*:%s*"([^"]+)"') or ""
+                    end
+                end
             end
             os.remove(tmp)
             return code, (nama or "PS") .. " [accessCode PRIVATE]", share
