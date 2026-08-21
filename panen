@@ -703,32 +703,104 @@ local function cocokTipe(petName, target)
     return petName == target or petName:find(target, 1, true) ~= nil
 end
 
-local function equipTeam()
-    timUuids = {}
+-- uuid -> nama pet (akumulasi dari backpack scan; inget walau pet udah ke-equip)
+local uuidTipe = {}
+local function scanUuidTipe()
+    pcall(function()
+        for _, p in ipairs(PetDetect.listBackpackPets(true) or {}) do
+            if p.uuid and p.name then uuidTipe[fmtUUID(p.uuid)] = p.name end
+        end
+    end)
+end
+
+-- TIM TERKUNCI: pilih uuid pet SEKALI, terus fokus ke pet itu-itu aja (gak ganti-ganti)
+local timKunci = {}   -- uuid(fmt) -> tipe
+local timInfo  = {}   -- uuid(fmt) -> { nama, tipe, kg, age }  (buat display UI)
+_G.ZenxGemTim = timInfo
+local function jmlKunci() local n = 0; for _ in pairs(timKunci) do n = n + 1 end; return n end
+
+-- pilih tim SEKALI (isi slot yg belom kekunci). AMBIL PET PALING BESAR (KG tertinggi)
+-- per jenis. uuid dikunci -> gak berubah tiap reset.
+local function pilihTim()
+    scanUuidTipe()
     local pets = {}
     pcall(function() pets = PetDetect.listBackpackPets(true) or {} end)
-    -- kelompokin per tipe target
-    local ambil = 0
+    local ada = {}
+    for _, tipe in pairs(timKunci) do ada[tipe] = (ada[tipe] or 0) + 1 end
     for tipe, jml in pairs(GEM.tim) do
-        local n = 0
-        for _, p in ipairs(pets) do
-            if n >= jml then break end
-            if not timUuids[fmtUUID(p.uuid)] and cocokTipe(p.name, tipe) then
-                equipPet(p.uuid, CLUSTER)   -- equip ke center (cluster)
-                timUuids[fmtUUID(p.uuid)] = true
-                n = n + 1; ambil = ambil + 1
-                task.wait(0.06)
+        local n = ada[tipe] or 0
+        if n < jml then
+            -- kumpulin semua pet jenis ini yg belom kekunci
+            local cocok = {}
+            for _, p in ipairs(pets) do
+                local u = fmtUUID(p.uuid)
+                if not timKunci[u] and cocokTipe(p.name, tipe) then cocok[#cocok+1] = p end
+            end
+            -- SORT KG paling besar dulu -> ambil yg gede
+            table.sort(cocok, function(a, b) return (a.dispKg or 0) > (b.dispKg or 0) end)
+            for _, p in ipairs(cocok) do
+                if n >= jml then break end
+                local u = fmtUUID(p.uuid)
+                timKunci[u] = tipe
+                uuidTipe[u] = p.name
+                timInfo[u]  = { nama = p.name, tipe = tipe, kg = p.dispKg, age = p.level }
+                n = n + 1
             end
         end
-        gemLog(("equip %s: %d/%d"):format(tipe, n, jml))
     end
-    gemLog("total equip: " .. ambil)
+end
+
+-- equip pet YANG TERKUNCI (uuid sama terus, gak pilih baru)
+local function equipTeam()
+    scanUuidTipe()
+    if jmlKunci() == 0 then pilihTim() end   -- pilih sekali di awal
+    timUuids = {}
+    local ambil = 0
+    local per = {}
+    for u, tipe in pairs(timKunci) do
+        equipPet(u, CLUSTER)          -- equip pet TERKUNCI ini
+        timUuids[u] = true
+        per[tipe] = (per[tipe] or 0) + 1
+        ambil = ambil + 1
+        task.wait(0.06)
+    end
+    for tipe, jml in pairs(GEM.tim) do gemLog(("equip %s: %d/%d"):format(tipe, per[tipe] or 0, jml)) end
+    gemLog("total equip: " .. ambil .. " (uuid terkunci)")
     return ambil
 end
 
--- unequip SEMUA pet placed
+-- verify: pet terkunci masih placed? ada pet nyasar (bukan anggota tim)?
+local function verifikasiTim()
+    scanUuidTipe()
+    local hilang, extra = {}, {}
+    -- pet terkunci yg GAK placed -> perlu re-equip
+    for u in pairs(timKunci) do
+        if not modelByUuid[u] then hilang[#hilang+1] = u end
+    end
+    -- pet placed PUNYA GUA, tipe tim, TAPI bukan anggota terkunci -> nyasar, buang
+    for uuid in pairs(modelByUuid) do
+        local nama = uuidTipe[uuid]
+        if nama and not timKunci[uuid] then
+            for tipe in pairs(GEM.tim) do
+                if cocokTipe(nama, tipe) then extra[#extra+1] = uuid; break end
+            end
+        end
+    end
+    return (#hilang == 0 and #extra == 0), hilang, extra
+end
+
+-- unequip SEMUA pet placed (BERSIH: timUuids + modelByUuid + retry + wait)
 local function unequipSemua()
-    for uuid in pairs(modelByUuid) do unequipPet(uuid); task.wait(0.04) end
+    for tri = 1, 3 do
+        local seen = {}
+        for uuid in pairs(timUuids)    do if not seen[uuid] then unequipPet(uuid); seen[uuid]=true; task.wait(0.04) end end
+        for uuid in pairs(modelByUuid) do if not seen[uuid] then unequipPet(uuid); seen[uuid]=true; task.wait(0.04) end end
+        task.wait(0.4)
+        local adaGua = false
+        for uuid in pairs(modelByUuid) do if uuidTipe[uuid] then adaGua = true; break end end
+        if not adaGua then break end
+    end
+    timUuids = {}
 end
 
 -- ----- swap engine (antre 1-1, cooldown-ready, cluster) -----
@@ -782,23 +854,56 @@ task.spawn(function()
 end)
 
 -- ----- START / STOP gem egg -----
+-- verify + auto-fix: buang pet nyasar + re-equip pet TERKUNCI yg hilang.
+-- gak ganti-ganti pet: uuid tetap terkunci, cuma dibetulin posisinya.
+local function pastikanTim()
+    local sesuai, hilang, extra = verifikasiTim()
+    if sesuai then return end
+    -- buang pet nyasar (bukan anggota tim terkunci)
+    for _, u in ipairs(extra) do unequipPet(u); task.wait(0.05) end
+    -- re-equip pet terkunci yg gak placed (double-check biar gak salah tangkap
+    -- pet yg lagi di-SWAP gacor -- swap ~0.3s, kita cek ulang abis 0.4s)
+    local balik = 0
+    for _, u in ipairs(hilang) do
+        task.wait(0.4)
+        if not modelByUuid[u] then   -- masih hilang beneran (bukan mid-swap)
+            equipPet(u, CLUSTER); timUuids[u] = true; balik = balik + 1; task.wait(0.06)
+        end
+    end
+    -- kalau ada slot terkunci yg PETNYA ILANG total (ketrade/kerelease) -> isi ulang slot
+    if jmlKunci() < 8 then pilihTim() end
+    gemLog(("FIX tim: buang %d nyasar, re-equip %d terkunci"):format(#extra, balik))
+end
+
 local function gemStart()
     GEM.aktif = true
     CLUSTER = farmCenter()
+    timKunci = {}    -- kunci fresh tiap START (pilih tim baru sesuai backpack sekarang)
     gemLog("START. center=" .. (CLUSTER and "ada" or "NIL"))
     task.spawn(function()
-        equipTeam()   -- equip tim awal
-        -- loop reset tiap resetTiap detik
+        equipTeam()   -- pilih + kunci tim + equip
+        task.wait(1)
+        pastikanTim()
+        -- loop reset tiap resetTiap detik (re-equip UUID YG SAMA, gak pilih baru)
         while GEM.aktif do
             for _ = 1, GEM.resetTiap do
                 if not GEM.aktif then return end
                 task.wait(1)
             end
             if not GEM.aktif then return end
-            gemLog("RESET: ambil semua -> masukin ulang")
+            gemLog("RESET: ambil semua -> masukin ulang (uuid terkunci)")
             unequipSemua()
             task.wait(0.5)
-            equipTeam()
+            equipTeam()   -- equip uuid TERKUNCI (pet sama)
+            task.wait(1)
+            pastikanTim()
+        end
+    end)
+    -- loop verify mandiri tiap 5s (buang pet nyasar / re-equip yg hilang)
+    task.spawn(function()
+        while GEM.aktif do
+            task.wait(5)
+            if GEM.aktif then pcall(pastikanTim) end
         end
     end)
 end
@@ -1326,6 +1431,39 @@ do
         gemLogBox.Text = table.concat(logLines, "\n")
     end
 end
+
+-- ---- DAFTAR PET DIPAKE (uuid terkunci + kg + age) ----
+local gemPetHdr = mk("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.card,
+    BorderSizePixel = 0, LayoutOrder = 5, Parent = cfgScroll }); corner(gemPetHdr, 6)
+local gph = lbl(gemPetHdr, "\u{1F433} PET DIPAKE (uuid terkunci)", 11.5, C.accent)
+gph.Font = FONT_B; gph.Position = UDim2.new(0, 10, 0, 0); gph.Size = UDim2.new(1, -10, 1, 0)
+
+local gemPetBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 200), BackgroundColor3 = C.panel,
+    Font = Enum.Font.Code, TextSize = 10, TextColor3 = C.text,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Text = "(belum ada \u{2014} nyalain AUTO GEM EGG dulu)",
+    LayoutOrder = 6, Parent = cfgScroll })
+corner(gemPetBox, 6)
+mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6), Parent = gemPetBox })
+
+-- loop update daftar pet dipake tiap 1s
+task.spawn(function()
+    while gui.Parent do
+        local info = _G.ZenxGemTim or {}
+        local baris = {}
+        for u, d in pairs(info) do
+            local kg  = d.kg  and string.format("%.2f", d.kg) or "?"
+            local age = d.age and tostring(d.age) or "?"
+            baris[#baris+1] = string.format("%s | %skg | age %s\n  %s",
+                d.tipe or d.nama or "?", kg, age, u)
+        end
+        table.sort(baris)   -- grup per tipe
+        gemPetBox.Text = (#baris > 0) and table.concat(baris, "\n")
+            or "(belum ada \u{2014} nyalain AUTO GEM EGG dulu)"
+        task.wait(1)
+    end
+end)
 
 -- ---- konten MISC = AUTO SEED RAIN ----
 local msH = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
