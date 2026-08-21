@@ -1,0 +1,1193 @@
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║  PANEN EGG — v0.1 (KERANGKA UI)                                ║
+-- ║  UI mirip HACT TELUR. Logika panen + tim pet NYUSUL.           ║
+-- ║  Tema: hitam elegan + aksen putih/abu minimalis.              ║
+-- ╚══════════════════════════════════════════════════════════════╝
+
+-- ===== DENYUT UNCONDITIONAL (copy market/hact) — worker tau client hidup =====
+do
+    if not _G.__ZenxDenyutJalan then
+        _G.__ZenxDenyutJalan = true
+        task.spawn(function()
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    if plr and plr.Name and writefile then
+                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                    end
+                end)
+                task.wait(20)
+            end
+        end)
+    end
+end
+
+local Players = game:GetService("Players")
+local player  = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+local UIS     = game:GetService("UserInputService")
+
+local VERSION = "v0.1"
+
+-- ============ THEME (sama kayak hact) ============
+local C = {
+    bg       = Color3.fromRGB(22, 22, 22),
+    panel    = Color3.fromRGB(26, 26, 26),
+    card     = Color3.fromRGB(30, 30, 30),
+    cardSel  = Color3.fromRGB(34, 34, 34),
+    input    = Color3.fromRGB(30, 30, 30),
+    border   = Color3.fromRGB(60, 60, 60),
+    borderSel= Color3.fromRGB(255, 255, 255),
+    line     = Color3.fromRGB(95, 95, 95),
+    text     = Color3.fromRGB(240, 240, 240),
+    textDim  = Color3.fromRGB(140, 140, 140),
+    textMute = Color3.fromRGB(100, 100, 100),
+    accent   = Color3.fromRGB(255, 255, 255),
+    danger   = Color3.fromRGB(200, 90, 90),
+}
+local FONT   = Enum.Font.GothamSemibold
+local FONT_B = Enum.Font.GothamBold
+
+-- ============ UI HELPERS (sama kayak hact) ============
+local function mk(class, props)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    return o
+end
+local function corner(o, r)
+    mk("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = o })
+    return o
+end
+local function stroke(o, col, th)
+    return mk("UIStroke", { Color = col or C.border, Thickness = th or 1.5, Parent = o })
+end
+local function pad(o, all)
+    mk("UIPadding", {
+        PaddingTop = UDim.new(0, all), PaddingBottom = UDim.new(0, all),
+        PaddingLeft = UDim.new(0, all), PaddingRight = UDim.new(0, all), Parent = o })
+end
+local function lbl(parent, text, size, col, xalign)
+    return mk("TextLabel", {
+        BackgroundTransparency = 1, Text = text, Font = FONT,
+        TextSize = size or 13, TextColor3 = col or C.text,
+        TextXAlignment = xalign or Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center, Parent = parent })
+end
+
+
+-- ============ DETEKSI PET (dari hact, getgc) ============
+local PetDetect = {}
+PetDetect.DEBUG_PCT = false  -- set true buat print nilai seal/koi per pet ke console
+PetDetect.container = nil
+PetDetect.count = 0
+PetDetect.cache = {}            -- uuid(clean & braced) -> PetData
+PetDetect.typeCache = {}        -- uuid(clean) -> PetType (dr level luar PetData, persisten)
+PetDetect.nameCache = {}        -- uuid -> nama tipe (persisten; diisi pas pet keliatan di backpack)
+PetDetect.MUT_SHORT = {         -- map MutationType pendek -> nama enak dibaca (opsional)
+    EV = "Everchanted",
+}
+-- urutan prioritas tipe pet di picker, PER TIM (atas = paling prioritas). Sisanya nyusul.
+-- pet yg gak ada di list ditaruh paling bawah (tetep urut KG terbesar).
+PetDetect.PRIORITY = {
+    ["Reduce Tim"] = { "Mimic Octopus", "Birb", "Bald Eagle" },
+    ["Hatch Tim"]  = { "Koi", "Brontosaurus" },
+    ["Sell Tim"]   = { "Seal" },
+}
+function PetDetect.priorityRank(tabName, name)
+    local list = PetDetect.PRIORITY[tabName]
+    if list and name then
+        local low = name:lower()
+        for i, n in ipairs(list) do
+            -- substring match biar toleran prefix mutasi (mis "Everchanted Mimic Octopus")
+            if low:find(n:lower(), 1, true) then return i end
+        end
+    end
+    return 9999  -- bukan prioritas
+end
+
+-- rumus per tipe (beda-beda):
+--  Koi   : egg-back chance = 0.22 × dispW + 1  (dari tabel resmi, pakai DISPLAY weight)
+--  Seal  : rumus PET STAT  = sealPct(BaseWeight×1.1, age) (yg sebelumnya udah bener)
+--  Bronto: nyusul (nunggu tabel)
+-- mutasi boost additive (HyperHunger/Venom/UFO=30, Nightmare=22, dll).
+PetDetect.MUTATION_BOOST = {
+    Nightmare = 22, Venom = 30, UFO = 30, HyperHunger = 30, Everchanted = 30,
+    Golden = 10, Rainbow = 20, Spectral = 8, Silver = 5,
+    ["Small Toy"] = 10, ["Medium Toy"] = 20, ["Large Toy"] = 30,
+}
+PetDetect.MUT_PREFIXES = {
+    "Everchanted","Rainbow","Frozen","Inverted","Golden","Diamond","Mythical","Hexed",
+    "Ascended","Radiant","Shocked","Bloodlit","Twilight","Voidtouched","Foxfire","Aurora",
+    "Static","Stormcloud","Frost","Burnt","Lethal","Cooked","Choc","Nightmare","Venom",
+    "UFO","HyperHunger","Spectral","Silver","Corrupted",
+}
+PetDetect.MUT_CODE = {
+    EV = "Everchanted", HH = "HyperHunger", NM = "Nightmare", VN = "Venom",
+}
+function PetDetect.normMut(raw)
+    if not raw or raw == "" then return nil end
+    local s = tostring(raw)
+    if PetDetect.MUT_CODE[s] then return PetDetect.MUT_CODE[s] end
+    return (s:gsub("%s+$", ""))
+end
+local function mutBoost(mut)
+    local m = PetDetect.normMut(mut)
+    return (PetDetect.MUTATION_BOOST[m or ""] or 0) / 100
+end
+
+-- SEAL: rumus PET STAT (pakai BaseWeight × 1.1 sebagai Wh, lalu W=(Wh/11)*(age+10))
+function PetDetect.sealPct(baseWeight, age, mut)
+    if not baseWeight or not age then return 0 end
+    local Wh = baseWeight * 1.1
+    local W = (Wh / 11) * (age + 10)
+    local base = (W <= 100) and (0.05 * W + 1.0) or (6.0 + 0.0125 * (W - 100))
+    return base + mutBoost(mut)
+end
+
+-- KOI: egg-back chance = 0.22 × dispW + 1 (display weight)
+function PetDetect.koiPct(dispW, mut)
+    if not dispW then return 0 end
+    return (0.22 * dispW + 1.0) + mutBoost(mut)
+end
+
+-- BRONTO: dari tabel resmi = 0.10 × dispW + 5.25 (display weight)
+-- boost mutasi BEDA dari Koi/Seal: proporsional ke berat (bukan additive flat).
+--   selisih = (mutBoost/100) × dispW × 0.161  (terverifikasi: venom/golden/nightmare di W=32.73)
+function PetDetect.brontoPct(dispW, mut)
+    if not dispW then return 0 end
+    local base = 0.10 * dispW + 5.25
+    local m = PetDetect.normMut(mut)
+    local mb = PetDetect.MUTATION_BOOST[m or ""] or 0
+    local boost = (mb / 100) * dispW * 0.161
+    return base + boost
+end
+
+-- jumlah seal% gabungan dari pet yg DIPILIH (set uuid->true) yg namanya mengandung keyword.
+-- nama diambil dari backpack (terbukti akurat), stat (BaseWeight/Level/Mut) dari cache PetData.
+-- return: total persen, jumlah pet yg ke-hitung
+-- jumlah egg-back% gabungan dari pet yg DIPILIH (set uuid->true) yg namanya mengandung keyword.
+-- pctType: "koi"|"bronto"|"seal" buat milih rumus. dispW dari berat sesuai age.
+function PetDetect.sumPctSelected(selectedSet, keyword, pctType)
+    local sum, n = 0, 0
+    if not selectedSet then return 0, 0 end
+    local byUuid = {}
+    for _, p in ipairs(PetDetect.listBackpackPets()) do byUuid[p.uuid] = p end
+    local kw = keyword and keyword:lower() or nil
+    for uuid in pairs(selectedSet) do
+        local p = byUuid[uuid]
+        if p then
+            local nm = p.name or ""
+            local match = (not kw) or (nm:lower():find(kw, 1, true) ~= nil)
+            if match then
+                -- v17.2: mutasi dari NAMA TOOL dulu (prefix lengkap: UFO/Venom/Nightmare jelas),
+                -- baru MutationType (sering cuma code 'A'/'X'/'Z' yg gak dikenal -> boost 0).
+                local pd = PetDetect.cache[uuid] or PetDetect.cache["{"..uuid.."}"]
+                local mut = nil
+                if p.rawName then
+                    for _, pre in ipairs(PetDetect.MUT_PREFIXES) do
+                        if p.rawName:find(pre, 1, true) then mut = pre break end
+                    end
+                end
+                -- fallback: MutationType (kalau nama tool gak ada prefix mutasi)
+                if not mut then
+                    mut = pd and pd.MutationType
+                end
+                local add = 0
+                if pctType == "seal" then
+                    if pd and pd.BaseWeight and pd.Level then
+                        add = PetDetect.sealPct(pd.BaseWeight, pd.Level, mut)
+                    end
+                elseif pctType == "bronto" then
+                    add = PetDetect.brontoPct(p.dispKg, mut)
+                else  -- koi
+                    add = PetDetect.koiPct(p.dispKg, mut)
+                end
+                sum = sum + add
+                n = n + 1
+                if PetDetect.DEBUG_PCT then
+                    print(string.format("[SealDbg] %s | kg=%s age=%s mut=%s -> %.2f",
+                        tostring(nm):sub(1,20), tostring(pd and pd.BaseWeight),
+                        tostring(pd and pd.Level), tostring(mut), add))
+                end
+            end
+        end
+    end
+    return sum, n
+end
+
+-- cari container UUID->PetData yg berisi PET KITA (backpack + garden), bukan yg terbanyak.
+-- (DB global pet bisa 219 entri tapi GARDEN=0; container milik kita ~56 entri tapi punya garden)
+function PetDetect.findContainer()
+    if not getgc then return nil, 0 end
+    -- kumpulin uuid pet kita: dari backpack/char + dari workspace garden
+    local mine = {}
+    pcall(function()
+        local function addTool(holder)
+            if not holder then return end
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID")
+                    if u then mine[tostring(u):gsub("[{}]","")] = true end
+                end
+            end
+        end
+        addTool(player:FindFirstChild("Backpack"))
+        addTool(player.Character)
+        -- pet di garden (Workspace.PetsPhysical dll)
+        for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+            local f = Workspace:FindFirstChild(nm)
+            if f then
+                for _, d in ipairs(f:GetDescendants()) do
+                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
+                    if not u then
+                        local n = d.Name:gsub("[{}]","")
+                        if #n >= 32 and n:find("-") then u = n end
+                    end
+                    if u then mine[tostring(u):gsub("[{}]","")] = true end
+                end
+            end
+        end
+    end)
+
+    local best, bestScore, bestCnt = nil, -1, 0
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                local valid, mineHits, scanned = 0, 0, 0
+                for k, v in pairs(obj) do
+                    if type(k) == "string" and #k >= 32 and k:find("-")
+                       and type(v) == "table" and rawget(v, "PetData") then
+                        valid = valid + 1
+                        local clean = k:gsub("[{}]","")
+                        if mine[clean] then mineHits = mineHits + 1 end
+                    end
+                    scanned = scanned + 1
+                    if scanned > 1200 then break end
+                end
+                if valid >= 3 then
+                    -- SKOR: utamakan container yg berisi pet kita (mineHits), bukan yg terbesar.
+                    -- mineHits dikali besar biar dominan; valid cuma tie-breaker kecil.
+                    local score = mineHits * 100000 + valid
+                    if score > bestScore then best, bestScore, bestCnt = obj, score, valid end
+                end
+            end
+        end
+    end)
+    return best, bestCnt
+end
+
+-- build cache uuid -> PetData. MERGE semua container yg berisi pet kita
+-- (pet bisa kesebar di container #2 & #3; garden pet kadang di salah satunya).
+PetDetect.lastRebuild = 0
+PetDetect.rebuildTTL = 8  -- v21.2: detik; getgc SANGAT berat (apalagi pet/egg banyak). dulu 3s -> lag.
+function PetDetect.rebuild(force)
+    -- throttle: skip kalau baru rebuild < TTL detik lalu (kecuali force)
+    local now = tick()
+    if not force and PetDetect.cache and (now - PetDetect.lastRebuild) < PetDetect.rebuildTTL then
+        return PetDetect.count or 0
+    end
+    PetDetect.lastRebuild = now
+    PetDetect.cache = {}
+    if not getgc then return 0 end
+    -- 1) kumpulin uuid pet kita (bp + char + garden)
+    local mine = {}
+    pcall(function()
+        local function addTool(holder)
+            if not holder then return end
+            for _, t in ipairs(holder:GetChildren()) do
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID")
+                    if u then mine[tostring(u):gsub("[{}]","")] = true end
+                end
+            end
+        end
+        addTool(player:FindFirstChild("Backpack"))
+        addTool(player.Character)
+        -- v17.0: garden (PetsPhysical dll) berisi pet SEMUA pemain di server.
+        -- HANYA ambil pet milik kita (cek OWNER = nama/UserId kita). dulu semua ke-ambil
+        -- -> pet pemain lain ikut kehitung (mis garden orang +8 -> total meleset).
+        local myName = player.Name
+        local myId = tostring(player.UserId)
+        local function ownerIsMine(d)
+            -- cek owner di node ini atau ancestor terdekat (model induk pet).
+            -- atribut aslinya 'owner' (lowercase) — GetAttribute case-sensitive!
+            local cur = d
+            for _ = 1, 6 do  -- naik max 6 level cari atribut owner
+                if not cur or cur == Workspace then break end
+                local o = cur:GetAttribute("owner") or cur:GetAttribute("OWNER")
+                    or cur:GetAttribute("Owner") or cur:GetAttribute("UserId")
+                    or cur:GetAttribute("OwnerUserId") or cur:GetAttribute("OwnerId")
+                if o ~= nil then
+                    local os = tostring(o)
+                    return (os == myName or os == myId)
+                end
+                cur = cur.Parent
+            end
+            return nil  -- owner gak ketemu (tak tentu)
+        end
+        for _, nm in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+            local f = Workspace:FindFirstChild(nm)
+            if f then
+                for _, d in ipairs(f:GetDescendants()) do
+                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
+                    if not u then
+                        local n = d.Name:gsub("[{}]","")
+                        if #n >= 32 and n:find("-") then u = n end
+                    end
+                    if u then
+                        local mineFlag = ownerIsMine(d)
+                        -- masukin kalau owner = kita ATAU owner tak ketemu (fallback aman:
+                        -- pet kita yg baru di-place kadang owner blm ke-set). owner pemain lain -> SKIP.
+                        if mineFlag ~= false then
+                            mine[tostring(u):gsub("[{}]","")] = true
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    -- 2) walk SEMUA container, merge entry dari container yg berisi >=1 pet kita
+    local n = 0
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                -- cek dulu apakah container ini punya pet kita
+                local hasMine, valid, scanned = false, 0, 0
+                for k, v in pairs(obj) do
+                    if type(k) == "string" and #k >= 32 and k:find("-")
+                       and type(v) == "table" and rawget(v, "PetData") then
+                        valid = valid + 1
+                        if mine[k:gsub("[{}]","")] then hasMine = true end
+                    end
+                    scanned = scanned + 1
+                    if scanned > 1500 then break end
+                end
+                -- merge kalo container berisi pet kita (skip DB global 219 yg gak ada pet kita)
+                -- v16.9: HANYA simpan pet yg uuid-nya MILIK KITA (ada di set `mine`).
+                -- dulu merge SEMUA pet di container -> ikut hitung pet pemain lain yg nyangkut
+                -- di container yg sama -> count meledak (mis 341 padahal asli 195).
+                if hasMine and valid >= 1 then
+                    for k, v in pairs(obj) do
+                        if type(k) == "string" and #k >= 32 and k:find("-")
+                           and type(v) == "table" and rawget(v, "PetData") then
+                            local clean = k:gsub("[{}]","")
+                            if mine[clean] then  -- cuma pet milik kita
+                                if not PetDetect.cache[clean] then n = n + 1 end
+                                PetDetect.cache[clean] = v.PetData
+                                PetDetect.cache["{"..clean.."}"] = v.PetData
+                                -- v27.7: PetType ada di level LUAR PetData (sibling).
+                                -- simpan terpisah biar resolve nama pet garden gak jatuh ke UUID.
+                                local pt = rawget(v, "PetType")
+                                if pt and tostring(pt) ~= "" then
+                                    PetDetect.typeCache[clean] = tostring(pt)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    PetDetect.count = n
+    return n
+end
+
+-- base age-1 dari BaseWeight server (×1.1) — akurat age berapa pun
+function PetDetect.baseKg(pd)
+    if pd and pd.BaseWeight and pd.BaseWeight > 0 then
+        return pd.BaseWeight * 1.1
+    end
+    return nil
+end
+
+-- list SEMUA pet milik kita (termasuk yg di garden/placed) dari container,
+-- dilengkapi data dari tool backpack (nama & dispKg akurat) kalau ada.
+-- return array {uuid, name, rawName, mut, dispKg, level, fav, hasData, inBackpack}
+-- v21.8: fungsi RAW (berat). dibungkus cache di bawah biar gak scan ulang tiap panggil.
+function PetDetect._listBackpackPetsRaw()
+    -- 1) kumpulin tool yg ada di backpack/character (sumber nama & dispKg paling akurat)
+    local toolByUuid = {}
+    local function scanTools(holder)
+        if not holder then return end
+        for _, t in ipairs(holder:GetChildren()) do
+            if t:IsA("Tool") then
+                local uuid = t:GetAttribute("PET_UUID")
+                local isPetTool = t:FindFirstChild("PetToolLocal") or uuid
+                if uuid and isPetTool then
+                    local clean = tostring(uuid):gsub("^{", ""):gsub("}$", "")
+                    toolByUuid[clean] = t
+                end
+            end
+        end
+    end
+    scanTools(player:FindFirstChild("Backpack"))
+    scanTools(player.Character)
+
+    -- lookup nama TIPE pet dari workspace (buat pet garden yg PetData-nya gak punya PetType)
+    local gardenName = {}
+    pcall(function()
+        for _, fname in ipairs({"PetsPhysical","Pets","PlacedPets","ActivePets"}) do
+            local f = Workspace:FindFirstChild(fname)
+            if f then
+                for _, d in ipairs(f:GetDescendants()) do
+                    local u = d:GetAttribute("PET_UUID") or d:GetAttribute("UUID")
+                    if not u then
+                        local n = d.Name:gsub("[{}]","")
+                        if #n >= 32 and n:find("-") then u = n end
+                    end
+                    if u then
+                        local clean = tostring(u):gsub("[{}]","")
+                        if not gardenName[clean] then
+                            -- cari nama tipe: atribut PetType/Type, atau dari child TextLabel PET_TYPE
+                            local nm = d:GetAttribute("PetType") or d:GetAttribute("Type")
+                                or d:GetAttribute("PetName") or d:GetAttribute("Name")
+                            if not nm then
+                                for _, c in ipairs(d:GetDescendants()) do
+                                    if c:IsA("TextLabel") and (c.Name == "PET_TYPE" or c.Name == "PetType")
+                                       and c.Text and #c.Text > 0 then
+                                        nm = c.Text break
+                                    end
+                                end
+                            end
+                            if nm and tostring(nm) ~= "" and not tostring(nm):find("-") then
+                                gardenName[clean] = tostring(nm)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    PetDetect._gardenName = gardenName
+
+    local out = {}
+    local seen = {}
+
+    -- helper: bikin entry dari uuid + PetData (+ tool kalau ada)
+    local function makeEntry(clean, pd, tool)
+        if seen[clean] then return end
+        seen[clean] = true
+        local nm, dispKg
+        if tool then
+            nm = tostring(tool.Name)
+            dispKg = tonumber(nm:match("%[([%d%.]+)%s*[Kk][Gg]%]"))
+        end
+        -- nama dasar (buang [KG]/[Age]); kalo gak ada tool, ambil dari PetData
+        local baseName
+        if nm then
+            baseName = nm:gsub("%s*%[.-%]", ""):gsub("%s+$", "")
+            -- simpan ke cache persisten (buat nanti pas pet pindah ke garden)
+            if baseName ~= "" then PetDetect.nameCache[clean] = baseName end
+        else
+            -- pet di garden: PetData → typeCache → workspace → CACHE persisten → UUID
+            local t = pd and (pd.PetType or pd.Type or pd.Kind or pd.Species)
+            -- v27.7: PetType gak ada di dalam PetData; ambil dari typeCache (level luar)
+            if (not t or tostring(t) == "") and PetDetect.typeCache then
+                t = PetDetect.typeCache[clean]
+            end
+            if (not t or tostring(t) == "") and PetDetect._gardenName then
+                t = PetDetect._gardenName[clean]
+            end
+            if (not t or tostring(t) == "") then
+                t = PetDetect.nameCache[clean]  -- nama dari waktu pet masih di backpack
+            end
+            if t and tostring(t) ~= "" then
+                baseName = tostring(t)
+            else
+                baseName = clean:sub(1, 8) .. "…"  -- last resort
+            end
+            nm = baseName
+        end
+        -- dispKg: dari tool, fallback hitung dari BaseWeight & Level
+        if not dispKg and pd and pd.BaseWeight and pd.Level then
+            dispKg = pd.BaseWeight * (pd.Level + 10) / 10
+        end
+        -- v17.2: mutasi — NAMA TOOL dulu (prefix lengkap), baru MutationType code.
+        local mut = nil
+        if nm then  -- nm = nama tool (rawName), punya prefix mutasi jelas
+            for _, pre in ipairs(PetDetect.MUT_PREFIXES) do
+                if tostring(nm):find(pre, 1, true) then mut = pre break end
+            end
+        end
+        if not mut then
+            mut = pd and pd.MutationType and tostring(pd.MutationType) or nil
+            if mut and PetDetect.MUT_SHORT[mut] then mut = PetDetect.MUT_SHORT[mut] end
+        end
+        -- favorit: PetData.IsFavorite, fallback atribut tool
+        local fav = false
+        if pd and pd.IsFavorite == true then fav = true end
+        if not fav and tool then
+            for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
+                if tool:GetAttribute(attr) == true then fav = true break end
+            end
+        end
+        table.insert(out, {
+            uuid = clean,
+            name = baseName,
+            rawName = nm,
+            mut = (mut and mut ~= "" and mut) or nil,
+            dispKg = dispKg,
+            age1Kg = PetDetect.baseKg(pd),  -- berat di age 1 (BaseWeight×1.1)
+            level = pd and pd.Level or nil,
+            fav = fav,
+            hasData = pd ~= nil,
+            inBackpack = tool ~= nil,
+            tool = tool,  -- Instance Tool (buat sell/favorite remote)
+        })
+    end
+
+    -- 2) sumber UTAMA: cache (gabungan semua container milik kita, termasuk pet garden)
+    -- cache punya key clean & braced; pakai set biar gak dobel
+    local doneUuid = {}
+    for k, pd in pairs(PetDetect.cache) do
+        local clean = tostring(k):gsub("[{}]", "")
+        if not doneUuid[clean] and type(pd) == "table" then
+            doneUuid[clean] = true
+            makeEntry(clean, pd, toolByUuid[clean])
+        end
+    end
+    -- 3) tambahin tool yg belum ke-cover cache (jaga-jaga)
+    for clean, tool in pairs(toolByUuid) do
+        if not seen[clean] then
+            local pd = PetDetect.cache[clean] or PetDetect.cache["{"..clean.."}"]
+            makeEntry(clean, pd, tool)
+        end
+    end
+    return out
+end
+-- v21.8: WRAPPER cache — listBackpackPets dipanggil di banyak tempat (title bar, automation loop).
+-- Tanpa cache, tiap panggilan scan ulang (berat, apalagi pet banyak) -> lag. Cache 2 detik.
+PetDetect._lbpCache, PetDetect._lbpTime = nil, 0
+function PetDetect.listBackpackPets(force)
+    if not force and PetDetect._lbpCache and (tick() - PetDetect._lbpTime) < 2 then
+        return PetDetect._lbpCache
+    end
+    local out = PetDetect._listBackpackPetsRaw()
+    PetDetect._lbpCache = out; PetDetect._lbpTime = tick()
+    return out
+end
+
+
+-- (v-panen: baris cleanup hact DIBUANG — panen jangan stop/destroy hact yg lagi jalan)
+-- gen guard tetep dipake buat isCurrentGen (dipakai listBackpackPets cache)
+_G.ZenxPanenGen = (_G.ZenxPanenGen or 0) + 1
+local MY_GEN = _G.ZenxPanenGen
+local function isCurrentGen() return _G.ZenxPanenGen == MY_GEN end
+
+_G.ZenxPanenPetDetect = PetDetect
+
+-- ============================================================
+-- ENGINE GEM EGG — swap skill (mekanik gacor) + tim + reset 60s
+-- ============================================================
+local RS = game:GetService("ReplicatedStorage")
+
+-- ----- remotes + cooldown (dari swap_test / leveling) -----
+local equipRE, getCooldownRF
+for _, v in pairs(RS:GetDescendants()) do
+    if v.Name == "PetsService" and v:IsA("RemoteEvent") then equipRE = v end
+    if v.Name == "GetPetCooldown" and v:IsA("RemoteFunction") then getCooldownRF = v end
+end
+if not equipRE then
+    for _, v in pairs(RS:GetDescendants()) do
+        if v.Name == "PetsService" then equipRE = v; break end
+    end
+end
+local function fmtUUID(u) local s = tostring(u); if s:sub(1,1) ~= "{" then s = "{"..s.."}" end return s end
+local function unequipPet(uuid) pcall(function() equipRE:FireServer("UnequipPet", fmtUUID(uuid)) end) end
+-- RAHASIA GACOR: EquipPet kasih 1 OBJEK CFrame (bukan nil, bukan 12 angka)
+local function equipPet(uuid, pos)
+    if pos then pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), CFrame.new(pos)) end)
+    else pcall(function() equipRE:FireServer("EquipPet", fmtUUID(uuid), nil) end) end
+end
+
+-- ----- cooldown ready (event PetCooldownsUpdated + GetPetCooldown) -----
+local cdEventCache = {}
+do
+    local ge = RS:FindFirstChild("GameEvents")
+    local pcu = ge and ge:FindFirstChild("PetCooldownsUpdated")
+    local req = ge and ge:FindFirstChild("RequestPetCooldowns")
+    if pcu and pcu:IsA("RemoteEvent") then
+        pcu.OnClientEvent:Connect(function(uuid, data)
+            local key = tostring(uuid):gsub("[{}]", "")
+            local t
+            if type(data) == "table" and type(data[1]) == "table" and type(data[1].Time) == "number" then t = data[1].Time end
+            cdEventCache[key] = { ready = (t ~= nil) and (t <= 0) or false, at = tick() }
+        end)
+    end
+    if req and req:IsA("RemoteEvent") then pcall(function() req:FireServer() end) end
+end
+local function petReady(uuid)
+    local key = tostring(uuid):gsub("[{}]", "")
+    local e = cdEventCache[key]
+    if e and tick() - e.at <= 8 then return e.ready end
+    if getCooldownRF then
+        local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(uuid)) end)
+        if ok and type(res) == "table" and type(res[1]) == "table" and type(res[1].Time) == "number" then
+            return res[1].Time <= 0
+        end
+    end
+    return nil
+end
+
+-- ----- center kebun (cluster pet, kayak gacor) -----
+local function farmCenter()
+    local farms = workspace:FindFirstChild("Farm")
+    if not farms then return nil end
+    for _, f in ipairs(farms:GetChildren()) do
+        local imp = f:FindFirstChild("Important")
+        local data = imp and imp:FindFirstChild("Data")
+        local owner = data and data:FindFirstChild("Owner")
+        if owner and owner.Value == player.Name then
+            local c = f:FindFirstChild("Center", true)
+            if c and c:IsA("BasePart") then return Vector3.new(c.Position.X, 4, c.Position.Z) end
+        end
+    end
+    return nil
+end
+
+-- ----- pet placed ({uuid} model) tracking -----
+local modelByUuid = {}
+local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" end
+local function regModel(m) if isPetModel(m) then modelByUuid[m.Name] = m end end
+pcall(function() for _, d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
+workspace.DescendantAdded:Connect(function(d) task.defer(function() pcall(regModel, d) end) end)
+workspace.DescendantRemoving:Connect(function(d) if isPetModel(d) and modelByUuid[d.Name] == d then modelByUuid[d.Name] = nil end end)
+
+-- ============================================================
+-- CONFIG GEM EGG
+-- ============================================================
+local GEM = {
+    aktif    = false,
+    pickup   = 0.3,
+    place    = 0.0,
+    resetTiap= 60,
+    -- tim: tipe pet -> jumlah
+    tim = { ["Mimic Octopus"] = 6, ["Spider"] = 1, ["Bearded Dragon"] = 1 },
+}
+_G.ZenxGem = GEM
+
+-- daftar uuid tim yg lagi dipakai (diisi pas equipTeam)
+local timUuids = {}     -- uuid -> true
+local CLUSTER = nil
+
+-- cari + equip tim dari backpack (6 Mimic + 1 Spider + 1 Bearded Dragon)
+local function gemLog(s) if _G.ZenxGemLog then _G.ZenxGemLog(s) end print("[GemEgg] "..s) end
+
+local function cocokTipe(petName, target)
+    if not petName then return false end
+    petName = tostring(petName):lower(); target = tostring(target):lower()
+    return petName == target or petName:find(target, 1, true) ~= nil
+end
+
+local function equipTeam()
+    timUuids = {}
+    local pets = {}
+    pcall(function() pets = PetDetect.listBackpackPets(true) or {} end)
+    -- kelompokin per tipe target
+    local ambil = 0
+    for tipe, jml in pairs(GEM.tim) do
+        local n = 0
+        for _, p in ipairs(pets) do
+            if n >= jml then break end
+            if not timUuids[fmtUUID(p.uuid)] and cocokTipe(p.name, tipe) then
+                equipPet(p.uuid, CLUSTER)   -- equip ke center (cluster)
+                timUuids[fmtUUID(p.uuid)] = true
+                n = n + 1; ambil = ambil + 1
+                task.wait(0.06)
+            end
+        end
+        gemLog(("equip %s: %d/%d"):format(tipe, n, jml))
+    end
+    gemLog("total equip: " .. ambil)
+    return ambil
+end
+
+-- unequip SEMUA pet placed
+local function unequipSemua()
+    for uuid in pairs(modelByUuid) do unequipPet(uuid); task.wait(0.04) end
+end
+
+-- ----- swap engine (antre 1-1, cooldown-ready, cluster) -----
+local queue, inQueue, busy, lastSwap, lastPos = {}, {}, {}, {}, {}
+local function enqueue(uuid)
+    if busy[uuid] or inQueue[uuid] then return end
+    inQueue[uuid] = true
+    local pos = CLUSTER
+    if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
+    if not pos then pos = lastPos[uuid] end
+    if pos then lastPos[uuid] = pos end
+    table.insert(queue, { uuid = uuid, pos = pos })
+end
+-- worker swap
+task.spawn(function()
+    while true do
+        task.wait(0.03)
+        if GEM.aktif and #queue > 0 then
+            local it = table.remove(queue, 1); local uuid = it.uuid
+            inQueue[uuid] = nil; busy[uuid] = true
+            if GEM.pickup > 0 then task.wait(GEM.pickup) end
+            unequipPet(uuid)
+            if GEM.place > 0 then task.wait(GEM.place) else task.wait(0.01) end
+            equipPet(uuid, it.pos or lastPos[uuid])
+            lastSwap[uuid] = tick()
+            task.spawn(function()
+                for i = 1, 3 do
+                    task.wait(0.35)
+                    local m = modelByUuid[uuid]; if m and m.Parent then break end
+                    equipPet(uuid, lastPos[uuid])
+                end
+                busy[uuid] = nil
+            end)
+        end
+    end
+end)
+-- loop ready: pet tim yg ready -> antre
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if GEM.aktif then
+            for uuid in pairs(modelByUuid) do
+                if timUuids[uuid] and not busy[uuid] and not inQueue[uuid] then
+                    local rdy = petReady(uuid)
+                    local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
+                    if (rdy == true and idle > 0.15) or (rdy == nil and idle > 4) then enqueue(uuid) end
+                end
+            end
+        end
+    end
+end)
+
+-- ----- START / STOP gem egg -----
+local function gemStart()
+    GEM.aktif = true
+    CLUSTER = farmCenter()
+    gemLog("START. center=" .. (CLUSTER and "ada" or "NIL"))
+    task.spawn(function()
+        equipTeam()   -- equip tim awal
+        -- loop reset tiap resetTiap detik
+        while GEM.aktif do
+            for _ = 1, GEM.resetTiap do
+                if not GEM.aktif then return end
+                task.wait(1)
+            end
+            if not GEM.aktif then return end
+            gemLog("RESET: ambil semua -> masukin ulang")
+            unequipSemua()
+            task.wait(0.5)
+            equipTeam()
+        end
+    end)
+end
+local function gemStop()
+    GEM.aktif = false
+    task.spawn(function()
+        task.wait(0.15)      -- kasih waktu loop swap berhenti
+        unequipSemua()       -- kosongin garden (ambil semua pet)
+        gemLog("STOP + garden dikosongin")
+    end)
+end
+_G.ZenxGemStart = gemStart
+_G.ZenxGemStop  = gemStop
+
+-- ============================================================
+-- ENGINE SEED RAIN — auto-collect seed rain (semua tier)
+-- COLLECT = ProximityPrompt (fireproximityprompt). Auto ON pas ada rain.
+-- ============================================================
+local SEED = {
+    auto  = false,      -- master: auto-collect pas ada seed di tanah
+    jeda  = 0.01,
+    spam  = 5,
+    tp    = true,
+    yOfs  = 3,
+    ground = true,
+    maxY  = 6,
+    rain  = "-",
+    collect = 0,
+    adaSeed = 0,
+}
+_G.ZenxSeed = SEED
+local FP_ADA = type(fireproximityprompt) == "function"
+local function seedLog(s) if _G.ZenxSeedLog then _G.ZenxSeedLog(s) end print("[Seed] " .. s) end
+
+local function seedCariPrompts()
+    local out = {}
+    local wv = workspace:FindFirstChild("WeatherVisuals")
+    local root = wv or workspace
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            local seed = d.Parent
+            local lolosG = true
+            if SEED.ground and seed then
+                local ok, y = pcall(function()
+                    if seed:IsA("BasePart") then return seed.Position.Y end
+                    return seed:GetPivot().Position.Y
+                end)
+                if ok and type(y) == "number" then lolosG = (y <= SEED.maxY) end
+            end
+            if lolosG then out[#out+1] = d end
+        end
+    end
+    return out
+end
+
+local function seedCollect(prompt, hrp)
+    if SEED.tp and hrp then
+        local seed = prompt.Parent
+        local part = seed and (seed:IsA("BasePart") and seed or seed:FindFirstChildWhichIsA("BasePart"))
+        if part then pcall(function() hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, SEED.yOfs, 0)) end) end
+    end
+    pcall(function() prompt.RequiresLineOfSight = false end)
+    for i = 1, SEED.spam do
+        if FP_ADA then pcall(function() fireproximityprompt(prompt) end)
+        else pcall(function() prompt:InputHoldBegin(); prompt:InputHoldEnd() end) end
+    end
+end
+
+-- loop collect non-stop (jalan pas SEED.auto ON + ada seed)
+task.spawn(function()
+    while true do
+        if SEED.auto then
+            local prompts = seedCariPrompts()
+            SEED.adaSeed = #prompts
+            if #prompts > 0 then
+                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                for _, p in ipairs(prompts) do
+                    if not SEED.auto then break end
+                    seedCollect(p, hrp)
+                    SEED.collect = SEED.collect + 1
+                end
+            end
+        end
+        task.wait(SEED.jeda)
+    end
+end)
+
+-- info rain mulai (buat status)
+do
+    local ge = RS:FindFirstChild("GameEvents")
+    local w = ge and ge:FindFirstChild("WeatherEventStarted")
+    if w and w:IsA("RemoteEvent") then
+        w.OnClientEvent:Connect(function(nama, durasi)
+            if tostring(nama):find("SeedRain") then
+                SEED.rain = tostring(nama) .. " (" .. tostring(durasi) .. "s)"
+                seedLog("RAIN: " .. SEED.rain .. (SEED.auto and " -> auto collect" or ""))
+            end
+        end)
+    end
+end
+
+-- ============================================================
+-- AUTO DESTROY POHON (SELALU ON) — FPS naik
+-- ============================================================
+do
+    local WS = workspace
+    local function semuaFarm()
+        local roots = {}
+        local farm = WS:FindFirstChild("Farm")
+        if farm then
+            for _, f in ipairs(farm:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            end
+        end
+        if #roots == 0 then
+            for _, f in ipairs(WS:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            end
+        end
+        return roots
+    end
+    local function destroyPohonSemua()
+        local roots = semuaFarm(); local n = 0
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end); n = n + 1 end
+            end
+        end
+        return n
+    end
+    task.spawn(function() task.wait(3); destroyPohonSemua() end)
+    task.spawn(function()
+        local farm = WS:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                task.wait(0.05); pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+    task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
+end
+
+-- ============ SCREEN GUI ============
+-- buang GUI lama kalau re-exec
+pcall(function()
+    local old = (gethui and gethui() or CoreGui):FindFirstChild("ZenxPanenEgg")
+    if old then old:Destroy() end
+end)
+
+local gui = mk("ScreenGui", {
+    Name = "ZenxPanenEgg", ResetOnSpawn = false, IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
+pcall(function() gui.Parent = (gethui and gethui()) or CoreGui end)
+if not gui.Parent then gui.Parent = player:WaitForChild("PlayerGui") end
+
+-- main frame
+local main = mk("Frame", {
+    Size = UDim2.new(0, 660, 0, 420),
+    Position = UDim2.new(0.5, -330, 0.5, -210),
+    BackgroundColor3 = C.bg, BorderSizePixel = 0, Parent = gui })
+corner(main, 12)
+stroke(main, C.border, 1.5)
+
+-- ============ TITLE BAR ============
+local titleBar = mk("Frame", {
+    Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.panel,
+    BorderSizePixel = 0, Parent = main })
+mk("UICorner", { CornerRadius = UDim.new(0, 12), Parent = titleBar })
+-- nutup sudut bawah titlebar biar gak bulet
+mk("Frame", { Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0, Parent = titleBar })
+
+local judul = lbl(titleBar, "\u{1F95A} PANEN EGG", 15, C.text)
+judul.Font = FONT_B
+judul.Position = UDim2.new(0, 16, 0, 0); judul.Size = UDim2.new(0, 200, 1, 0)
+local verL = lbl(titleBar, VERSION, 11, C.textDim)
+verL.Position = UDim2.new(0, 150, 0, 0); verL.Size = UDim2.new(0, 60, 1, 0)
+
+-- tombol close + minimize (anchor kanan)
+local closeBtn = mk("TextButton", {
+    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -38, 0, 7),
+    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 15,
+    TextColor3 = C.textDim, AutoButtonColor = true, Parent = titleBar })
+corner(closeBtn, 7)
+local minBtn = mk("TextButton", {
+    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -74, 0, 7),
+    BackgroundColor3 = C.card, Text = "\u{2013}", Font = FONT_B, TextSize = 15,
+    TextColor3 = C.textDim, AutoButtonColor = true, Parent = titleBar })
+corner(minBtn, 7)
+
+-- drag manual (titlebar)
+do
+    local dragging, dragStart, startPos
+    titleBar.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = inp.Position; startPos = main.Position
+            inp.Changed:Connect(function()
+                if inp.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
+        or inp.UserInputType == Enum.UserInputType.Touch) then
+            local d = inp.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                      startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+-- minimize (sembunyiin body, sisain titlebar)
+local minimized = false
+local function bodyVisible(v)
+    for _, ch in ipairs(main:GetChildren()) do
+        if ch ~= titleBar and (ch:IsA("Frame") or ch:IsA("ScrollingFrame")) then
+            ch.Visible = v
+        end
+    end
+end
+minBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    bodyVisible(not minimized)
+    main.Size = minimized and UDim2.new(0, 660, 0, 44) or UDim2.new(0, 660, 0, 420)
+end)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+-- ============ SIDEBAR KIRI (AUTO PANEN / MISC) ============
+local sidebar = mk("Frame", {
+    Size = UDim2.new(0, 125, 1, -44), Position = UDim2.new(0, 0, 0, 44),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0, Parent = main })
+-- garis pemisah
+mk("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0),
+    BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = sidebar })
+
+local sidebarItems = { "AUTO PANEN", "MISC" }
+local activeSide = "AUTO PANEN"
+local sideBtns = {}
+local showSideFn   -- forward declare
+
+local function makeSideBtn(name, y)
+    local btn = mk("TextButton", {
+        Size = UDim2.new(1, -16, 0, 34), Position = UDim2.new(0, 8, 0, y),
+        BackgroundColor3 = (name == activeSide) and C.card or C.panel,
+        Text = "", AutoButtonColor = false, Parent = sidebar })
+    corner(btn, 7)
+    local accent = mk("Frame", {
+        Size = UDim2.new(0, 3, 0.6, 0), Position = UDim2.new(0, 0, 0.2, 0),
+        BackgroundColor3 = C.accent, BorderSizePixel = 0,
+        Visible = (name == activeSide), Parent = btn })
+    corner(accent, 2)
+    local t = lbl(btn, name, 11.5, (name == activeSide) and C.text or C.textDim)
+    t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(1, -12, 1, 0); t.Font = FONT_B
+    sideBtns[name] = { btn = btn, accent = accent, label = t }
+    btn.MouseButton1Click:Connect(function()
+        activeSide = name
+        for n, d in pairs(sideBtns) do
+            local on = (n == name)
+            d.btn.BackgroundColor3 = on and C.card or C.panel
+            d.accent.Visible = on
+            d.label.TextColor3 = on and C.text or C.textDim
+        end
+        if showSideFn then showSideFn(name) end
+    end)
+    return btn
+end
+makeSideBtn("AUTO PANEN", 14)
+makeSideBtn("MISC", 54)
+
+-- ============ AREA KONTEN ============
+-- konten AUTO PANEN
+local content = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Parent = main })
+pad(content, 14)
+
+-- konten MISC (disembunyiin dulu)
+local miscContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(miscContent, 14)
+
+-- switch konten
+showSideFn = function(name)
+    content.Visible     = (name == "AUTO PANEN")
+    miscContent.Visible = (name == "MISC")
+end
+
+-- ---- KONTEN AUTO PANEN (kanan) = CONFIG (bukan tim-tim) ----
+-- ScrollingFrame biar muat banyak config nanti
+local cfgScroll = mk("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    Parent = content })
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = cfgScroll })
+
+-- helper section header
+local function sectionHeader(txt, lo)
+    local h = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = lo or 0, Parent = cfgScroll })
+    corner(h, 7)
+    local t = lbl(h, txt, 13, C.accent); t.Font = FONT_B
+    t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(1, -12, 1, 0)
+    return h
+end
+-- helper baris config (label + kotak isi) — buat dipakai nanti
+local function cfgRow(label, defaultVal, lo)
+    local r = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.panel,
+        BorderSizePixel = 0, LayoutOrder = lo or 0, Parent = cfgScroll })
+    corner(r, 6)
+    local t = lbl(r, label, 12, C.text)
+    t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(0.55, 0, 1, 0)
+    local box = mk("TextBox", { Size = UDim2.new(0, 100, 0, 24), Position = UDim2.new(1, -110, 0.5, -12),
+        BackgroundColor3 = C.input, Text = tostring(defaultVal or ""), Font = FONT_B, TextSize = 12,
+        TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false,
+        Parent = r })
+    corner(box, 5); stroke(box, C.border, 1)
+    return box, r
+end
+
+-- ============ SECTION: CONFIG GEM EGG ============
+sectionHeader("\u{2699} CONFIG GEM EGG", 1)
+
+-- tombol AUTO ON/OFF
+local gemTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "AUTO GEM EGG: OFF", Font = FONT_B, TextSize = 13, TextColor3 = C.textDim,
+    LayoutOrder = 2, Parent = cfgScroll })
+corner(gemTog, 7)
+gemTog.MouseButton1Click:Connect(function()
+    if _G.ZenxGem and _G.ZenxGem.aktif then
+        if _G.ZenxGemStop then _G.ZenxGemStop() end
+        gemTog.Text = "AUTO GEM EGG: OFF"; gemTog.TextColor3 = C.textDim; gemTog.BackgroundColor3 = C.card
+    else
+        if _G.ZenxGemStart then _G.ZenxGemStart() end
+        gemTog.Text = "AUTO GEM EGG: ON"; gemTog.TextColor3 = Color3.fromRGB(0,230,118); gemTog.BackgroundColor3 = C.panel
+    end
+end)
+
+-- info settingan (fixed sesuai spec)
+local infoTxt = "Pick Up 0.3 \u{00b7} Place 0 \u{00b7} reset tiap 60s\nTim: 6 Mimic + 1 Spider + 1 Bearded Dragon"
+local gemInfo = lbl(cfgScroll, infoTxt, 11.5, C.textDim)
+gemInfo.Size = UDim2.new(1, 0, 0, 40); gemInfo.TextWrapped = true; gemInfo.LayoutOrder = 3
+
+-- log area
+local gemLogBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 120), BackgroundColor3 = C.panel,
+    Font = Enum.Font.Code, TextSize = 10.5, TextColor3 = C.textDim,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Text = "log gem egg...", LayoutOrder = 4, Parent = cfgScroll })
+corner(gemLogBox, 6)
+mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6), Parent = gemLogBox })
+
+-- wire log engine -> UI
+do
+    local logLines = {}
+    _G.ZenxGemLog = function(s)
+        table.insert(logLines, 1, os.date("%H:%M:%S ") .. s)
+        while #logLines > 10 do table.remove(logLines) end
+        gemLogBox.Text = table.concat(logLines, "\n")
+    end
+end
+
+-- ---- konten MISC = AUTO SEED RAIN ----
+local msH = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+    BorderSizePixel = 0, Parent = miscContent }); corner(msH, 7)
+local msHt = lbl(msH, "\u{2601} AUTO SEED RAIN", 13, C.accent); msHt.Font = FONT_B
+msHt.Position = UDim2.new(0, 12, 0, 0); msHt.Size = UDim2.new(1, -12, 1, 0)
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscContent })
+msH.LayoutOrder = 1
+
+-- toggle master
+local srTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "AUTO SEED RAIN: OFF", Font = FONT_B, TextSize = 13, TextColor3 = C.textDim,
+    LayoutOrder = 2, Parent = miscContent }); corner(srTog, 7)
+srTog.MouseButton1Click:Connect(function()
+    _G.ZenxSeed.auto = not _G.ZenxSeed.auto
+    local on = _G.ZenxSeed.auto
+    srTog.Text = "AUTO SEED RAIN: " .. (on and "ON" or "OFF")
+    srTog.TextColor3 = on and Color3.fromRGB(0,230,118) or C.textDim
+    srTog.BackgroundColor3 = on and C.panel or C.card
+end)
+
+-- info setelan (fixed sesuai spec)
+local srInfo = lbl(miscContent,
+    "Auto ON pas ada rain (tier apapun)\njeda 0.01 \u{00b7} spam E \u{00b7} TP ON \u{00b7} Ground ON",
+    11.5, C.textDim); srInfo.Size = UDim2.new(1, 0, 0, 40); srInfo.TextWrapped = true; srInfo.LayoutOrder = 3
+
+-- status
+local srStat = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 90), BackgroundColor3 = C.panel,
+    Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.textDim,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Text = "", LayoutOrder = 4, Parent = miscContent }); corner(srStat, 6)
+mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6), Parent = srStat })
+do
+    local logLine = FP_ADA and "fireproximityprompt: ADA" or "fireproximityprompt: GAK ADA!"
+    _G.ZenxSeedLog = function(s) logLine = s end
+    task.spawn(function()
+        while gui.Parent do
+            srStat.Text = ("Rain: %s\nSeed di tanah: %d\nCollected: %d\n\n%s"):format(
+                SEED.rain, SEED.adaSeed, SEED.collect, logLine)
+            task.wait(0.25)
+        end
+    end)
+end
+
+-- ============ EXPOSE (biar gampang di-extend nanti) ============
+_G.ZenxPanen = {
+    gui = gui, main = main, content = content, miscContent = miscContent,
+    cfgScroll = cfgScroll, sectionHeader = sectionHeader, cfgRow = cfgRow,
+    C = C, mk = mk, corner = corner, stroke = stroke, lbl = lbl, FONT = FONT, FONT_B = FONT_B,
+}
+
+print("[PanenEgg] " .. VERSION .. " loaded (kerangka UI). Logika panen + tim pet nyusul.")
