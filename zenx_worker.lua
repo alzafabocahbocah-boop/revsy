@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.295-cf"
+local VERSION = "9.296-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7989,6 +7989,15 @@ local function run(cfg)
                             -- sekali. Sekarang cek cacheHidup: mati = buka.
                             if cacheHidup[pkg] then
                                 diGame = diGame + 1   -- proses hidup, denyut nyusul
+                            elseif KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 240 then
+                                -- v9.296: baru di-CLOSE/tembak (grace) -> JANGAN buka walau
+                                -- belum ada file denyut. FORCE dari panel yg buka. Cegah
+                                -- double-open pas boot (denyut-rejoin buka duluan, terus
+                                -- FORCE buka lagi). Dulu grace cuma dicek di cabang "denyut
+                                -- basi", gak di "belum ada file" -> boot tetep dobel.
+                                diGame = diGame + 1
+                                info(("[antrian] %s belum ada denyut TAPI baru di-close/tembak %ds lalu -> GRACE (tunggu FORCE)")
+                                    :format(ak or pkg, os.time() - KICK_DIURUS["tembak_ts:" .. pkg]))
                             else
                                 perluTembak[#perluTembak+1] = pkg   -- proses mati = buka
                                 info(("[antrian] %s proses MATI + belum ada denyut = WAJIB BUKA")
