@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.293-cf"
+local VERSION = "9.294-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -4647,6 +4647,13 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- pas cek lisensi di bawah.
     local lisensiAda = false
 
+    -- v9.294: ARCEUS gak pakai lisensi Delta (executor BEDA -- gak ada layar
+    -- "Enter key" Delta, gak ada berkas kunci Delta). Langsung anggap lisensiAda=true
+    -- -> skip semua cek + bypass Delta -> Arceus full fitur (grid, tembak barengan,
+    -- stagger 30s). Kalau tetep dicek Delta, Arceus bisa nyangkut / kurang fitur.
+    local arceusMode = (cfg.executor == "arceus")
+    if arceusMode then lisensiAda = true end
+
     -- v8.28: CEK KEY juga di jalur FAST. Dulu lisensiAda cuma di-set di
     -- `if not fast and not only` -- kalau FORCE masuk lewat fast=true,
     -- lisensiAda tetep false -> masuk cabang "tutup dulu client" (close_all)
@@ -4679,7 +4686,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- start sebagian -> client kebuka DULUAN (0/6...) tanpa cek lisensi -> nyangkut
     -- di layar key -> baru bypass di TENGAH sesi. Lisensi Delta itu per-DEVICE
     -- (semua client share), jadi HARUS dicek dulu apapun modenya (full/sebagian).
-    if not fast then
+    if not fast and not arceusMode then
         local kead, umur = lisensi_keadaan(cfg)
         -- v7.14: tembak barengan kalau GAK PERLU BYPASS KEY. Itu berarti:
         -- lisensi ADA, ATAU auto_key MATI (worker gak ngurus key -> gak ada
@@ -8610,7 +8617,7 @@ local function run(cfg)
         -- Kalau KEY API HILANG -> mulai dari awal LAGI (kayak Start): bypass key
         -- dulu, terus buka semua client (open_all fast=false = jalur bypass +
         -- buka ulang, persis start).
-        if cfg.auto_key == true and (now - lastLisensiCek) >= 600 then
+        if cfg.auto_key == true and cfg.executor ~= "arceus" and (now - lastLisensiCek) >= 600 then
             lastLisensiCek = now
             local kd = lisensi_keadaan(cfg)   -- v7.69: udah retry 3x di dalam
             -- v8.25: LOG status lisensi tiap 10 menit (user minta). Kalau key masih
