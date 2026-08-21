@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.296-cf"
+local VERSION = "9.297-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7133,6 +7133,9 @@ local function run(cfg)
             local psl  = obj:match('"ps_link"%s*:%s*"(.-)"')
             if akun and akun2pkg[akun] and psl and psl ~= "" then
                 local pkg = akun2pkg[akun]
+                -- v9.297: ps_link bisa "accessCode=X|share=Y" -> buang bagian share
+                -- (itu buat panel/mobile). Worker join pakai accessCode aja.
+                psl = psl:gsub("|share=.*$", "")
                 if not mapLink[pkg] then mapLink[pkg] = psl; nDapet = nDapet + 1 end
             end
         end
@@ -12332,9 +12335,21 @@ function getps_akun(cfg, cookie)
         -- accessCode dipake langsung executor -> join PRIVATE. Ini yg bener dari awal.
         local code = out:match('"accessCode"%s*:%s*"([%w%-]+)"')
         if code then
-            os.remove(tmp)
             local nama = out:match('"name"%s*:%s*"([^"]*)"')
-            return code, (nama or "PS") .. " [accessCode PRIVATE]"
+            -- v9.297: ambil SHARE LINK (privateServerLinkCode, buat login PS dari HP).
+            -- vipServerId dari LIST -> GET vip-servers/<id> -> field "link". BEDA dari
+            -- accessCode: accessCode buat executor tembak, share link buat mobile/browser.
+            local vsid = out:match('"vipServerId"%s*:%s*(%d+)')
+            local share = ""
+            if vsid then
+                local su = "https://games.roblox.com/v1/vip-servers/" .. vsid
+                local sh = io.popen(("curl -s -4 -m 15 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), su))
+                local so = sh and sh:read("*all") or ""
+                if sh then sh:close() end
+                share = so:match('"link"%s*:%s*"([^"]+)"') or ""
+            end
+            os.remove(tmp)
+            return code, (nama or "PS") .. " [accessCode PRIVATE]", share
         end
         if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
         elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
@@ -12399,8 +12414,18 @@ function getps_akun(cfg, cookie)
                 -- accessCode dari response
                 local kode = bout:match('"accessCode"%s*:%s*"([%w%-]+)"')
                 if kode then
+                    -- v9.297: share link buat PS baru. vipServerId dari response bikin.
+                    local vsid = bout:match('"vipServerId"%s*:%s*(%d+)')
+                    local share = ""
+                    if vsid then
+                        local su = "https://games.roblox.com/v1/vip-servers/" .. vsid
+                        local sh = io.popen(("curl -s -4 -m 15 -H \"Cookie: $(cat %s)\" \"%s\" 2>&1"):format(shq(tmp), su))
+                        local so = sh and sh:read("*all") or ""
+                        if sh then sh:close() end
+                        share = so:match('"link"%s*:%s*"([^"]+)"') or ""
+                    end
                     os.remove(tmp)
-                    return kode, "PS BARU dibikin (gratis)"
+                    return kode, "PS BARU dibikin (gratis)", share
                 end
                 sebabAkhir = "bikin PS gagal: " .. (bout:match('"message"%s*:%s*"([^"]*)"') or bout:sub(1,80))
             else
@@ -12618,10 +12643,13 @@ if PERINTAH == "getps" then
             end
         end
         if cookie and cookie ~= "" then
-            local code, ket = getps_akun(cfg, cookie)
+            local code, ket, share = getps_akun(cfg, cookie)
             if code then
                 -- v9.191: accessCode (join PRIVATE via executor). prefix "accessCode=".
                 local psLink = (code:sub(1,4) == "http") and code or ("accessCode=" .. code)
+                -- v9.297: pack SHARE LINK (buat login PS dari HP) di belakang, dipisah "|share=".
+                -- Worker split pas join (pakai accessCode), panel split pas Salin PS (pakai share).
+                if share and share ~= "" then psLink = psLink .. "|share=" .. share end
                 local simpanOk, resp = false, ""
                 pcall(function()
                     resp = api_post(cfg, "/ps-simpan",
