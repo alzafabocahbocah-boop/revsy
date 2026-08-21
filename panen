@@ -4,16 +4,40 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.              ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
--- ===== DENYUT UNCONDITIONAL (copy market/hact) — worker tau client hidup =====
+-- ===== DENYUT + EGG COUNT — worker tau client hidup + jumlah egg =====
+-- format denyut: "ts;<egg>;egg" (worker baca sheck=egg, sheckW=egg -> panel)
+_G.ZenxPanenEgg = _G.ZenxPanenEgg or 0
 do
     if not _G.__ZenxDenyutJalan then
         _G.__ZenxDenyutJalan = true
+        -- penghitung egg: scan backpack + character buat item nama "egg"
+        task.spawn(function()
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    local n = 0
+                    local function cek(cont)
+                        if not cont then return end
+                        for _, it in ipairs(cont:GetChildren()) do
+                            if tostring(it.Name):lower():find("egg") then n = n + 1 end
+                        end
+                    end
+                    cek(plr and plr:FindFirstChild("Backpack"))
+                    cek(plr and plr.Character)
+                    _G.ZenxPanenEgg = n
+                end)
+                task.wait(10)
+            end
+        end)
+        -- denyut tiap 20s (bawa egg count)
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
                     if plr and plr.Name and writefile then
-                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                        local egg = tonumber(_G.ZenxPanenEgg) or 0
+                        writefile("zenx_denyut_" .. plr.Name .. ".txt",
+                            os.time() .. ";" .. egg .. ";egg")
                     end
                 end)
                 task.wait(20)
@@ -988,20 +1012,32 @@ do
     end)
 end
 
--- minimize (sembunyiin body, sisain titlebar)
-local minimized = false
-local function bodyVisible(v)
-    for _, ch in ipairs(main:GetChildren()) do
-        if ch ~= titleBar and (ch:IsA("Frame") or ch:IsA("ScrollingFrame")) then
-            ch.Visible = v
-        end
-    end
-end
-minBtn.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    bodyVisible(not minimized)
-    main.Size = minimized and UDim2.new(0, 660, 0, 44) or UDim2.new(0, 660, 0, 420)
-end)
+-- ============ LOGO MINI (Z) — muncul saat minimize (kayak hact) ============
+local miniLogo = mk("TextButton", {
+    Size = UDim2.new(0, 50, 0, 50), Position = UDim2.new(0, 16, 0.4, 0),
+    BackgroundColor3 = Color3.fromRGB(20, 20, 20), Text = "", AutoButtonColor = false,
+    Visible = false, ZIndex = 60, Parent = gui })
+mk("UICorner", { CornerRadius = UDim.new(1, 0), Parent = miniLogo })
+mk("UIGradient", {
+    Color = ColorSequence.new(Color3.fromRGB(34,34,34), Color3.fromRGB(16,16,16)),
+    Rotation = 90, Parent = miniLogo })
+local miniStroke = mk("UIStroke", {
+    Color = Color3.fromRGB(245,245,245), Thickness = 1.5, Transparency = 0.1, Parent = miniLogo })
+local innerRing = mk("Frame", {
+    Size = UDim2.new(1, -8, 1, -8), Position = UDim2.new(0, 4, 0, 4),
+    BackgroundTransparency = 1, ZIndex = 60, Parent = miniLogo })
+mk("UICorner", { CornerRadius = UDim.new(1, 0), Parent = innerRing })
+mk("UIStroke", { Color = Color3.fromRGB(70,70,70), Thickness = 1, Transparency = 0.3, Parent = innerRing })
+local miniZ = lbl(miniLogo, "Z", 24, Color3.fromRGB(248,248,248), Enum.TextXAlignment.Center)
+miniZ.Font = FONT_B; miniZ.Size = UDim2.new(1, 0, 1, 0); miniZ.ZIndex = 61
+miniLogo.MouseEnter:Connect(function() miniStroke.Transparency = 0 end)
+miniLogo.MouseLeave:Connect(function() miniStroke.Transparency = 0.1 end)
+
+-- minimize: sembunyiin panel, tampilin logo. restore: sebaliknya.
+local function doMinimize() main.Visible = false; miniLogo.Visible = true end
+local function doRestore()  miniLogo.Visible = false; main.Visible = true end
+minBtn.MouseButton1Click:Connect(doMinimize)
+miniLogo.MouseButton1Click:Connect(doRestore)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
 -- ============ SIDEBAR KIRI (AUTO PANEN / MISC) ============
@@ -1190,4 +1226,9 @@ _G.ZenxPanen = {
     C = C, mk = mk, corner = corner, stroke = stroke, lbl = lbl, FONT = FONT, FONT_B = FONT_B,
 }
 
-print("[PanenEgg] " .. VERSION .. " loaded (kerangka UI). Logika panen + tim pet nyusul.")
+-- v-panen: MULAI MINIMIZE — pas exe tampil LOGO Z (panel sembunyi, gak lebar).
+-- Klik logo buat buka panel.
+main.Visible = false
+miniLogo.Visible = true
+
+print("[PanenEgg] " .. VERSION .. " loaded (mulai minimize, logo Z).")
