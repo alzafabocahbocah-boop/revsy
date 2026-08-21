@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.297-cf"
+local VERSION = "9.298-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -741,7 +741,7 @@ local function tulis_skrip_up(diam)
     local PREFIX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
     -- v9.258: command pendek per preset (ketik `seed`/`market`/`farm`/`gag1` langsung).
     -- Inline di sini (bukan fungsi terpisah) biar gak nambah local ke main chunk (limit 200).
-    for _, pre in ipairs({ "seed", "market", "farm", "gag1", "hact" }) do
+    for _, pre in ipairs({ "seed", "market", "farm", "gag1", "hact", "panen" }) do
         local jp = PREFIX .. "/bin/" .. pre
         local ip = "#!" .. PREFIX .. "/bin/sh\ncurl -sL \"" .. REPO_WORKER .. "/pasang.sh\" | sh -s " .. pre .. "\n"
         local lp = ""
@@ -5232,8 +5232,9 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                                      (os.time() - TERAKHIR_BUKA[pkg]) < (cfg.konfirmasi_sec or 90)
                 local lagiJalan = potretJalan and potretJalan[pkg]
                 if lagiJalan == nil then lagiJalan = pkg_running(pkg) end
+                local denyutFresh0 = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 180
                 local diLewat = lagiJalan and (panelBuram0 or not akun
-                                or bridge_fresh(stat0, akun) or baruDisentuh)
+                                or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh0)
                 local diCaptcha = akun and KICK_DIURUS["captcha:" .. pkg]
                 local diMati = akun and KICK_DIURUS["mati:" .. akun]
                 if not diLewat and not diCaptcha and not diMati then
@@ -5326,8 +5327,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             -- mendadak, auto-rejoin bridge-diem) yang gak bergantung /stat.
             -- ============================================================
             local panelBuram = (ambil_num(stat0, "skrg") == nil)
+            -- v9.298: SKIP juga kalau DENYUT fresh (client idup per SD card, walau
+            -- bridge/panel stale). Bug: reopen_sec re-join client hidup krn cuma
+            -- ngecek bridge_fresh (panel), padahal denyut-cek udah bilang idup.
+            local denyutFresh = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 180
             if lagiJalan and (panelBuram or not akun
-                              or bridge_fresh(stat0, akun) or baruDisentuh) then
+                              or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh) then
                 hasil.lewat = hasil.lewat + 1
                 -- v4.6: JANGAN print tiap client yg udah jalan (bikin spam log).
             elseif akun and KICK_DIURUS["mati:" .. akun] then
@@ -6039,6 +6044,7 @@ local function setup_otomatis(namaPreset)
         market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
         gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
         hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
+        panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
     }
     local pre_raw = (namaPreset or ""):lower()
     -- v9.263: suffix "-arceus" di preset apapun -> PAKSA logika Arceus (skip auto-deteksi).
@@ -6052,7 +6058,7 @@ local function setup_otomatis(namaPreset)
     local pre = PRESET[pre_raw]
     if not pre then
         err("Preset '" .. tostring(namaPreset) .. "' gak dikenal.")
-        info("Yang ada: farm / seed / market / gag1  (+ suffix -arceus, mis: market-arceus)")
+        info("Yang ada: farm / seed / market / gag1 / hact / panen  (+ suffix -arceus, mis: panen-arceus)")
         return nil
     end
 
