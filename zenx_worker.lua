@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.294-cf"
+local VERSION = "9.295-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1305,6 +1305,10 @@ end
 -- masuk, cuma muter-muter sambil ngabisin RAM.
 -- balikin: "ada" / "hilang" / "basi", umur dalam detik (nil kalau hilang)
 local function lisensi_keadaan(cfg)
+    -- v9.295: ARCEUS gak pakai lisensi Delta (executor beda -- gak ada berkas kunci
+    -- Delta, gak ada layar "Enter key"). Anggap "ada" biar SEMUA cek lisensi lolos
+    -- (start, antrian/denyut-rejoin, bypass, cek berkala) tanpa nyangkut.
+    if cfg and cfg.executor == "arceus" then return "ada", 0 end
     local path = (cfg and cfg.delta_license) or DELTA_LICENSE
 
     -- v5.96: PENENTU UTAMA = ISI FILE, bukan umur. Kebukti di lapangan:
