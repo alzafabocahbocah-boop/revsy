@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.54"
+local VERSION = "v0.57"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -699,13 +699,15 @@ do
             busy[uuid] = nil   -- SELALU clear (walau error) -> pet gak nyangkut
         end)
     end
-    -- ready-loop: SESI 1 = support doang. SESI 2 = SEMUA (support + bahan). Cek cepet 0.05s.
+    -- ready-loop: swap SUPPORT doang (bahan DIEM di kedua sesi). Cek cepet 0.05s.
     task.spawn(function()
         while _G.__ZenxKgEngineGen == engGen do
             task.wait(0.05)
             if KG.aktif and not KG.reset then
                 for uuid in pairs(modelByUuid) do
-                    local swapIni = supportKunci[uuid] or (KG.sesi == 2 and bahanAktif[uuid])
+                    -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
+                    if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
+                    local swapIni = supportKunci[uuid]   -- CUMA support (bahan DIEM, gak di-swap)
                     if swapIni and not busy[uuid] then
                         local rdy = petReady(uuid)
                         local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
@@ -1356,6 +1358,26 @@ kgInfo.Size = UDim2.new(1, 0, 0, 20); kgInfo.TextWrapped = true; kgInfo.LayoutOr
 
 -- ============ MISC = REJOIN GLOBAL ============
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscScroll })
+-- REJOIN NOW: pencet -> LANGSUNG Teleport (no kick, no wait). retry sampe masuk.
+do
+    local rjNow = mk("TextButton", { Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = Color3.fromRGB(180, 70, 60),
+        Text = "\u{1F504} REJOIN NOW", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(255,255,255),
+        LayoutOrder = 0, Parent = miscScroll }); corner(rjNow, 7)
+    rjNow.MouseButton1Click:Connect(function()
+        rjNow.Text = "\u{1F504} REJOIN..."
+        rjNow.BackgroundColor3 = Color3.fromRGB(120, 50, 45)
+        _G.ZenxRejoining = true       -- biar loop rejoin/self-rejoin lain gak ganggu
+        _G.ZenxRejoinSisa = 0
+        local TS = game:GetService("TeleportService")
+        local plr = game:GetService("Players").LocalPlayer
+        task.spawn(function()
+            while true do
+                pcall(function() TS:Teleport(game.PlaceId, plr) end)   -- gacor: balik ke PS sama
+                task.wait(6)
+            end
+        end)
+    end)
+end
 do
     local rjH = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 1, Parent = miscScroll }); corner(rjH, 7)
