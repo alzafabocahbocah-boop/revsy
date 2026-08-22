@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.48"
+local VERSION = "v0.49"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1781,52 +1781,66 @@ do
     end
     updPetBtn()
     local function openPetPicker()
-        local counts, types = {}, {}
-        -- hitung dari container (SEMUA pet, incl yg ke-equip); fallback backpack
+        local counts, seen, types = {}, {}, {}
+        -- 1) hitung dari container (pet yg DIPUNYA)
         local c = _kgContainer
         if c then
             pcall(function()
                 for _, entry in pairs(c) do
                     if type(entry)=="table" and entry.PetType and entry.PetData then
                         local ty = stripMutation(tostring(entry.PetType))
-                        if ty~="" then if not counts[ty] then counts[ty]=0; types[#types+1]=ty end; counts[ty]=counts[ty]+1 end
+                        if ty~="" then counts[ty]=(counts[ty] or 0)+1; if not seen[ty] then seen[ty]=true; types[#types+1]=ty end end
                     end
                 end
             end)
         end
-        if #types == 0 then
-            pcall(function()
-                local bp = player:FindFirstChild("Backpack")
-                if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and t:GetAttribute("PET_UUID") then local ty=stripMutation(tostring(t:GetAttribute("f") or "")); if ty~="" then if not counts[ty] then counts[ty]=0; types[#types+1]=ty end; counts[ty]=counts[ty]+1 end end end end
-            end)
-        end
+        -- 2) tambah SEMUA pet dari registry game (biar bisa pre-select walau belum punya)
+        pcall(function()
+            local reg = _G.ZenxReg and _G.ZenxReg.pets
+            if type(reg)=="table" then
+                for nama in pairs(reg) do
+                    local ty = stripMutation(tostring(nama))
+                    if ty~="" and not seen[ty] then seen[ty]=true; types[#types+1]=ty end
+                end
+            end
+        end)
         table.sort(types, function(a,b)
             local ca, cb = counts[a] or 0, counts[b] or 0
-            if ca ~= cb then return ca > cb end   -- jumlah terbanyak DI ATAS
-            return a < b                           -- seri -> alfabet
+            if ca ~= cb then return ca > cb end   -- punya (jumlah) di atas
+            return a < b
         end)
         local old = gui:FindFirstChild("TradePetPicker"); if old then old:Destroy() end
         local ov = mk("Frame", { Name="TradePetPicker", Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=0.4, ZIndex=200, Parent=gui })
-        local pk = mk("Frame", { Size=UDim2.new(0,300,0,360), Position=UDim2.new(0.5,-150,0.5,-180), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=201, Parent=ov }); corner(pk,10)
-        local pt = lbl(pk, "  Pilih Jenis Pet ("..#types.." jenis)", 13, C.text); pt.Font=FONT_B; pt.Position=UDim2.new(0,10,0,8); pt.Size=UDim2.new(1,-40,0,24); pt.ZIndex=202
+        local pk = mk("Frame", { Size=UDim2.new(0,300,0,380), Position=UDim2.new(0.5,-150,0.5,-190), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=201, Parent=ov }); corner(pk,10)
+        local pt = lbl(pk, "  Jenis Pet ("..#types..")", 13, C.text); pt.Font=FONT_B; pt.Position=UDim2.new(0,10,0,8); pt.Size=UDim2.new(1,-40,0,24); pt.ZIndex=202
         local px = mk("TextButton", { Size=UDim2.new(0,26,0,24), Position=UDim2.new(1,-32,0,8), BackgroundColor3=Color3.fromRGB(150,60,60), Text="X", Font=FONT_B, TextSize=12, TextColor3=Color3.new(1,1,1), ZIndex=202, Parent=pk }); corner(px,6)
-        local scr = mk("ScrollingFrame", { Size=UDim2.new(1,-20,1,-90), Position=UDim2.new(0,10,0,40), BackgroundColor3=C.bg, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=202, Parent=pk }); corner(scr,6)
+        local srch = mk("TextBox", { Size=UDim2.new(1,-20,0,28), Position=UDim2.new(0,10,0,38), BackgroundColor3=C.bg, TextColor3=C.text, PlaceholderText="cari jenis pet...", Text="", Font=FONT, TextSize=12, ClearTextOnFocus=false, ZIndex=202, Parent=pk }); corner(srch,6)
+        local scr = mk("ScrollingFrame", { Size=UDim2.new(1,-20,1,-116), Position=UDim2.new(0,10,0,74), BackgroundColor3=C.bg, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=202, Parent=pk }); corner(scr,6)
         mk("UIListLayout", { Padding=UDim.new(0,4), Parent=scr })
         local doneBtn = mk("TextButton", { Size=UDim2.new(1,-20,0,28), Position=UDim2.new(0,10,1,-34), BackgroundColor3=C.accent, Text="Selesai", Font=FONT_B, TextSize=12, TextColor3=Color3.fromRGB(17,17,17), ZIndex=202, Parent=pk }); corner(doneBtn,6)
-        local function rebuild()
-            for _,c in ipairs(scr:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-            if #types == 0 then local e=lbl(scr,"(backpack kosong / gak ada pet)",11,C.textDim); e.Size=UDim2.new(1,-8,0,26); e.ZIndex=203; return end
+        local function rebuild(filter)
+            for _,c2 in ipairs(scr:GetChildren()) do if c2:IsA("TextButton") or (c2:IsA("TextLabel") and c2.Name=="hint") then c2:Destroy() end end
+            filter = (filter or ""):lower()
+            local shown = 0
             for _, ty in ipairs(types) do
-                local sel = TR.tipe[ty]==true
-                local b = mk("TextButton", { Size=UDim2.new(1,-4,0,30), BackgroundColor3= sel and C.accent or C.card, Text="", ZIndex=202, Parent=scr }); corner(b,6)
-                local chk = lbl(b, sel and "\u{2713}" or "", 14, Color3.fromRGB(17,17,17)); chk.Position=UDim2.new(0,8,0,0); chk.Size=UDim2.new(0,20,1,0); chk.ZIndex=203
-                local nm = lbl(b, ty.."  \u{00d7}"..(counts[ty] or 0), 12, sel and Color3.fromRGB(17,17,17) or C.text); nm.Position=UDim2.new(0,30,0,0); nm.Size=UDim2.new(1,-34,1,0); nm.ZIndex=203
-                b.MouseButton1Click:Connect(function() if TR.tipe[ty] then TR.tipe[ty]=nil else TR.tipe[ty]=true end; saveTr(); updPetBtn(); rebuild() end)
+                if filter=="" or ty:lower():find(filter,1,true) then
+                    shown = shown + 1
+                    if shown <= 200 then
+                        local sel = TR.tipe[ty]==true
+                        local cnt = counts[ty] or 0
+                        local b = mk("TextButton", { Size=UDim2.new(1,-4,0,30), BackgroundColor3= sel and C.accent or C.card, Text="", ZIndex=202, Parent=scr }); corner(b,6)
+                        local chk = lbl(b, sel and "\u{2713}" or "", 14, Color3.fromRGB(17,17,17)); chk.Position=UDim2.new(0,8,0,0); chk.Size=UDim2.new(0,20,1,0); chk.ZIndex=203
+                        local nm = lbl(b, ty.."  \u{00d7}"..cnt, 12, sel and Color3.fromRGB(17,17,17) or (cnt>0 and C.text or C.textDim)); nm.Position=UDim2.new(0,30,0,0); nm.Size=UDim2.new(1,-34,1,0); nm.ZIndex=203
+                        b.MouseButton1Click:Connect(function() if TR.tipe[ty] then TR.tipe[ty]=nil else TR.tipe[ty]=true end; saveTr(); updPetBtn(); rebuild(srch.Text) end)
+                    end
+                end
             end
+            if shown > 200 then local e=lbl(scr,"...(ketik buat cari, "..shown.." total)",10,C.textDim); e.Name="hint"; e.Size=UDim2.new(1,-8,0,22); e.ZIndex=203 end
         end
         px.MouseButton1Click:Connect(function() ov:Destroy() end)
         doneBtn.MouseButton1Click:Connect(function() ov:Destroy() end)
-        rebuild()
+        srch:GetPropertyChangedSignal("Text"):Connect(function() rebuild(srch.Text) end)
+        rebuild("")
     end
     petBtn.MouseButton1Click:Connect(openPetPicker)
 
