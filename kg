@@ -4,7 +4,61 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.36"
+local VERSION = "v0.40"
+
+-- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
+-- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
+-- Akses via _G.ZenxReg.pets / .petEggs / .eggShop / .packs / .seeds / .seedShop
+do
+    local _RS = game:GetService("ReplicatedStorage")
+    local function _cnt(t) local n=0 if type(t)=="table" then for _ in pairs(t) do n=n+1 end end return n end
+    local function _req(...)
+        local segs = {...}
+        local ok, mod = pcall(function()
+            local o = _RS
+            for _, s in ipairs(segs) do o = o:FindFirstChild(s); if not o then error(s) end end
+            return require(o)
+        end)
+        return ok and mod or nil
+    end
+    _G.ZenxReg = _G.ZenxReg or {}
+    local R = _G.ZenxReg
+    local petReg = _req("Data", "PetRegistry")
+    if petReg then
+        R.pets      = petReg.PetList               -- semua pet (nama -> Rarity/SellPrice/Passives/Icon/MovementType..)
+        R.petEggs   = petReg.PetEggs               -- semua egg hatch (nama -> EggRarity/HatchTime/Icon)
+        local _mReg = petReg.PetMutationRegistry
+        R.mutations  = _mReg                                -- container mutation penuh (Machine/Level500/dll)
+        R.mutasiData = _mReg and _mReg.PetMutationRegistry  -- nama -> data (61 mutation: warna/efek)
+        R.mutasiEnum = _mReg and _mReg.PetMutationToEnum    -- nama mutation -> kode enum (Rainbow -> c)
+        R.enumMutasi = _mReg and _mReg.EnumToPetMutation    -- kode enum -> nama (c -> Rainbow)
+        R.petReg    = petReg                        -- akses penuh (PetConfig/PetRarities/dll)
+    end
+    R.eggShop  = _req("Data", "PetEggData")          -- egg BELI (nama -> PurchaseID/Price/EggRarity/RebirthRequirement)
+    R.packs    = (_req("Data", "SeedPackData") or {}).Packs  -- semua seed pack (nama -> data)
+    R.seeds    = _req("Data", "SeedData")            -- semua seed/buah (nama -> SeedRarity/SeedName/Asset)
+    R.seedShop = _req("Data", "SeedShopData")        -- seed BELI (nama -> Price/PurchaseID/StockChance)
+    -- helper: daftar nama (buat picker/dropdown), urut
+    R.namaList = function(tbl)
+        local out = {}
+        if type(tbl) == "table" then for k in pairs(tbl) do out[#out+1] = tostring(k) end table.sort(out) end
+        return out
+    end
+    -- helper: PurchaseID egg beli by nama
+    R.eggPurchaseId = function(nama) local e = R.eggShop and R.eggShop[nama]; return e and e.PurchaseID end
+    -- helper: mutation pet disimpan sbg KODE enum -> konversi kode<->nama
+    R.mutasiNama = function(kode) return R.enumMutasi and R.enumMutasi[kode] end   -- kode -> nama (c -> Rainbow)
+    R.mutasiKode = function(nama) return R.mutasiEnum and R.mutasiEnum[nama] end   -- nama -> kode (Rainbow -> c)
+    -- helper: cek nama egg/pet ada di registry (deteksi konten baru)
+    R.punyaPet = function(nama) return R.pets and R.pets[nama] ~= nil end
+    R.punyaEgg = function(nama) return (R.petEggs and R.petEggs[nama] ~= nil) or (R.eggShop and R.eggShop[nama] ~= nil) end
+    if not _G.__ZenxRegPrinted then
+        _G.__ZenxRegPrinted = true
+        print(("[ZenxReg] pet:%d egg-hatch:%d egg-beli:%d pack:%d seed:%d mutasi:%d"):format(
+            _cnt(R.pets), _cnt(R.petEggs), _cnt(R.eggShop), _cnt(R.packs), _cnt(R.seeds), _cnt(R.mutasiData)))
+    end
+end
+
 
 -- ===== CONFIG SIMPAN/LOAD (persist antar rejoin/re-exe — writefile) =====
 -- rejoin = sesi baru (_G reset), jadi setting HARUS ke file biar gak balik awal.
@@ -36,6 +90,7 @@ do
                 end
                 if tonumber(cfg.rejoinMenit) then _G.ZenxRejoinMenit = tonumber(cfg.rejoinMenit) end
                 if cfg.config then _G.ZenxKgConfig = cfg.config end
+                _G.__ZenxKgAutoOnBoot = (cfg.autoOn == true)   -- kalau terakhir ON -> nanti auto-nyala lagi
             end
         end
     end)
@@ -579,7 +634,7 @@ do
     task.spawn(function()
         while _G.__ZenxKgEngineGen == engGen do
             task.wait(0.05)
-            if KG.aktif then
+            if KG.aktif and not KG.reset then
                 for uuid in pairs(modelByUuid) do
                     local swapIni = supportKunci[uuid] or (KG.sesi == 2 and bahanAktif[uuid])
                     if swapIni and not busy[uuid] then
@@ -654,6 +709,32 @@ do
         CLUSTER = farmCenter()
         supportKunci = {}; bahanAktif = {}
         kgLog("START ("..tostring(config)..") pickup="..KG.pickup.."s center="..(CLUSTER and "ada" or "NIL"))
+        -- RESET tiap 3 menit: copot SEMUA pet -> pasang lagi tim yg sama (refresh garden)
+        KG.reset = false
+        _G.__ZenxKgResetGen = (_G.__ZenxKgResetGen or 0) + 1
+        local resetGen = _G.__ZenxKgResetGen
+        task.spawn(function()
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
+                -- tunggu 3 menit (cek tiap 1s biar responsif ke OFF)
+                local t0 = tick()
+                while KG.aktif and _G.__ZenxKgResetGen == resetGen and (tick() - t0) < 180 do task.wait(1) end
+                if not (KG.aktif and _G.__ZenxKgResetGen == resetGen) then break end
+                KG.reset = true                        -- pause swap-loop
+                task.wait(0.1)
+                -- rekam tim sekarang (support + bahan)
+                local timNow = {}
+                for u in pairs(supportKunci) do timNow[u] = true end
+                for u in pairs(bahanAktif) do timNow[u] = true end
+                kgLog("RESET 3-menit: copot semua + pasang lagi ("..jml(timNow).." pet)")
+                pickupAll()                            -- copot SEMUA pet di kebun
+                task.wait(0.8)
+                for u in pairs(timNow) do             -- pasang lagi tim yg tadi
+                    if KG.aktif then equipPet(u, CLUSTER); task.wait(0.06) end
+                end
+                task.wait(0.3)
+                KG.reset = false                       -- lanjut swap
+            end
+        end)
         task.spawn(function()
             local tgt = _G.ZenxKgUpTipe
             if type(tgt) ~= "table" or not next(tgt) then kgLog("!! PICKER BELUM DIPILIH -> bahan gak ke-equip") end
@@ -1125,6 +1206,17 @@ kgTog.MouseButton1Click:Connect(function()
         kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(0,230,118); kgTog.BackgroundColor3 = C.panel
     end
 end)
+
+-- AUTO-RESUME setelah rejoin: kalau terakhir AUTO UP KG ON, nyalain lagi otomatis
+if _G.__ZenxKgAutoOnBoot then
+    task.spawn(function()
+        task.wait(4)   -- kasih waktu engine + picker + container siap dulu
+        if _G.__ZenxKgAutoOnBoot and not (_G.ZenxKg and _G.ZenxKg.aktif) then
+            if _G.ZenxKgStart then _G.ZenxKgStart(kgConfigAktif) end
+            kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(0,230,118); kgTog.BackgroundColor3 = C.panel
+        end
+    end)
+end
 
 local kgInfo = lbl(cfgScroll, "Naikin KG pet tim sampe 3.8kg. Logika nyusul.", 11.5, C.textDim)
 kgInfo.Size = UDim2.new(1, 0, 0, 20); kgInfo.TextWrapped = true; kgInfo.LayoutOrder = 7
