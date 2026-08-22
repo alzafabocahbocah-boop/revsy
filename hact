@@ -67,11 +67,12 @@ do
         end
         _G.ZenxCekDisconnect = zenxCekDisconnect
         -- loop cepat: hapus denyut pas disconnect -> worker rejoin cepet
+        -- TAPI skip kalau lagi SELF-REJOIN (script yg handle, worker jangan ikut)
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and zenxCekDisconnect() and delfile then
+                    if plr and plr.Name and not _G.ZenxRejoining and zenxCekDisconnect() and delfile then
                         if isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
                             pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
                         end
@@ -90,6 +91,52 @@ do
                     end
                 end)
                 task.wait(20)
+            end
+        end)
+    end
+end
+
+-- ===== AUTO-REJOIN tiap N menit (KICK dulu -> rejoin server SAMA dalam 30s) =====
+-- SETTING WAKTU: ganti REJOIN_MENIT di sini (berlaku semua RF pas reload script).
+-- Bisa juga di-override runtime: _G.ZenxRejoinMenit = 45
+local REJOIN_MENIT = 30    -- <<< SETTING: rejoin tiap berapa menit
+-- Port dari leveling/farm: player:Kick (putus server, script executor TETEP hidup)
+-- -> tunggu 30s (ghost slot bekas kita bebas) -> TeleportToPlaceInstance jobId SAMA
+-- (retry 12s). Private server: retry server SAMA terus (Teleport acak = kelempar public).
+-- _G.ZenxRejoining=true -> disconnect-detect JANGAN hapus denyut (worker gak ikut rejoin).
+do
+    if not _G.__ZenxRejoinJalan then
+        _G.__ZenxRejoinJalan = true
+        local TS = game:GetService("TeleportService")
+        task.spawn(function()
+            while true do
+                local menit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT
+                local interval = math.max(60, math.floor(menit * 60))
+                -- COUNTDOWN GLOBAL TERSINKRON: align ke wall-clock (os.time UTC). Semua client
+                -- rejoin BARENG di boundary (kelipatan interval) — gak peduli kapan load. Jadi
+                -- countdown SAMA buat semua RF (kayak slot jam: :00, :30 buat interval 30 menit).
+                local nextB = (math.floor(os.time() / interval) + 1) * interval
+                while os.time() < nextB do
+                    _G.ZenxRejoinSisa = nextB - os.time()   -- detik tersisa (buat UI)
+                    task.wait(1)
+                end
+                _G.ZenxRejoinSisa = 0
+                local plr = game:GetService("Players").LocalPlayer
+                if plr then
+                    local jobId  = game.JobId
+                    local isPriv = (game.PrivateServerId or "") ~= ""
+                    _G.ZenxRejoining = true
+                    pcall(function() plr:Kick("ZenxFreezeRejoin") end)
+                    task.wait(30)   -- ghost slot bekas kita bebas dulu
+                    while true do
+                        if jobId and jobId ~= "" then
+                            pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
+                        else
+                            pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                        end
+                        task.wait(12)
+                    end
+                end
             end
         end)
     end
