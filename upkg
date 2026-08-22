@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.42"
+local VERSION = "v0.44"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -199,9 +199,11 @@ do
                             pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
                         end
                         dcCount = dcCount + 1
-                        -- konfirmasi 2x (~6s) biar bukan false positive -> REJOIN SENDIRI
-                        if dcCount >= 2 and _G.ZenxSelfRejoin then
-                            _G.ZenxSelfRejoin("error/disconnect terdeteksi")
+                        -- SELF-REJOIN cuma kalau: udah 4x berturut (~12s) DAN >60s sejak boot
+                        -- (grace period: hindari trigger pas client lagi loading/teleport = false-positive loop)
+                        local umur = os.time() - (_G.__ZenxBootT or os.time())
+                        if dcCount >= 4 and umur > 60 and _G.ZenxSelfRejoin then
+                            _G.ZenxSelfRejoin("error/disconnect terdeteksi ("..dcCount.."x)")
                         end
                     else
                         dcCount = 0
@@ -1744,7 +1746,7 @@ do
         local seen, types = {}, {}
         pcall(function()
             local bp = player:FindFirstChild("Backpack")
-            if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then local ty=stripMutation(tostring(t:GetAttribute("f") or "")); if ty~="" and not seen[ty] then seen[ty]=true; types[#types+1]=ty end end end end
+            if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and t:GetAttribute("PET_UUID") then local ty=stripMutation(tostring(t:GetAttribute("f") or "")); if ty~="" and not seen[ty] then seen[ty]=true; types[#types+1]=ty end end end end
         end)
         table.sort(types)
         local old = gui:FindFirstChild("TradePetPicker"); if old then old:Destroy() end
