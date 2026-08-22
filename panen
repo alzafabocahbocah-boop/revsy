@@ -10,6 +10,75 @@ _G.ZenxPanenEgg = _G.ZenxPanenEgg or 0
 do
     if not _G.__ZenxDenyutJalan then
         _G.__ZenxDenyutJalan = true
+        -- DETEKSI DISCONNECT (port star_seed) — denyut BERHENTI + file DIHAPUS pas putus
+        local function zenxCekDisconnect()
+            local dc = false
+            pcall(function()
+                local GuiService = game:GetService("GuiService")
+                local ec = GuiService:GetErrorCode()
+                if ec and ec ~= Enum.ConnectionError.OK and ec ~= Enum.ConnectionError.None then dc = true end
+            end)
+            if dc then return true end
+            pcall(function()
+                local CoreGui = game:GetService("CoreGui")
+                local pg = CoreGui:FindFirstChild("RobloxPromptGui")
+                local overlay = pg and pg:FindFirstChild("promptOverlay")
+                if overlay then
+                    for _, child in ipairs(overlay:GetChildren()) do
+                        if child:IsA("GuiObject") and child.Visible
+                            and (child.Name:find("Error") or child.Name:find("Prompt")) then
+                            for _, d in ipairs(child:GetDescendants()) do
+                                if d:IsA("TextButton") or d:IsA("TextLabel") then
+                                    local t = tostring(d.Text or ""):lower()
+                                    if t:find("reconnect") or t:find("leave") or t:find("disconnect")
+                                        or t:find("shut") or t:find("keluar") or t:find("sambung")
+                                        or t:find("terputus") or t:find("dimatikan") or t:find("hubungkan") then
+                                        dc = true; return
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+            if dc then return true end
+            pcall(function()
+                local CoreGui = game:GetService("CoreGui")
+                for _, d in ipairs(CoreGui:GetDescendants()) do
+                    if d:IsA("TextLabel") or d:IsA("TextButton") then
+                        local vis = false
+                        pcall(function() vis = d.Visible end)
+                        if vis then
+                            local t = tostring(d.Text or ""):lower()
+                            if t:find("reconnect") or t:find("sambung ulang")
+                                or t:find("terputus") or t:find("disconnected")
+                                or t:find("dimatikan") or t:find("was shut down")
+                                or t:find("lost connection") or t:find("kehilangan koneksi")
+                                or t:find("error code") or t:find("kode error") or t:find("kode eror")
+                                or t:find("id error") or t:find("(error)") then
+                                dc = true; return
+                            end
+                        end
+                    end
+                end
+            end)
+            return dc
+        end
+        _G.ZenxCekDisconnect = zenxCekDisconnect
+        -- loop cepat: hapus denyut pas disconnect -> worker rejoin cepet
+        task.spawn(function()
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    if plr and plr.Name and zenxCekDisconnect() and delfile then
+                        if isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
+                            pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                        end
+                    end
+                end)
+                task.wait(3)
+            end
+        end)
         -- penghitung egg: scan backpack + character buat item nama "egg"
         task.spawn(function()
             while true do
@@ -29,12 +98,12 @@ do
                 task.wait(10)
             end
         end)
-        -- denyut tiap 20s (bawa egg count)
+        -- denyut tiap 20s (bawa egg count) — SKIP kalau disconnect
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and writefile then
+                    if plr and plr.Name and writefile and not zenxCekDisconnect() then
                         local egg = tonumber(_G.ZenxPanenEgg) or 0
                         writefile("zenx_denyut_" .. plr.Name .. ".txt",
                             os.time() .. ";" .. egg .. ";egg")
@@ -1410,7 +1479,7 @@ gemTog.MouseButton1Click:Connect(function()
 end)
 
 -- info settingan (fixed sesuai spec)
-local infoTxt = "Pick Up 0.3 \u{00b7} Place 0 \u{00b7} reset tiap 60s\nTim: 6 Mimic + 1 Spider + 1 Bearded Dragon"
+local infoTxt = "Pick Up 0.3 \u{00b7} Place 0 \u{00b7} reset tiap 60s\nTim: 6 Mimic + 1 Spider + 1 Bearded Dragon\nAmbil pet KG PALING BESAR \u{00b7} uuid dikunci (gak ganti-ganti)"
 local gemInfo = lbl(cfgScroll, infoTxt, 11.5, C.textDim)
 gemInfo.Size = UDim2.new(1, 0, 0, 40); gemInfo.TextWrapped = true; gemInfo.LayoutOrder = 3
 
