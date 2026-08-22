@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.58"
+local VERSION = "v0.59"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -534,11 +534,7 @@ do
         local key = tostring(uuid):gsub("[{}]", "")
         local e = cdEventCache[key]
         if e and tick() - e.at <= 8 then return e.ready end
-        if getCooldownRF then
-            local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(uuid)) end)
-            if ok then return readyDariData(res) end
-        end
-        return nil
+        return nil   -- GAK InvokeServer di hot-loop (biar gak nge-block/lambat). cache di-refresh loop periodik.
     end
     -- farm center (cluster)
     local function farmCenter()
@@ -784,6 +780,26 @@ do
         KG.reset = false
         _G.__ZenxKgResetGen = (_G.__ZenxKgResetGen or 0) + 1
         local resetGen = _G.__ZenxKgResetGen
+        -- REFRESH cooldown cache periodik (2s, BACKGROUND) — biar petReady selalu dari cache (non-block).
+        -- Ini yg bikin swap TETEP gacor (gak makin lambat): cache gak pernah basi -> gak ada InvokeServer di hot-loop.
+        task.spawn(function()
+            local ge2 = RS:FindFirstChild("GameEvents")
+            local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
+                if req2 then pcall(function() req2:FireServer() end) end   -- minta game fire event cooldown SEMUA pet
+                if getCooldownRF then
+                    for u in pairs(supportKunci) do   -- pet tim yg cache-nya basi -> ambil di background (bukan hot-loop)
+                        local key = tostring(u):gsub("[{}]", "")
+                        local e = cdEventCache[key]
+                        if not (e and tick() - e.at <= 8) then
+                            local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(u)) end)
+                            if ok then cdEventCache[key] = { ready = (readyDariData(res) == true), at = tick() } end
+                        end
+                    end
+                end
+                task.wait(2)
+            end
+        end)
         -- HEALER cek TERUS (tiap 1s): pet tim yg model-nya ILANG -> langsung PAKSA copot->pasang
         -- (server nganggep udah equip -> equip biasa no-op. copot dulu baru equip = model spawn lagi)
         task.spawn(function()
