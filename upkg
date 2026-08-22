@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.50"
+local VERSION = "v0.52"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -800,11 +800,11 @@ do
                 KG.reset = false                       -- lanjut swap
             end
         end)
-        -- HEALER tiap 10s: pet tim yg model-nya ILANG (equipped tapi gak keliatan) -> PAKSA copot->pasang
+        -- HEALER cek TERUS (tiap 1s): pet tim yg model-nya ILANG -> langsung PAKSA copot->pasang
         -- (server nganggep udah equip -> equip biasa no-op. copot dulu baru equip = model spawn lagi)
         task.spawn(function()
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
-                task.wait(10)
+                task.wait(1)
                 if KG.aktif and not KG.reset and _G.__ZenxKgResetGen == resetGen then
                     local team = {}
                     for u in pairs(supportKunci) do team[u] = true end
@@ -1229,42 +1229,59 @@ pTitle.Position = UDim2.new(0, 14, 0, 10); pTitle.Size = UDim2.new(1, -50, 0, 24
 local pClose = mk("TextButton", { Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -36, 0, 8),
     BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 14, TextColor3 = C.textDim,
     ZIndex = 102, Parent = pickPanel }); corner(pClose, 6)
-local pList = mk("ScrollingFrame", { Size = UDim2.new(1, -20, 1, -58), Position = UDim2.new(0, 10, 0, 44),
+local pSearch = mk("TextBox", { Size = UDim2.new(1, -20, 0, 28), Position = UDim2.new(0, 10, 0, 42),
+    BackgroundColor3 = C.card, TextColor3 = C.text, PlaceholderText = "cari jenis pet...", Text = "",
+    Font = FONT, TextSize = 12, ClearTextOnFocus = false, ZIndex = 102, Parent = pickPanel }); corner(pSearch, 6)
+local pList = mk("ScrollingFrame", { Size = UDim2.new(1, -20, 1, -92), Position = UDim2.new(0, 10, 0, 78),
     BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 102, Parent = pickPanel })
 mk("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pList })
 
-local function bukaPicker()
-    for _, c in ipairs(pList:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-    local tipe = (_G.ZenxKgStat and _G.ZenxKgStat.tipe) or {}
-    local names = {}
-    for t in pairs(tipe) do names[#names+1] = t end
-    table.sort(names, function(a, b)
-        local ca, cb = tonumber(tipe[a]) or 0, tonumber(tipe[b]) or 0
-        if ca ~= cb then return ca > cb end   -- jumlah terbanyak DI ATAS
-        return a < b                           -- seri -> alfabet
+local function bukaPicker(filter)
+    for _, c in ipairs(pList:GetChildren()) do if c:IsA("TextButton") or (c:IsA("TextLabel") and c.Name=="kosong") then c:Destroy() end end
+    local tipe = (_G.ZenxKgStat and _G.ZenxKgStat.tipe) or {}   -- jumlah pet yg DIPUNYA
+    local set = (type(_G.ZenxKgUpTipe)=="table") and _G.ZenxKgUpTipe or {}
+    -- union: yg dipunya + SEMUA pet registry
+    local seen, names = {}, {}
+    for t in pairs(tipe) do if not seen[t] then seen[t]=true; names[#names+1]=t end end
+    for t in pairs(set) do if not seen[t] then seen[t]=true; names[#names+1]=t end end
+    pcall(function()
+        local reg = _G.ZenxReg and _G.ZenxReg.pets
+        if type(reg)=="table" then for nm in pairs(reg) do local ty=stripMutation(tostring(nm)); if ty~="" and not seen[ty] then seen[ty]=true; names[#names+1]=ty end end end
     end)
-    if #names == 0 then
-        local e = lbl(pList, "(belum ada pet kebaca)", 12, C.textDim, Enum.TextXAlignment.Center)
-        e.Size = UDim2.new(1, 0, 0, 30); e.ZIndex = 102; e.Name = "kosong"
+    table.sort(names, function(a, b)
+        local sa, sb = set[a] and 1 or 0, set[b] and 1 or 0
+        if sa ~= sb then return sa > sb end            -- KEPILIH di atas
+        local ca, cb = tonumber(tipe[a]) or 0, tonumber(tipe[b]) or 0
+        if ca ~= cb then return ca > cb end             -- punya (jumlah) di atas
+        return a < b                                     -- sisanya alfabet
+    end)
+    filter = (filter or ""):lower()
+    local shown = 0
+    for _, t in ipairs(names) do
+        if filter=="" or t:lower():find(filter,1,true) then
+            shown = shown + 1
+            if shown <= 200 then
+                local sel = set[t] and true or false
+                local cnt = tonumber(tipe[t]) or 0
+                local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30),
+                    BackgroundColor3 = sel and C.cardSel or C.card, AutoButtonColor = true,
+                    Text = "   " .. (sel and "\u{2713} " or "") .. t .. "   \u{00d7}" .. cnt,
+                    Font = FONT, TextSize = 12,
+                    TextColor3 = sel and C.accent or (cnt>0 and C.text or C.textDim), TextXAlignment = Enum.TextXAlignment.Left,
+                    LayoutOrder = shown, ZIndex = 102, Parent = pList }); corner(b, 5)
+                b.MouseButton1Click:Connect(function()
+                    _G.ZenxKgUpTipe = (type(_G.ZenxKgUpTipe) == "table") and _G.ZenxKgUpTipe or {}
+                    local s = _G.ZenxKgUpTipe
+                    if s[t] then s[t] = nil else s[t] = true end
+                    if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
+                    bukaPicker(pSearch.Text)   -- refresh (kepilih pindah ke atas)
+                end)
+            end
+        end
     end
-    for i, t in ipairs(names) do
-        local set = _G.ZenxKgUpTipe
-        local sel = (type(set) == "table" and set[t]) and true or false
-        local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30),
-            BackgroundColor3 = sel and C.cardSel or C.card, AutoButtonColor = true,
-            Text = "   " .. (sel and "\u{2713} " or "") .. t .. "   (" .. tostring(tipe[t]) .. ")",
-            Font = FONT, TextSize = 12,
-            TextColor3 = sel and C.accent or C.text, TextXAlignment = Enum.TextXAlignment.Left,
-            LayoutOrder = i, ZIndex = 102, Parent = pList }); corner(b, 5)
-        b.MouseButton1Click:Connect(function()
-            _G.ZenxKgUpTipe = (type(_G.ZenxKgUpTipe) == "table") and _G.ZenxKgUpTipe or {}
-            local s = _G.ZenxKgUpTipe
-            if s[t] then s[t] = nil else s[t] = true end
-            if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
-            bukaPicker()   -- refresh highlight
-        end)
-    end
+    if shown == 0 then local e = lbl(pList, "(gak ada)", 12, C.textDim, Enum.TextXAlignment.Center); e.Size = UDim2.new(1, 0, 0, 30); e.ZIndex = 102; e.Name = "kosong" end
+    if shown > 200 then local e = lbl(pList, "...(ketik buat cari)", 11, C.textDim); e.Size = UDim2.new(1, 0, 0, 22); e.ZIndex = 102; e.Name = "kosong" end
     pickOverlay.Visible = true
 end
 local function updatePickBtn()
@@ -1274,7 +1291,8 @@ local function updatePickBtn()
     table.sort(names)
     pickBtn.Text = "\u{1F43E} Pilih Pet Di-Up: " .. (#names > 0 and table.concat(names, ", ") or "(belum)")
 end
-pickBtn.MouseButton1Click:Connect(bukaPicker)
+pickBtn.MouseButton1Click:Connect(function() pSearch.Text = ""; bukaPicker("") end)
+pSearch:GetPropertyChangedSignal("Text"):Connect(function() bukaPicker(pSearch.Text) end)
 updatePickBtn()   -- reflect setting yg di-load
 pClose.MouseButton1Click:Connect(function() updatePickBtn(); pickOverlay.Visible = false end)
 -- klik luar panel (di overlay) buat nutup
@@ -1310,14 +1328,22 @@ kgTog.MouseButton1Click:Connect(function()
     end
 end)
 
--- AUTO-RESUME setelah rejoin: kalau terakhir AUTO UP KG ON, nyalain lagi otomatis
+-- SYNC tampilan toggle ke state ASLI engine (re-exe: engine mungkin masih jalan dari exe sebelumnya)
+local function syncKgTog()
+    local on = _G.ZenxKg and _G.ZenxKg.aktif
+    kgTog.Text = "AUTO UP KG: " .. (on and "ON" or "OFF")
+    kgTog.TextColor3 = on and Color3.fromRGB(0,230,118) or C.textDim
+    kgTog.BackgroundColor3 = on and C.panel or C.card
+end
+syncKgTog()
+-- AUTO-RESUME setelah rejoin: kalau terakhir AUTO UP KG ON + engine belum jalan -> nyalain lagi
 if _G.__ZenxKgAutoOnBoot then
     task.spawn(function()
         task.wait(4)   -- kasih waktu engine + picker + container siap dulu
         if _G.__ZenxKgAutoOnBoot and not (_G.ZenxKg and _G.ZenxKg.aktif) then
             if _G.ZenxKgStart then _G.ZenxKgStart(kgConfigAktif) end
-            kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(0,230,118); kgTog.BackgroundColor3 = C.panel
         end
+        syncKgTog()
     end)
 end
 
@@ -1828,6 +1854,8 @@ do
             end
         end)
         table.sort(types, function(a,b)
+            local sa, sb = (TR.tipe[a]==true) and 1 or 0, (TR.tipe[b]==true) and 1 or 0
+            if sa ~= sb then return sa > sb end   -- KEPILIH di atas
             local ca, cb = counts[a] or 0, counts[b] or 0
             if ca ~= cb then return ca > cb end   -- punya (jumlah) di atas
             return a < b
@@ -1843,6 +1871,13 @@ do
         local doneBtn = mk("TextButton", { Size=UDim2.new(1,-20,0,28), Position=UDim2.new(0,10,1,-34), BackgroundColor3=C.accent, Text="Selesai", Font=FONT_B, TextSize=12, TextColor3=Color3.fromRGB(17,17,17), ZIndex=202, Parent=pk }); corner(doneBtn,6)
         local function rebuild(filter)
             for _,c2 in ipairs(scr:GetChildren()) do if c2:IsA("TextButton") or (c2:IsA("TextLabel") and c2.Name=="hint") then c2:Destroy() end end
+            table.sort(types, function(a,b)   -- re-sort: kepilih naik ke atas
+                local sa, sb = (TR.tipe[a]==true) and 1 or 0, (TR.tipe[b]==true) and 1 or 0
+                if sa ~= sb then return sa > sb end
+                local ca, cb = counts[a] or 0, counts[b] or 0
+                if ca ~= cb then return ca > cb end
+                return a < b
+            end)
             filter = (filter or ""):lower()
             local shown = 0
             for _, ty in ipairs(types) do
