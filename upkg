@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.44"
+local VERSION = "v0.46"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -154,6 +154,28 @@ do
             end)
             return dc
         end
+        -- deteksi STRICT: CUMA prompt reconnect Roblox yg BENERAN muncul (buat trigger self-rejoin).
+        -- gak pake scan teks luas / error code (sumber false-positive) -> anti rejoin-loop.
+        local function zenxDcStrict()
+            local dc = false
+            pcall(function()
+                local cg = game:GetService("CoreGui")
+                local pg = cg:FindFirstChild("RobloxPromptGui")
+                local overlay = pg and pg:FindFirstChild("promptOverlay")
+                if not overlay then return end
+                for _, child in ipairs(overlay:GetChildren()) do
+                    if child:IsA("GuiObject") and child.Visible then
+                        for _, d in ipairs(child:GetDescendants()) do
+                            if d:IsA("TextButton") and d.Visible then
+                                local t = tostring(d.Text or ""):lower()
+                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
+                            end
+                        end
+                    end
+                end
+            end)
+            return dc
+        end
         _G.ZenxCekDisconnect = zenxCekDisconnect
         -- SELF-REJOIN: error kedeteksi tapi VM masih hidup (masih bisa denyut) -> rejoin SENDIRI (gak nunggu worker)
         _G.ZenxSelfRejoin = function(reason)
@@ -187,26 +209,26 @@ do
                 task.wait(8)
             end
         end
-        -- loop cepat: hapus denyut pas disconnect + REJOIN SENDIRI (skip pas self-rejoin)
+        -- loop cepat: hapus denyut pas disconnect (broad, harmless) + SELF-REJOIN cuma pas prompt reconnect BENERAN (strict)
         task.spawn(function()
-            local dcCount = 0
+            local dcStrict = 0
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and not _G.ZenxRejoining and zenxCekDisconnect() then
-                        -- hapus denyut (worker tau putus)
-                        if delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
-                            pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
-                        end
-                        dcCount = dcCount + 1
-                        -- SELF-REJOIN cuma kalau: udah 4x berturut (~12s) DAN >60s sejak boot
-                        -- (grace period: hindari trigger pas client lagi loading/teleport = false-positive loop)
+                    if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
+                    -- denyut: hapus kalau ada sinyal disconnect apapun (worker tau putus)
+                    if zenxCekDisconnect() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
+                        pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                    end
+                    -- SELF-REJOIN: CUMA pas prompt reconnect Roblox muncul (strict), persist 4x + grace 60s
+                    if zenxDcStrict() then
+                        dcStrict = dcStrict + 1
                         local umur = os.time() - (_G.__ZenxBootT or os.time())
-                        if dcCount >= 4 and umur > 60 and _G.ZenxSelfRejoin then
-                            _G.ZenxSelfRejoin("error/disconnect terdeteksi ("..dcCount.."x)")
+                        if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then
+                            _G.ZenxSelfRejoin("prompt reconnect Roblox (" .. dcStrict .. "x)")
                         end
                     else
-                        dcCount = 0
+                        dcStrict = 0
                     end
                 end)
                 task.wait(3)
@@ -1194,7 +1216,11 @@ local function bukaPicker()
     local tipe = (_G.ZenxKgStat and _G.ZenxKgStat.tipe) or {}
     local names = {}
     for t in pairs(tipe) do names[#names+1] = t end
-    table.sort(names)
+    table.sort(names, function(a, b)
+        local ca, cb = tonumber(tipe[a]) or 0, tonumber(tipe[b]) or 0
+        if ca ~= cb then return ca > cb end   -- jumlah terbanyak DI ATAS
+        return a < b                           -- seri -> alfabet
+    end)
     if #names == 0 then
         local e = lbl(pList, "(belum ada pet kebaca)", 12, C.textDim, Enum.TextXAlignment.Center)
         e.Size = UDim2.new(1, 0, 0, 30); e.ZIndex = 102; e.Name = "kosong"
@@ -1743,16 +1769,34 @@ do
     end
     updPetBtn()
     local function openPetPicker()
-        local seen, types = {}, {}
-        pcall(function()
-            local bp = player:FindFirstChild("Backpack")
-            if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and t:GetAttribute("PET_UUID") then local ty=stripMutation(tostring(t:GetAttribute("f") or "")); if ty~="" and not seen[ty] then seen[ty]=true; types[#types+1]=ty end end end end
+        local counts, types = {}, {}
+        -- hitung dari container (SEMUA pet, incl yg ke-equip); fallback backpack
+        local c = _kgContainer
+        if c then
+            pcall(function()
+                for _, entry in pairs(c) do
+                    if type(entry)=="table" and entry.PetType and entry.PetData then
+                        local ty = stripMutation(tostring(entry.PetType))
+                        if ty~="" then if not counts[ty] then counts[ty]=0; types[#types+1]=ty end; counts[ty]=counts[ty]+1 end
+                    end
+                end
+            end)
+        end
+        if #types == 0 then
+            pcall(function()
+                local bp = player:FindFirstChild("Backpack")
+                if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and t:GetAttribute("PET_UUID") then local ty=stripMutation(tostring(t:GetAttribute("f") or "")); if ty~="" then if not counts[ty] then counts[ty]=0; types[#types+1]=ty end; counts[ty]=counts[ty]+1 end end end end
+            end)
+        end
+        table.sort(types, function(a,b)
+            local ca, cb = counts[a] or 0, counts[b] or 0
+            if ca ~= cb then return ca > cb end   -- jumlah terbanyak DI ATAS
+            return a < b                           -- seri -> alfabet
         end)
-        table.sort(types)
         local old = gui:FindFirstChild("TradePetPicker"); if old then old:Destroy() end
         local ov = mk("Frame", { Name="TradePetPicker", Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=0.4, ZIndex=200, Parent=gui })
         local pk = mk("Frame", { Size=UDim2.new(0,300,0,360), Position=UDim2.new(0.5,-150,0.5,-180), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=201, Parent=ov }); corner(pk,10)
-        local pt = lbl(pk, "  Pilih Jenis Pet (multi)", 13, C.text); pt.Font=FONT_B; pt.Position=UDim2.new(0,10,0,8); pt.Size=UDim2.new(1,-40,0,24); pt.ZIndex=202
+        local pt = lbl(pk, "  Pilih Jenis Pet ("..#types.." jenis)", 13, C.text); pt.Font=FONT_B; pt.Position=UDim2.new(0,10,0,8); pt.Size=UDim2.new(1,-40,0,24); pt.ZIndex=202
         local px = mk("TextButton", { Size=UDim2.new(0,26,0,24), Position=UDim2.new(1,-32,0,8), BackgroundColor3=Color3.fromRGB(150,60,60), Text="X", Font=FONT_B, TextSize=12, TextColor3=Color3.new(1,1,1), ZIndex=202, Parent=pk }); corner(px,6)
         local scr = mk("ScrollingFrame", { Size=UDim2.new(1,-20,1,-90), Position=UDim2.new(0,10,0,40), BackgroundColor3=C.bg, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=202, Parent=pk }); corner(scr,6)
         mk("UIListLayout", { Padding=UDim.new(0,4), Parent=scr })
@@ -1764,7 +1808,7 @@ do
                 local sel = TR.tipe[ty]==true
                 local b = mk("TextButton", { Size=UDim2.new(1,-4,0,30), BackgroundColor3= sel and C.accent or C.card, Text="", ZIndex=202, Parent=scr }); corner(b,6)
                 local chk = lbl(b, sel and "\u{2713}" or "", 14, Color3.fromRGB(17,17,17)); chk.Position=UDim2.new(0,8,0,0); chk.Size=UDim2.new(0,20,1,0); chk.ZIndex=203
-                local nm = lbl(b, ty, 12, sel and Color3.fromRGB(17,17,17) or C.text); nm.Position=UDim2.new(0,30,0,0); nm.Size=UDim2.new(1,-34,1,0); nm.ZIndex=203
+                local nm = lbl(b, ty.."  \u{00d7}"..(counts[ty] or 0), 12, sel and Color3.fromRGB(17,17,17) or C.text); nm.Position=UDim2.new(0,30,0,0); nm.Size=UDim2.new(1,-34,1,0); nm.ZIndex=203
                 b.MouseButton1Click:Connect(function() if TR.tipe[ty] then TR.tipe[ty]=nil else TR.tipe[ty]=true end; saveTr(); updPetBtn(); rebuild() end)
             end
         end
