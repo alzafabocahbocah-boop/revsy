@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.53"
+local VERSION = "v0.54"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -605,9 +605,10 @@ do
     }
     -- SESI 2 (up KG): 7 support, swap SEMUA (support+bahan), bahan 1, rotate pas age turun <=30
     local SUPPORT_S2 = {
-        { nama = "Mimic Octopus",   cari = { "mimic" },     jml = 4 },
-        { nama = "Peacock",         cari = { "peacock" },   jml = 1 },
-        { nama = "Elephant",        cari = { "elephant" },  jml = 2 },
+        { nama = "Mimic Octopus",   cari = { "mimic" },              jml = 3 },
+        { nama = "Elephant",        cari = { "elephant" },           jml = 2 },
+        { nama = "Peacock",         cari = { "peacock" },            jml = 1 },
+        { nama = "Ghostly Spider",  cari = { "ghostly", "spider" },  jml = 1 },
     }
     local AGE_TARGET = 50     -- sesi 1: bahan sampe age ini
     local AGE_DROP   = 30     -- sesi 2: KG-up kelar kalau age turun <= ini
@@ -674,25 +675,28 @@ do
 
 
     -- swap gacor PARALEL (tiap pet swap sendiri-sendiri, GAK antre) — lebih cepet
-    local busy, lastSwap, lastPos = {}, {}, {}
+    local busy, lastSwap, lastPos, busySince = {}, {}, {}, {}
     local function swapPet(uuid)
         if busy[uuid] then return end
         busy[uuid] = true
+        busySince[uuid] = tick()
         task.spawn(function()
-            local pos = CLUSTER
-            if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
-            if not pos then pos = lastPos[uuid] end
-            if pos then lastPos[uuid] = pos end
-            task.wait(KG.pickup or 0.3)
-            unequipPet(uuid); task.wait(0.01)
-            equipPet(uuid, pos)
-            lastSwap[uuid] = tick()
-            for i = 1, 3 do
-                task.wait(0.35)
-                local m = modelByUuid[uuid]; if m and m.Parent then break end
-                equipPet(uuid, lastPos[uuid])
-            end
-            busy[uuid] = nil
+            pcall(function()   -- kalau error di tengah, busy TETEP ke-clear di bawah (anti nyangkut)
+                local pos = CLUSTER
+                if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
+                if not pos then pos = lastPos[uuid] end
+                if pos then lastPos[uuid] = pos end
+                task.wait(KG.pickup or 0.3)
+                unequipPet(uuid); task.wait(0.01)
+                equipPet(uuid, pos)
+                lastSwap[uuid] = tick()
+                for i = 1, 3 do
+                    task.wait(0.35)
+                    local m = modelByUuid[uuid]; if m and m.Parent then break end
+                    equipPet(uuid, lastPos[uuid])
+                end
+            end)
+            busy[uuid] = nil   -- SELALU clear (walau error) -> pet gak nyangkut
         end)
     end
     -- ready-loop: SESI 1 = support doang. SESI 2 = SEMUA (support + bahan). Cek cepet 0.05s.
