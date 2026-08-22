@@ -66,11 +66,12 @@ do
         end
         _G.ZenxCekDisconnect = zenxCekDisconnect
         -- loop cepat: hapus denyut pas disconnect -> worker rejoin cepet
+        -- TAPI skip kalau lagi SELF-REJOIN (script yg handle, worker jangan ikut)
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and zenxCekDisconnect() and delfile then
+                    if plr and plr.Name and not _G.ZenxRejoining and zenxCekDisconnect() and delfile then
                         if isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
                             pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
                         end
@@ -79,21 +80,50 @@ do
                 task.wait(3)
             end
         end)
-        -- penghitung egg: scan backpack + character buat item nama "egg"
+        -- penghitung egg (port EggDetect hact: Tool backpack/char + GUI stacked "18x Egg")
         task.spawn(function()
+            local lastGuiScan, guiCache = 0, {}
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    local n = 0
-                    local function cek(cont)
+                    if not plr then return end
+                    local counts = {}
+                    local function scanTools(cont)
                         if not cont then return end
-                        for _, it in ipairs(cont:GetChildren()) do
-                            if tostring(it.Name):lower():find("egg") then n = n + 1 end
+                        for _, t in ipairs(cont:GetChildren()) do
+                            if t:IsA("Tool") and t.Name:lower():find("egg") then
+                                counts[t.Name] = (counts[t.Name] or 0) + 1
+                            end
                         end
                     end
-                    cek(plr and plr:FindFirstChild("Backpack"))
-                    cek(plr and plr.Character)
-                    _G.ZenxPanenEgg = n
+                    scanTools(plr:FindFirstChild("Backpack"))
+                    scanTools(plr.Character)
+                    -- scan GUI tiap 15s (egg stacked, mis "18x Bug Egg" / "Bug Egg x18")
+                    local now = os.time()
+                    if (now - lastGuiScan) >= 15 then
+                        lastGuiScan = now
+                        local fresh = {}
+                        local pg = plr:FindFirstChildOfClass("PlayerGui")
+                        if pg then
+                            for _, d in ipairs(pg:GetDescendants()) do
+                                if d:IsA("TextLabel") then
+                                    local txt = d.Text or ""
+                                    local cnt, name = txt:match("^(%d+)x%s+(.+[Ee]gg.*)$")
+                                    if not cnt then cnt, name = txt:match("^x(%d+)%s+(.+[Ee]gg.*)$") end
+                                    if not cnt then name, cnt = txt:match("^(.+[Ee]gg.-)%s+x?(%d+)$") end
+                                    if cnt and name then
+                                        local n = tonumber(cnt)
+                                        if n and n > 0 then fresh[name] = math.max(fresh[name] or 0, n) end
+                                    end
+                                end
+                            end
+                        end
+                        guiCache = fresh
+                    end
+                    for k, v in pairs(guiCache) do counts[k] = math.max(counts[k] or 0, v) end
+                    local total = 0
+                    for _, c in pairs(counts) do total = total + (tonumber(c) or 0) end
+                    _G.ZenxPanenEgg = total
                 end)
                 task.wait(10)
             end
@@ -110,6 +140,43 @@ do
                     end
                 end)
                 task.wait(20)
+            end
+        end)
+    end
+end
+
+-- ===== AUTO-REJOIN tiap N menit (KICK dulu -> rejoin server SAMA dalam 30s) =====
+-- SETTING WAKTU: ganti REJOIN_MENIT di sini (berlaku semua RF pas reload script).
+-- Bisa juga di-override runtime: _G.ZenxRejoinMenit = 45
+local REJOIN_MENIT = 30    -- <<< SETTING: rejoin tiap berapa menit
+-- Port dari leveling/farm: player:Kick (putus server, script executor TETEP hidup)
+-- -> tunggu 30s (ghost slot bekas kita bebas) -> TeleportToPlaceInstance jobId SAMA
+-- (retry 12s). Private server: retry server SAMA terus (Teleport acak = kelempar public).
+-- _G.ZenxRejoining=true -> disconnect-detect JANGAN hapus denyut (worker gak ikut rejoin).
+do
+    if not _G.__ZenxRejoinJalan then
+        _G.__ZenxRejoinJalan = true
+        local TS = game:GetService("TeleportService")
+        task.spawn(function()
+            while true do
+                local menit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT
+                for _ = 1, math.floor(menit * 60) do task.wait(1) end
+                local plr = game:GetService("Players").LocalPlayer
+                if plr then
+                    local jobId  = game.JobId
+                    local isPriv = (game.PrivateServerId or "") ~= ""
+                    _G.ZenxRejoining = true
+                    pcall(function() plr:Kick("ZenxFreezeRejoin") end)
+                    task.wait(30)   -- ghost slot bekas kita bebas dulu
+                    while true do
+                        if jobId and jobId ~= "" then
+                            pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
+                        else
+                            pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                        end
+                        task.wait(12)
+                    end
+                end
             end
         end)
     end
