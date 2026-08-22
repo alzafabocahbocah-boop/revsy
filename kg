@@ -1,20 +1,217 @@
--- ============================================================
--- ZENX KG STATS v1.1 (minimal)
--- Cuma show TOTAL / KG 60+ / KG 60- — no table, no search
--- Data via getgc memory container
--- Scope: backpack only — Auto-refresh 5 detik
--- ============================================================
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║  UP KG — v0.1 (KERANGKA UI)                                    ║
+-- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
+-- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
+-- ╚══════════════════════════════════════════════════════════════╝
 
-local Players    = game:GetService("Players")
-local CoreGui    = game:GetService("CoreGui")
-local HS         = game:GetService("HttpService")
-local player     = Players.LocalPlayer
-local playerGui  = player:WaitForChild("PlayerGui", 10)
-local VER = "v2.5"
-local KG_THRESHOLD = 6  -- compared against age-1 kg (BaseWeight × 1.1)
-local SETTINGS_FILE = "ZenxKgStats_settings.json"
+local VERSION = "v0.16"
 
--- Mutation prefixes for type normalization
+-- ===== CONFIG SIMPAN/LOAD (persist antar rejoin/re-exe — writefile) =====
+-- rejoin = sesi baru (_G reset), jadi setting HARUS ke file biar gak balik awal.
+do
+    local CFG_FILE = "zenx_upkg_cfg.json"
+    local HS = game:GetService("HttpService")
+    _G.ZenxKgSaveCfg = function()
+        pcall(function()
+            if not writefile then return end
+            local cfg = {
+                upTipe = (type(_G.ZenxKgUpTipe) == "table") and _G.ZenxKgUpTipe or {},
+                rejoinMenit = tonumber(_G.ZenxRejoinMenit) or 30,
+                config = _G.ZenxKgConfig or "Tim Spider",
+                autoOn = _G.ZenxKg and _G.ZenxKg.aktif or false,
+            }
+            writefile(CFG_FILE, HS:JSONEncode(cfg))
+        end)
+    end
+    -- load pas awal
+    pcall(function()
+        if isfile and isfile(CFG_FILE) and readfile then
+            local cfg = HS:JSONDecode(readfile(CFG_FILE))
+            if type(cfg) == "table" then
+                if type(cfg.upTipe) == "table" then
+                    -- convert array kosong -> set kosong
+                    local s = {}
+                    for k, v in pairs(cfg.upTipe) do if type(k) == "string" and v then s[k] = true end end
+                    _G.ZenxKgUpTipe = s
+                end
+                if tonumber(cfg.rejoinMenit) then _G.ZenxRejoinMenit = tonumber(cfg.rejoinMenit) end
+                if cfg.config then _G.ZenxKgConfig = cfg.config end
+            end
+        end
+    end)
+end
+
+-- ===== DENYUT — worker tau client hidup (guard disconnect) =====
+do
+    if not _G.__ZenxDenyutJalan then
+        _G.__ZenxDenyutJalan = true
+        -- DETEKSI DISCONNECT (port star_seed) — denyut BERHENTI + file DIHAPUS pas putus
+        local function zenxCekDisconnect()
+            local dc = false
+            pcall(function()
+                local GuiService = game:GetService("GuiService")
+                local ec = GuiService:GetErrorCode()
+                if ec and ec ~= Enum.ConnectionError.OK and ec ~= Enum.ConnectionError.None then dc = true end
+            end)
+            if dc then return true end
+            pcall(function()
+                local CoreGui = game:GetService("CoreGui")
+                local pg = CoreGui:FindFirstChild("RobloxPromptGui")
+                local overlay = pg and pg:FindFirstChild("promptOverlay")
+                if overlay then
+                    for _, child in ipairs(overlay:GetChildren()) do
+                        if child:IsA("GuiObject") and child.Visible
+                            and (child.Name:find("Error") or child.Name:find("Prompt")) then
+                            for _, d in ipairs(child:GetDescendants()) do
+                                if d:IsA("TextButton") or d:IsA("TextLabel") then
+                                    local t = tostring(d.Text or ""):lower()
+                                    if t:find("reconnect") or t:find("leave") or t:find("disconnect")
+                                        or t:find("shut") or t:find("keluar") or t:find("sambung")
+                                        or t:find("terputus") or t:find("dimatikan") or t:find("hubungkan") then
+                                        dc = true; return
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+            if dc then return true end
+            pcall(function()
+                local CoreGui = game:GetService("CoreGui")
+                for _, d in ipairs(CoreGui:GetDescendants()) do
+                    if d:IsA("TextLabel") or d:IsA("TextButton") then
+                        local vis = false
+                        pcall(function() vis = d.Visible end)
+                        if vis then
+                            local t = tostring(d.Text or ""):lower()
+                            if t:find("reconnect") or t:find("sambung ulang")
+                                or t:find("terputus") or t:find("disconnected")
+                                or t:find("dimatikan") or t:find("was shut down")
+                                or t:find("lost connection") or t:find("kehilangan koneksi")
+                                or t:find("error code") or t:find("kode error") or t:find("kode eror")
+                                or t:find("id error") or t:find("(error)") then
+                                dc = true; return
+                            end
+                        end
+                    end
+                end
+            end)
+            return dc
+        end
+        _G.ZenxCekDisconnect = zenxCekDisconnect
+        -- loop cepat: hapus denyut pas disconnect -> worker rejoin cepet (skip pas self-rejoin)
+        task.spawn(function()
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    if plr and plr.Name and not _G.ZenxRejoining and zenxCekDisconnect() and delfile then
+                        if isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
+                            pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                        end
+                    end
+                end)
+                task.wait(3)
+            end
+        end)
+        -- denyut tiap 20s — SKIP kalau disconnect
+        task.spawn(function()
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    if plr and plr.Name and writefile and not zenxCekDisconnect() then
+                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                    end
+                end)
+                task.wait(20)
+            end
+        end)
+    end
+end
+
+-- ===== AUTO-REJOIN tiap N menit (KICK dulu -> rejoin server SAMA, countdown GLOBAL sync) =====
+local REJOIN_MENIT = 30    -- <<< SETTING: rejoin tiap berapa menit (bisa override _G.ZenxRejoinMenit)
+_G.ZenxRejoinMenit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT   -- DEFAULT 30, WAJIB nyala (gak ada toggle mati)
+_G.__ZenxBootT = _G.__ZenxBootT or os.time()   -- waktu boot script (buat guard kick-pertama)
+do
+    _G.__ZenxRejoinGen = (_G.__ZenxRejoinGen or 0) + 1
+    local myGen = _G.__ZenxRejoinGen
+    do
+        local TS = game:GetService("TeleportService")
+        task.spawn(function()
+            while _G.__ZenxRejoinGen == myGen do
+                -- countdown: recompute boundary TIAP DETIK -> ganti _G.ZenxRejoinMenit LIVE
+                -- langsung re-align ke boundary baru (gak nunggu cycle selesai).
+                while _G.__ZenxRejoinGen == myGen do
+                    local menit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT
+                    local interval = math.max(60, math.floor(menit * 60))
+                    local offset = math.max(0, math.floor(menit / 10) - 1) * 60
+                    local now = os.time()
+                    local nextB = (math.floor((now - offset) / interval) + 1) * interval + offset
+                    while nextB - (_G.__ZenxBootT or now) < 60 do nextB = nextB + interval end
+                    _G.ZenxRejoinSisa = nextB - now
+                    if _G.ZenxRejoinSisa <= 1 then break end
+                    task.wait(1)
+                end
+                if _G.__ZenxRejoinGen ~= myGen then return end
+                _G.ZenxRejoinSisa = 0
+                local plr = game:GetService("Players").LocalPlayer
+                if plr then
+                    local jobId = game.JobId
+                    _G.ZenxRejoining = true
+                    pcall(function() plr:Kick("ZenxFreezeRejoin") end)
+                    -- SEMBUNYIIN dialog "kicked/disconnect" biar TeleportToPlaceInstance gak ke-blok
+                    task.spawn(function()
+                        local cg = game:GetService("CoreGui")
+                        local guiSvc = game:GetService("GuiService")
+                        for _ = 1, 300 do
+                            pcall(function()
+                                for _, g in ipairs(cg:GetChildren()) do
+                                    local n = tostring(g.Name):lower()
+                                    if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                        if g:IsA("ScreenGui") then g.Enabled = false end
+                                        pcall(function() g.Parent = nil end)
+                                    end
+                                end
+                                pcall(function() guiSvc:ClearError() end)
+                            end)
+                            task.wait(0.5)
+                        end
+                    end)
+                    print("[Rejoin] KICK dilakukan. jobId=" .. tostring(jobId) .. " place=" .. tostring(game.PlaceId))
+                    pcall(function()
+                        TS.TeleportInitFailed:Connect(function(_, res, msg)
+                            print("[Rejoin] teleport GAGAL: " .. tostring(res) .. " | " .. tostring(msg))
+                        end)
+                    end)
+                    task.wait(30)
+                    local tries = 0
+                    while true do   -- rejoin sampe berhasil (VM mati pas teleport sukses)
+                        tries = tries + 1
+                        print("[Rejoin] coba teleport #" .. tries)
+                        if jobId and jobId ~= "" then
+                            pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
+                        else
+                            pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                        end
+                        task.wait(8)
+                    end
+                end
+            end
+        end)
+    end
+end
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local UIS     = game:GetService("UserInputService")
+local player  = Players.LocalPlayer
+
+-- ============================================================
+-- STAT KG — total pet + belum/udah 3.8kg (dari hact PetDetect + kg.lua base weight)
+-- age-1 KG = BaseWeight × 1.1 (dari sc kg stat). Container via getgc.
+-- ============================================================
+local KG_TARGET_STAT = 3.8
 local MUTATION_PREFIXES = {
     "Everchanted ","Rainbow ","Frozen ","Inverted ","Golden ","Diamond ",
     "Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ",
@@ -28,123 +225,26 @@ local function stripMutation(s)
     end
     return s
 end
+-- config -> pet type filter (substring match). Random = semua pet (no filter).
+local KG_CONFIG_PET = { ["Tim Spider"] = "Spider", ["Tim Dilop"] = "Dilo", ["Tim Random"] = nil }
 
--- ALL pet types in Grow A Garden (master list — comprehensive base)
-local ALL_PET_TYPES = {
-    "Bee","Black Bear","Brontosaurus","Bunny","Bull","Capybara","Cat","Chicken",
-    "Cow","Crab","Cyclops","Dog","Dragonfly","Dragon Fruit","Duck","Eagle",
-    "Elephant","Fennec Fox","Flamingo","Frog","Giraffe","Goat","Golden Lab",
-    "Grey Mouse","Hamster","Hedgehog","Honey Bee","Horse","Hyena","Ice Golem",
-    "Kappa","King Bee","Komodo Dragon","Krakeon","Ladybug","Lion","Llama",
-    "Mantis","Meerkat","Mimic Octopus","Mole","Monkey","Moon Cat","Mosquito",
-    "Newt","Nightmare Peacock","Otter","Owl","Pack Bee","Panda","Parrot",
-    "Peacock","Penguin","Peryton","Petal Bee","Pig","Polar Bear","Puma",
-    "Queen Bee","Rabbit","Raccoon","Red Fox","Rhino","Ringneck Pheasant",
-    "Robin","Rooster","Ruby Squid","Salamander","Scorpion","Sea Turtle","Seal",
-    "Shark","Shiba Inu","Silver Monkey","Snail","Snow Owl","Snowfall","Spider",
-    "Spotted Deer","Squirrel","Starfish","Stork","Sugar Glider","Swan","T-Rex",
-    "Tarantula","Tortoise","Toucan","Triceratops","Turtle","Wasp","Werewolf",
-    "White Mouse","Wolf","ZapHorse","Beaver","Chocolate Bunny","Hootsie Roll",
-    "Brown Mouse","Black Mouse","Octopus","Snake","Snowman","Reindeer","Yak",
-    "Wolverine","Manta Ray","Jellyfish","Seahorse","Anglerfish","Pufferfish",
-    "Lobster","Bat","Cobra","Iguana","Chameleon","Gecko","Pelican","Vulture",
-    "Hawk","Falcon","Crow","Raven","Magpie","Cardinal","Sparrow","Bluebird",
-    "Hummingbird","Woodpecker","Pheasant","Quail","Turkey","Ostrich","Emu",
-    "Kookaburra","Cockatoo","Macaw","Lemur","Sloth","Anteater","Armadillo",
-    "Tapir","Capuchin","Gorilla","Orangutan","Chimpanzee","Baboon","Bushbaby",
-    "Tarsier","Possum","Skunk","Badger","Weasel","Ferret","Marten","Stoat",
-    "Mink","Mongoose","Pangolin","Aardvark","Echidna","Platypus","Wombat",
-    "Kangaroo","Wallaby","Koala","Tasmanian Devil",
-}
-
--- Settings persistence
-local selectedPetTypes = {}  -- {[petName]=true}
-
-local function loadSettings()
-    -- Try file first
-    local content = nil
-    pcall(function()
-        if isfile and readfile and isfile(SETTINGS_FILE) then
-            content = readfile(SETTINGS_FILE)
-        end
-    end)
-    if content then
-        local ok, data = pcall(function() return HS:JSONDecode(content) end)
-        if ok and type(data) == "table" and type(data.petTypes) == "table" then
-            for _, n in ipairs(data.petTypes) do
-                if type(n) == "string" then selectedPetTypes[n] = true end
-            end
-            print("[ZenxKgStats] loaded "..#data.petTypes.." pet filters from file")
-            return
-        end
-    end
-    -- Fallback: getgenv (in-session)
-    local g = (getgenv and getgenv()) or _G
-    if g and g.ZenxKgStatsSettings and type(g.ZenxKgStatsSettings) == "table" then
-        for _, n in ipairs(g.ZenxKgStatsSettings.petTypes or {}) do
-            if type(n) == "string" then selectedPetTypes[n] = true end
-        end
-        print("[ZenxKgStats] loaded from getgenv (in-session)")
-    end
-end
-
-local function saveSettings()
-    local types = {}
-    for k in pairs(selectedPetTypes) do table.insert(types, k) end
-    local data = {petTypes = types}
-    -- Save to file (persist across rejoin)
-    pcall(function()
-        if writefile then writefile(SETTINGS_FILE, HS:JSONEncode(data)) end
-    end)
-    -- Also save to getgenv (in-session backup)
-    local g = (getgenv and getgenv()) or _G
-    if g then g.ZenxKgStatsSettings = data end
-end
-
-local function petTypeCount()
-    local n = 0; for _ in pairs(selectedPetTypes) do n = n + 1 end; return n
-end
-
--- ===== CLEANUP =====
-local function cleanup()
-    for _, p in ipairs({playerGui, CoreGui}) do
-        for _, c in ipairs(p:GetChildren()) do
-            if c.Name == "ZenxKgStats" then pcall(function() c:Destroy() end) end
-        end
-    end
-    pcall(function()
-        if gethui then
-            for _, c in ipairs(gethui():GetChildren()) do
-                if c.Name == "ZenxKgStats" then c:Destroy() end
-            end
-        end
-    end)
-end
-cleanup()
-
--- ============================================================
--- MEMORY CONTAINER
--- ============================================================
+-- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
+local _kgContainer = nil
 local function findMemoryContainer()
-    if not getgc then return nil, 0 end
-    -- v1.8: Get backpack UUIDs to find the RIGHT container
-    local backpackUUIDs = {}
-    local bpCount = 0
+    if not getgc then return nil end
+    local backpackUUIDs, bpCount = {}, 0
     local bp = player:FindFirstChild("Backpack")
     if bp then
         for _, t in ipairs(bp:GetChildren()) do
             if t:IsA("Tool") then
                 local u = t:GetAttribute("PET_UUID")
                 if u then
-                    local k = tostring(u)
-                    if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
-                    backpackUUIDs[k] = true
-                    bpCount = bpCount + 1
+                    local k = tostring(u); if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
+                    backpackUUIDs[k] = true; bpCount = bpCount + 1
                 end
             end
         end
     end
-
     local best, bestCount, bestMatch = nil, 0, 0
     pcall(function()
         for _, obj in pairs(getgc(true)) do
@@ -161,8 +261,7 @@ local function findMemoryContainer()
                     local sample = nil
                     for _, v in pairs(obj) do sample = v; break end
                     if type(sample) == "table" and rawget(sample, "PetData") then
-                        local cnt = 0
-                        for _ in pairs(obj) do cnt = cnt + 1 end
+                        local cnt = 0; for _ in pairs(obj) do cnt = cnt + 1 end
                         local better = false
                         if bpCount > 0 then
                             if matchCount > bestMatch then better = true
@@ -170,543 +269,561 @@ local function findMemoryContainer()
                         else
                             if cnt > bestCount then better = true end
                         end
-                        if better then
-                            best = obj
-                            bestCount = cnt
-                            bestMatch = matchCount
-                        end
+                        if better then best = obj; bestCount = cnt; bestMatch = matchCount end
                     end
                 end
             end
         end
     end)
-    if best then
-        print("[ZenxKgStats] container: "..bestCount.." entries, "..bestMatch.."/"..bpCount.." backpack match")
-    end
-    return best, bestCount
+    return best
 end
-
+local function ambilContainer()
+    -- valid kalau masih tabel + ada PetData. re-find kalau nil.
+    if _kgContainer then
+        local ok = false
+        pcall(function()
+            for _, v in pairs(_kgContainer) do
+                if type(v) == "table" and rawget(v, "PetData") then ok = true end
+                break
+            end
+        end)
+        if ok then return _kgContainer end
+    end
+    _kgContainer = findMemoryContainer()
+    return _kgContainer
+end
+-- age-1 KG = BaseWeight × 1.1 (dari kg.lua)
 local function getAgeOneKg(container, uuid)
-    -- Return berat di age 1 = BaseWeight × 1.1
-    -- Contoh: pet 27kg age 40 → BW≈5.4 → age 1 = 5.94 ≈ 6kg
     if not container or not uuid then return 0 end
-    local key = tostring(uuid)
-    if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+    local key = tostring(uuid); if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
     local entry = container[key]
     if type(entry) == "table" and entry.PetData then
-        local bw = tonumber(entry.PetData.BaseWeight) or 0
-        return bw * 1.1
+        return (tonumber(entry.PetData.BaseWeight) or 0) * 1.1
     end
     return 0
 end
 
-local function collectStats(container)
-    local total, above, below = 0, 0, 0
-    local bp = player:FindFirstChild("Backpack")
-    if not bp then return total, above, below end
-    local hasFilter = petTypeCount() > 0
-    for _, tool in ipairs(bp:GetChildren()) do
-        if tool:IsA("Tool") then
-            local uuid = tool:GetAttribute("PET_UUID")
-            if uuid then
-                local skip = false
-                if hasFilter then
-                    local pType = stripMutation(tostring(tool:GetAttribute("f") or "?"))
-                    if not selectedPetTypes[pType] then skip = true end
-                end
-                if not skip then
-                    local kg = getAgeOneKg(container, uuid)
-                    if kg >= KG_THRESHOLD then
-                        above = above + 1
-                    else
-                        below = below + 1
-                    end
-                    total = total + 1
-                end
-            end
-        end
+-- LOOP CEPAT (tiap 1s): total pet + tipe (backpack doang, MURAH, STABIL — gak flicker).
+-- GEN-GUARD: re-load matiin loop lama (biar gak 2 loop tabrakan tulis total beda).
+_G.ZenxKgStat = _G.ZenxKgStat or { total = 0, belum = 0, udah = 0, list = {}, tipe = {} }
+_G.__ZenxKgStatGen = (_G.__ZenxKgStatGen or 0) + 1
+local statGen = _G.__ZenxKgStatGen
+-- CONTAINER-FIND loop (tiap 15s, getgc BERAT) — refresh _kgContainer aja.
+task.spawn(function()
+    while _G.__ZenxKgStatGen == statGen do
+        pcall(function() ambilContainer() end)
+        task.wait(15)
     end
-    return total, above, below
+end)
+
+-- STAT loop (tiap 1s): total + belum + udah + tipe. FILTER by pet kepilih (_G.ZenxKgUpTipe).
+-- Kalau belum pilih pet -> hitung SEMUA. tipe = SEMUA (buat picker).
+task.spawn(function()
+    while _G.__ZenxKgStatGen == statGen do
+        pcall(function()
+            local target = _G.ZenxKgUpTipe   -- SET {tipe=true} pet kepilih (nil/kosong = semua)
+            local hasTarget = (type(target) == "table") and next(target) ~= nil
+            local container = _kgContainer
+            local total, belum, udah, tipe = 0, 0, 0, {}
+            local bp = player:FindFirstChild("Backpack")
+            if bp then
+                for _, tool in ipairs(bp:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local uuid = tool:GetAttribute("PET_UUID")
+                        if uuid then
+                            local ptype = stripMutation(tostring(tool:GetAttribute("f") or ""))
+                            tipe[ptype] = (tipe[ptype] or 0) + 1   -- SEMUA tipe buat picker
+                            if (not hasTarget) or target[ptype] then
+                                total = total + 1
+                                local kg = getAgeOneKg(container, tostring(uuid))
+                                if kg >= KG_TARGET_STAT then udah = udah + 1 else belum = belum + 1 end
+                            end
+                        end
+                    end
+                end
+                _G.ZenxKgStat.total = total
+                _G.ZenxKgStat.belum = belum
+                _G.ZenxKgStat.udah = udah
+                _G.ZenxKgStat.tipe = tipe
+            end
+        end)
+        task.wait(1)
+    end
+end)
+
+-- ============ TEMA ============
+local C = {
+    bg       = Color3.fromRGB(22, 22, 22),
+    panel    = Color3.fromRGB(26, 26, 26),
+    card     = Color3.fromRGB(30, 30, 30),
+    cardSel  = Color3.fromRGB(34, 34, 34),
+    input    = Color3.fromRGB(30, 30, 30),
+    border   = Color3.fromRGB(60, 60, 60),
+    borderSel= Color3.fromRGB(255, 255, 255),
+    line     = Color3.fromRGB(95, 95, 95),
+    text     = Color3.fromRGB(240, 240, 240),
+    textDim  = Color3.fromRGB(140, 140, 140),
+    textMute = Color3.fromRGB(100, 100, 100),
+    accent   = Color3.fromRGB(255, 255, 255),
+    danger   = Color3.fromRGB(200, 90, 90),
+}
+local FONT   = Enum.Font.GothamSemibold
+local FONT_B = Enum.Font.GothamBold
+
+-- ============ UI HELPERS ============
+local function mk(class, props)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    return o
+end
+local function corner(o, r)
+    mk("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = o }); return o
+end
+local function stroke(o, col, th)
+    return mk("UIStroke", { Color = col or C.border, Thickness = th or 1.5, Parent = o })
+end
+local function pad(o, all)
+    mk("UIPadding", {
+        PaddingTop = UDim.new(0, all), PaddingBottom = UDim.new(0, all),
+        PaddingLeft = UDim.new(0, all), PaddingRight = UDim.new(0, all), Parent = o })
+end
+local function lbl(parent, text, size, col, xalign)
+    return mk("TextLabel", {
+        BackgroundTransparency = 1, Text = text, Font = FONT,
+        TextSize = size or 13, TextColor3 = col or C.text,
+        TextXAlignment = xalign or Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center, Parent = parent })
 end
 
--- ============================================================
--- COLORS
--- ============================================================
-local C = {
-    BG     = Color3.fromRGB(18, 18, 18),
-    Panel  = Color3.fromRGB(28, 28, 28),
-    Card   = Color3.fromRGB(36, 36, 36),
-    Accent = Color3.fromRGB(255, 200, 0),
-    Text   = Color3.fromRGB(230, 230, 230),
-    Dim    = Color3.fromRGB(140, 140, 140),
-    Green  = Color3.fromRGB(100, 200, 120),
-    Orange = Color3.fromRGB(255, 140, 60),
-    Red    = Color3.fromRGB(220, 80, 80),
-    Blue   = Color3.fromRGB(80, 130, 200),
+-- ============ SCREEN GUI ============
+pcall(function()
+    local old = (gethui and gethui() or CoreGui):FindFirstChild("ZenxUpKg")
+    if old then old:Destroy() end
+end)
+
+local gui = mk("ScreenGui", {
+    Name = "ZenxUpKg", ResetOnSpawn = false, IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
+pcall(function() gui.Parent = (gethui and gethui()) or CoreGui end)
+if not gui.Parent then gui.Parent = player:WaitForChild("PlayerGui") end
+
+-- main frame
+local main = mk("Frame", {
+    Size = UDim2.new(0, 660, 0, 420),
+    Position = UDim2.new(0.5, -330, 0.5, -210),
+    BackgroundColor3 = C.bg, BorderSizePixel = 0, Parent = gui })
+corner(main, 12); stroke(main, C.border, 1.5)
+
+-- ============ TITLE BAR ============
+local titleBar = mk("Frame", {
+    Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = C.panel,
+    BorderSizePixel = 0, Parent = main })
+mk("UICorner", { CornerRadius = UDim.new(0, 12), Parent = titleBar })
+mk("Frame", { Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0, Parent = titleBar })
+
+local judul = lbl(titleBar, "\u{2696} UP KG", 15, C.text)
+judul.Font = FONT_B
+judul.Position = UDim2.new(0, 16, 0, 0); judul.Size = UDim2.new(0, 200, 1, 0)
+local verL = lbl(titleBar, VERSION, 11, C.textDim)
+verL.Position = UDim2.new(0, 120, 0, 0); verL.Size = UDim2.new(0, 60, 1, 0)
+
+local closeBtn = mk("TextButton", {
+    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -38, 0, 7),
+    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 15,
+    TextColor3 = C.textDim, AutoButtonColor = true, Parent = titleBar })
+corner(closeBtn, 7)
+local minBtn = mk("TextButton", {
+    Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -74, 0, 7),
+    BackgroundColor3 = C.card, Text = "\u{2013}", Font = FONT_B, TextSize = 15,
+    TextColor3 = C.textDim, AutoButtonColor = true, Parent = titleBar })
+corner(minBtn, 7)
+
+-- drag manual
+do
+    local dragging, dragStart, startPos
+    titleBar.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = inp.Position; startPos = main.Position
+            inp.Changed:Connect(function()
+                if inp.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UIS.InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType == Enum.UserInputType.MouseMovement
+        or inp.UserInputType == Enum.UserInputType.Touch) then
+            local d = inp.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                      startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+-- ============ LOGO MINI (Z) — muncul saat minimize ============
+local miniLogo = mk("TextButton", {
+    Size = UDim2.new(0, 50, 0, 50), Position = UDim2.new(0, 16, 0.4, 0),
+    BackgroundColor3 = Color3.fromRGB(20, 20, 20), Text = "", AutoButtonColor = false,
+    Visible = false, ZIndex = 60, Parent = gui })
+mk("UICorner", { CornerRadius = UDim.new(1, 0), Parent = miniLogo })
+mk("UIGradient", {
+    Color = ColorSequence.new(Color3.fromRGB(34,34,34), Color3.fromRGB(16,16,16)),
+    Rotation = 90, Parent = miniLogo })
+local miniStroke = mk("UIStroke", {
+    Color = Color3.fromRGB(245,245,245), Thickness = 1.5, Transparency = 0.1, Parent = miniLogo })
+local innerRing = mk("Frame", {
+    Size = UDim2.new(1, -8, 1, -8), Position = UDim2.new(0, 4, 0, 4),
+    BackgroundTransparency = 1, ZIndex = 60, Parent = miniLogo })
+mk("UICorner", { CornerRadius = UDim.new(1, 0), Parent = innerRing })
+mk("UIStroke", { Color = Color3.fromRGB(70,70,70), Thickness = 1, Transparency = 0.3, Parent = innerRing })
+local miniZ = lbl(miniLogo, "Z", 24, Color3.fromRGB(248,248,248), Enum.TextXAlignment.Center)
+miniZ.Font = FONT_B; miniZ.Size = UDim2.new(1, 0, 1, 0); miniZ.ZIndex = 61
+miniLogo.MouseEnter:Connect(function() miniStroke.Transparency = 0 end)
+miniLogo.MouseLeave:Connect(function() miniStroke.Transparency = 0.1 end)
+
+local function doMinimize() main.Visible = false; miniLogo.Visible = true end
+local function doRestore()  miniLogo.Visible = false; main.Visible = true end
+minBtn.MouseButton1Click:Connect(doMinimize)
+miniLogo.MouseButton1Click:Connect(doRestore)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+-- ============ SIDEBAR KIRI (AUTO KG / MISC) ============
+local sidebar = mk("Frame", {
+    Size = UDim2.new(0, 125, 1, -44), Position = UDim2.new(0, 0, 0, 44),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0, Parent = main })
+mk("Frame", { Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(1, -1, 0, 0),
+    BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = sidebar })
+
+local activeSide = "AUTO KG"
+local sideBtns = {}
+local showSideFn
+
+local function makeSideBtn(name, y)
+    local btn = mk("TextButton", {
+        Size = UDim2.new(1, -16, 0, 34), Position = UDim2.new(0, 8, 0, y),
+        BackgroundColor3 = (name == activeSide) and C.card or C.panel,
+        Text = "", AutoButtonColor = false, Parent = sidebar })
+    corner(btn, 7)
+    local accent = mk("Frame", {
+        Size = UDim2.new(0, 3, 0.6, 0), Position = UDim2.new(0, 0, 0.2, 0),
+        BackgroundColor3 = C.accent, BorderSizePixel = 0,
+        Visible = (name == activeSide), Parent = btn })
+    corner(accent, 2)
+    local t = lbl(btn, name, 11.5, (name == activeSide) and C.text or C.textDim)
+    t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(1, -12, 1, 0); t.Font = FONT_B
+    sideBtns[name] = { btn = btn, accent = accent, label = t }
+    btn.MouseButton1Click:Connect(function()
+        activeSide = name
+        for n, d in pairs(sideBtns) do
+            local on = (n == name)
+            d.btn.BackgroundColor3 = on and C.card or C.panel
+            d.accent.Visible = on
+            d.label.TextColor3 = on and C.text or C.textDim
+        end
+        if showSideFn then showSideFn(name) end
+    end)
+    return btn
+end
+makeSideBtn("AUTO KG", 14)
+makeSideBtn("MISC", 54)
+
+-- ============ AREA KONTEN ============
+local content = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Parent = main })
+pad(content, 14)
+
+local miscContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(miscContent, 14)
+
+showSideFn = function(name)
+    content.Visible     = (name == "AUTO KG")
+    miscContent.Visible = (name == "MISC")
+end
+
+-- ---- KONTEN AUTO KG (kanan) = CONFIG ----
+local cfgScroll = mk("ScrollingFrame", {
+    Size = UDim2.new(1, 0, 1, 0), Position = UDim2.new(0, 0, 0, 0),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    Parent = content })
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = cfgScroll })
+
+local function sectionHeader(txt, lo)
+    local h = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = lo or 0, Parent = cfgScroll })
+    corner(h, 7)
+    local t = lbl(h, txt, 13, C.accent); t.Font = FONT_B
+    t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(1, -12, 1, 0)
+    return h
+end
+local function cfgRow(label, defaultVal, lo)
+    local r = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.panel,
+        BorderSizePixel = 0, LayoutOrder = lo or 0, Parent = cfgScroll })
+    corner(r, 6)
+    local t = lbl(r, label, 12, C.text)
+    t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(0.55, 0, 1, 0)
+    local box = mk("TextBox", { Size = UDim2.new(0, 100, 0, 24), Position = UDim2.new(1, -110, 0.5, -12),
+        BackgroundColor3 = C.input, Text = tostring(defaultVal or ""), Font = FONT_B, TextSize = 12,
+        TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false,
+        Parent = r })
+    corner(box, 5); stroke(box, C.border, 1)
+    return box, r
+end
+
+-- ============ SECTION: CONFIG UP KG ============
+sectionHeader("\u{2696} CONFIG UP KG", 1)
+
+-- selector 3 config: Tim Spider / Tim Dilop / Tim Random
+local KG_CONFIGS = { "Tim Spider", "Tim Dilop", "Tim Random" }
+local kgConfigAktif = _G.ZenxKgConfig or "Tim Spider"
+local kgConfBtns = {}
+local kgSelRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1,
+    LayoutOrder = 2, Parent = cfgScroll })
+mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = kgSelRow })
+_G.ZenxKgConfig = kgConfigAktif
+local kgConfStrokes = {}
+local function pilihConfig(name)
+    kgConfigAktif = name
+    _G.ZenxKgConfig = name
+    if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
+    for n, b in pairs(kgConfBtns) do
+        local on = (n == name)
+        b.BackgroundColor3 = on and C.cardSel or C.card
+        b.TextColor3 = on and C.accent or C.textDim
+        if kgConfStrokes[n] then kgConfStrokes[n].Color = on and C.borderSel or C.border end
+    end
+    if _G.ZenxKgLog then _G.ZenxKgLog("config: " .. name) end
+end
+for i, name in ipairs(KG_CONFIGS) do
+    local on = (name == kgConfigAktif)
+    local b = mk("TextButton", { Size = UDim2.new(1/3, -4, 1, 0),
+        BackgroundColor3 = on and C.cardSel or C.card, Text = name:gsub("Tim ", ""),
+        Font = FONT_B, TextSize = 11, TextColor3 = on and C.accent or C.textDim,
+        AutoButtonColor = false, LayoutOrder = i, Parent = kgSelRow })
+    corner(b, 6); kgConfStrokes[name] = stroke(b, on and C.borderSel or C.border, 1)
+    b.MouseButton1Click:Connect(function() pilihConfig(name) end)
+    kgConfBtns[name] = b
+end
+
+-- ============ TABEL 1: STATUS TIM ============
+-- pet dipake di tim + jumlah + berapa yg BELUM 3.8kg + berapa yg UDAH.
+local KG_TARGET = 3.8
+_G.ZenxKgTarget = KG_TARGET
+local statTbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 108), BackgroundColor3 = C.panel,
+    Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.text,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Text = "", LayoutOrder = 3, Parent = cfgScroll })
+corner(statTbl, 6)
+mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6), Parent = statTbl })
+task.spawn(function()
+    while gui.Parent do
+        local st = _G.ZenxKgStat or {}
+        local total = st.total or 0
+        local belum = st.belum or 0
+        local udah  = st.udah or 0
+        local pilih = "SEMUA PET"
+        if type(_G.ZenxKgUpTipe) == "table" and next(_G.ZenxKgUpTipe) then
+            local nm = {}
+            for t in pairs(_G.ZenxKgUpTipe) do nm[#nm+1] = t end
+            table.sort(nm); pilih = table.concat(nm, ", ")
+        end
+        local lines = {
+            "STATUS \u{2014} " .. pilih,
+            "Target KG   : " .. KG_TARGET .. " kg",
+            string.rep("\u{2500}", 26),
+            "Total pet   : " .. total,
+            "Belum 3.8kg : " .. belum,
+            "Udah 3.8kg  : " .. udah,
+        }
+        statTbl.Text = table.concat(lines, "\n")
+        task.wait(1)
+    end
+end)
+
+-- ============ PICKER: PET YANG MAU DI-UP (tombol -> POPUP) ============
+local pickBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.card,
+    Text = "\u{1F43E} Pilih Pet Di-Up: (belum)", Font = FONT_B, TextSize = 12, TextColor3 = C.text,
+    LayoutOrder = 4, Parent = cfgScroll }); corner(pickBtn, 6); stroke(pickBtn, C.border, 1)
+
+-- popup overlay (di atas semua, muncul pas tombol dipencet)
+local pickOverlay = mk("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
+    BackgroundTransparency = 0.5, Visible = false, ZIndex = 100, Parent = gui })
+local pickPanel = mk("Frame", { Size = UDim2.new(0, 300, 0, 340),
+    Position = UDim2.new(0.5, -150, 0.5, -170), BackgroundColor3 = C.bg, ZIndex = 101, Parent = pickOverlay })
+corner(pickPanel, 10); stroke(pickPanel, C.border, 1.5)
+local pTitle = lbl(pickPanel, "\u{1F43E} Pilih Pet Di-Up", 14, C.text); pTitle.Font = FONT_B
+pTitle.Position = UDim2.new(0, 14, 0, 10); pTitle.Size = UDim2.new(1, -50, 0, 24); pTitle.ZIndex = 102
+local pClose = mk("TextButton", { Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -36, 0, 8),
+    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 14, TextColor3 = C.textDim,
+    ZIndex = 102, Parent = pickPanel }); corner(pClose, 6)
+local pList = mk("ScrollingFrame", { Size = UDim2.new(1, -20, 1, -58), Position = UDim2.new(0, 10, 0, 44),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 102, Parent = pickPanel })
+mk("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pList })
+
+local function bukaPicker()
+    for _, c in ipairs(pList:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+    local tipe = (_G.ZenxKgStat and _G.ZenxKgStat.tipe) or {}
+    local names = {}
+    for t in pairs(tipe) do names[#names+1] = t end
+    table.sort(names)
+    if #names == 0 then
+        local e = lbl(pList, "(belum ada pet kebaca)", 12, C.textDim, Enum.TextXAlignment.Center)
+        e.Size = UDim2.new(1, 0, 0, 30); e.ZIndex = 102; e.Name = "kosong"
+    end
+    for i, t in ipairs(names) do
+        local set = _G.ZenxKgUpTipe
+        local sel = (type(set) == "table" and set[t]) and true or false
+        local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30),
+            BackgroundColor3 = sel and C.cardSel or C.card, AutoButtonColor = true,
+            Text = "   " .. (sel and "\u{2713} " or "") .. t .. "   (" .. tostring(tipe[t]) .. ")",
+            Font = FONT, TextSize = 12,
+            TextColor3 = sel and C.accent or C.text, TextXAlignment = Enum.TextXAlignment.Left,
+            LayoutOrder = i, ZIndex = 102, Parent = pList }); corner(b, 5)
+        b.MouseButton1Click:Connect(function()
+            _G.ZenxKgUpTipe = (type(_G.ZenxKgUpTipe) == "table") and _G.ZenxKgUpTipe or {}
+            local s = _G.ZenxKgUpTipe
+            if s[t] then s[t] = nil else s[t] = true end
+            if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
+            bukaPicker()   -- refresh highlight
+        end)
+    end
+    pickOverlay.Visible = true
+end
+local function updatePickBtn()
+    local s = _G.ZenxKgUpTipe
+    local names = {}
+    if type(s) == "table" then for t in pairs(s) do names[#names+1] = t end end
+    table.sort(names)
+    pickBtn.Text = "\u{1F43E} Pilih Pet Di-Up: " .. (#names > 0 and table.concat(names, ", ") or "(belum)")
+end
+pickBtn.MouseButton1Click:Connect(bukaPicker)
+updatePickBtn()   -- reflect setting yg di-load
+pClose.MouseButton1Click:Connect(function() updatePickBtn(); pickOverlay.Visible = false end)
+-- klik luar panel (di overlay) buat nutup
+pickOverlay.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+        local m = inp.Position
+        local ap, sz = pickPanel.AbsolutePosition, pickPanel.AbsoluteSize
+        if m.X < ap.X or m.X > ap.X + sz.X or m.Y < ap.Y or m.Y > ap.Y + sz.Y then
+            updatePickBtn(); pickOverlay.Visible = false
+        end
+    end
+end)
+-- tombol SELESAI di popup
+local pDone = mk("TextButton", { Size = UDim2.new(0, 80, 0, 24), Position = UDim2.new(0.5, -40, 1, -30),
+    BackgroundColor3 = C.accent, Text = "Selesai", Font = FONT_B, TextSize = 12,
+    TextColor3 = Color3.fromRGB(17,17,17), ZIndex = 103, Parent = pickPanel }); corner(pDone, 6)
+pDone.MouseButton1Click:Connect(function() updatePickBtn(); pickOverlay.Visible = false end)
+
+-- AUTO UP KG toggle (BAWAH tabel 1)
+local kgTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "AUTO UP KG: OFF", Font = FONT_B, TextSize = 13, TextColor3 = C.textDim,
+    LayoutOrder = 6, Parent = cfgScroll })
+corner(kgTog, 7)
+kgTog.MouseButton1Click:Connect(function()
+    if _G.ZenxKg and _G.ZenxKg.aktif then
+        if _G.ZenxKgStop then _G.ZenxKgStop() end
+        if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
+        kgTog.Text = "AUTO UP KG: OFF"; kgTog.TextColor3 = C.textDim; kgTog.BackgroundColor3 = C.card
+    else
+        if _G.ZenxKgStart then _G.ZenxKgStart(kgConfigAktif) end
+        if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
+        kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(0,230,118); kgTog.BackgroundColor3 = C.panel
+    end
+end)
+
+local kgInfo = lbl(cfgScroll, "Naikin KG pet tim sampe 3.8kg. Logika nyusul.", 11.5, C.textDim)
+kgInfo.Size = UDim2.new(1, 0, 0, 20); kgInfo.TextWrapped = true; kgInfo.LayoutOrder = 7
+
+-- ============ MISC = REJOIN GLOBAL ============
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscContent })
+do
+    local rjH = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 1, Parent = miscContent }); corner(rjH, 7)
+    local rjHt = lbl(rjH, "\u{1F504} REJOIN GLOBAL", 13, C.accent); rjHt.Font = FONT_B
+    rjHt.Position = UDim2.new(0, 12, 0, 0); rjHt.Size = UDim2.new(1, -12, 1, 0)
+
+    local rjInfo = lbl(miscContent, "Rejoin tiap X menit (default 30, WAJIB nyala).\nSemua RF sinkron per interval \u{00b7} tiap interval grid sendiri.", 11.5, C.textDim)
+    rjInfo.Size = UDim2.new(1, 0, 0, 40); rjInfo.TextWrapped = true; rjInfo.LayoutOrder = 2
+
+    local RJ_PRESETS = { 10, 20, 30, 40, 50, 60, 70 }
+    local rjPreRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1,
+        LayoutOrder = 3, Parent = miscContent })
+    mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal,
+        Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = rjPreRow })
+    local rjPreBtns = {}
+    local rjStrokes = {}
+    local function setRejoin(m)
+        _G.ZenxRejoinMenit = m
+        if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
+        for mm, b in pairs(rjPreBtns) do
+            local on = (mm == m)
+            b.BackgroundColor3 = on and C.cardSel or C.card
+            b.TextColor3 = on and C.accent or C.textDim
+            if rjStrokes[mm] then rjStrokes[mm].Color = on and C.borderSel or C.border end
+        end
+        if _G.ZenxKgLog then _G.ZenxKgLog("rejoin global -> " .. m .. " menit") end
+    end
+    local aktifM = tonumber(_G.ZenxRejoinMenit) or 30
+    for i, m in ipairs(RJ_PRESETS) do
+        local on = (m == aktifM)
+        local b = mk("TextButton", { Size = UDim2.new(1/7, -4, 1, 0),
+            BackgroundColor3 = on and C.cardSel or C.card, Text = tostring(m),
+            Font = FONT_B, TextSize = 11, TextColor3 = on and C.accent or C.textDim,
+            AutoButtonColor = false, LayoutOrder = i, Parent = rjPreRow })
+        corner(b, 5); rjStrokes[m] = stroke(b, on and C.borderSel or C.border, 1)
+        b.MouseButton1Click:Connect(function() setRejoin(m) end)
+        rjPreBtns[m] = b
+    end
+    -- label sisa countdown (live, sinkron semua RF)
+    local rjSisa = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.panel,
+        Font = Enum.Font.Code, TextSize = 12, TextColor3 = C.text,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
+        Text = "", LayoutOrder = 4, Parent = miscContent }); corner(rjSisa, 6)
+    mk("UIPadding", { PaddingLeft = UDim.new(0, 10), Parent = rjSisa })
+    task.spawn(function()
+        while gui.Parent do
+            local s = tonumber(_G.ZenxRejoinSisa) or 0
+            local m = tonumber(_G.ZenxRejoinMenit) or 30
+            rjSisa.Text = ("Rejoin tiap %dm \u{00b7} sisa %02d:%02d\n(sinkron semua RF)"):format(
+                m, math.floor(s/60), s%60)
+            task.wait(1)
+        end
+    end)
+end
+
+local kgLogBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 130), BackgroundColor3 = C.panel,
+    Font = Enum.Font.Code, TextSize = 10.5, TextColor3 = C.textDim,
+    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+    TextWrapped = true, Text = "log up kg...", LayoutOrder = 8, Parent = cfgScroll })
+corner(kgLogBox, 6)
+mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6), Parent = kgLogBox })
+do
+    local logLines = {}
+    _G.ZenxKgLog = function(s)
+        table.insert(logLines, 1, os.date("%H:%M:%S ") .. s)
+        while #logLines > 10 do table.remove(logLines) end
+        kgLogBox.Text = table.concat(logLines, "\n")
+    end
+end
+
+-- expose theme/helper buat modul lanjutan
+_G.ZenxUpKgUI = {
+    gui = gui, main = main, C = C, mk = mk, corner = corner, stroke = stroke,
+    lbl = lbl, cfgScroll = cfgScroll, sectionHeader = sectionHeader, cfgRow = cfgRow,
+    FONT = FONT, FONT_B = FONT_B,
 }
 
--- ============================================================
--- ScreenGui
--- ============================================================
-local sg = Instance.new("ScreenGui")
-sg.Name = "ZenxKgStats"
-sg.ResetOnSpawn = false
-sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-sg.DisplayOrder = 9999
-local parented = false
-pcall(function() if gethui then sg.Parent = gethui(); parented = true end end)
-if not parented then sg.Parent = playerGui end
+-- MULAI MINIMIZE — pas exe tampil logo Z (gak langsung lebar)
+main.Visible = false
+miniLogo.Visible = true
 
--- ============================================================
--- DIMENSIONS
--- ============================================================
-local W = 460
-local TITLE_H = 34
-local HEADER_H = 84
-local TOTAL_H = TITLE_H + 8 + HEADER_H + 8
-
--- ============================================================
--- MAIN
--- ============================================================
-local main = Instance.new("Frame")
-main.Size = UDim2.new(0, W, 0, TOTAL_H)
-main.Position = UDim2.new(0, 10, 0.5, -TOTAL_H/2)
-main.BackgroundColor3 = C.BG
-main.BorderSizePixel = 0
-main.Active = true
-main.Draggable = true
-main.Parent = sg
-Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
-local mainStroke = Instance.new("UIStroke", main)
-mainStroke.Color = C.Accent
-mainStroke.Thickness = 1.5
-
--- ============================================================
--- TITLE BAR
--- ============================================================
-local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1, 0, 0, TITLE_H)
-titleBar.BackgroundColor3 = C.Panel
-titleBar.BorderSizePixel = 0
-titleBar.Parent = main
-Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
-local tbFix = Instance.new("Frame")
-tbFix.Size = UDim2.new(1, 0, 0, 10)
-tbFix.Position = UDim2.new(0, 0, 1, -10)
-tbFix.BackgroundColor3 = C.Panel
-tbFix.BorderSizePixel = 0
-tbFix.Parent = titleBar
-
-local titleLbl = Instance.new("TextLabel")
-titleLbl.Size = UDim2.new(1, -150, 1, 0)
-titleLbl.Position = UDim2.new(0, 12, 0, 0)
-titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "ZENX KG STATS "..VER
-titleLbl.TextColor3 = C.Accent
-titleLbl.Font = Enum.Font.GothamBold
-titleLbl.TextSize = 12
-titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-titleLbl.Parent = titleBar
-
--- Pet picker button (small, in title bar)
-local petPickBtn = Instance.new("TextButton")
-petPickBtn.Size = UDim2.new(0, 68, 0, 22)
-petPickBtn.Position = UDim2.new(1, -150, 0.5, -11)
-petPickBtn.BackgroundColor3 = C.Card
-petPickBtn.Text = "Pet ▼"
-petPickBtn.TextColor3 = C.Dim
-petPickBtn.Font = Enum.Font.GothamBold
-petPickBtn.TextSize = 10
-petPickBtn.BorderSizePixel = 0
-petPickBtn.AutoButtonColor = false
-petPickBtn.Parent = titleBar
-Instance.new("UICorner", petPickBtn).CornerRadius = UDim.new(0, 4)
-
-local function mkTitleBtn(x, txt, color, txtColor)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, 26, 0, 22)
-    b.Position = UDim2.new(1, x, 0.5, -11)
-    b.BackgroundColor3 = color
-    b.Text = txt b.TextColor3 = txtColor or Color3.new(1,1,1)
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 14
-    b.BorderSizePixel = 0
-    b.AutoButtonColor = false
-    b.Parent = titleBar
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
-    return b
-end
-
-local minBtn   = mkTitleBtn(-62, "—", C.Blue)
-local closeBtn = mkTitleBtn(-32, "✕", C.Red)
-closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
-
--- ============================================================
--- HEADER STATS
--- ============================================================
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, -16, 0, HEADER_H)
-header.Position = UDim2.new(0, 8, 0, TITLE_H + 8)
-header.BackgroundColor3 = C.Card
-header.BorderSizePixel = 0
-header.Parent = main
-Instance.new("UICorner", header).CornerRadius = UDim.new(0, 6)
-
-local function mkStat(parent, x, w, labelText, valColor)
-    local cell = Instance.new("Frame")
-    cell.Size = UDim2.new(w, 0, 1, 0)
-    cell.Position = UDim2.new(x, 0, 0, 0)
-    cell.BackgroundTransparency = 1
-    cell.Parent = parent
-    local t = Instance.new("TextLabel")
-    t.Size = UDim2.new(1, 0, 0, 22)
-    t.Position = UDim2.new(0, 0, 0, 12)
-    t.BackgroundTransparency = 1
-    t.Text = labelText t.TextColor3 = C.Dim
-    t.Font = Enum.Font.Gotham t.TextSize = 21  -- v2.2: atas gede lagi
-    t.Parent = cell
-    local v = Instance.new("TextLabel")
-    v.Size = UDim2.new(1, 0, 0, 48)
-    v.Position = UDim2.new(0, 0, 0, 36)
-    v.BackgroundTransparency = 1
-    v.Text = "0" v.TextColor3 = valColor or C.Text
-    v.Font = Enum.Font.GothamBold v.TextSize = 44  -- v2.2: bawah gede lagi
-    v.Parent = cell
-    return v
-end
-local totalVal = mkStat(header, 0,    0.33, "TOTAL",                C.Text)
-local aboveVal = mkStat(header, 0.33, 0.33, "KG "..KG_THRESHOLD.."+", C.Text)
-local belowVal = mkStat(header, 0.66, 0.33, "KG "..KG_THRESHOLD.."-", C.Text)
-
--- ============================================================
--- RENDER
--- ============================================================
-local cachedContainer, cachedCount = nil, 0
-
-local function render()
-    local total, above, below = collectStats(cachedContainer)
-    totalVal.Text = tostring(total)
-    aboveVal.Text = tostring(above)
-    belowVal.Text = tostring(below)
-end
-
--- ============================================================
--- FLOATING LOGO + MINIMIZE
--- ============================================================
-local zLogo = Instance.new("TextButton")
-zLogo.Size = UDim2.new(0, 42, 0, 42)
-zLogo.Position = UDim2.new(0, 10, 0.5, -21)
-zLogo.BackgroundColor3 = C.Accent
-zLogo.Text = "⚖" zLogo.TextColor3 = Color3.new(0,0,0)
-zLogo.Font = Enum.Font.GothamBold zLogo.TextSize = 22
-zLogo.BorderSizePixel = 0
-zLogo.AutoButtonColor = false
-zLogo.Active = true
-zLogo.Draggable = true
-zLogo.Visible = false
-zLogo.Parent = sg
-Instance.new("UICorner", zLogo).CornerRadius = UDim.new(1, 0)
-local zStroke = Instance.new("UIStroke", zLogo)
-zStroke.Color = Color3.new(0,0,0) zStroke.Thickness = 1.5
-
-minBtn.MouseButton1Click:Connect(function()
-    main.Visible = false
-    zLogo.Visible = true
-end)
-zLogo.MouseButton1Click:Connect(function()
-    main.Visible = true
-    zLogo.Visible = false
-end)
-
--- ============================================================
--- PET TYPE PICKER MODAL
--- ============================================================
-local function updatePetPickBtn()
-    local cnt = petTypeCount()
-    if cnt == 0 then
-        petPickBtn.Text = "Pet ▼"
-        petPickBtn.TextColor3 = C.Dim
-    else
-        petPickBtn.Text = cnt.." pet ▼"
-        petPickBtn.TextColor3 = C.Accent
-    end
-end
-
-local pickerOverlay = nil
-
-local function openPetPicker()
-    if pickerOverlay then pickerOverlay:Destroy() end
-
-    pickerOverlay = Instance.new("Frame")
-    pickerOverlay.Size = UDim2.new(1, 0, 1, 0)
-    pickerOverlay.BackgroundColor3 = Color3.new(0, 0, 0)
-    pickerOverlay.BackgroundTransparency = 0.4
-    pickerOverlay.BorderSizePixel = 0
-    pickerOverlay.ZIndex = 100
-    pickerOverlay.Parent = main
-
-    local backBtn = Instance.new("TextButton")
-    backBtn.Size = UDim2.new(1, 0, 1, 0)
-    backBtn.BackgroundTransparency = 1
-    backBtn.Text = "" backBtn.AutoButtonColor = false
-    backBtn.ZIndex = 100
-    backBtn.Parent = pickerOverlay
-
-    local box = Instance.new("Frame")
-    box.Size = UDim2.new(0, 320, 0, 360)
-    box.Position = UDim2.new(0.5, 0, 0.5, 0)
-    box.AnchorPoint = Vector2.new(0.5, 0.5)
-    box.BackgroundColor3 = C.BG
-    box.BorderSizePixel = 0
-    box.ZIndex = 101
-    box.Parent = pickerOverlay
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
-    local bStroke = Instance.new("UIStroke", box)
-    bStroke.Color = C.Accent
-    bStroke.Thickness = 1.5
-
-    local guard = Instance.new("TextButton")
-    guard.Size = UDim2.new(1, 0, 1, 0)
-    guard.BackgroundTransparency = 1
-    guard.Text = "" guard.AutoButtonColor = false
-    guard.ZIndex = 101
-    guard.Parent = box
-
-    local pTitleBar = Instance.new("Frame")
-    pTitleBar.Size = UDim2.new(1, 0, 0, 32)
-    pTitleBar.BackgroundColor3 = C.Panel
-    pTitleBar.BorderSizePixel = 0
-    pTitleBar.ZIndex = 102
-    pTitleBar.Parent = box
-    Instance.new("UICorner", pTitleBar).CornerRadius = UDim.new(0, 8)
-    local pTbFix = Instance.new("Frame")
-    pTbFix.Size = UDim2.new(1, 0, 0, 10)
-    pTbFix.Position = UDim2.new(0, 0, 1, -10)
-    pTbFix.BackgroundColor3 = C.Panel
-    pTbFix.BorderSizePixel = 0
-    pTbFix.ZIndex = 102
-    pTbFix.Parent = pTitleBar
-
-    local pTitle = Instance.new("TextLabel")
-    pTitle.Size = UDim2.new(1, -120, 1, 0)
-    pTitle.Position = UDim2.new(0, 12, 0, 0)
-    pTitle.BackgroundTransparency = 1
-    pTitle.Text = "Pilih Jenis Pet"
-    pTitle.TextColor3 = C.Accent
-    pTitle.Font = Enum.Font.GothamBold
-    pTitle.TextSize = 13
-    pTitle.TextXAlignment = Enum.TextXAlignment.Left
-    pTitle.ZIndex = 103
-    pTitle.Parent = pTitleBar
-
-    local doneBtn = Instance.new("TextButton")
-    doneBtn.Size = UDim2.new(0, 56, 0, 22)
-    doneBtn.Position = UDim2.new(1, -110, 0.5, -11)
-    doneBtn.BackgroundColor3 = C.Green
-    doneBtn.Text = "DONE"
-    doneBtn.TextColor3 = Color3.new(0, 0, 0)
-    doneBtn.Font = Enum.Font.GothamBold
-    doneBtn.TextSize = 10
-    doneBtn.BorderSizePixel = 0
-    doneBtn.AutoButtonColor = false
-    doneBtn.ZIndex = 103
-    doneBtn.Parent = pTitleBar
-    Instance.new("UICorner", doneBtn).CornerRadius = UDim.new(0, 4)
-
-    local clearBtn = Instance.new("TextButton")
-    clearBtn.Size = UDim2.new(0, 40, 0, 22)
-    clearBtn.Position = UDim2.new(1, -50, 0.5, -11)
-    clearBtn.BackgroundColor3 = C.Red
-    clearBtn.Text = "CLR"
-    clearBtn.TextColor3 = Color3.new(1, 1, 1)
-    clearBtn.Font = Enum.Font.GothamBold
-    clearBtn.TextSize = 10
-    clearBtn.BorderSizePixel = 0
-    clearBtn.AutoButtonColor = false
-    clearBtn.ZIndex = 103
-    clearBtn.Parent = pTitleBar
-    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 4)
-
-    local pSearch = Instance.new("TextBox")
-    pSearch.Size = UDim2.new(1, -16, 0, 28)
-    pSearch.Position = UDim2.new(0, 8, 0, 40)
-    pSearch.BackgroundColor3 = C.Card
-    pSearch.Text = ""
-    pSearch.PlaceholderText = "Cari pet..."
-    pSearch.PlaceholderColor3 = C.Dim
-    pSearch.TextColor3 = C.Text
-    pSearch.Font = Enum.Font.Gotham
-    pSearch.TextSize = 12
-    pSearch.ClearTextOnFocus = false
-    pSearch.BorderSizePixel = 0
-    pSearch.ZIndex = 102
-    pSearch.Parent = box
-    Instance.new("UICorner", pSearch).CornerRadius = UDim.new(0, 4)
-    local psPad = Instance.new("UIPadding", pSearch)
-    psPad.PaddingLeft = UDim.new(0, 10)
-
-    local pScroll = Instance.new("ScrollingFrame")
-    pScroll.Size = UDim2.new(1, -16, 1, -80)
-    pScroll.Position = UDim2.new(0, 8, 0, 76)
-    pScroll.BackgroundTransparency = 1
-    pScroll.BorderSizePixel = 0
-    pScroll.ScrollBarThickness = 4
-    pScroll.ScrollBarImageColor3 = C.Accent
-    pScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    pScroll.ZIndex = 102
-    pScroll.Parent = box
-    local pLayout = Instance.new("UIListLayout")
-    pLayout.Padding = UDim.new(0, 3)
-    pLayout.Parent = pScroll
-
-    local function closePicker()
-        if pickerOverlay then pickerOverlay:Destroy() end
-        pickerOverlay = nil
-        updatePetPickBtn()
-        render()  -- refresh stats with new filter
-    end
-    backBtn.MouseButton1Click:Connect(closePicker)
-    doneBtn.MouseButton1Click:Connect(closePicker)
-    clearBtn.MouseButton1Click:Connect(function()
-        selectedPetTypes = {}
-        saveSettings()
-    end)
-
-    local function renderList(filter)
-        for _, c in ipairs(pScroll:GetChildren()) do
-            if c:IsA("TextButton") then c:Destroy() end
-        end
-        filter = (filter or ""):lower()
-        -- Build pet type list from: master list + backpack + memContainer + already-selected
-        local byType = {}
-        -- 1) Master list (semua jenis pet di game)
-        for _, n in ipairs(ALL_PET_TYPES) do
-            byType[n] = 0
-        end
-        -- 2) Backpack (count actual pets)
-        local bp = player:FindFirstChild("Backpack")
-        if bp then
-            for _, tool in ipairs(bp:GetChildren()) do
-                if tool:IsA("Tool") and tool:GetAttribute("PET_UUID") then
-                    local pType = stripMutation(tostring(tool:GetAttribute("f") or "?"))
-                    byType[pType] = (byType[pType] or 0) + 1
-                end
-            end
-        end
-        -- 3) memContainer (catches new pets gw belum hardcode)
-        if cachedContainer then
-            for _, entry in pairs(cachedContainer) do
-                if type(entry) == "table" and entry.PetType then
-                    local pType = stripMutation(tostring(entry.PetType))
-                    if not byType[pType] then byType[pType] = 0 end
-                end
-            end
-        end
-        -- 4) Already-selected (so they don't disappear)
-        for k in pairs(selectedPetTypes) do
-            if not byType[k] then byType[k] = 0 end
-        end
-
-        local items = {}
-        for k, v in pairs(byType) do table.insert(items, {name=k, count=v}) end
-        table.sort(items, function(a, b)
-            local aSel = selectedPetTypes[a.name] and 1 or 0
-            local bSel = selectedPetTypes[b.name] and 1 or 0
-            if aSel ~= bSel then return aSel > bSel end
-            if a.count ~= b.count then return a.count > b.count end
-            return a.name < b.name
-        end)
-
-        for _, it in ipairs(items) do
-            if filter == "" or it.name:lower():find(filter, 1, true) then
-                local sel = selectedPetTypes[it.name] == true
-                local row = Instance.new("TextButton")
-                row.Size = UDim2.new(1, -4, 0, 28)
-                row.BackgroundColor3 = sel and C.Accent or C.Card
-                row.Text = (sel and "v " or "  ")..it.name..(it.count > 0 and ("  ("..it.count..")") or "")
-                row.TextColor3 = sel and Color3.new(0,0,0) or C.Text
-                row.Font = sel and Enum.Font.GothamBold or Enum.Font.Gotham
-                row.TextSize = 12
-                row.TextXAlignment = Enum.TextXAlignment.Left
-                row.BorderSizePixel = 0
-                row.AutoButtonColor = false
-                row.ZIndex = 103
-                row.Parent = pScroll
-                Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
-                local rPad = Instance.new("UIPadding", row)
-                rPad.PaddingLeft = UDim.new(0, 10)
-                row.MouseButton1Click:Connect(function()
-                    if selectedPetTypes[it.name] then
-                        selectedPetTypes[it.name] = nil
-                    else
-                        selectedPetTypes[it.name] = true
-                    end
-                    saveSettings()
-                    renderList(pSearch.Text)
-                end)
-            end
-        end
-        pScroll.CanvasSize = UDim2.new(0, 0, 0, pLayout.AbsoluteContentSize.Y + 8)
-    end
-
-    pSearch:GetPropertyChangedSignal("Text"):Connect(function() renderList(pSearch.Text) end)
-    renderList("")
-end
-
-petPickBtn.MouseButton1Click:Connect(openPetPicker)
-
--- Load saved settings
-loadSettings()
-updatePetPickBtn()
-
--- ============================================================
--- INIT + AUTO-REFRESH
--- ============================================================
-cachedContainer, cachedCount = findMemoryContainer()
-print("[ZenxKgStats] memContainer: "..(cachedContainer and cachedCount.." entries" or "FAIL"))
-print("[ZenxKgStats] threshold: "..KG_THRESHOLD.."kg")
-
-render()
-
--- v2.4: KG = konstan (gak berubah sama umur). Angka cuma berubah pas pet nambah/ilang.
--- Jadi update PAS BACKPACK BERUBAH (event), bukan polling tiap 2s (itu yg lag tipis).
-local function hookBp(c)
-    if not c then return end
-    c.ChildAdded:Connect(function(child)
-        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
-            task.wait(0.15); render()
-        end
-    end)
-    c.ChildRemoved:Connect(function(child)
-        if child:IsA("Tool") and child:GetAttribute("PET_UUID") then
-            task.wait(0.15); render()
-        end
-    end)
-end
-hookBp(player:FindFirstChild("Backpack"))
-hookBp(player.Character)
-player.CharacterAdded:Connect(function(ch) hookBp(ch) end)
-
-task.spawn(function()
-    -- getgc scan: belum ketemu / 3x awal / tiap 5 menit. Poll render lambat (safety).
-    local lastScan = 0
-    local scanCount = 0
-    while sg.Parent do
-        task.wait(5)  -- v2.4: poll lambat (event listener yg handle update instan)
-        if not sg.Parent then break end
-        local needScan = false
-        if not cachedContainer then needScan = true
-        elseif scanCount < 3 and (tick() - lastScan) > 4 then needScan = true
-        elseif (tick() - lastScan) > 300 then needScan = true
-        end
-        if needScan then
-            local nc, ncnt = findMemoryContainer()
-            if nc and ncnt > 0 then cachedContainer = nc; cachedCount = ncnt end
-            lastScan = tick()
-            scanCount = scanCount + 1
-            render()  -- v2.5: render CUMA pas abis re-scan (jarang). Selebihnya event listener.
-        end
-    end
-end)
-
-print("[ZenxKgStats] "..VER.." loaded")
+print("[UpKg] " .. VERSION .. " loaded (kerangka UI, mulai minimize).")
