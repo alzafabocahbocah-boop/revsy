@@ -180,9 +180,17 @@ do
                         guiCache = fresh
                     end
                     for k, v in pairs(guiCache) do counts[k] = math.max(counts[k] or 0, v) end
-                    local total = 0
-                    for _, c in pairs(counts) do total = total + (tonumber(c) or 0) end
-                    _G.ZenxPanenEgg = total
+                    -- PISAH: christmas egg (nama ada "christmas"/"festive") vs gem/lainnya
+                    local totalChr, totalGem = 0, 0
+                    for k, c in pairs(counts) do
+                        local n = tonumber(c) or 0
+                        local lk = tostring(k):lower()
+                        if lk:find("christmas") or lk:find("festive") then totalChr = totalChr + n
+                        else totalGem = totalGem + n end
+                    end
+                    _G.ZenxPanenEggChr = totalChr
+                    _G.ZenxPanenEggGem = totalGem
+                    _G.ZenxPanenEgg = totalChr + totalGem   -- total (backward compat)
                 end)
                 task.wait(10)
             end
@@ -193,9 +201,11 @@ do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
                     if plr and plr.Name and writefile and not zenxCekDisconnect() then
-                        local egg = tonumber(_G.ZenxPanenEgg) or 0
+                        local chr = tonumber(_G.ZenxPanenEggChr) or 0
+                        local gem = tonumber(_G.ZenxPanenEggGem) or 0
+                        -- format egg2: "ts;<gemEgg>;<chrEgg>;egg2" (worker pisah gem vs christmas)
                         writefile("zenx_denyut_" .. plr.Name .. ".txt",
-                            os.time() .. ";" .. egg .. ";egg")
+                            os.time() .. ";" .. gem .. ";" .. chr .. ";egg2")
                     end
                 end)
                 task.wait(20)
@@ -308,7 +318,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v1.9"
+local VERSION = "v2.1"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1191,20 +1201,7 @@ local function gemStart()
         equipTeam()   -- pilih + kunci tim + equip
         task.wait(1)
         pastikanTim()
-        -- loop reset tiap resetTiap detik (re-equip UUID YG SAMA, gak pilih baru)
-        while GEM.aktif do
-            for _ = 1, GEM.resetTiap do
-                if not GEM.aktif then return end
-                task.wait(1)
-            end
-            if not GEM.aktif then return end
-            gemLog("RESET: ambil semua -> masukin ulang (uuid terkunci)")
-            unequipSemua()
-            task.wait(0.5)
-            equipTeam()   -- equip uuid TERKUNCI (pet sama)
-            task.wait(1)
-            pastikanTim()
-        end
+        -- (RESET 60s DIHAPUS — HEALER 1s + verify 5s udah jaga visual, gak perlu refresh berkala)
     end)
     -- loop verify mandiri tiap 5s (buang pet nyasar / re-equip yg hilang)
     task.spawn(function()
@@ -1244,7 +1241,7 @@ _G.ZenxGemStop  = gemStop
 -- Pet by tipe (CHR.tim, uuid dikunci). Healer 1s jaga tetep ke-equip. GAK ada swap gacor.
 -- CHR.tim DIISI nanti sesuai pet yg lo mau (skrg kosong = placeholder).
 -- ============================================================
-local CHR = { aktif = false, tim = {} }   -- tim: tipe pet -> jumlah (contoh: { ["Nutcracker"] = 3 })
+local CHR = { aktif = false, tim = { ["Festive Nutcracker"] = 4, ["Moose"] = 4 } }   -- pet christmas egg (min 3 nutcracker gpp)
 _G.ZenxChr = CHR
 local chrKunci = {}   -- uuid(fmt) -> tipe
 local chrInfo  = {}
@@ -1284,6 +1281,8 @@ local function chrStart()
     chrLog("START christmas egg (no swap). center=" .. (CLUSTER and "ada" or "NIL"))
     if chrTotal() == 0 then chrLog("!! CHR.tim KOSONG — belum ada pet di-set (kasih tau jenis pet-nya)") end
     task.spawn(function()
+        unequipSemua()   -- COPOT SEMUA pet dulu (bersih pas ganti config)
+        task.wait(0.5)
         chrPilihTim(); chrEquip()
         -- HEALER 1s: jaga pet TETEP ke-equip (re-equip yg ilang) — TANPA swap
         while CHR.aktif do
@@ -1303,8 +1302,8 @@ local function chrStop()
     CHR.aktif = false
     task.spawn(function()
         task.wait(0.15)
-        for u in pairs(chrKunci) do unequipPet(u); task.wait(0.04) end
-        chrLog("STOP + pet dicopot")
+        unequipSemua()   -- COPOT SEMUA pet (bersih)
+        chrLog("STOP + SEMUA pet dicopot")
     end)
 end
 _G.ZenxChrStart = chrStart
@@ -2166,6 +2165,61 @@ if not _G.__ZenxAutoTicket then
         while true do
             task.wait(5)
             if ticketCount() < 2 then pcall(function() re:FireServer(ticketName) end) end
+        end
+    end)
+end
+
+-- ============ ANTI-AFK (anti idle kick 20 menit) ============
+if not _G.__ZenxAntiAfk then
+    _G.__ZenxAntiAfk = true
+    task.spawn(function()
+        local ok, VirtualUser = pcall(function() return game:GetService("VirtualUser") end)
+        if ok and VirtualUser then
+            local plr = game:GetService("Players").LocalPlayer
+            plr.Idled:Connect(function()
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end)
+            end)
+            print("[Zenx] anti-AFK aktif")
+        end
+    end)
+end
+
+-- ===== AUTO SELL PINE BEETLE (jual otomatis, SKIP yg di-favorite biar aman) =====
+if not _G.__ZenxAutoSellPB then
+    _G.__ZenxAutoSellPB = true
+    task.spawn(function()
+        local RS = game:GetService("ReplicatedStorage")
+        local plr = game:GetService("Players").LocalPlayer
+        local GE = RS:FindFirstChild("GameEvents")
+        local sellRE = GE and GE:FindFirstChild("SellPetShopSelected")
+        if not sellRE then print("[AutoSellPB] SellPetShopSelected gak ketemu — batal"); return end
+        local MUT_PRE = {"Everchanted ","Rainbow ","Frozen ","Inverted ","Golden ","Diamond ","Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ","Twilight ","Voidtouched ","Foxfire ","Aurora ","Static ","Stormcloud ","Frost ","Burnt ","Lethal ","Cooked ","Choc "}
+        local function stripMut(s) s = tostring(s or ""); for _, p in ipairs(MUT_PRE) do if s:sub(1, #p) == p then return s:sub(#p + 1) end end return s end
+        print("[AutoSellPB] auto-sell Pine Beetle aktif (skip favorite)")
+        while true do
+            task.wait(10)
+            pcall(function()
+                local bp = plr:FindFirstChild("Backpack")
+                if not bp then return end
+                for _, t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") and t:GetAttribute("PET_UUID") then
+                        local base = stripMut(t:GetAttribute("f") or t.Name):lower()
+                        if base:find("pine beetle") then
+                            local fav = false
+                            for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
+                                if t:GetAttribute(attr) == true then fav = true; break end
+                            end
+                            if not fav then   -- fav = keep (jangan jual), non-fav = jual
+                                pcall(function() sellRE:FireServer(t) end)
+                                task.wait(0.15)
+                            end
+                        end
+                    end
+                end
+            end)
         end
     end)
 end
