@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.33"
+local VERSION = "v0.35"
 
 -- ===== CONFIG SIMPAN/LOAD (persist antar rejoin/re-exe — writefile) =====
 -- rejoin = sesi baru (_G reset), jadi setting HARUS ke file biar gak balik awal.
@@ -554,49 +554,39 @@ do
     end
 
 
-    -- swap gacor (ANTRE 1-1) — CUMA support
-    local queue, inQueue, busy, lastSwap, lastPos = {}, {}, {}, {}, {}
-    local function enqueue(uuid)
-        if busy[uuid] or inQueue[uuid] then return end
-        inQueue[uuid] = true
-        local pos = CLUSTER
-        if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
-        if not pos then pos = lastPos[uuid] end
-        if pos then lastPos[uuid] = pos end
-        table.insert(queue, { uuid = uuid, pos = pos })
-    end
-    task.spawn(function()
-        while true do
-            task.wait(0.03)
-            if KG.aktif and #queue > 0 then
-                local it = table.remove(queue, 1); local uuid = it.uuid
-                inQueue[uuid] = nil; busy[uuid] = true
-                task.wait(KG.pickup or 0.3)
-                unequipPet(uuid); task.wait(0.01)
-                equipPet(uuid, it.pos or lastPos[uuid])
-                lastSwap[uuid] = tick()
-                task.spawn(function()
-                    for i = 1, 3 do
-                        task.wait(0.35)
-                        local m = modelByUuid[uuid]; if m and m.Parent then break end
-                        equipPet(uuid, lastPos[uuid])
-                    end
-                    busy[uuid] = nil
-                end)
+    -- swap gacor PARALEL (tiap pet swap sendiri-sendiri, GAK antre) — lebih cepet
+    local busy, lastSwap, lastPos = {}, {}, {}
+    local function swapPet(uuid)
+        if busy[uuid] then return end
+        busy[uuid] = true
+        task.spawn(function()
+            local pos = CLUSTER
+            if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
+            if not pos then pos = lastPos[uuid] end
+            if pos then lastPos[uuid] = pos end
+            task.wait(KG.pickup or 0.3)
+            unequipPet(uuid); task.wait(0.01)
+            equipPet(uuid, pos)
+            lastSwap[uuid] = tick()
+            for i = 1, 3 do
+                task.wait(0.35)
+                local m = modelByUuid[uuid]; if m and m.Parent then break end
+                equipPet(uuid, lastPos[uuid])
             end
-        end
-    end)
-    -- ready-loop: SESI 1 = support doang. SESI 2 = SEMUA (support + bahan).
+            busy[uuid] = nil
+        end)
+    end
+    -- ready-loop: SESI 1 = support doang. SESI 2 = SEMUA (support + bahan). Cek cepet 0.05s.
     task.spawn(function()
-        while true do
-            task.wait(0.1)
+        while _G.__ZenxKgEngineGen == engGen do
+            task.wait(0.05)
             if KG.aktif then
                 for uuid in pairs(modelByUuid) do
                     local swapIni = supportKunci[uuid] or (KG.sesi == 2 and bahanAktif[uuid])
-                    if swapIni and not busy[uuid] and not inQueue[uuid] then
+                    if swapIni and not busy[uuid] then
                         local rdy = petReady(uuid)
                         local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
-                        if (rdy == true) or (rdy == nil and idle > 4) then enqueue(uuid) end
+                        if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
                     end
                 end
             end
