@@ -100,6 +100,7 @@ end
 -- SETTING WAKTU: ganti REJOIN_MENIT di sini (berlaku semua RF pas reload script).
 -- Bisa juga di-override runtime: _G.ZenxRejoinMenit = 45
 local REJOIN_MENIT = 30    -- <<< SETTING: rejoin tiap berapa menit
+_G.ZenxRejoinMenit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT   -- DEFAULT 30, WAJIB nyala (gak ada toggle mati)
 -- Port dari leveling/farm: player:Kick (putus server, script executor TETEP hidup)
 -- -> tunggu 30s (ghost slot bekas kita bebas) -> TeleportToPlaceInstance jobId SAMA
 -- (retry 12s). Private server: retry server SAMA terus (Teleport acak = kelempar public).
@@ -110,14 +111,19 @@ do
         local TS = game:GetService("TeleportService")
         task.spawn(function()
             while true do
-                local menit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT
-                local interval = math.max(60, math.floor(menit * 60))
-                -- COUNTDOWN GLOBAL TERSINKRON: align ke wall-clock (os.time UTC). Semua client
-                -- rejoin BARENG di boundary (kelipatan interval) — gak peduli kapan load. Jadi
-                -- countdown SAMA buat semua RF (kayak slot jam: :00, :30 buat interval 30 menit).
-                local nextB = (math.floor(os.time() / interval) + 1) * interval
-                while os.time() < nextB do
-                    _G.ZenxRejoinSisa = nextB - os.time()   -- detik tersisa (buat UI)
+                -- COUNTDOWN GLOBAL TERSINKRON + LIVE: align wall-clock (os.time UTC), semua
+                -- client rejoin BARENG di boundary. Recompute TIAP DETIK -> ganti waktu
+                -- (_G.ZenxRejoinMenit) LIVE langsung re-align ke boundary baru (gak nunggu cycle).
+                while true do
+                    local menit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT
+                    local interval = math.max(60, math.floor(menit * 60))
+                    -- OFFSET per-interval: tiap interval punya grid GLOBAL sendiri (10m/20m/
+                    -- 30m/dst gak numpuk boundary-nya). offset = (menit/10 - 1) menit.
+                    local offset = math.max(0, math.floor(menit / 10) - 1) * 60
+                    local now = os.time()
+                    local nextB = (math.floor((now - offset) / interval) + 1) * interval + offset
+                    _G.ZenxRejoinSisa = nextB - now
+                    if _G.ZenxRejoinSisa <= 1 then break end
                     task.wait(1)
                 end
                 _G.ZenxRejoinSisa = 0
@@ -127,6 +133,24 @@ do
                     local isPriv = (game.PrivateServerId or "") ~= ""
                     _G.ZenxRejoining = true
                     pcall(function() plr:Kick("ZenxFreezeRejoin") end)
+                    -- SEMBUNYIIN dialog "kicked/disconnect" biar TeleportToPlaceInstance gak ke-blok
+                    task.spawn(function()
+                        local cg = game:GetService("CoreGui")
+                        local guiSvc = game:GetService("GuiService")
+                        for _ = 1, 300 do
+                            pcall(function()
+                                for _, g in ipairs(cg:GetChildren()) do
+                                    local n = tostring(g.Name):lower()
+                                    if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                        if g:IsA("ScreenGui") then g.Enabled = false end
+                                        pcall(function() g.Parent = nil end)
+                                    end
+                                end
+                                pcall(function() guiSvc:ClearError() end)
+                            end)
+                            task.wait(0.5)
+                        end
+                    end)
                     task.wait(30)   -- ghost slot bekas kita bebas dulu
                     while true do
                         if jobId and jobId ~= "" then
