@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.46"
+local VERSION = "v0.48"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1491,11 +1491,11 @@ do
     local GE = RS:FindFirstChild("GameEvents")
     local TRADE_CFG = "zenx_trade_cfg.json"
 
-    local TR = { targets = {}, tipe = {}, minKg = 0, minAge = 0, autoAcc = false }
+    local TR = { targets = {}, tipe = {}, minKg = 0, minAge = 0, autoAcc = false, mode = "off" }
     local function saveTr()
         pcall(function()
             if not writefile then return end
-            writefile(TRADE_CFG, HS:JSONEncode({ targets=TR.targets, tipe=TR.tipe, minKg=TR.minKg, minAge=TR.minAge, autoAcc=TR.autoAcc }))
+            writefile(TRADE_CFG, HS:JSONEncode({ targets=TR.targets, tipe=TR.tipe, minKg=TR.minKg, minAge=TR.minAge, autoAcc=TR.autoAcc, mode=TR.mode }))
         end)
     end
     pcall(function()
@@ -1505,6 +1505,7 @@ do
                 if type(c.targets)=="table" then local a={} for _,v in ipairs(c.targets) do if type(v)=="string" then a[#a+1]=v end end TR.targets=a end
                 if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end TR.tipe=s end
                 TR.minKg=tonumber(c.minKg) or 0; TR.minAge=tonumber(c.minAge) or 0; TR.autoAcc=(c.autoAcc==true)
+                TR.mode = (c.mode=="trade" or c.mode=="gift") and c.mode or "off"
             end
         end
     end)
@@ -1673,6 +1674,17 @@ do
         end)
     end
 
+    -- AUTO-LOOP: kalau TR.mode ON (trade/gift), kirim pet lolos filter TERUS (gak perlu pencet tiap kali)
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            if (TR.mode == "trade" or TR.mode == "gift") and not trBusy then
+                local pets = petsLolos()
+                if #pets > 0 then jalankan(TR.mode) end
+            end
+        end
+    end)
+
     do
         local function acceptGiftPopups()
             pcall(function()
@@ -1828,11 +1840,26 @@ do
     inputRow("Min KG (base age-1)", 6, TR.minKg, function(v) TR.minKg=v; saveTr() end)
     inputRow("Min Age (level)", 7, TR.minAge, function(v) TR.minAge=v; saveTr() end)
 
-    trHeader("\u{1F680} AKSI", 8)
-    local bTrade = trBtn("TRADE via TIKET", 9, Color3.fromRGB(0,120,80))
-    bTrade.MouseButton1Click:Connect(function() jalankan("trade") end)
-    local bGift = trBtn("GIFT (biasa)", 10, Color3.fromRGB(60,90,180))
-    bGift.MouseButton1Click:Connect(function() jalankan("gift") end)
+    trHeader("\u{1F680} AKSI (toggle - salah satu aktif)", 8)
+    local bTrade = trBtn("TRADE via TIKET: OFF", 9, C.card)
+    local bGift  = trBtn("GIFT (biasa): OFF", 10, C.card)
+    local function updModeBtns()
+        local t = (TR.mode == "trade"); local g = (TR.mode == "gift")
+        bTrade.Text = "TRADE via TIKET: "..(t and "ON" or "OFF")
+        bTrade.BackgroundColor3 = t and Color3.fromRGB(0,120,80) or C.card
+        bTrade.TextColor3 = t and Color3.fromRGB(0,230,118) or C.text
+        bGift.Text = "GIFT (biasa): "..(g and "ON" or "OFF")
+        bGift.BackgroundColor3 = g and Color3.fromRGB(60,90,180) or C.card
+        bGift.TextColor3 = g and Color3.fromRGB(140,180,255) or C.text
+    end
+    local function setMode(m)
+        TR.mode = (TR.mode == m) and "off" or m   -- klik lagi = OFF. nyalain satu -> yg lain auto OFF
+        saveTr(); updModeBtns()
+        if trStatus then trStatus.Text = (TR.mode=="off") and "OFF (berhenti)" or (TR.mode:upper().." ON - auto kirim pet lolos filter ke target online") end
+    end
+    bTrade.MouseButton1Click:Connect(function() setMode("trade") end)
+    bGift.MouseButton1Click:Connect(function() setMode("gift") end)
+    updModeBtns()
 
     local bAcc = trBtn("AUTO ACCEPT MASUK: "..(TR.autoAcc and "ON" or "OFF"), 11, TR.autoAcc and C.panel or C.card)
     if TR.autoAcc then bAcc.TextColor3 = Color3.fromRGB(0,230,118) end
@@ -1860,3 +1887,52 @@ main.Visible = false
 miniLogo.Visible = true
 
 print("[UpKg] " .. VERSION .. " loaded (kerangka UI, mulai minimize).")
+
+-- ===== AUTO BUY TRADING TICKET (port market v8.276) =====
+-- fire BuyGearStock(namaTiket) tiap 5s KALAU tiket < 2 (biar gak over-buy).
+-- game auto-tolak kalau stock abis / Sheckles kurang -> aman. self-contained.
+if not _G.__ZenxAutoTicket then
+    _G.__ZenxAutoTicket = true
+    task.spawn(function()
+        local rs = game:GetService("ReplicatedStorage")
+        local plr = game:GetService("Players").LocalPlayer
+        -- auto-detect nama tiket dari GearData (fallback "Trading Ticket")
+        local ticketName = "Trading Ticket"
+        pcall(function()
+            local dataF = rs:FindFirstChild("Data")
+            local mod = dataF and dataF:FindFirstChild("GearData")
+            if mod then
+                local ok, tbl = pcall(require, mod)
+                if ok and type(tbl) == "table" then
+                    for k, v in pairs(tbl) do
+                        local nm
+                        if type(k) == "string" then nm = k
+                        elseif type(v) == "table" then nm = v.Name or v.ItemName or v.DisplayName end
+                        if type(nm) == "string" then
+                            local low = nm:lower()
+                            if low:find("trading", 1, true) and low:find("ticket", 1, true) then ticketName = nm; break end
+                        end
+                    end
+                end
+            end
+        end)
+        local ge = rs:FindFirstChild("GameEvents")
+        local re = ge and ge:FindFirstChild("BuyGearStock")
+        if not re then print("[AutoTicket] BuyGearStock gak ketemu — auto-buy batal"); return end
+        print("[AutoTicket] auto-buy '" .. ticketName .. "' aktif (beli kalau tiket < 2)")
+        local function ticketCount()
+            local n = 0
+            pcall(function()
+                local function scan(c) if not c then return end for _, t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then local low = t.Name:lower()
+                        if (low:find("trading") and low:find("ticket")) or low:find("trade ticket") then n = n + 1 end end end end
+                scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+            end)
+            return n
+        end
+        while true do
+            task.wait(5)
+            if ticketCount() < 2 then pcall(function() re:FireServer(ticketName) end) end
+        end
+    end)
+end
