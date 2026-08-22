@@ -318,7 +318,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v2.1"
+local VERSION = "v2.7"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -965,13 +965,7 @@ local function petReady(uuid)
     local key = tostring(uuid):gsub("[{}]", "")
     local e = cdEventCache[key]
     if e and tick() - e.at <= 8 then return e.ready end
-    if getCooldownRF then
-        local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(uuid)) end)
-        if ok and type(res) == "table" and type(res[1]) == "table" and type(res[1].Time) == "number" then
-            return res[1].Time <= 0
-        end
-    end
-    return nil
+    return nil   -- GAK InvokeServer di hot-loop (anti makin-lambat). cache di-refresh loop periodik.
 end
 
 -- ----- center kebun (cluster pet, kayak gacor) -----
@@ -1003,7 +997,7 @@ workspace.DescendantRemoving:Connect(function(d) if isPetModel(d) and modelByUui
 -- ============================================================
 local GEM = {
     aktif    = false,
-    pickup   = 0.3,
+    pickup   = 0.25,
     place    = 0.0,
     resetTiap= 60,
     -- tim: tipe pet -> jumlah
@@ -1138,13 +1132,13 @@ local function swapPet(uuid)
             if pos then lastPos[uuid] = pos end
             if GEM.pickup > 0 then task.wait(GEM.pickup) end
             unequipPet(uuid)
-            if GEM.place > 0 then task.wait(GEM.place) else task.wait(0.01) end
+            if GEM.place > 0 then task.wait(GEM.place) else task.wait(0.03) end
             equipPet(uuid, pos)
             lastSwap[uuid] = tick()
-            for i = 1, 3 do
-                task.wait(0.35)
+            for i = 1, 12 do                       -- retry: cek tiap 0.1s (deteksi respawn CEPET) biar gak nyangkut lama
+                task.wait(0.1)
                 local m = modelByUuid[uuid]; if m and m.Parent then break end
-                equipPet(uuid, lastPos[uuid])
+                if i % 4 == 0 then equipPet(uuid, lastPos[uuid]) end   -- re-equip tiap ~0.4s (gak spam)
             end
         end)
         busy[uuid] = nil   -- SELALU clear (walau error) -> pet gak nyangkut
@@ -1158,7 +1152,9 @@ task.spawn(function()
             for uuid in pairs(modelByUuid) do
                 -- lepas busy NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
                 if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
-                if timUuids[uuid] and not busy[uuid] then
+                -- tim di-swap, TAPI Spider/Ghostly Spider di-equip aja (DIEM, gak di-swap)
+                local nm = uuidTipe[uuid]
+                if timUuids[uuid] and not busy[uuid] and not (nm and tostring(nm):lower():find("spider")) then
                     local rdy = petReady(uuid)
                     local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
                     if (rdy == true and idle > 0.15) or (rdy == nil and idle > 4) then swapPet(uuid) end
@@ -1208,6 +1204,29 @@ local function gemStart()
         while GEM.aktif do
             task.wait(5)
             if GEM.aktif then pcall(pastikanTim) end
+        end
+    end)
+    -- REFRESH cooldown cache periodik (2s, BACKGROUND) — biar petReady non-block = swap TETEP gacor
+    task.spawn(function()
+        local ge2 = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+        local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
+        local lastInvoke = 0
+        while GEM.aktif do
+            if req2 then pcall(function() req2:FireServer() end) end   -- SERING (0.5s) = cache fresh = GACOR
+            if getCooldownRF and (tick() - lastInvoke) >= 2 then
+                lastInvoke = tick()
+                for u in pairs(timKunci) do
+                    local key = tostring(u):gsub("[{}]", "")
+                    local e = cdEventCache[key]
+                    if not (e and tick() - e.at <= 8) then
+                        local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(u)) end)
+                        if ok and type(res) == "table" and type(res[1]) == "table" and type(res[1].Time) == "number" then
+                            cdEventCache[key] = { ready = (res[1].Time <= 0), at = tick() }
+                        end
+                    end
+                end
+            end
+            task.wait(0.5)
         end
     end)
     -- HEALER cek TERUS (1s): pet terkunci yg model ILANG -> PAKSA copot->pasang (force spawn)
