@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.59"
+local VERSION = "v0.62"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -703,7 +703,9 @@ do
                 for uuid in pairs(modelByUuid) do
                     -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
                     if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
-                    local swapIni = supportKunci[uuid]   -- CUMA support (bahan DIEM, gak di-swap)
+                    local nm = supportKunci[uuid]
+                    -- support di-swap, TAPI Spider/Ghostly Spider di-equip aja (DIEM, gak di-swap). bahan juga diem.
+                    local swapIni = nm and not (tostring(nm):lower():find("spider"))
                     if swapIni and not busy[uuid] then
                         local rdy = petReady(uuid)
                         local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
@@ -785,10 +787,12 @@ do
         task.spawn(function()
             local ge2 = RS:FindFirstChild("GameEvents")
             local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
+            local lastInvoke = 0
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
-                if req2 then pcall(function() req2:FireServer() end) end   -- minta game fire event cooldown SEMUA pet
-                if getCooldownRF then
-                    for u in pairs(supportKunci) do   -- pet tim yg cache-nya basi -> ambil di background (bukan hot-loop)
+                if req2 then pcall(function() req2:FireServer() end) end   -- SERING (0.5s, cheap/non-block) = cache fresh, readiness cepet = GACOR
+                if getCooldownRF and (tick() - lastInvoke) >= 2 then       -- InvokeServer fallback JARANG (2s) buat pet yg cache masih basi
+                    lastInvoke = tick()
+                    for u in pairs(supportKunci) do
                         local key = tostring(u):gsub("[{}]", "")
                         local e = cdEventCache[key]
                         if not (e and tick() - e.at <= 8) then
@@ -797,7 +801,7 @@ do
                         end
                     end
                 end
-                task.wait(2)
+                task.wait(0.5)
             end
         end)
         -- HEALER cek TERUS (tiap 1s): pet tim yg model-nya ILANG -> langsung PAKSA copot->pasang
@@ -1336,16 +1340,33 @@ local function syncKgTog()
     kgTog.BackgroundColor3 = on and C.panel or C.card
 end
 syncKgTog()
--- AUTO-RESUME setelah rejoin: kalau terakhir AUTO UP KG ON + engine belum jalan -> nyalain lagi
-if _G.__ZenxKgAutoOnBoot then
-    task.spawn(function()
-        task.wait(4)   -- kasih waktu engine + picker + container siap dulu
-        if _G.__ZenxKgAutoOnBoot and not (_G.ZenxKg and _G.ZenxKg.aktif) then
-            if _G.ZenxKgStart then _G.ZenxKgStart(kgConfigAktif) end
+-- AUTO-RESUME setelah rejoin/re-exe (ROBUST: baca ULANG config kalau flag ke-miss + RETRY sampe ON)
+task.spawn(function()
+    local mauOn = (_G.__ZenxKgAutoOnBoot == true)
+    -- jaga-jaga flag ke-miss (config kebaca telat pas fresh join) -> baca ULANG file langsung
+    if not mauOn then
+        for _ = 1, 6 do
+            local ok = pcall(function()
+                if isfile and isfile("zenx_upkg_cfg.json") and readfile then
+                    local c = game:GetService("HttpService"):JSONDecode(readfile("zenx_upkg_cfg.json"))
+                    if type(c) == "table" and c.autoOn == true then mauOn = true end
+                end
+            end)
+            if mauOn or not ok then break end
+            if not mauOn then task.wait(1) end
         end
+    end
+    if not mauOn then syncKgTog(); return end
+    task.wait(3)   -- kasih waktu engine/container siap dikit
+    -- RETRY ~30s: begitu belum jalan -> START (kgStart nunggu container sendiri di dalamnya)
+    for _ = 1, 20 do
+        if _G.ZenxKg and _G.ZenxKg.aktif then break end   -- udah ON
+        if _G.ZenxKgStart then pcall(function() _G.ZenxKgStart(kgConfigAktif) end) end
         syncKgTog()
-    end)
-end
+        task.wait(1.5)
+    end
+    syncKgTog()
+end)
 
 local kgInfo = lbl(cfgScroll, "Naikin KG pet tim sampe 3.8kg. Logika nyusul.", 11.5, C.textDim)
 kgInfo.Size = UDim2.new(1, 0, 0, 20); kgInfo.TextWrapped = true; kgInfo.LayoutOrder = 7
