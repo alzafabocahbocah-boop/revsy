@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.299-cf"
+local VERSION = "9.300-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7900,9 +7900,17 @@ local function run(cfg)
                             local umurMtime = mtime and (sekarang - tonumber(mtime)) or nil  -- dari mtime file
                             denyutSemua[nama] = umurIsi
                             -- v9.254: extract sheckles (ts;sheck;sheckW). sheck>0 aja.
-                            local sk, sw = isi:match("^%d+;(%d+);(%a*)")
-                            if sk and (tonumber(sk) or 0) > 0 then
-                                sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "" }
+                            -- format egg2 (ts;gemEgg;chrEgg;egg2) -> pisah gem + christmas egg
+                            if isi:match("^%d+;%d+;%d+;egg2$") then
+                                local gem, chr = isi:match("^%d+;(%d+);(%d+);egg2")
+                                if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 then
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = gem or "0", sheckW = "egg", chr = chr or "0" }
+                                end
+                            else
+                                local sk, sw = isi:match("^%d+;(%d+);(%a*)")
+                                if sk and (tonumber(sk) or 0) > 0 then
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "" }
+                                end
                             end
                             if #ddetail < 6 then
                                 ddetail[#ddetail+1] = ("%s(isi=%ds mtime=%ss)"):format(
@@ -7916,7 +7924,8 @@ local function run(cfg)
                         local body = '{"akun":['
                         for i, d in ipairs(sheckDenyut) do
                             body = body .. '{"akun":"' .. d.nama .. '","sheck":' .. d.sheck ..
-                                   ',"sheckW":"' .. d.sheckW .. '"}'
+                                   ',"sheckW":"' .. d.sheckW .. '"' ..
+                                   (d.chr and (',"chr":' .. d.chr) or '') .. '}'
                             if i < #sheckDenyut then body = body .. "," end
                         end
                         body = body .. "]}"
