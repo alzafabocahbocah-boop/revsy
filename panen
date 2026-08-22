@@ -288,6 +288,7 @@ do
             if not writefile then return end
             writefile(CFG_FILE, HS:JSONEncode({
                 gemOn = (_G.ZenxGem and _G.ZenxGem.aktif) or false,
+                chrOn = (_G.ZenxChr and _G.ZenxChr.aktif) or false,
                 seedAuto = (_G.ZenxSeed and _G.ZenxSeed.auto) or false,
                 rejoinMenit = tonumber(_G.ZenxRejoinMenit) or 30,
             }))
@@ -307,7 +308,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v1.7"
+local VERSION = "v1.9"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1239,6 +1240,77 @@ _G.ZenxGemStart = gemStart
 _G.ZenxGemStop  = gemStop
 
 -- ============================================================
+-- ENGINE CHRISTMAS EGG — equip pet TANPA swap (cuma TAHAN pet buat passive).
+-- Pet by tipe (CHR.tim, uuid dikunci). Healer 1s jaga tetep ke-equip. GAK ada swap gacor.
+-- CHR.tim DIISI nanti sesuai pet yg lo mau (skrg kosong = placeholder).
+-- ============================================================
+local CHR = { aktif = false, tim = {} }   -- tim: tipe pet -> jumlah (contoh: { ["Nutcracker"] = 3 })
+_G.ZenxChr = CHR
+local chrKunci = {}   -- uuid(fmt) -> tipe
+local chrInfo  = {}
+_G.ZenxChrTim = chrInfo
+local function chrLog(s) if _G.ZenxChrLog then _G.ZenxChrLog(s) end print("[ChrEgg] "..s) end
+local function chrJml() local n=0; for _ in pairs(chrKunci) do n=n+1 end return n end
+local function chrTotal() local n=0; for _,j in pairs(CHR.tim) do n=n+(tonumber(j) or 0) end return n end
+local function chrPilihTim()
+    scanUuidTipe()
+    local pets = {}; pcall(function() pets = PetDetect.listBackpackPets(true) or {} end)
+    local ada = {}
+    for _, tipe in pairs(chrKunci) do ada[tipe] = (ada[tipe] or 0) + 1 end
+    for tipe, jml in pairs(CHR.tim) do
+        local n = ada[tipe] or 0
+        if n < jml then
+            local cocok = {}
+            for _, p in ipairs(pets) do local u=fmtUUID(p.uuid); if not chrKunci[u] and cocokTipe(p.name, tipe) then cocok[#cocok+1]=p end end
+            table.sort(cocok, function(a,b) return (a.dispKg or 0) > (b.dispKg or 0) end)
+            for _, p in ipairs(cocok) do
+                if n >= jml then break end
+                local u = fmtUUID(p.uuid)
+                chrKunci[u] = tipe; uuidTipe[u] = p.name
+                chrInfo[u] = { nama = p.name, tipe = tipe, kg = p.dispKg, age = p.level }
+                n = n + 1
+            end
+        end
+    end
+end
+local function chrEquip()
+    for u in pairs(chrKunci) do equipPet(u, CLUSTER); task.wait(0.06) end
+    chrLog("equip " .. chrJml() .. " pet (uuid terkunci, TANPA swap)")
+end
+local function chrStart()
+    CHR.aktif = true
+    CLUSTER = farmCenter()
+    chrKunci = {}; chrInfo = {}; _G.ZenxChrTim = chrInfo
+    chrLog("START christmas egg (no swap). center=" .. (CLUSTER and "ada" or "NIL"))
+    if chrTotal() == 0 then chrLog("!! CHR.tim KOSONG — belum ada pet di-set (kasih tau jenis pet-nya)") end
+    task.spawn(function()
+        chrPilihTim(); chrEquip()
+        -- HEALER 1s: jaga pet TETEP ke-equip (re-equip yg ilang) — TANPA swap
+        while CHR.aktif do
+            task.wait(1)
+            if CHR.aktif then
+                for u in pairs(chrKunci) do
+                    if not modelByUuid[u] then
+                        pcall(function() unequipPet(u); task.wait(0.15); equipPet(u, CLUSTER); task.wait(0.1) end)
+                    end
+                end
+                if chrJml() < chrTotal() then chrPilihTim(); chrEquip() end
+            end
+        end
+    end)
+end
+local function chrStop()
+    CHR.aktif = false
+    task.spawn(function()
+        task.wait(0.15)
+        for u in pairs(chrKunci) do unequipPet(u); task.wait(0.04) end
+        chrLog("STOP + pet dicopot")
+    end)
+end
+_G.ZenxChrStart = chrStart
+_G.ZenxChrStop  = chrStop
+
+-- ============================================================
 -- ENGINE SEED RAIN — auto-collect seed rain (semua tier)
 -- COLLECT = ProximityPrompt (fireproximityprompt). Auto ON pas ada rain.
 -- ============================================================
@@ -1714,36 +1786,69 @@ local function cfgRow(label, defaultVal, lo)
     return box, r
 end
 
--- ============ SECTION: CONFIG GEM EGG ============
-sectionHeader("\u{2699} CONFIG GEM EGG", 1)
+-- ============ SECTION: CONFIG EGG ============
+sectionHeader("\u{2699} CONFIG EGG", 1)
 
--- tombol AUTO ON/OFF
+-- tombol AUTO GEM EGG (swap gacor) — mutual exclusive sama christmas
 local gemTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
     Text = "AUTO GEM EGG: OFF", Font = FONT_B, TextSize = 13, TextColor3 = C.textDim,
     LayoutOrder = 2, Parent = cfgScroll })
 corner(gemTog, 7)
+local chrTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "AUTO CHRISTMAS EGG: OFF", Font = FONT_B, TextSize = 13, TextColor3 = C.textDim,
+    LayoutOrder = 3, Parent = cfgScroll })
+corner(chrTog, 7)
+local function syncEggTog()
+    local gOn = _G.ZenxGem and _G.ZenxGem.aktif
+    local cOn = _G.ZenxChr and _G.ZenxChr.aktif
+    gemTog.Text = "AUTO GEM EGG: " .. (gOn and "ON" or "OFF")
+    gemTog.TextColor3 = gOn and Color3.fromRGB(0,230,118) or C.textDim
+    gemTog.BackgroundColor3 = gOn and C.panel or C.card
+    chrTog.Text = "AUTO CHRISTMAS EGG: " .. (cOn and "ON" or "OFF")
+    chrTog.TextColor3 = cOn and Color3.fromRGB(0,230,118) or C.textDim
+    chrTog.BackgroundColor3 = cOn and C.panel or C.card
+end
 gemTog.MouseButton1Click:Connect(function()
     if _G.ZenxGem and _G.ZenxGem.aktif then
         if _G.ZenxGemStop then _G.ZenxGemStop() end
-        gemTog.Text = "AUTO GEM EGG: OFF"; gemTog.TextColor3 = C.textDim; gemTog.BackgroundColor3 = C.card
-        if _G.ZenxPanenSaveCfg then _G.ZenxPanenSaveCfg() end
     else
+        if _G.ZenxChr and _G.ZenxChr.aktif and _G.ZenxChrStop then _G.ZenxChrStop() end  -- matiin christmas (mutual excl)
         if _G.ZenxGemStart then _G.ZenxGemStart() end
-        gemTog.Text = "AUTO GEM EGG: ON"; gemTog.TextColor3 = Color3.fromRGB(0,230,118); gemTog.BackgroundColor3 = C.panel
-        if _G.ZenxPanenSaveCfg then _G.ZenxPanenSaveCfg() end
     end
+    syncEggTog()
+    if _G.ZenxPanenSaveCfg then _G.ZenxPanenSaveCfg() end
+end)
+chrTog.MouseButton1Click:Connect(function()
+    if _G.ZenxChr and _G.ZenxChr.aktif then
+        if _G.ZenxChrStop then _G.ZenxChrStop() end
+    else
+        if _G.ZenxGem and _G.ZenxGem.aktif and _G.ZenxGemStop then _G.ZenxGemStop() end  -- matiin gem (mutual excl)
+        if _G.ZenxChrStart then _G.ZenxChrStart() end
+    end
+    syncEggTog()
+    if _G.ZenxPanenSaveCfg then _G.ZenxPanenSaveCfg() end
+end)
+syncEggTog()
+
+-- AUTO-RESUME setelah rejoin: kalau terakhir ON, nyalain lagi (gem ATAU christmas)
+task.spawn(function()
+    task.wait(4)
+    local cfg = _G.__ZenxPanenCfg or {}
+    if cfg.chrOn and _G.ZenxChrStart and not (_G.ZenxChr and _G.ZenxChr.aktif) then _G.ZenxChrStart()
+    elseif cfg.gemOn and _G.ZenxGemStart and not (_G.ZenxGem and _G.ZenxGem.aktif) then _G.ZenxGemStart() end
+    syncEggTog()
 end)
 
 -- info settingan (fixed sesuai spec)
 local infoTxt = "Pick Up 0.3 \u{00b7} Place 0 \u{00b7} reset tiap 60s\nTim: 6 Mimic + 1 Spider + 1 Bearded Dragon\nAmbil pet KG PALING BESAR \u{00b7} uuid dikunci (gak ganti-ganti)"
 local gemInfo = lbl(cfgScroll, infoTxt, 11.5, C.textDim)
-gemInfo.Size = UDim2.new(1, 0, 0, 40); gemInfo.TextWrapped = true; gemInfo.LayoutOrder = 3
+gemInfo.Size = UDim2.new(1, 0, 0, 40); gemInfo.TextWrapped = true; gemInfo.LayoutOrder = 4
 
 -- log area
 local gemLogBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 120), BackgroundColor3 = C.panel,
     Font = Enum.Font.Code, TextSize = 10.5, TextColor3 = C.textDim,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-    TextWrapped = true, Text = "log gem egg...", LayoutOrder = 4, Parent = cfgScroll })
+    TextWrapped = true, Text = "log egg...", LayoutOrder = 5, Parent = cfgScroll })
 corner(gemLogBox, 6)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6), Parent = gemLogBox })
 
@@ -1759,7 +1864,7 @@ end
 
 -- ---- DAFTAR PET DIPAKE (uuid terkunci + kg + age) ----
 local gemPetHdr = mk("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.card,
-    BorderSizePixel = 0, LayoutOrder = 5, Parent = cfgScroll }); corner(gemPetHdr, 6)
+    BorderSizePixel = 0, LayoutOrder = 6, Parent = cfgScroll }); corner(gemPetHdr, 6)
 local gph = lbl(gemPetHdr, "\u{1F433} PET DIPAKE (uuid terkunci)", 11.5, C.accent)
 gph.Font = FONT_B; gph.Position = UDim2.new(0, 10, 0, 0); gph.Size = UDim2.new(1, -10, 1, 0)
 
@@ -1767,7 +1872,7 @@ local gemPetBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 200), BackgroundCo
     Font = Enum.Font.Code, TextSize = 10, TextColor3 = C.text,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Text = "(belum ada \u{2014} nyalain AUTO GEM EGG dulu)",
-    LayoutOrder = 6, Parent = cfgScroll })
+    LayoutOrder = 7, Parent = cfgScroll })
 corner(gemPetBox, 6)
 mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6),
     PaddingRight = UDim.new(0, 6), Parent = gemPetBox })
@@ -1797,6 +1902,36 @@ local msHt = lbl(msH, "\u{2601} AUTO SEED RAIN", 13, C.accent); msHt.Font = FONT
 msHt.Position = UDim2.new(0, 12, 0, 0); msHt.Size = UDim2.new(1, -12, 1, 0)
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscScroll })
 msH.LayoutOrder = 1
+
+-- ---- REJOIN GLOBAL (countdown + REJOIN NOW) — di ATAS AUTO SEED RAIN ----
+do
+    local rjH = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = -3, Parent = miscScroll }); corner(rjH, 7)
+    local rjHt = lbl(rjH, "\u{1F504} REJOIN GLOBAL", 13, C.accent); rjHt.Font = FONT_B
+    rjHt.Position = UDim2.new(0, 12, 0, 0); rjHt.Size = UDim2.new(1, -12, 1, 0)
+    -- countdown (baca _G.ZenxRejoinSisa yg di-set loop rejoin)
+    local rjSisa = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.panel,
+        Font = Enum.Font.Code, TextSize = 12, TextColor3 = C.text, Text = "rejoin dlm: -",
+        BorderSizePixel = 0, LayoutOrder = -2, Parent = miscScroll }); corner(rjSisa, 6)
+    mk("UIPadding", { PaddingLeft = UDim.new(0, 8), Parent = rjSisa })
+    task.spawn(function()
+        while gui.Parent do
+            local s = math.max(0, math.floor(tonumber(_G.ZenxRejoinSisa) or 0))
+            rjSisa.Text = ("\u{1F504} rejoin dlm: %d:%02d  (tiap %d menit)"):format(math.floor(s/60), s%60, tonumber(_G.ZenxRejoinMenit) or 30)
+            task.wait(1)
+        end
+    end)
+    -- REJOIN NOW: langsung teleport (no kick, no wait)
+    local rjNow = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Color3.fromRGB(180,70,60),
+        Text = "\u{1F504} REJOIN NOW", Font = FONT_B, TextSize = 13, TextColor3 = Color3.fromRGB(255,255,255),
+        LayoutOrder = -1, Parent = miscScroll }); corner(rjNow, 7)
+    rjNow.MouseButton1Click:Connect(function()
+        rjNow.Text = "\u{1F504} REJOIN..."; rjNow.BackgroundColor3 = Color3.fromRGB(120,50,45)
+        _G.ZenxRejoining = true; _G.ZenxRejoinSisa = 0
+        local TS = game:GetService("TeleportService"); local plr = game:GetService("Players").LocalPlayer
+        task.spawn(function() while true do pcall(function() TS:Teleport(game.PlaceId, plr) end); task.wait(6) end end)
+    end)
+end
 
 -- toggle master
 local srTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
