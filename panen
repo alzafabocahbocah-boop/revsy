@@ -167,12 +167,13 @@ do
                             for _, d in ipairs(pg:GetDescendants()) do
                                 if d:IsA("TextLabel") then
                                     local txt = d.Text or ""
+                                    -- WAJIB penanda stack "Nx"/"xN" (bukan angka telanjang -> hindari nangkep stat/sheckles gede)
                                     local cnt, name = txt:match("^(%d+)x%s+(.+[Ee]gg.*)$")
                                     if not cnt then cnt, name = txt:match("^x(%d+)%s+(.+[Ee]gg.*)$") end
-                                    if not cnt then name, cnt = txt:match("^(.+[Ee]gg.-)%s+x?(%d+)$") end
+                                    if not cnt then name, cnt = txt:match("^(.+[Ee]gg.-)%s+x(%d+)$") end   -- WAJIB "x" (dulu "x?" nangkep angka apapun)
                                     if cnt and name then
                                         local n = tonumber(cnt)
-                                        if n and n > 0 then fresh[name] = math.max(fresh[name] or 0, n) end
+                                        if n and n > 0 and n <= 20000 then fresh[name] = math.max(fresh[name] or 0, n) end   -- cap 20rb (egg gak mungkin jutaan)
                                     end
                                 end
                             end
@@ -180,17 +181,17 @@ do
                         guiCache = fresh
                     end
                     for k, v in pairs(guiCache) do counts[k] = math.max(counts[k] or 0, v) end
-                    -- PISAH: christmas egg (nama ada "christmas"/"festive") vs gem/lainnya
+                    -- HITUNG per JENIS spesifik: Gem Egg (nama ada "gem") + Christmas Egg (nama ada "christmas"/"festive")
                     local totalChr, totalGem = 0, 0
                     for k, c in pairs(counts) do
                         local n = tonumber(c) or 0
                         local lk = tostring(k):lower()
                         if lk:find("christmas") or lk:find("festive") then totalChr = totalChr + n
-                        else totalGem = totalGem + n end
+                        elseif lk:find("gem") then totalGem = totalGem + n end   -- CUMA gem egg (bukan all egg)
                     end
                     _G.ZenxPanenEggChr = totalChr
                     _G.ZenxPanenEggGem = totalGem
-                    _G.ZenxPanenEgg = totalChr + totalGem   -- total (backward compat)
+                    _G.ZenxPanenEgg = totalChr + totalGem   -- total gem+christmas
                 end)
                 task.wait(10)
             end
@@ -318,7 +319,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v2.8"
+local VERSION = "v3.0"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
