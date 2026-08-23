@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.300-cf"
+local VERSION = "9.301-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5232,7 +5232,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                                      (os.time() - TERAKHIR_BUKA[pkg]) < (cfg.konfirmasi_sec or 90)
                 local lagiJalan = potretJalan and potretJalan[pkg]
                 if lagiJalan == nil then lagiJalan = pkg_running(pkg) end
-                local denyutFresh0 = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 180
+                local denyutFresh0 = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 300
                 local diLewat = lagiJalan and (panelBuram0 or not akun
                                 or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh0)
                 local diCaptcha = akun and KICK_DIURUS["captcha:" .. pkg]
@@ -5330,7 +5330,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             -- v9.298: SKIP juga kalau DENYUT fresh (client idup per SD card, walau
             -- bridge/panel stale). Bug: reopen_sec re-join client hidup krn cuma
             -- ngecek bridge_fresh (panel), padahal denyut-cek udah bilang idup.
-            local denyutFresh = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 180
+            local denyutFresh = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 300
             if lagiJalan and (panelBuram or not akun
                               or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh) then
                 hasil.lewat = hasil.lewat + 1
@@ -7908,7 +7908,7 @@ local function run(cfg)
                                 end
                             else
                                 local sk, sw = isi:match("^%d+;(%d+);(%a*)")
-                                if sk and (tonumber(sk) or 0) > 0 then
+                                if sk and ((tonumber(sk) or 0) > 0 or sw == "kg") then   -- kg = report walau 0 (progress up_kg)
                                     sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "" }
                                 end
                             end
@@ -7981,7 +7981,7 @@ local function run(cfg)
                             info(("[denyut-cek] %s: umur=%s")
                                 :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
                         end
-                        if umur ~= nil and umur <= 180 then
+                        if umur ~= nil and umur <= 300 then
                             -- v9.276: toleransi denyut 120 -> 180s (3 menit). denyut fresh
                             -- (<=3 menit) = script nulis = DI GAME. Dilonggarin biar transisi
                             -- market<->garden (place beda, ada jeda denyut pas teleport) gak
@@ -8007,7 +8007,7 @@ local function run(cfg)
                             -- sekali. Sekarang cek cacheHidup: mati = buka.
                             if cacheHidup[pkg] then
                                 diGame = diGame + 1   -- proses hidup, denyut nyusul
-                            elseif KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 240 then
+                            elseif KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 then
                                 -- v9.296: baru di-CLOSE/tembak (grace) -> JANGAN buka walau
                                 -- belum ada file denyut. FORCE dari panel yg buka. Cegah
                                 -- double-open pas boot (denyut-rejoin buka duluan, terus
@@ -8027,7 +8027,7 @@ local function run(cfg)
                             -- JANGAN rejoin walau denyut basi (grace 240s = 4 menit, krn masuk PS ~3 menit). Dia masih loading/spawn
                             -- (belum sempet nulis denyut fresh ~2 menit). Rejoin di sini =
                             -- INTERRUPT loading -> client nyangkut di HOME -> loop terus.
-                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 240 then
+                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 then
                                 diGame = diGame + 1   -- anggap di game (lagi loading), tunggu denyut nyusul
                                 info(("[antrian] %s baru dibuka %ds lalu -> GRACE (loading, JANGAN rejoin)")
                                     :format(ak or pkg, os.time() - KICK_DIURUS["tembak_ts:" .. pkg]))
