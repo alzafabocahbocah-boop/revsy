@@ -65,11 +65,11 @@ PRESET="$1"
 [ -z "$PRESET" ] && PRESET="seed"
 
 case "$PRESET" in
-    seed|farm|market|gag1|hact|panen|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus|panen-arceus) ;;
+    seed|farm|market|gag1|hact|panen|campur|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus|panen-arceus|campur-arceus) ;;
     *)
         gagal "Preset '$PRESET' gak dikenal." \
-              "Yang ada: seed / farm / market / gag1 / hact / panen  (+ suffix -arceus, mis: panen-arceus)" \
-              "Contoh:  ... | sh -s panen-arceus"
+              "Yang ada: seed / farm / market / gag1 / hact / panen / campur  (+ suffix -arceus)" \
+              "Contoh:  ... | sh -s campur-arceus"
         ;;
 esac
 
@@ -209,17 +209,25 @@ case "$PRESET" in
         # v9.291: pilih script ronihub sesuai preset. hact-arceus -> hact,
         # panen-arceus -> panen, sisanya -> market.
         case "$PRESET" in
-            hact-arceus)  RONIHUB_SC="hact" ;;
-            panen-arceus) RONIHUB_SC="panen" ;;
-            *)            RONIHUB_SC="market" ;;
+            hact-arceus)   RONIHUB_SC="hact" ;;
+            panen-arceus)  RONIHUB_SC="panen" ;;
+            campur-arceus) RONIHUB_SC="__campur__" ;;
+            *)             RONIHUB_SC="market" ;;
         esac
-        MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/$RONIHUB_SC"
+        # campur: loader pinter dari revsy (pilih script per akun via /sc-get panel). else: script fixed ronihub.
+        if [ "$RONIHUB_SC" = "__campur__" ]; then
+            MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/revsy/main/zenx-loader.lua"
+            SC_LABEL="campur (loader pinter -- script per akun dari panel)"
+        else
+            MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/$RONIHUB_SC"
+            SC_LABEL="$RONIHUB_SC"
+        fi
         su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
         # cek beneran ketulis
         AX_CEK=$(su -c "cat \"$AX_LOADER\" 2>/dev/null" 2>/dev/null)
         if printf '%s' "$AX_CEK" | grep -q "HttpGet"; then
-            ok "Loader Arceus ketulis: $AX_LOADER ($RONIHUB_SC)"
-            info "$RONIHUB_SC auto-nyala tiap Arceus join."
+            ok "Loader Arceus ketulis: $AX_LOADER ($SC_LABEL)"
+            info "$SC_LABEL auto-nyala tiap Arceus join."
         else
             warn "Loader Arceus GAGAL ketulis (cek akses su / folder Arceus X ada)."
             info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
