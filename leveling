@@ -1,6 +1,176 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.62"
+local SCRIPT_VERSION="v13.63"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
+
+-- ===== MODUL DENYUT/KICK DIPINDAH KE ATAS (jalan DULUAN, sebelum kode utama) =====
+-- ===== DENYUT + SELF-DISCONNECT (biar worker tau akun leveling HIDUP, sama kayak hact/upkg/panen) =====
+-- di-bungkus do...end -> local ke-scope, GAK nambah main-chunk local (limit 200 Luau aman)
+do
+    if not _G.__ZenxDenyutJalan then
+        _G.__ZenxDenyutJalan = true
+        _G.__ZenxBootT = _G.__ZenxBootT or os.time()
+        -- disconnect STRICT: cuma true kalau ada prompt reconnect beneran (hindari false-positive)
+        local function zenxDcStrict()
+            local dc = false
+            pcall(function()
+                local cg = game:GetService("CoreGui")
+                local pg = cg:FindFirstChild("RobloxPromptGui")
+                local overlay = pg and pg:FindFirstChild("promptOverlay")
+                if not overlay then return end
+                for _, child in ipairs(overlay:GetChildren()) do
+                    if child:IsA("GuiObject") and child.Visible then
+                        for _, d in ipairs(child:GetDescendants()) do
+                            if d:IsA("TextButton") and d.Visible then
+                                local t = tostring(d.Text or ""):lower()
+                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
+                            end
+                        end
+                    end
+                end
+            end)
+            return dc
+        end
+        -- self-rejoin (pakai punya leveling kalau udah ada, else bikin sendiri)
+        _G.ZenxSelfRejoin = _G.ZenxSelfRejoin or function(reason)
+            if _G.ZenxRejoining then return end
+            _G.ZenxRejoining = true
+            local TS = game:GetService("TeleportService")
+            local plr = game:GetService("Players").LocalPlayer
+            task.spawn(function()
+                local cg = game:GetService("CoreGui")
+                local guiSvc = game:GetService("GuiService")
+                for _ = 1, 120 do
+                    pcall(function()
+                        for _, g in ipairs(cg:GetChildren()) do
+                            local n = tostring(g.Name):lower()
+                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                if g:IsA("ScreenGui") then g.Enabled = false end
+                                pcall(function() g.Parent = nil end)
+                            end
+                        end
+                        guiSvc:ClearError()
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+            task.wait(8)
+            while true do pcall(function() TS:Teleport(game.PlaceId, plr) end); task.wait(8) end
+        end
+        -- loop: pas disconnect -> HAPUS denyut (worker tau putus) + self-rejoin (grace 60s + 4x konfirmasi)
+        task.spawn(function()
+            local dcStrict = 0
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
+                    if zenxDcStrict() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
+                        pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                    end
+                    if zenxDcStrict() then
+                        dcStrict = dcStrict + 1
+                        local umur = os.time() - (_G.__ZenxBootT or os.time())
+                        if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then
+                            _G.ZenxSelfRejoin("prompt reconnect (" .. dcStrict .. "x)")
+                        end
+                    else
+                        dcStrict = 0
+                    end
+                end)
+                task.wait(3)
+            end
+        end)
+        -- DENYUT tiap 20s + INDIKATOR on-screen (biar ketauan jalan/enggak + kenapa)
+        local hudD
+        pcall(function()
+            local g = Instance.new("ScreenGui"); g.Name = "ZenxLvlDenyut"; g.ResetOnSpawn = false
+            g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+            hudD = Instance.new("TextLabel")
+            hudD.Size = UDim2.new(0, 230, 0, 24); hudD.Position = UDim2.new(0, 6, 1, -30)
+            hudD.BackgroundColor3 = Color3.fromRGB(15, 15, 20); hudD.BackgroundTransparency = 0.15
+            hudD.Font = Enum.Font.GothamBold; hudD.TextSize = 11; hudD.TextColor3 = Color3.fromRGB(230, 220, 120)
+            hudD.Text = "denyut: mulai..."; hudD.BorderSizePixel = 0; hudD.Parent = g
+            Instance.new("UICorner", hudD).CornerRadius = UDim.new(0, 5)
+        end)
+        local function setD(t, warna) pcall(function() if hudD then hudD.Text = t; if warna then hudD.TextColor3 = warna end end end) end
+        task.spawn(function()
+            task.wait(2)   -- tulis pertama cepat (gak nunggu 20s)
+            while true do
+                pcall(function()
+                    local plr = game:GetService("Players").LocalPlayer
+                    local nm = plr and plr.Name
+                    if not writefile then
+                        setD("denyut: NO writefile (executor?)", Color3.fromRGB(255, 110, 110))
+                    elseif not nm or nm == "" then
+                        setD("denyut: player belum siap", Color3.fromRGB(255, 200, 80))
+                    elseif zenxDcStrict() then
+                        setD("denyut: SKIP (disconnect)", Color3.fromRGB(255, 200, 80))
+                    else
+                        writefile("zenx_denyut_" .. nm .. ".txt", tostring(os.time()))
+                        setD("denyut OK: " .. nm .. " " .. os.date("%H:%M:%S"), Color3.fromRGB(120, 255, 140))
+                    end
+                end)
+                task.wait(20)
+            end
+        end)
+        print("[ZenxLvl] denyut + self-disconnect aktif")
+    end
+end
+
+-- ===== KICK ON-DEMAND (poll backend LANGSUNG, TANPA worker — kayak market bridge) =====
+if not _G.__ZenxKickPoll then
+    _G.__ZenxKickPoll = true
+    task.spawn(function()
+        local Players = game:GetService("Players")
+        local plr = Players.LocalPlayer
+        local req = (syn and syn.request) or (fluxus and fluxus.request)
+                 or (krnl and krnl.request) or http_request or request or httprequest
+        if type(http) == "table" and http.request then req = http.request end
+        if not (req and plr and plr.Name) then return end
+        local URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+        task.wait(8)
+        while true do
+            task.wait(10)
+            local delayMin = nil
+            pcall(function()
+                local r = req({ Url = URL .. "/kick-cek?akun=" .. plr.Name, Method = "GET",
+                    Headers = { ["X-Kunci"] = KUNCI } })
+                if r and (r.StatusCode == 200 or r.Success) and r.Body then
+                    local m = tostring(r.Body):match('"kick"%s*:%s*(%d+)')
+                    if m then delayMin = tonumber(m) end
+                end
+            end)
+            if delayMin ~= nil then
+                print("[KickOnDemand] KICK sekarang -> rejoin " .. delayMin .. " menit lagi")
+                _G.ZenxRejoining = true
+                pcall(function() plr:Kick("\n\n  ZenX: kick (rejoin " .. delayMin .. "m)\n") end)
+                local cg = game:GetService("CoreGui")
+                local gs = game:GetService("GuiService")
+                local t0 = tick()
+                while (tick() - t0) < (delayMin * 60) do
+                    pcall(function()
+                        for _, g in ipairs(cg:GetChildren()) do
+                            local n = tostring(g.Name):lower()
+                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                if g:IsA("ScreenGui") then g.Enabled = false end
+                                pcall(function() g.Parent = nil end)
+                            end
+                        end
+                        gs:ClearError()
+                    end)
+                    task.wait(1)
+                end
+                local TS = game:GetService("TeleportService")
+                while true do
+                    pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                    task.wait(8)
+                end
+            end
+        end
+    end)
+end
+
+
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
 local RS = game:GetService("ReplicatedStorage")
@@ -5401,170 +5571,3 @@ end)()
 setMinimized(true)
 
 print("ZenxAutoElephantRainbow "..SCRIPT_VERSION.." loaded! v12.98: revert v12.97 - no implicit MAX assumption")
-
--- ===== DENYUT + SELF-DISCONNECT (biar worker tau akun leveling HIDUP, sama kayak hact/upkg/panen) =====
--- di-bungkus do...end -> local ke-scope, GAK nambah main-chunk local (limit 200 Luau aman)
-do
-    if not _G.__ZenxDenyutJalan then
-        _G.__ZenxDenyutJalan = true
-        _G.__ZenxBootT = _G.__ZenxBootT or os.time()
-        -- disconnect STRICT: cuma true kalau ada prompt reconnect beneran (hindari false-positive)
-        local function zenxDcStrict()
-            local dc = false
-            pcall(function()
-                local cg = game:GetService("CoreGui")
-                local pg = cg:FindFirstChild("RobloxPromptGui")
-                local overlay = pg and pg:FindFirstChild("promptOverlay")
-                if not overlay then return end
-                for _, child in ipairs(overlay:GetChildren()) do
-                    if child:IsA("GuiObject") and child.Visible then
-                        for _, d in ipairs(child:GetDescendants()) do
-                            if d:IsA("TextButton") and d.Visible then
-                                local t = tostring(d.Text or ""):lower()
-                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
-                            end
-                        end
-                    end
-                end
-            end)
-            return dc
-        end
-        -- self-rejoin (pakai punya leveling kalau udah ada, else bikin sendiri)
-        _G.ZenxSelfRejoin = _G.ZenxSelfRejoin or function(reason)
-            if _G.ZenxRejoining then return end
-            _G.ZenxRejoining = true
-            local TS = game:GetService("TeleportService")
-            local plr = game:GetService("Players").LocalPlayer
-            task.spawn(function()
-                local cg = game:GetService("CoreGui")
-                local guiSvc = game:GetService("GuiService")
-                for _ = 1, 120 do
-                    pcall(function()
-                        for _, g in ipairs(cg:GetChildren()) do
-                            local n = tostring(g.Name):lower()
-                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
-                                if g:IsA("ScreenGui") then g.Enabled = false end
-                                pcall(function() g.Parent = nil end)
-                            end
-                        end
-                        guiSvc:ClearError()
-                    end)
-                    task.wait(0.5)
-                end
-            end)
-            task.wait(8)
-            while true do pcall(function() TS:Teleport(game.PlaceId, plr) end); task.wait(8) end
-        end
-        -- loop: pas disconnect -> HAPUS denyut (worker tau putus) + self-rejoin (grace 60s + 4x konfirmasi)
-        task.spawn(function()
-            local dcStrict = 0
-            while true do
-                pcall(function()
-                    local plr = game:GetService("Players").LocalPlayer
-                    if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
-                    if zenxDcStrict() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
-                        pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
-                    end
-                    if zenxDcStrict() then
-                        dcStrict = dcStrict + 1
-                        local umur = os.time() - (_G.__ZenxBootT or os.time())
-                        if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then
-                            _G.ZenxSelfRejoin("prompt reconnect (" .. dcStrict .. "x)")
-                        end
-                    else
-                        dcStrict = 0
-                    end
-                end)
-                task.wait(3)
-            end
-        end)
-        -- DENYUT tiap 20s + INDIKATOR on-screen (biar ketauan jalan/enggak + kenapa)
-        local hudD
-        pcall(function()
-            local g = Instance.new("ScreenGui"); g.Name = "ZenxLvlDenyut"; g.ResetOnSpawn = false
-            g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
-            hudD = Instance.new("TextLabel")
-            hudD.Size = UDim2.new(0, 230, 0, 24); hudD.Position = UDim2.new(0, 6, 1, -30)
-            hudD.BackgroundColor3 = Color3.fromRGB(15, 15, 20); hudD.BackgroundTransparency = 0.15
-            hudD.Font = Enum.Font.GothamBold; hudD.TextSize = 11; hudD.TextColor3 = Color3.fromRGB(230, 220, 120)
-            hudD.Text = "denyut: mulai..."; hudD.BorderSizePixel = 0; hudD.Parent = g
-            Instance.new("UICorner", hudD).CornerRadius = UDim.new(0, 5)
-        end)
-        local function setD(t, warna) pcall(function() if hudD then hudD.Text = t; if warna then hudD.TextColor3 = warna end end end) end
-        task.spawn(function()
-            task.wait(2)   -- tulis pertama cepat (gak nunggu 20s)
-            while true do
-                pcall(function()
-                    local plr = game:GetService("Players").LocalPlayer
-                    local nm = plr and plr.Name
-                    if not writefile then
-                        setD("denyut: NO writefile (executor?)", Color3.fromRGB(255, 110, 110))
-                    elseif not nm or nm == "" then
-                        setD("denyut: player belum siap", Color3.fromRGB(255, 200, 80))
-                    elseif zenxDcStrict() then
-                        setD("denyut: SKIP (disconnect)", Color3.fromRGB(255, 200, 80))
-                    else
-                        writefile("zenx_denyut_" .. nm .. ".txt", tostring(os.time()))
-                        setD("denyut OK: " .. nm .. " " .. os.date("%H:%M:%S"), Color3.fromRGB(120, 255, 140))
-                    end
-                end)
-                task.wait(20)
-            end
-        end)
-        print("[ZenxLvl] denyut + self-disconnect aktif")
-    end
-end
-
--- ===== KICK ON-DEMAND (poll backend LANGSUNG, TANPA worker — kayak market bridge) =====
-if not _G.__ZenxKickPoll then
-    _G.__ZenxKickPoll = true
-    task.spawn(function()
-        local Players = game:GetService("Players")
-        local plr = Players.LocalPlayer
-        local req = (syn and syn.request) or (fluxus and fluxus.request)
-                 or (krnl and krnl.request) or http_request or request or httprequest
-        if type(http) == "table" and http.request then req = http.request end
-        if not (req and plr and plr.Name) then return end
-        local URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
-        local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
-        task.wait(8)
-        while true do
-            task.wait(10)
-            local delayMin = nil
-            pcall(function()
-                local r = req({ Url = URL .. "/kick-cek?akun=" .. plr.Name, Method = "GET",
-                    Headers = { ["X-Kunci"] = KUNCI } })
-                if r and (r.StatusCode == 200 or r.Success) and r.Body then
-                    local m = tostring(r.Body):match('"kick"%s*:%s*(%d+)')
-                    if m then delayMin = tonumber(m) end
-                end
-            end)
-            if delayMin ~= nil then
-                print("[KickOnDemand] KICK sekarang -> rejoin " .. delayMin .. " menit lagi")
-                _G.ZenxRejoining = true
-                pcall(function() plr:Kick("\n\n  ZenX: kick (rejoin " .. delayMin .. "m)\n") end)
-                local cg = game:GetService("CoreGui")
-                local gs = game:GetService("GuiService")
-                local t0 = tick()
-                while (tick() - t0) < (delayMin * 60) do
-                    pcall(function()
-                        for _, g in ipairs(cg:GetChildren()) do
-                            local n = tostring(g.Name):lower()
-                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
-                                if g:IsA("ScreenGui") then g.Enabled = false end
-                                pcall(function() g.Parent = nil end)
-                            end
-                        end
-                        gs:ClearError()
-                    end)
-                    task.wait(1)
-                end
-                local TS = game:GetService("TeleportService")
-                while true do
-                    pcall(function() TS:Teleport(game.PlaceId, plr) end)
-                    task.wait(8)
-                end
-            end
-        end
-    end)
-end
