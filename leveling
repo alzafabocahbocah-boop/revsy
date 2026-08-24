@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.60"
+local SCRIPT_VERSION="v13.62"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -1563,7 +1563,7 @@ local targetPetTypes=d.targetPetTypes or {}
 local fromAge=d.fromAge or 1
 local maxPetTarget=d.maxPetTarget or 1
 local autoStartEnabled=d.autoStartEnabled or false
-local autoRejoin=d.autoRejoin or false
+local autoRejoin=false   -- v13.61: PAKSA OFF (auto-rejoin sc dimatiin di semua sc, worker+panel-kick handle rejoin). Cegah TeleportToPlaceInstance -> "server shutdown" pas instance kosong.
 -- v13.24: eager build panel Rejoin dipindah ke bawah save() (scoping leksikal)
 local autoAccGift=d.autoAccGift or false
 local autoAccTrade=d.autoAccTrade or false
@@ -5478,13 +5478,34 @@ do
                 task.wait(3)
             end
         end)
-        -- DENYUT tiap 20s (cuma timestamp) — SKIP kalau disconnect (worker jadi tau + rejoin)
+        -- DENYUT tiap 20s + INDIKATOR on-screen (biar ketauan jalan/enggak + kenapa)
+        local hudD
+        pcall(function()
+            local g = Instance.new("ScreenGui"); g.Name = "ZenxLvlDenyut"; g.ResetOnSpawn = false
+            g.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+            hudD = Instance.new("TextLabel")
+            hudD.Size = UDim2.new(0, 230, 0, 24); hudD.Position = UDim2.new(0, 6, 1, -30)
+            hudD.BackgroundColor3 = Color3.fromRGB(15, 15, 20); hudD.BackgroundTransparency = 0.15
+            hudD.Font = Enum.Font.GothamBold; hudD.TextSize = 11; hudD.TextColor3 = Color3.fromRGB(230, 220, 120)
+            hudD.Text = "denyut: mulai..."; hudD.BorderSizePixel = 0; hudD.Parent = g
+            Instance.new("UICorner", hudD).CornerRadius = UDim.new(0, 5)
+        end)
+        local function setD(t, warna) pcall(function() if hudD then hudD.Text = t; if warna then hudD.TextColor3 = warna end end end) end
         task.spawn(function()
+            task.wait(2)   -- tulis pertama cepat (gak nunggu 20s)
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and writefile and not zenxDcStrict() then
-                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                    local nm = plr and plr.Name
+                    if not writefile then
+                        setD("denyut: NO writefile (executor?)", Color3.fromRGB(255, 110, 110))
+                    elseif not nm or nm == "" then
+                        setD("denyut: player belum siap", Color3.fromRGB(255, 200, 80))
+                    elseif zenxDcStrict() then
+                        setD("denyut: SKIP (disconnect)", Color3.fromRGB(255, 200, 80))
+                    else
+                        writefile("zenx_denyut_" .. nm .. ".txt", tostring(os.time()))
+                        setD("denyut OK: " .. nm .. " " .. os.date("%H:%M:%S"), Color3.fromRGB(120, 255, 140))
                     end
                 end)
                 task.wait(20)
