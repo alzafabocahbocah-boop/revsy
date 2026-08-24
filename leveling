@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.56"
+local SCRIPT_VERSION="v13.58"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -113,13 +113,6 @@ do
         dbg("Step 2c: PetCooldownsUpdated GAK ADA -> fallback ke GetPetCooldown lama")
     end
     if req and req:IsA("RemoteEvent") then pcall(function() req:FireServer() end) end
-end
-local function cdReadyFromEvent(uuid)
-    local key = tostring(uuid):gsub("[{}]","")
-    local e = cdEventCache[key]
-    if not e then return nil end                 -- belum ada data event
-    if tick() - e.at > 8 then return nil end     -- data basi >8s, jangan dipercaya
-    return e.ready
 end
 
 -- ============= APS (ActivePetsService) API - v13.08 =============
@@ -629,24 +622,6 @@ end
 --   3. Fire GivePet("GivePet", PlayerInstance) -> server gift pet yg lagi di-pegang
 --   4. Verify pet hilang dari Backpack DAN Character
 
-local function holdPetAsTool(uuid)
-    local item = findPetInBackpack(uuid)
-    if not item then return nil end
-    local char = player.Character
-    if not char then return nil end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    -- Method 1: Humanoid:EquipTool (proper way)
-    if hum then
-        local ok = pcall(function() hum:EquipTool(item) end)
-        if ok then return item end
-    end
-    -- Method 2: direct reparent fallback
-    if item:IsA("Tool") then
-        pcall(function() item.Parent = char end)
-        return item
-    end
-    return nil
-end
 
 local function petInCharacter(uuid)
     local char = player.Character if not char then return false end
@@ -1202,7 +1177,7 @@ function getAgeFromKG(item)
                 elseif raw > 500 then
                     -- v13.09: JANGAN cap ke 100! mutasi bikin kg overshoot -> pet MUDA kebaca age 100
                     -- -> dicap completed -> gak pernah di-level. overshoot = umur GAK DIKETAHUI (nil),
-                    -- biar sumber lain (APS/UI) yang nentuin. getQueue strict udah skip nil dgn aman.
+                    -- biar sumber lain (APS/UI) yang nentuin. M78.getQueue strict udah skip nil dgn aman.
                     kgAge = nil
                 end
             end
@@ -1217,14 +1192,6 @@ function getAgeFromKG(item)
     return best
 end
 
-local function getAgeByUUID(uuid)
-    if not uuid then return nil end
-    local ui=getAgeFromUI(uuid)
-    if ui then return ui end
-    local item=findPetInBackpack(uuid)
-    if item then return getAgeFromKG(item) end
-    return nil
-end
 
 local function getPetInfo(item)
     local name=getPetName(item)
@@ -1625,7 +1592,6 @@ for i=1,3 do
     end
 end
 -- v12.93: rotation state per slot (not saved, runtime only)
-local giftSlotRotIdx = {1,1,1}
 -- v12.79l: gift target history (riwayat penerima)
 local giftTargetHistory=d.giftTargetHistory or {}
 local antiAfk=(d.antiAfk~=false)
@@ -1842,16 +1808,6 @@ task.spawn(function()
         task.wait(4) -- v12.79p: 2s -> 4s biar gak stutter scroll
     end
 end)
-local function getTeamPetInfo(uuid)
-    if teamPetInfoCache[uuid] then return teamPetInfoCache[uuid] end
-    local item=findPetInBackpack(uuid)
-    if item then
-        local rec={name=getPetName(item),info=getPetInfo(item)}
-        teamPetInfoCache[uuid]=rec
-        return rec
-    end
-    return {name="Unknown",info="Unknown pet"}
-end
 
 -- forward declarations needed by tab builders
 local startTeamKeeper
@@ -2429,7 +2385,7 @@ buildSwapList=function()
                 -- v10.4: auto-equip pet ke garden biar cooldown ke-track (gak nunggu START)
                 pcall(function() equipPet(p.uuid) end)
                 if startGlobalPoller then startGlobalPoller() end
-                startSwapKeeper()
+                M78.startSwapKeeper()
             end
         end)
     end
@@ -4622,7 +4578,7 @@ end)
 -- ============================================
 -- LOGIC UTAMA
 -- ============================================
-local function setRunning(state)
+M78.setRunning = function(state)
     -- v13.14: mono halus - running = latar terang dikit + teks/garis silver (tanpa blok putih)
     if state then
         runBtn.BackgroundColor3=C.TDim runBtn.TextColor3=C.Teal runStroke.Color=C.Teal
@@ -4633,12 +4589,12 @@ local function setRunning(state)
     end
 end
 
-local function isPetInSwap(uuid)
+M78.isPetInSwap = function(uuid)
     local ps=swapPerPet[uuid]
     return ps~=nil and ps.enabled==true
 end
 
-local function isPetEquippedInUI(uuid)
+M78.isPetEquippedInUI = function(uuid)
     local pg=player:FindFirstChild("PlayerGui") if not pg then return false end
     local activePetUI=pg:FindFirstChild("ActivePetUI") if not activePetUI then return false end
     local uuidStr=tostring(uuid):gsub("^{",""):gsub("}$","")
@@ -4658,28 +4614,11 @@ local function isPetEquippedInUI(uuid)
     return false
 end
 
-local function getFavoriteUUIDs()
-    local favs={}
-    local bp=player:FindFirstChild("Backpack")
-    if not bp then return favs end
-    for _,item in pairs(bp:GetChildren()) do
-        if isPet(item) and isFavorite(item) then
-            local uuid=getPetUUID(item)
-            if uuid then
-                local uuidStr=tostring(uuid)
-                if not teamPetUUIDs[uuidStr] then
-                    favs[uuidStr]=true
-                end
-            end
-        end
-    end
-    return favs
-end
 
-local function equipTeam()
+M78.equipTeam = function()
     for uuid,_ in pairs(teamPetUUIDs) do
-        if not isPetInSwap(uuid) then
-            if not isPetEquippedInUI(uuid) then
+        if not M78.isPetInSwap(uuid) then
+            if not M78.isPetEquippedInUI(uuid) then
                 equipPet(uuid)
                 task.wait(0.1)
             end
@@ -4687,11 +4626,6 @@ local function equipTeam()
     end
 end
 
-local function unequipTeam()
-    for uuid,_ in pairs(teamPetUUIDs) do
-        unequipPet(uuid) task.wait(0.1)
-    end
-end
 
 -- ============================================
 -- TEAM KEEPER
@@ -4714,10 +4648,10 @@ startTeamKeeper=function()
                 -- jangan cek UI, jangan re-equip. dulu keeper ngira pet "ilang" pas sekejap
                 -- di-swap (unequip 0.05s) -> re-equip -> tabrakan sama poller -> game error
                 -- (CreatePetWithScale / WaitForChild infinite yield) + skill keganggu.
-                if isPetInSwap(uuid) then
+                if M78.isPetInSwap(uuid) then
                     -- skip, poller handle
                 elseif not currentLevelingUUIDs[uuid] then
-                    if not isPetEquippedInUI(uuid) then
+                    if not M78.isPetEquippedInUI(uuid) then
                         local uuidStr=tostring(uuid)
                         dbg("[teamKeeper] tim "..uuidStr:sub(1,8).." gak di UI, re-equip")
                         equipPet(uuid)
@@ -4734,18 +4668,18 @@ end
 
 -- v10.4: swap keeper - re-equip swap pet yg ke-pickup manual (gak perlu START)
 local swapKeeperTask=nil
-local function swapKeeperShouldRun()
+M78.swapKeeperShouldRun = function()
     for _,cfg in pairs(swapPerPet) do
         if cfg.enabled then return true end
     end
     return false
 end
-local function startSwapKeeper()
+M78.startSwapKeeper = function()
     if swapKeeperTask then return end
-    if not swapKeeperShouldRun() then return end
+    if not M78.swapKeeperShouldRun() then return end
     swapKeeperTask=task.spawn(function()
         dbg("[swapKeeper] START (re-equip swap pet yg ke-pickup)")
-        while swapKeeperShouldRun() do
+        while M78.swapKeeperShouldRun() do
             -- v13.45: swapKeeper DINONAKTIFKAN - poller (v13.30+) udah unequip->equip sendiri
             -- tiap swap, jadi pet SELALU balik ke-equip dalam 0.05s. keeper ini cuma bikin
             -- tabrakan: dia cek UI pas pet sekejap "di tangan" -> ngira ilang -> re-equip paksa
@@ -4772,7 +4706,7 @@ _G.ZenxStopTeamKeeper=stopTeamKeeper
 -- ============================================
 -- GLOBAL POLLER (FRIEND-7)
 -- ============================================
-local function pollerShouldRun()
+M78.pollerShouldRun = function()
     for _,cfg in pairs(swapPerPet) do
         if cfg.enabled then return true end
     end
@@ -4787,7 +4721,7 @@ local equipAt2 = {}      -- v13.47: per-uuid: kapan pet mulai aktif (buat durasi
 
 startGlobalPoller=function()
     if pollerTask then return end
-    if not pollerShouldRun() then dbg("[poller] GA START - ga ada pet swap yg ON") return end
+    if not M78.pollerShouldRun() then dbg("[poller] GA START - ga ada pet swap yg ON") return end
     -- v13.33: diagnostik - cek equipRE & getPetTime beneran ada + sample 1 pet
     do
         local nOn=0 for _,c in pairs(swapPerPet) do if c.enabled then nOn=nOn+1 end end
@@ -4908,7 +4842,7 @@ startGlobalPoller=function()
             pcall(function() remConn:Disconnect() end)
         end)
         local cycles=0
-        while pollerShouldRun() do
+        while M78.pollerShouldRun() do
             cycles=cycles+1
             local now = tick()
             for uuid,cfg in pairs(swapPerPet) do
@@ -5007,7 +4941,7 @@ startGlobalPoller=function()
     end)
 end
 
-local function stopAllSwaps()
+M78.stopAllSwaps = function()
     if pollerTask then
         pcall(task.cancel,pollerTask)
         pollerTask=nil
@@ -5017,18 +4951,18 @@ local function stopAllSwaps()
     nextCheckAt={} equipAt2={}
 end
 
-local function startSwapForPet(uuid)
+M78.startSwapForPet = function(uuid)
     startGlobalPoller()
 end
 
-local function stopSwapForPet(uuid)
+M78.stopSwapForPet = function(uuid)
     lastSwap[uuid]=nil
 end
 
-_G.ZenxStartSwap=startSwapForPet
-_G.ZenxStopSwap=stopSwapForPet
+_G.ZenxStartSwap=M78.startSwapForPet
+_G.ZenxStopSwap=M78.stopSwapForPet
 
-local function getQueue()
+M78.getQueue = function()
     local queue={}
     local bp=player:FindFirstChild("Backpack") if not bp then return queue end
     for _,item in pairs(bp:GetChildren()) do
@@ -5061,7 +4995,7 @@ local function getQueue()
     return queue
 end
 
-local function doStop(reason)
+M78.doStop = function(reason)
     isRunning=false
     if mainTask then task.cancel(mainTask) mainTask=nil end
     if monitorTask then task.cancel(monitorTask) monitorTask=nil end
@@ -5079,12 +5013,12 @@ local function doStop(reason)
             task.wait(0.1)
         end
     end
-    setRunning(false)
+    M78.setRunning(false)
     statusLbl.Text=reason or "Dihentikan" statusLbl.TextColor3=C.Gray
     buildTargetList()
 end
 
-local function pickupAllGardenPets()
+M78.pickupAllGardenPets = function()
     local petsPhys=workspace:FindFirstChild("PetsPhysical")
     if not petsPhys then
         dbg("[pickup] PetsPhysical gak ada di workspace")
@@ -5135,32 +5069,32 @@ local function pickupAllGardenPets()
     return #uuids
 end
 
-local function doStart()
-    dbg("[doStart] dipanggil")
+M78.doStart = function()
+    dbg("[M78.doStart] dipanggil")
     currentLevelingUUIDs={}
     completedPets={}
-    if isRunning then dbg("[doStart] sudah running, skip") return end
-    if next(teamPetUUIDs)==nil then dbg("[doStart] FAIL: pilih tim dulu") statusLbl.Text="Pilih tim leveling dulu!" statusLbl.TextColor3=C.Red return end
+    if isRunning then dbg("[M78.doStart] sudah running, skip") return end
+    if next(teamPetUUIDs)==nil then dbg("[M78.doStart] FAIL: pilih tim dulu") statusLbl.Text="Pilih tim leveling dulu!" statusLbl.TextColor3=C.Red return end
     buildMaxKGCache()
 
     statusLbl.Text="Membersihkan garden..." statusLbl.TextColor3=C.Gold
     local totalRemoved=0
     -- v12.79b: super-aggressive (back to this version per user request - 'udah gacor')
     for attempt=1,2 do
-        local removed=pickupAllGardenPets()
+        local removed=M78.pickupAllGardenPets()
         totalRemoved=totalRemoved+removed
         if removed>0 then
-            dbg("[doStart] pickup attempt "..attempt..": "..removed.." pet")
+            dbg("[M78.doStart] pickup attempt "..attempt..": "..removed.." pet")
             task.wait(0.02)
         else
-            if attempt>1 then dbg("[doStart] garden bersih setelah "..(attempt-1).." attempt") end
+            if attempt>1 then dbg("[M78.doStart] garden bersih setelah "..(attempt-1).." attempt") end
             break
         end
     end
     if totalRemoved>0 then
-        dbg("[doStart] TOTAL pickup: "..totalRemoved.." pet")
+        dbg("[M78.doStart] TOTAL pickup: "..totalRemoved.." pet")
     else
-        dbg("[doStart] garden udah kosong, gak ada yg di-pickup")
+        dbg("[M78.doStart] garden udah kosong, gak ada yg di-pickup")
     end
 
     statusLbl.Text="Pasang tim leveling..." statusLbl.TextColor3=C.Gold
@@ -5171,16 +5105,16 @@ local function doStart()
         teamPlaced=teamPlaced+1
     end
     if teamPlaced>0 then
-        dbg("[doStart] tim "..teamPlaced.." pet di-place (rapid-fire)")
+        dbg("[M78.doStart] tim "..teamPlaced.." pet di-place (rapid-fire)")
         task.wait(math.min(0.12, 0.03+teamPlaced*0.01)) -- was 0.05+0.015N max 0.2
     end
 
-    local queue=getQueue()
+    local queue=M78.getQueue()
     -- v12.12: jangan bail out kalo queue kosong, tetep mulai dgn "wait" mode
     -- main loop akan handle empty queue (display "Tunggu pet target...")
-    isRunning=true setRunning(true)
+    isRunning=true M78.setRunning(true)
     if #queue==0 then
-        dbg("[doStart] queue kosong, mulai dgn wait mode")
+        dbg("[M78.doStart] queue kosong, mulai dgn wait mode")
         statusLbl.Text="Mulai... tunggu pet target..." statusLbl.TextColor3=C.Gold
     else
         statusLbl.Text="Berjalan... Q:"..#queue statusLbl.TextColor3=C.Teal
@@ -5192,9 +5126,9 @@ local function doStart()
     for _,cfg in pairs(swapPerPet) do
         if cfg.enabled then swapCnt=swapCnt+1 end
     end
-    dbg("[doStart] team="..teamCnt.." swap-enabled="..swapCnt)
+    dbg("[M78.doStart] team="..teamCnt.." swap-enabled="..swapCnt)
     if swapCnt==0 then
-        dbg("[doStart] NO swap pets")
+        dbg("[M78.doStart] NO swap pets")
     else
         startGlobalPoller()
     end
@@ -5202,10 +5136,10 @@ local function doStart()
     -- v13.09: teamKeeper (0.5s) udah ngerjain re-equip tim; jangan dobel (remote 2x percuma)
     if not teamKeeperTask then
         mainTask=task.spawn(function()
-            while isRunning do equipTeam() task.wait(1) end
+            while isRunning do M78.equipTeam() task.wait(1) end
         end)
     else
-        dbg("[doStart] teamKeeper aktif, skip mainTask dobel")
+        dbg("[M78.doStart] teamKeeper aktif, skip mainTask dobel")
     end
 
     monitorTask=task.spawn(function()
@@ -5286,7 +5220,7 @@ local function doStart()
             for _ in pairs(currentLevelingUUIDs) do slotsUsed=slotsUsed+1 end
             local slotsFree=maxPetTarget-slotsUsed
 
-            local queue2=getQueue()
+            local queue2=M78.getQueue()
             local available={}
             for _,pet in ipairs(queue2) do
                 local uuid=getPetUUID(pet)
@@ -5295,7 +5229,7 @@ local function doStart()
                 end
             end
 
-            -- v12.15: jangan auto-stop, tetep waiting mode (gak doStop lagi)
+            -- v12.15: jangan auto-stop, tetep waiting mode (gak M78.doStop lagi)
             -- biar user trade pet baru, queue refresh otomatis level lagi
             if slotsUsed==0 and #available==0 then
                 statusLbl.Text="Semua pet selesai Age "..toAge.."! (waiting...)"
@@ -5364,8 +5298,8 @@ local function doStart()
     end)
 end
 
-runBtn.MouseButton1Click:Connect(function() doStart() end)
-stopBtn.MouseButton1Click:Connect(function() doStop("Dihentikan") end)
+runBtn.MouseButton1Click:Connect(function() M78.doStart() end)
+stopBtn.MouseButton1Click:Connect(function() M78.doStop("Dihentikan") end)
 
 closeBtn.MouseButton1Click:Connect(function()
     local overlay=mk("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.fromRGB(0,0,0),BackgroundTransparency=0.5,BorderSizePixel=0,ZIndex=10,Parent=main})
@@ -5394,12 +5328,12 @@ closeBtn.MouseButton1Click:Connect(function()
         end
 
         -- 2. Cancel semua background task
-        stopAllSwaps()
+        M78.stopAllSwaps()
         if teamKeeperTask then pcall(task.cancel, teamKeeperTask) teamKeeperTask=nil end
         if swapKeeperTask then pcall(task.cancel, swapKeeperTask) swapKeeperTask=nil end
         if autoSendTask then pcall(task.cancel, autoSendTask) autoSendTask=nil end
         if isAR then stopAR() end
-        if isRunning then doStop("Closed") end
+        if isRunning then M78.doStop("Closed") end
 
         -- 3. Disconnect semua event connection
         for _, conn in ipairs(connections) do
@@ -5417,7 +5351,7 @@ end)
 
 task.wait(1)
 if autoRejoin then startAR() end
-if autoStartEnabled then doStart() end
+if autoStartEnabled then M78.doStart() end
 
 ;(function()
     -- v12.79j: auto-on swap untuk SEMUA pet di tim leveling (pas awal exe)
@@ -5450,7 +5384,7 @@ if autoStartEnabled then doStart() end
             end
         end)
         startGlobalPoller()
-        startSwapKeeper()
+        M78.startSwapKeeper()
     end
 end)()
 
