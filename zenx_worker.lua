@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.304-cf"
+local VERSION = "9.305-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7412,9 +7412,13 @@ local function run(cfg)
         SERVER_TERAKHIR = ambil_str(rS, "server") or ""   -- v9.62: baseline server
         local berubah = false
         if sPlace ~= "" and sPlace ~= cfg.place_id then
+            if (cfg.script_label or ""):upper() == "PANEN" and sPlace ~= "126884695634066" then
+                info(("PANEN: place %s DITOLAK (kunci di 126884695634066)"):format(sPlace))
+            else
             info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
             cfg.place_id = sPlace
             berubah = true
+            end
         end
         if sGrid > 0 and sGrid ~= (tonumber(cfg.grid_kolom) or 0) then
             info(("Setting panel: grid %d kolom (beda dari %d) -- kepakai"):format(sGrid, tonumber(cfg.grid_kolom) or 0))
@@ -7713,6 +7717,10 @@ local function run(cfg)
             -- place fall.
             do
                 local placeTop = isiTop:match("PLACE:(%d+)")
+                if placeTop and placeTop ~= cfg.place_id and (cfg.script_label or ""):upper() == "PANEN" and placeTop ~= "126884695634066" then
+                    info("PANEN: PLACE command " .. placeTop .. " DIABAIKAN (kunci di 126884695634066)")
+                    placeTop = nil
+                end
                 if placeTop and placeTop ~= cfg.place_id then
                     cfg.place_id = placeTop
                     pcall(function() save_config(cfg) end)
@@ -8572,7 +8580,11 @@ local function run(cfg)
                 end
                 warn("SETTING PANEL BERUBAH (place/grid beda) -> RESTART sendiri pakai setting baru")
                 SETTING_TS_TERAKHIR = tsBaru
-                if sPlace ~= "" then cfg.place_id = sPlace end
+                -- v9.306: PANEN = GAG 1 garden (126884695634066) selalu. TOLAK place lain
+                -- (akun/panel data basi -> nyasar ke dunia lama 126987765280963).
+                if (cfg.script_label or ""):upper() == "PANEN" and sPlace ~= "" and sPlace ~= "126884695634066" then
+                    warn("PANEN: place " .. sPlace .. " DITOLAK (kunci di 126884695634066)")
+                elseif sPlace ~= "" then cfg.place_id = sPlace end
                 if sGrid > 0 then cfg.grid_kolom = sGrid end
                 pcall(function() save_config(cfg) end)
                 info(("  setting baru: place=%s grid=%d kolom"):format(tostring(cfg.place_id), tonumber(cfg.grid_kolom) or 0))
