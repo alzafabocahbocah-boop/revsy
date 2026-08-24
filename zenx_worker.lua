@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.303-cf"
+local VERSION = "9.304-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2817,10 +2817,15 @@ local function build_url(cfg, link_client)
     -- linkCode! itu kode share yg harus di-RESOLVE Roblox dulu. dulu worker
     -- ambil code jadi linkCode langsung -> SALAH -> join gagal, nyangkut server
     -- lama. FIX: buka URL share-nya LANGSUNG, biar Roblox sendiri yg resolve+join.
-    -- v9.303: cek accessCode DULUAN (SEBELUM share). ps_link bisa format combined
-    -- "accessCode=UUID|share=..." -- punya accessCode + share?code. Dulu cek share
-    -- match duluan -> return combined mentah -> URL malformed, client gak masuk.
-    -- accessCode = PS utama -> extract itu dulu, build roblox://...accessCode= bersih.
+    -- v9.304: ps_link combined "accessCode=X|share=shareURL" -> PILIH bagian SHARE.
+    -- Buat CAMPUR (semua akun ke 1 server buat trade): accessCode = PS private OWNER-ONLY
+    -- -> akun lain "no permission to join". share link = anyone-with-link -> SEMUA bisa masuk.
+    -- Jadi kalau ada bagian share=http, pakai itu (buka share URL, Roblox resolve+join).
+    if lc:find("share=http") then
+        local shareUrl = lc:match("share=(https?://[^|%s]+)")
+        if shareUrl then return shareUrl end
+    end
+    -- pure accessCode (tanpa share) -> PS owner sendiri (1 akun join PS-nya sendiri)
     if lc:find("accessCode=") then
         local code = lc:match("accessCode=([%w%-]+)")
         if code then return "roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code end
