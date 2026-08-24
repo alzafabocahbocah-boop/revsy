@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.36"
+local VERSION = "v27.38"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2967,8 +2967,8 @@ end
 local function makeEggBillboard(egg)
     local bb = Instance.new("BillboardGui")
     bb.Name = "HactEggESP"
-    bb.Size = UDim2.new(0, 150, 0, 40)
-    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.Size = UDim2.new(0, 450, 0, 120)
+    bb.StudsOffset = Vector3.new(0, 4, 0)
     bb.AlwaysOnTop = true
     bb.MaxDistance = 1000
     bb.Adornee = egg
@@ -2977,7 +2977,7 @@ local function makeEggBillboard(egg)
     nameL.Size = UDim2.new(1, 0, 0.5, 0)
     nameL.BackgroundTransparency = 1
     nameL.Font = Enum.Font.GothamBold
-    nameL.TextSize = 13
+    nameL.TextSize = 39
     nameL.TextColor3 = Color3.fromRGB(255, 255, 255)
     nameL.TextStrokeTransparency = 0
     nameL.Text = tostring(egg:GetAttribute("EggName") or "Egg")
@@ -2987,7 +2987,7 @@ local function makeEggBillboard(egg)
     timeL.Position = UDim2.new(0, 0, 0.5, 0)
     timeL.BackgroundTransparency = 1
     timeL.Font = Enum.Font.GothamBold
-    timeL.TextSize = 12
+    timeL.TextSize = 36
     timeL.TextStrokeTransparency = 0
     timeL.Text = "..."
     timeL.Parent = bb
@@ -7028,4 +7028,52 @@ if not _G.__ZenxKickPoll then
             end
         end
     end)
+end
+
+-- ===== STAT LAPOR KE PANEL (egg + pet keep + kg range) — buat campur display =====
+-- tulis zenx_hactstat_<akun>.json tiap 15s. Worker baca -> lapor backend -> panel.
+do
+    task.spawn(function()
+        local HttpService = game:GetService("HttpService")
+        local Players = game:GetService("Players")
+        while true do
+            task.wait(15)
+            pcall(function()
+                local plr = Players.LocalPlayer
+                if not plr or not plr.Name or not writefile then return end
+                -- egg name aktif (dari config)
+                local eggName = "?"
+                if config and config.eggSelected then
+                    for e in pairs(config.eggSelected) do eggName = e; break end
+                elseif config and config.egg and config.egg[1] then
+                    eggName = config.egg[1]
+                end
+                -- jumlah egg lagi di-hatch
+                local eggN = 0
+                pcall(function() eggN = (totalEggNow and totalEggNow()) or 0 end)
+                -- pet KEEP (petFate == "keep") -> per nama, per bucket kg (base weight age 1)
+                local keep = {}   -- { [namaPet] = { total=N, ranges={ ["1-2"]=x, ["2-3"]=y } } }
+                pcall(function()
+                    if PetDetect and PetDetect.listBackpackPets and petFate then
+                        for _, p in ipairs(PetDetect.listBackpackPets()) do
+                            if petFate(p) == "keep" then
+                                local kg = tonumber(p.dispKg) or 0
+                                local lo = math.floor(kg)
+                                local bucket = lo .. "-" .. (lo + 1)
+                                local nm = p.name or "?"
+                                keep[nm] = keep[nm] or { total = 0, ranges = {} }
+                                keep[nm].total = keep[nm].total + 1
+                                keep[nm].ranges[bucket] = (keep[nm].ranges[bucket] or 0) + 1
+                            end
+                        end
+                    end
+                end)
+                local stat = { egg = eggName, eggN = eggN, keep = keep, ts = os.time() }
+                _G.HactStat = stat
+                local ok, js = pcall(function() return HttpService:JSONEncode(stat) end)
+                if ok and js then writefile("zenx_hactstat_" .. plr.Name .. ".json", js) end
+            end)
+        end
+    end)
+    print("[HactTelur] stat-lapor aktif (egg + pet keep -> panel)")
 end
