@@ -1,7 +1,6 @@
 -- ============================================================
 -- ZENX LOADER PINTER — pilih script per AKUN dari backend (panel assign)
--- Taruh di Arceus Autoexec (ganti loader lama). Auto-run tiap join.
--- Akun di-assign script dari panel; loader fetch + jalanin script itu.
+-- Taruh di Arceus Autoexec. Auto-run tiap join. Nampilin STATUS di layar.
 -- ============================================================
 local URL     = "https://dry-glitter-63e4.petagee5.workers.dev"
 local KUNCI   = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
@@ -29,30 +28,46 @@ pcall(function()
         end
     end
 end)
-
 print("[ZenxLoader] akun=" .. nama .. " -> script: " .. sc)
 
--- INDIKATOR ON-SCREEN (biar keliatan tanpa console -- Arceus dll)
+-- INDIKATOR ON-SCREEN (label global, di-update status jalan/error)
+local infoLbl
 pcall(function()
     local gui = Instance.new("ScreenGui")
     gui.Name = "ZenxLoaderInfo"; gui.ResetOnSpawn = false
-    local par = (gethui and gethui()) or game:GetService("CoreGui")
-    gui.Parent = par
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0, 340, 0, 32); lbl.Position = UDim2.new(0.5, -170, 0, 6)
-    lbl.BackgroundColor3 = Color3.fromRGB(18, 18, 24); lbl.BackgroundTransparency = 0.08
-    lbl.Text = "ZenxLoader:  " .. nama .. "  ->  " .. sc
-    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(120, 255, 140)
-    lbl.BorderSizePixel = 0; lbl.Parent = gui
-    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 7)
-    task.delay(25, function() pcall(function() gui:Destroy() end) end)   -- ilang sendiri 25s
+    gui.Parent = (gethui and gethui()) or game:GetService("CoreGui")
+    infoLbl = Instance.new("TextLabel")
+    infoLbl.Size = UDim2.new(0, 380, 0, 32); infoLbl.Position = UDim2.new(0.5, -190, 0, 6)
+    infoLbl.BackgroundColor3 = Color3.fromRGB(18, 18, 24); infoLbl.BackgroundTransparency = 0.06
+    infoLbl.Text = "ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [loading...]"
+    infoLbl.Font = Enum.Font.GothamBold; infoLbl.TextSize = 13; infoLbl.TextColor3 = Color3.fromRGB(230, 220, 120)
+    infoLbl.BorderSizePixel = 0; infoLbl.Parent = gui
+    Instance.new("UICorner", infoLbl).CornerRadius = UDim.new(0, 7)
+    task.delay(35, function() pcall(function() gui:Destroy() end) end)
 end)
+local function setInfo(txt, warna)
+    pcall(function() if infoLbl then infoLbl.Text = txt; if warna then infoLbl.TextColor3 = warna end end end)
+end
+local IJO  = Color3.fromRGB(120, 255, 140)
+local MERAH= Color3.fromRGB(255, 110, 110)
 
--- jalanin script dari ronihub
+-- fetch + jalanin script
 local ok, src = pcall(function() return game:HttpGet(REPO .. sc .. "?cb=" .. os.time()) end)
 if ok and src and #src > 100 then
-    local fn = loadstring(src)
-    if fn then fn() else warn("[ZenxLoader] loadstring gagal buat " .. sc) end
+    local fn, cerr = loadstring(src)
+    if fn then
+        local ok2, rerr = pcall(fn)
+        if ok2 then
+            setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [JALAN OK]", IJO)
+        else
+            setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [RUN-ERR: " .. tostring(rerr):sub(1, 55) .. "]", MERAH)
+            warn("[ZenxLoader] " .. sc .. " RUN error: " .. tostring(rerr))
+        end
+    else
+        setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [COMPILE-ERR: " .. tostring(cerr):sub(1, 50) .. "]", MERAH)
+        warn("[ZenxLoader] " .. sc .. " loadstring gagal: " .. tostring(cerr))
+    end
 else
-    warn("[ZenxLoader] fetch script gagal: " .. sc)
+    setInfo("ZenxLoader:  " .. nama .. "  ->  " .. sc .. "  [FETCH-GAGAL: ronihub/" .. sc .. " gak ada?]", MERAH)
+    warn("[ZenxLoader] fetch gagal: " .. sc)
 end
