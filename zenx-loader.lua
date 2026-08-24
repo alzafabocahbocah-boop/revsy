@@ -32,6 +32,22 @@ end)
 
 print("[ZenxLoader] akun=" .. nama .. " -> script: " .. sc)
 
+-- INDIKATOR ON-SCREEN (biar keliatan tanpa console -- Arceus dll)
+pcall(function()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ZenxLoaderInfo"; gui.ResetOnSpawn = false
+    local par = (gethui and gethui()) or game:GetService("CoreGui")
+    gui.Parent = par
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0, 340, 0, 32); lbl.Position = UDim2.new(0.5, -170, 0, 6)
+    lbl.BackgroundColor3 = Color3.fromRGB(18, 18, 24); lbl.BackgroundTransparency = 0.08
+    lbl.Text = "ZenxLoader:  " .. nama .. "  ->  " .. sc
+    lbl.Font = Enum.Font.GothamBold; lbl.TextSize = 14; lbl.TextColor3 = Color3.fromRGB(120, 255, 140)
+    lbl.BorderSizePixel = 0; lbl.Parent = gui
+    Instance.new("UICorner", lbl).CornerRadius = UDim.new(0, 7)
+    task.delay(25, function() pcall(function() gui:Destroy() end) end)   -- ilang sendiri 25s
+end)
+
 -- jalanin script dari ronihub
 local ok, src = pcall(function() return game:HttpGet(REPO .. sc .. "?cb=" .. os.time()) end)
 if ok and src and #src > 100 then
