@@ -7953,6 +7953,21 @@ local function run(cfg)
                         body = body .. "]}"
                         pcall(function() api_post(cfg, "/stat-batch", body) end)
                     end
+                    -- v9.306: baca hactstat (egg + pet keep + kg range) -> POST buat panel campur
+                    do
+                        local rawH = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f\t$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                        local items = {}
+                        for line in rawH:gmatch("[^\n]+") do
+                            local nama, js = line:match("zenx_hactstat_(.-)%.json\t(.+)")
+                            if nama and js and #js > 5 then
+                                items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
+                            end
+                        end
+                        if #items > 0 then
+                            local body = '{"list":[' .. table.concat(items, ",") .. ']}'
+                            pcall(function() api_post(cfg, "/hactstat-batch", body) end)
+                        end
+                    end
                     local dcnt = 0
                     for _ in pairs(denyutSemua) do dcnt = dcnt + 1 end
                     DENYUT_UMUR = denyutSemua   -- v9.77: simpen global biar lapor kirim ke panel
