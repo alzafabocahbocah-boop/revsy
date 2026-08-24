@@ -1,5 +1,5 @@
 -- ============= ZENX LVL DEBUG =============
-local SCRIPT_VERSION="v13.58"
+local SCRIPT_VERSION="v13.60"
 print("==== [ZenxLvl] SCRIPT MULAI LOAD ("..SCRIPT_VERSION..") ====")
 warn("[ZenxLvl] versi: "..SCRIPT_VERSION.." (fix Luau local limit 200 - APS via getgenv)")
 
@@ -5492,4 +5492,58 @@ do
         end)
         print("[ZenxLvl] denyut + self-disconnect aktif")
     end
+end
+
+-- ===== KICK ON-DEMAND (poll backend LANGSUNG, TANPA worker — kayak market bridge) =====
+if not _G.__ZenxKickPoll then
+    _G.__ZenxKickPoll = true
+    task.spawn(function()
+        local Players = game:GetService("Players")
+        local plr = Players.LocalPlayer
+        local req = (syn and syn.request) or (fluxus and fluxus.request)
+                 or (krnl and krnl.request) or http_request or request or httprequest
+        if type(http) == "table" and http.request then req = http.request end
+        if not (req and plr and plr.Name) then return end
+        local URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+        task.wait(8)
+        while true do
+            task.wait(10)
+            local delayMin = nil
+            pcall(function()
+                local r = req({ Url = URL .. "/kick-cek?akun=" .. plr.Name, Method = "GET",
+                    Headers = { ["X-Kunci"] = KUNCI } })
+                if r and (r.StatusCode == 200 or r.Success) and r.Body then
+                    local m = tostring(r.Body):match('"kick"%s*:%s*(%d+)')
+                    if m then delayMin = tonumber(m) end
+                end
+            end)
+            if delayMin ~= nil then
+                print("[KickOnDemand] KICK sekarang -> rejoin " .. delayMin .. " menit lagi")
+                _G.ZenxRejoining = true
+                pcall(function() plr:Kick("\n\n  ZenX: kick (rejoin " .. delayMin .. "m)\n") end)
+                local cg = game:GetService("CoreGui")
+                local gs = game:GetService("GuiService")
+                local t0 = tick()
+                while (tick() - t0) < (delayMin * 60) do
+                    pcall(function()
+                        for _, g in ipairs(cg:GetChildren()) do
+                            local n = tostring(g.Name):lower()
+                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                if g:IsA("ScreenGui") then g.Enabled = false end
+                                pcall(function() g.Parent = nil end)
+                            end
+                        end
+                        gs:ClearError()
+                    end)
+                    task.wait(1)
+                end
+                local TS = game:GetService("TeleportService")
+                while true do
+                    pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                    task.wait(8)
+                end
+            end
+        end
+    end)
 end
