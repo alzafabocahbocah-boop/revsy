@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.311-cf"
+local VERSION = "9.312-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13358,7 +13358,7 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
             print("[" .. nn .. "] URL gak ketemu di rilis (skip)")
         else
             print("[" .. nn .. "] download (100MB, sabar)...")
-            sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+            os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
             local szRaw = sh("su -c 'stat -c%s \"/sdcard/arc" .. nn .. ".apk\" 2>/dev/null' 2>/dev/null") or "0"
             local sz = tonumber((szRaw:gsub("%s", ""))) or 0
             if sz < 50000000 then
@@ -13391,7 +13391,7 @@ if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
             print("[" .. nn .. "] URL gak ketemu (skip)")
         else
             print("[" .. nn .. "] update: download...")
-            sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+            os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
             local szRaw = sh("su -c 'stat -c%s \"/sdcard/arc" .. nn .. ".apk\" 2>/dev/null' 2>/dev/null") or "0"
             local sz = tonumber((szRaw:gsub("%s", ""))) or 0
             if sz < 50000000 then
@@ -13429,7 +13429,7 @@ if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
             print("[" .. nn .. "] URL gak ketemu -> SKIP (gak dihapus, biar aman)")
         else
             print("[" .. nn .. "] download dulu (100MB, sabar)...")
-            sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+            os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
             local szRaw = sh("su -c 'stat -c%s \"/sdcard/arc" .. nn .. ".apk\" 2>/dev/null' 2>/dev/null") or "0"
             local sz = tonumber((szRaw:gsub("%s", ""))) or 0
             if sz < 1000000 then
