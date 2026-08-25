@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.313-cf"
+local VERSION = "9.314-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13499,6 +13499,49 @@ if PERINTAH == "tembak" and arg and (arg[2] or ""):lower() == "arceus" then
         end
     end
     print(("== SELESAI: %d di-tembak, %d gagal =="):format(ok_n, gagal_n))
+    return
+end
+
+-- v9.313: LOGIN SEMUA — "zenx loginsemua arceus" -> worker MINTA cookie ke panel + inject ke tiap client
+if PERINTAH == "loginsemua" and arg and (arg[2] or ""):lower() == "arceus" then
+    local cfg = load_config()
+    if not cfg then err("Config gak ada. `pasang <preset>` dulu."); return end
+    print("== LOGIN SEMUA (minta cookie ke panel + inject) ==")
+    local tim = cfg.tim or cfg.id or ""
+    local resp = api_get(cfg, "/akun-tim?tim=" .. tim) or ""
+    local akuns = {}
+    for a, c in resp:gmatch('{"akun":"([^"]*)","cookie":"([^"]*)"}') do
+        akuns[#akuns + 1] = { akun = a, cookie = c }
+    end
+    if #akuns == 0 then print("Gak ada akun ke-fetch dari panel (tim=" .. tim .. ")."); return end
+    local pkgs = split(cfg.pkgs or "")
+    print("dari panel: " .. #akuns .. " akun | client: " .. #pkgs)
+    for i, a in ipairs(akuns) do
+        local pkg = pkgs[i]
+        if pkg then
+            local nm = pkg:gsub("com%.roblox%.", "")
+            local cookie = a.cookie
+            if not (cookie and cookie:find("_|WARNING")) then
+                local ck = api_get(cfg, "/cookie-satu?akun=" .. a.akun) or ""
+                cookie = ck:match('"cookie"%s*:%s*"([^"]*)"')
+            end
+            if not (cookie and cookie:find("_|WARNING")) then
+                print("[" .. nm .. "] " .. a.akun .. ": cookie gak ada di panel (skip)")
+            else
+                print("[" .. nm .. "] " .. a.akun .. ": buka client (bikin DB cookie)...")
+                sh("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1' 2>/dev/null")
+                os.execute("sleep 18")
+                sh("su -c 'am force-stop " .. pkg .. "' 2>/dev/null")
+                local DB = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                local ckSql = tostring(cookie):gsub("'", "''")
+                local upd = "/data/data/com.termux/files/usr/bin/sqlite3 " .. DB ..
+                    " \"UPDATE cookies SET value='" .. ckSql .. "' WHERE name='.ROBLOSECURITY'\""
+                local r = sh("su -c " .. shq(upd) .. " 2>&1") or ""
+                print("[" .. nm .. "] inject: " .. (r:find("[Ee]rror") and ("GAGAL " .. r:gsub("%s+", " "):sub(1, 60)) or "OK"))
+            end
+        end
+    end
+    print("== SELESAI. Jalanin 'zenx' buat buka client (udah ke-login). ==")
     return
 end
 
