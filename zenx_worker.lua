@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.307-cf"
+local VERSION = "9.309-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13390,6 +13390,63 @@ if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
         end
     end
     print("== SELESAI update arceus ==")
+    return
+end
+
+-- v9.307: REFRESH ARCEUS — "zenx refresh arceus" -> hapus arceus lama + install ULANG fresh (sesuai yg ada)
+if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
+    print("== REFRESH ARCEUS (hapus lama + install ulang fresh) ==")
+    local list = sh("su -c 'pm list packages 2>/dev/null' 2>/dev/null | grep 'com.roblox.clien'") or ""
+    local items = {}
+    for p in list:gmatch("package:([%w%.]+)") do
+        local letter = p:match("clien(%a)$")
+        local num = letter and (string.byte(letter) - string.byte("u") + 1) or nil
+        if num and num >= 1 and num <= 6 then items[#items + 1] = { pkg = p, num = num } end
+    end
+    if #items == 0 then print("Gak ada Arceus terinstall (com.roblox.clien*). Pakai 'zenx download arceus 1-4' dulu."); return end
+    print("terdeteksi " .. #items .. " arceus -> refresh")
+    local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
+    for _, it in ipairs(items) do
+        local nn = string.format("%02d", it.num)
+        local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        if not url then
+            print("[" .. nn .. "] URL gak ketemu -> SKIP (gak dihapus, biar aman)")
+        else
+            print("[" .. nn .. "] download dulu (100MB, sabar)...")
+            sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+            local szRaw = sh("su -c 'stat -c%s \"/sdcard/arc" .. nn .. ".apk\" 2>/dev/null' 2>/dev/null") or "0"
+            local sz = tonumber((szRaw:gsub("%s", ""))) or 0
+            if sz < 1000000 then
+                print("[" .. nn .. "] download GAGAL (" .. sz .. " byte) -> SKIP (gak dihapus)")
+                sh("rm -f '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+            else
+                -- v9.308: BACKUP cookie DB akun sebelumnya (biar bisa di-restore = auto-login)
+                local ckSrc = "/data/data/" .. it.pkg .. "/app_webview/Default/Cookies"
+                local ckBak = "/sdcard/ckbak" .. nn .. ".db"
+                local adaCk = sh("su -c '[ -f \"" .. ckSrc .. "\" ] && cp \"" .. ckSrc .. "\" \"" .. ckBak .. "\" && echo Y' 2>/dev/null") or ""
+                local punyaCk = adaCk:find("Y") ~= nil
+                print("[" .. nn .. "] " .. (punyaCk and "cookie akun disimpan" or "gak ada cookie (skip backup)"))
+                print("[" .. nn .. "] hapus " .. it.pkg .. " + install fresh...")
+                sh("su -c 'pm uninstall " .. it.pkg .. "' 2>&1")
+                local r = sh("su -c 'pm install \"/sdcard/arc" .. nn .. ".apk\"' 2>&1") or ""
+                local instOk = r:find("Success") ~= nil
+                print("[" .. nn .. "] " .. (instOk and "OK fresh terinstall" or r:gsub("%s+", " "):sub(1, 80)))
+                -- v9.308: RESTORE cookie -> akun sebelumnya langsung ke-login (chown + restorecon biar kebaca)
+                if instOk and punyaCk then
+                    local uidRaw = sh("su -c 'stat -c%u \"/data/data/" .. it.pkg .. "\" 2>/dev/null' 2>/dev/null") or ""
+                    local uid = (uidRaw:gsub("%s", ""))
+                    if uid ~= "" then
+                        local dir = "/data/data/" .. it.pkg .. "/app_webview/Default"
+                        sh("su -c 'mkdir -p \"" .. dir .. "\" && cp \"" .. ckBak .. "\" \"" .. dir .. "/Cookies\" && chown -R " .. uid .. ":" .. uid .. " \"/data/data/" .. it.pkg .. "/app_webview\" && restorecon -R \"/data/data/" .. it.pkg .. "/app_webview\" 2>/dev/null' 2>/dev/null")
+                        print("[" .. nn .. "] cookie akun sebelumnya di-RESTORE (auto-login)")
+                    end
+                end
+                sh("rm -f '/sdcard/arc" .. nn .. ".apk' '" .. ckBak .. "' 2>/dev/null")
+            end
+        end
+    end
+    print("== SELESAI refresh arceus (cookie akun lama ke-restore) ==")
+    print("Kalau ada yg gak ke-login: 'zenx login <akun> <client>' manual.")
     return
 end
 
