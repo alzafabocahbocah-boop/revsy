@@ -13534,10 +13534,33 @@ if PERINTAH == "loginsemua" and arg and (arg[2] or ""):lower() == "arceus" then
                 sh("su -c 'am force-stop " .. pkg .. "' 2>/dev/null")
                 local DB = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
                 local ckSql = tostring(cookie):gsub("'", "''")
-                local upd = "/data/data/com.termux/files/usr/bin/sqlite3 " .. DB ..
-                    " \"UPDATE cookies SET value='" .. ckSql .. "' WHERE name='.ROBLOSECURITY'\""
+                local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
+                -- 1) coba UPDATE + cek berapa row kena
+                local upd = SQ .. " " .. DB ..
+                    " \"UPDATE cookies SET value='" .. ckSql .. "' WHERE name='.ROBLOSECURITY'; SELECT changes()\""
                 local r = sh("su -c " .. shq(upd) .. " 2>&1") or ""
-                print("[" .. nm .. "] inject: " .. (r:find("[Ee]rror") and ("GAGAL " .. r:gsub("%s+", " "):sub(1, 60)) or "OK"))
+                local nCh = tonumber(r:match("(%d+)%s*$")) or -1
+                if nCh > 0 then
+                    print("[" .. nm .. "] inject OK (update " .. nCh .. " row)")
+                elseif r:find("[Ee]rror") then
+                    print("[" .. nm .. "] inject ERR: " .. r:gsub("%s+", " "):sub(1, 70))
+                else
+                    -- 2) row .ROBLOSECURITY gak ada (guest) -> INSERT baru (copy struktur cookie roblox yg ada)
+                    local ins = SQ .. " " .. DB .. " \"INSERT INTO cookies " ..
+                        "(creation_utc,host_key,name,value,encrypted_value,path,expires_utc,is_secure,is_httponly,last_access_utc,has_expires,is_persistent,priority,samesite,source_scheme,source_port,last_update_utc) " ..
+                        "SELECT creation_utc,'.roblox.com','.ROBLOSECURITY','" .. ckSql .. "',X'','/',0,1,1,last_access_utc,0,0,1,-1,2,443,last_update_utc FROM cookies LIMIT 1; SELECT changes()\""
+                    local r2 = sh("su -c " .. shq(ins) .. " 2>&1") or ""
+                    local nIns = tonumber(r2:match("(%d+)%s*$")) or -1
+                    if nIns > 0 then
+                        print("[" .. nm .. "] inject OK (INSERT row baru, guest belum ada row)")
+                        -- chown + restorecon biar kebaca app
+                        local uidRaw = sh("su -c 'stat -c%u \"/data/data/" .. pkg .. "\" 2>/dev/null' 2>/dev/null") or ""
+                        local uid = (uidRaw:gsub("%s", ""))
+                        if uid ~= "" then sh("su -c 'chown -R " .. uid .. ":" .. uid .. " \"/data/data/" .. pkg .. "/app_webview\"; restorecon -R \"/data/data/" .. pkg .. "/app_webview\"' 2>/dev/null") end
+                    else
+                        print("[" .. nm .. "] inject GAGAL: guest DB gak ada cookie roblox buat template. " .. r2:gsub("%s+"," "):sub(1,60))
+                    end
+                end
             end
         end
     end
