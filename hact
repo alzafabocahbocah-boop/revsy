@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.46"
+local VERSION = "v27.48"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1397,6 +1397,7 @@ _G.HactTelurPetDetect = PetDetect
 local PRESET_HACT = {
     ["Rare Egg"] = {
         egg = { "Rare Egg" },
+        petPool = { "Orange Tabby", "Spotted Deer", "Pig", "Rooster", "Monkey" },
         komposisi = {
             ["Reduce Tim"] = {
                 { tipe = "Mimic Octopus", jml = 7, sortir = "kg" },
@@ -1423,6 +1424,7 @@ local PRESET_HACT = {
     },
     ["Gem Egg"] = {
         egg = { "Gem Egg" },
+        petPool = { "Topaz Snail", "Sapphire Macaw", "Diamond Panther", "Amethyst Beetle", "Emerald Snake", "Ruby Squid" },
         komposisi = {
             ["Reduce Tim"] = {
                 { tipe = "Mimic Octopus", jml = 7, sortir = "kg" },
@@ -1448,6 +1450,7 @@ local PRESET_HACT = {
     },
     ["Christmas Egg"] = {
         egg = { "Christmas Egg" },
+        petPool = { "Nutcracker", "Ice Golem", "Reindeer", "Yeti", "Turtle Dove" },
         komposisi = {
             ["Reduce Tim"] = {
                 { tipe = "Mimic Octopus", jml = 7, sortir = "kg" },
@@ -1530,6 +1533,8 @@ local function applyPresetHact(name)
     config.eggSelected = {}
     for _, e in ipairs(ps.egg) do config.eggSelected[e] = true end
     config.komposisi = ps.komposisi   -- v27.40: simpen tim pet yg dipakai (buat lapor panel)
+    config.petPool = nil
+    if ps.petPool then config.petPool = {}; for _, pn in ipairs(ps.petPool) do config.petPool[pn] = true end end
     local total = 0
     for tabName, spec in pairs(ps.komposisi) do
         total = total + autoPickTeam(tabName, spec)
@@ -3826,14 +3831,14 @@ local function makeTeamPanel(tabName)
 
     -- panel persentase (pojok kanan atas) — Koi / Bronto / Seal
     local pctBox = mk("Frame", {
-        Size = UDim2.new(0, 150, 0, 62), Position = UDim2.new(1, -150, 0, 0),
+        Size = UDim2.new(0, 210, 0, 116), Position = UDim2.new(1, -210, 0, 0),
         BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 5, Parent = panel })
     corner(pctBox, 8); stroke(pctBox, C.border, 1.5)
     mk("UIPadding", { PaddingTop = UDim.new(0,6), PaddingLeft = UDim.new(0,10),
         PaddingRight = UDim.new(0,10), Parent = pctBox })
     mk("UIListLayout", { Padding = UDim.new(0,2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pctBox })
     local function pctRow(name)
-        local r = mk("Frame", { Size = UDim2.new(1,0,0,42), BackgroundTransparency = 1, ZIndex = 6, Parent = pctBox })
+        local r = mk("Frame", { Size = UDim2.new(1,0,0,32), BackgroundTransparency = 1, ZIndex = 6, Parent = pctBox })
         local l = lbl(r, name, 11, C.textDim); l.Size = UDim2.new(0.5, 0, 1, 0); l.ZIndex = 6
         local v = lbl(r, "—", 11, C.text, Enum.TextXAlignment.Right)
         v.Font = FONT_B; v.Size = UDim2.new(0.5, 0, 1, 0); v.ZIndex = 6
@@ -7049,15 +7054,18 @@ do
                 elseif config and config.egg and config.egg[1] then
                     eggName = config.egg[1]
                 end
-                -- jumlah egg lagi di-hatch
+                -- jumlah egg AKTIF (Gem doang, bukan semua tipe egg)
                 local eggN = 0
-                pcall(function() eggN = (totalEggNow and totalEggNow()) or 0 end)
+                pcall(function()
+                    if EggDetect and EggDetect.scan then EggDetect.scan() end
+                    eggN = (EggDetect and EggDetect.counts and tonumber(EggDetect.counts[eggName])) or 0
+                end)
                 -- pet KEEP (petFate == "keep") -> per nama, per bucket kg (base weight age 1)
                 local keep = {}   -- { [namaPet] = { total=N, ranges={ ["1-2"]=x, ["2-3"]=y } } }
                 pcall(function()
                     if PetDetect and PetDetect.listBackpackPets and petFate then
                         for _, p in ipairs(PetDetect.listBackpackPets()) do
-                            if petFate(p) == "keep" then
+                            if petFate(p) == "keep" and (not config.petPool or config.petPool[p.name]) then
                                 local kg = tonumber(p.dispKg) or 0
                                 local lo = math.floor(kg)
                                 local bucket = lo .. "-" .. (lo + 1)
