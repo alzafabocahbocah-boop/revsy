@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.74"
+local VERSION = "v0.75"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -725,6 +725,23 @@ do
         end
     end)
 
+    -- v0.75: AUTO SWAP SKILL — swap skill SEMUA pet (bukan support doang), jalan WALAU engine spider/dilop OFF
+    task.spawn(function()
+        while _G.__ZenxKgEngineGen == engGen do
+            task.wait(0.1)
+            if _G.ZenxAutoSwapSkill and not KG.aktif then   -- cuma pas engine utama GAK jalan
+                for uuid in pairs(modelByUuid) do
+                    if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
+                    if not busy[uuid] then
+                        local rdy = petReady(uuid)
+                        local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
+                        if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
+                    end
+                end
+            end
+        end
+    end)
+
     -- pickup all pet di kebun (scan workspace FRESH + retry)
     local function pickupAll()
         local np = 0
@@ -1358,6 +1375,23 @@ kgTog.MouseButton1Click:Connect(function()
         kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(255, 255, 255); kgTog.BackgroundColor3 = C.panel
     end
 end)
+
+-- v0.75: AUTO SWAP SKILL toggle -- swap skill SEMUA pet walau AUTO UP KG (spider/dilop) OFF
+local swTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "AUTO SWAP SKILL: OFF", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
+    LayoutOrder = 7, Parent = cfgScroll })
+corner(swTog, 7)
+local function syncSwTog()
+    local on = _G.ZenxAutoSwapSkill == true
+    swTog.Text = "AUTO SWAP SKILL: " .. (on and "ON" or "OFF")
+    swTog.TextColor3 = Color3.fromRGB(255, 255, 255)
+    swTog.BackgroundColor3 = on and C.panel or C.card
+end
+swTog.MouseButton1Click:Connect(function()
+    _G.ZenxAutoSwapSkill = not _G.ZenxAutoSwapSkill
+    syncSwTog()
+end)
+syncSwTog()
 
 -- SYNC tampilan toggle ke state ASLI engine (re-exe: engine mungkin masih jalan dari exe sebelumnya)
 local function syncKgTog()
