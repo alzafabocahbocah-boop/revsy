@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.305-cf"
+local VERSION = "9.307-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7955,10 +7955,10 @@ local function run(cfg)
                     end
                     -- v9.306: baca hactstat (egg + pet keep + kg range) -> POST buat panel campur
                     do
-                        local rawH = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f\t$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                        local rawH = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
                         local items = {}
                         for line in rawH:gmatch("[^\n]+") do
-                            local nama, js = line:match("zenx_hactstat_(.-)%.json\t(.+)")
+                            local nama, js = line:match("zenx_hactstat_(.-)%.json|(.+)")
                             if nama and js and #js > 5 then
                                 items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
                             end
@@ -13336,6 +13336,60 @@ if PERINTAH == "hapus" then
     print("")
     ok(("SELESAI: %d client kehapus%s"):format(
         ok_n, gagal_n > 0 and (", " .. gagal_n .. " gagal") or ""))
+    return
+end
+
+-- v9.307: DOWNLOAD ARCEUS — "zenx download arceus 1-4" -> download+install no 01-04
+if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
+    local rentang = arg[3] or ""
+    local nums = {}
+    local lo, hi = rentang:match("^(%d+)%s*%-%s*(%d+)$")
+    if lo then for i = tonumber(lo), tonumber(hi) do nums[#nums + 1] = i end
+    else for n in rentang:gmatch("%d+") do nums[#nums + 1] = tonumber(n) end end
+    if #nums == 0 then print("Pakai: zenx download arceus 1-4   (atau: zenx download arceus 1 3 5)"); return end
+    print("== DOWNLOAD ARCEUS: no " .. rentang .. " ==")
+    print("ambil daftar rilis GitHub...")
+    local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
+    for _, n in ipairs(nums) do
+        local nn = string.format("%02d", n)
+        local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        if not url then
+            print("[" .. nn .. "] URL gak ketemu di rilis (skip)")
+        else
+            print("[" .. nn .. "] download (100MB, sabar)...")
+            sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+            print("[" .. nn .. "] install...")
+            local r = sh("su -c 'pm install -r \"/sdcard/arc" .. nn .. ".apk\"' 2>&1") or ""
+            print("[" .. nn .. "] " .. (r:find("Success") and "OK terinstall" or r:gsub("%s+", " "):sub(1, 80)))
+            sh("rm -f '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+        end
+    end
+    print("== SELESAI download arceus ==")
+    return
+end
+
+-- v9.307: UPDATE ARCEUS — "zenx update arceus" -> update HANYA arceus yg udah keinstall
+if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
+    print("== UPDATE ARCEUS (yg udah ada doang) ==")
+    local cntRaw = sh("su -c 'pm list packages 2>/dev/null' 2>/dev/null | grep -c 'com.roblox.clien'") or "0"
+    local cnt = tonumber((cntRaw:gsub("%s", ""))) or 0
+    if cnt == 0 then print("Gak ada client Arceus terinstall (com.roblox.clien*). Pakai 'zenx download arceus 1-4' dulu."); return end
+    print("terdeteksi " .. cnt .. " client terinstall -> update no 01-" .. string.format("%02d", cnt))
+    local rel = sh("curl -sL 'https://api.github.com/repos/alzafabocahbocah-boop/revsy/releases/tags/worker_64' 2>/dev/null") or ""
+    for n = 1, cnt do
+        local nn = string.format("%02d", n)
+        local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        if not url then
+            print("[" .. nn .. "] URL gak ketemu (skip)")
+        else
+            print("[" .. nn .. "] update (download 100MB + install)...")
+            sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+            local r = sh("su -c 'pm install -r \"/sdcard/arc" .. nn .. ".apk\"' 2>&1") or ""
+            print("[" .. nn .. "] " .. (r:find("Success") and "OK terupdate" or r:gsub("%s+", " "):sub(1, 80)))
+            sh("rm -f '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
+        end
+    end
+    print("== SELESAI update arceus ==")
     return
 end
 
