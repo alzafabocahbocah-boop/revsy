@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.310-cf"
+local VERSION = "9.311-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13353,6 +13353,7 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
     for _, n in ipairs(nums) do
         local nn = string.format("%02d", n)
         local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        if not url then url = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/ZETSU.ARCEUS.LITE." .. nn .. "-2.734.917.apk.apk" end
         if not url then
             print("[" .. nn .. "] URL gak ketemu di rilis (skip)")
         else
@@ -13385,6 +13386,7 @@ if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
     for n = 1, cnt do
         local nn = string.format("%02d", n)
         local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        if not url then url = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/ZETSU.ARCEUS.LITE." .. nn .. "-2.734.917.apk.apk" end
         if not url then
             print("[" .. nn .. "] URL gak ketemu (skip)")
         else
@@ -13422,6 +13424,7 @@ if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
     for _, it in ipairs(items) do
         local nn = string.format("%02d", it.num)
         local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
+        if not url then url = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/ZETSU.ARCEUS.LITE." .. nn .. "-2.734.917.apk.apk" end
         if not url then
             print("[" .. nn .. "] URL gak ketemu -> SKIP (gak dihapus, biar aman)")
         else
