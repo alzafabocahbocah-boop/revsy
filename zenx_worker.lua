@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.309-cf"
+local VERSION = "9.310-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13358,9 +13358,15 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
         else
             print("[" .. nn .. "] download (100MB, sabar)...")
             sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
-            print("[" .. nn .. "] install...")
-            local r = sh("su -c 'pm install -r \"/sdcard/arc" .. nn .. ".apk\"' 2>&1") or ""
-            print("[" .. nn .. "] " .. (r:find("Success") and "OK terinstall" or r:gsub("%s+", " "):sub(1, 80)))
+            local szRaw = sh("su -c 'stat -c%s \"/sdcard/arc" .. nn .. ".apk\" 2>/dev/null' 2>/dev/null") or "0"
+            local sz = tonumber((szRaw:gsub("%s", ""))) or 0
+            if sz < 50000000 then
+                print("[" .. nn .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB, harusnya ~100MB) -> SKIP")
+            else
+                print("[" .. nn .. "] " .. math.floor(sz/1048576) .. "MB, install (stdin)...")
+                local r = sh("su -c 'cat \"/sdcard/arc" .. nn .. ".apk\" | pm install -r -S " .. sz .. "' 2>&1") or ""
+                print("[" .. nn .. "] " .. (r:find("Success") and "OK terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
+            end
             sh("rm -f '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
         end
     end
@@ -13382,10 +13388,17 @@ if PERINTAH == "update" and arg and (arg[2] or ""):lower() == "arceus" then
         if not url then
             print("[" .. nn .. "] URL gak ketemu (skip)")
         else
-            print("[" .. nn .. "] update (download 100MB + install)...")
+            print("[" .. nn .. "] update: download...")
             sh("curl -sL '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
-            local r = sh("su -c 'pm install -r \"/sdcard/arc" .. nn .. ".apk\"' 2>&1") or ""
-            print("[" .. nn .. "] " .. (r:find("Success") and "OK terupdate" or r:gsub("%s+", " "):sub(1, 80)))
+            local szRaw = sh("su -c 'stat -c%s \"/sdcard/arc" .. nn .. ".apk\" 2>/dev/null' 2>/dev/null") or "0"
+            local sz = tonumber((szRaw:gsub("%s", ""))) or 0
+            if sz < 50000000 then
+                print("[" .. nn .. "] download GAGAL/partial (" .. math.floor(sz/1048576) .. "MB) -> SKIP")
+            else
+                print("[" .. nn .. "] " .. math.floor(sz/1048576) .. "MB, install (stdin)...")
+                local r = sh("su -c 'cat \"/sdcard/arc" .. nn .. ".apk\" | pm install -r -S " .. sz .. "' 2>&1") or ""
+                print("[" .. nn .. "] " .. (r:find("Success") and "OK terupdate" or ("GAGAL: " .. (r == "" and "(kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
+            end
             sh("rm -f '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
         end
     end
@@ -13426,11 +13439,11 @@ if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
                 local adaCk = sh("su -c '[ -f \"" .. ckSrc .. "\" ] && cp \"" .. ckSrc .. "\" \"" .. ckBak .. "\" && echo Y' 2>/dev/null") or ""
                 local punyaCk = adaCk:find("Y") ~= nil
                 print("[" .. nn .. "] " .. (punyaCk and "cookie akun disimpan" or "gak ada cookie (skip backup)"))
-                print("[" .. nn .. "] hapus " .. it.pkg .. " + install fresh...")
+                print("[" .. nn .. "] ukuran " .. math.floor(sz/1048576) .. "MB, hapus " .. it.pkg .. " + install fresh...")
                 sh("su -c 'pm uninstall " .. it.pkg .. "' 2>&1")
-                local r = sh("su -c 'pm install \"/sdcard/arc" .. nn .. ".apk\"' 2>&1") or ""
+                local r = sh("su -c 'cat \"/sdcard/arc" .. nn .. ".apk\" | pm install -S " .. sz .. "' 2>&1") or ""
                 local instOk = r:find("Success") ~= nil
-                print("[" .. nn .. "] " .. (instOk and "OK fresh terinstall" or r:gsub("%s+", " "):sub(1, 80)))
+                print("[" .. nn .. "] " .. (instOk and "OK fresh terinstall" or ("GAGAL: " .. (r == "" and "(output kosong)" or r:gsub("%s+", " "):sub(1, 120)))))
                 -- v9.308: RESTORE cookie -> akun sebelumnya langsung ke-login (chown + restorecon biar kebaca)
                 if instOk and punyaCk then
                     local uidRaw = sh("su -c 'stat -c%u \"/data/data/" .. it.pkg .. "\" 2>/dev/null' 2>/dev/null") or ""
