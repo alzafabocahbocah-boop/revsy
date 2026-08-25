@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.312-cf"
+local VERSION = "9.313-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13436,12 +13436,13 @@ if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
                 print("[" .. nn .. "] download GAGAL (" .. sz .. " byte) -> SKIP (gak dihapus)")
                 sh("rm -f '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
             else
-                -- v9.308: BACKUP cookie DB akun sebelumnya (biar bisa di-restore = auto-login)
+                -- v9.313: BACKUP cookie DB ke path PERSISTEN /sdcard/zenx_ck/<pkg>.db
+                -- (gak dihapus -> bisa di-inject ulang lewat 'zenx tembak arceus')
                 local ckSrc = "/data/data/" .. it.pkg .. "/app_webview/Default/Cookies"
-                local ckBak = "/sdcard/ckbak" .. nn .. ".db"
-                local adaCk = sh("su -c '[ -f \"" .. ckSrc .. "\" ] && cp \"" .. ckSrc .. "\" \"" .. ckBak .. "\" && echo Y' 2>/dev/null") or ""
+                local ckBak = "/sdcard/zenx_ck/" .. it.pkg .. ".db"
+                local adaCk = sh("su -c 'mkdir -p /sdcard/zenx_ck; [ -f \"" .. ckSrc .. "\" ] && cp \"" .. ckSrc .. "\" \"" .. ckBak .. "\" && echo Y' 2>/dev/null") or ""
                 local punyaCk = adaCk:find("Y") ~= nil
-                print("[" .. nn .. "] " .. (punyaCk and "cookie akun disimpan" or "gak ada cookie (skip backup)"))
+                print("[" .. nn .. "] " .. (punyaCk and "cookie akun disimpan (persisten)" or "gak ada cookie (skip backup)"))
                 print("[" .. nn .. "] ukuran " .. math.floor(sz/1048576) .. "MB, hapus " .. it.pkg .. " + install fresh...")
                 sh("su -c 'pm uninstall " .. it.pkg .. "' 2>&1")
                 local r = sh("su -c 'cat \"/sdcard/arc" .. nn .. ".apk\" | pm install -S " .. sz .. "' 2>&1") or ""
@@ -13457,12 +13458,47 @@ if PERINTAH == "refresh" and arg and (arg[2] or ""):lower() == "arceus" then
                         print("[" .. nn .. "] cookie akun sebelumnya di-RESTORE (auto-login)")
                     end
                 end
-                sh("rm -f '/sdcard/arc" .. nn .. ".apk' '" .. ckBak .. "' 2>/dev/null")
+                sh("rm -f '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")   -- APK dihapus, backup cookie KEEP
             end
         end
     end
     print("== SELESAI refresh arceus (cookie akun lama ke-restore) ==")
     print("Kalau ada yg gak ke-login: 'zenx login <akun> <client>' manual.")
+    return
+end
+
+-- v9.313: TEMBAK COOKIE — "zenx tembak arceus" -> inject cookie dari backup lokal (/sdcard/zenx_ck), GAK lewat panel
+if PERINTAH == "tembak" and arg and (arg[2] or ""):lower() == "arceus" then
+    print("== TEMBAK COOKIE ARCEUS (dari backup lokal, gak lewat panel) ==")
+    local list = sh("su -c 'pm list packages 2>/dev/null' 2>/dev/null | grep 'com.roblox.clien'") or ""
+    local pkgs = {}
+    for p in list:gmatch("package:([%w%.]+)") do pkgs[#pkgs + 1] = p end
+    if #pkgs == 0 then print("Gak ada client Arceus terinstall."); return end
+    local ok_n, gagal_n = 0, 0
+    for _, p in ipairs(pkgs) do
+        local nm = p:gsub("com%.roblox%.", "")
+        local bak = "/sdcard/zenx_ck/" .. p .. ".db"
+        local ada = sh("su -c '[ -f \"" .. bak .. "\" ] && echo Y' 2>/dev/null") or ""
+        if not ada:find("Y") then
+            print("[" .. nm .. "] gak ada backup cookie (skip). Refresh dulu buat backup.")
+            gagal_n = gagal_n + 1
+        else
+            local uidRaw = sh("su -c 'stat -c%u \"/data/data/" .. p .. "\" 2>/dev/null' 2>/dev/null") or ""
+            local uid = (uidRaw:gsub("%s", ""))
+            if uid == "" then
+                print("[" .. nm .. "] UID gak kebaca (app belum keinstall?) skip")
+                gagal_n = gagal_n + 1
+            else
+                -- matiin dulu biar gak ke-overwrite pas nulis
+                sh("su -c 'am force-stop " .. p .. "' 2>/dev/null")
+                local dir = "/data/data/" .. p .. "/app_webview/Default"
+                sh("su -c 'mkdir -p \"" .. dir .. "\" && cp \"" .. bak .. "\" \"" .. dir .. "/Cookies\" && chown -R " .. uid .. ":" .. uid .. " \"/data/data/" .. p .. "/app_webview\" && restorecon -R \"/data/data/" .. p .. "/app_webview\" 2>/dev/null' 2>/dev/null")
+                print("[" .. nm .. "] cookie DI-TEMBAK (dari backup)")
+                ok_n = ok_n + 1
+            end
+        end
+    end
+    print(("== SELESAI: %d di-tembak, %d gagal =="):format(ok_n, gagal_n))
     return
 end
 
