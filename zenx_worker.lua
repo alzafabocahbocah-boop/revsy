@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.316-cf"
+local VERSION = "9.317-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13533,6 +13533,13 @@ if PERINTAH == "loginsemua" and arg and (arg[2] or ""):lower() == "arceus" then
                 os.execute("sleep 18")
                 sh("su -c 'am force-stop " .. pkg .. "' 2>/dev/null")
                 local DB = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+                -- v9.317: DIAGNOSTIK -- cari path DB cookie beneran + cek isinya (biar tau kenapa gagal)
+                local dbFind = sh("su -c 'find /data/data/" .. pkg .. " -name Cookies -type f 2>/dev/null | head -2' 2>/dev/null") or ""
+                dbFind = dbFind:gsub("%s+$", "")
+                if dbFind ~= "" and dbFind ~= DB then DB = dbFind:match("^[^\n]+") or DB end
+                print("[" .. nm .. "] DB path: " .. (dbFind == "" and "GAK KETEMU (app belum bikin DB)" or dbFind:gsub("\n", " ")))
+                local dbCnt = sh("su -c '/data/data/com.termux/files/usr/bin/sqlite3 \"" .. DB .. "\" \"SELECT count(*) FROM cookies\"' 2>&1") or ""
+                print("[" .. nm .. "] jumlah cookie di DB: " .. dbCnt:gsub("%s+", " "):sub(1, 50))
                 local ckSql = tostring(cookie):gsub("'", "''")
                 local SQ = "/data/data/com.termux/files/usr/bin/sqlite3"
                 -- 1) coba UPDATE + cek berapa row kena
