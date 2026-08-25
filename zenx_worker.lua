@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.314-cf"
+local VERSION = "9.316-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13561,6 +13561,9 @@ if PERINTAH == "loginsemua" and arg and (arg[2] or ""):lower() == "arceus" then
                         print("[" .. nm .. "] inject GAGAL: guest DB gak ada cookie roblox buat template. " .. r2:gsub("%s+"," "):sub(1,60))
                     end
                 end
+                -- v9.316: metod gacor -> ABIS inject, BUKA client biar baca cookie + login (monkey, bukan panel)
+                sh("su -c 'monkey -p " .. pkg .. " -c android.intent.category.LAUNCHER 1' 2>/dev/null")
+                print("[" .. nm .. "] client dibuka -> baca cookie + login")
             end
         end
     end
