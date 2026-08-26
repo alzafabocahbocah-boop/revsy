@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.82"
+local VERSION = "v0.83"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -528,6 +528,91 @@ task.spawn(function()
             end
         end)
         task.wait(15)
+    end
+end)
+
+-- ============================================================
+-- v0.83: AUTO ACCEPT GIFT (gift biasa GiftPet + tiket via trade) -- SELALU ON
+-- ============================================================
+task.spawn(function()
+    local RS = game:GetService("ReplicatedStorage")
+    local plr = game:GetService("Players").LocalPlayer
+    local fs = (typeof(firesignal) == "function") and firesignal or nil
+    local function fireBtn(btn)
+        if not btn then return false end
+        if fs then
+            pcall(function() fs(btn.MouseButton1Down) end)
+            pcall(function() fs(btn.MouseButton1Click) end)
+            return true
+        end
+        return false
+    end
+    local function acceptAllGiftPopups()
+        local clicked = 0
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            local gn = pg and pg:FindFirstChild("Gift_Notification")
+            if not gn then return end
+            local outer = gn:FindFirstChild("Frame")
+            local inner = outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
+            local container = inner or gn
+            for _, holder in ipairs(container:GetChildren()) do
+                local accept
+                local fr = holder:FindFirstChild("Frame")
+                if fr then accept = fr:FindFirstChild("Accept") end
+                if not accept then
+                    for _, dd in ipairs(holder:GetDescendants()) do
+                        if dd.Name == "Accept" and dd:IsA("GuiButton") then accept = dd break end
+                    end
+                end
+                if accept and accept:IsA("GuiButton") then
+                    local vis = true; pcall(function() vis = accept.Visible end)
+                    if vis and fireBtn(accept) then clicked = clicked + 1 end
+                end
+            end
+        end)
+        return clicked
+    end
+    local ge = RS:WaitForChild("GameEvents", 30)
+    if ge then
+        -- GIFT BIASA: GiftPet.OnClientEvent -> AcceptPetGift + klik popup Accept
+        local giftRE = ge:FindFirstChild("GiftPet")
+        local acceptGiftRE = ge:FindFirstChild("AcceptPetGift")
+        if giftRE then
+            giftRE.OnClientEvent:Connect(function(petUUID)
+                if acceptGiftRE and type(petUUID) == "string" and #petUUID > 8 then
+                    pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
+                end
+                task.spawn(function()
+                    for _ = 1, 10 do
+                        if acceptAllGiftPopups() > 0 then task.wait(0.3) else task.wait(0.25) end
+                    end
+                end)
+            end)
+        end
+        -- TIKET: TradeEvents.SendRequest -> RespondRequest(tradeID, true)
+        local te = ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE = te:FindFirstChild("SendRequest")
+            local respondRE = te:FindFirstChild("RespondRequest")
+            local lastTradeID = nil
+            if sendReqRE and respondRE then
+                sendReqRE.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("-") then
+                        lastTradeID = args[1]
+                    end
+                    if lastTradeID then
+                        pcall(function() respondRE:FireServer(lastTradeID, true) end)
+                    end
+                end)
+            end
+        end
+    end
+    -- loop mandiri: klik popup gift yg udah ada / muncul tanpa event
+    while true do
+        task.wait(0.8)
+        pcall(acceptAllGiftPopups)
     end
 end)
 -- 6 support (4 Mimic + 1 Ghostly Spider + 1 Gilded Coach Perytron) + SWAP GACOR
