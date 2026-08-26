@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.320-cf"
+local VERSION = "9.321-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6545,6 +6545,17 @@ local function setup_wizard()
             ok("Perintah awal: STANDBY -- client GAK dibuka dulu.")
             info("  Pencet 'Jalankan semua' di panel buat mulai.")
         end
+    end
+
+    -- v9.321: STANDBY = client HARUS ketutup. Dulu client yg udah JALAN dari sesi lama
+    -- TETEP jalan -> loader Autoexec auto-exe script -> langsung mulai SEBELUM Start.
+    -- (panen dulu ketutup krn place berubah; upkg/campur place sama -> gak ketutup -> bug)
+    do
+        local nTutup = 0
+        for _, pkg in ipairs(split(cfg.pkgs or "")) do
+            if pkg ~= "" then sh("su -c 'am force-stop " .. pkg .. "' 2>/dev/null"); nTutup = nTutup + 1 end
+        end
+        if nTutup > 0 then ok("Client ditutup (" .. nTutup .. ") -- STANDBY beneran, nunggu Start dari panel.") end
     end
 
     -- v5.22: pasang.sh nanya kunci API SEBELUM config ada, jadi dia nyimpen
