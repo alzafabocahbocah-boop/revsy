@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.86"
+local VERSION = "v0.90"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -489,10 +489,12 @@ task.spawn(function()
             local total, belum, udah, tipe = 0, 0, 0, {}
             local tipeUdah, tipeBelum = {}, {}   -- v0.82: per-jenis 3.8kg udah/belum (buat lapor panel)
             local age50Belum, mudaBelum = 0, 0   -- age50+ belum3.8 / age<50 belum3.8
+            local totalAll = 0   -- v0.87: total SEMUA pet (buat "180/210" di panel)
             -- ITERASI CONTAINER = SEMUA pet (backpack + yg lagi ke-equip di kebun)
             if container then
                 for _, entry in pairs(container) do
                     if type(entry) == "table" and entry.PetType and type(entry.PetData) == "table" then
+                        totalAll = totalAll + 1   -- v0.87: hitung SEMUA pet (semua jenis)
                         local ptype = stripMutation(tostring(entry.PetType))
                         tipe[ptype] = (tipe[ptype] or 0) + 1   -- SEMUA tipe buat picker
                         if (not hasTarget) or target[ptype] then
@@ -512,6 +514,24 @@ task.spawn(function()
                         end
                     end
                 end
+                -- v0.90: max pet inventory dari MEMORY -- field "MaxPetsInInventory" (cara hact,
+                -- ikut upgrade). getgc BERAT -> cache 30s. total pet = container count (akurat).
+                if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
+                    local mx = nil
+                    pcall(function()
+                        if getgc then
+                            for _, obj in ipairs(getgc(true)) do
+                                if type(obj) == "table" then
+                                    local mp = rawget(obj, "MaxPetsInInventory")
+                                    if type(mp) == "number" and mp > 0 and (not mx or mp > mx) then mx = mp end
+                                end
+                            end
+                        end
+                    end)
+                    _G.__ZenxMaxPetCache = mx
+                    _G.__ZenxMaxPetTime = tick()
+                end
+                local maxInv = _G.__ZenxMaxPetCache or 200
                 _G.ZenxKgStat.total = total
                 _G.ZenxKgStat.belum = belum
                 _G.ZenxKgStat.udah = udah
@@ -520,6 +540,8 @@ task.spawn(function()
                 _G.ZenxKgStat.tipe = tipe
                 _G.ZenxKgStat.tipeUdah = tipeUdah
                 _G.ZenxKgStat.tipeBelum = tipeBelum
+                _G.ZenxKgStat.totalAll = totalAll   -- pet asli dari container
+                _G.ZenxKgStat.maxInv = maxInv        -- MaxPetsInInventory (memory)
             end
         end)
         task.wait(1)
@@ -548,9 +570,10 @@ task.spawn(function()
                 local bahanStr = ""
                 for i, b in ipairs(bahan) do bahanStr = bahanStr .. (i>1 and "," or "") .. string.format("%q", b) end
                 local js = string.format(
-                    '{"akun":%q,"config":%q,"bahan":[%s],"total":%d,"udah":%d,"belum":%d,"tipeUdah":%s,"tipeBelum":%s,"ts":%d}',
+                    '{"akun":%q,"config":%q,"bahan":[%s],"total":%d,"udah":%d,"belum":%d,"totalAll":%d,"maxInv":%d,"tipeUdah":%s,"tipeBelum":%s,"ts":%d}',
                     plr.Name, tostring(_G.ZenxKgConfig or ""), bahanStr,
                     tonumber(st.total) or 0, tonumber(st.udah) or 0, tonumber(st.belum) or 0,
+                    tonumber(st.totalAll) or 0, tonumber(st.maxInv) or 210,
                     jsonKV(st.tipeUdah), jsonKV(st.tipeBelum), os.time())
                 writefile("zenx_upkgstat_" .. plr.Name .. ".json", js)
             end
