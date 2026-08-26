@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.321-cf"
+local VERSION = "9.322-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -872,6 +872,15 @@ local function load_config()
                                 cfg.executor      = cfg.executor or "delta"
                                 cfg.workspace_dir = "/sdcard/Delta/Workspace"
                             end
+                        end
+                    end
+                    -- v9.322: farm script (panen/hact/upkg/campur) = SINGLE place, GAK perlu
+                    -- rotasi PS kayak market. Paksa rotasi_on OFF -> Start buka client 1-1
+                    -- (open_one), bukan 'tembak BARENGAN' (yg bikin 4 client kebuka sekaligus).
+                    do
+                        local sl = (cfg.script_label or ""):upper()
+                        if sl == "PANEN" or sl == "HACT" or sl == "UP KG" or sl == "UPKG" or sl == "CAMPUR" then
+                            cfg.rotasi_on = false
                         end
                     end
                     return cfg
@@ -7432,8 +7441,8 @@ local function run(cfg)
         SERVER_TERAKHIR = ambil_str(rS, "server") or ""   -- v9.62: baseline server
         local berubah = false
         if sPlace ~= "" and sPlace ~= cfg.place_id then
-            if (cfg.script_label or ""):upper() == "PANEN" and sPlace ~= "126884695634066" then
-                info(("PANEN: place %s DITOLAK (kunci di 126884695634066)"):format(sPlace))
+            if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" end)() and sPlace ~= "126884695634066" then
+                info(((cfg.script_label or "FARM") .. ": place " .. sPlace .. " DITOLAK (kunci 126884695634066)"))
             else
             info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
             cfg.place_id = sPlace
@@ -7737,8 +7746,8 @@ local function run(cfg)
             -- place fall.
             do
                 local placeTop = isiTop:match("PLACE:(%d+)")
-                if placeTop and placeTop ~= cfg.place_id and (cfg.script_label or ""):upper() == "PANEN" and placeTop ~= "126884695634066" then
-                    info("PANEN: PLACE command " .. placeTop .. " DIABAIKAN (kunci di 126884695634066)")
+                if placeTop and placeTop ~= cfg.place_id and (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" end)() and placeTop ~= "126884695634066" then
+                    info(((cfg.script_label or "FARM")) .. ": PLACE command " .. placeTop .. " DIABAIKAN (kunci di 126884695634066)")
                     placeTop = nil
                 end
                 if placeTop and placeTop ~= cfg.place_id then
@@ -8127,7 +8136,7 @@ local function run(cfg)
                 end
                 info(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
                 tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
-                if #perluTembak > 0 and not lewatiDenyutRejoin then
+                if #perluTembak > 0 and not lewatiDenyutRejoin and MODE_JALAN then   -- v9.322: cuma rejoin kalau UDAH Start (MODE_JALAN). STANDBY = client ketutup, JANGAN dibuka.
                     -- v8.54: REFRESH mapLink (+ accessCode per akun) SEBELUM tembak.
                     -- Bug: blok denyut ini pakai mapLink dari refresh terakhir, kalau
                     -- accessCode di-set SETELAH itu (klik World 2 Private) -> mapLink
@@ -8617,8 +8626,8 @@ local function run(cfg)
                 SETTING_TS_TERAKHIR = tsBaru
                 -- v9.306: PANEN = GAG 1 garden (126884695634066) selalu. TOLAK place lain
                 -- (akun/panel data basi -> nyasar ke dunia lama 126987765280963).
-                if (cfg.script_label or ""):upper() == "PANEN" and sPlace ~= "" and sPlace ~= "126884695634066" then
-                    warn("PANEN: place " .. sPlace .. " DITOLAK (kunci di 126884695634066)")
+                if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" end)() and sPlace ~= "" and sPlace ~= "126884695634066" then
+                    warn(((cfg.script_label or "FARM")) .. ": place " .. sPlace .. " DITOLAK (kunci di 126884695634066)")
                 elseif sPlace ~= "" then cfg.place_id = sPlace end
                 if sGrid > 0 then cfg.grid_kolom = sGrid end
                 pcall(function() save_config(cfg) end)
