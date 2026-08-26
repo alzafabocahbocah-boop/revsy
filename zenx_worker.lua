@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.323-cf"
+local VERSION = "9.324-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8001,6 +8001,21 @@ local function run(cfg)
                         if #items > 0 then
                             local body = '{"list":[' .. table.concat(items, ",") .. ']}'
                             pcall(function() api_post(cfg, "/hactstat-batch", body) end)
+                        end
+                    end
+                    -- v9.324: baca upkgstat (bahan pet + per-jenis 3.8kg udah/belum) -> POST buat panel up kg
+                    do
+                        local rawU = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_upkgstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                        local items = {}
+                        for line in rawU:gmatch("[^\n]+") do
+                            local nama, js = line:match("zenx_upkgstat_(.-)%.json|(.+)")
+                            if nama and js and #js > 5 then
+                                items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
+                            end
+                        end
+                        if #items > 0 then
+                            local body = '{"list":[' .. table.concat(items, ",") .. ']}'
+                            pcall(function() api_post(cfg, "/upkgstat-batch", body) end)
                         end
                     end
                     local dcnt = 0
