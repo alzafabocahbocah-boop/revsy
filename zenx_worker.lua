@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.317-cf"
+local VERSION = "9.320-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2823,7 +2823,13 @@ local function build_url(cfg, link_client)
     -- Jadi kalau ada bagian share=http, pakai itu (buka share URL, Roblox resolve+join).
     if lc:find("share=http") then
         local shareUrl = lc:match("share=(https?://[^|%s]+)")
-        if shareUrl then return shareUrl end
+        if shareUrl then
+            -- v9.318: HTTPS share nyangkut HOME (inkonsisten di Arceus baru). Deep link
+            -- roblox://placeId=X&linkCode=<sharecode> TERUJI stabil (test manual user).
+            local code = shareUrl:match("share%?code=([%w%-]+)")
+            if code then return "roblox://placeId=" .. cfg.place_id .. "&linkCode=" .. code end
+            return shareUrl
+        end
     end
     -- pure accessCode (tanpa share) -> PS owner sendiri (1 akun join PS-nya sendiri)
     if lc:find("accessCode=") then
@@ -2831,9 +2837,11 @@ local function build_url(cfg, link_client)
         if code then return "roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code end
     end
     if lc:find("share%?code=") or lc:find("/share%?") then
-        -- pastikan pakai https lengkap, biar am start buka lewat Roblox app
+        -- v9.318: HTTPS share nyangkut HOME (inkonsisten). Deep link roblox://placeId=X&linkCode=<code> teruji stabil.
+        local code = lc:match("share%?code=([%w%-]+)")
+        if code then return "roblox://placeId=" .. cfg.place_id .. "&linkCode=" .. code end
         if lc:sub(1,4) ~= "http" then lc = "https://www.roblox.com/" .. lc:gsub("^/", "") end
-        return lc   -- buka URL share apa adanya -> Roblox resolve sendiri
+        return lc   -- fallback: buka URL share apa adanya
     elseif lc:find("privateServerLinkCode=") and lc:sub(1,4) == "http" then
         -- v9.181: ganti placeId ke cfg.place_id (dunia AKTIF) -- joinCode universe-level.
         -- v9.185: DEEP LINK roblox://...&linkCode= biar AUTO-JOIN (https URL cuma buka
@@ -2909,7 +2917,7 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         info(("   [join] %s -> %s | url=%s"):format(
             pkg:gsub("com%.roblox%.",""), jenisJoin, url))
     end
-    local wm = tonumber(cfg.win_mode) or 0
+    local wm = 0   -- v9.319: --windowingMode DIPAKSA OFF (RF/exe udah freeform sendiri, wm bikin DOUBLE BINGKAI)
 
     -- v8.09: HAPUS TASK DULU sebelum tembak (user minta). Cuma `am task remove`
     -- task Roblox pkg INI -- BUKAN force-stop (force-stop ngerusak client lain,
@@ -6058,6 +6066,7 @@ local function setup_otomatis(namaPreset)
         gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
         hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
+        upkg   = { place = "126884695634066", game = "GAG 1 UPKG",   sc = "UP KG",     url = "upkg"   },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
     local pre_raw = (namaPreset or ""):lower()
@@ -6917,7 +6926,7 @@ local function run(cfg)
     -- v4.1: freeform butuh setelan sistem. Kalau ini mati, --windowingMode 5
     -- DITERIMA tapi diem-diem gak ngefek -> kebuka fullscreen, gak ada error.
     -- Ini jebakan paling nyebelin: keliatan jalan padahal nggak.
-    local wm = tonumber(cfg.win_mode) or 0
+    local wm = 0   -- v9.319: --windowingMode DIPAKSA OFF
     if wm == 5 then
         local ff = sh("su -c 'settings get global enable_freeform_support'"):gsub("%s+","")
         if ff ~= "1" then
