@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.77"
+local VERSION = "v0.81"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -234,12 +234,25 @@ do
                 task.wait(3)
             end
         end)
-        -- denyut tiap 20s (BAWA stat KG: pet yg udah 3.8kg) — SKIP kalau disconnect
+        -- v0.81: FPS tracker -- denyut cuma kirim kalau render JALAN (>5 fps).
+        -- Client PUTIH (fps ~1, GPU gak render) -> denyut GAK kekirim -> worker anggap mati -> REJOIN.
+        if not _G.__ZenxFpsTrack then
+            _G.__ZenxFpsTrack = true
+            _G.__ZenxFps = 60   -- optimis dulu (sebelum keukur, biar gak salah-rejoin pas loading)
+            local cnt = 0
+            pcall(function()
+                game:GetService("RunService").RenderStepped:Connect(function() cnt = cnt + 1 end)
+            end)
+            task.spawn(function()
+                while true do task.wait(1); _G.__ZenxFps = cnt; cnt = 0 end
+            end)
+        end
+        -- denyut tiap 20s (BAWA stat KG: pet yg udah 3.8kg) — SKIP kalau disconnect ATAU fps<=5 (putih)
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and writefile and not zenxDcStrict() then
+                    if plr and plr.Name and writefile and not zenxDcStrict() and (_G.__ZenxFps or 60) > 5 then
                         local udah = (_G.ZenxKgStat and tonumber(_G.ZenxKgStat.udah)) or 0
                         -- format "ts;<udah>;kg" (worker: sheck=udah, sheckW="kg")
                         writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";" .. udah .. ";kg")
@@ -347,7 +360,7 @@ local function stripMutation(s)
     return s
 end
 -- config -> pet type filter (substring match). Random = semua pet (no filter).
-local KG_CONFIG_PET = { ["Tim Spider"] = "Spider", ["Tim Dilop"] = "Dilo", ["Tim Random"] = nil }
+local KG_CONFIG_PET = { ["Tim Spider"] = "Spider", ["Tim Peacock"] = "Peacock", ["Tim Dilop"] = "Dilo" }
 
 -- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
 local _kgContainer = nil
@@ -615,6 +628,17 @@ do
         { nama = "Peacock",         cari = { "peacock" },            jml = 1 },
         { nama = "Ghostly Spider",  cari = { "ghostly", "spider" },  jml = 1 },
     }
+    -- v0.78: config "Tim Peacock" -- SESI 1: 2 Gilded Choc Peryton + 3 Mimic + 3 bahan
+    local SUPPORT_S1_PEACOCK = {
+        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" },  jml = 2 },
+        { nama = "Mimic Octopus",       cari = { "mimic" },              jml = 3 },
+    }
+    -- v0.78: config "Tim Peacock" -- SESI 2 (up KG): 2 Elephant + 4 Mimic + 1 Peacock + 1 bahan
+    local SUPPORT_S2_PEACOCK = {
+        { nama = "Elephant",        cari = { "elephant" },           jml = 2 },
+        { nama = "Mimic Octopus",   cari = { "mimic" },              jml = 4 },
+        { nama = "Peacock",         cari = { "peacock" },            jml = 1 },
+    }
     local AGE_TARGET = 50     -- sesi 1: bahan sampe age ini
     local AGE_DROP   = 30     -- sesi 2: KG-up kelar kalau age turun <= ini
     local BAHAN_S1   = 2
@@ -637,7 +661,7 @@ do
 
     -- pilih support (PALING GEDE per tipe, kunci) — tim sesuai SESI
     local function pilihSupport(sesi)
-        local SUP = (sesi == 2) and SUPPORT_S2 or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or SUPPORT_S1)
+        local SUP = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
         local pets = listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local ada = {}
@@ -657,7 +681,7 @@ do
     local function pilihBahan(sesi)
         local target = _G.ZenxKgUpTipe
         if type(target) ~= "table" or not next(target) then return end
-        local maxB = (sesi == 2) and BAHAN_S2 or ((_G.ZenxKgConfig == "Tim Dilop") and 3 or BAHAN_S1)
+        local maxB = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
         local pets = listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local n = jml(bahanAktif)
@@ -674,8 +698,10 @@ do
         end
     end
     local function equipSemua()
-        for u in pairs(supportKunci) do equipPet(u, CLUSTER); task.wait(0.06) end
-        for u in pairs(bahanAktif) do equipPet(u, CLUSTER); task.wait(0.06) end
+        -- v0.80: config Peacock -> equip AWAL (pas mulai/ganti sesi) delay 2s per pet. Config lain 0.06s.
+        local dly = (_G.ZenxKgConfig == "Tim Peacock") and 2 or 0.06
+        for u in pairs(supportKunci) do equipPet(u, CLUSTER); task.wait(dly) end
+        for u in pairs(bahanAktif) do equipPet(u, CLUSTER); task.wait(dly) end
     end
 
 
@@ -788,7 +814,7 @@ do
         pilihSupport(sesi)
         pilihBahan(sesi)
         equipSemua()
-        local SUP = (sesi == 2) and SUPPORT_S2 or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or SUPPORT_S1)
+        local SUP = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
         local perT = {}
         for _, nm in pairs(supportKunci) do perT[nm] = (perT[nm] or 0) + 1 end
         local ss = ""; for _, sup in ipairs(SUP) do ss = ss..sup.nama.."="..(perT[sup.nama] or 0).."/"..sup.jml.." " end
@@ -936,7 +962,7 @@ do
                         end
                     end
                     -- isi ulang bahan
-                    local maxB = (KG.sesi == 2) and BAHAN_S2 or ((_G.ZenxKgConfig == "Tim Dilop") and 3 or BAHAN_S1)
+                    local maxB = (KG.sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
                     if jml(bahanAktif) < maxB then
                         pilihBahan(KG.sesi)
                         for u in pairs(bahanAktif) do
@@ -1205,8 +1231,8 @@ end
 -- ============ SECTION: CONFIG UP KG ============
 sectionHeader("\u{2696} CONFIG UP KG", 1)
 
--- selector 3 config: Tim Spider / Tim Dilop / Tim Random
-local KG_CONFIGS = { "Tim Spider", "Tim Dilop", "Tim Random" }
+-- selector config: Tim Spider / Tim Peacock / Tim Dilop
+local KG_CONFIGS = { "Tim Spider", "Tim Peacock", "Tim Dilop" }
 local kgConfigAktif = _G.ZenxKgConfig or "Tim Spider"
 local kgConfBtns = {}
 local kgSelRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1,
@@ -1214,10 +1240,16 @@ local kgSelRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTranspar
 mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal,
     Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = kgSelRow })
 _G.ZenxKgConfig = kgConfigAktif
+if kgConfigAktif == "Tim Peacock" then _G.ZenxAutoTengah = true end
 local kgConfStrokes = {}
 local function pilihConfig(name)
     kgConfigAktif = name
     _G.ZenxKgConfig = name
+    -- v0.79: config "Tim Peacock" -> AUTO TENGAH otomatis ON (ikut config)
+    if name == "Tim Peacock" then
+        _G.ZenxAutoTengah = true
+        if _G.ZenxSyncTengah then _G.ZenxSyncTengah() end
+    end
     if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
     for n, b in pairs(kgConfBtns) do
         local on = (n == name)
@@ -1427,6 +1459,7 @@ ctTog.MouseButton1Click:Connect(function()
     syncCtTog()
 end)
 syncCtTog()
+_G.ZenxSyncTengah = syncCtTog
 
 -- SYNC tampilan toggle ke state ASLI engine (re-exe: engine mungkin masih jalan dari exe sebelumnya)
 local function syncKgTog()
