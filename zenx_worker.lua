@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.322-cf"
+local VERSION = "9.323-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3958,8 +3958,14 @@ function pulih_aktif(cfg)
     if not place then return false end
     -- server (place_id) + grid_kolom -> ke config kalau ada isinya
     if place ~= "" and place ~= tostring(cfg.place_id or "") then
-        cfg.place_id = place
-        pcall(function() save_config(cfg) end)
+        local _sl = (cfg.script_label or ""):upper()
+        local _farm = (_sl=="PANEN" or _sl=="HACT" or _sl=="UP KG" or _sl=="UPKG" or _sl=="CAMPUR")
+        if _farm and place ~= "126884695634066" then
+            -- v9.323: farm kunci -- jangan pulihin place BASI dari .zenx_aktif (sesi lama GAG 2)
+        else
+            cfg.place_id = place
+            pcall(function() save_config(cfg) end)
+        end
     end
     local gk = tonumber(grid)
     if gk and gk ~= (tonumber(cfg.grid_kolom) or 0) then
@@ -9510,10 +9516,16 @@ local function run(cfg)
             -- place_id baru -> client join world baru. Simpen ke config biar tetep.
             local placeBaruDari = isi:match("PLACE:(%d+)")
             if placeBaruDari then
-                cfg.place_id = placeBaruDari
-                pcall(function() save_config(cfg) end)
-                info("Place diganti ke " .. placeBaruDari .. " (pindah world) -- rejoin buat masuk")
-                SUDAH_GRID = false; GRID_CACHE = nil
+                local _sl = (cfg.script_label or ""):upper()
+                local _farm = (_sl=="PANEN" or _sl=="HACT" or _sl=="UP KG" or _sl=="UPKG" or _sl=="CAMPUR")
+                if _farm and placeBaruDari ~= "126884695634066" then
+                    info("(" .. _sl .. ") PLACE:" .. placeBaruDari .. " DIABAIKAN (farm kunci di 126884695634066)")
+                else
+                    cfg.place_id = placeBaruDari
+                    pcall(function() save_config(cfg) end)
+                    info("Place diganti ke " .. placeBaruDari .. " (pindah world) -- rejoin buat masuk")
+                    SUDAH_GRID = false; GRID_CACHE = nil
+                end
             end
             -- v8.57: GRID:<kolom> dari panel -> atur jumlah kolom grid manual.
             -- GRID:0 / GRID:auto -> balik otomatis (SUSUNAN). Reset grid biar
