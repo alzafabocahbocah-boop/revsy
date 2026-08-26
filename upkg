@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.81"
+local VERSION = "v0.82"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -459,6 +459,7 @@ task.spawn(function()
             local hasTarget = (type(target) == "table") and next(target) ~= nil
             local container = _kgContainer
             local total, belum, udah, tipe = 0, 0, 0, {}
+            local tipeUdah, tipeBelum = {}, {}   -- v0.82: per-jenis 3.8kg udah/belum (buat lapor panel)
             local age50Belum, mudaBelum = 0, 0   -- age50+ belum3.8 / age<50 belum3.8
             -- ITERASI CONTAINER = SEMUA pet (backpack + yg lagi ke-equip di kebun)
             if container then
@@ -474,8 +475,10 @@ task.spawn(function()
                             total = total + 1
                             if kg >= KG_TARGET_STAT - 0.005 then
                                 udah = udah + 1
+                                tipeUdah[ptype] = (tipeUdah[ptype] or 0) + 1
                             else
                                 belum = belum + 1
+                                tipeBelum[ptype] = (tipeBelum[ptype] or 0) + 1
                                 if age >= 50 then age50Belum = age50Belum + 1 else mudaBelum = mudaBelum + 1 end
                             end
                         end
@@ -487,14 +490,46 @@ task.spawn(function()
                 _G.ZenxKgStat.age50Belum = age50Belum
                 _G.ZenxKgStat.mudaBelum = mudaBelum
                 _G.ZenxKgStat.tipe = tipe
+                _G.ZenxKgStat.tipeUdah = tipeUdah
+                _G.ZenxKgStat.tipeBelum = tipeBelum
             end
         end)
         task.wait(1)
     end
 end)
 
--- ============================================================
--- ENGINE AUTO UP KG — SESI 1 (up BAHAN ke AGE 50)
+-- v0.82: LAPOR STAT ke panel -- tulis zenx_upkgstat_<akun>.json tiap 15s (worker baca -> backend -> panel)
+task.spawn(function()
+    while true do
+        pcall(function()
+            local plr = game:GetService("Players").LocalPlayer
+            if plr and plr.Name and writefile then
+                local st = _G.ZenxKgStat or {}
+                -- bahan pet = jenis yg dipilih (target), fallback ke config
+                local bahan = {}
+                if type(_G.ZenxKgUpTipe) == "table" then
+                    for t in pairs(_G.ZenxKgUpTipe) do bahan[#bahan+1] = t end
+                end
+                local function jsonKV(tbl)
+                    local parts = {}
+                    for k, v in pairs(tbl or {}) do
+                        parts[#parts+1] = string.format("%q:%d", tostring(k), tonumber(v) or 0)
+                    end
+                    return "{" .. table.concat(parts, ",") .. "}"
+                end
+                local bahanStr = ""
+                for i, b in ipairs(bahan) do bahanStr = bahanStr .. (i>1 and "," or "") .. string.format("%q", b) end
+                local js = string.format(
+                    '{"akun":%q,"config":%q,"bahan":[%s],"total":%d,"udah":%d,"belum":%d,"tipeUdah":%s,"tipeBelum":%s,"ts":%d}',
+                    plr.Name, tostring(_G.ZenxKgConfig or ""), bahanStr,
+                    tonumber(st.total) or 0, tonumber(st.udah) or 0, tonumber(st.belum) or 0,
+                    jsonKV(st.tipeUdah), jsonKV(st.tipeBelum), os.time())
+                writefile("zenx_upkgstat_" .. plr.Name .. ".json", js)
+            end
+        end)
+        task.wait(15)
+    end
+end)
 -- 6 support (4 Mimic + 1 Ghostly Spider + 1 Gilded Coach Perytron) + SWAP GACOR
 -- 2 bahan (jenis picker, age<50 + kg<3.8) — DIEM (no swap), rotate pas age 50
 -- ============================================================
