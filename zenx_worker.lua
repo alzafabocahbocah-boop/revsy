@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.324-cf"
+local VERSION = "9.325-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7968,6 +7968,9 @@ local function run(cfg)
                                 if sk and ((tonumber(sk) or 0) > 0 or sw == "kg") then   -- kg = report walau 0 (progress up_kg)
                                     sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "" }
                                 end
+                                -- v9.325: fps (field ke-4, "ts;udah;kg;fps") -> deteksi PUTIH (fps<=5)
+                                local fpsV = isi:match("^%d+;%d+;%a*;(%d+)")
+                                if fpsV then KICK_DIURUS["fps:" .. nama] = tonumber(fpsV) end
                             end
                             if #ddetail < 6 then
                                 ddetail[#ddetail+1] = ("%s(isi=%ds mtime=%ss)"):format(
@@ -8069,14 +8072,8 @@ local function run(cfg)
                                 :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
                         end
                         if umur ~= nil and umur <= 300 then
-                            -- v9.276: toleransi denyut 120 -> 180s (3 menit). denyut fresh
-                            -- (<=3 menit) = script nulis = DI GAME. Dilonggarin biar transisi
-                            -- market<->garden (place beda, ada jeda denyut pas teleport) gak
-                            -- ke-rejoin sia-sia. denyut ditulis tiap 20s -> masih banyak margin.
+                            -- denyut fresh (<=5 menit) = script nulis = DI GAME (jalan normal).
                             diGame = diGame + 1
-                            -- v8.47: denyut fresh = client masuk game = CAPTCHA SOLVED.
-                            -- Clear flag captcha (dulu clear di loop grafis lama yg
-                            -- OFF -> captcha stuck selamanya). Sekarang clear di sini.
                             if KICK_DIURUS["captcha:" .. pkg] then
                                 info(("[antrian] %s CAPTCHA kelar (denyut fresh = masuk game)")
                                     :format(ak or pkg))
