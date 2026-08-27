@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.54"
+local VERSION = "v27.56"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2118,6 +2118,39 @@ local function giftPetsByFilter(cfg)
     Auto.giftBusy = false  -- v20.3: SELALU reset (di luar pcall) — walau gift error
     if not okRun then print("[HactTelur] gift/trade error: "..tostring(errRun)..", giftBusy di-reset") end
     return sent
+end
+-- v27.56: expose buat loop HACT OTO auto-gift
+_G.HactGetMatched = getMatchedPets
+_G.HactGiftFilter = giftPetsByFilter
+-- v27.56: HACT OTO auto-gift -- baca target dari worker (zenx_hactoto_<akun>.json).
+-- auto-trade Peacock base 2+ ke target pas stok >= minCount (default 50). Kirim SEMUA pas >= 50,
+-- stok < 50 -> GAK trade (biar hactotomatis gak abisin stok bahan sendiri).
+do
+    task.spawn(function()
+        local HttpService = game:GetService("HttpService")
+        local Players = game:GetService("Players")
+        while true do
+            task.wait(8)
+            pcall(function()
+                local plr = Players.LocalPlayer
+                if not plr or not readfile or not isfile then return end
+                local fn = "zenx_hactoto_" .. plr.Name .. ".json"
+                if not isfile(fn) then return end   -- gak ada target -> gak gift
+                local ok, data = pcall(function() return HttpService:JSONDecode(readfile(fn)) end)
+                if not ok or type(data) ~= "table" or not data.target or data.target == "" then return end
+                local minC = tonumber(data.minCount) or 50
+                -- cfg filter Peacock base 2+ (kg >= 2), trade ke target
+                local cfg2 = { pets = {["Peacock"]=true}, kg = 2, age = 0, muts = {},
+                    method = "trade", targets = {[data.target]=true}, unfavFirst = true }
+                if Auto.giftBusy then return end   -- lagi gift/trade -> tunggu
+                local n = #(_G.HactGetMatched(cfg2))
+                if n < minC then return end        -- stok < 50 -> GAK trade
+                print("[HactTelur] HACT OTO: stok Peacock 2+ "..n.." >= "..minC.." -> trade ke "..data.target)
+                _G.HactGiftFilter(cfg2)            -- trade SEMUA Peacock 2+ ke target
+            end)
+        end
+    end)
+    print("[HactTelur] HACT OTO auto-gift aktif (baca target dari worker)")
 end
 local function giftPetsByType(targetName, petTypeSet)
     local Players = game:GetService("Players")
@@ -6226,14 +6259,29 @@ do
             wKnob.BackgroundColor3 = cfg.waitFull and Color3.fromRGB(17,17,17) or C.textDim
             wKnob.Position = cfg.waitFull and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
         end
+        -- v27.55: Min Stok -- trade CUMA kalau jenis pet cocok >= N (buat hactotomatis: Peacock 2+ >= 50).
+        -- 0 = mati (pakai mode waitFull / spam biasa). >0 = mode min-stok (nunggu stok cukup).
+        local mL = lbl(body, "Min Stok (0=mati)", 14, C.text, Enum.TextXAlignment.Left)
+        mL.Position = UDim2.new(0, 0, 0, 292); mL.Size = UDim2.new(0.55, 0, 0, 28)
+        local mIn = mk("TextBox", {
+            Size = UDim2.new(0, 64, 0, 26), Position = UDim2.new(1, -64, 0, 293),
+            BackgroundColor3 = C.input, Text = tostring(cfg.minCount or 0), Font = FONT,
+            TextSize = 21, TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center,
+            ClearTextOnFocus = false, Parent = body })
+        corner(mIn, 5); stroke(mIn, C.border, 1)
+        mIn.FocusLost:Connect(function()
+            cfg.minCount = tonumber(mIn.Text) or 0
+            mIn.Text = tostring(cfg.minCount)
+            if _G.HactTelurSave then pcall(_G.HactTelurSave) end
+        end)
         -- tombol Gift (toggle auto-loop)
         local gBtn = mk("TextButton", {
-            Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 294),
+            Size = UDim2.new(1, 0, 0, 32), Position = UDim2.new(0, 0, 0, 330),
             BackgroundColor3 = C.accent, Text = "Auto Gift: OFF", Font = FONT_B, TextSize = 24,
             TextColor3 = Color3.fromRGB(17,17,17), AutoButtonColor = false, Parent = body })
         corner(gBtn, 7)
         local statL = lbl(body, "", 10, C.textMute, Enum.TextXAlignment.Center)
-        statL.Position = UDim2.new(0, 0, 0, 330); statL.Size = UDim2.new(1, 0, 0, 16)
+        statL.Position = UDim2.new(0, 0, 0, 366); statL.Size = UDim2.new(1, 0, 0, 16)
         local running = false
         local function doStartGift()
             if running then return end
@@ -6247,7 +6295,20 @@ do
             task.spawn(function()
                 local wasFull = false  -- lacak status full sebelumnya
                 while running do
-                    if cfg.waitFull then
+                    if cfg.minCount and cfg.minCount > 0 then
+                            -- v27.55: mode TUNGGU JENIS PET >= N (buat hactotomatis). trade CUMA kalau
+                            -- pet cocok (mis Peacock 2+) >= threshold. stok di bawah threshold -> trade GAK
+                            -- jalan (biar hactotomatis gak abisin stok bahan sendiri). Set via "min stok" GUI.
+                            local n = #getMatchedPets(cfg)
+                            if n >= cfg.minCount then
+                                local sent = giftPetsByFilter(cfg)
+                                statL.Text = sent > 0 and ("Terkirim "..sent.." (stok "..n..")") or "gak ada pet cocok"
+                                task.wait(1)
+                            else
+                                statL.Text = "stok "..n.."/"..cfg.minCount.." - trade nunggu "..cfg.minCount.."+"
+                                task.wait(2)
+                            end
+                    elseif cfg.waitFull then
                             -- mode tunggu full: trade SEKALI pas backpack full, lalu tunggu full lagi
                             local full = isBackpackFull()
                             if full and not wasFull then
@@ -6687,6 +6748,7 @@ local function saveConfig()
                 targets = c.targets or {}, pets = c.pets or {}, muts = c.muts or {},
                 age = c.age or 0, kg = c.kg or 0, method = c.method or "trade",
                 unfavFirst = c.unfavFirst or false, waitFull = c.waitFull or false,
+                minCount = c.minCount or 0,   -- v27.55: threshold min stok (trade nunggu jenis pet >= N)
             }
         end
     end
@@ -6805,6 +6867,7 @@ local function loadConfig()
                 dst.method = src.method or "trade"
                 dst.unfavFirst = src.unfavFirst or false
                 dst.waitFull = src.waitFull or false
+                dst.minCount = src.minCount or 0   -- v27.55: restore threshold min stok
                 -- v27.13 DIAG
                 print("[HactTelur] LOAD giftCfg G"..i.." -> unfav="..tostring(dst.unfavFirst)
                     .." (src="..tostring(src.unfavFirst)..") bpfull="..tostring(dst.waitFull)
