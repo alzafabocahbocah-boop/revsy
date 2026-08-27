@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.328-cf"
+local VERSION = "9.329-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7201,9 +7201,10 @@ local function run(cfg)
             local psl  = obj:match('"ps_link"%s*:%s*"(.-)"')
             if akun and akun2pkg[akun] and psl and psl ~= "" then
                 local pkg = akun2pkg[akun]
-                -- v9.297: ps_link bisa "accessCode=X|share=Y" -> buang bagian share
-                -- (itu buat panel/mobile). Worker join pakai accessCode aja.
-                psl = psl:gsub("|share=.*$", "")
+                -- v9.329: JANGAN buang bagian share! Dulu (v9.297) di-buang -> sisa accessCode
+                -- = OWNER-ONLY -> client lain "no permission to join" PS akun ini. build_url
+                -- prefer share (linkCode = anyone-with-link) -> client lain BISA join PS akun lain
+                -- (persis kayak campur). ps_link tetep full "accessCode=X|share=Y".
                 if not mapLink[pkg] then mapLink[pkg] = psl; nDapet = nDapet + 1 end
             end
         end
