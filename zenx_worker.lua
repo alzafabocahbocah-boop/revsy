@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.338-cf"
+local VERSION = "9.339-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7260,16 +7260,13 @@ local function run(cfg)
                 n = n + 1
                 assigned[pengisi] = true
                 info(("[hactoto] %s -> join PS target %s"):format(pengisi, tostring(target)))
-                -- v9.338: tulis file target -- gaya SAMA kayak READ hactstat (1 lapis single-quote,
-                -- path+json double-quote). Dulu (v9.332) double-nest shq -> Android su GAGAL nulis.
+                -- v9.339: tulis pakai printf octal \042 buat KUTIP. Android su strip \" (v9.338)
+                -- -> kutip ilang -> JSON rusak ({target:X} bukan {"target":"X"}). printf yg bikin kutip.
                 if cfg.workspace_dir and target and target ~= "" then
-                    local js = '{"target":"' .. target .. '","minCount":50}'
-                    local jsEsc = js:gsub('"', '\\"')   -- escape " buat inner double-quote
                     local file = "zenx_hactoto_" .. pengisi .. ".json"
-                    sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && printf %s \"" .. jsEsc .. "\" > \"" .. file .. "\"'")
-                    -- verify (baca balik, gaya sama)
+                    sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && printf \"{\\042target\\042:\\042%s\\042,\\042minCount\\042:50}\" \"" .. target .. "\" > \"" .. file .. "\"'")
                     local chk = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" && cat \"" .. file .. "\" 2>/dev/null'") or ""
-                    info(("[hactoto] tulis %s = %s"):format(file, #chk > 0 and ("OK("..#chk.."c)") or "GAGAL"))
+                    info(("[hactoto] tulis %s = %s"):format(file, chk:find('"target"', 1, true) and "OK-JSON" or ("CEK:"..chk:sub(1,40))))
                 elseif target and target ~= "" then
                     info("[hactoto] workspace_dir KOSONG -> gak bisa tulis file target!")
                 end
