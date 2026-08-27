@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.331-cf"
+local VERSION = "9.332-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7235,6 +7235,7 @@ local function run(cfg)
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
         local n = 0
+        local assigned = {}   -- v9.332: pengisi yg dapet target (buat clear sisanya)
         -- assignments: [{"pengisi":"X","target":"Y","psNama":"Z","psLink":"url"}]
         for obj in r:gmatch('{.-}') do
             local pengisi = obj:match('"pengisi"%s*:%s*"(.-)"')
@@ -7243,7 +7244,22 @@ local function run(cfg)
             if pengisi and akun2pkg[pengisi] and psLink and psLink ~= "" then
                 mapLink[akun2pkg[pengisi]] = psLink   -- OVERRIDE: pengisi ke PS target
                 n = n + 1
+                assigned[pengisi] = true
                 info(("[hactoto] %s -> join PS target %s"):format(pengisi, tostring(target)))
+                -- v9.332: tulis file target buat hact auto-config gift (Peacock 2+ >=50 -> trade ke target)
+                if cfg.workspace_dir and target and target ~= "" then
+                    local js = '{"target":"' .. target .. '","minCount":50}'
+                    local path = cfg.workspace_dir .. "/zenx_hactoto_" .. pengisi .. ".json"
+                    sh_silent("su -c " .. shq("printf '%s' " .. shq(js) .. " > " .. shq(path)))
+                end
+            end
+        end
+        -- v9.332: clear file hactoto buat akun yg GAK di-assign (target kelar -> hact stop gift)
+        if cfg.workspace_dir then
+            for _, ak in pairs(mapAkun) do
+                if not assigned[ak] then
+                    sh_silent("su -c " .. shq("rm -f " .. shq(cfg.workspace_dir .. "/zenx_hactoto_" .. ak .. ".json")))
+                end
             end
         end
         if n > 0 then info(("[hactoto] %d client di-assign ke PS target"):format(n)) end
