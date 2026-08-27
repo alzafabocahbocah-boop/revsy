@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.326-cf"
+local VERSION = "9.327-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3760,12 +3760,15 @@ local function grid_hitung(cfg, pkgsPilih)
     -- slot-nya (0,1,2 = baris atas; 3,4,5 = baris bawah). Jadi dimensi + peta basis SEMUA
     -- client, walau yg dibuka cuma subset. peta punya posisi semua 6 -> caller ambil yg perlu.
     local pkgsFull = split(cfg.pkgs)
-    local paksaPenuh = (cfg.script_label == "MARKET") or (cfg.executor == "arceus")
+    -- v9.327: paksaPenuh CUMA market (butuh layout 3x2 TETAP biar client konsisten posisi).
+    -- Farm script (HACT/UP KG/PANEN/CAMPUR/HACT OTO) pakai basis client AKTIF -> grid ngepas
+    -- jumlah client beneran (mis 2 client + grid_kolom=2 baris = 2 baris 1 kolom, bukan 2x2 basis 4).
+    local paksaPenuh = (cfg.script_label == "MARKET")
     local pkgs
     if paksaPenuh then
-        pkgs = pkgsFull                    -- basis PENUH (6) -> 3x2 konsisten
+        pkgs = pkgsFull                    -- basis PENUH (6) -> 3x2 konsisten (market)
     else
-        pkgs = pkgsPilih or pkgsFull       -- perilaku lama: subset -> grid subset
+        pkgs = pkgsPilih or pkgsFull       -- farm: subset aktif -> grid ngepas jumlah client
     end
     local n = #pkgs
     if n == 0 then return nil, "gak ada client di config" end
