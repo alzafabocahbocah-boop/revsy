@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.48"
+local VERSION = "v27.50"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1422,6 +1422,25 @@ local PRESET_HACT = {
             ["Monkey"]       = { action = "sell", kg = 1e9 },
         },
     },
+    ["Paradise Egg"] = {
+        egg = { "Paradise Egg" },
+        keepOnly = true,   -- v27.50: keep CUMA Peacock, sisanya jual
+        petPool = { "Peacock" },
+        komposisi = {
+            ["Reduce Tim"] = {
+                { tipe = "Mimic Octopus", jml = 7, sortir = "kg" },
+                { tipe = "Bald Eagle",    jml = 1, sortir = "kg", ganti = "Birb" },
+            },
+            ["Hatch Tim"] = {
+                { tipe = "Koi",          jml = 5, sortir = "koi" },
+                { tipe = "Brontosaurus", jml = 3, sortir = "bronto" },
+            },
+            ["Sell Tim"] = {
+                { tipe = "Seal", jml = 8, sortir = "seal" },
+            },
+        },
+        sellRules = {},   -- kosong: keepOnly yg atur (Peacock keep, sisanya jual semua kg)
+    },
     ["Gem Egg"] = {
         egg = { "Gem Egg" },
         petPool = { "Topaz Snail", "Sapphire Macaw", "Diamond Panther", "Amethyst Beetle", "Emerald Snake", "Ruby Squid" },
@@ -1535,6 +1554,7 @@ local function applyPresetHact(name)
     config.komposisi = ps.komposisi   -- v27.40: simpen tim pet yg dipakai (buat lapor panel)
     config.petPool = nil
     if ps.petPool then config.petPool = {}; for _, pn in ipairs(ps.petPool) do config.petPool[pn] = true end end
+    config.keepOnly = ps.keepOnly or false   -- v27.50: keep CUMA petPool, sisanya jual (mis Paradise Egg keep Peacock)
     local total = 0
     for tabName, spec in pairs(ps.komposisi) do
         total = total + autoPickTeam(tabName, spec)
@@ -2123,6 +2143,11 @@ local function petFate(p)
     if rule and rule.action == "sell" then
         if p.dispKg and p.dispKg < (rule.kg or 0) then return "sell" end
         return "keep"
+    end
+    if rule and rule.action == "keep" then return "keep" end
+    -- v27.50: keepOnly -> pet DILUAR petPool = SELL (config "keep 1 jenis doang", mis Paradise Egg keep Peacock)
+    if config.keepOnly and config.petPool and not config.petPool[p.name] then
+        return "sell"
     end
     return "keep"  -- KEEP rule atau gak ada rule
 end
@@ -7077,7 +7102,10 @@ do
                         end
                     end
                 end)
-                local stat = { egg = eggName, eggN = eggN, keep = keep, ts = os.time() }
+                -- v27.49: total pet hactotomatis (buat aturan HACT OTO: cuma isi kalau pet > 50)
+                local totalPet = 0
+                pcall(function() if PetDetect and PetDetect.listBackpackPets then totalPet = #PetDetect.listBackpackPets() end end)
+                local stat = { egg = eggName, eggN = eggN, keep = keep, totalPet = totalPet, ts = os.time() }
                 -- pet yang DIPAKAI (tim hatching) dari config.komposisi
                 local used = {}   -- { [namaPet] = jml }
                 pcall(function()
