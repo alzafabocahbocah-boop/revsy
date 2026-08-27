@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.327-cf"
+local VERSION = "9.328-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -4006,12 +4006,21 @@ end
 function grid_satu(cfg, pkg)
     if cfg.auto_grid ~= true then return end   -- grid mati -> lewat
     -- hitung grid FRESH buat client aktif (PKGS_AKTIF). nil = semua client.
-    local peta = grid_hitung(cfg, PKGS_AKTIF)
+    local basis = PKGS_AKTIF
+    -- v9.328: FARM script (non-market) -> basis = client yg BENERAN JALAN (bukan PKGS_AKTIF
+    -- yg bisa stale/beda per client). Bug: 2 client, satu grid basis 2 (bener) satu nyangkut
+    -- basis 4 (lama) krn PKGS_AKTIF beda. Pakai running count -> dua-duanya basis SAMA.
+    if cfg.script_label ~= "MARKET" then
+        local jalan = {}
+        for _, p in ipairs(split(cfg.pkgs)) do
+            if pkg_running(p) then jalan[#jalan+1] = p end
+        end
+        if #jalan > 0 then basis = jalan end
+    end
+    local peta = grid_hitung(cfg, basis)
     if peta and peta[pkg] then
         tata_satu(pkg, peta[pkg], true)   -- hapus posisi lama + tulis fresh
-        -- v9.251: DIAGNOSTIK -- keliatan grid pakai basis berapa client. Kalau 6-10
-        -- keluar "basis 5" = PKGS_AKTIF ke-reset jadi 5 (bug). Harusnya "basis 10".
-        info(("[grid] %s -> grid basis %d client"):format(tostring(pkg):sub(-10), #(PKGS_AKTIF or {})))
+        info(("[grid] %s -> grid basis %d client"):format(tostring(pkg):sub(-10), #(basis or PKGS_AKTIF or {})))
     end
 end
 
