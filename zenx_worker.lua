@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.335-cf"
+local VERSION = "9.336-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8091,6 +8091,9 @@ local function run(cfg)
                             pcall(function() api_post(cfg, "/upkgstat-batch", body) end)
                         end
                     end
+                    -- v9.336: refresh_hactoto di loop HIDUP (denyut). Dulu (v9.334) ke-taro di
+                    -- blok `if false then` yg DIMATIIN -> gak pernah jalan. Sekarang tiap siklus denyut.
+                    pcall(refresh_hactoto)
                     local dcnt = 0
                     for _ in pairs(denyutSemua) do dcnt = dcnt + 1 end
                     DENYUT_UMUR = denyutSemua   -- v9.77: simpen global biar lapor kirim ke panel
