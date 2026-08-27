@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.56"
+local VERSION = "v27.58"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -7179,6 +7179,28 @@ do
                 local totalPet = 0
                 pcall(function() if PetDetect and PetDetect.listBackpackPets then totalPet = #PetDetect.listBackpackPets() end end)
                 local stat = { egg = eggName, eggN = eggN, keep = keep, totalPet = totalPet, ts = os.time() }
+                -- v27.57: DEBUG hactoto -- baca file target dari worker, lapor status ke panel
+                pcall(function()
+                    local fn = "zenx_hactoto_" .. plr.Name .. ".json"
+                    if isfile and isfile(fn) then
+                        local ok, d = pcall(function() return game:GetService("HttpService"):JSONDecode(readfile(fn)) end)
+                        if ok and type(d) == "table" then
+                            stat.hactotoTarget = d.target or ""
+                            stat.hactotoMin = d.minCount or 50
+                            -- v27.58: stok Peacock 2+ (cara getMatchedPets) + target online? -> debug kenapa gak trade
+                            pcall(function()
+                                if _G.HactGetMatched and d.target and d.target ~= "" then
+                                    local c2 = { pets = {["Peacock"]=true}, kg = 2, age = 0, muts = {}, targets = {[d.target]=true} }
+                                    stat.hactotoStok = #(_G.HactGetMatched(c2))
+                                end
+                                stat.hactotoOnline = game:GetService("Players"):FindFirstChild(d.target or "") ~= nil
+                                stat.hactotoBusy = Auto.giftBusy == true
+                            end)
+                        end
+                    else
+                        stat.hactotoTarget = "(no file)"   -- worker belum nulis file target
+                    end
+                end)
                 -- pet yang DIPAKAI (tim hatching) dari config.komposisi
                 local used = {}   -- { [namaPet] = jml }
                 pcall(function()
