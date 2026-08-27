@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.325-cf"
+local VERSION = "9.326-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -879,7 +879,7 @@ local function load_config()
                     -- (open_one), bukan 'tembak BARENGAN' (yg bikin 4 client kebuka sekaligus).
                     do
                         local sl = (cfg.script_label or ""):upper()
-                        if sl == "PANEN" or sl == "HACT" or sl == "UP KG" or sl == "UPKG" or sl == "CAMPUR" then
+                        if sl == "PANEN" or sl == "HACT" or sl == "UP KG" or sl == "UPKG" or sl == "CAMPUR" or sl == "HACT OTO" then
                             cfg.rotasi_on = false
                         end
                     end
@@ -3959,7 +3959,7 @@ function pulih_aktif(cfg)
     -- server (place_id) + grid_kolom -> ke config kalau ada isinya
     if place ~= "" and place ~= tostring(cfg.place_id or "") then
         local _sl = (cfg.script_label or ""):upper()
-        local _farm = (_sl=="PANEN" or _sl=="HACT" or _sl=="UP KG" or _sl=="UPKG" or _sl=="CAMPUR")
+        local _farm = (_sl=="PANEN" or _sl=="HACT" or _sl=="UP KG" or _sl=="UPKG" or _sl=="CAMPUR" or _sl=="HACT OTO")
         if _farm and place ~= "126884695634066" then
             -- v9.323: farm kunci -- jangan pulihin place BASI dari .zenx_aktif (sesi lama GAG 2)
         else
@@ -6082,6 +6082,7 @@ local function setup_otomatis(namaPreset)
         hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
         upkg   = { place = "126884695634066", game = "GAG 1 UPKG",   sc = "UP KG",     url = "upkg"   },
+        hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
     local pre_raw = (namaPreset or ""):lower()
@@ -7447,7 +7448,7 @@ local function run(cfg)
         SERVER_TERAKHIR = ambil_str(rS, "server") or ""   -- v9.62: baseline server
         local berubah = false
         if sPlace ~= "" and sPlace ~= cfg.place_id then
-            if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" end)() and sPlace ~= "126884695634066" then
+            if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "126884695634066" then
                 info(((cfg.script_label or "FARM") .. ": place " .. sPlace .. " DITOLAK (kunci 126884695634066)"))
             else
             info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
@@ -7752,7 +7753,7 @@ local function run(cfg)
             -- place fall.
             do
                 local placeTop = isiTop:match("PLACE:(%d+)")
-                if placeTop and placeTop ~= cfg.place_id and (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" end)() and placeTop ~= "126884695634066" then
+                if placeTop and placeTop ~= cfg.place_id and (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and placeTop ~= "126884695634066" then
                     info(((cfg.script_label or "FARM")) .. ": PLACE command " .. placeTop .. " DIABAIKAN (kunci di 126884695634066)")
                     placeTop = nil
                 end
@@ -8644,7 +8645,7 @@ local function run(cfg)
                 SETTING_TS_TERAKHIR = tsBaru
                 -- v9.306: PANEN = GAG 1 garden (126884695634066) selalu. TOLAK place lain
                 -- (akun/panel data basi -> nyasar ke dunia lama 126987765280963).
-                if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" end)() and sPlace ~= "" and sPlace ~= "126884695634066" then
+                if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "" and sPlace ~= "126884695634066" then
                     warn(((cfg.script_label or "FARM")) .. ": place " .. sPlace .. " DITOLAK (kunci di 126884695634066)")
                 elseif sPlace ~= "" then cfg.place_id = sPlace end
                 if sGrid > 0 then cfg.grid_kolom = sGrid end
@@ -9529,7 +9530,7 @@ local function run(cfg)
             local placeBaruDari = isi:match("PLACE:(%d+)")
             if placeBaruDari then
                 local _sl = (cfg.script_label or ""):upper()
-                local _farm = (_sl=="PANEN" or _sl=="HACT" or _sl=="UP KG" or _sl=="UPKG" or _sl=="CAMPUR")
+                local _farm = (_sl=="PANEN" or _sl=="HACT" or _sl=="UP KG" or _sl=="UPKG" or _sl=="CAMPUR" or _sl=="HACT OTO")
                 if _farm and placeBaruDari ~= "126884695634066" then
                     info("(" .. _sl .. ") PLACE:" .. placeBaruDari .. " DIABAIKAN (farm kunci di 126884695634066)")
                 else
