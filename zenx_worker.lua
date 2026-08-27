@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.339-cf"
+local VERSION = "9.340-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7245,6 +7245,8 @@ local function run(cfg)
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
         local n = 0
         local assigned = {}   -- v9.332: pengisi yg dapet target (buat clear sisanya)
+        local asgn = {}       -- v9.340: {pengisi, target} buat tulis file setelah kumpul semua target
+        local allT = {}       -- v9.340: SEMUA target (buat hact pilih yg BENERAN present di server-nya)
         -- assignments: [{"pengisi":"X","target":"Y","psNama":"Z","psLink":"url"}]
         for obj in r:gmatch('{.-}') do
             local pengisi = obj:match('"pengisi"%s*:%s*"(.-)"')
@@ -7256,19 +7258,30 @@ local function run(cfg)
             end
             if pengisi and akun2pkg[pengisi] and psLink and psLink ~= "" then
                 mapLink[akun2pkg[pengisi]] = psLink   -- OVERRIDE: pengisi ke PS target
-                mapPsNama[akun2pkg[pengisi]] = "target:" .. tostring(target)   -- v9.333: biar periodic loop deteksi PINDAH -> rejoin ke PS target
+                mapPsNama[akun2pkg[pengisi]] = "target:" .. tostring(target)   -- v9.333: deteksi PINDAH -> rejoin
                 n = n + 1
                 assigned[pengisi] = true
+                asgn[#asgn+1] = { pengisi = pengisi, target = target }
+                if target and target ~= "" then allT[#allT+1] = target end
                 info(("[hactoto] %s -> join PS target %s"):format(pengisi, tostring(target)))
-                -- v9.339: tulis pakai printf octal \042 buat KUTIP. Android su strip \" (v9.338)
-                -- -> kutip ilang -> JSON rusak ({target:X} bukan {"target":"X"}). printf yg bikin kutip.
-                if cfg.workspace_dir and target and target ~= "" then
-                    local file = "zenx_hactoto_" .. pengisi .. ".json"
-                    sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && printf \"{\\042target\\042:\\042%s\\042,\\042minCount\\042:50}\" \"" .. target .. "\" > \"" .. file .. "\"'")
-                    local chk = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" && cat \"" .. file .. "\" 2>/dev/null'") or ""
-                    info(("[hactoto] tulis %s = %s"):format(file, chk:find('"target"', 1, true) and "OK-JSON" or ("CEK:"..chk:sub(1,40))))
-                elseif target and target ~= "" then
-                    info("[hactoto] workspace_dir KOSONG -> gak bisa tulis file target!")
+            end
+        end
+        -- v9.340: tulis file per pengisi -- {"target":"<assigned>","targets":[semua],"minCount":50}
+        -- hact trade ke target yg BENERAN present di server-nya (anti swap: pengisi bisa nyasar
+        -- ke PS target lain, tapi tetep isi target yg ADA di situ).
+        do
+            local tl = {}
+            for _, t in ipairs(allT) do tl[#tl+1] = "\\042" .. t .. "\\042" end
+            local tlist = table.concat(tl, ",")
+            for _, a in ipairs(asgn) do
+                if cfg.workspace_dir and a.target and a.target ~= "" then
+                    local file = "zenx_hactoto_" .. a.pengisi .. ".json"
+                    local fmt = "{\\042target\\042:\\042%s\\042,\\042targets\\042:[" .. tlist .. "],\\042minCount\\042:50}"
+                    sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && printf \"" .. fmt .. "\" \"" .. a.target .. "\" > \"" .. file .. "\"'")
+                    if dbg then
+                        local chk = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" && cat \"" .. file .. "\" 2>/dev/null'") or ""
+                        info(("[hactoto] tulis %s = %s"):format(file, chk:find('"target"', 1, true) and "OK-JSON" or ("CEK:"..chk:sub(1,40))))
+                    end
                 end
             end
         end
