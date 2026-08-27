@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.62"
+local VERSION = "v27.63"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2137,16 +2137,28 @@ do
                 local fn = "zenx_hactoto_" .. plr.Name .. ".json"
                 if not isfile(fn) then return end   -- gak ada target -> gak gift
                 local ok, data = pcall(function() return HttpService:JSONDecode(readfile(fn)) end)
-                if not ok or type(data) ~= "table" or not data.target or data.target == "" then return end
+                if not ok or type(data) ~= "table" then return end
                 local minC = tonumber(data.minCount) or 50
-                -- cfg filter Peacock base 2+ (kg >= 2), trade ke target
+                -- v27.63: pilih target yg BENERAN PRESENT di server ini (anti-swap: pengisi bisa
+                -- nyasar ke PS target lain, tapi tetep isi target yg ADA). Coba data.target dulu,
+                -- kalau gak present -> cari dari data.targets[] yg present.
+                local pilih = nil
+                if data.target and data.target ~= "" and Players:FindFirstChild(data.target) then
+                    pilih = data.target
+                elseif type(data.targets) == "table" then
+                    for _, t in ipairs(data.targets) do
+                        if t and t ~= "" and Players:FindFirstChild(t) then pilih = t; break end
+                    end
+                end
+                if not pilih then return end   -- gak ada target present di server -> skip
+                -- cfg filter Peacock base 2+ (kg >= 2), trade ke target present
                 local cfg2 = { pets = {["Peacock"]=true}, kg = 2, age = 0, muts = {},
-                    method = "trade", targets = {[data.target]=true}, unfavFirst = true }
+                    method = "trade", targets = {[pilih]=true}, unfavFirst = true }
                 if Auto.giftBusy then return end   -- lagi gift/trade -> tunggu
                 local n = #(_G.HactGetMatched(cfg2))
                 if n < minC then return end        -- stok < 50 -> GAK trade
-                print("[HactTelur] HACT OTO: stok Peacock 2+ "..n.." >= "..minC.." -> trade ke "..data.target)
-                _G.HactGiftFilter(cfg2)            -- trade SEMUA Peacock 2+ ke target
+                print("[HactTelur] HACT OTO: stok Peacock 2+ "..n.." >= "..minC.." -> trade ke "..pilih)
+                _G.HactGiftFilter(cfg2)            -- trade SEMUA Peacock 2+ ke target present
             end)
         end
     end)
@@ -7195,7 +7207,14 @@ do
                                     local c2 = { pets = {["Peacock"]=true}, kg = 2, age = 0, muts = {}, targets = {[d.target]=true} }
                                     stat.hactotoStok = #(_G.HactGetMatched(c2))
                                 end
-                                stat.hactotoOnline = game:GetService("Players"):FindFirstChild(d.target or "") ~= nil
+                                -- v27.63: online = ada target present (data.target ATAU salah satu targets[])
+                                local onlineT = nil
+                                if d.target and d.target ~= "" and game:GetService("Players"):FindFirstChild(d.target) then onlineT = d.target
+                                elseif type(d.targets) == "table" then
+                                    for _, t in ipairs(d.targets) do if t and game:GetService("Players"):FindFirstChild(t) then onlineT = t break end end
+                                end
+                                stat.hactotoOnline = onlineT ~= nil
+                                if onlineT then stat.hactotoTarget = onlineT end   -- tampil target yg BENERAN dipilih
                                 stat.hactotoBusy = Auto.giftBusy == true
                                 -- v27.62: siapa aja di server ini (debug kenapa target gak online)
                                 local pl = {}
