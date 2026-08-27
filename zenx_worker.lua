@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.330-cf"
+local VERSION = "9.331-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7226,7 +7226,30 @@ local function run(cfg)
             warn("[ps-getps] Jalanin 'zenx getps' di RF ini dulu, atau assign PS di panel.")
         end
     end
+    -- v9.331 TAHAP 3: HACT OTO -- baca /hactoto-target, OVERRIDE mapLink[pengisi] ke PS target.
+    -- Tiap client hactotomatis (pengisi) join ke PS target-nya (yg bahan habis), bukan PS sendiri.
+    -- MENETAP: mapLink tetep = PS target -> rejoin pun balik ke target (gak balik server sendiri).
+    local function refresh_hactoto()
+        if (cfg.script_label or "") ~= "HACT OTO" then return end
+        local r = api_get(cfg, "/hactoto-target?tim=" .. cfg.tim) or ""
+        local akun2pkg = {}
+        for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
+        local n = 0
+        -- assignments: [{"pengisi":"X","target":"Y","psNama":"Z","psLink":"url"}]
+        for obj in r:gmatch('{.-}') do
+            local pengisi = obj:match('"pengisi"%s*:%s*"(.-)"')
+            local psLink  = obj:match('"psLink"%s*:%s*"(.-)"')
+            local target  = obj:match('"target"%s*:%s*"(.-)"')
+            if pengisi and akun2pkg[pengisi] and psLink and psLink ~= "" then
+                mapLink[akun2pkg[pengisi]] = psLink   -- OVERRIDE: pengisi ke PS target
+                n = n + 1
+                info(("[hactoto] %s -> join PS target %s"):format(pengisi, tostring(target)))
+            end
+        end
+        if n > 0 then info(("[hactoto] %d client di-assign ke PS target"):format(n)) end
+    end
     pcall(refresh_ps_getps)
+    pcall(refresh_hactoto)   -- v9.331: override mapLink pengisi ke PS target (HACT OTO)
     local lastPsRefresh = os.time()
 
     -- v4.10: tampilan TABEL (clear screen + redraw kiri atas, gak scroll spam).
@@ -7786,7 +7809,7 @@ local function run(cfg)
                         info("  AUTO GETPS -- ambil PS link semua akun dulu (biar gak public)...")
                         os.execute(((os.getenv("PREFIX") or "/data/data/com.termux/files/usr")
                             .. "/bin/zenx") .. " getps")
-                        pcall(refresh_ps_getps)   -- muat ulang ps_link yg baru ke-ambil
+                        pcall(refresh_ps_getps); pcall(refresh_hactoto)   -- muat ulang ps_link + assign hactoto
                     end
                 end
                 -- v8.64: proses GRID juga di denyut loop (bareng PLACE). Biar grid
@@ -8175,7 +8198,7 @@ local function run(cfg)
                     -- accessCode di-set SETELAH itu (klik World 2 Private) -> mapLink
                     -- kosong -> join PUBLIC. Refresh di sini biar accessCode terbaru
                     -- kepakai -> join PS-access per akun.
-                    pcall(refresh_ps); pcall(refresh_ps_getps)
+                    pcall(refresh_ps); pcall(refresh_ps_getps); pcall(refresh_hactoto)
                     -- v8.68 FIX: CEK LISENSI DULU sebelum rejoin. Bug user: rejoin
                     -- denyut buka client TANPA cek lisensi -> client kebuka nyangkut
                     -- di layar "Enter key" (lisensi hilang) -> baru ketahuan pas FORCE
@@ -8930,7 +8953,7 @@ local function run(cfg)
                         nm = nm:gsub("%s+", "")
                         if nm ~= "" then daftarAkun[#daftarAkun+1] = nm end
                     end
-                    refresh_ps(); pcall(refresh_ps_getps)   -- v8.53: getps juga (accessCode per akun ke-refresh)
+                    refresh_ps(); pcall(refresh_ps_getps); pcall(refresh_hactoto)   -- v8.53: getps + assign hactoto
                     -- v4.61: kumpulin dulu, TUTUP BARENGAN, baru buka bertahap.
                     -- Perintah dari panel jadi kerasa langsung -- bukan nunggu
                     -- client 1 kelar dulu baru nyentuh client 2.
