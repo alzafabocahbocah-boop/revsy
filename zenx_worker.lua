@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.337-cf"
+local VERSION = "9.338-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7260,14 +7260,16 @@ local function run(cfg)
                 n = n + 1
                 assigned[pengisi] = true
                 info(("[hactoto] %s -> join PS target %s"):format(pengisi, tostring(target)))
-                -- v9.332: tulis file target buat hact auto-config gift (Peacock 2+ >=50 -> trade ke target)
+                -- v9.338: tulis file target -- gaya SAMA kayak READ hactstat (1 lapis single-quote,
+                -- path+json double-quote). Dulu (v9.332) double-nest shq -> Android su GAGAL nulis.
                 if cfg.workspace_dir and target and target ~= "" then
                     local js = '{"target":"' .. target .. '","minCount":50}'
-                    local path = cfg.workspace_dir .. "/zenx_hactoto_" .. pengisi .. ".json"
-                    sh_silent("su -c " .. shq("printf '%s' " .. shq(js) .. " > " .. shq(path)))
-                    -- v9.337 DEBUG: baca balik biar tau file beneran ke-tulis + path-nya
-                    local chk = sh("su -c " .. shq("cat " .. shq(path) .. " 2>/dev/null")) or ""
-                    info(("[hactoto] tulis '%s' = %s"):format(path, #chk > 0 and ("OK("..#chk.."c)") or "GAGAL/kosong"))
+                    local jsEsc = js:gsub('"', '\\"')   -- escape " buat inner double-quote
+                    local file = "zenx_hactoto_" .. pengisi .. ".json"
+                    sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && printf %s \"" .. jsEsc .. "\" > \"" .. file .. "\"'")
+                    -- verify (baca balik, gaya sama)
+                    local chk = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" && cat \"" .. file .. "\" 2>/dev/null'") or ""
+                    info(("[hactoto] tulis %s = %s"):format(file, #chk > 0 and ("OK("..#chk.."c)") or "GAGAL"))
                 elseif target and target ~= "" then
                     info("[hactoto] workspace_dir KOSONG -> gak bisa tulis file target!")
                 end
@@ -7277,7 +7279,7 @@ local function run(cfg)
         if cfg.workspace_dir then
             for _, ak in pairs(mapAkun) do
                 if not assigned[ak] then
-                    sh_silent("su -c " .. shq("rm -f " .. shq(cfg.workspace_dir .. "/zenx_hactoto_" .. ak .. ".json")))
+                    sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && rm -f \"zenx_hactoto_" .. ak .. ".json\"'")
                 end
             end
         end
