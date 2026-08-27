@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.333-cf"
+local VERSION = "9.334-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7256,6 +7256,7 @@ local function run(cfg)
             end
             if pengisi and akun2pkg[pengisi] and psLink and psLink ~= "" then
                 mapLink[akun2pkg[pengisi]] = psLink   -- OVERRIDE: pengisi ke PS target
+                mapPsNama[akun2pkg[pengisi]] = "target:" .. tostring(target)   -- v9.333: biar periodic loop deteksi PINDAH -> rejoin ke PS target
                 n = n + 1
                 assigned[pengisi] = true
                 info(("[hactoto] %s -> join PS target %s"):format(pengisi, tostring(target)))
@@ -7281,6 +7282,7 @@ local function run(cfg)
     pcall(refresh_ps_getps)
     pcall(refresh_hactoto)   -- v9.331: override mapLink pengisi ke PS target (HACT OTO)
     local lastPsRefresh = os.time()
+    local lastHactoto = 0   -- v9.334: timer refresh_hactoto (tiap 5s)
 
     -- v4.10: tampilan TABEL (clear screen + redraw kiri atas, gak scroll spam).
     -- log penting (auto-rejoin/error) ditaro di buffer, muncul di bawah tabel.
@@ -10342,7 +10344,11 @@ local function run(cfg)
                 psGantiKerjakan = psGantiPeek
                 tambahLog("PANEL: ada perubahan server -> langsung dikerjain")
             end
-            if (psBaruDariPanel or (now - lastPsRefresh) >= 60) and MODE_JALAN then
+            -- v9.334: refresh_hactoto CEPET (tiap 5s, ringan cuma GET) biar target hactoto
+            -- cepet ke-apply. refresh_ps/getps tetep 60s (berat: getps accessCode per akun).
+            local doHactoto = (now - lastHactoto) >= 5
+            local doPs = psBaruDariPanel or (now - lastPsRefresh) >= 60
+            if (doHactoto or doPs) and MODE_JALAN then
                 -- v8.96: TAMBAH guard MODE_JALAN. Bug user (curiga grid nyangkut pas
                 -- standby): loop PS-pindah rejoin client walau STANDBY -> open_one ->
                 -- grid_satu pakai PKGS_AKTIF yg BASI (pas standby hitTop=false, PKGS_
@@ -10352,8 +10358,9 @@ local function run(cfg)
                 -- v4.23: PS pindah? -> rejoin client itu doang, biar masuk PS baru.
                 local psLama = {}
                 for k, v in pairs(mapPsNama) do psLama[k] = v end
-                refresh_ps(); pcall(refresh_ps_getps)
-                lastPsRefresh = now
+                refresh_ps()
+                if doPs then pcall(refresh_ps_getps); lastPsRefresh = now end   -- v9.334: getps berat -> 60s
+                if doHactoto then pcall(refresh_hactoto); lastHactoto = now end  -- v9.334: hactoto ringan -> 5s
                 -- v4.61: KUMPULIN dulu semua yang pindah, TUTUP BARENGAN, baru
                 -- buka satu-satu. Dulu tiap client ditutup+dibuka sendiri-sendiri
                 -- -> 3 client bisa makan semenit lebih cuma buat nutup.
