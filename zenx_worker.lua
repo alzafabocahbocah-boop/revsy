@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.334-cf"
+local VERSION = "9.335-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7232,15 +7232,15 @@ local function run(cfg)
     local _hactotoDbg = 0
     local function refresh_hactoto()
         local sl = cfg.script_label or ""
-        -- v9.333 DEBUG: log berkala biar keliatan kenapa gak jalan
         _hactotoDbg = _hactotoDbg + 1
         local dbg = (_hactotoDbg % 3 == 1)   -- log tiap 3x panggil (kurangin spam)
         if sl ~= "HACT OTO" then
-            if dbg then info(("[hactoto] SKIP: script_label=%q (bukan 'HACT OTO') -- device ini bukan hactotomatis?"):format(sl)) end
+            if dbg then info(("[hactoto] SKIP: script_label=%q (bukan 'HACT OTO')"):format(sl)) end
             return
         end
-        local r = api_get(cfg, "/hactoto-target?tim=" .. cfg.tim) or ""
-        if dbg then info(("[hactoto] baca tim=%s -> resp %d char"):format(tostring(cfg.tim), #r)) end
+        local r = api_get(cfg, "/hactoto-target?tim=" .. tostring(cfg.tim)) or ""
+        -- v9.335: SELALU log tim + resp (biar keliatan pasti -- tim mismatch = resp 0)
+        info(("[hactoto] tim=%q resp=%dchar akun_device=%d"):format(tostring(cfg.tim), #r, (function() local c=0 for _ in pairs(mapAkun) do c=c+1 end return c end)()))
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
         local n = 0
