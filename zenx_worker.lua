@@ -8844,6 +8844,9 @@ local function run(cfg)
                             end
                         end
                     end
+                    -- v9.332: apply target hactoto SEBELUM FORCE open -> pas awal start
+                    -- client langsung masuk PS target (perintah panel langsung dijalanin).
+                    pcall(refresh_ps); pcall(refresh_ps_getps); pcall(refresh_hactoto)
                     open_all(cfg, onlyLis, function() return ada_perintah_baru(cfg, isi) end, nil, mapLink, mapAkun, false, true)
                     refresh_status(); lastStatusCek = os.time()
                     BYPASS_TERAKHIR = now
