@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.329-cf"
+local VERSION = "9.330-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2833,10 +2833,10 @@ local function build_url(cfg, link_client)
     if lc:find("share=http") then
         local shareUrl = lc:match("share=(https?://[^|%s]+)")
         if shareUrl then
-            -- v9.318: HTTPS share nyangkut HOME (inkonsisten di Arceus baru). Deep link
-            -- roblox://placeId=X&linkCode=<sharecode> TERUJI stabil (test manual user).
-            local code = shareUrl:match("share%?code=([%w%-]+)")
-            if code then return "roblox://placeId=" .. cfg.place_id .. "&linkCode=" .. code end
+            -- v9.330: HTTPS share URL LANGSUNG (roblox.com/share?code=X&type=Server).
+            -- Deep link roblox://...&linkCode= (v9.318) SEKARANG bikin error 524 + nyangkut
+            -- HOME putih. User test manual: am start HTTPS share + flag 0x14000000 -> masuk
+            -- PS LANCAR. Balik ke share URL (Roblox resolve+join sendiri).
             return shareUrl
         end
     end
@@ -2846,9 +2846,10 @@ local function build_url(cfg, link_client)
         if code then return "roblox://placeId=" .. cfg.place_id .. "&accessCode=" .. code end
     end
     if lc:find("share%?code=") or lc:find("/share%?") then
-        -- v9.318: HTTPS share nyangkut HOME (inkonsisten). Deep link roblox://placeId=X&linkCode=<code> teruji stabil.
+        -- v9.330: HTTPS share URL langsung (roblox.com/share?code=X&type=Server), BUKAN deep
+        -- link linkCode (v9.318) yg skrg error 524 + nyangkut HOME. User test: HTTPS share jalan.
         local code = lc:match("share%?code=([%w%-]+)")
-        if code then return "roblox://placeId=" .. cfg.place_id .. "&linkCode=" .. code end
+        if code then return "https://www.roblox.com/share?code=" .. code .. "&type=Server" end
         if lc:sub(1,4) ~= "http" then lc = "https://www.roblox.com/" .. lc:gsub("^/", "") end
         return lc   -- fallback: buka URL share apa adanya
     elseif lc:find("privateServerLinkCode=") and lc:sub(1,4) == "http" then
