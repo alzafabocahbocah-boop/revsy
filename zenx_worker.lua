@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.332-cf"
+local VERSION = "9.333-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7229,9 +7229,18 @@ local function run(cfg)
     -- v9.331 TAHAP 3: HACT OTO -- baca /hactoto-target, OVERRIDE mapLink[pengisi] ke PS target.
     -- Tiap client hactotomatis (pengisi) join ke PS target-nya (yg bahan habis), bukan PS sendiri.
     -- MENETAP: mapLink tetep = PS target -> rejoin pun balik ke target (gak balik server sendiri).
+    local _hactotoDbg = 0
     local function refresh_hactoto()
-        if (cfg.script_label or "") ~= "HACT OTO" then return end
+        local sl = cfg.script_label or ""
+        -- v9.333 DEBUG: log berkala biar keliatan kenapa gak jalan
+        _hactotoDbg = _hactotoDbg + 1
+        local dbg = (_hactotoDbg % 3 == 1)   -- log tiap 3x panggil (kurangin spam)
+        if sl ~= "HACT OTO" then
+            if dbg then info(("[hactoto] SKIP: script_label=%q (bukan 'HACT OTO') -- device ini bukan hactotomatis?"):format(sl)) end
+            return
+        end
         local r = api_get(cfg, "/hactoto-target?tim=" .. cfg.tim) or ""
+        if dbg then info(("[hactoto] baca tim=%s -> resp %d char"):format(tostring(cfg.tim), #r)) end
         local akun2pkg = {}
         for pkg, ak in pairs(mapAkun) do akun2pkg[ak] = pkg end
         local n = 0
@@ -7241,6 +7250,10 @@ local function run(cfg)
             local pengisi = obj:match('"pengisi"%s*:%s*"(.-)"')
             local psLink  = obj:match('"psLink"%s*:%s*"(.-)"')
             local target  = obj:match('"target"%s*:%s*"(.-)"')
+            if dbg and pengisi then
+                info(("[hactoto] entry pengisi=%s match_pkg=%s psLink=%s"):format(
+                    tostring(pengisi), tostring(akun2pkg[pengisi] ~= nil), (psLink and psLink ~= "") and "ada" or "KOSONG"))
+            end
             if pengisi and akun2pkg[pengisi] and psLink and psLink ~= "" then
                 mapLink[akun2pkg[pengisi]] = psLink   -- OVERRIDE: pengisi ke PS target
                 n = n + 1
@@ -7262,7 +7275,8 @@ local function run(cfg)
                 end
             end
         end
-        if n > 0 then info(("[hactoto] %d client di-assign ke PS target"):format(n)) end
+        if n > 0 then info(("[hactoto] %d client di-assign ke PS target"):format(n))
+        elseif dbg then info("[hactoto] n=0 (gak ada assignment cocok -- cek tim/pengisi/psLink)") end
     end
     pcall(refresh_ps_getps)
     pcall(refresh_hactoto)   -- v9.331: override mapLink pengisi ke PS target (HACT OTO)
