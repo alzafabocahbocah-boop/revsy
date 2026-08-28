@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.93"
+local VERSION = "v0.94"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -925,6 +925,62 @@ do
         for u in pairs(bahanAktif) do equipPet(u, CLUSTER); task.wait(dly) end
     end
 
+    -- v0.94: VERIFIKASI PLACEMENT -- support 1 tipe > config ATAU bahan > max ATAU ada pet EXTRA
+    -- ke-equip (tipe support tapi gak di-track) -> placement SALAH -> redo sesi (out semua, masukin lagi).
+    local function getSUP(sesi)
+        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
+    end
+    local function getMaxB(sesi)
+        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
+    end
+    local function tipeDariUuid(uuid)
+        local c = _kgContainer
+        if not c then return nil end
+        local e = c[fmtUUID(uuid)]
+        if type(e) == "table" and e.PetType then return stripMutation(tostring(e.PetType)) end
+        return nil
+    end
+    local function placementSalah(sesi)
+        local SUP = getSUP(sesi); local maxB = getMaxB(sesi)
+        -- 1. support 1 tipe LEBIH dari config? (mis 3 Gilded, config 2)
+        local supCnt = {}
+        for _, nm in pairs(supportKunci) do supCnt[nm] = (supCnt[nm] or 0) + 1 end
+        for _, sup in ipairs(SUP) do
+            if (supCnt[sup.nama] or 0) > sup.jml then return sup.nama.." "..(supCnt[sup.nama] or 0).."/"..sup.jml end
+        end
+        -- 2. bahan LEBIH dari max?
+        if jml(bahanAktif) > maxB then return "bahan "..jml(bahanAktif).."/"..maxB end
+        -- 3. pet EXTRA ke-equip (punya gua, di cluster, tipe support config, TAPI gak di-track)
+        for uuid in pairs(modelByUuid) do
+            if not supportKunci[uuid] and not bahanAktif[uuid] then
+                local tipe = tipeDariUuid(uuid)   -- nil = bukan pet gua (pet player lain)
+                if tipe then
+                    for _, sup in ipairs(SUP) do
+                        if cocokSemua(tipe, sup.cari) then return tipe.." EXTRA (auto-equip, gak di-track)" end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+    -- OUT semua pet ke-equip -> clear tracking -> re-pick + re-equip (mulai ulang sesi bersih)
+    local function redoSesi(sesi, alasan)
+        KG.reset = true   -- v0.94: pause HEAL/swap selama redo biar gak rebutan
+        kgLog("PLACEMENT SALAH ("..tostring(alasan)..") -> OUT SEMUA + masukin lagi")
+        for uuid in pairs(modelByUuid) do
+            if tipeDariUuid(uuid) then unequipPet(uuid); task.wait(0.04) end   -- cuma pet gua
+        end
+        for u in pairs(supportKunci) do unequipPet(u); task.wait(0.03) end
+        for u in pairs(bahanAktif) do unequipPet(u); task.wait(0.03) end
+        task.wait(0.6)
+        for k in pairs(supportKunci) do supportKunci[k] = nil end   -- clear in-place (jaga upvalue)
+        for k in pairs(bahanAktif) do bahanAktif[k] = nil end
+        task.wait(0.3)
+        pilihSupport(sesi); pilihBahan(sesi); equipSemua()
+        KG.reset = false
+        kgLog("REDO sesi"..sesi.." kelar -> support "..jml(supportKunci).." bahan "..jml(bahanAktif))
+    end
+
 
     -- swap gacor PARALEL (tiap pet swap sendiri-sendiri, GAK antre) — lebih cepet
     local busy, lastSwap, lastPos, busySince = {}, {}, {}, {}
@@ -1133,6 +1189,18 @@ do
                         end
                     end
                     if healed > 0 then kgLog("HEAL: " .. healed .. " pet model ilang -> paksa re-equip") end
+                end
+            end
+        end)
+        -- v0.94: CEK PLACEMENT berkala (tiap 10s) -- support 1 tipe > config / bahan > max /
+        -- ada pet extra ke-equip -> OUT SEMUA + masukin lagi (mulai ulang sesi bersih).
+        task.spawn(function()
+            task.wait(18)   -- tunggu equip awal beres dulu (config Peacock 2s/pet)
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
+                task.wait(10)
+                if KG.aktif and not KG.reset and _G.__ZenxKgResetGen == resetGen then
+                    local salah = placementSalah(KG.sesi)
+                    if salah then pcall(function() redoSesi(KG.sesi, salah) end) end
                 end
             end
         end)
