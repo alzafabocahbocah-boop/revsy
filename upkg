@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.90"
+local VERSION = "v0.92"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -660,10 +660,53 @@ task.spawn(function()
             end
         end
     end
-    -- loop mandiri: klik popup gift yg udah ada / muncul tanpa event
+    -- v0.91: auto-accept WINDOW trade (konfirmasi AKHIR) -- biar terima trade tiket dari
+    -- hactotomatis. Dulu cuma terima gift popup + trade REQUEST, tapi window trade gak di-Accept
+    -- -> trade nggantung. Samain cara hact (klik LiveTrade.Options.Accept + fire remote).
+    local function autoAcceptTradeWindow()
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            if not pg then return end
+            local tui = pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts = lt:FindFirstChild("Options")
+                -- v0.92: klik Accept DAN Confirm (2 langkah: accept dulu, lalu confirm akhir)
+                for _, bn in ipairs({"Accept", "Confirm"}) do
+                    local b = opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function() firesignal(b.Activated) end) end
+                        if getconnections then
+                            for _, c in ipairs(getconnections(b.Activated)) do pcall(function() c:Fire() end) end
+                        end
+                        pcall(function() fireBtn(b) end)
+                    end
+                end
+                -- auto-klik tombol accept/confirm/yes di seluruh window (TextButton & ImageButton)
+                for _, d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t == "yes" or t:find("confirm") or t == "continue" or t == "accept" then
+                            pcall(function() fireBtn(d) end)
+                        end
+                    end
+                end
+            end
+            -- backup remote
+            local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            te = te and te:FindFirstChild("TradeEvents")
+            if te then
+                local a = te:FindFirstChild("Accept"); local c = te:FindFirstChild("Confirm")
+                if c then pcall(function() c:FireServer() end) end
+                if a then pcall(function() a:FireServer() end) end
+            end
+        end)
+    end
+    -- loop mandiri: klik popup gift + ACCEPT window trade
     while true do
-        task.wait(0.8)
+        task.wait(0.6)
         pcall(acceptAllGiftPopups)
+        pcall(autoAcceptTradeWindow)   -- v0.91: konfirmasi trade window (terima tiket)
     end
 end)
 -- 6 support (4 Mimic + 1 Ghostly Spider + 1 Gilded Coach Perytron) + SWAP GACOR
