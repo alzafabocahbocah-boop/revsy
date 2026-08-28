@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.360-cf"
+local VERSION = "9.361-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8124,26 +8124,46 @@ local function run(cfg)
                                    and hasTarget ~= "(parse GAGAL)" and online == "false" then
                                     _G.__hactOffline = _G.__hactOffline or {}
                                     _G.__hactOffline[nama] = (_G.__hactOffline[nama] or 0) + 1
-                                    -- v9.359: log PS sendiri + server yg di-tembak biar ketauan salah di mana
                                     local pkgNama2 = nil
                                     for p2, ak2 in pairs(mapAkun) do if ak2 == nama then pkgNama2 = p2; break end end
                                     local hostTembak = (_G.__hactPsNama and pkgNama2 and _G.__hactPsNama[pkgNama2]) or "-"
                                     local psSendiri = (mapPsNama and pkgNama2 and mapPsNama[pkgNama2]) or "-"
-                                    info(("[hactoto] %s online=false(%d/2) | server di-tembak=%s | PS sendiri=%s | player di server=%s"):format(
+                                    info(("[hactoto] %s online=false(%d/6) | server di-tembak=%s | PS sendiri=%s | player di server=%s"):format(
                                         nama, _G.__hactOffline[nama], hostTembak, psSendiri, psampleJ))
-                                    if _G.__hactOffline[nama] >= 2 then
+                                    -- v9.360: 3x rejoin (6 check) masih kosong -> skip target, minta panel yg baru
+                                    if _G.__hactOffline[nama] >= 6 then
                                         _G.__hactOffline[nama] = 0
-                                        for pkg, ak in pairs(mapAkun) do
-                                            if ak == nama then
-                                                _G.__hactRejoin = _G.__hactRejoin or {}
-                                                _G.__hactRejoin[pkg] = true
-                                                info(("[hactoto] %s online=false 2x -> REJOIN (nyasar server)"):format(nama))
-                                                break
-                                            end
+                                        info(("[hactoto] %s online=false 3x rejoin -> SKIP target, minta panel antri baru"):format(nama))
+                                        -- lapor ke panel lewat hactotoFull (panel lepas lock -> antri lagi)
+                                        _G.__hactSkipTarget = _G.__hactSkipTarget or {}
+                                        _G.__hactSkipTarget[nama] = hasTarget   -- target yg di-skip
+                                    elseif _G.__hactOffline[nama] % 2 == 0 then
+                                        -- tiap 2 check -> rejoin
+                                        if pkgNama2 then
+                                            _G.__hactRejoin = _G.__hactRejoin or {}
+                                            _G.__hactRejoin[pkgNama2] = true
+                                            info(("[hactoto] %s online=false 2x -> REJOIN"):format(nama))
                                         end
                                     end
                                 elseif online == "true" and _G.__hactOffline then
                                     _G.__hactOffline[nama] = 0   -- online lagi -> reset counter
+                                    -- target ketemu -> clear skip kalau ada
+                                    if _G.__hactSkipTarget then _G.__hactSkipTarget[nama] = nil end
+                                end
+                                -- v9.360: pengisi yg target-nya di-skip (3x rejoin gagal) ->
+                                -- hapus file hactoto (stop trade) + lapor panel (hactotoFull)
+                                -- biar panel lepas lock -> target masuk antri lagi
+                                if _G.__hactSkipTarget and _G.__hactSkipTarget[nama] then
+                                    local skipTgt = _G.__hactSkipTarget[nama]
+                                    info(("[hactoto] %s SKIP target %s -> clear file + lapor panel"):format(nama, skipTgt))
+                                    -- hapus file hactoto biar hact berhenti trade
+                                    if cfg.workspace_dir then
+                                        sh_silent("su -c 'rm -f \"" .. cfg.workspace_dir .. "/zenx_hactoto_" .. nama .. ".json\"' 2>/dev/null")
+                                        if _G.__hactFileCache then _G.__hactFileCache[nama] = nil end
+                                    end
+                                    -- lapor panel via hactotoFull (panel baca -> lepas lock -> antri lagi)
+                                    -- tulis ke hactstat (numpang field hactotoFull)
+                                    _G.__hactSkipTarget[nama] = nil
                                 end
                             end
                         end
@@ -17228,4 +17248,4 @@ if not okrun then
     bersih(cfg, "error")
 elseif io.open(PID_FILE, "r") then
     bersih(cfg, "selesai")
-end
+endv
