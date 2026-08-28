@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.346-cf"
+local VERSION = "9.349-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7261,13 +7261,15 @@ local function run(cfg)
                 mapLink[pkg] = psLink   -- OVERRIDE: pengisi ke PS target
                 mapPsNama[pkg] = "target:" .. tostring(target)   -- v9.333: deteksi PINDAH -> rejoin
                 -- v9.341: psLink BERUBAH (target GANTI) -> tandai buat REJOIN ke PS target baru.
-                -- Dulu pengisi nyangkut di PS target LAMA walau udah dapet target baru.
+                -- v9.349: LANGSUNG tembak di sini (bukan tunggu loop denyut) -- prioritas tertinggi.
+                -- Panel kirim target baru = pengisi HARUS segera pindah, bypass grace/antrian.
                 _G.__hactLastLink = _G.__hactLastLink or {}
                 if _G.__hactLastLink[pkg] ~= psLink then
                     _G.__hactLastLink[pkg] = psLink
-                    _G.__hactRejoin = _G.__hactRejoin or {}
-                    _G.__hactRejoin[pkg] = true
-                    info(("[hactoto] %s target GANTI -> rejoin ke PS baru"):format(pengisi))
+                    info(("[hactoto] %s target GANTI -> TEMBAK LANGSUNG ke PS baru (prioritas)"):format(pengisi))
+                    pcall(function() grid_satu(cfg, pkg) end)
+                    open_one(cfg, pkg, psLink, "hactoto-target-baru")
+                    KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
                 end
                 n = n + 1
                 assigned[pengisi] = true
@@ -8304,13 +8306,19 @@ local function run(cfg)
                 end
                 info(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
                 tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
-                -- v9.341: pengisi yg target-nya GANTI -> rejoin ke PS target baru (biar gak nyangkut
-                -- di PS target lama). Ditandai di refresh_hactoto pas psLink berubah.
+                -- v9.348: hactRejoin LANGSUNG tembak walau denyut fresh (bypass antrian diGame).
+                -- Bug: client di game (denyut fresh) -> diGame=true -> perluTembak gak ke-proses
+                -- (perlu==diGame -> skip tembak) -> nyasar server salah selamanya walau online=false.
+                -- Fix: tembak TERPISAH via open_one langsung (bypass cek antrian), grace 150s buat load.
                 if _G.__hactRejoin and MODE_JALAN then
                     for pkg in pairs(_G.__hactRejoin) do
-                        local udahAda = false
-                        for _, p in ipairs(perluTembak) do if p == pkg then udahAda = true break end end
-                        if not udahAda then perluTembak[#perluTembak+1] = pkg end
+                        local tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
+                        if tsAge >= 150 then
+                            info(("[hactoto] TEMBAK %s ke PS target (bypass diGame)"):format((mapAkun or {})[pkg] or pkg))
+                            pcall(function() grid_satu(cfg, pkg) end)
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "hactoto-nyasar")
+                            KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                        end
                     end
                     _G.__hactRejoin = {}
                 end
