@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.343-cf"
+local VERSION = "9.344-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8242,7 +8242,11 @@ local function run(cfg)
                             -- JANGAN rejoin walau denyut basi (grace 240s = 4 menit, krn masuk PS ~3 menit). Dia masih loading/spawn
                             -- (belum sempet nulis denyut fresh ~2 menit). Rejoin di sini =
                             -- INTERRUPT loading -> client nyangkut di HOME -> loop terus.
-                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 then
+                            -- v9.344: BYPASS grace kalau umur >= 480s (denyut mati >8 menit).
+                            -- Loading normal cuma ~2-3 menit. >8 menit = BENERAN nyangkut (home),
+                            -- bukan loading. Dulu grace SEMUA-client ke-reset tiap ada 1 client
+                            -- reopen -> client nyangkut lama gak pernah di-rejoin (grace terus).
+                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 and umur < 480 then
                                 diGame = diGame + 1   -- anggap di game (lagi loading), tunggu denyut nyusul
                                 info(("[antrian] %s baru dibuka %ds lalu -> GRACE (loading, JANGAN rejoin)")
                                     :format(ak or pkg, os.time() - KICK_DIURUS["tembak_ts:" .. pkg]))
