@@ -272,7 +272,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.78"
+local VERSION = "v27.79"
 
 -- ============================================================
 -- v27.77: STARTUP FAKE-INPUT (30 DETIK AWAL pas sc di-exe) -- klik + gerak mouse + keyboard
@@ -1943,14 +1943,28 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         for i = 1, 2 do autoAcceptTrade(); task.wait(0.2) end
         totalSent = totalSent + added
         idx = idx + added
-        -- v27.65: TUNGGU window HILANG baru re-send. Max 3s (was 6s) biar send tiket berikutnya cepet.
+        -- v27.79: cek TARGET FULL SETELAH accept -- notif "max their inventory (236/235)" muncul pas
+        -- CONFIRM, BUKAN pas add-pet. Dulu cuma cek pas add -> notif kelewat -> trade terus walau full.
+        if targetMaxPet() then
+            _G.__hactTargetFull = targetPlayer.Name
+            print("[HactTelur] HACT OTO: target "..targetPlayer.Name.." FULL (max pet pas confirm) -> stop + lapor")
+            break
+        end
+        -- v27.65: TUNGGU window HILANG baru re-send. Max 3s. Cek full juga selama nunggu.
         local waited = 0
-        while windowOpen() and waited < 3 do autoAcceptTrade(); task.wait(0.2); waited = waited + 0.2 end
+        while windowOpen() and waited < 3 do
+            autoAcceptTrade()
+            if targetMaxPet() then _G.__hactTargetFull = targetPlayer.Name; break end
+            task.wait(0.2); waited = waited + 0.2
+        end
+        if _G.__hactTargetFull == targetPlayer.Name then
+            print("[HactTelur] HACT OTO: target "..targetPlayer.Name.." FULL (max pet) -> stop + lapor")
+            break
+        end
         -- v27.78: TUNGGU notif "can't add more" ILANG sebelum re-send (biar round baru bisa nambah full 12)
         local w2 = 0
         while cantAddMore() and w2 < 2.5 do task.wait(0.2); w2 = w2 + 0.2 end
         task.wait(0.1)   -- was 0.25
-        if _G.__hactTargetFull == targetPlayer.Name then break end   -- v27.73: target FULL -> stop re-send
         if added == 0 then break end   -- gak ada yg ke-add (target penuh / gak bisa) -> stop
     end
     return totalSent
@@ -2325,16 +2339,23 @@ do
                     return
                 end
                 local minC = tonumber(data.minCount) or 50
+                -- v27.79: clear flag FULL kalau panel UDAH reassign (data.target ganti dari yg full).
+                -- Berarti akun full udah dipindahin -> boleh trade target baru.
+                if _G.__hactFullReport and data.target and data.target ~= "" and data.target ~= _G.__hactFullReport then
+                    _G.__hactFullReport = nil
+                end
                 -- v27.63: pilih target yg BENERAN PRESENT di server ini (anti-swap).
-                -- v27.64: SKIP target yg lagi cooldown penuh (baru kena notif max ~90s lalu).
+                -- v27.79: SKIP target yg udah dilaporin FULL -> JANGAN retry, tunggu panel reassign.
+                --         (dulu cuma cooldown 90s -> abis itu retry akun full yg sama terus)
                 local cand = {}
                 if data.target and data.target ~= "" then cand[#cand+1] = data.target end
                 if type(data.targets) == "table" then for _, t in ipairs(data.targets) do cand[#cand+1] = t end end
                 local pilih = nil
                 for _, t in ipairs(cand) do
-                    if t and t ~= "" and Players:FindFirstChild(t) and (tick() - (fullCd[t] or 0)) > 90 then pilih = t; break end
+                    if t and t ~= "" and Players:FindFirstChild(t) and t ~= _G.__hactFullReport
+                       and (tick() - (fullCd[t] or 0)) > 90 then pilih = t; break end
                 end
-                if not pilih then return end   -- gak ada target present & belum cooldown -> skip
+                if not pilih then return end   -- gak ada target present / semua full / cooldown -> skip (tunggu reassign)
                 -- cfg filter Peacock base 2+ (kg >= 2), trade ke target present
                 local cfg2 = { pets = {["Peacock"]=true}, kg = 2, age = 0, muts = {},
                     method = "trade", targets = {[pilih]=true}, unfavFirst = true }
