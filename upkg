@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.94"
+local VERSION = "v0.96"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -389,6 +389,87 @@ local function stripMutation(s)
 end
 -- config -> pet type filter (substring match). Random = semua pet (no filter).
 local KG_CONFIG_PET = { ["Tim Spider"] = "Spider", ["Tim Peacock"] = "Peacock", ["Tim Dilop"] = "Dilo" }
+
+-- ============================================================
+-- v0.95: AUTO DESTROY POHON (SELALU ON) — FPS naik (port dari sc panen)
+-- Destroy semua Model di folder "Plants_Physical" (pohon/tanaman). Pet leveling BEDA folder
+-- (model "{uuid}"), jadi GAK ke-destroy. Trigger: sekali start + tiap pohon baru + loop 30s.
+-- ============================================================
+do
+    local WS = workspace
+    local function semuaFarm()
+        local roots = {}
+        local farm = WS:FindFirstChild("Farm")
+        if farm then
+            for _, f in ipairs(farm:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            end
+        end
+        if #roots == 0 then
+            for _, f in ipairs(WS:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            end
+        end
+        return roots
+    end
+    local function destroyPohonSemua()
+        local roots = semuaFarm(); local n = 0
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end); n = n + 1 end
+            end
+        end
+        return n
+    end
+    task.spawn(function() task.wait(3); destroyPohonSemua() end)
+    task.spawn(function()
+        local farm = WS:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                task.wait(0.05); pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+    task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
+end
+
+-- ============================================================
+-- v0.96: STARTUP FAKE-INPUT (30 DETIK AWAL pas sc di-exe) -- klik + gerak mouse + keyboard
+-- tipuan terus, buat LEWATIN loading / prompt "click to continue" biar sc gak nyangkut loading.
+-- ============================================================
+task.spawn(function()
+    local UIS = game:GetService("UserInputService")
+    local VIM, VU
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    pcall(function() VU = game:GetService("VirtualUser") end)
+    local t0 = tick()
+    while tick() - t0 < 30 do
+        -- firesignal InputBegan (fake keyboard -> lewatin prompt yg nunggu input)
+        pcall(function()
+            if firesignal then
+                firesignal(UIS.InputBegan, { UserInputType = Enum.UserInputType.Keyboard,
+                    KeyCode = Enum.KeyCode.Space, UserInputState = Enum.UserInputState.Begin }, false)
+            end
+        end)
+        -- VIM keyboard (Space) + mouse move random
+        pcall(function()
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                VIM:SendMouseMoveEvent(math.random(200, 600), math.random(200, 400), game)
+            end
+        end)
+        -- VU KLIK (Button1 kiri buat "click to continue" + Button2 backup)
+        pcall(function()
+            if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end
+        end)
+        task.wait(1.2)
+    end
+    print("[UpKg] startup fake-input 30s kelar")
+end)
+
+
 
 -- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
 local _kgContainer = nil
