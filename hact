@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.66"
+local VERSION = "v27.67"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1715,15 +1715,22 @@ local function autoAcceptTrade()
     pcall(function()
         local pg = player:FindFirstChild("PlayerGui")
         if not pg then return end
+        local function tekan(b)
+            if not b then return end
+            if firesignal then pcall(function() firesignal(b.Activated) end) end
+            if getconnections then for _, c in ipairs(getconnections(b.Activated)) do pcall(function() c:Fire() end) end end
+        end
         local tui = pg:FindFirstChild("TradingUI")
         local lt = tui and tui:FindFirstChild("LiveTrade")
         if lt and lt.Visible then
             local opts = lt:FindFirstChild("Options")
-            local acc = opts and opts:FindFirstChild("Accept")
-            if acc then
-                if firesignal then pcall(function() firesignal(acc.Activated) end) end
-                if getconnections then
-                    for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end
+            -- v27.67: klik Accept DAN Confirm (2 langkah), bukan Accept doang
+            if opts then tekan(opts:FindFirstChild("Accept")); tekan(opts:FindFirstChild("Confirm")) end
+            -- v27.67: semua tombol accept/confirm/yes di window (TextButton & ImageButton)
+            for _, d in ipairs(lt:GetDescendants()) do
+                if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                    local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                    if t == "yes" or t:find("confirm") or t == "continue" or t == "accept" then tekan(d) end
                 end
             end
         end
