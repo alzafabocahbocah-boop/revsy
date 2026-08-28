@@ -17248,4 +17248,4 @@ if not okrun then
     bersih(cfg, "error")
 elseif io.open(PID_FILE, "r") then
     bersih(cfg, "selesai")
-endv
+end
