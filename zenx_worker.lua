@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.361-cf"
+local VERSION = "9.362-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7207,19 +7207,17 @@ local function run(cfg)
                 if not mapLink[pkg] then mapLink[pkg] = psl; nDapet = nDapet + 1 end
             end
         end
-        -- v8.53: log berapa akun dapet accessCode (biar keliatan ps_link ada/kosong)
-        info(("[ps-getps] %d akun dapet ps_link (place=%s)"):format(nDapet, cfg.place_id or "?"))
+        -- v9.361: hitung total mapLink yg ada (dari assign-ps panel + getps), bukan cuma yg baru dari getps
+        local nTotal = 0
+        for pkg in pairs(akun2pkg) do if mapLink[akun2pkg[pkg] or ""] then nTotal = nTotal + 1 end end
+        info(("[ps-getps] %d akun dapet ps_link (place=%s, getps=%d panel=%d)"):format(nDapet+nTotal, cfg.place_id or "?", nDapet, nTotal))
         -- v8.71: kalau 0 dapet PS + place FALL (bukan public/W1) -> WARNING jelas.
         -- Akun belum punya PS fall -> bakal fallback PUBLIC (rawan di-steal).
         -- Saran: jalanin `zenx getps` di RF ini buat ambil accessCode PS akun.
-        if nDapet == 0 and cfg.pakai_ps ~= false then
-            -- v9.129: AUTO-getps DIBUANG dari loop utama (user minta getps MANUAL).
-            -- Dulu di sini auto jalanin 'zenx getps' (timeout 180 = block 3 menit)
-            -- tiap 5 menit kalau 0 PS -> bikin loop utama macet + ganggu rotasi.
-            -- Sekarang cuma BACA /ps-list. Kalau 0 PS -> warning, user getps manual.
+        if nDapet == 0 and nTotal == 0 and cfg.pakai_ps ~= false then
             warn("[ps-getps] 0 ps_link -> jalanin 'zenx getps' MANUAL di RF ini dulu (auto-getps udah dimatiin).")
         end
-        if nDapet == 0 and cfg.pakai_ps ~= false then
+        if nDapet == 0 and nTotal == 0 and cfg.pakai_ps ~= false then
             warn("[ps-getps] 0 akun punya PS -> client bakal masuk PUBLIC (rawan)!")
             warn("[ps-getps] Jalanin 'zenx getps' di RF ini dulu, atau assign PS di panel.")
         end
