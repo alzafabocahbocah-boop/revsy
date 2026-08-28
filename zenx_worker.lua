@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.364-cf"
+local VERSION = "9.365-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2971,23 +2971,16 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         if pakai_S then
             pcall(function()
                 local stk = sh("su -c 'am stack list 2>/dev/null'") or ""
-                -- cari SEMUA stackId yg punya task pkg ini (bisa numpuk beberapa)
+                -- cari SEMUA stackId yg punya task pkg ini -- parse line-by-line,
+                -- "Stack id=" jadi header, baris "taskId=" berikutnya sebelum
+                -- "Stack id=" lain milik stack itu.
                 local stackIds = {}
-                for stackBlok in stk:gmatch("Stack id=%d+.-\n\n") do
-                    local sid = stackBlok:match("Stack id=(%d+)")
-                    if sid and stackBlok:find(pkg, 1, true) then
-                        stackIds[#stackIds+1] = sid
-                    end
-                end
-                -- fallback kalau regex block gak dapet (format beda) -- cari manual per baris
-                if #stackIds == 0 then
-                    local lastStackId = nil
-                    for line in stk:gmatch("[^\n]+") do
-                        local sid = line:match("Stack id=(%d+)")
-                        if sid then lastStackId = sid end
-                        if line:find(pkg, 1, true) and lastStackId then
-                            stackIds[#stackIds+1] = lastStackId
-                        end
+                local lastStackId = nil
+                for line in stk:gmatch("[^\n]+") do
+                    local sid = line:match("Stack id=(%d+)")
+                    if sid then lastStackId = sid end
+                    if line:find(pkg, 1, true) and lastStackId then
+                        stackIds[#stackIds+1] = lastStackId
                     end
                 end
                 for _, sid in ipairs(stackIds) do
