@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.341-cf"
+local VERSION = "9.343-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8096,6 +8096,29 @@ local function run(cfg)
                             local nama, js = line:match("zenx_hactstat_(.-)%.json|(.+)")
                             if nama and js and #js > 5 then
                                 items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
+                                -- v9.343: baca hactoto online. Kalau pengisi ADA target tapi online=FALSE
+                                -- (nyasar/sendirian di server salah) 2x berturut -> REJOIN (pakai psLink
+                                -- fresh dari getps 30s). Ini yg bikin olivia nyusul walau psLink gak berubah.
+                                local hasTarget = js:match('"hactotoTarget"%s*:%s*"([^"]-)"')
+                                local online = js:match('"hactotoOnline"%s*:%s*(%a+)')
+                                if hasTarget and hasTarget ~= "" and hasTarget ~= "(no file)"
+                                   and hasTarget ~= "(parse GAGAL)" and online == "false" then
+                                    _G.__hactOffline = _G.__hactOffline or {}
+                                    _G.__hactOffline[nama] = (_G.__hactOffline[nama] or 0) + 1
+                                    if _G.__hactOffline[nama] >= 2 then
+                                        _G.__hactOffline[nama] = 0
+                                        for pkg, ak in pairs(mapAkun) do
+                                            if ak == nama then
+                                                _G.__hactRejoin = _G.__hactRejoin or {}
+                                                _G.__hactRejoin[pkg] = true
+                                                info(("[hactoto] %s online=false 2x -> REJOIN (nyasar server)"):format(nama))
+                                                break
+                                            end
+                                        end
+                                    end
+                                elseif online == "true" and _G.__hactOffline then
+                                    _G.__hactOffline[nama] = 0   -- online lagi -> reset counter
+                                end
                             end
                         end
                         if #items > 0 then
@@ -8117,6 +8140,14 @@ local function run(cfg)
                             local body = '{"list":[' .. table.concat(items, ",") .. ']}'
                             pcall(function() api_post(cfg, "/upkgstat-batch", body) end)
                         end
+                    end
+                    -- v9.342: getps PERIODIK (tiap 30s) di loop HIDUP -- biar ps_link target CEPET
+                    -- update pas pindah server. Dulu getps cuma di rejoin/FORCE (+ blok if-false mati)
+                    -- -> pas target pindah tanpa rejoin, ps_link basi -> pengisi hactoto nyasar server lama.
+                    _G.__lastGetps = _G.__lastGetps or 0
+                    if (os.time() - _G.__lastGetps) >= 30 and MODE_JALAN then
+                        pcall(refresh_ps); pcall(refresh_ps_getps)
+                        _G.__lastGetps = os.time()
                     end
                     -- v9.336: refresh_hactoto di loop HIDUP (denyut). Dulu (v9.334) ke-taro di
                     -- blok `if false then` yg DIMATIIN -> gak pernah jalan. Sekarang tiap siklus denyut.
