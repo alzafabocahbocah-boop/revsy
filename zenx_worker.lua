@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.358-cf"
+local VERSION = "9.360-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7250,23 +7250,24 @@ local function run(cfg)
             local pengisi = obj:match('"pengisi"%s*:%s*"(.-)"')
             local psLink  = obj:match('"psLink"%s*:%s*"(.-)"')
             local target  = obj:match('"target"%s*:%s*"(.-)"')
+            local psNama  = obj:match('"psNama"%s*:%s*"(.-)"')   -- v9.359: nama host server (buat debug)
             if dbg and pengisi then
-                info(("[hactoto] entry pengisi=%s match_pkg=%s psLink=%s"):format(
-                    tostring(pengisi), tostring(akun2pkg[pengisi] ~= nil), (psLink and psLink ~= "") and "ada" or "KOSONG"))
+                info(("[hactoto] entry pengisi=%s match_pkg=%s psLink=%s psNama=%s"):format(
+                    tostring(pengisi), tostring(akun2pkg[pengisi] ~= nil), (psLink and psLink ~= "") and "ada" or "KOSONG", tostring(psNama or "-")))
             end
             if pengisi and akun2pkg[pengisi] and psLink and psLink ~= "" then
                 local pkg = akun2pkg[pengisi]
-                mapLink[pkg] = psLink   -- OVERRIDE: pengisi ke PS target
-                mapPsNama[pkg] = "target:" .. tostring(target)   -- v9.333: deteksi PINDAH -> rejoin
-                -- v9.349: psLink BERUBAH -> TEMBAK LANGSUNG (prioritas tertinggi, bypass diGame/antrian).
-                -- v9.350: EXEMPT dari grace (tembak_ts) -- psLink dari panel = prioritas MUTLAK.
-                -- Walau baru dibuka, langsung tembak. TAPI kalau < 30s (loading awal) -> tunggu sebentar.
+                mapLink[pkg] = psLink
+                mapPsNama[pkg] = "target:" .. tostring(target)
+                _G.__hactPsNama = _G.__hactPsNama or {}
+                _G.__hactPsNama[pkg] = psNama or target   -- simpan nama PS buat log
                 _G.__hactLastLink = _G.__hactLastLink or {}
                 if _G.__hactLastLink[pkg] ~= psLink then
                     _G.__hactLastLink[pkg] = psLink
                     local tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
                     if tsAge >= 30 then
-                        info(("[hactoto] %s target GANTI -> TEMBAK LANGSUNG (prioritas, exempt grace)"):format(pengisi))
+                        local code2 = psLink:match("code=([%w]+)") or psLink:sub(1,16)
+                        info(("[hactoto] %s target GANTI -> TEMBAK ke [%s] host=%s code=%s"):format(pengisi, tostring(target), tostring(psNama or "-"), code2))
                         pcall(function() grid_satu(cfg, pkg) end)
                         open_one(cfg, pkg, psLink, "hactoto-target-baru", true)
                         KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
@@ -7280,7 +7281,8 @@ local function run(cfg)
                 assigned[pengisi] = true
                 asgn[#asgn+1] = { pengisi = pengisi, target = target }
                 if target and target ~= "" then allT[#allT+1] = target end
-                info(("[hactoto] %s -> join PS target %s"):format(pengisi, tostring(target)))
+                local code3 = psLink:match("code=([%w]+)") or psLink:sub(1,16)
+                info(("[hactoto] %s -> join PS target %s (host=%s code=%s)"):format(pengisi, tostring(target), tostring(psNama or "-"), code3))
             end
         end
         -- v9.340: tulis file per pengisi -- {"target":"<assigned>","targets":[semua],"minCount":50}
@@ -8117,10 +8119,18 @@ local function run(cfg)
                                 -- fresh dari getps 30s). Ini yg bikin olivia nyusul walau psLink gak berubah.
                                 local hasTarget = js:match('"hactotoTarget"%s*:%s*"([^"]-)"')
                                 local online = js:match('"hactotoOnline"%s*:%s*(%a+)')
+                                local psampleJ = js:match('"hactotoPsample"%s*:%s*"([^"]-)"') or "-"
                                 if hasTarget and hasTarget ~= "" and hasTarget ~= "(no file)"
                                    and hasTarget ~= "(parse GAGAL)" and online == "false" then
                                     _G.__hactOffline = _G.__hactOffline or {}
                                     _G.__hactOffline[nama] = (_G.__hactOffline[nama] or 0) + 1
+                                    -- v9.359: log PS sendiri + server yg di-tembak biar ketauan salah di mana
+                                    local pkgNama2 = nil
+                                    for p2, ak2 in pairs(mapAkun) do if ak2 == nama then pkgNama2 = p2; break end end
+                                    local hostTembak = (_G.__hactPsNama and pkgNama2 and _G.__hactPsNama[pkgNama2]) or "-"
+                                    local psSendiri = (mapPsNama and pkgNama2 and mapPsNama[pkgNama2]) or "-"
+                                    info(("[hactoto] %s online=false(%d/2) | server di-tembak=%s | PS sendiri=%s | player di server=%s"):format(
+                                        nama, _G.__hactOffline[nama], hostTembak, psSendiri, psampleJ))
                                     if _G.__hactOffline[nama] >= 2 then
                                         _G.__hactOffline[nama] = 0
                                         for pkg, ak in pairs(mapAkun) do
@@ -8320,9 +8330,12 @@ local function run(cfg)
                         local tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
                         if tsAge >= 150 then
                             local ak = (mapAkun or {})[pkg] or pkg
-                            info(("[hactoto] TEMBAK %s ke PS target (bypass diGame)"):format(ak))
+                            local psN = (_G.__hactPsNama and _G.__hactPsNama[pkg]) or "-"
+                            local lnk = (mapLink and mapLink[pkg]) or ""
+                            local code = lnk:match("code=([%w]+)") or lnk:sub(1,20)
+                            info(("[hactoto] TEMBAK %s -> host=%s code=%s"):format(ak, psN, code))
                             pcall(function() grid_satu(cfg, pkg) end)
-                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "hactoto-nyasar", true)
+                            open_one(cfg, pkg, lnk ~= "" and lnk or nil, "hactoto-nyasar", true)
                             KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
                             os.execute("sleep 30")   -- v9.355: jeda 30s antar tembak (gantian, bukan barengan)
                         end
