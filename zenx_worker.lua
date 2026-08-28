@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.355-cf"
+local VERSION = "9.358-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8329,7 +8329,21 @@ local function run(cfg)
                     end
                     _G.__hactRejoin = {}
                 end
-                if #perluTembak > 0 and not lewatiDenyutRejoin and MODE_JALAN then   -- v9.322: cuma rejoin kalau UDAH Start (MODE_JALAN). STANDBY = client ketutup, JANGAN dibuka.
+                -- v9.356: buang pkg yg baru di-tembak hactoto dari perluTembak
+                -- (denyut-rejoin biasa jangan tembak lagi di iterasi yg sama -> spam -S)
+                if next(_G.__hactRejoin or {}) == nil then
+                    local baru = {}
+                    for _, p in ipairs(perluTembak) do
+                        local tsAge = KICK_DIURUS["tembak_ts:" .. p] and (os.time() - KICK_DIURUS["tembak_ts:" .. p]) or 99999
+                        if tsAge >= 10 then baru[#baru+1] = p end   -- baru di-tembak <10s = skip
+                    end
+                    perluTembak = baru
+                end
+                -- v9.358: HACT OTO -> skip denyut-rejoin biasa. Hactoto punya rejoin
+                -- sendiri (__hactRejoin) yang join ke PS TARGET. Denyut-rejoin biasa
+                -- rejoin ke PS SENDIRI -> ganggu + spam tembak.
+                local skipDenyutRejoin = (cfg.script_label or ""):upper() == "HACT OTO"
+                if #perluTembak > 0 and not lewatiDenyutRejoin and MODE_JALAN and not skipDenyutRejoin then
                     -- v8.54: REFRESH mapLink (+ accessCode per akun) SEBELUM tembak.
                     -- Bug: blok denyut ini pakai mapLink dari refresh terakhir, kalau
                     -- accessCode di-set SETELAH itu (klik World 2 Private) -> mapLink
@@ -8557,7 +8571,7 @@ local function run(cfg)
                         -- v7.02: GAK perlu suntik ulang (spam). Cookie udah masuk
                         -- bener (creation_utc wajar -> Roblox terima, gak dihapus).
                         info("Masuk ulang " .. clientG .. " dengan akun baru...")
-                        open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil, "ganti-akun")
+                        open_one(cfg, pkgG, mapLink and mapLink[pkgG] or nil, "ganti-akun", true)
                         os.execute("sleep 3")
                     end
                     -- v6.48: SIMPEN TARGET akun per client + jadwal CEK 60 detik
@@ -10500,7 +10514,7 @@ local function run(cfg)
                     close_all(cfg, pindahPkg, mapLink)   -- SEKALI JALAN buat semuanya
                     os.execute("sleep 2")
                     for i, pkg in ipairs(pindahPkg) do
-                        open_one(cfg, pkg, mapLink[pkg], "pindah-warehouse")
+                        open_one(cfg, pkg, mapLink[pkg], "pindah-warehouse", true)
                         tambahLog("   -> " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.",""))
                                   .. " dibuka lagi di " .. ((mapPsNama[pkg] or "") ~= "" and mapPsNama[pkg] or "public"))
                         -- jeda cuma ANTAR buka (biar RAM gak kaget), bukan tiap tutup
@@ -11070,7 +11084,7 @@ local function run(cfg)
                        and not KICK_DIURUS["captcha:" .. pkg] and not baruDibuka then
                         local ak = (mapAkun and mapAkun[pkg]) or r.nama
                         tambahLog(("[logcat] %s KICK kode %s -> REJOIN"):format(ak, r.kode))
-                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "logcat-kick")
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "logcat-kick", true)
                     end
                 end
             end)
