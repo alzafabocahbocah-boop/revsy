@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.340-cf"
+local VERSION = "9.341-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7257,8 +7257,18 @@ local function run(cfg)
                     tostring(pengisi), tostring(akun2pkg[pengisi] ~= nil), (psLink and psLink ~= "") and "ada" or "KOSONG"))
             end
             if pengisi and akun2pkg[pengisi] and psLink and psLink ~= "" then
-                mapLink[akun2pkg[pengisi]] = psLink   -- OVERRIDE: pengisi ke PS target
-                mapPsNama[akun2pkg[pengisi]] = "target:" .. tostring(target)   -- v9.333: deteksi PINDAH -> rejoin
+                local pkg = akun2pkg[pengisi]
+                mapLink[pkg] = psLink   -- OVERRIDE: pengisi ke PS target
+                mapPsNama[pkg] = "target:" .. tostring(target)   -- v9.333: deteksi PINDAH -> rejoin
+                -- v9.341: psLink BERUBAH (target GANTI) -> tandai buat REJOIN ke PS target baru.
+                -- Dulu pengisi nyangkut di PS target LAMA walau udah dapet target baru.
+                _G.__hactLastLink = _G.__hactLastLink or {}
+                if _G.__hactLastLink[pkg] ~= psLink then
+                    _G.__hactLastLink[pkg] = psLink
+                    _G.__hactRejoin = _G.__hactRejoin or {}
+                    _G.__hactRejoin[pkg] = true
+                    info(("[hactoto] %s target GANTI -> rejoin ke PS baru"):format(pengisi))
+                end
                 n = n + 1
                 assigned[pengisi] = true
                 asgn[#asgn+1] = { pengisi = pengisi, target = target }
@@ -8244,6 +8254,16 @@ local function run(cfg)
                 end
                 info(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
                 tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
+                -- v9.341: pengisi yg target-nya GANTI -> rejoin ke PS target baru (biar gak nyangkut
+                -- di PS target lama). Ditandai di refresh_hactoto pas psLink berubah.
+                if _G.__hactRejoin and MODE_JALAN then
+                    for pkg in pairs(_G.__hactRejoin) do
+                        local udahAda = false
+                        for _, p in ipairs(perluTembak) do if p == pkg then udahAda = true break end end
+                        if not udahAda then perluTembak[#perluTembak+1] = pkg end
+                    end
+                    _G.__hactRejoin = {}
+                end
                 if #perluTembak > 0 and not lewatiDenyutRejoin and MODE_JALAN then   -- v9.322: cuma rejoin kalau UDAH Start (MODE_JALAN). STANDBY = client ketutup, JANGAN dibuka.
                     -- v8.54: REFRESH mapLink (+ accessCode per akun) SEBELUM tembak.
                     -- Bug: blok denyut ini pakai mapLink dari refresh terakhir, kalau
