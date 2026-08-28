@@ -232,7 +232,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.63"
+local VERSION = "v27.65"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1771,11 +1771,7 @@ end
 
 local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
-    pcall(holdTradingTicket)  -- v26.9: pegang tiket dulu sebelum kirim trade request
-    pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
-    task.wait(0.4)
-    local added = 0
-    -- deteksi notif "you can't add more items" di layar
+    -- deteksi notif "you can't add more items" di layar (slot trade penuh)
     local function cantAddMore()
         local found = false
         pcall(function()
@@ -1792,22 +1788,47 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         end)
         return found
     end
-    for _, uuid in ipairs(petList) do
-        -- v16.3: di-stop di tengah? berhenti tambah item LANGSUNG
+    -- v27.65: cek window trade masih kebuka?
+    local function windowOpen()
+        local o = false
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            local tui = pg and pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade")
+            o = (lt and lt.Visible) or false
+        end)
+        return o
+    end
+    local totalSent = 0
+    local idx = 1
+    -- v27.65: SPAM RE-SEND. Kirim batch pet, accept, TUNGGU window HILANG (trade kelar),
+    -- lalu re-send SISA pet sampai abis / target penuh. Dulu cuma 1 batch -> sisa gak kekirim.
+    for round = 1, 40 do
         if stopCheck and stopCheck() then break end
-        -- berhenti kalau slot trade udah penuh (notif muncul)
-        if cantAddMore() then break end
-        local u = tostring(uuid):gsub("[{}]",""); u = "{"..u.."}"
-        pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
-        added = added + 1
-        task.wait(0.12)
+        if idx > #petList then break end
+        pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
+        pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
+        task.wait(0.4)   -- tunggu window kebuka
+        local added = 0
+        for i = idx, #petList do
+            if stopCheck and stopCheck() then break end
+            if cantAddMore() then break end   -- slot trade penuh -> accept dulu
+            local u = tostring(petList[i]):gsub("[{}]",""); u = "{"..u.."}"
+            pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
+            added = added + 1
+            task.wait(0.1)
+        end
+        -- auto-accept
+        for i = 1, 4 do autoAcceptTrade(); task.wait(0.3) end
+        totalSent = totalSent + added
+        idx = idx + added
+        -- v27.65: TUNGGU window HILANG (trade beneran kelar) baru re-send batch berikutnya
+        local waited = 0
+        while windowOpen() and waited < 6 do autoAcceptTrade(); task.wait(0.3); waited = waited + 0.3 end
+        task.wait(0.25)
+        if added == 0 then break end   -- gak ada yg ke-add (target penuh / gak bisa) -> stop
     end
-    -- auto-accept (spam 4x cepat)
-    for i = 1, 4 do
-        autoAcceptTrade()
-        task.wait(0.3)
-    end
-    return added
+    return totalSent
 end
 
 -- ============ GIFT PET (tiru market sc) ============
@@ -2129,6 +2150,27 @@ do
     task.spawn(function()
         local HttpService = game:GetService("HttpService")
         local Players = game:GetService("Players")
+        local fullCd = {}   -- v27.64: target -> tick() pas kena notif "max/penuh" (cooldown, pindah target lain)
+        -- deteksi notif target PENUH di layar (mis "inventory is full", "can't add more", "max")
+        local function targetPenuh()
+            local hit = false
+            pcall(function()
+                local lp = Players.LocalPlayer
+                local pg = lp and lp:FindFirstChild("PlayerGui")
+                if not pg then return end
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then
+                        local t = (d.Text or ""):lower()
+                        if t:find("can't add more") or t:find("cant add more") or t:find("can.t add more")
+                           or t:find("inventory is full") or t:find("inventory full")
+                           or t:find("max pet") or t:find("maximum") then
+                            hit = true; break
+                        end
+                    end
+                end
+            end)
+            return hit
+        end
         while true do
             task.wait(8)
             pcall(function()
@@ -2139,18 +2181,16 @@ do
                 local ok, data = pcall(function() return HttpService:JSONDecode(readfile(fn)) end)
                 if not ok or type(data) ~= "table" then return end
                 local minC = tonumber(data.minCount) or 50
-                -- v27.63: pilih target yg BENERAN PRESENT di server ini (anti-swap: pengisi bisa
-                -- nyasar ke PS target lain, tapi tetep isi target yg ADA). Coba data.target dulu,
-                -- kalau gak present -> cari dari data.targets[] yg present.
+                -- v27.63: pilih target yg BENERAN PRESENT di server ini (anti-swap).
+                -- v27.64: SKIP target yg lagi cooldown penuh (baru kena notif max ~90s lalu).
+                local cand = {}
+                if data.target and data.target ~= "" then cand[#cand+1] = data.target end
+                if type(data.targets) == "table" then for _, t in ipairs(data.targets) do cand[#cand+1] = t end end
                 local pilih = nil
-                if data.target and data.target ~= "" and Players:FindFirstChild(data.target) then
-                    pilih = data.target
-                elseif type(data.targets) == "table" then
-                    for _, t in ipairs(data.targets) do
-                        if t and t ~= "" and Players:FindFirstChild(t) then pilih = t; break end
-                    end
+                for _, t in ipairs(cand) do
+                    if t and t ~= "" and Players:FindFirstChild(t) and (tick() - (fullCd[t] or 0)) > 90 then pilih = t; break end
                 end
-                if not pilih then return end   -- gak ada target present di server -> skip
+                if not pilih then return end   -- gak ada target present & belum cooldown -> skip
                 -- cfg filter Peacock base 2+ (kg >= 2), trade ke target present
                 local cfg2 = { pets = {["Peacock"]=true}, kg = 2, age = 0, muts = {},
                     method = "trade", targets = {[pilih]=true}, unfavFirst = true }
@@ -2159,6 +2199,12 @@ do
                 if n < minC then return end        -- stok < 50 -> GAK trade
                 print("[HactTelur] HACT OTO: stok Peacock 2+ "..n.." >= "..minC.." -> trade ke "..pilih)
                 _G.HactGiftFilter(cfg2)            -- trade SEMUA Peacock 2+ ke target present
+                task.wait(0.6)
+                -- v27.64: abis trade, cek notif PENUH -> cooldown target ini, pindah ke lain
+                if targetPenuh() then
+                    fullCd[pilih] = tick()
+                    print("[HactTelur] HACT OTO: target "..pilih.." PENUH (notif max) -> cooldown 90s, cari target lain")
+                end
             end)
         end
     end)
