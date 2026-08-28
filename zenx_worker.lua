@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.345-cf"
+local VERSION = "9.346-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8255,10 +8255,16 @@ local function run(cfg)
                             -- Loading normal cuma ~2-3 menit. >8 menit = BENERAN nyangkut (home),
                             -- bukan loading. Dulu grace SEMUA-client ke-reset tiap ada 1 client
                             -- reopen -> client nyangkut lama gak pernah di-rejoin (grace terus).
-                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 and umur < 480 then
+                            -- v9.346: FIX loop rejoin. Denyut BASI dari sesi lalu (mis 2800s) + client
+                            -- BARU dibuka -> v9.344 langsung rejoin lagi (bypass grace) -> INTERRUPT loading
+                            -- -> client gak pernah selesai load -> denyut gak update -> LOOP SELAMANYA.
+                            -- Sekarang: kasih 150s buat LOAD setelah dibuka (walau denyut lama). Baru
+                            -- setelah 150s (masih gak ada denyut fresh + umur>=480 lama) -> rejoin (nyangkut beneran).
+                            local _tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
+                            if _tsAge < 150 or (_tsAge < 300 and umur < 480) then
                                 diGame = diGame + 1   -- anggap di game (lagi loading), tunggu denyut nyusul
                                 info(("[antrian] %s baru dibuka %ds lalu -> GRACE (loading, JANGAN rejoin)")
-                                    :format(ak or pkg, os.time() - KICK_DIURUS["tembak_ts:" .. pkg]))
+                                    :format(ak or pkg, _tsAge))
                             elseif KICK_DIURUS["captcha:" .. pkg] then
                                 -- v8.70: RE-CEK pakai logcat doang. Logcat masih ada
                                 -- captcha fresh (<120s) -> masih captcha. Kalau udah
