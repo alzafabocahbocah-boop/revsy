@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.349-cf"
+local VERSION = "9.354-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2964,10 +2964,8 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     end
 
     local function coba(pakai_wm)
-        -- v9.286: ARCEUS -> PAKSA cara WC (web URL + CLEAR_TOP 0x14000000), BUKAN -S.
-        -- User tes manual: WC bisa join/ganti server tanpa nutup window. -S kadang
-        -- masih goyangin. Walau caller minta pakai_S, buat arceus tetep WC.
-        if cfg.executor == "arceus" then pakai_S = false end
+        -- v9.354: ARCEUS pakai -S untuk SEMUA rejoin (user konfirmasi: am start -S
+        -- bisa join server + gak rusak client lain). Hapus override pakai_S=false.
         -- v7.85: CARA PANDORA PERSIS (dari logcat: START {dat=... flg=0x10000000
         -- pkg=com.roblox.clienX cmp=.../ActivityProtocolLaunch} from uid 0).
         -- Persis kayak Pandora:
@@ -7260,16 +7258,23 @@ local function run(cfg)
                 local pkg = akun2pkg[pengisi]
                 mapLink[pkg] = psLink   -- OVERRIDE: pengisi ke PS target
                 mapPsNama[pkg] = "target:" .. tostring(target)   -- v9.333: deteksi PINDAH -> rejoin
-                -- v9.341: psLink BERUBAH (target GANTI) -> tandai buat REJOIN ke PS target baru.
-                -- v9.349: LANGSUNG tembak di sini (bukan tunggu loop denyut) -- prioritas tertinggi.
-                -- Panel kirim target baru = pengisi HARUS segera pindah, bypass grace/antrian.
+                -- v9.349: psLink BERUBAH -> TEMBAK LANGSUNG (prioritas tertinggi, bypass diGame/antrian).
+                -- v9.350: EXEMPT dari grace (tembak_ts) -- psLink dari panel = prioritas MUTLAK.
+                -- Walau baru dibuka, langsung tembak. TAPI kalau < 30s (loading awal) -> tunggu sebentar.
                 _G.__hactLastLink = _G.__hactLastLink or {}
                 if _G.__hactLastLink[pkg] ~= psLink then
                     _G.__hactLastLink[pkg] = psLink
-                    info(("[hactoto] %s target GANTI -> TEMBAK LANGSUNG ke PS baru (prioritas)"):format(pengisi))
-                    pcall(function() grid_satu(cfg, pkg) end)
-                    open_one(cfg, pkg, psLink, "hactoto-target-baru")
-                    KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                    local tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
+                    if tsAge >= 30 then
+                        info(("[hactoto] %s target GANTI -> TEMBAK LANGSUNG (prioritas, exempt grace)"):format(pengisi))
+                        pcall(function() grid_satu(cfg, pkg) end)
+                        open_one(cfg, pkg, psLink, "hactoto-target-baru", true)
+                        KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                    else
+                        _G.__hactRejoin = _G.__hactRejoin or {}
+                        _G.__hactRejoin[pkg] = true
+                        info(("[hactoto] %s target GANTI (baru dibuka %ds) -> tembak 30s lagi"):format(pengisi, tsAge))
+                    end
                 end
                 n = n + 1
                 assigned[pengisi] = true
@@ -8314,9 +8319,10 @@ local function run(cfg)
                     for pkg in pairs(_G.__hactRejoin) do
                         local tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
                         if tsAge >= 150 then
-                            info(("[hactoto] TEMBAK %s ke PS target (bypass diGame)"):format((mapAkun or {})[pkg] or pkg))
+                            local ak = (mapAkun or {})[pkg] or pkg
+                            info(("[hactoto] TEMBAK %s ke PS target (bypass diGame)"):format(ak))
                             pcall(function() grid_satu(cfg, pkg) end)
-                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "hactoto-nyasar")
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "hactoto-nyasar", true)
                             KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
                         end
                     end
@@ -8386,7 +8392,7 @@ local function run(cfg)
                         -- window pakai default/lama (bukan 3x2 yg diset). grid_satu
                         -- nulis prefs posisi client ini (App Cloner baca pas buka).
                         pcall(function() grid_satu(cfg, pkg) end)
-                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                        open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out", true)
                         pcall(function() jaga_depan(cfg, mapLink) end)
                         -- v8.44: jeda 30s antar rejoin (tembak 1-1, bukan barengan).
                         -- User: kalau 5 client keluar, tembak 1-1 selama 30s. Client
@@ -9111,7 +9117,7 @@ local function run(cfg)
                         close_all(cfg, semua and nil or pkgRejoin, mapLink)
                         os.execute("sleep 2")
                         for i, pkg in ipairs(pkgRejoin) do
-                            open_one(cfg, pkg, mapLink[pkg], "rejoin-manual-panel")
+                            open_one(cfg, pkg, mapLink[pkg], "rejoin-manual-panel", true)
                             if i < #pkgRejoin then os.execute("sleep " .. (cfg.stagger_sec or 10)) end
                         end
                         notify("ZenX "..cfg.tim, "rejoin " .. #pkgRejoin .. " akun")
@@ -10009,7 +10015,7 @@ local function run(cfg)
                             -- start no-op ke app hidup). Cuma client ini.
                             -- v7.84: force-stop DIHAPUS (user minta). open_one
                             -- cara Pandora (P/A3) re-join tanpa kill.
-                            open_one(cfg, pkg, mapLink[pkg], "mati-bareng")
+                            open_one(cfg, pkg, mapLink[pkg], "mati-bareng", true)
                             jaga_depan(cfg, mapLink)
                             refresh_status(); gambar_tabel(isi)
                             -- cek standby di tengah (interupsi)
@@ -10041,7 +10047,7 @@ local function run(cfg)
                               .. " -> dibuka lagi")
                     RIW.catat("REJOIN", mapAkun[pkg] or pkg, "karena=mati-mendadak")
                     setAksi("buka lagi " .. (mapAkun[pkg] or pkg:gsub("com%.roblox%.","")))
-                    open_one(cfg, pkg, mapLink[pkg], "mati-mendadak")
+                    open_one(cfg, pkg, mapLink[pkg], "mati-mendadak", true)
                     os.execute("sleep 3")
                     refresh_status(); lastStatusCek = os.time()
                     gambar_tabel(isi)
@@ -10126,7 +10132,7 @@ local function run(cfg)
                                           (kead == "alive" and "ON" or kead) .. " -> masukin game")
                                 RIW.catat("REJOIN", ak or pkg, "karena=nyangkut-home")
                                 setAksi("masukin " .. namaP)
-                                open_one(cfg, pkg, mapLink[pkg], "nyangkut-home")   -- am start, TANPA kill
+                                open_one(cfg, pkg, mapLink[pkg], "nyangkut-home", true)   -- am start, TANPA kill
                                 os.execute("sleep 3")
                                 refresh_status(); lastStatusCek = os.time()
                                 gambar_tabel(isi)
@@ -10360,7 +10366,14 @@ local function run(cfg)
                 do
                     local tSelesai = os.time()
                     for _, pk in ipairs(split(cfg.pkgs or "")) do
-                        KICK_DIURUS["tembak_ts:" .. pk] = tSelesai
+                        -- v9.351: JANGAN reset tembak_ts kalau client ini baru di-tembak hactoto
+                        -- (< 120s lalu). Bug: "Grace SEMUA" reset tembak_ts olivia walau hactoto
+                        -- baru nembak 30s lalu -> denyut-rejoin langsung nembak lagi -> interrupt
+                        -- loading olivia -> loop selamanya.
+                        local tsAge = KICK_DIURUS["tembak_ts:" .. pk] and (tSelesai - KICK_DIURUS["tembak_ts:" .. pk]) or 99999
+                        if tsAge >= 120 then
+                            KICK_DIURUS["tembak_ts:" .. pk] = tSelesai
+                        end
                     end
                     info("Grace SEMUA client di-refresh -> denyut-cek nunggu ~3 menit dari sekarang (client terakhir kebuka)")
                 end
@@ -10629,7 +10642,7 @@ local function run(cfg)
                             os.execute("sleep 8")
                             -- v7.84: force-stop DIHAPUS (user minta). Langsung
                             -- open_one (cara Pandora re-join tanpa kill).
-                            open_one(cfg, pkg, mapLink[pkg], "diem-diagnosa")
+                            open_one(cfg, pkg, mapLink[pkg], "diem-diagnosa", true)
                             os.execute("sleep 3")
                             refresh_status(); lastStatusCek = os.time()
                         end
@@ -10692,7 +10705,7 @@ local function run(cfg)
                             info(("SCRIPT OFF %s (off %dm, grafis %.0f MB) -> masukin lagi"):format(akD, math.floor(diem/60), gNow/1024))
                             RIW.catat("REJOIN", akD, "karena=script-off-3menit")
                             -- v7.84: force-stop DIHAPUS (user minta). Langsung tembak.
-                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "script-off-3menit")
+                            open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "script-off-3menit", true)
                             TERAKHIR_BUKA[pkg] = os.time()
                             jaga_depan(cfg, mapLink)
                             local msk, mbk = cek_masuk_game(pkg, 30, cek_batal)
@@ -10784,7 +10797,7 @@ local function run(cfg)
                                 nudgeCnt[pkg] = (nudgeCnt[pkg] or 0) + 1
                                 tambahLog(string.format("HOME: %s %s -> rejoin ke PS (percobaan %d), GAK dibunuh",
                                     akun, errUi, nudgeCnt[pkg]))
-                                open_one(cfg, pkg, mapLink[pkg], "home-nudge")
+                                open_one(cfg, pkg, mapLink[pkg], "home-nudge", true)
                                 os.execute("sleep 5")   -- kasih waktu join
                                 errUi = nil             -- jangan jatuh ke blok bunuh
                                 end
@@ -10803,7 +10816,7 @@ local function run(cfg)
                                 -- semua disconnect cukup masuk lagi, jangan bunuh.
                                 -- am start munculin window + join link -> masuk lagi.
                                 tambahLog(string.format("DISCONNECT: %s kena '%s' -> masuk kembali (gak dibunuh)", akun, errUi))
-                                open_one(cfg, pkg, mapLink[pkg], "disconnect-errui")
+                                open_one(cfg, pkg, mapLink[pkg], "disconnect-errui", true)
                                 notify("ZenX "..cfg.tim, akun .. " " .. errUi .. " -> masuk kembali")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
@@ -10820,7 +10833,7 @@ local function run(cfg)
                                 -- jadi gak ada alasan buru-buru bunuh.
                                 tambahLog(string.format("DIEM: %s %dm gak lapor -> tembak link PS (%d/4), gak dibunuh",
                                     akun, math.floor(diem/60), nudgeCnt[pkg]))
-                                open_one(cfg, pkg, mapLink[pkg], "diem-nudge")
+                                open_one(cfg, pkg, mapLink[pkg], "diem-nudge", true)
                                 os.execute("sleep 5")
                             else
                                 -- udah dibangunin 2x masih diem -> script beneran mati -> rejoin penuh
@@ -10847,7 +10860,7 @@ local function run(cfg)
                                 -- munculin window + join link; kalau nyangkut home,
                                 -- link-nya jalan (join). Lebih ringan, gak reset client.
                                 tambahLog(string.format("AUTO-REJOIN: %s dibangunin 2x masih diem -> masuk ulang (gak dibunuh)", akun))
-                                open_one(cfg, pkg, mapLink[pkg], "auto-rejoin-dibangunin")
+                                open_one(cfg, pkg, mapLink[pkg], "auto-rejoin-dibangunin", true)
                                 notify("ZenX "..cfg.tim, "masuk ulang "..akun.." (nyangkut)")
                                 nudgeCnt[pkg] = nil
                                 os.execute("sleep " .. (cfg.stagger_sec or 10))
@@ -10859,7 +10872,7 @@ local function run(cfg)
                             -- di-kill. Semua disconnect/keluar game cukup masuk lagi.
                             tambahLog(string.format("AUTO-REJOIN: %s off %dm -> masuk kembali (gak dibunuh)",
                                 akun, math.floor(diem/60)))
-                            open_one(cfg, pkg, mapLink[pkg], "auto-rejoin-offlama")   -- buka lagi ke PS-nya
+                            open_one(cfg, pkg, mapLink[pkg], "auto-rejoin-offlama", true)   -- buka lagi ke PS-nya
                             notify("ZenX "..cfg.tim, "masuk kembali "..akun.." (keluar game)")
                             nudgeCnt[pkg] = nil
                             os.execute("sleep " .. (cfg.stagger_sec or 10))  -- jeda sebelum cek berikutnya
@@ -11013,7 +11026,7 @@ local function run(cfg)
                     tambahLog(("[grafis] %s OUT (%.0f MB) -> masukin"):format(
                         akun or nama, (petaGrafis[pkg] or 0)/1024))
                     grid_satu(cfg, pkg)
-                    open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                    open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out", true)
                     TERAKHIR_BUKA[pkg] = os.time()
                 end
                 jaga_depan(cfg, mapLink)   -- munculin jendela SEKALI setelah tembak semua
