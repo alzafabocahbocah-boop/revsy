@@ -140,13 +140,53 @@ do
                 task.wait(3)
             end
         end)
-        -- denyut tiap 20s — SKIP kalau disconnect
+        -- v27.69: FPS tracker (kayak up_kg) -- denyut BAWA fps. Client PUTIH (fps<=5, GPU gak
+        -- render) -> worker deteksi fps<=5 -> REJOIN cepet. Optimis 60 dulu (biar gak salah-rejoin loading).
+        if not _G.__ZenxFpsTrack then
+            _G.__ZenxFpsTrack = true
+            _G.__ZenxFps = 60
+            local cnt = 0
+            pcall(function()
+                game:GetService("RunService").RenderStepped:Connect(function() cnt = cnt + 1 end)
+            end)
+            local fpsLbl
+            pcall(function()
+                local plr = game:GetService("Players").LocalPlayer
+                local g = Instance.new("ScreenGui"); g.Name = "ZenxFpsHud"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
+                pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+                if not g.Parent then g.Parent = plr:WaitForChild("PlayerGui") end
+                fpsLbl = Instance.new("TextLabel", g)
+                fpsLbl.Size = UDim2.new(0, 120, 0, 34)
+                fpsLbl.Position = UDim2.new(1, -128, 0, 8)   -- pojok kanan atas
+                fpsLbl.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+                fpsLbl.BackgroundTransparency = 0.25
+                fpsLbl.Font = Enum.Font.GothamBold; fpsLbl.TextSize = 18
+                fpsLbl.TextColor3 = Color3.fromRGB(120, 255, 140); fpsLbl.BorderSizePixel = 0
+                fpsLbl.Text = "FPS --"
+                Instance.new("UICorner", fpsLbl).CornerRadius = UDim.new(0, 8)
+            end)
+            task.spawn(function()
+                while true do
+                    task.wait(1); _G.__ZenxFps = cnt; cnt = 0
+                    if fpsLbl then
+                        local f = _G.__ZenxFps or 0
+                        fpsLbl.Text = "FPS " .. f .. (f <= 5 and " (putih)" or "")
+                        fpsLbl.TextColor3 = (f <= 5) and Color3.fromRGB(255, 90, 90)
+                            or (f <= 20) and Color3.fromRGB(255, 210, 90)
+                            or Color3.fromRGB(120, 255, 140)
+                    end
+                end
+            end)
+        end
+        -- denyut tiap 20s — SELALU nulis + BAWA fps. format "ts;0;hact;<fps>"
+        -- (worker: denyut ada + fps<=5 = PUTIH -> rejoin cepet; denyut gak ada = loading -> grace)
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
                     if plr and plr.Name and writefile and not zenxDcStrict() then
-                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                        local fps = math.floor(tonumber(_G.__ZenxFps) or 60)
+                        writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";0;hact;" .. fps)
                     end
                 end)
                 task.wait(20)
@@ -232,7 +272,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.68"
+local VERSION = "v27.75"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1806,6 +1846,33 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         end)
         return o
     end
+    -- v27.74: deteksi notif TARGET FULL yg BENER (teks persis dari game):
+    -- "You can't give more pets to this user, because they will max their inventory (236/235)"
+    -- BEDA dari "can't add more items" (itu limit 12 slot trade, ditangani cantAddMore).
+    local function targetMaxPet()
+        local found = false
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            if not pg then return end
+            for _, d in ipairs(pg:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Visible then
+                    local t = (d.Text or ""):lower()
+                    if t:find("give more pets") or t:find("max their inventory")
+                       or t:find("can.t give more") or (t:find("max") and t:find("inventory"))
+                       or t:find("their inventory")
+                       -- v27.75: Indonesia (tebakan, refine kalau dapet teks asli)
+                       or t:find("tidak bisa memberi") or t:find("tidak dapat memberi")
+                       or t:find("gak bisa memberi") or t:find("tidak bisa memberikan")
+                       or (t:find("inventaris") and (t:find("penuh") or t:find("maks") or t:find("maksimal")))
+                       or (t:find("inventori") and (t:find("penuh") or t:find("maks")))
+                       or (t:find("memberi") and (t:find("pet") or t:find("hewan"))) then
+                        found = true; break
+                    end
+                end
+            end
+        end)
+        return found
+    end
     local totalSent = 0
     local idx = 1
     -- v27.65: SPAM RE-SEND. Kirim batch pet, accept, TUNGGU window HILANG (trade kelar),
@@ -1815,24 +1882,31 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         if idx > #petList then break end
         pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
-        task.wait(0.4)   -- tunggu window kebuka
+        task.wait(0.3)   -- tunggu window kebuka (was 0.4)
         local added = 0
         for i = idx, #petList do
             if stopCheck and stopCheck() then break end
             if cantAddMore() then break end   -- slot trade penuh -> accept dulu
+            -- v27.73: TARGET full (max pet) -> set flag lapor + STOP (gak usah lanjut, target kelar)
+            if targetMaxPet() then
+                _G.__hactTargetFull = targetPlayer.Name
+                print("[HactTelur] HACT OTO: target " .. targetPlayer.Name .. " FULL (max pet) -> lapor panel")
+                break
+            end
             local u = tostring(petList[i]):gsub("[{}]",""); u = "{"..u.."}"
             pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
             added = added + 1
-            task.wait(0.1)
+            task.wait(0.05)   -- was 0.1
         end
-        -- auto-accept
-        for i = 1, 4 do autoAcceptTrade(); task.wait(0.3) end
+        -- auto-accept (spam loop v27.68 udah bantu, jadi cukup 2x)
+        for i = 1, 2 do autoAcceptTrade(); task.wait(0.2) end
         totalSent = totalSent + added
         idx = idx + added
-        -- v27.65: TUNGGU window HILANG (trade beneran kelar) baru re-send batch berikutnya
+        -- v27.65: TUNGGU window HILANG baru re-send. Max 3s (was 6s) biar send tiket berikutnya cepet.
         local waited = 0
-        while windowOpen() and waited < 6 do autoAcceptTrade(); task.wait(0.3); waited = waited + 0.3 end
-        task.wait(0.25)
+        while windowOpen() and waited < 3 do autoAcceptTrade(); task.wait(0.2); waited = waited + 0.2 end
+        task.wait(0.1)   -- was 0.25
+        if _G.__hactTargetFull == targetPlayer.Name then break end   -- v27.73: target FULL -> stop re-send
         if added == 0 then break end   -- gak ada yg ke-add (target penuh / gak bisa) -> stop
     end
     return totalSent
@@ -2168,9 +2242,15 @@ do
                 for _, d in ipairs(pg:GetDescendants()) do
                     if d:IsA("TextLabel") and d.Visible then
                         local t = (d.Text or ""):lower()
-                        if t:find("can't add more") or t:find("cant add more") or t:find("can.t add more")
-                           or t:find("inventory is full") or t:find("inventory full")
-                           or t:find("max pet") or t:find("maximum") then
+                        -- v27.74: TARGET full (bukan "can't add more" yg limit 12 slot trade)
+                        if t:find("give more pets") or t:find("max their inventory")
+                           or t:find("can.t give more") or (t:find("max") and t:find("inventory"))
+                           or t:find("their inventory")
+                           or t:find("tidak bisa memberi") or t:find("tidak dapat memberi")
+                           or t:find("gak bisa memberi") or t:find("tidak bisa memberikan")
+                           or (t:find("inventaris") and (t:find("penuh") or t:find("maks") or t:find("maksimal")))
+                           or (t:find("inventori") and (t:find("penuh") or t:find("maks")))
+                           or (t:find("memberi") and (t:find("pet") or t:find("hewan"))) then
                             hit = true; break
                         end
                     end
@@ -2179,14 +2259,22 @@ do
             return hit
         end
         while true do
-            task.wait(3)   -- v27.66: 8s -> 3s biar trade lebih cepet nyaut
+            task.wait(1.5)   -- v27.70: 3s -> 1.5s biar send tiket berikutnya lebih cepet nyaut
             pcall(function()
                 local plr = Players.LocalPlayer
                 if not plr or not readfile or not isfile then return end
                 local fn = "zenx_hactoto_" .. plr.Name .. ".json"
                 if not isfile(fn) then return end   -- gak ada target -> gak gift
                 local ok, data = pcall(function() return HttpService:JSONDecode(readfile(fn)) end)
-                if not ok or type(data) ~= "table" then return end
+                -- v27.72: parse gagal sesaat (file lagi ditulis worker) -> pakai data TERAKHIR yg bener,
+                -- jangan skip. Biar trade gak putus gara-gara race baca-tulis file.
+                if ok and type(data) == "table" and data.target then
+                    _G.__hactLastData = data
+                elseif _G.__hactLastData then
+                    data = _G.__hactLastData
+                else
+                    return
+                end
                 local minC = tonumber(data.minCount) or 50
                 -- v27.63: pilih target yg BENERAN PRESENT di server ini (anti-swap).
                 -- v27.64: SKIP target yg lagi cooldown penuh (baru kena notif max ~90s lalu).
@@ -2201,16 +2289,27 @@ do
                 -- cfg filter Peacock base 2+ (kg >= 2), trade ke target present
                 local cfg2 = { pets = {["Peacock"]=true}, kg = 2, age = 0, muts = {},
                     method = "trade", targets = {[pilih]=true}, unfavFirst = true }
-                if Auto.giftBusy then return end   -- lagi gift/trade -> tunggu
+                if Auto.giftBusy then
+                    -- v27.70: safety anti "gak ngirim lagi" -- kalau giftBusy nyangkut >25s
+                    -- (trade error/hang gak reset), paksa reset biar bisa trade lagi.
+                    if Auto.giftBusySince and (tick() - Auto.giftBusySince) > 25 then
+                        Auto.giftBusy = false
+                        print("[HactTelur] HACT OTO: giftBusy nyangkut >25s -> RESET (lanjut trade)")
+                    else
+                        return   -- lagi gift/trade beneran -> tunggu
+                    end
+                end
                 local n = #(_G.HactGetMatched(cfg2))
                 if n < minC then return end        -- stok < 50 -> GAK trade
                 print("[HactTelur] HACT OTO: stok Peacock 2+ "..n.." >= "..minC.." -> trade ke "..pilih)
+                _G.__hactTargetFull = nil          -- reset flag sebelum trade
                 _G.HactGiftFilter(cfg2)            -- trade SEMUA Peacock 2+ ke target present
-                task.wait(0.6)
-                -- v27.64: abis trade, cek notif PENUH -> cooldown target ini, pindah ke lain
-                if targetPenuh() then
+                -- v27.73: kalau pas trade ke-detect target FULL (max pet) -> cooldown + LAPOR ke panel
+                if _G.__hactTargetFull == pilih or targetPenuh() then
                     fullCd[pilih] = tick()
-                    print("[HactTelur] HACT OTO: target "..pilih.." PENUH (notif max) -> cooldown 90s, cari target lain")
+                    _G.__hactFullReport = pilih    -- lapor ke panel via hactstat (akun ini FULL)
+                    _G.__hactTargetFull = nil
+                    print("[HactTelur] HACT OTO: target "..pilih.." FULL -> lapor panel + cari target lain")
                 end
             end)
         end
@@ -2598,6 +2697,7 @@ local function isEggSelected(toolName)
 end
 -- cari & pegang 1 egg tool dari backpack — CUMA egg yg dipilih di config
 local function holdEggTool()
+    if Auto.giftBusy then return false end   -- v27.71: lagi trade/gift -> JANGAN equip telur (biar tiket ke-hold)
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local bp = player:FindFirstChild("Backpack")
@@ -2642,6 +2742,8 @@ end
 -- v26.5: PENCET EGG 2X (unequip lalu equip lagi) walau udah pegang. dipanggil berkala
 -- biar megang egg gak pernah berhenti & pet baru/nyangkut langsung kelempar.
 local function forceReEquipEgg()
+    if Auto.giftBusy then return false end   -- v27.71: lagi trade/gift -> JANGAN re-equip telur
+                                             -- (UnequipTools buang TIKET -> trade gagal, stock gak drop)
     local char = player.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     local bp = player:FindFirstChild("Backpack")
@@ -7261,6 +7363,8 @@ do
                 local totalPet = 0
                 pcall(function() if PetDetect and PetDetect.listBackpackPets then totalPet = #PetDetect.listBackpackPets() end end)
                 local stat = { egg = eggName, eggN = eggN, keep = keep, totalPet = totalPet, ts = os.time(), ver = VERSION }
+                -- v27.73: lapor akun target yg udah FULL (dari notif max pet) -> panel pindahin target
+                if _G.__hactFullReport and _G.__hactFullReport ~= "" then stat.hactotoFull = _G.__hactFullReport end
                 -- v27.57: DEBUG hactoto -- baca file target dari worker, lapor status ke panel
                 pcall(function()
                     local fn = "zenx_hactoto_" .. plr.Name .. ".json"
