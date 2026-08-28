@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.354-cf"
+local VERSION = "9.355-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8324,6 +8324,7 @@ local function run(cfg)
                             pcall(function() grid_satu(cfg, pkg) end)
                             open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "hactoto-nyasar", true)
                             KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                            os.execute("sleep 30")   -- v9.355: jeda 30s antar tembak (gantian, bukan barengan)
                         end
                     end
                     _G.__hactRejoin = {}
