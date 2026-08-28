@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.365-cf"
+local VERSION = "9.368-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8386,11 +8386,14 @@ local function run(cfg)
                 end
                 -- v9.356: buang pkg yg baru di-tembak hactoto dari perluTembak
                 -- (denyut-rejoin biasa jangan tembak lagi di iterasi yg sama -> spam -S)
-                if next(_G.__hactRejoin or {}) == nil then
+                -- v9.368 FIX: ini CUMA buat HACT OTO device -- kemarin jalan di SEMUA
+                -- device (termasuk farm biasa) -> client yg baru rejoin ke-filter keluar
+                -- terus dari perluTembak, bikin rejoin denyut biasa ketunda/ke-skip.
+                if (cfg.script_label or ""):upper() == "HACT OTO" and next(_G.__hactRejoin or {}) == nil then
                     local baru = {}
                     for _, p in ipairs(perluTembak) do
                         local tsAge = KICK_DIURUS["tembak_ts:" .. p] and (os.time() - KICK_DIURUS["tembak_ts:" .. p]) or 99999
-                        if tsAge >= 10 then baru[#baru+1] = p end   -- baru di-tembak <10s = skip
+                        if tsAge >= 10 then baru[#baru+1] = p end
                     end
                     perluTembak = baru
                 end
