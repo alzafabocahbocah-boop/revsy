@@ -272,7 +272,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.77"
+local VERSION = "v27.78"
 
 -- ============================================================
 -- v27.77: STARTUP FAKE-INPUT (30 DETIK AWAL pas sc di-exe) -- klik + gerak mouse + keyboard
@@ -1925,17 +1925,19 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         local added = 0
         for i = idx, #petList do
             if stopCheck and stopCheck() then break end
-            if cantAddMore() then break end   -- slot trade penuh -> accept dulu
-            -- v27.73: TARGET full (max pet) -> set flag lapor + STOP (gak usah lanjut, target kelar)
+            -- v27.78: TARGET full (max pet) -> lapor + STOP
             if targetMaxPet() then
                 _G.__hactTargetFull = targetPlayer.Name
                 print("[HactTelur] HACT OTO: target " .. targetPlayer.Name .. " FULL (max pet) -> lapor panel")
                 break
             end
+            -- v27.78: ADD dulu, BARU cek cantAddMore. Dulu cek SEBELUM add -> notif "can't add more"
+            -- yg LINGER dari batch sebelumnya nge-block round baru -> cuma 12 kekirim, sisa 50 nyangkut.
             local u = tostring(petList[i]):gsub("[{}]",""); u = "{"..u.."}"
             pcall(function() TradeSys.addItemRE:FireServer("Pet", u) end)
             added = added + 1
-            task.wait(0.05)   -- was 0.1
+            task.wait(0.05)
+            if cantAddMore() then break end   -- slot trade penuh (12) -> accept + re-send sisa
         end
         -- auto-accept (spam loop v27.68 udah bantu, jadi cukup 2x)
         for i = 1, 2 do autoAcceptTrade(); task.wait(0.2) end
@@ -1944,6 +1946,9 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         -- v27.65: TUNGGU window HILANG baru re-send. Max 3s (was 6s) biar send tiket berikutnya cepet.
         local waited = 0
         while windowOpen() and waited < 3 do autoAcceptTrade(); task.wait(0.2); waited = waited + 0.2 end
+        -- v27.78: TUNGGU notif "can't add more" ILANG sebelum re-send (biar round baru bisa nambah full 12)
+        local w2 = 0
+        while cantAddMore() and w2 < 2.5 do task.wait(0.2); w2 = w2 + 0.2 end
         task.wait(0.1)   -- was 0.25
         if _G.__hactTargetFull == targetPlayer.Name then break end   -- v27.73: target FULL -> stop re-send
         if added == 0 then break end   -- gak ada yg ke-add (target penuh / gak bisa) -> stop
