@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.344-cf"
+local VERSION = "9.345-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7286,11 +7286,18 @@ local function run(cfg)
             for _, a in ipairs(asgn) do
                 if cfg.workspace_dir and a.target and a.target ~= "" then
                     local file = "zenx_hactoto_" .. a.pengisi .. ".json"
-                    local fmt = "{\\042target\\042:\\042%s\\042,\\042targets\\042:[" .. tlist .. "],\\042minCount\\042:50}"
-                    sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && printf \"" .. fmt .. "\" \"" .. a.target .. "\" > \"" .. file .. "\"'")
-                    if dbg then
-                        local chk = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" && cat \"" .. file .. "\" 2>/dev/null'") or ""
-                        info(("[hactoto] tulis %s = %s"):format(file, chk:find('"target"', 1, true) and "OK-JSON" or ("CEK:"..chk:sub(1,40))))
+                    -- v9.345: tulis CUMA kalau isi BERUBAH (target/list beda). Dulu di-rewrite tiap
+                    -- 5s walau sama -> hact bisa baca pas file lagi ditulis -> parse gagal sesaat.
+                    local content = a.target .. "|" .. tlist
+                    _G.__hactFileCache = _G.__hactFileCache or {}
+                    if _G.__hactFileCache[a.pengisi] ~= content then
+                        _G.__hactFileCache[a.pengisi] = content
+                        local fmt = "{\\042target\\042:\\042%s\\042,\\042targets\\042:[" .. tlist .. "],\\042minCount\\042:50}"
+                        sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && printf \"" .. fmt .. "\" \"" .. a.target .. "\" > \"" .. file .. "\"'")
+                        if dbg then
+                            local chk = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" && cat \"" .. file .. "\" 2>/dev/null'") or ""
+                            info(("[hactoto] tulis %s = %s"):format(file, chk:find('"target"', 1, true) and "OK-JSON" or ("CEK:"..chk:sub(1,40))))
+                        end
                     end
                 end
             end
@@ -7298,7 +7305,9 @@ local function run(cfg)
         -- v9.332: clear file hactoto buat akun yg GAK di-assign (target kelar -> hact stop gift)
         if cfg.workspace_dir then
             for _, ak in pairs(mapAkun) do
-                if not assigned[ak] then
+                -- v9.345: cuma rm kalau cache-nya masih ADA (berarti file ada) -> gak spam rm tiap 5s
+                if not assigned[ak] and _G.__hactFileCache and _G.__hactFileCache[ak] then
+                    _G.__hactFileCache[ak] = nil   -- clear cache -> ditulis ulang kalau assignment balik
                     sh_silent("su -c 'cd \"" .. cfg.workspace_dir .. "\" && rm -f \"zenx_hactoto_" .. ak .. ".json\"'")
                 end
             end
