@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.40"
+local VERSION = "v0.100"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -154,28 +154,136 @@ do
             end)
             return dc
         end
+        -- deteksi STRICT: CUMA prompt reconnect Roblox yg BENERAN muncul (buat trigger self-rejoin).
+        -- gak pake scan teks luas / error code (sumber false-positive) -> anti rejoin-loop.
+        local function zenxDcStrict()
+            local dc = false
+            pcall(function()
+                local cg = game:GetService("CoreGui")
+                local pg = cg:FindFirstChild("RobloxPromptGui")
+                local overlay = pg and pg:FindFirstChild("promptOverlay")
+                if not overlay then return end
+                for _, child in ipairs(overlay:GetChildren()) do
+                    if child:IsA("GuiObject") and child.Visible then
+                        for _, d in ipairs(child:GetDescendants()) do
+                            if d:IsA("TextButton") and d.Visible then
+                                local t = tostring(d.Text or ""):lower()
+                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
+                            end
+                        end
+                    end
+                end
+            end)
+            return dc
+        end
         _G.ZenxCekDisconnect = zenxCekDisconnect
-        -- loop cepat: hapus denyut pas disconnect -> worker rejoin cepet (skip pas self-rejoin)
+        -- SELF-REJOIN: error kedeteksi tapi VM masih hidup (masih bisa denyut) -> rejoin SENDIRI (gak nunggu worker)
+        _G.ZenxSelfRejoin = function(reason)
+            if _G.ZenxRejoining then return end
+            _G.ZenxRejoining = true
+            _G.ZenxRejoinSisa = 0
+            print("[SelfRejoin] " .. tostring(reason) .. " -> rejoin sendiri (VM masih hidup)")
+            local TS = game:GetService("TeleportService")
+            local plr = game:GetService("Players").LocalPlayer
+            -- hide prompt error terus (biar Teleport gak keblok)
+            task.spawn(function()
+                local cg = game:GetService("CoreGui")
+                local guiSvc = game:GetService("GuiService")
+                for _ = 1, 120 do
+                    pcall(function()
+                        for _, g in ipairs(cg:GetChildren()) do
+                            local n = tostring(g.Name):lower()
+                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                if g:IsA("ScreenGui") then g.Enabled = false end
+                                pcall(function() g.Parent = nil end)
+                            end
+                        end
+                        guiSvc:ClearError()
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+            task.wait(8)   -- ghost slot bentar (udah putus duluan, jadi lebih pendek dari scheduled)
+            while true do  -- Teleport gacor (matchmaking) balik ke PS SAMA, retry sampe berhasil
+                pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                task.wait(8)
+            end
+        end
+        -- loop cepat: hapus denyut pas disconnect (broad, harmless) + SELF-REJOIN cuma pas prompt reconnect BENERAN (strict)
         task.spawn(function()
+            local dcStrict = 0
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and not _G.ZenxRejoining and zenxCekDisconnect() and delfile then
-                        if isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
-                            pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                    if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
+                    -- denyut: hapus kalau ada sinyal disconnect apapun (worker tau putus)
+                    if zenxDcStrict() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
+                        pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                    end
+                    -- SELF-REJOIN: CUMA pas prompt reconnect Roblox muncul (strict), persist 4x + grace 60s
+                    if zenxDcStrict() then
+                        dcStrict = dcStrict + 1
+                        local umur = os.time() - (_G.__ZenxBootT or os.time())
+                        if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then
+                            _G.ZenxSelfRejoin("prompt reconnect Roblox (" .. dcStrict .. "x)")
                         end
+                    else
+                        dcStrict = 0
                     end
                 end)
                 task.wait(3)
             end
         end)
-        -- denyut tiap 20s — SKIP kalau disconnect
+        -- v0.81: FPS tracker -- denyut cuma kirim kalau render JALAN (>5 fps).
+        -- Client PUTIH (fps ~1, GPU gak render) -> denyut GAK kekirim -> worker anggap mati -> REJOIN.
+        if not _G.__ZenxFpsTrack then
+            _G.__ZenxFpsTrack = true
+            _G.__ZenxFps = 60   -- optimis dulu (sebelum keukur, biar gak salah-rejoin pas loading)
+            local cnt = 0
+            pcall(function()
+                game:GetService("RunService").RenderStepped:Connect(function() cnt = cnt + 1 end)
+            end)
+            -- v0.84: indikator FPS pojok KANAN ATAS (biar keliatan render jalan / denyut nulis apa enggak)
+            local fpsLbl
+            pcall(function()
+                local plr = game:GetService("Players").LocalPlayer
+                local g = Instance.new("ScreenGui"); g.Name = "ZenxFpsHud"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
+                pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+                if not g.Parent then g.Parent = plr:WaitForChild("PlayerGui") end
+                fpsLbl = Instance.new("TextLabel", g)
+                fpsLbl.Size = UDim2.new(0, 120, 0, 34)
+                fpsLbl.Position = UDim2.new(1, -128, 0, 8)   -- pojok kanan atas
+                fpsLbl.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+                fpsLbl.BackgroundTransparency = 0.25
+                fpsLbl.Font = Enum.Font.GothamBold; fpsLbl.TextSize = 18
+                fpsLbl.TextColor3 = Color3.fromRGB(120, 255, 140); fpsLbl.BorderSizePixel = 0
+                fpsLbl.Text = "FPS --"
+                Instance.new("UICorner", fpsLbl).CornerRadius = UDim.new(0, 8)
+            end)
+            task.spawn(function()
+                while true do
+                    task.wait(1); _G.__ZenxFps = cnt; cnt = 0
+                    if fpsLbl then
+                        local f = _G.__ZenxFps or 0
+                        fpsLbl.Text = "FPS " .. f .. (f <= 5 and " (putih)" or "")
+                        fpsLbl.TextColor3 = (f <= 5) and Color3.fromRGB(255, 90, 90)
+                            or (f <= 20) and Color3.fromRGB(255, 210, 90)
+                            or Color3.fromRGB(120, 255, 140)
+                    end
+                end
+            end)
+        end
+        -- denyut tiap 20s (BAWA stat KG: pet yg udah 3.8kg) — SKIP kalau disconnect ATAU fps<=5 (putih)
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and writefile and not zenxCekDisconnect() then
-                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                    if plr and plr.Name and writefile and not zenxDcStrict() then
+                        local udah = (_G.ZenxKgStat and tonumber(_G.ZenxKgStat.udah)) or 0
+                        local fps = math.floor(tonumber(_G.__ZenxFps) or 60)
+                        -- v0.86: SELALU nulis denyut + bawa fps. format "ts;<udah>;kg;<fps>"
+                        -- (worker: denyut ada + fps<=5 = PUTIH -> rejoin cepet; denyut gak ada = loading -> grace)
+                        writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";" .. udah .. ";kg;" .. fps)
                     end
                 end)
                 task.wait(20)
@@ -188,7 +296,7 @@ end
 local REJOIN_MENIT = 30    -- <<< SETTING: rejoin tiap berapa menit (bisa override _G.ZenxRejoinMenit)
 _G.ZenxRejoinMenit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT   -- DEFAULT 30, WAJIB nyala (gak ada toggle mati)
 _G.__ZenxBootT = _G.__ZenxBootT or os.time()   -- waktu boot script (buat guard kick-pertama)
-do
+if false then   -- <<< AUTO-REJOIN SC DIMATIIN (worker + panel kick handle rejoin, gak perlu dobel)
     _G.__ZenxRejoinGen = (_G.__ZenxRejoinGen or 0) + 1
     local myGen = _G.__ZenxRejoinGen
     do
@@ -239,7 +347,7 @@ do
                             print("[Rejoin] teleport GAGAL: " .. tostring(res) .. " | " .. tostring(msg))
                         end)
                     end)
-                    task.wait(30)
+                    task.wait(40)   -- jeda abis kick dinaikin 30->40s
                     local tries = 0
                     while true do   -- rejoin sampe berhasil (VM mati pas teleport sukses)
                         tries = tries + 1
@@ -280,7 +388,88 @@ local function stripMutation(s)
     return s
 end
 -- config -> pet type filter (substring match). Random = semua pet (no filter).
-local KG_CONFIG_PET = { ["Tim Spider"] = "Spider", ["Tim Dilop"] = "Dilo", ["Tim Random"] = nil }
+local KG_CONFIG_PET = { ["Tim Spider"] = "Spider", ["Tim Peacock"] = "Peacock", ["Tim Dilop"] = "Dilo" }
+
+-- ============================================================
+-- v0.95: AUTO DESTROY POHON (SELALU ON) — FPS naik (port dari sc panen)
+-- Destroy semua Model di folder "Plants_Physical" (pohon/tanaman). Pet leveling BEDA folder
+-- (model "{uuid}"), jadi GAK ke-destroy. Trigger: sekali start + tiap pohon baru + loop 30s.
+-- ============================================================
+do
+    local WS = workspace
+    local function semuaFarm()
+        local roots = {}
+        local farm = WS:FindFirstChild("Farm")
+        if farm then
+            for _, f in ipairs(farm:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            end
+        end
+        if #roots == 0 then
+            for _, f in ipairs(WS:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then table.insert(roots, f) end
+            end
+        end
+        return roots
+    end
+    local function destroyPohonSemua()
+        local roots = semuaFarm(); local n = 0
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end); n = n + 1 end
+            end
+        end
+        return n
+    end
+    task.spawn(function() task.wait(3); destroyPohonSemua() end)
+    task.spawn(function()
+        local farm = WS:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                task.wait(0.05); pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+    task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
+end
+
+-- ============================================================
+-- v0.96: STARTUP FAKE-INPUT (30 DETIK AWAL pas sc di-exe) -- klik + gerak mouse + keyboard
+-- tipuan terus, buat LEWATIN loading / prompt "click to continue" biar sc gak nyangkut loading.
+-- ============================================================
+task.spawn(function()
+    local UIS = game:GetService("UserInputService")
+    local VIM, VU
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    pcall(function() VU = game:GetService("VirtualUser") end)
+    local t0 = tick()
+    while tick() - t0 < 30 do
+        -- firesignal InputBegan (fake keyboard -> lewatin prompt yg nunggu input)
+        pcall(function()
+            if firesignal then
+                firesignal(UIS.InputBegan, { UserInputType = Enum.UserInputType.Keyboard,
+                    KeyCode = Enum.KeyCode.Space, UserInputState = Enum.UserInputState.Begin }, false)
+            end
+        end)
+        -- VIM keyboard (Space) + mouse move random
+        pcall(function()
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                VIM:SendMouseMoveEvent(math.random(200, 600), math.random(200, 400), game)
+            end
+        end)
+        -- VU KLIK (Button1 kiri buat "click to continue" + Button2 backup)
+        pcall(function()
+            if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end
+        end)
+        task.wait(1.2)
+    end
+    print("[UpKg] startup fake-input 30s kelar")
+end)
+
+
 
 -- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
 local _kgContainer = nil
@@ -379,11 +568,14 @@ task.spawn(function()
             local hasTarget = (type(target) == "table") and next(target) ~= nil
             local container = _kgContainer
             local total, belum, udah, tipe = 0, 0, 0, {}
+            local tipeUdah, tipeBelum = {}, {}   -- v0.82: per-jenis 3.8kg udah/belum (buat lapor panel)
             local age50Belum, mudaBelum = 0, 0   -- age50+ belum3.8 / age<50 belum3.8
+            local totalAll = 0   -- v0.87: total SEMUA pet (buat "180/210" di panel)
             -- ITERASI CONTAINER = SEMUA pet (backpack + yg lagi ke-equip di kebun)
             if container then
                 for _, entry in pairs(container) do
                     if type(entry) == "table" and entry.PetType and type(entry.PetData) == "table" then
+                        totalAll = totalAll + 1   -- v0.87: hitung SEMUA pet (semua jenis)
                         local ptype = stripMutation(tostring(entry.PetType))
                         tipe[ptype] = (tipe[ptype] or 0) + 1   -- SEMUA tipe buat picker
                         if (not hasTarget) or target[ptype] then
@@ -394,27 +586,217 @@ task.spawn(function()
                             total = total + 1
                             if kg >= KG_TARGET_STAT - 0.005 then
                                 udah = udah + 1
+                                tipeUdah[ptype] = (tipeUdah[ptype] or 0) + 1
                             else
                                 belum = belum + 1
+                                tipeBelum[ptype] = (tipeBelum[ptype] or 0) + 1
                                 if age >= 50 then age50Belum = age50Belum + 1 else mudaBelum = mudaBelum + 1 end
                             end
                         end
                     end
                 end
+                -- v0.90: max pet inventory dari MEMORY -- field "MaxPetsInInventory" (cara hact,
+                -- ikut upgrade). getgc BERAT -> cache 30s. total pet = container count (akurat).
+                if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
+                    local mx = nil
+                    pcall(function()
+                        if getgc then
+                            for _, obj in ipairs(getgc(true)) do
+                                if type(obj) == "table" then
+                                    local mp = rawget(obj, "MaxPetsInInventory")
+                                    if type(mp) == "number" and mp > 0 and (not mx or mp > mx) then mx = mp end
+                                end
+                            end
+                        end
+                    end)
+                    _G.__ZenxMaxPetCache = mx
+                    _G.__ZenxMaxPetTime = tick()
+                end
+                local maxInv = _G.__ZenxMaxPetCache or 200
                 _G.ZenxKgStat.total = total
                 _G.ZenxKgStat.belum = belum
                 _G.ZenxKgStat.udah = udah
                 _G.ZenxKgStat.age50Belum = age50Belum
                 _G.ZenxKgStat.mudaBelum = mudaBelum
                 _G.ZenxKgStat.tipe = tipe
+                _G.ZenxKgStat.tipeUdah = tipeUdah
+                _G.ZenxKgStat.tipeBelum = tipeBelum
+                _G.ZenxKgStat.totalAll = totalAll   -- pet asli dari container
+                _G.ZenxKgStat.maxInv = maxInv        -- MaxPetsInInventory (memory)
             end
         end)
         task.wait(1)
     end
 end)
 
+-- v0.82: LAPOR STAT ke panel -- tulis zenx_upkgstat_<akun>.json tiap 15s (worker baca -> backend -> panel)
+task.spawn(function()
+    while true do
+        pcall(function()
+            local plr = game:GetService("Players").LocalPlayer
+            if plr and plr.Name and writefile then
+                local st = _G.ZenxKgStat or {}
+                -- bahan pet = jenis yg dipilih (target), fallback ke config
+                local bahan = {}
+                if type(_G.ZenxKgUpTipe) == "table" then
+                    for t in pairs(_G.ZenxKgUpTipe) do bahan[#bahan+1] = t end
+                end
+                local function jsonKV(tbl)
+                    local parts = {}
+                    for k, v in pairs(tbl or {}) do
+                        parts[#parts+1] = string.format("%q:%d", tostring(k), tonumber(v) or 0)
+                    end
+                    return "{" .. table.concat(parts, ",") .. "}"
+                end
+                local bahanStr = ""
+                for i, b in ipairs(bahan) do bahanStr = bahanStr .. (i>1 and "," or "") .. string.format("%q", b) end
+                local js = string.format(
+                    '{"akun":%q,"config":%q,"bahan":[%s],"total":%d,"udah":%d,"belum":%d,"totalAll":%d,"maxInv":%d,"tipeUdah":%s,"tipeBelum":%s,"ts":%d}',
+                    plr.Name, tostring(_G.ZenxKgConfig or ""), bahanStr,
+                    tonumber(st.total) or 0, tonumber(st.udah) or 0, tonumber(st.belum) or 0,
+                    tonumber(st.totalAll) or 0, tonumber(st.maxInv) or 210,
+                    jsonKV(st.tipeUdah), jsonKV(st.tipeBelum), os.time())
+                writefile("zenx_upkgstat_" .. plr.Name .. ".json", js)
+            end
+        end)
+        task.wait(15)
+    end
+end)
+
 -- ============================================================
--- ENGINE AUTO UP KG — SESI 1 (up BAHAN ke AGE 50)
+-- v0.83: AUTO ACCEPT GIFT (gift biasa GiftPet + tiket via trade) -- SELALU ON
+-- ============================================================
+task.spawn(function()
+    local RS = game:GetService("ReplicatedStorage")
+    local plr = game:GetService("Players").LocalPlayer
+    local fs = (typeof(firesignal) == "function") and firesignal or nil
+    local function fireBtn(btn)
+        if not btn then return false end
+        if fs then
+            pcall(function() fs(btn.MouseButton1Down) end)
+            pcall(function() fs(btn.MouseButton1Click) end)
+            return true
+        end
+        return false
+    end
+    local function acceptAllGiftPopups()
+        local clicked = 0
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            local gn = pg and pg:FindFirstChild("Gift_Notification")
+            if not gn then return end
+            local outer = gn:FindFirstChild("Frame")
+            local inner = outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
+            local container = inner or gn
+            for _, holder in ipairs(container:GetChildren()) do
+                local accept
+                local fr = holder:FindFirstChild("Frame")
+                if fr then accept = fr:FindFirstChild("Accept") end
+                if not accept then
+                    for _, dd in ipairs(holder:GetDescendants()) do
+                        if dd.Name == "Accept" and dd:IsA("GuiButton") then accept = dd break end
+                    end
+                end
+                if accept and accept:IsA("GuiButton") then
+                    local vis = true; pcall(function() vis = accept.Visible end)
+                    if vis and fireBtn(accept) then clicked = clicked + 1 end
+                end
+            end
+        end)
+        return clicked
+    end
+    local ge = RS:WaitForChild("GameEvents", 30)
+    if ge then
+        -- GIFT BIASA: GiftPet.OnClientEvent -> AcceptPetGift + klik popup Accept
+        local giftRE = ge:FindFirstChild("GiftPet")
+        local acceptGiftRE = ge:FindFirstChild("AcceptPetGift")
+        if giftRE then
+            giftRE.OnClientEvent:Connect(function(petUUID)
+                if acceptGiftRE and type(petUUID) == "string" and #petUUID > 8 then
+                    pcall(function() acceptGiftRE:FireServer(true, petUUID) end)
+                end
+                task.spawn(function()
+                    for _ = 1, 10 do
+                        if acceptAllGiftPopups() > 0 then task.wait(0.3) else task.wait(0.25) end
+                    end
+                end)
+            end)
+        end
+        -- TIKET: TradeEvents.SendRequest -> RespondRequest(tradeID, true)
+        local te = ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE = te:FindFirstChild("SendRequest")
+            local respondRE = te:FindFirstChild("RespondRequest")
+            local lastTradeID = nil
+            if sendReqRE and respondRE then
+                sendReqRE.OnClientEvent:Connect(function(...)
+                    local args = {...}
+                    if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("-") then
+                        lastTradeID = args[1]
+                    end
+                    if lastTradeID then
+                        pcall(function() respondRE:FireServer(lastTradeID, true) end)
+                    end
+                end)
+            end
+        end
+    end
+    -- v0.91: auto-accept WINDOW trade (konfirmasi AKHIR) -- biar terima trade tiket dari
+    -- hactotomatis. Dulu cuma terima gift popup + trade REQUEST, tapi window trade gak di-Accept
+    -- -> trade nggantung. Samain cara hact (klik LiveTrade.Options.Accept + fire remote).
+    local function autoAcceptTradeWindow()
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui")
+            if not pg then return end
+            local tui = pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts = lt:FindFirstChild("Options")
+                -- v0.92: klik Accept DAN Confirm (2 langkah: accept dulu, lalu confirm akhir)
+                for _, bn in ipairs({"Accept", "Confirm"}) do
+                    local b = opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function() firesignal(b.Activated) end) end
+                        if getconnections then
+                            for _, c in ipairs(getconnections(b.Activated)) do pcall(function() c:Fire() end) end
+                        end
+                        pcall(function() fireBtn(b) end)
+                    end
+                end
+                -- auto-klik tombol accept/confirm/yes di seluruh window (TextButton & ImageButton)
+                for _, d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t == "yes" or t:find("confirm") or t == "continue" or t == "accept" then
+                            pcall(function() fireBtn(d) end)
+                        end
+                    end
+                end
+            end
+            -- backup remote
+            local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            te = te and te:FindFirstChild("TradeEvents")
+            if te then
+                local a = te:FindFirstChild("Accept"); local c = te:FindFirstChild("Confirm")
+                if c then pcall(function() c:FireServer() end) end
+                if a then pcall(function() a:FireServer() end) end
+            end
+        end)
+    end
+    -- loop gift popup (0.6s)
+    task.spawn(function()
+        while true do
+            task.wait(0.6)
+            pcall(acceptAllGiftPopups)
+        end
+    end)
+    -- v0.93: loop ACCEPT/CONFIRM window trade -- SPAM TERUS cepet (0.12s), jangan sekali doang.
+    -- Selama window trade kebuka, accept & confirm di-tekan terus biar trade LANGSUNG kelar.
+    while true do
+        task.wait(0.12)
+        pcall(autoAcceptTradeWindow)
+    end
+end)
 -- 6 support (4 Mimic + 1 Ghostly Spider + 1 Gilded Coach Perytron) + SWAP GACOR
 -- 2 bahan (jenis picker, age<50 + kg<3.8) — DIEM (no swap), rotate pas age 50
 -- ============================================================
@@ -469,11 +851,7 @@ do
         local key = tostring(uuid):gsub("[{}]", "")
         local e = cdEventCache[key]
         if e and tick() - e.at <= 8 then return e.ready end
-        if getCooldownRF then
-            local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(uuid)) end)
-            if ok then return readyDariData(res) end
-        end
-        return nil
+        return nil   -- GAK InvokeServer di hot-loop (biar gak nge-block/lambat). cache di-refresh loop periodik.
     end
     -- farm center (cluster)
     local function farmCenter()
@@ -538,11 +916,30 @@ do
         { nama = "Ghostly Spider",  cari = { "ghostly", "spider" },  jml = 1 },
         { nama = "Gilded Peryton",  cari = { "gilded", "peryton" },  jml = 1 },
     }
+    -- v0.74: SESI 1 khusus config "Tim Dilop": 1 Elephant, 2 Dilop, 1 Peacock, 1 Gilded Choc Peryton + 3 bahan
+    local SUPPORT_S1_DILOP = {
+        { nama = "Elephant",            cari = { "elephant" },           jml = 1 },
+        { nama = "Dilop",               cari = { "dilo" },               jml = 2 },
+        { nama = "Peacock",             cari = { "peacock" },            jml = 1 },
+        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" },  jml = 1 },
+    }
     -- SESI 2 (up KG): 7 support, swap SEMUA (support+bahan), bahan 1, rotate pas age turun <=30
     local SUPPORT_S2 = {
-        { nama = "Mimic Octopus",   cari = { "mimic" },     jml = 4 },
-        { nama = "Peacock",         cari = { "peacock" },   jml = 1 },
-        { nama = "Elephant",        cari = { "elephant" },  jml = 2 },
+        { nama = "Mimic Octopus",   cari = { "mimic" },              jml = 3 },
+        { nama = "Elephant",        cari = { "elephant" },           jml = 2 },
+        { nama = "Peacock",         cari = { "peacock" },            jml = 1 },
+        { nama = "Ghostly Spider",  cari = { "ghostly", "spider" },  jml = 1 },
+    }
+    -- v0.78: config "Tim Peacock" -- SESI 1: 2 Gilded Choc Peryton + 3 Mimic + 3 bahan
+    local SUPPORT_S1_PEACOCK = {
+        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" },  jml = 2 },
+        { nama = "Mimic Octopus",       cari = { "mimic" },              jml = 3 },
+    }
+    -- v0.78: config "Tim Peacock" -- SESI 2 (up KG): 2 Elephant + 4 Mimic + 1 Peacock + 1 bahan
+    local SUPPORT_S2_PEACOCK = {
+        { nama = "Elephant",        cari = { "elephant" },           jml = 2 },
+        { nama = "Mimic Octopus",   cari = { "mimic" },              jml = 4 },
+        { nama = "Peacock",         cari = { "peacock" },            jml = 1 },
     }
     local AGE_TARGET = 50     -- sesi 1: bahan sampe age ini
     local AGE_DROP   = 30     -- sesi 2: KG-up kelar kalau age turun <= ini
@@ -566,7 +963,7 @@ do
 
     -- pilih support (PALING GEDE per tipe, kunci) — tim sesuai SESI
     local function pilihSupport(sesi)
-        local SUP = (sesi == 2) and SUPPORT_S2 or SUPPORT_S1
+        local SUP = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
         local pets = listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local ada = {}
@@ -586,7 +983,7 @@ do
     local function pilihBahan(sesi)
         local target = _G.ZenxKgUpTipe
         if type(target) ~= "table" or not next(target) then return end
-        local maxB = (sesi == 2) and BAHAN_S2 or BAHAN_S1
+        local maxB = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
         local pets = listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local n = jml(bahanAktif)
@@ -603,44 +1000,144 @@ do
         end
     end
     local function equipSemua()
-        for u in pairs(supportKunci) do equipPet(u, CLUSTER); task.wait(0.06) end
-        for u in pairs(bahanAktif) do equipPet(u, CLUSTER); task.wait(0.06) end
+        -- v0.80: config Peacock -> equip AWAL (pas mulai/ganti sesi) delay 2s per pet. Config lain 0.06s.
+        local dly = (_G.ZenxKgConfig == "Tim Peacock") and 2 or 0.06
+        for u in pairs(supportKunci) do equipPet(u, CLUSTER); task.wait(dly) end
+        for u in pairs(bahanAktif) do equipPet(u, CLUSTER); task.wait(dly) end
+    end
+
+    -- v0.94: VERIFIKASI PLACEMENT -- support 1 tipe > config ATAU bahan > max ATAU ada pet EXTRA
+    -- ke-equip (tipe support tapi gak di-track) -> placement SALAH -> redo sesi (out semua, masukin lagi).
+    local function getSUP(sesi)
+        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
+    end
+    local function getMaxB(sesi)
+        return (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
+    end
+    local function tipeDariUuid(uuid)
+        local c = _kgContainer
+        if not c then return nil end
+        local e = c[fmtUUID(uuid)]
+        if type(e) == "table" and e.PetType then return stripMutation(tostring(e.PetType)) end
+        return nil
+    end
+    local function placementSalah(sesi)
+        local SUP = getSUP(sesi); local maxB = getMaxB(sesi)
+        -- 1. support 1 tipe LEBIH dari config? (mis 3 Gilded, config 2)
+        local supCnt = {}
+        for _, nm in pairs(supportKunci) do supCnt[nm] = (supCnt[nm] or 0) + 1 end
+        for _, sup in ipairs(SUP) do
+            if (supCnt[sup.nama] or 0) > sup.jml then return sup.nama.." "..(supCnt[sup.nama] or 0).."/"..sup.jml end
+        end
+        -- 2. bahan LEBIH dari max?
+        if jml(bahanAktif) > maxB then return "bahan "..jml(bahanAktif).."/"..maxB end
+        -- 3. pet EXTRA ke-equip (punya gua, di cluster, tipe support config, TAPI gak di-track)
+        for uuid in pairs(modelByUuid) do
+            if not supportKunci[uuid] and not bahanAktif[uuid] then
+                local tipe = tipeDariUuid(uuid)   -- nil = bukan pet gua (pet player lain)
+                if tipe then
+                    for _, sup in ipairs(SUP) do
+                        if cocokSemua(tipe, sup.cari) then return tipe.." EXTRA (auto-equip, gak di-track)" end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+    -- OUT semua pet ke-equip -> clear tracking -> re-pick + re-equip (mulai ulang sesi bersih)
+    local function redoSesi(sesi, alasan)
+        KG.reset = true   -- v0.94: pause HEAL/swap selama redo biar gak rebutan
+        kgLog("PLACEMENT SALAH ("..tostring(alasan)..") -> OUT SEMUA + masukin lagi")
+        for uuid in pairs(modelByUuid) do
+            if tipeDariUuid(uuid) then unequipPet(uuid); task.wait(0.04) end   -- cuma pet gua
+        end
+        for u in pairs(supportKunci) do unequipPet(u); task.wait(0.03) end
+        for u in pairs(bahanAktif) do unequipPet(u); task.wait(0.03) end
+        task.wait(0.6)
+        for k in pairs(supportKunci) do supportKunci[k] = nil end   -- clear in-place (jaga upvalue)
+        for k in pairs(bahanAktif) do bahanAktif[k] = nil end
+        task.wait(0.3)
+        pilihSupport(sesi); pilihBahan(sesi); equipSemua()
+        KG.reset = false
+        kgLog("REDO sesi"..sesi.." kelar -> support "..jml(supportKunci).." bahan "..jml(bahanAktif))
     end
 
 
     -- swap gacor PARALEL (tiap pet swap sendiri-sendiri, GAK antre) — lebih cepet
-    local busy, lastSwap, lastPos = {}, {}, {}
+    local busy, lastSwap, lastPos, busySince = {}, {}, {}, {}
     local function swapPet(uuid)
         if busy[uuid] then return end
         busy[uuid] = true
+        busySince[uuid] = tick()
         task.spawn(function()
-            local pos = CLUSTER
-            if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
-            if not pos then pos = lastPos[uuid] end
-            if pos then lastPos[uuid] = pos end
-            task.wait(KG.pickup or 0.3)
-            unequipPet(uuid); task.wait(0.01)
-            equipPet(uuid, pos)
-            lastSwap[uuid] = tick()
-            for i = 1, 3 do
-                task.wait(0.35)
-                local m = modelByUuid[uuid]; if m and m.Parent then break end
-                equipPet(uuid, lastPos[uuid])
-            end
-            busy[uuid] = nil
+            pcall(function()   -- kalau error di tengah, busy TETEP ke-clear di bawah (anti nyangkut)
+                local pos = CLUSTER
+                if not pos then local m = modelByUuid[uuid]; if m then local ok,p = pcall(function() return m:GetPivot().Position end); if ok then pos = p end end end
+                if not pos then pos = lastPos[uuid] end
+                if pos then lastPos[uuid] = pos end
+                task.wait(KG.pickup or 0.3)
+                unequipPet(uuid); task.wait(0.03)
+                equipPet(uuid, pos)
+                lastSwap[uuid] = tick()
+                for i = 1, 12 do                       -- retry: cek tiap 0.1s (deteksi respawn CEPET) biar gak nyangkut lama
+                    task.wait(0.1)
+                    local m = modelByUuid[uuid]; if m and m.Parent then break end
+                    if i % 4 == 0 then equipPet(uuid, lastPos[uuid]) end   -- re-equip tiap ~0.4s (gak spam)
+                end
+            end)
+            busy[uuid] = nil   -- SELALU clear (walau error) -> pet gak nyangkut
         end)
     end
-    -- ready-loop: SESI 1 = support doang. SESI 2 = SEMUA (support + bahan). Cek cepet 0.05s.
+    -- ready-loop: swap SUPPORT doang (bahan DIEM di kedua sesi). Cek cepet 0.05s.
     task.spawn(function()
         while _G.__ZenxKgEngineGen == engGen do
             task.wait(0.05)
             if KG.aktif and not KG.reset then
                 for uuid in pairs(modelByUuid) do
-                    local swapIni = supportKunci[uuid] or (KG.sesi == 2 and bahanAktif[uuid])
+                    -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
+                    if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
+                    local nm = supportKunci[uuid]
+                    -- support di-swap, TAPI Spider/Ghostly Spider di-equip aja (DIEM, gak di-swap). bahan juga diem.
+                    local swapIni = nm and not (tostring(nm):lower():find("spider"))
                     if swapIni and not busy[uuid] then
                         local rdy = petReady(uuid)
                         local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
                         if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- v0.75: AUTO SWAP SKILL — swap skill SEMUA pet (bukan support doang), jalan WALAU engine spider/dilop OFF
+    task.spawn(function()
+        while _G.__ZenxKgEngineGen == engGen do
+            task.wait(0.1)
+            if _G.ZenxAutoSwapSkill and not KG.aktif then   -- cuma pas engine utama GAK jalan
+                for uuid in pairs(modelByUuid) do
+                    if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
+                    if not busy[uuid] then
+                        local rdy = petReady(uuid)
+                        local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
+                        if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- v0.77: AUTO TENGAH standalone -- tahan SEMUA pet ke tengah walau AUTO UP KG OFF
+    task.spawn(function()
+        while _G.__ZenxKgEngineGen == engGen do
+            task.wait(0.25)
+            if _G.ZenxAutoTengah and not KG.aktif then   -- up kg OFF -> hold standalone (kalau up kg ON, HOLD engine yg jalan)
+                local center = farmCenter()
+                if center then
+                    for uuid, m in pairs(modelByUuid) do
+                        if m and m.Parent then
+                            local ok, p = pcall(function() return m:GetPivot().Position end)
+                            if ok and (p - center).Magnitude > 3 then pcall(function() m:PivotTo(CFrame.new(center)) end) end
+                        end
                     end
                 end
             end
@@ -675,7 +1172,7 @@ do
         pilihSupport(sesi)
         pilihBahan(sesi)
         equipSemua()
-        local SUP = (sesi == 2) and SUPPORT_S2 or SUPPORT_S1
+        local SUP = (sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S2_PEACOCK or SUPPORT_S2) or ((_G.ZenxKgConfig == "Tim Dilop") and SUPPORT_S1_DILOP or ((_G.ZenxKgConfig == "Tim Peacock") and SUPPORT_S1_PEACOCK or SUPPORT_S1))
         local perT = {}
         for _, nm in pairs(supportKunci) do perT[nm] = (perT[nm] or 0) + 1 end
         local ss = ""; for _, sup in ipairs(SUP) do ss = ss..sup.nama.."="..(perT[sup.nama] or 0).."/"..sup.jml.." " end
@@ -704,35 +1201,88 @@ do
     local function kgStart(config)
         KG.aktif = true
         KG.sesi = 1
-        KG.pickup = 0.3
-        if tostring(config):lower():find("spider") then KG.pickup = 0.5 end   -- Tim Spider = jeda 0.5s
-        CLUSTER = farmCenter()
+        KG.pickup = 0.25   -- jeda setelah ready sebelum copot (kecil = pickup responsif). spider gak di-swap jadi gak perlu special.
+        CLUSTER = farmCenter()   -- v0.73: BALIKIN buat swap (equip ke tengah pas swap = gacor, nentuin posisi). HOLD-loop yg dimatiin (biar gak ditahan terus pas gak swap).
         supportKunci = {}; bahanAktif = {}
         kgLog("START ("..tostring(config)..") pickup="..KG.pickup.."s center="..(CLUSTER and "ada" or "NIL"))
-        -- RESET tiap 3 menit: copot SEMUA pet -> pasang lagi tim yg sama (refresh garden)
+        -- (RESET 3-menit DIHAPUS — HEALER 1s udah jaga visual, gak perlu refresh berkala)
         KG.reset = false
         _G.__ZenxKgResetGen = (_G.__ZenxKgResetGen or 0) + 1
         local resetGen = _G.__ZenxKgResetGen
+        -- REFRESH cooldown cache periodik (2s, BACKGROUND) — biar petReady selalu dari cache (non-block).
+        -- Ini yg bikin swap TETEP gacor (gak makin lambat): cache gak pernah basi -> gak ada InvokeServer di hot-loop.
+        task.spawn(function()
+            local ge2 = RS:FindFirstChild("GameEvents")
+            local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
+            local lastInvoke = 0
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
+                if req2 then pcall(function() req2:FireServer() end) end   -- SERING (0.5s, cheap/non-block) = cache fresh, readiness cepet = GACOR
+                if getCooldownRF and (tick() - lastInvoke) >= 2 then       -- InvokeServer fallback JARANG (2s) buat pet yg cache masih basi
+                    lastInvoke = tick()
+                    for u in pairs(supportKunci) do
+                        local key = tostring(u):gsub("[{}]", "")
+                        local e = cdEventCache[key]
+                        if not (e and tick() - e.at <= 8) then
+                            local ok, res = pcall(function() return getCooldownRF:InvokeServer(fmtUUID(u)) end)
+                            if ok then cdEventCache[key] = { ready = (readyDariData(res) == true), at = tick() } end
+                        end
+                    end
+                end
+                task.wait(0.5)
+            end
+        end)
+        -- HEALER cek TERUS (tiap 1s): pet tim yg model-nya ILANG -> langsung PAKSA copot->pasang
+        -- HOLD di TENGAH: tahan pet tim di CLUSTER (numpuk rapet) — pivot balik kalau drift >3 stud
         task.spawn(function()
             while KG.aktif and _G.__ZenxKgResetGen == resetGen do
-                -- tunggu 3 menit (cek tiap 1s biar responsif ke OFF)
-                local t0 = tick()
-                while KG.aktif and _G.__ZenxKgResetGen == resetGen and (tick() - t0) < 180 do task.wait(1) end
-                if not (KG.aktif and _G.__ZenxKgResetGen == resetGen) then break end
-                KG.reset = true                        -- pause swap-loop
-                task.wait(0.1)
-                -- rekam tim sekarang (support + bahan)
-                local timNow = {}
-                for u in pairs(supportKunci) do timNow[u] = true end
-                for u in pairs(bahanAktif) do timNow[u] = true end
-                kgLog("RESET 3-menit: copot semua + pasang lagi ("..jml(timNow).." pet)")
-                pickupAll()                            -- copot SEMUA pet di kebun
-                task.wait(0.8)
-                for u in pairs(timNow) do             -- pasang lagi tim yg tadi
-                    if KG.aktif then equipPet(u, CLUSTER); task.wait(0.06) end
+                task.wait(0.25)
+                if _G.ZenxAutoTengah and KG.aktif and not KG.reset and CLUSTER then   -- v0.76: HOLD-ke-tengah lewat toggle "AUTO TENGAH"
+                    for uuid in pairs(modelByUuid) do
+                        if (supportKunci[uuid] or bahanAktif[uuid]) and not busy[uuid] then
+                            local m = modelByUuid[uuid]
+                            if m and m.Parent then
+                                local ok, p = pcall(function() return m:GetPivot().Position end)
+                                if ok and (p - CLUSTER).Magnitude > 3 then
+                                    pcall(function() m:PivotTo(CFrame.new(CLUSTER)) end)
+                                end
+                            end
+                        end
+                    end
                 end
-                task.wait(0.3)
-                KG.reset = false                       -- lanjut swap
+            end
+        end)
+        -- (server nganggep udah equip -> equip biasa no-op. copot dulu baru equip = model spawn lagi)
+        task.spawn(function()
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
+                task.wait(1)
+                if KG.aktif and not KG.reset and _G.__ZenxKgResetGen == resetGen then
+                    local team = {}
+                    for u in pairs(supportKunci) do team[u] = true end
+                    for u in pairs(bahanAktif) do team[u] = true end
+                    local healed = 0
+                    for u in pairs(team) do
+                        local idle = lastSwap[u] and (tick() - lastSwap[u]) or 999
+                        -- ilang model + gak lagi di-swap + gak baru di-swap (biar gak ganggu swap normal)
+                        if not modelByUuid[u] and not busy[u] and idle > 3 then
+                            unequipPet(u); task.wait(0.15)
+                            equipPet(u, CLUSTER); task.wait(0.12)
+                            healed = healed + 1
+                        end
+                    end
+                    if healed > 0 then kgLog("HEAL: " .. healed .. " pet model ilang -> paksa re-equip") end
+                end
+            end
+        end)
+        -- v0.94: CEK PLACEMENT berkala (tiap 10s) -- support 1 tipe > config / bahan > max /
+        -- ada pet extra ke-equip -> OUT SEMUA + masukin lagi (mulai ulang sesi bersih).
+        task.spawn(function()
+            task.wait(18)   -- tunggu equip awal beres dulu (config Peacock 2s/pet)
+            while KG.aktif and _G.__ZenxKgResetGen == resetGen do
+                task.wait(10)
+                if KG.aktif and not KG.reset and _G.__ZenxKgResetGen == resetGen then
+                    local salah = placementSalah(KG.sesi)
+                    if salah then pcall(function() redoSesi(KG.sesi, salah) end) end
+                end
             end
         end)
         task.spawn(function()
@@ -782,7 +1332,7 @@ do
                         end
                     end
                     -- isi ulang bahan
-                    local maxB = (KG.sesi == 2) and BAHAN_S2 or BAHAN_S1
+                    local maxB = (KG.sesi == 2) and ((_G.ZenxKgConfig == "Tim Peacock") and 1 or BAHAN_S2) or (((_G.ZenxKgConfig == "Tim Dilop") or (_G.ZenxKgConfig == "Tim Peacock")) and 3 or BAHAN_S1)
                     if jml(bahanAktif) < maxB then
                         pilihBahan(KG.sesi)
                         for u in pairs(bahanAktif) do
@@ -884,18 +1434,18 @@ mk("Frame", { Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
 local judul = lbl(titleBar, "\u{2696} UP KG", 15, C.text)
 judul.Font = FONT_B
 judul.Position = UDim2.new(0, 16, 0, 0); judul.Size = UDim2.new(0, 200, 1, 0)
-local verL = lbl(titleBar, VERSION, 11, C.textDim)
+local verL = lbl(titleBar, VERSION, 22, C.textDim)
 verL.Position = UDim2.new(0, 120, 0, 0); verL.Size = UDim2.new(0, 60, 1, 0)
 
 local closeBtn = mk("TextButton", {
     Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -38, 0, 7),
-    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 15,
-    TextColor3 = C.textDim, AutoButtonColor = true, Parent = titleBar })
+    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 30,
+    TextColor3 = Color3.fromRGB(255, 255, 255), AutoButtonColor = true, Parent = titleBar })
 corner(closeBtn, 7)
 local minBtn = mk("TextButton", {
     Size = UDim2.new(0, 30, 0, 30), Position = UDim2.new(1, -74, 0, 7),
-    BackgroundColor3 = C.card, Text = "\u{2013}", Font = FONT_B, TextSize = 15,
-    TextColor3 = C.textDim, AutoButtonColor = true, Parent = titleBar })
+    BackgroundColor3 = C.card, Text = "\u{2013}", Font = FONT_B, TextSize = 30,
+    TextColor3 = Color3.fromRGB(255, 255, 255), AutoButtonColor = true, Parent = titleBar })
 corner(minBtn, 7)
 
 -- drag manual
@@ -986,6 +1536,7 @@ local function makeSideBtn(name, y)
 end
 makeSideBtn("AUTO KG", 14)
 makeSideBtn("MISC", 54)
+makeSideBtn("TRADE", 94)
 
 -- ============ AREA KONTEN ============
 local content = mk("Frame", {
@@ -1001,9 +1552,19 @@ local miscScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), Backgrou
     BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = miscContent })
 
+local tradeContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(tradeContent, 14)
+local tradeScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = tradeContent })
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = tradeScroll })
+
 showSideFn = function(name)
     content.Visible     = (name == "AUTO KG")
     miscContent.Visible = (name == "MISC")
+    tradeContent.Visible = (name == "TRADE")
 end
 
 -- ---- KONTEN AUTO KG (kanan) = CONFIG ----
@@ -1030,8 +1591,8 @@ local function cfgRow(label, defaultVal, lo)
     local t = lbl(r, label, 12, C.text)
     t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(0.55, 0, 1, 0)
     local box = mk("TextBox", { Size = UDim2.new(0, 100, 0, 24), Position = UDim2.new(1, -110, 0.5, -12),
-        BackgroundColor3 = C.input, Text = tostring(defaultVal or ""), Font = FONT_B, TextSize = 12,
-        TextColor3 = C.text, TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false,
+        BackgroundColor3 = C.input, Text = tostring(defaultVal or ""), Font = FONT_B, TextSize = 24,
+        TextColor3 = Color3.fromRGB(255, 255, 255), TextXAlignment = Enum.TextXAlignment.Center, ClearTextOnFocus = false,
         Parent = r })
     corner(box, 5); stroke(box, C.border, 1)
     return box, r
@@ -1040,8 +1601,8 @@ end
 -- ============ SECTION: CONFIG UP KG ============
 sectionHeader("\u{2696} CONFIG UP KG", 1)
 
--- selector 3 config: Tim Spider / Tim Dilop / Tim Random
-local KG_CONFIGS = { "Tim Spider", "Tim Dilop", "Tim Random" }
+-- selector config: Tim Spider / Tim Peacock / Tim Dilop
+local KG_CONFIGS = { "Tim Spider", "Tim Peacock", "Tim Dilop" }
 local kgConfigAktif = _G.ZenxKgConfig or "Tim Spider"
 local kgConfBtns = {}
 local kgSelRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1,
@@ -1049,10 +1610,18 @@ local kgSelRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 32), BackgroundTranspar
 mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal,
     Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = kgSelRow })
 _G.ZenxKgConfig = kgConfigAktif
+-- v0.99: AUTO TENGAH default ALWAYS ON (dulu cuma auto-ON kalau config "Tim Peacock").
+-- Sekarang ON dari awal terlepas dari config apapun.
+if _G.ZenxAutoTengah == nil then _G.ZenxAutoTengah = true end
 local kgConfStrokes = {}
 local function pilihConfig(name)
     kgConfigAktif = name
     _G.ZenxKgConfig = name
+    -- v0.79: config "Tim Peacock" -> AUTO TENGAH otomatis ON (ikut config)
+    if name == "Tim Peacock" then
+        _G.ZenxAutoTengah = true
+        if _G.ZenxSyncTengah then _G.ZenxSyncTengah() end
+    end
     if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
     for n, b in pairs(kgConfBtns) do
         local on = (n == name)
@@ -1066,7 +1635,7 @@ for i, name in ipairs(KG_CONFIGS) do
     local on = (name == kgConfigAktif)
     local b = mk("TextButton", { Size = UDim2.new(1/3, -4, 1, 0),
         BackgroundColor3 = on and C.cardSel or C.card, Text = name:gsub("Tim ", ""),
-        Font = FONT_B, TextSize = 11, TextColor3 = on and C.accent or C.textDim,
+        Font = FONT_B, TextSize = 22, TextColor3 = on and C.accent or C.textDim,
         AutoButtonColor = false, LayoutOrder = i, Parent = kgSelRow })
     corner(b, 6); kgConfStrokes[name] = stroke(b, on and C.borderSel or C.border, 1)
     b.MouseButton1Click:Connect(function() pilihConfig(name) end)
@@ -1078,7 +1647,7 @@ end
 local KG_TARGET = 3.8
 _G.ZenxKgTarget = KG_TARGET
 local statTbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 148), BackgroundColor3 = C.panel,
-    Font = Enum.Font.Code, TextSize = 11, TextColor3 = C.text,
+    Font = Enum.Font.Code, TextSize = 22, TextColor3 = Color3.fromRGB(255, 255, 255),
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Text = "", LayoutOrder = 3, Parent = cfgScroll })
 corner(statTbl, 6)
@@ -1116,7 +1685,7 @@ end)
 
 -- ============ PICKER: PET YANG MAU DI-UP (tombol -> POPUP) ============
 local pickBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.card,
-    Text = "\u{1F43E} Pilih Pet Di-Up: (belum)", Font = FONT_B, TextSize = 12, TextColor3 = C.text,
+    Text = "\u{1F43E} Pilih Pet Di-Up: (belum)", Font = FONT_B, TextSize = 24, TextColor3 = Color3.fromRGB(255, 255, 255),
     LayoutOrder = 4, Parent = cfgScroll }); corner(pickBtn, 6); stroke(pickBtn, C.border, 1)
 
 -- popup overlay (di atas semua, muncul pas tombol dipencet)
@@ -1128,40 +1697,61 @@ corner(pickPanel, 10); stroke(pickPanel, C.border, 1.5)
 local pTitle = lbl(pickPanel, "\u{1F43E} Pilih Pet Di-Up", 14, C.text); pTitle.Font = FONT_B
 pTitle.Position = UDim2.new(0, 14, 0, 10); pTitle.Size = UDim2.new(1, -50, 0, 24); pTitle.ZIndex = 102
 local pClose = mk("TextButton", { Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(1, -36, 0, 8),
-    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 14, TextColor3 = C.textDim,
+    BackgroundColor3 = C.card, Text = "\u{2715}", Font = FONT_B, TextSize = 28, TextColor3 = Color3.fromRGB(255, 255, 255),
     ZIndex = 102, Parent = pickPanel }); corner(pClose, 6)
-local pList = mk("ScrollingFrame", { Size = UDim2.new(1, -20, 1, -58), Position = UDim2.new(0, 10, 0, 44),
+local pSearch = mk("TextBox", { Size = UDim2.new(1, -20, 0, 28), Position = UDim2.new(0, 10, 0, 42),
+    BackgroundColor3 = C.card, TextColor3 = Color3.fromRGB(255, 255, 255), PlaceholderText = "cari jenis pet...", Text = "",
+    Font = FONT, TextSize = 24, ClearTextOnFocus = false, ZIndex = 102, Parent = pickPanel }); corner(pSearch, 6)
+local pList = mk("ScrollingFrame", { Size = UDim2.new(1, -20, 1, -92), Position = UDim2.new(0, 10, 0, 78),
     BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 102, Parent = pickPanel })
 mk("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pList })
 
-local function bukaPicker()
-    for _, c in ipairs(pList:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
-    local tipe = (_G.ZenxKgStat and _G.ZenxKgStat.tipe) or {}
-    local names = {}
-    for t in pairs(tipe) do names[#names+1] = t end
-    table.sort(names)
-    if #names == 0 then
-        local e = lbl(pList, "(belum ada pet kebaca)", 12, C.textDim, Enum.TextXAlignment.Center)
-        e.Size = UDim2.new(1, 0, 0, 30); e.ZIndex = 102; e.Name = "kosong"
+local function bukaPicker(filter)
+    for _, c in ipairs(pList:GetChildren()) do if c:IsA("TextButton") or (c:IsA("TextLabel") and c.Name=="kosong") then c:Destroy() end end
+    local tipe = (_G.ZenxKgStat and _G.ZenxKgStat.tipe) or {}   -- jumlah pet yg DIPUNYA
+    local set = (type(_G.ZenxKgUpTipe)=="table") and _G.ZenxKgUpTipe or {}
+    -- union: yg dipunya + SEMUA pet registry
+    local seen, names = {}, {}
+    for t in pairs(tipe) do if not seen[t] then seen[t]=true; names[#names+1]=t end end
+    for t in pairs(set) do if not seen[t] then seen[t]=true; names[#names+1]=t end end
+    pcall(function()
+        local reg = _G.ZenxReg and _G.ZenxReg.pets
+        if type(reg)=="table" then for nm in pairs(reg) do local ty=stripMutation(tostring(nm)); if ty~="" and not seen[ty] then seen[ty]=true; names[#names+1]=ty end end end
+    end)
+    table.sort(names, function(a, b)
+        local sa, sb = set[a] and 1 or 0, set[b] and 1 or 0
+        if sa ~= sb then return sa > sb end            -- KEPILIH di atas
+        local ca, cb = tonumber(tipe[a]) or 0, tonumber(tipe[b]) or 0
+        if ca ~= cb then return ca > cb end             -- punya (jumlah) di atas
+        return a < b                                     -- sisanya alfabet
+    end)
+    filter = (filter or ""):lower()
+    local shown = 0
+    for _, t in ipairs(names) do
+        if filter=="" or t:lower():find(filter,1,true) then
+            shown = shown + 1
+            if shown <= 200 then
+                local sel = set[t] and true or false
+                local cnt = tonumber(tipe[t]) or 0
+                local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30),
+                    BackgroundColor3 = sel and C.cardSel or C.card, AutoButtonColor = true,
+                    Text = "   " .. (sel and "\u{2713} " or "") .. t .. "   \u{00d7}" .. cnt,
+                    Font = FONT, TextSize = 24,
+                    TextColor3 = sel and C.accent or (cnt>0 and C.text or C.textDim), TextXAlignment = Enum.TextXAlignment.Left,
+                    LayoutOrder = shown, ZIndex = 102, Parent = pList }); corner(b, 5)
+                b.MouseButton1Click:Connect(function()
+                    _G.ZenxKgUpTipe = (type(_G.ZenxKgUpTipe) == "table") and _G.ZenxKgUpTipe or {}
+                    local s = _G.ZenxKgUpTipe
+                    if s[t] then s[t] = nil else s[t] = true end
+                    if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
+                    bukaPicker(pSearch.Text)   -- refresh (kepilih pindah ke atas)
+                end)
+            end
+        end
     end
-    for i, t in ipairs(names) do
-        local set = _G.ZenxKgUpTipe
-        local sel = (type(set) == "table" and set[t]) and true or false
-        local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 30),
-            BackgroundColor3 = sel and C.cardSel or C.card, AutoButtonColor = true,
-            Text = "   " .. (sel and "\u{2713} " or "") .. t .. "   (" .. tostring(tipe[t]) .. ")",
-            Font = FONT, TextSize = 12,
-            TextColor3 = sel and C.accent or C.text, TextXAlignment = Enum.TextXAlignment.Left,
-            LayoutOrder = i, ZIndex = 102, Parent = pList }); corner(b, 5)
-        b.MouseButton1Click:Connect(function()
-            _G.ZenxKgUpTipe = (type(_G.ZenxKgUpTipe) == "table") and _G.ZenxKgUpTipe or {}
-            local s = _G.ZenxKgUpTipe
-            if s[t] then s[t] = nil else s[t] = true end
-            if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
-            bukaPicker()   -- refresh highlight
-        end)
-    end
+    if shown == 0 then local e = lbl(pList, "(gak ada)", 12, C.textDim, Enum.TextXAlignment.Center); e.Size = UDim2.new(1, 0, 0, 30); e.ZIndex = 102; e.Name = "kosong" end
+    if shown > 200 then local e = lbl(pList, "...(ketik buat cari)", 11, C.textDim); e.Size = UDim2.new(1, 0, 0, 22); e.ZIndex = 102; e.Name = "kosong" end
     pickOverlay.Visible = true
 end
 local function updatePickBtn()
@@ -1171,7 +1761,8 @@ local function updatePickBtn()
     table.sort(names)
     pickBtn.Text = "\u{1F43E} Pilih Pet Di-Up: " .. (#names > 0 and table.concat(names, ", ") or "(belum)")
 end
-pickBtn.MouseButton1Click:Connect(bukaPicker)
+pickBtn.MouseButton1Click:Connect(function() pSearch.Text = ""; bukaPicker("") end)
+pSearch:GetPropertyChangedSignal("Text"):Connect(function() bukaPicker(pSearch.Text) end)
 updatePickBtn()   -- reflect setting yg di-load
 pClose.MouseButton1Click:Connect(function() updatePickBtn(); pickOverlay.Visible = false end)
 -- klik luar panel (di overlay) buat nutup
@@ -1186,43 +1777,123 @@ pickOverlay.InputBegan:Connect(function(inp)
 end)
 -- tombol SELESAI di popup
 local pDone = mk("TextButton", { Size = UDim2.new(0, 80, 0, 24), Position = UDim2.new(0.5, -40, 1, -30),
-    BackgroundColor3 = C.accent, Text = "Selesai", Font = FONT_B, TextSize = 12,
-    TextColor3 = Color3.fromRGB(17,17,17), ZIndex = 103, Parent = pickPanel }); corner(pDone, 6)
+    BackgroundColor3 = C.accent, Text = "Selesai", Font = FONT_B, TextSize = 24,
+    TextColor3 = Color3.fromRGB(255, 255, 255), ZIndex = 103, Parent = pickPanel }); corner(pDone, 6)
 pDone.MouseButton1Click:Connect(function() updatePickBtn(); pickOverlay.Visible = false end)
 
 -- AUTO UP KG toggle (BAWAH tabel 1)
 local kgTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
-    Text = "AUTO UP KG: OFF", Font = FONT_B, TextSize = 13, TextColor3 = C.textDim,
+    Text = "AUTO UP KG: OFF", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
     LayoutOrder = 6, Parent = cfgScroll })
 corner(kgTog, 7)
 kgTog.MouseButton1Click:Connect(function()
     if _G.ZenxKg and _G.ZenxKg.aktif then
         if _G.ZenxKgStop then _G.ZenxKgStop() end
         if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
-        kgTog.Text = "AUTO UP KG: OFF"; kgTog.TextColor3 = C.textDim; kgTog.BackgroundColor3 = C.card
+        kgTog.Text = "AUTO UP KG: OFF"; kgTog.TextColor3 = Color3.fromRGB(255, 255, 255); kgTog.BackgroundColor3 = C.card
     else
         if _G.ZenxKgStart then _G.ZenxKgStart(kgConfigAktif) end
         if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
-        kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(0,230,118); kgTog.BackgroundColor3 = C.panel
+        kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(255, 255, 255); kgTog.BackgroundColor3 = C.panel
     end
 end)
 
--- AUTO-RESUME setelah rejoin: kalau terakhir AUTO UP KG ON, nyalain lagi otomatis
-if _G.__ZenxKgAutoOnBoot then
-    task.spawn(function()
-        task.wait(4)   -- kasih waktu engine + picker + container siap dulu
-        if _G.__ZenxKgAutoOnBoot and not (_G.ZenxKg and _G.ZenxKg.aktif) then
-            if _G.ZenxKgStart then _G.ZenxKgStart(kgConfigAktif) end
-            kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(0,230,118); kgTog.BackgroundColor3 = C.panel
-        end
-    end)
+-- v0.75: AUTO SWAP SKILL toggle -- swap skill SEMUA pet walau AUTO UP KG (spider/dilop) OFF
+local swTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "AUTO SWAP SKILL: OFF", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
+    LayoutOrder = 7, Parent = cfgScroll })
+corner(swTog, 7)
+local function syncSwTog()
+    local on = _G.ZenxAutoSwapSkill == true
+    swTog.Text = "AUTO SWAP SKILL: " .. (on and "ON" or "OFF")
+    swTog.TextColor3 = Color3.fromRGB(255, 255, 255)
+    swTog.BackgroundColor3 = on and C.panel or C.card
 end
+swTog.MouseButton1Click:Connect(function()
+    _G.ZenxAutoSwapSkill = not _G.ZenxAutoSwapSkill
+    syncSwTog()
+end)
+syncSwTog()
+
+-- v0.76: AUTO TENGAH toggle -- tahan pet numpuk ke tengah TERUS (fitur HOLD yg tadi dimatiin)
+local ctTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "AUTO TENGAH: OFF", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
+    LayoutOrder = 8, Parent = cfgScroll })
+corner(ctTog, 7)
+local function syncCtTog()
+    local on = _G.ZenxAutoTengah == true
+    ctTog.Text = "AUTO TENGAH: " .. (on and "ON" or "OFF")
+    ctTog.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ctTog.BackgroundColor3 = on and C.panel or C.card
+end
+ctTog.MouseButton1Click:Connect(function()
+    _G.ZenxAutoTengah = not _G.ZenxAutoTengah
+    syncCtTog()
+end)
+syncCtTog()
+_G.ZenxSyncTengah = syncCtTog
+
+-- SYNC tampilan toggle ke state ASLI engine (re-exe: engine mungkin masih jalan dari exe sebelumnya)
+local function syncKgTog()
+    local on = _G.ZenxKg and _G.ZenxKg.aktif
+    kgTog.Text = "AUTO UP KG: " .. (on and "ON" or "OFF")
+    kgTog.TextColor3 = on and Color3.fromRGB(0,230,118) or C.textDim
+    kgTog.BackgroundColor3 = on and C.panel or C.card
+end
+syncKgTog()
+-- AUTO-RESUME setelah rejoin/re-exe (ROBUST: baca ULANG config kalau flag ke-miss + RETRY sampe ON)
+task.spawn(function()
+    local mauOn = (_G.__ZenxKgAutoOnBoot == true)
+    -- jaga-jaga flag ke-miss (config kebaca telat pas fresh join) -> baca ULANG file langsung
+    if not mauOn then
+        for _ = 1, 6 do
+            local ok = pcall(function()
+                if isfile and isfile("zenx_upkg_cfg.json") and readfile then
+                    local c = game:GetService("HttpService"):JSONDecode(readfile("zenx_upkg_cfg.json"))
+                    if type(c) == "table" and c.autoOn == true then mauOn = true end
+                end
+            end)
+            if mauOn or not ok then break end
+            if not mauOn then task.wait(1) end
+        end
+    end
+    if not mauOn then syncKgTog(); return end
+    task.wait(3)   -- kasih waktu engine/container siap dikit
+    -- RETRY ~30s: begitu belum jalan -> START (kgStart nunggu container sendiri di dalamnya)
+    for _ = 1, 20 do
+        if _G.ZenxKg and _G.ZenxKg.aktif then break end   -- udah ON
+        if _G.ZenxKgStart then pcall(function() _G.ZenxKgStart(kgConfigAktif) end) end
+        syncKgTog()
+        task.wait(1.5)
+    end
+    syncKgTog()
+end)
 
 local kgInfo = lbl(cfgScroll, "Naikin KG pet tim sampe 3.8kg. Logika nyusul.", 11.5, C.textDim)
 kgInfo.Size = UDim2.new(1, 0, 0, 20); kgInfo.TextWrapped = true; kgInfo.LayoutOrder = 7
 
 -- ============ MISC = REJOIN GLOBAL ============
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscScroll })
+-- REJOIN NOW: pencet -> LANGSUNG Teleport (no kick, no wait). retry sampe masuk.
+do
+    local rjNow = mk("TextButton", { Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = Color3.fromRGB(180, 70, 60),
+        Text = "\u{1F504} REJOIN NOW", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
+        LayoutOrder = 0, Parent = miscScroll }); corner(rjNow, 7)
+    rjNow.MouseButton1Click:Connect(function()
+        rjNow.Text = "\u{1F504} REJOIN..."
+        rjNow.BackgroundColor3 = Color3.fromRGB(120, 50, 45)
+        _G.ZenxRejoining = true       -- biar loop rejoin/self-rejoin lain gak ganggu
+        _G.ZenxRejoinSisa = 0
+        local TS = game:GetService("TeleportService")
+        local plr = game:GetService("Players").LocalPlayer
+        task.spawn(function()
+            while true do
+                pcall(function() TS:Teleport(game.PlaceId, plr) end)   -- gacor: balik ke PS sama
+                task.wait(6)
+            end
+        end)
+    end)
+end
 do
     local rjH = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
         BorderSizePixel = 0, LayoutOrder = 1, Parent = miscScroll }); corner(rjH, 7)
@@ -1255,7 +1926,7 @@ do
         local on = (m == aktifM)
         local b = mk("TextButton", { Size = UDim2.new(1/7, -4, 1, 0),
             BackgroundColor3 = on and C.cardSel or C.card, Text = tostring(m),
-            Font = FONT_B, TextSize = 11, TextColor3 = on and C.accent or C.textDim,
+            Font = FONT_B, TextSize = 22, TextColor3 = on and C.accent or C.textDim,
             AutoButtonColor = false, LayoutOrder = i, Parent = rjPreRow })
         corner(b, 5); rjStrokes[m] = stroke(b, on and C.borderSel or C.border, 1)
         b.MouseButton1Click:Connect(function() setRejoin(m) end)
@@ -1263,7 +1934,7 @@ do
     end
     -- label sisa countdown (live, sinkron semua RF)
     local rjSisa = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.panel,
-        Font = Enum.Font.Code, TextSize = 12, TextColor3 = C.text,
+        Font = Enum.Font.Code, TextSize = 24, TextColor3 = Color3.fromRGB(255, 255, 255),
         TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Center,
         Text = "", LayoutOrder = 4, Parent = miscScroll }); corner(rjSisa, 6)
     mk("UIPadding", { PaddingLeft = UDim.new(0, 10), Parent = rjSisa })
@@ -1351,8 +2022,8 @@ do
     end
     local btnRow = mk("Frame", { Size=UDim2.new(1,0,0,34), BackgroundTransparency=1, LayoutOrder=14, Parent=miscScroll })
     mk("UIListLayout", { FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,6), SortOrder=Enum.SortOrder.LayoutOrder, Parent=btnRow })
-    local refBtn = mk("TextButton", { Size=UDim2.new(0.4,-3,1,0), BackgroundColor3=C.card, Text="\u{1F504} Refresh", Font=FONT_B, TextSize=12, TextColor3=C.text, LayoutOrder=1, Parent=btnRow }); corner(refBtn,6)
-    local sellBtn = mk("TextButton", { Size=UDim2.new(0.6,-3,1,0), BackgroundColor3=Color3.fromRGB(200,60,60), Text="\u{1F4B0} Sell Pet", Font=FONT_B, TextSize=13, TextColor3=Color3.fromRGB(255,255,255), LayoutOrder=2, Parent=btnRow }); corner(sellBtn,6)
+    local refBtn = mk("TextButton", { Size=UDim2.new(0.4,-3,1,0), BackgroundColor3=C.card, Text="\u{1F504} Refresh", Font=FONT_B, TextSize=24, TextColor3=Color3.fromRGB(255, 255, 255), LayoutOrder=1, Parent=btnRow }); corner(refBtn,6)
+    local sellBtn = mk("TextButton", { Size=UDim2.new(0.6,-3,1,0), BackgroundColor3=Color3.fromRGB(200,60,60), Text="\u{1F4B0} Sell Pet", Font=FONT_B, TextSize=26, TextColor3=Color3.fromRGB(255, 255, 255), LayoutOrder=2, Parent=btnRow }); corner(sellBtn,6)
     refBtn.MouseButton1Click:Connect(refresh)
     sellBtn.MouseButton1Click:Connect(function()
         local target = {}
@@ -1362,8 +2033,8 @@ do
         local box = mk("Frame", { Size=UDim2.new(0,280,0,150), Position=UDim2.new(0.5,-140,0.5,-75), BackgroundColor3=C.bg, ZIndex=101, Parent=dim }); corner(box,10); stroke(box,C.border,1.5)
         local q = lbl(box, "Yakin jual "..#target.." pet?", 14, C.text); q.Font=FONT_B; q.Position=UDim2.new(0,16,0,18); q.Size=UDim2.new(1,-32,0,24); q.ZIndex=102
         local det = lbl(box, "Langsung jual (tanpa Seal). Gak bisa balik.", 11, C.textDim); det.Position=UDim2.new(0,16,0,46); det.Size=UDim2.new(1,-32,0,32); det.ZIndex=102; det.TextWrapped=true
-        local ya = mk("TextButton", { Size=UDim2.new(0.5,-20,0,34), Position=UDim2.new(0,16,1,-46), BackgroundColor3=Color3.fromRGB(200,60,60), Text="Yakin, jual", Font=FONT_B, TextSize=12, TextColor3=Color3.fromRGB(255,255,255), ZIndex=102, Parent=box }); corner(ya,7)
-        local tidak = mk("TextButton", { Size=UDim2.new(0.5,-20,0,34), Position=UDim2.new(0.5,4,1,-46), BackgroundColor3=C.card, Text="Batal", Font=FONT, TextSize=12, TextColor3=C.text, ZIndex=102, Parent=box }); corner(tidak,7)
+        local ya = mk("TextButton", { Size=UDim2.new(0.5,-20,0,34), Position=UDim2.new(0,16,1,-46), BackgroundColor3=Color3.fromRGB(200,60,60), Text="Yakin, jual", Font=FONT_B, TextSize=24, TextColor3=Color3.fromRGB(255, 255, 255), ZIndex=102, Parent=box }); corner(ya,7)
+        local tidak = mk("TextButton", { Size=UDim2.new(0.5,-20,0,34), Position=UDim2.new(0.5,4,1,-46), BackgroundColor3=C.card, Text="Batal", Font=FONT, TextSize=24, TextColor3=Color3.fromRGB(255, 255, 255), ZIndex=102, Parent=box }); corner(tidak,7)
         tidak.MouseButton1Click:Connect(function() dim:Destroy() end)
         ya.MouseButton1Click:Connect(function()
             dim:Destroy()
@@ -1387,7 +2058,7 @@ do
 end
 
 local kgLogBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 130), BackgroundColor3 = C.panel,
-    Font = Enum.Font.Code, TextSize = 10.5, TextColor3 = C.textDim,
+    Font = Enum.Font.Code, TextSize = 20.5, TextColor3 = Color3.fromRGB(255, 255, 255),
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Text = "log up kg...", LayoutOrder = 8, Parent = cfgScroll })
 corner(kgLogBox, 6)
@@ -1401,6 +2072,423 @@ do
     end
 end
 
+-- ============================================================
+-- TAB TRADE — trade pet (tiket) + gift pet. Picker target MULTI (persist + indikator OFF),
+-- picker jenis pet, filter min KG (base) + min age. Logika port dari hact/market.
+-- ============================================================
+do
+    local RS = game:GetService("ReplicatedStorage")
+    local HS = game:GetService("HttpService")
+    local GE = RS:FindFirstChild("GameEvents")
+    local TRADE_CFG = "zenx_trade_cfg.json"
+
+    local TR = { targets = {}, tipe = {}, minKg = 0, minAge = 0, autoAcc = false, mode = "off" }
+    local function saveTr()
+        pcall(function()
+            if not writefile then return end
+            writefile(TRADE_CFG, HS:JSONEncode({ targets=TR.targets, tipe=TR.tipe, minKg=TR.minKg, minAge=TR.minAge, autoAcc=TR.autoAcc, mode=TR.mode }))
+        end)
+    end
+    pcall(function()
+        if isfile and isfile(TRADE_CFG) and readfile then
+            local c = HS:JSONDecode(readfile(TRADE_CFG))
+            if type(c) == "table" then
+                if type(c.targets)=="table" then local a={} for _,v in ipairs(c.targets) do if type(v)=="string" then a[#a+1]=v end end TR.targets=a end
+                if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end TR.tipe=s end
+                TR.minKg=tonumber(c.minKg) or 0; TR.minAge=tonumber(c.minAge) or 0; TR.autoAcc=(c.autoAcc==true)
+                TR.mode = (c.mode=="trade" or c.mode=="gift") and c.mode or "off"
+            end
+        end
+    end)
+
+    local TradeSys = {}
+    do
+        local te = GE and GE:FindFirstChild("TradeEvents")
+        if te then
+            TradeSys.sendReqRE=te:FindFirstChild("SendRequest"); TradeSys.addItemRE=te:FindFirstChild("AddItem")
+            TradeSys.respondRE=te:FindFirstChild("RespondRequest"); TradeSys.acceptRE=te:FindFirstChild("Accept"); TradeSys.confirmRE=te:FindFirstChild("Confirm")
+        end
+    end
+    local GiftSys = {}
+    do
+        GiftSys.giftRE = GE and GE:FindFirstChild("PetGiftingService")
+        if not GiftSys.giftRE then GiftSys.giftRE = RS:FindFirstChild("PetGiftingService", true) end
+        pcall(function()
+            local mods = RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
+            local gm = mods and mods:FindFirstChild("PetGiftingInputService")
+            if gm then local ok, mod = pcall(require, gm); if ok then GiftSys.pgs = mod end end
+        end)
+    end
+
+    local function fmtU(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end return s end
+    local trBusy = false
+    local trStatus
+    local function setStat(s) if trStatus then trStatus.Text = s end print("[Trade] "..tostring(s)) end
+
+    local function clickBtnByText(root, texts)
+        if not root then return end
+        pcall(function()
+            for _, d in ipairs(root:GetDescendants()) do
+                if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                    local txt = (d:IsA("TextButton") and d.Text or ""):lower()
+                    for _, want in ipairs(texts) do
+                        if txt == want or txt:find(want, 1, true) then
+                            if firesignal then pcall(function() firesignal(d.Activated) end) end
+                            if getconnections then for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    local function autoAcceptTrade()
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            if not pg then return end
+            local tui = pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts = lt:FindFirstChild("Options")
+                local acc = opts and opts:FindFirstChild("Accept")
+                if acc then
+                    if firesignal then pcall(function() firesignal(acc.Activated) end) end
+                    if getconnections then for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end end
+                end
+            end
+            clickBtnByText(pg, {"yes","confirm","continue","lanjut"})
+            if TradeSys.confirmRE then pcall(function() TradeSys.confirmRE:FireServer() end) end
+            if TradeSys.acceptRE then pcall(function() TradeSys.acceptRE:FireServer() end) end
+        end)
+    end
+    local function holdTradingTicket()
+        local char = player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local bp = player:FindFirstChild("Backpack")
+        if not (char and hum and bp) then return false end
+        local function findTicket(cont)
+            if not cont then return nil end
+            for _, t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") then local n=t.Name:lower(); if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end end
+            end
+        end
+        if findTicket(char) then return true end
+        local tk = findTicket(bp); if not tk then return false end
+        pcall(function() hum:UnequipTools() end); task.wait(0.1)
+        pcall(function() hum:EquipTool(tk) end); task.wait(0.15)
+        return findTicket(char) ~= nil
+    end
+
+    local function petsLolos()
+        local out = {}
+        local bp = player:FindFirstChild("Backpack"); local c = _kgContainer
+        if not bp then return out end
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") then
+                local uuid = t:GetAttribute("PET_UUID")
+                if uuid then
+                    local tipe = stripMutation(tostring(t:GetAttribute("f") or ""))
+                    if next(TR.tipe)==nil or TR.tipe[tipe] then
+                        local kgBase, age = 0, 0
+                        if c then local e=c[fmtU(uuid)]; if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end end
+                        if kgBase >= (TR.minKg or 0) and age >= (TR.minAge or 0) then
+                            out[#out+1] = { uuid=uuid, tool=t, tipe=tipe, kg=kgBase, age=age }
+                        end
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    local function tradeToTarget(targetPlayer, pets)
+        if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+        pcall(holdTradingTicket)
+        pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
+        task.wait(0.5)
+        local added = 0
+        local function cantAddMore()
+            local found = false
+            pcall(function()
+                local pg = player:FindFirstChild("PlayerGui"); if not pg then return end
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then local t=(d.Text or ""):lower(); if t:find("can't add more") or t:find("cant add more") then found=true break end end
+                end
+            end)
+            return found
+        end
+        for _, p in ipairs(pets) do
+            if cantAddMore() then break end
+            pcall(function() TradeSys.addItemRE:FireServer("Pet", fmtU(p.uuid)) end)
+            added = added + 1; task.wait(0.12)
+        end
+        for i = 1, 4 do autoAcceptTrade(); task.wait(0.3) end
+        return added
+    end
+    local function giftToTarget(targetPlayer, pets)
+        local char = player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not (hum and targetPlayer) then return 0 end
+        local sent = 0
+        for _, p in ipairs(pets) do
+            local petTool = p.tool
+            pcall(function() hum:EquipTool(petTool) end); task.wait(0.2)
+            if petTool.Parent ~= char then pcall(function() hum:EquipTool(petTool) end); task.wait(0.2) end
+            if GiftSys.pgs and GiftSys.pgs.GivePet then pcall(function() GiftSys.pgs.GivePet(targetPlayer) end); task.wait(0.25) end
+            if petTool.Parent and GiftSys.giftRE then pcall(function() GiftSys.giftRE:FireServer("GivePet", targetPlayer, fmtU(p.uuid)) end); task.wait(0.25) end
+            if not petTool.Parent then sent = sent + 1 end
+            task.wait(0.1)
+        end
+        return sent
+    end
+
+    local function jalankan(mode)
+        if trBusy then setStat("lagi jalan, tunggu...") return end
+        trBusy = true
+        task.spawn(function()
+            local Players = game:GetService("Players")
+            local pets = petsLolos()
+            if #pets == 0 then setStat("gak ada pet lolos filter (tipe/minKG/minAge)"); trBusy=false; return end
+            local nTgt = 0
+            for _, nama in ipairs(TR.targets) do
+                local tp = Players:FindFirstChild(nama)
+                if tp then
+                    nTgt = nTgt + 1
+                    setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
+                    if mode == "trade" then tradeToTarget(tp, pets) else giftToTarget(tp, pets) end
+                    task.wait(1)
+                    pets = petsLolos()
+                    if #pets == 0 then break end
+                end
+            end
+            if nTgt == 0 then setStat("gak ada target ONLINE di server") else setStat("selesai ("..nTgt.." target)") end
+            trBusy = false
+        end)
+    end
+
+    -- AUTO-LOOP: kalau TR.mode ON (trade/gift), kirim pet lolos filter TERUS (gak perlu pencet tiap kali)
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            if (TR.mode == "trade" or TR.mode == "gift") and not trBusy then
+                local pets = petsLolos()
+                if #pets > 0 then jalankan(TR.mode) end
+            end
+        end
+    end)
+
+    do
+        local function acceptGiftPopups()
+            pcall(function()
+                local pg = player:FindFirstChild("PlayerGui")
+                local gn = pg and pg:FindFirstChild("Gift_Notification")
+                if not gn then return end
+                for _, d in ipairs(gn:GetDescendants()) do
+                    if d.Name == "Accept" and d:IsA("GuiButton") and d.Visible then
+                        if firesignal then pcall(function() firesignal(d.MouseButton1Click) end) end
+                        if getconnections then for _, c in ipairs(getconnections(d.MouseButton1Click)) do pcall(function() c:Fire() end) end end
+                    end
+                end
+            end)
+        end
+        task.spawn(function()
+            while true do
+                task.wait(1)
+                if TR.autoAcc then pcall(acceptGiftPopups); pcall(autoAcceptTrade) end
+            end
+        end)
+    end
+
+    -- ============ UI ============
+    local function trHeader(txt, lo)
+        local h = mk("Frame", { Size=UDim2.new(1,0,0,28), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=lo, Parent=tradeScroll }); corner(h,7)
+        local t = lbl(h, txt, 12.5, C.accent); t.Font=FONT_B; t.Position=UDim2.new(0,12,0,0); t.Size=UDim2.new(1,-12,1,0)
+    end
+    local function trBtn(txt, lo, col)
+        local b = mk("TextButton", { Size=UDim2.new(1,0,0,34), BackgroundColor3=col or C.card, Text=txt, Font=FONT_B, TextSize=24.5, TextColor3=Color3.fromRGB(255, 255, 255), LayoutOrder=lo, Parent=tradeScroll }); corner(b,7)
+        return b
+    end
+
+    trHeader("\u{1F464} TARGET (ke siapa)", 1)
+    local tgtBtn = trBtn("Pilih target: -", 2, C.card)
+    local function updTgtBtn()
+        local n = #TR.targets
+        tgtBtn.Text = n==0 and "Pilih target: -" or ("Target ("..n.."): "..table.concat(TR.targets, ", "):sub(1,40))
+    end
+    updTgtBtn()
+
+    local function openTargetPicker()
+        local Players = game:GetService("Players")
+        local old = gui:FindFirstChild("TradeTargetPicker"); if old then old:Destroy() end
+        local ov = mk("Frame", { Name="TradeTargetPicker", Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=0.4, ZIndex=200, Parent=gui })
+        local pk = mk("Frame", { Size=UDim2.new(0,300,0,360), Position=UDim2.new(0.5,-150,0.5,-180), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=201, Parent=ov }); corner(pk,10)
+        local pt = lbl(pk, "  Pilih Target (multi)", 13, C.text); pt.Font=FONT_B; pt.Position=UDim2.new(0,10,0,8); pt.Size=UDim2.new(1,-40,0,24); pt.ZIndex=202
+        local px = mk("TextButton", { Size=UDim2.new(0,26,0,24), Position=UDim2.new(1,-32,0,8), BackgroundColor3=Color3.fromRGB(150,60,60), Text="X", Font=FONT_B, TextSize=24, TextColor3=Color3.new(1,1,1), ZIndex=202, Parent=pk }); corner(px,6)
+        local srch = mk("TextBox", { Size=UDim2.new(1,-84,0,28), Position=UDim2.new(0,10,0,38), BackgroundColor3=C.bg, TextColor3=Color3.fromRGB(255, 255, 255), PlaceholderText="cari / ketik nama akun...", Text="", Font=FONT, TextSize=24, ClearTextOnFocus=false, ZIndex=202, Parent=pk }); corner(srch,6)
+        local addBtn = mk("TextButton", { Size=UDim2.new(0,62,0,28), Position=UDim2.new(1,-72,0,38), BackgroundColor3=C.accent, Text="+ Tambah", Font=FONT_B, TextSize=22, TextColor3=Color3.fromRGB(255, 255, 255), ZIndex=203, Parent=pk }); corner(addBtn,6)
+        local scr = mk("ScrollingFrame", { Size=UDim2.new(1,-20,1,-116), Position=UDim2.new(0,10,0,74), BackgroundColor3=C.bg, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=202, Parent=pk }); corner(scr,6)
+        mk("UIListLayout", { Padding=UDim.new(0,4), Parent=scr })
+        local doneBtn = mk("TextButton", { Size=UDim2.new(1,-20,0,28), Position=UDim2.new(0,10,1,-34), BackgroundColor3=C.accent, Text="Selesai", Font=FONT_B, TextSize=24, TextColor3=Color3.fromRGB(255, 255, 255), ZIndex=202, Parent=pk }); corner(doneBtn,6)
+
+        local function isSel(nama) for _,n in ipairs(TR.targets) do if n==nama then return true end end return false end
+        local function toggleSel(nama)
+            if isSel(nama) then for i=#TR.targets,1,-1 do if TR.targets[i]==nama then table.remove(TR.targets,i) end end
+            else TR.targets[#TR.targets+1]=nama end
+            saveTr(); updTgtBtn()
+        end
+        local function rebuild(filter)
+            for _,c in ipairs(scr:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+            filter = (filter or ""):lower()
+            local seen, list = {}, {}
+            for _, n in ipairs(TR.targets) do if not seen[n] then seen[n]=true; list[#list+1]=n end end
+            for _, p in ipairs(Players:GetPlayers()) do if p~=player and not seen[p.Name] then seen[p.Name]=true; list[#list+1]=p.Name end end
+            for _, nama in ipairs(list) do
+                if filter=="" or nama:lower():find(filter,1,true) then
+                    local online = Players:FindFirstChild(nama) ~= nil
+                    local sel = isSel(nama)
+                    local b = mk("TextButton", { Size=UDim2.new(1,-4,0,32), BackgroundColor3= sel and C.accent or C.card, Text="", ZIndex=202, Parent=scr }); corner(b,6)
+                    local chk = lbl(b, sel and "\u{2713}" or "", 14, Color3.fromRGB(17,17,17)); chk.Position=UDim2.new(0,8,0,0); chk.Size=UDim2.new(0,20,1,0); chk.ZIndex=203
+                    local nm = lbl(b, nama, 12.5, sel and Color3.fromRGB(17,17,17) or C.text); nm.Position=UDim2.new(0,30,0,0); nm.Size=UDim2.new(1,-90,1,0); nm.ZIndex=203
+                    local st = lbl(b, online and "ONLINE" or "OFF", 10, online and Color3.fromRGB(0,200,100) or Color3.fromRGB(150,150,150)); st.Position=UDim2.new(1,-58,0,0); st.Size=UDim2.new(0,52,1,0); st.ZIndex=203; st.Font=FONT_B
+                    b.MouseButton1Click:Connect(function() toggleSel(nama); rebuild(srch.Text) end)
+                end
+            end
+        end
+        px.MouseButton1Click:Connect(function() ov:Destroy() end)
+        doneBtn.MouseButton1Click:Connect(function() ov:Destroy() end)
+        addBtn.MouseButton1Click:Connect(function()
+            local nm = srch.Text:gsub("^%s+",""):gsub("%s+$","")
+            if nm ~= "" and not isSel(nm) then toggleSel(nm); srch.Text=""; rebuild("") end
+        end)
+        srch:GetPropertyChangedSignal("Text"):Connect(function() rebuild(srch.Text) end)
+        rebuild("")
+    end
+    tgtBtn.MouseButton1Click:Connect(openTargetPicker)
+
+    trHeader("\u{1F43E} JENIS PET", 3)
+    local petBtn = trBtn("Pilih jenis pet: semua", 4, C.card)
+    local function updPetBtn()
+        local names = {} for k in pairs(TR.tipe) do names[#names+1]=k end
+        petBtn.Text = #names==0 and "Pilih jenis pet: semua" or ("Jenis ("..#names.."): "..table.concat(names, ", "):sub(1,38))
+    end
+    updPetBtn()
+    local function openPetPicker()
+        local counts, seen, types = {}, {}, {}
+        -- 1) hitung dari container (pet yg DIPUNYA)
+        local c = _kgContainer
+        if c then
+            pcall(function()
+                for _, entry in pairs(c) do
+                    if type(entry)=="table" and entry.PetType and entry.PetData then
+                        local ty = stripMutation(tostring(entry.PetType))
+                        if ty~="" then counts[ty]=(counts[ty] or 0)+1; if not seen[ty] then seen[ty]=true; types[#types+1]=ty end end
+                    end
+                end
+            end)
+        end
+        -- 2) tambah SEMUA pet dari registry game (biar bisa pre-select walau belum punya)
+        pcall(function()
+            local reg = _G.ZenxReg and _G.ZenxReg.pets
+            if type(reg)=="table" then
+                for nama in pairs(reg) do
+                    local ty = stripMutation(tostring(nama))
+                    if ty~="" and not seen[ty] then seen[ty]=true; types[#types+1]=ty end
+                end
+            end
+        end)
+        table.sort(types, function(a,b)
+            local sa, sb = (TR.tipe[a]==true) and 1 or 0, (TR.tipe[b]==true) and 1 or 0
+            if sa ~= sb then return sa > sb end   -- KEPILIH di atas
+            local ca, cb = counts[a] or 0, counts[b] or 0
+            if ca ~= cb then return ca > cb end   -- punya (jumlah) di atas
+            return a < b
+        end)
+        local old = gui:FindFirstChild("TradePetPicker"); if old then old:Destroy() end
+        local ov = mk("Frame", { Name="TradePetPicker", Size=UDim2.new(1,0,1,0), BackgroundColor3=Color3.new(0,0,0), BackgroundTransparency=0.4, ZIndex=200, Parent=gui })
+        local pk = mk("Frame", { Size=UDim2.new(0,300,0,380), Position=UDim2.new(0.5,-150,0.5,-190), BackgroundColor3=C.panel, BorderSizePixel=0, ZIndex=201, Parent=ov }); corner(pk,10)
+        local pt = lbl(pk, "  Jenis Pet ("..#types..")", 13, C.text); pt.Font=FONT_B; pt.Position=UDim2.new(0,10,0,8); pt.Size=UDim2.new(1,-40,0,24); pt.ZIndex=202
+        local px = mk("TextButton", { Size=UDim2.new(0,26,0,24), Position=UDim2.new(1,-32,0,8), BackgroundColor3=Color3.fromRGB(150,60,60), Text="X", Font=FONT_B, TextSize=24, TextColor3=Color3.new(1,1,1), ZIndex=202, Parent=pk }); corner(px,6)
+        local srch = mk("TextBox", { Size=UDim2.new(1,-20,0,28), Position=UDim2.new(0,10,0,38), BackgroundColor3=C.bg, TextColor3=Color3.fromRGB(255, 255, 255), PlaceholderText="cari jenis pet...", Text="", Font=FONT, TextSize=24, ClearTextOnFocus=false, ZIndex=202, Parent=pk }); corner(srch,6)
+        local scr = mk("ScrollingFrame", { Size=UDim2.new(1,-20,1,-116), Position=UDim2.new(0,10,0,74), BackgroundColor3=C.bg, BorderSizePixel=0, ScrollBarThickness=4, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=202, Parent=pk }); corner(scr,6)
+        mk("UIListLayout", { Padding=UDim.new(0,4), Parent=scr })
+        local doneBtn = mk("TextButton", { Size=UDim2.new(1,-20,0,28), Position=UDim2.new(0,10,1,-34), BackgroundColor3=C.accent, Text="Selesai", Font=FONT_B, TextSize=24, TextColor3=Color3.fromRGB(255, 255, 255), ZIndex=202, Parent=pk }); corner(doneBtn,6)
+        local function rebuild(filter)
+            for _,c2 in ipairs(scr:GetChildren()) do if c2:IsA("TextButton") or (c2:IsA("TextLabel") and c2.Name=="hint") then c2:Destroy() end end
+            table.sort(types, function(a,b)   -- re-sort: kepilih naik ke atas
+                local sa, sb = (TR.tipe[a]==true) and 1 or 0, (TR.tipe[b]==true) and 1 or 0
+                if sa ~= sb then return sa > sb end
+                local ca, cb = counts[a] or 0, counts[b] or 0
+                if ca ~= cb then return ca > cb end
+                return a < b
+            end)
+            filter = (filter or ""):lower()
+            local shown = 0
+            for _, ty in ipairs(types) do
+                if filter=="" or ty:lower():find(filter,1,true) then
+                    shown = shown + 1
+                    if shown <= 200 then
+                        local sel = TR.tipe[ty]==true
+                        local cnt = counts[ty] or 0
+                        local b = mk("TextButton", { Size=UDim2.new(1,-4,0,30), BackgroundColor3= sel and C.accent or C.card, Text="", ZIndex=202, Parent=scr }); corner(b,6)
+                        local chk = lbl(b, sel and "\u{2713}" or "", 14, Color3.fromRGB(17,17,17)); chk.Position=UDim2.new(0,8,0,0); chk.Size=UDim2.new(0,20,1,0); chk.ZIndex=203
+                        local nm = lbl(b, ty.."  \u{00d7}"..cnt, 12, sel and Color3.fromRGB(17,17,17) or (cnt>0 and C.text or C.textDim)); nm.Position=UDim2.new(0,30,0,0); nm.Size=UDim2.new(1,-34,1,0); nm.ZIndex=203
+                        b.MouseButton1Click:Connect(function() if TR.tipe[ty] then TR.tipe[ty]=nil else TR.tipe[ty]=true end; saveTr(); updPetBtn(); rebuild(srch.Text) end)
+                    end
+                end
+            end
+            if shown > 200 then local e=lbl(scr,"...(ketik buat cari, "..shown.." total)",10,C.textDim); e.Name="hint"; e.Size=UDim2.new(1,-8,0,22); e.ZIndex=203 end
+        end
+        px.MouseButton1Click:Connect(function() ov:Destroy() end)
+        doneBtn.MouseButton1Click:Connect(function() ov:Destroy() end)
+        srch:GetPropertyChangedSignal("Text"):Connect(function() rebuild(srch.Text) end)
+        rebuild("")
+    end
+    petBtn.MouseButton1Click:Connect(openPetPicker)
+
+    local function inputRow(labelTxt, lo, val, onChange)
+        local row = mk("Frame", { Size=UDim2.new(1,0,0,30), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=lo, Parent=tradeScroll }); corner(row,7)
+        local l = lbl(row, labelTxt, 12, C.textDim); l.Position=UDim2.new(0,12,0,0); l.Size=UDim2.new(0.55,-12,1,0)
+        local ib = mk("TextBox", { Size=UDim2.new(0.4,-8,0,22), Position=UDim2.new(0.6,0,0.5,-11), BackgroundColor3=C.bg, TextColor3=Color3.fromRGB(255, 255, 255), Text=tostring(val), Font=FONT, TextSize=24, ClearTextOnFocus=false, Parent=row }); corner(ib,5)
+        ib:GetPropertyChangedSignal("Text"):Connect(function() onChange(tonumber(ib.Text) or 0) end)
+    end
+    trHeader("\u{2699} FILTER", 5)
+    inputRow("Min KG (base age-1)", 6, TR.minKg, function(v) TR.minKg=v; saveTr() end)
+    inputRow("Min Age (level)", 7, TR.minAge, function(v) TR.minAge=v; saveTr() end)
+
+    trHeader("\u{1F680} AKSI (toggle - salah satu aktif)", 8)
+    local bTrade = trBtn("TRADE via TIKET: OFF", 9, C.card)
+    local bGift  = trBtn("GIFT (biasa): OFF", 10, C.card)
+    local function updModeBtns()
+        local t = (TR.mode == "trade"); local g = (TR.mode == "gift")
+        bTrade.Text = "TRADE via TIKET: "..(t and "ON" or "OFF")
+        bTrade.BackgroundColor3 = t and Color3.fromRGB(0,120,80) or C.card
+        bTrade.TextColor3 = t and Color3.fromRGB(0,230,118) or C.text
+        bGift.Text = "GIFT (biasa): "..(g and "ON" or "OFF")
+        bGift.BackgroundColor3 = g and Color3.fromRGB(60,90,180) or C.card
+        bGift.TextColor3 = g and Color3.fromRGB(140,180,255) or C.text
+    end
+    local function setMode(m)
+        TR.mode = (TR.mode == m) and "off" or m   -- klik lagi = OFF. nyalain satu -> yg lain auto OFF
+        saveTr(); updModeBtns()
+        if trStatus then trStatus.Text = (TR.mode=="off") and "OFF (berhenti)" or (TR.mode:upper().." ON - auto kirim pet lolos filter ke target online") end
+    end
+    bTrade.MouseButton1Click:Connect(function() setMode("trade") end)
+    bGift.MouseButton1Click:Connect(function() setMode("gift") end)
+    updModeBtns()
+
+    local bAcc = trBtn("AUTO ACCEPT MASUK: "..(TR.autoAcc and "ON" or "OFF"), 11, TR.autoAcc and C.panel or C.card)
+    if TR.autoAcc then bAcc.TextColor3 = Color3.fromRGB(255, 255, 255) end
+    bAcc.MouseButton1Click:Connect(function()
+        TR.autoAcc = not TR.autoAcc; saveTr()
+        bAcc.Text = "AUTO ACCEPT MASUK: "..(TR.autoAcc and "ON" or "OFF")
+        bAcc.BackgroundColor3 = TR.autoAcc and C.panel or C.card
+        bAcc.TextColor3 = TR.autoAcc and Color3.fromRGB(0,230,118) or C.text
+    end)
+
+    trStatus = lbl(tradeScroll, "siap. pilih target + jenis pet + filter min KG/age.", 11.5, C.textDim)
+    trStatus.Size = UDim2.new(1,0,0,42); trStatus.TextWrapped=true; trStatus.LayoutOrder=12; trStatus.TextYAlignment=Enum.TextYAlignment.Top
+end
+
+
 -- expose theme/helper buat modul lanjutan
 _G.ZenxUpKgUI = {
     gui = gui, main = main, C = C, mk = mk, corner = corner, stroke = stroke,
@@ -1413,3 +2501,151 @@ main.Visible = false
 miniLogo.Visible = true
 
 print("[UpKg] " .. VERSION .. " loaded (kerangka UI, mulai minimize).")
+
+-- ===== AUTO BUY TRADING TICKET (port market v8.276) =====
+-- fire BuyGearStock(namaTiket) tiap 5s KALAU tiket < 2 (biar gak over-buy).
+-- game auto-tolak kalau stock abis / Sheckles kurang -> aman. self-contained.
+if not _G.__ZenxAutoTicket then
+    _G.__ZenxAutoTicket = true
+    task.spawn(function()
+        local rs = game:GetService("ReplicatedStorage")
+        local plr = game:GetService("Players").LocalPlayer
+        -- auto-detect nama tiket dari GearData (fallback "Trading Ticket")
+        local ticketName = "Trading Ticket"
+        pcall(function()
+            local dataF = rs:FindFirstChild("Data")
+            local mod = dataF and dataF:FindFirstChild("GearData")
+            if mod then
+                local ok, tbl = pcall(require, mod)
+                if ok and type(tbl) == "table" then
+                    for k, v in pairs(tbl) do
+                        local nm
+                        if type(k) == "string" then nm = k
+                        elseif type(v) == "table" then nm = v.Name or v.ItemName or v.DisplayName end
+                        if type(nm) == "string" then
+                            local low = nm:lower()
+                            if low:find("trading", 1, true) and low:find("ticket", 1, true) then ticketName = nm; break end
+                        end
+                    end
+                end
+            end
+        end)
+        local ge = rs:FindFirstChild("GameEvents")
+        local re = ge and ge:FindFirstChild("BuyGearStock")
+        if not re then print("[AutoTicket] BuyGearStock gak ketemu — auto-buy batal"); return end
+        print("[AutoTicket] auto-buy '" .. ticketName .. "' aktif (beli kalau tiket < 2)")
+        local function ticketCount()
+            local n = 0
+            pcall(function()
+                local function scan(c) if not c then return end for _, t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then local low = t.Name:lower()
+                        if (low:find("trading") and low:find("ticket")) or low:find("trade ticket") then n = n + 1 end end end end
+                scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+            end)
+            return n
+        end
+        while true do
+            task.wait(5)
+            if ticketCount() < 2 then pcall(function() re:FireServer(ticketName) end) end
+        end
+    end)
+end
+
+-- ===== AUTO BUY NIGHT EGG (remote CONFIRMED dari hook FireServer) =====
+-- CONFIRMED via hook: BuyEventShopStock:FireServer(itemName, shopName) -- 2 argumen.
+-- Contoh nyata yg ketangkep: FireServer("Twilight Crate", "Twilight Shop").
+-- Night Egg ada di 2 shop (Blood Moon Shop + Twilight Shop) -- coba dua-duanya.
+if not _G.__ZenxAutoNightEgg then
+    _G.__ZenxAutoNightEgg = true
+    task.spawn(function()
+        local rs = game:GetService("ReplicatedStorage")
+        local ge = rs:FindFirstChild("GameEvents")
+        if not ge then print("[AutoNightEgg] GameEvents gak ketemu -- batal"); return end
+        local re = ge:FindFirstChild("BuyEventShopStock")
+        if not re then print("[AutoNightEgg] BuyEventShopStock gak ketemu -- batal"); return end
+        local shops = { "Blood Moon Shop", "Twilight Shop" }
+        local items = { "Night Egg" }
+        print("[AutoNightEgg] aktif -- BuyEventShopStock, coba Night Egg di Blood Moon Shop + Twilight Shop tiap 10s")
+        while true do
+            task.wait(10)
+            for _, shop in ipairs(shops) do
+                for _, item in ipairs(items) do
+                    pcall(function() re:FireServer(item, shop) end)
+                    task.wait(0.1)
+                end
+            end
+        end
+    end)
+end
+
+-- ============ ANTI-AFK (anti idle kick 20 menit) ============
+if not _G.__ZenxAntiAfk then
+    _G.__ZenxAntiAfk = true
+    task.spawn(function()
+        local ok, VirtualUser = pcall(function() return game:GetService("VirtualUser") end)
+        if ok and VirtualUser then
+            local plr = game:GetService("Players").LocalPlayer
+            plr.Idled:Connect(function()
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end)
+            end)
+            print("[Zenx] anti-AFK aktif")
+        end
+    end)
+end
+
+-- ===== KICK ON-DEMAND (poll backend LANGSUNG, TANPA worker — kayak market bridge) =====
+if not _G.__ZenxKickPoll then
+    _G.__ZenxKickPoll = true
+    task.spawn(function()
+        local Players = game:GetService("Players")
+        local plr = Players.LocalPlayer
+        local req = (syn and syn.request) or (fluxus and fluxus.request)
+                 or (krnl and krnl.request) or http_request or request or httprequest
+        if type(http) == "table" and http.request then req = http.request end
+        if not (req and plr and plr.Name) then return end
+        local URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+        task.wait(8)
+        while true do
+            task.wait(10)
+            local delayMin = nil
+            pcall(function()
+                local r = req({ Url = URL .. "/kick-cek?akun=" .. plr.Name, Method = "GET",
+                    Headers = { ["X-Kunci"] = KUNCI } })
+                if r and (r.StatusCode == 200 or r.Success) and r.Body then
+                    local m = tostring(r.Body):match('"kick"%s*:%s*(%d+)')
+                    if m then delayMin = tonumber(m) end
+                end
+            end)
+            if delayMin ~= nil then
+                print("[KickOnDemand] KICK sekarang -> rejoin " .. delayMin .. " menit lagi")
+                _G.ZenxRejoining = true
+                pcall(function() plr:Kick("\n\n  ZenX: kick (rejoin " .. delayMin .. "m)\n") end)
+                local cg = game:GetService("CoreGui")
+                local gs = game:GetService("GuiService")
+                local t0 = tick()
+                while (tick() - t0) < (delayMin * 60) do
+                    pcall(function()
+                        for _, g in ipairs(cg:GetChildren()) do
+                            local n = tostring(g.Name):lower()
+                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                if g:IsA("ScreenGui") then g.Enabled = false end
+                                pcall(function() g.Parent = nil end)
+                            end
+                        end
+                        gs:ClearError()
+                    end)
+                    task.wait(1)
+                end
+                local TS = game:GetService("TeleportService")
+                while true do
+                    pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                    task.wait(8)
+                end
+            end
+        end
+    end)
+end
