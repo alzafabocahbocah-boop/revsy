@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.377-cf"
+local VERSION = "9.380-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2935,11 +2935,12 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- Cloner service GAK disentuh -> client lain aman. Terus jeda 5s biar task
     -- beneran kelar dibuang sebelum tembak masuk (fresh, gak nyangkut task lama).
     -- Tetep NEW_TASK (0x10000000, one task) -- BUKAN A3/multi task.
-    -- v9.286: SKIP task-remove buat ARCEUS. User tes manual: cara WC (am start web
-    -- URL + CLEAR_TOP 0x14000000) TANPA task-remove BISA join/ganti server, window
-    -- GAK ilang (gak keliatan "nutup 1 client dulu"). task-remove + sleep 5s bikin
-    -- window ilang bentar. Buat arceus -> murni WC tembak, gak buang window.
-    if cfg.executor ~= "arceus" then
+    -- v9.286: SKIP task-remove buat ARCEUS. cara WC (am start web URL + CLEAR_TOP
+    -- 0x14000000) TANPA task-remove BISA join/ganti server, window GAK ilang.
+    -- v9.379: SKIP task-remove buat SEMUA executor (bukan cuma arceus). User: gak perlu
+    -- hapus/clear task -- langsung NEW TASK (WC) + tembak server. Rejoin udah ditangani
+    -- denyut. (task-remove + sleep 5s bikin window ilang bentar + lambat.) `if false` = mati.
+    if false then
     do
         pcall(function()
             local stk = sh("su -c 'am stack list 2>/dev/null'") or ""
@@ -7635,6 +7636,10 @@ local function run(cfg)
             -- ronde ini. Percuma rotasi kalau client nyangkut layar key. Lisensi balik
             -- dulu, baru urus stock. User: lisensi lebih utama dari perintah apapun.
             local skipKarenaLisensi = false
+            -- v9.378: rotasi STOCK gak guna di arceus (GAG 1 market/hact/upkg, bukan
+            -- seed GAG 2). Matiin SEMUA path rotasi kalau executor arceus -- nebeng
+            -- skipKarenaLisensi (nutup ROTASI-TEST, ROTASI-GO, stock lokal star_seed).
+            if cfg.executor == "arceus" then skipKarenaLisensi = true end
             if MODE_JALAN and (os.time() - (LISENSI_CEK_TS or 0)) >= 60 then
                 LISENSI_CEK_TS = os.time()
                 if lisensi_keadaan(cfg) ~= "ada" then
@@ -7762,7 +7767,7 @@ local function run(cfg)
             -- PERTAMA abis gate siap kelewat (cuma jadi baseline) -> nunggu 1 siklus
             -- (~5 menit) baru trigger. Sekarang baseline selalu fresh -> begitu gate
             -- siap, restock berikutnya langsung ke-trigger (gak kelewat).
-            if cfg.rotasi_on and (os.time() - ROTASI_CEK_TS) >= 1 then
+            if cfg.rotasi_on and cfg.executor ~= "arceus" and (os.time() - ROTASI_CEK_TS) >= 1 then
                 ROTASI_CEK_TS = os.time()
                 -- 1) SELALU poll (update ROTASI_NB_LAST) -> baseline gak pernah basi
                 local barang = cek_stock_rotasi(cfg)
@@ -8448,6 +8453,9 @@ local function run(cfg)
                         if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                         pcall(function() grid_satu(cfg, pkg) end)
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
+                        TERAKHIR_BUKA[pkg] = os.time()   -- v9.380: FIX dobel-buka. Tanpa ini, FORCE
+                        -- sticky yg re-dispatch abis denyut rejoin GAK TAU client baru dibuka denyut
+                        -- (baruDisentuh false + denyut msh basi) -> buka ULANG. Jalur grafis udah set ini.
                         pcall(function() jaga_depan(cfg, mapLink) end)
                         if idx < #perluTembak then
                             for _ = 1, 30 do
