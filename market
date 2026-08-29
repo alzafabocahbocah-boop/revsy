@@ -66,16 +66,77 @@ do
             end)
             return dc
         end
+        local function zenxDcStrict()
+            local dc = false
+            pcall(function()
+                local cg = game:GetService("CoreGui")
+                local pg = cg:FindFirstChild("RobloxPromptGui")
+                local overlay = pg and pg:FindFirstChild("promptOverlay")
+                if not overlay then return end
+                for _, child in ipairs(overlay:GetChildren()) do
+                    if child:IsA("GuiObject") and child.Visible then
+                        for _, d in ipairs(child:GetDescendants()) do
+                            if d:IsA("TextButton") and d.Visible then
+                                local t = tostring(d.Text or ""):lower()
+                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
+                            end
+                        end
+                    end
+                end
+            end)
+            return dc
+        end
         _G.ZenxCekDisconnect = zenxCekDisconnect
-        -- loop cepat: hapus denyut pas disconnect -> worker rejoin cepet
+        _G.__ZenxBootT = _G.__ZenxBootT or os.time()   -- market: set boot time biar grace self-rejoin jalan
+        -- SELF-REJOIN: error kedeteksi tapi VM masih hidup -> rejoin SENDIRI (gak nunggu worker)
+        _G.ZenxSelfRejoin = function(reason)
+            if _G.ZenxRejoining then return end
+            _G.ZenxRejoining = true
+            _G.ZenxRejoinSisa = 0
+            print("[SelfRejoin] " .. tostring(reason) .. " -> rejoin sendiri (VM masih hidup)")
+            local TS = game:GetService("TeleportService")
+            local plr = game:GetService("Players").LocalPlayer
+            task.spawn(function()
+                local cg = game:GetService("CoreGui")
+                local guiSvc = game:GetService("GuiService")
+                for _ = 1, 120 do
+                    pcall(function()
+                        for _, g in ipairs(cg:GetChildren()) do
+                            local n = tostring(g.Name):lower()
+                            if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                                if g:IsA("ScreenGui") then g.Enabled = false end
+                                pcall(function() g.Parent = nil end)
+                            end
+                        end
+                        guiSvc:ClearError()
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+            task.wait(8)
+            while true do
+                pcall(function() TS:Teleport(game.PlaceId, plr) end)
+                task.wait(8)
+            end
+        end
+        -- loop cepat: hapus denyut pas disconnect + REJOIN SENDIRI (grace 60s + konfirmasi 4x, hindari false-positive)
         task.spawn(function()
+            local dcStrict = 0
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and zenxCekDisconnect() and delfile then
-                        if isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
-                            pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                    if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
+                    if zenxCekDisconnect() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
+                        pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
+                    end
+                    if zenxDcStrict() then
+                        dcStrict = dcStrict + 1
+                        local umur = os.time() - (_G.__ZenxBootT or os.time())
+                        if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then
+                            _G.ZenxSelfRejoin("prompt reconnect Roblox (" .. dcStrict .. "x)")
                         end
+                    else
+                        dcStrict = 0
                     end
                 end)
                 task.wait(3)
@@ -167,7 +228,61 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.343"
+local VERSION = "8.349"
+
+-- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
+-- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
+-- Akses via _G.ZenxReg.pets / .petEggs / .eggShop / .packs / .seeds / .seedShop
+do
+    local _RS = game:GetService("ReplicatedStorage")
+    local function _cnt(t) local n=0 if type(t)=="table" then for _ in pairs(t) do n=n+1 end end return n end
+    local function _req(...)
+        local segs = {...}
+        local ok, mod = pcall(function()
+            local o = _RS
+            for _, s in ipairs(segs) do o = o:FindFirstChild(s); if not o then error(s) end end
+            return require(o)
+        end)
+        return ok and mod or nil
+    end
+    _G.ZenxReg = _G.ZenxReg or {}
+    local R = _G.ZenxReg
+    local petReg = _req("Data", "PetRegistry")
+    if petReg then
+        R.pets      = petReg.PetList               -- semua pet (nama -> Rarity/SellPrice/Passives/Icon/MovementType..)
+        R.petEggs   = petReg.PetEggs               -- semua egg hatch (nama -> EggRarity/HatchTime/Icon)
+        local _mReg = petReg.PetMutationRegistry
+        R.mutations  = _mReg                                -- container mutation penuh (Machine/Level500/dll)
+        R.mutasiData = _mReg and _mReg.PetMutationRegistry  -- nama -> data (61 mutation: warna/efek)
+        R.mutasiEnum = _mReg and _mReg.PetMutationToEnum    -- nama mutation -> kode enum (Rainbow -> c)
+        R.enumMutasi = _mReg and _mReg.EnumToPetMutation    -- kode enum -> nama (c -> Rainbow)
+        R.petReg    = petReg                        -- akses penuh (PetConfig/PetRarities/dll)
+    end
+    R.eggShop  = _req("Data", "PetEggData")          -- egg BELI (nama -> PurchaseID/Price/EggRarity/RebirthRequirement)
+    R.packs    = (_req("Data", "SeedPackData") or {}).Packs  -- semua seed pack (nama -> data)
+    R.seeds    = _req("Data", "SeedData")            -- semua seed/buah (nama -> SeedRarity/SeedName/Asset)
+    R.seedShop = _req("Data", "SeedShopData")        -- seed BELI (nama -> Price/PurchaseID/StockChance)
+    -- helper: daftar nama (buat picker/dropdown), urut
+    R.namaList = function(tbl)
+        local out = {}
+        if type(tbl) == "table" then for k in pairs(tbl) do out[#out+1] = tostring(k) end table.sort(out) end
+        return out
+    end
+    -- helper: PurchaseID egg beli by nama
+    R.eggPurchaseId = function(nama) local e = R.eggShop and R.eggShop[nama]; return e and e.PurchaseID end
+    -- helper: mutation pet disimpan sbg KODE enum -> konversi kode<->nama
+    R.mutasiNama = function(kode) return R.enumMutasi and R.enumMutasi[kode] end   -- kode -> nama (c -> Rainbow)
+    R.mutasiKode = function(nama) return R.mutasiEnum and R.mutasiEnum[nama] end   -- nama -> kode (Rainbow -> c)
+    -- helper: cek nama egg/pet ada di registry (deteksi konten baru)
+    R.punyaPet = function(nama) return R.pets and R.pets[nama] ~= nil end
+    R.punyaEgg = function(nama) return (R.petEggs and R.petEggs[nama] ~= nil) or (R.eggShop and R.eggShop[nama] ~= nil) end
+    if not _G.__ZenxRegPrinted then
+        _G.__ZenxRegPrinted = true
+        print(("[ZenxReg] pet:%d egg-hatch:%d egg-beli:%d pack:%d seed:%d mutasi:%d"):format(
+            _cnt(R.pets), _cnt(R.petEggs), _cnt(R.eggShop), _cnt(R.packs), _cnt(R.seeds), _cnt(R.mutasiData)))
+    end
+end
+
 local VERSION_DATE = "v8.304: pisah kotak EXPORT v8.303: fix tombol YA PAKAI ke-block (ZIndex) IMPORT"
 
 warn("============================================")
@@ -13065,3 +13180,29 @@ end)
         Instance.new("UICorner", TstatusLbl).CornerRadius=UDim.new(0,6)
     end
 end)()   -- v8.343: tutup IIFE blok TRADE
+
+-- ===== AUTO BUY NIGHT EGG (remote CONFIRMED via hook FireServer) =====
+-- CONFIRMED: BuyEventShopStock:FireServer("Night Egg", "Blood Moon Shop") -- 2 argumen.
+-- Night Egg ada di 2 shop (Blood Moon Shop + Twilight Shop). Auto-ON, gak perlu shop UI kebuka.
+if not _G.__ZenxAutoNightEgg then
+    _G.__ZenxAutoNightEgg = true
+    task.spawn(function()
+        local rs = game:GetService("ReplicatedStorage")
+        local ge = rs:FindFirstChild("GameEvents")
+        if not ge then print("[AutoNightEgg] GameEvents gak ketemu -- batal"); return end
+        local re = ge:FindFirstChild("BuyEventShopStock")
+        if not re then print("[AutoNightEgg] BuyEventShopStock gak ketemu -- batal"); return end
+        local shops = { "Blood Moon Shop", "Twilight Shop" }
+        local items = { "Night Egg" }
+        print("[AutoNightEgg] aktif -- BuyEventShopStock, Night Egg @ Blood Moon Shop + Twilight Shop tiap 10s")
+        while true do
+            task.wait(10)
+            for _, shop in ipairs(shops) do
+                for _, item in ipairs(items) do
+                    pcall(function() re:FireServer(item, shop) end)
+                    task.wait(0.1)
+                end
+            end
+        end
+    end)
+end
