@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.369-cf"
+local VERSION = "9.370-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13633,9 +13633,15 @@ if PERINTAH == "download" and arg and (arg[2] or ""):lower() == "arceus" then
     for _, n in ipairs(nums) do
         local nn = string.format("%02d", n)
         local url = rel:match('"(https://[^"]*ARCEUS%.LITE%.' .. nn .. '[^"]*%.apk)"')
-        if not url then url = "https://github.com/alzafabocahbocah-boop/revsy/releases/download/worker_64/ZETSU.ARCEUS.LITE." .. nn .. "-2.734.917.apk.apk" end
         if not url then
-            print("[" .. nn .. "] URL gak ketemu di rilis (skip)")
+            -- v9.370: FIX -- fallback lama RUSAK (double .apk.apk + versi hardcode basi,
+            -- bikin download gagal terus). Sekarang: coba regex lebih longgar dulu
+            -- (LITE.NN tanpa syarat prefix "ARCEUS." persis), baru kalau tetep gagal,
+            -- kasih diagnostik jelas (bukan nebak URL rusak).
+            url = rel:match('"(https://[^"]*LITE%.' .. nn .. '[^"]*%.apk)"')
+        end
+        if not url then
+            print("[" .. nn .. "] URL gak ketemu di rilis JSON (skip). Cek manual: nama asset yg ada 'LITE." .. nn .. "' di rilis worker_64.")
         else
             print("[" .. nn .. "] download (100MB, sabar)...")
             os.execute("curl -sL --retry 3 --retry-delay 2 --connect-timeout 20 '" .. url .. "' -o '/sdcard/arc" .. nn .. ".apk' 2>/dev/null")
