@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.370-cf"
+local VERSION = "9.372-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8281,26 +8281,15 @@ local function run(cfg)
                                     :format(ak or pkg))
                             end
                         else
-                            -- umur > 120s = denyut MATI >2 menit.
-                            -- v9.221: GRACE -- kalau client BARU DIBUKA (< 180s lalu),
-                            -- JANGAN rejoin walau denyut basi (grace 240s = 4 menit, krn masuk PS ~3 menit). Dia masih loading/spawn
-                            -- (belum sempet nulis denyut fresh ~2 menit). Rejoin di sini =
-                            -- INTERRUPT loading -> client nyangkut di HOME -> loop terus.
-                            -- v9.344: BYPASS grace kalau umur >= 480s (denyut mati >8 menit).
-                            -- Loading normal cuma ~2-3 menit. >8 menit = BENERAN nyangkut (home),
-                            -- bukan loading. Dulu grace SEMUA-client ke-reset tiap ada 1 client
-                            -- reopen -> client nyangkut lama gak pernah di-rejoin (grace terus).
-                            -- v9.346: FIX loop rejoin. Denyut BASI dari sesi lalu (mis 2800s) + client
-                            -- BARU dibuka -> v9.344 langsung rejoin lagi (bypass grace) -> INTERRUPT loading
-                            -- -> client gak pernah selesai load -> denyut gak update -> LOOP SELAMANYA.
-                            -- Sekarang: kasih 150s buat LOAD setelah dibuka (walau denyut lama). Baru
-                            -- setelah 150s (masih gak ada denyut fresh + umur>=480 lama) -> rejoin (nyangkut beneran).
-                            local _tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
-                            if _tsAge < 150 or (_tsAge < 300 and umur < 480) then
-                                diGame = diGame + 1   -- anggap di game (lagi loading), tunggu denyut nyusul
-                                info(("[antrian] %s baru dibuka %ds lalu -> GRACE (loading, JANGAN rejoin)")
-                                    :format(ak or pkg, _tsAge))
-                            elseif KICK_DIURUS["captcha:" .. pkg] then
+                            -- umur > 120s = denyut MATI >2 menit -> WAJIB REJOIN.
+                            -- v9.372: GRACE LOADING DIMATIIN (user keputusan: 120s "denyut mati"
+                            -- udah cukup jadi satu-satunya proteksi -- gak perlu grace tambahan
+                            -- abis rejoin). Worker sekarang LANGSUNG proses "denyut mati -> rejoin"
+                            -- tanpa tunggu tambahan. Proteksi loading di initial START tetep ada
+                            -- lewat jalur lain (line ~8276: "belum ada denyut TAPI baru
+                            -- di-close/tembak -> GRACE (tunggu FORCE)" -- itu proteksi HANYA buat
+                            -- kasus proses baru dibuka & BELUM PERNAH nulis denyut sama sekali).
+                            if KICK_DIURUS["captcha:" .. pkg] then
                                 -- v8.70: RE-CEK pakai logcat doang. Logcat masih ada
                                 -- captcha fresh (<120s) -> masih captcha. Kalau udah
                                 -- bersih -> udah solved / false positive -> lepas + rejoin.
@@ -8339,24 +8328,19 @@ local function run(cfg)
                 end
                 info(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
                 tambahLog(("[antrian] %d/%d di game (%d perlu diurus)"):format(diGame, perlu, perlu - diGame))
-                -- v9.348: hactRejoin LANGSUNG tembak walau denyut fresh (bypass antrian diGame).
-                -- Bug: client di game (denyut fresh) -> diGame=true -> perluTembak gak ke-proses
-                -- (perlu==diGame -> skip tembak) -> nyasar server salah selamanya walau online=false.
-                -- Fix: tembak TERPISAH via open_one langsung (bypass cek antrian), grace 150s buat load.
+                -- v9.372: GRACE DIMATIIN (user keputusan) -- langsung tembak semua yg di-flag,
+                -- gak nunggu tsAge lagi.
                 if _G.__hactRejoin and MODE_JALAN then
                     for pkg in pairs(_G.__hactRejoin) do
-                        local tsAge = KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) or 99999
-                        if tsAge >= 150 then
-                            local ak = (mapAkun or {})[pkg] or pkg
-                            local psN = (_G.__hactPsNama and _G.__hactPsNama[pkg]) or "-"
-                            local lnk = (mapLink and mapLink[pkg]) or ""
-                            local code = lnk:match("code=([%w]+)") or lnk:sub(1,20)
-                            info(("[hactoto] TEMBAK %s -> host=%s code=%s"):format(ak, psN, code))
-                            pcall(function() grid_satu(cfg, pkg) end)
-                            open_one(cfg, pkg, lnk ~= "" and lnk or nil, "hactoto-nyasar", true)
-                            KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
-                            os.execute("sleep 30")   -- v9.355: jeda 30s antar tembak (gantian, bukan barengan)
-                        end
+                        local ak = (mapAkun or {})[pkg] or pkg
+                        local psN = (_G.__hactPsNama and _G.__hactPsNama[pkg]) or "-"
+                        local lnk = (mapLink and mapLink[pkg]) or ""
+                        local code = lnk:match("code=([%w]+)") or lnk:sub(1,20)
+                        info(("[hactoto] TEMBAK %s -> host=%s code=%s"):format(ak, psN, code))
+                        pcall(function() grid_satu(cfg, pkg) end)
+                        open_one(cfg, pkg, lnk ~= "" and lnk or nil, "hactoto-nyasar", true)
+                        KICK_DIURUS["tembak_ts:" .. pkg] = os.time()
+                        os.execute("sleep 30")   -- v9.355: jeda 30s antar tembak (gantian, bukan barengan)
                     end
                     _G.__hactRejoin = {}
                 end
@@ -10401,17 +10385,14 @@ local function run(cfg)
                 -- rejoin. User minta: nunggu ~3 menit dari client TERAKHIR kebuka. Set
                 -- tembak_ts = SEKARANG (waktu selesai) buat semua -> denyut-cek diem
                 -- 240s dari sini, kasih semua client waktu boot + nulis denyut.
+                -- v9.372: proteksi tsAge DIBUANG (user keputusan, konsisten sama grace dimatiin
+                -- di tempat lain). Ini sebelumnya nyegah reset tembak_ts abis hactoto tembak
+                -- individual -- tapi karena "denyut MATI -> block rejoin" grace-nya udah dimatiin
+                -- juga, proteksi ini udah gak ngefek lagi ke jalur manapun. Reset semua langsung.
                 do
                     local tSelesai = os.time()
                     for _, pk in ipairs(split(cfg.pkgs or "")) do
-                        -- v9.351: JANGAN reset tembak_ts kalau client ini baru di-tembak hactoto
-                        -- (< 120s lalu). Bug: "Grace SEMUA" reset tembak_ts olivia walau hactoto
-                        -- baru nembak 30s lalu -> denyut-rejoin langsung nembak lagi -> interrupt
-                        -- loading olivia -> loop selamanya.
-                        local tsAge = KICK_DIURUS["tembak_ts:" .. pk] and (tSelesai - KICK_DIURUS["tembak_ts:" .. pk]) or 99999
-                        if tsAge >= 120 then
-                            KICK_DIURUS["tembak_ts:" .. pk] = tSelesai
-                        end
+                        KICK_DIURUS["tembak_ts:" .. pk] = tSelesai
                     end
                     info("Grace SEMUA client di-refresh -> denyut-cek nunggu ~3 menit dari sekarang (client terakhir kebuka)")
                 end
