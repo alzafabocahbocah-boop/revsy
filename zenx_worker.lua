@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.382-cf"
+local VERSION = "9.383-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8331,7 +8331,18 @@ local function run(cfg)
                             -- lewat jalur lain (line ~8276: "belum ada denyut TAPI baru
                             -- di-close/tembak -> GRACE (tunggu FORCE)" -- itu proteksi HANYA buat
                             -- kasus proses baru dibuka & BELUM PERNAH nulis denyut sama sekali).
-                            if KICK_DIURUS["captcha:" .. pkg] then
+                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 then
+                                -- v9.383: RE-ADD grace loading buat cabang DENYUT BASI. v9.372 buang
+                                -- grace di sini -> client baru dibuka/tembak (<300s) yg file denyut
+                                -- LAMA-nya masih basi -> langsung ke-flag MATI + rejoin walau MASIH
+                                -- LOADING -> LOOP (13 detik abis dibuka udah di-rejoin lagi). Kasih
+                                -- grace 300s dari tembak terakhir: masih loading, tunggu denyut fresh.
+                                -- (Client yg BENERAN mati -- udah lama jalan lalu putus -- tembak_ts-nya
+                                -- lama >300s, jadi tetep ke-rejoin cepet. Grace CUMA buat yg baru dibuka.)
+                                diGame = diGame + 1
+                                info((("[antrian] %s denyut basi (%ss) TAPI baru di-tembak %ds lalu -> GRACE (msh loading)")
+                                    ):format(ak or pkg, umur, os.time() - KICK_DIURUS["tembak_ts:" .. pkg]))
+                            elseif KICK_DIURUS["captcha:" .. pkg] then
                                 -- v8.70: RE-CEK pakai logcat doang. Logcat masih ada
                                 -- captcha fresh (<120s) -> masih captcha. Kalau udah
                                 -- bersih -> udah solved / false positive -> lepas + rejoin.
