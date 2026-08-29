@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.368-cf"
+local VERSION = "9.369-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2964,32 +2964,8 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     end
 
     local function coba(pakai_wm)
-        -- v9.365: GANTI -S dengan cara terbukti manual: hapus stack lama (am stack
-        -- remove) dulu -> task kosong -> tembak WC (0x14000000). -S dibuang total
-        -- (kadang bikin client lain ikut keluar di device 4-client). pakai_S=true
-        -- sekarang jadi sinyal "bersihin task dulu" bukan "pakai flag -S".
-        if pakai_S then
-            pcall(function()
-                local stk = sh("su -c 'am stack list 2>/dev/null'") or ""
-                -- cari SEMUA stackId yg punya task pkg ini -- parse line-by-line,
-                -- "Stack id=" jadi header, baris "taskId=" berikutnya sebelum
-                -- "Stack id=" lain milik stack itu.
-                local stackIds = {}
-                local lastStackId = nil
-                for line in stk:gmatch("[^\n]+") do
-                    local sid = line:match("Stack id=(%d+)")
-                    if sid then lastStackId = sid end
-                    if line:find(pkg, 1, true) and lastStackId then
-                        stackIds[#stackIds+1] = lastStackId
-                    end
-                end
-                for _, sid in ipairs(stackIds) do
-                    sh_silent("su -c 'am stack remove " .. sid .. "' 2>/dev/null")
-                end
-                if #stackIds > 0 then os.execute("sleep 2") end
-            end)
-        end
-        pakai_S = false   -- -S gak dipake lagi, selalu WC di bawah
+        -- v9.369: HAPUS mekanisme stack-remove (gak perlu lagi, WC polos udah cukup).
+        pakai_S = false   -- semua tembak pakai WC (0x14000000), gak ada -S / stack-remove
         -- v7.85: CARA PANDORA PERSIS (dari logcat: START {dat=... flg=0x10000000
         -- pkg=com.roblox.clienX cmp=.../ActivityProtocolLaunch} from uid 0).
         -- Persis kayak Pandora:
