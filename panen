@@ -66,18 +66,28 @@ do
         end
         local function zenxDcStrict()
             local dc = false
+            -- [1] GuiService error code -- disconnect/kick bikin error code != OK.
+            -- Sinyal PALING reliable + murah. Deteksi lama (scan prompt) suka meleset
+            -- -> client disconnect tapi denyut tetep ketulis -> worker anggap hidup.
+            pcall(function()
+                local ec = game:GetService("GuiService"):GetErrorCode()
+                if ec ~= nil and ec ~= Enum.ConnectionError.OK then dc = true end
+            end)
+            if dc then return true end
+            -- [2] backup: scan RobloxPromptGui -- TextButton/TextLabel keyword disconnect
+            -- (pakai find, bukan == exact).
             pcall(function()
                 local cg = game:GetService("CoreGui")
                 local pg = cg:FindFirstChild("RobloxPromptGui")
                 local overlay = pg and pg:FindFirstChild("promptOverlay")
                 if not overlay then return end
-                for _, child in ipairs(overlay:GetChildren()) do
-                    if child:IsA("GuiObject") and child.Visible then
-                        for _, d in ipairs(child:GetDescendants()) do
-                            if d:IsA("TextButton") and d.Visible then
-                                local t = tostring(d.Text or ""):lower()
-                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
-                            end
+                for _, d in ipairs(overlay:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("TextLabel")) and d.Visible then
+                        local t = tostring(d.Text or ""):lower()
+                        if t:find("reconnect") or t:find("leave") or t:find("sambung")
+                           or t:find("disconnect") or t:find("terputus")
+                           or t:find("lost connection") or t:find("kicked") then
+                            dc = true; return
                         end
                     end
                 end
@@ -324,7 +334,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v3.7"
+local VERSION = "v3.8"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2217,6 +2227,55 @@ if not _G.__ZenxAutoTicket then
             task.wait(5)
             if ticketCount() < 2 then pcall(function() re:FireServer(ticketName) end) end
         end
+    end)
+end
+
+-- ============ STARTUP -- lewatin LOADING (tap layar cloud phone) ============
+-- v3.8: keyboard(Space) spam 5s + TOUCH TAP layar CUMA pas loading (belum ada
+-- karakter). Touch = native cloud phone (game respon ke touch, bukan mouse) ->
+-- lewat "tap to continue". Begitu karakter masuk, mouse/touch berhenti (gak
+-- mis-click), keyboard tetep (Space = lompat, harmless).
+if not _G.__ZenxStartupTap then
+    _G.__ZenxStartupTap = true
+    task.spawn(function()
+        local UIS = game:GetService("UserInputService")
+        local Players = game:GetService("Players")
+        local VIM, VU
+        pcall(function() VIM = game:GetService("VirtualInputManager") end)
+        pcall(function() VU = game:GetService("VirtualUser") end)
+        local t0 = tick()
+        while tick() - t0 < 5 do
+            local plr = Players.LocalPlayer
+            local hum = plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+            pcall(function()
+                if firesignal and UIS then
+                    firesignal(UIS.InputBegan, { UserInputType = Enum.UserInputType.Keyboard,
+                        KeyCode = Enum.KeyCode.Space, UserInputState = Enum.UserInputState.Begin }, false)
+                end
+            end)
+            pcall(function()
+                if VIM then
+                    VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
+                    VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                end
+            end)
+            if not hum then
+                pcall(function() if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end end)
+                pcall(function()
+                    if VIM then
+                        local x, y = 200, 300
+                        local cam = workspace.CurrentCamera
+                        if cam and cam.ViewportSize and cam.ViewportSize.X > 0 then
+                            x, y = cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2
+                        end
+                        VIM:SendTouchEvent(1, 0, x, y); task.wait(0.03)   -- tap DOWN
+                        VIM:SendTouchEvent(1, 2, x, y)                    -- tap UP
+                    end
+                end)
+            end
+            task.wait(1)
+        end
+        print("[PanenEgg] startup kelar (keyboard 5s, tap layar cuma pas loading)")
     end)
 end
 
