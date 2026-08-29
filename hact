@@ -272,7 +272,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.82"
+local VERSION = "v27.83"
 
 -- ============================================================
 -- v27.77: STARTUP FAKE-INPUT (30 DETIK AWAL pas sc di-exe) -- klik + gerak mouse + keyboard
@@ -2290,6 +2290,28 @@ do
         local HttpService = game:GetService("HttpService")
         local Players = game:GetService("Players")
         local fullCd = {}   -- v27.64: target -> tick() pas kena notif "max/penuh" (cooldown, pindah target lain)
+        -- v27.83: LAPOR LANGSUNG ke backend (bypass worker) pas target FULL -- gak nunggu
+        -- worker baca hactstat.json di siklus denyut berikutnya (bisa 20-30s+ delay).
+        -- Panel bisa langsung reassign begitu hact detect full, real-time.
+        local ZENX_URL = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local ZENX_KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+        local function laporFullLangsung(akunSendiri, targetFull)
+            pcall(function()
+                local req = (syn and syn.request) or (fluxus and fluxus.request)
+                         or (krnl and krnl.request) or http_request or request or httprequest
+                if type(http) == "table" and http.request then req = http.request end
+                if not req then return end
+                local body = HttpService:JSONEncode({
+                    list = { { akun = akunSendiri, stat = { hactotoFull = targetFull } } }
+                })
+                req({
+                    Url = ZENX_URL .. "/hactstat-batch", Method = "POST",
+                    Headers = { ["X-Kunci"] = ZENX_KUNCI, ["Content-Type"] = "application/json" },
+                    Body = body,
+                })
+                print("[HactTelur] LAPOR LANGSUNG ke panel: " .. akunSendiri .. " -> target " .. targetFull .. " FULL (bypass worker)")
+            end)
+        end
         -- deteksi notif target PENUH di layar (mis "inventory is full", "can't add more", "max")
         local function targetPenuh()
             local hit = false
@@ -2377,9 +2399,12 @@ do
                 -- v27.73: kalau pas trade ke-detect target FULL (max pet) -> cooldown + LAPOR ke panel
                 if _G.__hactTargetFull == pilih or targetPenuh() then
                     fullCd[pilih] = tick()
-                    _G.__hactFullReport = pilih    -- lapor ke panel via hactstat (akun ini FULL)
+                    _G.__hactFullReport = pilih    -- lapor ke panel via hactstat (fallback, lewat worker)
                     _G.__hactTargetFull = nil
                     print("[HactTelur] HACT OTO: target "..pilih.." FULL -> lapor panel + cari target lain")
+                    -- v27.83: LAPOR LANGSUNG (bypass worker) -- panel reaksi instan, gak nunggu
+                    -- worker baca file di siklus denyut berikutnya.
+                    laporFullLangsung(plr.Name, pilih)
                 end
             end)
         end
