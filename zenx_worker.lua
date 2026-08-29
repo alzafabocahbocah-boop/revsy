@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.386-cf"
+local VERSION = "9.387-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8023,7 +8023,12 @@ local function run(cfg)
             -- v9.376: interval CEK denyut 30s -> 180s (3 menit). Ambang mati tetap
             -- 2 menit (120s). Konsekuensi: begitu denyut basi >2 menit, rejoin baru
             -- kelar di cek berikutnya (worst case ~3 menit lagi). User minta cek 3 menit.
-            if (hitTop or cfg.rotasi_on) and ROTASI_STATE == "idle" and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 180 then
+            -- v9.387: TAMBAH `or MODE_JALAN`. Bug user: pas command panel BUKAN FORCE lagi
+            -- (idle/kosong abis start), hitTop=false + rotasi_on=false -> blok denyut SKIP TOTAL
+            -- -> worker gak ngecek denyut / gak rejoin selama BERJAM-JAM (cuma ps-getps + banner).
+            -- MODE_JALAN = "udah Start, belum STANDBY" -> denyut tetep jalan tiap 180s selama
+            -- worker mode jalan. STANDBY/STOP set MODE_JALAN=false -> denyut mati (respect standby).
+            if (hitTop or cfg.rotasi_on or MODE_JALAN) and ROTASI_STATE == "idle" and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 180 then
                 KICK_DIURUS["_denyutTop"] = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
