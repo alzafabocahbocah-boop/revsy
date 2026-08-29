@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.372-cf"
+local VERSION = "9.373-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8070,8 +8070,14 @@ local function run(cfg)
                             local umurMtime = mtime and (sekarang - tonumber(mtime)) or nil  -- dari mtime file
                             denyutSemua[nama] = umurIsi
                             -- v9.254: extract sheckles (ts;sheck;sheckW). sheck>0 aja.
-                            -- format egg2 (ts;gemEgg;chrEgg;egg2) -> pisah gem + christmas egg
-                            if isi:match("^%d+;%d+;%d+;egg2$") then
+                            -- v9.373: format egg3 (ts;gemEgg;chrEgg;nightEgg;egg3) -> pisah 3 jenis.
+                            -- Tetep support egg2 lama (backward-compat, night default 0).
+                            if isi:match("^%d+;%d+;%d+;%d+;egg3$") then
+                                local gem, chr, night = isi:match("^%d+;(%d+);(%d+);(%d+);egg3")
+                                if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(night) or 0) > 0 then
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = gem or "0", sheckW = "egg", chr = chr or "0", night = night or "0" }
+                                end
+                            elseif isi:match("^%d+;%d+;%d+;egg2$") then
                                 local gem, chr = isi:match("^%d+;(%d+);(%d+);egg2")
                                 if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 then
                                     sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = gem or "0", sheckW = "egg", chr = chr or "0" }
@@ -8098,7 +8104,8 @@ local function run(cfg)
                         for i, d in ipairs(sheckDenyut) do
                             body = body .. '{"akun":"' .. d.nama .. '","sheck":' .. d.sheck ..
                                    ',"sheckW":"' .. d.sheckW .. '"' ..
-                                   (d.chr and (',"chr":' .. d.chr) or '') .. '}'
+                                   (d.chr and (',"chr":' .. d.chr) or '') ..
+                                   (d.night and (',"night":' .. d.night) or '') .. '}'
                             if i < #sheckDenyut then body = body .. "," end
                         end
                         body = body .. "]}"
