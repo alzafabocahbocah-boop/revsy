@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.373-cf"
+local VERSION = "9.374-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5517,7 +5517,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         -- ketangkep ronde berikutnya).
                         if coba >= maxc then
                             warn(string.format("[%d/%d] %s — belum masuk game setelah %dx, SKIP (coba ronde berikutnya)",
-                                urut, totalBuka, pkg, maxc))
+                                urutBuka, totalBuka, pkg, maxc))
                             -- sukses tetep false -> masuk hitungan gagal, tapi gak nyangkut
                             break
                         end
@@ -5530,7 +5530,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         -- (v7.84) pas TANPA force-stop. Jadi retry cuma jeda 30s +
                         -- tembak ulang (open_one cara WC re-join, TANPA close).
                         warn(string.format("[%d/%d] %s — %s, tunggu 30s + re-join (%d/%d)...",
-                            urut, totalBuka, pkg, sebab or "belum masuk", coba, maxc))
+                            urutBuka, totalBuka, pkg, sebab or "belum masuk", coba, maxc))
                         if lapor_fn then pcall(lapor_fn) end
                         if cek_batal and cek_batal() then break end
                         info("   " .. pkg:gsub("com%.roblox%.","") .. " tunggu 30s -> re-join murni (tanpa -S/kill)...")
@@ -5546,16 +5546,16 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                         TERAKHIR_BUKA[pkg] = os.time()
                     elseif nyangkut then
                         warn(string.format("[%d/%d] %s — nyangkut di Home; DIBUNUH terus dibuka ulang",
-                            urut, #list, pkg))
+                            urutBuka, totalBuka, pkg))
                         close_all(cfg, pkg, mapLink)
                         os.execute("sleep 2")
                     elseif pkg_hidup(pkg) then
                         warn(string.format("[%d/%d] %s — prosesnya idup tapi gak kedeteksi di layar game; LANJUT ke client berikutnya",
-                            urut, #list, pkg))
+                            urutBuka, totalBuka, pkg))
                         sukses = true   -- dihitung di blok bawah (jangan nambah di sini: dobel)
                         break
                     end
-                    warn(string.format("[%d/%d] %s — %s (%ds), ulang...", urut, #list, pkg, sebab, lama))
+                    warn(string.format("[%d/%d] %s — %s (%ds), ulang...", urutBuka, totalBuka, pkg, sebab, lama))
                     if lapor_fn then pcall(lapor_fn) end   -- v4.33: segerin tabel tiap percobaan
                     if cek_batal and cek_batal() then break end   -- v4.16: STANDBY di tengah retry
                     if coba < maxc then
@@ -5570,11 +5570,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
 
                 if sukses then
                     hasil.ok = hasil.ok + 1
-                    ok(string.format("[%d/%d] %s — jalan (%ds)", urut, #list, pkg, lama))
+                    ok(string.format("[%d/%d] %s — jalan (%ds)", urutBuka, totalBuka, pkg, lama))
                 else
                     hasil.gagal = hasil.gagal + 1
                     hasil.nama_gagal[#hasil.nama_gagal + 1] = pkg
-                    err(string.format("[%d/%d] %s — GAGAL: %s", urut, #list, pkg, sebab or "?"))
+                    err(string.format("[%d/%d] %s — GAGAL: %s", urutBuka, totalBuka, pkg, sebab or "?"))
                 end
 
                 -- lapor ke panel di sela-sela, biar gak "ilang" bermenit-menit
