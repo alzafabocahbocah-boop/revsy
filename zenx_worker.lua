@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.381-cf"
+local VERSION = "9.382-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5281,8 +5281,12 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 local lagiJalan = potretJalan and potretJalan[pkg]
                 if lagiJalan == nil then lagiJalan = pkg_running(pkg) end
                 local denyutFresh0 = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 300
-                local diLewat = lagiJalan and (panelBuram0 or not akun
-                                or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh0)
+                -- v9.382: BLOCK FORCE kalau denyut BARU rejoin client ini (<180s) -- gak peduli
+                -- 'lagiJalan' (client msh loading abis denyut buka = belum keliatan jalan).
+                local denyutRejoinBaru = KICK_DIURUS["denyut_rejoin:" .. pkg]
+                    and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < 180
+                local diLewat = denyutRejoinBaru or (lagiJalan and (panelBuram0 or not akun
+                                or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh0))
                 local diCaptcha = akun and KICK_DIURUS["captcha:" .. pkg]
                 local diMati = akun and KICK_DIURUS["mati:" .. akun]
                 if not diLewat and not diCaptcha and not diMati then
@@ -5379,8 +5383,11 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             -- bridge/panel stale). Bug: reopen_sec re-join client hidup krn cuma
             -- ngecek bridge_fresh (panel), padahal denyut-cek udah bilang idup.
             local denyutFresh = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 300
-            if lagiJalan and (panelBuram or not akun
-                              or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh) then
+            -- v9.382: BLOCK FORCE kalau denyut BARU rejoin client ini (<180s), walau msh loading.
+            local denyutRejoinBaru2 = KICK_DIURUS["denyut_rejoin:" .. pkg]
+                and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < 180
+            if denyutRejoinBaru2 or (lagiJalan and (panelBuram or not akun
+                              or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh)) then
                 hasil.lewat = hasil.lewat + 1
                 -- v4.6: JANGAN print tiap client yg udah jalan (bikin spam log).
             elseif akun and KICK_DIURUS["mati:" .. akun] then
@@ -8458,6 +8465,10 @@ local function run(cfg)
                         TERAKHIR_BUKA[pkg] = os.time()   -- v9.380: FIX dobel-buka. Tanpa ini, FORCE
                         -- sticky yg re-dispatch abis denyut rejoin GAK TAU client baru dibuka denyut
                         -- (baruDisentuh false + denyut msh basi) -> buka ULANG. Jalur grafis udah set ini.
+                        KICK_DIURUS["denyut_rejoin:" .. pkg] = os.time()   -- v9.382: BLOCK FORCE. Client
+                        -- yg BARU di-rejoin denyut -> FORCE (panel/sticky) di-skip 180s, kasih denyut
+                        -- kesempatan. Beda dari TERAKHIR_BUKA (90s + butuh 'lagiJalan') -- ini nge-block
+                        -- walau client belum keliatan jalan (msh loading abis denyut buka).
                         pcall(function() jaga_depan(cfg, mapLink) end)
                         if idx < #perluTembak then
                             for _ = 1, 30 do
