@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v0.99"
+local VERSION = "v1.01"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -660,6 +660,88 @@ task.spawn(function()
             end
         end)
         task.wait(15)
+    end
+end)
+
+-- ============================================================
+-- v1.01: FAST-REPORT inventory ke panel (edge-triggered, DIRECT POST).
+-- Cek tiap 3s. Lapor LANGSUNG ke panel (gak nunggu siklus worker) kalau:
+--   * pet MAX (totalAll >= maxInv) -> lapor pas AWAL max, terus re-lapor tiap
+--     20 menit selama masih full (gak spam 3s, tapi panel tetep tau masih full).
+--   * pet berubah >= 20 (NAIK atau TURUN) dari terakhir lapor -> lapor.
+-- POST langsung ke /upkgstat-batch (list 1 akun). Lapor rutin 15s (file->worker)
+-- TETEP jalan -- ini cuma jalur cepet buat momen penting (max / lonjakan).
+-- ============================================================
+task.spawn(function()
+    local Players = game:GetService("Players")
+    local plr = Players.LocalPlayer
+    local req = (syn and syn.request) or (fluxus and fluxus.request)
+             or (krnl and krnl.request) or http_request or request or httprequest
+    if type(http) == "table" and http.request then req = http.request end
+    if not (req and plr and plr.Name) then return end
+    local URL   = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+
+    local lastLapor  = -1        -- totalAll terakhir yg dilaporin (-1 = belum ada baseline)
+    local maxLaporTs = 0         -- kapan terakhir lapor "max" (0 = lagi gak full)
+    local MAX_ULANG  = 20 * 60   -- pas FULL: re-lapor tiap 20 menit (biar panel tau masih full)
+
+    local function jsonKV(tbl)
+        local parts = {}
+        for k, v in pairs(tbl or {}) do
+            parts[#parts+1] = string.format("%q:%d", tostring(k), tonumber(v) or 0)
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    local function laporSekarang(alasan)
+        pcall(function()
+            local st = _G.ZenxKgStat or {}
+            local bahan = {}
+            if type(_G.ZenxKgUpTipe) == "table" then
+                for t in pairs(_G.ZenxKgUpTipe) do bahan[#bahan+1] = t end
+            end
+            local bahanStr = ""
+            for i, b in ipairs(bahan) do bahanStr = bahanStr .. (i>1 and "," or "") .. string.format("%q", b) end
+            local stat = string.format(
+                '{"akun":%q,"config":%q,"bahan":[%s],"total":%d,"udah":%d,"belum":%d,"totalAll":%d,"maxInv":%d,"tipeUdah":%s,"tipeBelum":%s,"ts":%d}',
+                plr.Name, tostring(_G.ZenxKgConfig or ""), bahanStr,
+                tonumber(st.total) or 0, tonumber(st.udah) or 0, tonumber(st.belum) or 0,
+                tonumber(st.totalAll) or 0, tonumber(st.maxInv) or 210,
+                jsonKV(st.tipeUdah), jsonKV(st.tipeBelum), os.time())
+            local body = '{"list":[{"akun":"' .. plr.Name .. '","stat":' .. stat .. '}]}'
+            req({ Url = URL .. "/upkgstat-batch", Method = "POST",
+                  Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = KUNCI },
+                  Body = body })
+            print("[UpKg] FAST-LAPOR (" .. alasan .. ") inv=" ..
+                  (tonumber(st.totalAll) or 0) .. "/" .. (tonumber(st.maxInv) or 0))
+        end)
+    end
+
+    task.wait(10)   -- kasih waktu stat pertama keitung
+    while true do
+        task.wait(3)
+        local st = _G.ZenxKgStat
+        if st and tonumber(st.totalAll) and tonumber(st.maxInv) and (tonumber(st.maxInv) or 0) > 0 then
+            local cur = tonumber(st.totalAll)
+            local mx  = tonumber(st.maxInv)
+            if cur >= mx then
+                -- FULL: lapor pas AWAL nyampe, terus re-lapor tiap 20 menit selama masih full
+                -- (gak spam 3s, tapi gak diem selamanya juga).
+                if maxLaporTs == 0 or (os.time() - maxLaporTs) >= MAX_ULANG then
+                    laporSekarang(maxLaporTs == 0 and "MAX" or "MAX-ulang")
+                    maxLaporTs = os.time()
+                    lastLapor  = cur
+                end
+            else
+                maxLaporTs = 0   -- turun di bawah max -> reset (bisa lapor "MAX" lagi nanti)
+                if lastLapor < 0 then
+                    lastLapor = cur                          -- baseline pertama, jangan lapor
+                elseif math.abs(cur - lastLapor) >= 20 then
+                    laporSekarang(cur > lastLapor and "+20" or "-20")  -- naik/turun 20 -> lapor
+                    lastLapor = cur
+                end
+            end
+        end
     end
 end)
 
