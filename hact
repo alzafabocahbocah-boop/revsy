@@ -272,27 +272,45 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.86"
+local VERSION = "v27.87"
 
 -- ============================================================
--- v27.86: STARTUP -- KLIK sampai LEWAT loading, terus LONCAT 2 detik doang (yg penting lewatin loading)
+-- v27.87: STARTUP -- SPAM input (firesignal+VIM+VU) sampai LEWAT loading, terus LONCAT 2 detik doang (yg penting lewatin loading)
 -- biar karakter aktif pas awal masuk tanpa resiko salah-mencet UI.
 -- ============================================================
 task.spawn(function()
+    local UIS = game:GetService("UserInputService")
     local Players = game:GetService("Players")
-    local VU
+    local VIM, VU
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
     pcall(function() VU = game:GetService("VirtualUser") end)
-    -- FASE 1: KLIK terus selama masih LOADING (belum ada karakter). Ini yg PENTING:
-    -- lewatin prompt loading / "click to continue". Berhenti begitu karakter ke-load.
-    while true do
+    -- FASE 1: SPAM input (firesignal + VIM keyboard + VU klik) buat LEWATIN loading.
+    -- Pakai 3 metode barengan -- di cloud phone (window background), VU klik doang
+    -- sering GAK jalan, firesignal/VIM yg nembus. Berhenti begitu karakter ke-load.
+    -- Cap 90s biar gak selamanya kalau stuck.
+    local t0 = tick()
+    while tick() - t0 < 90 do
         local plr = Players.LocalPlayer
-        local char = plr and plr.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then break end   -- udah masuk game -> stop klik
-        pcall(function() if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()) end end)
+        local hum = plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+        if hum then break end   -- udah masuk game -> stop
+        pcall(function()
+            if firesignal and UIS then
+                firesignal(UIS.InputBegan, { UserInputType = Enum.UserInputType.Keyboard,
+                    KeyCode = Enum.KeyCode.Space, UserInputState = Enum.UserInputState.Begin }, false)
+            end
+        end)
+        pcall(function()
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end
+        end)
+        pcall(function()
+            if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end
+        end)
         task.wait(1)
     end
-    -- FASE 2: udah masuk game -> LONCAT 2 detik doang, terus udahan (gak perlu apa-apa lagi).
+    -- FASE 2: udah masuk game -> LONCAT 2 detik doang, terus udahan.
     local t1 = tick()
     while tick() - t1 < 2 do
         pcall(function()
