@@ -1,0 +1,3666 @@
+// ============================================================
+// STAR PANEL WORKER
+// Ganti Pantry buat data panel. Yang dikasih Pantry nggak bisa:
+//   - CORS beneran (browser boleh manggil langsung)
+//   - kunci beneran (bukan cuma "rahasia URL")
+//   - batas yang JELAS & bisa direncanain
+//
+// Endpoint:
+//   GET  /stat            -> semua akun + semua tim (buat panel)
+//   POST /stat            -> 1 akun lapor      (star_bridge.lua)
+//   POST /tim             -> 1 tim lapor       (zenx_worker, Termux)
+//   GET  /cfg?akun=NAMA   -> setelan gabungan  (star_bridge.lua)
+//   PUT  /cfg             -> panel nulis setelan
+//   GET  /perintah?tim=X  -> ambil perintah    (zenx_worker)
+//   PUT  /perintah        -> panel kirim FORCE/STANDBY
+//
+// Semua butuh header:  X-Kunci: <rahasia>
+// Pasang kuncinya:     npx wrangler secret put KUNCI
+// ============================================================
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  // v15-81: DELETE ikut didaftarin. Ada tiga endpoint yang pakai DELETE
+  // (/ps-template, /script, /seed-cfg) -- tanpa ini browser nolak duluan di
+  // tahap preflight, dan yang keliatan di panel cuma "Failed to fetch" tanpa
+  // sebab (jawaban servernya gak pernah kebaca).
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-Kunci, X-Panel-Versi",
+  "Access-Control-Max-Age": "86400",
+};
+
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS },
+  });
+
+const salah = (pesan, status = 400) => json({ error: pesan }, status);
+
+// perbandingan waktu-tetap, biar kunci nggak bisa ditebak dari lama respons
+function kunciCocok(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (a.length !== b.length) return false;
+  let beda = 0;
+  for (let i = 0; i < a.length; i++) beda |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return beda === 0;
+}
+
+const angka = (v, bawaan = 0) => (typeof v === "number" && isFinite(v) ? Math.trunc(v) : bawaan);
+const teks  = (v, max = 64) => (typeof v === "string" ? v.slice(0, max) : null);
+
+// tanggal WIB (UTC+7) format YYYY-MM-DD
+function tglWIB(ts) {
+  const d = new Date((ts * 1000) + 7 * 3600 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+// catat total token GAG 1 hari ini ke token_riwayat (1 baris per tanggal WIB)
+async function snapshotToken(db) {
+  const skrg = Math.floor(Date.now() / 1000);
+  const tgl = tglWIB(skrg);
+  const r = await db.prepare(
+    "SELECT COALESCE(SUM(tokens),0) AS t FROM akun WHERE place IN ('126884695634066','129954712878723')"
+  ).first();
+  const total = r ? r.t : 0;
+  await db.prepare(
+    `INSERT INTO token_riwayat (tgl, total, ts) VALUES (?1, ?2, ?3)
+     ON CONFLICT(tgl) DO UPDATE SET total=?2, ts=?3`
+  ).bind(tgl, total, skrg).run();
+  return { tgl, total };
+}
+
+// ============================================================
+// v15-82: PENYUSUN SETELAN SEED, dipakai BARENG /seed-cfg & /stat.
+//
+// Sengaja satu fungsi, bukan disalin ke dua tempat: kalau logikanya kepecah,
+// suatu saat yang satu diubah dan yang lain ketinggalan -- dan gejalanya bakal
+// bisu (panel nunjukin setelan A, script jalan pakai setelan B).
+//
+// Tiga lapis, yang belakangan nimpa yang duluan:
+//   seed              -> berlaku ke semua akun seed
+//   seed:tim:<tim>    -> khusus satu tim
+//   seed:<akun>       -> khusus satu akun
+// ============================================================
+async function susunCfgSeed(db, akun) {
+  let tim = null;
+  if (akun) {
+    const a = await db.prepare("SELECT tim FROM akun WHERE nama=?1").bind(akun).first();
+    if (a && a.tim) tim = a.tim;
+  }
+  const urut = ["seed"];
+  if (tim) urut.push("seed:tim:" + tim);
+  if (akun) urut.push("seed:" + akun);
+
+  const r = await db
+    .prepare(`SELECT scope, ts, data FROM cfg WHERE scope IN (${urut.map((_, i) => "?" + (i + 1)).join(",")})`)
+    .bind(...urut)
+    .all();
+
+  let gabung = {}, ts = 0;
+  for (const sc of urut) {
+    const b = (r.results || []).find((x) => x.scope === sc);
+    if (!b) continue;
+    try {
+      gabung = { ...gabung, ...JSON.parse(b.data) };
+      ts = Math.max(ts, b.ts);
+    } catch {}
+  }
+
+  // v8.75: EXCLUDE target yg udah di-gift (laporan star_seed 'giftdone') dari
+  // giftPkList -> farm gak nyangkut ngirim ke akun yg mailbox-nya udah keisi.
+  // Otomatis kepilih target lain. Entry giftdone < 8 menit dianggap masih valid.
+  if (gabung.giftPkList && typeof gabung.giftPkList === "string") {
+    try {
+      const cg = await db.prepare("SELECT data FROM cfg WHERE scope='giftdone'").first();
+      let done = {};
+      if (cg) { try { done = JSON.parse(cg.data) || {}; } catch {} }
+      const skrg = Math.floor(Date.now() / 1000);
+      // v8.77: exclude target yg TOTAL gift-nya udah >= kurang (butuh). Yg belum
+      // cukup TETEP di list (farm kirim sisanya). Tanpa batas waktu -- clear via reset.
+      gabung.giftPkList = gabung.giftPkList.split(",").filter((item) => {
+        const bagian = item.split(":");
+        const nm = (bagian[0] || "").trim().toLowerCase();
+        const kurang = Number(bagian[1]) || 0;
+        const gd = done[nm];
+        const total = (gd && typeof gd === "object") ? (gd.nilai || 0) : (gd ? 1e18 : 0);
+        return nm && !(kurang > 0 && total >= kurang);
+      }).join(",");
+    } catch {}
+  }
+
+  return { cfg: gabung, ts, tim };
+}
+
+export default {
+  // cron: dijalanin otomatis tiap hari (jadwal diset di dashboard: Triggers > Cron)
+  async scheduled(event, env, ctx) {
+    try { await snapshotToken(env.DB); } catch (e) {}
+  },
+
+  async fetch(req, env) {
+    if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+
+    if (!env.KUNCI) return salah("KUNCI belum dipasang di server", 500);
+
+    const url = new URL(req.url);
+    let jalur = url.pathname.replace(/\/+$/, "") || "/";
+
+    // ============================================================
+    // v15-75: JALUR /k/<kunci>/... -- kunci lewat URL, bukan header.
+    //
+    // Perlu karena star_farm manggil relay pakai request() polos, TANPA header
+    // X-Kunci -- dan URL-nya diturunin sendiri dengan gsub("/basket/[^/]+$").
+    // Jadi kalau kuncinya ditaruh di query (?k=), bakal kehapus sama gsub itu.
+    // Ditaruh di DEPAN bikin polanya selamat:
+    //   .../k/<kunci>/basket/apapun  ->  .../k/<kunci>/basket/zenxprio
+    //
+    // Hasilnya: star_farm GAK PERLU DIUBAH sama sekali -- cukup arahin
+    // gfRelayUrl ke sini.
+    // ============================================================
+    let kunciDariJalur = null;
+    {
+      const m = jalur.match(/^\/k\/([^/]+)(\/.*)$/);
+      if (m) { kunciDariJalur = decodeURIComponent(m[1]); jalur = m[2]; }
+    }
+
+    const kunciDipakai = kunciDariJalur !== null
+      ? kunciDariJalur
+      : (req.headers.get("X-Kunci") || "");
+    // v8.75-backend: CEK VERSI PANEL. Request "ngatur" (PUT perintah/setting/
+    // start-pilih) HARUS dari panel versi >= MIN. Bug user: panel v16-111 lama di
+    // HP lain masih auto-kirim setting -> restart tiba-tiba di semua device. Panel
+    // baru kirim header X-Panel-Versi. Lama (gak ada header / < MIN) -> ditolak.
+    const PANEL_VERSI_MIN = 16126;   // v16-115
+    const panelVersiRaw = req.headers.get("X-Panel-Versi") || "0";
+    // v8.76-backend: WORKER dikecualiin dari guard versi (X-Panel-Versi: worker).
+    // Guard cuma buat panel LAMA yg ngaco, BUKAN worker. Bug: worker kirim v0 ->
+    // ke-tolak -> gak bisa netralin perintah/kirim STANDBY awal (log user: "Perintah
+    // awal gak kekirim: panel terlalu lama").
+    const dariWorker = (panelVersiRaw === "worker");
+    const panelVersi = dariWorker ? PANEL_VERSI_MIN : (parseInt(panelVersiRaw, 10) || 0);
+    const jalurNgatur = (
+      (jalur === "/perintah" && req.method === "PUT") ||
+      (jalur === "/setting-tim" && req.method === "PUT") ||
+      (jalur === "/start-pilih" && req.method === "PUT")
+    );
+    if (jalurNgatur && !dariWorker && panelVersi < PANEL_VERSI_MIN) {
+      return new Response(
+        JSON.stringify({ error: "panel terlalu lama (v" + panelVersi + " < v" + PANEL_VERSI_MIN + "). Refresh panel ke versi terbaru." }),
+        { status: 426, headers: { "Content-Type": "application/json", ...CORS } }
+      );
+    }
+    // v8.73: /versi BISA diakses TANPA kunci (buat cek deploy dari browser).
+    // Cuma balikin versi backend, gak ada data sensitif.
+    if (jalur === "/versi" && req.method === "GET") {
+      return new Response(
+        JSON.stringify({ versi: "v8.88-backend-2026-08-21", endpoint_baru: ["gift-reset", "panel-ui", "leader", "cookie-massal", "panel-utama", "panel-presence"] }),
+        { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+      );
+    }
+    if (!kunciCocok(kunciDipakai, env.KUNCI)) {
+      return salah("kunci salah", 401);
+    }
+    const db = env.DB;
+    const skrg = Math.floor(Date.now() / 1000);
+
+    // ============================================================
+    // /cek-user -- verifikasi username Roblox EXACT + ambil avatar (headshot).
+    // Panel gak bisa call API Roblox langsung (CORS + file://), backend proxy.
+    //   GET /cek-user?nama=akunA,akunB  ->  { users:[{nama,ok,id,name,avatar}] }
+    //
+    // Pakai POST usernames/users (exact, JARANG rate-limit -- beda dari search)
+    // + batch thumbnail. Banyak akun sekaligus = tetep 2 call total. Hemat.
+    // ============================================================
+    if (jalur === "/cek-user" && req.method === "GET") {
+      const raw = (url.searchParams.get("nama") || "").trim();
+      if (!raw) return json({ users: [] });
+      const namas = raw.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 12);
+      if (!namas.length) return json({ users: [] });
+      try {
+        // 1. verifikasi username -> id (satu call, banyak nama)
+        const r = await fetch("https://users.roblox.com/v1/usernames/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify({ usernames: namas, excludeBannedUsers: false }),
+        });
+        const found = {}; // lower(nama) -> {id, name}
+        if (r.ok) {
+          const d = await r.json();
+          if (d && Array.isArray(d.data)) {
+            for (const u of d.data) {
+              if (!u) continue;
+              const rec = { id: u.id, name: u.name };
+              if (u.name) found[String(u.name).toLowerCase()] = rec;
+              if (u.requestedUsername) found[String(u.requestedUsername).toLowerCase()] = rec;
+            }
+          }
+        }
+        // 2. avatar headshot batch (satu call, banyak id)
+        const ids = [...new Set(Object.values(found).map((u) => u.id).filter(Boolean))];
+        const avaMap = {};
+        if (ids.length) {
+          try {
+            const tr = await fetch(
+              "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=" +
+                ids.join(",") + "&size=48x48&format=Png&isCircular=true",
+              { headers: { "Accept": "application/json" } }
+            );
+            if (tr.ok) {
+              const td = await tr.json();
+              if (td && Array.isArray(td.data)) {
+                for (const t of td.data) {
+                  if (t && t.targetId) avaMap[t.targetId] = t.imageUrl || "";
+                }
+              }
+            }
+          } catch (e) { /* avatar gagal, tetep balikin user tanpa foto */ }
+        }
+        // 3. susun hasil urut input
+        const users = namas.map((nm) => {
+          const f = found[nm.toLowerCase()];
+          if (f) return { nama: nm, ok: true, id: f.id, name: f.name, avatar: avaMap[f.id] || "" };
+          return { nama: nm, ok: false };
+        });
+        return json({ users });
+      } catch (e) {
+        return json({ users: [], error: "gagal call Roblox: " + (e && e.message || "?") });
+      }
+    }
+
+    try {
+      // ---------- panel baca semuanya ----------
+      if (jalur === "/stat" && req.method === "GET") {
+        const [a, t, lg, dv] = await Promise.all([
+          db.prepare("SELECT * FROM akun ORDER BY nama").all(),
+          db.prepare("SELECT * FROM tim ORDER BY nama").all(),
+          db.prepare("SELECT scope, ts, data FROM cfg WHERE scope LIKE 'log:%'").all(),
+          db.prepare("SELECT scope, data FROM cfg WHERE scope LIKE 'devnama:%'").all(),
+        ]);
+        // v6.00: peta nama device per tim (scope 'devnama:<tim>')
+        const petaDev = {};
+        for (const r of (dv.results || [])) {
+          try { petaDev[r.scope.slice(8)] = JSON.parse(r.data); } catch {}
+        }
+        // v15-18: peta log worker per tim (scope 'log:<tim>')
+        const petaLog = {};
+        for (const r of (lg.results || [])) {
+          try { petaLog[r.scope.slice(4)] = { ...JSON.parse(r.data), logTs: r.ts }; } catch {}
+        }
+        // v8.76: sertakan giftdone (detail gift per target) buat panel tab "Udah diproses"
+        let giftdone = {};
+        {
+          const cgd = await db.prepare("SELECT data FROM cfg WHERE scope='giftdone'").first();
+          if (cgd) { try { giftdone = JSON.parse(cgd.data) || {}; } catch {} }
+        }
+        return json({
+          skrg,
+          giftdone,
+          akun: a.results || [],
+          tim: (t.results || []).map((r) => ({
+            ...r,
+            clients: r.clients ? JSON.parse(r.clients) : [],
+            aksi:  petaLog[r.nama]?.aksi || "",
+            wlog:  petaLog[r.nama]?.log  || [],
+            wver:  petaLog[r.nama]?.ver  || "",
+            logTs: petaLog[r.nama]?.logTs || 0,
+            wplace: petaLog[r.nama]?.place || "",
+            wgrid:  petaLog[r.nama]?.grid || 0,
+            wnaik:  petaLog[r.nama]?.wnaik || null,
+            wboot:  petaLog[r.nama]?.wboot || 0,
+            wnaktif: petaLog[r.nama]?.wnaktif || 0,
+            devnama: petaDev[r.nama]?.devnama || "",
+            dev:     petaDev[r.nama]?.dev || "",
+          })),
+        });
+      }
+
+      // ---------- bridge lapor 1 akun ----------
+      // v-sc: panel ASSIGN script per akun. POST /sc-set {akun, sc}  (sc="" / null = HAPUS assignment)
+      if (jalur === "/sc-set" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        if (!b || !b.akun) return json({ ok: false, error: "akun kosong" });
+        await db.prepare("ALTER TABLE akun ADD COLUMN scAssign TEXT").run().catch(() => {});
+        const sc = (b.sc && String(b.sc).trim() !== "") ? String(b.sc).trim() : null;
+        await db.prepare("UPDATE akun SET scAssign=?2 WHERE nama=?1").bind(String(b.akun), sc).run().catch(() => {});
+        return json({ ok: true, akun: b.akun, sc });
+      }
+      // v-sc: loader AMBIL script yg di-assign. GET /sc-get?akun=X -> {sc: "hact"|null}
+      if (jalur === "/sc-get" && req.method === "GET") {
+        const akun = url.searchParams.get("akun") || "";
+        if (!akun) return json({ sc: null });
+        const row = await db.prepare("SELECT scAssign FROM akun WHERE nama=?1").bind(String(akun)).first().catch(() => null);
+        return json({ sc: row && row.scAssign ? String(row.scAssign) : null });
+      }
+
+      // v-kick: panel SET kick per akun. POST /kick-set {akun, menit}
+      if (jalur === "/kick-set" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        if (!b || !b.akun) return json({ ok: false, error: "akun kosong" });
+        await db.prepare("ALTER TABLE akun ADD COLUMN kickreq INTEGER").run().catch(() => {});
+        const menit = angka(b.menit);
+        await db.prepare("UPDATE akun SET kickreq=?2 WHERE nama=?1").bind(String(b.akun), menit).run().catch(() => {});
+        return json({ ok: true, akun: b.akun, menit });
+      }
+      // v-kick: script POLL kick. GET /kick-cek?akun=X -> {kick: menit|null} lalu CLEAR (sekali pakai)
+      if (jalur === "/kick-cek" && req.method === "GET") {
+        const akun = url.searchParams.get("akun") || "";
+        if (!akun) return json({ kick: null });
+        const row = await db.prepare("SELECT kickreq FROM akun WHERE nama=?1").bind(String(akun)).first().catch(() => null);
+        const menit = row && row.kickreq != null ? Number(row.kickreq) : null;
+        if (menit != null) await db.prepare("UPDATE akun SET kickreq=NULL WHERE nama=?1").bind(String(akun)).run().catch(() => {});
+        return json({ kick: menit });
+      }
+
+      // v8.85: STAT BATCH -- worker kirim sheckles SEMUA akun sekaligus (nebeng denyut).
+      // 1 request buat banyak akun. Update sheck aja (BUKAN ts -> jangan bikin akun mati
+      // keliatan idup). Gak ilang walau akun mati (worker baca dari file lokal).
+      if (jalur === "/stat-batch" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const list = Array.isArray(b.akun) ? b.akun : [];
+        try {
+          // v9.30x: kolom chr (christmas egg) — idempotent, aman dijalanin tiap request
+          await db.prepare("ALTER TABLE akun ADD COLUMN chr INTEGER").run().catch(() => {});
+          const stmts = [];
+          for (const it of list) {
+            if (!it || !it.akun) continue;
+            const sk = angka(it.sheck);
+            const chr = angka(it.chr);
+            if (chr != null) {
+              // format egg2: update sheck (gem egg) + chr (christmas egg) sekaligus
+              stmts.push(db.prepare("UPDATE akun SET sheck=?2, chr=?3 WHERE nama=?1").bind(String(it.akun), sk || 0, chr));
+            } else {
+              if (sk == null || sk <= 0) continue;   // skip 0/invalid (format lama)
+              stmts.push(db.prepare("UPDATE akun SET sheck=?2 WHERE nama=?1").bind(String(it.akun), sk));
+            }
+          }
+          if (stmts.length > 0) await db.batch(stmts);
+          return json({ ok: true, n: stmts.length });
+        } catch (e) { return json({ ok: false, error: String(e) }); }
+      }
+
+      if (jalur === "/akun-tim" && req.method === "GET") {
+        // v9.313: daftar akun device (buat 'zenx loginsemua' -> inject cookie per client)
+        const tim = url.searchParams.get("tim") || "";
+        if (!tim) return json({ akun: [] });
+        try {
+          const rows = await db.prepare("SELECT nama, cookie FROM akun WHERE tim=?1 ORDER BY rowid").bind(tim).all();
+          const list = (rows.results || []).map(r => ({ akun: r.nama, cookie: r.cookie || "" }));
+          return json({ akun: list });
+        } catch (e) {
+          const rows = await db.prepare("SELECT nama FROM akun WHERE tim=?1 ORDER BY rowid").bind(tim).all();
+          return json({ akun: (rows.results || []).map(r => ({ akun: r.nama, cookie: "" })) });
+        }
+      }
+
+      if (jalur === "/hactstat-batch" && req.method === "POST") {
+        // v9.306: stat hact (egg + pet keep + kg range) dari worker -> simpen kolom hactstat
+        const b = await req.json().catch(() => ({}));
+        const list = Array.isArray(b.list) ? b.list : [];
+        try {
+          await db.prepare("ALTER TABLE akun ADD COLUMN hactstat TEXT").run().catch(() => {});
+          const stmts = [];
+          for (const it of list) {
+            if (!it || !it.akun || it.stat == null) continue;
+            const js = typeof it.stat === "string" ? it.stat : JSON.stringify(it.stat);
+            stmts.push(db.prepare("UPDATE akun SET hactstat=?2 WHERE nama=?1").bind(String(it.akun), js));
+          }
+          if (stmts.length > 0) await db.batch(stmts);
+          return json({ ok: true, n: stmts.length });
+        } catch (e) { return json({ ok: false, error: String(e) }); }
+      }
+
+      if (jalur === "/upkgstat-batch" && req.method === "POST") {
+        // v9.324: stat up kg (bahan pet + per-jenis 3.8kg udah/belum) dari worker -> kolom upkgstat
+        const b = await req.json().catch(() => ({}));
+        const list = Array.isArray(b.list) ? b.list : [];
+        try {
+          await db.prepare("ALTER TABLE akun ADD COLUMN upkgstat TEXT").run().catch(() => {});
+          const stmts = [];
+          for (const it of list) {
+            if (!it || !it.akun || it.stat == null) continue;
+            const js = typeof it.stat === "string" ? it.stat : JSON.stringify(it.stat);
+            stmts.push(db.prepare("UPDATE akun SET upkgstat=?2 WHERE nama=?1").bind(String(it.akun), js));
+          }
+          if (stmts.length > 0) await db.batch(stmts);
+          return json({ ok: true, n: stmts.length });
+        } catch (e) { return json({ ok: false, error: String(e) }); }
+      }
+
+      if (jalur === "/stat" && req.method === "POST") {
+        const b = await req.json();
+        const nama = teks(b.akun);
+        if (!nama) return salah("akun kosong");
+
+        // tim & game SENGAJA gak diisi dari sini. Script gak tau dia di RedFinger
+        // mana -- itu urusan panel. Baris baru masuk dengan tim=NULL (= belum
+        // ditugasin), dan laporan berikutnya GAK BOLEH nimpa penugasan panel.
+        // v-gift: kolom rerollon + gifton (FARM = reroll ON). ALTER idempotent
+        // (kalau udah ada, error ditelen .catch -> aman dijalanin tiap request).
+        await db.prepare("ALTER TABLE akun ADD COLUMN rerollon INTEGER").run().catch(() => {});
+        await db.prepare("ALTER TABLE akun ADD COLUMN gifton INTEGER").run().catch(() => {});
+        await db
+          .prepare(
+            // v15-68: kolom `sc` = penanda script yang jalanin akun ini
+            // ("seed" dari star_seed; star_farm gak ngirim -> tetep NULL).
+            // COALESCE dipakai biar nilai lama gak kehapus kalau suatu laporan
+            // kebetulan gak nyertain penandanya.
+            `INSERT INTO akun (nama,tim,game,ts,farm2on,kg,glow,gate,kecil,besar,
+                               matang,tot,nilai,sheck,wctrig,beratmax,prio,job,place,sc,
+                               tunda,buah,mail,kick,kick_sebab,kick_ts,rerollon,gifton)
+             VALUES (?1,NULL,NULL,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,
+                     ?21,?22,?23,?24,?25,?26,?27,?28)
+             ON CONFLICT(nama) DO UPDATE SET
+               ts=?4, farm2on=?5, kg=?6, glow=?7, gate=?8,
+               kecil=?9, besar=?10, matang=?11, tot=?12, nilai=?13, sheck=?14,
+               wctrig=?15, beratmax=?16, prio=?17, job=?18, place=?19,
+               sc=COALESCE(?20, akun.sc),
+               tunda=?21, buah=?22, mail=?23,
+               -- v15-87: laporan kick. COALESCE biar laporan biasa (yang gak
+               -- nyertain kick) gak NGAPUS laporan kick yang baru masuk --
+               -- kalau kehapus, worker kehilangan sebabnya dan balik nebak.
+               kick=COALESCE(?24, akun.kick),
+               kick_sebab=COALESCE(?25, akun.kick_sebab),
+               kick_ts=COALESCE(?26, akun.kick_ts),
+               rerollon=?27, gifton=?28`
+          )
+          .bind(
+            nama,
+            null,
+            null,
+            skrg,
+            b.farm2On ? 1 : 0,
+            angka(b.kg, -50),
+            angka(b.glow),
+            angka(b.gate, 20),
+            angka(b.kecil),
+            angka(b.besar),
+            angka(b.matang),
+            angka(b.tot),
+            angka(b.nilai),
+            angka(b.sheck),
+            angka(b.wcTrig, 30),
+            angka(b.beratMax, 100),
+            b.prio ? 1 : 0,
+            teks(b.job, 12),
+            teks(b.place, 24),
+            teks(b.sc, 12),         // v15-68: penanda script ("seed" / null)
+            // v15-76: nilai buah yang nunggu jual + jumlahnya + isi mailbox.
+            // Dipakai buat "sheckles tertunda" & biar auto-suplai gak ngirim
+            // berulang ke akun yang barangnya udah dateng.
+            angka(b.tunda),
+            angka(b.buah),
+            angka(b.mail),
+            // v15-87: kick cuma ditulis kalau ADA di laporan ini. null = jangan
+            // sentuh (lihat COALESCE di atas).
+            b.kick ? angka(b.kick) : null,
+            b.kickSebab ? teks(b.kickSebab, 24) : null,
+            b.kick ? skrg : null,
+            b.rerollOn ? 1 : 0,   // ?27 v-gift: FARM = reroll ON
+            b.giftOn ? 1 : 0      // ?28
+          )
+          .run();
+
+        // v8.75: SIMPEN target yg udah di-gift (laporan farm). Dipakai buat
+        // exclude dari giftPkList (lihat susunCfgSeed). Format b.giftDone =
+        // "target1,target2". Auto-bersih entry > 15 menit.
+        if (Array.isArray(b.giftDone) && b.giftDone.length) {
+          try {
+            const cg = await db.prepare("SELECT data FROM cfg WHERE scope='giftdone'").first();
+            let done = {};
+            if (cg) { try { done = JSON.parse(cg.data) || {}; } catch {} }
+            for (const x of b.giftDone) {
+              const nm = (x && x.n ? String(x.n) : "").trim().toLowerCase();
+              if (nm) done[nm] = { ts: skrg, nama: String(x.n), buah: Number(x.b) || 0, nilai: Number(x.v) || 0 };
+            }
+            // v8.77: TANPA expiry -- giftdone persist sampe di-RESET manual dari
+            // panel (tombol restart). Biar akun gak di-gift dobel walau lama.
+            await db.prepare(
+              `INSERT INTO cfg (scope, ts, data) VALUES ('giftdone', ?1, ?2)
+               ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+            ).bind(skrg, JSON.stringify(done)).run();
+          } catch (e) {}
+        }
+
+        // ============================================================
+        // v15-82: SETELAN SEED NEBENG DI JAWABAN INI.
+        //
+        // Dulu star_seed narik /seed-cfg sendiri tiap 30 detik -- 2.880
+        // permintaan/hari per akun, dan 99% jawabannya sama persis. Itu 65%
+        // dari seluruh beban akun, cuma buat nanya "ada yang berubah?".
+        //
+        // Sekarang dibonceng di jawaban /stat yang MEMANG SUDAH dikirim.
+        // Nol permintaan tambahan. Jedanya jadi seinterval /stat (120 detik)
+        // -- lebih lambat dari 30 detik, tapi setelan seed jarang diubah.
+        //
+        // Cuma dikirim ke akun SEED: akun farm gak pernah baca ini, jadi
+        // ngirimin ke mereka cuma gedein jawaban tanpa guna.
+        // ============================================================
+        let cfgSeed = null;
+        {
+          const jenis = await db.prepare(
+            `SELECT (UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                     OR UPPER(COALESCE(tim.sc,'')) LIKE '%FARM%'
+                     OR (COALESCE(tim.sc,'') = ''
+                         AND COALESCE(akun.sc,'') IN ('seed','farm'))) AS seed
+               FROM akun LEFT JOIN tim ON tim.nama = akun.tim
+              WHERE akun.nama = ?1`
+          ).bind(nama).first();
+          if (jenis && jenis.seed) {
+            const { cfg, ts, tim } = await susunCfgSeed(db, nama);
+            cfgSeed = { cfg, cfgTs: ts, tim };   // v8.84: sertakan tim -> star_seed bisa kirim ROTASI-GO ke /perintah?tim=X
+          }
+        }
+
+        // v-inv-minta: cek flag "minta inventory fresh" buat akun ini. Panel set
+        // via /inv-minta?akun=X. Kalau ada, selip mintaInv=true di response +
+        // CLEAR flag (biar cuma sekali). star_seed nangkep -> kirim inv fresh.
+        let mintaInv = false;
+        try {
+          const fm = await db.prepare("SELECT data FROM cfg WHERE scope='inv-minta'").first();
+          if (fm) {
+            let set = {};
+            try { set = JSON.parse(fm.data) || {}; } catch {}
+            if (set[nama]) {
+              mintaInv = true;
+              delete set[nama];   // clear (sekali pakai)
+              await db.prepare("UPDATE cfg SET data=?1 WHERE scope='inv-minta'").bind(JSON.stringify(set)).run();
+            }
+          }
+        } catch (e) { /* diem, flag opsional */ }
+
+        const resp = cfgSeed
+          ? { ok: true, ts: skrg, cfg: cfgSeed.cfg, cfgTs: cfgSeed.cfgTs, tim: cfgSeed.tim }
+          : { ok: true, ts: skrg };
+        if (mintaInv) resp.mintaInv = true;
+        return json(resp);
+      }
+
+      // v-inv-minta: PANEL minta akun kirim inventory FRESH. Set flag -> star_seed
+      // nangkep di response /stat berikutnya -> kirim inv. Panel terus baca /inv?akun.
+      if (jalur === "/inv-minta" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const nama = teks(b.akun) || teks(url.searchParams.get("akun"));
+        if (!nama) return salah("akun kosong");
+        let set = {};
+        try {
+          const fm = await db.prepare("SELECT data FROM cfg WHERE scope='inv-minta'").first();
+          if (fm) { try { set = JSON.parse(fm.data) || {}; } catch {} }
+        } catch (e) {}
+        set[nama] = skrg;
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('inv-minta', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(set)).run();
+        return json({ ok: true, akun: nama });
+      }
+
+      // v-inv-minta: star_seed CEK sinyal (loop 5s). Return minta:true kalau ada
+      // flag buat akun ini. GAK clear di sini -- clear pas /inv POST masuk (biar
+      // gak ilang sebelum akun sempet kirim).
+      // v-start-pilih: pilihan client Start per tim, SIMPAN DI BACKEND (bukan
+      // localStorage per-browser). Biar 1 ARAH -- semua device baca setelan sama.
+      // GET ?tim=X -> {pilih:[...]}. PUT {tim,pilih:[...]} -> simpen.
+      if (jalur === "/start-pilih" && req.method === "GET") {
+        const tim = teks(url.searchParams.get("tim"));
+        if (!tim) return json({ pilih: null });
+        try {
+          const r = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind("start:" + tim).first();
+          if (r) { try { return json({ pilih: JSON.parse(r.data) }); } catch {} }
+        } catch (e) {}
+        return json({ pilih: null });
+      }
+      if (jalur === "/start-pilih" && req.method === "PUT") {
+        const b = await req.json();
+        const tim = teks(b.tim);
+        if (!tim) return salah("tim kosong");
+        const pilih = Array.isArray(b.pilih) ? b.pilih.slice(0, 50).map(x => teks(x, 40)) : [];
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
+           ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+        ).bind("start:" + tim, skrg, JSON.stringify(pilih)).run();
+        return json({ ok: true, tim, pilih });
+      }
+
+      if (jalur === "/inv-minta-cek" && req.method === "GET") {
+        const nama = teks(url.searchParams.get("akun"));
+        if (!nama) return json({ minta: false });
+        let minta = false;
+        try {
+          const fm = await db.prepare("SELECT data FROM cfg WHERE scope='inv-minta'").first();
+          if (fm) {
+            let set = {};
+            try { set = JSON.parse(fm.data) || {}; } catch {}
+            minta = !!set[nama];
+          }
+        } catch (e) {}
+        return json({ minta });
+      }
+
+      // ---------- worker Termux lapor 1 tim ----------
+      if (jalur === "/tim" && req.method === "POST") {
+        const b = await req.json();
+        const nama = teks(b.tim);
+        if (!nama) return salah("tim kosong");
+
+        await db
+          .prepare(
+            // v15-70: kolom `sc` = script yang dijalanin RF ini ("STAR FARM" /
+            // "STAR SEED" / "MARKET"), dilapor worker dari config-nya.
+            // Ini lebih andal daripada penanda per-akun: satu sumber (config RF),
+            // langsung kepakai buat SEMUA akun tim itu, dan akun yang belum
+            // pernah lapor pun ikut keklasifikasi.
+            // COALESCE biar nilai lama gak kehapus kalau suatu laporan gak
+            // nyertain (mis. worker versi lama).
+            `INSERT INTO tim (nama,ts,cpu,ram_used,ram_free,ram_total,jalan,total,sticky,sig,clients,sc)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
+             ON CONFLICT(nama) DO UPDATE SET
+               ts=?2, cpu=?3, ram_used=?4, ram_free=?5, ram_total=?6,
+               jalan=?7, total=?8, sticky=?9, sig=?10, clients=?11,
+               sc=COALESCE(?12, tim.sc)`
+          )
+          .bind(
+            nama,
+            skrg,
+            angka(b.cpu),
+            Number(b.ram_used) || 0,
+            Number(b.ram_free) || 0,
+            Number(b.ram_total) || 0,
+            angka(b.jalan),
+            angka(b.total),
+            b.sticky ? 1 : 0,
+            teks(b.sig, 48),
+            JSON.stringify(Array.isArray(b.clients) ? b.clients.slice(0, 20) : []),
+            teks(b.sc, 20)          // v15-70: script yang dijalanin RF ini
+          )
+          .run();
+
+        // v15-18: simpen "lagi ngapain" + log worker biar keliatan di panel.
+        // Ditaruh di cfg (scope log:<tim>) supaya gak perlu ubah skema tabel tim.
+        if (b.aksi !== undefined || b.log !== undefined) {
+          const isiLog = {
+            aksi: teks(b.aksi, 120) || "",
+            ver:  teks(b.ver, 24) || "",
+            log:  Array.isArray(b.log)
+                    ? b.log.slice(-25).map((x) => teks(x, 200)).filter(Boolean)
+                    : [],
+            // v8.62: place + grid yg lagi keset di worker (buat cek sebelum Start)
+            place: teks(b.place, 24) || "",
+            grid: Number(b.grid) || 0,
+            // v9.85: wnaik = versi lama kalau worker baru naik (abis update)
+            wnaik: (b.wnaik !== undefined && b.wnaik !== null) ? teks(b.wnaik, 24) : null,
+            wboot: Number(b.wboot) || 0,
+            wnaktif: Number(b.wnaktif) || 0,
+          };
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
+             ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+          ).bind("log:" + nama, skrg, JSON.stringify(isiLog)).run();
+        }
+
+        // v6.00: nama device (Samsung dll) + device ID, buat panel gantiin "tim".
+        // Disimpen di cfg scope "dev:<tim>" bareng klaim device (udah ada di bawah).
+        // devnama disimpen terpisah biar gampang dibaca panel.
+        if (b.devnama !== undefined || b.dev !== undefined) {
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
+             ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+          ).bind("devnama:" + nama, skrg, JSON.stringify({
+            devnama: teks(b.devnama, 60) || "",
+            dev: teks(b.dev, 64) || ""
+          })).run();
+        }
+
+        // v4.29: segerin klaim device selama worker jalan. Kalau RF-nya mati,
+        // klaimnya basi sendiri (>15 menit) -> nomor tim boleh dipakai RF lain.
+        if (b.dev) {
+          const dev = teks(b.dev, 64);
+          const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope=?1")
+            .bind("dev:" + nama).first();
+          let pemilik = "", kapan = 0;
+          if (c) { try { const d = JSON.parse(c.data);
+            pemilik = d.dev || ""; kapan = d.ts || c.ts || 0; } catch {} }
+          // jangan biarin device lain nyerobot diam-diam kalau pemiliknya masih idup
+          if (!pemilik || pemilik === dev || (skrg - kapan) >= 900) {
+            await db.prepare(
+              `INSERT INTO cfg (scope, ts, data) VALUES (?1,?2,?3)
+               ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+            ).bind("dev:" + nama, skrg, JSON.stringify({ dev, ts: skrg })).run();
+          }
+        }
+
+        return json({ ok: true, ts: skrg });
+      }
+
+      // ---------- bridge ambil setelan ----------
+      if (jalur === "/cfg" && req.method === "GET") {
+        const akun = teks(url.searchParams.get("akun"));
+        const r = await db
+          .prepare("SELECT scope, ts, data FROM cfg WHERE scope IN ('all', ?1)")
+          .bind(akun || "")
+          .all();
+
+        // 'all' dulu, terus ditimpa blok nama akun
+        let gabung = {};
+        let ts = 0;
+        for (const s of ["all", akun]) {
+          const baris = (r.results || []).find((x) => x.scope === s);
+          if (!baris) continue;
+          try {
+            gabung = { ...gabung, ...JSON.parse(baris.data) };
+            ts = Math.max(ts, baris.ts);
+          } catch {}
+        }
+        return json({ ts, cfg: gabung });
+      }
+
+      // ---------- panel nulis setelan ----------
+      if (jalur === "/cfg" && req.method === "PUT") {
+        const b = await req.json();
+        const scope = teks(b.scope) || "all";
+        if (typeof b.data !== "object" || b.data === null) return salah("data harus objek");
+
+        await db
+          .prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
+             ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+          )
+          .bind(scope, skrg, JSON.stringify(b.data))
+          .run();
+
+        return json({ ok: true, ts: skrg, scope });
+      }
+
+      // ---------- PANEL UI SETTINGS (akun-like, GLOBAL, sync antar HP) ----------
+      // Setelan UI panel (pilihan seed rotasi, wishlist, server/grid per tim, dll)
+      // disimpen di server (scope khusus '__panelui__') -> semua HP narik yg sama.
+      // Beda dari /cfg (yg per-akun/all buat setelan device) -- ini blob global UI.
+      if (jalur === "/panel-ui" && req.method === "GET") {
+        const r = await db
+          .prepare("SELECT data, ts FROM cfg WHERE scope='__panelui__'")
+          .first();
+        if (!r) return json({ ts: 0, data: {} });
+        let data = {};
+        try { data = JSON.parse(r.data); } catch {}
+        return json({ ts: r.ts || 0, data });
+      }
+      if (jalur === "/panel-ui" && req.method === "PUT") {
+        const b = await req.json();
+        if (typeof b.data !== "object" || b.data === null) return salah("data harus objek");
+        await db
+          .prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('__panelui__', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          )
+          .bind(skrg, JSON.stringify(b.data))
+          .run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      // ---------- LEADER LOCK global (lintas device) -- cuma 1 panel yg boleh kirim
+      // ROTASI-GO, walau dari HP/browser beda. Panel POST tiap ~3s. Server tunjuk 1
+      // leader (yg pertama klaim / yg lagi pegang). Leader basi > 8s -> panel lain ambil.
+      // v8.83: PANEL PRESENCE -- tiap panel lapor keberadaan (heartbeat) + info
+      // (versi, browser, os). Buat popup "panel mana aja yg online".
+      if (jalur === "/panel-presence" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const id = b.id ? String(b.id) : null;
+        if (!id) return salah("id kosong");
+        try {
+          const r = await db.prepare("SELECT data FROM cfg WHERE scope='__panel_presence__'").first();
+          let map = {};
+          if (r) { try { map = JSON.parse(r.data) || {}; } catch {} }
+          for (const k in map) { if (skrg - (map[k].ts || 0) > 45) delete map[k]; }  // prune > 45s
+          map[id] = { versi: String(b.versi || "?"), browser: String(b.browser || "?"),
+                      os: String(b.os || "?"), ts: skrg };
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('__panel_presence__', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(map)).run();
+          return json({ ok: true });
+        } catch (e) { return json({ ok: false }); }
+      }
+      if (jalur === "/panel-presence" && req.method === "GET") {
+        try {
+          const r = await db.prepare("SELECT data FROM cfg WHERE scope='__panel_presence__'").first();
+          let map = r ? (JSON.parse(r.data) || {}) : {};
+          const list = Object.entries(map)
+            .filter(([k, v]) => skrg - (v.ts || 0) <= 45)
+            .map(([k, v]) => ({ id: k, versi: v.versi, browser: v.browser, os: v.os, ts: v.ts }));
+          return json({ ok: true, panels: list });
+        } catch (e) { return json({ ok: true, panels: [] }); }
+      }
+
+      // v8.82: PANEL UTAMA -- device yg di-set manual jadi satu-satunya pengirim ROTASI-GO.
+      // GET: baca device id panel utama (null = belum di-set -> auto leader).
+      if (jalur === "/panel-utama" && req.method === "GET") {
+        try {
+          const r = await db.prepare("SELECT data FROM cfg WHERE scope='__panel_utama__'").first();
+          const id = r ? (JSON.parse(r.data).id || null) : null;
+          return json({ ok: true, id });
+        } catch (e) { return json({ ok: true, id: null }); }
+      }
+      // POST: set device panel utama (id kosong/null = clear -> balik auto leader).
+      if (jalur === "/panel-utama" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const id = b.id ? String(b.id) : null;
+        try {
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('__panel_utama__', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify({ id })).run();
+          return json({ ok: true, id });
+        } catch (e) { return json({ ok: false }); }
+      }
+
+      if (jalur === "/leader" && req.method === "POST") {
+        const b = await req.json();
+        const id = String(b.id || "");
+        if (!id) return salah("id kosong");
+        const TTL = 8; // detik
+        const r = await db.prepare("SELECT data FROM cfg WHERE scope='__leader__'").first();
+        let ld = null;
+        if (r) { try { ld = JSON.parse(r.data); } catch {} }
+        const kosong = !ld || (skrg - (ld.ts || 0)) > TTL;
+        let leader = false;
+        if (kosong || ld.id === id) {
+          await db
+            .prepare(
+              `INSERT INTO cfg (scope, ts, data) VALUES ('__leader__', ?1, ?2)
+               ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+            )
+            .bind(skrg, JSON.stringify({ id, ts: skrg }))
+            .run();
+          leader = true;
+        }
+        return json({ leader, id, ts: skrg });
+      }
+      if (jalur === "/petlist" && req.method === "POST") {
+        const b = await req.json();
+        if (!Array.isArray(b.pets)) return salah("pets bukan array");
+        // bersihin + batasi + simpan sebagai 1 baris JSON (scope tetap)
+        const bersih = [...new Set(b.pets
+          .filter(x => typeof x === "string" && x.length > 1 && x.length < 60))]
+          .sort();
+        await db.prepare(
+          `INSERT INTO petlist (id, ts, data) VALUES ('all', ?1, ?2)
+           ON CONFLICT(id) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(bersih)).run();
+        return json({ ok: true, jumlah: bersih.length });
+      }
+      if (jalur === "/petlist" && req.method === "GET") {
+        const r = await db.prepare("SELECT ts, data FROM petlist WHERE id='all'").first();
+        let pets = [];
+        if (r) { try { pets = JSON.parse(r.data); } catch {} }
+        return json({ ts: r ? r.ts : 0, pets });
+      }
+
+      // ---------- bridge MARKET (GAG 1): tokens + total pet cocok rule ----------
+      // ---------- PANTAU PENJUALAN (gabungan semua akun market) ----------
+      // Tiap akun ngirim ringkasannya sendiri (24 jam terakhir, per jenis pet).
+      // Di sini digabung -> keliatan pet apa yang paling laku se-armada.
+      if (jalur === "/jual" && req.method === "GET") {
+        const cJ = await db.prepare("SELECT data FROM cfg WHERE scope='jual'").first();
+        let per = {};
+        if (cJ) { try { const d = JSON.parse(cJ.data); if (d && typeof d === "object") per = d; } catch {} }
+        const SEGAR = skrg - 3600;   // laporan > 1 jam dianggap basi
+        const gabung = {};
+        let nAkun = 0, totJual = 0, totToken = 0;
+        for (const [akun, isi] of Object.entries(per)) {
+          if (!isi || (isi.ts || 0) < SEGAR) continue;
+          nAkun++;
+          totJual  += Number(isi.total || 0);
+          totToken += Number(isi.token || 0);
+          for (const j of (isi.jenis || [])) {
+            const nm = j.n || "?";
+            const g = gabung[nm] || (gabung[nm] = { jual: 0, token: 0 });
+            g.jual  += Number(j.j || 0);
+            g.token += Number(j.t || 0);
+          }
+        }
+        const daftar = Object.entries(gabung)
+          .map(([nama, g]) => ({
+            nama, jual: g.jual, token: g.token,
+            rata: g.jual ? Math.round(g.token / g.jual) : 0,
+          }))
+          .sort((a, b) => b.jual - a.jual);
+        return json({ skrg, nAkun, totJual, totToken, daftar });
+      }
+
+      if (jalur === "/market" && req.method === "POST") {
+        const b = await req.json();
+        const nama = teks(b.akun);
+        if (!nama) return salah("akun kosong");
+        // simpan di tabel akun (upsert), tokens & petRule masuk kolom sendiri.
+        // place tetap dilapor biar panel tau ini GAG 1.
+        await db
+          .prepare(
+            `INSERT INTO akun (nama, ts, place, tokens, petrule, nrule)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(nama) DO UPDATE SET
+               ts=?2, place=?3, tokens=?4, petrule=?5, nrule=?6`
+          )
+          .bind(nama, skrg, teks(b.place, 24), angka(b.tokens), angka(b.petRule), angka(b.nRule))
+          .run();
+        // v4.78: simpen ringkasan penjualan akun ini (kalau dikirim)
+        if (b.jual && typeof b.jual === "object") {
+          const cJ = await db.prepare("SELECT data FROM cfg WHERE scope='jual'").first();
+          let per = {};
+          if (cJ) { try { const d = JSON.parse(cJ.data); if (d && typeof d === "object") per = d; } catch {} }
+          per[nama] = {
+            ts: skrg,
+            total: angka(b.jual.total),
+            token: angka(b.jual.token),
+            jenis: Array.isArray(b.jual.jenis)
+              ? b.jual.jenis.slice(0, 40).map((x) => ({
+                  n: teks(x.n, 40) || "?", j: angka(x.j), t: angka(x.t),
+                }))
+              : [],
+          };
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('jual', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(per)).run();
+        }
+        // v8.87: simpen rincian pet per jenis (kalau dikirim). {akun: {ts, list}}
+        if (Array.isArray(b.rincianPet)) {
+          const cR = await db.prepare("SELECT data FROM cfg WHERE scope='rincianpet'").first();
+          let perR = {};
+          if (cR) { try { const d = JSON.parse(cR.data); if (d && typeof d === "object") perR = d; } catch {} }
+          perR[nama] = {
+            ts: skrg,
+            list: b.rincianPet.slice(0, 60).map((x) => ({
+              t: teks(x.tipe, 40) || "?",
+              min: angka(x.min), max: angka(x.max), j: angka(x.jml),
+            })),
+          };
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('rincianpet', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(perR)).run();
+        }
+        return json({ ok: true, ts: skrg });
+      }
+
+      // v8.87: rincian pet per jenis (buat panel market) -> {akun: {ts, list}}
+      if (jalur === "/rincian-pet" && req.method === "GET") {
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='rincianpet'").first();
+        let per = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") per = d; } catch {} }
+        return json({ skrg, rincian: per });
+      }
+
+      // ---------- bridge lapor inventory (seed+pet rinci) ----------
+      if (jalur === "/inv" && req.method === "POST") {
+        const b = await req.json();
+        const nama = teks(b.akun);
+        if (!nama) return salah("akun kosong");
+        const bersih = (arr) => (Array.isArray(arr) ? arr.slice(0, 200).map(e => ({
+          n: teks(e.n, 40) || "?", j: angka(e.j), r: teks(e.r, 16) || "?",
+        })) : []);
+        const data = JSON.stringify({
+          seeds: bersih(b.seeds), pets: bersih(b.pets), gears: bersih(b.gears),
+          totSeed: angka(b.totSeed), superSpr: angka(b.superSpr), superWC: angka(b.superWC),
+          superSyrupWC: angka(b.superSyrupWC), superSyrupSpr: angka(b.superSyrupSpr),
+        });
+        await db
+          .prepare(
+            `INSERT INTO inv (akun, ts, data) VALUES (?1, ?2, ?3)
+             ON CONFLICT(akun) DO UPDATE SET ts=?2, data=?3`
+          )
+          .bind(nama, skrg, data)
+          .run();
+        // v-inv-minta: kalau ini hasil MINTA FRESH (invFresh), clear flag akun ini
+        // -> panel tau "done" (poll liat ts baru + flag clear).
+        if (b.invFresh) {
+          try {
+            const fm = await db.prepare("SELECT data FROM cfg WHERE scope='inv-minta'").first();
+            if (fm) {
+              let set = {};
+              try { set = JSON.parse(fm.data) || {}; } catch {}
+              if (set[nama]) {
+                delete set[nama];
+                await db.prepare("UPDATE cfg SET data=?1 WHERE scope='inv-minta'").bind(JSON.stringify(set)).run();
+              }
+            }
+          } catch (e) {}
+        }
+        return json({ ok: true, ts: skrg });
+      }
+
+      // ---------- TOTAL fleet: jumlah seed + super WC/spr semua akun ----------
+      // Buat ringkasan "No Tim" -- ngitung seluruh akun, bukan per tim.
+      if (jalur === "/total" && req.method === "GET") {
+        // ?place=<PlaceId> -> saring cuma akun di game itu. tanpa param = semua.
+        // inventory ada di tabel inv; game/place ada di tabel akun -> JOIN by nama.
+        const place = teks(url.searchParams.get("place"));
+        // v15-72: bisa disaring per SCRIPT juga (?sc=seed / ?sc=farm).
+        // Perlu karena GAG 2 farm & GAG 2 seed placeId-nya SAMA -- tanpa ini,
+        // tab "GAG 2 seed" nampilin total yang kecampur akun farm.
+        // Penentu jenis: kolom sc di tabel tim (dilapor worker) DULU, baru
+        // kolom sc di tabel akun (dilapor star_seed). Yang gak ketauan
+        // dianggap farm -- sama kayak aturan di panel.
+        const sc = teks(url.searchParams.get("sc"));
+        const syarat = [], ikat = [];
+        if (place) { syarat.push("akun.place = ?" + (ikat.length + 1)); ikat.push(place); }
+        // COALESCE di akun.sc itu WAJIB, bukan gaya-gayaan: kalau kolomnya NULL,
+        // `akun.sc = 'seed'` hasilnya NULL (bukan false) -- dan `NOT NULL` juga
+        // NULL, jadi barisnya kebuang dari hasil `sc=farm`. Ketangkep pas uji:
+        // akun farm yang timnya belum lapor script jadi ilang dari totalnya.
+        const ADALAH_SEED = `(UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                              OR (COALESCE(tim.sc,'') = ''
+                                  AND COALESCE(akun.sc,'') = 'seed'))`;
+        if (sc === "seed") {
+          syarat.push(ADALAH_SEED);
+        } else if (sc === "farm") {
+          syarat.push("NOT " + ADALAH_SEED);
+        }
+        let rows;
+        if (syarat.length > 0) {
+          rows = await db
+            .prepare(
+              `SELECT inv.data FROM inv
+                 JOIN akun ON akun.nama = inv.akun
+                 LEFT JOIN tim ON tim.nama = akun.tim
+               WHERE ` + syarat.join(" AND ")
+            )
+            .bind(...ikat)
+            .all();
+        } else {
+          rows = await db.prepare("SELECT data FROM inv").all();
+        }
+        let seed = 0, spr = 0, wc = 0, sswc = 0, ssspr = 0, n = 0;
+        const perSeed = {};   // nama -> { jml, rar }
+        for (const row of rows.results || []) {
+          let d; try { d = JSON.parse(row.data); } catch { continue; }
+          seed += d.totSeed || 0;
+          spr += d.superSpr || 0;
+          wc += d.superWC || 0;
+          sswc += d.superSyrupWC || 0;
+          ssspr += d.superSyrupSpr || 0;
+          n++;
+          for (const sd of d.seeds || []) {
+            const nm = sd.n || "?";
+            if (!perSeed[nm]) perSeed[nm] = { n: nm, jml: 0, r: sd.r || "?" };
+            perSeed[nm].jml += sd.j || 0;
+          }
+        }
+        return json({
+          akun: n, totSeed: seed, superSpr: spr, superWC: wc, superSyrupWC: sswc, superSyrupSpr: ssspr, place: place || null,
+          seeds: Object.values(perSeed),   // rincian per-jenis, panel yang urut+bagi halaman
+        });
+      }
+
+      // ---------- panel baca inventory 1 akun ----------
+      // ---------- v15-71: inventory SEMUA akun sekaligus ----------
+      // Dulu cuma ada GET /inv?akun=X -- satu akun per permintaan. Buat
+      // tampilan "Inventory" di panel (belasan akun seed) itu berarti belasan
+      // permintaan; lambat dan gampang kena rate limit.
+      //   GET /inv-semua        -> semua
+      //   GET /inv-semua?tim=X  -> cuma akun tim itu
+      if (jalur === "/inv-semua" && req.method === "GET") {
+        const tim = teks(url.searchParams.get("tim"));
+        let r;
+        if (tim) {
+          r = await db.prepare(
+            `SELECT i.akun, i.ts, i.data FROM inv i
+             JOIN akun a ON a.nama = i.akun
+             WHERE a.tim = ?1 ORDER BY i.akun`
+          ).bind(tim).all();
+        } else {
+          r = await db.prepare("SELECT akun, ts, data FROM inv ORDER BY akun").all();
+        }
+        const out = [];
+        for (const x of (r.results || [])) {
+          let d = {};
+          try { d = JSON.parse(x.data) || {}; } catch {}
+          out.push({
+            akun: x.akun, ts: x.ts,
+            totSeed: d.totSeed || 0,
+            superWC: d.superWC || 0,
+            superSpr: d.superSpr || 0,
+            // daftar dipotong -- panel cuma butuh ringkasan, bukan semua baris
+            seeds: Array.isArray(d.seeds) ? d.seeds.slice(0, 40) : [],
+            pets: Array.isArray(d.pets) ? d.pets.slice(0, 40) : [],
+            gears: Array.isArray(d.gears) ? d.gears.slice(0, 40) : [],
+          });
+        }
+        return json({ skrg, inv: out });
+      }
+
+      if (jalur === "/inv" && req.method === "GET") {
+        const nama = teks(url.searchParams.get("akun"));
+        if (!nama) return salah("akun kosong");
+        const r = await db.prepare("SELECT ts, data FROM inv WHERE akun=?1").bind(nama).first();
+        if (!r) return json({ ts: 0, seeds: [], pets: [], gears: [] });
+        let d = { seeds: [], pets: [], gears: [] };
+        try { d = JSON.parse(r.data); } catch {}
+        return json({ ts: r.ts, seeds: d.seeds || [], pets: d.pets || [], gears: d.gears || [],
+          totSeed: d.totSeed || 0, superSpr: d.superSpr || 0, superWC: d.superWC || 0 });
+      }
+
+      // ---------- LEVELING (GAG 1) — bridge ZenxAgeStats ----------
+      // Script age-stats/gift lapor ke sini. Selain nyimpen statistik pet,
+      // POST ini JUGA nyegerin akun.ts -> akun yg cuma jalanin script leveling
+      // (tanpa market.lua) gak lagi dikira "off" sama panel/worker.
+      if (jalur === "/leveling" && req.method === "POST") {
+        const b = await req.json();
+        const nama = teks(b.akun);
+        if (!nama) return salah("akun kosong");
+        // rincian per jenis pet: [{n: nama, a: age penuh, k: kurang}]
+        const jenis = (Array.isArray(b.jenis) ? b.jenis.slice(0, 120).map(e => ({
+          n: teks(e.n, 40) || "?", a: angka(e.a), k: angka(e.k),
+        })) : []);
+        const data = JSON.stringify({
+          total: angka(b.total),
+          age: angka(b.age),          // pet yg udah age >= batas (siap gift)
+          kurang: angka(b.kurang),    // pet yg belum
+          batas: angka(b.batas),      // AGE_MAX yg dipake script
+          giftOn: b.giftOn ? 1 : 0,
+          sent: angka(b.sent),
+          gagal: angka(b.gagal),
+          target: teks(b.target, 120) || "",
+          // v4.47: isi server sebenernya (dihitung dari DALAM game), bukan tebakan
+          // dari daftar penugasan. Dipakai biar narik akun market gak nabrak.
+          pemain: angka(b.pemain),
+          jobId: teks(b.jobId, 64) || "",
+          jenis,
+        });
+        try {
+          await db
+            .prepare(
+              `INSERT INTO leveling (akun, ts, data) VALUES (?1, ?2, ?3)
+               ON CONFLICT(akun) DO UPDATE SET ts=?2, data=?3`
+            )
+            .bind(nama, skrg, data)
+            .run();
+        } catch (e) {
+          return json({ ok: false, belumSiap: true,
+            pesan: "Tabel 'leveling' belum ada di D1 — jalanin CREATE TABLE dulu." }, 200);
+        }
+        // denyut: bikin akun keitung idup (place biar panel tau ini GAG 1)
+        await db
+          .prepare(
+            `INSERT INTO akun (nama, ts, place) VALUES (?1, ?2, ?3)
+             ON CONFLICT(nama) DO UPDATE SET ts=?2, place=?3`
+          )
+          .bind(nama, skrg, teks(b.place, 24))
+          .run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      // panel ambil SEMUA akun leveling sekaligus (buat mode Leveling)
+      if (jalur === "/leveling" && req.method === "GET") {
+        let hasil = [];
+        try {
+          const r = await db.prepare("SELECT akun, ts, data FROM leveling").all();
+          hasil = (r.results || []).map((x) => {
+            let d = {};
+            try { d = JSON.parse(x.data); } catch {}
+            return { akun: x.akun, ts: x.ts, ...d };
+          });
+        } catch (e) {
+          // paling sering: tabel 'leveling' belum dibikin di D1
+          return json({ skrg, leveling: [], belumSiap: true,
+            pesan: "Tabel 'leveling' belum ada di D1. Buka Cloudflare > D1 > star > " +
+                   "Console, jalanin: CREATE TABLE IF NOT EXISTS leveling " +
+                   "(akun TEXT PRIMARY KEY, ts INTEGER, data TEXT);" });
+        }
+        return json({ skrg, leveling: hasil });
+      }
+
+      // ---------- MASA AKTIF REDFINGER ----------
+      // Kapan tiap RF abis. Disimpen di cfg scope 'rf' = { "tim-1": {habis: ts}, ... }
+      // Diisi manual dari panel (nanti bisa disambung ke API RF kalau udah dapet).
+      if (jalur === "/rf" && req.method === "GET") {
+        const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='rf'").first();
+        let rf = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") rf = d; } catch {} }
+        return json({ skrg, rf });
+      }
+      if (jalur === "/rf" && req.method === "PUT") {
+        const b = await req.json();
+        const tim = teks(b.tim);
+        if (!tim) return salah("tim kosong");
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='rf'").first();
+        let rf = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") rf = d; } catch {} }
+        if (b.habis === null || b.habis === 0) {
+          delete rf[tim];                       // hapus catatan
+        } else {
+          const habis = Math.floor(Number(b.habis));
+          if (!(habis > 0)) return salah("habis harus timestamp detik");
+          rf[tim] = { habis, catat: skrg };
+        }
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('rf', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(rf)).run();
+        return json({ ok: true, rf });
+      }
+
+      // v4.53: penanda "assign PS baru aja berubah". Worker baca ini lewat
+      // /perintah -- kalau berubah di tengah dia lagi buka client, dia BERHENTI
+      // dan ngerjain instruksi panel dulu (jangan nerusin sesi lama).
+      const tandaiPsGanti = async () => {
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('psganti', ?1, '{}')
+           ON CONFLICT(scope) DO UPDATE SET ts=?1`
+        ).bind(skrg).run();
+      };
+
+      // ---------- LINK PS PER AKUN (khusus akun leveling) ----------
+      // Tiap akun leveling punya private server SENDIRI, jadi gak cocok pakai
+      // template bersama. Disimpen di cfg scope 'pslink' = { akun: link }.
+      // Penanda tujuannya: ps_nama = "lvl:<namaAkun>" -> link diambil dari sini.
+      if (jalur === "/ps-akun" && req.method === "GET") {
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+        let link = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") link = d; } catch {} }
+        return json({ skrg, link });
+      }
+      if (jalur === "/ps-akun" && req.method === "PUT") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+        let link = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") link = d; } catch {} }
+        const isi = teks(b.link, 300) || "";
+        if (isi) link[akun] = isi; else delete link[akun];
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('pslink', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(link)).run();
+        // akun leveling otomatis diarahkan ke PS-nya sendiri
+        await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2")
+          .bind(isi ? ("lvl:" + akun) : "", akun).run();
+        await tandaiPsGanti();
+        return json({ ok: true, akun, link: isi });
+      }
+
+      // ---------- START MARKET 2-TIM (v8.86) ----------
+      // tim 1 akun -> server 1, tim 2 akun -> server 2. Pakai pslink (PS per-akun)
+      // yg udah ada. server "public" = hapus PS (join public), "custom" = pakai link.
+      // Panel abis ini kirim /perintah RESTART sendiri (reuse mekanisme start biasa).
+      if (jalur === "/start-market" && req.method === "PUT") {
+        const b = await req.json();
+        const tim = teks(b.tim);
+        if (!tim) return salah("tim kosong");
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+        let link = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") link = d; } catch {} }
+        const stmts = [];
+        const proses = (grup) => {
+          if (!grup || !Array.isArray(grup.clients)) return;
+          const pakaiCustom = grup.server === "custom" && grup.custom;
+          const psNm = teks(grup.psNama, 60) || "";   // v: pemilik PS custom (psakun) -> ps_nama bener
+          for (const raw of grup.clients) {
+            const akun = teks(raw);
+            if (!akun) continue;
+            if (pakaiCustom) {
+              link[akun] = teks(grup.custom, 300);
+              // ps_nama = pemilik PS custom (mis "lvl:zenxparadise4"), bukan nama akun sendiri
+              stmts.push(db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2").bind("lvl:" + (psNm || akun), akun));
+            } else {
+              delete link[akun];
+              stmts.push(db.prepare("UPDATE akun SET ps_nama='' WHERE nama=?1").bind(akun));
+            }
+          }
+        };
+        proses(b.tim1);
+        proses(b.tim2);
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('pslink', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(link)).run();
+        if (stmts.length) await db.batch(stmts);
+        await tandaiPsGanti();
+        return json({ ok: true, tim,
+          tim1: (b.tim1 && b.tim1.clients || []).length,
+          tim2: (b.tim2 && b.tim2.clients || []).length });
+      }
+
+      // ---------- CATATAN RF PER AKUN (diisi manual) ----------
+      // Label bebas buat nandain akun ini ada di RedFinger yang mana secara
+      // fisik (mis. "zFARM8"). Nama tim (tim-1) gak selalu ngasih tau itu.
+      if (jalur === "/catatan" && req.method === "GET") {
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='catatan'").first();
+        let catat = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") catat = d; } catch {} }
+        return json({ skrg, catat });
+      }
+      if (jalur === "/catatan" && req.method === "PUT") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='catatan'").first();
+        let catat = {};
+        if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") catat = d; } catch {} }
+        const isi = teks(b.rf, 40) || "";
+        if (isi) catat[akun] = isi; else delete catat[akun];
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('catatan', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(catat)).run();
+        return json({ ok: true, akun, rf: isi });
+      }
+
+      // ---------- KLAIM TIM: 1 tim = 1 device ----------
+      // Pas setup, worker nanya dulu: "tim ini udah dipegang device lain?"
+      // Kalau iya (dan device itu masih idup) -> ditolak, disuruh pilih nomor lain.
+      // Device yang udah lama gak lapor (>15 menit) boleh diambil alih -- biar RF
+      // rusak/diganti gak bikin nomor timnya kekunci selamanya.
+      // ============================================================
+      // v15-84: /tim-kosong -- nomor tim pertama yang BELUM KEPAKAI.
+      //
+      // Dipakai buat setup otomatis: RF baru gak perlu ditanya nomor tim, dan
+      // gak ada risiko dua RF ngambil nomor sama karena salah ingat.
+      //
+      // "Kepakai" itu gabungan tiga hal, dan ketiganya perlu:
+      //   1. ada di tabel tim         -> pernah lapor
+      //   2. ada akun yang ditugasin  -> punya isi
+      //   3. klaim device masih hidup -> ada RF yang megang (<15 menit)
+      // Cuma pakai (1) doang gak cukup: tim yang RF-nya udah dibuang tetep
+      // nyangkut di tabel selamanya, dan nomornya gak pernah bisa dipakai lagi.
+      //
+      // ?dev=<id> -> kalau device ini UDAH megang satu tim, nomor ITU yang
+      // dibalikin. Jadi pasang ulang di RF yang sama gak bikin nomor baru --
+      // itu kesalahan yang gampang kejadian dan bikin tim lama jadi sampah.
+      // ============================================================
+      if (jalur === "/tim-kosong" && req.method === "GET") {
+        const BATAS_MATI = 900;   // 15 menit, sama kayak /tim-klaim
+        const dev = teks(url.searchParams.get("dev"), 64);
+
+        // device ini udah megang tim? -> pakai yang itu
+        if (dev) {
+          const r = await db.prepare(
+            "SELECT scope, ts, data FROM cfg WHERE scope LIKE 'dev:tim-%'").all();
+          for (const x of (r.results || [])) {
+            try {
+              const d = JSON.parse(x.data) || {};
+              const kapan = d.ts || x.ts || 0;
+              if (d.dev === dev && (skrg - kapan) < BATAS_MATI) {
+                const nomor = String(x.scope).replace("dev:tim-", "");
+                return json({ nomor: Number(nomor) || null, tim: "tim-" + nomor,
+                              alasan: "device ini udah megang tim itu" });
+              }
+            } catch {}
+          }
+        }
+
+        const kepakai = new Set();
+        // (1) pernah lapor
+        {
+          const r = await db.prepare("SELECT nama FROM tim").all();
+          for (const x of (r.results || [])) {
+            const n = String(x.nama).match(/^tim-(\d+)$/);
+            if (n) kepakai.add(Number(n[1]));
+          }
+        }
+        // (2) punya akun
+        {
+          const r = await db.prepare(
+            "SELECT DISTINCT tim FROM akun WHERE tim IS NOT NULL AND tim != ''").all();
+          for (const x of (r.results || [])) {
+            const n = String(x.tim).match(/^tim-(\d+)$/);
+            if (n) kepakai.add(Number(n[1]));
+          }
+        }
+        // (3) klaim device masih hidup
+        {
+          const r = await db.prepare(
+            "SELECT scope, ts, data FROM cfg WHERE scope LIKE 'dev:tim-%'").all();
+          for (const x of (r.results || [])) {
+            const n = String(x.scope).match(/^dev:tim-(\d+)$/);
+            if (!n) continue;
+            let kapan = x.ts || 0;
+            try { const d = JSON.parse(x.data) || {}; kapan = d.ts || kapan; } catch {}
+            if ((skrg - kapan) < BATAS_MATI) kepakai.add(Number(n[1]));
+          }
+        }
+
+        // cari lubang paling kecil. Sengaja NGISI LUBANG, bukan nambah di
+        // ujung -- kalau tim-3 udah dibuang, nomornya dipakai lagi daripada
+        // nomornya melompat terus dan bikin daftar panel jadi bolong-bolong.
+        let nomor = 1;
+        while (kepakai.has(nomor) && nomor < 500) nomor++;
+        return json({
+          nomor, tim: "tim-" + nomor,
+          kepakai: [...kepakai].sort((a, b) => a - b),
+          alasan: "lubang pertama yang kosong",
+        });
+      }
+
+      if (jalur === "/tim-klaim" && (req.method === "GET" || req.method === "PUT")) {
+        const BATAS_MATI = 900;   // 15 menit
+        let tim, dev;
+        if (req.method === "GET") {
+          tim = teks(url.searchParams.get("tim"));
+          dev = teks(url.searchParams.get("dev"), 64);
+        } else {
+          const b = await req.json();
+          tim = teks(b.tim); dev = teks(b.dev, 64);
+        }
+        if (!tim || !dev) return salah("tim/dev kosong");
+
+        const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope=?1")
+          .bind("dev:" + tim).first();
+        let pemilik = "", kapan = 0;
+        if (c) { try { const d = JSON.parse(c.data);
+          pemilik = d.dev || ""; kapan = d.ts || c.ts || 0; } catch {} }
+        const umur = skrg - kapan;
+        const dipakaiOrangLain = pemilik && pemilik !== dev && umur < BATAS_MATI;
+
+        if (req.method === "PUT") {
+          if (dipakaiOrangLain) {
+            return json({ ok: false, boleh: "nggak",
+              sebab: tim + " lagi dipegang device lain" });
+          }
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES (?1,?2,?3)
+             ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+          ).bind("dev:" + tim, skrg, JSON.stringify({ dev, ts: skrg })).run();
+          return json({ ok: true, boleh: "ya" });
+        }
+
+        // GET: sekalian kasih daftar tim yang lagi kepake, biar setup bisa nyaranin
+        const semua = await db.prepare(
+          "SELECT scope, ts, data FROM cfg WHERE scope LIKE 'dev:%'").all();
+        const terpakai = [];
+        for (const r of (semua.results || [])) {
+          try {
+            const d = JSON.parse(r.data);
+            const u = skrg - (d.ts || r.ts || 0);
+            if (d.dev && d.dev !== dev && u < BATAS_MATI) terpakai.push(r.scope.slice(4));
+          } catch {}
+        }
+        return json({
+          boleh: dipakaiOrangLain ? "nggak" : "ya",
+          sebab: dipakaiOrangLain
+            ? (tim + " lagi dipegang device lain (lapor " + Math.floor(umur / 60) + " menit lalu)")
+            : "",
+          pemilik, umur, terpakai: terpakai.sort(),
+        });
+      }
+
+      // Panel JANGAN manggil /suplai-cek -- itu MINDAHIN akun beneran & bakal
+      // rebutan sama worker. Yang ini cuma baca / ubah ambangSiap doang.
+      if (jalur === "/suplai" && req.method === "GET") {
+        // v4.69: daftar akun yang lagi dikunci manual (biar panel bisa nandain)
+        let manualList = [];
+        {
+          const cM = await db.prepare("SELECT data FROM cfg WHERE scope='manual'").first();
+          if (cM) { try { const d = JSON.parse(cM.data);
+            if (d && typeof d === "object") manualList = Object.keys(d); } catch {} }
+        }
+        const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='suplai'").first();
+        let p = {};
+        if (c) { try { p = JSON.parse(c.data) || {}; } catch {} }
+        const aktif = (p.aktif && typeof p.aktif === "object") ? p.aktif : {};
+        // v4.49: rute lengkap -- akun ini mau ke server mana, dari mana, sejak kapan.
+        // Panel pakai ini buat papan rute (gak usah nunggu akunnya nyampe).
+        const rute = [];
+        for (const [nama, v] of Object.entries(aktif)) {
+          const objek = (typeof v === "string") ? { asal: v } : (v || {});
+          rute.push({
+            akun: nama,
+            asal: objek.asal || "",
+            tujuan: objek.tujuan || "",
+            lvl: objek.lvl || "",
+            sejak: Number(objek.ts || 0),
+          });
+        }
+        // yang paling lama nunggu di atas
+        rute.sort((a, b) => (a.sejak || 0) - (b.sejak || 0));
+
+        return json({ skrg, ts: c ? c.ts : 0,
+          ambangSiap: Number(p.ambangSiap) >= 1 ? Math.floor(Number(p.ambangSiap)) : 100,
+          aktif, rute, jumlahAktif: Object.keys(aktif).length,
+          psTujuan: p.psTujuan || "", akunLeveling: p.akunLeveling || "",
+          alasan: p.alasan || "",
+          pemainDiPs: Number(p.pemainDiPs || 0), slotPs: Number(p.slotPs || 4),
+          manual: manualList });
+      }
+      if (jalur === "/suplai" && req.method === "PUT") {
+        const b = await req.json();
+        const n = Math.floor(Number(b.ambangSiap));
+        if (!(n >= 1)) return salah("ambangSiap harus >= 1");
+        // BACA dulu biar 'aktif' (catatan PS asal) + status terakhir gak keapus
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='suplai'").first();
+        let p = {};
+        if (c) { try { p = JSON.parse(c.data) || {}; } catch {} }
+        p.ambangSiap = n;
+        if (!p.aktif || typeof p.aktif !== "object") p.aktif = {};
+        if (berangkat.length || pulang.length || pindah.length) await tandaiPsGanti();
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('suplai', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(p)).run();
+        return json({ ok: true, ambangSiap: n });
+      }
+
+      // ---------- SUPLAI OTOMATIS: kumpulin market ke PS leveling ----------
+      // Dipanggil worker (yang suplai_master) tiap ~60 detik. Alur:
+      //   1. PULANG  : akun market yg stoknya udah cukup -> balikin ke PS asalnya
+      //   2. BERANGKAT: akun market yg kurang stok -> pindahin ke PS akun leveling
+      //                 yang pet siap-gift-nya udah >= ambangSiap
+      // PS asal diinget di cfg scope 'suplai'.aktif = { akunMarket: psAsal }.
+      // Worker yang mindahin beneran (dia liat ps_nama berubah -> rejoin client).
+      if (jalur === "/suplai-cek" && req.method === "GET") {
+        const MARKET_PLACE = ["126884695634066", "129954712878723"];
+        const SLOT_PS = 4;              // 1 PS = 4 slot
+        const SEGAR = skrg - 420;       // batas "masih idup"
+
+        // --- config ---
+        let ambangStok = 150, ambangSiap = 100, aktif = {};
+        const cGift = await db.prepare("SELECT data FROM cfg WHERE scope='gift'").first();
+        if (cGift) { try { const d = JSON.parse(cGift.data);
+          if (Number(d.ambang) >= 1) ambangStok = Math.floor(Number(d.ambang)); } catch {} }
+        const cSup = await db.prepare("SELECT data FROM cfg WHERE scope='suplai'").first();
+        if (cSup) { try { const d = JSON.parse(cSup.data);
+          if (Number(d.ambangSiap) >= 1) ambangSiap = Math.floor(Number(d.ambangSiap));
+          if (d.aktif && typeof d.aktif === "object") aktif = d.aktif; } catch {} }
+
+        // v4.69: akun yang diatur MANUAL dari panel -> jangan diutak-atik sistem.
+        let manualSet = new Set();
+        {
+          const cM = await db.prepare("SELECT data FROM cfg WHERE scope='manual'").first();
+          if (cM) { try { const d = JSON.parse(cM.data);
+            if (d && typeof d === "object") manualSet = new Set(Object.keys(d)); } catch {} }
+        }
+
+        // v4.51: peta link PS pribadi akun leveling
+        let pslinkPeta = {};
+        {
+          const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+          if (cl) { try { const d = JSON.parse(cl.data);
+            if (d && typeof d === "object") pslinkPeta = d; } catch {} }
+        }
+
+        // --- akun market yang lagi idup ---
+        const rm = await db
+          .prepare("SELECT nama, petrule, ps_nama, ts FROM akun WHERE place IN (?1, ?2)")
+          .bind(MARKET_PLACE[0], MARKET_PLACE[1]).all();
+        // v4.52: akun LEVELING juga jalan di place GAG 1 dan petrule-nya 0
+        // (mereka gak lapor itu) -> kebaca "stok habis" terus ikut ditarik.
+        // Padahal merekalah gudangnya. Buang dari daftar market.
+        let namaLeveling = new Set();
+        try {
+          const rl0 = await db.prepare("SELECT akun FROM leveling").all();
+          namaLeveling = new Set((rl0.results || []).map((x) => x.akun));
+        } catch (e) {}
+        const market = (rm.results || [])
+          .filter((x) => (x.ts || 0) > SEGAR)
+          .filter((x) => !namaLeveling.has(x.nama))
+          .filter((x) => !manualSet.has(x.nama));   // v4.69: manual = jangan disentuh
+
+        const pulang = [], berangkat = [], pindah = [];
+        const sudahPulang = new Set();   // v4.55: cegah dipulangin dua kali
+        // v4.49: 'aktif' sekarang nyimpen TUJUAN juga, bukan cuma asal.
+        // Format lama (string = ps asal) tetep kebaca biar gak putus.
+        const asalDari = (v) => (typeof v === "string" ? v : (v && v.asal) || "");
+        const tujuanDari = (v) => (typeof v === "string" ? "" : (v && v.tujuan) || "");
+        // v4.50: berapa akun yang lagi OTW ke SERVER TERTENTU. Dulu dipakai
+        // jumlah SEMUA yang OTW tanpa peduli tujuan -> jatah server lain ikut
+        // kepotong. Sekarang dihitung per server, jadi antar-tim gak rebutan.
+        const otwKe = (ps) => Object.values(aktif).filter((v) => tujuanDari(v) === ps).length;
+
+        // --- 1. PULANG: stok udah cukup (atau akunnya ilang) -> balik PS asal ---
+        const NYANGKUT_MAX = 1800;   // 30 menit: batas sabar buat akun yang diem
+        for (const nama of Object.keys(aktif)) {
+          const m = market.find((x) => x.nama === nama);
+          // v4.57 ANTI BOLAK-BALIK: akun yang lagi GAK LAPOR jangan langsung
+          // dipulangin. Dulu "gak ada di daftar market" (bridge diem) dianggap
+          // alasan buat pulang -> begitu lapor lagi ditarik lagi -> bolak-balik
+          // tiap ronde, dan tiap perpindahan bikin worker batal (kerasa lemot).
+          // Sekarang: yang diem DITUNGGU, kecuali udah kelewat lama.
+          const sejak = (typeof aktif[nama] === "object" && aktif[nama].ts) || 0;
+          const kelamaan = sejak > 0 && (skrg - sejak) > NYANGKUT_MAX;
+          if (!m && !kelamaan) continue;               // lagi diem -> sabar dulu
+          if (!m || (m.petrule || 0) >= ambangStok) {
+            const asal = teks(asalDari(aktif[nama]), 40) || "";
+            await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2").bind(asal, nama).run();
+            pulang.push({ akun: nama, ke: asal });
+            sudahPulang.add(nama);   // v4.55: jangan disapu lagi di langkah 1b
+            delete aktif[nama];
+          }
+        }
+
+        // --- 1b. SAPU BERSIH: akun market yang NYANGKUT di server leveling ---
+        // v4.55: langkah 1 cuma ngecek yang TERCATAT di 'aktif'. Kalau catatannya
+        // ilang (CF/worker restart, atau di-assign manual), akunnya nyangkut di
+        // gudang SELAMANYA -- gak pernah dipulangin walau stoknya udah penuh.
+        // Ini jaring pengaman: patokannya POSISI, bukan catatan.
+        for (const m of market) {
+          const ps = m.ps_nama || "";
+          if (!ps.startsWith("lvl:")) continue;          // gak lagi di gudang
+          if ((m.petrule || 0) < ambangStok) continue;   // masih butuh diisi
+          if (m.nama in aktif) continue;                 // lagi dipakai suplai
+          if (sudahPulang.has(m.nama)) continue;         // udah dipulangin langkah 1
+          if (manualSet.has(m.nama)) continue;           // v4.69: diatur manual
+          await db.prepare("UPDATE akun SET ps_nama='' WHERE nama=?1").bind(m.nama).run();
+          pulang.push({ akun: m.nama, ke: "", nyasar: true });
+        }
+
+        // --- 2. akun leveling yang pet siap-gift-nya udah banyak ---
+        let rowLvl = [];
+        try {
+          const rl = await db.prepare("SELECT akun, ts, data FROM leveling").all();
+          rowLvl = rl.results || [];
+        } catch (e) { rowLvl = []; }   // tabel belum ada -> anggap belum ada yg siap
+        const siap = [];
+        for (const x of rowLvl) {
+          if ((x.ts || 0) <= SEGAR) continue;
+          let d = {};
+          try { d = JSON.parse(x.data); } catch {}
+          if (Number(d.age || 0) >= ambangSiap) {
+            siap.push({ akun: x.akun, age: Number(d.age || 0),
+                        pemain: Number(d.pemain || 0) });   // isi server sebenernya
+          }
+        }
+        siap.sort((a, b) => b.age - a.age);
+
+        let psTujuan = "", akunLeveling = "", alasan = "", pemainDiPs = 0;
+        const tujuanTersedia = [];   // v4.54: semua gudang yang masih ada tempat
+        // v4.79: gudang yang SAH (stoknya cukup + punya link) -- termasuk yang
+        // udah PENUH. Dulu 'masihSah' ngecek ke tujuanTersedia, padahal itu cuma
+        // berisi yang ADA SLOT KOSONG. Akibatnya: begitu gudang penuh (yang mana
+        // itu tujuannya!), akun di dalamnya dianggap salah tempat -> dipindah ke
+        // gudang lain -> gudang tadi kosong -> ronde depan dipindah balik.
+        // Itu yang bikin akun market bolak-balik muter di antara gudang.
+        const gudangSah = new Set();
+        if (!siap.length) {
+          alasan = "belum ada akun leveling yang pet siap-gift-nya >= " + ambangSiap;
+        } else {
+          // pilih akun leveling siap yang PS-nya BENERAN punya link. kalau akun
+          // paling banyak pet-nya belum punya link PS, lanjut ke berikutnya --
+          // jangan dipaksa, nanti akun market malah kelempar ke server publik.
+          for (const s of siap) {
+            const lv = await db.prepare("SELECT ps_nama FROM akun WHERE nama=?1")
+              .bind(s.akun).first();
+            const nm = (lv && lv.ps_nama) ? lv.ps_nama : "";
+            if (!nm) { alasan = alasan || (s.akun + " belum diassign ke PS mana pun"); continue; }
+            // v4.51: PS pribadi akun leveling (lvl:<akun>) -> cek cfg 'pslink'.
+            // Selain itu -> template bersama kayak biasa.
+            let adaLink = false;
+            if (nm.startsWith("lvl:")) {
+              adaLink = !!(pslinkPeta[nm.slice(4)] || "");
+            } else {
+              const tpl = await db.prepare("SELECT link FROM ps_template WHERE nama=?1")
+                .bind(nm).first();
+              adaLink = !!(tpl && tpl.link);
+            }
+            if (!adaLink) {
+              alasan = alasan || ("PS '" + nm + "' belum ada link-nya");
+              continue;
+            }
+            // v4.50: penuh = yang UDAH di server + yang lagi OTW ke sini.
+            // 1 PS = 4 slot; 1 dipakai akun leveling -> sisa 3 buat market.
+            // Tanpa ngitung yang OTW, tim lain bisa ikut narik ke server yang
+            // sama -> pas nyampe barengan, yang belakangan ditolak.
+            const isiSkrg = Number(s.pemain || 0) + otwKe(nm);
+            gudangSah.add(nm);   // v4.79: penuh itu WAJAR -- bukan alasan pindah
+            if (isiSkrg >= SLOT_PS) {
+              alasan = alasan || ("server " + nm + " udah penuh (" + isiSkrg + "/" + SLOT_PS
+                                  + ", termasuk yang OTW)");
+              continue;
+            }
+            // v4.54: JANGAN berhenti di gudang pertama. Kumpulin SEMUA gudang
+            // yang masih ada tempat -- dulu cuma 1 dipakai, jadi cuma 3 akun
+            // market yang kebagian walau punya belasan akun leveling siap.
+            tujuanTersedia.push({
+              ps: nm, lvl: s.akun,
+              sisa: SLOT_PS - isiSkrg,
+              pemain: Number(s.pemain || 0),
+            });
+            if (!psTujuan) {                       // yang pertama jadi patokan tampilan
+              psTujuan = nm; akunLeveling = s.akun; alasan = "";
+              pemainDiPs = Number(s.pemain || 0);
+            }
+          }
+          if (tujuanTersedia.length) alasan = "";
+        }
+
+        // --- 2b. PINDAH GUDANG: akun leveling yang lagi dipake KEHABISAN pet.
+        // Akun market yang masih nunggu di situ percuma -- pindahin ke akun
+        // leveling LAIN yang masih ada stok. PS asal (server market) tetep
+        // diinget, jadi pulangnya nanti tetep ke tempat yang bener.
+        // Kalau gak ada leveling lain sama sekali -> pulangin aja, daripada
+        // nganggur di server kosong.
+        for (const nama of Object.keys(aktif)) {
+          const m = market.find((x) => x.nama === nama);
+          if (!m) continue;
+          const psSkrg = m.ps_nama || "";
+          // v4.54: gudang lama abis -> pindah ke gudang lain yang masih ada
+          // tempat (bukan cuma yang pertama), biar gak numpuk di satu server.
+          const masihSah = gudangSah.has(psSkrg);   // v4.79: penuh = tetep sah
+          const gudangBaru = masihSah ? null
+            : tujuanTersedia.find((x) => x.sisa > 0 && x.ps !== psSkrg);
+          if (gudangBaru) {
+            await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2")
+              .bind(gudangBaru.ps, nama).run();
+            aktif[nama] = { asal: asalDari(aktif[nama]), tujuan: gudangBaru.ps,
+                            lvl: gudangBaru.lvl, ts: skrg };
+            pindah.push({ akun: nama, dari: psSkrg, ke: gudangBaru.ps });
+            gudangBaru.sisa--;
+          } else if (masihSah) {
+            // gudangnya masih oke -> biarin, jangan diutak-atik
+          } else if (!tujuanTersedia.length) {
+            const asal = teks(asalDari(aktif[nama]), 40) || "";
+            await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2").bind(asal, nama).run();
+            pulang.push({ akun: nama, ke: asal });
+            delete aktif[nama];
+          }
+        }
+
+        // --- 3. BERANGKAT: yang kurang stok -> SEBAR ke gudang yang ada tempat ---
+        // v4.54: dulu semua dijejelin ke SATU gudang -> cuma 3 akun kebagian
+        // (1 PS = 4 slot, 1 dipakai akun leveling). Sekarang dibagi ke SEMUA
+        // gudang yang siap: gudang A penuh -> lanjut ke B, C, dst.
+        if (tujuanTersedia.length) {
+          const butuh = market
+            .filter((x) => (x.petrule || 0) < ambangStok)
+            .filter((x) => !(x.nama in aktif))
+            .sort((a, b) => (a.petrule || 0) - (b.petrule || 0));   // paling kosong duluan
+
+          for (const m of butuh) {
+            // cari gudang yang masih ada tempat (dan bukan tempat dia sekarang)
+            const t = tujuanTersedia.find((x) => x.sisa > 0 && (m.ps_nama || "") !== x.ps);
+            if (!t) break;                       // semua gudang penuh -> sisanya nunggu ronde depan
+            aktif[m.nama] = { asal: m.ps_nama || "", tujuan: t.ps,
+                              lvl: t.lvl, ts: skrg };
+            await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2")
+              .bind(t.ps, m.nama).run();
+            berangkat.push({ akun: m.nama, dari: m.ps_nama || "", ke: t.ps });
+            t.sisa--;
+          }
+        }
+
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('suplai', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify({ ambangSiap, aktif, psTujuan, akunLeveling, alasan,
+                                      pemainDiPs, slotPs: SLOT_PS })).run();
+
+        return json({ skrg, ambangStok, ambangSiap, psTujuan, akunLeveling, alasan,
+                      pemainDiPs, slotPs: SLOT_PS,
+                      nBerangkat: berangkat.length, nPulang: pulang.length,
+                      nPindah: pindah.length,
+                      berangkat, pulang, pindah, aktif });
+      }
+
+      // ---------- TUGAS GIFT: siapa yang stok pet-nya nipis ----------
+      // Dipanggil script leveling (mode AUTO). Balikin daftar akun market yg
+      // petrule < ambang DAN lagi idup (lapor < 7 menit) -- akun mati gak usah
+      // dijadiin target, gift-nya gak bakal nyampe.
+      // Ambang: ?ambang=150, atau dari cfg 'all'.giftAmbang, default 150.
+      if (jalur === "/gift-tugas" && req.method === "GET") {
+        const MARKET_PLACE = ["126884695634066", "129954712878723"];
+        let ambang = parseInt(url.searchParams.get("ambang") || "0", 10);
+        let petTypes = [], kgMin = 0, ageMin = 0, invMin = 100;
+        {
+          // dari cfg scope 'gift' (SENGAJA bukan 'all' -- scope 'all' itu punya
+          // setelan script farm, kalau ditimpa panel bisa keapus)
+          const c = await db.prepare("SELECT data FROM cfg WHERE scope='gift'").first();
+          if (c) {
+            try {
+              const d = JSON.parse(c.data);
+              if (!ambang && Number(d.ambang) >= 1) ambang = Math.floor(Number(d.ambang));
+              if (Array.isArray(d.petTypes)) petTypes = d.petTypes;
+              if (Number(d.kgMin) > 0) kgMin = Number(d.kgMin);
+              if (Number(d.ageMin) > 0) ageMin = Number(d.ageMin);
+              if (Number(d.invMin) >= 1) invMin = Math.floor(Number(d.invMin));
+            } catch {}
+          }
+        }
+        if (!ambang || ambang < 1) ambang = 150;
+
+        const r = await db
+          .prepare("SELECT nama, petrule, place, ts FROM akun WHERE place IN (?1, ?2)")
+          .bind(MARKET_PLACE[0], MARKET_PLACE[1])
+          .all();
+        // v4.52: akun leveling jangan dijadiin target gift (mereka pengirimnya)
+        let lvlSet = new Set();
+        try {
+          const rl0 = await db.prepare("SELECT akun FROM leveling").all();
+          lvlSet = new Set((rl0.results || []).map((x) => x.akun));
+        } catch (e) {}
+        const target = (r.results || [])
+          .filter((x) => (skrg - (x.ts || 0)) < 420)          // cuma yg lagi idup
+          .filter((x) => !lvlSet.has(x.nama))                  // bukan akun leveling
+          .filter((x) => (x.petrule || 0) < ambang)            // stok nipis
+          .sort((a, b) => (a.petrule || 0) - (b.petrule || 0)) // paling kosong duluan
+          .map((x) => ({ akun: x.nama, petrule: x.petrule || 0 }));
+        return json({ skrg, ambang, petTypes, kgMin, ageMin, invMin, target });
+      }
+
+      // ---------- ATURAN GIFT: jenis pet apa aja yang boleh di-gift ----------
+      // Panel yang atur; semua akun leveling (mode AUTO) ngikut aturan ini.
+      // petTypes kosong = SEMUA jenis boleh.
+      if (jalur === "/gift-aturan" && req.method === "PUT") {
+        const b = await req.json();
+        // baca dulu biar 'ambang' (dipake mode Market) gak keapus
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='gift'").first();
+        let lama = {};
+        if (c) { try { lama = JSON.parse(c.data) || {}; } catch {} }
+        const petTypes = Array.isArray(b.petTypes)
+          ? [...new Set(b.petTypes.filter((x) => typeof x === "string" && x.length > 1 && x.length < 60))].sort()
+          : (Array.isArray(lama.petTypes) ? lama.petTypes : []);
+        const isi = {
+          ambang:   Number(b.ambang) >= 1 ? Math.floor(Number(b.ambang))
+                    : (Number(lama.ambang) >= 1 ? Math.floor(Number(lama.ambang)) : 150),
+          petTypes,
+          kgMin:    b.kgMin  !== undefined ? (Number(b.kgMin)  > 0 ? Number(b.kgMin) : 0)
+                    : (Number(lama.kgMin)  > 0 ? Number(lama.kgMin)  : 0),
+          ageMin:   b.ageMin !== undefined ? (Number(b.ageMin) > 0 ? Math.floor(Number(b.ageMin)) : 0)
+                    : (Number(lama.ageMin) > 0 ? Math.floor(Number(lama.ageMin)) : 0),
+          // v4.41: ambang "inventory menipis" -- akun leveling yang total pet-nya
+          // di bawah ini perlu diisi ulang (manual lewat KG).
+          invMin:   Number(b.invMin) >= 1 ? Math.floor(Number(b.invMin))
+                    : (Number(lama.invMin) >= 1 ? Math.floor(Number(lama.invMin)) : 100),
+        };
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('gift', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(isi)).run();
+        return json({ ok: true, ...isi });
+      }
+
+      // ---------- panel nugasin akun ke tim ----------
+      // tim = null -> lepas penugasan (balik ke "belum ditugasin")
+      // ---------- worker auto-assign akun ke tim (batch) ----------
+      // worker kirim daftar akun yg dia pegang + tim-nya. panel jadi tau akun
+      // ini di tim mana OTOMATIS (gak usah assign manual).
+      // mode "isi_kosong" (default true): cuma set tim kalau akun BELUM punya tim,
+      // biar assign manual di panel gak ke-timpa. kalau false: timpa semua.
+      if (jalur === "/assign-tim" && req.method === "POST") {
+        const b = await req.json();
+        const tim = teks(b.tim);
+        if (!tim) return salah("tim kosong");
+        const akunList = Array.isArray(b.akun) ? b.akun : [];
+        const game = b.game === null ? null : teks(b.game, 16);
+        const isiKosong = b.isi_kosong !== false;   // default true
+
+        // v15-66: peta PlaceId -> game. Dipakai buat ngenali `place` BASI.
+        // Panel nentuin game akun dari PLACE[place] DULU, baru a.game. Jadi
+        // kalau place-nya kebawa dari pemakaian lama (akun ini dulu dipakai
+        // GAG 1), betulin kolom game aja GAK CUKUP -- place-nya masih nutupin.
+        const PLACE_GAME = {
+          "126884695634066": "GAG 1",
+          "129954712878723": "GAG 1",
+          "129343810645058": "GAG 2",
+          "126987765280963": "GAG 2",
+        };
+
+        let n = 0, nGame = 0, nPlace = 0;
+        const dipindah = [];
+        for (const a of akunList) {
+          const nama = teks(a);
+          if (!nama) continue;
+
+          const lama = await db.prepare(
+            "SELECT tim, game, place FROM akun WHERE nama=?1").bind(nama).first();
+
+          if (!lama) {
+            await db.prepare(
+              "INSERT INTO akun (nama, tim, game, ts) VALUES (?1, ?2, ?3, 0)"
+            ).bind(nama, tim, game).run();
+            n++;
+            continue;
+          }
+
+          const timLama = String(lama.tim || "").trim();
+
+          // v15-67: worker yang MEGANG client-nya BOLEH MEREBUT akun dari tim
+          // lain. Ini pembalikan dari v15-66, dan alasannya penting:
+          //
+          // Worker baca nama akun dari prefs.xml client-nya SENDIRI. Itu bukan
+          // rencana, itu FAKTA -- akunnya beneran login di RF itu. Kalau kolom
+          // tim di panel bilang lain, yang basi itu panelnya.
+          //
+          // Kejadian nyata: 4 akun kecatat tim-1/GAG 1 MARKET sisa pemakaian
+          // lama, padahal fisiknya udah pindah ke RF tim-4. Perlindungan lama
+          // ("jangan rebut") bikin mereka nyangkut di tim-1 SELAMANYA, dan
+          // gejalanya bisu -- panel bilang "0 akun" tanpa sebab.
+          //
+          // Risikonya: kalau satu akun kebetulan kepasang di client DUA RF,
+          // dua worker bakal tarik-menarik. Tapi itu keadaan yang udah rusak
+          // dari awal (Roblox cuma ngizinin satu sesi per akun), dan sekarang
+          // KEKIHATAN -- tiap perpindahan dilaporin, jadi tarik-menarik langsung
+          // ketara di log.
+          //
+          // isi_kosong:true dari worker sekarang cuma dipakai buat akun BARU;
+          // buat akun yang udah ada, worker pemegang client selalu menang.
+          const timBaru = tim;
+          const direbutDari = (timLama && timLama !== tim) ? timLama : null;
+          if (direbutDari) dipindah.push({ nama, dari: direbutDari });
+
+          let gameBaru = lama.game;
+          let placeBaru = lama.place;
+
+          if (game) {
+            if (lama.game !== game) { gameBaru = game; nGame++; }
+            const gamePlaceLama = PLACE_GAME[String(lama.place || "")];
+            if (gamePlaceLama && gamePlaceLama !== game) {
+              // place nunjuk ke game LAIN -> basi, dikosongin. Nanti keisi
+              // sendiri yang bener pas script di dalam game lapor.
+              placeBaru = "";
+              nPlace++;
+              // v9.305: place basi -> ps_link (accessCode dunia lama) JUGA basi.
+              // Kosongin biar worker gak join PS dunia lama pakai accessCode place-specific.
+              // Nanti getps ulang di place yang bener.
+              try { await db.prepare("UPDATE cookies SET ps_link='' WHERE akun=?1").bind(nama).run(); } catch (e) {}
+            }
+          }
+
+          await db.prepare(
+            "UPDATE akun SET tim=?1, game=?2, place=?3 WHERE nama=?4"
+          ).bind(timBaru, gameBaru, placeBaru, nama).run();
+          n++;
+        }
+        return json({ ok: true, tim, jumlah: n,
+                      gameDiperbarui: nGame, placeDibersihin: nPlace,
+                      dipindah });
+      }
+
+      if (jalur === "/assign" && req.method === "PUT") {
+        const b = await req.json();
+        const nama = teks(b.akun);
+        if (!nama) return salah("akun kosong");
+        const tim = b.tim === null ? null : teks(b.tim);
+        const game = b.game === null ? null : teks(b.game, 16);
+
+        // pakai INSERT..ON CONFLICT, bukan UPDATE: biar akun bisa ditugasin
+        // duluan walau belum pernah lapor sekali pun.
+        await db
+          .prepare(
+            `INSERT INTO akun (nama, tim, game, ts) VALUES (?1, ?2, ?3, 0)
+             ON CONFLICT(nama) DO UPDATE SET tim=?2, game=?3`
+          )
+          .bind(nama, tim, game)
+          .run();
+
+        return json({ ok: true, akun: nama, tim, game });
+      }
+
+      // ---------- link private server per tim ----------
+      // panel PUT simpan; zenx_worker GET narik tiap loop.
+      if (jalur === "/ps" && req.method === "PUT") {
+        const b = await req.json();
+        const tim = teks(b.tim);
+        if (!tim) return salah("tim kosong");
+        const link = teks(b.link, 300) || "";   // kosong = balik public
+        await db
+          .prepare(
+            `INSERT INTO ps (tim, ts, link) VALUES (?1, ?2, ?3)
+             ON CONFLICT(tim) DO UPDATE SET ts=?2, link=?3`
+          )
+          .bind(tim, skrg, link)
+          .run();
+        return json({ ok: true, tim, link });
+      }
+      if (jalur === "/ps" && req.method === "GET") {
+        const tim = teks(url.searchParams.get("tim"));
+        if (!tim) return salah("tim kosong");
+        const r = await db.prepare("SELECT ts, link FROM ps WHERE tim=?1").bind(tim).first();
+        return json({ tim, ts: r ? r.ts : 0, link: r ? r.link : "" });
+      }
+
+      // ---------- SETTING TIM PERSISTEN (place/grid/client) ----------
+      // Panel simpan setelan ke sini (bukan cuma localStorage). Worker ambil pas
+      // mulai -> langsung pakai setelan terbaru. RESTART cuma kalau BERUBAH.
+      if (jalur === "/setting-tim" && req.method === "PUT") {
+        const b = await req.json();
+        const tim = teks(b.tim);
+        if (!tim) return salah("tim kosong");
+        // v8.74-backend: COALESCE -- cuma update field yg DIKIRIM. Bug user:
+        // panel kirim place & grid TERPISAH -> yg gak dikirim ke-reset (set grid
+        // nimpa place jadi kosong -> worker pakai bekas/salah). Sekarang field
+        // null (gak dikirim) -> pakai nilai LAMA (COALESCE ke kolom existing).
+        const place = (b.place !== undefined) ? (teks(b.place, 30) || "") : null;
+        const grid = (b.grid !== undefined) ? Math.floor(Number(b.grid) || 0) : null;
+        const clients = (b.clients !== undefined) ? (teks(b.clients, 2000) || "") : null;
+        const server = (b.server !== undefined) ? (teks(b.server, 40) || "") : null;
+        await db.prepare(
+          `CREATE TABLE IF NOT EXISTS setting_tim (
+             tim TEXT PRIMARY KEY, ts INTEGER, place TEXT, grid INTEGER, clients TEXT, server TEXT
+           )`
+        ).run();
+        // v8.79-backend: tambah kolom server kalau tabel lama belum punya
+        await db.prepare("ALTER TABLE setting_tim ADD COLUMN server TEXT").run().catch(() => {});
+        await db.prepare(
+          `INSERT INTO setting_tim (tim, ts, place, grid, clients, server)
+           VALUES (?1,?2, COALESCE(?3,''), COALESCE(?4,0), COALESCE(?5,''), COALESCE(?6,''))
+           ON CONFLICT(tim) DO UPDATE SET
+             ts=?2,
+             place=COALESCE(?3, setting_tim.place),
+             grid=COALESCE(?4, setting_tim.grid),
+             clients=COALESCE(?5, setting_tim.clients),
+             server=COALESCE(?6, setting_tim.server)`
+        ).bind(tim, skrg, place, grid, clients, server).run();
+        // balik nilai FINAL (biar panel tau hasil gabungan)
+        const rF = await db.prepare(
+          "SELECT place, grid, clients FROM setting_tim WHERE tim=?1"
+        ).bind(tim).first();
+        return json({ ok: true, tim,
+          place: rF ? rF.place : "", grid: rF ? rF.grid : 0, clients: rF ? rF.clients : "", server: rF ? rF.server : "" });
+      }
+      if (jalur === "/setting-tim" && req.method === "GET") {
+        const tim = teks(url.searchParams.get("tim"));
+        if (!tim) return salah("tim kosong");
+        await db.prepare(
+          `CREATE TABLE IF NOT EXISTS setting_tim (
+             tim TEXT PRIMARY KEY, ts INTEGER, place TEXT, grid INTEGER, clients TEXT, server TEXT
+           )`
+        ).run();
+        await db.prepare("ALTER TABLE setting_tim ADD COLUMN server TEXT").run().catch(() => {});
+        const r = await db.prepare(
+          "SELECT ts, place, grid, clients, server FROM setting_tim WHERE tim=?1"
+        ).bind(tim).first();
+        return json({
+          tim,
+          ts: r ? r.ts : 0,
+          place: r ? r.place : "",
+          grid: r ? r.grid : 0,
+          clients: r ? r.clients : "",
+          server: r ? (r.server || "") : "",
+        });
+      }
+
+      // ---------- TAHAP 2b: HACTOTOMATIS target (panel pilih target -> worker join PS aktual) ----------
+      if (jalur === "/hactoto-target" && (req.method === "PUT" || req.method === "GET")) {
+        await db.prepare(
+          `CREATE TABLE IF NOT EXISTS setting_tim (
+             tim TEXT PRIMARY KEY, ts INTEGER, place TEXT, grid INTEGER, clients TEXT, server TEXT
+           )`
+        ).run();
+        await db.prepare("ALTER TABLE setting_tim ADD COLUMN hactoto_target TEXT").run().catch(() => {});
+        await db.prepare("ALTER TABLE setting_tim ADD COLUMN hactoto_ps TEXT").run().catch(() => {});
+        await db.prepare("ALTER TABLE setting_tim ADD COLUMN hactoto_link TEXT").run().catch(() => {});
+        await db.prepare("ALTER TABLE setting_tim ADD COLUMN hactoto_ts INTEGER").run().catch(() => {});
+        await db.prepare("ALTER TABLE setting_tim ADD COLUMN hactoto_assign TEXT").run().catch(() => {});
+        if (req.method === "PUT") {
+          const b = await req.json();
+          const tim = teks(b.tim);
+          if (!tim) return salah("tim kosong");
+          // v426: assignments = [{pengisi, target, psNama, psLink}] -- tiap client hactotomatis join target BEDA
+          const assign = Array.isArray(b.assignments) ? b.assignments.slice(0, 20).map(x => ({
+            pengisi: teks(x && x.pengisi, 60) || "",
+            target: teks(x && x.target, 60) || "",
+            psNama: teks(x && x.psNama, 60) || "",
+            psLink: teks(x && x.psLink, 500) || "",
+          })).filter(x => x.pengisi) : [];
+          const assignJs = JSON.stringify(assign);
+          // legacy 1-target (kompat lama): pakai assign[0] kalau ada
+          const t0 = assign[0] || { target: "", psNama: "", psLink: "" };
+          await db.prepare(
+            `INSERT INTO setting_tim (tim, ts, hactoto_target, hactoto_ps, hactoto_link, hactoto_ts, hactoto_assign)
+             VALUES (?1,?2,?3,?4,?5,?2,?6)
+             ON CONFLICT(tim) DO UPDATE SET
+               hactoto_target=?3, hactoto_ps=?4, hactoto_link=?5, hactoto_ts=?2, hactoto_assign=?6`
+          ).bind(tim, skrg, t0.target, t0.psNama, t0.psLink, assignJs).run();
+          return json({ ok: true, tim, n: assign.length });
+        } else {
+          const tim = teks(url.searchParams.get("tim"));
+          if (!tim) return salah("tim kosong");
+          const r = await db.prepare(
+            "SELECT hactoto_target, hactoto_ps, hactoto_link, hactoto_ts, hactoto_assign FROM setting_tim WHERE tim=?1"
+          ).bind(tim).first();
+          let assignments = [];
+          if (r && r.hactoto_assign) { try { assignments = JSON.parse(r.hactoto_assign) || []; } catch {} }
+          return json({
+            tim,
+            assignments,
+            target: r ? (r.hactoto_target || "") : "",   // legacy 1-target
+            psNama: r ? (r.hactoto_ps || "") : "",
+            psLink: r ? (r.hactoto_link || "") : "",
+            ts: r ? (r.hactoto_ts || 0) : 0,
+          });
+        }
+      }
+
+      // ---------- HACTOTOMATIS: kontrol panel (cuma 1 panel yg kirim sinyal) ----------
+      if (jalur === "/hactoto-kontrol" && (req.method === "PUT" || req.method === "GET")) {
+        if (req.method === "PUT") {
+          const b = await req.json();
+          const panelId = teks(b.panelId, 80) || "";
+          if (!panelId) return salah("panelId kosong");
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('hactoto_kontrol', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify({ panelId, ts: skrg })).run();
+          return json({ ok: true, panelId });
+        } else {
+          const c = await db.prepare("SELECT data FROM cfg WHERE scope='hactoto_kontrol'").first();
+          let d = {};
+          if (c) { try { d = JSON.parse(c.data); } catch {} }
+          return json({ panelId: d.panelId || "", ts: d.ts || 0 });
+        }
+      }
+
+      // ---------- TAHAP 1: template PS (global) ----------
+      // GET semua template
+      if (jalur === "/ps-template" && req.method === "GET") {
+        const rs = await db.prepare("SELECT nama, link, ts FROM ps_template ORDER BY nama").all();
+        return json({ template: rs.results || [] });
+      }
+      // simpan/edit 1 template (nama + link)
+      if (jalur === "/ps-template" && req.method === "PUT") {
+        const b = await req.json();
+        const nama = teks(b.nama, 40);
+        if (!nama) return salah("nama template kosong");
+        const link = teks(b.link, 300) || "";
+        await db.prepare(
+          `INSERT INTO ps_template (nama, link, ts) VALUES (?1, ?2, ?3)
+           ON CONFLICT(nama) DO UPDATE SET link=?2, ts=?3`
+        ).bind(nama, link, skrg).run();
+        return json({ ok: true, nama, link });
+      }
+      // hapus template
+      if (jalur === "/ps-template" && req.method === "DELETE") {
+        const b = await req.json();
+        const nama = teks(b.nama, 40);
+        if (!nama) return salah("nama kosong");
+        await db.prepare("DELETE FROM ps_template WHERE nama=?1").bind(nama).run();
+        return json({ ok: true, nama });
+      }
+
+      // ---------- TAHAP 1: assign client/akun -> PS (per akun) ----------
+      // set ps_nama buat 1 akun (atau banyak akun sekaligus)
+      if (jalur === "/assign-ps" && req.method === "PUT") {
+        const b = await req.json();
+        const psNama = teks(b.ps_nama, 40) || "";   // kosong = balik public
+        const akunList = Array.isArray(b.akun) ? b.akun : (b.akun ? [b.akun] : []);
+        if (akunList.length === 0) return salah("akun kosong");
+        // v4.69: assign dari PANEL = keputusan MANUAL -> ditandai, biar sistem
+        // suplai otomatis GAK mindahin balik. Tanpa ini, akun yang baru aja lo
+        // atur manual bisa dipulangin/dipindah otomatis beberapa detik kemudian.
+        // Lepas penanda ini lewat pilihan "otomatis" di Tugas manual.
+        const cM = await db.prepare("SELECT data FROM cfg WHERE scope='manual'").first();
+        let manual = {};
+        if (cM) { try { const d = JSON.parse(cM.data); if (d && typeof d === "object") manual = d; } catch {} }
+        for (const a of akunList) {
+          const nama = teks(a);
+          if (nama) {
+            await db.prepare("UPDATE akun SET ps_nama=?1 WHERE nama=?2").bind(psNama, nama).run();
+            if (b.otomatis === true) delete manual[nama]; else manual[nama] = skrg;
+          }
+        }
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('manual', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(manual)).run();
+        await tandaiPsGanti();
+        return json({ ok: true, ps_nama: psNama, jumlah: akunList.length });
+      }
+      // worker baca: assign PS per akun buat 1 tim (join sama link template)
+      if (jalur === "/assign-ps" && req.method === "GET") {
+        const tim = teks(url.searchParams.get("tim"));
+        if (!tim) return salah("tim kosong");
+        const rs = await db.prepare(
+          `SELECT a.nama AS akun, a.ps_nama, t.link
+           FROM akun a LEFT JOIN ps_template t ON a.ps_nama = t.nama
+           WHERE a.tim = ?1`
+        ).bind(tim).all();
+        // v4.51: ps_nama "lvl:<akun>" = PS pribadi akun leveling -> linknya
+        // dari cfg 'pslink', bukan dari template bersama.
+        const cl = await db.prepare("SELECT data FROM cfg WHERE scope='pslink'").first();
+        let pslink = {};
+        if (cl) { try { const d = JSON.parse(cl.data); if (d && typeof d === "object") pslink = d; } catch {} }
+        const assign = (rs.results || []).map((r) => {
+          const nm = r.ps_nama || "";
+          if (nm.startsWith("lvl:")) {
+            return { ...r, link: pslink[nm.slice(4)] || "" };
+          }
+          return r;
+        });
+        return json({ tim, assign });
+      }
+
+      // ---------- rename tim: pindahin semua akun tim lama -> tim baru ----------
+      if (jalur === "/rename-tim" && req.method === "PUT") {
+        const b = await req.json();
+        const lama = teks(b.lama), baru = teks(b.baru);
+        if (!lama || !baru) return salah("nama tim kosong");
+        // pindahin akun + baris tim (kalau ada)
+        await db.prepare("UPDATE akun SET tim=?1 WHERE tim=?2").bind(baru, lama).run();
+        await db.prepare("UPDATE cfg SET scope=?1 WHERE scope=?2").bind(baru, lama).run().catch(()=>{});
+        await db.prepare("UPDATE perintah SET tim=?1 WHERE tim=?2").bind(baru, lama).run().catch(()=>{});
+        await db.prepare("UPDATE tim SET nama=?1 WHERE nama=?2").bind(baru, lama).run().catch(()=>{});
+        return json({ ok: true, lama, baru });
+      }
+
+      // ---------- bubar tim: semua akun balik ke "belum ditugasin" ----------
+      if (jalur === "/bubar-tim" && req.method === "PUT") {
+        const b = await req.json();
+        const nama = teks(b.tim);
+        if (!nama) return salah("nama tim kosong");
+        await db.prepare("UPDATE akun SET tim=NULL WHERE tim=?1").bind(nama).run();
+        await db.prepare("DELETE FROM tim WHERE nama=?1").bind(nama).run().catch(()=>{});
+        await db.prepare("DELETE FROM perintah WHERE tim=?1").bind(nama).run().catch(()=>{});
+        return json({ ok: true, tim: nama });
+      }
+
+      // ---------- daftar tim yang BENERAN ADA (buat picker di HP) ----------
+      // Ringan: cuma nama, gak ikut CPU/RAM/clients. Dipanggil pas buka picker,
+      // bukan tiap detik.
+      if (jalur === "/tims" && req.method === "GET") {
+        const [t, a] = await Promise.all([
+          db.prepare("SELECT nama, ts FROM tim").all(),
+          db.prepare("SELECT DISTINCT tim FROM akun WHERE tim IS NOT NULL").all(),
+        ]);
+        // gabung: tim yang udah lapor + tim yang kepake akun tapi workernya belum jalan
+        const set = new Map();
+        for (const r of t.results || []) set.set(r.nama, r.ts);
+        for (const r of a.results || []) if (r.tim && !set.has(r.tim)) set.set(r.tim, 0);
+
+        const tims = [...set.entries()]
+          .map(([nama, ts]) => ({ nama, ts, hidup: ts > 0 && skrg - ts < 300 }))
+          .sort((x, y) => {
+            const nx = parseInt(x.nama.match(/\d+/)?.[0] || "0", 10);
+            const ny = parseInt(y.nama.match(/\d+/)?.[0] || "0", 10);
+            return nx - ny;
+          });
+        return json({ skrg, tims });
+      }
+
+      // ---------- worker Termux ambil perintah ----------
+      if (jalur === "/perintah" && req.method === "GET") {
+        const t = teks(url.searchParams.get("tim"));
+        if (!t) return salah("tim kosong");
+        const r = await db.prepare("SELECT ts, isi, pengirim FROM perintah WHERE tim=?1").bind(t).first().catch(async () => {
+          return await db.prepare("SELECT ts, isi FROM perintah WHERE tim=?1").bind(t).first();
+        });
+        // v8.75-backend: AUTO-EXPIRE perintah AKSI-SEKALI yg basi. RESTART/REJOIN/
+        // FRONT itu aksi sekali -- harusnya diproses lalu netral. Tapi backend simpan
+        // 1 perintah/tim (last-write-wins) -> RESTART NYANGKUT di DB -> worker re-exec
+        // (lastIsi reset nil) baca ulang -> LOOP RESTART. Bug user: bekas panel lama
+        // (RESTART) nyangkut -> restart tiba-tiba berulang. Fix: kalau perintah aksi-
+        // sekali udah BASI -> balikin STANDBY (netral).
+        // v8.76-backend: expire 90s -> 600s (10 MENIT). Bug user: RESTART buka 6-10
+        // client makan >90s -> backend keburu netralin ke STANDBY DI TENGAH proses
+        // -> worker berhenti sebelum kelar buka. 10 menit = pasti udah kelar; cuma
+        // nangkep RESTART yg BENERAN basi (bekas panel lama nyangkut berjam-jam).
+        if (r && r.isi && r.ts) {
+          const isiU = String(r.isi).toUpperCase();
+          const aksiSekali = isiU.includes("RESTART") || isiU.includes("PAKSA") ||
+                             isiU.startsWith("REJOIN") ||
+                             isiU.includes("FRONT") || isiU.startsWith("CEKCOOKIE") ||
+                             isiU.includes("CLOSE");
+          if (aksiSekali && (skrg - r.ts) > 600) {
+            // v8.77-backend: RESTART/REJOIN/FRONT/CEKCOOKIE = aksi sekali TAPI mode
+            // JALAN -> expire ke FORCE (lanjut jalan, jangan matiin). CLOSE = emang
+            // mau tutup -> STANDBY. User: setelah Start gak boleh balik STANDBY sendiri.
+            // v8.78-backend: PERTAHANKAN daftar client. Bug user: RESTART:6client
+            // expire jadi FORCE POLOS -> worker buka SEMUA 10 client. Ambil daftar
+            // akun dari perintah (RESTART:a,b,c -> FORCE:a,b,c) biar cuma client itu.
+            let balikExp;
+            if (isiU.includes("CLOSE")) {
+              balikExp = "STANDBY";
+            } else {
+              const daftar = String(r.isi).match(/^[A-Z]+:(.+)$/i);
+              balikExp = daftar ? ("FORCE:" + daftar[1]) : "FORCE";
+            }
+            await db.prepare(
+              "UPDATE perintah SET isi=?3, ts=?2 WHERE tim=?1"
+            ).bind(t, skrg, balikExp).run().catch(() => {});
+            r.isi = balikExp;
+          }
+        }
+        // v4.53: ikut kirim kapan assign PS terakhir berubah. Worker pakai ini
+        // buat BERHENTI di tengah kalau panel ngasih instruksi baru.
+        const g = await db.prepare("SELECT ts FROM cfg WHERE scope='psganti'").first();
+        // v15-51: SCRIPT PER TIM. Nebeng respons ini (worker udah poll tiap
+        // putaran) -- gak nambah request sama sekali. Worker banding scriptGanti
+        // sama yang terakhir dia kerjain; kalau beda -> tulis ulang autoexec.
+        let scriptUrl = "", scriptNama = "", scriptGanti = 0;
+        {
+          const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='script'").first();
+          if (c) {
+            try {
+              const d = JSON.parse(c.data) || {};
+              scriptNama = (d.tim && d.tim[t]) || "";
+              scriptUrl = (scriptNama && d.lib && d.lib[scriptNama]) || "";
+              scriptGanti = c.ts || 0;
+            } catch {}
+          }
+        }
+        return json({ ...(r || { ts: 0, isi: "" }), psGanti: g ? g.ts : 0,
+                      scriptUrl, scriptNama, scriptGanti });
+      }
+
+      // ---------- v15-51: PUSTAKA SCRIPT + PILIH SCRIPT PER TIM ----------
+      // Disimpen di cfg scope 'script' = { lib: {nama: url}, tim: {namaTim: namaScript} }
+      //   GET    /script              -> { lib, tim }
+      //   PUT    /script              -> {nama, url}  simpan/ubah 1 script
+      //   DELETE /script              -> {nama}       hapus dari pustaka
+      //   PUT    /script-tim          -> {tim, nama}  tim ini jalanin script apa
+      // Worker gak manggil endpoint ini -- dia dapet URL-nya lewat /perintah.
+      if (jalur === "/script" || jalur === "/script-tim") {
+        const bacaScript = async () => {
+          const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='script'").first();
+          let d = { lib: {}, tim: {} };
+          if (c) { try { const x = JSON.parse(c.data);
+            if (x && typeof x === "object") d = { lib: x.lib || {}, tim: x.tim || {} }; } catch {} }
+          return d;
+        };
+        const simpanScript = async (d) => {
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('script', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(d)).run();
+        };
+
+        if (jalur === "/script" && req.method === "GET") {
+          const d = await bacaScript();
+          return json({ skrg, ...d });
+        }
+        if (jalur === "/script" && req.method === "PUT") {
+          const b = await req.json();
+          const nama = teks(b.nama, 40);
+          const link = teks(b.url, 300) || "";
+          if (!nama) return salah("nama script kosong");
+          if (!link) return salah("url kosong");
+          const d = await bacaScript();
+          d.lib[nama] = link;
+          await simpanScript(d);
+          return json({ ok: true, nama, url: link });
+        }
+        if (jalur === "/script" && req.method === "DELETE") {
+          const b = await req.json();
+          const nama = teks(b.nama, 40);
+          if (!nama) return salah("nama kosong");
+          const d = await bacaScript();
+          delete d.lib[nama];
+          // tim yang tadinya pakai script ini -> dilepas, biar gak nunjuk ke yang gaib
+          for (const [t2, n2] of Object.entries(d.tim)) if (n2 === nama) delete d.tim[t2];
+          await simpanScript(d);
+          return json({ ok: true, nama });
+        }
+        if (jalur === "/script-tim" && req.method === "PUT") {
+          const b = await req.json();
+          const t2 = teks(b.tim);
+          if (!t2) return salah("tim kosong");
+          const nama = teks(b.nama, 40) || "";
+          const d = await bacaScript();
+          if (nama) {
+            if (!d.lib[nama]) return salah("script '" + nama + "' gak ada di pustaka");
+            d.tim[t2] = nama;
+          } else {
+            delete d.tim[t2];   // kosong = balik ke script_url lokal RF
+          }
+          await simpanScript(d);
+          return json({ ok: true, tim: t2, nama, url: nama ? d.lib[nama] : "" });
+        }
+        return salah("cara gak dikenal buat " + jalur, 405);
+      }
+
+      // ---------- panel kirim perintah ----------
+      if (jalur === "/perintah" && req.method === "PUT") {
+        const b = await req.json();
+        const t = teks(b.tim);
+        // v-fix: batas 64 -> 512. FORCE:akun1,akun2,... bisa panjang (10 akun x
+        // ~13 char = 130+). Dulu 64 -> kepotong -> nama akun terakhir rusak ->
+        // worker cuma baca sebagian (contoh: set 6, kebuka 4).
+        const isi = teks(b.isi, 512);
+        if (!t || !isi) return salah("tim/isi kosong");
+
+        // v8.75-backend: catat SIAPA yg kirim perintah (versi panel + IP) buat
+        // lacak restart tiba-tiba. Simpan di kolom 'pengirim'. Worker bisa baca
+        // ini pas log RESTART -> ketauan dari panel versi berapa / IP mana.
+        const pengirimV = parseInt(req.headers.get("X-Panel-Versi") || "0", 10) || 0;
+        const pengirimIP = req.headers.get("CF-Connecting-IP") || req.headers.get("X-Forwarded-For") || "?";
+        const pengirimInfo = "v" + pengirimV + " ip=" + pengirimIP;
+        await db.prepare(
+          "ALTER TABLE perintah ADD COLUMN pengirim TEXT"
+        ).run().catch(() => {});   // kolom mungkin udah ada
+        await db
+          .prepare(
+            `INSERT INTO perintah (tim, ts, isi, pengirim) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(tim) DO UPDATE SET ts=?2, isi=?3, pengirim=?4`
+          )
+          .bind(t, skrg, isi, pengirimInfo)
+          .run();
+
+        // ============================================================
+        // v15-82: SETELAN SEED NEBENG DI JAWABAN INI.
+        //
+        // Dulu star_seed narik /seed-cfg sendiri tiap 30 detik -- 2.880
+        // permintaan/hari per akun, dan 99% jawabannya sama persis. Itu 65%
+        // dari seluruh beban akun, cuma buat nanya "ada yang berubah?".
+        //
+        // Sekarang dibonceng di jawaban /stat yang MEMANG SUDAH dikirim.
+        // Nol permintaan tambahan. Jedanya jadi seinterval /stat (120 detik)
+        // -- lebih lambat dari 30 detik, tapi setelan seed jarang diubah.
+        //
+        // Cuma dikirim ke akun SEED: akun farm gak pernah baca ini, jadi
+        // ngirimin ke mereka cuma gedein jawaban tanpa guna.
+        // ============================================================
+        let cfgSeed = null;
+        {
+          const jenis = await db.prepare(
+            `SELECT (UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                     OR (COALESCE(tim.sc,'') = ''
+                         AND COALESCE(akun.sc,'') = 'seed')) AS seed
+               FROM akun LEFT JOIN tim ON tim.nama = akun.tim
+              WHERE akun.nama = ?1`
+          ).bind(t).first();
+          if (jenis && jenis.seed) {
+            const { cfg, ts } = await susunCfgSeed(db, t);
+            cfgSeed = { cfg, cfgTs: ts };
+          }
+        }
+
+        // v-inv-minta: cek flag "minta inventory fresh" buat akun ini. Panel set
+        // via /inv-minta?akun=X. Kalau ada, selip mintaInv=true di response +
+        // CLEAR flag (biar cuma sekali). star_seed nangkep -> kirim inv fresh.
+        let mintaInv = false;
+        try {
+          const fm = await db.prepare("SELECT data FROM cfg WHERE scope='inv-minta'").first();
+          if (fm) {
+            let set = {};
+            try { set = JSON.parse(fm.data) || {}; } catch {}
+            if (set[nama]) {
+              mintaInv = true;
+              delete set[nama];   // clear (sekali pakai)
+              await db.prepare("UPDATE cfg SET data=?1 WHERE scope='inv-minta'").bind(JSON.stringify(set)).run();
+            }
+          }
+        } catch (e) { /* diem, flag opsional */ }
+
+        const resp = cfgSeed
+          ? { ok: true, ts: skrg, cfg: cfgSeed.cfg, cfgTs: cfgSeed.cfgTs, tim: cfgSeed.tim }
+          : { ok: true, ts: skrg };
+        if (mintaInv) resp.mintaInv = true;
+        return json(resp);
+      }
+
+      // v-inv-minta: PANEL minta akun kirim inventory FRESH. Set flag -> star_seed
+      // nangkep di response /stat berikutnya -> kirim inv. Panel terus baca /inv?akun.
+      // v-inv-minta-semua: minta SEMUA akun (seed) kirim inventory FRESH. Buat
+      // paksa refresh setelah update star_seed (data lama tanpa syrup nyangkut).
+      if (jalur === "/inv-minta-semua" && req.method === "POST") {
+        // ambil semua akun seed dari tabel akun
+        const r = await db.prepare(
+          `SELECT akun.nama FROM akun LEFT JOIN tim ON tim.nama = akun.tim
+           WHERE (UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                  OR COALESCE(akun.sc,'') = 'seed')`
+        ).all();
+        let set = {};
+        try {
+          const fm = await db.prepare("SELECT data FROM cfg WHERE scope='inv-minta'").first();
+          if (fm) { try { set = JSON.parse(fm.data) || {}; } catch {} }
+        } catch (e) {}
+        let n = 0;
+        for (const row of r.results || []) {
+          if (row.nama) { set[row.nama] = skrg; n++; }
+        }
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('inv-minta', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(set)).run();
+        return json({ ok: true, jumlah: n });
+      }
+
+      // ---------- riwayat token harian (buat grafik) ----------
+      if (jalur === "/token-riwayat" && req.method === "GET") {
+        const hari = Math.min(90, Math.max(1, parseInt(url.searchParams.get("hari") || "7")));
+        const sampai = teks(url.searchParams.get("sampai")) || null; // "YYYY-MM-DD" WIB, default hari ini
+        // ambil baris <= sampai, urut tanggal, limit hari
+        let rows;
+        if (sampai) {
+          rows = await db.prepare(
+            "SELECT tgl, total FROM token_riwayat WHERE tgl <= ?1 ORDER BY tgl DESC LIMIT ?2"
+          ).bind(sampai, hari).all();
+        } else {
+          rows = await db.prepare(
+            "SELECT tgl, total FROM token_riwayat ORDER BY tgl DESC LIMIT ?1"
+          ).bind(hari).all();
+        }
+        const data = (rows.results || []).reverse(); // jadi urut lama->baru
+        // total token SEKARANG (live, buat kalkulator)
+        const now = await db.prepare(
+          "SELECT COALESCE(SUM(tokens),0) AS t FROM akun WHERE place IN ('126884695634066','129954712878723')"
+        ).first();
+        return json({ hari, sampai, data, tokenSekarang: now ? now.t : 0 });
+      }
+
+      // ---------- snapshot manual (kalau mau paksa catat sekarang) ----------
+      if (jalur === "/token-snapshot" && req.method === "POST") {
+        const r = await snapshotToken(db);
+        return json({ ok: true, ...r });
+      }
+
+      // ============================================================
+      // v15-46: COOKIE BACKUP -- simpan .ROBLOSECURITY akun sendiri buat
+      // pindah device. Digerbang password (hash SHA-256, sesi 24 jam).
+      //   POST /cookie-simpan  (worker)  -> setor cookie {akun,paket,cookie}
+      //   POST /cookie-login   (panel)   -> {hash} -> {token} valid 24 jam
+      //   GET  /cookie-ambil   (panel)   -> ?token=... sah -> daftar cookie
+      //   POST /cookie-hapus   (panel)   -> {akun, token} -> hapus 1 baris
+      // Password default 'jamal123'. Ganti hash-nya = ganti password (SHA-256).
+      // Token = "<expiry>.<hmac(expiry, KUNCI)>" -- stateless, gak butuh tabel sesi.
+      // ============================================================
+      const COOKIE_HASH = "b16b5ae529dceb12222f1fb7cc9ce4e945851eb1f51942c28feeb4efe547f1f9"; // sha256('jamal123')
+      const SESI_DETIK = 86400; // 24 jam
+
+      const hmacHex = async (pesan) => {
+        const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.KUNCI),
+          { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+        const s = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(pesan));
+        return [...new Uint8Array(s)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      };
+      const buatToken = async () => {
+        const exp = skrg + SESI_DETIK;
+        return exp + "." + (await hmacHex(String(exp)));
+      };
+      const tokenSah = async (token) => {
+        if (typeof token !== "string" || !token.includes(".")) return false;
+        const [expStr, sig] = token.split(".");
+        const exp = parseInt(expStr, 10);
+        if (!(exp > skrg)) return false;                       // kadaluarsa
+        const benar = await hmacHex(String(exp));
+        return kunciCocok(sig || "", benar);                   // banding waktu-tetap
+      };
+
+      // panel kirim perintah LOGIN akun ke client tertentu.
+      // Body: { tim, akun, client }. Ditulis ke /perintah sbg "LOGIN:akun:client".
+      // Worker (v5.88) baca ini, jalanin zenx login, balik FORCE.
+      if (jalur === "/cookie-login" && req.method === "POST") {
+        const b = await req.json();
+        // DUA fungsi di endpoint ini:
+        //  (1) login PANEL -> body {hash} -> balikin token
+        //  (2) login AKUN ke client -> body {tim,akun,client} -> tulis perintah
+        // Deteksi dari isi body. Dulu ada 2 handler terpisah -> yang pertama
+        // nangkep SEMUA -> login panel (hash) selalu kena cek tim/akun/client
+        // -> error "kosong". Sekarang disatuin.
+        if (typeof b.hash === "string") {
+          if (!kunciCocok(b.hash.toLowerCase(), COOKIE_HASH)) return salah("password salah", 401);
+          return json({ ok: true, token: await buatToken(), berlaku: skrg + SESI_DETIK });
+        }
+        const tim = teks(b.tim);
+        const akun = teks(b.akun);
+        const client = teks(b.client, 60);
+        if (!tim || !akun || !client) {
+          const kurang = [!tim && "device", !akun && "akun", !client && "client"].filter(Boolean).join(", ");
+          return salah("kosong: " + kurang);
+        }
+        const isiBaru = "LOGIN:" + akun + ":" + client;
+        // v16-23: ANTRE LOGIN. Dulu ON CONFLICT timpa -> spam LOGIN cepat saling
+        // nimpa, worker cuma nangkep 1. Sekarang: kalau perintah lagi LOGIN
+        // (belum kebaca worker), APPEND (antre pakai ";"). Worker proses semua.
+        // Kalau perintah bukan LOGIN (FORCE dll), timpa biasa.
+        const skrgRow = await db.prepare("SELECT isi FROM perintah WHERE tim=?1").bind(tim).first();
+        let isiFinal = isiBaru;
+        if (skrgRow && typeof skrgRow.isi === "string" && skrgRow.isi.startsWith("LOGIN:")) {
+          // udah ada antrean LOGIN -> tambah, tapi jangan dobel client yang sama
+          const antre = skrgRow.isi.split(";").filter(Boolean);
+          // buang LOGIN lama buat client yang sama (ganti dgn yang baru)
+          const tanpaClientIni = antre.filter(x => !x.endsWith(":" + client));
+          tanpaClientIni.push(isiBaru);
+          isiFinal = tanpaClientIni.join(";");
+        }
+        await db.prepare(
+          `INSERT INTO perintah (tim, isi, ts) VALUES (?1, ?2, ?3)
+           ON CONFLICT(tim) DO UPDATE SET isi=?2, ts=?3`
+        ).bind(tim, isiFinal, skrg).run();
+        return json({ ok: true, isi: isiFinal });
+      }
+
+      // panel minta worker tim CEK COOKIE semua akunnya (hidup/mati/captcha).
+      // Body: { tim }. Ditulis ke /perintah sbg "CEKCOOKIE". Worker (v5.99)
+      // baca, jalanin `zenx cekcookie`, setor status tiap akun, balik FORCE.
+      if (jalur === "/cookie-cek" && req.method === "POST") {
+        const b = await req.json();
+        const tim = teks(b.tim);
+        if (!tim) return salah("tim kosong");
+        await db.prepare(
+          `INSERT INTO perintah (tim, isi, ts) VALUES (?1, ?2, ?3)
+           ON CONFLICT(tim) DO UPDATE SET isi=?2, ts=?3`
+        ).bind(tim, "CEKCOOKIE", skrg).run();
+        return json({ ok: true, tim });
+      }
+
+      // worker AMBIL satu cookie by akun (buat zenx login)
+      if (jalur === "/cookie-satu" && req.method === "GET") {
+        const akun = teks(url.searchParams.get("akun"));
+        if (!akun) return salah("akun kosong");
+        try {
+          const r = await db.prepare(
+            "SELECT cookie, paket, ts FROM cookies WHERE akun=?1"
+          ).bind(akun).first();
+          if (!r) return json({ ok: true, ada: false });
+          return json({ ok: true, ada: true, cookie: r.cookie, paket: r.paket, ts: r.ts });
+        } catch (e) {
+          return json({ ok: false, belumSiap: true,
+            pesan: "Tabel 'cookies' belum ada." }, 200);
+        }
+      }
+
+      // worker setor STATUS cookie (alive/dead/captcha/ban) -- dicek pas login
+      if (jalur === "/cookie-status" && req.method === "POST") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        const status = teks(b.status, 20);
+        if (!akun) return salah("akun kosong");
+        try {
+          // upsert: kalau akun belum ada di tabel cookies, bikin baris minimal.
+          // Status bisa masuk walau cookie-nya belum kesimpen di sini.
+          await db.prepare(
+            `INSERT INTO cookies (akun, status, ts) VALUES (?1, ?2, ?3)
+             ON CONFLICT(akun) DO UPDATE SET status=?2, ts=?3`
+          ).bind(akun, status || "", skrg).run();
+        } catch (e) {
+          // kolom status mungkin belum ada
+          return json({ ok: false, belumSiap: true,
+            pesan: "Kolom 'status' belum ada. Jalanin: ALTER TABLE cookies ADD COLUMN status TEXT;" }, 200);
+        }
+        return json({ ok: true, ts: skrg });
+      }
+
+      // daftar akun yang punya cookie (buat panel: dropdown)
+      if (jalur === "/cookie-list" && req.method === "GET") {
+        try {
+          const rows = await db.prepare(
+            "SELECT akun, paket, ts, status, game, length(cookie) AS pj FROM cookies ORDER BY akun"
+          ).all();
+          return json({ ok: true, akun: (rows.results || []) });
+        } catch (e) {
+          return json({ ok: true, akun: [] });
+        }
+      }
+
+      // BULK: semua akun + cookie (buat panel salin cookie 1 tim sekaligus)
+      if (jalur === "/cookie-massal" && req.method === "GET") {
+        try {
+          const rows = await db.prepare(
+            "SELECT akun, cookie FROM cookies WHERE cookie IS NOT NULL AND cookie != '' ORDER BY akun"
+          ).all();
+          return json({ ok: true, akun: (rows.results || []) });
+        } catch (e) {
+          return json({ ok: true, akun: [] });
+        }
+      }
+
+      // ============================================================
+      // v16-44: POOL AKUN. Kolom "pool" di cookies: status akun dlm pool.
+      //   siap    = di pool, boleh diambil worker (auto-isi client kosong)
+      //   antri   = lagi diambil RF (kuning di panel), belum masuk game
+      //   kepakai = udah masuk client (hilang dari pool, gak balik kecuali
+      //             user keluarin manual)
+      //   buang   = dikeluarin user dari pool, GAK auto-dipakai
+      // Butuh: ALTER TABLE cookies ADD COLUMN pool TEXT;
+      // Default: cookie alive tanpa pool -> dianggap "siap".
+
+      // /ps-get : PANEL minta ambil PS link akun (server-side fetch API Roblox
+      // -- panel gak bisa fetch games.roblox.com karena CORS). Body {token, akun}.
+      // Ambil cookie tersimpan -> fetch private-servers -> accessCode -> simpen
+      // ps_link -> balikin ke panel. place default GAG 2 map baru (129343810645058).
+      if (jalur === "/ps-get" && req.method === "POST") {
+        // v7.37: gak butuh token login -- cukup X-Kunci (udah dicek global).
+        // Kayak endpoint pool. Biar get PS dari kartu client langsung jalan.
+        const b = await req.json();
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        const place = teks(b.place) || "129343810645058";   // v7.97: map baru GAG 2 Panen Musim Gugur
+        // ambil cookie tersimpan
+        let cookie = "";
+        try {
+          const r = await db.prepare("SELECT cookie FROM cookies WHERE akun=?1").bind(akun).first();
+          cookie = (r && r.cookie) ? String(r.cookie) : "";
+        } catch (e) { return json({ ok: false, pesan: "Gak bisa baca cookie." }); }
+        if (!cookie || !cookie.includes("_|WARNING")) {
+          return json({ ok: false, pesan: "Gak ada cookie tersimpan buat akun ini." });
+        }
+        // fetch private-servers API (server-side, pake cookie akun)
+        let accessCode = "", psNama = "";
+        try {
+          const url = "https://games.roblox.com/v1/games/" + place + "/private-servers?cursor=";
+          const r = await fetch(url, { headers: { "Cookie": ".ROBLOSECURITY=" + cookie } });
+          if (r.status === 200) {
+            const j = await r.json();
+            const arr = (j && j.data) ? j.data : [];
+            if (arr.length > 0 && arr[0].accessCode) {
+              accessCode = String(arr[0].accessCode);
+              psNama = arr[0].name ? String(arr[0].name) : "PS";
+            }
+          } else if (r.status === 401) {
+            return json({ ok: false, pesan: "Cookie mati (401)." });
+          } else if (r.status === 403 || r.status === 429) {
+            return json({ ok: false, pesan: "Kena rate-limit/captcha (" + r.status + ")." });
+          }
+        } catch (e) {
+          return json({ ok: false, pesan: "Gagal fetch Roblox: " + String(e).slice(0,80) });
+        }
+        if (!accessCode) {
+          // v7.38: akun BELUM punya PS -> BIKIN PS baru (gratis, expectedPrice 0).
+          // universe GAG 2 = 10200395747 (dari capture). Butuh X-CSRF-TOKEN:
+          // POST kosong dulu -> Roblox balikin 403 + header token -> POST beneran.
+          const universe = teks(b.universe) || "10200395747";
+          const createUrl = "https://games.roblox.com/v1/games/vip-servers/" + universe;
+          try {
+            // 1. get CSRF token (POST kosong -> 403 + x-csrf-token header)
+            let csrf = "";
+            const r0 = await fetch(createUrl, {
+              method: "POST",
+              headers: { "Cookie": ".ROBLOSECURITY=" + cookie, "Content-Type": "application/json" },
+              body: "{}",
+            });
+            csrf = r0.headers.get("x-csrf-token") || "";
+            // v7.38: kalau CSRF gak keambil -> lapor (biar tau gagal di sini)
+            if (!csrf) {
+              const t0 = await r0.text();
+              return json({ ok: false,
+                pesan: "CSRF token gak keambil (status " + r0.status + "). Resp: " + t0.slice(0,150) });
+            }
+            // 2. POST beneran dengan CSRF token + body {name, expectedPrice:0}
+            if (!accessCode && csrf) {
+              const namaBaru = akun + "'s server";
+              // v7.38: idempotencyKey WAJIB (UUID random, biar create gak dobel).
+              const idemKey = crypto.randomUUID();
+              const r1 = await fetch(createUrl, {
+                method: "POST",
+                headers: {
+                  "Cookie": ".ROBLOSECURITY=" + cookie,
+                  "Content-Type": "application/json",
+                  "X-CSRF-TOKEN": csrf,
+                },
+                body: JSON.stringify({
+                  name: namaBaru,
+                  expectedPrice: 0,
+                  idempotencyKey: idemKey,
+                }),
+              });
+              if (r1.status === 200) {
+                const j1 = await r1.json();
+                psNama = (j1 && j1.name) ? String(j1.name) : namaBaru;
+                // v7.38: SELALU GET private-servers ulang setelah create -- itu
+                // sumber accessCode paling andal (response create format-nya
+                // beda-beda). Kasih jeda dikit biar PS kedaftar.
+                await new Promise(r => setTimeout(r, 800));
+                const rG = await fetch(url, { headers: { "Cookie": ".ROBLOSECURITY=" + cookie } });
+                if (rG.status === 200) {
+                  const jG = await rG.json();
+                  const arrG = (jG && jG.data) ? jG.data : [];
+                  if (arrG.length > 0 && arrG[0].accessCode) {
+                    accessCode = String(arrG[0].accessCode);
+                    psNama = arrG[0].name ? String(arrG[0].name) : psNama;
+                  }
+                }
+                // fallback: kalau GET masih kosong, coba ambil dari response create
+                if (!accessCode && j1) {
+                  let link = "";
+                  if (j1.link) link = typeof j1.link === "string" ? j1.link : (j1.link.url || "");
+                  const m = link && link.match(/accessCode=([\w-]+)/);
+                  if (m) accessCode = m[1];
+                  // atau langsung field accessCode di response
+                  if (!accessCode && j1.accessCode) accessCode = String(j1.accessCode);
+                }
+                // masih kosong -> lapor response create (buat debug)
+                if (!accessCode) {
+                  return json({ ok: false,
+                    pesan: "PS kebikin tapi accessCode gak ketemu. Response: " + JSON.stringify(j1).slice(0,200) });
+                }
+              } else {
+                const errTxt = await r1.text();
+                return json({ ok: false, pesan: "Bikin PS gagal (" + r1.status + "): " + errTxt.slice(0,120) });
+              }
+            }
+          } catch (e) {
+            return json({ ok: false, pesan: "Gagal bikin PS: " + String(e).slice(0,100) });
+          }
+        }
+        if (!accessCode) {
+          return json({ ok: false, pesan: "Gagal dapet/bikin PS (accessCode kosong)." });
+        }
+        // simpen ps_link
+        const psLink = "accessCode=" + accessCode;
+        try {
+          await db.prepare("UPDATE cookies SET ps_link=?2 WHERE akun=?1").bind(akun, psLink).run();
+        } catch (e) {
+          return json({ ok: false,
+            pesan: "Kolom 'ps_link' belum ada. Jalanin: ALTER TABLE cookies ADD COLUMN ps_link TEXT;" });
+        }
+        return json({ ok: true, akun, ps_link: psLink, ps_nama: psNama, accessCode });
+      }
+
+      // /ps-hapus : PANEL set akun balik ke PUBLIC (kosongin ps_link).
+      if (jalur === "/ps-hapus" && req.method === "POST") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        try {
+          await db.prepare("UPDATE cookies SET ps_link='' WHERE akun=?1").bind(akun).run();
+          return json({ ok: true, akun, ps_link: "" });
+        } catch (e) { return json({ ok: false, pesan: String(e).slice(0,80) }); }
+      }
+
+      // ============================================================
+      // v7.36: PS LINK per akun (kayak Pandora). Kolom "ps_link" di cookies:
+      // "accessCode=UUID" dari zenx getps. Worker masuk PS pribadi tiap akun.
+      // Butuh: ALTER TABLE cookies ADD COLUMN ps_link TEXT;
+
+      // /ps-simpan : worker simpen ps_link akun. Body {akun, ps_link}.
+      if (jalur === "/ps-simpan" && req.method === "POST") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        const psl = teks(b.ps_link, 300);   // v8.88: 64 -> 300 (muat accessCode + share link mobile)
+        if (!akun) return salah("akun kosong");
+        try {
+          await db.prepare("UPDATE cookies SET ps_link=?2 WHERE akun=?1")
+            .bind(akun, psl).run();
+          return json({ ok: true, akun, ps_link: psl });
+        } catch (e) {
+          return json({ ok: false,
+            pesan: "Kolom 'ps_link' belum ada. Jalanin: ALTER TABLE cookies ADD COLUMN ps_link TEXT;" });
+        }
+      }
+
+      // /ps-list : daftar akun + ps_link (buat worker & panel).
+      if (jalur === "/ps-list" && req.method === "GET") {
+        try {
+          const rows = await db.prepare(
+            "SELECT akun, ps_link FROM cookies WHERE ps_link IS NOT NULL AND ps_link != ''"
+          ).all();
+          return json({ ok: true, ps: (rows.results || []) });
+        } catch (e) {
+          return json({ ok: true, ps: [],
+            pesan: "Kolom 'ps_link' belum ada. Jalanin: ALTER TABLE cookies ADD COLUMN ps_link TEXT;" });
+        }
+      }
+
+      // /pool-list : daftar akun pool + status (buat panel). Butuh X-Kunci.
+      if (jalur === "/pool-list" && req.method === "GET") {
+        try {
+          const rows = await db.prepare(
+            "SELECT akun, status, pool, ts, game FROM cookies ORDER BY ts ASC"
+          ).all();
+          const semua = rows.results || [];
+          // pool efektif: kalau kolom pool null & status alive -> "siap"
+          const out = semua.map(r => ({
+            akun: r.akun,
+            status: r.status || "",
+            pool: r.pool || ((r.status || "").toLowerCase() === "alive" ? "siap" : ""),
+            ts: r.ts || 0,
+          }));
+          return json({ ok: true, akun: out });
+        } catch (e) {
+          return json({ ok: true, akun: [],
+            pesan: "Kolom 'pool' belum ada. Jalanin: ALTER TABLE cookies ADD COLUMN pool TEXT;" });
+        }
+      }
+
+      // /pool-ambil : worker klaim akun dari pool (buat zenx login).
+      // Body: { kunci, arah } arah = "atas" | "bawah" | "random".
+      // Balikin akun status "siap" (alive) paling atas/bawah/acak -> set "antri"
+      // (biar RF lain gak ambil sama). Balikin {akun, cookie}.
+      if (jalur === "/pool-ambil" && req.method === "POST") {
+        // X-Kunci udah dicek global di atas -> worker terproteksi.
+        const b = await req.json();
+        const arah = (b.arah || "atas").toLowerCase();
+        try {
+          // akun SIAP = alive + (pool siap ATAU pool null). Urut ts (urutan masuk).
+          const rows = await db.prepare(
+            "SELECT akun, cookie, pool, status FROM cookies " +
+            "WHERE lower(status)='alive' AND (pool IS NULL OR pool='siap') " +
+            "ORDER BY ts ASC"
+          ).all();
+          let list = rows.results || [];
+          if (list.length === 0) {
+            return json({ ok: true, ada: false, pesan: "Pool kosong (gak ada akun siap)." });
+          }
+          let pilih;
+          if (arah === "bawah") pilih = list[list.length - 1];
+          else if (arah === "random") pilih = list[Math.floor(Math.random() * list.length)];
+          else pilih = list[0];   // atas (default)
+          // klaim: set antri (biar RF lain gak ambil sama)
+          await db.prepare("UPDATE cookies SET pool='antri' WHERE akun=?1")
+            .bind(pilih.akun).run();
+          return json({ ok: true, ada: true, akun: pilih.akun, cookie: pilih.cookie });
+        } catch (e) {
+          return json({ ok: false, pesan: "Error pool-ambil: " + String(e).slice(0,100) });
+        }
+      }
+
+      // /pool-status : worker update status akun di pool.
+      // Body: { kunci, akun, pool }. pool = "kepakai" (masuk game) | "siap"
+      // (balik ke pool, misal gagal masuk) | "antri".
+      if (jalur === "/pool-status" && req.method === "POST") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        const pool = teks(b.pool);
+        if (!akun || !pool) return salah("akun/pool kosong");
+        try {
+          await db.prepare("UPDATE cookies SET pool=?2 WHERE akun=?1")
+            .bind(akun, pool).run();
+          return json({ ok: true, akun, pool });
+        } catch (e) {
+          return json({ ok: false, pesan: String(e).slice(0,100) });
+        }
+      }
+
+      // /pool-buang : buang akun dari pool (panel). Butuh token.
+      // Body: { token, akun }. Set pool="buang" -> gak auto-dipakai.
+      if (jalur === "/pool-buang" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        try {
+          await db.prepare("UPDATE cookies SET pool='buang' WHERE akun=?1").bind(akun).run();
+          return json({ ok: true, akun, pool: "buang" });
+        } catch (e) {
+          return json({ ok: false, pesan: String(e).slice(0,100) });
+        }
+      }
+
+      // /pool-balik : balikin akun ke pool (panel picker). Set pool="siap".
+      if (jalur === "/pool-balik" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        try {
+          await db.prepare("UPDATE cookies SET pool='siap' WHERE akun=?1").bind(akun).run();
+          return json({ ok: true, akun, pool: "siap" });
+        } catch (e) {
+          return json({ ok: false, pesan: String(e).slice(0,100) });
+        }
+      }
+
+      // worker setor cookie (X-Kunci udah dicek di atas)
+      // v16-15: TAMBAH AKUN VIA COOKIE (kayak Pandora). Panel paste cookie ->
+      // backend fetch Roblox SERVER-SIDE (gak kena CORS) -> dapet username +
+      // status hidup -> simpan. Gak butuh worker RF. Butuh token panel (login).
+      if (jalur === "/cookie-tambah" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        let cookie = (typeof b.cookie === "string") ? b.cookie.trim() : "";
+        if (!cookie.includes("_|WARNING")) return salah("cookie gak valid (harus ada _|WARNING)");
+        cookie = cookie.slice(0, 4096);
+
+        // resolve username + cek hidup lewat Roblox API (server-side)
+        let username = "", status = "dead";
+        try {
+          const r = await fetch("https://users.roblox.com/v1/users/authenticated", {
+            headers: { "Cookie": ".ROBLOSECURITY=" + cookie },
+          });
+          if (r.status === 200) {
+            const j = await r.json();
+            username = (j && j.name) ? String(j.name) : "";
+            status = "alive";
+          } else if (r.status === 401) {
+            status = "dead";
+          } else if (r.status === 403 || r.status === 429) {
+            status = "captcha";
+          } else {
+            status = "error";
+          }
+        } catch (e) { status = "error"; }
+
+        if (status !== "alive" || !username) {
+          return json({ ok: false, status,
+            pesan: status === "dead" ? "Cookie mati / gak valid."
+                 : status === "captcha" ? "Kena rate-limit/captcha, coba lagi bentar."
+                 : "Gak bisa resolve cookie (" + status + ")." });
+        }
+
+        // simpan pakai username sbg akun (kayak akun lain)
+        try {
+          await db.prepare(
+            `INSERT INTO cookies (akun, paket, cookie, ts, status) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(akun) DO UPDATE SET cookie=?3, ts=?4, status=?5`
+          ).bind(username, "", cookie, skrg, "alive").run();
+        } catch (e) {
+          return json({ ok: false, pesan: "Tabel cookies belum ada / error simpan." });
+        }
+        return json({ ok: true, akun: username, status: "alive" });
+      }
+
+      // v16-32: VALIDASI ULANG cookie yang UDAH tersimpan (kayak Pandora, cek
+      // dari panel tanpa worker). Ambil cookie akun dari DB -> fetch Roblox
+      // server-side -> update status (alive/dead/captcha). Butuh token panel.
+      if (jalur === "/cookie-validasi" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        // ambil cookie tersimpan
+        let cookie = "";
+        try {
+          const r = await db.prepare("SELECT cookie FROM cookies WHERE akun=?1").bind(akun).first();
+          cookie = (r && r.cookie) ? String(r.cookie) : "";
+        } catch (e) {
+          return json({ ok: false, pesan: "Gak bisa baca cookie dari DB." });
+        }
+        if (!cookie || !cookie.includes("_|WARNING")) {
+          return json({ ok: false, status: "kosong", pesan: "Gak ada cookie tersimpan buat akun ini." });
+        }
+        // cek ke Roblox server-side
+        let username = "", status = "dead";
+        try {
+          const r = await fetch("https://users.roblox.com/v1/users/authenticated", {
+            headers: { "Cookie": ".ROBLOSECURITY=" + cookie },
+          });
+          if (r.status === 200) {
+            const j = await r.json();
+            username = (j && j.name) ? String(j.name) : "";
+            status = "alive";
+          } else if (r.status === 401) {
+            status = "dead";
+          } else if (r.status === 403 || r.status === 429) {
+            status = "captcha";
+          } else {
+            status = "error";
+          }
+        } catch (e) { status = "error"; }
+        // update status di DB
+        try {
+          await db.prepare(
+            "INSERT INTO cookies (akun, status, ts) VALUES (?1, ?2, ?3) " +
+            "ON CONFLICT(akun) DO UPDATE SET status=?2, ts=?3"
+          ).bind(akun, status, skrg).run();
+        } catch (e) {}
+        return json({ ok: true, akun, status, username,
+          pesan: status === "alive" ? "Cookie VALID (" + (username || akun) + ")"
+               : status === "dead" ? "Cookie MATI / gak valid."
+               : status === "captcha" ? "Kena rate-limit/captcha, coba lagi bentar."
+               : "Gagal cek (" + status + ")." });
+      }
+
+      if (jalur === "/cookie-simpan" && req.method === "POST") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        const cookie = (typeof b.cookie === "string") ? b.cookie.slice(0, 4096) : "";
+        if (!akun) return salah("akun kosong");
+        if (!cookie.includes("_|WARNING")) return salah("cookie gak valid (gak ada _|WARNING)");
+        try {
+          await db.prepare(
+            `INSERT INTO cookies (akun, paket, cookie, ts) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(akun) DO UPDATE SET paket=?2, cookie=?3, ts=?4`
+          ).bind(akun, teks(b.paket, 40) || "", cookie, skrg).run();
+        } catch (e) {
+          return json({ ok: false, belumSiap: true,
+            pesan: "Tabel 'cookies' belum ada. Jalanin: CREATE TABLE IF NOT EXISTS " +
+                   "cookies (akun TEXT PRIMARY KEY, paket TEXT, cookie TEXT, ts INTEGER);" }, 200);
+        }
+        return json({ ok: true, ts: skrg });
+      }
+
+      // panel login -> token 24 jam
+      // panel ambil daftar cookie (butuh token sah)
+      if (jalur === "/cookie-ambil" && (req.method === "GET" || req.method === "POST")) {
+        let token = url.searchParams.get("token");
+        if (!token && req.method === "POST") { try { token = (await req.json()).token; } catch {} }
+        if (!(await tokenSah(token))) return salah("sesi habis / belum login", 401);
+        let hasil = [];
+        try {
+          const r = await db.prepare("SELECT akun, paket, cookie, ts, status, game FROM cookies ORDER BY akun").all();
+          hasil = r.results || [];
+        } catch (e) {
+          return json({ skrg, cookies: [], belumSiap: true, pesan: "Tabel 'cookies' belum ada di D1." });
+        }
+        return json({ skrg, cookies: hasil });
+      }
+
+      // panel hapus 1 cookie (butuh token sah)
+      if (jalur === "/cookie-hapus" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        await db.prepare("DELETE FROM cookies WHERE akun=?1").bind(akun).run();
+        return json({ ok: true, akun });
+      }
+
+      // ---------- v15-52: SETELAN SCRIPT SEED (star_seed.lua) ----------
+      // v15-60: TIGA LAPIS, digabung di sini. Yang bawah nimpa yang atas:
+      //   scope 'seed'            -> semua akun seed
+      //   scope 'seed:tim:<tim>'  -> semua akun di tim itu
+      //   scope 'seed:<akun>'     -> akun itu doang
+      // Timnya DICARI SENDIRI dari tabel akun -- script cuma ngirim namanya,
+      // gak usah tau dia di tim mana. Itu penting: penugasan tim diatur dari
+      // panel, dan script di dalam game gak punya cara andal buat tau.
+      //
+      // SENGAJA scope sendiri -- scope 'all' itu punya script farm, kalau
+      // ditimpa bakal ngerusak setelan farm seluruh armada.
+      //   GET /seed-cfg?akun=X  -> { ts, cfg, tim }  (dipanggil script tiap 30s)
+      //   PUT /seed-cfg         -> { data, akun?, tim? }
+      //                            dua-duanya kosong = aturan global
+      if (jalur === "/seed-cfg" && req.method === "GET") {
+        // v15-82: pakai penyusun bersama -- lihat susunCfgSeed().
+        // Endpoint ini DITAHAN walau star_seed gak manggil lagi (setelannya
+        // sekarang nebeng di jawaban /stat): panel masih pakai buat baca
+        // setelan, dan script versi lama juga masih manggil ini.
+        const akun = teks(url.searchParams.get("akun"));
+        const { cfg, ts, tim } = await susunCfgSeed(db, akun);
+        return json({ ts, cfg, akun: akun || null, tim });
+      }
+      if (jalur === "/seed-cfg" && req.method === "PUT") {
+        const b = await req.json();
+        if (typeof b.data !== "object" || b.data === null) return salah("data harus objek");
+        const akun = teks(b.akun);
+        const tim = teks(b.tim);
+        // akun paling khusus, terus tim, terus global
+        const scope = akun ? ("seed:" + akun) : (tim ? ("seed:tim:" + tim) : "seed");
+        // gabung sama yang lama -> panel bisa kirim SEBAGIAN field aja,
+        // gak usah ngirim ulang semuanya tiap ganti satu toggle
+        const lama = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind(scope).first();
+        let isi = {};
+        if (lama) { try { isi = JSON.parse(lama.data) || {}; } catch {} }
+        isi = { ...isi, ...b.data };
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
+           ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+        ).bind(scope, skrg, JSON.stringify(isi)).run();
+        return json({ ok: true, scope, cfg: isi });
+      }
+      // v15-60: hapus aturan satu lapis (balik ngikut lapis di atasnya)
+      if (jalur === "/seed-cfg" && req.method === "DELETE") {
+        const b = await req.json();
+        const akun = teks(b.akun);
+        const tim = teks(b.tim);
+        // v108b: izinin hapus config GLOBAL lama (dari panel lama) kalau reset=true.
+        // Biar panel baru (per-tim) yg menang, gak ketiban config global basi.
+        if (b.reset === true && !akun && !tim) {
+          await db.prepare("DELETE FROM cfg WHERE scope='seed'").run();
+          return json({ ok: true, scope: "seed", reset: true });
+        }
+        if (!akun && !tim) return salah("aturan global gak bisa dihapus (pakai reset:true buat bersihin config panel lama)");
+        const scope = akun ? ("seed:" + akun) : ("seed:tim:" + tim);
+        await db.prepare("DELETE FROM cfg WHERE scope=?1").bind(scope).run();
+        return json({ ok: true, scope });
+      }
+
+      // ---------- v15-53: KATALOG PET & SEED (dari dalam game) ----------
+      // Script ngirim daftar jenis yang ADA DI GAME; CF nyatat kapan tiap nama
+      // PERTAMA KALI keliat. Nama yang belum pernah kecatat = BARU -> panel
+      // kasih notif. Jadi begitu dev game nambah pet/seed, panel tau sendiri
+      // tanpa nunggu diberitahu.
+      //   POST /katalog       -> {pets:[...], seeds:[...]}  (dari script)
+      //   GET  /katalog       -> { pets, seeds, baru }      (buat panel)
+      //   POST /katalog-lihat -> {pets:[...], seeds:[...]}  tandai "udah dilihat"
+      if (jalur === "/katalog" || jalur === "/katalog-lihat") {
+        const bacaKatalog = async () => {
+          const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='katalog'").first();
+          let d = { pets: {}, seeds: {}, gears: {}, detail: {}, lihat: { pets: {}, seeds: {}, gears: {} } };
+          if (c) {
+            try {
+              const x = JSON.parse(c.data);
+              if (x && typeof x === "object") {
+                d.pets  = x.pets  || {};
+                d.seeds = x.seeds || {};
+                d.gears = x.gears || {};   // v3.20: gear
+                d.detail = x.detail || {};
+                d.lihat = x.lihat || { pets: {}, seeds: {}, gears: {} };
+                d.lihat.pets  = d.lihat.pets  || {};
+                d.lihat.seeds = d.lihat.seeds || {};
+                d.lihat.gears = d.lihat.gears || {};
+              }
+            } catch {}
+          }
+          return d;
+        };
+        const simpanKatalog = async (d) => {
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('katalog', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(d)).run();
+        };
+        const bersihkan = (arr) =>
+          Array.isArray(arr)
+            ? [...new Set(arr.filter((x) => typeof x === "string" && x.length > 0 && x.length < 60))]
+            : [];
+
+        if (jalur === "/katalog" && req.method === "POST") {
+          const b = await req.json();
+          const d = await bacaKatalog();
+          const baru = { pets: [], seeds: [], gears: [] };
+          for (const jenis of ["pets", "seeds", "gears"]) {
+            for (const nm of bersihkan(b[jenis])) {
+              if (!d[jenis][nm]) { d[jenis][nm] = skrg; baru[jenis].push(nm); }
+            }
+          }
+          // v15-54: rincian pet (harga dasar, rarity, peluang spawn). Yang
+          // SpawnChance=0 itu BELUM RILIS -- panel nandain biar gak dipilih
+          // percuma. Selalu ditimpa: data game bisa berubah kalau ada update.
+          let detailBerubah = false;
+          if (b.detail && typeof b.detail === "object") {
+            for (const [nm, v] of Object.entries(b.detail)) {
+              if (typeof nm !== "string" || nm.length > 60 || typeof v !== "object" || !v) continue;
+              const isi = {
+                tampil: teks(v.tampil, 60) || nm,
+                harga: angka(v.harga),
+                rarity: teks(v.rarity, 20) || "?",
+                spawn: (typeof v.spawn === "number" && isFinite(v.spawn)) ? v.spawn : null,
+                rilis: v.rilis !== false,
+              };
+              if (JSON.stringify(d.detail[nm]) !== JSON.stringify(isi)) {
+                d.detail[nm] = isi; detailBerubah = true;
+              }
+            }
+          }
+          if (baru.pets.length || baru.seeds.length || baru.gears.length || detailBerubah) await simpanKatalog(d);
+          // v3.28: daftar mutasi (buat picker collect mutasi). Simpel: simpan
+          // array string apa adanya, gak perlu tracking "baru".
+          if (Array.isArray(b.muts) && b.muts.length) {
+            const m = bersihkan(b.muts);
+            if (JSON.stringify(d.muts || []) !== JSON.stringify(m)) {
+              d.muts = m; await simpanKatalog(d);
+            }
+          }
+          return json({ ok: true, baru, totalPet: Object.keys(d.pets).length,
+                        totalSeed: Object.keys(d.seeds).length,
+                        totalGear: Object.keys(d.gears).length });
+        }
+
+        if (jalur === "/katalog" && req.method === "GET") {
+          const d = await bacaKatalog();
+          const susun = (jenis) =>
+            Object.entries(d[jenis])
+              .map(([nama, sejak]) => ({
+                nama, sejak, baru: !d.lihat[jenis][nama],
+                // v15-55: rincian berlaku buat pet DAN seed (seed: "harga" =
+                // nilai jual buahnya, "rilis" dari SeedShopEnabled)
+                ...(d.detail[nama] || {}),
+              }))
+              .sort((a, b) => a.nama.localeCompare(b.nama));
+          const pets = susun("pets"), seeds = susun("seeds"), gears = susun("gears");
+          return json({
+            skrg, pets, seeds, gears,
+            muts: (d.muts || []).map((m) => ({ nama: m, tampil: m })),
+            nBaruPet: pets.filter((x) => x.baru).length,
+            nBaruSeed: seeds.filter((x) => x.baru).length,
+            nBaruGear: gears.filter((x) => x.baru).length,
+          });
+        }
+
+        if (jalur === "/katalog-lihat" && req.method === "POST") {
+          const b = await req.json();
+          const d = await bacaKatalog();
+          // tanpa isi = tandai SEMUA udah dilihat
+          const semua = !b.pets && !b.seeds;
+          for (const jenis of ["pets", "seeds"]) {
+            const daftar = semua ? Object.keys(d[jenis]) : bersihkan(b[jenis]);
+            for (const nm of daftar) d.lihat[jenis][nm] = skrg;
+          }
+          await simpanKatalog(d);
+          return json({ ok: true });
+        }
+        return salah("cara gak dikenal buat " + jalur, 405);
+      }
+
+      // ---------- v15-57: EVENT GUILD ----------
+      // Script lapor event yang lagi jalan; CF nyatat kapan nama event
+      // BERUBAH. Panel banding sama yang terakhir dilihat -> kalau beda,
+      // kasih notif "event baru".
+      //   POST /guild-event  -> {akun, nama, tag, sisa, selesai, sumber}
+      //   GET  /guild-event  -> { event, baru }
+      //   POST /guild-lihat  -> tandai udah dilihat
+      if (jalur === "/guild-event" || jalur === "/guild-lihat") {
+        const baca = async () => {
+          const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='guild'").first();
+          let d = { nama: "", tag: "", sisa: 0, selesai: false, sumber: "",
+                    akun: "", mulai: 0, lihat: "" };
+          if (c) { try { const x = JSON.parse(c.data); if (x && typeof x === "object") d = { ...d, ...x }; } catch {} }
+          return d;
+        };
+        const simpan = async (d) => {
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('guild', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(d)).run();
+        };
+
+        if (jalur === "/guild-event" && req.method === "POST") {
+          const b = await req.json();
+          const nama = teks(b.nama, 80);
+          if (!nama) return salah("nama event kosong");
+          const d = await baca();
+          const gantiEvent = (d.nama !== nama);
+          const isi = {
+            nama,
+            tag: teks(b.tag, 60) || "",
+            sisa: angka(b.sisa),
+            selesai: b.selesai === true,
+            sumber: teks(b.sumber, 30) || "",
+            akun: teks(b.akun) || "",
+            // mulai = kapan nama event ini pertama keliat
+            mulai: gantiEvent ? skrg : (d.mulai || skrg),
+            // event ganti -> tanda "udah dilihat" direset
+            lihat: gantiEvent ? "" : (d.lihat || ""),
+          };
+          await simpan(isi);
+          return json({ ok: true, gantiEvent, ...isi });
+        }
+
+        if (jalur === "/guild-event" && req.method === "GET") {
+          const d = await baca();
+          return json({
+            skrg, event: d.nama ? d : null,
+            baru: !!(d.nama && d.lihat !== d.nama),
+          });
+        }
+
+        if (jalur === "/guild-lihat" && req.method === "POST") {
+          const d = await baca();
+          d.lihat = d.nama || "";
+          await simpan(d);
+          return json({ ok: true });
+        }
+        return salah("cara gak dikenal buat " + jalur, 405);
+      }
+
+      // ---------- v15-64: KUNCI API bypass.vip ----------
+      // Dulu ditanyain di SETIAP setup RF -- 20 RF = 20 kali ngetik kunci yang
+      // sama. Sekarang disimpen SEKALI di sini, worker narik sendiri.
+      //
+      // Tetep GAK masuk GitHub: dia ada di D1, bukan di berkas yang di-push.
+      // Aturan lama (jangan hardcode di worker) tetep dipegang -- yang berubah
+      // cuma tempat nyimpennya: dari config per-RF jadi satu tempat terpusat.
+      //   GET /bypass-key       -> { key }         (dipanggil worker)
+      //   GET /bypass-key?samar=1 -> { key: "...abcd", ada: true }  (buat panel)
+      //   PUT /bypass-key       -> { key }
+      if (jalur === "/bypass-key") {
+        if (req.method === "GET") {
+          const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='bypass'").first();
+          let key = "";
+          if (c) { try { key = (JSON.parse(c.data) || {}).key || ""; } catch {} }
+          // panel minta versi SAMAR -- biar kalau layarnya ke-screenshot,
+          // kuncinya gak kebaca utuh. Worker minta yang asli.
+          if (url.searchParams.get("samar")) {
+            return json({
+              ada: key !== "",
+              key: key ? ("\u2022".repeat(Math.max(0, key.length - 4)) + key.slice(-4)) : "",
+              ts: c ? c.ts : 0,
+            });
+          }
+          return json({ key, ts: c ? c.ts : 0 });
+        }
+        if (req.method === "PUT") {
+          const b = await req.json();
+          const key = teks(b.key, 200);
+          if (key === null) return salah("key harus teks");
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('bypass', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify({ key: key.trim() })).run();
+          return json({ ok: true, ada: key.trim() !== "" });
+        }
+        return salah("cara gak dikenal buat /bypass-key", 405);
+      }
+
+      // ---------- KUNCI API blocksolve.site (solve captcha) ----------
+      // Pola SAMA PERSIS kayak /bypass-key: satu tempat, worker narik sendiri,
+      // gak masuk GitHub (ada di D1). Panel dapet versi samar biar aman
+      // di-screenshot.
+      //   GET /solve-key        -> { key }         (worker)
+      //   GET /solve-key?samar=1 -> { key:"...cd2", ada:true }  (panel)
+      //   PUT /solve-key        -> { key }
+      if (jalur === "/solve-key") {
+        if (req.method === "GET") {
+          const c = await db.prepare("SELECT ts, data FROM cfg WHERE scope='solve'").first();
+          let key = "";
+          if (c) { try { key = (JSON.parse(c.data) || {}).key || ""; } catch {} }
+          if (url.searchParams.get("samar")) {
+            return json({
+              ada: key !== "",
+              key: key ? ("\u2022".repeat(Math.max(0, key.length - 4)) + key.slice(-4)) : "",
+              ts: c ? c.ts : 0,
+            });
+          }
+          return json({ key, ts: c ? c.ts : 0 });
+        }
+        if (req.method === "PUT") {
+          const b = await req.json();
+          const key = teks(b.key, 200);
+          if (key === null) return salah("key harus teks");
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('solve', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify({ key: key.trim() })).run();
+          return json({ ok: true, ada: key.trim() !== "" });
+        }
+        return salah("cara gak dikenal buat /solve-key", 405);
+      }
+
+      // ============================================================
+      // v15-75: JALUR /basket/<nama> -- niru bentuk Pantry.
+      // star_farm baca relay lewat pola ini, jadi bentuk balasannya harus
+      // sama persis biar dia gak perlu diubah.
+      //
+      //   zenxprio -> "kirim semua ke sini". Balasannya { nm, t }, dan
+      //               star_farm cuma nganggep sah kalau (skrg - t) < 90.
+      //               ISINYA DIISI OTOMATIS: akun seed yang sheckles-nya
+      //               paling mepet. Jadi farm ngirim ke yang paling butuh,
+      //               tanpa ada yang nyetel manual.
+      //   zenxfull -> daftar akun simpanan yang penuh. Ini tetep manual
+      //               (ditulis akun simpanan itu sendiri).
+      // ============================================================
+      if (jalur.startsWith("/basket/")) {
+        const basket = jalur.slice("/basket/".length);
+
+        // ---- zenxprio: otomatis dari daftar sheckles mepet ----
+        if (basket === "zenxprio" && req.method === "GET") {
+          // ambang dari setelan seed (scope 'seed'), sama kayak yang dipakai panel
+          let amb = 0, autoOn = true, minMail = 0;
+          {
+            const c = await db.prepare("SELECT data FROM cfg WHERE scope='seed'").first();
+            if (c) { try {
+              const d = JSON.parse(c.data) || {};
+              amb = Number(d.ambangSheck) || 0;
+              // saklar: kalau autoSuplai disetel false, fitur ini mati
+              autoOn = (d.autoSuplai !== false);
+              // v15-77: batas isi mailbox. Dipakai kalau terimaGift MATI --
+              // buahnya numpuk di mailbox, jadi nilai di tas tetep 0 dan
+              // patokan nilai gak kepakai. 0 = matiin aturan ini.
+              minMail = Number(d.minMail) || 0;
+            } catch {} }
+          }
+          if (!amb || !autoOn) return json({ nm: "", t: skrg });
+
+          // akun SEED yang di bawah ambang, paling sedikit duluan.
+          // Cuma yang MASIH LAPOR (<10 menit) -- ngirim ke akun mati itu
+          // percuma, barangnya nyangkut di mailbox.
+          // v15-76: akun yang barangnya UDAH DATENG dilewatin -- kalau nggak,
+          // farm bakal ngirim terus ke akun yang sama sampai buahnya kejual
+          // (dan itu bisa lama, karena nunggu pengali nyampe ambang).
+          // Patokannya: nilai buah yang nunggu jual >= ambang. Sekali kirim
+          // 100 buah nilainya jauh di atas itu, jadi sekali kirim ya cukup.
+          const r = await db.prepare(
+            `SELECT akun.nama, akun.sheck, akun.tunda FROM akun
+               LEFT JOIN tim ON tim.nama = akun.tim
+             WHERE akun.sheck < ?1
+               AND akun.ts > ?2
+               AND COALESCE(akun.tunda,0) < ?1
+               AND (?3 = 0 OR COALESCE(akun.mail,0) < ?3)
+               AND (UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                    OR (COALESCE(tim.sc,'') = '' AND COALESCE(akun.sc,'') = 'seed'))
+             ORDER BY akun.sheck ASC LIMIT 1`
+          ).bind(amb, skrg - 600, minMail).first();
+
+          // t = skrg -> selalu segar, jadi star_farm nganggepnya sah
+          return json({ nm: r ? r.nama : "", t: skrg,
+                        sisa: r ? r.sheck : null, ambang: amb });
+        }
+
+        // ---- v15-80: /basket/relay -- jalur RELAY punya star_farm ----
+        // Bentuknya beda dari zenxprio, dan star_farm merlakuinnya beda juga:
+        //   zenxprio -> { nm, t }        "kirim SEMUA ke sini" (nimpa segalanya)
+        //   relay    -> { nm, shk, t }   "akun ini punya shk sheckles"
+        //                                farm kirim kalau shk < gfSheckMax,
+        //                                kalau nggak -> rute ke simpanan
+        //
+        // Jalur relay yang lebih pas buat auto-suplai: dia bawa ANGKA, jadi
+        // ambang keputusannya ada di sisi farm (gfSheckMax) dan tetep kepakai.
+        // zenxprio itu palu godam -- semua buah dialihin, pet & simpanan
+        // dilewat. Itu cocok buat "kuras ke sini sekarang", bukan buat
+        // pengisian rutin.
+        //
+        // Catatan: star_farm nganggep basi kalau (skrg - t) > 300.
+        if (basket === "relay" && req.method === "GET") {
+          let amb = 0, autoOn = true, minMail = 0;
+          {
+            const c = await db.prepare("SELECT data FROM cfg WHERE scope='seed'").first();
+            if (c) { try {
+              const d = JSON.parse(c.data) || {};
+              amb = Number(d.ambangSheck) || 0;
+              autoOn = (d.autoSuplai !== false);
+              minMail = Number(d.minMail) || 0;
+            } catch {} }
+          }
+          // gak ada ambang / fitur dimatiin -> laporin saldo BESAR, biar farm
+          // nganggep "gak ada yang butuh" dan jalan normal (simpanan/tahan).
+          const KOSONG = { nm: "", shk: 999999999999, t: skrg };
+          if (!amb || !autoOn) return json(KOSONG);
+
+          const r = await db.prepare(
+            `SELECT akun.nama, akun.sheck FROM akun
+               LEFT JOIN tim ON tim.nama = akun.tim
+             WHERE akun.sheck < ?1
+               AND akun.ts > ?2
+               AND COALESCE(akun.tunda,0) < ?1
+               AND (?3 = 0 OR COALESCE(akun.mail,0) < ?3)
+               AND (UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                    OR (COALESCE(tim.sc,'') = '' AND COALESCE(akun.sc,'') = 'seed'))
+             ORDER BY akun.sheck ASC LIMIT 1`
+          ).bind(amb, skrg - 600, minMail).first();
+
+          if (!r) return json(KOSONG);
+          return json({ nm: r.nama, shk: Number(r.sheck) || 0, t: skrg });
+        }
+
+        // ---- v15-83: /basket/zenxantrean -- DAFTAR akun yang nunggu suplai ----
+        // Bedanya sama /basket/relay: relay balikin SATU akun (yang paling
+        // butuh) buat dikirimin sekarang. Ini balikin SELURUH antrean, buat
+        // ditampilin di GUI star_farm.
+        //
+        // Kenapa perlu ditampilin di sisi farm juga: sekarang satu-satunya cara
+        // tau sambungannya jalan itu ngeliat panel. Kalau farm nampilin daftar
+        // yang SAMA, dua sisi bisa saling dicek -- kalau panel bilang 10 tapi
+        // farm bilang 0, sambungannya yang bermasalah, bukan datanya.
+        //
+        // Jalurnya sengaja ditaruh di bawah /basket/ biar star_farm bisa
+        // nurunin alamatnya pakai gsub yang sama kayak relay & zenxprio.
+        if (basket === "zenxantrean" && req.method === "GET") {
+          let amb = 0, autoOn = true, minMail = 0;
+          {
+            const c = await db.prepare("SELECT data FROM cfg WHERE scope='seed'").first();
+            if (c) { try {
+              const d = JSON.parse(c.data) || {};
+              amb = Number(d.ambangSheck) || 0;
+              autoOn = (d.autoSuplai !== false);
+              minMail = Number(d.minMail) || 0;
+            } catch {} }
+          }
+          if (!amb) return json({ aktif: false, sebab: "ambang belum diatur", antre: [] });
+          if (!autoOn) return json({ aktif: false, sebab: "auto suplai dimatiin", antre: [] });
+
+          // Aturan sama persis kayak /basket/relay -- SENGAJA disamain, biar
+          // yang ditampilin di GUI itu yang beneran bakal dikirimin. Kalau
+          // aturannya beda, daftarnya jadi bohong.
+          const r = await db.prepare(
+            `SELECT akun.nama, akun.sheck, akun.tunda, akun.mail, akun.tim, akun.ts
+               FROM akun LEFT JOIN tim ON tim.nama = akun.tim
+             WHERE akun.sheck < ?1
+               AND akun.ts > ?2
+               AND COALESCE(akun.tunda,0) < ?1
+               AND (?3 = 0 OR COALESCE(akun.mail,0) < ?3)
+               AND (UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                    OR (COALESCE(tim.sc,'') = '' AND COALESCE(akun.sc,'') = 'seed'))
+             ORDER BY akun.sheck ASC LIMIT 40`
+          ).bind(amb, skrg - 600, minMail).all();
+
+          const antre = (r.results || []).map(x => ({
+            nm: x.nama, shk: Number(x.sheck) || 0,
+            tunda: Number(x.tunda) || 0, mail: Number(x.mail) || 0,
+            tim: x.tim || "", umur: skrg - (Number(x.ts) || 0),
+          }));
+
+          // yang "tertunda" ikut dilaporin TERPISAH -- mereka bukan antrean
+          // (barangnya udah dateng), tapi berguna buat tau suplai sebelumnya
+          // nyampe apa nggak.
+          const rt = await db.prepare(
+            `SELECT COUNT(*) AS n FROM akun LEFT JOIN tim ON tim.nama = akun.tim
+             WHERE akun.sheck < ?1 AND akun.ts > ?2
+               AND (COALESCE(akun.tunda,0) >= ?1
+                    OR (?3 > 0 AND COALESCE(akun.mail,0) >= ?3))
+               AND (UPPER(COALESCE(tim.sc,'')) LIKE '%SEED%'
+                    OR (COALESCE(tim.sc,'') = '' AND COALESCE(akun.sc,'') = 'seed'))`
+          ).bind(amb, skrg - 600, minMail).first();
+
+          return json({
+            aktif: true, ambang: amb, minMail,
+            antre, jml: antre.length,
+            tertunda: rt ? (Number(rt.n) || 0) : 0,
+            t: skrg,
+          });
+        }
+
+        // ---- basket biasa: simpan/ambil apa adanya (kayak Pantry) ----
+        const scope = "basket:" + basket;
+        if (req.method === "GET") {
+          const c = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind(scope).first();
+          if (!c) return json({});
+          try { return json(JSON.parse(c.data) || {}); } catch { return json({}); }
+        }
+        if (req.method === "POST" || req.method === "PUT") {
+          const b = await req.json().catch(() => ({}));
+          let isi = b;
+          if (req.method === "PUT") {
+            // PUT = GABUNG per-kunci (Pantry begitu), bukan timpa
+            const c = await db.prepare("SELECT data FROM cfg WHERE scope=?1").bind(scope).first();
+            let lama = {};
+            if (c) { try { lama = JSON.parse(c.data) || {}; } catch {} }
+            isi = { ...lama, ...b };
+          }
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES (?1, ?2, ?3)
+             ON CONFLICT(scope) DO UPDATE SET ts=?2, data=?3`
+          ).bind(scope, skrg, JSON.stringify(isi)).run();
+          return json(isi);
+        }
+        return salah("cara gak dikenal buat " + jalur, 405);
+      }
+
+      // v8.77: RESET gift buat akun (tombol restart panel). Clear dari giftdone
+      // (target balik ke giftPkList) + set giftReset di scope 'seed' (star_seed
+      // abaikan riwayat lama -> gift fresh). Body: {akun}.
+      if (jalur === "/gift-reset" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        const pk = akun.toLowerCase();
+        // 1. hapus dari giftdone
+        try {
+          const cg = await db.prepare("SELECT data FROM cfg WHERE scope='giftdone'").first();
+          let done = {};
+          if (cg) { try { done = JSON.parse(cg.data) || {}; } catch {} }
+          delete done[pk];
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('giftdone', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(done)).run();
+        } catch (e) {}
+        // 2. set giftReset di scope 'seed' (gabung ke config seed global)
+        try {
+          const cs = await db.prepare("SELECT data FROM cfg WHERE scope='seed'").first();
+          let sd = {};
+          if (cs) { try { sd = JSON.parse(cs.data) || {}; } catch {} }
+          sd.giftReset = sd.giftReset || {};
+          sd.giftReset[pk] = skrg;
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('seed', ?1, ?2)
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+          ).bind(skrg, JSON.stringify(sd)).run();
+        } catch (e) {}
+        return json({ ok: true, akun });
+      }
+
+      return salah("jalur gak dikenal: " + jalur, 404);
+    } catch (e) {
+      return salah("server: " + e.message, 500);
+    }
+  },
+};
