@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.383-cf"
+local VERSION = "9.386-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8183,9 +8183,17 @@ local function run(cfg)
                                 if hasTarget and hasTarget ~= "" and hasTarget ~= "(no file)"
                                    and hasTarget ~= "(parse GAGAL)" and online == "false" then
                                     _G.__hactOffline = _G.__hactOffline or {}
-                                    _G.__hactOffline[nama] = (_G.__hactOffline[nama] or 0) + 1
                                     local pkgNama2 = nil
                                     for p2, ak2 in pairs(mapAkun) do if ak2 == nama then pkgNama2 = p2; break end end
+                                    -- v9.386: GRACE loading pengisi hactoto (samain sama grace denyut).
+                                    -- Baru di-tembak <180s (msh loading ke server target) -> online=false
+                                    -- itu WAJAR, JANGAN itung offline -> gak rejoin pengisi yg msh loading.
+                                    if pkgNama2 and KICK_DIURUS["tembak_ts:" .. pkgNama2]
+                                       and (os.time() - KICK_DIURUS["tembak_ts:" .. pkgNama2]) < 180 then
+                                        info(("[hactoto] %s online=false TAPI baru di-tembak %ds lalu -> GRACE (msh loading ke target)")
+                                            :format(nama, os.time() - KICK_DIURUS["tembak_ts:" .. pkgNama2]))
+                                    else
+                                    _G.__hactOffline[nama] = (_G.__hactOffline[nama] or 0) + 1
                                     local hostTembak = (_G.__hactPsNama and pkgNama2 and _G.__hactPsNama[pkgNama2]) or "-"
                                     local psSendiri = (mapPsNama and pkgNama2 and mapPsNama[pkgNama2]) or "-"
                                     info(("[hactoto] %s online=false(%d/6) | server di-tembak=%s | PS sendiri=%s | player di server=%s"):format(
@@ -8205,6 +8213,7 @@ local function run(cfg)
                                             info(("[hactoto] %s online=false 2x -> REJOIN"):format(nama))
                                         end
                                     end
+                                    end   -- v9.386: tutup grace-else hactoto
                                 elseif online == "true" and _G.__hactOffline then
                                     _G.__hactOffline[nama] = 0   -- online lagi -> reset counter
                                     -- target ketemu -> clear skip kalau ada
@@ -8308,7 +8317,7 @@ local function run(cfg)
                             -- sekali. Sekarang cek cacheHidup: mati = buka.
                             if cacheHidup[pkg] then
                                 diGame = diGame + 1   -- proses hidup, denyut nyusul
-                            elseif KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 then
+                            elseif KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 180 then
                                 -- v9.296: baru di-CLOSE/tembak (grace) -> JANGAN buka walau
                                 -- belum ada file denyut. FORCE dari panel yg buka. Cegah
                                 -- double-open pas boot (denyut-rejoin buka duluan, terus
@@ -8331,12 +8340,12 @@ local function run(cfg)
                             -- lewat jalur lain (line ~8276: "belum ada denyut TAPI baru
                             -- di-close/tembak -> GRACE (tunggu FORCE)" -- itu proteksi HANYA buat
                             -- kasus proses baru dibuka & BELUM PERNAH nulis denyut sama sekali).
-                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 300 then
+                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 180 then
                                 -- v9.383: RE-ADD grace loading buat cabang DENYUT BASI. v9.372 buang
                                 -- grace di sini -> client baru dibuka/tembak (<300s) yg file denyut
                                 -- LAMA-nya masih basi -> langsung ke-flag MATI + rejoin walau MASIH
                                 -- LOADING -> LOOP (13 detik abis dibuka udah di-rejoin lagi). Kasih
-                                -- grace 300s dari tembak terakhir: masih loading, tunggu denyut fresh.
+                                -- grace 180s (3 menit) dari tembak terakhir: masih loading, tunggu denyut fresh.
                                 -- (Client yg BENERAN mati -- udah lama jalan lalu putus -- tembak_ts-nya
                                 -- lama >300s, jadi tetep ke-rejoin cepet. Grace CUMA buat yg baru dibuka.)
                                 diGame = diGame + 1
@@ -10450,7 +10459,13 @@ local function run(cfg)
                 -- di tempat lain). Ini sebelumnya nyegah reset tembak_ts abis hactoto tembak
                 -- individual -- tapi karena "denyut MATI -> block rejoin" grace-nya udah dimatiin
                 -- juga, proteksi ini udah gak ngefek lagi ke jalur manapun. Reset semua langsung.
-                do
+                -- v9.384: grace-refresh CUMA kalau ADA client yg beneran dibuka (h.ok > 0).
+                -- Bug user: dulu refresh TANPA SYARAT -> tiap FORCE periodik nemu "semua udah
+                -- jalan" (h.ok=0), grace tetep di-refresh -> client NYANGKUT (denyut basi terus,
+                -- gak pernah dibuka ulang) grace-nya keterusan -> gak pernah di-rejoin walau
+                -- udah basi 5+ menit. Sekarang: 0 dibuka = gak refresh -> client nyangkut kelewat
+                -- grace (300s dari open terakhir yg ASLI) -> di-rejoin.
+                if h.ok > 0 then
                     local tSelesai = os.time()
                     for _, pk in ipairs(split(cfg.pkgs or "")) do
                         KICK_DIURUS["tembak_ts:" .. pk] = tSelesai
