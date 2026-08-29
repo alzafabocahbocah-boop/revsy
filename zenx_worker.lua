@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.376-cf"
+local VERSION = "9.377-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7968,6 +7968,45 @@ local function run(cfg)
             -- v9.220: TAPI kalau lagi ADA STOCK (rotasi JALAN, ROTASI_STATE != idle) ->
             -- SKIP denyut. User: pas ada stock, borong DIUTAMAIN, jangan ngurus denyut.
             -- (tim 1 juga lagi ditutup pas rotasi, jadi emang gak perlu diurus.)
+            -- v9.377: LAPOR STAT + getps DIPISAH dari cek denyut. Cek denyut skrg
+            -- 180s (3 menit) -- kalau lapor panel (up kg / hact) + getps ikut nunut di
+            -- situ, panel telat 3 menit & ps_link basi. Timer sendiri 30s biar reporting
+            -- tetep cepet walau rejoin-cek santai. (rejoin/sheckles tetep di blok denyut.)
+            if (os.time() - (KICK_DIURUS["_laporTop"] or 0)) >= 30 then
+                KICK_DIURUS["_laporTop"] = os.time()
+                -- up kg: baca zenx_upkgstat_*.json -> POST panel
+                do
+                    local rawU = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_upkgstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    local items = {}
+                    for line in rawU:gmatch("[^\n]+") do
+                        local nama, js = line:match("zenx_upkgstat_(.-)%.json|(.+)")
+                        if nama and js and #js > 5 then
+                            items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
+                        end
+                    end
+                    if #items > 0 then
+                        pcall(function() api_post(cfg, "/upkgstat-batch", '{"list":[' .. table.concat(items, ",") .. ']}') end)
+                    end
+                end
+                -- hact: report-only (logika hactoto-online tetap di blok denyut)
+                do
+                    local rawH = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_hactstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    local items = {}
+                    for line in rawH:gmatch("[^\n]+") do
+                        local nama, js = line:match("zenx_hactstat_(.-)%.json|(.+)")
+                        if nama and js and #js > 5 then
+                            items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
+                        end
+                    end
+                    if #items > 0 then
+                        pcall(function() api_post(cfg, "/hactstat-batch", '{"list":[' .. table.concat(items, ",") .. ']}') end)
+                    end
+                end
+                -- getps periodik (ps_link target cepet update pas pindah server)
+                if MODE_JALAN then
+                    pcall(refresh_ps); pcall(refresh_ps_getps)
+                end
+            end
             -- v9.376: interval CEK denyut 30s -> 180s (3 menit). Ambang mati tetap
             -- 2 menit (120s). Konsekuensi: begitu denyut basi >2 menit, rejoin baru
             -- kelar di cek berikutnya (worst case ~3 menit lagi). User minta cek 3 menit.
@@ -8180,29 +8219,9 @@ local function run(cfg)
                             pcall(function() api_post(cfg, "/hactstat-batch", body) end)
                         end
                     end
-                    -- v9.324: baca upkgstat (bahan pet + per-jenis 3.8kg udah/belum) -> POST buat panel up kg
-                    do
-                        local rawU = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_upkgstat_*.json; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
-                        local items = {}
-                        for line in rawU:gmatch("[^\n]+") do
-                            local nama, js = line:match("zenx_upkgstat_(.-)%.json|(.+)")
-                            if nama and js and #js > 5 then
-                                items[#items+1] = '{"akun":"' .. nama .. '","stat":' .. js .. '}'
-                            end
-                        end
-                        if #items > 0 then
-                            local body = '{"list":[' .. table.concat(items, ",") .. ']}'
-                            pcall(function() api_post(cfg, "/upkgstat-batch", body) end)
-                        end
-                    end
-                    -- v9.342: getps PERIODIK (tiap 30s) di loop HIDUP -- biar ps_link target CEPET
-                    -- update pas pindah server. Dulu getps cuma di rejoin/FORCE (+ blok if-false mati)
-                    -- -> pas target pindah tanpa rejoin, ps_link basi -> pengisi hactoto nyasar server lama.
-                    _G.__lastGetps = _G.__lastGetps or 0
-                    if (os.time() - _G.__lastGetps) >= 30 and MODE_JALAN then
-                        pcall(refresh_ps); pcall(refresh_ps_getps)
-                        _G.__lastGetps = os.time()
-                    end
+                    -- v9.377: upkgstat DIPINDAH ke timer lapor 30s (di atas, sebelum blok denyut).
+                    -- v9.377: getps PERIODIK DIPINDAH ke timer lapor 30s (di atas). Dulu kejebak
+                    -- di blok denyut -> pas cek denyut 180s, ps_link basi sampe 3 menit.
                     -- v9.336: refresh_hactoto di loop HIDUP (denyut). Dulu (v9.334) ke-taro di
                     -- blok `if false then` yg DIMATIIN -> gak pernah jalan. Sekarang tiap siklus denyut.
                     pcall(refresh_hactoto)
