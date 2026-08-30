@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.402-cf"
+local VERSION = "9.403-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8575,6 +8575,9 @@ local function run(cfg)
                         pcall(function() grid_satu(cfg, pkg) end)
                         open_one(cfg, pkg, mapLink and mapLink[pkg] or nil, "grafis-out")
                         TERAKHIR_BUKA[pkg] = os.time()   -- v9.380: FIX dobel-buka. Tanpa ini, FORCE
+                        KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- v9.403: GRACE loading. Rejoin 1-1
+                        -- dulu GAK set tembak_ts -> client baru rejoin (denyut msh basi) langsung ke-flag
+                        -- MATI lagi di cek berikutnya -> rejoin loop. Sekarang di-grace (dianggap loading).
                         -- sticky yg re-dispatch abis denyut rejoin GAK TAU client baru dibuka denyut
                         -- (baruDisentuh false + denyut msh basi) -> buka ULANG. Jalur grafis udah set ini.
                         KICK_DIURUS["denyut_rejoin:" .. pkg] = os.time()   -- v9.382: BLOCK FORCE. Client
@@ -8589,6 +8592,11 @@ local function run(cfg)
                             end
                         end
                     end
+                    -- v9.403: RESET timer cek-denyut SETELAH rejoin 1-1 SELESAI. Rejoin makan lama
+                    -- (30s/client), kalau timer ngitung dari cek SEBELUMNYA -> cek berikutnya nyala
+                    -- TEPAT abis rejoin (client baru belum sempat loading+nulis denyut) -> ke-flag MATI
+                    -- lagi -> rejoin loop percuma. Reset -> cek berikutnya dihitung 3 menit DARI SINI.
+                    KICK_DIURUS["_denyutTop"] = os.time()
                     end
                     end
                     end
