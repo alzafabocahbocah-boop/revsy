@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.393-cf"
+local VERSION = "9.394-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13005,7 +13005,21 @@ if PERINTAH == "getps" then
     local seen = {}
     local akunPkg = {}   -- v9.174: akun -> client, buat baca cookie kalau backend kosong
     for _, pkg in ipairs(split(cfg.pkgs or "")) do
+        -- v9.394: AUTO-DETECT akun. Dulu cuma dari prefs.xml username -> client yg belum
+        -- login penuh (prefs username kosong) KE-SKIP -> akun gak kedetect (cuma sebagian).
+        -- Sekarang: prefs DULU, kalau kosong -> baca username DARI COOKIE (uname_dari_cookie)
+        -- -> deteksi SEMUA client yg punya cookie (udah login), gak peduli prefs keisi nggak.
         local u = baca_username(pkg)
+        if (not u or u == "" or u == "?") then
+            local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
+            local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
+                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+            local rawC = hC and hC:read("*all") or ""
+            if hC then hC:close() end
+            local ckC = cookie_terpanjang(rawC or "")
+            if ckC ~= "" and ckC:find("_|WARNING") then u = uname_dari_cookie(ckC) end
+        end
         if u and u ~= "" and u ~= "?" and not seen[u] then
             seen[u] = true
             akunList[#akunList+1] = u
