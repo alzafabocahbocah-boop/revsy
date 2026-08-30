@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.388-cf"
+local VERSION = "9.389-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2321,13 +2321,14 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
-    elseif u:find("TEMBAK") then
+    if u:find("STANDBY") or u:find("STOP") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
+    elseif u:find("TEMBAK") or u:find("CLOSE") then
         -- v9.388 FIX STARVASI: TEMBAK dulu nyela TIAP 2s TANPA cek ts -> kalau TEMBAK
         -- nempel (sticky) di DB, preempt loop TERUS-MENERUS -> rejoin denyut (client
         -- MATI) GAK PERNAH kebagian jalan (client mati berjam-jam gak ke-rejoin, selalu
         -- keburu di-STOP sama TEMBAK yg sama). Sekarang cuma nyela kalau TEMBAK-nya BEDA
         -- dari yg terakhir diproses (isi+ts) -> sticky yg sama gak re-preempt.
+        -- v9.389: CLOSE juga -- kasus identik (CLOSE sticky preempt tiap 2s -> starvasi).
         local tsR = ambil_num(r, "ts") or 0
         local sig = isi .. "|" .. tostring(tsR)
         if sig ~= (TEMBAK_SIG_PROSES or "") then nyela = true; TEMBAK_SIG_PROSES = sig end
