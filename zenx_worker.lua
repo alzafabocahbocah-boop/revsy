@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.403-cf"
+local VERSION = "9.405-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8205,20 +8205,23 @@ local function run(cfg)
                             -- v9.254: extract sheckles (ts;sheck;sheckW). sheck>0 aja.
                             -- v9.373: format egg3 (ts;gemEgg;chrEgg;nightEgg;egg3) -> pisah 3 jenis.
                             -- Tetep support egg2 lama (backward-compat, night default 0).
-                            if isi:match("^%d+;%d+;%d+;%d+;egg3$") then
+                            -- v9.404: extract SHECKLES currency (;S<n>) -- dipisah dari egg/kg
+                            -- (script append ";S<sheckles>" di denyut). Panel tampil di UP KG/PANEN.
+                            local skReal = isi:match(";S(%d+)")
+                            if isi:match("^%d+;%d+;%d+;%d+;egg3") then
                                 local gem, chr, night = isi:match("^%d+;(%d+);(%d+);(%d+);egg3")
-                                if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(night) or 0) > 0 then
-                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = gem or "0", sheckW = "egg", chr = chr or "0", night = night or "0" }
+                                if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(night) or 0) > 0 or (tonumber(skReal) or 0) > 0 then
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = gem or "0", sheckW = "egg", chr = chr or "0", night = night or "0", sheckReal = skReal }
                                 end
-                            elseif isi:match("^%d+;%d+;%d+;egg2$") then
+                            elseif isi:match("^%d+;%d+;%d+;egg2") then
                                 local gem, chr = isi:match("^%d+;(%d+);(%d+);egg2")
-                                if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 then
-                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = gem or "0", sheckW = "egg", chr = chr or "0" }
+                                if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(skReal) or 0) > 0 then
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = gem or "0", sheckW = "egg", chr = chr or "0", sheckReal = skReal }
                                 end
                             else
                                 local sk, sw = isi:match("^%d+;(%d+);(%a*)")
-                                if sk and ((tonumber(sk) or 0) > 0 or sw == "kg") then   -- kg = report walau 0 (progress up_kg)
-                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "" }
+                                if sk and ((tonumber(sk) or 0) > 0 or sw == "kg" or (tonumber(skReal) or 0) > 0) then   -- kg = report walau 0 (progress up_kg)
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "", sheckReal = skReal }
                                 end
                                 -- v9.325: fps (field ke-4, "ts;udah;kg;fps") -> deteksi PUTIH (fps<=5)
                                 local fpsV = isi:match("^%d+;%d+;%a*;(%d+)")
@@ -8238,7 +8241,8 @@ local function run(cfg)
                             body = body .. '{"akun":"' .. d.nama .. '","sheck":' .. d.sheck ..
                                    ',"sheckW":"' .. d.sheckW .. '"' ..
                                    (d.chr and (',"chr":' .. d.chr) or '') ..
-                                   (d.night and (',"night":' .. d.night) or '') .. '}'
+                                   (d.night and (',"night":' .. d.night) or '') ..
+                                   (d.sheckReal and (',"sheckReal":' .. d.sheckReal) or '') .. '}'
                             if i < #sheckDenyut then body = body .. "," end
                         end
                         body = body .. "]}"
@@ -9801,9 +9805,17 @@ local function run(cfg)
                             -- KECUALI HACT OTO (di hactoto pengisi EMANG harus pindah ke server target).
                             -- Alasan: am start GAK bisa ganti server client in-game (batasan Roblox) ->
                             -- tembak-nya SIA-SIA + ganggu client sehat. Client mati/loading TETEP ditembak.
-                            if (not isHactOto) and u and DENYUT_UMUR[u] and DENYUT_UMUR[u] <= 120 then
+                            -- v9.405: JUGA skip client yg BARU dibuka/rejoin (<180s) = lagi LOADING. Bug user:
+                            -- abis RESTART+rejoin, denyut masih OLD (belum sempat nulis) -> skip liat "gak sehat"
+                            -- -> tembak SEMUA (0 skip) -> ganggu client yg baru masuk. Baru-dibuka = jangan ditembak.
+                            local sehat = u and DENYUT_UMUR[u] and DENYUT_UMUR[u] <= 120
+                            local baruBuka = (TERAKHIR_BUKA[pkg] and (os.time() - TERAKHIR_BUKA[pkg]) < 180)
+                                or (KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 180)
+                                or (KICK_DIURUS["denyut_rejoin:" .. pkg] and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < 180)
+                            if (not isHactOto) and (sehat or baruBuka) then
                                 nSkip = nSkip + 1
-                                info(("[tembak] %s udah sehat in-game (denyut %ss) -> SKIP (am start gak bisa ganti server in-game)"):format(u, DENYUT_UMUR[u]))
+                                info(("[tembak] %s -> SKIP (%s)"):format(u or pkg,
+                                    sehat and ("sehat, denyut "..DENYUT_UMUR[u].."s") or "baru dibuka/rejoin (lagi loading)"))
                             else
                                 KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace (baru ditembak)
                                 open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC
