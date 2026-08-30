@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.399-cf"
+local VERSION = "9.401-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1152,6 +1152,14 @@ local function split(s,sep)
 end
 
 local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+-- v9.401: jeda per-client 60s buat device BANYAK client (>=8). Biar RF gak overload /
+-- kena rate-limit pas buka/rejoin banyak client sekaligus. <8 client -> jeda normal (base).
+function jeda_client(cfg, base)
+    local n = 0
+    for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
+    if n >= 8 then return 60 end
+    return base
+end
 
 -- ============================================================
 -- v4.78: BYPASS KEY DELTA (api.bypass.vip)
@@ -5607,7 +5615,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 -- 1 client, BUKAN barengan). Biar RF gak keteteran + tiap client
                 -- dapet jatah resource pas masuk. Deteksi di-game via denyut (kalau
                 -- 2 menit gak denyut -> rejoin), jadi gak perlu tembak barengan.
-                local jedaStagger = lisensiAda and 30 or (cfg.stagger_sec or 0)
+                local jedaStagger = jeda_client(cfg, lisensiAda and 30 or (cfg.stagger_sec or 0))
                 if jedaStagger > 0 then
                     for _ = 1, jedaStagger do
                         if cek_batal and cek_batal() then break end
@@ -6077,6 +6085,39 @@ end
 -- BARU login (app roblox jalan) DB Cookies-nya ke-LOCK / cookie masih di file -wal (belum
 -- commit) -> SELECT langsung suka KOSONG -> client gak kedetect getps. Copy dulu = gak
 -- kena lock + WAL keikut (cookie terbaru kebaca). Return cookie terpanjang / "".
+-- v9.400 FIX: cookie_terpanjang + uname_dari_cookie didefinisi DI SINI (sebelum
+-- baca_ck_robust + blok getps yg jalan di MAIN CHUNK ~line 13xxx). Definisi asli ada
+-- di bawah (~15900) TAPI itu SETELAH getps -> pas getps jalan fungsi masih NIL -> CRASH
+-- "attempt to call nil (cookie_terpanjang)". Taro di sini bikin available lebih awal.
+-- (Definisi bawah biarin -- redefinisi identik, harmless.)
+function cookie_terpanjang(raw)
+    if not raw or raw == "" then return "" end
+    local best = ""
+    for baris in (raw .. "\n"):gmatch("(.-)\n") do
+        baris = baris:gsub("%s+$", "")
+        if baris:find("_|WARNING") and #baris > #best then best = baris end
+    end
+    if best == "" then
+        for baris in (raw .. "\n"):gmatch("(.-)\n") do
+            baris = baris:gsub("%s+$", "")
+            if #baris > #best then best = baris end
+        end
+    end
+    return best
+end
+function uname_dari_cookie(ck)
+    if not ck then return nil end
+    local mid = ck:match("|_([A-Za-z0-9+/=_%-]+)%.")
+    if not mid then return nil end
+    mid = mid:gsub("-", "+"):gsub("_", "/")
+    local pad = #mid % 4
+    if pad > 0 then mid = mid .. string.rep("=", 4 - pad) end
+    local h = io.popen("printf %s " .. shq(mid) .. " | base64 -d 2>/dev/null")
+    local raw = h and h:read("*all") or ""
+    if h then h:close() end
+    return raw:match("uname..([a-zA-Z0-9_]+)")
+end
+
 function baca_ck_robust(pkg)
     local d = "/data/data/" .. pkg .. "/app_webview/Default"
     local t = "/data/local/tmp/zenxck"
@@ -8514,7 +8555,7 @@ local function run(cfg)
                         local tnowBuka = os.time()
                         for _, pkg in ipairs(perluTembak) do KICK_DIURUS["tembak_ts:" .. pkg] = tnowBuka end
                     else
-                    info(("[antrian] %d client OUT -> rejoin (1-1 tiap 30s)"):format(#perluTembak))
+                    info(("[antrian] %d client OUT -> rejoin (1-1 tiap %ds)"):format(#perluTembak, jeda_client(cfg, 30)))
                     for idx, pkg in ipairs(perluTembak) do
                         if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                         pcall(function() grid_satu(cfg, pkg) end)
@@ -8528,7 +8569,7 @@ local function run(cfg)
                         -- walau client belum keliatan jalan (msh loading abis denyut buka).
                         pcall(function() jaga_depan(cfg, mapLink) end)
                         if idx < #perluTembak then
-                            for _ = 1, 30 do
+                            for _ = 1, jeda_client(cfg, 30) do
                                 if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                                 os.execute("sleep 1")
                             end
