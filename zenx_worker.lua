@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.395-cf"
+local VERSION = "9.396-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9708,21 +9708,34 @@ local function run(cfg)
                     end
                     if #pkgsT > 0 then
                         refresh_ps(); pcall(refresh_ps_getps)   -- server baru ke-refresh dulu
-                        warn(("TEMBAK dari panel -> tembak ulang %d client ke server baru (TANPA close)"):format(#pkgsT))
+                        local isHactOto = (cfg.script_label or ""):upper() == "HACT OTO"
+                        warn(("TEMBAK dari panel -> %d client (skip yg udah sehat in-game kecuali HACT OTO)"):format(#pkgsT))
+                        local nTembak, nSkip = 0, 0
                         for i, pkg in ipairs(pkgsT) do
-                            KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace (baru ditembak)
-                            open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC
-                            -- v9.289: 1x per client + jeda 30s antar client (user minta
-                            -- 1x cukup). Arceus = 30; lain = stagger_sec.
-                            if i < #pkgsT then
-                                local jedaT = (cfg.executor == "arceus") and 30 or (cfg.stagger_sec or 8)
-                                for _ = 1, jedaT do
-                                    if ada_stop() then break end
-                                    os.execute("sleep 1")
+                            local u = (mapAkun or {})[pkg]
+                            -- v9.396: SKIP tembak client yg UDAH sehat in-game (denyut fresh <=120s),
+                            -- KECUALI HACT OTO (di hactoto pengisi EMANG harus pindah ke server target).
+                            -- Alasan: am start GAK bisa ganti server client in-game (batasan Roblox) ->
+                            -- tembak-nya SIA-SIA + ganggu client sehat. Client mati/loading TETEP ditembak.
+                            if (not isHactOto) and u and DENYUT_UMUR[u] and DENYUT_UMUR[u] <= 120 then
+                                nSkip = nSkip + 1
+                                info(("[tembak] %s udah sehat in-game (denyut %ss) -> SKIP (am start gak bisa ganti server in-game)"):format(u, DENYUT_UMUR[u]))
+                            else
+                                KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace (baru ditembak)
+                                open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC
+                                TERAKHIR_BUKA[pkg] = os.time()
+                                nTembak = nTembak + 1
+                                -- v9.289: 1x per client + jeda 30s antar client. Arceus = 30; lain = stagger_sec.
+                                if i < #pkgsT then
+                                    local jedaT = (cfg.executor == "arceus") and 30 or (cfg.stagger_sec or 8)
+                                    for _ = 1, jedaT do
+                                        if ada_stop() then break end
+                                        os.execute("sleep 1")
+                                    end
                                 end
                             end
                         end
-                        ok(("TEMBAK: %d client ditembak ke server baru (langsung, tanpa close)"):format(#pkgsT))
+                        ok(("TEMBAK: %d ditembak, %d skip (udah sehat in-game)"):format(nTembak, nSkip))
                         notify("ZenX "..cfg.tim, "TEMBAK -> "..#pkgsT.." client ke server baru")
                         lastOpen = os.time()
                     else
