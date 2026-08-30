@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.406-cf"
+local VERSION = "9.409-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2331,15 +2331,26 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local nyela = false
     if u:find("STANDBY") or u:find("STOP") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
     elseif u:find("TEMBAK") or u:find("CLOSE") then
-        -- v9.388 FIX STARVASI: TEMBAK dulu nyela TIAP 2s TANPA cek ts -> kalau TEMBAK
-        -- nempel (sticky) di DB, preempt loop TERUS-MENERUS -> rejoin denyut (client
-        -- MATI) GAK PERNAH kebagian jalan (client mati berjam-jam gak ke-rejoin, selalu
-        -- keburu di-STOP sama TEMBAK yg sama). Sekarang cuma nyela kalau TEMBAK-nya BEDA
-        -- dari yg terakhir diproses (isi+ts) -> sticky yg sama gak re-preempt.
-        -- v9.389: CLOSE juga -- kasus identik (CLOSE sticky preempt tiap 2s -> starvasi).
-        local tsR = ambil_num(r, "ts") or 0
-        local sig = isi .. "|" .. tostring(tsR)
-        if sig ~= (TEMBAK_SIG_PROSES or "") then nyela = true; TEMBAK_SIG_PROSES = sig end
+        -- v9.388/389: sig-dedup (sticky gak re-preempt).
+        -- v9.409: command NYASAR -- TEMBAK/CLOSE buat akun device LAIN (mis. TEMBAK:wildnx
+        -- ke device yg isinya olivia) -> ABAIKAN (gak preempt). Cek akun command match sama
+        -- akun device (DENYUT_UMUR). DENYUT_UMUR kosong (fresh start) -> proses normal.
+        local adaMatch = true
+        if next(DENYUT_UMUR or {}) ~= nil then
+            adaMatch = false
+            local isiL = isi:lower()
+            for ak in pairs(DENYUT_UMUR) do
+                if ak ~= "" and isiL:find(ak:lower(), 1, true) then adaMatch = true; break end
+            end
+        end
+        if adaMatch then
+            local tsR = ambil_num(r, "ts") or 0
+            local sig = isi .. "|" .. tostring(tsR)
+            if sig ~= (TEMBAK_SIG_PROSES or "") then nyela = true; TEMBAK_SIG_PROSES = sig end
+        elseif isi ~= (KICK_DIURUS["nyasar_last"] or "") then
+            KICK_DIURUS["nyasar_last"] = isi   -- log sekali per command nyasar
+            warn(("[perintah NYASAR] %s -> 0 akun match device ini -> DIABAIKAN (bukan buat device ini)"):format(isi:sub(1, 50)))
+        end
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
@@ -4027,20 +4038,15 @@ function grid_satu(cfg, pkg)
     -- hitung grid FRESH buat client aktif (PKGS_AKTIF). nil = semua client.
     local basis = PKGS_AKTIF
     -- v9.328: FARM script (non-market) -> basis = client yg BENERAN JALAN (bukan PKGS_AKTIF
-    -- yg bisa stale/beda per client). Bug: 2 client, satu grid basis 2 (bener) satu nyangkut
-    -- basis 4 (lama) krn PKGS_AKTIF beda. Pakai running count -> dua-duanya basis SAMA.
+    -- yg bisa stale). TAPI v9.407: running count bikin grid basis KURANG 1 pas belum semua
+    -- running (10 client, 9 running -> grid basis 9 -> layout salah, 1 client ketimpa/nyasar).
+    -- Grid itu LAYOUT TETAP -> harus pake JUMLAH TOTAL client (cfg.pkgs), gak peduli berapa
+    -- yg lagi running. cfg.pkgs = hasil mindai (akurat), gak stale kayak PKGS_AKTIF.
     if cfg.script_label ~= "MARKET" then
-        local jalan = {}
-        for _, p in ipairs(split(cfg.pkgs)) do
-            if pkg_running(p) then jalan[#jalan+1] = p end
-        end
-        if #jalan > 0 then basis = jalan end
+        local semua = split(cfg.pkgs)
+        if #semua > 0 then basis = semua end
     end
-    -- v9.406: FIX grid gak keatur pas FRESH START / state stale. grid_hitung cuma masukin
-    -- client yg ADA di basis. Kalau pkg yg lagi dibuka BELUM running (fresh open) atau basis
-    -- stale (PKGS_AKTIF 4 padahal device 10) -> pkg gak di basis -> peta[pkg] nil -> grid GAK
-    -- keatur buat client itu (log '[grid]' gak muncul). Pastiin pkg ada di basis; kalau nggak,
-    -- pakai SEMUA client (cfg.pkgs) sbg basis -> layout bener buat semua.
+    -- v9.406: pastiin pkg yg lagi dibuka ADA di basis (grid_hitung cuma masukin yg di basis).
     local adaP = false
     for _, p in ipairs(basis or {}) do if p == pkg then adaP = true; break end end
     if not adaP then basis = split(cfg.pkgs) end
@@ -5289,6 +5295,15 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
         end)
     end
 
+    -- v9.408: START FRESH (dari standby) -> CLOSE SEMUA client dulu, baru buka. User minta
+    -- tiap start pasti tutup semua (clean start), walau setting SAMA. Flag di-set pas
+    -- standby->jalan; di-clear di sini -> fire SEKALI (rejoin/periodik gak close).
+    if KICK_DIURUS["start_fresh"] then
+        KICK_DIURUS["start_fresh"] = nil
+        warn("START FRESH -> tutup SEMUA client dulu (clean start)")
+        pcall(function() close_all_cepat(cfg) end)
+        os.execute("sleep 3")
+    end
     if lisensiAda and not only and not fast then
         info(">> MODE TEMBAK BARENGAN (lisensi ok / auto_key mati) -- buka cepet, gak tutup dulu")
     end
@@ -8929,7 +8944,13 @@ local function run(cfg)
         -- PLACE:/GRID: gak nyentuh MODE_JALAN -> gak ngubah standby jadi jalan.
         do
             local u = isi:upper()
-            if u:find("FORCE") or u:find("REJOIN") or u:find("TEMBAK") then MODE_JALAN = true
+            if u:find("FORCE") or u:find("REJOIN") or u:find("TEMBAK") then
+                -- v9.408: STANDBY -> jalan (START via FORCE/TEMBAK) -> tandai buat CLOSE-ALL
+                -- di open flow (clean start, walau setting SAMA). User minta tiap start fresh.
+                if MODE_JALAN == false and (u:find("FORCE") or u:find("TEMBAK")) then
+                    KICK_DIURUS["start_fresh"] = true
+                end
+                MODE_JALAN = true
             elseif u:find("STANDBY") or u:find("STOP") then MODE_JALAN = false end
         end
         -- mati = kebalikan MODE_JALAN. Dulu dicek dari `isi` sekarang doang -> PLACE/
@@ -9805,6 +9826,13 @@ local function run(cfg)
                     if #pkgsT > 0 then
                         refresh_ps(); pcall(refresh_ps_getps)   -- server baru ke-refresh dulu
                         local isHactOto = (cfg.script_label or ""):upper() == "HACT OTO"
+                        -- v9.408: START FRESH (dari standby via TEMBAK) -> CLOSE SEMUA dulu (clean start).
+                        if KICK_DIURUS["start_fresh"] then
+                            KICK_DIURUS["start_fresh"] = nil
+                            warn("START (via TEMBAK) -> tutup SEMUA client dulu (clean start)")
+                            pcall(function() close_all_cepat(cfg) end)
+                            os.execute("sleep 3")
+                        end
                         warn(("TEMBAK dari panel -> %d client (skip yg udah sehat in-game kecuali HACT OTO)"):format(#pkgsT))
                         local nTembak, nSkip = 0, 0
                         for i, pkg in ipairs(pkgsT) do
