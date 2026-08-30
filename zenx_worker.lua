@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.405-cf"
+local VERSION = "9.406-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -4036,6 +4036,14 @@ function grid_satu(cfg, pkg)
         end
         if #jalan > 0 then basis = jalan end
     end
+    -- v9.406: FIX grid gak keatur pas FRESH START / state stale. grid_hitung cuma masukin
+    -- client yg ADA di basis. Kalau pkg yg lagi dibuka BELUM running (fresh open) atau basis
+    -- stale (PKGS_AKTIF 4 padahal device 10) -> pkg gak di basis -> peta[pkg] nil -> grid GAK
+    -- keatur buat client itu (log '[grid]' gak muncul). Pastiin pkg ada di basis; kalau nggak,
+    -- pakai SEMUA client (cfg.pkgs) sbg basis -> layout bener buat semua.
+    local adaP = false
+    for _, p in ipairs(basis or {}) do if p == pkg then adaP = true; break end end
+    if not adaP then basis = split(cfg.pkgs) end
     local peta = grid_hitung(cfg, basis)
     if peta and peta[pkg] then
         tata_satu(pkg, peta[pkg], true)   -- hapus posisi lama + tulis fresh
@@ -9823,7 +9831,7 @@ local function run(cfg)
                                 nTembak = nTembak + 1
                                 -- v9.289: 1x per client + jeda 30s antar client. Arceus = 30; lain = stagger_sec.
                                 if i < #pkgsT then
-                                    local jedaT = (cfg.executor == "arceus") and 30 or (cfg.stagger_sec or 8)
+                                    local jedaT = jeda_client(cfg, (cfg.executor == "arceus") and 30 or (cfg.stagger_sec or 8))
                                     for _ = 1, jedaT do
                                         if ada_stop() then break end
                                         os.execute("sleep 1")
