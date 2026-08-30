@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.387-cf"
+local VERSION = "9.388-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -648,6 +648,7 @@ TIM1_AKHIR = 10
 -- kedua bakal dilewat dan client-nya nyangkut.
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
+TEMBAK_SIG_PROSES = ""  -- v9.388: TEMBAK terakhir (isi+ts) yg udah nyela -- anti sticky-preempt
 DENYUT_UMUR = {}        -- v9.77: akun -> umur denyut (detik) terakhir. lapor kirim ke panel biak on/off akurat
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
     KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m" }
@@ -2320,7 +2321,16 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     local nyela = false
-    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("TEMBAK") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
+    if u:find("STANDBY") or u:find("STOP") or u:find("CLOSE") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
+    elseif u:find("TEMBAK") then
+        -- v9.388 FIX STARVASI: TEMBAK dulu nyela TIAP 2s TANPA cek ts -> kalau TEMBAK
+        -- nempel (sticky) di DB, preempt loop TERUS-MENERUS -> rejoin denyut (client
+        -- MATI) GAK PERNAH kebagian jalan (client mati berjam-jam gak ke-rejoin, selalu
+        -- keburu di-STOP sama TEMBAK yg sama). Sekarang cuma nyela kalau TEMBAK-nya BEDA
+        -- dari yg terakhir diproses (isi+ts) -> sticky yg sama gak re-preempt.
+        local tsR = ambil_num(r, "ts") or 0
+        local sig = isi .. "|" .. tostring(tsR)
+        if sig ~= (TEMBAK_SIG_PROSES or "") then nyela = true; TEMBAK_SIG_PROSES = sig end
     elseif (u:find("PAKSA") or u:find("RESTART")) and isi ~= (isiLagiJalan or "") then
         -- v9.77 FIX LOOP: RESTART/PAKSA cuma nyela kalau ts-nya BARU (belum diproses).
         -- Bug: RESTART netep di DB -> nyela terus tiap 2s -> loop selamanya.
