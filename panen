@@ -66,40 +66,17 @@ do
         end
         local function zenxDcStrict()
             local dc = false
-            -- [1] GuiService error code -- disconnect/kick bikin error code != OK.
-            -- Sinyal PALING reliable + murah. Deteksi lama (scan prompt) suka meleset
-            -- -> client disconnect tapi denyut tetep ketulis -> worker anggap hidup.
+            -- v-dc7: FOKUS JUDUL AJA. Cek CUMA judul prompt disconnect "Disconnected" /
+            -- "Koneksi terputus" (TextLabel visible). Dulu pake GetErrorCode + tombol
+            -- (leave/reconnect/keluar) + pesan (connection/same account) -> bisa FALSE-POSITIVE
+            -- (tombol/kata nyangkut di UI game biasa, atau errorcode stale) -> denyut BEKU
+            -- walau GAK disconnect. Judul paling spesifik -- cuma nongol di prompt disconnect asli.
             pcall(function()
-                local ec = game:GetService("GuiService"):GetErrorCode()
-                if ec ~= nil and ec ~= Enum.ConnectionError.OK then dc = true end
-            end)
-            if dc then return true end
-            -- [2] backup: scan RobloxPromptGui -- TextButton/TextLabel keyword disconnect
-            -- (pakai find, bukan == exact).
-            pcall(function()
-                -- v-dc5: prompt "Koneksi terputus" muncul di GUI ATAS (indikator/notif), BUKAN cuma
-                -- RobloxPromptGui. Jadi scan CoreGui -- TAPI biar gak false-positive kayak dulu:
-                --   TOMBOL  -> match kata reconnect/leave/keluar/sambung (tombol prompt disconnect).
-                --   LABEL   -> match FRASA LENGKAP pesan disconnect (koneksi terputus / connection
-                --              lost / reconnecting / dll) -- spesifik, gak nyangkut kata tunggal.
                 local cg = game:GetService("CoreGui")
                 for _, d in ipairs(cg:GetDescendants()) do
-                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
+                    if d:IsA("TextLabel") and d.Visible then
                         local t = tostring(d.Text or ""):lower()
-                        -- FRASA disconnect (spesifik) -- cek di LABEL & TOMBOL. Teks persis yg
-                        -- muncul: "Koneksi terputus" (ID) / "Disconnected" (EN) di GUI atas.
-                        if t:find("koneksi terputus") or t:find("disconnected")
-                           or t:find("connection lost") or t:find("lost connection")
-                           or t:find("reconnecting") or t:find("menyambungkan")
-                           or t:find("you were disconnected") or t:find("you have been kicked")
-                           or t:find("same account launched") or t:find("error code: 276")
-                           or t:find("different device") or t:find("perangkat lain")
-                           or t:find("akun yang sama") or t:find("akun sama") then
-                            dc = true; return
-                        end
-                        -- TOMBOL prompt disconnect: reconnect/leave/keluar/sambungkan
-                        if d:IsA("TextButton") and (t == "reconnect" or t == "leave" or t == "keluar"
-                           or t:find("reconnect") or t:find("sambungkan") or t:find("sambung ulang")) then
+                        if t:find("disconnected") or t:find("koneksi terputus") then
                             dc = true; return
                         end
                     end
@@ -350,7 +327,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v3.18"
+local VERSION = "v3.20"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
