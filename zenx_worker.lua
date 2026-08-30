@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.389-cf"
+local VERSION = "9.390-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -12784,7 +12784,18 @@ function getps_akun(cfg, cookie)
             return code, (nama or "PS") .. " [accessCode PRIVATE]", share
         end
         if out:find('"data"%s*:%s*%[%s*%]') then sebabAkhir = "akun belum punya PS"
-        elseif out:lower():find("unauthorized") or out:find('"errors"') then sebabAkhir = "cookie invalid/error" end
+        -- v9.390: JANGAN vonis "cookie invalid" buat SEMUA error. Rate-limit (429) &
+        -- error transien Roblox juga ada '"errors"' -> dulu ke-label cookie invalid
+        -- (PADAHAL cookie AMAN). Pisahin: rate-limit & error lain != cookie invalid.
+        elseif out:lower():find("toomanyrequest") or out:lower():find("too many request")
+            or out:lower():find("rate limit") or out:find("429") then
+            sebabAkhir = "rate limit (throttle Roblox) -- coba lagi"
+        elseif out:lower():find("unauthorized") or out:lower():find("authorization has been denied")
+            or out:lower():find("token validation") then
+            sebabAkhir = "cookie invalid/error"
+        elseif out:find('"errors"') then
+            sebabAkhir = "error Roblox transien -- coba lagi"
+        end
     end
 
     -- v8.85: akun BELUM PUNYA PS -> BIKIN BARU (free private server, GAG gratis).
@@ -13076,6 +13087,13 @@ if PERINTAH == "getps" then
         end
         if cookie and cookie ~= "" then
             local code, ket, share = getps_akun(cfg, cookie)
+            -- v9.390: kena rate-limit (BUKAN cookie invalid) -> tunggu 6s + coba lagi 1x.
+            -- Cookie aman, cuma kegetok throttle Roblox pas nembak beruntun.
+            if not code and ket and (ket:find("rate limit") or ket:find("transien")) then
+                info(("%s: %s -> tunggu 6s, coba lagi..."):format(akun, ket))
+                os.execute("sleep 6")
+                code, ket, share = getps_akun(cfg, cookie)
+            end
             if code then
                 -- v9.191: accessCode (join PRIVATE via executor). prefix "accessCode=".
                 local psLink = (code:sub(1,4) == "http") and code or ("accessCode=" .. code)
@@ -13105,7 +13123,7 @@ if PERINTAH == "getps" then
                 gagal = gagal + 1
             end
         end
-        os.execute("sleep 1")   -- jeda biar gak kena rate-limit Roblox
+        os.execute("sleep 3")   -- v9.390: jeda 1s->3s biar gak kena rate-limit Roblox (getps beruntun)
     end
     print()
     ok(("Selesai: %d dapet PS, %d gagal."):format(dapet, gagal))
