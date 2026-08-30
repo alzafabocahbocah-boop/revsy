@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.20"
+local VERSION = "v1.23"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -140,12 +140,13 @@ do
                         pcall(function() vis = d.Visible end)
                         if vis then
                             local t = tostring(d.Text or ""):lower()
-                            if t:find("reconnect") or t:find("sambung ulang")
+                            local _hs = t:find("headset") or t:find("controller") or t:find("audio") or t:find("bluetooth") or t:find("mic") or t:find("earphone") or t:find("headphone")
+                            if (not _hs) and (t:find("reconnect") or t:find("sambung ulang")
                                 or t:find("terputus") or t:find("disconnected")
                                 or t:find("dimatikan") or t:find("was shut down")
                                 or t:find("lost connection") or t:find("kehilangan koneksi")
                                 or t:find("error code") or t:find("kode error") or t:find("kode eror")
-                                or t:find("id error") or t:find("(error)") then
+                                or t:find("id error") or t:find("(error)")) then
                                 dc = true; return
                             end
                         end
@@ -158,41 +159,23 @@ do
         -- gak pake scan teks luas / error code (sumber false-positive) -> anti rejoin-loop.
         local function zenxDcStrict()
             local dc = false
-            -- [1] GuiService error code -- disconnect/kick bikin error code != OK.
-            -- Ini sinyal PALING reliable + murah (gak scan GUI). Denyut LAMA cuma
-            -- ngandelin scan prompt yg suka meleset -> client disconnect tapi denyut
-            -- tetep ketulis -> worker anggap hidup -> gak rejoin. Ini nutup itu.
+            -- v-dc7: FOKUS JUDUL AJA. Cek CUMA judul prompt disconnect "Disconnected" /
+            -- "Koneksi terputus" (TextLabel visible). Dulu pake GetErrorCode + tombol
+            -- (leave/reconnect/keluar) + pesan (connection/same account) -> bisa FALSE-POSITIVE
+            -- (tombol/kata nyangkut di UI game biasa, atau errorcode stale) -> denyut BEKU
+            -- walau GAK disconnect. Judul paling spesifik -- cuma nongol di prompt disconnect asli.
+            -- (SAMAIN PANEN v3.23 -- upkg dulu masih v-dc5 + GetErrorCode yg suka meleset.)
             pcall(function()
-                local ec = game:GetService("GuiService"):GetErrorCode()
-                if ec ~= nil and ec ~= Enum.ConnectionError.OK then dc = true end
-            end)
-            if dc then return true end
-            -- [2] backup: scan RobloxPromptGui -- TextButton/TextLabel keyword disconnect.
-            -- (pakai find, bukan == exact -- "Leave "/"Leave Game"/beda case ketangkep.)
-            pcall(function()
-                -- v-dc5: prompt "Koneksi terputus" muncul di GUI ATAS (indikator/notif), BUKAN cuma
-                -- RobloxPromptGui. Jadi scan CoreGui -- TAPI biar gak false-positive kayak dulu:
-                --   TOMBOL  -> match kata reconnect/leave/keluar/sambung (tombol prompt disconnect).
-                --   LABEL   -> match FRASA LENGKAP pesan disconnect (koneksi terputus / connection
-                --              lost / reconnecting / dll) -- spesifik, gak nyangkut kata tunggal.
                 local cg = game:GetService("CoreGui")
                 for _, d in ipairs(cg:GetDescendants()) do
-                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
+                    if d:IsA("TextLabel") and d.Visible then
                         local t = tostring(d.Text or ""):lower()
-                        -- FRASA disconnect (spesifik) -- cek di LABEL & TOMBOL. Teks persis yg
-                        -- muncul: "Koneksi terputus" (ID) / "Disconnected" (EN) di GUI atas.
-                        if t:find("koneksi terputus") or t:find("disconnected")
-                           or t:find("connection lost") or t:find("lost connection")
-                           or t:find("reconnecting") or t:find("menyambungkan")
-                           or t:find("you were disconnected") or t:find("you have been kicked")
-                           or t:find("same account launched") or t:find("error code: 276")
-                           or t:find("different device") or t:find("perangkat lain")
-                           or t:find("akun yang sama") or t:find("akun sama") then
-                            dc = true; return
-                        end
-                        -- TOMBOL prompt disconnect: reconnect/leave/keluar/sambungkan
-                        if d:IsA("TextButton") and (t == "reconnect" or t == "leave" or t == "keluar"
-                           or t:find("reconnect") or t:find("sambungkan") or t:find("sambung ulang")) then
+                        -- v-dc8 FIX false-positive: "headset disconnected"/"controller
+                        -- disconnected"/audio bukan disconnect GAME -> exclude.
+                        if (t:find("disconnected") or t:find("koneksi terputus"))
+                           and not (t:find("headset") or t:find("controller") or t:find("audio")
+                                    or t:find("bluetooth") or t:find("mic") or t:find("earphone")
+                                    or t:find("headphone") or t:find("perangkat audio")) then
                             dc = true; return
                         end
                     end
@@ -248,9 +231,12 @@ do
                     if zenxDcStrict() then
                         dcStrict = dcStrict + 1
                         local umur = os.time() - (_G.__ZenxBootT or os.time())
-                        if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then
-                            _G.ZenxSelfRejoin("prompt reconnect Roblox (" .. dcStrict .. "x)")
-                        end
+                        -- v-sr-off: SELF-REJOIN SCRIPT DIMATIIN. Worker + panel yg handle rejoin
+                        -- (samain AUTO-REJOIN yg udah dimatiin). Dulu script teleport SENDIRI pas
+                        -- dcStrict>=4 -> kalau zenxDcStrict false-positive / prompt 276 kena semua
+                        -- client -> teleport BARENGAN (walau denyut fresh) -> "rejoin barengan".
+                        -- Sekarang script cuma BERHENTI nulis denyut (basi) -> worker rejoin (1-1).
+                        -- if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then _G.ZenxSelfRejoin("dc") end
                     else
                         dcStrict = 0
                     end
