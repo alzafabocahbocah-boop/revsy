@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.401-cf"
+local VERSION = "9.402-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8371,6 +8371,7 @@ local function run(cfg)
                         -- ngirim denyut = client WAJIB rejoin. Grafis RAM gak dipake
                         -- lagi (gak bisa bedain di-game vs layar disconnect).
                         local umur = ak and denyutSemua[ak]
+                        if umur ~= nil then KICK_DIURUS["nofile_since:" .. pkg] = nil end   -- v9.402: denyut ADA -> reset grace 10-menit no-file
                         if ak then
                             info(("[denyut-cek] %s: umur=%s")
                                 :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
@@ -8405,9 +8406,22 @@ local function run(cfg)
                                 info(("[antrian] %s belum ada denyut TAPI baru di-close/tembak %ds lalu -> GRACE (tunggu FORCE)")
                                     :format(ak or pkg, os.time() - KICK_DIURUS["tembak_ts:" .. pkg]))
                             else
-                                perluTembak[#perluTembak+1] = pkg   -- proses mati = buka
-                                info(("[antrian] %s proses MATI + belum ada denyut = WAJIB BUKA")
-                                    :format(ak or pkg))
+                                -- v9.402: BELUM ADA FILE denyut -> TUNGGU 10 MENIT dulu, BLOCK rejoin.
+                                -- User: client belum nulis denyut (loading / baru login / lagi masuk)
+                                -- -> JANGAN buru-buru rejoin. Kasih grace 10 menit (600s) dari pertama
+                                -- keliat no-file. Lewat 10 menit MASIH no-file -> baru buka (stuck beneran).
+                                local nkey = "nofile_since:" .. pkg
+                                if not KICK_DIURUS[nkey] then KICK_DIURUS[nkey] = os.time() end
+                                local nofileAge = os.time() - KICK_DIURUS[nkey]
+                                if nofileAge < 600 then
+                                    diGame = diGame + 1   -- BLOCK rejoin, tunggu 10 menit
+                                    info(("[antrian] %s belum ada file denyut (%ds) -> TUNGGU (grace 10 menit, block rejoin)")
+                                        :format(ak or pkg, nofileAge))
+                                else
+                                    perluTembak[#perluTembak+1] = pkg   -- >10 menit masih no-file = buka
+                                    info(("[antrian] %s belum ada file >10 menit -> WAJIB BUKA")
+                                        :format(ak or pkg))
+                                end
                             end
                         else
                             -- umur > 120s = denyut MATI >2 menit -> WAJIB REJOIN.
