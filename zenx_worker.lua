@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.409-cf"
+local VERSION = "9.411-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -649,6 +649,7 @@ TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
 TEMBAK_SIG_PROSES = ""  -- v9.388: TEMBAK terakhir (isi+ts) yg udah nyela -- anti sticky-preempt
+DEBUG_JEJAK = false     -- v9.411: mode debug (log tiap command + keputusan). Toggle DEBUGON/DEBUGOFF. Default off (nol overhead).
 DENYUT_UMUR = {}        -- v9.77: akun -> umur denyut (detik) terakhir. lapor kirim ke panel biak on/off akurat
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
     KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m" }
@@ -2328,6 +2329,19 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
+    -- v9.411: DEBUG JEJAK. Toggle DEBUGON/DEBUGOFF (gak nyela). Log tiap command DISTINCT
+    -- (isi+ts) -- TERMASUK yg di-dedup/diabaikan -> ketauan panel ngirim apa aja. Cuma fire
+    -- pas command BEDA (bukan tiap poll) -> gak lemot.
+    if u:find("DEBUGON") then if not DEBUG_JEJAK then DEBUG_JEJAK = true; info("[DBG] mode debug NYALA") end; return false end
+    if u:find("DEBUGOFF") then if DEBUG_JEJAK then DEBUG_JEJAK = false; info("[DBG] mode debug MATI") end; return false end
+    if DEBUG_JEJAK and isi ~= "" then
+        local tsD = ambil_num(r, "ts") or 0
+        local sigD = isi .. "|" .. tostring(tsD)
+        if sigD ~= (KICK_DIURUS["dbg_cmd_last"] or "") then
+            KICK_DIURUS["dbg_cmd_last"] = sigD
+            info(("[DBG-CMD] isi=%q ts=%s"):format(isi:sub(1, 60), tostring(tsD)))
+        end
+    end
     local nyela = false
     if u:find("STANDBY") or u:find("STOP") or u:find("REBOOT") or u:find("UPDATE") or u:find("DOWNLOAD") then nyela = true
     elseif u:find("TEMBAK") or u:find("CLOSE") then
@@ -2953,7 +2967,8 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         local jenisJoin = url:find("privateServerLinkCode") and "PS-fall"
             or (url:find("linkCode") and "PS-linkcode")
             or (url:find("accessCode") and "PS-access")
-            or "PUBLIC"
+            or (url:find("share%?code=") and "PS-share")   -- v9.410: share?code= itu share link PS
+            or "PUBLIC"                                     -- private (dari getps). Dulu ke-label PUBLIC = nyasar.
         info(("   [join] %s -> %s | url=%s"):format(
             pkg:gsub("com%.roblox%.",""), jenisJoin, url))
     end
