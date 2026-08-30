@@ -77,16 +77,16 @@ do
             -- [2] backup: scan RobloxPromptGui -- TextButton/TextLabel keyword disconnect
             -- (pakai find, bukan == exact).
             pcall(function()
+                -- v-dc2: scan SELURUH CoreGui (bukan cuma RobloxPromptGui) -- prompt
+                -- "Koneksi terputus" / reconnect bisa di ScreenGui lain / struktur beda.
                 local cg = game:GetService("CoreGui")
-                local pg = cg:FindFirstChild("RobloxPromptGui")
-                local overlay = pg and pg:FindFirstChild("promptOverlay")
-                if not overlay then return end
-                for _, d in ipairs(overlay:GetDescendants()) do
+                for _, d in ipairs(cg:GetDescendants()) do
                     if (d:IsA("TextButton") or d:IsA("TextLabel")) and d.Visible then
                         local t = tostring(d.Text or ""):lower()
-                        if t:find("reconnect") or t:find("leave") or t:find("sambung")
-                           or t:find("disconnect") or t:find("terputus")
-                           or t:find("lost connection") or t:find("kicked") then
+                        if t ~= "" and (t:find("reconnect") or t:find("koneksi terputus")
+                           or t:find("terputus") or t:find("sambung")
+                           or t:find("disconnect") or t:find("lost connection")
+                           or t:find("kicked") or t:find("leave and rejoin")) then
                             dc = true; return
                         end
                     end
@@ -334,7 +334,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v3.8"
+local VERSION = "v3.10"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1559,11 +1559,25 @@ do
             local lt = tui and tui:FindFirstChild("LiveTrade")
             if lt and lt.Visible then
                 local opts = lt:FindFirstChild("Options")
-                local acc = opts and opts:FindFirstChild("Accept")
-                if acc then
-                    if firesignal then pcall(function() firesignal(acc.Activated) end) end
-                    if getconnections then
-                        for _, c in ipairs(getconnections(acc.Activated)) do pcall(function() c:Fire() end) end
+                -- v3.10: klik Accept DAN Confirm (2 langkah) -- dulu cuma Accept -> Confirm
+                -- (konfirmasi akhir) gak ketekan -> trade NGGANTUNG. Samain upkg.
+                for _, bn in ipairs({"Accept", "Confirm"}) do
+                    local b = opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function() firesignal(b.Activated) end) end
+                        if getconnections then
+                            for _, c in ipairs(getconnections(b.Activated)) do pcall(function() c:Fire() end) end
+                        end
+                        pcall(function() fireGuiButton(b) end)
+                    end
+                end
+                -- semua tombol accept/confirm/yes di window LiveTrade
+                for _, d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t == "yes" or t:find("confirm") or t == "continue" or t == "accept" then
+                            pcall(function() fireGuiButton(d) end)
+                        end
                     end
                 end
             end
@@ -1599,6 +1613,12 @@ do
         -- loop pemindai gift (tangkap popup yg udah ada / tanpa event)
         task.spawn(function()
             while true do task.wait(0.8); pcall(acceptAllGiftPopups) end
+        end)
+        -- v3.10: SPAM accept/confirm TERUS (0.12s) selama window trade kebuka -- samain upkg.
+        -- Dulu autoAcceptTrade cuma dipanggil 8x/0.5s (4 detik) pas trade masuk -> kalau
+        -- window/confirm nongol setelah itu, KELEWAT -> trade nggantung. Sekarang terus.
+        task.spawn(function()
+            while true do task.wait(0.12); pcall(autoAcceptTrade) end
         end)
         -- trade masuk: SendRequest.OnClientEvent -> RespondRequest(id, true) + spam accept
         local te = ge:FindFirstChild("TradeEvents")
