@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.08"
+local VERSION = "v1.11"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -158,18 +158,29 @@ do
         -- gak pake scan teks luas / error code (sumber false-positive) -> anti rejoin-loop.
         local function zenxDcStrict()
             local dc = false
+            -- [1] GuiService error code -- disconnect/kick bikin error code != OK.
+            -- Ini sinyal PALING reliable + murah (gak scan GUI). Denyut LAMA cuma
+            -- ngandelin scan prompt yg suka meleset -> client disconnect tapi denyut
+            -- tetep ketulis -> worker anggap hidup -> gak rejoin. Ini nutup itu.
             pcall(function()
+                local ec = game:GetService("GuiService"):GetErrorCode()
+                if ec ~= nil and ec ~= Enum.ConnectionError.OK then dc = true end
+            end)
+            if dc then return true end
+            -- [2] backup: scan RobloxPromptGui -- TextButton/TextLabel keyword disconnect.
+            -- (pakai find, bukan == exact -- "Leave "/"Leave Game"/beda case ketangkep.)
+            pcall(function()
+                -- v-dc2: scan SELURUH CoreGui (bukan cuma RobloxPromptGui) -- prompt
+                -- "Koneksi terputus" / reconnect bisa di ScreenGui lain / struktur beda.
                 local cg = game:GetService("CoreGui")
-                local pg = cg:FindFirstChild("RobloxPromptGui")
-                local overlay = pg and pg:FindFirstChild("promptOverlay")
-                if not overlay then return end
-                for _, child in ipairs(overlay:GetChildren()) do
-                    if child:IsA("GuiObject") and child.Visible then
-                        for _, d in ipairs(child:GetDescendants()) do
-                            if d:IsA("TextButton") and d.Visible then
-                                local t = tostring(d.Text or ""):lower()
-                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
-                            end
+                for _, d in ipairs(cg:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("TextLabel")) and d.Visible then
+                        local t = tostring(d.Text or ""):lower()
+                        if t ~= "" and (t:find("reconnect") or t:find("koneksi terputus")
+                           or t:find("terputus") or t:find("sambung")
+                           or t:find("disconnect") or t:find("lost connection")
+                           or t:find("kicked") or t:find("leave and rejoin")) then
+                            dc = true; return
                         end
                     end
                 end
@@ -869,6 +880,21 @@ task.spawn(function()
                         local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
                         if t == "yes" or t:find("confirm") or t == "continue" or t == "accept" then
                             pcall(function() fireBtn(d) end)
+                        end
+                    end
+                end
+                -- v1.11: FIX popup "Unfair Trade" -- muncul DI LUAR LiveTrade (tiket = trade
+                -- gak seimbang -> Roblox minta konfirmasi YES). upkg dulu cuma scan DALAM
+                -- LiveTrade -> popup KELEWAT -> trade NGGANTUNG (gak accept/confirm). Samain
+                -- hact: scan SELURUH PlayerGui buat tombol YES/Confirm/Continue/Lanjut. Cuma
+                -- pas trade aktif (lt.Visible) biar gak mis-click UI game pas lagi gak trading.
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t = ((d:IsA("TextButton") and d.Text) or ""):lower()
+                        if t == "yes" or t:find("confirm") or t == "continue" or t == "lanjut" then
+                            pcall(function() fireBtn(d) end)
+                            if firesignal then pcall(function() firesignal(d.Activated) end) end
+                            if getconnections then for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end end
                         end
                     end
                 end
