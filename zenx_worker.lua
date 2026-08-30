@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.418-cf"
+local VERSION = "9.421-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1158,7 +1158,7 @@ local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 function jeda_client(cfg, base)
     local n = 0
     for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
-    if n >= 8 then return 60 end
+    if n >= 8 then return 120 end   -- v9.419: 60s -> 120s. Device banyak client (RF/cloud phone lambat) -> kasih napas lebih tiap client sebelum buka berikutnya.
     return base
 end
 -- v9.415: interval cek denyut. Device BANYAK client (>=8) -> 5 menit (300s), bukan 3 menit.
@@ -8153,7 +8153,12 @@ local function run(cfg)
                 local pkgList = split(cfg.pkgs or "")
                 -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
                 -- semua 10). Parse daftar, cocokin sama mapAkun (pkg->username).
-                local daftarForce = isiTop:match("FORCE:([%w%.%_,]+)") or isiTop:match("RESTART:([%w%.%_,]+)")
+                -- v9.421: TEMBAK:daftar JUGA jadi daftar aktif (buat "Jalankan Tim n" -> tembak
+                -- grup n aja). Tanpa ini, abis TEMBAK grup n -> daftarForce nil -> jatuh ke PKGS_AKTIF
+                -- + v9.414 expand ke SEMUA assigned -> grup yg di-close ke-cek denyut -> di-rejoin balik
+                -- (padahal sengaja ditutup). Sekarang TEMBAK:grup-n -> cek denyut CUMA grup n.
+                local daftarForce = isiTop:match("FORCE:([%w%.%_%-,]+)") or isiTop:match("RESTART:([%w%.%_%-,]+)")
+                                    or isiTop:match("TEMBAK:([%w%.%_%-,]+)")
                 local setAkun = nil
                 if cfg.rotasi_on then
                     -- v9.120: ROTASI nyala -> denyut/rejoin CUMA tim 1 (10 pkg pertama),
@@ -17565,14 +17570,35 @@ do
     local lain = {}
     for p in raw:gmatch("%d+") do
         local pn = tonumber(p)
-        if pn and pn ~= diri then lain[#lain+1] = pn end
+        if pn and pn ~= diri then
+            -- baca command-line proses (bukti) + tentuin worker vs sub-command
+            local cmd = (sh("tr '\\0' ' ' < /proc/" .. pn .. "/cmdline 2>/dev/null") or ""):gsub("%s+$", "")
+            -- arg pertama setelah nama script. cari/ukur/pantau/lisensi/dll = SUB-CMD (bukan worker).
+            -- 'pasang' / kosong = WORKER (worker dijalanin via 'pasang <preset>').
+            local arg = cmd:match("zenx_worker%.lua%s+(%S+)")
+            local subCmds = { cari=1, ukur=1, pantau=1, lisensi=1, key=1, cek=1, catat=1,
+                              stop=1, ["rejoin-log"]=1, up=1, update=1, download=1 }
+            local isSub = arg ~= nil and subCmds[arg] ~= nil
+            lain[#lain+1] = { pid = pn, cmd = (cmd ~= "" and cmd or "?"), sub = isSub }
+        end
     end
     if #lain > 0 then
-        warn(("Ada %d proses zenx_worker lain jalan (PID file meleset?) -> dimatiin biar gak dobel..."):format(#lain))
-        for _, pn in ipairs(lain) do sh_silent("kill " .. pn .. " 2>/dev/null") end
-        os.execute("sleep 2")
-        for _, pn in ipairs(lain) do sh_silent("kill -9 " .. pn .. " 2>/dev/null") end   -- bandel -> paksa
-        os.execute("sleep 1")
+        -- v9.420: LOG tiap proses lain + cmdline-nya (bukti apa yg dimatiin). Cuma bunuh
+        -- WORKER (pasang/kosong); SKIP sub-command (cari/ukur/pantau/dll) biar gak false-positive.
+        for _, it in ipairs(lain) do
+            info(("[anti-dobel] pid %d: %s%s"):format(it.pid, it.cmd, it.sub and "  (sub-command -> DILEWAT)" or "  (worker -> DIBUNUH)"))
+        end
+        local bunuh = {}
+        for _, it in ipairs(lain) do if not it.sub then bunuh[#bunuh+1] = it.pid end end
+        if #bunuh > 0 then
+            warn(("Ada %d WORKER lain jalan -> dimatiin biar gak dobel..."):format(#bunuh))
+            for _, pn in ipairs(bunuh) do sh_silent("kill " .. pn .. " 2>/dev/null") end
+            os.execute("sleep 2")
+            for _, pn in ipairs(bunuh) do sh_silent("kill -9 " .. pn .. " 2>/dev/null") end   -- bandel -> paksa
+            os.execute("sleep 1")
+        else
+            info("[anti-dobel] semua proses lain itu sub-command (cari/ukur/pantau/dll), BUKAN worker -> gak dibunuh")
+        end
     end
 end
 hapus(STOP_FILE)   -- sisa dari sesi sebelumnya
