@@ -76,9 +76,13 @@ do
                 for _, d in ipairs(cg:GetDescendants()) do
                     if d:IsA("TextLabel") and d.Visible then
                         local t = tostring(d.Text or ""):lower()
-                        if t:find("disconnected") or t:find("koneksi terputus") then
-                            -- DIAG: simpen elemen yg bikin dc=true (tampil di GUI, biar ketauan false-positive)
-                            _G.__ZenxDcMatch = tostring(d.Text):sub(1,40)
+                        -- v-dc8 FIX false-positive: "headset disconnected"/"controller
+                        -- disconnected"/audio bukan disconnect GAME -> exclude. Disconnect game
+                        -- nyata: "disconnected" TANPA kata headset/controller/audio/bluetooth.
+                        if (t:find("disconnected") or t:find("koneksi terputus"))
+                           and not (t:find("headset") or t:find("controller") or t:find("audio")
+                                    or t:find("bluetooth") or t:find("mic") or t:find("earphone")
+                                    or t:find("headphone") or t:find("perangkat audio")) then
                             dc = true; return
                         end
                     end
@@ -209,14 +213,6 @@ do
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if not (plr and plr.Name and writefile and not zenxDcStrict()) then
-                        -- DIAG: kenapa denyut gak ketulis? (tampil di GUI)
-                        _G.__ZenxDenyutInfo = (not plr and "SKIP: no plr") or (not plr.Name and "SKIP: no plr.Name")
-                            or (not writefile and "SKIP: no writefile")
-                            or ("SKIP: DC (" .. tostring(_G.__ZenxDcMatch or "?") .. ")")
-                    else
-                        _G.__ZenxDenyutInfo = "OK"
-                    end
                     if plr and plr.Name and writefile and not zenxDcStrict() then
                         local chr = tonumber(_G.ZenxPanenEggChr) or 0
                         local gem = tonumber(_G.ZenxPanenEggGem) or 0
@@ -337,7 +333,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v3.23-diag"
+local VERSION = "v3.21"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1680,31 +1676,8 @@ mk("Frame", { Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
 local judul = lbl(titleBar, "\u{1F95A} PANEN EGG", 15, C.text)
 judul.Font = FONT_B
 judul.Position = UDim2.new(0, 16, 0, 0); judul.Size = UDim2.new(0, 200, 1, 0)
-local verL = lbl(titleBar, VERSION, 18, C.text)
-verL.Font = FONT_B
-verL.Position = UDim2.new(0, 150, 0, 0); verL.Size = UDim2.new(0, 320, 1, 0)
--- DIAG: OVERLAY BESAR di ATAS layar (screen sendiri, gak keganggu minimize) -- status
--- denyut gede biar kebaca dari screenshot tanpa log executor.
-task.spawn(function()
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "ZenxDenyutDiag"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true
-    sg.DisplayOrder = 999999
-    pcall(function() sg.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
-    if not sg.Parent then sg.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui") end
-    local bg = Instance.new("TextLabel")
-    bg.Size = UDim2.new(1, 0, 0, 90); bg.Position = UDim2.new(0, 0, 0, 0)
-    bg.BackgroundColor3 = Color3.fromRGB(0,0,0); bg.BackgroundTransparency = 0.25
-    bg.Font = Enum.Font.GothamBold; bg.TextSize = 42; bg.TextColor3 = Color3.fromRGB(255,255,255)
-    bg.TextScaled = false; bg.Text = "..."; bg.Parent = sg
-    while true do
-        pcall(function()
-            local st = _G.__ZenxDenyutInfo or "?"
-            bg.Text = "DENYUT: " .. st
-            bg.TextColor3 = (st == "OK") and Color3.fromRGB(80,255,120) or Color3.fromRGB(255,80,80)
-        end)
-        task.wait(1)
-    end
-end)
+local verL = lbl(titleBar, VERSION, 11, C.textDim)
+verL.Position = UDim2.new(0, 150, 0, 0); verL.Size = UDim2.new(0, 60, 1, 0)
 
 -- tombol close + minimize (anchor kanan)
 local closeBtn = mk("TextButton", {
