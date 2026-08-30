@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.25"
+local VERSION = "v1.26"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -295,24 +295,33 @@ do
                         -- (worker: denyut ada + fps<=5 = PUTIH -> rejoin cepet; denyut gak ada = loading -> grace)
                         local skV = 0
                         pcall(function()
+                            -- v1.26: GAG1 sheckles = StringValue BERFORMAT "257.964T\226\130\162" -> parse suffix.
+                            local function parseSheck(raw)
+                                raw = tostring(raw or ""):gsub("[%s,]", ""):gsub("\226\130\162", "")
+                                local n = tonumber(raw:match("^(%-?[%d%.]+)"))
+                                if not n then return 0 end
+                                local suf = (raw:match("([KkMmBbTt])") or ""):lower()
+                                local mult = ({ k=1e3, m=1e6, b=1e9, t=1e12 })[suf] or 1
+                                return math.floor(n * mult)
+                            end
                             local ls = plr:FindFirstChild("leaderstats")
                             if ls then
                                 local sh = ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Leaves")
                                            or ls:FindFirstChild("Cash") or ls:FindFirstChild("Coins") or ls:FindFirstChild("Money")
-                                if sh and sh.Value then skV = tonumber(sh.Value) or 0 end
-                                if skV == 0 then   -- nama beda -> cari child yg namanya sheck/cash/coin/money/leaves
+                                if sh and sh.Value then skV = parseSheck(sh.Value) end
+                                if skV == 0 then
                                     for _, v in ipairs(ls:GetChildren()) do
                                         local nm = tostring(v.Name):lower()
                                         if (nm:find("sheck") or nm:find("cash") or nm:find("coin") or nm:find("money") or nm:find("leaves")) and v:IsA("ValueBase") then
-                                            skV = tonumber(v.Value) or 0; if skV > 0 then break end
+                                            skV = parseSheck(v.Value); if skV > 0 then break end
                                         end
                                     end
                                 end
                             end
-                            if skV == 0 then   -- fallback: atribut di player
+                            if skV == 0 then
                                 local a = plr:GetAttribute("Sheckles") or plr:GetAttribute("Cash")
                                           or plr:GetAttribute("Money") or plr:GetAttribute("Coins")
-                                if a then skV = tonumber(a) or 0 end
+                                if a then skV = parseSheck(a) end
                             end
                         end)
                         writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";" .. udah .. ";kg;" .. fps .. ";S" .. skV .. ";N" .. (tonumber(_G.ZenxUpkgNight) or 0))
