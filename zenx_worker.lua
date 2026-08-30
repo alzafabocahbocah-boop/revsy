@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.413-cf"
+local VERSION = "9.416-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1160,6 +1160,15 @@ function jeda_client(cfg, base)
     for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
     if n >= 8 then return 60 end
     return base
+end
+-- v9.415: interval cek denyut. Device BANYAK client (>=8) -> 5 menit (300s), bukan 3 menit.
+-- Rejoin 10 client makan lama (60s/client = ~10 menit) -> cek 3 menit kekecilan (client baru
+-- rejoin belum sempat loading+nulis denyut -> ke-flag mati lagi). 5 menit kasih napas.
+function interval_denyut(cfg)
+    local n = 0
+    for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
+    if n >= 8 then return 300 end
+    return 180
 end
 
 -- ============================================================
@@ -5341,7 +5350,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                 -- v9.382: BLOCK FORCE kalau denyut BARU rejoin client ini (<180s) -- gak peduli
                 -- 'lagiJalan' (client msh loading abis denyut buka = belum keliatan jalan).
                 local denyutRejoinBaru = KICK_DIURUS["denyut_rejoin:" .. pkg]
-                    and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < 180
+                    and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < interval_denyut(cfg)
                 local diLewat = denyutRejoinBaru or (lagiJalan and (panelBuram0 or not akun
                                 or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh0))
                 local diCaptcha = akun and KICK_DIURUS["captcha:" .. pkg]
@@ -5442,7 +5451,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             local denyutFresh = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 300
             -- v9.382: BLOCK FORCE kalau denyut BARU rejoin client ini (<180s), walau msh loading.
             local denyutRejoinBaru2 = KICK_DIURUS["denyut_rejoin:" .. pkg]
-                and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < 180
+                and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < interval_denyut(cfg)
             if denyutRejoinBaru2 or (lagiJalan and (panelBuram or not akun
                               or bridge_fresh(stat0, akun) or baruDisentuh or denyutFresh)) then
                 hasil.lewat = hasil.lewat + 1
@@ -8139,7 +8148,7 @@ local function run(cfg)
             -- -> worker gak ngecek denyut / gak rejoin selama BERJAM-JAM (cuma ps-getps + banner).
             -- MODE_JALAN = "udah Start, belum STANDBY" -> denyut tetep jalan tiap 180s selama
             -- worker mode jalan. STANDBY/STOP set MODE_JALAN=false -> denyut mati (respect standby).
-            if (hitTop or cfg.rotasi_on or MODE_JALAN) and ROTASI_STATE == "idle" and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= 180 then
+            if (hitTop or cfg.rotasi_on or MODE_JALAN) and ROTASI_STATE == "idle" and (os.time() - (KICK_DIURUS["_denyutTop"] or 0)) >= interval_denyut(cfg) then
                 KICK_DIURUS["_denyutTop"] = os.time()
                 local pkgList = split(cfg.pkgs or "")
                 -- v8.34: kalau FORCE:daftar-akun -> cuma hitung akun ITU (bukan
@@ -8161,14 +8170,27 @@ local function run(cfg)
                     setAkun = {}
                     for a in daftarForce:gmatch("[^,]+") do setAkun[a] = true end
                 elseif PKGS_AKTIF and #PKGS_AKTIF > 0 then
-                    -- v9.47: FORCE polos tapi PKGS_AKTIF ada (jalan 6) -> filter pakai
-                    -- PKGS_AKTIF (pkg-based). Bug: FORCE polos pas jalan 6 -> antrian
-                    -- cek/rejoin 10. Sekarang cuma client aktif yg dicek.
-                    setAkun = {}
-                    for _, pkg in ipairs(PKGS_AKTIF) do
-                        setAkun[pkg] = true
-                        local u = mapAkun and mapAkun[pkg]
-                        if u then setAkun[u] = true end
+                    -- v9.414: cek PKGS_AKTIF BASI. Kalau client yg PUNYA akun assigned (mapAkun)
+                    -- LEBIH BANYAK dari PKGS_AKTIF -> PKGS_AKTIF basi (bug user: boot restore
+                    -- 4 client padahal device assign 10 -> 6 client (wildnx) gak masuk cek denyut
+                    -- -> gak di-rejoin, nyangkut off). Jangan pake yg basi -> fall ke fallback (semua assigned).
+                    local nAssign = 0
+                    if mapAkun then
+                        for _, pkg in ipairs(pkgList) do
+                            if mapAkun[pkg] and tostring(mapAkun[pkg]) ~= "" then nAssign = nAssign + 1 end
+                        end
+                    end
+                    if nAssign > #PKGS_AKTIF then
+                        info(("[daftar] PKGS_AKTIF basi (%d) < akun assigned (%d) -> pakai SEMUA assigned (state lama ketinggalan)"):format(#PKGS_AKTIF, nAssign))
+                        -- setAkun tetep nil -> jatuh ke fallback "semua client yg ADA AKUN"
+                    else
+                        -- v9.47: FORCE polos + PKGS_AKTIF cocok -> filter pakai PKGS_AKTIF (pkg-based).
+                        setAkun = {}
+                        for _, pkg in ipairs(PKGS_AKTIF) do
+                            setAkun[pkg] = true
+                            local u = mapAkun and mapAkun[pkg]
+                            if u then setAkun[u] = true end
+                        end
                     end
                 end
                 -- v9.90: JANGAN PERNAH buka SEMUA (daftar polos). Kalau sampai sini
@@ -8310,7 +8332,7 @@ local function run(cfg)
                                     -- Baru di-tembak <180s (msh loading ke server target) -> online=false
                                     -- itu WAJAR, JANGAN itung offline -> gak rejoin pengisi yg msh loading.
                                     if pkgNama2 and KICK_DIURUS["tembak_ts:" .. pkgNama2]
-                                       and (os.time() - KICK_DIURUS["tembak_ts:" .. pkgNama2]) < 180 then
+                                       and (os.time() - KICK_DIURUS["tembak_ts:" .. pkgNama2]) < interval_denyut(cfg) then
                                         info(("[hactoto] %s online=false TAPI baru di-tembak %ds lalu -> GRACE (msh loading ke target)")
                                             :format(nama, os.time() - KICK_DIURUS["tembak_ts:" .. pkgNama2]))
                                     else
@@ -8439,7 +8461,7 @@ local function run(cfg)
                             -- sekali. Sekarang cek cacheHidup: mati = buka.
                             if cacheHidup[pkg] then
                                 diGame = diGame + 1   -- proses hidup, denyut nyusul
-                            elseif KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 180 then
+                            elseif KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < interval_denyut(cfg) then
                                 -- v9.296: baru di-CLOSE/tembak (grace) -> JANGAN buka walau
                                 -- belum ada file denyut. FORCE dari panel yg buka. Cegah
                                 -- double-open pas boot (denyut-rejoin buka duluan, terus
@@ -8475,7 +8497,7 @@ local function run(cfg)
                             -- lewat jalur lain (line ~8276: "belum ada denyut TAPI baru
                             -- di-close/tembak -> GRACE (tunggu FORCE)" -- itu proteksi HANYA buat
                             -- kasus proses baru dibuka & BELUM PERNAH nulis denyut sama sekali).
-                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 180 then
+                            if KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < interval_denyut(cfg) then
                                 -- v9.383: RE-ADD grace loading buat cabang DENYUT BASI. v9.372 buang
                                 -- grace di sini -> client baru dibuka/tembak (<300s) yg file denyut
                                 -- LAMA-nya masih basi -> langsung ke-flag MATI + rejoin walau MASIH
@@ -9861,9 +9883,9 @@ local function run(cfg)
                             -- abis RESTART+rejoin, denyut masih OLD (belum sempat nulis) -> skip liat "gak sehat"
                             -- -> tembak SEMUA (0 skip) -> ganggu client yg baru masuk. Baru-dibuka = jangan ditembak.
                             local sehat = u and DENYUT_UMUR[u] and DENYUT_UMUR[u] <= 120
-                            local baruBuka = (TERAKHIR_BUKA[pkg] and (os.time() - TERAKHIR_BUKA[pkg]) < 180)
-                                or (KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < 180)
-                                or (KICK_DIURUS["denyut_rejoin:" .. pkg] and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < 180)
+                            local baruBuka = (TERAKHIR_BUKA[pkg] and (os.time() - TERAKHIR_BUKA[pkg]) < interval_denyut(cfg))
+                                or (KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < interval_denyut(cfg))
+                                or (KICK_DIURUS["denyut_rejoin:" .. pkg] and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < interval_denyut(cfg))
                             if (not isHactOto) and (sehat or baruBuka) then
                                 nSkip = nSkip + 1
                                 info(("[tembak] %s -> SKIP (%s)"):format(u or pkg,
