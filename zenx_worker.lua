@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.390-cf"
+local VERSION = "9.391-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -12794,7 +12794,12 @@ function getps_akun(cfg, cookie)
             or out:lower():find("token validation") then
             sebabAkhir = "cookie invalid/error"
         elseif out:find('"errors"') then
-            sebabAkhir = "error Roblox transien -- coba lagi"
+            -- v9.391: TAMPILIN pesan error Roblox ASLI. "error transien" generik gak
+            -- ngasih info -- kalau KONSISTEN gagal (akun sama terus), ini BUKAN throttle,
+            -- ada sebab spesifik. Extract message+code biar ketauan persisnya.
+            local emsg = out:match('"message"%s*:%s*"([^"]*)"') or ""
+            local ecode = out:match('"code"%s*:%s*(%-?%d+)') or "?"
+            sebabAkhir = "Roblox err[" .. ecode .. "]: " .. (emsg ~= "" and emsg or out:sub(1, 120))
         end
     end
 
