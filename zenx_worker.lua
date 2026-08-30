@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.396-cf"
+local VERSION = "9.399-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6071,6 +6071,27 @@ function pindai_pkgs()
     end
     table.sort(t, urut_alami)   -- v9.146: natural sort (folder Download order)
     return t
+end
+
+-- v9.397: baca cookie ROBUST -- COPY DB + WAL/SHM ke temp DULU, baru sqlite. Client yg
+-- BARU login (app roblox jalan) DB Cookies-nya ke-LOCK / cookie masih di file -wal (belum
+-- commit) -> SELECT langsung suka KOSONG -> client gak kedetect getps. Copy dulu = gak
+-- kena lock + WAL keikut (cookie terbaru kebaca). Return cookie terpanjang / "".
+function baca_ck_robust(pkg)
+    local d = "/data/data/" .. pkg .. "/app_webview/Default"
+    local t = "/data/local/tmp/zenxck"
+    local sq = "/data/data/com.termux/files/usr/bin/sqlite3"
+    local inner =
+        "rm -rf " .. t .. "; mkdir -p " .. t ..
+        "; cp " .. d .. "/Cookies " .. t .. "/Cookies 2>/dev/null" ..
+        "; cp " .. d .. "/Cookies-wal " .. t .. "/Cookies-wal 2>/dev/null" ..
+        "; cp " .. d .. "/Cookies-shm " .. t .. "/Cookies-shm 2>/dev/null" ..
+        "; " .. sq .. " " .. t .. "/Cookies \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"" ..
+        "; rm -rf " .. t
+    local h = io.popen(("su -c %s 2>/dev/null"):format(shq(inner)))
+    local raw = h and h:read("*all") or ""
+    if h then h:close() end
+    return cookie_terpanjang(raw or "")
 end
 
 -- ============================================================
@@ -13030,18 +13051,12 @@ if PERINTAH == "getps" then
             if not ada[pkg] then scanPkgs[#scanPkgs+1] = pkg; ada[pkg] = true end
         end
     end
-    local nTanpaAkun = 0
+    local pkgTanpa = {}
     for _, pkg in ipairs(scanPkgs) do
         -- prefs DULU, kalau kosong -> baca username DARI COOKIE (uname_dari_cookie).
         local u = baca_username(pkg)
         if (not u or u == "" or u == "?") then
-            local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
-            local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
-                "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
-                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
-            local rawC = hC and hC:read("*all") or ""
-            if hC then hC:close() end
-            local ckC = cookie_terpanjang(rawC or "")
+            local ckC = baca_ck_robust(pkg)   -- v9.397: copy DB+WAL (anti-lock)
             if ckC ~= "" and ckC:find("_|WARNING") then u = uname_dari_cookie(ckC) end
         end
         if u and u ~= "" and u ~= "?" and not seen[u] then
@@ -13049,11 +13064,48 @@ if PERINTAH == "getps" then
             akunList[#akunList+1] = u
             akunPkg[u] = pkg
         elseif not u or u == "" or u == "?" then
-            nTanpaAkun = nTanpaAkun + 1
+            pkgTanpa[#pkgTanpa+1] = pkg
         end
     end
-    info(("[getps] scan %d client -> %d akun kedetect (%d client tanpa akun/belum login)")
-        :format(#scanPkgs, #akunList, nTanpaAkun))
+    info(("[getps] scan %d client -> %d akun kedetect (%d client belum ada cookie/login)")
+        :format(#scanPkgs, #akunList, #pkgTanpa))
+    -- v9.398: client BELUM ada cookie -> TAMPILIN mana aja + TUNGGU s/d 60s, re-cek cookie
+    -- tiap 5s. User login akun DALAM window ini -> cookie masuk -> langsung kedetect + ikut
+    -- getps (gak perlu getps ulang). "gacorin" cookie sampe dapet / 60s abis.
+    if #pkgTanpa > 0 then
+        for _, pkg in ipairs(pkgTanpa) do
+            info(("[getps] BELUM ada cookie/login -> %s"):format(pkg:gsub("com%.roblox%.", "")))
+        end
+        info(("[getps] NUNGGU 120s (2 menit) -- login %d akun SEKARANG, gua re-detect cookie tiap 3s..."):format(#pkgTanpa))
+        local t0 = os.time()
+        while #pkgTanpa > 0 and (os.time() - t0) < 120 do
+            os.execute("sleep 3")
+            if ada_stop() then break end
+            local sisa = {}
+            for _, pkg in ipairs(pkgTanpa) do
+                local u = baca_username(pkg)
+                if (not u or u == "" or u == "?") then
+                    local ckC = baca_ck_robust(pkg)
+                    if ckC ~= "" and ckC:find("_|WARNING") then u = uname_dari_cookie(ckC) end
+                end
+                if u and u ~= "" and u ~= "?" and not seen[u] then
+                    seen[u] = true
+                    akunList[#akunList+1] = u
+                    akunPkg[u] = pkg
+                    ok(("[getps] %s -> COOKIE MASUK (%s) -> ikut getps"):format(pkg:gsub("com%.roblox%.", ""), u))
+                else
+                    sisa[#sisa+1] = pkg
+                end
+            end
+            pkgTanpa = sisa
+            if #pkgTanpa > 0 then
+                info(("[getps] masih %d client belum login (%ds lagi)..."):format(#pkgTanpa, 120 - (os.time() - t0)))
+            end
+        end
+        for _, pkg in ipairs(pkgTanpa) do
+            warn(("[getps] %s tetep belum ada cookie -> skip (login + 'zenx getps' ulang)"):format(pkg:gsub("com%.roblox%.", "")))
+        end
+    end
     if #akunList == 0 then
         warn("Gak ada akun kebaca di client device ini (prefs username kosong?).")
         return
@@ -13095,16 +13147,8 @@ if PERINTAH == "getps" then
         local pkgA = akunPkg[akun]
         local cookie = nil
         if pkgA then
-            local db = "/data/data/" .. pkgA .. "/app_webview/Default/Cookies"
-            local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
-                "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
-                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
-            local raw = hC and hC:read("*all") or ""
-            if hC then hC:close() end
-            for baris in (raw .. "\n"):gmatch("(.-)\n") do
-                baris = baris:gsub("%s+$", "")
-                if baris:find("_|WARNING") and (not cookie or #baris > #cookie) then cookie = baris end
-            end
+            local ck1 = baca_ck_robust(pkgA)   -- v9.397: copy DB+WAL (anti-lock, WAL keikut)
+            if ck1 ~= "" and ck1:find("_|WARNING") then cookie = ck1 end
             if cookie and cookie ~= "" then
                 -- sync cookie fresh dari client ke backend (biar konsisten)
                 pcall(function() api_post(cfg, "/cookie-simpan",
