@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.26"
+local VERSION = "v1.27"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2762,6 +2762,66 @@ if not _G.__ZenxUpkgNightScan then
                 _G.ZenxUpkgNight = night
             end)
             task.wait(15)
+        end
+    end)
+end
+
+-- ============ KIRIM SHECKLES LANGSUNG KE PANEL (HTTP, gak lewat denyut/worker) ============
+if not _G.__ZenxSheckHTTP then
+    _G.__ZenxSheckHTTP = true
+    task.spawn(function()
+        local WURL = "https://dry-glitter-63e4.petagee5.workers.dev"
+        local KUNCI = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb"
+        local HS = game:GetService("HttpService")
+        local function parseSheck(raw)
+            raw = tostring(raw or ""):gsub("[%s,]", ""):gsub("\226\130\162", "")
+            local n = tonumber(raw:match("^(%-?[%d%.]+)"))
+            if not n then return 0 end
+            local suf = (raw:match("([KkMmBbTt])") or ""):lower()
+            local mult = ({ k=1e3, m=1e6, b=1e9, t=1e12 })[suf] or 1
+            return math.floor(n * mult)
+        end
+        local function bacaSheck(plr)
+            local skV = 0
+            pcall(function()
+                local ls = plr:FindFirstChild("leaderstats")
+                if ls then
+                    local sh = ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Cash")
+                               or ls:FindFirstChild("Coins") or ls:FindFirstChild("Money")
+                    if sh and sh.Value then skV = parseSheck(sh.Value) end
+                    if skV == 0 then
+                        for _, v in ipairs(ls:GetChildren()) do
+                            local nm = tostring(v.Name):lower()
+                            if (nm:find("sheck") or nm:find("cash") or nm:find("coin") or nm:find("money")) and v:IsA("ValueBase") then
+                                skV = parseSheck(v.Value); if skV > 0 then break end
+                            end
+                        end
+                    end
+                end
+                if skV == 0 then
+                    local a = plr:GetAttribute("Sheckles") or plr:GetAttribute("Cash")
+                    if a then skV = parseSheck(a) end
+                end
+            end)
+            return skV
+        end
+        local req = (syn and syn.request) or (fluxus and fluxus.request) or http_request or request
+                    or (http and http.request)
+        while true do
+            pcall(function()
+                local plr = game:GetService("Players").LocalPlayer
+                if plr and req then
+                    local sk = bacaSheck(plr)
+                    local body = HS:JSONEncode({ akun = plr.Name, sheck = sk })
+                    req({
+                        Url = WURL .. "/k/" .. KUNCI .. "/sheck",
+                        Method = "POST",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = body,
+                    })
+                end
+            end)
+            task.wait(60)   -- kirim sheckles tiap 60 detik
         end
     end)
 end
