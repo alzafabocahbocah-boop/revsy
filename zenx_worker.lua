@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.416-cf"
+local VERSION = "9.417-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8269,6 +8269,9 @@ local function run(cfg)
                             -- (script append ";S<sheckles>" di denyut). Panel tampil di UP KG/PANEN.
                             local skReal = isi:match(";S(%d+)")
                             local nightKg = isi:match(";N(%d+)")   -- v9.413: night egg dari upkg (format kg)
+                            if DEBUG_JEJAK then   -- v9.417: debug -> liat script kirim ;S berapa (0 = script lama/baca gagal)
+                                info(("[DBG-SHECK] %s: ;S=%s | isi=%s"):format(nama, tostring(skReal), isi:sub(1, 55)))
+                            end
                             if isi:match("^%d+;%d+;%d+;%d+;egg3") then
                                 local gem, chr, night = isi:match("^%d+;(%d+);(%d+);(%d+);egg3")
                                 if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(night) or 0) > 0 or (tonumber(skReal) or 0) > 0 then
