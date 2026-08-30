@@ -366,7 +366,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v3.26"
+local VERSION = "v3.27"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2372,21 +2372,37 @@ if not _G.__ZenxSheckHTTP then
         end
         local req = (syn and syn.request) or (fluxus and fluxus.request) or http_request or request
                     or (http and http.request)
+        local function kirim()
+            local plr = game:GetService("Players").LocalPlayer
+            if plr and req then
+                local sk = bacaSheck(plr)
+                req({
+                    Url = WURL .. "/k/" .. KUNCI .. "/sheck",
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/json" },
+                    Body = HS:JSONEncode({ akun = plr.Name, sheck = sk }),
+                })
+            end
+        end
+        -- v-sheckreq: GAK kirim terus. Poll flag /sheck-req; kirim CUMA pas panel tap tombol
+        -- (ts naik). Ringan (cuma GET tiap 20s). lastTs=-1 -> kirim SEKALI pas awal (data awal).
+        local lastReqTs = -1
         while true do
             pcall(function()
-                local plr = game:GetService("Players").LocalPlayer
-                if plr and req then
-                    local sk = bacaSheck(plr)
-                    local body = HS:JSONEncode({ akun = plr.Name, sheck = sk })
-                    req({
-                        Url = WURL .. "/k/" .. KUNCI .. "/sheck",
-                        Method = "POST",
-                        Headers = { ["Content-Type"] = "application/json" },
-                        Body = body,
-                    })
+                if req then
+                    local resp = req({ Url = WURL .. "/k/" .. KUNCI .. "/sheck-req", Method = "GET" })
+                    local ts = 0
+                    if resp and resp.Body then
+                        local ok2, data = pcall(function() return HS:JSONDecode(resp.Body) end)
+                        if ok2 and data then ts = tonumber(data.ts) or 0 end
+                    end
+                    if ts ~= lastReqTs then   -- ts baru (atau awal) -> kirim sekali
+                        lastReqTs = ts
+                        pcall(kirim)
+                    end
                 end
             end)
-            task.wait(60)   -- kirim sheckles tiap 60 detik
+            task.wait(20)   -- poll flag tiap 20 detik (GET ringan, gak nulis DB)
         end
     end)
 end
