@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.11"
+local VERSION = "v1.17"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -170,16 +170,29 @@ do
             -- [2] backup: scan RobloxPromptGui -- TextButton/TextLabel keyword disconnect.
             -- (pakai find, bukan == exact -- "Leave "/"Leave Game"/beda case ketangkep.)
             pcall(function()
-                -- v-dc2: scan SELURUH CoreGui (bukan cuma RobloxPromptGui) -- prompt
-                -- "Koneksi terputus" / reconnect bisa di ScreenGui lain / struktur beda.
+                -- v-dc5: prompt "Koneksi terputus" muncul di GUI ATAS (indikator/notif), BUKAN cuma
+                -- RobloxPromptGui. Jadi scan CoreGui -- TAPI biar gak false-positive kayak dulu:
+                --   TOMBOL  -> match kata reconnect/leave/keluar/sambung (tombol prompt disconnect).
+                --   LABEL   -> match FRASA LENGKAP pesan disconnect (koneksi terputus / connection
+                --              lost / reconnecting / dll) -- spesifik, gak nyangkut kata tunggal.
                 local cg = game:GetService("CoreGui")
                 for _, d in ipairs(cg:GetDescendants()) do
-                    if (d:IsA("TextButton") or d:IsA("TextLabel")) and d.Visible then
+                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible then
                         local t = tostring(d.Text or ""):lower()
-                        if t ~= "" and (t:find("reconnect") or t:find("koneksi terputus")
-                           or t:find("terputus") or t:find("sambung")
-                           or t:find("disconnect") or t:find("lost connection")
-                           or t:find("kicked") or t:find("leave and rejoin")) then
+                        -- FRASA disconnect (spesifik) -- cek di LABEL & TOMBOL. Teks persis yg
+                        -- muncul: "Koneksi terputus" (ID) / "Disconnected" (EN) di GUI atas.
+                        if t:find("koneksi terputus") or t:find("disconnected")
+                           or t:find("connection lost") or t:find("lost connection")
+                           or t:find("reconnecting") or t:find("menyambungkan")
+                           or t:find("you were disconnected") or t:find("you have been kicked")
+                           or t:find("same account launched") or t:find("error code: 276")
+                           or t:find("different device") or t:find("perangkat lain")
+                           or t:find("akun yang sama") or t:find("akun sama") then
+                            dc = true; return
+                        end
+                        -- TOMBOL prompt disconnect: reconnect/leave/keluar/sambungkan
+                        if d:IsA("TextButton") and (t == "reconnect" or t == "leave" or t == "keluar"
+                           or t:find("reconnect") or t:find("sambungkan") or t:find("sambung ulang")) then
                             dc = true; return
                         end
                     end
@@ -228,9 +241,9 @@ do
                     local plr = game:GetService("Players").LocalPlayer
                     if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
                     -- denyut: hapus kalau ada sinyal disconnect apapun (worker tau putus)
-                    if zenxDcStrict() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
-                        pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
-                    end
+                    -- v-dc4: JANGAN hapus file denyut pas disconnect. Cukup BERHENTI
+                    -- nulis (write di-gate not zenxDcStrict) -> denyut basi -> worker rejoin
+                    -- setelah 2 menit. Hapus file bikin "BELUM ADA FILE" (lebih ribet).
                     -- SELF-REJOIN: CUMA pas prompt reconnect Roblox muncul (strict), persist 4x + grace 60s
                     if zenxDcStrict() then
                         dcStrict = dcStrict + 1
