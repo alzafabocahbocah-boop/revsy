@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.411-cf"
+local VERSION = "9.413-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1406,8 +1406,8 @@ end
 
 -- v5.14: DIPINDAH KE ATAS. Perintah panjang (nyari tombol, pantau sentuhan)
 -- perlu ngecek tanda berhenti, dan mereka dideklarasi jauh di atas sini.
-local PID_FILE  = "zenx_worker.pid"
-local STOP_FILE = "zenx_worker.stop"
+local PID_FILE  = (os.getenv("HOME") or ".") .. "/zenx_worker.pid"   -- v9.412: ABSOLUT ($HOME).
+local STOP_FILE = (os.getenv("HOME") or ".") .. "/zenx_worker.stop"  -- Dulu relatif -> Termux:Boot CWD beda = PID file beda = guard anti-dobel meleset -> 2 worker jalan -> bug.
 
 local function ada_stop()
     local f = io.open(STOP_FILE, "r")
@@ -8246,6 +8246,7 @@ local function run(cfg)
                             -- v9.404: extract SHECKLES currency (;S<n>) -- dipisah dari egg/kg
                             -- (script append ";S<sheckles>" di denyut). Panel tampil di UP KG/PANEN.
                             local skReal = isi:match(";S(%d+)")
+                            local nightKg = isi:match(";N(%d+)")   -- v9.413: night egg dari upkg (format kg)
                             if isi:match("^%d+;%d+;%d+;%d+;egg3") then
                                 local gem, chr, night = isi:match("^%d+;(%d+);(%d+);(%d+);egg3")
                                 if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(night) or 0) > 0 or (tonumber(skReal) or 0) > 0 then
@@ -8258,8 +8259,8 @@ local function run(cfg)
                                 end
                             else
                                 local sk, sw = isi:match("^%d+;(%d+);(%a*)")
-                                if sk and ((tonumber(sk) or 0) > 0 or sw == "kg" or (tonumber(skReal) or 0) > 0) then   -- kg = report walau 0 (progress up_kg)
-                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "", sheckReal = skReal }
+                                if sk and ((tonumber(sk) or 0) > 0 or sw == "kg" or (tonumber(skReal) or 0) > 0) then
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "", sheckReal = skReal, night = nightKg }
                                 end
                                 -- v9.325: fps (field ke-4, "ts;udah;kg;fps") -> deteksi PUTIH (fps<=5)
                                 local fpsV = isi:match("^%d+;%d+;%a*;(%d+)")
@@ -17530,6 +17531,25 @@ if pid_hidup(pid_lama) then
     err("Udah ada worker jalan (pid " .. pid_lama .. ").")
     info("Matiin dulu:  lua5.4 zenx_worker.lua stop")
     return
+end
+-- v9.412: SANITY pgrep -- backup kalau PID file meleset (mis. Termux:Boot CWD beda dulu).
+-- Kalau ADA proses zenx_worker.lua lain (bukan diri sendiri / bukan sub-cmd cari/ukur),
+-- matiin dulu biar GAK jalan DOBEL (2 worker 1 tim = command nabrak + bug).
+do
+    local diri = tonumber(sh("echo $PPID")) or 0
+    local raw = sh("pgrep -f 'lua.*zenx_worker.lua' 2>/dev/null") or ""
+    local lain = {}
+    for p in raw:gmatch("%d+") do
+        local pn = tonumber(p)
+        if pn and pn ~= diri then lain[#lain+1] = pn end
+    end
+    if #lain > 0 then
+        warn(("Ada %d proses zenx_worker lain jalan (PID file meleset?) -> dimatiin biar gak dobel..."):format(#lain))
+        for _, pn in ipairs(lain) do sh_silent("kill " .. pn .. " 2>/dev/null") end
+        os.execute("sleep 2")
+        for _, pn in ipairs(lain) do sh_silent("kill -9 " .. pn .. " 2>/dev/null") end   -- bandel -> paksa
+        os.execute("sleep 1")
+    end
 end
 hapus(STOP_FILE)   -- sisa dari sesi sebelumnya
 
