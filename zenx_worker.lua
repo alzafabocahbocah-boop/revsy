@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.391-cf"
+local VERSION = "9.392-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13098,6 +13098,39 @@ if PERINTAH == "getps" then
                 info(("%s: %s -> tunggu 6s, coba lagi..."):format(akun, ket))
                 os.execute("sleep 6")
                 code, ket, share = getps_akun(cfg, cookie)
+            end
+            -- v9.391: 9002 "User is not authenticated" -> cookie BACKEND basi (ke-rotate
+            -- pas akun login di tempat lain). AUTO-RECOVERY: baca cookie FRESH dari CLIENT
+            -- yg lagi login akun ini -> verify hidup -> simpen ke backend -> getps ULANG.
+            -- (Akun aman, cuma cookie backend ketinggalan versi. Kalau client jg basi ->
+            -- tetep gagal = emang perlu re-login manual.)
+            if not code and ket and (ket:find("9002") or ket:lower():find("not authenticated")) then
+                local pkgR = akunPkg[akun]
+                if pkgR then
+                    info(("%s: cookie backend basi (9002) -> baca ulang dari client..."):format(akun))
+                    local dbR = "/data/data/" .. pkgR .. "/app_webview/Default/Cookies"
+                    local hR = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                        "/data/data/com.termux/files/usr/bin/sqlite3 " .. dbR ..
+                        " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+                    local rawR = hR and hR:read("*all") or ""
+                    if hR then hR:close() end
+                    local ckR = nil
+                    for baris in (rawR .. "\n"):gmatch("(.-)\n") do
+                        baris = baris:gsub("%s+$", "")
+                        if baris:find("_|WARNING") and (not ckR or #baris > #ckR) then ckR = baris end
+                    end
+                    if ckR and ckR ~= cookie then
+                        code, ket, share = getps_akun(cfg, ckR)
+                        if code then
+                            cookie = ckR   -- pakai yg fresh + simpen ke backend
+                            pcall(function() api_post(cfg, "/cookie-simpan",
+                                string.format('{"akun":%s,"paket":%s,"cookie":%s}', jstr(akun), jstr(pkgR), jstr(ckR))) end)
+                            info(("%s: cookie fresh dari client BERHASIL -> disimpen"):format(akun))
+                        end
+                    elseif ckR == cookie then
+                        info(("%s: cookie client SAMA (juga basi) -> perlu re-login manual"):format(akun))
+                    end
+                end
             end
             if code then
                 -- v9.191: accessCode (join PRIVATE via executor). prefix "accessCode=".
