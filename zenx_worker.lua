@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.394-cf"
+local VERSION = "9.395-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13004,11 +13004,22 @@ if PERINTAH == "getps" then
     local akunList = {}
     local seen = {}
     local akunPkg = {}   -- v9.174: akun -> client, buat baca cookie kalau backend kosong
-    for _, pkg in ipairs(split(cfg.pkgs or "")) do
-        -- v9.394: AUTO-DETECT akun. Dulu cuma dari prefs.xml username -> client yg belum
-        -- login penuh (prefs username kosong) KE-SKIP -> akun gak kedetect (cuma sebagian).
-        -- Sekarang: prefs DULU, kalau kosong -> baca username DARI COOKIE (uname_dari_cookie)
-        -- -> deteksi SEMUA client yg punya cookie (udah login), gak peduli prefs keisi nggak.
+    -- v9.395: AUTO-DETECT SEMUA client. Dulu cuma iterasi cfg.pkgs -> kalau config
+    -- cuma berisi sebagian client (mis. 3 dari 6), sisanya gak ke-getps. Sekarang GABUNG
+    -- cfg.pkgs + pindai_pkgs() (scan SEMUA com.roblox.* terpasang) -> semua client kebagian.
+    local scanPkgs = {}
+    do
+        local ada = {}
+        for _, pkg in ipairs(split(cfg.pkgs or "")) do
+            if pkg ~= "" and not ada[pkg] then scanPkgs[#scanPkgs+1] = pkg; ada[pkg] = true end
+        end
+        for _, pkg in ipairs(pindai_pkgs()) do
+            if not ada[pkg] then scanPkgs[#scanPkgs+1] = pkg; ada[pkg] = true end
+        end
+    end
+    local nTanpaAkun = 0
+    for _, pkg in ipairs(scanPkgs) do
+        -- prefs DULU, kalau kosong -> baca username DARI COOKIE (uname_dari_cookie).
         local u = baca_username(pkg)
         if (not u or u == "" or u == "?") then
             local db = "/data/data/" .. pkg .. "/app_webview/Default/Cookies"
@@ -13024,8 +13035,12 @@ if PERINTAH == "getps" then
             seen[u] = true
             akunList[#akunList+1] = u
             akunPkg[u] = pkg
+        elseif not u or u == "" or u == "?" then
+            nTanpaAkun = nTanpaAkun + 1
         end
     end
+    info(("[getps] scan %d client -> %d akun kedetect (%d client tanpa akun/belum login)")
+        :format(#scanPkgs, #akunList, nTanpaAkun))
     if #akunList == 0 then
         warn("Gak ada akun kebaca di client device ini (prefs username kosong?).")
         return
