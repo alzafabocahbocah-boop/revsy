@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.392-cf"
+local VERSION = "9.393-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -13047,48 +13047,39 @@ if PERINTAH == "getps" then
 
     local dapet, gagal = 0, 0
     for _, akun in ipairs(akunList) do
-        -- ambil cookie akun
-        local ck = api_get(cfg, "/cookie-satu?akun=" .. akun) or ""
-        local cookie = ck:match('"cookie"%s*:%s*"([^"]+)"')
+        -- v9.393: AMBIL COOKIE LANGSUNG DARI CLIENT (wortel) DULU. Cookie client PALING
+        -- FRESH (Roblox update di client tiap login) -> gak kena 9002 basi. Backend cuma
+        -- FALLBACK kalau client gak login akun ini. Cookie client yg kebaca -> sync ke backend.
+        local pkgA = akunPkg[akun]
+        local cookie = nil
+        if pkgA then
+            local db = "/data/data/" .. pkgA .. "/app_webview/Default/Cookies"
+            local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
+                "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
+                " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
+            local raw = hC and hC:read("*all") or ""
+            if hC then hC:close() end
+            for baris in (raw .. "\n"):gmatch("(.-)\n") do
+                baris = baris:gsub("%s+$", "")
+                if baris:find("_|WARNING") and (not cookie or #baris > #cookie) then cookie = baris end
+            end
+            if cookie and cookie ~= "" then
+                -- sync cookie fresh dari client ke backend (biar konsisten)
+                pcall(function() api_post(cfg, "/cookie-simpan",
+                    string.format('{"akun":%s,"paket":%s,"cookie":%s}', jstr(akun), jstr(pkgA), jstr(cookie))) end)
+            end
+        end
+        -- FALLBACK: client gak login akun ini / cookie gak kebaca -> pakai cookie backend
         if not cookie or cookie == "" then
-            -- v9.174: cookie KOSONG di backend -> LOGIN: baca cookie dari CLIENT yg
-            -- login akun ini + cek status. Hidup -> simpen + lanjut getps.
-            -- Captcha/ban/mati -> LAPOR ke panel (/cookie-status) + skip.
-            local pkgA = akunPkg[akun]
-            local ckClient = nil
-            if pkgA then
-                local db = "/data/data/" .. pkgA .. "/app_webview/Default/Cookies"
-                local hC = io.popen(("su -c %s 2>/dev/null"):format(shq(
-                    "/data/data/com.termux/files/usr/bin/sqlite3 " .. db ..
-                    " \"SELECT value FROM cookies WHERE name='.ROBLOSECURITY'\"")))
-                local raw = hC and hC:read("*all") or ""
-                if hC then hC:close() end
-                for baris in (raw .. "\n"):gmatch("(.-)\n") do
-                    baris = baris:gsub("%s+$", "")
-                    if baris:find("_|WARNING") and (not ckClient or #baris > #ckClient) then ckClient = baris end
-                end
+            local ck = api_get(cfg, "/cookie-satu?akun=" .. akun) or ""
+            cookie = ck:match('"cookie"%s*:%s*"([^"]+)"')
+            if cookie and cookie ~= "" then
+                info(("%s: client gak login -> pakai cookie backend (fallback)"):format(akun))
             end
-            if not ckClient then
-                warn(("%s: cookie kosong + client gak login akun ini -> skip"):format(akun))
-                gagal = gagal + 1
-            else
-                info(("%s: cookie kosong -> LOGIN (cek status dari client)..."):format(akun))
-                local keadaan, ketCk = cek_ck_getps(ckClient)
-                if keadaan == "alive" then
-                    cookie = ckClient
-                    pcall(function() api_post(cfg, "/cookie-simpan",
-                        string.format('{"akun":%s,"paket":%s,"cookie":%s}', jstr(akun), jstr(pkgA), jstr(cookie))) end)
-                    ok(("%s: cookie HIDUP -> disimpen + lanjut getps"):format(akun))
-                elseif keadaan == "captcha" or keadaan == "ban" or keadaan == "dead" then
-                    pcall(function() api_post(cfg, "/cookie-status",
-                        string.format('{"akun":%s,"status":%s}', jstr(akun), jstr(keadaan))) end)
-                    warn(("%s: cookie %s -> LAPOR ke panel + skip"):format(akun, keadaan))
-                    gagal = gagal + 1
-                else
-                    warn(("%s: cek cookie gagal (%s) -> skip"):format(akun, ketCk or "?"))
-                    gagal = gagal + 1
-                end
-            end
+        end
+        if not cookie or cookie == "" then
+            warn(("%s: cookie gak ada (client & backend kosong) -> skip"):format(akun))
+            gagal = gagal + 1
         end
         if cookie and cookie ~= "" then
             local code, ket, share = getps_akun(cfg, cookie)
