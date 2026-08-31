@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.427-cf"
+local VERSION = "9.428-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6228,15 +6228,27 @@ local function setup_otomatis(namaPreset)
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
     local pre_raw = (namaPreset or ""):lower()
+    -- v9.428: suffix "-market" -> device jalan di PLACE MARKET (TradeWorld 129954712878723),
+    -- bukan garden. Buat panen/upkg yg kumpul di market (oper Ele). Contoh: "panen-arceus-market".
+    local marketMode = false
+    if pre_raw:match("%-market$") then
+        marketMode = true
+        pre_raw = pre_raw:gsub("%-market$", "")
+    end
     -- v9.263: suffix "-arceus" di preset apapun -> PAKSA logika Arceus (skip auto-deteksi).
-    -- Contoh: "market-arceus" = market game + path Arceus dipaksa. Berguna buat RF baru
-    -- yg Arceus-nya belom pernah jalan (folder Workspace belom kebikin -> auto-deteksi meleset).
     local paksaArceus = false
     if pre_raw:match("%-arceus$") then
         paksaArceus = true
         pre_raw = pre_raw:gsub("%-arceus$", "")
     end
+    -- v9.428: alias "up" -> "upkg" (buat preset "up-arceus-market")
+    if pre_raw == "up" then pre_raw = "upkg" end
     local pre = PRESET[pre_raw]
+    -- v9.428: market mode -> override place ke MARKET (TradeWorld). Script tetep panen/upkg.
+    if marketMode and pre then
+        pre = { place = "129954712878723", game = (pre.game or "GAG 1") .. " MARKET",
+                sc = pre.sc, url = pre.url }
+    end
     if not pre then
         err("Preset '" .. tostring(namaPreset) .. "' gak dikenal.")
         info("Yang ada: farm / seed / market / gag1 / hact / panen / campur  (+ suffix -arceus, mis: campur-arceus)")
@@ -7713,7 +7725,7 @@ local function run(cfg)
         SERVER_TERAKHIR = ambil_str(rS, "server") or ""   -- v9.62: baseline server
         local berubah = false
         if sPlace ~= "" and sPlace ~= cfg.place_id then
-            if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "126884695634066" then
+            if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "126884695634066" and sPlace ~= "129954712878723" then
                 info(((cfg.script_label or "FARM") .. ": place " .. sPlace .. " DITOLAK (kunci 126884695634066)"))
             else
             info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
@@ -9112,7 +9124,7 @@ local function run(cfg)
                 SETTING_TS_TERAKHIR = tsBaru
                 -- v9.306: PANEN = GAG 1 garden (126884695634066) selalu. TOLAK place lain
                 -- (akun/panel data basi -> nyasar ke dunia lama 126987765280963).
-                if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "" and sPlace ~= "126884695634066" then
+                if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "" and sPlace ~= "126884695634066" and sPlace ~= "129954712878723" then
                     warn(((cfg.script_label or "FARM")) .. ": place " .. sPlace .. " DITOLAK (kunci di 126884695634066)")
                 elseif sPlace ~= "" then cfg.place_id = sPlace end
                 if sGrid > 0 then cfg.grid_kolom = sGrid end
