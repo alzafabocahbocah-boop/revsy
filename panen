@@ -366,7 +366,7 @@ end
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 
-local VERSION = "v3.29"
+local VERSION = "v3.31"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2070,7 +2070,24 @@ do
     local GameEvents = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
     local sellOneRE = GameEvents and GameEvents:FindFirstChild("SellPetShopSelected")
     local favRE = GameEvents and GameEvents:FindFirstChild("Favorite_Item")
-    local function sellOne(tool) if sellOneRE and tool then pcall(function() sellOneRE:FireServer(tool) end) end end
+    local function sellOne(tool)
+        -- v3.30: JANGAN jual pet MUTASI Rainbow (mahal). Rainbow-MUTASI di PetData.MutationType
+        -- (kode enum), BEDA dari JENIS "Rainbow X" (di nama). Guard level sellOne -> semua jalur.
+        do
+            local uuid = tool and tool:GetAttribute("PET_UUID")
+            if uuid then
+                local u = tostring(uuid):gsub("[{}]", "")
+                local pd = PetDetect.cache[u] or PetDetect.cache["{" .. u .. "}"]
+                if type(pd) == "table" and pd.MutationType then
+                    local mn = R.mutasiNama and R.mutasiNama(pd.MutationType)
+                    if mn and tostring(mn):lower() == "rainbow" then
+                        return   -- GAK dijual (mutasi Rainbow, mahal)
+                    end
+                end
+            end
+        end
+        if sellOneRE and tool then pcall(function() sellOneRE:FireServer(tool) end) end
+    end
     local function unfav(tool) if favRE and tool then pcall(function() favRE:FireServer(tool) end) end end
     local function listPets()
         local out = {}
@@ -2220,17 +2237,17 @@ if not _G.__ZenxAutoNightEgg then
         local re = ge:FindFirstChild("BuyEventShopStock")
         if not re then print("[AutoNightEgg] BuyEventShopStock gak ketemu -- batal"); return end
         -- daftar beli PER-SHOP (item cuma di-fire ke shop yg emang jual)
-        local beli = {
-            ["Blood Moon Shop"] = { "Night Egg", "Blood Owl" },   -- Blood Owl CUMA di sini
-            ["Twilight Shop"]   = { "Night Egg", "Moon Cat" },   -- Moon Cat CUMA di Twilight
-        }
-        print("[AutoNightEgg] aktif -- Night Egg @ Blood Moon + Twilight, Blood Owl @ Blood Moon (tiap 10s)")
+        -- v-forcebuy: fire SEMUA item ke SEMUA shop -> jalan di GARDEN atau MARKET (di manapun).
+        -- Kombinasi salah (item gak dijual di shop itu) auto-ditolak game -> aman.
+        local items = { "Night Egg", "Blood Owl", "Moon Cat" }
+        local shops = { "Blood Moon Shop", "Twilight Shop", "Harvest Moon Shop", "Moon Coin Shop" }
+        print("[AutoBuyEvent] aktif -- Night Egg/Blood Owl/Moon Cat x "..#shops.." shop (garden+market, tiap 10s)")
         while true do
             task.wait(10)
-            for shop, items in pairs(beli) do
-                for _, item in ipairs(items) do
+            for _, item in ipairs(items) do
+                for _, shop in ipairs(shops) do
                     pcall(function() re:FireServer(item, shop) end)
-                    task.wait(0.1)
+                    task.wait(0.05)
                 end
             end
         end
