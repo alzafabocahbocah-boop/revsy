@@ -65,7 +65,7 @@ PRESET="$1"
 [ -z "$PRESET" ] && PRESET="seed"
 
 case "$PRESET" in
-    seed|farm|market|gag1|hact|panen|campur|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus|panen-arceus|campur-arceus|upkg-arceus|hactotomatis-arceus) ;;
+    seed|farm|market|gag1|hact|panen|campur|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus|panen-arceus|campur-arceus|upkg-arceus|hactotomatis-arceus|panen-arceus-market|up-arceus-market) ;;
     *)
         gagal "Preset '$PRESET' gak dikenal." \
               "Yang ada: seed / farm / market / gag1 / hact / panen / campur  (+ suffix -arceus)" \
@@ -202,7 +202,7 @@ ok "Worker keunduh: ${VER:-?}"
 # Isinya 1 baris: fetch market dari ronihub + loadstring. Statis, gak berubah.
 # ============================================================
 case "$PRESET" in
-    *-arceus)
+    *arceus*)
         printf "\n${B}[+] Tulis loader Arceus (auto-exe script)${N}\n"
         AX_DIR="/sdcard/Arceus X/Autoexec"
         AX_LOADER="$AX_DIR/zenx.lua"
@@ -211,6 +211,8 @@ case "$PRESET" in
         case "$PRESET" in
             hact-arceus)   RONIHUB_SC="hact" ;;
             panen-arceus)  RONIHUB_SC="panen" ;;
+            panen-arceus-market)  RONIHUB_SC="panen" ;;
+            up-arceus-market)     RONIHUB_SC="upkg" ;;
             upkg-arceus)   RONIHUB_SC="upkg" ;;
             hactotomatis-arceus) RONIHUB_SC="hact" ;;
             campur-arceus) RONIHUB_SC="__campur__" ;;
