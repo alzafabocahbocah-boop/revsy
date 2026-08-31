@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.422-cf"
+local VERSION = "9.425-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1158,7 +1158,7 @@ local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 function jeda_client(cfg, base)
     local n = 0
     for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
-    if n >= 8 then return 120 end   -- v9.419: 60s -> 120s. Device banyak client (RF/cloud phone lambat) -> kasih napas lebih tiap client sebelum buka berikutnya.
+    if n >= 6 then return 120 end   -- v9.424: >=8 -> >=6. Device 6 client arceus buka lambat -> konsisten sama interval_denyut.
     return base
 end
 -- v9.415: interval cek denyut. Device BANYAK client (>=8) -> 5 menit (300s), bukan 3 menit.
@@ -1167,7 +1167,7 @@ end
 function interval_denyut(cfg)
     local n = 0
     for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
-    if n >= 8 then return 300 end
+    if n >= 6 then return 300 end   -- v9.424: >=8 -> >=6. Device 6 client arceus buka lambat (~50s/client = ~5 menit) -> cek 3 menit kekecilan -> loop. 5 menit kasih napas.
     return 180
 end
 
@@ -7216,13 +7216,22 @@ local function run(cfg)
                 if u then mapAkun[skrgPkg] = u; skrgPkg = nil end
             end
         end
-        -- cadangan: kalau ada yang gak kebaca, ambil satu-satu (jarang)
+
+        -- cadangan: client yg belum ke-map (prefs kosong) -> ambil satu-satu.
         for _, pkg in ipairs(pkgs) do
             if not mapAkun[pkg] then
                 local u = baca_username(pkg)
-                if u then mapAkun[pkg] = u end
+                -- v9.423: prefs.xml gak ada username -> baca DARI COOKIE (uname_dari_cookie).
+                -- Bug user: client login via cookie (getps kebaca 8) tapi prefs kosong ->
+                -- mapAkun cuma 1 -> auto-assign 1 -> 7 akun gak kebuka. Cookie fallback nutup ini.
+                if (not u or u == "" or u == "?") then
+                    local ck = baca_ck_robust(pkg)
+                    if ck ~= "" and ck:find("_|WARNING") then u = uname_dari_cookie(ck) end
+                end
+                if u and u ~= "" and u ~= "?" then mapAkun[pkg] = u end
             end
         end
+
         -- v9.243: deteksi ada username yang BERUBAH (akun baru dibuat / ganti akun di client).
         -- Kalau ada -> caller langsung auto_assign (gak nunggu siklus 3 menit).
         local berubah = false
@@ -7338,6 +7347,18 @@ local function run(cfg)
         -- v9.361: hitung total mapLink yg ada (dari assign-ps panel + getps), bukan cuma yg baru dari getps
         local nTotal = 0
         for pkg in pairs(akun2pkg) do if mapLink[akun2pkg[pkg] or ""] then nTotal = nTotal + 1 end end
+
+        -- v9.425: report. FIX dobel-hitung -- dulu nDapet+nTotal (nTotal udah termasuk nDapet)
+        -- -> 7 padahal cuma 6 akun. Sekarang nTotal (jumlah bener) + "baru getps" (yg baru run ini).
+        info(("[ps-getps] %d akun punya ps_link (place=%s, baru getps=%d)"):format(nTotal, cfg.place_id or "?", nDapet))
+        -- v9.422: warn kalau SEBAGIAN client belum ada PS (akun baru belum getps).
+        do
+            local nClient = 0
+            for _ in ((cfg.pkgs or "")):gmatch("[^,]+") do nClient = nClient + 1 end
+            if nTotal > 0 and nTotal < nClient and cfg.pakai_ps ~= false then
+                warn(("[ps-getps] %d dari %d client BELUM punya PS -> akun baru? Jalanin 'zenx getps ulang gag1'."):format(nClient - nTotal, nClient))
+            end
+        end
 
         -- v8.71: kalau 0 dapet PS + place FALL (bukan public/W1) -> WARNING jelas.
         -- Akun belum punya PS fall -> bakal fallback PUBLIC (rawan di-steal).
