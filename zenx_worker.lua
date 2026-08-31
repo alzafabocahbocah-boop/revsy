@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.426-cf"
+local VERSION = "9.427-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1158,7 +1158,10 @@ local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 function jeda_client(cfg, base)
     local n = 0
     for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
-    if n >= 6 then return 120 end   -- v9.424: >=8 -> >=6. Device 6 client arceus buka lambat -> konsisten sama interval_denyut.
+    -- v9.427: >=6 -> >=8. Device 6 client rejoin pake jeda NORMAL (base ~30s), bukan 120s.
+    -- 6 client buka cepet (30s x 6 = 3 menit) + cek denyut 6 menit -> udah cukup napas.
+    -- Cuma device BANYAK (>=8) yg butuh jeda 120s (buka lebih lama).
+    if n >= 8 then return 120 end
     return base
 end
 -- v9.415: interval cek denyut. Device BANYAK client (>=8) -> 5 menit (300s), bukan 3 menit.
