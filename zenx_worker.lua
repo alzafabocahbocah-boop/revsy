@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.425-cf"
+local VERSION = "9.426-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1165,10 +1165,10 @@ end
 -- Rejoin 10 client makan lama (60s/client = ~10 menit) -> cek 3 menit kekecilan (client baru
 -- rejoin belum sempat loading+nulis denyut -> ke-flag mati lagi). 5 menit kasih napas.
 function interval_denyut(cfg)
-    local n = 0
-    for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
-    if n >= 6 then return 300 end   -- v9.424: >=8 -> >=6. Device 6 client arceus buka lambat (~50s/client = ~5 menit) -> cek 3 menit kekecilan -> loop. 5 menit kasih napas.
-    return 180
+    -- v9.426: 6 menit (360s) buat SEMUA jumlah client (dulu 5 menit >=6, 3 menit <6).
+    -- User minta seragam 6 menit di client berapapun -> kasih napas lebih buat loading/rejoin,
+    -- biar gak ke-flag mati prematur (client rejoin belum sempet login+nulis denyut).
+    return 360
 end
 
 -- ============================================================
