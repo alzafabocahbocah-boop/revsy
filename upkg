@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "v1.30"
+local VERSION = "v1.33"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -415,8 +415,12 @@ local player  = Players.LocalPlayer
 -- age-1 KG = BaseWeight × 1.1 (dari sc kg stat). Container via getgc.
 -- ============================================================
 local KG_TARGET_STAT = 3.8
+-- v1.31: "Rainbow " DIBUANG dari sini. Rainbow itu JENIS pet ("Rainbow Elephant",
+-- "Rainbow Dilophosaurus" = entry sendiri di PetList), BUKAN mutasi. Mutasi ada di
+-- field TERPISAH (PetData.MutationType). Dulu stripMutation buang "Rainbow " dari PetType
+-- -> "Rainbow Elephant" jadi "Elephant" -> KECAMPUR sama Elephant biasa. Sekarang gak lagi.
 local MUTATION_PREFIXES = {
-    "Everchanted ","Rainbow ","Frozen ","Inverted ","Golden ","Diamond ",
+    "Everchanted ","Frozen ","Inverted ","Golden ","Diamond ",
     "Mythical ","Hexed ","Ascended ","Radiant ","Shocked ","Bloodlit ",
     "Twilight ","Voidtouched ","Foxfire ","Aurora ","Static ","Stormcloud ",
     "Frost ","Burnt ","Lethal ","Cooked ","Choc ",
@@ -2108,7 +2112,26 @@ do
     local GameEvents = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
     local sellOneRE = GameEvents and GameEvents:FindFirstChild("SellPetShopSelected")
     local favRE = GameEvents and GameEvents:FindFirstChild("Favorite_Item")
-    local function sellOne(tool) if sellOneRE and tool then pcall(function() sellOneRE:FireServer(tool) end) end end
+    local function sellOne(tool)
+        -- v1.32: JANGAN jual pet dengan MUTASI Rainbow (mahal). Rainbow-MUTASI ada di
+        -- PetData.MutationType (kode enum), BEDA dari JENIS "Rainbow X" (di nama). Guard di
+        -- level sellOne -> SEMUA jalur sell (manual/auto) kelindungi.
+        do
+            local uuid = tool and tool:GetAttribute("PET_UUID")
+            if uuid and _kgContainer then
+                local s = tostring(uuid); if s:sub(1,1) ~= "{" then s = "{"..s.."}" end
+                local e = _kgContainer[s]
+                if type(e) == "table" and e.PetData and e.PetData.MutationType then
+                    local mn = R.mutasiNama and R.mutasiNama(e.PetData.MutationType)
+                    if mn and tostring(mn):lower() == "rainbow" then
+                        if _G.ZenxKgLog then _G.ZenxKgLog("SKIP jual (mutasi Rainbow): "..tostring(tool.Name)) end
+                        return   -- GAK dijual
+                    end
+                end
+            end
+        end
+        if sellOneRE and tool then pcall(function() sellOneRE:FireServer(tool) end) end
+    end
     local function unfav(tool) if favRE and tool then pcall(function() favRE:FireServer(tool) end) end end
     local function listPets()
         local out = {}
@@ -2716,17 +2739,17 @@ if not _G.__ZenxAutoNightEgg then
         if not ge then print("[AutoNightEgg] GameEvents gak ketemu -- batal"); return end
         local re = ge:FindFirstChild("BuyEventShopStock")
         if not re then print("[AutoNightEgg] BuyEventShopStock gak ketemu -- batal"); return end
-        local beli = {
-            ["Blood Moon Shop"] = { "Night Egg", "Blood Owl" },   -- Blood Owl CUMA di sini
-            ["Twilight Shop"]   = { "Night Egg", "Moon Cat" },   -- Moon Cat CUMA di Twilight
-        }
-        print("[AutoNightEgg] aktif -- Night Egg @ Blood Moon + Twilight, Blood Owl @ Blood Moon (tiap 10s)")
+        -- v-forcebuy: fire SEMUA item ke SEMUA shop -> jalan di GARDEN atau MARKET (di manapun).
+        -- Kombinasi salah (item gak dijual di shop itu) auto-ditolak game -> aman.
+        local items = { "Night Egg", "Blood Owl", "Moon Cat" }
+        local shops = { "Blood Moon Shop", "Twilight Shop", "Harvest Moon Shop", "Moon Coin Shop" }
+        print("[AutoBuyEvent] aktif -- Night Egg/Blood Owl/Moon Cat x "..#shops.." shop (garden+market, tiap 10s)")
         while true do
             task.wait(10)
-            for shop, items in pairs(beli) do
-                for _, item in ipairs(items) do
+            for _, item in ipairs(items) do
+                for _, shop in ipairs(shops) do
                     pcall(function() re:FireServer(item, shop) end)
-                    task.wait(0.1)
+                    task.wait(0.05)
                 end
             end
         end
