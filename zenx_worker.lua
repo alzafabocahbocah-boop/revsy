@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.428-cf"
+local VERSION = "9.430-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -649,6 +649,7 @@ TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
 TEMBAK_SIG_PROSES = ""  -- v9.388: TEMBAK terakhir (isi+ts) yg udah nyela -- anti sticky-preempt
+_placeBerubah = false   -- v9.429: place baru berubah -> ps_link lama (place lama) nyasar -> abaikan PS -> public place baru sampe getps regenerate
 DEBUG_JEJAK = false     -- v9.411: mode debug (log tiap command + keputusan). Toggle DEBUGON/DEBUGOFF. Default off (nol overhead).
 DENYUT_UMUR = {}        -- v9.77: akun -> umur denyut (detik) terakhir. lapor kirim ke panel biak on/off akurat
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
@@ -2853,9 +2854,18 @@ local function build_url(cfg, link_client)
     -- paksa public kalau _ps_override=="" -- TAPI _ps_override="" itu dari /ps
     -- endpoint KOSONG (gak ada PS tim manual), BUKAN berarti mau public. Sekarang
     -- cek SERVER_TERAKHIR (field server dari setting-tim): cuma "public" yg maksa.
+    -- v9.430: MARKET (TradeWorld 129954712878723) = SELALU PUBLIC. Gak perlu PS -- cuma
+    -- place ID yg penting (semua akun kumpul di public market). Abaikan ps_link.
+    if tostring(cfg.place_id) == "129954712878723" then
+        return "roblox://placeId=" .. cfg.place_id
+    end
     local serverMode = (SERVER_TERAKHIR or ""):lower()
     if serverMode:find("public") then
         -- panel pilih server PUBLIC -> gak pakai PS apapun (link_client/override)
+        return "roblox://placeId=" .. cfg.place_id
+    end
+    -- v9.429: place BARU berubah -> ps_link lama buat PLACE LAMA (nyasar). Abaikan -> public.
+    if _placeBerubah then
         return "roblox://placeId=" .. cfg.place_id
     end
     -- v9.97: SERVER CUSTOM -> semua akun ke SATU server yg SAMA (link custom lo).
@@ -6325,6 +6335,8 @@ local function setup_otomatis(namaPreset)
             tostring(placeLama), tostring(pre.place)))
         pcall(function() close_all_cepat(cfg) end)
         ok("Client lama ditutup -- bakal reopen otomatis di " .. cfg.game_label)
+        _placeBerubah = true   -- v9.429: PS lama (place lama) nyasar -> abaikan sampe getps regenerate
+        info("  PS lama place lama DIABAIKAN -> join PUBLIC dulu. Jalanin 'zenx getps <place>' biar PS place baru.")
         _PAKSA_ASSIGN = true   -- v9.256: paksa auto_assign_tim LANGSUNG -> akun pindah tab (game baru) di panel seketika, gak nunggu 180s
     end
 
@@ -7334,6 +7346,8 @@ local function run(cfg)
     -- Kalau akun punya ps_link (accessCode=UUID dari zenx getps), pakai itu buat
     -- masuk PS pribadi akun. Prioritas: assign-ps panel > ps_link getps > public.
     local function refresh_ps_getps()
+        -- v9.430: MARKET (TradeWorld) = public, gak perlu PS -> skip getps.
+        if tostring(cfg.place_id) == "129954712878723" then return end
         -- v9.180: skip getps CUMA kalau public (pakai_ps==false). Dulu skip W1
         -- (place==129343810645058) SELALU -> W1 gak pernah ambil PS -> public. Skrg
         -- W1 private (pakai_ps=true dari server) IKUT getps -> ambil W1 PS accessCode.
@@ -13223,6 +13237,7 @@ if PERINTAH == "getps" then
             ok("getps override -> GAG 2 (129343810645058)")
         end
     end
+    _placeBerubah = false   -- v9.429: getps regenerate PS buat cfg.place_id (sekarang) -> PS gak nyasar lagi
 
     -- v8.84 FIX: ambil akun TIM DEVICE INI aja (dari client cfg.pkgs), BUKAN
     -- semua akun fleet (/cookie-list = 285 akun seluruh fleet -> boros + query
