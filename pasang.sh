@@ -65,7 +65,7 @@ PRESET="$1"
 [ -z "$PRESET" ] && PRESET="seed"
 
 case "$PRESET" in
-    seed|farm|market|gag1|hact|panen|campur|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus|panen-arceus|campur-arceus|upkg-arceus|hactotomatis-arceus|panen-arceus-market|up-arceus-market) ;;
+    seed|farm|market|gag1|hact|panen|campur|seed-arceus|farm-arceus|market-arceus|gag1-arceus|hact-arceus|panen-arceus|campur-arceus|upkg-arceus|hactotomatis-arceus|panen-arceus-market|up-arceus-market|upkg-arceus-market) ;;
     *)
         gagal "Preset '$PRESET' gak dikenal." \
               "Yang ada: seed / farm / market / gag1 / hact / panen / campur  (+ suffix -arceus)" \
@@ -213,6 +213,7 @@ case "$PRESET" in
             panen-arceus)  RONIHUB_SC="panen" ;;
             panen-arceus-market)  RONIHUB_SC="panen" ;;
             up-arceus-market)     RONIHUB_SC="upkg" ;;
+            upkg-arceus-market)   RONIHUB_SC="upkg" ;;
             upkg-arceus)   RONIHUB_SC="upkg" ;;
             hactotomatis-arceus) RONIHUB_SC="hact" ;;
             campur-arceus) RONIHUB_SC="__campur__" ;;
