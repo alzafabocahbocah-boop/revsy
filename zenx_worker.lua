@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.433-cf"
+local VERSION = "9.436-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6235,7 +6235,7 @@ local function setup_otomatis(namaPreset)
         hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
         upkg   = { place = "126884695634066", game = "GAG 1 UPKG",   sc = "UP KG",     url = "upkg"   },
-        up6kg  = { place = "126884695634066", game = "GAG 1 UP6KG",  sc = "UP KG",     url = "upkg"   },
+        up6kg  = { place = "126884695634066", game = "GAG 1 UP6KG",  sc = "UP6KG",      url = "up6kg"  },
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
@@ -6327,6 +6327,11 @@ local function setup_otomatis(namaPreset)
     -- world lama (GAG 2) padahal config udah GAG 1. Auto-pindah pas ganti preset.
     local placeLama = cfg.place_id
 
+    cfg.place_id     = pre.place
+    cfg.game_label   = pre.game   -- "GAG 1 UP6KG" (tanpa tim)
+    cfg.script_label = pre.sc .. (timGrup and (" T" .. timGrup) or "")   -- v9.436: "UP6KG T2" -> panel baca tim dari sc (STAT_TIM)
+    cfg.timGrup      = timGrup
+    if timGrup then ok("Tim grup: " .. timGrup .. " (up6kg multi-device)") end
     cfg.script_url   = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/" .. pre.url
     ok("Game  : " .. cfg.game_label)
     ok("Script: " .. cfg.script_label .. "  (" .. pre.url .. ")")
@@ -7285,6 +7290,7 @@ local function run(cfg)
         for _, ak in pairs(mapAkun) do akun[#akun+1] = ak end
         if #akun == 0 then return end
         local body = '{"tim":"' .. cfg.tim .. '","game":"' .. (cfg.game_label or "") ..
+                     '","timGrup":"' .. tostring(cfg.timGrup or "") ..
                      '","isi_kosong":true,"akun":['
         for i, a in ipairs(akun) do
             body = body .. '"' .. a .. '"'
@@ -17267,6 +17273,7 @@ if PERINTAH == "panel" or PERINTAH == "uji" then
             err("   Buka tiap client sekali & login, biar prefs.xml kebentuk.")
         else
             local body = '{"tim":"' .. cfg.tim .. '","game":"' .. (cfg.game_label or "") ..
+                         '","timGrup":"' .. tostring(cfg.timGrup or "") ..
                          '","isi_kosong":true,"akun":[' .. table.concat(daftar, ",") .. "]}"
             local r6 = api_post(cfg, "/assign-tim", body) or ""
             local e6 = ambil_str(r6, "error")
