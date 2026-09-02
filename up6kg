@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v2.0"
+local VERSION = "up6kg-v2.1"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1028,9 +1028,9 @@ do
     end
     -- placed pet ({uuid} model) tracking
     local modelByUuid = {}
-    -- up6kg: set uuid pet DILOP (dari tipe ASLI) -> exclude auto-tengah. Refresh loop di bawah
-    -- (setelah listPetsEngine didefinisiin, biar closure nangkep local-nya).
-    local dilopUuids = {}
+    -- up6kg: set uuid pet ELE (Rainbow Elephant) -> CUMA ini yg auto-tengah (diem buat reset).
+    -- Sisanya (Dilop/Peacock/Gilded/bahan) di-SWAP skill. Refresh di bawah (listPetsEngine dulu).
+    local eleUuids = {}
     local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" end
     local function regModel(m) if isPetModel(m) then modelByUuid[m.Name] = m end end
     pcall(function() for _, d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
@@ -1073,7 +1073,7 @@ do
         return out
     end
 
-    -- up6kg: refresh dilopUuids (uuid pet dilop) tiap 2s -- listPetsEngine udah ada di sini
+    -- up6kg: refresh eleUuids (uuid pet Ele) tiap 2s -- listPetsEngine udah ada di sini
     task.spawn(function()
         while true do
             pcall(function()
@@ -1084,12 +1084,12 @@ do
                 -- -> pas Dilop di-EQUIP, ilang dari backpack -> gak ke-exclude. Container gak gitu.
                 local c = _kgContainer
                 if type(c) == "table" then
-                    for uuid, e in pairs(c) do
+    for uuid, e in pairs(c) do
                         if type(e) == "table" then
                             local pt = e.PetType or (e.PetData and e.PetData.PetType)
                             if pt then
                                 nAll = nAll + 1
-                                if tostring(pt):lower():find("dilo") then
+                                if tostring(pt):lower():find("elephant") then
                                     -- masukin 2 format (braced + unbraced) biar match modelByUuid apapun
                                     local raw = tostring(uuid):gsub("[{}]", "")
                                     baru[raw] = true
@@ -1102,17 +1102,17 @@ do
                 end
                 -- fallback: backpack juga (kalau container kosong)
                 for _, p in ipairs(listPetsEngine()) do
-                    if p.tipe and tostring(p.tipe):lower():find("dilo") then
+                    if p.tipe and tostring(p.tipe):lower():find("elephant") then
                         local raw = tostring(p.uuid):gsub("[{}]", "")
                         baru[raw] = true; baru["{" .. raw .. "}"] = true
                     end
                 end
                 local nBaru = 0; for _ in pairs(baru) do nBaru = nBaru + 1 end
-                local nLama = 0; for _ in pairs(dilopUuids) do nLama = nLama + 1 end
+                local nLama = 0; for _ in pairs(eleUuids) do nLama = nLama + 1 end
                 if nBaru ~= nLama then
-                    print("[up6kg dilopUuids] "..(nBaru/2).." dilop (equipped+bp) | sample: "..table.concat(sampleTipe, ", "))
+                    print("[up6kg eleUuids] "..(nBaru/2).." Ele (equipped+bp) | sample: "..table.concat(sampleTipe, ", "))
                 end
-                dilopUuids = baru
+                eleUuids = baru
             end)
             task.wait(2)
         end
@@ -1290,15 +1290,9 @@ do
                 for uuid in pairs(modelByUuid) do
                     -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
                     if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
-                    local nm = supportKunci[uuid]
-                    -- up6kg: SESI 1 (leveling) -> CUMA Rainbow Dilop yg di-swap, Peacock DIEM.
-                    -- SESI 2 (up kg) -> semua support swap normal (Ele reset + dilop + peacock).
-                    local swapIni
-                    if (KG.sesi or 1) == 1 then
-                        swapIni = nm and (tostring(nm):lower():find("dilo") ~= nil)
-                    else
-                        swapIni = nm ~= nil
-                    end
+                    -- up6kg: SWAP SKILL semua (support + bahan) KECUALI Ele. Ele diem di tengah.
+                    local isSupOrBahan = (supportKunci[uuid] ~= nil) or (bahanAktif[uuid] ~= nil)
+                    local swapIni = isSupOrBahan and not eleUuids[uuid]
                     if swapIni and not busy[uuid] then
                         local rdy = petReady(uuid)
                         local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
@@ -1334,8 +1328,8 @@ do
                 local center = farmCenter()
                 if center then
                     for uuid, m in pairs(modelByUuid) do
-                        -- up6kg: Dilop JANGAN ditahan tengah (cek tipe ASLI via dilopUuids)
-                        if m and m.Parent and not dilopUuids[uuid] then
+                        -- up6kg: CUMA Ele yg ditahan tengah
+                        if m and m.Parent and eleUuids[uuid] then
                             local ok, p = pcall(function() return m:GetPivot().Position end)
                             if ok and (p - center).Magnitude > 3 then pcall(function() m:PivotTo(CFrame.new(center)) end) end
                         end
@@ -1439,9 +1433,8 @@ do
                 task.wait(0.25)
                 if _G.ZenxAutoTengah and KG.aktif and not KG.reset and CLUSTER then   -- v0.76: HOLD-ke-tengah lewat toggle "AUTO TENGAH"
                     for uuid in pairs(modelByUuid) do
-                        -- up6kg: Dilop JANGAN ditahan tengah (cek tipe ASLI via dilopUuids)
-                        local supNm = supportKunci[uuid]
-                        if (supNm or bahanAktif[uuid]) and not busy[uuid] and not dilopUuids[uuid] then
+                        -- up6kg: CUMA Ele yg ditahan tengah (sisanya swap skill)
+                        if eleUuids[uuid] and not busy[uuid] then
                             local m = modelByUuid[uuid]
                             if m and m.Parent then
                                 local ok, p = pcall(function() return m:GetPivot().Position end)
