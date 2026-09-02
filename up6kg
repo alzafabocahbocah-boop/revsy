@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v3.0"
+local VERSION = "up6kg-v3.3"
 
 -- ============ up6kg: AUTO REJOIN tiap :00 & :30 WIB (UTC+7), bukan waktu cloud ============
 task.spawn(function()
@@ -22,15 +22,43 @@ task.spawn(function()
         local dtk = wibNow() % 3600   -- 0..3599 (detik dalam jam)
         if dtk < 1800 then return 1800 - dtk else return 3600 - dtk end
     end
-    print("[up6kg rejoin] WIB sekarang " .. jamWib() .. " | auto-rejoin tiap :00 & :30 WIB")
+    print("[up6kg rejoin] WIB sekarang " .. jamWib() .. " | auto-rejoin tiap :00 & :30 WIB (kick 30s)")
     while true do
         local tunggu = detikSampaiMark()
-        if tunggu < 60 then tunggu = tunggu + 1800 end  -- baru join deket mark -> skip ke mark berikut (biar gak instant rejoin)
+        if tunggu < 60 then tunggu = tunggu + 1800 end  -- baru join deket mark -> skip ke mark berikut
         task.wait(tunggu)
-        if _G.ZenxKgLog then _G.ZenxKgLog("[rejoin] WIB " .. jamWib() .. " -> rejoin sekarang") end
-        print("[up6kg rejoin] WIB " .. jamWib() .. " -> teleport rejoin (place sama)")
-        pcall(function() TP:Teleport(game.PlaceId, plr) end)
-        task.wait(25)  -- tunggu teleport jalan (kalau gagal, loop ulang)
+        if _G.ZenxKgLog then _G.ZenxKgLog("[rejoin] WIB " .. jamWib() .. " -> KICK 30s terus rejoin") end
+        print("[up6kg rejoin] WIB " .. jamWib() .. " -> KICK dulu, tunggu 30s, rejoin")
+        -- 1) KICK client (leave)
+        pcall(function() plr:Kick("ZenxRejoin30s") end)
+        -- 2) SEMBUNYIIN dialog kick/disconnect (biar teleport gak keblok)
+        task.spawn(function()
+            local cg = game:GetService("CoreGui")
+            local guiSvc = game:GetService("GuiService")
+            for _ = 1, 90 do
+                pcall(function()
+                    for _, g in ipairs(cg:GetChildren()) do
+                        local n = tostring(g.Name):lower()
+                        if n:find("error") or n:find("prompt") or n:find("disconnect") then
+                            if g:IsA("ScreenGui") then g.Enabled = false end
+                            pcall(function() g.Parent = nil end)
+                        end
+                    end
+                    pcall(function() guiSvc:ClearError() end)
+                end)
+                task.wait(0.5)
+            end
+        end)
+        -- 3) TUNGGU 30 DETIK (di-kick dulu 30s)
+        task.wait(30)
+        -- 4) REJOIN (teleport polos -> balik ke server sama/public)
+        local tries = 0
+        while tries < 8 do
+            tries = tries + 1
+            print("[up6kg rejoin] coba teleport #" .. tries)
+            pcall(function() TP:Teleport(game.PlaceId, plr) end)
+            task.wait(8)
+        end
     end
 end)
 
@@ -1150,8 +1178,8 @@ do
     -- SESI 1 (leveling->age40): 2 Rainbow Dilop + 2 Gilded Choc Peryton + 1 Peacock + 3 bahan
     local SUPPORT_S1_ELE = {
         { nama = "Rainbow Dilop",       cari = { "rainbow", "dilo" },   jml = 2 },
-        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" }, jml = 2 },
-        { nama = "Peacock",             cari = { "peacock" },           jml = 1 },
+        { nama = "Peacock",             cari = { "peacock" },           jml = 2 },
+        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" }, jml = 1 },
     }
     -- SESI 2 (up KG): 1 Rainbow Elephant + 2 Rainbow Dilop + 4 Peacock + 1 bahan
     local SUPPORT_S2_ELE = {
@@ -1322,8 +1350,8 @@ do
                     -- langsung (fast harvest, gak nunggu transition loop 3s). Support -> swap. Ele -> diem.
                     if bahanAktif[uuid] then
                         local age = getAge(uuid)
-                        -- copot SESI-AWARE. SESI 1: copot age >= 40 (harvest). SESI 2: copot age <= 30
-                        -- (Ele reset age 40->1 = kg-up kelar). Bahan SWAP di dua sesi (gacor).
+                        -- copot SESI-AWARE. SESI 1: copot age >= 40. SESI 2: copot age <= 30.
+                        -- BAHAN GAK di-swap (DIEM) -> cuma cek copot.
                         local copot = false
                         if (KG.sesi or 1) == 1 then
                             copot = age and age >= AGE_TARGET
@@ -1334,18 +1362,24 @@ do
                             pcall(function() unequipPet(uuid) end)
                             bahanAktif[uuid] = nil; busy[uuid] = nil
                             if _G.ZenxKgLog then _G.ZenxKgLog("[fast-harvest] sesi"..(KG.sesi or 1).." bahan AGE "..age.." -> copot") end
-                        elseif not busy[uuid] then
-                            local rdy = petReady(uuid)
-                            local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
-                            if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
                         end
                     else
                         -- SUPPORT (Dilop/Peacock/Gilded/Ele) -> swap skill SEMUA (Ele ikut swap)
-                        local swapIni = (supportKunci[uuid] ~= nil)
+                        local supNm = supportKunci[uuid]
+                        local swapIni = (supNm ~= nil)
                         if swapIni and not busy[uuid] then
-                            local rdy = petReady(uuid)
-                            local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
-                            if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
+                            -- up6kg: PEACOCK -> jeda 1s antar pet Peacock (uuid beda) sebelum swap.
+                            local isPeacock = supNm and tostring(supNm):lower():find("peacock")
+                            local bolehPeacock = true
+                            if isPeacock and (tick() - (_G.__up6kgLastPeacock or 0)) < 1 then bolehPeacock = false end
+                            if bolehPeacock then
+                                local rdy = petReady(uuid)
+                                local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
+                                if (rdy == true) or (rdy == nil and idle > 4) then
+                                    swapPet(uuid)
+                                    if isPeacock then _G.__up6kgLastPeacock = tick() end
+                                end
+                            end
                         end
                     end
                 end
