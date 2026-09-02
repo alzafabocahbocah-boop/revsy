@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.436-cf"
+local VERSION = "9.438-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2966,7 +2966,10 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- KECUALI bypass: posisi 10-client udah diatur khusus (petaK) sebelum open_one
     -- -> jangan ketimpa grid biasa (3x2). Titik kalibrasi bypass butuh 10-layout.
     if alasan ~= "start-bypass" then
-        pcall(function() grid_satu(cfg, pkg) end)
+        -- v9.437: up6kg = 1 client FULL Roblox (bukan lite/cloner) -> SKIP atur grid (fullscreen).
+        if not (cfg.script_label and tostring(cfg.script_label):find("UP6KG")) then
+            pcall(function() grid_satu(cfg, pkg) end)
+        end
     end
     -- v7.34: LOG SETIAP REJOIN dengan ALASAN yang jelas (label dari pemanggil,
     -- gak ngandelin traceback yg suka salah). Tiap jalur open_one kasih `alasan`.
@@ -5282,7 +5285,8 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- TIAP open_all -> force-stop SEMUA client tiap ronde FORCE -> semua keluar
     -- terus dibuka ulang (user liat "keluar semua"). SUDAH_GRID di-reset cuma
     -- pas FORCE transisi (Start baru), jadi grid keset sekali per sesi.
-    if lisensiAda and petaGrid and not SUDAH_GRID then
+    -- v9.437: up6kg = 1 client full Roblox -> SKIP grid batch (gak perlu tata window)
+    if lisensiAda and petaGrid and not SUDAH_GRID and not (cfg.script_label and tostring(cfg.script_label):find("UP6KG")) then
         info("Set grid semua client sekali (tulis prefs, gak force-stop)...")
         for _, pkg in ipairs(list) do
             if petaGrid[pkg] then
