@@ -4,7 +4,35 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v2.1"
+local VERSION = "up6kg-v2.4"
+
+-- ============ up6kg: AUTO REJOIN tiap :00 & :30 WIB (UTC+7), bukan waktu cloud ============
+task.spawn(function()
+    local TP = game:GetService("TeleportService")
+    local Players = game:GetService("Players")
+    local plr = Players.LocalPlayer
+    -- os.time() = epoch UTC. WIB = UTC+7. Jadi PAKSA ikut waktu Indonesia (gak ikut cloud).
+    local function wibNow() return os.time() + 7 * 3600 end
+    local function jamWib()
+        local w = wibNow()
+        return string.format("%02d:%02d", math.floor(w % 86400 / 3600), math.floor(w % 3600 / 60))
+    end
+    -- detik sampai mark berikutnya (:00 atau :30 WIB)
+    local function detikSampaiMark()
+        local dtk = wibNow() % 3600   -- 0..3599 (detik dalam jam)
+        if dtk < 1800 then return 1800 - dtk else return 3600 - dtk end
+    end
+    print("[up6kg rejoin] WIB sekarang " .. jamWib() .. " | auto-rejoin tiap :00 & :30 WIB")
+    while true do
+        local tunggu = detikSampaiMark()
+        if tunggu < 60 then tunggu = tunggu + 1800 end  -- baru join deket mark -> skip ke mark berikut (biar gak instant rejoin)
+        task.wait(tunggu)
+        if _G.ZenxKgLog then _G.ZenxKgLog("[rejoin] WIB " .. jamWib() .. " -> rejoin sekarang") end
+        print("[up6kg rejoin] WIB " .. jamWib() .. " -> teleport rejoin (place sama)")
+        pcall(function() TP:Teleport(game.PlaceId, plr) end)
+        task.wait(25)  -- tunggu teleport jalan (kalau gagal, loop ulang)
+    end
+end)
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -632,7 +660,7 @@ task.spawn(function()
             local container = _kgContainer
             local total, belum, udah, tipe = 0, 0, 0, {}
             local tipeUdah, tipeBelum = {}, {}   -- v0.82: per-jenis 3.8kg udah/belum (buat lapor panel)
-            local age50Belum, mudaBelum = 0, 0   -- age50+ belum3.8 / age<50 belum3.8
+            local age50Belum, mudaBelum = 0, 0   -- up6kg: age40+ belum6kg / age<40 belum6kg
             local totalAll = 0   -- v0.87: total SEMUA pet (buat "180/210" di panel)
             -- ITERASI CONTAINER = SEMUA pet (backpack + yg lagi ke-equip di kebun)
             if container then
@@ -653,7 +681,7 @@ task.spawn(function()
                             else
                                 belum = belum + 1
                                 tipeBelum[ptype] = (tipeBelum[ptype] or 0) + 1
-                                if age >= 50 then age50Belum = age50Belum + 1 else mudaBelum = mudaBelum + 1 end
+                                if age >= 40 then age50Belum = age50Belum + 1 else mudaBelum = mudaBelum + 1 end   -- up6kg: threshold age 40
                             end
                         end
                     end
@@ -1119,11 +1147,11 @@ do
     end)
 
     -- ============ up6kg: CUMA config Tim Ele (6kg + Rainbow Elephant) ============
-    -- SESI 1 (leveling->age40): 2 Rainbow Dilop + 2 Peacock + 1 Gilded Choc Peryton + 3 bahan
+    -- SESI 1 (leveling->age40): 2 Rainbow Dilop + 2 Gilded Choc Peryton + 1 Peacock + 3 bahan
     local SUPPORT_S1_ELE = {
         { nama = "Rainbow Dilop",       cari = { "rainbow", "dilo" },   jml = 2 },
-        { nama = "Peacock",             cari = { "peacock" },           jml = 2 },
-        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" }, jml = 1 },
+        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" }, jml = 2 },
+        { nama = "Peacock",             cari = { "peacock" },           jml = 1 },
     }
     -- SESI 2 (up KG): 1 Rainbow Elephant + 2 Rainbow Dilop + 4 Peacock + 1 bahan
     local SUPPORT_S2_ELE = {
@@ -1290,9 +1318,9 @@ do
                 for uuid in pairs(modelByUuid) do
                     -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
                     if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
-                    -- up6kg: SWAP SKILL semua (support + bahan) KECUALI Ele. Ele diem di tengah.
-                    local isSupOrBahan = (supportKunci[uuid] ~= nil) or (bahanAktif[uuid] ~= nil)
-                    local swapIni = isSupOrBahan and not eleUuids[uuid]
+                    -- up6kg: SWAP cuma SUPPORT (Dilop/Peacock/Gilded) KECUALI Ele.
+                    -- BAHAN JANGAN di-swap -> biar leveling normal + ke-copot/harvest pas age 40.
+                    local swapIni = (supportKunci[uuid] ~= nil) and not eleUuids[uuid]
                     if swapIni and not busy[uuid] then
                         local rdy = petReady(uuid)
                         local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
@@ -1328,8 +1356,8 @@ do
                 local center = farmCenter()
                 if center then
                     for uuid, m in pairs(modelByUuid) do
-                        -- up6kg: CUMA Ele yg ditahan tengah
-                        if m and m.Parent and eleUuids[uuid] then
+                        -- up6kg: Ele + bahan ditahan tengah
+                        if m and m.Parent and (eleUuids[uuid] or bahanAktif[uuid]) then
                             local ok, p = pcall(function() return m:GetPivot().Position end)
                             if ok and (p - center).Magnitude > 3 then pcall(function() m:PivotTo(CFrame.new(center)) end) end
                         end
@@ -1376,8 +1404,8 @@ do
     -- tentuin sesi dari stat (sticky): sesi1 sampe muda habis, sesi2 sampe age50 habis
     local function tentukanSesi()
         local st = _G.ZenxKgStat or {}
-        local mudaB = st.mudaBelum or 0   -- age<50 base<3.8
-        local a50B  = st.age50Belum or 0  -- age50+ base<3.8
+        local mudaB = st.mudaBelum or 0   -- up6kg: age<40 base<6kg
+        local a50B  = st.age50Belum or 0  -- up6kg: age40+ base<6kg
         local total = st.total or 0
         if total == 0 then return KG.sesi end   -- stat belum siap -> jgn ganti/putus
         if KG.sesi == 1 then
@@ -1433,8 +1461,8 @@ do
                 task.wait(0.25)
                 if _G.ZenxAutoTengah and KG.aktif and not KG.reset and CLUSTER then   -- v0.76: HOLD-ke-tengah lewat toggle "AUTO TENGAH"
                     for uuid in pairs(modelByUuid) do
-                        -- up6kg: CUMA Ele yg ditahan tengah (sisanya swap skill)
-                        if eleUuids[uuid] and not busy[uuid] then
+                        -- up6kg: Ele + BAHAN ditahan tengah (support swap skill)
+                        if (eleUuids[uuid] or bahanAktif[uuid]) and not busy[uuid] then
                             local m = modelByUuid[uuid]
                             if m and m.Parent then
                                 local ok, p = pcall(function() return m:GetPivot().Position end)
@@ -1509,12 +1537,12 @@ do
                 else
                     -- rotate bahan
                     if KG.sesi == 1 then
-                        -- SESI 1: copot bahan yg udah age >= 50
+                        -- SESI 1: copot bahan yg udah age >= 40 (AGE_TARGET)
                         for u, tipe in pairs(bahanAktif) do
                             local age = getAge(u)
                             if age and age >= AGE_TARGET then
                                 unequipPet(u); bahanAktif[u] = nil
-                                kgLog("bahan "..tipe.." AGE "..age.." >= 50 -> copot (age kelar)")
+                                kgLog("bahan "..tipe.." AGE "..age.." >= 40 -> copot (age kelar)")
                             end
                         end
                     else
