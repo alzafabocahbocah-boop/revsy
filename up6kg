@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v2.5"
+local VERSION = "up6kg-v2.6"
 
 -- ============ up6kg: AUTO REJOIN tiap :00 & :30 WIB (UTC+7), bukan waktu cloud ============
 task.spawn(function()
@@ -1322,10 +1322,19 @@ do
                     -- langsung (fast harvest, gak nunggu transition loop 3s). Support -> swap. Ele -> diem.
                     if bahanAktif[uuid] then
                         local age = getAge(uuid)
-                        if age and age >= AGE_TARGET then
+                        -- up6kg: copot SESI-AWARE. SESI 1 (leveling): copot age >= 40 (harvest).
+                        -- SESI 2 (up kg): bahan HARUS age 40+ biar di-reset Ele. Copot pas age udah
+                        -- TURUN <= 30 (Ele reset age 40->1 = kg-up kelar). JANGAN copot age 40+ di sesi 2!
+                        local copot = false
+                        if (KG.sesi or 1) == 1 then
+                            copot = age and age >= AGE_TARGET
+                        else
+                            copot = age and age <= AGE_DROP
+                        end
+                        if copot then
                             pcall(function() unequipPet(uuid) end)
                             bahanAktif[uuid] = nil; busy[uuid] = nil
-                            if _G.ZenxKgLog then _G.ZenxKgLog("[fast-harvest] bahan AGE "..age.." >= "..AGE_TARGET.." -> copot") end
+                            if _G.ZenxKgLog then _G.ZenxKgLog("[fast-harvest] sesi"..(KG.sesi or 1).." bahan AGE "..age.." -> copot") end
                         elseif not busy[uuid] then
                             local rdy = petReady(uuid)
                             local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
