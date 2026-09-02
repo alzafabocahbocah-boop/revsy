@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v2.4"
+local VERSION = "up6kg-v2.5"
 
 -- ============ up6kg: AUTO REJOIN tiap :00 & :30 WIB (UTC+7), bukan waktu cloud ============
 task.spawn(function()
@@ -1318,13 +1318,27 @@ do
                 for uuid in pairs(modelByUuid) do
                     -- lepas busy yg NYANGKUT (>6s = swap gagal/kelamaan) biar pet swap lagi
                     if busy[uuid] and busySince[uuid] and (tick() - busySince[uuid]) > 6 then busy[uuid] = nil end
-                    -- up6kg: SWAP cuma SUPPORT (Dilop/Peacock/Gilded) KECUALI Ele.
-                    -- BAHAN JANGAN di-swap -> biar leveling normal + ke-copot/harvest pas age 40.
-                    local swapIni = (supportKunci[uuid] ~= nil) and not eleUuids[uuid]
-                    if swapIni and not busy[uuid] then
-                        local rdy = petReady(uuid)
-                        local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
-                        if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
+                    -- up6kg: BAHAN -> swap (gacor) TAPI cek age tiap 0.05s. Age >= 40 -> COPOT
+                    -- langsung (fast harvest, gak nunggu transition loop 3s). Support -> swap. Ele -> diem.
+                    if bahanAktif[uuid] then
+                        local age = getAge(uuid)
+                        if age and age >= AGE_TARGET then
+                            pcall(function() unequipPet(uuid) end)
+                            bahanAktif[uuid] = nil; busy[uuid] = nil
+                            if _G.ZenxKgLog then _G.ZenxKgLog("[fast-harvest] bahan AGE "..age.." >= "..AGE_TARGET.." -> copot") end
+                        elseif not busy[uuid] then
+                            local rdy = petReady(uuid)
+                            local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
+                            if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
+                        end
+                    else
+                        -- SUPPORT (Dilop/Peacock/Gilded) KECUALI Ele -> swap skill
+                        local swapIni = (supportKunci[uuid] ~= nil) and not eleUuids[uuid]
+                        if swapIni and not busy[uuid] then
+                            local rdy = petReady(uuid)
+                            local idle = lastSwap[uuid] and (tick() - lastSwap[uuid]) or 999
+                            if (rdy == true) or (rdy == nil and idle > 4) then swapPet(uuid) end
+                        end
                     end
                 end
             end
@@ -1356,8 +1370,8 @@ do
                 local center = farmCenter()
                 if center then
                     for uuid, m in pairs(modelByUuid) do
-                        -- up6kg: Ele + bahan ditahan tengah
-                        if m and m.Parent and (eleUuids[uuid] or bahanAktif[uuid]) then
+                        -- up6kg: CUMA Ele ditahan tengah
+                        if m and m.Parent and eleUuids[uuid] then
                             local ok, p = pcall(function() return m:GetPivot().Position end)
                             if ok and (p - center).Magnitude > 3 then pcall(function() m:PivotTo(CFrame.new(center)) end) end
                         end
@@ -1461,8 +1475,8 @@ do
                 task.wait(0.25)
                 if _G.ZenxAutoTengah and KG.aktif and not KG.reset and CLUSTER then   -- v0.76: HOLD-ke-tengah lewat toggle "AUTO TENGAH"
                     for uuid in pairs(modelByUuid) do
-                        -- up6kg: Ele + BAHAN ditahan tengah (support swap skill)
-                        if (eleUuids[uuid] or bahanAktif[uuid]) and not busy[uuid] then
+                        -- up6kg: CUMA Ele ditahan tengah (bahan+support swap skill)
+                        if eleUuids[uuid] and not busy[uuid] then
                             local m = modelByUuid[uuid]
                             if m and m.Parent then
                                 local ok, p = pcall(function() return m:GetPivot().Position end)
