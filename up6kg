@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v1.9"
+local VERSION = "up6kg-v2.0"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1080,18 +1080,37 @@ do
                 local baru = {}
                 local sampleTipe = {}
                 local nAll = 0
+                -- SUMBER: _kgContainer (SEMUA pet: equipped + backpack). listPetsEngine cuma backpack
+                -- -> pas Dilop di-EQUIP, ilang dari backpack -> gak ke-exclude. Container gak gitu.
+                local c = _kgContainer
+                if type(c) == "table" then
+                    for uuid, e in pairs(c) do
+                        if type(e) == "table" then
+                            local pt = e.PetType or (e.PetData and e.PetData.PetType)
+                            if pt then
+                                nAll = nAll + 1
+                                if tostring(pt):lower():find("dilo") then
+                                    -- masukin 2 format (braced + unbraced) biar match modelByUuid apapun
+                                    local raw = tostring(uuid):gsub("[{}]", "")
+                                    baru[raw] = true
+                                    baru["{" .. raw .. "}"] = true
+                                    if #sampleTipe < 3 then sampleTipe[#sampleTipe+1] = tostring(pt) end
+                                end
+                            end
+                        end
+                    end
+                end
+                -- fallback: backpack juga (kalau container kosong)
                 for _, p in ipairs(listPetsEngine()) do
-                    nAll = nAll + 1
                     if p.tipe and tostring(p.tipe):lower():find("dilo") then
-                        baru[p.uuid] = true
-                        if #sampleTipe < 3 then sampleTipe[#sampleTipe+1] = tostring(p.tipe) end
+                        local raw = tostring(p.uuid):gsub("[{}]", "")
+                        baru[raw] = true; baru["{" .. raw .. "}"] = true
                     end
                 end
                 local nBaru = 0; for _ in pairs(baru) do nBaru = nBaru + 1 end
                 local nLama = 0; for _ in pairs(dilopUuids) do nLama = nLama + 1 end
                 if nBaru ~= nLama then
-                    if _G.ZenxKgLog then _G.ZenxKgLog("[dilopUuids] "..nBaru.." dilop dari "..nAll.." pet | sample: "..table.concat(sampleTipe, ", ")) end
-                    print("[up6kg dilopUuids] "..nBaru.." dilop | sample: "..table.concat(sampleTipe, ", "))
+                    print("[up6kg dilopUuids] "..(nBaru/2).." dilop (equipped+bp) | sample: "..table.concat(sampleTipe, ", "))
                 end
                 dilopUuids = baru
             end)
