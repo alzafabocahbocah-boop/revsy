@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.430-cf"
+local VERSION = "9.433-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -905,6 +905,7 @@ local function save_config(cfg)
     f:write(string.format("  game_label=%q,\n",cfg.game_label or ""))
     f:write(string.format("  script_url=%q,\n",cfg.script_url or ""))
     f:write(string.format("  script_label=%q,\n",cfg.script_label or ""))
+    f:write(string.format("  timGrup=%q,\n",tostring(cfg.timGrup or "")))
     f:write(string.format("  link_code=%q,\n",cfg.link_code or ""))
     f:write(string.format("  autoexec_dir=%q,\n",cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"))
     f:write(string.format("  executor=%q,\n",cfg.executor or "delta"))                             -- v9.263: persist executor
@@ -6234,16 +6235,24 @@ local function setup_otomatis(namaPreset)
         hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
         upkg   = { place = "126884695634066", game = "GAG 1 UPKG",   sc = "UP KG",     url = "upkg"   },
+        up6kg  = { place = "126884695634066", game = "GAG 1 UP6KG",  sc = "UP KG",     url = "upkg"   },
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
     local pre_raw = (namaPreset or ""):lower()
-    -- v9.428: suffix "-market" -> device jalan di PLACE MARKET (TradeWorld 129954712878723),
-    -- bukan garden. Buat panen/upkg yg kumpul di market (oper Ele). Contoh: "panen-arceus-market".
+    -- v9.428: suffix "-market" -> device jalan di PLACE MARKET. Di-strip PALING AWAL.
     local marketMode = false
     if pre_raw:match("%-market$") then
         marketMode = true
         pre_raw = pre_raw:gsub("%-market$", "")
+    end
+    -- v9.432: suffix "-N" (angka di akhir, setelah -market di-strip) -> NOMOR TIM grup.
+    -- Contoh: "up6kg-arceus-2" -> tim 2. "up6kg-arceus-1-market" -> tim 1 + market.
+    local timGrup = nil
+    local mNum = pre_raw:match("%-(%d+)$")
+    if mNum then
+        timGrup = tonumber(mNum)
+        pre_raw = pre_raw:gsub("%-%d+$", "")
     end
     -- v9.263: suffix "-arceus" di preset apapun -> PAKSA logika Arceus (skip auto-deteksi).
     local paksaArceus = false
@@ -6317,9 +6326,7 @@ local function setup_otomatis(namaPreset)
     -- semua client biar reopen di PLACE BARU (GAG 1). Kalau gak, client nyangkut di
     -- world lama (GAG 2) padahal config udah GAG 1. Auto-pindah pas ganti preset.
     local placeLama = cfg.place_id
-    cfg.place_id     = pre.place
-    cfg.game_label   = pre.game
-    cfg.script_label = pre.sc
+
     cfg.script_url   = "https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/" .. pre.url
     ok("Game  : " .. cfg.game_label)
     ok("Script: " .. cfg.script_label .. "  (" .. pre.url .. ")")
