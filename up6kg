@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v1.6"
+local VERSION = "up6kg-v1.8"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1028,6 +1028,9 @@ do
     end
     -- placed pet ({uuid} model) tracking
     local modelByUuid = {}
+    -- up6kg: set uuid pet DILOP (dari tipe ASLI) -> exclude auto-tengah. Refresh loop di bawah
+    -- (setelah listPetsEngine didefinisiin, biar closure nangkep local-nya).
+    local dilopUuids = {}
     local function isPetModel(m) return m:IsA("Model") and tostring(m.Name):sub(1,1) == "{" end
     local function regModel(m) if isPetModel(m) then modelByUuid[m.Name] = m end end
     pcall(function() for _, d in ipairs(workspace:GetDescendants()) do regModel(d) end end)
@@ -1069,6 +1072,20 @@ do
         end
         return out
     end
+
+    -- up6kg: refresh dilopUuids (uuid pet dilop) tiap 2s -- listPetsEngine udah ada di sini
+    task.spawn(function()
+        while true do
+            pcall(function()
+                local baru = {}
+                for _, p in ipairs(listPetsEngine()) do
+                    if p.tipe and tostring(p.tipe):lower():find("dilo") then baru[p.uuid] = true end
+                end
+                dilopUuids = baru
+            end)
+            task.wait(2)
+        end
+    end)
 
     -- ============ up6kg: CUMA config Tim Ele (6kg + Rainbow Elephant) ============
     -- SESI 1 (leveling->age40): 2 Rainbow Dilop + 2 Peacock + 1 Gilded Choc Peryton + 3 bahan
@@ -1286,10 +1303,8 @@ do
                 local center = farmCenter()
                 if center then
                     for uuid, m in pairs(modelByUuid) do
-                        -- up6kg: Dilop JANGAN ditahan tengah (biar bebas swap/roam)
-                        local supNm = supportKunci[uuid]
-                        local isDilop = supNm and tostring(supNm):lower():find("dilo")
-                        if m and m.Parent and not isDilop then
+                        -- up6kg: Dilop JANGAN ditahan tengah (cek tipe ASLI via dilopUuids)
+                        if m and m.Parent and not dilopUuids[uuid] then
                             local ok, p = pcall(function() return m:GetPivot().Position end)
                             if ok and (p - center).Magnitude > 3 then pcall(function() m:PivotTo(CFrame.new(center)) end) end
                         end
@@ -1393,10 +1408,9 @@ do
                 task.wait(0.25)
                 if _G.ZenxAutoTengah and KG.aktif and not KG.reset and CLUSTER then   -- v0.76: HOLD-ke-tengah lewat toggle "AUTO TENGAH"
                     for uuid in pairs(modelByUuid) do
-                        -- up6kg: Dilop JANGAN ditahan tengah (dia swap/roam). Peacock/Ele/Gilded/bahan ke tengah.
+                        -- up6kg: Dilop JANGAN ditahan tengah (cek tipe ASLI via dilopUuids)
                         local supNm = supportKunci[uuid]
-                        local isDilop = supNm and tostring(supNm):lower():find("dilo")
-                        if (supNm or bahanAktif[uuid]) and not busy[uuid] and not isDilop then
+                        if (supNm or bahanAktif[uuid]) and not busy[uuid] and not dilopUuids[uuid] then
                             local m = modelByUuid[uuid]
                             if m and m.Parent then
                                 local ok, p = pcall(function() return m:GetPivot().Position end)
