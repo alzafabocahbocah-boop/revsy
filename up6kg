@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v6.9"
+local VERSION = "up6kg-v7.1"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1324,9 +1324,16 @@ do
         for k in pairs(supportKunci) do supportKunci[k] = nil end   -- clear in-place (jaga upvalue)
         for k in pairs(bahanAktif) do bahanAktif[k] = nil end
         task.wait(0.3)
-        pilihSupport(sesi); pilihBahan(sesi); equipSemua()
+        -- v7.1: JANGAN pilihSupport (re-pick nabrak pool locked). Support di-isi dari POOL LOCKED.
+        kunciSupPool()
+        local SUPr = getSUP(sesi); local cntR = {}
+        for _, sup in ipairs(SUPr) do
+            local pool = supPool[sup.nama] or {}
+            for i = 1, sup.jml do if pool[i] then supportKunci[pool[i]] = sup.nama end end
+        end
+        pilihBahan(sesi); equipSemua()
         KG.reset = false
-        kgLog("REDO sesi"..sesi.." kelar -> support "..jml(supportKunci).." bahan "..jml(bahanAktif))
+        kgLog("REDO sesi"..sesi.." kelar (pool locked) -> support "..jml(supportKunci).." bahan "..jml(bahanAktif))
     end
 
 
@@ -1462,18 +1469,42 @@ do
     -- POOL support LOCKED once -> uuid pet support TETAP di 2 sesi (gak re-pick tiap sesi,
     -- biar gak numpuk/lebih). Max count per tipe = max(sesi1, sesi2).
     local supPool = nil   -- nama -> { uuid, ... }
-    local function kunciSupPool()
+    local POOL_FILE = "zenx_up6kg_pool.txt"
+    local function savePool()
+        if not supPool then return end
+        local parts = {}
+        for nm, list in pairs(supPool) do parts[#parts + 1] = nm .. "=" .. table.concat(list, ",") end
+        pcall(function() if writefile then writefile(POOL_FILE, table.concat(parts, "\n")) end end)
+    end
+    local function loadPoolFile()
+        local ok, data = pcall(function()
+            if isfile and isfile(POOL_FILE) and readfile then return readfile(POOL_FILE) end
+            return nil
+        end)
+        if not ok or not data then return nil end
+        local pool = {}
+        for line in tostring(data):gmatch("[^\n]+") do
+            local nm, uuids = line:match("^(.-)=(.*)$")
+            if nm and nm ~= "" then
+                pool[nm] = {}
+                for u in tostring(uuids):gmatch("[^,]+") do pool[nm][#pool[nm] + 1] = u end
+            end
+        end
+        return next(pool) and pool or nil
+    end
+    -- KUNCI support: paksa=true -> kunci BARU (re-pick kg terbesar). else: pakai kunci lama
+    -- (dari memory / file). Sekali kunci -> TETAP walau rejoin (persist file). Ganti = pencet "kunci baru".
+    local function kunciSupPool(paksa)
+        if not paksa and supPool then return end                 -- udah ke-kunci di memory
+        if not paksa then
+            local saved = loadPoolFile()
+            if saved then supPool = saved; kgLog("pool support: LOAD kunci lama (uuid tetap, gak berubah)"); return end
+        end
         local maxPer, cariMap = {}, {}
         for _, sup in ipairs(SUPPORT_S1_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
         for _, sup in ipairs(SUPPORT_S2_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
-        -- pool udah LENGKAP? (tiap tipe udah cukup) -> jgn rebuild (uuid stabil).
-        if supPool then
-            local lengkap = true
-            for nm, maxJ in pairs(maxPer) do if #(supPool[nm] or {}) < maxJ then lengkap = false; break end end
-            if lengkap then return end
-        end
-        -- (re)build: pool KURANG / belum ada -> pick lagi (pet baru available)
-        local pets = listPetsAll()   -- v6.8: SEMUA pet (equipped + backpack), gak bentrok swap
+        -- pilih KG TERBESAR (kg current = base × age, BUKAN base weight doang)
+        local pets = listPetsAll()
         table.sort(pets, function(a, b) return (a.kg or 0) > (b.kg or 0) end)
         supPool = {}; local taken = {}
         for nm, maxJ in pairs(maxPer) do
@@ -1485,8 +1516,19 @@ do
                 end
             end
         end
+        savePool()   -- SIMPEN -> kunci ini dipakai terus (walau rejoin)
         local ss = ""; for nm, l in pairs(supPool) do ss = ss .. nm .. "=" .. #l .. "/" .. (maxPer[nm] or 0) .. " " end
-        kgLog("pool support: " .. ss)
+        kgLog("pool support: KUNCI BARU (kg terbesar) -> " .. ss)
+    end
+    -- hook GUI: tombol "kunci support baru" -> re-pick + re-equip
+    _G.ZenxKunciSupportBaru = function()
+        pcall(function() if delfile and isfile and isfile(POOL_FILE) then delfile(POOL_FILE) end end)
+        supPool = nil
+        for u in pairs(supportKunci) do pcall(function() unequipPet(u) end) end
+        supportKunci = {}
+        kunciSupPool(true)   -- kunci baru (kg terbesar) + simpen
+        if KG.aktif then pasangSesi(KG.sesi, false) end
+        kgLog("KUNCI SUPPORT BARU dipencet -> support di-pilih ulang (kg terbesar)")
     end
 
     local function pasangSesi(sesi, pickup)
@@ -1530,7 +1572,7 @@ do
     -- v6.7: ISI support KURANG aja (dari pool, TANPA copot/re-equip yg udah ada).
     -- Dipakai verifikasi -> gak siklus copot-semua. Kelebihan di-handle bersihGakCocok.
     local function isiKurang(sesi)
-        kunciSupPool()   -- rebuild pool kalo ada tipe kurang (pet baru available)
+        kunciSupPool()   -- LOAD pool locked (uuid tetap, gak re-pick). cuma equip yg belum ke-equip.
         local SUP = getSUP(sesi)
         local cnt = {}
         for _, nm in pairs(supportKunci) do cnt[nm] = (cnt[nm] or 0) + 1 end
@@ -1655,8 +1697,8 @@ do
                 if KG.aktif and not KG.reset and _G.__ZenxKgResetGen == resetGen then
                     local salah = placementSalah(KG.sesi)
                     if salah then pcall(function() bersihGakCocok(KG.sesi) end) end
-                    -- up6kg: cek support KURANG (di bawah config, mis. pet belum ke-load pas start)
-                    -- -> pasangSesi ulang (rebuild pool + isi). Gak perlu toggle off/on manual.
+                    -- up6kg: cek support KURANG -> isi dari pool LOCKED (uuid tetap, gak re-pick).
+                    -- Cuma equip uuid yg emang ke-kunci tapi belum ke-equip (bukan pilih pet baru).
                     pcall(function()
                         local cnt = {}
                         for _, nm in pairs(supportKunci) do cnt[nm] = (cnt[nm] or 0) + 1 end
@@ -1664,7 +1706,7 @@ do
                         for _, sup in ipairs(getSUP(KG.sesi)) do
                             if (cnt[sup.nama] or 0) < sup.jml then kurang = true; break end
                         end
-                        if kurang then kgLog("support KURANG -> isi (tambah aja)"); isiKurang(KG.sesi) end
+                        if kurang then isiKurang(KG.sesi) end
                     end)
                 end
             end
@@ -2029,6 +2071,19 @@ end
 
 -- ============ SECTION: CONFIG UP KG ============
 sectionHeader("\u{2696} CONFIG UP KG", 1)
+
+-- up6kg: tombol KUNCI SUPPORT BARU (re-pick support kg terbesar, tetep kunci sampe dipencet lagi)
+local kunciSupBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "\u{1F512} KUNCI SUPPORT BARU (kg terbesar)", Font = FONT_B, TextSize = 13,
+    TextColor3 = Color3.fromRGB(255, 255, 255), LayoutOrder = 1.5, Parent = cfgScroll })
+corner(kunciSupBtn, 7); stroke(kunciSupBtn, C.accent, 1)
+kunciSupBtn.MouseButton1Click:Connect(function()
+    if _G.ZenxKunciSupportBaru then
+        _G.ZenxKunciSupportBaru()
+        kunciSupBtn.Text = "\u{2705} SUPPORT DIKUNCI ULANG"
+        task.wait(2); kunciSupBtn.Text = "\u{1F512} KUNCI SUPPORT BARU (kg terbesar)"
+    end
+end)
 
 -- up6kg: config cuma Tim Ele
 local KG_CONFIGS = { "Tim Ele" }
