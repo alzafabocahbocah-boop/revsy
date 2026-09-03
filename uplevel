@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.1"
+local VERSION = "uplevel-v0.3"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1202,10 +1202,18 @@ do
         { nama = "Rainbow Dilop",    cari = { "rainbow", "dilo" },     jml = 2 },
         { nama = "Peacock",          cari = { "peacock" },             jml = 4 },
     }
-    local AGE_TARGET = 40     -- up6kg: leveling sampe age 40
+    local AGE_TARGET = 500    -- UPLEVEL: leveling sampe age 500 -> ganti (copot + bahan baru)
     local AGE_DROP   = 30     -- sesi 2: KG-up kelar kalau age turun <= ini
-    local BAHAN_S1   = 3   -- up6kg Tim Ele: sesi1 3 bahan
+    local BAHAN_S1   = 3
     local BAHAN_S2   = 1
+    -- UPLEVEL: jumlah bahan yg di-level (settingan, persist)
+    pcall(function()
+        if isfile and isfile("zenx_uplevel_bahan.txt") and readfile then
+            _G.ZenxUpLevelBahan = tonumber(readfile("zenx_uplevel_bahan.txt")) or _G.ZenxUpLevelBahan
+        end
+    end)
+    _G.ZenxUpLevelBahan = _G.ZenxUpLevelBahan or 8
+    local function bahanMax() return math.max(1, math.floor(tonumber(_G.ZenxUpLevelBahan) or 8)) end
     -- cocok kalau pet type mengandung SEMUA kata di cari
     local function cocokSemua(ptype, kws)
         ptype = tostring(ptype):lower()
@@ -1255,7 +1263,7 @@ do
     local function pilihBahan(sesi)
         local target = _G.ZenxKgUpTipe
         if type(target) ~= "table" or not next(target) then return end
-        local maxB = (sesi == 2) and 1 or 3
+        local maxB = bahanMax()
         local pets = listPetsEngine()
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local n = jml(bahanAktif)
@@ -1285,7 +1293,7 @@ do
         return (sesi == 2) and SUPPORT_S2_ELE or SUPPORT_S1_ELE
     end
     local function getMaxB(sesi)
-        return (sesi == 2) and BAHAN_S2 or BAHAN_S1
+        return bahanMax()
     end
     local function tipeDariUuid(uuid)
         local c = _kgContainer
@@ -1645,7 +1653,7 @@ do
         local perT = {}
         for _, nm in pairs(supportKunci) do perT[nm] = (perT[nm] or 0) + 1 end
         local ss = ""; for _, sup in ipairs(SUP) do ss = ss..sup.nama.."="..(perT[sup.nama] or 0).."/"..sup.jml.." " end
-        kgLog("SESI "..sesi.." | support: "..ss.."| bahan "..jml(bahanAktif).."/"..((sesi==2) and BAHAN_S2 or BAHAN_S1))
+        kgLog("SESI "..sesi.." | support: "..ss.."| bahan "..jml(bahanAktif).."/"..bahanMax())
     end
     -- v6.7: ISI support KURANG aja (dari pool, TANPA copot/re-equip yg udah ada).
     -- Dipakai verifikasi -> gak siklus copot-semua. Kelebihan di-handle bersihGakCocok.
@@ -1672,26 +1680,7 @@ do
     end
     -- tentuin sesi dari stat (sticky): sesi1 sampe muda habis, sesi2 sampe age50 habis
     local function tentukanSesi()
-        -- up6kg: sesi 2 BUTUH Ele. Gak pegang Ele -> paksa sesi 1 (leveling, nunggu Ele dioper balik).
-        if not next(eleUuids) then return 1 end
-        local st = _G.ZenxKgStat or {}
-        local mudaB = st.mudaBelum or 0   -- up6kg: age<40 base<6kg
-        local a50B  = st.age50Belum or 0  -- up6kg: age40+ base<6kg
-        local total = st.total or 0
-        if total == 0 then return KG.sesi end   -- stat belum siap -> jgn ganti/putus
-        -- FORCE SESI 2: OPER ELE nemu target -> skip leveling, langsung habisin age-40
-        if _G.ZenxForceSesi2 and a50B > 0 then return 2 end
-        if KG.sesi == 1 then
-            if mudaB == 0 then
-                if a50B > 0 then return 2 else return 0 end   -- 0 = SELESAI
-            end
-            return 1
-        else
-            if a50B == 0 then
-                if mudaB > 0 then return 1 else return 0 end
-            end
-            return 2
-        end
+        return 1   -- UPLEVEL: SINGLE MODE (leveling terus, gak ada sesi 2 / Ele)
     end
 
     -- ===== LINEUP: expose config + hook pilih support manual =====
@@ -1888,7 +1877,7 @@ do
                         end
                     end
                     -- TRIM: copot bahan LEBIH dari max (transisi sesi 1->2: 3 bahan -> 1)
-                    local _maxB = (KG.sesi == 2) and BAHAN_S2 or BAHAN_S1
+                    local _maxB = bahanMax()
                     if jml(bahanAktif) > _maxB then
                         local arr = {}
                         for u, tipe in pairs(bahanAktif) do arr[#arr+1] = { u=u, tipe=tipe, age=getAge(u) or 0 } end
@@ -1900,7 +1889,7 @@ do
                         end
                     end
                     -- isi ulang bahan
-                    local maxB = (KG.sesi == 2) and BAHAN_S2 or BAHAN_S1
+                    local maxB = bahanMax()
                     if jml(bahanAktif) < maxB then
                         pilihBahan(KG.sesi)
                         for u in pairs(bahanAktif) do
@@ -2180,6 +2169,15 @@ end
 -- ============ SECTION: CONFIG UP KG ============
 sectionHeader("\u{2696} SUPPORT LINEUP", 1)
 
+-- UPLEVEL: input jumlah bahan (yg di-level)
+local bahanRow = mk("Frame", { Size = UDim2.new(1,0,0,46), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 1.1, Parent = cfgScroll }); corner(bahanRow, 10); stroke(bahanRow, C.border, 1)
+local bahanLbl = lbl(bahanRow, "Jumlah bahan (yg di-level)", 11.5, C.textDim); bahanLbl.Position = UDim2.new(0,13,0,0); bahanLbl.Size = UDim2.new(1,-90,1,0)
+local bahanInput = mk("TextBox", { Size = UDim2.new(0,66,0,30), Position = UDim2.new(1,-78,0.5,-15), BackgroundColor3 = C.input, TextColor3 = C.accent, Text = tostring(_G.ZenxUpLevelBahan or 8), Font = FONT_B, TextSize = 17, ClearTextOnFocus = false, Parent = bahanRow }); corner(bahanInput, 7)
+bahanInput:GetPropertyChangedSignal("Text"):Connect(function()
+    local n = tonumber(bahanInput.Text)
+    if n and n >= 1 then _G.ZenxUpLevelBahan = math.floor(n); pcall(function() if writefile then writefile("zenx_uplevel_bahan.txt", tostring(_G.ZenxUpLevelBahan)) end end) end
+end)
+
 -- ===== SUPPORT LINEUP: tim toggle + slot cards + pilih pet manual =====
 local lineupTim = 1
 local TIPE_COL = { ["Rainbow Dilop"] = C.accent2, ["Peacock"] = C.accent, ["Gilded Choc Peryton"] = C.accent3, ["Rainbow Elephant"] = C.accent3 }
@@ -2187,6 +2185,7 @@ local TIPE_COL = { ["Rainbow Dilop"] = C.accent2, ["Peacock"] = C.accent, ["Gild
 local timRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.input, BorderSizePixel = 0, LayoutOrder = 1.2, Parent = cfgScroll }); corner(timRow, 9)
 local tim1Btn = mk("TextButton", { Size = UDim2.new(0.5, -3, 1, -6), Position = UDim2.new(0, 3, 0, 3), BackgroundColor3 = C.accent, Text = "TIM 1 (leveling)", Font = FONT_B, TextSize = 12, TextColor3 = Color3.fromRGB(0,0,0), Parent = timRow }); corner(tim1Btn, 7)
 local tim2Btn = mk("TextButton", { Size = UDim2.new(0.5, -3, 1, -6), Position = UDim2.new(0.5, 0, 0, 3), BackgroundColor3 = C.input, Text = "TIM 2 (up kg)", Font = FONT_B, TextSize = 12, TextColor3 = C.textDim, Parent = timRow }); corner(tim2Btn, 7)
+timRow.Visible = false   -- UPLEVEL: single-mode, gak ada TIM 1/2
 
 local lineupHolder = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = 1.4, Parent = cfgScroll })
 mk("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 60), CellPadding = UDim2.new(0, 8, 0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = lineupHolder })
