@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v6.6"
+local VERSION = "up6kg-v6.7"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1508,6 +1508,29 @@ do
         local ss = ""; for _, sup in ipairs(SUP) do ss = ss..sup.nama.."="..(perT[sup.nama] or 0).."/"..sup.jml.." " end
         kgLog("SESI "..sesi.." | support: "..ss.."| bahan "..jml(bahanAktif).."/"..((sesi==2) and BAHAN_S2 or BAHAN_S1))
     end
+    -- v6.7: ISI support KURANG aja (dari pool, TANPA copot/re-equip yg udah ada).
+    -- Dipakai verifikasi -> gak siklus copot-semua. Kelebihan di-handle bersihGakCocok.
+    local function isiKurang(sesi)
+        kunciSupPool()   -- rebuild pool kalo ada tipe kurang (pet baru available)
+        local SUP = getSUP(sesi)
+        local cnt = {}
+        for _, nm in pairs(supportKunci) do cnt[nm] = (cnt[nm] or 0) + 1 end
+        for _, sup in ipairs(SUP) do
+            local perlu = sup.jml - (cnt[sup.nama] or 0)
+            if perlu > 0 then
+                local pool = supPool[sup.nama] or {}
+                for _, u in ipairs(pool) do
+                    if perlu <= 0 then break end
+                    if not supportKunci[u] and not bahanAktif[u] then
+                        supportKunci[u] = sup.nama
+                        equipPet(u, CLUSTER)   -- equip yg BARU ditambah aja (yg lama diem)
+                        perlu = perlu - 1
+                        kgLog("isi support kurang: "..sup.nama.." (+1)")
+                    end
+                end
+            end
+        end
+    end
     -- tentuin sesi dari stat (sticky): sesi1 sampe muda habis, sesi2 sampe age50 habis
     local function tentukanSesi()
         local st = _G.ZenxKgStat or {}
@@ -1622,7 +1645,7 @@ do
                         for _, sup in ipairs(getSUP(KG.sesi)) do
                             if (cnt[sup.nama] or 0) < sup.jml then kurang = true; break end
                         end
-                        if kurang then kgLog("support KURANG -> isi ulang"); pasangSesi(KG.sesi, false) end
+                        if kurang then kgLog("support KURANG -> isi (tambah aja)"); isiKurang(KG.sesi) end
                     end)
                 end
             end
