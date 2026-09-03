@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v6.4"
+local VERSION = "up6kg-v6.5"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1639,6 +1639,26 @@ do
             local a50B0  = (_G.ZenxKgStat and _G.ZenxKgStat.age50Belum) or 0
             kgLog("awal: total="..((_G.ZenxKgStat and _G.ZenxKgStat.total) or 0).." muda(age<50 base<3.8)="..mudaB0.." age50+(base<3.8)="..a50B0)
             KG.sesi = (tentukanSesi() == 2) and 2 or 1   -- mulai dari sesi yg sesuai kondisi
+            -- up6kg: TUNGGU support READY (semua tipe cukup di inventory) SEBELUM kunci pool + equip.
+            -- Biar pool ke-lock LENGKAP dari awal (gak kurang gara2 pet belum ke-load).
+            do
+                local maxPer, cariMap = {}, {}
+                for _, sup in ipairs(SUPPORT_S1_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
+                for _, sup in ipairs(SUPPORT_S2_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
+                for att = 1, 45 do
+                    if not KG.aktif then break end
+                    local pets = listPetsEngine()
+                    local cnt = {}
+                    for _, p in ipairs(pets) do
+                        for nm, cari in pairs(cariMap) do if cocokSemua(p.tipe, cari) then cnt[nm] = (cnt[nm] or 0) + 1 end end
+                    end
+                    local lengkap, kurangNm = true, ""
+                    for nm, mx in pairs(maxPer) do if (cnt[nm] or 0) < mx then lengkap = false; kurangNm = nm .. " (" .. (cnt[nm] or 0) .. "/" .. mx .. ")" end end
+                    if lengkap then kgLog("support READY -> kunci pool + equip"); break end
+                    if att == 1 or att % 5 == 0 then kgLog("tunggu support ready... kurang: " .. kurangNm) end
+                    task.wait(1)
+                end
+            end
             pasangSesi(KG.sesi, true)
             while KG.aktif do
                 task.wait(3)
