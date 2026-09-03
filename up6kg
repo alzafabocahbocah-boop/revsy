@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v7.9"
+local VERSION = "up6kg-v8.6"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1495,9 +1495,21 @@ do
     -- KUNCI support: paksa=true -> kunci BARU (re-pick kg terbesar). else: pakai kunci lama
     -- (dari memory / file). Sekali kunci -> TETAP walau rejoin (persist file). Ganti = pencet "kunci baru".
     local function updateSupportUuids()
-        local su = {}
-        if supPool then for _, list in pairs(supPool) do for _, u in ipairs(list) do su[u] = true end end end
-        _G.ZenxSupportUuids = su   -- dipake trade: auto-fav biar gak ke-gift
+        local su, detail = {}, {}
+        if supPool then
+            local pets = listPetsAll()
+            local kgByUuid = {}
+            for _, p in ipairs(pets) do kgByUuid[p.uuid] = p.kg end
+            for nm, list in pairs(supPool) do
+                detail[nm] = {}
+                for _, u in ipairs(list) do
+                    su[u] = true
+                    detail[nm][#detail[nm] + 1] = { uuid = u, kg = kgByUuid[u] or 0 }
+                end
+            end
+        end
+        _G.ZenxSupportUuids = su        -- buat auto-fav
+        _G.ZenxSupportPool = detail     -- buat lineup UI (nama -> {{uuid, kg}})
     end
     local function kunciSupPool(paksa)
         if not paksa and supPool then updateSupportUuids(); return end   -- udah ke-kunci di memory
@@ -1623,6 +1635,28 @@ do
             end
             return 2
         end
+    end
+
+    -- ===== LINEUP: expose config + hook pilih support manual =====
+    _G.ZenxSupportConfig = { SUPPORT_S1_ELE, SUPPORT_S2_ELE }   -- [1]=sesi1 [2]=sesi2
+    -- set 1 slot support ke uuid tertentu (dari lineup UI). slotKey = nama.."#"..idx
+    _G.ZenxSetSupportPet = function(nama, idx, uuid)
+        kunciSupPool()
+        supPool = supPool or {}
+        supPool[nama] = supPool[nama] or {}
+        supPool[nama][idx] = uuid
+        savePool(); updateSupportUuids()
+        if KG.aktif then pasangSesi(KG.sesi, false) end
+        kgLog("lineup: set " .. nama .. " slot " .. idx)
+    end
+    -- list pet 1 jenis (buat picker lineup): {uuid, kg, age}
+    _G.ZenxListPetJenis = function(cari)
+        local out = {}
+        for _, p in ipairs(listPetsAll()) do
+            if cocokSemua(p.tipe, cari) then out[#out+1] = { uuid = p.uuid, kg = p.kg, age = p.age, tipe = p.tipe } end
+        end
+        table.sort(out, function(a, b) return (a.kg or 0) > (b.kg or 0) end)
+        return out
     end
 
     local function kgStart(config)
@@ -1835,21 +1869,21 @@ end
 
 -- ============ TEMA ============
 local C = {
-    bg       = Color3.fromRGB(14, 16, 22),    -- dark biru-hitam
-    panel    = Color3.fromRGB(22, 24, 42),    -- panel biru
-    card     = Color3.fromRGB(21, 23, 42),    -- card
-    cardSel  = Color3.fromRGB(31, 35, 64),    -- card terpilih
-    input    = Color3.fromRGB(18, 20, 31),
-    border   = Color3.fromRGB(35, 38, 58),    -- border biru-abu
+    bg       = Color3.fromRGB(13, 15, 21),    -- dark biru-hitam (dikit lebih gelap = kontras)
+    panel    = Color3.fromRGB(28, 31, 58),    -- panel biru (lebih terang)
+    card     = Color3.fromRGB(26, 29, 56),    -- card (lebih terang -> kontras vs bg)
+    cardSel  = Color3.fromRGB(38, 42, 77),    -- card terpilih
+    input    = Color3.fromRGB(19, 21, 36),
+    border   = Color3.fromRGB(54, 60, 92),    -- border JELAS (dulu samar)
     borderSel= Color3.fromRGB(139, 92, 246),  -- ungu (accent border)
-    line     = Color3.fromRGB(58, 63, 102),
-    text     = Color3.fromRGB(240, 240, 245),
-    textDim  = Color3.fromRGB(139, 142, 165),
-    textMute = Color3.fromRGB(107, 110, 133),
-    accent   = Color3.fromRGB(139, 92, 246),  -- UNGU (dulu putih)
-    accent2  = Color3.fromRGB(93, 214, 176),  -- hijau (Dilop)
-    accent3  = Color3.fromRGB(240, 184, 70),  -- kuning (Gilded/Ele)
-    danger   = Color3.fromRGB(224, 85, 85),
+    line     = Color3.fromRGB(74, 82, 130),   -- garis lebih jelas
+    text     = Color3.fromRGB(244, 245, 250),
+    textDim  = Color3.fromRGB(150, 154, 178),
+    textMute = Color3.fromRGB(112, 116, 140),
+    accent   = Color3.fromRGB(150, 105, 255),  -- UNGU lebih vibrant
+    accent2  = Color3.fromRGB(70, 224, 176),   -- hijau lebih vibrant
+    accent3  = Color3.fromRGB(250, 190, 75),   -- kuning lebih vibrant
+    danger   = Color3.fromRGB(235, 90, 95),
 }
 local FONT   = Enum.Font.GothamSemibold
 local FONT_B = Enum.Font.GothamBold
@@ -1864,7 +1898,7 @@ local function corner(o, r)
     mk("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = o }); return o
 end
 local function stroke(o, col, th)
-    return mk("UIStroke", { Color = col or C.border, Thickness = th or 1.5, Parent = o })
+    return mk("UIStroke", { Color = col or C.border, Thickness = th or 1.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = o })
 end
 local function pad(o, all)
     mk("UIPadding", {
@@ -1994,11 +2028,9 @@ local function makeSideBtn(name, y, ico)
         BackgroundColor3 = C.accent, BorderSizePixel = 0,
         Visible = (name == activeSide), Parent = btn })
     corner(accent, 2)
-    local icoL = lbl(btn, ico or "", 15, (name == activeSide) and C.accent or C.textDim)
-    icoL.Position = UDim2.new(0, 9, 0, 0); icoL.Size = UDim2.new(0, 20, 1, 0); icoL.TextXAlignment = Enum.TextXAlignment.Center
-    local t = lbl(btn, name, 11, (name == activeSide) and C.text or C.textDim)
-    t.Position = UDim2.new(0, 31, 0, 0); t.Size = UDim2.new(1, -33, 1, 0); t.Font = FONT_B
-    sideBtns[name] = { btn = btn, accent = accent, label = t, ico = icoL }
+    local t = lbl(btn, name, 12, (name == activeSide) and C.text or C.textDim)
+    t.Position = UDim2.new(0, 13, 0, 0); t.Size = UDim2.new(1, -13, 1, 0); t.Font = FONT_B
+    sideBtns[name] = { btn = btn, accent = accent, label = t }
     btn.MouseButton1Click:Connect(function()
         activeSide = name
         for n, d in pairs(sideBtns) do
@@ -2006,16 +2038,15 @@ local function makeSideBtn(name, y, ico)
             d.btn.BackgroundColor3 = on and C.cardSel or C.panel
             d.accent.Visible = on
             d.label.TextColor3 = on and C.text or C.textDim
-            if d.ico then d.ico.TextColor3 = on and C.accent or C.textDim end
         end
         if showSideFn then showSideFn(name) end
     end)
     return btn
 end
-makeSideBtn("AUTO KG", 14, "\u{2696}")
-makeSideBtn("MISC", 56, "\u{1F527}")
-makeSideBtn("TRADE", 98, "\u{1F4E4}")
-makeSideBtn("OPER ELE", 140, "\u{1F418}")
+makeSideBtn("AUTO KG", 14)
+makeSideBtn("MISC", 56)
+makeSideBtn("TRADE", 98)
+makeSideBtn("OPER ELE", 140)
 
 -- ============ AREA KONTEN ============
 local content = mk("Frame", {
@@ -2066,10 +2097,11 @@ local cfgScroll = mk("ScrollingFrame", {
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = cfgScroll })
 
 local function sectionHeader(txt, lo)
-    local h = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
+    local h = mk("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1,
         BorderSizePixel = 0, LayoutOrder = lo or 0, Parent = cfgScroll })
-    corner(h, 7)
-    local t = lbl(h, txt, 13, C.accent); t.Font = FONT_B
+    local bar = mk("Frame", { Size = UDim2.new(0, 3, 0, 14), Position = UDim2.new(0, 2, 0.5, -7),
+        BackgroundColor3 = C.accent, BorderSizePixel = 0, Parent = h }); corner(bar, 2)
+    local t = lbl(h, txt, 12, C.accent); t.Font = FONT_B
     t.Position = UDim2.new(0, 12, 0, 0); t.Size = UDim2.new(1, -12, 1, 0)
     return h
 end
@@ -2088,20 +2120,92 @@ local function cfgRow(label, defaultVal, lo)
 end
 
 -- ============ SECTION: CONFIG UP KG ============
-sectionHeader("\u{2696} SUPPORT PET (terkunci)", 1)
+sectionHeader("\u{2696} SUPPORT LINEUP", 1)
 
--- up6kg: tombol KUNCI SUPPORT BARU (re-pick support kg terbesar, tetep kunci sampe dipencet lagi)
-local kunciSupBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = C.cardSel,
-    Text = "\u{1F512}  Kunci Support Baru  \u{00B7}  kg terbesar", Font = FONT_B, TextSize = 14,
-    TextColor3 = C.accent, LayoutOrder = 1.5, Parent = cfgScroll })
-corner(kunciSupBtn, 10); stroke(kunciSupBtn, C.borderSel, 1.5)
+-- ===== SUPPORT LINEUP: tim toggle + slot cards + pilih pet manual =====
+local lineupTim = 1
+local TIPE_COL = { ["Rainbow Dilop"] = C.accent2, ["Peacock"] = C.accent, ["Gilded Choc Peryton"] = C.accent3, ["Rainbow Elephant"] = C.accent3 }
+
+local timRow = mk("Frame", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.input, BorderSizePixel = 0, LayoutOrder = 1.2, Parent = cfgScroll }); corner(timRow, 9)
+local tim1Btn = mk("TextButton", { Size = UDim2.new(0.5, -3, 1, -6), Position = UDim2.new(0, 3, 0, 3), BackgroundColor3 = C.accent, Text = "TIM 1 (leveling)", Font = FONT_B, TextSize = 12, TextColor3 = Color3.fromRGB(14,16,22), Parent = timRow }); corner(tim1Btn, 7)
+local tim2Btn = mk("TextButton", { Size = UDim2.new(0.5, -3, 1, -6), Position = UDim2.new(0.5, 0, 0, 3), BackgroundColor3 = C.input, Text = "TIM 2 (up kg)", Font = FONT_B, TextSize = 12, TextColor3 = C.textDim, Parent = timRow }); corner(tim2Btn, 7)
+
+local lineupHolder = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = 1.4, Parent = cfgScroll })
+mk("UIGridLayout", { CellSize = UDim2.new(0.5, -4, 0, 60), CellPadding = UDim2.new(0, 8, 0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = lineupHolder })
+
+local function openPetPicker(nama, idx, cari)
+    local old = gui:FindFirstChild("ZenxLineupPicker"); if old then old:Destroy() end
+    local ov = mk("Frame", { Name = "ZenxLineupPicker", Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0), BackgroundTransparency = 0.45, ZIndex = 300, Parent = gui })
+    local pk = mk("Frame", { Size = UDim2.new(0, 320, 0, 380), Position = UDim2.new(0.5,-160,0.5,-190), BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 301, Parent = ov }); corner(pk, 12); stroke(pk, C.border, 1.5)
+    local pt = lbl(pk, "  Pilih " .. nama .. "  \u{00B7}  slot " .. idx, 13, C.text); pt.Font = FONT_B; pt.Position = UDim2.new(0,12,0,10); pt.Size = UDim2.new(1,-44,0,22); pt.ZIndex = 302
+    local px = mk("TextButton", { Size = UDim2.new(0,28,0,24), Position = UDim2.new(1,-36,0,10), BackgroundColor3 = Color3.fromRGB(58,30,34), Text = "\u{2715}", Font = FONT_B, TextSize = 22, TextColor3 = Color3.fromRGB(240,130,140), ZIndex = 302, Parent = pk }); corner(px, 7)
+    px.MouseButton1Click:Connect(function() ov:Destroy() end)
+    local scr = mk("ScrollingFrame", { Size = UDim2.new(1,-20,1,-52), Position = UDim2.new(0,10,0,44), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line, CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 302, Parent = pk })
+    mk("UIListLayout", { Padding = UDim.new(0,5), Parent = scr })
+    local pets = (_G.ZenxListPetJenis and _G.ZenxListPetJenis(cari)) or {}
+    if #pets == 0 then local e = lbl(scr, "gak ada pet jenis ini di inventory", 12, C.textDim); e.Size = UDim2.new(1,0,0,40); e.ZIndex = 302 end
+    for _, p in ipairs(pets) do
+        local col = TIPE_COL[nama] or C.accent
+        local it = mk("TextButton", { Size = UDim2.new(1,-4,0,44), BackgroundColor3 = C.card, Text = "", AutoButtonColor = true, ZIndex = 302, Parent = scr }); corner(it, 8); stroke(it, C.border, 1)
+        local dot = mk("Frame", { Size = UDim2.new(0,8,0,8), Position = UDim2.new(0,12,0.5,-4), BackgroundColor3 = col, BorderSizePixel = 0, ZIndex = 303, Parent = it }); corner(dot,4)
+        local nmL = lbl(it, tostring(p.tipe or nama), 12.5, C.text); nmL.Font = FONT_B; nmL.Position = UDim2.new(0,26,0,5); nmL.Size = UDim2.new(1,-90,0,18); nmL.ZIndex = 303
+        local sub = lbl(it, "kg " .. string.format("%.2f", p.kg or 0) .. "  \u{00B7}  age " .. (p.age or 0), 11, C.textDim); sub.Position = UDim2.new(0,26,0,23); sub.Size = UDim2.new(1,-90,0,16); sub.ZIndex = 303
+        local kgB = lbl(it, string.format("%.1fkg", p.kg or 0), 13, col); kgB.Font = FONT_B; kgB.Position = UDim2.new(1,-78,0.5,-10); kgB.Size = UDim2.new(0,70,0,20); kgB.TextXAlignment = Enum.TextXAlignment.Right; kgB.ZIndex = 303
+        it.MouseButton1Click:Connect(function()
+            if _G.ZenxSetSupportPet then _G.ZenxSetSupportPet(nama, idx, p.uuid) end
+            ov:Destroy()
+        end)
+    end
+end
+
+local function renderLineup()
+    for _, c in ipairs(lineupHolder:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
+    local cfg = (_G.ZenxSupportConfig or {})[lineupTim] or {}
+    local pool = _G.ZenxSupportPool or {}
+    local order = 0
+    for _, sup in ipairs(cfg) do
+        local nm = sup.nama
+        local col = TIPE_COL[nm] or C.accent
+        for i = 1, sup.jml do
+            order = order + 1
+            local entry = (pool[nm] or {})[i]
+            local card = mk("TextButton", { BackgroundColor3 = C.card, Text = "", AutoButtonColor = true, LayoutOrder = order, Parent = lineupHolder }); corner(card, 10); stroke(card, entry and col or C.border, entry and 1.5 or 1)
+            mk("Frame", { Size = UDim2.new(0,3,1,-16), Position = UDim2.new(0,0,0,8), BackgroundColor3 = col, BorderSizePixel = 0, Parent = card })
+            local ty = lbl(card, (nm:gsub("Rainbow ",""):gsub("Choc ","")), 9, col); ty.Font = FONT_B; ty.Position = UDim2.new(0,11,0,7); ty.Size = UDim2.new(1,-16,0,12); ty.TextXAlignment = Enum.TextXAlignment.Left
+            if entry then
+                local pn = lbl(card, "#" .. tostring(entry.uuid):sub(2,5), 13, C.text); pn.Font = FONT_B; pn.Position = UDim2.new(0,11,0,21); pn.Size = UDim2.new(1,-16,0,18); pn.TextXAlignment = Enum.TextXAlignment.Left
+                local kg = lbl(card, string.format("%.1f kg", entry.kg or 0), 11, col); kg.Position = UDim2.new(0,11,0,39); kg.Size = UDim2.new(1,-16,0,14); kg.TextXAlignment = Enum.TextXAlignment.Left
+            else
+                local plus = lbl(card, "+ pilih", 13, C.textDim); plus.Position = UDim2.new(0,11,0,26); plus.Size = UDim2.new(1,-16,0,20); plus.TextXAlignment = Enum.TextXAlignment.Left
+            end
+            card.MouseButton1Click:Connect(function() openPetPicker(nm, i, sup.cari) end)
+        end
+    end
+end
+
+local function setLineupTim(t)
+    lineupTim = t
+    tim1Btn.BackgroundColor3 = (t==1) and C.accent or C.input; tim1Btn.TextColor3 = (t==1) and Color3.fromRGB(14,16,22) or C.textDim
+    tim2Btn.BackgroundColor3 = (t==2) and C.accent or C.input; tim2Btn.TextColor3 = (t==2) and Color3.fromRGB(14,16,22) or C.textDim
+    renderLineup()
+end
+tim1Btn.MouseButton1Click:Connect(function() setLineupTim(1) end)
+tim2Btn.MouseButton1Click:Connect(function() setLineupTim(2) end)
+
+local kunciSupBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
+    Text = "\u{1F504}  Auto-pilih (kg terbesar)", Font = FONT_B, TextSize = 13,
+    TextColor3 = C.textDim, LayoutOrder = 1.6, Parent = cfgScroll })
+corner(kunciSupBtn, 9); stroke(kunciSupBtn, C.border, 1)
 kunciSupBtn.MouseButton1Click:Connect(function()
     if _G.ZenxKunciSupportBaru then
         _G.ZenxKunciSupportBaru()
-        kunciSupBtn.Text = "\u{2705} Support dikunci ulang"
-        task.wait(2); kunciSupBtn.Text = "\u{1F512}  Kunci Support Baru  \u{00B7}  kg terbesar"
+        kunciSupBtn.Text = "\u{2705} di-auto ulang"
+        task.wait(1.5); kunciSupBtn.Text = "\u{1F504}  Auto-pilih (kg terbesar)"
+        renderLineup()
     end
 end)
+
+task.spawn(function() while gui.Parent do if content.Visible then pcall(renderLineup) end task.wait(2) end end)
 
 -- up6kg: config cuma Tim Ele
 local KG_CONFIGS = { "Tim Ele" }
@@ -2146,48 +2250,61 @@ end
 -- pet dipake di tim + jumlah + berapa yg BELUM 3.8kg + berapa yg UDAH.
 local KG_TARGET = 6.0   -- up6kg: target 6kg
 _G.ZenxKgTarget = KG_TARGET
-local statTbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 158), BackgroundColor3 = C.input, RichText = true,
-    Font = Enum.Font.Code, TextSize = 22, TextColor3 = Color3.fromRGB(240, 240, 245),
-    TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-    TextWrapped = true, Text = "", LayoutOrder = 3, Parent = cfgScroll })
-corner(statTbl, 6)
-mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6),
-    PaddingRight = UDim.new(0, 6), Parent = statTbl })
+-- ===== STATUS: progress 6kg + stat cards + sesi strip =====
+-- progress card
+local progCard = mk("Frame", { Size = UDim2.new(1,0,0,66), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 3, Parent = cfgScroll }); corner(progCard, 12); stroke(progCard, C.border, 1)
+local progHdr = lbl(progCard, "PROGRESS 6KG", 10, C.textDim); progHdr.Font = FONT_B; progHdr.Position = UDim2.new(0,14,0,11); progHdr.Size = UDim2.new(1,-110,0,14)
+local progNum = lbl(progCard, "0 / 0", 14, C.text); progNum.Font = FONT_B; progNum.Position = UDim2.new(1,-96,0,9); progNum.Size = UDim2.new(0,82,0,18); progNum.TextXAlignment = Enum.TextXAlignment.Right
+local progBg = mk("Frame", { Size = UDim2.new(1,-28,0,8), Position = UDim2.new(0,14,0,33), BackgroundColor3 = C.input, BorderSizePixel = 0, Parent = progCard }); corner(progBg,4)
+local progFill = mk("Frame", { Size = UDim2.new(0,0,1,0), BackgroundColor3 = C.accent2, BorderSizePixel = 0, Parent = progBg }); corner(progFill,4)
+local progPct = lbl(progCard, "0% selesai", 10, C.textMute); progPct.Position = UDim2.new(0,14,0,46); progPct.Size = UDim2.new(0,120,0,14)
+local progTgt = lbl(progCard, "", 10, C.textMute); progTgt.Position = UDim2.new(1,-110,0,46); progTgt.Size = UDim2.new(0,96,0,14); progTgt.TextXAlignment = Enum.TextXAlignment.Right
+
+-- stat cards (4)
+local statRow = mk("Frame", { Size = UDim2.new(1,0,0,50), BackgroundTransparency = 1, LayoutOrder = 3.2, Parent = cfgScroll })
+mk("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0,7), Parent = statRow })
+local function statC(col)
+    local c = mk("Frame", { Size = UDim2.new(0.25,-6,1,0), BackgroundColor3 = C.card, BorderSizePixel = 0, Parent = statRow }); corner(c,10); stroke(c, C.border, 1)
+    local v = lbl(c, "0", 18, col); v.Font = FONT_B; v.Position = UDim2.new(0,9,0,7); v.Size = UDim2.new(1,-9,0,22); v.TextXAlignment = Enum.TextXAlignment.Left
+    local l = lbl(c, "", 9, C.textMute); l.Position = UDim2.new(0,9,0,31); l.Size = UDim2.new(1,-9,0,14); l.TextXAlignment = Enum.TextXAlignment.Left
+    return v, l
+end
+local scTotV, scTotL = statC(C.text); scTotL.Text = "total pet"
+local scUdahV, scUdahL = statC(C.accent2); scUdahL.Text = "6kg+"
+local scBelumV, scBelumL = statC(C.text); scBelumL.Text = "6kg-"
+local scAgeV, scAgeL = statC(C.accent); scAgeL.Text = "age40"
+
+-- sesi strip
+local sesiF = mk("Frame", { Size = UDim2.new(1,0,0,38), BackgroundColor3 = Color3.fromRGB(26,18,48), BorderSizePixel = 0, LayoutOrder = 3.4, Parent = cfgScroll }); corner(sesiF,10); stroke(sesiF, C.accent, 1)
+local sesiBadge = mk("Frame", { Size = UDim2.new(0,56,0,20), Position = UDim2.new(0,12,0.5,-10), BackgroundColor3 = C.cardSel, BorderSizePixel = 0, Parent = sesiF }); corner(sesiBadge,6)
+local sesiBL = lbl(sesiBadge, "SESI 1", 10, C.accent); sesiBL.Font = FONT_B; sesiBL.Size = UDim2.new(1,0,1,0); sesiBL.TextXAlignment = Enum.TextXAlignment.Center
+local sesiInfo = lbl(sesiF, "leveling", 11.5, C.accent); sesiInfo.Position = UDim2.new(0,76,0,0); sesiInfo.Size = UDim2.new(1,-90,1,0)
+
 task.spawn(function()
     while gui.Parent do
         local st = _G.ZenxKgStat or {}
-        local total = st.total or 0
+        local total = st.totalAll or 0
+        local udah = st.udah or 0
         local belum = st.belum or 0
-        local udah  = st.udah or 0
-        local a50b  = st.age50Belum or 0
-        local mudab = st.mudaBelum or 0
-        local pilih = "SEMUA PET"
-        if type(_G.ZenxKgUpTipe) == "table" and next(_G.ZenxKgUpTipe) then
-            local nm = {}
-            for t in pairs(_G.ZenxKgUpTipe) do nm[#nm+1] = t end
-            table.sort(nm); pilih = table.concat(nm, ", ")
-        end
-        local sep = "<font color='#23263a'>" .. string.rep("\u{2500}", 22) .. "</font>"
-        local lines = {
-            "<font color='#c4b5fd'><b>STATUS</b></font>  <font color='#6b6e85'>" .. pilih .. "</font>",
-            "<font color='#8b8ea5'>Target KG</font>   <font color='#f0b846'><b>" .. KG_TARGET .. " kg</b></font>",
-            sep,
-            "<font color='#8b8ea5'>Total pet</font>   <font color='#f0f0f5'><b>" .. total .. "</b></font>",
-            "<font color='#5dd6b0'>Udah 6kg</font>   <font color='#5dd6b0'><b>" .. udah .. "</b></font>",
-            "<font color='#8b8ea5'>Belum 6kg</font>  <font color='#f0f0f5'><b>" .. belum .. "</b></font>",
-            sep,
-            "<font color='#c4b5fd'>Age40+ blm6</font> <font color='#c4b5fd'><b>" .. a50b .. "</b></font>",
-            "<font color='#6b6e85'>Muda blm6</font>   <font color='#8b8ea5'>" .. mudab .. "</font>",
-        }
-        statTbl.Text = table.concat(lines, "\n")
+        local age40 = st.age50Belum or 0
+        local goal = udah + belum
+        progNum.Text = udah .. " / " .. goal
+        local pct = (goal > 0) and (udah / goal) or 0
+        progFill.Size = UDim2.new(pct, 0, 1, 0)
+        progPct.Text = math.floor(pct * 100 + 0.5) .. "% selesai"
+        progTgt.Text = "target " .. string.format("%.1f", KG_TARGET) .. " kg"
+        scTotV.Text = tostring(total); scUdahV.Text = tostring(udah); scBelumV.Text = tostring(belum); scAgeV.Text = tostring(age40)
+        local sesi = (_G.ZenxKg and _G.ZenxKg.sesi) or 1
+        sesiBL.Text = "SESI " .. sesi
+        sesiInfo.Text = (sesi == 2) and "up kg \u{00B7} reset pakai Ele" or "leveling ke age 40"
         task.wait(1)
     end
 end)
 
 -- ============ PICKER: PET YANG MAU DI-UP (tombol -> POPUP) ============
-local pickBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.card,
-    Text = "\u{1F43E} Pilih Pet Di-Up: (belum)", Font = FONT_B, TextSize = 24, TextColor3 = Color3.fromRGB(255, 255, 255),
-    LayoutOrder = 4, Parent = cfgScroll }); corner(pickBtn, 6); stroke(pickBtn, C.border, 1)
+local pickBtn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.card,
+    Text = "\u{1F43E}  Pilih Bahan (pet di-up)", Font = FONT_B, TextSize = 14, TextColor3 = C.text,
+    LayoutOrder = 4, Parent = cfgScroll }); corner(pickBtn, 10); stroke(pickBtn, C.border, 1)
 
 -- popup overlay (di atas semua, muncul pas tombol dipencet)
 local pickOverlay = mk("Frame", { Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.new(0,0,0),
@@ -2260,7 +2377,7 @@ local function updatePickBtn()
     local names = {}
     if type(s) == "table" then for t in pairs(s) do names[#names+1] = t end end
     table.sort(names)
-    pickBtn.Text = "\u{1F43E} Pilih Pet Di-Up: " .. (#names > 0 and table.concat(names, ", ") or "(belum)")
+    pickBtn.Text = "\u{1F43E}  Bahan: " .. (#names > 0 and table.concat(names, ", ") or "(belum dipilih)")
 end
 pickBtn.MouseButton1Click:Connect(function() pSearch.Text = ""; bukaPicker("") end)
 pSearch:GetPropertyChangedSignal("Text"):Connect(function() bukaPicker(pSearch.Text) end)
@@ -2282,34 +2399,38 @@ local pDone = mk("TextButton", { Size = UDim2.new(0, 80, 0, 24), Position = UDim
     TextColor3 = Color3.fromRGB(255, 255, 255), ZIndex = 103, Parent = pickPanel }); corner(pDone, 6)
 pDone.MouseButton1Click:Connect(function() updatePickBtn(); pickOverlay.Visible = false end)
 
+-- up6kg: helper toggle switch-style (pill hijau ON / dim OFF + knob geser)
+local function makeSwitch(label, lo)
+    local row = mk("TextButton", { Size=UDim2.new(1,0,0,44), BackgroundColor3=C.card, Text="", AutoButtonColor=false, LayoutOrder=lo, Parent=cfgScroll }); corner(row,10); stroke(row, C.border, 1)
+    local l = lbl(row, label, 14, C.text); l.Font=FONT_B; l.Position=UDim2.new(0,14,0,0); l.Size=UDim2.new(1,-80,1,0)
+    local sw = mk("Frame", { Size=UDim2.new(0,46,0,24), Position=UDim2.new(1,-58,0.5,-12), BackgroundColor3=C.input, BorderSizePixel=0, Parent=row }); corner(sw,12)
+    local knob = mk("Frame", { Size=UDim2.new(0,18,0,18), Position=UDim2.new(0,3,0.5,-9), BackgroundColor3=C.textDim, BorderSizePixel=0, Parent=sw }); corner(knob,9)
+    local function setVis(on)
+        sw.BackgroundColor3 = on and C.accent2 or C.input
+        knob.Position = on and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9)
+        knob.BackgroundColor3 = on and Color3.fromRGB(14,16,22) or C.textDim
+    end
+    return row, setVis
+end
+
 -- AUTO UP KG toggle (BAWAH tabel 1)
-local kgTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
-    Text = "AUTO UP KG: OFF", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
-    LayoutOrder = 6, Parent = cfgScroll })
-corner(kgTog, 7)
+local kgTog, kgVis = makeSwitch("AUTO UP KG", 6)
 kgTog.MouseButton1Click:Connect(function()
     if _G.ZenxKg and _G.ZenxKg.aktif then
         if _G.ZenxKgStop then _G.ZenxKgStop() end
-        if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
-        kgTog.Text = "AUTO UP KG: OFF"; kgTog.TextColor3 = Color3.fromRGB(255, 255, 255); kgTog.BackgroundColor3 = C.card
+        kgVis(false)
     else
         if _G.ZenxKgStart then _G.ZenxKgStart(kgConfigAktif) end
-        if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
-        kgTog.Text = "AUTO UP KG: ON"; kgTog.TextColor3 = Color3.fromRGB(255, 255, 255); kgTog.BackgroundColor3 = C.panel
+        kgVis(true)
     end
+    if _G.ZenxKgSaveCfg then _G.ZenxKgSaveCfg() end
 end)
+kgVis(_G.ZenxKg and _G.ZenxKg.aktif or false)
+task.spawn(function() while gui.Parent do task.wait(1); kgVis(_G.ZenxKg and _G.ZenxKg.aktif or false) end end)
 
 -- v0.75: AUTO SWAP SKILL toggle -- swap skill SEMUA pet walau AUTO UP KG (spider/dilop) OFF
-local swTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
-    Text = "AUTO SWAP SKILL: OFF", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
-    LayoutOrder = 7, Parent = cfgScroll })
-corner(swTog, 7)
-local function syncSwTog()
-    local on = _G.ZenxAutoSwapSkill == true
-    swTog.Text = "AUTO SWAP SKILL: " .. (on and "ON" or "OFF")
-    swTog.TextColor3 = Color3.fromRGB(255, 255, 255)
-    swTog.BackgroundColor3 = on and C.panel or C.card
-end
+local swTog, swVis = makeSwitch("AUTO SWAP SKILL", 7)
+local function syncSwTog() swVis(_G.ZenxAutoSwapSkill == true) end
 swTog.MouseButton1Click:Connect(function()
     _G.ZenxAutoSwapSkill = not _G.ZenxAutoSwapSkill
     syncSwTog()
@@ -2317,16 +2438,8 @@ end)
 syncSwTog()
 
 -- v0.76: AUTO TENGAH toggle -- tahan pet numpuk ke tengah TERUS (fitur HOLD yg tadi dimatiin)
-local ctTog = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card,
-    Text = "AUTO TENGAH: OFF", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
-    LayoutOrder = 8, Parent = cfgScroll })
-corner(ctTog, 7)
-local function syncCtTog()
-    local on = _G.ZenxAutoTengah == true
-    ctTog.Text = "AUTO TENGAH: " .. (on and "ON" or "OFF")
-    ctTog.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ctTog.BackgroundColor3 = on and C.panel or C.card
-end
+local ctTog, ctVis = makeSwitch("AUTO TENGAH", 8)
+local function syncCtTog() ctVis(_G.ZenxAutoTengah == true) end
 ctTog.MouseButton1Click:Connect(function()
     _G.ZenxAutoTengah = not _G.ZenxAutoTengah
     syncCtTog()
@@ -2377,9 +2490,9 @@ kgInfo.Size = UDim2.new(1, 0, 0, 20); kgInfo.TextWrapped = true; kgInfo.LayoutOr
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = miscScroll })
 -- REJOIN NOW: pencet -> LANGSUNG Teleport (no kick, no wait). retry sampe masuk.
 do
-    local rjNow = mk("TextButton", { Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = Color3.fromRGB(180, 70, 60),
-        Text = "\u{1F504} REJOIN NOW", Font = FONT_B, TextSize = 26, TextColor3 = Color3.fromRGB(255, 255, 255),
-        LayoutOrder = 0, Parent = miscScroll }); corner(rjNow, 7)
+    local rjNow = mk("TextButton", { Size = UDim2.new(1, 0, 0, 42), BackgroundColor3 = Color3.fromRGB(58,30,34),
+        Text = "\u{1F504}  REJOIN NOW", Font = FONT_B, TextSize = 14, TextColor3 = Color3.fromRGB(240,130,140),
+        LayoutOrder = 0, Parent = miscScroll }); corner(rjNow, 10); stroke(rjNow, C.danger, 1)
     rjNow.MouseButton1Click:Connect(function()
         rjNow.Text = "\u{1F504} REJOIN..."
         rjNow.BackgroundColor3 = Color3.fromRGB(120, 50, 45)
@@ -2396,9 +2509,10 @@ do
     end)
 end
 do
-    local rjH = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card,
-        BorderSizePixel = 0, LayoutOrder = 1, Parent = miscScroll }); corner(rjH, 7)
-    local rjHt = lbl(rjH, "\u{1F504} REJOIN GLOBAL", 13, C.accent); rjHt.Font = FONT_B
+    local rjH = mk("Frame", { Size = UDim2.new(1, 0, 0, 26), BackgroundTransparency = 1,
+        BorderSizePixel = 0, LayoutOrder = 1, Parent = miscScroll })
+    mk("Frame", { Size = UDim2.new(0,3,0,14), Position = UDim2.new(0,2,0.5,-7), BackgroundColor3 = C.accent3, BorderSizePixel = 0, Parent = rjH })
+    local rjHt = lbl(rjH, "REJOIN GLOBAL", 11.5, C.accent3); rjHt.Font = FONT_B
     rjHt.Position = UDim2.new(0, 12, 0, 0); rjHt.Size = UDim2.new(1, -12, 1, 0)
 
     local rjInfo = lbl(miscScroll, "Rejoin tiap X menit (default 30, WAJIB nyala).\nSemua RF sinkron per interval \u{00b7} tiap interval grid sendiri.", 11.5, C.textDim)
@@ -2525,8 +2639,9 @@ do
         end
         return out
     end
-    local shH = mk("Frame", { Size = UDim2.new(1,0,0,30), BackgroundColor3 = C.card, BorderSizePixel=0, LayoutOrder=10, Parent=miscScroll }); corner(shH,7)
-    local shHt = lbl(shH, "\u{1F4B0} SELL PET MANUAL", 13, C.accent); shHt.Font=FONT_B; shHt.Position=UDim2.new(0,12,0,0); shHt.Size=UDim2.new(1,-12,1,0)
+    local shH = mk("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency=1, BorderSizePixel=0, LayoutOrder=10, Parent=miscScroll })
+    mk("Frame", { Size = UDim2.new(0,3,0,14), Position = UDim2.new(0,2,0.5,-7), BackgroundColor3 = C.accent3, BorderSizePixel = 0, Parent = shH })
+    local shHt = lbl(shH, "SELL PET MANUAL", 11.5, C.accent3); shHt.Font=FONT_B; shHt.Position=UDim2.new(0,12,0,0); shHt.Size=UDim2.new(1,-12,1,0)
     local shInfo = lbl(miscScroll, "Pilih jenis pet \u{2192} auto-unfav \u{2192} Sell (langsung, tanpa Seal).", 11, C.textDim); shInfo.Size=UDim2.new(1,0,0,18); shInfo.LayoutOrder=11
     local sellInfo = lbl(miscScroll, "", 11, C.textDim); sellInfo.Size=UDim2.new(1,0,0,16); sellInfo.LayoutOrder=12
     local sellList = mk("ScrollingFrame", { Size=UDim2.new(1,0,0,150), BackgroundColor3=C.panel, BorderSizePixel=0, ScrollBarThickness=4, ScrollBarImageColor3=C.line, CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y, LayoutOrder=13, Parent=miscScroll }); corner(sellList,6)
@@ -2570,10 +2685,10 @@ do
         end
         if #names==0 then local e=lbl(sellList, "(gak ada pet)", 12, C.textDim); e.Size=UDim2.new(1,0,0,30); e.Name="kosong" end
     end
-    local btnRow = mk("Frame", { Size=UDim2.new(1,0,0,34), BackgroundTransparency=1, LayoutOrder=14, Parent=miscScroll })
+    local btnRow = mk("Frame", { Size=UDim2.new(1,0,0,40), BackgroundTransparency=1, LayoutOrder=14, Parent=miscScroll })
     mk("UIListLayout", { FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,6), SortOrder=Enum.SortOrder.LayoutOrder, Parent=btnRow })
-    local refBtn = mk("TextButton", { Size=UDim2.new(0.4,-3,1,0), BackgroundColor3=C.card, Text="\u{1F504} Refresh", Font=FONT_B, TextSize=24, TextColor3=Color3.fromRGB(255, 255, 255), LayoutOrder=1, Parent=btnRow }); corner(refBtn,6)
-    local sellBtn = mk("TextButton", { Size=UDim2.new(0.6,-3,1,0), BackgroundColor3=Color3.fromRGB(200,60,60), Text="\u{1F4B0} Sell Pet", Font=FONT_B, TextSize=26, TextColor3=Color3.fromRGB(255, 255, 255), LayoutOrder=2, Parent=btnRow }); corner(sellBtn,6)
+    local refBtn = mk("TextButton", { Size=UDim2.new(0.4,-3,1,0), BackgroundColor3=C.card, Text="\u{1F504} Refresh", Font=FONT_B, TextSize=13, TextColor3=C.text, LayoutOrder=1, Parent=btnRow }); corner(refBtn,10); stroke(refBtn, C.border, 1)
+    local sellBtn = mk("TextButton", { Size=UDim2.new(0.6,-3,1,0), BackgroundColor3=C.danger, Text="\u{1F5D1} Sell Pet", Font=FONT_B, TextSize=13, TextColor3=Color3.fromRGB(255,255,255), LayoutOrder=2, Parent=btnRow }); corner(sellBtn,10)
     refBtn.MouseButton1Click:Connect(refresh)
     sellBtn.MouseButton1Click:Connect(function()
         local target = {}
@@ -2607,23 +2722,27 @@ do
     refresh()
 end
 
-local kgLogBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 140), BackgroundColor3 = C.input, RichText = true,
-    Font = Enum.Font.Code, TextSize = 20.5, TextColor3 = Color3.fromRGB(255, 255, 255),
+-- ===== LOG panel (header + entries dot warna) =====
+local logWrap = mk("Frame", { Size = UDim2.new(1, 0, 0, 166), BackgroundColor3 = C.input, BorderSizePixel = 0, LayoutOrder = 9, Parent = cfgScroll }); corner(logWrap, 12); stroke(logWrap, C.border, 1)
+local logHdr = mk("Frame", { Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.card, BorderSizePixel = 0, Parent = logWrap }); corner(logHdr, 12)
+mk("Frame", { Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12), BackgroundColor3 = C.card, BorderSizePixel = 0, Parent = logHdr })
+local logHt = lbl(logHdr, "LOG AKTIVITAS", 10, C.textDim); logHt.Font = FONT_B; logHt.Position = UDim2.new(0, 13, 0, 0); logHt.Size = UDim2.new(1, -40, 1, 0)
+local logDot = mk("Frame", { Size = UDim2.new(0, 7, 0, 7), Position = UDim2.new(1, -18, 0.5, -3), BackgroundColor3 = C.accent2, BorderSizePixel = 0, Parent = logHdr }); corner(logDot, 4)
+local kgLogBox = mk("TextLabel", { Size = UDim2.new(1, -20, 1, -40), Position = UDim2.new(0, 10, 0, 34), BackgroundTransparency = 1, RichText = true,
+    Font = Enum.Font.Code, TextSize = 12.5, TextColor3 = C.text,
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-    TextWrapped = true, Text = "log up kg...", LayoutOrder = 8, Parent = cfgScroll })
-corner(kgLogBox, 6)
-mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6), Parent = kgLogBox })
+    TextWrapped = true, Text = "", Parent = logWrap })
 do
     local logLines = {}
     _G.ZenxKgLog = function(s)
         local sl = tostring(s):lower()
         local col = "#c8c8d5"
-        if sl:find("gagal") or sl:find("tolak") or sl:find("error") or sl:find("salah") then col = "#e05555"
-        elseif sl:find("ready") or sl:find("kunci") or sl:find("selesai") or sl:find("nerima") then col = "#5dd6b0"
-        elseif sl:find("copot") or sl:find("kurang") or sl:find("isi ") then col = "#f0b846"
-        elseif sl:find("sesi") or sl:find("swap") then col = "#c4b5fd" end
+        if sl:find("gagal") or sl:find("tolak") or sl:find("error") or sl:find("salah") then col = "#eb5a5f"
+        elseif sl:find("ready") or sl:find("kunci") or sl:find("selesai") or sl:find("nerima") or sl:find("harvest") then col = "#46e0b0"
+        elseif sl:find("copot") or sl:find("kurang") or sl:find("isi ") then col = "#fabe4b"
+        elseif sl:find("sesi") or sl:find("swap") or sl:find("lineup") then col = "#9669ff" end
         local esc = tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;")
-        table.insert(logLines, 1, "<font color='#5a5d75'>" .. os.date("%H:%M:%S") .. "</font> <font color='" .. col .. "'>" .. esc .. "</font>")
+        table.insert(logLines, 1, "<font color='#4a4d63'>" .. os.date("%H:%M:%S") .. "</font>  <font color='" .. col .. "'>\u{25CF}</font> <font color='" .. col .. "'>" .. esc .. "</font>")
         while #logLines > 12 do table.remove(logLines) end
         kgLogBox.Text = table.concat(logLines, "\n")
     end
@@ -2857,11 +2976,12 @@ do
 
     -- ============ UI ============
     local function trHeader(txt, lo)
-        local h = mk("Frame", { Size=UDim2.new(1,0,0,28), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=lo, Parent=tradeScroll }); corner(h,7)
-        local t = lbl(h, txt, 12.5, C.accent); t.Font=FONT_B; t.Position=UDim2.new(0,12,0,0); t.Size=UDim2.new(1,-12,1,0)
+        local h = mk("Frame", { Size=UDim2.new(1,0,0,26), BackgroundTransparency=1, BorderSizePixel=0, LayoutOrder=lo, Parent=tradeScroll })
+        local bar = mk("Frame", { Size=UDim2.new(0,3,0,14), Position=UDim2.new(0,2,0.5,-7), BackgroundColor3=C.accent2, BorderSizePixel=0, Parent=h }); corner(bar,2)
+        local t = lbl(h, txt, 11.5, C.accent2); t.Font=FONT_B; t.Position=UDim2.new(0,12,0,0); t.Size=UDim2.new(1,-12,1,0)
     end
     local function trBtn(txt, lo, col)
-        local b = mk("TextButton", { Size=UDim2.new(1,0,0,34), BackgroundColor3=col or C.card, Text=txt, Font=FONT_B, TextSize=24.5, TextColor3=Color3.fromRGB(255, 255, 255), LayoutOrder=lo, Parent=tradeScroll }); corner(b,7)
+        local b = mk("TextButton", { Size=UDim2.new(1,0,0,40), BackgroundColor3=col or C.card, Text=txt, Font=FONT_B, TextSize=13.5, TextColor3=C.text, LayoutOrder=lo, Parent=tradeScroll }); corner(b,10); stroke(b, C.border, 1)
         return b
     end
 
@@ -3017,11 +3137,11 @@ do
     local function updModeBtns()
         local t = (TR.mode == "trade"); local g = (TR.mode == "gift")
         bTrade.Text = "TRADE via TIKET: "..(t and "ON" or "OFF")
-        bTrade.BackgroundColor3 = t and Color3.fromRGB(0,120,80) or C.card
-        bTrade.TextColor3 = t and Color3.fromRGB(0,230,118) or C.text
+        bTrade.BackgroundColor3 = t and C.accent2 or C.card
+        bTrade.TextColor3 = t and Color3.fromRGB(14,16,22) or C.text
         bGift.Text = "GIFT (biasa): "..(g and "ON" or "OFF")
-        bGift.BackgroundColor3 = g and Color3.fromRGB(60,90,180) or C.card
-        bGift.TextColor3 = g and Color3.fromRGB(140,180,255) or C.text
+        bGift.BackgroundColor3 = g and C.accent or C.card
+        bGift.TextColor3 = g and Color3.fromRGB(14,16,22) or C.text
     end
     local function setMode(m)
         TR.mode = (TR.mode == m) and "off" or m   -- klik lagi = OFF. nyalain satu -> yg lain auto OFF
@@ -3032,13 +3152,13 @@ do
     bGift.MouseButton1Click:Connect(function() setMode("gift") end)
     updModeBtns()
 
-    local bAcc = trBtn("AUTO ACCEPT MASUK: "..(TR.autoAcc and "ON" or "OFF"), 11, TR.autoAcc and C.panel or C.card)
-    if TR.autoAcc then bAcc.TextColor3 = Color3.fromRGB(255, 255, 255) end
+    local bAcc = trBtn("AUTO ACCEPT MASUK: "..(TR.autoAcc and "ON" or "OFF"), 11, TR.autoAcc and C.accent2 or C.card)
+    if TR.autoAcc then bAcc.TextColor3 = Color3.fromRGB(14,16,22) end
     bAcc.MouseButton1Click:Connect(function()
         TR.autoAcc = not TR.autoAcc; saveTr()
         bAcc.Text = "AUTO ACCEPT MASUK: "..(TR.autoAcc and "ON" or "OFF")
-        bAcc.BackgroundColor3 = TR.autoAcc and C.panel or C.card
-        bAcc.TextColor3 = TR.autoAcc and Color3.fromRGB(0,230,118) or C.text
+        bAcc.BackgroundColor3 = TR.autoAcc and C.accent2 or C.card
+        bAcc.TextColor3 = TR.autoAcc and Color3.fromRGB(14,16,22) or C.text
     end)
 
     trStatus = lbl(tradeScroll, "siap. pilih target + jenis pet + filter min KG/age.", 11.5, C.textDim)
