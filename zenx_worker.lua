@@ -2967,7 +2967,9 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
     -- -> jangan ketimpa grid biasa (3x2). Titik kalibrasi bypass butuh 10-layout.
     if alasan ~= "start-bypass" then
         -- v9.437: up6kg = 1 client FULL Roblox (bukan lite/cloner) -> SKIP atur grid (fullscreen).
-        if not (cfg.script_label and tostring(cfg.script_label):find("UP6KG")) then
+        -- v9.439: leveling juga 1 client full per device -> SKIP grid (gak mencar).
+        local _scl1 = tostring(cfg.script_label or "")
+        if not (_scl1:find("UP6KG") or _scl1:find("LEVELING")) then
             pcall(function() grid_satu(cfg, pkg) end)
         end
     end
@@ -5286,7 +5288,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- terus dibuka ulang (user liat "keluar semua"). SUDAH_GRID di-reset cuma
     -- pas FORCE transisi (Start baru), jadi grid keset sekali per sesi.
     -- v9.437: up6kg = 1 client full Roblox -> SKIP grid batch (gak perlu tata window)
-    if lisensiAda and petaGrid and not SUDAH_GRID and not (cfg.script_label and tostring(cfg.script_label):find("UP6KG")) then
+    if lisensiAda and petaGrid and not SUDAH_GRID and not (tostring(cfg.script_label or ""):find("UP6KG") or tostring(cfg.script_label or ""):find("LEVELING")) then
         info("Set grid semua client sekali (tulis prefs, gak force-stop)...")
         for _, pkg in ipairs(list) do
             if petaGrid[pkg] then
@@ -6240,7 +6242,7 @@ local function setup_otomatis(namaPreset)
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
         upkg   = { place = "126884695634066", game = "GAG 1 UPKG",   sc = "UP KG",     url = "upkg"   },
         up6kg  = { place = "126884695634066", game = "GAG 1 UP6KG",  sc = "UP6KG",      url = "up6kg"  },
-        leveling = { place = "126884695634066", game = "GAG 1 LEVELING", sc = "LEVELING", url = "leveling" },
+        uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
