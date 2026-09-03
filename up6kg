@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v6.7"
+local VERSION = "up6kg-v6.9"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1091,6 +1091,25 @@ do
         return out
     end
 
+    -- v6.8: listPetsAll -> baca SEMUA pet dari CONTAINER (equipped + backpack). Buat POOL support
+    -- + tunggu-ready, biar pet yg lagi ke-equip (di-swap) TETEP ke-hitung (gak dianggap ilang).
+    local function listPetsAll()
+        local out = {}
+        local c = _kgContainer
+        if not c then return listPetsEngine() end
+        for uuid, e in pairs(c) do
+            if type(e) == "table" and e.PetType then
+                local tipe = stripMutation(tostring(e.PetType))
+                local pd = e.PetData or {}
+                local bw = tonumber(pd.BaseWeight) or 0
+                local lv = tonumber(pd.Level) or 0
+                out[#out+1] = { uuid = fmtUUID(uuid), tipe = tipe, age = lv, kg = bw * (lv + 10) / 10, kgBase = bw * 1.1 }
+            end
+        end
+        if #out == 0 then return listPetsEngine() end
+        return out
+    end
+
     -- up6kg: refresh eleUuids (uuid pet Ele) tiap 2s -- listPetsEngine udah ada di sini
     task.spawn(function()
         while true do
@@ -1454,7 +1473,7 @@ do
             if lengkap then return end
         end
         -- (re)build: pool KURANG / belum ada -> pick lagi (pet baru available)
-        local pets = listPetsEngine()
+        local pets = listPetsAll()   -- v6.8: SEMUA pet (equipped + backpack), gak bentrok swap
         table.sort(pets, function(a, b) return (a.kg or 0) > (b.kg or 0) end)
         supPool = {}; local taken = {}
         for nm, maxJ in pairs(maxPer) do
@@ -1670,7 +1689,7 @@ do
                 for _, sup in ipairs(SUPPORT_S2_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
                 for att = 1, 45 do
                     if not KG.aktif then break end
-                    local pets = listPetsEngine()
+                    local pets = listPetsAll()   -- v6.8: SEMUA pet (equipped + backpack)
                     local cnt = {}
                     for _, p in ipairs(pets) do
                         for nm, cari in pairs(cariMap) do if cocokSemua(p.tipe, cari) then cnt[nm] = (cnt[nm] or 0) + 1 end end
@@ -1730,9 +1749,17 @@ do
                             if not modelByUuid[u] then equipPet(u, CLUSTER); task.wait(0.06) end
                         end
                     end
-                    -- re-equip support yg hilang
+                    -- re-equip support yg hilang -- GRACE 5s: baru equip kalo hilang >5s
+                    -- (biar gak react transient swap skill; swap unequip sebentar = normal).
+                    _G.__ZenxHilangSince = _G.__ZenxHilangSince or {}
+                    local hs = _G.__ZenxHilangSince
                     for u in pairs(supportKunci) do
-                        if not modelByUuid[u] then equipPet(u, CLUSTER); task.wait(0.06) end
+                        if not modelByUuid[u] then
+                            hs[u] = hs[u] or tick()
+                            if tick() - hs[u] >= 5 then equipPet(u, CLUSTER); task.wait(0.06); hs[u] = nil end
+                        else
+                            hs[u] = nil
+                        end
                     end
                 end
             end
