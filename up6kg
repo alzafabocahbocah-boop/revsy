@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.2"
+local VERSION = "up6kg-v10.5"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1665,6 +1665,8 @@ do
         local a50B  = st.age50Belum or 0  -- up6kg: age40+ base<6kg
         local total = st.total or 0
         if total == 0 then return KG.sesi end   -- stat belum siap -> jgn ganti/putus
+        -- FORCE SESI 2: OPER ELE nemu target -> skip leveling, langsung habisin age-40
+        if _G.ZenxForceSesi2 and a50B > 0 then return 2 end
         if KG.sesi == 1 then
             if mudaB == 0 then
                 if a50B > 0 then return 2 else return 0 end   -- 0 = SELESAI
@@ -3329,6 +3331,9 @@ do
     local ELE_NAME = "Rainbow Elephant"
 
     local OP = { auto = false, pick = {}, minOper = 50, logAkun = {}, age40 = {}, operCount = 0 }
+    pcall(function()   -- restore AUTO pas rejoin (biar gak balik OFF tiap auto-rejoin)
+        if isfile and isfile("zenx_ele_auto.txt") and readfile then OP.auto = (tostring(readfile("zenx_ele_auto.txt")) == "1") end
+    end)
 
     local function httpReq(path, method, body)
         local req = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
@@ -3410,12 +3415,20 @@ do
     end
 
     -- gift Ele ke target (SAFETY: cuma yg di pick)
+    OP.log = OP.log or {}
+    local function opLog(msg)
+        table.insert(OP.log, os.date("%H:%M:%S").." "..tostring(msg))
+        while #OP.log > 20 do table.remove(OP.log, 1) end
+    end
+    opLog("== LOG siap - nyalain AUTO buat mulai ==")
     local function giftEle(targetPlayer)
-        if not targetPlayer or not OP.pick[targetPlayer.Name] then return false, "gak di picker (ditolak)" end
+        local nm = targetPlayer and targetPlayer.Name or "?"
+        opLog("== GIFT ELE -> "..nm)
+        if not targetPlayer or not OP.pick[targetPlayer.Name] then opLog("  X target gak di picker (ditolak)"); return false, "gak di picker (ditolak)" end
         local plr = Players.LocalPlayer
         local bp = plr:FindFirstChild("Backpack"); local char = plr.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not (bp and hum) then return false, "no bp/hum" end
+        if not (bp and hum) then opLog("  X no backpack/humanoid"); return false, "no bp/hum" end
         local eleTool
         for _, t in ipairs(bp:GetChildren()) do
             if t:IsA("Tool") then
@@ -3423,16 +3436,18 @@ do
                 if f:lower():find("rainbow elephant", 1, true) then eleTool = t; break end
             end
         end
-        if not eleTool then return false, "Ele gak di backpack" end
+        if not eleTool then opLog("  X Ele gak ketemu di backpack"); return false, "Ele gak di backpack" end
+        opLog("  equip Ele ke tangan...")
         pcall(function() hum:EquipTool(eleTool) end); task.wait(0.25)
         local ge = RS:FindFirstChild("GameEvents"); local re = ge and ge:FindFirstChild("PetGiftingService")
-        if re then
-            local uuid = eleTool:GetAttribute("PET_UUID"); local u = tostring(uuid)
-            if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
-            pcall(function() re:FireServer("GivePet", targetPlayer, u) end); task.wait(0.3)
-            if not eleTool.Parent then return true, "gift ok" end
-        end
-        return false, "gift gagal"
+        if not re then opLog("  X remote PetGiftingService gak ada"); return false, "remote gift gak ada" end
+        local uuid = eleTool:GetAttribute("PET_UUID"); local u = tostring(uuid)
+        if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
+        opLog("  FireServer GivePet uuid="..u:sub(1,12).."...")
+        pcall(function() re:FireServer("GivePet", targetPlayer, u) end); task.wait(0.5)
+        if not eleTool.Parent then opLog("  OK! Ele TERKIRIM ke "..nm); return true, "gift ok" end
+        opLog("  X Ele masih di backpack (gift gagal / target nolak?)")
+        return false, "gift gagal (Ele masih ada)"
     end
 
     -- === UI (desain baru: stat cards + kartu akun kaya) ===
@@ -3443,6 +3458,12 @@ do
     local hdrT = opLbl(hdr, "OPER RAINBOW ELEPHANT", 13, C.text); hdrT.Font=FONT_B; hdrT.Position=UDim2.new(0,13,0,8); hdrT.Size=UDim2.new(1,-110,0,18)
     local hdrS = opLbl(hdr, "cek status...", 11, C.textDim); hdrS.Position=UDim2.new(0,13,0,28); hdrS.Size=UDim2.new(1,-110,0,16)
     local autoBtn = mk("TextButton", { Size=UDim2.new(0,86,0,34), Position=UDim2.new(1,-96,0.5,-17), BackgroundColor3=C.card, Text="AUTO OFF", Font=FONT_B, TextSize=12, TextColor3=Color3.fromRGB(255,255,255), Parent=hdr }); corner(autoBtn,9); stroke(autoBtn, C.border, 1)
+    local function syncAutoBtn()
+        autoBtn.Text = OP.auto and "AUTO ON" or "AUTO OFF"
+        autoBtn.BackgroundColor3 = OP.auto and C.accent2 or C.card
+        autoBtn.TextColor3 = OP.auto and Color3.fromRGB(0,0,0) or Color3.fromRGB(255,255,255)
+    end
+    syncAutoBtn()   -- reflect state yg di-restore (ON kalo sebelum rejoin ON)
 
     -- HOLDER strip (siapa pegang Ele)
     local holderF = mk("Frame", { Size=UDim2.new(1,0,0,50), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=1.3, Parent=operScroll }); corner(holderF,11); stroke(holderF, C.accent, 1)
@@ -3481,12 +3502,15 @@ do
     local lainHolder = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=6, Parent=operScroll })
     mk("UIListLayout", { Padding=UDim.new(0,6), Parent=lainHolder })
 
-    -- DEBUG: log scan kecil (buat tau kenapa count gak muncul) — tap 2x buat salin
-    local dbgFrame = mk("Frame", { Size=UDim2.new(1,0,0,44), BackgroundColor3=Color3.fromRGB(18,18,18), BorderSizePixel=0, LayoutOrder=20, Parent=operScroll }); corner(dbgFrame,8); stroke(dbgFrame, C.border, 1)
-    local dbgHdr = opLbl(dbgFrame, "DEBUG scan (tap 2x = salin)", 9, C.accent); dbgHdr.Font=FONT_B; dbgHdr.Position=UDim2.new(0,10,0,5); dbgHdr.Size=UDim2.new(1,-16,0,12)
-    local dbgLbl = opLbl(dbgFrame, "-", 9, C.textMute); dbgLbl.Font=Enum.Font.Code; dbgLbl.Position=UDim2.new(0,10,0,19); dbgLbl.Size=UDim2.new(1,-16,0,22); dbgLbl.TextWrapped=true; dbgLbl.TextXAlignment=Enum.TextXAlignment.Left; dbgLbl.TextYAlignment=Enum.TextYAlignment.Top
+    -- LOG OPER ELE (rolling, tiap step gift + keputusan) — tap 2x buat salin
+    local dbgFrame = mk("Frame", { Size=UDim2.new(1,0,0,264), BackgroundColor3=Color3.fromRGB(12,12,12), BorderSizePixel=0, LayoutOrder=20, Parent=operScroll }); corner(dbgFrame,8); stroke(dbgFrame, C.border, 1)
+    local dbgHdr = opLbl(dbgFrame, "LOG OPER ELE (tap 2x = salin)", 11, C.accent); dbgHdr.Font=FONT_B; dbgHdr.Position=UDim2.new(0,12,0,7); dbgHdr.Size=UDim2.new(1,-18,0,15)
+    local dbgLbl = opLbl(dbgFrame, "-", 11, C.textDim); dbgLbl.Font=Enum.Font.Code; dbgLbl.Position=UDim2.new(0,12,0,26); dbgLbl.Size=UDim2.new(1,-18,1,-32); dbgLbl.TextWrapped=true; dbgLbl.TextXAlignment=Enum.TextXAlignment.Left; dbgLbl.TextYAlignment=Enum.TextYAlignment.Top
     local function buildDbg()
         local L = { "=== ZENX OPER ELE DEBUG ===" }
+        L[#L+1] = "--- LOG ---"
+        for _, ln in ipairs(OP.log or {}) do L[#L+1] = ln end
+        L[#L+1] = "--- STATE ---"
         L[#L+1] = "scan: "..tostring(OP.scanDbg or "-")
         L[#L+1] = "AUTO: "..tostring(OP.auto).." | pegangEle: (cek di kartu)"
         local pk = {}; for nm in pairs(OP.pick) do pk[#pk+1] = nm end
@@ -3519,7 +3543,12 @@ do
     end)
 
     local function refreshUI()
-        if dbgLbl then dbgLbl.Text = tostring(OP.scanDbg or "belum scan") end
+        -- log reason kalo BERUBAH (biar keputusan auto ke-record, gak spam)
+        if OP.reason ~= OP.__lastReason then
+            OP.__lastReason = OP.reason
+            if OP.reason then opLog("> "..tostring(OP.reason)) end
+        end
+        if dbgLbl then dbgLbl.Text = table.concat(OP.log or {}, "\n").."\n--- scan: "..tostring(OP.scanDbg or "-") end
         local plr = Players.LocalPlayer
         local st = _G.ZenxKgStat or {}
         local pegangEle = false
@@ -3588,9 +3617,8 @@ do
 
     autoBtn.MouseButton1Click:Connect(function()
         OP.auto = not OP.auto
-        autoBtn.Text = OP.auto and "AUTO ON" or "AUTO OFF"
-        autoBtn.BackgroundColor3 = OP.auto and C.accent2 or C.card
-        autoBtn.TextColor3 = OP.auto and Color3.fromRGB(0,0,0) or Color3.fromRGB(255,255,255)
+        syncAutoBtn()
+        pcall(function() if writefile then writefile("zenx_ele_auto.txt", OP.auto and "1" or "0") end end)   -- persist
     end)
 
     -- refresh UI tiap 3s (kalo tab OPER ELE keliatan)
@@ -3647,18 +3675,21 @@ do
                     end
                     OP.nextTarget = best and best.Name or "-"
                     if not (best and bestN >= OP.minOper) then
+                        _G.ZenxForceSesi2 = false   -- gak ada target -> leveling normal
                         OP.reason = "gak ada target cukup (>=50) - tertinggi " .. math.max(0, bestN)
                         return
                     end
-                    -- TARGET READY -> habisin age40 DIRI dulu (masuk SESI ELE / up-kg)
+                    -- TARGET READY -> habisin age40 DIRI dulu (SKIP leveling, PAKSA sesi 2 / up-kg)
                     if (st.age50Belum or 0) > 0 then
+                        _G.ZenxForceSesi2 = true   -- skip sesi leveling, langsung sesi kg
                         if _G.ZenxKgStart and not (_G.ZenxKg and _G.ZenxKg.aktif) then
                             pcall(function() _G.ZenxKgStart(_G.ZenxKgConfig or "Tim Ele") end)   -- masuk sesi ele
                         end
-                        OP.reason = "target "..best.Name.." ready - masuk sesi ele, habisin age40 diri: masih "..(st.age50Belum or 0)
+                        OP.reason = "target "..best.Name.." ready - SKIP leveling, sesi KG habisin age40 diri: masih "..(st.age50Belum or 0)
                         return
                     end
                     -- age40 diri HABIS + target ready -> GIFT
+                    _G.ZenxForceSesi2 = false   -- age40 diri habis, gak perlu paksa lagi
                     OP.reason = nil   -- SIAP OPER
                     local ok2, msg = giftEle(best)
                     if ok2 then OP.operCount = (OP.operCount or 0) + 1 end
