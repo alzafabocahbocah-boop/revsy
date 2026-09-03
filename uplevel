@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.7"
+local VERSION = "uplevel-v0.8"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1222,12 +1222,7 @@ do
     -- up6kg: default config Tim Ele kalau belum diset
     if not _G.ZenxKgConfig or _G.ZenxKgConfig == "" then _G.ZenxKgConfig = "Tim Ele" end
     -- up6kg: DEFAULT bahan (jenis pet yg di-up). User bisa ganti via picker.
-    if not _G.ZenxKgUpTipe or (type(_G.ZenxKgUpTipe) == "table" and not next(_G.ZenxKgUpTipe)) then
-        _G.ZenxKgUpTipe = {
-            ["Mimic Octopus"] = true, ["Peacock"] = true, ["Blood Owl"] = true,
-            ["Moon Cat"] = true, ["Peryton"] = true, ["Raccoon"] = true,
-        }
-    end
+    if not _G.ZenxKgUpTipe then _G.ZenxKgUpTipe = {} end   -- UPLEVEL: bahan = ALL pet (kosong = semua)
     -- up6kg: AUTO TENGAH default ON (Peacock/Ele/Gilded/bahan dipaksa ke tengah)
     if _G.ZenxAutoTengah == nil then _G.ZenxAutoTengah = true end
     local CLUSTER = nil
@@ -1550,13 +1545,13 @@ do
         local su, detail = {}, {}
         if supPool then
             local pets = listPetsAll()
-            local kgByUuid = {}
-            for _, p in ipairs(pets) do kgByUuid[p.uuid] = p.kg end
+            local kgByUuid, tipeByUuid = {}, {}
+            for _, p in ipairs(pets) do kgByUuid[p.uuid] = p.kg; tipeByUuid[p.uuid] = p.tipe end
             for nm, list in pairs(supPool) do
                 detail[nm] = {}
                 for _, u in ipairs(list) do
                     su[u] = true
-                    detail[nm][#detail[nm] + 1] = { uuid = u, kg = kgByUuid[u] or 0 }
+                    detail[nm][#detail[nm] + 1] = { uuid = u, kg = kgByUuid[u] or 0, tipe = tipeByUuid[u] }
                 end
             end
         end
@@ -1686,9 +1681,11 @@ do
     end
     -- list pet 1 jenis (buat picker lineup): {uuid, kg, age}
     _G.ZenxListPetJenis = function(cari)
+        local picked = {}
+        for _, list in pairs(_G.ZenxSupportPool or {}) do for _, e in ipairs(list) do if e.uuid then picked[e.uuid] = true end end end
         local all = {}
         for _, p in ipairs(listPetsAll()) do
-            if cocokSemua(p.tipe, cari) then all[#all+1] = { uuid = p.uuid, kg = p.kg, age = p.age, tipe = p.tipe } end
+            if not picked[p.uuid] and cocokSemua(p.tipe, cari) then all[#all+1] = { uuid = p.uuid, kg = p.kg, age = p.age, tipe = p.tipe } end
         end
         -- UPLEVEL: grup prioritas TOP 5 by kg (French Fry Ferret / Rainbow Dilop / Peacock) atas sendiri
         local prio = { {"French Fry Ferret", {"french","ferret"}}, {"Rainbow Dilop", {"rainbow","dilo"}}, {"Peacock", {"peacock"}} }
@@ -2242,7 +2239,7 @@ local function renderLineup()
             mk("Frame", { Size = UDim2.new(0,3,1,-16), Position = UDim2.new(0,0,0,8), BackgroundColor3 = col, BorderSizePixel = 0, Parent = card })
             local ty = lbl(card, (nm:gsub("Rainbow ",""):gsub("Choc ","")), 9, col); ty.Font = FONT_B; ty.Position = UDim2.new(0,11,0,7); ty.Size = UDim2.new(1,-16,0,12); ty.TextXAlignment = Enum.TextXAlignment.Left
             if entry then
-                local pn = lbl(card, "#" .. tostring(entry.uuid):sub(2,5), 13, C.text); pn.Font = FONT_B; pn.Position = UDim2.new(0,11,0,21); pn.Size = UDim2.new(1,-16,0,18); pn.TextXAlignment = Enum.TextXAlignment.Left
+                local pn = lbl(card, tostring(entry.tipe or "?"):gsub("Rainbow ",""):gsub("Choc ",""):gsub("Gilded ",""), 11.5, C.text); pn.Font = FONT_B; pn.Position = UDim2.new(0,11,0,21); pn.Size = UDim2.new(1,-14,0,18); pn.TextXAlignment = Enum.TextXAlignment.Left; pn.TextTruncate = Enum.TextTruncate.AtEnd
                 local kg = lbl(card, string.format("%.1f kg", entry.kg or 0), 11, col); kg.Position = UDim2.new(0,11,0,39); kg.Size = UDim2.new(1,-16,0,14); kg.TextXAlignment = Enum.TextXAlignment.Left
             else
                 local plus = lbl(card, "+ pilih", 13, C.textDim); plus.Position = UDim2.new(0,11,0,26); plus.Size = UDim2.new(1,-16,0,20); plus.TextXAlignment = Enum.TextXAlignment.Left
@@ -2339,9 +2336,9 @@ local function statC(col)
     return v, l
 end
 local scTotV, scTotL = statC(C.text); scTotL.Text = "total pet"
-local scUdahV, scUdahL = statC(C.accent2); scUdahL.Text = "6kg+"
-local scBelumV, scBelumL = statC(C.text); scBelumL.Text = "6kg-"
-local scAgeV, scAgeL = statC(C.accent); scAgeL.Text = "age40"
+local scUdahV, scUdahL = statC(C.accent2); scUdahL.Text = "age 500+"
+local scBelumV, scBelumL = statC(C.text); scBelumL.Text = "age 500-"
+local scAgeV, scAgeL = statC(C.accent); scAgeL.Text = "fps"
 
 -- sesi strip
 local sesiF = mk("Frame", { Size = UDim2.new(1,0,0,38), BackgroundColor3 = C.card, BorderSizePixel = 0, LayoutOrder = 3.4, Parent = cfgScroll }); corner(sesiF,10); stroke(sesiF, C.accent, 1)
@@ -2353,19 +2350,19 @@ task.spawn(function()
     while gui.Parent do
         local st = _G.ZenxKgStat or {}
         local total = st.totalAll or 0
-        local udah = st.udah or 0
-        local belum = st.belum or 0
-        local age40 = st.age50Belum or 0
+        local udah = st.age500plus or 0
+        local belum = st.age500minus or 0
+        local age40 = _G.ZenxFPS or 0
         local goal = udah + belum
         progNum.Text = udah .. " / " .. goal
         local pct = (goal > 0) and (udah / goal) or 0
         progFill.Size = UDim2.new(pct, 0, 1, 0)
         progPct.Text = math.floor(pct * 100 + 0.5) .. "% selesai"
-        progTgt.Text = "target " .. string.format("%.1f", KG_TARGET) .. " kg"
+        progTgt.Text = "target age 500"
         scTotV.Text = tostring(total); scUdahV.Text = tostring(udah); scBelumV.Text = tostring(belum); scAgeV.Text = tostring(age40)
         local sesi = (_G.ZenxKg and _G.ZenxKg.sesi) or 1
-        sesiBL.Text = "SESI " .. sesi
-        sesiInfo.Text = (sesi == 2) and "up kg \u{00B7} reset pakai Ele" or "leveling ke age 40"
+        sesiBL.Text = "LEVELING"
+        sesiInfo.Text = "leveling ke age 500 -> ganti"
         task.wait(1)
     end
 end)
@@ -2483,7 +2480,7 @@ local function makeSwitch(label, lo)
 end
 
 -- AUTO UP KG toggle (BAWAH tabel 1)
-local kgTog, kgVis = makeSwitch("AUTO UP KG", 6)
+local kgTog, kgVis = makeSwitch("AUTO LEVELING", 6)
 kgTog.MouseButton1Click:Connect(function()
     if _G.ZenxKg and _G.ZenxKg.aktif then
         if _G.ZenxKgStop then _G.ZenxKgStop() end
