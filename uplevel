@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.3"
+local VERSION = "uplevel-v0.5"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1190,17 +1190,12 @@ do
     end)
 
     -- ============ up6kg: CUMA config Tim Ele (6kg + Rainbow Elephant) ============
-    -- SESI 1 (leveling->age40): 2 Rainbow Dilop + 2 Gilded Choc Peryton + 1 Peacock + 3 bahan
+    -- UPLEVEL: 7 slot support BEBAS (any pet, gak fixed dilop/peacock)
     local SUPPORT_S1_ELE = {
-        { nama = "Rainbow Dilop",       cari = { "rainbow", "dilo" },   jml = 2 },
-        { nama = "Peacock",             cari = { "peacock" },           jml = 2 },
-        { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" }, jml = 1 },
+        { nama = "Support", cari = {}, jml = 7 },
     }
-    -- SESI 2 (up KG): 1 Rainbow Elephant + 2 Rainbow Dilop + 4 Peacock + 1 bahan
-    -- up6kg: Ele DIKELUARIN dari config (dioper keliling -> auto-detect via eleUuids, bukan pool).
     local SUPPORT_S2_ELE = {
-        { nama = "Rainbow Dilop",    cari = { "rainbow", "dilo" },     jml = 2 },
-        { nama = "Peacock",          cari = { "peacock" },             jml = 4 },
+        { nama = "Support", cari = {}, jml = 7 },
     }
     local AGE_TARGET = 500    -- UPLEVEL: leveling sampe age 500 -> ganti (copot + bahan baru)
     local AGE_DROP   = 30     -- sesi 2: KG-up kelar kalau age turun <= ini
@@ -1697,11 +1692,30 @@ do
     end
     -- list pet 1 jenis (buat picker lineup): {uuid, kg, age}
     _G.ZenxListPetJenis = function(cari)
-        local out = {}
+        local bahanTipe = _G.ZenxKgUpTipe or {}
+        local all = {}
         for _, p in ipairs(listPetsAll()) do
-            if cocokSemua(p.tipe, cari) then out[#out+1] = { uuid = p.uuid, kg = p.kg, age = p.age, tipe = p.tipe } end
+            if not bahanTipe[p.tipe] and cocokSemua(p.tipe, cari) then all[#all+1] = { uuid = p.uuid, kg = p.kg, age = p.age, tipe = p.tipe } end
         end
-        table.sort(out, function(a, b) return (a.kg or 0) > (b.kg or 0) end)
+        -- UPLEVEL: grup prioritas TOP 5 by kg (French Fry Ferret / Rainbow Dilop / Peacock) atas sendiri
+        local prio = { {"French Fry Ferret", {"french","ferret"}}, {"Rainbow Dilop", {"rainbow","dilo"}}, {"Peacock", {"peacock"}} }
+        local out, used = {}, {}
+        for _, g in ipairs(prio) do
+            local grp = {}
+            for _, p in ipairs(all) do if not used[p.uuid] and cocokSemua(p.tipe, g[2]) then grp[#grp+1] = p end end
+            table.sort(grp, function(a,b) return (a.kg or 0) > (b.kg or 0) end)
+            if #grp > 0 then
+                out[#out+1] = { _header = g[1] }
+                for i = 1, math.min(5, #grp) do out[#out+1] = grp[i]; used[grp[i].uuid] = true end
+            end
+        end
+        local rest = {}
+        for _, p in ipairs(all) do if not used[p.uuid] then rest[#rest+1] = p end end
+        table.sort(rest, function(a,b) return (a.kg or 0) > (b.kg or 0) end)
+        if #rest > 0 then
+            out[#out+1] = { _header = "lainnya" }
+            for _, p in ipairs(rest) do out[#out+1] = p end
+        end
         return out
     end
 
@@ -2202,7 +2216,10 @@ local function openPetPicker(nama, idx, cari)
     local pets = (_G.ZenxListPetJenis and _G.ZenxListPetJenis(cari)) or {}
     if #pets == 0 then local e = lbl(scr, "gak ada pet jenis ini di inventory", 12, C.textDim); e.Size = UDim2.new(1,0,0,40); e.ZIndex = 302 end
     for _, p in ipairs(pets) do
-        local col = TIPE_COL[nama] or C.accent
+        if p._header then
+            local h = lbl(scr, string.upper(tostring(p._header)), 10, C.accent); h.Font = FONT_B; h.Size = UDim2.new(1,-4,0,20); h.TextXAlignment = Enum.TextXAlignment.Left; h.ZIndex = 302
+        else
+        local col = TIPE_COL[p.tipe] or C.accent
         local it = mk("TextButton", { Size = UDim2.new(1,-4,0,44), BackgroundColor3 = C.card, Text = "", AutoButtonColor = true, ZIndex = 302, Parent = scr }); corner(it, 8); stroke(it, C.border, 1)
         local dot = mk("Frame", { Size = UDim2.new(0,8,0,8), Position = UDim2.new(0,12,0.5,-4), BackgroundColor3 = col, BorderSizePixel = 0, ZIndex = 303, Parent = it }); corner(dot,4)
         local nmL = lbl(it, tostring(p.tipe or nama), 12.5, C.text); nmL.Font = FONT_B; nmL.Position = UDim2.new(0,26,0,5); nmL.Size = UDim2.new(1,-90,0,18); nmL.ZIndex = 303
@@ -2212,6 +2229,7 @@ local function openPetPicker(nama, idx, cari)
             if _G.ZenxSetSupportPet then _G.ZenxSetSupportPet(nama, idx, p.uuid) end
             ov:Destroy()
         end)
+        end
     end
 end
 
