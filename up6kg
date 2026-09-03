@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v9.998"
+local VERSION = "up6kg-v10.2"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2502,10 +2502,8 @@ _G.ZenxSyncTengah = syncCtTog
 
 -- SYNC tampilan toggle ke state ASLI engine (re-exe: engine mungkin masih jalan dari exe sebelumnya)
 local function syncKgTog()
-    local on = _G.ZenxKg and _G.ZenxKg.aktif
-    kgTog.Text = "AUTO UP KG: " .. (on and "ON" or "OFF")
-    kgTog.TextColor3 = on and Color3.fromRGB(0,230,118) or C.textDim
-    kgTog.BackgroundColor3 = on and C.panel or C.card
+    kgTog.Text = ""   -- buang teks lama (sisa desain lama) — indikator = pill switch aja
+    kgVis(_G.ZenxKg and _G.ZenxKg.aktif or false)
 end
 syncKgTog()
 -- AUTO-RESUME setelah rejoin/re-exe (ROBUST: baca ULANG config kalau flag ke-miss + RETRY sampe ON)
@@ -3375,12 +3373,13 @@ do
     local function nPick() local n = 0; for _ in pairs(OP.pick) do n = n + 1 end; return n end
 
     -- baca inventory target -> bahan age40 (<6kg) count
-    local function bahanAge40Lain(target)
+    local function bahanAge40Lain(target, noRetry)
         local te = RS:FindFirstChild("GameEvents"); te = te and te:FindFirstChild("TradeEvents")
         local vi = te and te:FindFirstChild("ViewInventory")
         if not vi then return nil, false, "remote VI gak ada" end
         local list, lastErr
-        for att = 1, 2 do
+        local maxAtt = noRetry and 1 or 2
+        for att = 1, maxAtt do
             local res = table.pack(pcall(function() return vi:InvokeServer(target) end))
             if res[1] then
                 for k = 2, res.n do if type(res[k]) == "table" then list = res[k]; break end end
@@ -3389,7 +3388,7 @@ do
                 lastErr = "err:"..tostring(res[2]):sub(1,26)
             end
             if list then break end
-            if att < 2 then task.wait(8) end
+            if att < maxAtt then task.wait(8) end
         end
         if not list then return nil, false, lastErr or "gagal" end
         local n, hasEle = 0, false
@@ -3636,11 +3635,7 @@ do
                         return
                     end
                     OP.holder = plr.Name; OP.holderDetected = plr.Name
-                    if (st.age50Belum or 0) > 0 then
-                        OP.reason = "bahan diri belum habis \\u{2014} masih " .. (st.age50Belum or 0) .. " age40 harus di-reset"
-                        return
-                    end
-                    -- pegang Ele + bahan diri HABIS -> scan target
+                    -- SCAN TARGET DULU (cari yg bahannya cukup >=50)
                     OP.reason = "cek inventory target..."
                     local best, bestN = nil, -1
                     for _, p in ipairs(Players:GetPlayers()) do
@@ -3651,14 +3646,23 @@ do
                         end
                     end
                     OP.nextTarget = best and best.Name or "-"
-                    if best and bestN >= OP.minOper then
-                        OP.reason = nil   -- SIAP OPER
-                        local ok2, msg = giftEle(best)
-                        if ok2 then OP.operCount = (OP.operCount or 0) + 1 end
-                        OP.logAkun[best.Name] = ok2 and ("<- Ele dikirim ("..bestN..")") or ("gift gagal: "..tostring(msg))
-                    else
-                        OP.reason = "gak ada target cukup (>=50) \\u{2014} tertinggi " .. math.max(0, bestN)
+                    if not (best and bestN >= OP.minOper) then
+                        OP.reason = "gak ada target cukup (>=50) - tertinggi " .. math.max(0, bestN)
+                        return
                     end
+                    -- TARGET READY -> habisin age40 DIRI dulu (masuk SESI ELE / up-kg)
+                    if (st.age50Belum or 0) > 0 then
+                        if _G.ZenxKgStart and not (_G.ZenxKg and _G.ZenxKg.aktif) then
+                            pcall(function() _G.ZenxKgStart(_G.ZenxKgConfig or "Tim Ele") end)   -- masuk sesi ele
+                        end
+                        OP.reason = "target "..best.Name.." ready - masuk sesi ele, habisin age40 diri: masih "..(st.age50Belum or 0)
+                        return
+                    end
+                    -- age40 diri HABIS + target ready -> GIFT
+                    OP.reason = nil   -- SIAP OPER
+                    local ok2, msg = giftEle(best)
+                    if ok2 then OP.operCount = (OP.operCount or 0) + 1 end
+                    OP.logAkun[best.Name] = ok2 and ("<- Ele dikirim ("..bestN..")") or ("gift gagal: "..tostring(msg))
                 end)
             else
                 OP.reason = "AUTO OFF"
@@ -3671,30 +3675,21 @@ do
         while true do
             task.wait(1)
             local plr = Players.LocalPlayer
-            if operContent.Visible then   -- scan buat DISPLAY, walau AUTO on
-                local results = {}
-                local pending = 0
+            if operContent.Visible then   -- scan SEKUENSIAL (ViewInventory gak bisa paralel -> hang)
+                local parts = {}
                 for _, p in ipairs(Players:GetPlayers()) do
                     if p ~= plr and OP.pick[p.Name] then
-                        pending = pending + 1
-                        local pp = p
-                        task.spawn(function()   -- scan BARENG (paralel) - semua ViewInventory fire sekaligus
-                            local n, _, why = bahanAge40Lain(pp)
-                            if n then OP.age40[pp.Name] = n; results[pp.Name] = pp.Name:sub(1,7).."="..n
-                            else results[pp.Name] = pp.Name:sub(1,7).."=X:"..(why or "?") end
-                            pending = pending - 1
-                        end)
+                        local n, _, why = bahanAge40Lain(p, true)   -- 1 attempt (gagal -> cycle berikutnya ulang, gak block 8s)
+                        if n then OP.age40[p.Name] = n; parts[#parts+1] = p.Name:sub(1,7).."="..n
+                        else parts[#parts+1] = p.Name:sub(1,7).."=X:"..(why or "?") end
+                        pcall(refreshUI)
+                        task.wait(0.1)   -- langsung lanjut akun berikutnya begitu data masuk
                     end
                 end
-                -- tunggu semua selesai bareng (max 22s), refresh sambil nunggu
-                local t0 = tick()
-                repeat pcall(refreshUI); task.wait(0.4) until pending <= 0 or tick() - t0 > 22
-                local parts = {}
-                for _, v in pairs(results) do parts[#parts+1] = v end
                 OP.scanDbg = (OP.auto and "[AUTO] " or "")..(#parts>0 and table.concat(parts, " | ") or "gak ada picker di server").."  @"..os.date("%H:%M:%S")
                 pcall(refreshUI)
             end
-            task.wait(10)
+            task.wait(8)
         end
     end)
 end
