@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v6.1"
+local VERSION = "up6kg-v6.4"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -227,6 +227,7 @@ do
         _G.ZenxCekDisconnect = zenxCekDisconnect
         -- SELF-REJOIN: error kedeteksi tapi VM masih hidup (masih bisa denyut) -> rejoin SENDIRI (gak nunggu worker)
         _G.ZenxSelfRejoin = function(reason)
+            if true then return end   -- up6kg: SELF-REJOIN DIMATIIN (worker/panel yg handle)
             if _G.ZenxRejoining then return end
             _G.ZenxRejoining = true
             _G.ZenxRejoinSisa = 0
@@ -378,7 +379,7 @@ end
 local REJOIN_MENIT = 30    -- <<< SETTING: rejoin tiap berapa menit (bisa override _G.ZenxRejoinMenit)
 _G.ZenxRejoinMenit = tonumber(_G.ZenxRejoinMenit) or REJOIN_MENIT   -- DEFAULT 30, WAJIB nyala (gak ada toggle mati)
 _G.__ZenxBootT = _G.__ZenxBootT or os.time()   -- waktu boot script (buat guard kick-pertama)
-if true then   -- <<< up6kg: REJOIN GACOR NYALA (kick + balik PS sama, timing WIB :00/:30)
+if false then  -- <<< up6kg: SEMUA REJOIN SC DIMATIIN (worker/panel yg handle)
     _G.__ZenxRejoinGen = (_G.__ZenxRejoinGen or 0) + 1
     local myGen = _G.__ZenxRejoinGen
     do
@@ -404,36 +405,17 @@ if true then   -- <<< up6kg: REJOIN GACOR NYALA (kick + balik PS sama, timing WI
                 if plr then
                     local jobId = game.JobId
                     _G.ZenxRejoining = true
-                    pcall(function() plr:Kick("ZenxFreezeRejoin") end)
-                    -- SEMBUNYIIN dialog "kicked/disconnect" biar teleport gak ke-blok
-                    task.spawn(function()
-                        local cg = game:GetService("CoreGui")
-                        local guiSvc = game:GetService("GuiService")
-                        for _ = 1, 300 do
-                            pcall(function()
-                                for _, g in ipairs(cg:GetChildren()) do
-                                    local n = tostring(g.Name):lower()
-                                    if n:find("error") or n:find("prompt") or n:find("disconnect") then
-                                        if g:IsA("ScreenGui") then g.Enabled = false end
-                                        pcall(function() g.Parent = nil end)
-                                    end
-                                end
-                                pcall(function() guiSvc:ClearError() end)
-                            end)
-                            task.wait(0.5)
-                        end
-                    end)
-                    print("[Rejoin] KICK. jobId=" .. tostring(jobId) .. " place=" .. tostring(game.PlaceId))
-                    task.wait(40)
+                    -- up6kg: JANGAN pakai plr:Kick (matiin VM Arceus -> teleport abis kick gak jalan
+                    -- -> gak rejoin). Teleport LANGSUNG ke server SAMA (jobId) -> leave+rejoin, VM idup
+                    -- sampe teleport sukses. Fallback Teleport polos kalau jobId keblok.
+                    print("[Rejoin] teleport langsung ke server sama (jobId=" .. tostring(jobId) .. ")")
                     local tries = 0
-                    while true do   -- rejoin sampe berhasil (VM mati pas teleport sukses)
+                    while true do
                         tries = tries + 1
-                        print("[Rejoin] coba teleport #" .. tries .. " (jobId dulu)")
-                        -- up6kg: TeleportToPlaceInstance(jobId) -> balik ke SERVER PERSIS SAMA (anti-nyasar).
-                        -- Kalau keblok/gagal, fallback Teleport polos (matchmaking join-back).
+                        print("[Rejoin] coba teleport #" .. tries)
                         local ok1 = pcall(function() TS:TeleportToPlaceInstance(game.PlaceId, jobId, plr) end)
-                        task.wait(8)
-                        if not ok1 then pcall(function() TS:Teleport(game.PlaceId, plr) end); task.wait(8) end
+                        task.wait(6)
+                        if not ok1 then pcall(function() TS:Teleport(game.PlaceId, plr) end); task.wait(6) end
                     end
                 end
             end
