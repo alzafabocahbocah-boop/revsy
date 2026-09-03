@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v6.5"
+local VERSION = "up6kg-v6.6"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3126,44 +3126,58 @@ do
     end)
 end
 
--- ============ SCALE GUI (x0.5 - x1.5, default x1) + persist antar rejoin ============
+-- ============ SCALE GUI -> tombol "range" + popup pilihan ukuran (persist) ============
 do
-    -- wrapper biar UIScale nge-scale main (border) + konten + teks BARENGAN (uniform).
     local scaleWrap = mk("Frame", { Name = "ZenxScaleWrap", Size = UDim2.new(1,0,1,0),
         BackgroundTransparency = 1, BorderSizePixel = 0, Parent = gui })
     main.Parent = scaleWrap
     local uiScale = Instance.new("UIScale"); uiScale.Scale = 1; uiScale.Parent = scaleWrap
     local SCALES = { 0.5, 0.75, 1, 1.25, 1.5 }
     local FILE = "zenx_up6kg_scale.txt"
-    local function saveScale(s) pcall(function() if writefile then writefile(FILE, tostring(s)) end end) end
+    local function saveScale(sc) pcall(function() if writefile then writefile(FILE, tostring(sc)) end end) end
     local function loadScale()
         local ok, v = pcall(function()
             if isfile and isfile(FILE) and readfile then return readfile(FILE) end
             return nil
         end)
         local n = ok and v and tonumber(v) or 1
-        -- validasi cuma yg di SCALES
-        for _, s in ipairs(SCALES) do if math.abs(n - s) < 0.001 then return s end end
+        for _, sc in ipairs(SCALES) do if math.abs(n - sc) < 0.001 then return sc end end
         return 1
     end
+
+    -- POPUP pilihan ukuran (di gui, gak ke-scale, di atas semua)
+    local pop = mk("Frame", { Name = "ZenxRangePop", Size = UDim2.new(0, 200, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y, Position = UDim2.new(0.5, -100, 0.3, 0),
+        BackgroundColor3 = C.panel, BorderSizePixel = 0, Visible = false, ZIndex = 800, Parent = gui })
+    corner(pop, 10); stroke(pop, C.border, 1.5)
+    local popPad = mk("Frame", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, ZIndex = 801, Parent = pop })
+    mk("UIListLayout", { Padding = UDim.new(0, 6), HorizontalAlignment = Enum.HorizontalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder, Parent = popPad })
+    mk("UIPadding", { PaddingTop = UDim.new(0,10), PaddingBottom = UDim.new(0,10), PaddingLeft = UDim.new(0,10), PaddingRight = UDim.new(0,10), Parent = popPad })
+    local popT = lbl(popPad, "Ukuran GUI", 14, C.accent); popT.Size = UDim2.new(1,0,0,22); popT.Font = FONT_B; popT.ZIndex = 802; popT.LayoutOrder = 0
+
     local scaleBtns = {}
-    local function applyScale(s)
-        uiScale.Scale = s; saveScale(s)
-        for sv, b in pairs(scaleBtns) do b.BackgroundColor3 = (math.abs(sv - s) < 0.001) and C.accent or C.card end
+    local rangeBtn
+    local function applyScale(sc)
+        uiScale.Scale = sc; saveScale(sc)
+        for sv, b in pairs(scaleBtns) do b.BackgroundColor3 = (math.abs(sv - sc) < 0.001) and C.accent or C.card end
+        if rangeBtn then rangeBtn.Text = "range x" .. tostring(sc):gsub("%.", ",") end
     end
-    -- tombol scale di titleBar (kiri, setelah judul)
-    local bx = 118
-    for _, s in ipairs(SCALES) do
-        local txt = "x" .. tostring(s):gsub("%.", ",")
-        local b = mk("TextButton", { Size = UDim2.new(0, 40, 0, 22), Position = UDim2.new(0, bx, 0, 11),
-            BackgroundColor3 = C.card, Text = txt, Font = FONT_B, TextSize = 11,
-            TextColor3 = Color3.fromRGB(255,255,255), Parent = titleBar })
-        corner(b, 6)
-        scaleBtns[s] = b
-        b.MouseButton1Click:Connect(function() applyScale(s) end)
-        bx = bx + 44
+    local lo = 1
+    for _, sc in ipairs(SCALES) do
+        local txt = "x" .. tostring(sc):gsub("%.", ",")
+        local b = mk("TextButton", { Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = C.card, Text = txt,
+            Font = FONT_B, TextSize = 15, TextColor3 = Color3.fromRGB(255,255,255), ZIndex = 802, LayoutOrder = lo, Parent = popPad })
+        corner(b, 7); scaleBtns[sc] = b; lo = lo + 1
+        b.MouseButton1Click:Connect(function() applyScale(sc); pop.Visible = false end)
     end
-    -- APPLY scale tersimpan (persist antar rejoin -> gak balik ke default)
+
+    -- tombol RANGE di titleBar (kiri, gak nutup versi di kanan)
+    rangeBtn = mk("TextButton", { Size = UDim2.new(0, 84, 0, 22), Position = UDim2.new(0, 118, 0, 11),
+        BackgroundColor3 = C.card, Text = "range", Font = FONT_B, TextSize = 12,
+        TextColor3 = Color3.fromRGB(255,255,255), Parent = titleBar })
+    corner(rangeBtn, 6)
+    rangeBtn.MouseButton1Click:Connect(function() pop.Visible = not pop.Visible end)
+
     applyScale(loadScale())
 end
 
