@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v7.1"
+local VERSION = "up6kg-v7.7"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1163,8 +1163,8 @@ do
         { nama = "Gilded Choc Peryton", cari = { "gilded", "peryton" }, jml = 1 },
     }
     -- SESI 2 (up KG): 1 Rainbow Elephant + 2 Rainbow Dilop + 4 Peacock + 1 bahan
+    -- up6kg: Ele DIKELUARIN dari config (dioper keliling -> auto-detect via eleUuids, bukan pool).
     local SUPPORT_S2_ELE = {
-        { nama = "Rainbow Elephant", cari = { "rainbow", "elephant" }, jml = 1 },
         { nama = "Rainbow Dilop",    cari = { "rainbow", "dilo" },     jml = 2 },
         { nama = "Peacock",          cari = { "peacock" },             jml = 4 },
     }
@@ -1494,11 +1494,16 @@ do
     end
     -- KUNCI support: paksa=true -> kunci BARU (re-pick kg terbesar). else: pakai kunci lama
     -- (dari memory / file). Sekali kunci -> TETAP walau rejoin (persist file). Ganti = pencet "kunci baru".
+    local function updateSupportUuids()
+        local su = {}
+        if supPool then for _, list in pairs(supPool) do for _, u in ipairs(list) do su[u] = true end end end
+        _G.ZenxSupportUuids = su   -- dipake trade: auto-fav biar gak ke-gift
+    end
     local function kunciSupPool(paksa)
-        if not paksa and supPool then return end                 -- udah ke-kunci di memory
+        if not paksa and supPool then updateSupportUuids(); return end   -- udah ke-kunci di memory
         if not paksa then
             local saved = loadPoolFile()
-            if saved then supPool = saved; kgLog("pool support: LOAD kunci lama (uuid tetap, gak berubah)"); return end
+            if saved then supPool = saved; updateSupportUuids(); kgLog("pool support: LOAD kunci lama (uuid tetap, gak berubah)"); return end
         end
         local maxPer, cariMap = {}, {}
         for _, sup in ipairs(SUPPORT_S1_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
@@ -1516,7 +1521,7 @@ do
                 end
             end
         end
-        savePool()   -- SIMPEN -> kunci ini dipakai terus (walau rejoin)
+        savePool(); updateSupportUuids()   -- SIMPEN + expose uuid (buat auto-fav)
         local ss = ""; for nm, l in pairs(supPool) do ss = ss .. nm .. "=" .. #l .. "/" .. (maxPer[nm] or 0) .. " " end
         kgLog("pool support: KUNCI BARU (kg terbesar) -> " .. ss)
     end
@@ -1539,6 +1544,12 @@ do
         for _, sup in ipairs(SUP) do
             local pool = supPool[sup.nama] or {}
             for i = 1, sup.jml do if pool[i] then supBaru[pool[i]] = sup.nama end end
+        end
+        -- up6kg: SESI 2 -> Ele AUTO-DETECT (uuid apapun yg lagi di akun, bukan pool)
+        if sesi == 2 then
+            for u in pairs(eleUuids) do
+                if tostring(u):sub(1,1) == "{" then supBaru[u] = "Rainbow Elephant"; break end
+            end
         end
         -- copot support lama yg GAK di supBaru (mis. Ele/Gilded sesi lain, atau extra)
         for u in pairs(supportKunci) do
@@ -1594,6 +1605,8 @@ do
     end
     -- tentuin sesi dari stat (sticky): sesi1 sampe muda habis, sesi2 sampe age50 habis
     local function tentukanSesi()
+        -- up6kg: sesi 2 BUTUH Ele. Gak pegang Ele -> paksa sesi 1 (leveling, nunggu Ele dioper balik).
+        if not next(eleUuids) then return 1 end
         local st = _G.ZenxKgStat or {}
         local mudaB = st.mudaBelum or 0   -- up6kg: age<40 base<6kg
         local a50B  = st.age50Belum or 0  -- up6kg: age40+ base<6kg
@@ -1822,19 +1835,21 @@ end
 
 -- ============ TEMA ============
 local C = {
-    bg       = Color3.fromRGB(22, 22, 22),
-    panel    = Color3.fromRGB(26, 26, 26),
-    card     = Color3.fromRGB(30, 30, 30),
-    cardSel  = Color3.fromRGB(34, 34, 34),
-    input    = Color3.fromRGB(30, 30, 30),
-    border   = Color3.fromRGB(60, 60, 60),
-    borderSel= Color3.fromRGB(255, 255, 255),
-    line     = Color3.fromRGB(95, 95, 95),
-    text     = Color3.fromRGB(240, 240, 240),
-    textDim  = Color3.fromRGB(140, 140, 140),
-    textMute = Color3.fromRGB(100, 100, 100),
-    accent   = Color3.fromRGB(255, 255, 255),
-    danger   = Color3.fromRGB(200, 90, 90),
+    bg       = Color3.fromRGB(14, 16, 22),    -- dark biru-hitam
+    panel    = Color3.fromRGB(22, 24, 42),    -- panel biru
+    card     = Color3.fromRGB(21, 23, 42),    -- card
+    cardSel  = Color3.fromRGB(31, 35, 64),    -- card terpilih
+    input    = Color3.fromRGB(18, 20, 31),
+    border   = Color3.fromRGB(35, 38, 58),    -- border biru-abu
+    borderSel= Color3.fromRGB(139, 92, 246),  -- ungu (accent border)
+    line     = Color3.fromRGB(58, 63, 102),
+    text     = Color3.fromRGB(240, 240, 245),
+    textDim  = Color3.fromRGB(139, 142, 165),
+    textMute = Color3.fromRGB(107, 110, 133),
+    accent   = Color3.fromRGB(139, 92, 246),  -- UNGU (dulu putih)
+    accent2  = Color3.fromRGB(93, 214, 176),  -- hijau (Dilop)
+    accent3  = Color3.fromRGB(240, 184, 70),  -- kuning (Gilded/Ele)
+    danger   = Color3.fromRGB(224, 85, 85),
 }
 local FONT   = Enum.Font.GothamSemibold
 local FONT_B = Enum.Font.GothamBold
@@ -2128,8 +2143,8 @@ end
 -- pet dipake di tim + jumlah + berapa yg BELUM 3.8kg + berapa yg UDAH.
 local KG_TARGET = 6.0   -- up6kg: target 6kg
 _G.ZenxKgTarget = KG_TARGET
-local statTbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 148), BackgroundColor3 = C.panel,
-    Font = Enum.Font.Code, TextSize = 22, TextColor3 = Color3.fromRGB(255, 255, 255),
+local statTbl = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 158), BackgroundColor3 = C.input, RichText = true,
+    Font = Enum.Font.Code, TextSize = 22, TextColor3 = Color3.fromRGB(240, 240, 245),
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Text = "", LayoutOrder = 3, Parent = cfgScroll })
 corner(statTbl, 6)
@@ -2149,16 +2164,17 @@ task.spawn(function()
             for t in pairs(_G.ZenxKgUpTipe) do nm[#nm+1] = t end
             table.sort(nm); pilih = table.concat(nm, ", ")
         end
+        local sep = "<font color='#23263a'>" .. string.rep("\u{2500}", 22) .. "</font>"
         local lines = {
-            "STATUS \u{2014} " .. pilih,
-            "Target KG   : " .. KG_TARGET .. " kg",
-            string.rep("\u{2500}", 26),
-            "Total pet   : " .. total,
-            "Belum 6kg : " .. belum,
-            "Udah 6kg  : " .. udah,
-            string.rep("\u{2500}", 26),
-            "Age40+ blm6: " .. a50b,
-            "Age<40 blm6: " .. mudab,
+            "<font color='#c4b5fd'><b>STATUS</b></font>  <font color='#6b6e85'>" .. pilih .. "</font>",
+            "<font color='#8b8ea5'>Target KG</font>   <font color='#f0b846'><b>" .. KG_TARGET .. " kg</b></font>",
+            sep,
+            "<font color='#8b8ea5'>Total pet</font>   <font color='#f0f0f5'><b>" .. total .. "</b></font>",
+            "<font color='#5dd6b0'>Udah 6kg</font>   <font color='#5dd6b0'><b>" .. udah .. "</b></font>",
+            "<font color='#8b8ea5'>Belum 6kg</font>  <font color='#f0f0f5'><b>" .. belum .. "</b></font>",
+            sep,
+            "<font color='#c4b5fd'>Age40+ blm6</font> <font color='#c4b5fd'><b>" .. a50b .. "</b></font>",
+            "<font color='#6b6e85'>Muda blm6</font>   <font color='#8b8ea5'>" .. mudab .. "</font>",
         }
         statTbl.Text = table.concat(lines, "\n")
         task.wait(1)
@@ -2457,6 +2473,36 @@ do
         if sellOneRE and tool then pcall(function() sellOneRE:FireServer(tool) end) end
     end
     local function unfav(tool) if favRE and tool then pcall(function() favRE:FireServer(tool) end) end end
+    -- AUTO-FAV support pet (dari _G.ZenxSupportUuids) -> ke-favorite -> GAK ke-gift/jual.
+    local function isFav(t)
+        for _, attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do
+            if t:GetAttribute(attr) == true then return true end
+        end
+        return false
+    end
+    task.spawn(function()
+        while true do
+            task.wait(8)
+            pcall(function()
+                local sup = _G.ZenxSupportUuids
+                if not sup or not next(sup) or not favRE then return end
+                local tools = {}
+                local bp = player:FindFirstChild("Backpack")
+                if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then tools[#tools+1] = t end end end
+                if player.Character then for _, t in ipairs(player.Character:GetChildren()) do if t:IsA("Tool") then tools[#tools+1] = t end end end
+                for _, t in ipairs(tools) do
+                    local uuid = t:GetAttribute("PET_UUID")
+                    if uuid then
+                        local u = tostring(uuid); if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
+                        if sup[u] and not isFav(t) then
+                            pcall(function() favRE:FireServer(t) end)   -- favorite -> protected
+                            if _G.ZenxKgLog then _G.ZenxKgLog("[auto-fav] support "..tostring(t.Name).." di-favorite (gak ke-gift)") end
+                        end
+                    end
+                end
+            end)
+        end
+    end)
     local function listPets()
         local out = {}
         local bp = player:FindFirstChild("Backpack")
@@ -2558,7 +2604,7 @@ do
     refresh()
 end
 
-local kgLogBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 130), BackgroundColor3 = C.panel,
+local kgLogBox = mk("TextLabel", { Size = UDim2.new(1, 0, 0, 140), BackgroundColor3 = C.input, RichText = true,
     Font = Enum.Font.Code, TextSize = 20.5, TextColor3 = Color3.fromRGB(255, 255, 255),
     TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
     TextWrapped = true, Text = "log up kg...", LayoutOrder = 8, Parent = cfgScroll })
@@ -2567,8 +2613,15 @@ mk("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6), Par
 do
     local logLines = {}
     _G.ZenxKgLog = function(s)
-        table.insert(logLines, 1, os.date("%H:%M:%S ") .. s)
-        while #logLines > 10 do table.remove(logLines) end
+        local sl = tostring(s):lower()
+        local col = "#c8c8d5"
+        if sl:find("gagal") or sl:find("tolak") or sl:find("error") or sl:find("salah") then col = "#e05555"
+        elseif sl:find("ready") or sl:find("kunci") or sl:find("selesai") or sl:find("nerima") then col = "#5dd6b0"
+        elseif sl:find("copot") or sl:find("kurang") or sl:find("isi ") then col = "#f0b846"
+        elseif sl:find("sesi") or sl:find("swap") then col = "#c4b5fd" end
+        local esc = tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;")
+        table.insert(logLines, 1, "<font color='#5a5d75'>" .. os.date("%H:%M:%S") .. "</font> <font color='" .. col .. "'>" .. esc .. "</font>")
+        while #logLines > 12 do table.remove(logLines) end
         kgLogBox.Text = table.concat(logLines, "\n")
     end
 end
@@ -2985,51 +3038,6 @@ do
         bAcc.TextColor3 = TR.autoAcc and Color3.fromRGB(0,230,118) or C.text
     end)
 
-    -- ============ INTIP INVENTORY (baca inventory target via ViewInventory) ============
-    local function intipInv(targetNm)
-        local Players = game:GetService("Players")
-        local target = nil
-        for _, p in ipairs(Players:GetPlayers()) do if p.Name == targetNm then target = p; break end end
-        if not target then return targetNm .. ": gak se-server" end
-        local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
-        local te = ge and ge:FindFirstChild("TradeEvents")
-        local vi = te and te:FindFirstChild("ViewInventory")
-        if not vi then return "ViewInventory gak ada" end
-        local list = nil
-        for att = 1, 3 do
-            local res = { pcall(function() return vi:InvokeServer(target) end) }
-            if res[1] then for k = 2, #res do if type(res[k]) == "table" then list = res[k]; break end end end
-            if list then break end
-            if att < 3 then task.wait(13) end
-        end
-        if not list then return targetNm .. ": cooldown/gagal (retry ~13s)" end
-        local total, age40 = 0, 0
-        local perTipe = {}
-        for _, item in pairs(list) do
-            if type(item) == "table" and tostring(item.type) == "Pet" and type(item.data) == "table" then
-                total = total + 1
-                local pd = item.data.PetData or {}
-                local lvl = tonumber(pd.Level) or 0
-                local bw = tonumber(pd.BaseWeight) or 0
-                local tp = tostring(item.data.PetType or "")
-                if lvl >= 40 and bw < 6 then age40 = age40 + 1; perTipe[tp] = (perTipe[tp] or 0) + 1 end
-            end
-        end
-        local ss = ""; for tp, n in pairs(perTipe) do ss = ss .. tp .. "=" .. n .. " " end
-        return targetNm .. ": " .. total .. " pet | age40<6kg: " .. age40 .. (ss ~= "" and ("\n  " .. ss) or "")
-    end
-    local bIntip = trBtn("\u{1F50D} INTIP INVENTORY TARGET", 11.5, C.card)
-    bIntip.MouseButton1Click:Connect(function()
-        if #TR.targets == 0 then if trStatus then trStatus.Text = "pilih target dulu" end return end
-        bIntip.Text = "Baca inventory... (cooldown ~13s)"
-        task.spawn(function()
-            local out = {}
-            for _, nm in ipairs(TR.targets) do out[#out+1] = intipInv(nm) end
-            if trStatus then trStatus.Text = table.concat(out, "\n\n") end
-            bIntip.Text = "\u{1F50D} INTIP INVENTORY TARGET"
-        end)
-    end)
-
     trStatus = lbl(tradeScroll, "siap. pilih target + jenis pet + filter min KG/age.", 11.5, C.textDim)
     trStatus.Size = UDim2.new(1,0,0,42); trStatus.TextWrapped=true; trStatus.LayoutOrder=12; trStatus.TextYAlignment=Enum.TextYAlignment.Top
 end
@@ -3047,7 +3055,7 @@ do
     local MAX_PICK = 3
     local ELE_NAME = "Rainbow Elephant"
 
-    local OP = { auto = false, pick = {}, minOper = 50, logAkun = {} }  -- pick = {nama=true}, logAkun = {nama="..."}
+    local OP = { auto = false, pick = {}, minOper = 50, logAkun = {}, age40 = {}, operCount = 0 }
 
     local function httpReq(path, method, body)
         local req = http_request or request or (syn and syn.request) or (fluxus and fluxus.request)
@@ -3084,7 +3092,7 @@ do
             if att < 3 then task.wait(13) end
         end
         if not list then return nil end
-        local n = 0
+        local n, hasEle = 0, false
         local bahanSet = _G.ZenxKgUpTipe or {}
         for _, item in pairs(list) do
             if type(item) == "table" and tostring(item.type) == "Pet" and type(item.data) == "table" then
@@ -3092,12 +3100,13 @@ do
                 local lvl = tonumber(pd.Level) or 0
                 local bw = tonumber(pd.BaseWeight) or 0
                 local tp = stripMutation(tostring(item.data.PetType or ""))
+                if tostring(tp):lower():find("rainbow elephant", 1, true) then hasEle = true end
                 local cocok = false
                 for b in pairs(bahanSet) do if tostring(tp):lower():find(tostring(b):lower(), 1, true) then cocok = true; break end end
                 if cocok and lvl >= 40 and bw < 6 then n = n + 1 end
             end
         end
-        return n
+        return n, hasEle
     end
 
     -- gift Ele ke target (SAFETY: cuma yg di pick)
@@ -3126,55 +3135,114 @@ do
         return false, "gift gagal"
     end
 
-    -- === UI ===
-    local ui = _G.ZenxUpKgUI or {}
-    local mk2, corner2, C2 = mk, corner, C
+    -- === UI (desain baru: stat cards + kartu akun kaya) ===
     local function opLbl(parent, txt, size, col) return lbl(parent, txt, size, col) end
 
-    -- header
-    local hdr = mk("Frame", { Size=UDim2.new(1,0,0,34), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=1, Parent=operScroll }); corner(hdr,7)
-    local hdrL = opLbl(hdr, "aku: ...", 15, C.text); hdrL.Position=UDim2.new(0,10,0,0); hdrL.Size=UDim2.new(1,-90,1,0)
-    local autoBtn = mk("TextButton", { Size=UDim2.new(0,76,0,26), Position=UDim2.new(1,-82,0.5,-13), BackgroundColor3=C.card, Text="AUTO: OFF", Font=FONT_B, TextSize=14, TextColor3=Color3.fromRGB(255,255,255), Parent=hdr }); corner(autoBtn,6)
+    -- HEADER
+    local hdr = mk("Frame", { Size=UDim2.new(1,0,0,54), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=1, Parent=operScroll }); corner(hdr,11); stroke(hdr, C.border, 1)
+    local hdrT = opLbl(hdr, "OPER RAINBOW ELEPHANT", 13, C.text); hdrT.Font=FONT_B; hdrT.Position=UDim2.new(0,13,0,8); hdrT.Size=UDim2.new(1,-110,0,18)
+    local hdrS = opLbl(hdr, "cek status...", 11, C.textDim); hdrS.Position=UDim2.new(0,13,0,28); hdrS.Size=UDim2.new(1,-110,0,16)
+    local autoBtn = mk("TextButton", { Size=UDim2.new(0,86,0,34), Position=UDim2.new(1,-96,0.5,-17), BackgroundColor3=C.card, Text="AUTO OFF", Font=FONT_B, TextSize=12, TextColor3=Color3.fromRGB(255,255,255), Parent=hdr }); corner(autoBtn,9); stroke(autoBtn, C.border, 1)
 
-    -- header terpilih
-    local secPick = mk("Frame", { Size=UDim2.new(1,0,0,26), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=2, Parent=operScroll }); corner(secPick,7)
-    local secPickL = opLbl(secPick, "akun terpilih (0/3)", 14, C.accent); secPickL.Position=UDim2.new(0,10,0,0); secPickL.Size=UDim2.new(1,-12,1,0); secPickL.Font=FONT_B
+    -- HOLDER strip (siapa pegang Ele)
+    local holderF = mk("Frame", { Size=UDim2.new(1,0,0,50), BackgroundColor3=Color3.fromRGB(26,18,48), BorderSizePixel=0, LayoutOrder=1.3, Parent=operScroll }); corner(holderF,11); stroke(holderF, C.accent, 1)
+    local holderIco = opLbl(holderF, "\u{1F418}", 24, C.text); holderIco.Position=UDim2.new(0,12,0,11); holderIco.Size=UDim2.new(0,32,0,28)
+    local holderTop = opLbl(holderF, "PEMEGANG ELEPHANT", 9, C.textMute); holderTop.Position=UDim2.new(0,50,0,8); holderTop.Size=UDim2.new(1,-150,0,12)
+    local holderNm = opLbl(holderF, "...", 15, C.text); holderNm.Font=FONT_B; holderNm.Position=UDim2.new(0,50,0,22); holderNm.Size=UDim2.new(1,-150,0,22)
+    local holderTag = opLbl(holderF, "", 11, C.accent3); holderTag.Font=FONT_B; holderTag.Position=UDim2.new(1,-96,0.5,-9); holderTag.Size=UDim2.new(0,88,0,18); holderTag.TextXAlignment=Enum.TextXAlignment.Right
 
-    local pickHolder = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=3, Parent=operScroll })
-    mk("UIListLayout", { Padding=UDim.new(0,5), Parent=pickHolder })
+    -- REASON banner (kenapa gak oper)
+    local reasonF = mk("Frame", { Size=UDim2.new(1,0,0,46), BackgroundColor3=Color3.fromRGB(42,34,19), BorderSizePixel=0, LayoutOrder=1.6, Visible=false, Parent=operScroll }); corner(reasonF,10); stroke(reasonF, C.accent3, 1)
+    local reasonTop = opLbl(reasonF, "\u{26A0} Belum oper", 12, C.accent3); reasonTop.Font=FONT_B; reasonTop.Position=UDim2.new(0,13,0,7); reasonTop.Size=UDim2.new(1,-20,0,16)
+    local reasonTxt = opLbl(reasonF, "", 11, Color3.fromRGB(200,184,118)); reasonTxt.Position=UDim2.new(0,13,0,24); reasonTxt.Size=UDim2.new(1,-20,0,16); reasonTxt.TextWrapped=true
 
-    local secLain = mk("Frame", { Size=UDim2.new(1,0,0,26), BackgroundColor3=C.card, BorderSizePixel=0, LayoutOrder=4, Parent=operScroll }); corner(secLain,7)
-    local secLainL = opLbl(secLain, "se-server lain", 14, C.textDim); secLainL.Position=UDim2.new(0,10,0,0); secLainL.Size=UDim2.new(1,-12,1,0); secLainL.Font=FONT_B
+    -- STAT CARDS
+    local statRow = mk("Frame", { Size=UDim2.new(1,0,0,52), BackgroundTransparency=1, LayoutOrder=2, Parent=operScroll })
+    mk("UIListLayout", { FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,7), Parent=statRow })
+    local function statCard(lblTxt, col)
+        local c = mk("Frame", { Size=UDim2.new(0.25,-6,1,0), BackgroundColor3=C.card, BorderSizePixel=0, Parent=statRow }); corner(c,9)
+        local v = opLbl(c, "0", 18, col or C.text); v.Font=FONT_B; v.Position=UDim2.new(0,10,0,7); v.Size=UDim2.new(1,-10,0,22); v.TextXAlignment=Enum.TextXAlignment.Left
+        local l = opLbl(c, lblTxt, 9, C.textMute); l.Position=UDim2.new(0,10,0,31); l.Size=UDim2.new(1,-10,0,14); l.TextXAlignment=Enum.TextXAlignment.Left
+        return v
+    end
+    local scOper  = statCard("oper", C.text)
+    local scBahan = statCard("bahan diri", C.accent3)
+    local scIkut  = statCard("ikut", C.accent)
+    local scNext  = statCard("next target", C.accent2)
 
-    local lainHolder = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=5, Parent=operScroll })
-    mk("UIListLayout", { Padding=UDim.new(0,5), Parent=lainHolder })
+    -- section penerima
+    local secPick = mk("Frame", { Size=UDim2.new(1,0,0,20), BackgroundTransparency=1, LayoutOrder=3, Parent=operScroll })
+    local secPickL = opLbl(secPick, "AKUN PENERIMA (0/3)", 11, C.accent); secPickL.Font=FONT_B; secPickL.Size=UDim2.new(1,0,1,0)
+    local pickHolder = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=4, Parent=operScroll })
+    mk("UIListLayout", { Padding=UDim.new(0,7), Parent=pickHolder })
+
+    local secLain = mk("Frame", { Size=UDim2.new(1,0,0,20), BackgroundTransparency=1, LayoutOrder=5, Parent=operScroll })
+    local secLainL = opLbl(secLain, "SE-SERVER LAIN", 11, C.textDim); secLainL.Font=FONT_B; secLainL.Size=UDim2.new(1,0,1,0)
+    local lainHolder = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=6, Parent=operScroll })
+    mk("UIListLayout", { Padding=UDim.new(0,6), Parent=lainHolder })
 
     local function refreshUI()
         local plr = Players.LocalPlayer
         local st = _G.ZenxKgStat or {}
-        hdrL.Text = "aku: "..plr.Name.."  |  bahan age40: "..(st.age50Belum or 0)
+        local pegangEle = false
+        local bp = plr:FindFirstChild("Backpack")
+        if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and tostring(t:GetAttribute("f") or t.Name):lower():find("rainbow elephant",1,true) then pegangEle=true break end end end
+        hdrS.Text = (pegangEle and "\u{25CF} pegang Ele" or "\u{25CB} gak pegang Ele")
+        hdrS.TextColor3 = pegangEle and C.accent2 or C.textDim
         local np = nPick()
-        secPickL.Text = "akun terpilih ("..np.."/"..MAX_PICK..")"..(np>=MAX_PICK and "  [TERKUNCI]" or "")
+        scOper.Text = tostring(OP.operCount or 0)
+        scBahan.Text = tostring(st.age50Belum or 0)
+        scIkut.Text = np.."/"..MAX_PICK
+        scNext.Text = tostring(OP.nextTarget or "-"):sub(1,8)
+        -- HOLDER
+        local holder = OP.holder or (pegangEle and plr.Name or "?")
+        holderNm.Text = holder .. (holder == plr.Name and "  (aku)" or "")
+        if pegangEle and OP.reason == nil then holderTag.Text = "siap oper"; holderTag.TextColor3 = C.accent2
+        elseif pegangEle then holderTag.Text = "\u{23F8} TAHAN"; holderTag.TextColor3 = C.accent3
+        else holderTag.Text = "\u{2192} akun lain"; holderTag.TextColor3 = C.textDim end
+        -- REASON
+        if OP.reason and OP.auto then reasonF.Visible = true; reasonTxt.Text = OP.reason
+        else reasonF.Visible = false end
+        secPickL.Text = "AKUN PENERIMA ("..np.."/"..MAX_PICK..")"..(np>=MAX_PICK and " \u{1F512}" or "")
         local locked = np >= MAX_PICK
-        secLainL.Text = locked and "se-server lain (terkunci - hapus dulu)" or "se-server lain (klik buat pilih)"
-        -- bersihin holder
+        secLainL.Text = locked and "SE-SERVER LAIN (terkunci)" or "SE-SERVER LAIN (klik pilih)"
         for _, c in ipairs(pickHolder:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
         for _, c in ipairs(lainHolder:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= plr then
                 local nm = p.Name
-                local dipilih = OP.pick[nm] == true
-                local logTxt = OP.logAkun[nm] or ""
-                if dipilih then
-                    local row = mk("Frame", { Size=UDim2.new(1,0,0,logTxt~="" and 54 or 38), BackgroundColor3=Color3.fromRGB(48,36,82), BorderSizePixel=0, Parent=pickHolder }); corner(row,7)
-                    local l = opLbl(row, "  \u{2705} "..nm, 15, C.text); l.Position=UDim2.new(0,8,0,5); l.Size=UDim2.new(1,-78,0,24)
-                    if logTxt ~= "" then local lg = opLbl(row, "    "..logTxt, 12.5, C.textDim); lg.Position=UDim2.new(0,8,0,28); lg.Size=UDim2.new(1,-16,0,20) end
-                    local del = mk("TextButton", { Size=UDim2.new(0,56,0,22), Position=UDim2.new(1,-62,0,5), BackgroundColor3=Color3.fromRGB(122,59,59), Text="hapus", Font=FONT_B, TextSize=13, TextColor3=Color3.fromRGB(255,217,217), Parent=row }); corner(del,6)
+                if OP.pick[nm] == true then
+                    local logTxt = OP.logAkun[nm] or ""
+                    local age40 = OP.age40[nm]
+                    local ll = tostring(logTxt):lower()
+                    local badge, bcol, bbg, dot = "SIAP", C.textDim, Color3.fromRGB(31,35,64), Color3.fromRGB(107,110,133)
+                    if ll:find("nerima") or ll:find("dikirim") then badge="NERIMA ELE"; bcol=C.accent2; bbg=Color3.fromRGB(21,58,42); dot=C.accent2
+                    elseif ll:find("nunggu") or ll:find("belum") then badge="NUNGGU"; bcol=C.accent; bbg=Color3.fromRGB(42,37,64); dot=C.accent
+                    elseif ll:find("gagal") then badge="GAGAL"; bcol=C.danger; bbg=Color3.fromRGB(58,26,26); dot=C.danger end
+                    local h = 42 + (age40 and 16 or 0) + (logTxt~="" and 16 or 0)
+                    local row = mk("Frame", { Size=UDim2.new(1,0,0,h), BackgroundColor3=C.card, BorderSizePixel=0, Parent=pickHolder }); corner(row,11); stroke(row, C.line, 1)
+                    local d = mk("Frame", { Size=UDim2.new(0,9,0,9), Position=UDim2.new(0,12,0,15), BackgroundColor3=dot, BorderSizePixel=0, Parent=row }); corner(d,5)
+                    local l = opLbl(row, nm, 14, C.text); l.Font=FONT_B; l.Position=UDim2.new(0,28,0,9); l.Size=UDim2.new(1,-190,0,22)
+                    local bg = mk("Frame", { Size=UDim2.new(0,92,0,20), Position=UDim2.new(1,-130,0,10), BackgroundColor3=bbg, BorderSizePixel=0, Parent=row }); corner(bg,6)
+                    local bl = opLbl(bg, badge, 10, bcol); bl.Font=FONT_B; bl.Size=UDim2.new(1,0,1,0); bl.TextXAlignment=Enum.TextXAlignment.Center
+                    local del = mk("TextButton", { Size=UDim2.new(0,26,0,22), Position=UDim2.new(1,-32,0,9), BackgroundColor3=Color3.fromRGB(58,37,64), Text="\u{1F5D1}", Font=FONT_B, TextSize=12, TextColor3=Color3.fromRGB(255,150,180), Parent=row }); corner(del,6)
                     del.MouseButton1Click:Connect(function() setPick(nm, false); refreshUI() end)
+                    local yy = 38
+                    if age40 then
+                        local barBg = mk("Frame", { Size=UDim2.new(1,-90,0,5), Position=UDim2.new(0,12,0,yy+3), BackgroundColor3=Color3.fromRGB(35,38,58), BorderSizePixel=0, Parent=row }); corner(barBg,3)
+                        local pct = math.min(1, age40/(OP.minOper or 50))
+                        local barFill = mk("Frame", { Size=UDim2.new(pct,0,1,0), BackgroundColor3=dot, BorderSizePixel=0, Parent=barBg }); corner(barFill,3)
+                        local cnt = opLbl(row, age40.." bahan age40", 11, C.textDim); cnt.Position=UDim2.new(1,-78,0,yy-2); cnt.Size=UDim2.new(0,72,0,14); cnt.TextXAlignment=Enum.TextXAlignment.Right
+                        yy = yy + 16
+                    end
+                    if logTxt ~= "" then
+                        local lg = opLbl(row, logTxt, 10, C.textMute); lg.Font=Enum.Font.Code; lg.Position=UDim2.new(0,12,0,yy); lg.Size=UDim2.new(1,-16,0,14)
+                    end
                 else
-                    local row = mk("TextButton", { Size=UDim2.new(1,0,0,36), BackgroundColor3=locked and Color3.fromRGB(26,28,36) or C.card, Text="", AutoButtonColor=not locked, Parent=lainHolder }); corner(row,7)
-                    local l = opLbl(row, (locked and "  \u{1F512} " or "  \u{2B1C} ")..nm, 15, locked and Color3.fromRGB(120,120,120) or C.text); l.Position=UDim2.new(0,8,0,0); l.Size=UDim2.new(1,-16,1,0)
-                    if not locked then row.MouseButton1Click:Connect(function() if nPick() < MAX_PICK then setPick(nm, true); refreshUI() end end) end
+                    local nm2 = nm
+                    local row = mk("TextButton", { Size=UDim2.new(1,0,0,34), BackgroundColor3=locked and C.input or C.card, Text="", AutoButtonColor=not locked, Parent=lainHolder }); corner(row,9); stroke(row, C.border, 1)
+                    local l = opLbl(row, (locked and "  \u{1F512} " or "  + ")..nm2, 13, locked and C.textMute or C.text); l.Position=UDim2.new(0,10,0,0); l.Size=UDim2.new(1,-16,1,0)
+                    if not locked then row.MouseButton1Click:Connect(function() if nPick() < MAX_PICK then setPick(nm2, true); refreshUI() end end) end
                 end
             end
         end
@@ -3182,8 +3250,9 @@ do
 
     autoBtn.MouseButton1Click:Connect(function()
         OP.auto = not OP.auto
-        autoBtn.Text = OP.auto and "AUTO: ON" or "AUTO: OFF"
-        autoBtn.BackgroundColor3 = OP.auto and Color3.fromRGB(29,158,117) or C.card
+        autoBtn.Text = OP.auto and "AUTO ON" or "AUTO OFF"
+        autoBtn.BackgroundColor3 = OP.auto and C.accent2 or C.card
+        autoBtn.TextColor3 = OP.auto and Color3.fromRGB(14,16,22) or Color3.fromRGB(255,255,255)
     end)
 
     -- refresh UI tiap 3s (kalo tab OPER ELE keliatan)
@@ -3209,23 +3278,51 @@ do
                     local pegangEle = false
                     local bp = plr:FindFirstChild("Backpack")
                     if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and tostring(t:GetAttribute("f") or t.Name):lower():find("rainbow elephant",1,true) then pegangEle = true break end end end
-                    -- syarat: pegang Ele + bahan age40 diri HABIS (=0)
-                    if pegangEle and (st.age50Belum or 0) == 0 then
-                        loadPick()
-                        local best, bestN = nil, -1
+                    loadPick()
+                    if not next(OP.pick) then
+                        OP.holder = pegangEle and plr.Name or "?"; OP.reason = "belum pilih akun penerima"; return
+                    end
+                    if not pegangEle then
+                        -- Ele bukan di device ini -> scan picker buat deteksi holder + update age40
+                        OP.holder = OP.holderDetected or "akun lain"
+                        OP.reason = "Ele di akun lain" .. (OP.holderDetected and (": " .. OP.holderDetected) or "")
                         for _, p in ipairs(Players:GetPlayers()) do
                             if p ~= plr and OP.pick[p.Name] then
-                                local n = bahanAge40Lain(p)
-                                if n then OP.logAkun[p.Name] = "age40: "..n; if n > bestN then bestN = n; best = p end end
+                                local n, hasEle = bahanAge40Lain(p)
+                                if n then OP.age40[p.Name] = n end
+                                if hasEle then OP.holderDetected = p.Name; OP.holder = p.Name; OP.reason = "Ele di akun lain: " .. p.Name end
                                 task.wait(1)
                             end
                         end
-                        if best and bestN >= OP.minOper then
-                            local ok2, msg = giftEle(best)
-                            OP.logAkun[best.Name] = ok2 and ("<- nerima ele ("..bestN..")") or ("gift gagal: "..tostring(msg))
+                        return
+                    end
+                    OP.holder = plr.Name; OP.holderDetected = plr.Name
+                    if (st.age50Belum or 0) > 0 then
+                        OP.reason = "bahan diri belum habis \\u{2014} masih " .. (st.age50Belum or 0) .. " age40 harus di-reset"
+                        return
+                    end
+                    -- pegang Ele + bahan diri HABIS -> scan target
+                    OP.reason = "cek inventory target..."
+                    local best, bestN = nil, -1
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p ~= plr and OP.pick[p.Name] then
+                            local n = bahanAge40Lain(p)
+                            if n then OP.age40[p.Name] = n; OP.logAkun[p.Name] = (n >= OP.minOper) and "cukup (age40 "..n..")" or ("nunggu (age40 "..n..")"); if n > bestN then bestN = n; best = p end end
+                            task.wait(1)
                         end
                     end
+                    OP.nextTarget = best and best.Name or "-"
+                    if best and bestN >= OP.minOper then
+                        OP.reason = nil   -- SIAP OPER
+                        local ok2, msg = giftEle(best)
+                        if ok2 then OP.operCount = (OP.operCount or 0) + 1 end
+                        OP.logAkun[best.Name] = ok2 and ("<- Ele dikirim ("..bestN..")") or ("gift gagal: "..tostring(msg))
+                    else
+                        OP.reason = "gak ada target cukup (>=50) \\u{2014} tertinggi " .. math.max(0, bestN)
+                    end
                 end)
+            else
+                OP.reason = "AUTO OFF"
             end
         end
     end)
