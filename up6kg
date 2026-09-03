@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v9.991"
+local VERSION = "up6kg-v9.993"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3345,17 +3345,23 @@ do
     local function bahanAge40Lain(target)
         local te = RS:FindFirstChild("GameEvents"); te = te and te:FindFirstChild("TradeEvents")
         local vi = te and te:FindFirstChild("ViewInventory")
-        if not vi then return nil end
-        local list
+        if not vi then return nil, false, "remote VI gak ada" end
+        local list, lastErr
         for att = 1, 2 do
             local res = table.pack(pcall(function() return vi:InvokeServer(target) end))
-            if res[1] then for k = 2, res.n do if type(res[k]) == "table" then list = res[k]; break end end end
+            if res[1] then
+                for k = 2, res.n do if type(res[k]) == "table" then list = res[k]; break end end
+                if not list then lastErr = "balik "..(res.n-1).." nilai, gak ada tabel" end
+            else
+                lastErr = "err:"..tostring(res[2]):sub(1,26)
+            end
             if list then break end
             if att < 2 then task.wait(8) end
         end
-        if not list then return nil end
+        if not list then return nil, false, lastErr or "gagal" end
         local n, hasEle = 0, false
         local bahanSet = _G.ZenxKgUpTipe or {}
+        local nb = 0; for _ in pairs(bahanSet) do nb = nb + 1 end
         for _, item in pairs(list) do
             if type(item) == "table" and tostring(item.type) == "Pet" and type(item.data) == "table" then
                 local pd = item.data.PetData or {}
@@ -3368,7 +3374,7 @@ do
                 if cocok and lvl >= 40 and bw < 6 then n = n + 1 end
             end
         end
-        return n, hasEle
+        return n, hasEle, (nb == 0 and "ok(bahan-list KOSONG)" or "ok")
     end
 
     -- gift Ele ke target (SAFETY: cuma yg di pick)
@@ -3443,7 +3449,45 @@ do
     local lainHolder = mk("Frame", { Size=UDim2.new(1,0,0,0), BackgroundTransparency=1, AutomaticSize=Enum.AutomaticSize.Y, LayoutOrder=6, Parent=operScroll })
     mk("UIListLayout", { Padding=UDim.new(0,6), Parent=lainHolder })
 
+    -- DEBUG: log scan kecil (buat tau kenapa count gak muncul) — tap 2x buat salin
+    local dbgFrame = mk("Frame", { Size=UDim2.new(1,0,0,44), BackgroundColor3=Color3.fromRGB(18,18,18), BorderSizePixel=0, LayoutOrder=20, Parent=operScroll }); corner(dbgFrame,8); stroke(dbgFrame, C.border, 1)
+    local dbgHdr = opLbl(dbgFrame, "DEBUG scan (tap 2x = salin)", 9, C.accent); dbgHdr.Font=FONT_B; dbgHdr.Position=UDim2.new(0,10,0,5); dbgHdr.Size=UDim2.new(1,-16,0,12)
+    local dbgLbl = opLbl(dbgFrame, "-", 9, C.textMute); dbgLbl.Font=Enum.Font.Code; dbgLbl.Position=UDim2.new(0,10,0,19); dbgLbl.Size=UDim2.new(1,-16,0,22); dbgLbl.TextWrapped=true; dbgLbl.TextXAlignment=Enum.TextXAlignment.Left; dbgLbl.TextYAlignment=Enum.TextYAlignment.Top
+    local function buildDbg()
+        local L = { "=== ZENX OPER ELE DEBUG ===" }
+        L[#L+1] = "scan: "..tostring(OP.scanDbg or "-")
+        L[#L+1] = "AUTO: "..tostring(OP.auto).." | pegangEle: (cek di kartu)"
+        local pk = {}; for nm in pairs(OP.pick) do pk[#pk+1] = nm end
+        L[#L+1] = "picker ("..#pk.."): "..(#pk>0 and table.concat(pk, ", ") or "(KOSONG)")
+        local bs = {}; for b in pairs(_G.ZenxKgUpTipe or {}) do bs[#bs+1] = b end
+        L[#L+1] = "bahan-list ("..#bs.."): "..(#bs>0 and table.concat(bs, ", ") or "(KOSONG!)")
+        local ag = {}; for nm, v in pairs(OP.age40) do ag[#ag+1] = nm.."="..tostring(v) end
+        L[#L+1] = "age40: "..(#ag>0 and table.concat(ag, ", ") or "(kosong)")
+        local te = RS:FindFirstChild("GameEvents"); te = te and te:FindFirstChild("TradeEvents")
+        local vi = te and te:FindFirstChild("ViewInventory")
+        L[#L+1] = "ViewInventory remote: "..(vi and "ADA" or "GAK ADA")
+        L[#L+1] = "TradeEvents: "..(te and "ADA" or "GAK ADA")
+        local pl = {}; for _, p in ipairs(Players:GetPlayers()) do pl[#pl+1] = p.Name end
+        L[#L+1] = "players ("..#pl.."): "..table.concat(pl, ", ")
+        return table.concat(L, "\n")
+    end
+    local dbgTapT = 0
+    local dbgBtn = mk("TextButton", { Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, Text="", ZIndex=5, Parent=dbgFrame })
+    dbgBtn.MouseButton1Click:Connect(function()
+        local now = tick()
+        if now - dbgTapT < 0.45 then
+            dbgTapT = 0
+            local clip = setclipboard or toclipboard or set_clipboard or writeclipboard
+            local ok = clip and pcall(function() clip(buildDbg()) end)
+            dbgHdr.Text = ok and "DEBUG scan \u{2014} TERSALIN \u{2713}" or "DEBUG scan \u{2014} gagal (no clipboard)"
+            task.delay(1.6, function() if dbgHdr then dbgHdr.Text = "DEBUG scan (tap 2x = salin)" end end)
+        else
+            dbgTapT = now
+        end
+    end)
+
     local function refreshUI()
+        if dbgLbl then dbgLbl.Text = tostring(OP.scanDbg or "belum scan") end
         local plr = Players.LocalPlayer
         local st = _G.ZenxKgStat or {}
         local pegangEle = false
@@ -3593,16 +3637,25 @@ do
     task.spawn(function()
         while true do
             task.wait(1)
-            if operContent.Visible and not OP.auto then   -- kalo AUTO on, loop auto udah scan
-                local plr = Players.LocalPlayer
+            local plr = Players.LocalPlayer
+            if not operContent.Visible then
+                -- tab ketutup, skip
+            elseif OP.auto then
+                OP.scanDbg = "AUTO on (scan di loop auto) @"..os.date("%H:%M:%S")
+                pcall(refreshUI)
+            else
+                local parts = {}
                 for _, p in ipairs(Players:GetPlayers()) do
                     if p ~= plr and OP.pick[p.Name] then
-                        local n = bahanAge40Lain(p)
-                        if n then OP.age40[p.Name] = n end
+                        local n, _, why = bahanAge40Lain(p)
+                        if n then OP.age40[p.Name] = n; parts[#parts+1] = p.Name:sub(1,7).."="..n
+                        else parts[#parts+1] = p.Name:sub(1,7).."=X:"..(why or "?") end
                         pcall(refreshUI)
                         task.wait(0.5)
                     end
                 end
+                OP.scanDbg = (#parts>0 and table.concat(parts, " | ") or "gak ada picker di server").."  @"..os.date("%H:%M:%S")
+                pcall(refreshUI)
             end
             task.wait(10)
         end
