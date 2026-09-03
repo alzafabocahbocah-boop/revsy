@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v9.7"
+local VERSION = "up6kg-v9.9"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -15,9 +15,12 @@ task.spawn(function()
     sg.Name = "ZenxUp6kgStat"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 999998
     sg.Parent = par
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 356, 0, 220); frame.Position = UDim2.new(1, -368, 0, 12)
+    local owrap = Instance.new("Frame")
+    owrap.Size = UDim2.new(1,0,1,0); owrap.BackgroundTransparency = 1; owrap.BorderSizePixel = 0; owrap.Parent = sg
+    local oscale = Instance.new("UIScale"); oscale.Scale = 1.5; oscale.Parent = owrap   -- 1.5x
+    frame.Size = UDim2.new(0, 356, 0, 220); frame.AnchorPoint = Vector2.new(1, 0); frame.Position = UDim2.new(1, -12, 0, 12)
     frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0); frame.BackgroundTransparency = 0.08
-    frame.BorderSizePixel = 0; frame.Parent = sg
+    frame.BorderSizePixel = 0; frame.Parent = owrap
     local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 14); corner.Parent = frame
     local st1 = Instance.new("UIStroke"); st1.Color = Color3.fromRGB(38, 38, 38); st1.Thickness = 1.5; st1.Parent = frame
     local pad0 = Instance.new("UIPadding"); pad0.PaddingTop = UDim.new(0,11); pad0.PaddingBottom = UDim.new(0,11); pad0.PaddingLeft = UDim.new(0,11); pad0.PaddingRight = UDim.new(0,11); pad0.Parent = frame
@@ -37,26 +40,23 @@ task.spawn(function()
     local vUdah  = makeCard(AQ, "6kg+", 2)
     local vBelum = makeCard(WH, "6kg-", 3)
     local vAge   = makeCard(AQ, "age 40", 4)
-    -- sembunyi 10s pas pencet layar (biar gak ganggu interaksi)
-    local sembunyiSampai = 0
+    -- pas pencet layar: MENGECIL ke 0.7x (bukan ilang), balik 1.5x abis gak touch
+    local kecilSampai = 0
     local UIS = game:GetService("UserInputService")
     UIS.InputBegan:Connect(function(input, gpe)
         if input.UserInputType == Enum.UserInputType.Touch
            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            frame.Visible = false
-            sembunyiSampai = tick() + 10
+            kecilSampai = tick() + 3
         end
     end)
     while sg.Parent do
-        if tick() >= sembunyiSampai then
-            frame.Visible = true
-            local st = _G.ZenxKgStat or {}
-            vTotal.Text = string.format("%d<font color='#555555'>/%d</font>", st.totalAll or 0, st.maxInv or 0)
-            vUdah.Text = tostring(st.udah or 0)
-            vBelum.Text = tostring(st.belum or 0)
-            vAge.Text = tostring(st.age50Belum or 0)
-        end
-        task.wait(0.3)
+        oscale.Scale = (tick() < kecilSampai) and 0.7 or 1.5
+        local st = _G.ZenxKgStat or {}
+        vTotal.Text = string.format("%d<font color='#555555'>/%d</font>", st.totalAll or 0, st.maxInv or 0)
+        vUdah.Text = tostring(st.udah or 0)
+        vBelum.Text = tostring(st.belum or 0)
+        vAge.Text = tostring(st.age50Belum or 0)
+        task.wait(0.2)
     end
 end)
 
@@ -2771,6 +2771,24 @@ do
     local HS = game:GetService("HttpService")
     local GE = RS:FindFirstChild("GameEvents")
     local TRADE_CFG = "zenx_trade_cfg.json"
+    local TR = { targets = {}, tipe = {}, minKg = 0, minAge = 0, autoAcc = false, mode = "off" }
+    local function saveTr()
+        pcall(function()
+            if not writefile then return end
+            writefile(TRADE_CFG, HS:JSONEncode({ targets=TR.targets, tipe=TR.tipe, minKg=TR.minKg, minAge=TR.minAge, autoAcc=TR.autoAcc, mode=TR.mode }))
+        end)
+    end
+    pcall(function()
+        if isfile and isfile(TRADE_CFG) and readfile then
+            local c = HS:JSONDecode(readfile(TRADE_CFG))
+            if type(c) == "table" then
+                if type(c.targets)=="table" then local a={} for _,v in ipairs(c.targets) do if type(v)=="string" then a[#a+1]=v end end TR.targets=a end
+                if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end TR.tipe=s end
+                TR.minKg=tonumber(c.minKg) or 0; TR.minAge=tonumber(c.minAge) or 0; TR.autoAcc=(c.autoAcc==true)
+                TR.mode = (c.mode=="trade" or c.mode=="gift") and c.mode or "off"
+            end
+        end
+    end)
 
 
 
@@ -2982,38 +3000,6 @@ do
         return b
     end
 
-    -- ===== 3 TEMPLATE GIFT switcher =====
-    local tradeRefresh   -- forward decl (di-set di akhir)
-    local tplBtns = {}
-    local tplRow = mk("Frame", { Size=UDim2.new(1,0,0,46), BackgroundTransparency=1, LayoutOrder=0.5, Parent=tradeScroll })
-    mk("UIListLayout", { FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,7), Parent=tplRow })
-    local function updTplVisual()
-        for i, d in ipairs(tplBtns) do
-            local on = (i == activeTemplate)
-            d.btn.BackgroundColor3 = on and C.cardSel or C.card
-            d.stroke.Color = on and C.accent or C.border
-            d.lbl.TextColor3 = on and C.accent or C.textDim
-            d.sub.Text = TR_ALL[i].nama
-        end
-    end
-    local function switchTo(n)
-        activeTemplate = n
-        TR = TR_ALL[n]
-        saveTr()
-        updTplVisual()
-        if tradeRefresh then tradeRefresh() end
-    end
-    for i = 1, 3 do
-        local b = mk("TextButton", { Size=UDim2.new(1/3,-5,1,0), BackgroundColor3=C.card, Text="", AutoButtonColor=false, Parent=tplRow }); corner(b,9)
-        local st = stroke(b, C.border, 1)
-        local l = lbl(b, "GIFT "..i, 12, C.textDim); l.Font=FONT_B; l.Position=UDim2.new(0,0,0,7); l.Size=UDim2.new(1,0,0,16); l.TextXAlignment=Enum.TextXAlignment.Center
-        local sub = lbl(b, TR_ALL[i].nama, 9, C.textMute); sub.Position=UDim2.new(0,0,0,25); sub.Size=UDim2.new(1,0,0,12); sub.TextXAlignment=Enum.TextXAlignment.Center
-        tplBtns[i] = { btn=b, stroke=st, lbl=l, sub=sub }
-        local n = i
-        b.MouseButton1Click:Connect(function() switchTo(n) end)
-    end
-    updTplVisual()
-
     trHeader("\u{1F464} TARGET (ke siapa)", 1)
     local tgtBtn = trBtn("+ Tambah target", 2, C.card)
     -- chip holder (baris target terpilih, tiap chip bisa dihapus)
@@ -3210,20 +3196,6 @@ do
         bAcc.BackgroundColor3 = TR.autoAcc and C.accent2 or C.card
         bAcc.TextColor3 = TR.autoAcc and Color3.fromRGB(0,0,0) or C.text
     end)
-
-    -- refresh SEMUA UI trade pas ganti template (dipanggil switchTo)
-    tradeRefresh = function()
-        pcall(updTgtBtn)
-        pcall(updPetBtn)
-        pcall(updModeBtns)
-        if fbKg then fbKg.Text = tostring(TR.minKg or 0) end
-        if fbAge then fbAge.Text = tostring(TR.minAge or 0) end
-        if bAcc then
-            bAcc.Text = "AUTO ACCEPT MASUK: "..(TR.autoAcc and "ON" or "OFF")
-            bAcc.BackgroundColor3 = TR.autoAcc and C.accent2 or C.card
-            bAcc.TextColor3 = TR.autoAcc and Color3.fromRGB(0,0,0) or C.text
-        end
-    end
 
     trStatus = lbl(tradeScroll, "siap. pilih target + jenis pet + filter min KG/age.", 11.5, C.textDim)
     trStatus.Size = UDim2.new(1,0,0,42); trStatus.TextWrapped=true; trStatus.LayoutOrder=12; trStatus.TextYAlignment=Enum.TextYAlignment.Top
