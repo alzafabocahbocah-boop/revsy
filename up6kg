@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v9.93"
+local VERSION = "up6kg-v9.96"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3308,6 +3308,23 @@ do
         local ok, res = pcall(function() return req(o) end)
         return ok and res or nil
     end
+    local ELE_PICK_FILE = "zenx_ele_pick.txt"
+    local function saveLocalPick()
+        pcall(function()
+            if not writefile then return end
+            local names = {}
+            for nm in pairs(OP.pick) do names[#names+1] = '"'..nm..'"' end
+            writefile(ELE_PICK_FILE, "["..table.concat(names, ",").."]")
+        end)
+    end
+    local function loadLocalPick()
+        pcall(function()
+            if isfile and isfile(ELE_PICK_FILE) and readfile then
+                local arr = tostring(readfile(ELE_PICK_FILE)):match("%[(.-)%]")
+                if arr then for nm in arr:gmatch('"([^"]+)"') do OP.pick[nm] = true end end
+            end
+        end)
+    end
     local function loadPick()
         OP.pick = {}
         local res = httpReq("/ele-ikut", "GET")
@@ -3315,10 +3332,12 @@ do
             local arr = tostring(res.Body):match("%[(.-)%]")
             if arr then for nm in arr:gmatch('"([^"]+)"') do OP.pick[nm] = true end end
         end
+        if not next(OP.pick) then loadLocalPick() end   -- backend kosong/gagal -> pakai file lokal
     end
     local function setPick(nama, val)
         httpReq("/ele-ikut", "POST", string.format('{"kunci":"%s","akun":"%s","ikut":%s}', KUNCI, nama, tostring(val)))
         if val then OP.pick[nama] = true else OP.pick[nama] = nil end
+        saveLocalPick()   -- persist lokal juga
     end
     local function nPick() local n = 0; for _ in pairs(OP.pick) do n = n + 1 end; return n end
 
@@ -3569,6 +3588,25 @@ do
             end
         end
     end)
+
+    -- scan age40 picker buat DISPLAY (jalan walau AUTO off, biar count pet keliatan di kartu)
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            if operContent.Visible and not OP.auto then   -- kalo AUTO on, loop auto udah scan
+                local plr = Players.LocalPlayer
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= plr and OP.pick[p.Name] then
+                        local n = bahanAge40Lain(p)
+                        if n then OP.age40[p.Name] = n end
+                        pcall(refreshUI)
+                        task.wait(1)
+                    end
+                end
+            end
+            task.wait(25)
+        end
+    end)
 end
 
 -- ============ SCALE GUI -> tombol "range" + popup pilihan ukuran (persist) ============
@@ -3604,6 +3642,8 @@ do
     local rangeBtn
     local function applyScale(sc)
         uiScale.Scale = sc; saveScale(sc)
+        -- kompensasi: scale part 0.5/sc biar main tetep center abis di-scale (UIScale nge-scale posisi dari pojok)
+        main.Position = UDim2.new(0.5/sc, -330, 0.5/sc, -210)
         for sv, b in pairs(scaleBtns) do b.BackgroundColor3 = (math.abs(sv - sc) < 0.001) and C.accent or C.card end
         if rangeBtn then rangeBtn.Text = "range x" .. tostring(sc):gsub("%.", ",") end
     end
