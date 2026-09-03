@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v9.996"
+local VERSION = "up6kg-v9.998"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1395,6 +1395,14 @@ do
                     -- langsung (fast harvest, gak nunggu transition loop 3s). Support -> swap. Ele -> diem.
                     if bahanAktif[uuid] then
                         local age = getAge(uuid)
+                        -- DEBUG sesi 2: log level bahan tiap 1.5s (biar tau kebaca berapa / nil / stale)
+                        if (KG.sesi or 1) == 2 then
+                            _G.__dbgBahanT = _G.__dbgBahanT or {}
+                            if (tick() - (_G.__dbgBahanT[uuid] or 0)) > 1.5 then
+                                _G.__dbgBahanT[uuid] = tick()
+                                if _G.ZenxKgLog then _G.ZenxKgLog("[dbg-bahan] "..tostring(uuid):sub(1,10).." level="..tostring(age).." (copot kalo <=30)") end
+                            end
+                        end
                         -- copot SESI-AWARE. SESI 1: copot age >= 40. SESI 2: copot age <= 30.
                         -- BAHAN GAK di-swap (DIEM) -> cuma cek copot.
                         local copot = false
@@ -1423,6 +1431,18 @@ do
                                 if (rdy == true) or (rdy == nil and idle > 4) then
                                     swapPet(uuid)
                                     if isPeacock then _G.__up6kgLastPeacock = tick() end
+                                end
+                            end
+                        elseif not swapIni then
+                            -- PICK UP: pet nempel tapi GAK ke-track (bukan bahan/support) + bukan Ele
+                            -- -> copot (nangkep bekas bahan yg ke-reset + drop dari tracking bahanAktif).
+                            local tp = tipeDariUuid(uuid)
+                            if tp and not tostring(tp):lower():find("rainbow elephant", 1, true) then
+                                _G.__untrackSince = _G.__untrackSince or {}
+                                _G.__untrackSince[uuid] = _G.__untrackSince[uuid] or tick()
+                                if tick() - _G.__untrackSince[uuid] >= 2 then
+                                    pcall(function() unequipPet(uuid) end); _G.__untrackSince[uuid] = nil
+                                    if _G.ZenxKgLog then _G.ZenxKgLog("[pick-up] untracked "..tostring(tp).." -> copot (bekas bahan?)") end
                                 end
                             end
                         end
