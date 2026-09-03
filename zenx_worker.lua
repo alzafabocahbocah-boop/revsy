@@ -3863,6 +3863,7 @@ local function grid_hitung(cfg, pkgsPilih)
     -- baris Y0.713, 2 baris Y0.723, 3 baris Y0.808). Baris di-set -> kolom dihitung dari
     -- jumlah client. (field-nya masih 'grid_kolom' biar gak mecah config lama, tapi ARTINYA baris.)
     local barPaksa = tonumber(cfg.grid_kolom)
+    if cfg.script_label == "UPLEVEL" then barPaksa = n end   -- UPLEVEL: 1 KOLOM (vertikal stack), tiap client 1 baris
     if barPaksa and barPaksa >= 1 then
         bar = math.min(barPaksa, n)
         kol = math.ceil(n / bar)
