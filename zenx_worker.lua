@@ -9359,6 +9359,29 @@ local function run(cfg)
             end
         end
 
+        -- v9.xxx: UP6KG AUTO BALIK SERVER UTAMA. Fetch server utama + baca flag gohome dari script.
+        if tostring(cfg.script_label or ""):find("UP6KG") then
+            -- fetch server utama (home) yg di-set panel pas start
+            do
+                local ru = api_get(cfg, "/ps-utama?tim=" .. cfg.tim)
+                local uTs = ambil_num(ru, "ts") or 0
+                if uTs > 0 then cfg.server_utama = ambil_str(ru, "link") or "" end
+            end
+            -- baca flag gohome (script tulis pas SEMUA akun leveling full). fresh (<90s) -> set PS = utama.
+            do
+                local goRaw = sh("su -c 'cd \"" .. (cfg.workspace_dir or "") .. "\" 2>/dev/null && for f in zenx_gohome_*.txt; do [ -f \"$f\" ] && stat -c %Y \"$f\" 2>/dev/null; done' 2>/dev/null") or ""
+                local goFresh = false
+                for mt in goRaw:gmatch("%d+") do if (os.time() - tonumber(mt)) < 90 then goFresh = true break end end
+                if goFresh and cfg.server_utama and cfg.server_utama ~= "" then
+                    if cfg._ps_override ~= cfg.server_utama and (os.time() - (cfg._goHomeTs or 0)) > 30 then
+                        cfg._goHomeTs = os.time()
+                        api_post(cfg, "/ps", string.format('{"tim":%q,"link":%q}', cfg.tim, cfg.server_utama), "PUT")
+                        info("[GOHOME] leveling full -> set PS = server utama: " .. cfg.server_utama)
+                    end
+                end
+            end
+        end
+
         -- v4.4: CLOSE = tutup paksa semua client (Roblox ketutup, akun keluar).
         -- REJOIN = tutup paksa DULU, terus buka lagi (fresh). beda dari FORCE yg
         -- cuma mastiin kebuka (client yg udah jalan dibiarin).
