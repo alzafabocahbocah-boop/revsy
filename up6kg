@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.33"
+local VERSION = "up6kg-v10.35"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -745,22 +745,23 @@ task.spawn(function()
                 end
                 -- v0.90: max pet inventory dari MEMORY -- field "MaxPetsInInventory" (cara hact,
                 -- ikut upgrade). getgc BERAT -> cache 30s. total pet = container count (akurat).
-                -- v10.33 FIX: dulu ambil MAX dari SEMUA object -> kena CAP game (mis. 235), bukan
-                -- max ASLI akun (mis. 60). Sekarang: prioritas object yg HOLD container akun
-                -- (data ASLI akun) -> max bener. Fallback: TERKECIL >= 20 (max asli <= cap game).
+                -- v10.35 FIX: baca MAX langsung dari UI game "Pet Items (X/Y)" -> Y = max ASLI akun.
+                -- UI ini punya akun SENDIRI -> GAK ke-kontaminasi data trade (beda sama getgc yg
+                -- kecampur data akun lawan pas ViewInventory). X = jumlah pet (cocok sama totalAll).
+                -- getgc parent-find + fit CUMA fallback kalo UI belum ke-load.
                 if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
-                    local mx, mxParent = nil, nil
-                    local allMax = {}
+                    local maxUI = nil
                     pcall(function()
-                        if getgc then
-                            for _, obj in ipairs(getgc(true)) do
-                                if type(obj) == "table" then
-                                    local mp = rawget(obj, "MaxPetsInInventory")
-                                    if type(mp) == "number" and mp > 0 then
-                                        allMax[#allMax+1] = mp
-                                        if container and not mxParent then
-                                            for _, v in pairs(obj) do
-                                                if v == container then mxParent = mp; break end
+                        local pg = player:FindFirstChild("PlayerGui")
+                        if pg then
+                            for _, d in ipairs(pg:GetDescendants()) do
+                                if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
+                                    if d.Text:lower():find("item") then      -- label "Pet Items"
+                                        local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
+                                        if a and b then
+                                            a, b = tonumber(a), tonumber(b)
+                                            if a and b and b > 0 and math.abs(a - (totalAll or 0)) <= 10 then
+                                                maxUI = b; break     -- X cocok jumlah pet -> ini inventory akun ini
                                             end
                                         end
                                     end
@@ -768,17 +769,48 @@ task.spawn(function()
                             end
                         end
                     end)
-                    if mxParent then
-                        mx = mxParent                        -- max ASLI akun (data object holder container)
-                    else
-                        for _, v in ipairs(allMax) do         -- fallback: terkecil >= 20 (asli <= cap)
-                            if v >= 20 and (not mx or v < mx) then mx = v end
+                    local mx = maxUI
+                    if not mx then                            -- FALLBACK getgc (UI belum ke-load)
+                        local mxParent, allMax = nil, {}
+                        pcall(function()
+                            if getgc then
+                                for _, obj in ipairs(getgc(true)) do
+                                    if type(obj) == "table" then
+                                        local mp = rawget(obj, "MaxPetsInInventory")
+                                        if type(mp) == "number" and mp > 0 then
+                                            allMax[#allMax+1] = mp
+                                            if container and not mxParent then
+                                                for _, v in pairs(obj) do
+                                                    if v == container then mxParent = mp; break end
+                                                    if type(v) == "table" then
+                                                        for _, v2 in pairs(v) do
+                                                            if v2 == container then mxParent = mp; break end
+                                                        end
+                                                        if mxParent then break end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        local floor = (totalAll or 0) - 10
+                        if mxParent and mxParent >= floor then
+                            mx = mxParent
+                        else
+                            for _, v in ipairs(allMax) do
+                                if v >= floor and (not mx or v < mx) then mx = v end
+                            end
+                            if not mx then
+                                for _, v in ipairs(allMax) do if not mx or v > mx then mx = v end end
+                            end
                         end
                     end
                     _G.__ZenxMaxPetCache = mx
                     _G.__ZenxMaxPetTime = tick()
-                    _G.__ZenxMaxPetAll = allMax               -- debug: semua nilai ketemu
-                    _G.__ZenxMaxPetSrc = mxParent and "parent" or "min"
+                    _G.__ZenxMaxPetSrc = maxUI and "ui" or "gc"
+                    _G.__ZenxMaxPetTotal = totalAll
                 end
                 local maxInv = _G.__ZenxMaxPetCache or 200
                 _G.ZenxKgStat.total = total
