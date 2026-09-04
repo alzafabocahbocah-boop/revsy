@@ -1170,10 +1170,14 @@ end
 -- Rejoin 10 client makan lama (60s/client = ~10 menit) -> cek 3 menit kekecilan (client baru
 -- rejoin belum sempat loading+nulis denyut -> ke-flag mati lagi). 5 menit kasih napas.
 function interval_denyut(cfg)
-    -- v9.426: 6 menit (360s) buat SEMUA jumlah client (dulu 5 menit >=6, 3 menit <6).
-    -- User minta seragam 6 menit di client berapapun -> kasih napas lebih buat loading/rejoin,
-    -- biar gak ke-flag mati prematur (client rejoin belum sempet login+nulis denyut).
+    -- up6kg: 3 menit (180s). Lainnya 6 menit (360s).
+    if tostring(cfg and cfg.script_label or ""):find("UP6KG") then return 180 end
     return 360
+end
+function denyut_fresh_sec(cfg)
+    -- up6kg: denyut fresh 2 menit (120s). Lainnya 5 menit (300s).
+    if tostring(cfg and cfg.script_label or ""):find("UP6KG") then return 120 end
+    return 300
 end
 
 -- ============================================================
@@ -5371,7 +5375,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
                                      (os.time() - TERAKHIR_BUKA[pkg]) < (cfg.konfirmasi_sec or 90)
                 local lagiJalan = potretJalan and potretJalan[pkg]
                 if lagiJalan == nil then lagiJalan = pkg_running(pkg) end
-                local denyutFresh0 = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 300
+                local denyutFresh0 = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= denyut_fresh_sec(cfg)
                 -- v9.382: BLOCK FORCE kalau denyut BARU rejoin client ini (<180s) -- gak peduli
                 -- 'lagiJalan' (client msh loading abis denyut buka = belum keliatan jalan).
                 local denyutRejoinBaru = KICK_DIURUS["denyut_rejoin:" .. pkg]
@@ -5473,7 +5477,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
             -- v9.298: SKIP juga kalau DENYUT fresh (client idup per SD card, walau
             -- bridge/panel stale). Bug: reopen_sec re-join client hidup krn cuma
             -- ngecek bridge_fresh (panel), padahal denyut-cek udah bilang idup.
-            local denyutFresh = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= 300
+            local denyutFresh = akun and DENYUT_UMUR[akun] and DENYUT_UMUR[akun] <= denyut_fresh_sec(cfg)
             -- v9.382: BLOCK FORCE kalau denyut BARU rejoin client ini (<180s), walau msh loading.
             local denyutRejoinBaru2 = KICK_DIURUS["denyut_rejoin:" .. pkg]
                 and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < interval_denyut(cfg)
@@ -8523,7 +8527,7 @@ local function run(cfg)
                             info(("[denyut-cek] %s: umur=%s")
                                 :format(ak, umur and (umur.."s") or "BELUM ADA FILE"))
                         end
-                        if umur ~= nil and umur <= 300 then
+                        if umur ~= nil and umur <= denyut_fresh_sec(cfg) then
                             -- denyut fresh (<=5 menit) = script nulis = DI GAME (jalan normal).
                             diGame = diGame + 1
                             if KICK_DIURUS["captcha:" .. pkg] then
