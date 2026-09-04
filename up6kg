@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.22"
+local VERSION = "up6kg-v10.25"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3121,12 +3121,22 @@ do
             for _, nama in ipairs(targets) do
                 local tp = Players:FindFirstChild(nama)
                 if tp then
-                    nTgt = nTgt + 1
-                    setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
-                    if mode == "trade" then tradeToTarget(tp, pets) else giftToTarget(tp, pets) end
-                    task.wait(1)
-                    pets = petsLolos()
-                    if #pets == 0 then break end
+                    -- v10.25: cek inventory target FRESH sebelum gift -> skip kalo udah FULL (target bisa keburu penuh)
+                    local skip = false
+                    if TR.autoLevel then
+                        _lvlCnt[nama] = nil   -- invalidate cache -> baca fresh
+                        local cnt = countTargetPets(nama) or 0
+                        local mx = (_G.ZenxLvlMax or {})[nama]
+                        if mx and cnt >= mx then skip = true; setStat(nama.." FULL ("..cnt.."/"..mx..") - skip, cari akun lain") end
+                    end
+                    if not skip then
+                        nTgt = nTgt + 1
+                        setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
+                        if mode == "trade" then tradeToTarget(tp, pets) else giftToTarget(tp, pets) end
+                        task.wait(1)
+                        pets = petsLolos()
+                        if #pets == 0 then break end
+                    end
                 end
             end
             if nTgt == 0 then setStat("gak ada target ONLINE di server") else setStat("selesai ("..nTgt.." target)") end
@@ -3136,11 +3146,20 @@ do
 
     -- AUTO-LOOP: kalau TR.mode ON (trade/gift), kirim pet lolos filter TERUS (gak perlu pencet tiap kali)
     task.spawn(function()
+        local hadPets, emptyCount = false, 0
         while true do
             task.wait(2)
             if (TR.mode == "trade" or TR.mode == "gift" or TR.autoLevel) and not trBusy then
                 local pets = petsLolos()
-                if #pets > 0 then jalankan(TR.autoLevel and "trade" or TR.mode) end
+                if #pets > 0 then jalankan(TR.autoLevel and "trade" or TR.mode); hadPets = true; emptyCount = 0
+                elseif TR.autoLevel and hadPets then
+                    -- v10.24: autoLevel (Gift 1) + PERNAH gift, sekarang 6kg+ bahan HABIS -> lapor worker balik server utama
+                    emptyCount = emptyCount + 1
+                    if emptyCount >= 3 then   -- konsisten kosong ~6s
+                        pcall(function() if writefile then writefile("zenx_gohome_"..(player and player.Name or "x")..".txt", tostring(os.time())) end end)
+                        hadPets = false; emptyCount = 0
+                    end
+                end
             end
         end
     end)
@@ -3220,7 +3239,8 @@ do
         for _, c in ipairs(tgtChips:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
         for _, nm in ipairs(TR.targets) do
             local chip = mk("Frame", { Size = UDim2.new(0,0,0,26), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = C.cardSel, BorderSizePixel = 0, Parent = tgtChips }); corner(chip,13); stroke(chip, C.accent, 1)
-            local l = lbl(chip, nm, 11, C.accent); l.Font = FONT_B; l.AutomaticSize = Enum.AutomaticSize.X; l.Size = UDim2.new(0,0,1,0); l.Position = UDim2.new(0,11,0,0)
+            local mx = (_G.ZenxLvlMax or {})[nm]   -- v10.23: max inv akun leveling dari panel
+            local l = lbl(chip, nm .. (mx and (" ("..mx..")") or ""), 11, C.accent); l.Font = FONT_B; l.AutomaticSize = Enum.AutomaticSize.X; l.Size = UDim2.new(0,0,1,0); l.Position = UDim2.new(0,11,0,0)
             local xb = mk("TextButton", { Size = UDim2.new(0,18,0,18), BackgroundColor3 = Color3.fromRGB(58,37,64), Text = "\u{2715}", Font = FONT_B, TextSize = 11, TextColor3 = Color3.fromRGB(240,150,180), Parent = chip }); corner(xb,9)
             -- posisi X di kanan chip
             local pad = mk("UIPadding", { PaddingLeft = UDim.new(0,0), PaddingRight = UDim.new(0,26), Parent = l })
