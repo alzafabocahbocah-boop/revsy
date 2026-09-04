@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.26"
+local VERSION = "up6kg-v10.32"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3076,6 +3076,8 @@ do
         end)
     end
     local _lvlCnt = {}   -- nama -> {cnt, ts}: cache pet-count target (ViewInventory berat)
+    local trLog = {}
+    local function trLogAdd(m) trLog[#trLog+1] = os.date("%H:%M:%S").." "..tostring(m); if #trLog > 40 then table.remove(trLog, 1) end end
     local function countTargetPets(target)
         if not target then return nil end
         -- v10.26: target HARUS Player object (bukan string) buat InvokeServer. cache by nama.
@@ -3098,7 +3100,8 @@ do
         task.spawn(function()
             local Players = game:GetService("Players")
             local pets = petsLolos()
-            if #pets == 0 then setStat("gak ada pet lolos filter (tipe/minKG/minAge)"); trBusy=false; return end
+            trLogAdd("== jalankan mode="..mode.." | pet 6kg+ lolos="..#pets.." | AL="..tostring(TR.autoLevel))
+            if #pets == 0 then setStat("gak ada pet lolos filter (tipe/minKG/minAge)"); trLogAdd("STOP: 0 pet lolos filter (bahan/kg6/age<500). cek ZenxKgUpTipe + ada 6kg+?"); trBusy=false; return end
             local nTgt = 0
             local targets = TR.targets
             if TR.autoLevel then
@@ -3106,13 +3109,19 @@ do
                 local lvlMax = _G.ZenxLvlMax or {}
                 local cand, nOther = {}, 0
                 -- v10.11: target = DAFTAR akun leveling dari panel (bukan scan semua player), yg present di server
-                for nm, mx in pairs(lvlMax) do
-                    if nm ~= player.Name and Players:FindFirstChild(nm) then
+                for nm, mxv in pairs(lvlMax) do
+                    local present = Players:FindFirstChild(nm)
+                    if nm ~= player.Name and present then
                         nOther = nOther + 1
-                        local cnt = countTargetPets(nm) or 0
-                        if not (mx and cnt >= mx) then cand[#cand+1] = { nm=nm, cnt=cnt } end
+                        local cnt = countTargetPets(present)   -- nil = read gagal
+                        local full = (mxv and cnt ~= nil and cnt >= mxv)
+                        trLogAdd(nm..": cnt="..(cnt==nil and "GAGAL-baca" or tostring(cnt)).." max="..tostring(mxv)..(full and " -> FULL skip" or " -> ok"))
+                        if not full then cand[#cand+1] = { nm=nm, cnt=(cnt or 999) } end
+                    elseif nm ~= player.Name then
+                        trLogAdd(nm..": gak di server (skip)")
                     end
                 end
+                trLogAdd("total: "..nOther.." akun leveling present, "..#cand.." bisa di-gift")
                 table.sort(cand, function(a,b) return a.cnt < b.cnt end)
                 targets = {}; for _, c in ipairs(cand) do targets[#targets+1] = c.nm end
                 _G.ZenxGiftNext = (cand[1] and (tostring(cand[1].nm):sub(1,12).." ("..cand[1].cnt..")")) or nil
@@ -3129,11 +3138,10 @@ do
                     -- v10.25: cek inventory target FRESH sebelum gift -> skip kalo udah FULL (target bisa keburu penuh)
                     local skip = false
                     if TR.autoLevel then
-                        _lvlCnt[nama] = nil   -- invalidate cache -> baca FRESH
-                        local cnt = countTargetPets(tp)
+                        local cnt = countTargetPets(tp)   -- pake cache 5s (gak invalidate -> read gak sering gagal)
                         local mx = (_G.ZenxLvlMax or {})[nama]
-                        if cnt == nil then skip = true; setStat(nama.." gagal cek inventory - skip")
-                        elseif mx and cnt >= mx then skip = true; setStat(nama.." FULL ("..cnt.."/"..mx..") - skip, cari akun lain") end
+                        -- v10.31: cuma skip kalo count KEBACA + udah full. read gagal (nil) -> JANGAN skip, trade tetep jalan (biar gak macet gara2 read flaky).
+                        if cnt ~= nil and mx and cnt >= mx then skip = true; setStat(nama.." FULL ("..cnt.."/"..mx..") - skip, cari akun lain") end
                     end
                     if not skip then
                         nTgt = nTgt + 1
@@ -3504,6 +3512,24 @@ do
 
     trStatus = lbl(tradeScroll, "siap. pilih target + jenis pet + filter min KG/age.", 11.5, C.textDim)
     trStatus.Size = UDim2.new(1,0,0,42); trStatus.TextWrapped=true; trStatus.LayoutOrder=13; trStatus.TextYAlignment=Enum.TextYAlignment.Top
+
+    -- v10.32: DEBUG trade log (tap 2x = salin)
+    local trDbgHdr = lbl(tradeScroll, "DEBUG trade (tap 2x = salin)", 11, C.textMute); trDbgHdr.Font = FONT_B; trDbgHdr.LayoutOrder = 14; trDbgHdr.Size = UDim2.new(1,0,0,18)
+    local trDbgCard = mk("Frame", { Size = UDim2.new(1,0,0,160), BackgroundColor3 = C.bg, BorderSizePixel = 0, LayoutOrder = 15, Parent = tradeScroll }); corner(trDbgCard, 8); stroke(trDbgCard, C.border, 1)
+    local trDbgLbl = lbl(trDbgCard, "belum ada log", 10, C.textDim); trDbgLbl.Position = UDim2.new(0,8,0,6); trDbgLbl.Size = UDim2.new(1,-16,1,-12); trDbgLbl.TextXAlignment = Enum.TextXAlignment.Left; trDbgLbl.TextYAlignment = Enum.TextYAlignment.Top; trDbgLbl.TextWrapped = true
+    local trDbgBtn = mk("TextButton", { Size = UDim2.new(1,0,1,0), BackgroundTransparency = 1, Text = "", Parent = trDbgCard })
+    local trDbgTapT = 0
+    trDbgBtn.MouseButton1Click:Connect(function()
+        local now = tick()
+        if now - trDbgTapT < 0.45 then
+            trDbgTapT = 0
+            local clip = setclipboard or toclipboard or set_clipboard or writeclipboard
+            local ok = clip and pcall(function() clip(table.concat(trLog, "\n")) end)
+            trDbgHdr.Text = ok and "DEBUG trade \u{2014} TERSALIN \u{2713}" or "DEBUG trade \u{2014} gagal (no clipboard)"
+            task.delay(1.6, function() if trDbgHdr then trDbgHdr.Text = "DEBUG trade (tap 2x = salin)" end end)
+        else trDbgTapT = now end
+    end)
+    task.spawn(function() while trDbgLbl and trDbgLbl.Parent do pcall(function() trDbgLbl.Text = (#trLog > 0 and table.concat(trLog, "\n") or "belum ada log") end); task.wait(1) end end)
 end
 
 
@@ -3851,21 +3877,22 @@ do
                         return
                     end
                     OP.holder = plr.Name; OP.holderDetected = plr.Name
-                    -- SCAN TARGET DULU (cari yg bahannya cukup >=50)
-                    OP.reason = "cek inventory target..."
+                    -- v10.28: LOCK target. Udah dapet target QUALIFY (valid) -> pake itu, GAK scan lagi. Belum dapet -> cari dari OP.age40 (display scan) + lock kalo cukup.
                     local best, bestN = nil, -1
-                    for _, p in ipairs(Players:GetPlayers()) do
-                        if p ~= plr and OP.pick[p.Name] then
-                            local n = bahanAge40Lain(p)
-                            if n then OP.age40[p.Name] = n; OP.logAkun[p.Name] = (n >= OP.minOper) and "cukup (age40 "..n..")" or ("nunggu (age40 "..n..")"); if n > bestN then bestN = n; best = p end end
-                            task.wait(1)
+                    if OP.lockedTarget and Players:FindFirstChild(OP.lockedTarget) then
+                        best = Players:FindFirstChild(OP.lockedTarget); bestN = OP.age40[OP.lockedTarget] or OP.minOper
+                    else
+                        OP.lockedTarget = nil
+                        for nm, n in pairs(OP.age40) do
+                            if OP.pick[nm] and Players:FindFirstChild(nm) and (n or 0) > bestN then bestN = n; best = Players:FindFirstChild(nm) end
                         end
+                        if best and bestN >= OP.minOper then OP.lockedTarget = best.Name end   -- LOCK: dapet target cukup
                     end
                     OP.nextTarget = best and best.Name or "-"
                     _G.ZenxOperNext = best and (best.Name..(bestN and bestN>=0 and (" ("..bestN..")") or "")) or nil
                     if not (best and bestN >= OP.minOper) then
                         _G.ZenxForceSesi2 = false   -- gak ada target -> leveling normal
-                        OP.committed = false   -- v10.17: gak ada target -> reset commit
+                        OP.committed = false; OP.lockedTarget = nil   -- gak ada target -> reset commit + unlock
                         OP.reason = "gak ada target cukup (>=50) - tertinggi " .. math.max(0, bestN)
                         return
                     end
@@ -3880,12 +3907,12 @@ do
                         OP.reason = "target "..best.Name.." ready - SKIP leveling, sesi KG habisin age40 diri: masih "..(st.age50Belum or 0)
                         return
                     end
-                    -- age40 diri HABIS (atau UDAH committed) + target ready -> GIFT (gak reset lagi)
+                    -- age40 diri HABIS (atau UDAH committed) + target ready -> GIFT (gak reset lagi, gak rechek)
                     OP.committed = true   -- COMMIT: age40 udah pernah habis -> fokus GIFT, jangan reset lagi walau age40 baru
                     _G.ZenxForceSesi2 = false   -- lepas Ele dari kebun biar bisa di-gift
                     OP.reason = nil   -- SIAP OPER
                     local ok2, msg = giftEle(best)
-                    if ok2 then OP.operCount = (OP.operCount or 0) + 1; OP.committed = false end   -- sukses -> reset commit
+                    if ok2 then OP.operCount = (OP.operCount or 0) + 1; OP.committed = false; OP.lockedTarget = nil end   -- sukses -> reset commit + unlock
                     OP.logAkun[best.Name] = ok2 and ("<- Ele dikirim ("..bestN..")") or ("gift gagal: "..tostring(msg))
                 end)
             else
@@ -3899,7 +3926,7 @@ do
         while true do
             task.wait(1)
             local plr = Players.LocalPlayer
-            if operContent.Visible then   -- scan SEKUENSIAL (ViewInventory gak bisa paralel -> hang)
+            if (operContent.Visible or _G.ZenxPunyaEle) and not (OP.lockedTarget and Players:FindFirstChild(OP.lockedTarget)) then   -- v10.28: scan pas viewing/pegang Ele TAPI berhenti kalo udah ada target locked. SEKUENSIAL (ViewInventory gak bisa paralel -> hang)
                 local parts = {}
                 for _, p in ipairs(Players:GetPlayers()) do
                     if p ~= plr and OP.pick[p.Name] then
