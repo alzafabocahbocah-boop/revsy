@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.50"
+local VERSION = "up6kg-v10.51"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1703,8 +1703,22 @@ do
         end
         -- up6kg: SESI 2 -> Ele AUTO-DETECT (uuid apapun yg lagi di akun, bukan pool)
         if sesi == 2 then
+            local eleFound = false
             for u in pairs(eleUuids) do
-                if tostring(u):sub(1,1) == "{" then supBaru[u] = "Rainbow Elephant"; break end
+                if tostring(u):sub(1,1) == "{" then supBaru[u] = "Rainbow Elephant"; eleFound = true; break end
+            end
+            -- v10.51: fallback -- eleUuids kosong sesaat (telat refresh) -> scan container langsung cari Ele
+            if not eleFound and _kgContainer then
+                pcall(function()
+                    for uuid, pdata in pairs(_kgContainer) do
+                        if tostring(uuid):sub(1,1) == "{" then
+                            local pt = tostring((type(pdata)=="table" and (pdata.PetType or (pdata.PetData and pdata.PetData.PetType))) or "")
+                            if pt:lower():find("rainbow elephant", 1, true) then
+                                supBaru[uuid] = "Rainbow Elephant"; eleUuids[uuid] = true; break
+                            end
+                        end
+                    end
+                end)
             end
         end
         -- copot support lama yg GAK di supBaru (mis. Ele/Gilded sesi lain, atau extra)
@@ -1725,8 +1739,17 @@ do
                 if (KG.sesi or 1) ~= sesi then return end
                 for uuid in pairs(modelByUuid) do
                     if not supportKunci[uuid] and not bahanAktif[uuid] then
-                        pcall(function() unequipPet(uuid) end)
-                        kgLog("copot UNTRACKED: " .. (tipeDariUuid(uuid) or "?"))
+                        -- v10.51: SESI 2 -> Ele untracked JANGAN copot, malah TRACK (supportKunci) biar
+                        -- ke-re-equip. Bug: eleUuids telat refresh pas pasangSesi -> Ele gak ke-track ->
+                        -- ENFORCE copot -> Ele KELEPAS gak balik ke kebun.
+                        local tp = tostring(tipeDariUuid(uuid) or "")
+                        if sesi == 2 and tp:lower():find("rainbow elephant", 1, true) then
+                            supportKunci[uuid] = "Rainbow Elephant"
+                            eleUuids[uuid] = true
+                        else
+                            pcall(function() unequipPet(uuid) end)
+                            kgLog("copot UNTRACKED: " .. (tp ~= "" and tp or "?"))
+                        end
                     end
                 end
             end
