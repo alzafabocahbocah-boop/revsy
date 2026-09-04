@@ -1170,13 +1170,15 @@ end
 -- Rejoin 10 client makan lama (60s/client = ~10 menit) -> cek 3 menit kekecilan (client baru
 -- rejoin belum sempat loading+nulis denyut -> ke-flag mati lagi). 5 menit kasih napas.
 function interval_denyut(cfg)
-    -- up6kg: 3 menit (180s). Lainnya 6 menit (360s).
-    if tostring(cfg and cfg.script_label or ""):find("UP6KG") then return 180 end
+    -- up6kg + uplevel: 3 menit (180s). Lainnya 6 menit (360s).
+    local sl = tostring(cfg and cfg.script_label or "")
+    if sl:find("UP6KG") or sl:find("UPLEVEL") then return 180 end
     return 360
 end
 function denyut_fresh_sec(cfg)
-    -- up6kg: denyut fresh 2 menit (120s). Lainnya 5 menit (300s).
-    if tostring(cfg and cfg.script_label or ""):find("UP6KG") then return 120 end
+    -- up6kg + uplevel: 2 menit (120s). Lainnya 5 menit (300s).
+    local sl = tostring(cfg and cfg.script_label or "")
+    if sl:find("UP6KG") or sl:find("UPLEVEL") then return 120 end
     return 300
 end
 
@@ -4755,7 +4757,22 @@ end
 -- cek_batal: dipanggil di sela-sela client. Buka 10 client bisa makan
 -- 5-10 menit; tanpa ini, STANDBY dari panel gak kebaca sampe semuanya kelar.
 local TERAKHIR_BUKA = {}   -- v4.68: pkg -> kapan terakhir dibuka worker
+-- v9.439: refresh DENYUT_UMUR dari FILE mtime (fresh) -> open_all gak reopen client pake denyut BASI.
+--   Bug: antrian baca denyut jam X (mati) -> rejoin. 6 menit kemudian open_all reopen pake
+--   DENYUT_UMUR basi jam X (gak baca ulang) -> reopen client yg udah idup. Fix: baca fresh dulu.
+function refresh_denyut_umur(cfg)
+    if not cfg or not cfg.workspace_dir then return end
+    local raw = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+    if raw == "" then return end
+    local now = os.time()
+    for line in raw:gmatch("[^\n]+") do
+        local nama, mtime = line:match("zenx_denyut_(.-)%.txt|(%d+)")
+        if nama and mtime then DENYUT_UMUR[nama] = now - tonumber(mtime) end
+    end
+end
+
 local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, paksaMasuk)
+    refresh_denyut_umur(cfg)   -- v9.439: baca denyut FRESH dulu -> gak reopen client yg rejoin-nya udah berhasil
     -- v8.18: `only` bisa STRING (1 pkg, lama) ATAU TABLE {pkg=true,...} (banyak
     -- client dari FORCE:akun1,akun2). Helper: pkg ini termasuk yang mau dibuka?
     -- v9.121: ROTASI nyala -> loop buka/restart CUMA tim 1 (10 pkg pertama). Tim 2
@@ -9372,8 +9389,14 @@ local function run(cfg)
                 local goRaw = sh("su -c 'cd \"" .. (cfg.workspace_dir or "") .. "\" 2>/dev/null && for f in zenx_gohome_*.txt; do [ -f \"$f\" ] && stat -c %Y \"$f\" 2>/dev/null; done' 2>/dev/null") or ""
                 local goFresh = false
                 for mt in goRaw:gmatch("%d+") do if (os.time() - tonumber(mt)) < 90 then goFresh = true break end end
-                if goFresh and cfg.server_utama and cfg.server_utama ~= "" then
-                    if cfg._ps_override ~= cfg.server_utama and (os.time() - (cfg._goHomeTs or 0)) > 30 then
+                if goFresh then
+                    if not cfg.server_utama or cfg.server_utama == "" then
+                        info("[GOHOME] flag FRESH tapi server_utama KOSONG -> up6kg gak di-start pake custom PS (panel: /ps-utama cuma ke-set kalo server='custom'). Gak bisa balik home.")
+                    elseif cfg._ps_override == cfg.server_utama then
+                        -- udah di-override ke home, skip
+                    elseif (os.time() - (cfg._goHomeTs or 0)) <= 30 then
+                        -- throttle, skip
+                    else
                         cfg._goHomeTs = os.time()
                         api_post(cfg, "/ps", string.format('{"tim":%q,"link":%q}', cfg.tim, cfg.server_utama), "PUT")
                         info("[GOHOME] leveling full -> set PS = server utama: " .. cfg.server_utama)
