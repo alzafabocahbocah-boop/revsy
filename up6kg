@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.36"
+local VERSION = "up6kg-v10.41"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3119,9 +3119,18 @@ do
                         if req then local ok, res = pcall(function() return req({ Url = LVLMAX_URL, Method = "GET" }) end); if ok and res and res.Body then raw = res.Body end end
                     end
                     if raw and raw ~= "" then
-                        local m = {}
-                        for pair in tostring(raw):gmatch("[^,]+") do local k,v = pair:match("^%s*(.-)%s*=%s*(%d+)%s*$"); if k and v then m[k]=tonumber(v) end end
+                        local m, mc = {}, {}
+                        for pair in tostring(raw):gmatch("[^,]+") do
+                            local k, mx, cn = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)%s*$")   -- "akun=max:count"
+                            if k and mx then
+                                m[k] = tonumber(mx); mc[k] = tonumber(cn)
+                            else
+                                local k2, v2 = pair:match("^%s*(.-)%s*=%s*(%d+)%s*$")          -- backward: max doang
+                                if k2 and v2 then m[k2] = tonumber(v2) end
+                            end
+                        end
                         _G.ZenxLvlMax = m
+                        _G.ZenxLvlCount = mc      -- count self-report akun leveling (fallback kalo ViewInventory gagal)
                     end
                 end)
                 task.wait(30)
@@ -3138,11 +3147,12 @@ do
         if not pobj then return nil end
         local key = pobj.Name
         local cc = _lvlCnt[key]; if cc and (tick()-cc.ts) < 5 then return cc.cnt end
+        local lc = (_G.ZenxLvlCount or {})[key]   -- count self-report akun leveling (fallback)
         local te = GE and GE:FindFirstChild("TradeEvents"); local vi = te and te:FindFirstChild("ViewInventory")
-        if not vi then return (cc and cc.cnt) end
+        if not vi then return (cc and cc.cnt) or lc end
         local list; local res = table.pack(pcall(function() return vi:InvokeServer(pobj) end))
         if res[1] then for k=2,res.n do if type(res[k])=="table" then list=res[k]; break end end end
-        if not list then return (cc and cc.cnt) end
+        if not list then return (cc and cc.cnt) or lc end
         local n = 0; for _, item in pairs(list) do if type(item)=="table" and tostring(item.type)=="Pet" then n=n+1 end end
         _lvlCnt[key] = { cnt=n, ts=tick() }; return n
     end
@@ -3162,26 +3172,35 @@ do
                 local lvlMax = _G.ZenxLvlMax or {}
                 local cand, nOther = {}, 0
                 -- v10.11: target = DAFTAR akun leveling dari panel (bukan scan semua player), yg present di server
+                local nFull = 0
                 for nm, mxv in pairs(lvlMax) do
                     local present = Players:FindFirstChild(nm)
                     if nm ~= player.Name and present then
                         nOther = nOther + 1
-                        local cnt = countTargetPets(present)   -- nil = read gagal
+                        local cnt = countTargetPets(present)   -- nil = read gagal (VI + panel dua-duanya gagal)
+                        local pc = (_G.ZenxLvlCount or {})[nm]
                         local full = (mxv and cnt ~= nil and cnt >= mxv)
-                        trLogAdd(nm..": cnt="..(cnt==nil and "GAGAL-baca" or tostring(cnt)).." max="..tostring(mxv)..(full and " -> FULL skip" or " -> ok"))
-                        if not full then cand[#cand+1] = { nm=nm, cnt=(cnt or 999) } end
+                        local gagal = (cnt == nil)
+                        trLogAdd(nm..": cnt="..(gagal and ("GAGAL(panel="..tostring(pc)..")") or tostring(cnt)).." max="..tostring(mxv)..(full and " -> FULL skip" or (gagal and " -> GAGAL skip (gak di-trade)" or " -> ok")))
+                        if full then nFull = nFull + 1 end
+                        -- v10.39: GAGAL (count gak kebaca) -> JANGAN gift. gak diverifikasi = jangan di-trade
+                        -- (biar gak nyangkut trade ke akun yg mungkin udah full)
+                        if not full and not gagal then cand[#cand+1] = { nm=nm, cnt=(cnt or 999) } end
                     elseif nm ~= player.Name then
                         trLogAdd(nm..": gak di server (skip)")
                     end
                 end
-                trLogAdd("total: "..nOther.." akun leveling present, "..#cand.." bisa di-gift")
+                trLogAdd("total: "..nOther.." present, "..nFull.." full, "..#cand.." bisa di-gift")
                 table.sort(cand, function(a,b) return a.cnt < b.cnt end)
                 targets = {}; for _, c in ipairs(cand) do targets[#targets+1] = c.nm end
                 _G.ZenxGiftNext = (cand[1] and (tostring(cand[1].nm):sub(1,12).." ("..cand[1].cnt..")")) or nil
-                _G.ZenxLvlAllFull = (nOther > 0 and #cand == 0)
-                if nOther > 0 and #cand == 0 then
-                    setStat("SEMUA akun leveling FULL - minta balik home")
-                    -- v10.13: flag buat worker -> teleport balik ke server home (PS sendiri). ts fresh = masih full.
+                -- v10.41: gohome kalo SEMUA akun present CONFIRMED full (nFull == nOther) + minimal 2.
+                -- BUKAN #cand==0 (itu keitung kalo ada akun GAGAL yg di-skip tapi belum tentu full).
+                -- Harus akunnya EMANG full beneran (kebaca count-nya >= max), bukan sekedar gak bisa gift.
+                local semuaFull = (nOther >= 2 and nFull == nOther)
+                _G.ZenxLvlAllFull = semuaFull
+                if semuaFull then
+                    setStat("SEMUA akun leveling ("..nFull..") FULL - minta balik home")
                     pcall(function() if writefile then writefile("zenx_gohome_"..(player and player.Name or "x")..".txt", tostring(os.time())) end end)
                 end
             end
