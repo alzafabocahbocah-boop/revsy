@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.21"
+local VERSION = "up6kg-v10.22"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2882,7 +2882,7 @@ do
                         local t = TR_ALL[i]
                         if type(ct.targets)=="table" then local a={} for _,v in ipairs(ct.targets) do if type(v)=="string" then a[#a+1]=v end end t.targets=a end
                         if type(ct.tipe)=="table" then local s={} for k,v in pairs(ct.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
-                        t.minKg=tonumber(ct.minKg) or 0; t.minAge=tonumber(ct.minAge) or 0; t.autoAcc=(ct.autoAcc==true); t.autoLevel=(ct.autoLevel==true)
+                        t.minKg=tonumber(ct.minKg) or 0; t.minAge=tonumber(ct.minAge) or 0; t.autoAcc=(ct.autoAcc==true); t.autoLevel=(ct.autoLevel==true) or (i==1)
                         t.mode = (ct.mode=="trade" or ct.mode=="gift") and ct.mode or "off"
                         if type(ct.nama)=="string" and ct.nama~="" then t.nama = ct.nama end
                     end
@@ -3428,21 +3428,22 @@ do
         if trStatus then trStatus.Text = TR.autoLevel and "AUTO LEVELING ON \u{2014} auto ambil akun leveling di server, kirim bahan (kg6+ / age<500) via tiket. pet tim & Ele di-skip." or "OFF (berhenti)" end
     end)
 
-    -- v10.20: sync TARGET list dari akun leveling (_G.ZenxLvlMax) pas autoLevel ON -> muncul + update otomatis
+    -- v10.22: GIFT 1 = AUTO LEVELING PERMANEN. Target SELALU auto dari akun leveling panel (_G.ZenxLvlMax)
+    --   + bahan (_G.ZenxKgUpTipe) + kg6 + age500. Gak perlu nyalain toggle. Update tiap 5s.
     task.spawn(function()
         while true do
-            task.wait(6)
-            if TR.autoLevel then
-                local nw = {}; for nm in pairs(_G.ZenxLvlMax or {}) do nw[#nw+1] = nm end
-                table.sort(nw)
-                local cur = {}; for _, v in ipairs(TR.targets or {}) do cur[#cur+1] = v end; table.sort(cur)
-                if table.concat(nw, ",") ~= table.concat(cur, ",") then
-                    TR.targets = nw
-                    TR.tipe = {}; for t in pairs(_G.ZenxKgUpTipe or {}) do TR.tipe[t] = true end
-                    TR.minKg = 6
-                    saveTr(); if tradeRefresh then pcall(tradeRefresh) end
-                end
+            local t1 = TR_ALL[1]; t1.autoLevel = true
+            local nw = {}; for nm in pairs(_G.ZenxLvlMax or {}) do nw[#nw+1] = nm end; table.sort(nw)
+            local cur = {}; for _, v in ipairs(t1.targets or {}) do cur[#cur+1] = v end; table.sort(cur)
+            local nbTipe = {}; for k in pairs(_G.ZenxKgUpTipe or {}) do nbTipe[k] = true end
+            local tS = {}; for k in pairs(nbTipe) do tS[#tS+1] = k end; table.sort(tS)
+            local cS = {}; for k in pairs(t1.tipe or {}) do cS[#cS+1] = k end; table.sort(cS)
+            if (table.concat(nw, ",") ~= table.concat(cur, ",")) or (t1.minKg ~= 6) or (table.concat(tS, ",") ~= table.concat(cS, ",")) then
+                t1.targets = nw; t1.tipe = nbTipe; t1.minKg = 6
+                saveTr()
+                if activeTemplate == 1 and tradeRefresh then pcall(tradeRefresh) end
             end
+            task.wait(5)
         end
     end)
 
