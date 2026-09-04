@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.442-cf"
+local VERSION = "9.444-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9962,7 +9962,7 @@ local function run(cfg)
                         -- denyut-rejoin diem -> FORCE (dari panel, 8s nyusul) yg buka batch
                         -- -> gak dobel. Grace 240s > 8s jeda CLOSE->FORCE, aman.
                         local tNowC = os.time()
-                        for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = tNowC end
+                        for _, pk in ipairs(pkgsC) do KICK_DIURUS["tembak_ts:" .. pk] = tNowC; KICK_DIURUS["mau_force:" .. pk] = tNowC end   -- v9.443: mau_force -> TEMBAK/FORCE nyusul (oper) WAJIB buka, jangan ke-skip gara2 tembak_ts/sehat stale
                         ok("CLOSE: " .. #pkgsC .. " client target ditutup (barengan) -> denyut-rejoin di-BLOCK, tunggu FORCE")
                         notify("ZenX "..cfg.tim, "CLOSE -> "..#pkgsC.." client target ditutup")
                     else
@@ -10018,15 +10018,27 @@ local function run(cfg)
                             -- abis RESTART+rejoin, denyut masih OLD (belum sempat nulis) -> skip liat "gak sehat"
                             -- -> tembak SEMUA (0 skip) -> ganggu client yg baru masuk. Baru-dibuka = jangan ditembak.
                             local sehat = u and DENYUT_UMUR[u] and DENYUT_UMUR[u] <= 120
+                            -- v9.443: mau_force (CLOSE oper nyusul TEMBAK) -> WAJIB buka. Tanpa ini,
+                            -- CLOSE tadi set tembak_ts + denyut msh stale-fresh -> TEMBAK ke-SKIP
+                            -- (sehat/baruBuka) -> oper gak pindah server (nunggu grace ~5menit).
+                            local mauForce = KICK_DIURUS["mau_force:" .. pkg] and (os.time() - KICK_DIURUS["mau_force:" .. pkg]) < 90
                             local baruBuka = (TERAKHIR_BUKA[pkg] and (os.time() - TERAKHIR_BUKA[pkg]) < interval_denyut(cfg))
                                 or (KICK_DIURUS["tembak_ts:" .. pkg] and (os.time() - KICK_DIURUS["tembak_ts:" .. pkg]) < interval_denyut(cfg))
                                 or (KICK_DIURUS["denyut_rejoin:" .. pkg] and (os.time() - KICK_DIURUS["denyut_rejoin:" .. pkg]) < interval_denyut(cfg))
-                            if (not isHactOto) and (sehat or baruBuka) then
+                            if (not isHactOto) and (not mauForce) and (sehat or baruBuka) then
                                 nSkip = nSkip + 1
                                 info(("[tembak] %s -> SKIP (%s)"):format(u or pkg,
                                     sehat and ("sehat, denyut "..DENYUT_UMUR[u].."s") or "baru dibuka/rejoin (lagi loading)"))
                             else
-                                KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace (baru ditembak)
+                                -- v9.444: TEMBAK (oper/hact) = PRIORITAS server-change. RESET SEMUA grace/state
+                                -- client -> FRESH START kayak awal, gak ada sisa block. denyut LAMA (server lama)
+                                -- di-buang biar antrian gak salah keputusan (dianggap sehat/mati server lama).
+                                KICK_DIURUS["denyut_rejoin:" .. pkg] = nil
+                                KICK_DIURUS["nofile_since:" .. pkg] = nil
+                                KICK_DIURUS["captcha:" .. pkg] = nil
+                                if u then DENYUT_UMUR[u] = nil end
+                                KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace loading fresh (baru ditembak)
+                                KICK_DIURUS["mau_force:" .. pkg] = nil   -- v9.443: udah dibuka via oper, clear flag
                                 open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC
                                 TERAKHIR_BUKA[pkg] = os.time()
                                 nTembak = nTembak + 1
