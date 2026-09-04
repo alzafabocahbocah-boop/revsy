@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.444-cf"
+local VERSION = "9.448-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7075,7 +7075,7 @@ local function run(cfg)
     -- di setup. Config lama yang shell_tetap=false tetep dihormatin.
     if cfg.shell_tetap == nil then cfg.shell_tetap = true end
     cfg.autoexec_dir = cfg.autoexec_dir or "/sdcard/Delta/Autoexecute"
-    cfg.poll_sec    = cfg.poll_sec or 5
+    cfg.poll_sec    = 1   -- v9.447: cek perintah tiap 1 detik (oper/rejoin paling responsif)
     cfg.stagger_sec = cfg.stagger_sec or 15
     cfg.status_sec  = cfg.status_sec or 20
     cfg.win_mode    = cfg.win_mode or 0   -- config lama gak punya -> fullscreen, gak berubah perilaku
@@ -9401,8 +9401,10 @@ local function run(cfg)
                         -- throttle
                     else
                         cfg._goHomeTs = os.time()
+                        cfg._ps_override = cfg.server_utama   -- v9.445: set home sekarang (biar gak re-fire)
                         api_post(cfg, "/ps", string.format('{"tim":%q,"link":%q}', cfg.tim, cfg.server_utama), "PUT")
-                        info("[GOHOME] leveling full -> set PS = server home: " .. cfg.server_utama:sub(1,34))
+                        api_post(cfg, "/perintah", string.format('{"tim":%q,"isi":%q}', cfg.tim, "REJOIN"), "PUT")   -- v9.445: LANGSUNG REJOIN ke home, gak nunggu antrian (kayak oper)
+                        info("[GOHOME] leveling full -> set PS home + REJOIN LANGSUNG: " .. cfg.server_utama:sub(1,34))
                     end
                 end
             end
@@ -9483,6 +9485,7 @@ local function run(cfg)
                 -- REJOIN doang (tanpa :akun) = rejoin SEMUA (kill all) -- buat ganti
                 -- server SEMUA client sekaligus.
                 local akunTarget = isi:match("REJOIN:(.+)")
+                if akunTarget then akunTarget = akunTarget:gsub("#%d+$", "") end   -- v9.446: buang nonce (#ts) dari panel -> tiap oper UNIK (gak ke-skip lastIsi) tapi daftar akun bersih
                 if akunTarget then
                     -- parse daftar akun (pisah koma)
                     local daftarAkun = {}
@@ -9514,6 +9517,13 @@ local function run(cfg)
                         tambahLog(("REJOIN %d akun: %s"):format(#pkgRejoin, table.concat(namaRejoin, ", ")))
                         close_all(cfg, semua and nil or pkgRejoin, mapLink)
                         os.execute("sleep 2")
+                        -- v9.446: BLOCK ALL grace -> REJOIN (oper/ambil/balikin) GAK PERNAH ke-block. Buang
+                        -- tembak_ts/denyut_rejoin/nofile + denyut lama sebelum buka -> open fresh pasti jalan.
+                        for _, pk in ipairs(pkgRejoin) do
+                            KICK_DIURUS["tembak_ts:" .. pk] = nil; KICK_DIURUS["denyut_rejoin:" .. pk] = nil
+                            KICK_DIURUS["nofile_since:" .. pk] = nil; KICK_DIURUS["mau_force:" .. pk] = nil
+                            local ak2 = (mapAkun or {})[pk]; if ak2 then DENYUT_UMUR[ak2] = nil end
+                        end
                         for i, pkg in ipairs(pkgRejoin) do
                             open_one(cfg, pkg, mapLink[pkg], "rejoin-manual-panel")
                             if i < #pkgRejoin then os.execute("sleep " .. (cfg.stagger_sec or 10)) end
@@ -9530,6 +9540,12 @@ local function run(cfg)
                         or "REJOIN dari panel -> tutup semua, buka lagi")
                     close_all(cfg, onlyRejoin, mapLink)
                     os.execute("sleep 3")
+                    -- v9.446: BLOCK ALL grace -> REJOIN polos (gohome auto) GAK ke-block juga.
+                    for _, pk in ipairs(onlyRejoin or split(cfg.pkgs)) do
+                        KICK_DIURUS["tembak_ts:" .. pk] = nil; KICK_DIURUS["denyut_rejoin:" .. pk] = nil
+                        KICK_DIURUS["nofile_since:" .. pk] = nil; KICK_DIURUS["mau_force:" .. pk] = nil
+                        local ak3 = (mapAkun or {})[pk]; if ak3 then DENYUT_UMUR[ak3] = nil end
+                    end
                     local function batal_r()
                         -- v9.63: PAKSA/RESTART/STANDBY baru -> nyela loop rejoin
                         return ada_perintah_baru(cfg, isi)
