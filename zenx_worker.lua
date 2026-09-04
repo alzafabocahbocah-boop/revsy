@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.448-cf"
+local VERSION = "9.449-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9386,9 +9386,13 @@ local function run(cfg)
             end
             -- baca flag gohome (script tulis pas SEMUA akun leveling full). fresh (<90s) -> set PS = utama.
             do
-                local goRaw = sh("su -c 'cd \"" .. (cfg.workspace_dir or "") .. "\" 2>/dev/null && for f in zenx_gohome_*.txt; do [ -f \"$f\" ] && stat -c %Y \"$f\" 2>/dev/null; done' 2>/dev/null") or ""
+                local goRaw = sh("su -c 'cd \"" .. (cfg.workspace_dir or "") .. "\" 2>/dev/null && for f in zenx_gohome_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
                 local goFresh = false
-                for mt in goRaw:gmatch("%d+") do if (os.time() - tonumber(mt)) < 90 then goFresh = true break end end
+                local goAkuns = {}
+                for line in goRaw:gmatch("[^\n]+") do
+                    local akun, mt = line:match("zenx_gohome_(.-)%.txt|(%d+)")
+                    if akun and mt and (os.time() - tonumber(mt)) < 90 then goFresh = true; goAkuns[#goAkuns+1] = akun end
+                end
                 if goFresh then
                     if not cfg.server_utama or cfg.server_utama == "" then
                         info("[GOHOME] flag FRESH tapi server_utama KOSONG -> /ps-utama belum di-set panel pas start")
@@ -9403,8 +9407,11 @@ local function run(cfg)
                         cfg._goHomeTs = os.time()
                         cfg._ps_override = cfg.server_utama   -- v9.445: set home sekarang (biar gak re-fire)
                         api_post(cfg, "/ps", string.format('{"tim":%q,"link":%q}', cfg.tim, cfg.server_utama), "PUT")
-                        api_post(cfg, "/perintah", string.format('{"tim":%q,"isi":%q}', cfg.tim, "REJOIN"), "PUT")   -- v9.445: LANGSUNG REJOIN ke home, gak nunggu antrian (kayak oper)
-                        info("[GOHOME] leveling full -> set PS home + REJOIN LANGSUNG: " .. cfg.server_utama:sub(1,34))
+                        -- v9.449: REJOIN:daftar (open_one, GAK ke-block) -- bukan REJOIN polos (open_all +
+                        -- refresh_denyut_umur + batal_r -> "0 jalan"). Akun dari flag file.
+                        local isiRejoin = (#goAkuns > 0) and ("REJOIN:" .. table.concat(goAkuns, ",") .. "#" .. os.time()) or "REJOIN"
+                        api_post(cfg, "/perintah", string.format('{"tim":%q,"isi":%q}', cfg.tim, isiRejoin), "PUT")
+                        info("[GOHOME] leveling full -> set PS home + " .. isiRejoin .. " (langsung): " .. cfg.server_utama:sub(1,30))
                     end
                 end
             end
