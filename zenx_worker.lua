@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.441-cf"
+local VERSION = "9.442-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9391,15 +9391,18 @@ local function run(cfg)
                 for mt in goRaw:gmatch("%d+") do if (os.time() - tonumber(mt)) < 90 then goFresh = true break end end
                 if goFresh then
                     if not cfg.server_utama or cfg.server_utama == "" then
-                        info("[GOHOME] flag FRESH tapi server_utama KOSONG -> up6kg gak di-start pake custom PS (panel: /ps-utama cuma ke-set kalo server='custom'). Gak bisa balik home.")
+                        info("[GOHOME] flag FRESH tapi server_utama KOSONG -> /ps-utama belum di-set panel pas start")
                     elseif cfg._ps_override == cfg.server_utama then
-                        -- udah di-override ke home, skip
+                        if (os.time() - (cfg._goHomeTs or 0)) > 60 then
+                            cfg._goHomeTs = os.time()
+                            info("[GOHOME] leveling full -> UDAH di home (" .. cfg.server_utama:sub(1,30) .. "...), gak perlu pindah")
+                        end
                     elseif (os.time() - (cfg._goHomeTs or 0)) <= 30 then
-                        -- throttle, skip
+                        -- throttle
                     else
                         cfg._goHomeTs = os.time()
                         api_post(cfg, "/ps", string.format('{"tim":%q,"link":%q}', cfg.tim, cfg.server_utama), "PUT")
-                        info("[GOHOME] leveling full -> set PS = server utama: " .. cfg.server_utama)
+                        info("[GOHOME] leveling full -> set PS = server home: " .. cfg.server_utama:sub(1,34))
                     end
                 end
             end
