@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.451-cf"
+local VERSION = "9.452-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -5370,8 +5370,16 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- standby->jalan; di-clear di sini -> fire SEKALI (rejoin/periodik gak close).
     if KICK_DIURUS["start_fresh"] then
         KICK_DIURUS["start_fresh"] = nil
-        warn("START FRESH -> tutup SEMUA client dulu (clean start)")
-        pcall(function() close_all_cepat(cfg) end)
+        -- v9.452: kalau `only` (FORCE:akun spesifik dari panel Start) -> tutup TARGET aja
+        -- (aman tim multi-akun, gak matiin yg laen -- kayak oper/REJOIN). Kalau `only`
+        -- kosong (start semua) -> tutup SEMUA (clean start).
+        if only and next(only) then
+            warn("START FRESH -> tutup client TARGET aja (aman multi-akun)")
+            pcall(function() close_all(cfg, only, mapLink) end)
+        else
+            warn("START FRESH -> tutup SEMUA client dulu (clean start)")
+            pcall(function() close_all_cepat(cfg) end)
+        end
         os.execute("sleep 3")
     end
     if lisensiAda and not only and not fast then
@@ -9088,11 +9096,16 @@ local function run(cfg)
             if u:find("FORCE") or u:find("REJOIN") or u:find("TEMBAK") then
                 -- v9.408: STANDBY -> jalan (START via FORCE/TEMBAK) -> tandai buat CLOSE-ALL
                 -- di open flow (clean start, walau setting SAMA). User minta tiap start fresh.
-                if MODE_JALAN == false and (u:find("FORCE") or u:find("TEMBAK")) then
+                -- v9.451: Start dari standby -> lastOpen=0 (gate open_all langsung + fast).
+                -- v9.452: FORCE ber-nonce (#ts dari panel Start) -> restart FRESH tiap press
+                -- WALAU client udah jalan (Option A: Start = mulai ulang, balek ke home).
+                -- start_fresh emang udah "close + reopen". dedupe by nonce biar sticky-command
+                -- gak churn tiap iterasi. FORCE internal (tanpa nonce) tetep "ensure running".
+                if (MODE_JALAN == false and (u:find("FORCE") or u:find("TEMBAK")))
+                   or (u:find("FORCE") and u:match("#(%d+)") and u:match("#(%d+)") ~= (KICK_DIURUS["last_force_nonce"] or "")) then
                     KICK_DIURUS["start_fresh"] = true
-                    lastOpen = 0   -- v9.451: Start dari standby -> gate open_all LANGSUNG kebuka
-                                   -- (gak nunggu reopen_sec ~5menit) + fast nyala (lastOpen==0).
-                                   -- Fix delay start 5-8 menit. Denyut monitor urus akun yg gagal buka.
+                    lastOpen = 0
+                    if u:match("#(%d+)") then KICK_DIURUS["last_force_nonce"] = u:match("#(%d+)") end
                 end
                 MODE_JALAN = true
             elseif u:find("STANDBY") or u:find("STOP") then MODE_JALAN = false end
