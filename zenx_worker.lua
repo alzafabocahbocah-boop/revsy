@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.450-cf"
+local VERSION = "9.451-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9090,6 +9090,9 @@ local function run(cfg)
                 -- di open flow (clean start, walau setting SAMA). User minta tiap start fresh.
                 if MODE_JALAN == false and (u:find("FORCE") or u:find("TEMBAK")) then
                     KICK_DIURUS["start_fresh"] = true
+                    lastOpen = 0   -- v9.451: Start dari standby -> gate open_all LANGSUNG kebuka
+                                   -- (gak nunggu reopen_sec ~5menit) + fast nyala (lastOpen==0).
+                                   -- Fix delay start 5-8 menit. Denyut monitor urus akun yg gagal buka.
                 end
                 MODE_JALAN = true
             elseif u:find("STANDBY") or u:find("STOP") then MODE_JALAN = false end
