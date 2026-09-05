@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.449-cf"
+local VERSION = "9.450-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -10771,7 +10771,13 @@ local function run(cfg)
                     lapor(cfg, isi, cacheRun)
                 end
 
-                local h = open_all(cfg, only, batal, lapor_sela, mapLink, mapAkun)
+                -- v9.450: START cold (lastOpen==0 = boot/STOP/force) pakai FAST mode ->
+                -- skip bridge-confirm, perintah LANGSUNG kepake (gak nunggu tiap client
+                -- lapor 90s). Denyut-monitor + grace TETEP jalan di background, jadi
+                -- Home-stuck TETEP ketangkep (akun gak denyut dalam grace -> auto-rejoin).
+                -- reopen berkala (lastOpen>0) TETEP confirm biar Home-stuck ketangkep upfront.
+                local fastStart = (lastOpen == 0)
+                local h = open_all(cfg, only, batal, lapor_sela, mapLink, mapAkun, fastStart)
 
                 -- v6.60: abis buka client (open_all makan menit-menitan), RESET
                 -- jadwal cek captcha -> iterasi berikutnya LANGSUNG cek (client
