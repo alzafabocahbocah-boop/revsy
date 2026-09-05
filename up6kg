@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.51"
+local VERSION = "up6kg-v10.52"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1431,7 +1431,11 @@ do
         for uuid in pairs(modelByUuid) do
             if not supportKunci[uuid] and not bahanAktif[uuid] then
                 local tipe = tipeDariUuid(uuid)
-                if tipe then pcall(function() unequipPet(uuid) end); kgLog("copot untracked: " .. tipe) end
+                -- v10.52: Ele di-protect CUMA sesi 2 (dipegang buat up-kg). Sesi 1 -> copot
+                -- (masuk backpack, gak makan slot pet leveling).
+                if tipe and not (sesi == 2 and tostring(tipe):lower():find("rainbow elephant", 1, true)) then
+                    pcall(function() unequipPet(uuid) end); kgLog("copot untracked: " .. tipe)
+                end
             end
         end
     end
@@ -1540,13 +1544,39 @@ do
                             -- PICK UP: pet nempel tapi GAK ke-track (bukan bahan/support) + bukan Ele
                             -- -> copot (nangkep bekas bahan yg ke-reset + drop dari tracking bahanAktif).
                             local tp = tipeDariUuid(uuid)
-                            if tp and not tostring(tp):lower():find("rainbow elephant", 1, true) then
+                            -- v10.52: Ele di-protect CUMA sesi 2. Sesi 1 -> copot (masuk backpack).
+                            if tp and not ((KG.sesi or 1) == 2 and tostring(tp):lower():find("rainbow elephant", 1, true)) then
                                 _G.__untrackSince = _G.__untrackSince or {}
                                 _G.__untrackSince[uuid] = _G.__untrackSince[uuid] or tick()
                                 if tick() - _G.__untrackSince[uuid] >= 2 then
                                     pcall(function() unequipPet(uuid) end); _G.__untrackSince[uuid] = nil
                                     if _G.ZenxKgLog then _G.ZenxKgLog("[pick-up] untracked "..tostring(tp).." -> copot (bekas bahan?)") end
                                 end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    -- v10.52: JAGA ELE TETEP KE-EQUIP di sesi 2. Ele gak di supportKunci (di-track via
+    -- eleUuids) -> gak masuk swap/re-equip loop. Kalo kecopot (copot-untracked/redoSesi/
+    -- respawn) -> equip lagi. Equip 1 aja (kalo GAK ADA Ele ke-equip). Skip pas gift/oper.
+    task.spawn(function()
+        while _G.__ZenxKgEngineGen == engGen do
+            task.wait(0.5)
+            if KG.aktif and not KG.reset and (KG.sesi or 1) == 2 then
+                -- skip kalo lagi gift Ele (dipegang buat dikirim) biar gak lawan transfer
+                if not (_G.__up6kgGiftBusy and (tick() - _G.__up6kgGiftBusy) < 5) then
+                    local eleEquipped = false
+                    for eu in pairs(eleUuids) do if modelByUuid[eu] then eleEquipped = true; break end end
+                    if not eleEquipped then
+                        for eu in pairs(eleUuids) do
+                            if eu:sub(1,1) ~= "{" then
+                                pcall(function() equipPet(eu, CLUSTER) end)
+                                if _G.ZenxKgLog then _G.ZenxKgLog("[jaga-ele] Ele kecopot -> equip lagi") end
+                                break
                             end
                         end
                     end
@@ -3759,6 +3789,7 @@ do
     end
     opLog("== LOG siap - nyalain AUTO buat mulai ==")
     local function giftEle(targetPlayer)
+        _G.__up6kgGiftBusy = tick()   -- v10.52: tandai gift lagi jalan -> loop jaga-Ele skip (gak lawan transfer)
         local nm = targetPlayer and targetPlayer.Name or "?"
         opLog("== GIFT ELE -> "..nm)
         if not targetPlayer or not OP.pick[targetPlayer.Name] then opLog("  X target gak di picker (ditolak)"); return false, "gak di picker (ditolak)" end
