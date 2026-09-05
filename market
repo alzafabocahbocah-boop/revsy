@@ -142,16 +142,28 @@ do
                 task.wait(3)
             end
         end)
-        -- denyut tiap 20s — SKIP kalau disconnect
+        -- v8.353: FPS tracker (buat denyut -> worker deteksi layar PUTIH, sama kayak up6kg)
+        pcall(function()
+            local RS = game:GetService("RunService")
+            local frames, lastT = 0, tick()
+            RS.RenderStepped:Connect(function()
+                frames = frames + 1
+                local now = tick()
+                if now - lastT >= 1 then _G.__ZenxFps = frames; frames = 0; lastT = now end
+            end)
+        end)
+        -- v8.353: denyut tiap 5s (dari 20s) + BAWA fps (format "ts;0;kg;fps") — sama up6kg,
+        -- biar worker deteksi putih + rejoin secepet up6kg. SKIP kalau disconnect.
         task.spawn(function()
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
                     if plr and plr.Name and writefile and not zenxCekDisconnect() then
-                        writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time()))
+                        local fps = math.floor(tonumber(_G.__ZenxFps) or 60)
+                        writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";0;kg;" .. fps)
                     end
                 end)
-                task.wait(20)
+                task.wait(5)
             end
         end)
     end
@@ -228,7 +240,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.349"
+local VERSION = "8.356"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -417,6 +429,8 @@ task.spawn(function()
     --   * lapor denyut tiap 20s (ringan: cuma baca token) -> panel tau idup
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
+    local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
+    local snipeJenisTerakhir, snipeTokTerakhir = {}, 0   -- v8.356: snipe breakdown per tipe
     task.spawn(function()
         while masihGuaYangAktif() do
             pcall(function()
@@ -425,6 +439,21 @@ task.spawn(function()
                     petTerakhir, nRuleTerakhir = p2, n2
                     if type(r2) == "table" then rincianTerakhir = r2 end
                 end
+                -- v8.354: total pet backpack + maxInv buat panel ("total pet X/Y")
+                local bp = plr:FindFirstChild("Backpack")
+                if bp then local nn=0; for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then nn=nn+1 end end; totalPetTerakhir=nn end
+                local mi = tonumber(_G.__ZenxMaxInv); if mi and mi > 0 then maxInvTerakhir = mi end
+                -- v8.356: snipe breakdown per tipe (dari _G.__ZenxSnipePer) — paling DIKIT dulu
+                local sj, stk = {}, 0
+                if type(_G.__ZenxSnipePer) == "table" then
+                    for ty, d in pairs(_G.__ZenxSnipePer) do
+                        sj[#sj+1] = { n = tostring(ty), j = tonumber(d.n) or 0, t = tonumber(d.tok) or 0 }
+                        stk = stk + (tonumber(d.tok) or 0)
+                    end
+                    table.sort(sj, function(a,b) return a.j < b.j end)
+                    while #sj > 40 do table.remove(sj) end
+                end
+                snipeJenisTerakhir = sj; snipeTokTerakhir = stk
             end)
             task.wait(60)
         end
@@ -437,7 +466,7 @@ task.spawn(function()
         -- rejoin sia-sia tiap ada FORCE/RESTART. Konten = ts (worker pakai mtime).
         pcall(function()
             local dcx = _G.ZenxCekDisconnect and _G.ZenxCekDisconnect()
-            if writefile and not dcx then writefile("zenx_denyut_" .. plr.Name .. ".txt", tostring(os.time())) end
+            if writefile and not dcx then writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";0;kg;" .. math.floor(tonumber(_G.__ZenxFps) or 60)) end
         end)
         -- v8.333: SELURUH isi loop dibungkus pcall biar gak PERNAH macet.
         -- di TradeWorld, GUI garden gak ada -> bacaTokens bisa error. dulu error
@@ -468,6 +497,11 @@ task.spawn(function()
                     petRule = petTerakhir,
                     nRule = nRuleTerakhir,
                     rincianPet = rincianTerakhir,   -- v8.342: breakdown per jenis (tipe+kg+jml)
+                    totalPet = totalPetTerakhir,             -- v8.354: total pet backpack
+                    maxInv = maxInvTerakhir,                 -- v8.354: max inventory
+                    snipe = tonumber(_G.__ZenxSnipeN) or 0,  -- v8.356: total snipe UNCAPPED
+                    snipeTok = snipeTokTerakhir,             -- v8.356: total token beli snipe
+                    snipeJenis = snipeJenisTerakhir,         -- v8.356: breakdown per tipe (paling dikit dulu)
                     jual = jual,
                 }) then
                     lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
@@ -1534,16 +1568,19 @@ local gui = Instance.new("ScreenGui") gui.Name = "ZenxV8" gui.Parent = CoreGui g
 
 -- ===== STYLE =====
 local C = {
-    bg = Color3.fromRGB(8, 8, 8),
-    panel = Color3.fromRGB(15, 15, 15),
-    card = Color3.fromRGB(22, 22, 22),
-    input = Color3.fromRGB(28, 28, 28),
-    accent = Color3.fromRGB(255, 215, 0),
-    accentDim = Color3.fromRGB(180, 150, 0),
-    text = Color3.fromRGB(245, 245, 245),
+    bg = Color3.fromRGB(0, 0, 0),         -- v8.350: HITAM PEKAT (pure, kayak up6kg)
+    panel = Color3.fromRGB(8, 8, 8),
+    card = Color3.fromRGB(16, 16, 16),    -- v8.350: card lebih gelap (16)
+    cardSel = Color3.fromRGB(28, 28, 28), -- v8.350: card selected
+    input = Color3.fromRGB(20, 20, 20),
+    border = Color3.fromRGB(38, 38, 38),  -- v8.350: border halus
+    accent = Color3.fromRGB(255, 210, 63),    -- v8.350: GOLD clean #ffd23f
+    accentDim = Color3.fromRGB(138, 116, 24),
+    text = Color3.fromRGB(255, 255, 255),
     textDim = Color3.fromRGB(160, 160, 160),
-    success = Color3.fromRGB(80, 200, 130),
-    danger = Color3.fromRGB(220, 80, 90),
+    textMute = Color3.fromRGB(92, 92, 92),
+    success = Color3.fromRGB(130, 210, 160),  -- ijo halus (status ok)
+    danger = Color3.fromRGB(150, 150, 150),   -- v8.350: abu redup (error mono, gak norak)
 }
 -- v8.250: di server GARDEN, ganti accent gold → merah crimson gelap (elegan, bukan norak).
 -- Server market tetep gold. Deteksi: garden = gak ada Workspace.TradeWorld.
@@ -1562,7 +1599,7 @@ main.BackgroundColor3 = C.bg main.BorderSizePixel = 0
 main.Active = true main.Draggable = true main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
 local mainStroke = Instance.new("UIStroke", main)
-mainStroke.Color = C.accent mainStroke.Thickness = 2
+mainStroke.Color = C.accent mainStroke.Thickness = 1.5
 
 -- ===== TITLE BAR =====
 local titleBar = Instance.new("Frame")
@@ -1570,7 +1607,7 @@ titleBar.Size = UDim2.new(1, 0, 0, 44) titleBar.BackgroundTransparency = 1 title
 
 local logoLbl = Instance.new("TextLabel")
 logoLbl.Size = UDim2.new(0, 60, 1, 0) logoLbl.Position = UDim2.new(0, 16, 0, 0)
-logoLbl.BackgroundTransparency = 1 logoLbl.Text = "⚡"
+logoLbl.BackgroundTransparency = 1 logoLbl.Text = "●"
 logoLbl.TextColor3 = C.accent logoLbl.Font = FB logoLbl.TextSize = 18
 logoLbl.TextXAlignment = Enum.TextXAlignment.Left logoLbl.Parent = titleBar
 
@@ -1584,7 +1621,7 @@ titleLbl.TextXAlignment = Enum.TextXAlignment.Left titleLbl.Parent = titleBar
 -- v8.154: status indicator di title bar (samping logo) — mirror dari statsLbl listing panel
 do
     local headerStatusLbl = Instance.new("TextLabel")
-    headerStatusLbl.Size = UDim2.new(1, -270, 1, 0) headerStatusLbl.Position = UDim2.new(0, 224, 0, 0)
+    headerStatusLbl.Size = UDim2.new(1, -420, 1, 0) headerStatusLbl.Position = UDim2.new(0, 224, 0, 0)
     headerStatusLbl.BackgroundTransparency = 1
     headerStatusLbl.Text = ""
     headerStatusLbl.TextColor3 = C.success headerStatusLbl.Font = Enum.Font.Code headerStatusLbl.TextSize = 11
@@ -1600,6 +1637,35 @@ closeBtn.BackgroundColor3 = C.card closeBtn.AutoButtonColor = false
 closeBtn.Text = "—" closeBtn.TextColor3 = C.accent
 closeBtn.Font = FB closeBtn.TextSize = 18 closeBtn.Parent = titleBar
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+-- v8.351: SCALE STEPPER [- 1.00× +] di header (do-block: slot ke-free, closure pegang oscale)
+do
+    local oscale = Instance.new("UIScale") oscale.Scale = 1.0 oscale.Parent = main
+    local sclFrame = Instance.new("Frame")
+    sclFrame.Size = UDim2.new(0, 106, 0, 24) sclFrame.Position = UDim2.new(1, -156, 0.5, -12)
+    sclFrame.BackgroundColor3 = C.card sclFrame.BorderSizePixel = 0 sclFrame.Parent = titleBar
+    Instance.new("UICorner", sclFrame).CornerRadius = UDim.new(0, 6)
+    local sclStroke = Instance.new("UIStroke", sclFrame) sclStroke.Color = C.border sclStroke.Thickness = 1
+    local sclMinus = Instance.new("TextButton")
+    sclMinus.Size = UDim2.new(0, 28, 1, 0) sclMinus.Position = UDim2.new(0, 0, 0, 0)
+    sclMinus.BackgroundTransparency = 1 sclMinus.Text = "-" sclMinus.TextColor3 = C.accent
+    sclMinus.Font = FB sclMinus.TextSize = 17 sclMinus.AutoButtonColor = false sclMinus.Parent = sclFrame
+    local sclVal = Instance.new("TextLabel")
+    sclVal.Size = UDim2.new(0, 50, 1, 0) sclVal.Position = UDim2.new(0, 28, 0, 0)
+    sclVal.BackgroundTransparency = 1 sclVal.Text = "1.00×" sclVal.TextColor3 = C.text
+    sclVal.Font = FB sclVal.TextSize = 11 sclVal.Parent = sclFrame
+    local sclPlus = Instance.new("TextButton")
+    sclPlus.Size = UDim2.new(0, 28, 1, 0) sclPlus.Position = UDim2.new(1, -28, 0, 0)
+    sclPlus.BackgroundTransparency = 1 sclPlus.Text = "+" sclPlus.TextColor3 = C.accent
+    sclPlus.Font = FB sclPlus.TextSize = 17 sclPlus.AutoButtonColor = false sclPlus.Parent = sclFrame
+    local function setScale(s)
+        s = math.clamp(math.floor(s * 100 + 0.5) / 100, 0.5, 1.75)
+        oscale.Scale = s
+        sclVal.Text = string.format("%.2f×", s)
+    end
+    sclMinus.MouseButton1Click:Connect(function() setScale(oscale.Scale - 0.25) end)
+    sclPlus.MouseButton1Click:Connect(function() setScale(oscale.Scale + 0.25) end)
+end
 
 -- Floating Z logo button (when minimized)
 local zBtn = Instance.new("TextButton")
@@ -2485,7 +2551,7 @@ plPad.PaddingRight = UDim.new(0, 14) plPad.PaddingBottom = UDim.new(0, 14)
 plPad.Parent = pricePanel
 
 -- v8.72: hide header biar tab rules lebar
-local lhTitleLbl = lblOf(pricePanel, "💰  LIST HARGA (Rules)", 0, 0, 400, 28, C.accent, 18, FB)
+local lhTitleLbl = lblOf(pricePanel, "LIST HARGA", 0, 0, 400, 28, C.accent, 18, FB)
 local lhDescLbl = lblOf(pricePanel, "Sama kayak rules di Listing — bisa tambah & edit harga di sini.", 0, 32, 700, 20, C.textDim, 13)
 lhTitleLbl.Visible = false
 lhDescLbl.Visible = false
@@ -3243,7 +3309,7 @@ end
 
 -- BOOTH MGMT CARD
 local boothCard = makeCard(miscPanel, 120)
-lblOf(boothCard, "🏠  BOOTH", 14, 10, 200, 22, C.accent, 14, FB)
+lblOf(boothCard, "BOOTH", 14, 10, 200, 22, C.accent, 14, FB)
 lblOf(boothCard, "Auto-claim booth empty (unlist all dipindah ke Pantau)", 14, 32, 400, 18, C.textDim, 11)
 local claimBtn = btnOf(boothCard, 14, 54, 140, 26, "🏠 CLAIM BOOTH", C.accent)
 -- v8.43: Auto-Claim toggle | v8.132: persist
@@ -3266,7 +3332,7 @@ end)
 
 -- DISPLAY PET CARD
 local petCard = makeCard(miscPanel, 86)
-lblOf(petCard, "👜  DISPLAY PET", 14, 10, 250, 22, C.accent, 14, FB)
+lblOf(petCard, "DISPLAY PET", 14, 10, 250, 22, C.accent, 14, FB)
 lblOf(petCard, "Auto-equip pet biar keliatan di booth", 14, 32, 400, 18, C.textDim, 11)
 -- v8.70: load dari state, default true
 local autoEquipState = true
@@ -3280,12 +3346,12 @@ local equipModeBtn = btnOf(petCard, 164, 54, 140, 26, "📦 "..equipMode, C.card
 -- pakai BH.equipPetType (bukan local) biar gak nambah local var di scope utama.
 BH.equipPetType = (BH.marketState and BH.marketState.equipPetType) or "ALL"
 BH.equipTypeBtn = btnOf(petCard, 314, 54, 150, 26,
-    "🐾 "..(BH.equipPetType == "ALL" and "Semua Jenis" or BH.equipPetType), C.card, C.text)
+    ""..(BH.equipPetType == "ALL" and "Semua Jenis" or BH.equipPetType), C.card, C.text)
 
 -- v8.46: ANTI-AFK CARD (wrapped in do-block to manage local count)
 do
     local afkCard = makeCard(miscPanel, 86)
-    lblOf(afkCard, "🚫  ANTI-AFK", 14, 10, 250, 22, C.accent, 14, FB)
+    lblOf(afkCard, "ANTI-AFK", 14, 10, 250, 22, C.accent, 14, FB)
     lblOf(afkCard, "Cegah kick karena idle (~20 menit)", 14, 32, 400, 18, C.textDim, 11)
     local antiAfkBtn = btnOf(afkCard, 14, 54, 160, 26,
         antiAfkEnabled and "🚫 Anti-AFK: ON" or "🚫 Anti-AFK: OFF",
@@ -3484,18 +3550,18 @@ end
 -- v8.48: AUTO-START card — auto klik START pas script load (kalau rules ada)
 do
     local autoStartCard = makeCard(miscPanel, 86)
-    lblOf(autoStartCard, "🚀  AUTO-START", 14, 10, 250, 22, C.accent, 14, FB)
+    lblOf(autoStartCard, "AUTO-START", 14, 10, 250, 22, C.accent, 14, FB)
     lblOf(autoStartCard, "Auto klik START pas script di-load (saved across rejoin)", 14, 32, 460, 18, C.textDim, 11)
-    local autoStartBtn = btnOf(autoStartCard, 14, 54, 220, 26, "🚀 Auto-Start: OFF", C.danger)
+    local autoStartBtn = btnOf(autoStartCard, 14, 54, 220, 26, "Auto-Start: OFF", C.danger)
     -- Init dari state
     BH.autoStart = BH.marketState.autoStart == true
     if BH.autoStart then
-        autoStartBtn.Text = "🚀 Auto-Start: ON"
+        autoStartBtn.Text = "Auto-Start: ON"
         autoStartBtn.BackgroundColor3 = C.success
     end
     autoStartBtn.MouseButton1Click:Connect(function()
         BH.autoStart = not BH.autoStart
-        autoStartBtn.Text = BH.autoStart and "🚀 Auto-Start: ON" or "🚀 Auto-Start: OFF"
+        autoStartBtn.Text = BH.autoStart and "Auto-Start: ON" or "Auto-Start: OFF"
         autoStartBtn.BackgroundColor3 = BH.autoStart and C.success or C.danger
         L("[Auto-Start] "..(BH.autoStart and "enabled" or "disabled"))
         -- Save ke state
@@ -3507,7 +3573,7 @@ do
                 task.wait(0.5)
                 local running = BH.getIsRunning and BH.getIsRunning() or false
                 if BH.autoStart and not running then
-                    L("🚀 [Auto-Start] toggle ON → langsung fire onStartClick")
+                    L("[Auto-Start] toggle ON → langsung fire onStartClick")
                     pcall(BH.onStartClick)
                 end
             end)
@@ -4615,7 +4681,7 @@ snPad.PaddingRight = UDim.new(0, 14) snPad.PaddingBottom = UDim.new(0, 14)
 snPad.Parent = snManualPanel
 
 -- v8.73: title, subtitle, count label di-hide — search jadi y=0
-lblOf(snManualPanel, "🎯  SNIPE MANUAL", 0, 0, 400, 24, C.accent, 14, FB).Visible = false
+lblOf(snManualPanel, "SNIPE MANUAL", 0, 0, 400, 24, C.accent, 14, FB).Visible = false
 lblOf(snManualPanel, "Scan semua pet — auto-refresh 10s", 0, 24, 600, 16, C.textDim, 10).Visible = false
 
 -- v8.49: hide refresh+TP, counter inline
@@ -4798,7 +4864,7 @@ do
     petTypeBtn.Position = UDim2.new(0, 0, 0, 0)
     petTypeBtn.BackgroundColor3 = C.input
     petTypeBtn.BorderSizePixel = 0
-    petTypeBtn.Text = "🐾 Tap to pick" petTypeBtn.TextColor3 = C.textDim
+    petTypeBtn.Text = "Tap to pick" petTypeBtn.TextColor3 = C.textDim
     petTypeBtn.Font = F petTypeBtn.TextSize = 11
     petTypeBtn.TextXAlignment = Enum.TextXAlignment.Left
     petTypeBtn.AutoButtonColor = false
@@ -4817,7 +4883,7 @@ do
             petTypeBtn.Text = val
             petTypeBtn.TextColor3 = C.text
         else
-            petTypeBtn.Text = "🐾 Tap to pick"
+            petTypeBtn.Text = "Tap to pick"
             petTypeBtn.TextColor3 = C.textDim
         end
     end
@@ -4831,7 +4897,7 @@ do
             if not first then first = k end
         end
         if cnt == 0 then
-            petTypeBtn.Text = "🐾 Tap to pick"
+            petTypeBtn.Text = "Tap to pick"
             petTypeBtn.TextColor3 = C.textDim
             BH.autoSnipe.pickedPetType = ""
         elseif cnt == 1 then
@@ -4871,7 +4937,7 @@ do
     pickerHeader.Size = UDim2.new(1, -36, 0, 24)
     pickerHeader.Position = UDim2.new(0, 8, 0, 4)
     pickerHeader.BackgroundTransparency = 1
-    pickerHeader.Text = "🐾 Pilih Pet Type"
+    pickerHeader.Text = "Pilih Pet Type"
     pickerHeader.TextColor3 = C.accent
     pickerHeader.Font = FB pickerHeader.TextSize = 12
     pickerHeader.TextXAlignment = Enum.TextXAlignment.Left
@@ -5307,7 +5373,7 @@ do
             end
             BH.autoSnipe.toggleBtn.Text = "⛔ STOP AUTO-BUY"
             BH.autoSnipe.toggleBtn.BackgroundColor3 = C.danger
-            BH.autoSnipe.statusLbl.Text = "🎯 Active — scanning..."
+            BH.autoSnipe.statusLbl.Text = "Active — scanning..."
             BH.autoSnipe.statusLbl.TextColor3 = C.accent
             L("[AutoSnipe] START dengan "..#BH.autoSnipe.rules.." rule(s)")
         else
@@ -5329,7 +5395,7 @@ do
         BH.autoSnipe.active = true
         BH.autoSnipe.toggleBtn.Text = "⛔ STOP AUTO-BUY"
         BH.autoSnipe.toggleBtn.BackgroundColor3 = C.danger
-        BH.autoSnipe.statusLbl.Text = "🎯 Auto-resumed setelah rejoin — scanning..."
+        BH.autoSnipe.statusLbl.Text = "Auto-resumed setelah rejoin — scanning..."
         BH.autoSnipe.statusLbl.TextColor3 = C.accent
         L("[AutoSnipe] AUTO-RESUMED setelah rejoin dengan "..#BH.autoSnipe.rules.." rule(s)")
     end
@@ -5343,6 +5409,13 @@ BH.autoSnipe.history = BH.autoSnipe.history or {}
 -- Restore history from state
 if BH.marketState and BH.marketState.autoSnipeHistory then
     BH.autoSnipe.history = BH.marketState.autoSnipeHistory
+end
+-- v8.356: counter snipe PERSIST + UNCAPPED (bukan #history yg dibatesin 100).
+if BH.marketState then
+    BH.marketState.snipeTotal = tonumber(BH.marketState.snipeTotal) or #BH.autoSnipe.history
+    BH.marketState.snipePer = BH.marketState.snipePer or {}
+    _G.__ZenxSnipeN = BH.marketState.snipeTotal
+    _G.__ZenxSnipePer = BH.marketState.snipePer
 end
 
 do
@@ -5502,7 +5575,7 @@ do
     BH.snBuy.search.Size = UDim2.new(0.6, -3, 0, 26) BH.snBuy.search.Position = UDim2.new(0, 0, 0, 0)
     BH.snBuy.search.BackgroundColor3 = C.input BH.snBuy.search.BorderSizePixel = 0
     BH.snBuy.search.Text = "" BH.snBuy.search.TextColor3 = C.text
-    BH.snBuy.search.PlaceholderText = "🐾 Pet type (Peacock, Giraffe, ...)"
+    BH.snBuy.search.PlaceholderText = "Pet type (Peacock, Giraffe, ...)"
     BH.snBuy.search.PlaceholderColor3 = C.textDim
     BH.snBuy.search.Font = F BH.snBuy.search.TextSize = 11
     BH.snBuy.search.ClearTextOnFocus = false BH.snBuy.search.Parent = snBuyPanel
@@ -5555,7 +5628,7 @@ do
     Instance.new("UICorner", BH.snBuy.maxPrice).CornerRadius = UDim.new(0, 5)
 
     -- Row 3 (y=64): START HUNT (full width, toggles to STOP when active)
-    BH.snBuy.refresh = btnOf(snBuyPanel, 0, 0, 1, 1, "🎯 START HUNT", C.accent)
+    BH.snBuy.refresh = btnOf(snBuyPanel, 0, 0, 1, 1, "START HUNT", C.accent)
     BH.snBuy.refresh.Size = UDim2.new(1, 0, 0, 30)
     BH.snBuy.refresh.Position = UDim2.new(0, 0, 0, 64)
     BH.snBuy.refresh.TextSize = 12
@@ -5630,7 +5703,7 @@ do
     BH.indexHop.active = false
 
     -- tombol pilih jenis (multi)
-    BH.indexHop.pickBtn = btnOf(hp, 0, 48, 1, 26, "🐾 Pilih Jenis Pet", C.card, C.text)
+    BH.indexHop.pickBtn = btnOf(hp, 0, 48, 1, 26, "Pilih Jenis Pet", C.card, C.text)
     BH.indexHop.pickBtn.Size = UDim2.new(1, 0, 0, 26)
     BH.indexHop.pickBtn.TextSize = 11
 
@@ -5753,7 +5826,7 @@ do
         box.BackgroundColor3 = C.panel; box.BorderSizePixel = 0; box.ZIndex = 71; box.Parent = ov
         Instance.new("UICorner", box).CornerRadius = UDim.new(0,10)
         Instance.new("UIStroke", box).Color = C.accent
-        local tt = lblOf(box, "🐾 Pilih Jenis (multi)", 12, 8, 240, 22, C.accent, 13, FB)
+        local tt = lblOf(box, "Pilih Jenis (multi)", 12, 8, 240, 22, C.accent, 13, FB)
         tt.ZIndex = 72
         local xb = Instance.new("TextButton")
         xb.Size = UDim2.new(0,26,0,22); xb.Position = UDim2.new(1,-34,0,8)
@@ -6532,7 +6605,7 @@ do
     local function getInventoryCapacity()
         for _, attr in ipairs({"MaxInventory", "InventoryCapacity", "MaxPets", "PetCapacity", "MaxStorage", "BackpackSize"}) do
             local v = player:GetAttribute(attr)
-            if v and tonumber(v) then return tonumber(v) end
+            if v and tonumber(v) then _G.__ZenxMaxInv = tonumber(v); return tonumber(v) end   -- v8.354: expose buat report
         end
         local ls = player:FindFirstChild("leaderstats")
         if ls then
@@ -7916,16 +7989,16 @@ startBtn.MouseButton1Click:Connect(BH.onStartClick)
 -- Re-fire mid-session = lewat toggle OFF/ON (v8.176 handler langsung fire)
 task.spawn(function()
     task.wait(2)
-    L("🚀 [Auto-Start] === STATE DIAGNOSTIC ===")
+    L("[Auto-Start] === STATE DIAGNOSTIC ===")
     if BH.marketState then
-        L("🚀   state.autoStart="..tostring(BH.marketState.autoStart).." | rules="..tostring(BH.marketState.listingRules and #BH.marketState.listingRules or "nil"))
+        L(" state.autoStart="..tostring(BH.marketState.autoStart).." | rules="..tostring(BH.marketState.listingRules and #BH.marketState.listingRules or "nil"))
     end
-    L("🚀   BH.autoStart="..tostring(BH.autoStart).." | listingRules="..#listingRules)
+    L(" BH.autoStart="..tostring(BH.autoStart).." | listingRules="..#listingRules)
 
     -- FALLBACK recover dari state
     if (BH.autoStart == nil or BH.autoStart == false) and BH.marketState and BH.marketState.autoStart == true then
         BH.autoStart = true
-        L("🚀 [Auto-Start] FALLBACK → ON")
+        L("[Auto-Start] FALLBACK → ON")
     end
 
     -- Wait conditions met (max 60s buat handle slow init)
@@ -7933,17 +8006,17 @@ task.spawn(function()
     local waited = 0
     while gui.Parent and waited < maxWait do
         if not BH.autoStart then
-            L("🚀 [Auto-Start] autoStart=OFF, exit (user bisa toggle ON anytime)")
+            L("[Auto-Start] autoStart=OFF, exit (user bisa toggle ON anytime)")
             return
         end
         if isRunning then
-            L("🚀 [Auto-Start] isRunning=true, exit (manual start sudah jalan)")
+            L("[Auto-Start] isRunning=true, exit (manual start sudah jalan)")
             return
         end
         if #listingRules > 0 then
-            L("🚀 [Auto-Start] ✓ FIRING onStartClick (sekali)...")
+            L("[Auto-Start] ✓ FIRING onStartClick (sekali)...")
             local ok, err = pcall(BH.onStartClick)
-            L(ok and "🚀 [Auto-Start] ✅ FIRED" or ("✗ [Auto-Start] ❌ "..tostring(err)))
+            L(ok and "[Auto-Start] ✅ FIRED" or ("✗ [Auto-Start] ❌ "..tostring(err)))
             return  -- ONE-SHOT, exit setelah fire
         end
         task.wait(3)
@@ -7959,7 +8032,7 @@ task.spawn(function()
     while gui and gui.Parent do
         pcall(function()
             if BH.autoStart and not isRunning and #listingRules > 0 and BH.onStartClick then
-                L("🚀 [Auto-Start WATCHDOG] mati padahal ON -> START lagi")
+                L("[Auto-Start WATCHDOG] mati padahal ON -> START lagi")
                 pcall(BH.onStartClick)
             end
         end)
@@ -8071,7 +8144,7 @@ end)
     local function fetchAndHop(reasonLabel)
         -- v8.211: pakai hopToBestServer (streaming ≥25 / fallback 22-24)
         -- ganti logic lama yg filter cuma ≥10 + random
-        L("🎯 [Low-Pop] panggil hopToBestServer (reason: "..tostring(reasonLabel)..")")
+        L("[Low-Pop] panggil hopToBestServer (reason: "..tostring(reasonLabel)..")")
         if BH.manualHop then
             BH.manualHop()
         else
@@ -9404,7 +9477,7 @@ BH.equipTypeBtn.MouseButton1Click:Connect(function()
     box.BackgroundColor3 = C.panel; box.BorderSizePixel = 0; box.ZIndex = 61; box.Parent = ov
     Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
     local st = Instance.new("UIStroke", box); st.Color = C.accent; st.Thickness = 1.5
-    local tt = lblOf(box, "🐾 Pilih Jenis Pet", 14, 10, 250, 22, C.accent, 14, FB)
+    local tt = lblOf(box, "Pilih Jenis Pet", 14, 10, 250, 22, C.accent, 14, FB)
     tt.ZIndex = 62
     local xb = Instance.new("TextButton")
     xb.Size = UDim2.new(0,26,0,22); xb.Position = UDim2.new(1,-34,0,8)
@@ -9436,7 +9509,7 @@ BH.equipTypeBtn.MouseButton1Click:Connect(function()
                 Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
                 b.MouseButton1Click:Connect(function()
                     BH.equipPetType = nm
-                    BH.equipTypeBtn.Text = "🐾 "..(nm == "ALL" and "Semua Jenis" or nm)
+                    BH.equipTypeBtn.Text = ""..(nm == "ALL" and "Semua Jenis" or nm)
                     if BH.marketState then BH.marketState.equipPetType = nm; BH.saveMarketState(BH.marketState) end
                     L("[👜] jenis pet display: "..nm)
                     ov:Destroy()
@@ -9926,7 +9999,7 @@ local function scanBoothListings()
             end
         end
     end
-    L(string.format("Booths:%d | DynInst:%d | Tools:%d (🐾Pet:%d, 🌱Plant:%d, ?:%d)",
+    L(string.format("Booths:%d | DynInst:%d | Tools:%d (Pet:%d, 🌱Plant:%d, ?:%d)",
         boothCount, dynCount, toolCount, petCount, plantCount, otherCount))
     L(string.format("Mine:%d | Found Pet listings: %d", mineCount, #scanCache))
 
@@ -10108,7 +10181,7 @@ local function renderBuy()
             BH.snBuy.countLbl.TextColor3 = C.success
             -- v8.75: kalo match ketemu, stop auto-hop (user bisa beli manual / restart hunt)
             BH.hunt.active = false
-            BH.snBuy.refresh.Text = "🎯 START HUNT"
+            BH.snBuy.refresh.Text = "START HUNT"
             BH.snBuy.refresh.BackgroundColor3 = C.accent
             if BH.marketState then
                 BH.marketState.hunt = BH.marketState.hunt or {}
@@ -10469,6 +10542,16 @@ do
                                         while #BH.autoSnipe.history > 100 do
                                             table.remove(BH.autoSnipe.history)
                                         end
+                                        -- v8.356: counter UNCAPPED + per-tipe (persist, gak kena cap 100)
+                                        if BH.marketState then
+                                            BH.marketState.snipeTotal = (tonumber(BH.marketState.snipeTotal) or 0) + 1
+                                            local sp = BH.marketState.snipePer or {}; BH.marketState.snipePer = sp
+                                            local tyy = tostring(petType or "?")
+                                            local dd = sp[tyy]; if not dd then dd = {n=0, tok=0}; sp[tyy] = dd end
+                                            dd.n = dd.n + 1; dd.tok = dd.tok + (tonumber(petPrice) or 0)
+                                            _G.__ZenxSnipeN = BH.marketState.snipeTotal
+                                            _G.__ZenxSnipePer = sp
+                                        end
                                         if BH.marketState then
                                             BH.marketState.autoSnipeHistory = BH.autoSnipe.history
                                             pcall(function() BH.saveMarketState(BH.marketState) end)
@@ -10613,7 +10696,7 @@ do
             BH.hunt.scanned = 0
             BH.snBuy.refresh.Text = "⛔ STOP HUNT"
             BH.snBuy.refresh.BackgroundColor3 = C.danger
-            BH.snBuy.countLbl.Text = "🎯 Hunt started — scanning server #1..."
+            BH.snBuy.countLbl.Text = "Hunt started — scanning server #1..."
             BH.snBuy.countLbl.TextColor3 = C.accent
             L("[HUNT] START — type="..BH.snBuy.search.Text.." mut="..BH.snBuy.mutation.Text
                 .." kg="..BH.snBuy.minKg.Text.."-"..BH.snBuy.maxKg.Text
@@ -10626,7 +10709,7 @@ do
             end)
         else
             -- STOP
-            BH.snBuy.refresh.Text = "🎯 START HUNT"
+            BH.snBuy.refresh.Text = "START HUNT"
             BH.snBuy.refresh.BackgroundColor3 = C.accent
             BH.snBuy.countLbl.Text = "⛔ Hunt stopped"
             BH.snBuy.countLbl.TextColor3 = C.textDim
@@ -10985,33 +11068,45 @@ L("  - Inventory capacity")
     -- v8.338: buka ringkasan penjualan buat BRIDGE (dikirim ke panel).
     -- Dikelompokin per jenis pet biar payload-nya kecil -- bukan kirim mentahan.
     getgenv().ZenxRingkasJual = function(sejakDetik)
-        local batas = sejakDetik and (os.time() - sejakDetik) or 0
-        local per, nTotal, tokenTotal = {}, 0, 0
+        -- v8.355: breakdown per RULE (tipe + kg range) + laku HARI INI vs KEMARIN.
+        local now = os.time()
+        local rules = (BH and BH.marketState and BH.marketState.listingRules) or {}
+        local perRule = {}
+        for i, r in ipairs(rules) do
+            perRule[i] = { n = tostring(r.type or "?"), min = tonumber(r.min) or 0, max = tonumber(r.max) or 0, ini = 0, kmr = 0, tok = 0 }
+        end
+        local lain = { n = "(lain)", min = 0, max = 0, ini = 0, kmr = 0, tok = 0 }
+        local totIni, totKmr, tokIni = 0, 0, 0
         for _, e in ipairs(salesHistory) do
             local t = tonumber(e.time) or 0
-            if t >= batas then
-                local nama = tostring(e.petType or "?")
-                local d = per[nama]
-                if not d then d = {n = 0, tok = 0}; per[nama] = d end
-                d.n   = d.n + 1
-                d.tok = d.tok + (tonumber(e.price) or 0)
-                nTotal = nTotal + 1
-                tokenTotal = tokenTotal + (tonumber(e.price) or 0)
+            local umur = now - t
+            local hariIni = umur < 24*3600
+            local kemarin = (umur >= 24*3600) and (umur < 48*3600)
+            if hariIni or kemarin then
+                local pt = tostring(e.petType or "")
+                local kg = tonumber(e.kg) or 0
+                local price = tonumber(e.price) or 0
+                local hit = lain
+                for i, r in ipairs(rules) do
+                    if tostring(r.type) == pt and kg >= (tonumber(r.min) or 0) and kg <= (tonumber(r.max) or 999) then
+                        hit = perRule[i]; break
+                    end
+                end
+                if hariIni then hit.ini = hit.ini + 1; hit.tok = hit.tok + price; totIni = totIni + 1; tokIni = tokIni + price
+                else hit.kmr = hit.kmr + 1; totKmr = totKmr + 1 end
             end
         end
-        -- jadiin array, urut dari yang paling laku
         local arr = {}
-        for nama, d in pairs(per) do
-            arr[#arr+1] = {n = nama, j = d.n, t = d.tok}
-        end
-        table.sort(arr, function(x, y) return x.j > y.j end)
-        -- ambil 40 teratas aja, sisanya gak penting buat papan
+        for _, d in ipairs(perRule) do if d.ini > 0 or d.kmr > 0 then arr[#arr+1] = d end end
+        if lain.ini > 0 or lain.kmr > 0 then arr[#arr+1] = lain end
+        table.sort(arr, function(x, y) return x.ini > y.ini end)
         while #arr > 40 do table.remove(arr) end
-        return { total = nTotal, token = tokenTotal, jenis = arr }
+        -- v8.355: total = hari ini (biar kompat lama), token = hari ini, jenis = arr (per-rule)
+        return { total = totIni, totalKmr = totKmr, token = tokIni, jenis = arr }
     end
 
     local function purgeOld()
-        local cutoff = os.time() - 24*3600
+        local cutoff = os.time() - 48*3600   -- v8.355: 48 jam (buat bandingin hari ini vs kemarin)
         local fresh, keys = {}, {}
         local removed = 0
         for _, e in ipairs(salesHistory) do
@@ -11657,7 +11752,7 @@ BH.buildGardenPanel = function()
     gTravelBtn.Position = UDim2.new(0.67, btnPad, 0, 0)
     gTravelBtn.BackgroundColor3 = C.card
     gTravelBtn.AutoButtonColor = false
-    gTravelBtn.Text = "🚀 TP Market" gTravelBtn.TextColor3 = C.textDim
+    gTravelBtn.Text = "TP Market" gTravelBtn.TextColor3 = C.textDim
     gTravelBtn.Font = FM gTravelBtn.TextSize = 11
     gTravelBtn.BorderSizePixel = 0 gTravelBtn.Parent = btnRow
     Instance.new("UICorner", gTravelBtn).CornerRadius = UDim.new(0, 6)
@@ -12037,7 +12132,7 @@ BH.buildGardenPanel = function()
     local tabAll = makeTab("ALL", 0, 70)
     local tab60p = makeTab("60kg+", 76, 70)
     local tab60m = makeTab("60kg-", 152, 70)
-    local tabGift = makeTab("🎁 GIFT", 228, 90)
+    local tabGift = makeTab("GIFT", 228, 90)
     local function setTabActive(active)
         for _, b in ipairs({tabAll, tab60p, tab60m, tabGift}) do
             b.BackgroundColor3 = C.card
@@ -12068,7 +12163,7 @@ BH.buildGardenPanel = function()
         pad.Parent = gListScroll
     end
 
-    -- v8.151: 🎁 AUTO GIFT CARD — same area as gListScroll, toggled via tab
+    -- v8.151: AUTO GIFT CARD — same area as gListScroll, toggled via tab
     local giftCard = Instance.new("Frame")
     giftCard.Size = gListScroll.Size
     giftCard.Position = gListScroll.Position
@@ -12115,7 +12210,7 @@ BH.buildGardenPanel = function()
     -- Row 1: Title + TOTAL match count
     local gTitleLbl = Instance.new("TextLabel")
     gTitleLbl.Size = UDim2.new(1, -120, 0, 26) gTitleLbl.Position = UDim2.new(0, 12, 0, 8)
-    gTitleLbl.BackgroundTransparency = 1 gTitleLbl.Text = "🎁 AUTO GIFT"
+    gTitleLbl.BackgroundTransparency = 1 gTitleLbl.Text = "AUTO GIFT"
     gTitleLbl.TextColor3 = C.accent gTitleLbl.Font = FB gTitleLbl.TextSize = 15
     gTitleLbl.TextXAlignment = Enum.TextXAlignment.Left gTitleLbl.Parent = giftCard
 
@@ -12129,7 +12224,7 @@ BH.buildGardenPanel = function()
     local gTargetBtn = Instance.new("TextButton")
     gTargetBtn.Size = UDim2.new(0.5, -16, 0, 30) gTargetBtn.Position = UDim2.new(0, 12, 0, 42)
     gTargetBtn.BackgroundColor3 = C.card gTargetBtn.AutoButtonColor = false
-    gTargetBtn.Text = "🎯 Target..." gTargetBtn.TextColor3 = C.text
+    gTargetBtn.Text = "Target..." gTargetBtn.TextColor3 = C.text
     gTargetBtn.Font = FM gTargetBtn.TextSize = 12 gTargetBtn.BorderSizePixel = 0
     gTargetBtn.Parent = giftCard
     Instance.new("UICorner", gTargetBtn).CornerRadius = UDim.new(0, 5)
@@ -12137,7 +12232,7 @@ BH.buildGardenPanel = function()
     local gPetBtn = Instance.new("TextButton")
     gPetBtn.Size = UDim2.new(0.5, -16, 0, 30) gPetBtn.Position = UDim2.new(0.5, 4, 0, 42)
     gPetBtn.BackgroundColor3 = C.card gPetBtn.AutoButtonColor = false
-    gPetBtn.Text = "🐾 Pet Type..." gPetBtn.TextColor3 = C.text
+    gPetBtn.Text = "Pet Type..." gPetBtn.TextColor3 = C.text
     gPetBtn.Font = FM gPetBtn.TextSize = 12 gPetBtn.BorderSizePixel = 0
     gPetBtn.Parent = giftCard
     Instance.new("UICorner", gPetBtn).CornerRadius = UDim.new(0, 5)
@@ -12181,7 +12276,7 @@ BH.buildGardenPanel = function()
     local giftToggle = Instance.new("TextButton")
     giftToggle.Size = UDim2.new(0.5, -16, 0, 32) giftToggle.Position = UDim2.new(0, 12, 0, 116)
     giftToggle.BackgroundColor3 = C.danger giftToggle.AutoButtonColor = false
-    giftToggle.Text = "🎁 GIFT: OFF" giftToggle.TextColor3 = Color3.new(0, 0, 0)
+    giftToggle.Text = "GIFT: OFF" giftToggle.TextColor3 = Color3.new(0, 0, 0)
     giftToggle.Font = FB giftToggle.TextSize = 13 giftToggle.BorderSizePixel = 0
     giftToggle.Parent = giftCard
     Instance.new("UICorner", giftToggle).CornerRadius = UDim.new(0, 5)
@@ -12296,8 +12391,8 @@ BH.buildGardenPanel = function()
     local function updateGiftDisplay()
         local nt = 0; for _ in pairs(giftSelectedTargets) do nt = nt + 1 end
         local np = 0; for _ in pairs(giftSelectedPets) do np = np + 1 end
-        gTargetBtn.Text = nt > 0 and ("🎯 "..nt.." target") or "🎯 Target..."
-        gPetBtn.Text = np > 0 and ("🐾 "..np.." pet type") or "🐾 Pet Type..."
+        gTargetBtn.Text = nt > 0 and (""..nt.." target") or "Target..."
+        gPetBtn.Text = np > 0 and (""..np.." pet type") or "Pet Type..."
         giftPickedLbl.Text = string.format("Targets: %d | Pet types: %d", nt, np)
         -- Refresh match count
         local bp = player:FindFirstChild("Backpack")
@@ -12318,6 +12413,95 @@ BH.buildGardenPanel = function()
             task.wait(2)
         end
     end)
+
+    -- ===== v8.352: AUTO TP MARKET pas LEVELING gak punya bahan 6kg age-500 lagi =====
+    -- akun MARKET masuk server leveling buat ngumpulin bahan 6kg (age 500). tiap ~30s,
+    -- cek inventory SEMUA player leveling via ViewInventory. filter: BaseWeight>=6 & Level>=500.
+    -- kalo TOTAL bahan < 5 (2 scan berturut, semua kebaca sukses) -> remote fire TP Market.
+    -- cuma jalan di SERVER LEVELING (garden, gak ada TradeWorld).
+    if Workspace:FindFirstChild("TradeWorld") == nil then
+    task.spawn(function()
+        local function viewRemote()
+            local ge = RS:FindFirstChild("GameEvents")
+            local te = ge and ge:FindFirstChild("TradeEvents")
+            return te and te:FindFirstChild("ViewInventory")
+        end
+        -- return: jumlah bahan 6kg age-500 (number) | nil = gagal baca
+        local function countBahan(target)
+            local vi = viewRemote()
+            if not vi then return nil end
+            local list
+            for att = 1, 2 do
+                local res = { pcall(function() return vi:InvokeServer(target) end) }
+                if res[1] then
+                    for k = 2, #res do if type(res[k]) == "table" then list = res[k]; break end end
+                end
+                if list then break end
+                if att < 2 then task.wait(13) end  -- cooldown ViewInventory
+            end
+            if not list then return nil end
+            local n = 0
+            for _, item in pairs(list) do
+                if type(item) == "table" and tostring(item.type) == "Pet" and type(item.data) == "table" then
+                    local pd = item.data.PetData or {}
+                    local lv = tonumber(pd.Level) or 0
+                    local w  = tonumber(pd.BaseWeight) or 0
+                    if lv >= 500 and w >= 6 then n = n + 1 end
+                end
+            end
+            return n
+        end
+        local function fireTpMarket()
+            local done = false
+            for _, c in ipairs(RS:GetDescendants()) do
+                if (c:IsA("RemoteEvent") or c:IsA("RemoteFunction")) and not done then
+                    local nm = c.Name:lower()
+                    if nm:find("farmermarket") or nm:find("tofarmer") or nm:find("travelto")
+                       or nm:find("trademarket") or nm:find("entermarket") or nm:find("gotomarket") then
+                        L("[AutoTP-Bahan] remote fire: "..c:GetFullName())
+                        pcall(function()
+                            if c:IsA("RemoteFunction") then c:InvokeServer() else c:FireServer() end
+                        end)
+                        done = true
+                    end
+                end
+            end
+            if not done then pcall(function() _fireGuiBtn(gTravelBtn) end) end  -- fallback tombol
+            return done
+        end
+
+        local lowStreak = 0
+        local fired = false
+        local AMBANG = 5   -- v8.352: TP kalo total bahan 6kg age-500 DI BAWAH angka ini
+        task.wait(20)  -- kasih waktu load + collect dulu
+        while gp and gp.Parent and not fired do
+            local allRead, total = true, 0
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player then
+                    local c = countBahan(p)
+                    if c == nil then allRead = false
+                    else total = total + c end
+                    if total >= AMBANG then break end  -- udah >=5, gak bakal TP, stop scan
+                    task.wait(1)  -- jeda antar target biar gak spam cooldown
+                end
+            end
+            if allRead and total < AMBANG then
+                lowStreak = lowStreak + 1
+                L(string.format("[AutoTP-Bahan] bahan 6kg age-500 = %d (<%d), streak %d/2", total, AMBANG, lowStreak))
+                if lowStreak >= 2 then
+                    fired = true
+                    L(string.format("[AutoTP-Bahan] BAHAN < %d -> TP Market", AMBANG))
+                    fireTpMarket()
+                end
+            else
+                if not allRead then L("[AutoTP-Bahan] sebagian inventory gagal kebaca, skip cycle")
+                else L(string.format("[AutoTP-Bahan] bahan masih %d (>=%d), lanjut collect", total, AMBANG)) end
+                lowStreak = 0
+            end
+            task.wait(30)
+        end
+    end)
+    end
 
     -- ===== Target Picker Modal =====
     local function openTargetPicker()
@@ -12599,7 +12783,7 @@ BH.buildGardenPanel = function()
         giftStopReq = false
         giftSent, giftFailed = 0, 0
         giftCounterLbl.Text = "Sent: 0   Failed: 0"
-        giftToggle.Text = "🎁 GIFT: ON"
+        giftToggle.Text = "GIFT: ON"
         giftToggle.BackgroundColor3 = C.success
         giftStatusLbl.Text = "Status: starting..."
         giftStatusLbl.TextColor3 = C.accent
@@ -12645,7 +12829,7 @@ BH.buildGardenPanel = function()
                 end
             end
             giftActive = false
-            giftToggle.Text = "🎁 GIFT: OFF"
+            giftToggle.Text = "GIFT: OFF"
             giftToggle.BackgroundColor3 = C.danger
             giftStatusLbl.Text = "Stopped (Sent: "..giftSent..")"
             giftStatusLbl.TextColor3 = C.textDim
