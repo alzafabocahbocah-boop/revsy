@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.452-cf"
+local VERSION = "9.455-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1170,15 +1170,15 @@ end
 -- Rejoin 10 client makan lama (60s/client = ~10 menit) -> cek 3 menit kekecilan (client baru
 -- rejoin belum sempat loading+nulis denyut -> ke-flag mati lagi). 5 menit kasih napas.
 function interval_denyut(cfg)
-    -- up6kg + uplevel: 3 menit (180s). Lainnya 6 menit (360s).
+    -- up6kg + uplevel + market: 3 menit (180s). Lainnya 6 menit (360s).
     local sl = tostring(cfg and cfg.script_label or "")
-    if sl:find("UP6KG") or sl:find("UPLEVEL") then return 180 end
+    if sl:find("UP6KG") or sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
     return 360
 end
 function denyut_fresh_sec(cfg)
-    -- up6kg + uplevel: 2 menit (120s). Lainnya 5 menit (300s).
+    -- up6kg + uplevel + market: 2 menit (120s). Lainnya 5 menit (300s).
     local sl = tostring(cfg and cfg.script_label or "")
-    if sl:find("UP6KG") or sl:find("UPLEVEL") then return 120 end
+    if sl:find("UP6KG") or sl:find("UPLEVEL") or sl:find("MARKET") then return 120 end
     return 300
 end
 
@@ -3873,6 +3873,9 @@ local function grid_hitung(cfg, pkgsPilih)
         -- UPLEVEL: max 3 client per kolom. 3->3x1 (vertikal), 4->2x2, 6->3x2.
         local _kol = math.ceil(n / 3)
         barPaksa = math.ceil(n / _kol)
+    elseif tostring(cfg.script_label or ""):find("MARKET") then
+        -- v9.454: MARKET -> 2 BARIS (4 client = 2x2). user minta. default kalo grid_kolom belom di-set.
+        if not (barPaksa and barPaksa >= 1) then barPaksa = math.min(2, n) end
     end
     if barPaksa and barPaksa >= 1 then
         bar = math.min(barPaksa, n)
@@ -16945,8 +16948,10 @@ if PERINTAH == "cookie" then
             for _, baris in ipairs(hasil) do
                 local akun2, paket2, cookie2 = baris:match("^(.-)\t(.-)\t(.*)$")
                 if cookie2 and cookie2 ~= "" then
-                    local body = '{"akun":"' .. jstr(akun2) .. '","paket":"' .. jstr(paket2) ..
-                                 '","cookie":"' .. jstr(cookie2) .. '"}'
+                    -- v9.455: FIX kutip dobel. jstr() UDAH kasih kutip -> template JANGAN
+                    -- kasih kutip lagi. Dulu: {"akun":""test""} (INVALID) -> backend nolak.
+                    local body = '{"akun":' .. jstr(akun2) .. ',"paket":' .. jstr(paket2) ..
+                                 ',"cookie":' .. jstr(cookie2) .. '}'
                     local resp = api_post(cfg, "/cookie-simpan", body) or ""
                     if resp:find('"ok"%s*:%s*true') then
                         kirim_ok = kirim_ok + 1
