@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.462-cf"
+local VERSION = "9.463-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1177,15 +1177,18 @@ end
 -- Rejoin 10 client makan lama (60s/client = ~10 menit) -> cek 3 menit kekecilan (client baru
 -- rejoin belum sempat loading+nulis denyut -> ke-flag mati lagi). 5 menit kasih napas.
 function interval_denyut(cfg)
-    -- up6kg + uplevel + market: 3 menit (180s). Lainnya 6 menit (360s).
+    -- v9.463: UP6KG khusus 45s (grace buka/rejoin/tembak + interval cek denyut). user minta.
+    -- uplevel + market TETEP 3 menit (180s). Lainnya 6 menit (360s).
     local sl = tostring(cfg and cfg.script_label or "")
-    if sl:find("UP6KG") or sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
+    if sl:find("UP6KG") then return 45 end
+    if sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
     return 360
 end
 function denyut_fresh_sec(cfg)
-    -- up6kg + uplevel + market: 2 menit (120s). Lainnya 5 menit (300s).
+    -- v9.463: UP6KG khusus 30s. uplevel + market TETEP 2 menit (120s). Lainnya 5 menit (300s).
     local sl = tostring(cfg and cfg.script_label or "")
-    if sl:find("UP6KG") or sl:find("UPLEVEL") or sl:find("MARKET") then return 120 end
+    if sl:find("UP6KG") then return 30 end
+    if sl:find("UPLEVEL") or sl:find("MARKET") then return 120 end
     return 300
 end
 -- v9.456: folder2 tempat cari file denyut. Market bisa jalan di ARCEUS sementara script
