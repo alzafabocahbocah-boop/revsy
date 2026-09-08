@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.20"
+local VERSION = "uplevel-v0.21"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1619,32 +1619,45 @@ do
         _G.ZenxSupportPool = detail     -- buat lineup UI (nama -> {{uuid, kg}})
     end
     local function kunciSupPool(paksa)
-        if not paksa and supPool then updateSupportUuids(); return end   -- udah ke-kunci di memory
-        if not paksa then
-            local saved = loadPoolFile()
-            if saved then supPool = saved; updateSupportUuids(); kgLog("pool support: LOAD kunci lama (uuid tetap, gak berubah)"); return end
-        end
+        -- v0.21: SELALU isi slot KOSONG (auto, kg terbesar). Slot manual/kepilih -> KEEP.
+        -- Dulu: pool udah ada -> return -> slot kosong gak pernah keisi (bug user: manual
+        -- pilih 2 slot -> 5 sisanya nganggur). Sekarang: keep yg valid, isi gap sampai penuh.
+        if paksa then supPool = nil end
+        if not supPool then supPool = (not paksa and loadPoolFile()) or {} end
         local maxPer, cariMap = {}, {}
         for _, sup in ipairs(SUPPORT_S1_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
         for _, sup in ipairs(SUPPORT_S2_ELE) do maxPer[sup.nama] = math.max(maxPer[sup.nama] or 0, sup.jml); cariMap[sup.nama] = sup.cari end
-        -- v0.18: AUTO-PILIH-KG-TERBESAR DINYALAIN LAGI (user minta). Sort kg desc dulu
-        -- -> ambil N pertama (= paling gede) yg cocok tipe. Pool tetep di-LOCK sekali
-        -- (persist ke file) jadi begitu kepilih, uuid-nya tetap (gak ganti-ganti).
         local pets = listPetsAll()
         table.sort(pets, function(a, b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
-        supPool = {}; local taken = {}
+        local adaUuid = {}
+        for _, p in ipairs(pets) do adaUuid[p.uuid] = true end
+        -- pass 1: KEEP entri valid (manual/kepilih, petnya masih ada) -> locked
+        local taken, baru = {}, {}
         for nm, maxJ in pairs(maxPer) do
-            supPool[nm] = {}
+            local old = supPool[nm] or {}
+            local list, seen = {}, {}
+            for i = 1, 20 do
+                local u = old[i]
+                if u and u ~= "" and adaUuid[u] and not seen[u] and #list < maxJ then
+                    list[#list + 1] = u; seen[u] = true; taken[u] = true
+                end
+            end
+            baru[nm] = list
+        end
+        -- pass 2: isi GAP pakai pet paling gede yg cocok tipe + belum kepakai slot lain
+        for nm, maxJ in pairs(maxPer) do
+            local list = baru[nm]
             for _, p in ipairs(pets) do
-                if #supPool[nm] >= maxJ then break end
+                if #list >= maxJ then break end
                 if not taken[p.uuid] and cocokSemua(p.tipe, cariMap[nm]) then
-                    supPool[nm][#supPool[nm] + 1] = p.uuid; taken[p.uuid] = true
+                    list[#list + 1] = p.uuid; taken[p.uuid] = true
                 end
             end
         end
-        savePool(); updateSupportUuids()   -- SIMPEN + expose uuid (buat auto-fav)
+        supPool = baru
+        savePool(); updateSupportUuids()
         local ss = ""; for nm, l in pairs(supPool) do ss = ss .. nm .. "=" .. #l .. "/" .. (maxPer[nm] or 0) .. " " end
-        kgLog("pool support: KUNCI BARU (kg terbesar) -> " .. ss)
+        kgLog("pool support (auto-isi gap, kg terbesar): " .. ss)
     end
     -- hook GUI: tombol "kunci support baru" -> re-pick + re-equip
     _G.ZenxKunciSupportBaru = function()
