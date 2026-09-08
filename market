@@ -60,12 +60,13 @@ do
                         pcall(function() vis = d.Visible end)
                         if vis then
                             local t = tostring(d.Text or ""):lower()
-                            if t:find("reconnect") or t:find("sambung ulang")
+                            local _hs = t:find("headset") or t:find("controller") or t:find("audio") or t:find("bluetooth") or t:find("mic") or t:find("earphone") or t:find("headphone")
+                            if (not _hs) and (t:find("reconnect") or t:find("sambung ulang")
                                 or t:find("terputus") or t:find("disconnected")
                                 or t:find("dimatikan") or t:find("was shut down")
                                 or t:find("lost connection") or t:find("kehilangan koneksi")
                                 or t:find("error code") or t:find("kode error") or t:find("kode eror")
-                                or t:find("id error") or t:find("(error)") then
+                                or t:find("id error") or t:find("(error)")) then
                                 dc = true; return
                             end
                         end
@@ -95,6 +96,7 @@ do
             return dc
         end
         _G.ZenxCekDisconnect = zenxCekDisconnect
+        _G.ZenxDcStrict = zenxDcStrict   -- v8.367: expose (denyut pakai strict, anti false-positive)
         _G.__ZenxBootT = _G.__ZenxBootT or os.time()   -- market: set boot time biar grace self-rejoin jalan
         -- SELF-REJOIN: error kedeteksi tapi VM masih hidup -> rejoin SENDIRI (gak nunggu worker)
         _G.ZenxSelfRejoin = function(reason)
@@ -134,7 +136,7 @@ do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
                     if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
-                    if zenxCekDisconnect() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
+                    if zenxDcStrict() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
                         pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
                     end
                     if zenxDcStrict() then
@@ -166,7 +168,7 @@ do
             while true do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
-                    if plr and plr.Name and writefile and not zenxCekDisconnect() then
+                    if plr and plr.Name and writefile and not zenxDcStrict() then
                         local fps = math.floor(tonumber(_G.__ZenxFps) or 60)
                         writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";0;kg;" .. fps)
                     end
@@ -248,7 +250,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.366"
+local VERSION = "8.367"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -529,7 +531,7 @@ task.spawn(function()
         -- market gak punya denyut lokal -> worker denyut-rejoin (7681) kira MATI ->
         -- rejoin sia-sia tiap ada FORCE/RESTART. Konten = ts (worker pakai mtime).
         pcall(function()
-            local dcx = _G.ZenxCekDisconnect and _G.ZenxCekDisconnect()
+            local dcx = _G.ZenxDcStrict and _G.ZenxDcStrict()
             if writefile and not dcx then writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";0;kg;" .. math.floor(tonumber(_G.__ZenxFps) or 60)) end
         end)
         -- v8.333: SELURUH isi loop dibungkus pcall biar gak PERNAH macet.
