@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.455-cf"
+local VERSION = "9.458-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -652,6 +652,9 @@ TEMBAK_SIG_PROSES = ""  -- v9.388: TEMBAK terakhir (isi+ts) yg udah nyela -- ant
 _placeBerubah = false   -- v9.429: place baru berubah -> ps_link lama (place lama) nyasar -> abaikan PS -> public place baru sampe getps regenerate
 DEBUG_JEJAK = false     -- v9.411: mode debug (log tiap command + keputusan). Toggle DEBUGON/DEBUGOFF. Default off (nol overhead).
 DENYUT_UMUR = {}        -- v9.77: akun -> umur denyut (detik) terakhir. lapor kirim ke panel biak on/off akurat
+AKUN_KENAL = {}         -- v9.457: akun -> true : akun yg KE-INSTALL di device ini (dari prefs, gak
+                        -- butuh denyut). Buat NYASAR check: command buat akun device ini jangan
+                        -- diabaikan cuma gara-gara belum ada denyut (mis. market fresh start).
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
     KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m" }
 local LOG_KIRIM = {}          -- v9.109: SEMUA baris log (buat dikirim ke panel), maks 60
@@ -1180,6 +1183,16 @@ function denyut_fresh_sec(cfg)
     local sl = tostring(cfg and cfg.script_label or "")
     if sl:find("UP6KG") or sl:find("UPLEVEL") or sl:find("MARKET") then return 120 end
     return 300
+end
+-- v9.456: folder2 tempat cari file denyut. Market bisa jalan di ARCEUS sementara script
+-- lain di DELTA -> file denyut ke folder beda. Scan semua (configured + Delta + Arceus).
+function denyut_dirs(cfg)
+    local seen, dirs = {}, {}
+    local kandidat = { cfg and cfg.workspace_dir, "/sdcard/Delta/Workspace", "/sdcard/Arceus X/Workspace" }
+    for _, d in ipairs(kandidat) do
+        if d and d ~= "" and not seen[d] then seen[d] = true; dirs[#dirs + 1] = d end
+    end
+    return dirs
 end
 
 -- ============================================================
@@ -2375,6 +2388,15 @@ function ada_perintah_baru(cfg, isiLagiJalan)
             local isiL = isi:lower()
             for ak in pairs(DENYUT_UMUR) do
                 if ak ~= "" and isiL:find(ak:lower(), 1, true) then adaMatch = true; break end
+            end
+            -- v9.457: match JUGA ke akun yg KE-INSTALL di device ini (AKUN_KENAL), bukan cuma
+            -- yg lagi ada denyut. Fix DEADLOCK: akun FRESH START (belum nulis denyut -- mis.
+            -- market yg denyut-nya baru kefix) -> command-nya JANGAN dikira NYASAR gara-gara
+            -- belum ada denyut. Device campur (up6kg denyut ada, market belum) -> market bisa start.
+            if not adaMatch and next(AKUN_KENAL or {}) ~= nil then
+                for ak in pairs(AKUN_KENAL) do
+                    if ak ~= "" and isiL:find(ak:lower(), 1, true) then adaMatch = true; break end
+                end
             end
         end
         if adaMatch then
@@ -4765,7 +4787,11 @@ local TERAKHIR_BUKA = {}   -- v4.68: pkg -> kapan terakhir dibuka worker
 --   DENYUT_UMUR basi jam X (gak baca ulang) -> reopen client yg udah idup. Fix: baca fresh dulu.
 function refresh_denyut_umur(cfg)
     if not cfg or not cfg.workspace_dir then return end
-    local raw = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+    local raw = ""
+    for _, _dd in ipairs(denyut_dirs(cfg)) do
+        local _r = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$f|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+        if _r ~= "" then raw = raw .. _r .. "\n" end
+    end
     if raw == "" then return end
     local now = os.time()
     for line in raw:gmatch("[^\n]+") do
@@ -6829,7 +6855,11 @@ function lisensi_false_alarm(cfg)
     os.execute("sleep 3")
     if lisensi_keadaan(cfg) == "ada" then return true end
     local now2 = os.time()
-    local raw = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+    local raw = ""
+    for _, _dd in ipairs(denyut_dirs(cfg)) do
+        local _r = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+        if _r ~= "" then raw = raw .. _r .. "\n" end
+    end
     for tsStr in raw:gmatch("(%d+)") do
         local ts = tonumber(tsStr)
         if ts and (now2 - ts) <= 90 then return true end   -- denyut fresh = di game = key ada
@@ -7296,7 +7326,7 @@ local function run(cfg)
                 skrgPkg = tanda
             elseif skrgPkg then
                 local u = baris:match('<string name="username">(.-)</string>')
-                if u then mapAkun[skrgPkg] = u; skrgPkg = nil end
+                if u then mapAkun[skrgPkg] = u; if AKUN_KENAL then AKUN_KENAL[u] = true end; skrgPkg = nil end
             end
         end
 
@@ -8362,7 +8392,11 @@ local function run(cfg)
                     local sekarang = os.time()
                     -- baca isi (timestamp) + MTIME file (kapan file terakhir ditulis).
                     -- format: nama|isi_timestamp|mtime_epoch
-                    local raw = sh("su -c 'cd \"" .. cfg.workspace_dir .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                    local raw = ""
+                    for _, _dd in ipairs(denyut_dirs(cfg)) do
+                        local _r = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
+                        if _r ~= "" then raw = raw .. _r .. "\n" end
+                    end
                     local ddetail = {}
                     local sheckDenyut = {}   -- v9.254: sheckles dari denyut file (nebeng)
                     for line in raw:gmatch("[^\n]+") do
@@ -9191,10 +9225,18 @@ local function run(cfg)
                     tostring(serverBeda)))
                 SETTING_TS_TERAKHIR = tsBaru   -- update ts (biar gak cek ulang terus)
                 if sServer ~= "" then SERVER_TERAKHIR = sServer end
-                if not (placeBeda or gridBeda or serverBeda) then
+                -- v9.456: market place/server GAK PERNAH ganti (public permanen) -> jalur
+                -- ini SELALU skip -> market gak restart pas Start. Fix: kalau ada start_fresh
+                -- pending (FORCE ber-nonce dari panel Start barusan), JANGAN skip -> lanjut
+                -- restart kayak up6kg (yg ke-trigger serverBeda). Setting biasa (tanpa Start
+                -- FORCE) tetep skip -> gak restart sia-sia.
+                if not (placeBeda or gridBeda or serverBeda) and not KICK_DIURUS["start_fresh"] then
                     -- ts naik tapi nilai sama (mis. panel set field lain) -> gak restart
                     info("Setting-tim ts naik tapi place/grid/server sama -- gak restart")
                     goto lewatSetting
+                end
+                if not (placeBeda or gridBeda or serverBeda) then
+                    info("Setting-tim sama TAPI ada Start (FORCE nonce) -> tetep restart market (paksa, kayak up6kg)")
                 end
                 if serverBeda then
                     info("Server BEDA (" .. tostring(SERVER_TERAKHIR) .. " -> " .. sServer .. ") -- restart pakai server baru")
