@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.461-cf"
+local VERSION = "9.462-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -8299,7 +8299,13 @@ local function run(cfg)
                 -- + v9.414 expand ke SEMUA assigned -> grup yg di-close ke-cek denyut -> di-rejoin balik
                 -- (padahal sengaja ditutup). Sekarang TEMBAK:grup-n -> cek denyut CUMA grup n.
                 local daftarForce = isiTop:match("FORCE:([%w%.%_%-,]+)") or isiTop:match("RESTART:([%w%.%_%-,]+)")
-                                    or isiTop:match("TEMBAK:([%w%.%_%-,]+)")
+                -- v9.462: TEMBAK BER-LABEL (@isibahan/@oper/@ambil/dll) = OPER 1 akun -> JANGAN
+                -- jadiin daftar aktif. Bug user: oper 1 akun -> daftar aktif jadi 1 akun itu ->
+                -- client LAIN diorphan (denyut stale, gak pernah di-rejoin lagi). TEMBAK POLOS
+                -- (tanpa @, buat "Jalankan Tim n") -> tetep jadi daftar aktif.
+                if not daftarForce and not (isiTop:match("TEMBAK:[%w%.%_%-,]+@%w+")) then
+                    daftarForce = isiTop:match("TEMBAK:([%w%.%_%-,]+)")
+                end
                 local setAkun = nil
                 if cfg.rotasi_on then
                     -- v9.120: ROTASI nyala -> denyut/rejoin CUMA tim 1 (10 pkg pertama),
