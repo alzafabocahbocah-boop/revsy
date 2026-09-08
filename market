@@ -240,7 +240,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.357"
+local VERSION = "8.358"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -431,6 +431,7 @@ task.spawn(function()
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
     local snipeJenisTerakhir, snipeTokTerakhir = {}, 0   -- v8.356: snipe breakdown per tipe
+    local petJenisTerakhir = {}   -- v8.358: SEMUA pet backpack per jenis (buat popup "pet apa aja")
     task.spawn(function()
         while masihGuaYangAktif() do
             pcall(function()
@@ -439,9 +440,24 @@ task.spawn(function()
                     petTerakhir, nRuleTerakhir = p2, n2
                     if type(r2) == "table" then rincianTerakhir = r2 end
                 end
-                -- v8.354: total pet backpack + maxInv buat panel ("total pet X/Y")
+                -- v8.354: total pet backpack + v8.358: breakdown SEMUA pet per jenis
                 local bp = plr:FindFirstChild("Backpack")
-                if bp then local nn=0; for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then nn=nn+1 end end; totalPetTerakhir=nn end
+                if bp then
+                    local nn = 0; local pjMap = {}
+                    for _, t in ipairs(bp:GetChildren()) do
+                        if t:IsA("Tool") then
+                            nn = nn + 1
+                            local f = tostring(t:GetAttribute("f") or "")
+                            if f ~= "" then pjMap[f] = (pjMap[f] or 0) + 1 end
+                        end
+                    end
+                    totalPetTerakhir = nn
+                    local pjArr = {}
+                    for ty, n in pairs(pjMap) do pjArr[#pjArr+1] = { n = ty, j = n } end
+                    table.sort(pjArr, function(a, b) if a.j ~= b.j then return a.j > b.j end return a.n < b.n end)
+                    while #pjArr > 80 do table.remove(pjArr) end
+                    petJenisTerakhir = pjArr
+                end
                 -- v8.357: maxInv dari UI "Pet Items (X/Y)" (kayak up6kg) -> Y = max ASLI akun.
                 -- attribute (getInventoryCapacity) = fallback kalo UI belum ke-load.
                 local mxUI = nil
@@ -522,6 +538,7 @@ task.spawn(function()
                     snipe = tonumber(_G.__ZenxSnipeN) or 0,  -- v8.356: total snipe UNCAPPED
                     snipeTok = snipeTokTerakhir,             -- v8.356: total token beli snipe
                     snipeJenis = snipeJenisTerakhir,         -- v8.356: breakdown per tipe (paling dikit dulu)
+                    petJenis = petJenisTerakhir,             -- v8.358: SEMUA pet backpack per jenis
                     jual = jual,
                 }) then
                     lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
