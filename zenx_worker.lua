@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.458-cf"
+local VERSION = "9.460-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -10071,6 +10071,9 @@ local function run(cfg)
             if isi ~= lastIsi then
                 lastIsi = isi
                 local daftarT = isi:match("TEMBAK:([%w%.%_%-,]+)")
+                -- v9.460: label oper dari panel (@isibahan/@isitelur/@oper/@ambil/@balikin) -> log jelas
+                local labelT = isi:match("@(%w+)") or ""
+                local labelNama = ({ isibahan = "ISI BAHAN", isitelur = "ISI TELUR", oper = "OPER", ambil = "AMBIL", balikin = "BALIKIN" })[labelT] or (labelT ~= "" and labelT:upper() or "PANEL")
                 if daftarT then
                     local onlyT = {}
                     for a in daftarT:gmatch("[^,]+") do onlyT[a] = true end
@@ -10090,8 +10093,14 @@ local function run(cfg)
                             pcall(function() close_all_cepat(cfg) end)
                             os.execute("sleep 3")
                         end
-                        warn(("TEMBAK dari panel -> %d client (skip yg udah sehat in-game kecuali HACT OTO)"):format(#pkgsT))
+                        warn(("REJOIN [%s] (TEMBAK anti-skip anti-block) -> %d client"):format(labelNama, #pkgsT))
                         local nTembak, nSkip = 0, 0
+                        -- v9.459: TEMBAK dari panel = oper server-change EKSPLISIT (blok ini cuma jalan
+                        -- pas command BARU / isi != lastIsi -> Isi bahan/oper yg baru dipencet). WAJIB
+                        -- pindah server -> set mau_force biar skip loop di bawah GAK skip walau client
+                        -- sehat/baru-buka. (Isi bahan: pindah ke server leveling TANPA nutup. WC
+                        -- teleport bisa mindahin in-game client, kayak HACT OTO.)
+                        for _, pkg in ipairs(pkgsT) do KICK_DIURUS["mau_force:" .. pkg] = os.time() end
                         for i, pkg in ipairs(pkgsT) do
                             local u = (mapAkun or {})[pkg]
                             -- v9.396: SKIP tembak client yg UDAH sehat in-game (denyut fresh <=120s),
@@ -10136,7 +10145,7 @@ local function run(cfg)
                                 end
                             end
                         end
-                        ok(("TEMBAK: %d ditembak, %d skip (udah sehat in-game)"):format(nTembak, nSkip))
+                        ok(("REJOIN [%s]: %d ditembak, %d skip"):format(labelNama, nTembak, nSkip))
                         notify("ZenX "..cfg.tim, "TEMBAK -> "..#pkgsT.." client ke server baru")
                         lastOpen = os.time()
                     else
