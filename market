@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.388"
+local VERSION = "8.391"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -719,6 +719,13 @@ _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
 function _G.__ZenxPL(msg)
     table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  " .. tostring(msg))
     if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
+end
+-- v8.389: baca presence dari FILE LOKAL dulu (worker fetch + tulis), fallback HttpGet backend.
+function _G.__ZenxPresRaw()
+    local raw
+    pcall(function() if isfile and isfile("zenx_market_presence.json") and readfile then local b = readfile("zenx_market_presence.json"); if b and b ~= "" then raw = b end end end)
+    if not raw or raw == "" then pcall(function() raw = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev" .. "/market-presence") end) end
+    return raw
 end
 
 -- ===== v8.46: Anti-AFK (cegah kick karena idle 20 menit) =====
@@ -1984,12 +1991,18 @@ do
     -- Startup + periodik 120s. pcall total biar gak ganggu loop. Backend kosong
     -- / gagal -> biarin rule lokal (default hardcoded jadi fallback).
     local function fetchRuleFromPanel()
-        local ok, body = pcall(function()
-            local r = req({ Url = PANEL_URL .. "/market-rules", Method = "GET",
-                Headers = { ["X-Kunci"] = PANEL_KUNCI } })
-            return r and (r.Body or r.body)
-        end)
-        if not ok or type(body) ~= "string" or body == "" then return false end
+        -- v8.389: baca FILE LOKAL dulu (worker fetch backend + tulis, market baca instan).
+        -- Fallback GET backend kalo file belum ada (worker belum nulis).
+        local body
+        pcall(function() if isfile and isfile("zenx_market_rules.json") and readfile then local b = readfile("zenx_market_rules.json"); if b and b ~= "" then body = b end end end)
+        if type(body) ~= "string" or body == "" then
+            local okF, b = pcall(function()
+                local r = req({ Url = PANEL_URL .. "/market-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+                return r and (r.Body or r.body)
+            end)
+            if okF then body = b end
+        end
+        if type(body) ~= "string" or body == "" then return false end
         local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
         if not ok2 or type(data) ~= "table" then return false end
         local ver = tonumber(data.ver) or 0
@@ -2014,12 +2027,17 @@ do
     -- timpa autoSnipe.rules + rebuild UI snipe. BH.autoSnipe dibikin belakangan
     -- (dicek runtime), jadi aman dipanggil dari loop yg jalan setelah script load.
     local function fetchSnipeFromPanel()
-        local ok, body = pcall(function()
-            local r = req({ Url = PANEL_URL .. "/snipe-rules", Method = "GET",
-                Headers = { ["X-Kunci"] = PANEL_KUNCI } })
-            return r and (r.Body or r.body)
-        end)
-        if not ok or type(body) ~= "string" or body == "" then return false end
+        -- v8.389: baca FILE LOKAL dulu (worker tulis), fallback backend.
+        local body
+        pcall(function() if isfile and isfile("zenx_snipe_rules.json") and readfile then local b = readfile("zenx_snipe_rules.json"); if b and b ~= "" then body = b end end end)
+        if type(body) ~= "string" or body == "" then
+            local okF, b = pcall(function()
+                local r = req({ Url = PANEL_URL .. "/snipe-rules", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+                return r and (r.Body or r.body)
+            end)
+            if okF then body = b end
+        end
+        if type(body) ~= "string" or body == "" then return false end
         local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
         if not ok2 or type(data) ~= "table" then return false end
         local ver = tonumber(data.ver) or 0
@@ -2049,7 +2067,7 @@ do
         task.wait(6)
         pcall(fetchRuleFromPanel)
         pcall(fetchSnipeFromPanel)
-        while true do task.wait(20) pcall(fetchRuleFromPanel) pcall(fetchSnipeFromPanel) end
+        while true do task.wait(5) pcall(fetchRuleFromPanel) pcall(fetchSnipeFromPanel) end
     end)
 
     -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
@@ -2477,12 +2495,57 @@ BH.gardenPanel = gardenPanel  -- store for cross-scope access
 local isGardenServer = (Workspace:FindFirstChild("TradeWorld") == nil)
 BH.isGardenServer = isGardenServer  -- v8.237: simpen ke BH biar loop auto-rejoin bisa akses
 if isGardenServer then
-    -- Hide MARKET/LIST HARGA/SNIPE/HOP SERVER/HISTORY tabs, show GARDEN by default
-    sbBtns.MARKET.btn.Visible = false
+    -- v8.392: garden sidebar = 3 tab: MARKET(status) / GIFT PET / TRADE TOKEN. Hide sisa.
     sbBtns["LIST HARGA"].btn.Visible = false
     sbBtns.SNIPE.btn.Visible = false
     sbBtns["HOP SERVER"].btn.Visible = false
     sbBtns["HISTORY SELL"].btn.Visible = false
+    sbBtns.SHOP.btn.Visible = false
+    pcall(function() sbBtns.MARKET.lbl.Text = "GARDEN" end)
+    pcall(function() sbBtns.GARDEN.lbl.Text = "GIFT PET" end)
+    pcall(function() sbBtns.TRADE.lbl.Text = "TRADE TOKEN" end)
+    -- marketPanel di garden = STATUS (bukan Listing). Deferred: hide child Listing + tambah status.
+    task.spawn(function()
+        task.wait(0.6)
+        local sf = Instance.new("Frame")
+        sf.Name = "ZenxGardenStatus" sf.Size = UDim2.new(1, 0, 1, 0) sf.BackgroundTransparency = 1 sf.Parent = marketPanel
+        for _, ch in ipairs(marketPanel:GetChildren()) do
+            if ch:IsA("GuiObject") and ch ~= sf then ch.Visible = false end
+        end
+        local strip = Instance.new("Frame")
+        strip.Size = UDim2.new(1, 0, 0, 62) strip.Position = UDim2.new(0, 0, 0, 8)
+        strip.BackgroundColor3 = C.card strip.BorderSizePixel = 0 strip.Parent = sf
+        Instance.new("UICorner", strip).CornerRadius = UDim.new(0, 8)
+        do local s = Instance.new("UIStroke", strip) s.Color = C.border s.Transparency = 0.4 end
+        local function col(x, w, lblTxt)
+            local v = Instance.new("TextLabel")
+            v.Size = UDim2.new(w, 0, 0, 24) v.Position = UDim2.new(x, 0, 0, 10) v.BackgroundTransparency = 1
+            v.Text = "-" v.TextColor3 = C.accent v.Font = FB v.TextSize = 18 v.Parent = strip
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(w, 0, 0, 14) l.Position = UDim2.new(x, 0, 0, 38) l.BackgroundTransparency = 1
+            l.Text = lblTxt l.TextColor3 = C.textMute l.Font = FM l.TextSize = 9 l.Parent = strip
+            return v
+        end
+        local vTok = col(0.03, 0.31, "TOKEN")
+        local vPet = col(0.36, 0.31, "PET"); vPet.TextColor3 = C.text
+        local vA5 = col(0.69, 0.29, "AGE-500 LVL")
+        local info = Instance.new("TextLabel")
+        info.Size = UDim2.new(1, 0, 0, 16) info.Position = UDim2.new(0, 4, 0, 80) info.BackgroundTransparency = 1
+        info.Text = "balik home: pas FULL / age-500 leveling <10" info.TextColor3 = C.textDim info.Font = FM info.TextSize = 11
+        info.TextXAlignment = Enum.TextXAlignment.Left info.Parent = sf
+        task.spawn(function()
+            while sf.Parent do
+                local tok = tonumber(_G.__ZenxTokenNow) or 0
+                vTok.Text = tok >= 1000 and (string.format("%.0f", tok / 1000) .. "K") or tostring(tok)
+                vPet.Text = tostring(_G.__ZenxMarketTotalPet or "-")
+                local mAge = _G.__ZenxLvlAge500; local a5 = 0
+                if type(mAge) == "table" then for _, pl in ipairs(game:GetService("Players"):GetPlayers()) do local a = mAge[pl.Name]; if a then a5 = a5 + a end end end
+                vA5.Text = tostring(a5)
+                task.wait(3)
+            end
+        end)
+    end)
+
     marketPanel.Visible = false
     gardenPanel.Visible = true
     -- override default tab visual ke GARDEN
@@ -9004,7 +9067,7 @@ BH.getOtherJobIds = function()
     -- Jadi anti-nabrak liat SEMUA akun market (semua phone), bukan cuma 1 phone.
     pcall(function()
         local raw
-        pcall(function() raw = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev/market-presence") end)
+        raw = _G.__ZenxPresRaw()
         if raw and raw ~= "" then
             local ok2, obj = pcall(function() return HttpService:JSONDecode(raw) end)
             if ok2 and type(obj) == "table" then
@@ -9162,7 +9225,7 @@ task.spawn(function()
     while true do
         pcall(function()
             local raw
-            pcall(function() raw = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev/market-presence") end)
+            raw = _G.__ZenxPresRaw()
             if raw and raw ~= "" then
                 local ok2, obj = pcall(function() return HttpService:JSONDecode(raw) end)
                 if ok2 and type(obj) == "table" then
@@ -13371,49 +13434,6 @@ BH.buildGardenPanel = function()
         task.wait(2)
         pcall(BH.refreshGardenStats)
     end)
-
-    -- v8.388: ORGANIZE garden jadi 3 TAB (Market / Gift Pet / Trade Token). Re-parent elemen yg
-    -- UDAH ada (status + TP + toggle gift/trade) ke 3 sub-frame + tab switch. Logic auto-accept
-    -- GAK disentuh — cuma pindah parent + posisi. Mono merah (C.accent = crimson di garden).
-    do
-        local tabBar = Instance.new("Frame")
-        tabBar.Size = UDim2.new(1, -28, 0, 30) tabBar.Position = UDim2.new(0, 14, 0, 12)
-        tabBar.BackgroundTransparency = 1 tabBar.Parent = gp
-        local tl = Instance.new("UIListLayout") tl.FillDirection = Enum.FillDirection.Horizontal tl.Padding = UDim.new(0, 5) tl.Parent = tabBar
-        local tabBtns = {}
-        local function mkFrame()
-            local f = Instance.new("Frame")
-            f.Size = UDim2.new(1, -28, 1, -52) f.Position = UDim2.new(0, 14, 0, 48)
-            f.BackgroundTransparency = 1 f.Visible = false f.Parent = gp
-            return f
-        end
-        local fMarket, fGift, fTrade = mkFrame(), mkFrame(), mkFrame()
-        local function pilih(nm)
-            fMarket.Visible = (nm == "Market"); fGift.Visible = (nm == "Gift Pet"); fTrade.Visible = (nm == "Trade Token")
-            for n, b in pairs(tabBtns) do
-                b.BackgroundColor3 = (n == nm) and C.accent or C.card
-                b.TextColor3 = (n == nm) and Color3.fromRGB(17, 17, 17) or C.textDim
-            end
-        end
-        for _, nm in ipairs({ "Market", "Gift Pet", "Trade Token" }) do
-            local b = Instance.new("TextButton")
-            b.Size = UDim2.new(0.333, -4, 1, 0) b.BackgroundColor3 = C.card b.AutoButtonColor = false
-            b.Text = nm b.TextColor3 = C.textDim b.Font = FB b.TextSize = 11 b.BorderSizePixel = 0 b.Parent = tabBar
-            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-            tabBtns[nm] = b
-            b.MouseButton1Click:Connect(function() pilih(nm) end)
-        end
-        -- re-parent elemen yg udah ada ke tab masing-masing
-        pcall(function() if btnRow then btnRow.Visible = false end end)
-        pcall(function()
-            gStat.Position = UDim2.new(0, 0, 0, 0) gStat.Size = UDim2.new(1, 0, 0, 58) gStat.Parent = fMarket
-            gInfo.Position = UDim2.new(0, 2, 0, 64) gInfo.Size = UDim2.new(1, 0, 0, 14) gInfo.Parent = fMarket
-            gTravelBtn.Size = UDim2.new(1, 0, 0, 36) gTravelBtn.Position = UDim2.new(0, 0, 0, 88) gTravelBtn.TextSize = 13 gTravelBtn.Parent = fMarket
-            gGiftBtn.Size = UDim2.new(1, 0, 0, 42) gGiftBtn.Position = UDim2.new(0, 0, 0, 4) gGiftBtn.TextSize = 13 gGiftBtn.Parent = fGift
-            gTradeBtn.Size = UDim2.new(1, 0, 0, 42) gTradeBtn.Position = UDim2.new(0, 0, 0, 4) gTradeBtn.TextSize = 13 gTradeBtn.Parent = fTrade
-        end)
-        pilih("Market")
-    end
 end
 
 -- v8.273: ===== SHOP — AUTO BUY SEED & GEAR =====
