@@ -240,7 +240,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.358"
+local VERSION = "8.359"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1830,6 +1830,40 @@ do
         print("[ZenxMarket] applyState: "..nRules.." rule | sync="..tostring(synced).." | rebuild="..tostring(rebuiltOk))
         return nRules, synced, rebuiltOk
     end
+    BH.applyState = applyState   -- v8.359: expose
+
+    -- v8.359: FETCH ATURAN LIST dari panel (rule global). ver beda dari yg
+    -- ke-apply lokal -> timpa listingRules + applyState (live, gak usah rejoin).
+    -- Startup + periodik 120s. pcall total biar gak ganggu loop. Backend kosong
+    -- / gagal -> biarin rule lokal (default hardcoded jadi fallback).
+    local function fetchRuleFromPanel()
+        local ok, body = pcall(function()
+            local r = req({ Url = PANEL_URL .. "/market-rules", Method = "GET",
+                Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            return r and (r.Body or r.body)
+        end)
+        if not ok or type(body) ~= "string" or body == "" then return false end
+        local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
+        if not ok2 or type(data) ~= "table" then return false end
+        local ver = tonumber(data.ver) or 0
+        local rules = data.rules
+        if ver <= 0 or type(rules) ~= "table" or #rules == 0 then return false end
+        if BH.marketState.rulesVer == ver then return false end   -- udah ke-apply
+        local st = {}
+        for k, v in pairs(BH.marketState) do st[k] = v end
+        st.listingRules = rules
+        st.rulesVer = ver
+        pcall(function() applyState(st) end)
+        BH.marketState.rulesVer = ver
+        print("[ZenxMarket] aturan list dari panel ke-apply | ver="..ver.." | "..#rules.." rule")
+        return true
+    end
+    BH.fetchRuleFromPanel = fetchRuleFromPanel
+    task.spawn(function()
+        task.wait(6)
+        pcall(fetchRuleFromPanel)
+        while true do task.wait(120) pcall(fetchRuleFromPanel) end
+    end)
 
     -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
     local tplBtn = Instance.new("TextButton")
