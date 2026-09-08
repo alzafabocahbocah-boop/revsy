@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.17"
+local VERSION = "uplevel-v0.18"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1283,25 +1283,39 @@ do
     -- up6kg: AUTO TENGAH default ON (Peacock/Ele/Gilded/bahan dipaksa ke tengah)
     if _G.ZenxAutoTengah == nil then _G.ZenxAutoTengah = true end
     local CLUSTER = nil
-    local supportKunci = {}   -- uuid -> nama (support terkunci)
+    local supportKunci = {}   -- uuid -> nama (support terkunci, transient: ke-clear pas redo)
+    local heroLock = {}       -- v0.18: uuid -> nama : HERO PERMANEN. sekali kepilih (paling gede
+                              -- per tipe) gak diganti walau redo/ada yg lebih gede. cuma lepas kalo petnya ilang.
     local bahanAktif = {}     -- uuid -> tipe (bahan)
     local function kgLog(s) if _G.ZenxKgLog then _G.ZenxKgLog(s) end print("[UpKg] "..s) end
     local function jml(t) local n = 0; for _ in pairs(t) do n = n + 1 end return n end
 
-    -- pilih support (PALING GEDE per tipe, kunci) — tim sesuai SESI
+    -- pilih support (PALING GEDE per tipe, KUNCI PERMANEN) — tim sesuai SESI
     local function pilihSupport(sesi)
         local SUP = (sesi == 2) and SUPPORT_S2_ELE or SUPPORT_S1_ELE
-        local pets = listPetsEngine()
+        local pets = listPetsAll()   -- v0.18: SEMUA (equipped+backpack) biar hero yg lagi ke-equip gak keilangan.
+                                     -- di garden _kgContainer keisi -> kg kebaca buat "paling gede".
+        -- v0.18: bersihin heroLock yg petnya udah ilang dari pool
+        local adaUuid = {}
+        for _, p in ipairs(pets) do adaUuid[p.uuid] = true end
+        for u in pairs(heroLock) do if not adaUuid[u] then heroLock[u] = nil end end
         table.sort(pets, function(a,b) return (a.kg or 0) > (b.kg or 0) end)   -- paling gede dulu
         local ada = {}
         for _, nm in pairs(supportKunci) do ada[nm] = (ada[nm] or 0) + 1 end
         for _, sup in ipairs(SUP) do
             local perlu = sup.jml - (ada[sup.nama] or 0)
-            for _, p in ipairs(pets) do
-                if perlu <= 0 then break end
-                if not supportKunci[p.uuid] and not bahanAktif[p.uuid]
-                   and cocokSemua(p.tipe, sup.cari) then
-                    supportKunci[p.uuid] = sup.nama; perlu = perlu - 1
+            -- pass 1 = HERO lama (heroLock) dulu -> dipertahanin. pass 2 = pet baru paling gede.
+            for pass = 1, 2 do
+                for _, p in ipairs(pets) do
+                    if perlu <= 0 then break end
+                    local isHero = (heroLock[p.uuid] == sup.nama)
+                    if ((pass == 1) == isHero)
+                       and not supportKunci[p.uuid] and not bahanAktif[p.uuid]
+                       and cocokSemua(p.tipe, sup.cari) then
+                        supportKunci[p.uuid] = sup.nama
+                        heroLock[p.uuid] = sup.nama   -- kunci permanen
+                        perlu = perlu - 1
+                    end
                 end
             end
         end
