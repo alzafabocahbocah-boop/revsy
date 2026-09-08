@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.387"
+local VERSION = "8.388"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -13371,6 +13371,49 @@ BH.buildGardenPanel = function()
         task.wait(2)
         pcall(BH.refreshGardenStats)
     end)
+
+    -- v8.388: ORGANIZE garden jadi 3 TAB (Market / Gift Pet / Trade Token). Re-parent elemen yg
+    -- UDAH ada (status + TP + toggle gift/trade) ke 3 sub-frame + tab switch. Logic auto-accept
+    -- GAK disentuh — cuma pindah parent + posisi. Mono merah (C.accent = crimson di garden).
+    do
+        local tabBar = Instance.new("Frame")
+        tabBar.Size = UDim2.new(1, -28, 0, 30) tabBar.Position = UDim2.new(0, 14, 0, 12)
+        tabBar.BackgroundTransparency = 1 tabBar.Parent = gp
+        local tl = Instance.new("UIListLayout") tl.FillDirection = Enum.FillDirection.Horizontal tl.Padding = UDim.new(0, 5) tl.Parent = tabBar
+        local tabBtns = {}
+        local function mkFrame()
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(1, -28, 1, -52) f.Position = UDim2.new(0, 14, 0, 48)
+            f.BackgroundTransparency = 1 f.Visible = false f.Parent = gp
+            return f
+        end
+        local fMarket, fGift, fTrade = mkFrame(), mkFrame(), mkFrame()
+        local function pilih(nm)
+            fMarket.Visible = (nm == "Market"); fGift.Visible = (nm == "Gift Pet"); fTrade.Visible = (nm == "Trade Token")
+            for n, b in pairs(tabBtns) do
+                b.BackgroundColor3 = (n == nm) and C.accent or C.card
+                b.TextColor3 = (n == nm) and Color3.fromRGB(17, 17, 17) or C.textDim
+            end
+        end
+        for _, nm in ipairs({ "Market", "Gift Pet", "Trade Token" }) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(0.333, -4, 1, 0) b.BackgroundColor3 = C.card b.AutoButtonColor = false
+            b.Text = nm b.TextColor3 = C.textDim b.Font = FB b.TextSize = 11 b.BorderSizePixel = 0 b.Parent = tabBar
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+            tabBtns[nm] = b
+            b.MouseButton1Click:Connect(function() pilih(nm) end)
+        end
+        -- re-parent elemen yg udah ada ke tab masing-masing
+        pcall(function() if btnRow then btnRow.Visible = false end end)
+        pcall(function()
+            gStat.Position = UDim2.new(0, 0, 0, 0) gStat.Size = UDim2.new(1, 0, 0, 58) gStat.Parent = fMarket
+            gInfo.Position = UDim2.new(0, 2, 0, 64) gInfo.Size = UDim2.new(1, 0, 0, 14) gInfo.Parent = fMarket
+            gTravelBtn.Size = UDim2.new(1, 0, 0, 36) gTravelBtn.Position = UDim2.new(0, 0, 0, 88) gTravelBtn.TextSize = 13 gTravelBtn.Parent = fMarket
+            gGiftBtn.Size = UDim2.new(1, 0, 0, 42) gGiftBtn.Position = UDim2.new(0, 0, 0, 4) gGiftBtn.TextSize = 13 gGiftBtn.Parent = fGift
+            gTradeBtn.Size = UDim2.new(1, 0, 0, 42) gTradeBtn.Position = UDim2.new(0, 0, 0, 4) gTradeBtn.TextSize = 13 gTradeBtn.Parent = fTrade
+        end)
+        pilih("Market")
+    end
 end
 
 -- v8.273: ===== SHOP — AUTO BUY SEED & GEAR =====
