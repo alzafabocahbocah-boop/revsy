@@ -179,6 +179,51 @@ do
     end
 end
 
+-- v8.373: STARTUP TOUCH (port dari up6kg/uplevel v1.08) -- keyboard(Space) + TOUCH TAP layar
+-- (cloud phone) + mouse klik CUMA pas LOADING (belum ada karakter) buat dismiss "click/tap to
+-- continue". Market TELEPORT (garden<->TradeWorld) -> tiap exec jalan -> lewatin loading masuk
+-- game. Begitu karakter masuk, mouse/touch BERHENTI (gak mis-click beli/jual), keyboard tetep.
+task.spawn(function()
+    local UIS = game:GetService("UserInputService")
+    local Players = game:GetService("Players")
+    local VIM, VU
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    pcall(function() VU = game:GetService("VirtualUser") end)
+    local t0 = tick()
+    while tick() - t0 < 6 do
+        local plr = Players.LocalPlayer
+        local hum = plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+        pcall(function()
+            if firesignal and UIS then
+                firesignal(UIS.InputBegan, { UserInputType = Enum.UserInputType.Keyboard,
+                    KeyCode = Enum.KeyCode.Space, UserInputState = Enum.UserInputState.Begin }, false)
+            end
+        end)
+        pcall(function()
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end
+        end)
+        if not hum then
+            pcall(function() if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end end)
+            pcall(function()
+                if VIM then
+                    local x, y = 200, 300
+                    local cam = workspace.CurrentCamera
+                    if cam and cam.ViewportSize and cam.ViewportSize.X > 0 then
+                        x, y = cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2
+                    end
+                    VIM:SendTouchEvent(1, 0, x, y); task.wait(0.03)
+                    VIM:SendTouchEvent(1, 2, x, y)
+                end
+            end)
+        end
+        task.wait(1)
+    end
+    print("[ZenxMarket] startup touch kelar (lewatin loading)")
+end)
+
 -- v8.309: AUTO RE-EXEC di PALING AWAL - daftarin queue_on_teleport sebelum apapun.
 -- v8.321: ANTI HTTP 429. cache lokal + guard: kalau kena 429, JANGAN spam retry.
 --   maks 1 HttpGet per re-exec. gagal -> pakai cache lama -> berhenti.
@@ -250,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.367"
+local VERSION = "8.378"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -509,6 +554,41 @@ task.spawn(function()
                 end)
                 if mxUI and mxUI > 0 then maxInvTerakhir = mxUI
                 else local mi = tonumber(_G.__ZenxMaxInv); if mi and mi > 0 then maxInvTerakhir = mi end end
+                -- v8.368: BALIK HOME pas FULL di GARDEN (leveling). Akun market di-oper ke leveling
+                -- buat diisi bahan; pas totalPet >= maxInv (full) -> minta worker balikin ke market.
+                -- CUMA di garden (bukan TradeWorld). Tulis signal file SEKALI -> worker baca -> tembak
+                -- balik ke market + hapus move_link. Reset guard pas gak-full / udah di market.
+                do
+                    local diGarden = (game:GetService("Workspace"):FindFirstChild("TradeWorld") == nil)
+                    local full = (maxInvTerakhir > 0) and (totalPetTerakhir >= maxInvTerakhir)
+                    -- v8.375: BALIK HOME kedua -> age-500 leveling HABIS = SEMUA akun leveling present
+                    -- di server punya age-500 < 10 (dari /lvlmax field ke-3). min 1 akun present.
+                    local age500Habis = false
+                    if diGarden then
+                        local mAge = _G.__ZenxLvlAge500
+                        if type(mAge) == "table" then
+                            local nPresent, nHabis = 0, 0
+                            for _, pl in ipairs(game:GetService("Players"):GetPlayers()) do
+                                local a5 = mAge[pl.Name]
+                                if a5 ~= nil then
+                                    nPresent = nPresent + 1
+                                    if a5 < 10 then nHabis = nHabis + 1 end
+                                end
+                            end
+                            age500Habis = (nPresent >= 1 and nHabis == nPresent)
+                        end
+                    end
+                    if diGarden and (full or age500Habis) and plr and plr.Name and writefile then
+                        if not _G.__ZenxBalikHomeTulis then
+                            _G.__ZenxBalikHomeTulis = true
+                            local alasan = full and ("FULL (" .. totalPetTerakhir .. "/" .. maxInvTerakhir .. ")") or "age-500 leveling HABIS (<10)"
+                            pcall(function() writefile("zenx_balikhome_" .. plr.Name .. ".txt", tostring(os.time())) end)
+                            print("[ZenxMarket] " .. alasan .. " -> minta BALIK HOME ke market")
+                        end
+                    else
+                        _G.__ZenxBalikHomeTulis = nil
+                    end
+                end
                 -- v8.356: snipe breakdown per tipe (dari _G.__ZenxSnipePer) — paling DIKIT dulu
                 local sj, stk = {}, 0
                 if type(_G.__ZenxSnipePer) == "table" then
@@ -541,6 +621,13 @@ task.spawn(function()
         pcall(function()
             local ok, tok = pcall(bacaTokens)
             if not ok or type(tok) ~= "number" then tok = lamaTok >= 0 and lamaTok or 0 end
+            _G.__ZenxTokenNow = tok   -- v8.369: expose token buat auto-trade ke leveling
+            -- v8.371: token >= 5000 -> AUTO-TRADE ke leveling (async). TERPISAH dari balik-home.
+            -- Fungsi-nya OFF auto-accept-gift dulu -> trade -> ON lagi (cek garden/private/target di dalam).
+            if (tonumber(tok) or 0) >= 5000 and _G.__ZenxTradeAllToLeveling and not _G.__ZenxTradeBusy then
+                _G.__ZenxTradeBusy = true
+                task.spawn(function() pcall(_G.__ZenxTradeAllToLeveling); task.wait(8); _G.__ZenxTradeBusy = nil end)
+            end
             local skrg = os.time()
             local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
             local wajib = (skrg - lamaKirim) >= 120
@@ -1705,33 +1792,58 @@ closeBtn.Text = "—" closeBtn.TextColor3 = C.accent
 closeBtn.Font = FB closeBtn.TextSize = 18 closeBtn.Parent = titleBar
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 
--- v8.351: SCALE STEPPER [- 1.00× +] di header (do-block: slot ke-free, closure pegang oscale)
+-- v8.374: SCALE GUI (up6kg style) — tombol "range x1,00" -> popup pilihan ukuran (persist +
+-- kompensasi posisi biar tetep center). Pakai scaleWrap kayak up6kg. Ganti stepper lama.
 do
-    local oscale = Instance.new("UIScale") oscale.Scale = 1.0 oscale.Parent = main
-    local sclFrame = Instance.new("Frame")
-    sclFrame.Size = UDim2.new(0, 106, 0, 24) sclFrame.Position = UDim2.new(1, -156, 0.5, -12)
-    sclFrame.BackgroundColor3 = C.card sclFrame.BorderSizePixel = 0 sclFrame.Parent = titleBar
-    Instance.new("UICorner", sclFrame).CornerRadius = UDim.new(0, 6)
-    local sclStroke = Instance.new("UIStroke", sclFrame) sclStroke.Color = C.border sclStroke.Thickness = 1
-    local sclMinus = Instance.new("TextButton")
-    sclMinus.Size = UDim2.new(0, 28, 1, 0) sclMinus.Position = UDim2.new(0, 0, 0, 0)
-    sclMinus.BackgroundTransparency = 1 sclMinus.Text = "-" sclMinus.TextColor3 = C.accent
-    sclMinus.Font = FB sclMinus.TextSize = 17 sclMinus.AutoButtonColor = false sclMinus.Parent = sclFrame
-    local sclVal = Instance.new("TextLabel")
-    sclVal.Size = UDim2.new(0, 50, 1, 0) sclVal.Position = UDim2.new(0, 28, 0, 0)
-    sclVal.BackgroundTransparency = 1 sclVal.Text = "1.00×" sclVal.TextColor3 = C.text
-    sclVal.Font = FB sclVal.TextSize = 11 sclVal.Parent = sclFrame
-    local sclPlus = Instance.new("TextButton")
-    sclPlus.Size = UDim2.new(0, 28, 1, 0) sclPlus.Position = UDim2.new(1, -28, 0, 0)
-    sclPlus.BackgroundTransparency = 1 sclPlus.Text = "+" sclPlus.TextColor3 = C.accent
-    sclPlus.Font = FB sclPlus.TextSize = 17 sclPlus.AutoButtonColor = false sclPlus.Parent = sclFrame
-    local function setScale(s)
-        s = math.clamp(math.floor(s * 100 + 0.5) / 100, 0.5, 1.75)
-        oscale.Scale = s
-        sclVal.Text = string.format("%.2f×", s)
+    local scaleWrap = Instance.new("Frame")
+    scaleWrap.Name = "ZenxScaleWrap" scaleWrap.Size = UDim2.new(1, 0, 1, 0)
+    scaleWrap.BackgroundTransparency = 1 scaleWrap.BorderSizePixel = 0 scaleWrap.Parent = gui
+    main.Parent = scaleWrap
+    local oscale = Instance.new("UIScale") oscale.Scale = 1.0 oscale.Parent = scaleWrap
+    local SCALES = { 0.5, 0.75, 1, 1.25, 1.5, 1.75 }
+    local SFILE = "zenx_market_scale.txt"
+    local function saveScale(sc) pcall(function() if writefile then writefile(SFILE, tostring(sc)) end end) end
+    local function loadScale()
+        local ok, v = pcall(function() if isfile and isfile(SFILE) and readfile then return readfile(SFILE) end end)
+        local n = ok and v and tonumber(v) or 1
+        for _, sc in ipairs(SCALES) do if math.abs(n - sc) < 0.001 then return sc end end
+        return 1
     end
-    sclMinus.MouseButton1Click:Connect(function() setScale(oscale.Scale - 0.25) end)
-    sclPlus.MouseButton1Click:Connect(function() setScale(oscale.Scale + 0.25) end)
+    local rangeBtn = Instance.new("TextButton")
+    rangeBtn.Size = UDim2.new(0, 96, 0, 24) rangeBtn.Position = UDim2.new(1, -146, 0.5, -12)
+    rangeBtn.BackgroundColor3 = C.card rangeBtn.AutoButtonColor = false
+    rangeBtn.Text = "range x1,00" rangeBtn.TextColor3 = C.accent
+    rangeBtn.Font = FB rangeBtn.TextSize = 11 rangeBtn.BorderSizePixel = 0 rangeBtn.Parent = titleBar
+    Instance.new("UICorner", rangeBtn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", rangeBtn).Color = C.border
+    local pop = Instance.new("Frame")
+    pop.Size = UDim2.new(0, 200, 0, 268) pop.Position = UDim2.new(0.5, -100, 0.5, -134)
+    pop.BackgroundColor3 = C.panel pop.BorderSizePixel = 0 pop.Visible = false pop.ZIndex = 800 pop.Parent = gui
+    Instance.new("UICorner", pop).CornerRadius = UDim.new(0, 10)
+    Instance.new("UIStroke", pop).Color = C.border
+    local popT = Instance.new("TextLabel")
+    popT.Size = UDim2.new(1, -20, 0, 24) popT.Position = UDim2.new(0, 10, 0, 9) popT.BackgroundTransparency = 1
+    popT.Text = "Ukuran GUI" popT.TextColor3 = C.accent popT.Font = FB popT.TextSize = 14 popT.ZIndex = 801 popT.Parent = pop
+    local scaleBtns = {}
+    local function applyScale(sc)
+        oscale.Scale = sc
+        main.Position = UDim2.new(0.5 / sc, -320, 0.5 / sc, -200)
+        saveScale(sc)
+        rangeBtn.Text = "range x" .. tostring(sc):gsub("%.", ",")
+        for sv, b in pairs(scaleBtns) do b.BackgroundColor3 = (math.abs(sv - sc) < 0.001) and C.accent or C.card end
+    end
+    for i, sc in ipairs(SCALES) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, -20, 0, 32) b.Position = UDim2.new(0, 10, 0, 40 + (i - 1) * 37)
+        b.BackgroundColor3 = C.card b.AutoButtonColor = false
+        b.Text = "x" .. tostring(sc):gsub("%.", ",") b.TextColor3 = C.text
+        b.Font = FB b.TextSize = 14 b.BorderSizePixel = 0 b.ZIndex = 801 b.Parent = pop
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+        scaleBtns[sc] = b
+        b.MouseButton1Click:Connect(function() applyScale(sc); pop.Visible = false end)
+    end
+    rangeBtn.MouseButton1Click:Connect(function() pop.Visible = not pop.Visible end)
+    applyScale(loadScale())
 end
 
 -- Floating Z logo button (when minimized)
@@ -2563,7 +2675,7 @@ rulesPad.Parent = rulesScroll
 
 local rulesEmptyLbl = Instance.new("TextLabel")
 rulesEmptyLbl.Size = UDim2.new(1, 0, 1, 0) rulesEmptyLbl.BackgroundTransparency = 1
-rulesEmptyLbl.Text = "Rules kosong — tambah rule di bawah, atau START tanpa rule = list semua pet"
+rulesEmptyLbl.Text = "Rules kosong — tanpa rule GAK ada yang di-list (atur rule dari panel)"
 rulesEmptyLbl.TextColor3 = C.textDim rulesEmptyLbl.Font = FM rulesEmptyLbl.TextSize = 12
 rulesEmptyLbl.TextWrapped = true rulesEmptyLbl.Parent = rulesScroll
 
@@ -7665,8 +7777,8 @@ BH.onStartClick = function()
                     local rule, ruleIdx = nil, nil
                     local debugDecisions = nil  -- v8.111: nil until mutated pet seen
                     if #listingRules == 0 then
-                        rule = {price = perTypePrices[p.baseType] or perTypePrices[p.type] or 100, maxListings = math.huge}
-                        ruleIdx = 0
+                        -- v8.377: NO RULE = JANGAN list apa-apa (rule diatur dari panel). Dulu list SEMUA.
+                        rule, ruleIdx = nil, nil
                     else
                         for ri, r in ipairs(listingRules) do
                             local ml = r.maxListings or math.huge
@@ -8803,6 +8915,16 @@ BH.savePresence = function(jobId)
         }
         writefile(BH.USERS_FILE, HttpService:JSONEncode(data))
     end)
+    -- v8.377: POST jobId + SINCE ke backend (anti-nabrak LINTAS-PHONE + resolusi siapa duluan).
+    -- since = kapan akun MASUK jobId ini (reset pas jobId ganti) -> yg since lebih kecil = duluan.
+    pcall(function()
+        local jid = tostring(jobId or game.JobId)
+        if _G.__ZenxLastPresenceJob ~= jid then _G.__ZenxLastPresenceJob = jid; _G.__ZenxJobIdSince = os.time() end
+        local rq = request or http_request or (syn and syn.request)
+        if rq then rq({ Url = "https://dry-glitter-63e4.petagee5.workers.dev/market-presence", Method = "POST",
+            Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb" },
+            Body = HttpService:JSONEncode({ akun = player.Name, jobId = jid, since = _G.__ZenxJobIdSince }) }) end
+    end)
 end
 BH.getOtherJobIds = function()
     local ids = {}
@@ -8820,6 +8942,21 @@ BH.getOtherJobIds = function()
             end
         end
     end)
+    -- v8.376: GET presence dari backend (LINTAS-PHONE) -> merge sama file lokal (same-phone).
+    -- Jadi anti-nabrak liat SEMUA akun market (semua phone), bukan cuma 1 phone.
+    pcall(function()
+        local raw
+        pcall(function() raw = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev/market-presence") end)
+        if raw and raw ~= "" then
+            local ok2, obj = pcall(function() return HttpService:JSONDecode(raw) end)
+            if ok2 and type(obj) == "table" then
+                for akun, info in pairs(obj) do
+                    local jid = (type(info) == "table") and info.j or info   -- v8.377: format {j,s} (backward compat string)
+                    if akun ~= player.Name and type(jid) == "string" and jid ~= "" then ids[jid] = akun end
+                end
+            end
+        end
+    end)
     return ids
 end
 
@@ -8833,6 +8970,10 @@ end)
 
 local function hopToBestServer()
     L("==== HOP SERVER ====")
+    -- v8.376: JITTER anti-nabrak — kalo banyak akun (mis. 4 akun 1 device) hop BARENG,
+    -- kasih offset acak 0-4s biar klaim target (savePresence + backend) sempet nyebar dulu.
+    -- Akun yg hop belakangan liat server yg udah diklaim akun sebelumnya -> pilih server LAIN.
+    pcall(function() task.wait(math.random() * 4) end)
     local MAX_PAGES = 50  -- v8.221: 5000 server (up from 2000) buat coverage lebih luas
     L(string.format("Scan max %d page (%d server), pick busiest descending: 30→29→28→...", MAX_PAGES, MAX_PAGES*100))
 
@@ -8924,6 +9065,14 @@ local function hopToBestServer()
     end
 
     -- Priority loop (avoid collision, tetep busiest first)
+    -- v8.376: SHUFFLE top-12 terame biar tiap akun TARGET server BEDA (gak rebutan #1 yg sama).
+    -- Top-12 semua udah rame (15-30 player) -> ambil acak = tetep dapet server rame, tapi nyebar.
+    -- Sisanya (13+) tetep urut busiest sebagai fallback.
+    local TOPK = math.min(12, #priorityServers)
+    for i = TOPK, 2, -1 do
+        local j = math.random(1, i)
+        priorityServers[i], priorityServers[j] = priorityServers[j], priorityServers[i]
+    end
     local maxPriority = math.min(30, #priorityServers)
     for i = 1, maxPriority do
         if tryTeleport(priorityServers[i], "PRI", i) then return end
@@ -8945,6 +9094,40 @@ hopNowBtn.MouseButton1Click:Connect(function() task.spawn(hopToBestServer) end)
 
 -- v8.196: expose hopToBestServer ke BH supaya tombol HOP NOW (rejoin tab) bisa pakai juga
 BH.manualHop = function() task.spawn(hopToBestServer) end
+
+-- v8.377: RESOLUSI NABRAK — tiap 50s cek presence. Kalo ada akun kita LAIN di server yg SAMA
+-- (jobId sama), yg NYUSUL (since lebih GEDE = masuk belakangan, atau kalah tiebreak nama) HOP
+-- cari server baru. Yg DULUAN (since kecil) TETEP. Jadi cuma 1 yg pindah, gak dua-duanya kabur.
+task.spawn(function()
+    task.wait(25)
+    while true do
+        pcall(function()
+            local raw
+            pcall(function() raw = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev/market-presence") end)
+            if raw and raw ~= "" then
+                local ok2, obj = pcall(function() return HttpService:JSONDecode(raw) end)
+                if ok2 and type(obj) == "table" then
+                    local myJob = tostring(game.JobId)
+                    local mySince = tonumber(_G.__ZenxJobIdSince) or os.time()
+                    local myName = player.Name
+                    local kalah = false
+                    for akun, info in pairs(obj) do
+                        if akun ~= myName and type(info) == "table" and tostring(info.j) == myJob then
+                            local theirSince = tonumber(info.s) or 0
+                            if theirSince < mySince then kalah = true; break                              -- dia duluan -> gua hop
+                            elseif theirSince == mySince and tostring(akun) < myName then kalah = true; break end  -- seri -> tiebreak nama
+                        end
+                    end
+                    if kalah then
+                        L("[anti-nabrak] ada akun kita di server SAMA + gua yg nyusul -> HOP cari server baru")
+                        task.spawn(hopToBestServer)
+                    end
+                end
+            end
+        end)
+        task.wait(50)
+    end
+end)
 
 -- v8.197: log startup status
 task.spawn(function()
@@ -13438,6 +13621,64 @@ end)
             else
                 if Tst.conn then Tst.conn:Disconnect(); Tst.conn=nil end; TsetStatus("AUTO OFF")
             end
+        end
+
+        -- v8.369: AUTO-TRADE SEMUA token ke akun leveling (player pertama selain diri di server
+        -- = akun leveling). Dipanggil report loop pas FULL + token >= 5000. jml = SEMUA token.
+        -- v8.370: FETCH daftar akun leveling dari panel (/lvlmax) -> target trade TERKONTROL,
+        -- sama kayak up6kg. Cuma trade ke akun yg ADA di daftar ini + present di server (bukan
+        -- first-player yg bisa nyasar ke orang random). Refresh 30s.
+        local TlvlAkun = {}
+        task.spawn(function()
+            local LVLMAX_URL = "https://dry-glitter-63e4.petagee5.workers.dev/lvlmax"
+            local req2 = request or http_request or (syn and syn.request)
+            while true do
+                pcall(function()
+                    local raw
+                    pcall(function() raw = game:HttpGet(LVLMAX_URL) end)
+                    if (not raw or raw == "") and req2 then
+                        local ok, res = pcall(function() return req2({ Url = LVLMAX_URL, Method = "GET" }) end)
+                        if ok and res and res.Body then raw = res.Body end
+                    end
+                    if raw and raw ~= "" then
+                        local m, mAge = {}, {}
+                        for pair in tostring(raw):gmatch("[^,]+") do
+                            local k = pair:match("^%s*(.-)%s*=")
+                            local a5 = pair:match("=%s*%d+:%d+:(%d+)")   -- field ke-3 = age500 (v8.375)
+                            if k and k ~= "" then m[k] = true; if a5 then mAge[k] = tonumber(a5) end end
+                        end
+                        if next(m) then TlvlAkun = m; _G.__ZenxLvlAkun = m; _G.__ZenxLvlAge500 = mAge end
+                    end
+                end)
+                task.wait(30)
+            end
+        end)
+
+        _G.__ZenxTradeAllToLeveling = function()
+            if not TdiGarden() or Tst.sibuk then return end
+            -- v8.370: CUMA di PRIVATE server (leveling PS user). Public = players random -> skip.
+            if tostring(game.PrivateServerId or "") == "" then TsetStatus("public server -> SKIP trade"); return end
+            -- v8.370: target = player di server yg ADA di DAFTAR akun leveling (/lvlmax dari panel),
+            -- BUKAN first-player. Gak ada yg cocok -> skip (token aman, gak ke orang random).
+            local target = nil
+            for _, pl in ipairs(TPlayers:GetPlayers()) do
+                if pl ~= Tplr and TlvlAkun[pl.Name] then target = pl; break end
+            end
+            if not target then TsetStatus("gak ada akun leveling (dari daftar panel) di server -> skip"); return end
+            local jml = tonumber(_G.__ZenxTokenNow) or 0
+            if jml < 1 then return end
+            -- v8.371: OFF auto-accept-gift DULU (biar akun market gak nerima gift pet pas lagi
+            -- trade token), trade token, terus ON lagi (balikin ke state semula).
+            local _giftWas = nil
+            pcall(function() if BH then _giftWas = BH.autoGift; BH.autoGift = false end end)
+            Tst.kol = target.Name; Tst.jml = jml
+            TsetStatus("AUTO-TRADE " .. jml .. " token -> " .. target.Name .. " (gift OFF sementara)")
+            Tkirim()
+            task.spawn(function()
+                task.wait(6)
+                pcall(function() if BH and _giftWas ~= false then BH.autoGift = true end end)
+                TsetStatus("trade token kelar -> gift ON lagi")
+            end)
         end
 
         -- ===== UI di panel TRADE =====
