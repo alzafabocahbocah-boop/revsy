@@ -240,7 +240,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.359"
+local VERSION = "8.363"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -440,20 +440,39 @@ task.spawn(function()
                     petTerakhir, nRuleTerakhir = p2, n2
                     if type(r2) == "table" then rincianTerakhir = r2 end
                 end
-                -- v8.354: total pet backpack + v8.358: breakdown SEMUA pet per jenis
+                -- v8.354: total pet + v8.358: per jenis + v8.361: histogram base weight
+                -- (bucket 1..11 kg) per jenis -> panel tampil range kg pet yg gak di list.
                 local bp = plr:FindFirstChild("Backpack")
                 if bp then
+                    local ZAPI = getgenv and getgenv().ZenxAPS
                     local nn = 0; local pjMap = {}
                     for _, t in ipairs(bp:GetChildren()) do
                         if t:IsA("Tool") then
                             nn = nn + 1
                             local f = tostring(t:GetAttribute("f") or "")
-                            if f ~= "" then pjMap[f] = (pjMap[f] or 0) + 1 end
+                            if f ~= "" then
+                                local e = pjMap[f]
+                                if not e then e = { j = 0, kg = {} }; pjMap[f] = e end
+                                e.j = e.j + 1
+                                local uuid = t:GetAttribute("PET_UUID")
+                                if uuid and ZAPI and ZAPI.getBaseKg then
+                                    local ok, bw = pcall(ZAPI.getBaseKg, uuid)
+                                    if ok and type(bw) == "number" and bw > 0 then
+                                        local b = math.floor(bw)
+                                        if b < 1 then b = 1 elseif b > 12 then b = 12 end
+                                        e.kg[b] = (e.kg[b] or 0) + 1
+                                    end
+                                end
+                            end
                         end
                     end
                     totalPetTerakhir = nn
                     local pjArr = {}
-                    for ty, n in pairs(pjMap) do pjArr[#pjArr+1] = { n = ty, j = n } end
+                    for ty, e in pairs(pjMap) do
+                        local kgArr = {}
+                        for b = 1, 12 do kgArr[b] = e.kg[b] or 0 end
+                        pjArr[#pjArr+1] = { n = ty, j = e.j, kg = kgArr }
+                    end
                     table.sort(pjArr, function(a, b) if a.j ~= b.j then return a.j > b.j end return a.n < b.n end)
                     while #pjArr > 80 do table.remove(pjArr) end
                     petJenisTerakhir = pjArr
@@ -1859,10 +1878,44 @@ do
         return true
     end
     BH.fetchRuleFromPanel = fetchRuleFromPanel
+
+    -- v8.360: FETCH ATURAN SNIPE dari panel (target auto-buy global). ver beda ->
+    -- timpa autoSnipe.rules + rebuild UI snipe. BH.autoSnipe dibikin belakangan
+    -- (dicek runtime), jadi aman dipanggil dari loop yg jalan setelah script load.
+    local function fetchSnipeFromPanel()
+        local ok, body = pcall(function()
+            local r = req({ Url = PANEL_URL .. "/snipe-rules", Method = "GET",
+                Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            return r and (r.Body or r.body)
+        end)
+        if not ok or type(body) ~= "string" or body == "" then return false end
+        local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
+        if not ok2 or type(data) ~= "table" then return false end
+        local ver = tonumber(data.ver) or 0
+        local rules = data.rules
+        if ver <= 0 or type(rules) ~= "table" then return false end
+        if BH.marketState.snipeVer == ver then return false end
+        if not BH.autoSnipe then return false end
+        BH.autoSnipe.rules = rules
+        BH.marketState.autoSnipeRules = rules
+        BH.marketState.snipeVer = ver
+        local eg = data.eggSource
+        if eg == "prem" or eg == "biasa" or eg == "all" then
+            BH.autoSnipe.eggSource = eg
+            BH.marketState.autoSnipeEggSource = eg
+        end
+        pcall(function() BH.saveMarketState(BH.marketState) end)
+        pcall(function() if BH.autoSnipe.rebuildRules then BH.autoSnipe.rebuildRules() end end)
+        print("[ZenxMarket] aturan snipe dari panel ke-apply | ver="..ver.." | "..#rules.." rule")
+        return true
+    end
+    BH.fetchSnipeFromPanel = fetchSnipeFromPanel
+
     task.spawn(function()
         task.wait(6)
         pcall(fetchRuleFromPanel)
-        while true do task.wait(120) pcall(fetchRuleFromPanel) end
+        pcall(fetchSnipeFromPanel)
+        while true do task.wait(120) pcall(fetchRuleFromPanel) pcall(fetchSnipeFromPanel) end
     end)
 
     -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
