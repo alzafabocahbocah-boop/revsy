@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.385"
+local VERSION = "8.387"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -714,6 +714,12 @@ end)
 
 _G.ZenxV8 = _G.ZenxV8 or {}
 local function L(s) table.insert(_G.ZenxV8, s) print("[ZV8]", s) end
+-- v8.387: log KABAR PANEL/ANTI-NABRAK (buat log box di tab Listing). Kepisah dari L() (yg spam).
+_G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+function _G.__ZenxPL(msg)
+    table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  " .. tostring(msg))
+    if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
+end
 
 -- ===== v8.46: Anti-AFK (cegah kick karena idle 20 menit) =====
 -- v8.107: MULTI-METHOD anti-AFK (cobain semua biar mana yg jalan)
@@ -1997,6 +2003,9 @@ do
         pcall(function() applyState(st) end)
         BH.marketState.rulesVer = ver
         print("[ZenxMarket] aturan list dari panel ke-apply | ver="..ver.." | "..#rules.." rule")
+        _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+        table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  « PANEL: update list → " .. #rules .. " rule »")
+        if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
         return true
     end
     BH.fetchRuleFromPanel = fetchRuleFromPanel
@@ -2029,6 +2038,9 @@ do
         pcall(function() BH.saveMarketState(BH.marketState) end)
         pcall(function() if BH.autoSnipe.rebuildRules then BH.autoSnipe.rebuildRules() end end)
         print("[ZenxMarket] aturan snipe dari panel ke-apply | ver="..ver.." | "..#rules.." rule")
+        _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+        table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  « PANEL: update snipe → " .. #rules .. " target »")
+        if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
         return true
     end
     BH.fetchSnipeFromPanel = fetchSnipeFromPanel
@@ -2037,7 +2049,7 @@ do
         task.wait(6)
         pcall(fetchRuleFromPanel)
         pcall(fetchSnipeFromPanel)
-        while true do task.wait(120) pcall(fetchRuleFromPanel) pcall(fetchSnipeFromPanel) end
+        while true do task.wait(20) pcall(fetchRuleFromPanel) pcall(fetchSnipeFromPanel) end
     end)
 
     -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
@@ -2806,7 +2818,7 @@ do
     -- v8.383: LOG event di tab Listing (dari _G.ZenxV8 -> SELL/LIST/HOP/rejoin/scale realtime).
     local logHdr = Instance.new("TextLabel")
     logHdr.Size = UDim2.new(1, -4, 0, 14) logHdr.Position = UDim2.new(0, 2, 0, 190)
-    logHdr.BackgroundTransparency = 1 logHdr.Text = "LOG"
+    logHdr.BackgroundTransparency = 1 logHdr.Text = "KABAR DARI PANEL"
     logHdr.TextColor3 = C.textMute logHdr.Font = FB logHdr.TextSize = 9
     logHdr.TextXAlignment = Enum.TextXAlignment.Left logHdr.Parent = listingPanel
     local logBox = Instance.new("TextLabel")
@@ -2819,11 +2831,15 @@ do
     do local lp = Instance.new("UIPadding") lp.PaddingLeft = UDim.new(0,10) lp.PaddingTop = UDim.new(0,8) lp.PaddingRight = UDim.new(0,8) lp.Parent = logBox end
     task.spawn(function()
         while logBox.Parent do
-            local lines = _G.ZenxV8 or {}
+            local lines = _G.__ZenxPanelLog or {}
             local n = #lines
-            local buf = {}
-            for i = math.max(1, n - 6), n do buf[#buf+1] = tostring(lines[i]) end
-            logBox.Text = table.concat(buf, "\n")
+            if n == 0 then
+                logBox.Text = "(belum ada kabar dari panel)"
+            else
+                local buf = {}
+                for i = math.max(1, n - 5), n do buf[#buf+1] = tostring(lines[i]) end
+                logBox.Text = table.concat(buf, "\n")
+            end
             task.wait(2)
         end
     end)
@@ -9071,6 +9087,8 @@ local function hopToBestServer()
         for _, n in pairs(otherIds) do table.insert(names, n) end
         L(string.format("[Multi-acc] %d account aktif (%s) | priority:%d server | fallback:%d server",
             otherCount, table.concat(names, ", "), #priorityServers, #fallbackServers))
+        -- v8.387: log ke KABAR PANEL box biar keliatan proses anti-nabrak
+        if _G.__ZenxPL then _G.__ZenxPL("hop: tercatat " .. otherCount .. " job id akun kita -> cari server gak sama (" .. #priorityServers .. " bersih)") end
     end
 
     L(string.format("Total %d server | top:%d/%d | bottom:%d/%d",
@@ -9137,11 +9155,10 @@ hopNowBtn.MouseButton1Click:Connect(function() task.spawn(hopToBestServer) end)
 -- v8.196: expose hopToBestServer ke BH supaya tombol HOP NOW (rejoin tab) bisa pakai juga
 BH.manualHop = function() task.spawn(hopToBestServer) end
 
--- v8.377: RESOLUSI NABRAK — tiap 50s cek presence. Kalo ada akun kita LAIN di server yg SAMA
--- (jobId sama), yg NYUSUL (since lebih GEDE = masuk belakangan, atau kalah tiebreak nama) HOP
--- cari server baru. Yg DULUAN (since kecil) TETEP. Jadi cuma 1 yg pindah, gak dua-duanya kabur.
+-- v8.387: RESOLUSI NABRAK — tiap 20s cek presence (dipercepat dari 50s). Kalo ada akun kita LAIN
+-- di server SAMA (jobId sama), yg NYUSUL (since gede) HOP. Log ke KABAR PANEL box (keliatan).
 task.spawn(function()
-    task.wait(25)
+    task.wait(10)
     while true do
         pcall(function()
             local raw
@@ -9152,22 +9169,24 @@ task.spawn(function()
                     local myJob = tostring(game.JobId)
                     local mySince = tonumber(_G.__ZenxJobIdSince) or os.time()
                     local myName = player.Name
-                    local kalah = false
+                    local nAll, kalah, lawan = 0, false, nil
                     for akun, info in pairs(obj) do
+                        nAll = nAll + 1
                         if akun ~= myName and type(info) == "table" and tostring(info.j) == myJob then
                             local theirSince = tonumber(info.s) or 0
-                            if theirSince < mySince then kalah = true; break                              -- dia duluan -> gua hop
-                            elseif theirSince == mySince and tostring(akun) < myName then kalah = true; break end  -- seri -> tiebreak nama
+                            if theirSince < mySince then kalah = true; lawan = akun; break
+                            elseif theirSince == mySince and tostring(akun) < myName then kalah = true; lawan = akun; break end
                         end
                     end
                     if kalah then
-                        L("[anti-nabrak] ada akun kita di server SAMA + gua yg nyusul -> HOP cari server baru")
+                        if _G.__ZenxPL then _G.__ZenxPL("nabrak sama " .. tostring(lawan) .. " (tercatat " .. nAll .. " job id) -> cari server gak sama") end
+                        L("[anti-nabrak] nabrak sama " .. tostring(lawan) .. " -> HOP")
                         task.spawn(hopToBestServer)
                     end
                 end
             end
         end)
-        task.wait(50)
+        task.wait(20)
     end
 end)
 
