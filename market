@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.382"
+local VERSION = "8.385"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2489,6 +2489,12 @@ if isGardenServer then
 else
     -- v8.86: di server market, sembunyiin tab GARDEN (cuma muncul di server garden)
     sbBtns.GARDEN.btn.Visible = false
+    -- v8.384: #4 restructure — market server CUMA Market/Snipe/History. Hide sisanya
+    -- (Shop=dibuang, List Harga=masuk ke Market·Listing, Hop Server=masuk Rejoin, Trade=garden).
+    sbBtns.SHOP.btn.Visible = false
+    sbBtns["LIST HARGA"].btn.Visible = false
+    sbBtns["HOP SERVER"].btn.Visible = false
+    sbBtns.TRADE.btn.Visible = false
 end
 
 -- Activate Market default
@@ -2796,7 +2802,31 @@ do
             if py >= 160 then el.Visible = false end
         end
     end
-    rulesScroll.Size = UDim2.new(1, 0, 0, 320)   -- dari 158 -> 320, isi area form yg dikosongin
+    rulesScroll.Size = UDim2.new(1, 0, 0, 180)   -- v8.383: kecilin dari 320 buat kasih ruang log
+    -- v8.383: LOG event di tab Listing (dari _G.ZenxV8 -> SELL/LIST/HOP/rejoin/scale realtime).
+    local logHdr = Instance.new("TextLabel")
+    logHdr.Size = UDim2.new(1, -4, 0, 14) logHdr.Position = UDim2.new(0, 2, 0, 190)
+    logHdr.BackgroundTransparency = 1 logHdr.Text = "LOG"
+    logHdr.TextColor3 = C.textMute logHdr.Font = FB logHdr.TextSize = 9
+    logHdr.TextXAlignment = Enum.TextXAlignment.Left logHdr.Parent = listingPanel
+    local logBox = Instance.new("TextLabel")
+    logBox.Size = UDim2.new(1, 0, 0, 92) logBox.Position = UDim2.new(0, 0, 0, 206)
+    logBox.BackgroundColor3 = Color3.fromRGB(8, 8, 8) logBox.BorderSizePixel = 0
+    logBox.Text = "" logBox.TextColor3 = C.textDim logBox.Font = Enum.Font.Code logBox.TextSize = 10
+    logBox.TextXAlignment = Enum.TextXAlignment.Left logBox.TextYAlignment = Enum.TextYAlignment.Top
+    logBox.TextWrapped = true logBox.Parent = listingPanel
+    Instance.new("UICorner", logBox).CornerRadius = UDim.new(0, 8)
+    do local lp = Instance.new("UIPadding") lp.PaddingLeft = UDim.new(0,10) lp.PaddingTop = UDim.new(0,8) lp.PaddingRight = UDim.new(0,8) lp.Parent = logBox end
+    task.spawn(function()
+        while logBox.Parent do
+            local lines = _G.ZenxV8 or {}
+            local n = #lines
+            local buf = {}
+            for i = math.max(1, n - 6), n do buf[#buf+1] = tostring(lines[i]) end
+            logBox.Text = table.concat(buf, "\n")
+            task.wait(2)
+        end
+    end)
 end
 
 
@@ -12086,6 +12116,45 @@ BH.buildGardenPanel = function()
     gTravelBtn.Font = FM gTravelBtn.TextSize = 11
     gTravelBtn.BorderSizePixel = 0 gTravelBtn.Parent = btnRow
     Instance.new("UICorner", gTravelBtn).CornerRadius = UDim.new(0, 6)
+
+    -- v8.385: STATUS HEADER garden — token / pet(full) / age-500 leveling / status balik-home.
+    -- Info doang (bagian "Market status" dari design), gak ganggu 3 toggle di btnRow atas.
+    local gStat = Instance.new("Frame")
+    gStat.Size = UDim2.new(1, -28, 0, 58) gStat.Position = UDim2.new(0, 14, 0, 48)
+    gStat.BackgroundColor3 = C.card gStat.BorderSizePixel = 0 gStat.Parent = gp
+    Instance.new("UICorner", gStat).CornerRadius = UDim.new(0, 8)
+    do local st = Instance.new("UIStroke", gStat) st.Color = C.border st.Transparency = 0.4 end
+    local function gCol(x, w, lblTxt)
+        local v = Instance.new("TextLabel")
+        v.Size = UDim2.new(w, 0, 0, 22) v.Position = UDim2.new(x, 0, 0, 9) v.BackgroundTransparency = 1
+        v.Text = "-" v.TextColor3 = C.accent v.Font = FB v.TextSize = 17 v.Parent = gStat
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(w, 0, 0, 14) l.Position = UDim2.new(x, 0, 0, 36) l.BackgroundTransparency = 1
+        l.Text = lblTxt l.TextColor3 = C.textMute l.Font = FM l.TextSize = 9 l.Parent = gStat
+        return v
+    end
+    local gTok = gCol(0.02, 0.31, "TOKEN")
+    local gPet = gCol(0.35, 0.31, "PET"); gPet.TextColor3 = C.text
+    local gA5  = gCol(0.68, 0.30, "AGE-500 LVL")
+    local gInfo = Instance.new("TextLabel")
+    gInfo.Size = UDim2.new(1, -28, 0, 14) gInfo.Position = UDim2.new(0, 14, 0, 110) gInfo.BackgroundTransparency = 1
+    gInfo.Text = "balik home: pas FULL / age-500 <10" gInfo.TextColor3 = C.textDim gInfo.Font = FM gInfo.TextSize = 10
+    gInfo.TextXAlignment = Enum.TextXAlignment.Left gInfo.Parent = gp
+    task.spawn(function()
+        while gStat.Parent do
+            local tok = tonumber(_G.__ZenxTokenNow) or 0
+            gTok.Text = tok >= 1000 and (string.format("%.0f", tok/1000).."K") or tostring(tok)
+            gPet.Text = tostring(_G.__ZenxMarketTotalPet or "-")
+            local mAge = _G.__ZenxLvlAge500; local a5tot = 0
+            if type(mAge) == "table" then
+                for _, pl in ipairs(game:GetService("Players"):GetPlayers()) do
+                    local a = mAge[pl.Name]; if a then a5tot = a5tot + a end
+                end
+            end
+            gA5.Text = tostring(a5tot)
+            task.wait(3)
+        end
+    end)
 
     -- ===== Auto-Accept logic (gift + trade) — DEFERRED scan biar buildGardenPanel gak block =====
     BH.autoGift = (BH.marketState and BH.marketState.autoGift) == true
