@@ -240,7 +240,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.356"
+local VERSION = "8.357"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -442,7 +442,27 @@ task.spawn(function()
                 -- v8.354: total pet backpack + maxInv buat panel ("total pet X/Y")
                 local bp = plr:FindFirstChild("Backpack")
                 if bp then local nn=0; for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then nn=nn+1 end end; totalPetTerakhir=nn end
-                local mi = tonumber(_G.__ZenxMaxInv); if mi and mi > 0 then maxInvTerakhir = mi end
+                -- v8.357: maxInv dari UI "Pet Items (X/Y)" (kayak up6kg) -> Y = max ASLI akun.
+                -- attribute (getInventoryCapacity) = fallback kalo UI belum ke-load.
+                local mxUI = nil
+                pcall(function()
+                    local pg = plr:FindFirstChild("PlayerGui")
+                    if pg then
+                        for _, d in ipairs(pg:GetDescendants()) do
+                            if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
+                                local low = d.Text:lower()
+                                if low:find("pet") and low:find("item") then   -- "Pet Items" (BUKAN "All Items")
+                                    local aa, bb = d.Text:match("(%d+)%s*/%s*(%d+)")
+                                    if aa and bb then aa, bb = tonumber(aa), tonumber(bb)
+                                        if aa and bb and bb > 0 and math.abs(aa - (totalPetTerakhir or 0)) <= 10 then mxUI = bb; break end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+                if mxUI and mxUI > 0 then maxInvTerakhir = mxUI
+                else local mi = tonumber(_G.__ZenxMaxInv); if mi and mi > 0 then maxInvTerakhir = mi end end
                 -- v8.356: snipe breakdown per tipe (dari _G.__ZenxSnipePer) — paling DIKIT dulu
                 local sj, stk = {}, 0
                 if type(_G.__ZenxSnipePer) == "table" then
