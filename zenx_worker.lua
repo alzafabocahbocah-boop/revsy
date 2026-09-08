@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.463-cf"
+local VERSION = "9.466-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2343,6 +2343,34 @@ local function api_post(cfg, jalur, body, metode)
                              metode or "POST", TMP, 10))
 end
 
+-- v9.466: SYNC file market ke workspace (rules/snipe/presence). Worker (1 per phone) fetch
+-- backend + tulis file lokal -> market baca LOKAL instan (gak perlu tiap akun GET backend).
+-- Throttle 5s. GLOBAL (bukan local) biar gak makan slot limit 200 local main chunk.
+_G.__ZenxSyncMktTs = 0
+function sync_market_files(cfg)
+    if not cfg or not cfg.workspace_dir then return end
+    if not tostring(cfg.script_label or ""):find("MARKET") then return end   -- v9.466: cuma phone yg ada akun MARKET (gak buang fetch di phone up6kg/uplevel)
+    if (os.time() - (_G.__ZenxSyncMktTs or 0)) < 5 then return end
+    _G.__ZenxSyncMktTs = os.time()
+    local dirs = denyut_dirs(cfg)
+    local function tulis(jalur, nama)
+        local body = api_get(cfg, jalur)
+        if type(body) == "string" and #body > 0 and body:sub(1, 1) ~= "<" then
+            local tmp = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/.zmkt.tmp"
+            local f = io.open(tmp, "w")
+            if f then
+                f:write(body); f:close()
+                for _, dir in ipairs(dirs) do
+                    sh_silent("su -c 'cat " .. tmp .. " > \"" .. dir .. "/" .. nama .. "\"' 2>/dev/null")
+                end
+            end
+        end
+    end
+    tulis("/market-rules", "zenx_market_rules.json")
+    tulis("/snipe-rules", "zenx_snipe_rules.json")
+    tulis("/market-presence", "zenx_market_presence.json")
+end
+
 -- JSON kecil doang, cukup pola. gak perlu library.
 local function ambil_str(js, k) return tostring(js or ""):match('"'..k..'"%s*:%s*"(.-)"') end
 local function ambil_num(js, k) return tonumber(tostring(js or ""):match('"'..k..'"%s*:%s*(-?%d+)')) end
@@ -2367,6 +2395,7 @@ function ada_perintah_baru(cfg, isiLagiJalan)
     if (skrg - _apb_waktu) < 2 then return _apb_cache end
     _apb_waktu = skrg
     local r = api_get(cfg, "/perintah?tim=" .. cfg.tim)
+    pcall(function() sync_market_files(cfg) end)   -- v9.466: sekalian sync file market (throttle 5s internal)
     local isi = (ambil_str(r, "isi") or "")
     local u = isi:upper()
     -- v9.411: DEBUG JEJAK. Toggle DEBUGON/DEBUGOFF (gak nyela). Log tiap command DISTINCT
@@ -3023,7 +3052,14 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
             end
         end)
     end
+    -- v9.464: kalau akun ini punya "server terakhir" (dari oper/isi bahan/dll), rejoin ke
+    -- SITU (bukan market default). Bypass override market. Save/restore flag biar gak nabrak
+    -- pemakaian SERVER_MOVE_TEMBAK yg lain (mis. lagi di tengah blok tembak berlabel).
+    local _moveLink = pkg and KICK_DIURUS["move_link:" .. pkg]
+    local _smtSave = SERVER_MOVE_TEMBAK
+    if _moveLink and _moveLink ~= "" then link_client = _moveLink; SERVER_MOVE_TEMBAK = true end
     local url = build_url(cfg, link_client)
+    SERVER_MOVE_TEMBAK = _smtSave
     -- v8.51: LOG url join (biar keliatan pakai link PS apa public). Kalau ada
     -- privateServerLinkCode -> PS. Kalau cuma placeId -> public.
     do
@@ -8410,6 +8446,27 @@ local function run(cfg)
                         local _r = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_denyut_*.txt; do [ -f \"$f\" ] && echo \"$f|$(cat \"$f\" 2>/dev/null)|$(stat -c %Y \"$f\" 2>/dev/null)\"; done' 2>/dev/null") or ""
                         if _r ~= "" then raw = raw .. _r .. "\n" end
                     end
+                    -- v9.465: BALIK HOME -- market.lua nulis zenx_balikhome_<akun>.txt pas FULL di
+                    -- garden -> worker tembak balik ke MARKET (public) + HAPUS move_link (ingatan
+                    -- server leveling) biar rejoin berikutnya ke market normal -> hapus file signal.
+                    for _, _dd in ipairs(denyut_dirs(cfg)) do
+                        local _bh = sh("su -c 'cd \"" .. _dd .. "\" 2>/dev/null && for f in zenx_balikhome_*.txt; do [ -f \"$f\" ] && echo \"$f\"; done' 2>/dev/null") or ""
+                        for fline in _bh:gmatch("[^\n]+") do
+                            local akun = fline:match("zenx_balikhome_(.-)%.txt")
+                            if akun and akun ~= "" then
+                                local pkgBH = nil
+                                for pk, u in pairs(mapAkun or {}) do if u == akun then pkgBH = pk break end end
+                                if pkgBH then
+                                    KICK_DIURUS["move_link:" .. pkgBH] = nil   -- hapus ingatan leveling -> rejoin balik ke market
+                                    info(("[balik-home] %s FULL di garden -> tembak balik MARKET + hapus move_link"):format(akun))
+                                    pcall(function() open_one(cfg, pkgBH, nil, "balik-home", true) end)   -- nil link -> market default (public)
+                                    KICK_DIURUS["tembak_ts:" .. pkgBH] = os.time()
+                                    TERAKHIR_BUKA[pkgBH] = os.time()
+                                end
+                                pcall(function() sh("su -c 'rm -f \"" .. _dd .. "/" .. fline .. "\"' 2>/dev/null") end)
+                            end
+                        end
+                    end
                     local ddetail = {}
                     local sheckDenyut = {}   -- v9.254: sheckles dari denyut file (nebeng)
                     for line in raw:gmatch("[^\n]+") do
@@ -10117,6 +10174,16 @@ local function run(cfg)
                         -- v9.460: tembak BER-LABEL (@isibahan/@oper/dll) = PINDAH place (garden leveling)
                         -- pakai PS share link -> build_url lewati override market-public.
                         SERVER_MOVE_TEMBAK = (labelT ~= "")
+                        -- v9.464: INGET server terakhir tiap akun ditembak (oper/isi bahan/dll ->
+                        -- server tujuan). Pas rejoin nanti, balik ke SITU (bukan market default).
+                        -- balikin = pulang -> HAPUS ingatan (rejoin pakai default/home lagi).
+                        for _, pkg in ipairs(pkgsT) do
+                            if labelT == "balikin" or labelT == "" then
+                                KICK_DIURUS["move_link:" .. pkg] = nil
+                            elseif mapLink[pkg] and mapLink[pkg] ~= "" then
+                                KICK_DIURUS["move_link:" .. pkg] = mapLink[pkg]
+                            end
+                        end
                         for i, pkg in ipairs(pkgsT) do
                             local u = (mapAkun or {})[pkg]
                             -- v9.396: SKIP tembak client yg UDAH sehat in-game (denyut fresh <=120s),
