@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.460-cf"
+local VERSION = "9.461-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -655,6 +655,10 @@ DENYUT_UMUR = {}        -- v9.77: akun -> umur denyut (detik) terakhir. lapor ki
 AKUN_KENAL = {}         -- v9.457: akun -> true : akun yg KE-INSTALL di device ini (dari prefs, gak
                         -- butuh denyut). Buat NYASAR check: command buat akun device ini jangan
                         -- diabaikan cuma gara-gara belum ada denyut (mis. market fresh start).
+SERVER_MOVE_TEMBAK = false   -- v9.460: oper/isi bahan/dll dari panel (TEMBAK ber-label) -> build_url
+                        -- LEWATI override "market selalu public" + public + placeBerubah. Akun
+                        -- DIPINDAH ke place lain (garden leveling) pakai PS share link -> jangan
+                        -- dipaksa balik ke place/public sekarang.
 local C = { R="\27[31m",G="\27[32m",Y="\27[33m",C="\27[36m",D="\27[90m",N="\27[0m",BOLD="\27[1m",
     KRML="\27[38;5;173m", KOP="\27[38;5;130m", KRMD="\27[38;5;94m" }
 local LOG_KIRIM = {}          -- v9.109: SEMUA baris log (buat dikirim ke panel), maks 60
@@ -2885,16 +2889,16 @@ local function build_url(cfg, link_client)
     -- cek SERVER_TERAKHIR (field server dari setting-tim): cuma "public" yg maksa.
     -- v9.430: MARKET (TradeWorld 129954712878723) = SELALU PUBLIC. Gak perlu PS -- cuma
     -- place ID yg penting (semua akun kumpul di public market). Abaikan ps_link.
-    if tostring(cfg.place_id) == "129954712878723" then
+    if (not SERVER_MOVE_TEMBAK) and tostring(cfg.place_id) == "129954712878723" then
         return "roblox://placeId=" .. cfg.place_id
     end
     local serverMode = (SERVER_TERAKHIR or ""):lower()
-    if serverMode:find("public") then
+    if (not SERVER_MOVE_TEMBAK) and serverMode:find("public") then
         -- panel pilih server PUBLIC -> gak pakai PS apapun (link_client/override)
         return "roblox://placeId=" .. cfg.place_id
     end
     -- v9.429: place BARU berubah -> ps_link lama buat PLACE LAMA (nyasar). Abaikan -> public.
-    if _placeBerubah then
+    if (not SERVER_MOVE_TEMBAK) and _placeBerubah then
         return "roblox://placeId=" .. cfg.place_id
     end
     -- v9.97: SERVER CUSTOM -> semua akun ke SATU server yg SAMA (link custom lo).
@@ -10101,6 +10105,9 @@ local function run(cfg)
                         -- sehat/baru-buka. (Isi bahan: pindah ke server leveling TANPA nutup. WC
                         -- teleport bisa mindahin in-game client, kayak HACT OTO.)
                         for _, pkg in ipairs(pkgsT) do KICK_DIURUS["mau_force:" .. pkg] = os.time() end
+                        -- v9.460: tembak BER-LABEL (@isibahan/@oper/dll) = PINDAH place (garden leveling)
+                        -- pakai PS share link -> build_url lewati override market-public.
+                        SERVER_MOVE_TEMBAK = (labelT ~= "")
                         for i, pkg in ipairs(pkgsT) do
                             local u = (mapAkun or {})[pkg]
                             -- v9.396: SKIP tembak client yg UDAH sehat in-game (denyut fresh <=120s),
@@ -10146,6 +10153,7 @@ local function run(cfg)
                             end
                         end
                         ok(("REJOIN [%s]: %d ditembak, %d skip"):format(labelNama, nTembak, nSkip))
+                        SERVER_MOVE_TEMBAK = false   -- v9.460: reset flag abis loop
                         notify("ZenX "..cfg.tim, "TEMBAK -> "..#pkgsT.." client ke server baru")
                         lastOpen = os.time()
                     else
