@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.398"
+local VERSION = "8.401"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2505,6 +2505,7 @@ if isGardenServer then
     pcall(function() sbBtns.GARDEN.lbl.Text = "GIFT PET" end)
     pcall(function() sbBtns.TRADE.lbl.Text = "TRADE TOKEN" end)
     -- marketPanel di garden = STATUS (bukan Listing). Deferred: hide child Listing + tambah status.
+    -- v8.401: TAB GARDEN = status frame PERSIS garden-1-market.html
     task.spawn(function()
         task.wait(0.6)
         local sf = Instance.new("Frame")
@@ -2512,33 +2513,63 @@ if isGardenServer then
         for _, ch in ipairs(marketPanel:GetChildren()) do
             if ch:IsA("GuiObject") and ch ~= sf then ch.Visible = false end
         end
+        local lay = Instance.new("UIListLayout")
+        lay.Padding = UDim.new(0, 7) lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Parent = sf
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 4) pad.PaddingLeft = UDim.new(0, 2) pad.PaddingRight = UDim.new(0, 2) pad.Parent = sf
+
+        -- STRIP 4 kolom: TOKEN / PET / AGE-500 LVL / AKUN LVL
         local strip = Instance.new("Frame")
-        strip.Size = UDim2.new(1, 0, 0, 62) strip.Position = UDim2.new(0, 0, 0, 8)
-        strip.BackgroundColor3 = C.card strip.BorderSizePixel = 0 strip.Parent = sf
-        Instance.new("UICorner", strip).CornerRadius = UDim.new(0, 8)
-        do local s = Instance.new("UIStroke", strip) s.Color = C.border s.Transparency = 0.4 end
-        local function col(x, w, lblTxt)
+        strip.Size = UDim2.new(1, 0, 0, 64) strip.BackgroundColor3 = C.card strip.BorderSizePixel = 0 strip.LayoutOrder = 1 strip.Parent = sf
+        Instance.new("UICorner", strip).CornerRadius = UDim.new(0, 11)
+        do local s = Instance.new("UIStroke", strip) s.Color = C.border s.Transparency = 0.3 end
+        local function col(i, valColor, lblTxt)
+            local w = 0.25
+            local cell = Instance.new("Frame")
+            cell.Size = UDim2.new(w, 0, 1, 0) cell.Position = UDim2.new(w * (i - 1), 0, 0, 0) cell.BackgroundTransparency = 1 cell.Parent = strip
             local v = Instance.new("TextLabel")
-            v.Size = UDim2.new(w, 0, 0, 24) v.Position = UDim2.new(x, 0, 0, 10) v.BackgroundTransparency = 1
-            v.Text = "-" v.TextColor3 = C.accent v.Font = FB v.TextSize = 18 v.Parent = strip
+            v.Size = UDim2.new(1, 0, 0, 26) v.Position = UDim2.new(0, 0, 0, 12) v.BackgroundTransparency = 1
+            v.RichText = true v.Text = "-" v.TextColor3 = valColor v.Font = FB v.TextSize = 20 v.Parent = cell
             local l = Instance.new("TextLabel")
-            l.Size = UDim2.new(w, 0, 0, 14) l.Position = UDim2.new(x, 0, 0, 38) l.BackgroundTransparency = 1
-            l.Text = lblTxt l.TextColor3 = C.textMute l.Font = FM l.TextSize = 9 l.Parent = strip
+            l.Size = UDim2.new(1, 0, 0, 12) l.Position = UDim2.new(0, 0, 0, 42) l.BackgroundTransparency = 1
+            l.Text = lblTxt l.TextColor3 = C.textMute l.Font = FB l.TextSize = 8 l.Parent = cell
             return v
         end
-        local vTok = col(0.03, 0.31, "TOKEN")
-        local vPet = col(0.36, 0.31, "PET"); vPet.TextColor3 = C.text
-        local vA5 = col(0.69, 0.29, "AGE-500 LVL")
-        local info = Instance.new("TextLabel")
-        info.Size = UDim2.new(1, 0, 0, 16) info.Position = UDim2.new(0, 4, 0, 80) info.BackgroundTransparency = 1
-        info.Text = "balik home: pas FULL / age-500 leveling <10" info.TextColor3 = C.textDim info.Font = FM info.TextSize = 11
-        info.TextXAlignment = Enum.TextXAlignment.Left info.Parent = sf
+        local vTok = col(1, C.accent, "TOKEN")
+        local vPet = col(2, C.text, "PET")
+        local vA5 = col(3, C.success, "AGE-500 LVL")
+        local vAk = col(4, C.accent, "AKUN LVL")
+
+        -- ROW helper (label kiri + value kanan)
+        local function row(order, leftTxt, rightColor)
+            local r = Instance.new("Frame")
+            r.Size = UDim2.new(1, 0, 0, 38) r.BackgroundColor3 = C.card r.BorderSizePixel = 0 r.LayoutOrder = order r.Parent = sf
+            Instance.new("UICorner", r).CornerRadius = UDim.new(0, 10)
+            do local s = Instance.new("UIStroke", r) s.Color = C.border s.Transparency = 0.4 end
+            local ll = Instance.new("TextLabel")
+            ll.Size = UDim2.new(0.55, -15, 1, 0) ll.Position = UDim2.new(0, 15, 0, 0) ll.BackgroundTransparency = 1
+            ll.Text = leftTxt ll.TextColor3 = C.textDim ll.Font = FM ll.TextSize = 12 ll.TextXAlignment = Enum.TextXAlignment.Left ll.Parent = r
+            local rv = Instance.new("TextLabel")
+            rv.Size = UDim2.new(0.45, -15, 1, 0) rv.Position = UDim2.new(0.55, 0, 0, 0) rv.BackgroundTransparency = 1
+            rv.Text = "-" rv.TextColor3 = rightColor rv.Font = FB rv.TextSize = 12 rv.TextXAlignment = Enum.TextXAlignment.Right rv.Parent = r
+            return rv
+        end
+        local rServer = row(2, "server", C.text)
+        local rStatus = row(3, "status", C.accent)
+
+        -- HEADER balik home
+        local hd = Instance.new("TextLabel")
+        hd.Size = UDim2.new(1, 0, 0, 16) hd.BackgroundTransparency = 1 hd.Text = "BALIK HOME OTOMATIS KALAU"
+        hd.TextColor3 = C.textMute hd.Font = FB hd.TextSize = 9 hd.TextXAlignment = Enum.TextXAlignment.Left hd.LayoutOrder = 4 hd.Parent = sf
+
+        local rFull = row(5, "1 · market full", C.text)
+        local rAge = row(6, "2 · age-500 leveling habis", C.accent) rAge.Text = "< 10"
+
+        -- TP KE MARKET
         local tpBtn = Instance.new("TextButton")
-        tpBtn.Size = UDim2.new(1, 0, 0, 34) tpBtn.Position = UDim2.new(0, 0, 0, 104)
-        tpBtn.BackgroundColor3 = C.accent tpBtn.AutoButtonColor = false
-        tpBtn.Text = "TP KE MARKET" tpBtn.TextColor3 = Color3.fromRGB(17, 17, 17)
-        tpBtn.Font = FB tpBtn.TextSize = 12 tpBtn.BorderSizePixel = 0 tpBtn.Parent = sf
-        Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 8)
+        tpBtn.Size = UDim2.new(1, 0, 0, 40) tpBtn.BackgroundColor3 = C.accent tpBtn.AutoButtonColor = false
+        tpBtn.Text = "TP KE MARKET" tpBtn.TextColor3 = C.text tpBtn.Font = FB tpBtn.TextSize = 13 tpBtn.BorderSizePixel = 0 tpBtn.LayoutOrder = 7 tpBtn.Parent = sf
+        Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 10)
         tpBtn.MouseButton1Click:Connect(function()
             local b = _G.__ZenxTPBtn
             if not b then return end
@@ -2549,17 +2580,62 @@ if isGardenServer then
                 if firesignal then firesignal(b.MouseButton1Click) end
             end)
         end)
+
+        -- UPDATE loop
         task.spawn(function()
+            local Players = game:GetService("Players")
             while sf.Parent do
                 local tok = tonumber(_G.__ZenxTokenNow) or 0
-                vTok.Text = tok >= 1000 and (string.format("%.0f", tok / 1000) .. "K") or tostring(tok)
-                vPet.Text = tostring(_G.__ZenxMarketTotalPet or "-")
-                local mAge = _G.__ZenxLvlAge500; local a5 = 0
-                if type(mAge) == "table" then for _, pl in ipairs(game:GetService("Players"):GetPlayers()) do local a = mAge[pl.Name]; if a then a5 = a5 + a end end end
+                if tok >= 1000 then
+                    vTok.Text = string.format("%.0f", tok / 1000) .. "<font size=\"12\" color=\"#5c5c5c\">K</font>"
+                else
+                    vTok.Text = tostring(tok)
+                end
+                local pet = tonumber(_G.__ZenxMarketTotalPet) or 0
+                local maxI = tonumber(_G.__ZenxMaxInv) or 0
+                if maxI > 0 then
+                    vPet.Text = tostring(pet) .. "<font size=\"12\" color=\"#5c5c5c\">/" .. maxI .. "</font>"
+                else
+                    vPet.Text = tostring(pet)
+                end
+                local mAge = _G.__ZenxLvlAge500; local a5, akn = 0, 0
+                if type(mAge) == "table" then
+                    for _, pl in ipairs(Players:GetPlayers()) do
+                        local a = mAge[pl.Name]
+                        if a then a5 = a5 + a; akn = akn + 1 end
+                    end
+                end
                 vA5.Text = tostring(a5)
+                vAk.Text = tostring(akn)
+                local priv = (game.PrivateServerId ~= nil and game.PrivateServerId ~= "")
+                rServer.Text = "garden · " .. (priv and "private" or "public")
+                local full = (maxI > 0 and pet >= maxI)
+                rStatus.Text = full and "FULL" or "nerima bahan · belum full"
+                rStatus.TextColor3 = full and C.success or C.accent
+                rFull.Text = (maxI > 0) and (pet .. " / " .. maxI) or (pet .. " / -")
                 task.wait(3)
             end
         end)
+    end)
+
+    -- v8.400: SHELL — sidebar 3 tab udah bener; kosongin ISI tiap tab dulu (diisi ulang belakangan).
+    -- Konten lama gak di-destroy, cuma di-hide (Visible=false) biar logic gift/trade/auto-accept gak crash.
+    task.spawn(function()
+        task.wait(1.5)  -- tunggu buildGardenPanel + status frame selesai kebangun
+        local function emptyTab(panel, label)
+            if not panel then return end
+            for _, ch in ipairs(panel:GetChildren()) do
+                if ch:IsA("GuiObject") then ch.Visible = false end
+            end
+            local ph = Instance.new("TextLabel")
+            ph.Name = "ZenxEmptyPlaceholder"
+            ph.Size = UDim2.new(1, -24, 0, 40) ph.Position = UDim2.new(0, 12, 0.5, -20)
+            ph.BackgroundTransparency = 1 ph.Text = label
+            ph.TextColor3 = C.textDim ph.Font = FM ph.TextSize = 13
+            ph.TextXAlignment = Enum.TextXAlignment.Center ph.Parent = panel
+        end
+        emptyTab(BH.gardenPanel, "GIFT PET — kosong")   -- tab GIFT PET (diisi nanti)
+        pcall(function() emptyTab(panels["TRADE"], "TRADE TOKEN — kosong") end)  -- tab TRADE TOKEN (diisi nanti)
     end)
 
     marketPanel.Visible = false
@@ -12853,7 +12929,7 @@ BH.buildGardenPanel = function()
 
     -- Helper labels (under status)
     local giftPickedLbl = Instance.new("TextLabel")
-    giftPickedLbl.Size = UDim2.new(1, -24, 0, 18) giftPickedLbl.Position = UDim2.new(0, 12, 0, 224)
+    giftPickedLbl.Size = UDim2.new(1, -24, 0, 18) giftPickedLbl.Position = UDim2.new(0, 12, 0, 248)
     giftPickedLbl.BackgroundTransparency = 1 giftPickedLbl.Text = "Targets: 0 | Pet types: 0"
     giftPickedLbl.TextColor3 = C.textDim giftPickedLbl.Font = FM giftPickedLbl.TextSize = 11
     giftPickedLbl.TextXAlignment = Enum.TextXAlignment.Left giftPickedLbl.Parent = giftCard
