@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.424"
+local VERSION = "8.428"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -871,8 +871,10 @@ do
         BH.marketState.autoStart = true
         S.autoRejoinEnabled = true
         if S.autoSwitchFront == nil then S.autoSwitchFront = true end
-        -- v8.319: PAKSA rejoin interval 18 menit SELALU tiap load (abaikan setting manual).
-        S.rejoinIntervalMin = "18"
+        -- v8.427: rejoin interval BISA DIATUR sendiri + PERSIST (gak balik ke 18 tiap load).
+        -- default 18 CUMA kalo belum pernah diset. Staggering: tiap akun set beda (mis 12/14/16/18)
+        -- biar gak rejoin bareng -> gak masuk matchmaking bareng -> gak nyangkut server sama.
+        if S.rejoinIntervalMin == nil or tostring(S.rejoinIntervalMin) == "" then S.rejoinIntervalMin = "18" end
         S.autoRejoinEnabled = true
         BH.marketState.autoClaim = true
         BH.marketState.autoCleanNonMatch = true
@@ -1796,7 +1798,7 @@ local F = Enum.Font.Gotham
 local main = Instance.new("Frame")
 main.Size = UDim2.new(0, 640, 0, 400) main.Position = UDim2.new(0.5, -320, 0.5, -200)
 main.BackgroundColor3 = C.bg main.BorderSizePixel = 0
-main.Active = true main.Draggable = true main.Parent = gui
+main.Active = true main.Draggable = false main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
 local mainStroke = Instance.new("UIStroke", main)
 mainStroke.Color = C.accent mainStroke.Thickness = 1.5
@@ -1804,6 +1806,40 @@ mainStroke.Color = C.accent mainStroke.Thickness = 1.5
 -- ===== TITLE BAR =====
 local titleBar = Instance.new("Frame")
 titleBar.Size = UDim2.new(1, 0, 0, 44) titleBar.BackgroundTransparency = 1 titleBar.Parent = main
+
+-- v8.428: DRAG CUSTOM SMOOTH (slow-in) — ganti Draggable bawaan yg 1:1 (kelewat sensitif).
+-- Lerp posisi ke target -> gerakan halus. Sadar-scale (bagi oscale.Scale). + recenter pas buka logo.
+do
+    local UIS = game:GetService("UserInputService")
+    local RunS = game:GetService("RunService")
+    local dragging, dragStart, startPos, target = false, nil, nil, nil
+    local function scaleNow() local u = main.Parent and main.Parent:FindFirstChildOfClass("UIScale"); return (u and u.Scale) or 1 end
+    titleBar.Active = true
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true dragStart = input.Position startPos = main.Position target = main.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local sc = scaleNow()
+            local d = input.Position - dragStart
+            target = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X / sc, startPos.Y.Scale, startPos.Y.Offset + d.Y / sc)
+        end
+    end)
+    UIS.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+    RunS.RenderStepped:Connect(function()
+        if target then main.Position = main.Position:Lerp(target, 0.16) end   -- 0.16 = slow-in halus (kecil = makin pelan)
+    end)
+    -- balik ke TENGAH (dipanggil pas buka logo)
+    BH.recenterGui = function()
+        local sc = scaleNow()
+        local center = UDim2.new(0.5 / sc, -320, 0.5 / sc, -200)
+        target = center main.Position = center
+    end
+end
 
 local logoLbl = Instance.new("TextLabel")
 logoLbl.Size = UDim2.new(0, 60, 1, 0) logoLbl.Position = UDim2.new(0, 16, 0, 0)
@@ -1912,6 +1948,7 @@ end)
 zBtn.MouseButton1Click:Connect(function()
     main.Visible = true
     zBtn.Visible = false
+    if BH.recenterGui then pcall(BH.recenterGui) end   -- v8.428: balik ke tengah tiap buka logo
 end)
 
 -- v8.424: pas AWAL EXE, GUI start MINIMIZED (logo Z doang) — pencet logo baru kebuka.
@@ -3904,13 +3941,13 @@ BH.autoRejoinLowPopToggle = addToggleRow(rejBody, "Auto-Rejoin server kosong (<1
 BH.autoSwitchFrontToggle = addToggleRow(rejBody, "Auto-Switch ke booth DEPAN kalo available", false)
 local rejoinBtn = addButtonRow(rejBody, "🔀 HOP NOW", C.accent)
 
--- v8.127: bind rejoin settings to persist
--- v8.319: interval PAKSA 18m - kotak read-only, selalu 18 (abaikan input manual).
+-- v8.427: interval BISA DIATUR + PERSIST (gak dipaksa 18 lagi). Load nilai tersimpan, editable, auto-save.
 pcall(function()
-    intervalBox.Text = "18"
-    intervalBox.TextEditable = false
-    BH.setSetting("rejoinIntervalMin", "18")
+    intervalBox.TextEditable = true
+    local S = BH.marketState and BH.marketState.settings
+    intervalBox.Text = tostring((S and S.rejoinIntervalMin) or "18")
 end)
+BH.bindInput(intervalBox, "rejoinIntervalMin")
 BH.bindInput(listingBox, "rejoinAfterListings")
 BH.bindToggle(autoRejoinToggle, "autoRejoinEnabled")
 BH.bindToggle(BH.autoRejoinLowPopToggle, "autoRejoinLowPop")
@@ -8906,8 +8943,10 @@ task.spawn(function()
             -- skip — garden anchor, gak ikut hop walaupun toggle ON
         elseif autoRejoinToggle.get() then
             local intervalMin = tonumber(intervalBox.Text) or 0
-            -- v8.318: PAKSA max 18 menit (cegah kick idle 20m) walau user set lebih tinggi
-            if intervalMin <= 0 or intervalMin > 18 then intervalMin = 18 end
+            -- v8.427: respect nilai MANUAL (buat staggering biar akun gak rejoin bareng).
+            -- default 18 kalo kosong/invalid. cap aman 60m (anti-AFK v8.46 udah cegah kick idle 20m).
+            if intervalMin <= 0 then intervalMin = 18 end
+            if intervalMin > 60 then intervalMin = 60 end
             if intervalMin > 0 then
                 local elapsedMin = (workspace.DistributedGameTime or 0) / 60
                 if elapsedMin >= intervalMin then
@@ -9492,10 +9531,31 @@ BH.savePresence = function(jobId)
     pcall(function()
         local jid = tostring(jobId or game.JobId)
         if _G.__ZenxLastPresenceJob ~= jid then _G.__ZenxLastPresenceJob = jid; _G.__ZenxJobIdSince = os.time() end
-        local rq = request or http_request or (syn and syn.request)
-        if rq then rq({ Url = "https://dry-glitter-63e4.petagee5.workers.dev/market-presence", Method = "POST",
+        -- v8.426: finder LENGKAP (samain MarketBridge yg kebukti jalan). request() polos sering stub rusak.
+        local rq = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request)
+                or http_request or request or httprequest
+        if type(http) == "table" and http.request then rq = http.request end
+        if not rq then
+            if _G.__ZenxPresPostLast ~= "norq" then _G.__ZenxPresPostLast = "norq"
+                _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+                table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  [presence] ⚠ executor gak punya request() -> POST presence GAK BISA")
+                if #_G.__ZenxPanelLog > 40 then table.remove(_G.__ZenxPanelLog, 1) end
+            end
+            return
+        end
+        local r = rq({ Url = "https://dry-glitter-63e4.petagee5.workers.dev/market-presence", Method = "POST",
             Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = "nfSUwzy6aXTFF0a546iQ2tizIVBeTF3T2Z1Xx0rb" },
-            Body = HttpService:JSONEncode({ akun = player.Name, jobId = jid, since = _G.__ZenxJobIdSince }) }) end
+            Body = HttpService:JSONEncode({ akun = player.Name, jobId = jid, since = _G.__ZenxJobIdSince }) })
+        -- v8.426: log status POST ke KABAR (deduped) — biar ketauan presence beneran ke-kirim apa nggak
+        local okPost = r and (r.StatusCode == 200 or r.Success or r.StatusCode == 204)
+        local st = "code=" .. tostring(r and (r.StatusCode or r.status) or "?")
+        local msg = okPost and ("[presence] ✅ ke-kirim (" .. st .. ") jobId=" .. jid:sub(1,8)) or ("[presence] ❌ POST GAGAL (" .. st .. ")")
+        if _G.__ZenxPresPostLast ~= msg then
+            _G.__ZenxPresPostLast = msg
+            _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+            table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  " .. msg)
+            if #_G.__ZenxPanelLog > 40 then table.remove(_G.__ZenxPanelLog, 1) end
+        end
     end)
 end
 BH.getOtherJobIds = function()
@@ -9684,12 +9744,29 @@ task.spawn(function()
                     local mySince = tonumber(_G.__ZenxJobIdSince) or os.time()
                     local myName = player.Name
                     local nAll, kalah, lawan = 0, false, nil
+                    local sameServer, iSeeMe = 0, false
                     for akun, info in pairs(obj) do
                         nAll = nAll + 1
+                        if akun == myName then iSeeMe = true end
+                        if type(info) == "table" and tostring(info.j) == myJob then
+                            if akun ~= myName then sameServer = sameServer + 1 end
+                        end
                         if akun ~= myName and type(info) == "table" and tostring(info.j) == myJob then
                             local theirSince = tonumber(info.s) or 0
                             if theirSince < mySince then kalah = true; lawan = akun; break
                             elseif theirSince == mySince and tostring(akun) < myName then kalah = true; lawan = akun; break end
+                        end
+                    end
+                    -- v8.425: DEBUG anti-nabrak ke KABAR (deduped) — cek presence jalan apa nggak
+                    do
+                        local dmsg = "[nabrak] presence: " .. nAll .. " akun tercatat | aku keregister: " .. tostring(iSeeMe) ..
+                                     " | 1-server sama aku: " .. sameServer .. " | jobId=" .. myJob:sub(1, 8)
+                        if not iSeeMe then dmsg = dmsg .. " ⚠ AKU GAK KEREGISTER (POST presence gagal!)" end
+                        if _G.__ZenxNabrakLast ~= dmsg then
+                            _G.__ZenxNabrakLast = dmsg
+                            _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+                            table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  " .. dmsg)
+                            if #_G.__ZenxPanelLog > 40 then table.remove(_G.__ZenxPanelLog, 1) end
                         end
                     end
                     if kalah then
