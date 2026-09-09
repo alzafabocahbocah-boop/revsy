@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.73"
+local VERSION = "up6kg-v10.77"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2930,17 +2930,9 @@ do
                                 pcall(function() favRE:FireServer(t) end)   -- support -> favorite (protected)
                                 if _G.ZenxKgLog then _G.ZenxKgLog("[auto-fav] support "..tostring(t.Name).." di-favorite") end
                             end
-                        elseif supKnown then
-                            -- v10.73: unfav CUMA pet tipe BAHAN/GIFT (support-type di-skip walau uuid blm ke-lock).
-                            local _tp = stripMutation(tostring(t:GetAttribute("f") or t.Name or ""))
-                            local _bl = _G.ZenxKgUpTipe
-                            local _isBahan = (type(_bl) ~= "table") or (not next(_bl)) or _bl[_tp]
-                            if _isBahan and isFav(t) then
-                                pcall(function() favRE:FireServer(t) end)   -- toggle -> unfav
-                                if _G.ZenxKgLog then _G.ZenxKgLog("[auto-unfav] "..tostring(t.Name).." (bahan) -> unfav") end
-                            end
                         end
-                        -- sup KOSONG + bukan support -> SKIP (jangan unfav, hindari flapping support pas rebuild)
+                        -- v10.75: auto-fav loop CUMA fav support. Unfav bahan dilakuin pas mau kirim
+                        -- (unfavIfNeeded di send flow) -> support gak pernah keganggu, gak flapping.
                     end
                 end
             end)
@@ -3212,14 +3204,11 @@ do
         local minKg = AL and 6 or (TR.minKg or 0)
         local minAge = AL and 0 or (TR.minAge or 0)
         local supU = AL and (_G.ZenxSupportUuids or {}) or {}
-        local supAll = _G.ZenxSupportUuids or {}   -- v10.71: support (segala mode) buat proteksi unfav
-        local function _unfavTool(tt) local ge=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents"); local fRE=ge and ge:FindFirstChild("Favorite_Item"); if fRE and tt then pcall(function() fRE:FireServer(tt) end) end end
+        local supAll = _G.ZenxSupportUuids or {}   -- support (segala mode) buat proteksi
         for _, t in ipairs(bp:GetChildren()) do
             if t:IsA("Tool") then
                 local uuid = t:GetAttribute("PET_UUID")
-                local _fav = false
-                for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr) == true then _fav = true; break end end
-                -- v10.71: SUPPORT -> skip (gak kirim, gak di-unfav, tetep protected)
+                -- v10.75: SUPPORT -> skip (gak kirim). unfav BAHAN dilakuin di send flow (unfavIfNeeded), bukan di sini (hindari double-toggle -> ke-fav balik).
                 local isSup = uuid and (supAll[uuid] or supAll[fmtU(uuid)] or (AL and (supU[uuid] or supU[fmtU(uuid)])))
                 if uuid and not isSup then
                     local tipe = stripMutation(tostring(t:GetAttribute("f") or ""))
@@ -3231,7 +3220,6 @@ do
                         if c then local e=c[fmtU(uuid)]; if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end end
                         local okAge = age >= minAge and ((not AL) or age < 500)
                         if kgBase >= minKg and okAge then
-                            if _fav then _unfavTool(t) end   -- v10.71: bahan ke-fav -> UNFAV biar bisa dikirim
                             out[#out+1] = { uuid=uuid, tool=t, tipe=tipe, kg=kgBase, age=age }
                         end
                     end
@@ -3241,8 +3229,30 @@ do
         return out
     end
 
+    -- v10.76: unfav pet (kalo ke-fav) + WAIT biar clear. DOUBLE-CHECK support -> support GAK PERNAH di-unfav
+    -- (walau kesasar masuk send-list). Favorite_Item = toggle -> cek isFav dulu biar gak ke-fav balik.
+    local function unfavIfNeeded(tool)
+        if not tool then return end
+        local uuid = tool:GetAttribute("PET_UUID")
+        local supAll = _G.ZenxSupportUuids or {}
+        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)]) then return end   -- SUPPORT -> jangan unfav
+        local fav = false
+        for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr) == true then fav = true; break end end
+        if fav then
+            local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            local fRE = ge and ge:FindFirstChild("Favorite_Item")
+            if fRE then pcall(function() fRE:FireServer(tool) end); task.wait(0.2) end
+        end
+    end
+    -- v10.76: unfav SEMUA pet (cek tiap pet) sekaligus -> dipanggil SEBELUM send ticket/gift
+    local function unfavSemua(pets)
+        for _, p in ipairs(pets) do unfavIfNeeded(p.tool) end
+        task.wait(0.25)   -- kasih waktu semua fav clear sebelum trade/gift
+    end
+
     local function tradeToTarget(targetPlayer, pets)
         if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+        unfavSemua(pets)   -- v10.76: unfav SEMUA pet DULU sebelum SendRequest
         pcall(holdTradingTicket)
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
         task.wait(0.5)
@@ -3269,6 +3279,7 @@ do
         local char = player.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if not (hum and targetPlayer) then return 0 end
+        unfavSemua(pets)   -- v10.76: unfav SEMUA pet DULU sebelum gift
         local sent = 0
         for _, p in ipairs(pets) do
             local petTool = p.tool
@@ -3350,7 +3361,17 @@ do
             local Players = game:GetService("Players")
             local pets = petsLolos()
             trLogAdd("== jalankan mode="..mode.." | pet 6kg+ lolos="..#pets.." | AL="..tostring(TR.autoLevel))
-            if #pets == 0 then setStat("gak ada pet lolos filter (tipe/minKG/minAge)"); trLogAdd("STOP: 0 pet lolos filter (bahan/kg6/age<500). cek ZenxKgUpTipe + ada 6kg+?"); trBusy=false; return end
+            -- v10.77: balik home pas bahan HABIS (0). (v10.74 "<10" DIBATALIN.)
+            if #pets == 0 then
+                if TR.autoLevel then
+                    setStat("bahan 6kg+ habis (0) -> minta BALIK HOME")
+                    pcall(function() if writefile then writefile("zenx_gohome_"..(player and player.Name or "x")..".txt", tostring(os.time())) end end)
+                else
+                    setStat("gak ada pet lolos filter (tipe/minKG/minAge)")
+                end
+                trLogAdd("STOP: 0 pet lolos filter (bahan/kg6/age<500).")
+                trBusy=false; return
+            end
             local nTgt = 0
             local targets = TR.targets
             if TR.autoLevel then
