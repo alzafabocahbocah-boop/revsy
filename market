@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.417"
+local VERSION = "8.420"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -7049,6 +7049,44 @@ local function listPet(uuidBraced, price)
         return table.concat(parts, " | ")
     end
 
+    -- v8.420: DEBUG state pet PERSIS sebelum CreateListing — cek diblock karena apa (equipped? harga? state?)
+    if not _G.__ZenxListStateDbg then
+        _G.__ZenxListStateDbg = true
+        pcall(function()
+            local cleanU = uuidBraced:gsub("[{}]", "")
+            -- cek pet lagi ke-equip (di Character) gak
+            local equipped = false
+            local char = player.Character
+            if char then
+                for _, tool in ipairs(char:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local u = tool:GetAttribute("PET_UUID")
+                        if u and tostring(u):gsub("[{}]","") == cleanU then equipped = true break end
+                    end
+                end
+            end
+            -- cek pet ADA di backpack gak
+            local inBackpack = false
+            local bp = player:FindFirstChild("Backpack")
+            if bp then
+                for _, tool in ipairs(bp:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local u = tool:GetAttribute("PET_UUID")
+                        if u and tostring(u):gsub("[{}]","") == cleanU then inBackpack = true break end
+                    end
+                end
+            end
+            _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+            local function pl(m) table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S").."  "..m); if #_G.__ZenxPanelLog>40 then table.remove(_G.__ZenxPanelLog,1) end L("[LIST-STATE] "..m) end
+            pl("=== STATE sebelum list ===")
+            pl("pet EQUIPPED: "..tostring(equipped).." | di Backpack: "..tostring(inBackpack))
+            pl("price="..tostring(price).." ("..type(price)..") | uuid="..cleanU:sub(1,12))
+            pl("autoEquip: "..tostring(BH.marketState and BH.marketState.autoEquip))
+            if equipped then pl("⚠ PET KE-EQUIP! itu bikin CreateListing nolak. unequip dulu.") end
+            if not inBackpack and not equipped then pl("⚠ pet GAK ada di backpack/char — uuid basi?") end
+        end)
+    end
+
     -- Try with braced UUID first
     local rets = {pcall(function() return createRE:InvokeServer("Pet", uuidBraced, price) end)}
 
@@ -7112,6 +7150,50 @@ local function listPet(uuidBraced, price)
         local secondDump = dumpRets(rets)
         err = "unknown|braced:"..firstDump.."|clean:"..secondDump
     end
+
+    -- v8.419: PROBE SEKALI — coba variasi signature CreateListing (kalo game update ganti args).
+    -- Hasil dilapor ke KABAR DARI PANEL biar bisa di-copy. Jalan sekali doang.
+    if not _G.__ZenxSigProbed then
+        _G.__ZenxSigProbed = true
+        local function pushLog(msg)
+            _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+            table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  " .. msg)
+            if #_G.__ZenxPanelLog > 40 then table.remove(_G.__ZenxPanelLog, 1) end
+            L("[SIG-PROBE] " .. msg)
+        end
+        local reClass = "?"
+        pcall(function() reClass = createRE.ClassName end)
+        local reName = "?"
+        pcall(function() reName = createRE:GetFullName() end)
+        pushLog("=== PROBE CreateListing ===")
+        pushLog("remote: " .. tostring(reClass) .. " @ " .. tostring(reName):sub(-50))
+        local cln = uuidBraced:gsub("[{}]", "")
+        local function fmtRet(r)
+            local p = {}
+            for i = 1, 5 do
+                local v = r[i]
+                if v == nil and i > 1 then break end
+                p[#p+1] = "[" .. i .. "]" .. type(v) .. ":" .. tostring(v):sub(1, 16)
+            end
+            return table.concat(p, " ")
+        end
+        local variants = {
+            { "A: (Pet,braced,price#)", function() return createRE:InvokeServer("Pet", uuidBraced, price) end },
+            { "B: (Pet,clean,price#)", function() return createRE:InvokeServer("Pet", cln, price) end },
+            { "C: (Pet,clean,price$)", function() return createRE:InvokeServer("Pet", cln, tostring(price)) end },
+            { "D: (clean,price#)", function() return createRE:InvokeServer(cln, price) end },
+            { "E: (Pet,clean,price#,true)", function() return createRE:InvokeServer("Pet", cln, price, true) end },
+            { "F: (Pet,clean,price#,Token)", function() return createRE:InvokeServer("Pet", cln, price, "Token") end },
+            { "G: (clean)", function() return createRE:InvokeServer(cln) end },
+        }
+        for _, v in ipairs(variants) do
+            local r = { pcall(v[2]) }
+            pushLog(v[1] .. " -> " .. (r[1] and fmtRet({ r[2], r[3], r[4], r[5] }) or ("ERR:" .. tostring(r[2]):sub(1, 30))))
+            task.wait(0.35)
+        end
+        pushLog("=== cek variasi mana yg beda (true/uuid = bener) ===")
+    end
+
     return false, err
 end
 
