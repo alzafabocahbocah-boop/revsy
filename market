@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.401"
+local VERSION = "8.407"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -624,7 +624,7 @@ task.spawn(function()
             _G.__ZenxTokenNow = tok   -- v8.369: expose token buat auto-trade ke leveling
             -- v8.371: token >= 5000 -> AUTO-TRADE ke leveling (async). TERPISAH dari balik-home.
             -- Fungsi-nya OFF auto-accept-gift dulu -> trade -> ON lagi (cek garden/private/target di dalam).
-            if (tonumber(tok) or 0) >= 5000 and _G.__ZenxTradeAllToLeveling and not _G.__ZenxTradeBusy then
+            if (tonumber(tok) or 0) >= 5000 and _G.__ZenxTradeAllToLeveling and not _G.__ZenxTradeBusy and (_G.__ZenxAutoTradeToken ~= false) then
                 _G.__ZenxTradeBusy = true
                 task.spawn(function() pcall(_G.__ZenxTradeAllToLeveling); task.wait(8); _G.__ZenxTradeBusy = nil end)
             end
@@ -2505,70 +2505,103 @@ if isGardenServer then
     pcall(function() sbBtns.GARDEN.lbl.Text = "GIFT PET" end)
     pcall(function() sbBtns.TRADE.lbl.Text = "TRADE TOKEN" end)
     -- marketPanel di garden = STATUS (bukan Listing). Deferred: hide child Listing + tambah status.
-    -- v8.401: TAB GARDEN = status frame PERSIS garden-1-market.html
+    -- v8.404: TAB GARDEN = strip DINAMIS per akun leveling (TOKEN kita + kartu tiap akun leveling)
     task.spawn(function()
         task.wait(0.6)
+        local Players = game:GetService("Players")
         local sf = Instance.new("Frame")
         sf.Name = "ZenxGardenStatus" sf.Size = UDim2.new(1, 0, 1, 0) sf.BackgroundTransparency = 1 sf.Parent = marketPanel
         for _, ch in ipairs(marketPanel:GetChildren()) do
             if ch:IsA("GuiObject") and ch ~= sf then ch.Visible = false end
         end
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.new(1, 0, 1, 0) scroll.BackgroundTransparency = 1 scroll.BorderSizePixel = 0
+        scroll.ScrollBarThickness = 3 scroll.ScrollBarImageColor3 = C.border
+        scroll.CanvasSize = UDim2.new(0, 0, 0, 0) scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y scroll.Parent = sf
         local lay = Instance.new("UIListLayout")
-        lay.Padding = UDim.new(0, 7) lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Parent = sf
+        lay.Padding = UDim.new(0, 7) lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Parent = scroll
         local pad = Instance.new("UIPadding")
-        pad.PaddingTop = UDim.new(0, 4) pad.PaddingLeft = UDim.new(0, 2) pad.PaddingRight = UDim.new(0, 2) pad.Parent = sf
+        pad.PaddingTop = UDim.new(0, 4) pad.PaddingBottom = UDim.new(0, 8) pad.PaddingLeft = UDim.new(0, 2) pad.PaddingRight = UDim.new(0, 6) pad.Parent = scroll
 
-        -- STRIP 4 kolom: TOKEN / PET / AGE-500 LVL / AKUN LVL
-        local strip = Instance.new("Frame")
-        strip.Size = UDim2.new(1, 0, 0, 64) strip.BackgroundColor3 = C.card strip.BorderSizePixel = 0 strip.LayoutOrder = 1 strip.Parent = sf
-        Instance.new("UICorner", strip).CornerRadius = UDim.new(0, 11)
-        do local s = Instance.new("UIStroke", strip) s.Color = C.border s.Transparency = 0.3 end
-        local function col(i, valColor, lblTxt)
-            local w = 0.25
-            local cell = Instance.new("Frame")
-            cell.Size = UDim2.new(w, 0, 1, 0) cell.Position = UDim2.new(w * (i - 1), 0, 0, 0) cell.BackgroundTransparency = 1 cell.Parent = strip
-            local v = Instance.new("TextLabel")
-            v.Size = UDim2.new(1, 0, 0, 26) v.Position = UDim2.new(0, 0, 0, 12) v.BackgroundTransparency = 1
-            v.RichText = true v.Text = "-" v.TextColor3 = valColor v.Font = FB v.TextSize = 20 v.Parent = cell
-            local l = Instance.new("TextLabel")
-            l.Size = UDim2.new(1, 0, 0, 12) l.Position = UDim2.new(0, 0, 0, 42) l.BackgroundTransparency = 1
-            l.Text = lblTxt l.TextColor3 = C.textMute l.Font = FB l.TextSize = 8 l.Parent = cell
-            return v
+        -- 1. TOKEN kita (akun market)
+        local tokCard = Instance.new("Frame")
+        tokCard.Size = UDim2.new(1, 0, 0, 52) tokCard.BackgroundColor3 = C.card tokCard.BorderSizePixel = 0 tokCard.LayoutOrder = 1 tokCard.Parent = scroll
+        Instance.new("UICorner", tokCard).CornerRadius = UDim.new(0, 11)
+        do local s = Instance.new("UIStroke", tokCard) s.Color = C.border s.Transparency = 0.3 end
+        local tkL = Instance.new("TextLabel")
+        tkL.Size = UDim2.new(0.6, 0, 0, 12) tkL.Position = UDim2.new(0, 14, 0, 9) tkL.BackgroundTransparency = 1
+        tkL.Text = "TOKEN" tkL.TextColor3 = C.textMute tkL.Font = FB tkL.TextSize = 8 tkL.TextXAlignment = Enum.TextXAlignment.Left tkL.Parent = tokCard
+        local tkL2 = Instance.new("TextLabel")
+        tkL2.Size = UDim2.new(0.6, 0, 0, 14) tkL2.Position = UDim2.new(0, 14, 0, 24) tkL2.BackgroundTransparency = 1
+        tkL2.Text = "akun market (kita)" tkL2.TextColor3 = C.textDim tkL2.Font = FM tkL2.TextSize = 10 tkL2.TextXAlignment = Enum.TextXAlignment.Left tkL2.Parent = tokCard
+        local vTok = Instance.new("TextLabel")
+        vTok.Size = UDim2.new(0.4, -14, 1, 0) vTok.Position = UDim2.new(0.6, 0, 0, 0) vTok.BackgroundTransparency = 1
+        vTok.RichText = true vTok.Text = "-" vTok.TextColor3 = C.accent vTok.Font = FB vTok.TextSize = 24
+        vTok.TextXAlignment = Enum.TextXAlignment.Right vTok.Parent = tokCard
+
+        -- 2. header akun leveling
+        local lvlHd = Instance.new("TextLabel")
+        lvlHd.Size = UDim2.new(1, 0, 0, 14) lvlHd.BackgroundTransparency = 1 lvlHd.Text = "AKUN LEVELING (0)"
+        lvlHd.TextColor3 = C.textMute lvlHd.Font = FB lvlHd.TextSize = 9 lvlHd.TextXAlignment = Enum.TextXAlignment.Left lvlHd.LayoutOrder = 2 lvlHd.Parent = scroll
+
+        -- 3. container kartu akun leveling (dinamis 2/3/4...)
+        local lvlBox = Instance.new("Frame")
+        lvlBox.Size = UDim2.new(1, 0, 0, 0) lvlBox.AutomaticSize = Enum.AutomaticSize.Y lvlBox.BackgroundTransparency = 1 lvlBox.LayoutOrder = 3 lvlBox.Parent = scroll
+        local lvlLay = Instance.new("UIListLayout")
+        lvlLay.Padding = UDim.new(0, 6) lvlLay.SortOrder = Enum.SortOrder.LayoutOrder lvlLay.Parent = lvlBox
+
+        local function buildLvlCard(name, data, order)
+            local card = Instance.new("Frame")
+            card.Size = UDim2.new(1, 0, 0, 46) card.BackgroundColor3 = C.card card.BorderSizePixel = 0 card.LayoutOrder = order card.Parent = lvlBox
+            Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10)
+            do local s = Instance.new("UIStroke", card) s.Color = C.border s.Transparency = 0.4 end
+            local nm = Instance.new("TextLabel")
+            nm.Size = UDim2.new(1, -150, 0, 16) nm.Position = UDim2.new(0, 13, 0, 8) nm.BackgroundTransparency = 1
+            nm.Text = name nm.TextColor3 = C.text nm.Font = FB nm.TextSize = 12 nm.TextXAlignment = Enum.TextXAlignment.Left nm.TextTruncate = Enum.TextTruncate.AtEnd nm.Parent = card
+            local nt = Instance.new("TextLabel")
+            nt.Size = UDim2.new(1, -150, 0, 12) nt.Position = UDim2.new(0, 13, 0, 25) nt.BackgroundTransparency = 1
+            nt.Text = "leveling" nt.TextColor3 = C.textMute nt.Font = FM nt.TextSize = 8 nt.TextXAlignment = Enum.TextXAlignment.Left nt.Parent = card
+            local function stat(xr, valTxt, valColor, lblTxt)
+                local v = Instance.new("TextLabel")
+                v.Size = UDim2.new(0, 66, 0, 18) v.Position = UDim2.new(1, xr, 0, 7) v.BackgroundTransparency = 1
+                v.RichText = true v.Text = valTxt v.TextColor3 = valColor v.Font = FB v.TextSize = 15 v.TextXAlignment = Enum.TextXAlignment.Center v.Parent = card
+                local l = Instance.new("TextLabel")
+                l.Size = UDim2.new(0, 66, 0, 10) l.Position = UDim2.new(1, xr, 0, 27) l.BackgroundTransparency = 1
+                l.Text = lblTxt l.TextColor3 = C.textMute l.Font = FB l.TextSize = 7 l.TextXAlignment = Enum.TextXAlignment.Center l.Parent = card
+            end
+            local total = data and data.total
+            local maxp = data and data.max
+            local petTxt
+            if total and maxp and maxp > 0 then petTxt = tostring(total) .. "<font size=\"10\" color=\"#5c5c5c\">/" .. maxp .. "</font>"
+            elseif total then petTxt = tostring(total) else petTxt = "-" end
+            stat(-140, petTxt, C.text, "PET")
+            stat(-70, tostring((data and data.age500) or 0), C.success, "AGE 500+")
         end
-        local vTok = col(1, C.accent, "TOKEN")
-        local vPet = col(2, C.text, "PET")
-        local vA5 = col(3, C.success, "AGE-500 LVL")
-        local vAk = col(4, C.accent, "AKUN LVL")
 
-        -- ROW helper (label kiri + value kanan)
+        -- 4. header balik home
+        local bhHd = Instance.new("TextLabel")
+        bhHd.Size = UDim2.new(1, 0, 0, 14) bhHd.BackgroundTransparency = 1 bhHd.Text = "BALIK HOME OTOMATIS KALAU"
+        bhHd.TextColor3 = C.textMute bhHd.Font = FB bhHd.TextSize = 9 bhHd.TextXAlignment = Enum.TextXAlignment.Left bhHd.LayoutOrder = 4 bhHd.Parent = scroll
         local function row(order, leftTxt, rightColor)
             local r = Instance.new("Frame")
-            r.Size = UDim2.new(1, 0, 0, 38) r.BackgroundColor3 = C.card r.BorderSizePixel = 0 r.LayoutOrder = order r.Parent = sf
+            r.Size = UDim2.new(1, 0, 0, 36) r.BackgroundColor3 = C.card r.BorderSizePixel = 0 r.LayoutOrder = order r.Parent = scroll
             Instance.new("UICorner", r).CornerRadius = UDim.new(0, 10)
             do local s = Instance.new("UIStroke", r) s.Color = C.border s.Transparency = 0.4 end
             local ll = Instance.new("TextLabel")
-            ll.Size = UDim2.new(0.55, -15, 1, 0) ll.Position = UDim2.new(0, 15, 0, 0) ll.BackgroundTransparency = 1
-            ll.Text = leftTxt ll.TextColor3 = C.textDim ll.Font = FM ll.TextSize = 12 ll.TextXAlignment = Enum.TextXAlignment.Left ll.Parent = r
+            ll.Size = UDim2.new(0.6, -15, 1, 0) ll.Position = UDim2.new(0, 15, 0, 0) ll.BackgroundTransparency = 1
+            ll.Text = leftTxt ll.TextColor3 = C.textDim ll.Font = FM ll.TextSize = 11 ll.TextXAlignment = Enum.TextXAlignment.Left ll.Parent = r
             local rv = Instance.new("TextLabel")
-            rv.Size = UDim2.new(0.45, -15, 1, 0) rv.Position = UDim2.new(0.55, 0, 0, 0) rv.BackgroundTransparency = 1
+            rv.Size = UDim2.new(0.4, -15, 1, 0) rv.Position = UDim2.new(0.6, 0, 0, 0) rv.BackgroundTransparency = 1
             rv.Text = "-" rv.TextColor3 = rightColor rv.Font = FB rv.TextSize = 12 rv.TextXAlignment = Enum.TextXAlignment.Right rv.Parent = r
             return rv
         end
-        local rServer = row(2, "server", C.text)
-        local rStatus = row(3, "status", C.accent)
+        local rFull = row(5, "1 \xC2\xB7 market full", C.text)
+        local rAge = row(6, "2 \xC2\xB7 age-500 leveling habis", C.accent) rAge.Text = "< 10"
 
-        -- HEADER balik home
-        local hd = Instance.new("TextLabel")
-        hd.Size = UDim2.new(1, 0, 0, 16) hd.BackgroundTransparency = 1 hd.Text = "BALIK HOME OTOMATIS KALAU"
-        hd.TextColor3 = C.textMute hd.Font = FB hd.TextSize = 9 hd.TextXAlignment = Enum.TextXAlignment.Left hd.LayoutOrder = 4 hd.Parent = sf
-
-        local rFull = row(5, "1 · market full", C.text)
-        local rAge = row(6, "2 · age-500 leveling habis", C.accent) rAge.Text = "< 10"
-
-        -- TP KE MARKET
+        -- 5. TP KE MARKET
         local tpBtn = Instance.new("TextButton")
         tpBtn.Size = UDim2.new(1, 0, 0, 40) tpBtn.BackgroundColor3 = C.accent tpBtn.AutoButtonColor = false
-        tpBtn.Text = "TP KE MARKET" tpBtn.TextColor3 = C.text tpBtn.Font = FB tpBtn.TextSize = 13 tpBtn.BorderSizePixel = 0 tpBtn.LayoutOrder = 7 tpBtn.Parent = sf
+        tpBtn.Text = "TP KE MARKET" tpBtn.TextColor3 = C.text tpBtn.Font = FB tpBtn.TextSize = 13 tpBtn.BorderSizePixel = 0 tpBtn.LayoutOrder = 7 tpBtn.Parent = scroll
         Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 10)
         tpBtn.MouseButton1Click:Connect(function()
             local b = _G.__ZenxTPBtn
@@ -2582,60 +2615,174 @@ if isGardenServer then
         end)
 
         -- UPDATE loop
+        local lastSig = ""
         task.spawn(function()
-            local Players = game:GetService("Players")
             while sf.Parent do
                 local tok = tonumber(_G.__ZenxTokenNow) or 0
-                if tok >= 1000 then
-                    vTok.Text = string.format("%.0f", tok / 1000) .. "<font size=\"12\" color=\"#5c5c5c\">K</font>"
-                else
-                    vTok.Text = tostring(tok)
+                if tok >= 1000 then vTok.Text = string.format("%.0f", tok / 1000) .. "<font size=\"13\" color=\"#5c5c5c\">K</font>"
+                else vTok.Text = tostring(tok) end
+                local akun = _G.__ZenxLvlAkun; local data = _G.__ZenxLvlData
+                local present = {}
+                if type(akun) == "table" then
+                    for _, pl in ipairs(Players:GetPlayers()) do
+                        if akun[pl.Name] then table.insert(present, pl.Name) end
+                    end
+                end
+                table.sort(present)
+                lvlHd.Text = "AKUN LEVELING (" .. #present .. ")"
+                local sigParts = {}
+                for _, n in ipairs(present) do
+                    local d = data and data[n]
+                    sigParts[#sigParts + 1] = n .. ":" .. tostring(d and d.total) .. ":" .. tostring(d and d.max) .. ":" .. tostring(d and d.age500)
+                end
+                local sig = table.concat(sigParts, "|")
+                if sig ~= lastSig then
+                    lastSig = sig
+                    for _, ch in ipairs(lvlBox:GetChildren()) do if ch:IsA("GuiObject") then ch:Destroy() end end
+                    if #present == 0 then
+                        local empty = Instance.new("TextLabel")
+                        empty.Size = UDim2.new(1, 0, 0, 32) empty.BackgroundTransparency = 1 empty.Text = "belum ada akun leveling kedetect"
+                        empty.TextColor3 = C.textMute empty.Font = FM empty.TextSize = 11 empty.Parent = lvlBox
+                    else
+                        for idx, n in ipairs(present) do buildLvlCard(n, data and data[n], idx) end
+                    end
                 end
                 local pet = tonumber(_G.__ZenxMarketTotalPet) or 0
                 local maxI = tonumber(_G.__ZenxMaxInv) or 0
-                if maxI > 0 then
-                    vPet.Text = tostring(pet) .. "<font size=\"12\" color=\"#5c5c5c\">/" .. maxI .. "</font>"
-                else
-                    vPet.Text = tostring(pet)
-                end
-                local mAge = _G.__ZenxLvlAge500; local a5, akn = 0, 0
-                if type(mAge) == "table" then
-                    for _, pl in ipairs(Players:GetPlayers()) do
-                        local a = mAge[pl.Name]
-                        if a then a5 = a5 + a; akn = akn + 1 end
-                    end
-                end
-                vA5.Text = tostring(a5)
-                vAk.Text = tostring(akn)
-                local priv = (game.PrivateServerId ~= nil and game.PrivateServerId ~= "")
-                rServer.Text = "garden · " .. (priv and "private" or "public")
-                local full = (maxI > 0 and pet >= maxI)
-                rStatus.Text = full and "FULL" or "nerima bahan · belum full"
-                rStatus.TextColor3 = full and C.success or C.accent
                 rFull.Text = (maxI > 0) and (pet .. " / " .. maxI) or (pet .. " / -")
                 task.wait(3)
             end
         end)
     end)
 
-    -- v8.400: SHELL — sidebar 3 tab udah bener; kosongin ISI tiap tab dulu (diisi ulang belakangan).
-    -- Konten lama gak di-destroy, cuma di-hide (Visible=false) biar logic gift/trade/auto-accept gak crash.
+    -- v8.403: TAB TRADE TOKEN = build PERSIS garden-3-trade.html
     task.spawn(function()
-        task.wait(1.5)  -- tunggu buildGardenPanel + status frame selesai kebangun
-        local function emptyTab(panel, label)
-            if not panel then return end
-            for _, ch in ipairs(panel:GetChildren()) do
-                if ch:IsA("GuiObject") then ch.Visible = false end
-            end
-            local ph = Instance.new("TextLabel")
-            ph.Name = "ZenxEmptyPlaceholder"
-            ph.Size = UDim2.new(1, -24, 0, 40) ph.Position = UDim2.new(0, 12, 0.5, -20)
-            ph.BackgroundTransparency = 1 ph.Text = label
-            ph.TextColor3 = C.textDim ph.Font = FM ph.TextSize = 13
-            ph.TextXAlignment = Enum.TextXAlignment.Center ph.Parent = panel
+        task.wait(0.8)
+        local tp = panels["TRADE"]
+        if not tp then return end
+        for _, ch in ipairs(tp:GetChildren()) do
+            if ch:IsA("GuiObject") then ch.Visible = false end
         end
-        emptyTab(BH.gardenPanel, "GIFT PET — kosong")   -- tab GIFT PET (diisi nanti)
-        pcall(function() emptyTab(panels["TRADE"], "TRADE TOKEN — kosong") end)  -- tab TRADE TOKEN (diisi nanti)
+        local lay = Instance.new("UIListLayout")
+        lay.Padding = UDim.new(0, 9) lay.SortOrder = Enum.SortOrder.LayoutOrder lay.Parent = tp
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 14) pad.PaddingBottom = UDim.new(0, 12)
+        pad.PaddingLeft = UDim.new(0, 14) pad.PaddingRight = UDim.new(0, 14) pad.Parent = tp
+
+        -- toggle switch helper
+        local function makeToggle(order, title, sub, getV, setV)
+            local box = Instance.new("Frame")
+            box.Size = UDim2.new(1, 0, 0, 52) box.BackgroundColor3 = C.card box.BorderSizePixel = 0 box.LayoutOrder = order box.Parent = tp
+            Instance.new("UICorner", box).CornerRadius = UDim.new(0, 10)
+            do local s = Instance.new("UIStroke", box) s.Color = C.border s.Transparency = 0.4 end
+            local t = Instance.new("TextLabel")
+            t.Size = UDim2.new(1, -70, 0, 16) t.Position = UDim2.new(0, 14, 0, 10) t.BackgroundTransparency = 1
+            t.Text = title t.TextColor3 = C.text t.Font = FB t.TextSize = 12 t.TextXAlignment = Enum.TextXAlignment.Left t.Parent = box
+            local s2 = Instance.new("TextLabel")
+            s2.Size = UDim2.new(1, -70, 0, 12) s2.Position = UDim2.new(0, 14, 0, 28) s2.BackgroundTransparency = 1
+            s2.Text = sub s2.TextColor3 = C.textMute s2.Font = FM s2.TextSize = 9 s2.TextXAlignment = Enum.TextXAlignment.Left s2.Parent = box
+            local sw = Instance.new("TextButton")
+            sw.Size = UDim2.new(0, 44, 0, 24) sw.Position = UDim2.new(1, -58, 0.5, -12) sw.AutoButtonColor = false sw.Text = "" sw.BorderSizePixel = 0 sw.Parent = box
+            Instance.new("UICorner", sw).CornerRadius = UDim.new(0, 12)
+            local knob = Instance.new("Frame")
+            knob.Size = UDim2.new(0, 18, 0, 18) knob.BackgroundColor3 = C.text knob.BorderSizePixel = 0 knob.Parent = sw
+            Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+            local function paint()
+                local on = getV()
+                sw.BackgroundColor3 = on and C.accent or C.border
+                knob.Position = on and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+            end
+            paint()
+            sw.MouseButton1Click:Connect(function() setV(not getV()) paint() end)
+        end
+
+        -- 1. Auto-Trade Token
+        makeToggle(1, "Auto-Trade Token", "token \xE2\x89\xA5 5000 \xE2\x86\x92 kirim ke leveling",
+            function() return _G.__ZenxAutoTradeToken ~= false end,
+            function(v) _G.__ZenxAutoTradeToken = v if BH.marketState then BH.marketState.autoTradeToken = v pcall(function() BH.saveMarketState(BH.marketState) end) end end)
+
+        -- 2. ambang
+        local ambRow = Instance.new("Frame")
+        ambRow.Size = UDim2.new(1, 0, 0, 38) ambRow.BackgroundColor3 = C.card ambRow.BorderSizePixel = 0 ambRow.LayoutOrder = 2 ambRow.Parent = tp
+        Instance.new("UICorner", ambRow).CornerRadius = UDim.new(0, 10)
+        do local s = Instance.new("UIStroke", ambRow) s.Color = C.border s.Transparency = 0.4 end
+        local al = Instance.new("TextLabel")
+        al.Size = UDim2.new(0.5, -15, 1, 0) al.Position = UDim2.new(0, 15, 0, 0) al.BackgroundTransparency = 1
+        al.Text = "ambang" al.TextColor3 = C.textDim al.Font = FM al.TextSize = 12 al.TextXAlignment = Enum.TextXAlignment.Left al.Parent = ambRow
+        local ar = Instance.new("TextLabel")
+        ar.Size = UDim2.new(0.5, -15, 1, 0) ar.Position = UDim2.new(0.5, 0, 0, 0) ar.BackgroundTransparency = 1
+        ar.Text = "\xE2\x89\xA5 5000 token" ar.TextColor3 = C.accent ar.Font = FB ar.TextSize = 12 ar.TextXAlignment = Enum.TextXAlignment.Right ar.Parent = ambRow
+
+        -- 3. TARGET AKUN LEVELING + chips (dari _G.__ZenxLvlAkun / panel /lvlmax)
+        local tFld = Instance.new("Frame")
+        tFld.Size = UDim2.new(1, 0, 0, 72) tFld.BackgroundColor3 = C.card tFld.BorderSizePixel = 0 tFld.LayoutOrder = 3 tFld.Parent = tp
+        Instance.new("UICorner", tFld).CornerRadius = UDim.new(0, 9)
+        do local s = Instance.new("UIStroke", tFld) s.Color = C.border s.Transparency = 0.4 end
+        local th = Instance.new("TextLabel")
+        th.Size = UDim2.new(1, -26, 0, 14) th.Position = UDim2.new(0, 13, 0, 10) th.BackgroundTransparency = 1
+        th.Text = "TARGET AKUN LEVELING (dari panel)" th.TextColor3 = C.textMute th.Font = FB th.TextSize = 9
+        th.TextXAlignment = Enum.TextXAlignment.Left th.Parent = tFld
+        local chips = Instance.new("Frame")
+        chips.Size = UDim2.new(1, -26, 0, 34) chips.Position = UDim2.new(0, 13, 0, 30) chips.BackgroundTransparency = 1 chips.Parent = tFld
+        local cl = Instance.new("UIListLayout")
+        cl.FillDirection = Enum.FillDirection.Horizontal cl.Padding = UDim.new(0, 6) cl.Wraps = true cl.SortOrder = Enum.SortOrder.LayoutOrder cl.Parent = chips
+        local lastLvlSig = nil
+        local function renderLvl()
+            local m = _G.__ZenxLvlAkun
+            local names = {}
+            if type(m) == "table" then for name in pairs(m) do names[#names + 1] = name end end
+            table.sort(names)
+            local sig = table.concat(names, "|")
+            if sig == lastLvlSig then return end   -- v8.407: gak berubah -> chips dibiarin, gak dihapus/rebuild (stabil)
+            lastLvlSig = sig
+            for _, ch in ipairs(chips:GetChildren()) do if ch:IsA("TextLabel") then ch:Destroy() end end
+            if #names > 0 then
+                for i, name in ipairs(names) do
+                    local chip = Instance.new("TextLabel")
+                    chip.AutomaticSize = Enum.AutomaticSize.X chip.Size = UDim2.new(0, 0, 0, 26)
+                    chip.BackgroundColor3 = Color3.fromRGB(40, 20, 22) chip.Text = "  " .. name .. "  "
+                    chip.TextColor3 = C.accent chip.Font = FB chip.TextSize = 11 chip.BorderSizePixel = 0 chip.LayoutOrder = i chip.Parent = chips
+                    Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 6)
+                    do local s = Instance.new("UIStroke", chip) s.Color = C.accent s.Transparency = 0.6 end
+                end
+            else
+                local chip = Instance.new("TextLabel")
+                chip.AutomaticSize = Enum.AutomaticSize.X chip.Size = UDim2.new(0, 0, 0, 26)
+                chip.BackgroundColor3 = C.card chip.Text = "  belum ada (atur di panel)  "
+                chip.TextColor3 = C.textMute chip.Font = FM chip.TextSize = 11 chip.BorderSizePixel = 0 chip.Parent = chips
+                Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 6)
+            end
+        end
+        renderLvl()
+
+        -- 4. flow: token >=5000 -> gift OFF -> trade semua -> gift ON
+        local flow = Instance.new("Frame")
+        flow.Size = UDim2.new(1, 0, 0, 28) flow.BackgroundTransparency = 1 flow.LayoutOrder = 4 flow.Parent = tp
+        local fl = Instance.new("UIListLayout")
+        fl.FillDirection = Enum.FillDirection.Horizontal fl.Padding = UDim.new(0, 5)
+        fl.VerticalAlignment = Enum.VerticalAlignment.Center fl.SortOrder = Enum.SortOrder.LayoutOrder fl.Parent = flow
+        local function step(txt, active, order)
+            local s = Instance.new("TextLabel")
+            s.AutomaticSize = Enum.AutomaticSize.X s.Size = UDim2.new(0, 0, 0, 24)
+            s.BackgroundColor3 = active and Color3.fromRGB(40, 20, 22) or C.card s.Text = "  " .. txt .. "  "
+            s.TextColor3 = active and C.accent or C.textDim s.Font = FB s.TextSize = 10 s.BorderSizePixel = 0 s.LayoutOrder = order s.Parent = flow
+            Instance.new("UICorner", s).CornerRadius = UDim.new(0, 6)
+        end
+        local function arw(order)
+            local a = Instance.new("TextLabel")
+            a.AutomaticSize = Enum.AutomaticSize.X a.Size = UDim2.new(0, 0, 0, 24) a.BackgroundTransparency = 1
+            a.Text = " \xE2\x86\x92 " a.TextColor3 = C.textMute a.Font = FM a.TextSize = 11 a.LayoutOrder = order a.Parent = flow
+        end
+        step("token \xE2\x89\xA55000", true, 1) arw(2) step("gift OFF", false, 3) arw(4) step("trade semua", false, 5) arw(6) step("gift ON", false, 7)
+
+        -- 5. Auto Accept Trade
+        makeToggle(5, "Auto Accept Trade", "terima trade masuk",
+            function() return BH.autoTrade end,
+            function(v) BH.autoTrade = v if BH.marketState then BH.marketState.autoTrade = v pcall(function() BH.saveMarketState(BH.marketState) end) end end)
+
+        task.spawn(function()
+            while tp.Parent do pcall(renderLvl) task.wait(5) end
+        end)
     end)
 
     marketPanel.Visible = false
@@ -12336,6 +12483,8 @@ BH.buildGardenPanel = function()
     BH.autoGift = true
     BH.autoTrade = true
     if BH.marketState then BH.marketState.autoGift = true; BH.marketState.autoTrade = true; pcall(function() BH.saveMarketState(BH.marketState) end) end
+    -- v8.403: Auto-Trade Token (sender token>=5000) — toggleable via tab TRADE TOKEN, default ON
+    if BH.marketState and BH.marketState.autoTradeToken == false then _G.__ZenxAutoTradeToken = false else _G.__ZenxAutoTradeToken = true end
 
     local function refreshAcceptUI()
         gGiftBtn.Text = "Auto Accept Gift: "..(BH.autoGift and "ON" or "OFF")
@@ -12798,141 +12947,145 @@ BH.buildGardenPanel = function()
         BH.saveMarketState(BH.marketState)
     end
 
-    -- ===== Layout inside giftCard =====
-    -- Row 1: Title + TOTAL match count
+    -- ===== v8.402: GIFT PET tab = ROMBAK TOTAL sesuai garden-2-giftpet.html (UIListLayout, gak numpuk) =====
+    local giftLay = Instance.new("UIListLayout")
+    giftLay.Padding = UDim.new(0, 9) giftLay.SortOrder = Enum.SortOrder.LayoutOrder giftLay.Parent = giftCard
+    local giftPad = Instance.new("UIPadding")
+    giftPad.PaddingTop = UDim.new(0, 14) giftPad.PaddingBottom = UDim.new(0, 12)
+    giftPad.PaddingLeft = UDim.new(0, 14) giftPad.PaddingRight = UDim.new(0, 14) giftPad.Parent = giftCard
+
+    -- 1. Header: AUTO GIFT + MATCH
+    local gHead = Instance.new("Frame")
+    gHead.Size = UDim2.new(1, 0, 0, 20) gHead.BackgroundTransparency = 1 gHead.LayoutOrder = 1 gHead.Parent = giftCard
     local gTitleLbl = Instance.new("TextLabel")
-    gTitleLbl.Size = UDim2.new(1, -120, 0, 26) gTitleLbl.Position = UDim2.new(0, 12, 0, 8)
-    gTitleLbl.BackgroundTransparency = 1 gTitleLbl.Text = "AUTO GIFT"
-    gTitleLbl.TextColor3 = C.accent gTitleLbl.Font = FB gTitleLbl.TextSize = 15
-    gTitleLbl.TextXAlignment = Enum.TextXAlignment.Left gTitleLbl.Parent = giftCard
-
+    gTitleLbl.Size = UDim2.new(0.5, 0, 1, 0) gTitleLbl.BackgroundTransparency = 1 gTitleLbl.Text = "AUTO GIFT"
+    gTitleLbl.TextColor3 = C.accent gTitleLbl.Font = FB gTitleLbl.TextSize = 14
+    gTitleLbl.TextXAlignment = Enum.TextXAlignment.Left gTitleLbl.Parent = gHead
     local gTotalLbl = Instance.new("TextLabel")
-    gTotalLbl.Size = UDim2.new(0, 110, 0, 26) gTotalLbl.Position = UDim2.new(1, -120, 0, 8)
-    gTotalLbl.BackgroundTransparency = 1 gTotalLbl.Text = "Match: 0"
-    gTotalLbl.TextColor3 = C.text gTotalLbl.Font = FB gTotalLbl.TextSize = 14
-    gTotalLbl.TextXAlignment = Enum.TextXAlignment.Right gTotalLbl.Parent = giftCard
+    gTotalLbl.Size = UDim2.new(0.5, 0, 1, 0) gTotalLbl.Position = UDim2.new(0.5, 0, 0, 0)
+    gTotalLbl.BackgroundTransparency = 1 gTotalLbl.Text = "MATCH: 0"
+    gTotalLbl.TextColor3 = C.text gTotalLbl.Font = FB gTotalLbl.TextSize = 12
+    gTotalLbl.TextXAlignment = Enum.TextXAlignment.Right gTotalLbl.Parent = gHead
 
-    -- Row 2: Target picker + Pet picker
+    -- 2. Auto Accept ON
+    local aaLbl = Instance.new("TextLabel")
+    aaLbl.Size = UDim2.new(1, 0, 0, 18) aaLbl.BackgroundTransparency = 1 aaLbl.Text = "\xE2\x9C\x93 Auto Accept Gift + Trade: ON"
+    aaLbl.TextColor3 = C.accent aaLbl.Font = FB aaLbl.TextSize = 12
+    aaLbl.TextXAlignment = Enum.TextXAlignment.Left aaLbl.LayoutOrder = 2 aaLbl.Parent = giftCard
+
+    -- 3. CARA GIFT header
+    local cgHd = Instance.new("TextLabel")
+    cgHd.Size = UDim2.new(1, 0, 0, 12) cgHd.BackgroundTransparency = 1 cgHd.Text = "CARA GIFT"
+    cgHd.TextColor3 = C.textMute cgHd.Font = FB cgHd.TextSize = 9
+    cgHd.TextXAlignment = Enum.TextXAlignment.Left cgHd.LayoutOrder = 3 cgHd.Parent = giftCard
+
+    -- 4. Segment: Dengan Ticket / Gift Biasa
+    local cgFrame = Instance.new("Frame")
+    cgFrame.Size = UDim2.new(1, 0, 0, 34) cgFrame.BackgroundTransparency = 1 cgFrame.LayoutOrder = 4 cgFrame.Parent = giftCard
+    local cgTicket = Instance.new("TextButton")
+    cgTicket.Size = UDim2.new(0.5, -4, 1, 0) cgTicket.AutoButtonColor = false cgTicket.Text = "Dengan Ticket"
+    cgTicket.Font = FB cgTicket.TextSize = 12 cgTicket.BorderSizePixel = 0 cgTicket.Parent = cgFrame
+    Instance.new("UICorner", cgTicket).CornerRadius = UDim.new(0, 8)
+    local cgBiasa = Instance.new("TextButton")
+    cgBiasa.Size = UDim2.new(0.5, -4, 1, 0) cgBiasa.Position = UDim2.new(0.5, 4, 0, 0) cgBiasa.AutoButtonColor = false cgBiasa.Text = "Gift Biasa"
+    cgBiasa.Font = FB cgBiasa.TextSize = 12 cgBiasa.BorderSizePixel = 0 cgBiasa.Parent = cgFrame
+    Instance.new("UICorner", cgBiasa).CornerRadius = UDim.new(0, 8)
+    BH.giftMode = (BH.marketState and BH.marketState.gardenGiftMode) or "ticket"
+    local function refreshCg()
+        cgTicket.BackgroundColor3 = (BH.giftMode == "ticket") and C.accent or C.card
+        cgTicket.TextColor3 = (BH.giftMode == "ticket") and C.text or C.textDim
+        cgBiasa.BackgroundColor3 = (BH.giftMode == "biasa") and C.accent or C.card
+        cgBiasa.TextColor3 = (BH.giftMode == "biasa") and C.text or C.textDim
+    end
+    refreshCg()
+    local function setCg(m) BH.giftMode = m if BH.marketState then BH.marketState.gardenGiftMode = m pcall(function() BH.saveMarketState(BH.marketState) end) end refreshCg() end
+    cgTicket.MouseButton1Click:Connect(function() setCg("ticket") end)
+    cgBiasa.MouseButton1Click:Connect(function() setCg("biasa") end)
+
+    -- hidden trigger + dummy (biar logic openTargetPicker/openPetPicker/persistGiftState gak crash)
     local gTargetBtn = Instance.new("TextButton")
-    gTargetBtn.Size = UDim2.new(0.5, -16, 0, 30) gTargetBtn.Position = UDim2.new(0, 12, 0, 42)
-    gTargetBtn.BackgroundColor3 = C.card gTargetBtn.AutoButtonColor = false
-    gTargetBtn.Text = "Target..." gTargetBtn.TextColor3 = C.text
-    gTargetBtn.Font = FM gTargetBtn.TextSize = 12 gTargetBtn.BorderSizePixel = 0
-    gTargetBtn.Parent = giftCard
-    Instance.new("UICorner", gTargetBtn).CornerRadius = UDim.new(0, 5)
-
+    gTargetBtn.Size = UDim2.new(0, 0, 0, 0) gTargetBtn.BackgroundTransparency = 1 gTargetBtn.Text = "" gTargetBtn.Visible = false gTargetBtn.Parent = giftCard
     local gPetBtn = Instance.new("TextButton")
-    gPetBtn.Size = UDim2.new(0.5, -16, 0, 30) gPetBtn.Position = UDim2.new(0.5, 4, 0, 42)
-    gPetBtn.BackgroundColor3 = C.card gPetBtn.AutoButtonColor = false
-    gPetBtn.Text = "Pet Type..." gPetBtn.TextColor3 = C.text
-    gPetBtn.Font = FM gPetBtn.TextSize = 12 gPetBtn.BorderSizePixel = 0
-    gPetBtn.Parent = giftCard
-    Instance.new("UICorner", gPetBtn).CornerRadius = UDim.new(0, 5)
+    gPetBtn.Size = UDim2.new(0, 0, 0, 0) gPetBtn.Text = "" gPetBtn.Visible = false gPetBtn.Parent = giftCard
+    giftKgBox = Instance.new("TextBox") giftKgBox.Text = "" giftKgBox.Visible = false giftKgBox.Parent = giftCard
+    giftAgeBox = Instance.new("TextBox") giftAgeBox.Text = "" giftAgeBox.Visible = false giftAgeBox.Parent = giftCard
 
-    -- Row 3: KG min + Age min
-    local function lblFor(parent, text, x, y, w)
-        local l = Instance.new("TextLabel")
-        l.Size = UDim2.new(0, w, 0, 18) l.Position = UDim2.new(0, x, 0, y)
-        l.BackgroundTransparency = 1 l.Text = text l.TextColor3 = C.textDim
-        l.Font = FM l.TextSize = 11 l.TextXAlignment = Enum.TextXAlignment.Left
-        l.Parent = parent
-        return l
+    local function openPicker()
+        pcall(function()
+            if getconnections then for _, c in ipairs(getconnections(gTargetBtn.MouseButton1Click)) do
+                if c.Function then c.Function() elseif c.Fire then c:Fire() end
+            end end
+            if firesignal then firesignal(gTargetBtn.MouseButton1Click) end
+        end)
     end
-    local lblKgMin = lblFor(giftCard, "KG min:", 12, 80, 60)
-    giftKgBox = Instance.new("TextBox")
-    giftKgBox.Size = UDim2.new(0, 70, 0, 26) giftKgBox.Position = UDim2.new(0, 72, 0, 78)
-    giftKgBox.BackgroundColor3 = C.card giftKgBox.Text = ""
-    giftKgBox.PlaceholderText = "0" giftKgBox.TextColor3 = C.text
-    giftKgBox.Font = FM giftKgBox.TextSize = 12 giftKgBox.BorderSizePixel = 0
-    giftKgBox.ClearTextOnFocus = false giftKgBox.Parent = giftCard
-    Instance.new("UICorner", giftKgBox).CornerRadius = UDim.new(0, 4)
 
-    local lblAgeMin = lblFor(giftCard, "Age min:", 160, 80, 60)
-    giftAgeBox = Instance.new("TextBox")
-    giftAgeBox.Size = UDim2.new(0, 70, 0, 26) giftAgeBox.Position = UDim2.new(0, 220, 0, 78)
-    giftAgeBox.BackgroundColor3 = C.card giftAgeBox.Text = ""
-    giftAgeBox.PlaceholderText = "0" giftAgeBox.TextColor3 = C.text
-    giftAgeBox.Font = FM giftAgeBox.TextSize = 12 giftAgeBox.BorderSizePixel = 0
-    giftAgeBox.ClearTextOnFocus = false giftAgeBox.Parent = giftCard
-    Instance.new("UICorner", giftAgeBox).CornerRadius = UDim.new(0, 4)
-
-    -- v8.396: ROMBAK Gift Pet sesuai design — buang PET TYPE + KG MIN + AGE MIN, target full width,
-    -- tambah CARA GIFT (Dengan Ticket / Gift Biasa). Logic gift (target + GIFT) gak disentuh.
-    pcall(function()
-        gPetBtn.Visible = false
-        giftKgBox.Visible = false
-        giftAgeBox.Visible = false
-        lblKgMin.Visible = false
-        lblAgeMin.Visible = false
-        gTargetBtn.Size = UDim2.new(1, 0, 0, 30) gTargetBtn.Position = UDim2.new(0, 12, 0, 118)  -- full width, bawah Cara Gift
-        local aaLbl = Instance.new("TextLabel")
-        aaLbl.Size = UDim2.new(1, -24, 0, 22) aaLbl.Position = UDim2.new(0, 12, 0, 34) aaLbl.BackgroundTransparency = 1
-        aaLbl.Text = "✓ Auto Accept Gift + Trade: ON" aaLbl.TextColor3 = C.accent aaLbl.Font = FB aaLbl.TextSize = 12
-        aaLbl.TextXAlignment = Enum.TextXAlignment.Left aaLbl.Parent = giftCard
-        -- CARA GIFT segment (di posisi kg/age yg dikosongin, y=78)
-        BH.giftMode = (BH.marketState and BH.marketState.gardenGiftMode) or "ticket"
-        local cgLbl = Instance.new("TextLabel")
-        cgLbl.Size = UDim2.new(1, 0, 0, 16) cgLbl.Position = UDim2.new(0, 2, 0, 64) cgLbl.BackgroundTransparency = 1
-        cgLbl.Text = "CARA GIFT" cgLbl.TextColor3 = C.textMute cgLbl.Font = FB cgLbl.TextSize = 9
-        cgLbl.TextXAlignment = Enum.TextXAlignment.Left cgLbl.Parent = giftCard
-        local cgTicket = Instance.new("TextButton")
-        cgTicket.Size = UDim2.new(0.5, -4, 0, 30) cgTicket.Position = UDim2.new(0, 0, 0, 80)
-        cgTicket.AutoButtonColor = false cgTicket.Text = "Dengan Ticket" cgTicket.Font = FB cgTicket.TextSize = 12
-        cgTicket.BorderSizePixel = 0 cgTicket.Parent = giftCard
-        Instance.new("UICorner", cgTicket).CornerRadius = UDim.new(0, 6)
-        local cgBiasa = Instance.new("TextButton")
-        cgBiasa.Size = UDim2.new(0.5, -4, 0, 30) cgBiasa.Position = UDim2.new(0.5, 4, 0, 80)
-        cgBiasa.AutoButtonColor = false cgBiasa.Text = "Gift Biasa" cgBiasa.Font = FB cgBiasa.TextSize = 12
-        cgBiasa.BorderSizePixel = 0 cgBiasa.Parent = giftCard
-        Instance.new("UICorner", cgBiasa).CornerRadius = UDim.new(0, 6)
-        local function refreshCg()
-            cgTicket.BackgroundColor3 = (BH.giftMode == "ticket") and C.accent or C.card
-            cgTicket.TextColor3 = (BH.giftMode == "ticket") and Color3.fromRGB(17, 17, 17) or C.textDim
-            cgBiasa.BackgroundColor3 = (BH.giftMode == "biasa") and C.accent or C.card
-            cgBiasa.TextColor3 = (BH.giftMode == "biasa") and Color3.fromRGB(17, 17, 17) or C.textDim
+    -- 5. TARGET AKUN field (header + chips)
+    local tFld = Instance.new("Frame")
+    tFld.Size = UDim2.new(1, 0, 0, 72) tFld.BackgroundColor3 = C.card tFld.BorderSizePixel = 0 tFld.LayoutOrder = 5 tFld.Parent = giftCard
+    Instance.new("UICorner", tFld).CornerRadius = UDim.new(0, 9)
+    do local s = Instance.new("UIStroke", tFld) s.Color = C.border s.Transparency = 0.4 end
+    local tHdr = Instance.new("TextLabel")
+    tHdr.Size = UDim2.new(1, -70, 0, 14) tHdr.Position = UDim2.new(0, 13, 0, 10) tHdr.BackgroundTransparency = 1
+    tHdr.Text = "TARGET AKUN (HACT / PILIH)" tHdr.TextColor3 = C.textMute tHdr.Font = FB tHdr.TextSize = 9
+    tHdr.TextXAlignment = Enum.TextXAlignment.Left tHdr.Parent = tFld
+    local tPilih = Instance.new("TextButton")
+    tPilih.Size = UDim2.new(0, 55, 0, 16) tPilih.Position = UDim2.new(1, -62, 0, 9) tPilih.BackgroundTransparency = 1
+    tPilih.Text = "+ pilih" tPilih.TextColor3 = C.accent tPilih.Font = FB tPilih.TextSize = 10
+    tPilih.TextXAlignment = Enum.TextXAlignment.Right tPilih.AutoButtonColor = false tPilih.Parent = tFld
+    tPilih.MouseButton1Click:Connect(openPicker)
+    local chipsRow = Instance.new("Frame")
+    chipsRow.Size = UDim2.new(1, -26, 0, 34) chipsRow.Position = UDim2.new(0, 13, 0, 30) chipsRow.BackgroundTransparency = 1 chipsRow.Parent = tFld
+    local chipsLay = Instance.new("UIListLayout")
+    chipsLay.FillDirection = Enum.FillDirection.Horizontal chipsLay.Padding = UDim.new(0, 6)
+    chipsLay.Wraps = true chipsLay.SortOrder = Enum.SortOrder.LayoutOrder chipsLay.Parent = chipsRow
+    local addChip = Instance.new("TextButton")
+    addChip.AutomaticSize = Enum.AutomaticSize.X addChip.Size = UDim2.new(0, 0, 0, 26)
+    addChip.BackgroundColor3 = C.card addChip.AutoButtonColor = false addChip.Text = "  + akun  "
+    addChip.TextColor3 = C.textMute addChip.Font = FB addChip.TextSize = 11 addChip.BorderSizePixel = 0
+    addChip.LayoutOrder = 999 addChip.Parent = chipsRow
+    Instance.new("UICorner", addChip).CornerRadius = UDim.new(0, 6)
+    do local s = Instance.new("UIStroke", addChip) s.Color = C.border s.Transparency = 0.2 end
+    addChip.MouseButton1Click:Connect(openPicker)
+    BH.__renderGiftChips = function()
+        for _, ch in ipairs(chipsRow:GetChildren()) do
+            if ch:IsA("TextButton") and ch.Name == "ZenxTgtChip" then ch:Destroy() end
         end
-        refreshCg()
-        local function setCg(m) BH.giftMode = m; if BH.marketState then BH.marketState.gardenGiftMode = m; pcall(function() BH.saveMarketState(BH.marketState) end) end; refreshCg() end
-        cgTicket.MouseButton1Click:Connect(function() setCg("ticket") end)
-        cgBiasa.MouseButton1Click:Connect(function() setCg("biasa") end)
-    end)
-
-    -- Load saved values
-    if BH.marketState and BH.marketState.gardenGift then
-        if BH.marketState.gardenGift.kg then giftKgBox.Text = BH.marketState.gardenGift.kg end
-        if BH.marketState.gardenGift.age then giftAgeBox.Text = BH.marketState.gardenGift.age end
+        local i = 0
+        for name in pairs(giftSelectedTargets) do
+            i = i + 1
+            local chip = Instance.new("TextButton")
+            chip.Name = "ZenxTgtChip" chip.AutomaticSize = Enum.AutomaticSize.X chip.Size = UDim2.new(0, 0, 0, 26)
+            chip.BackgroundColor3 = Color3.fromRGB(40, 20, 22) chip.AutoButtonColor = false
+            chip.Text = "  " .. name .. "  " chip.TextColor3 = C.accent chip.Font = FB chip.TextSize = 11
+            chip.BorderSizePixel = 0 chip.LayoutOrder = i chip.Parent = chipsRow
+            Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 6)
+            do local s = Instance.new("UIStroke", chip) s.Color = C.accent s.Transparency = 0.6 end
+            chip.MouseButton1Click:Connect(openPicker)
+        end
     end
-    giftKgBox.FocusLost:Connect(persistGiftState)
-    giftAgeBox.FocusLost:Connect(persistGiftState)
+    pcall(BH.__renderGiftChips)
 
-    -- Row 4: GIFT toggle + counters
+    -- 6. GIFT toggle (OFF = merah kayak design)
     local giftToggle = Instance.new("TextButton")
-    giftToggle.Size = UDim2.new(1, -24, 0, 34) giftToggle.Position = UDim2.new(0, 12, 0, 156)
-    giftToggle.BackgroundColor3 = C.danger giftToggle.AutoButtonColor = false
-    giftToggle.Text = "GIFT: OFF" giftToggle.TextColor3 = Color3.new(0, 0, 0)
-    giftToggle.Font = FB giftToggle.TextSize = 13 giftToggle.BorderSizePixel = 0
-    giftToggle.Parent = giftCard
-    Instance.new("UICorner", giftToggle).CornerRadius = UDim.new(0, 5)
+    giftToggle.Size = UDim2.new(1, 0, 0, 36) giftToggle.BackgroundColor3 = C.accent giftToggle.AutoButtonColor = false
+    giftToggle.Text = "GIFT: OFF" giftToggle.TextColor3 = C.text giftToggle.Font = FB giftToggle.TextSize = 13
+    giftToggle.BorderSizePixel = 0 giftToggle.LayoutOrder = 6 giftToggle.Parent = giftCard
+    Instance.new("UICorner", giftToggle).CornerRadius = UDim.new(0, 9)
 
+    -- 7/8/9. Sent/Failed + Status + Targets
     local giftCounterLbl = Instance.new("TextLabel")
-    giftCounterLbl.Size = UDim2.new(1, -24, 0, 20) giftCounterLbl.Position = UDim2.new(0, 12, 0, 196)
-    giftCounterLbl.BackgroundTransparency = 1 giftCounterLbl.Text = "Sent: 0   Failed: 0"
-    giftCounterLbl.TextColor3 = C.text giftCounterLbl.Font = FM giftCounterLbl.TextSize = 12
-    giftCounterLbl.TextXAlignment = Enum.TextXAlignment.Left giftCounterLbl.Parent = giftCard
-
+    giftCounterLbl.Size = UDim2.new(1, 0, 0, 16) giftCounterLbl.BackgroundTransparency = 1 giftCounterLbl.Text = "Sent: 0   Failed: 0"
+    giftCounterLbl.TextColor3 = C.textDim giftCounterLbl.Font = FM giftCounterLbl.TextSize = 11
+    giftCounterLbl.TextXAlignment = Enum.TextXAlignment.Left giftCounterLbl.LayoutOrder = 7 giftCounterLbl.Parent = giftCard
     local giftStatusLbl = Instance.new("TextLabel")
-    giftStatusLbl.Size = UDim2.new(1, -24, 0, 22) giftStatusLbl.Position = UDim2.new(0, 12, 0, 222)
-    giftStatusLbl.BackgroundTransparency = 1 giftStatusLbl.Text = "Status: idle"
+    giftStatusLbl.Size = UDim2.new(1, 0, 0, 16) giftStatusLbl.BackgroundTransparency = 1 giftStatusLbl.Text = "Status: idle"
     giftStatusLbl.TextColor3 = C.textDim giftStatusLbl.Font = FM giftStatusLbl.TextSize = 11
-    giftStatusLbl.TextXAlignment = Enum.TextXAlignment.Left
-    giftStatusLbl.TextTruncate = Enum.TextTruncate.AtEnd giftStatusLbl.Parent = giftCard
-
-    -- Helper labels (under status)
+    giftStatusLbl.TextXAlignment = Enum.TextXAlignment.Left giftStatusLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    giftStatusLbl.LayoutOrder = 8 giftStatusLbl.Parent = giftCard
     local giftPickedLbl = Instance.new("TextLabel")
-    giftPickedLbl.Size = UDim2.new(1, -24, 0, 18) giftPickedLbl.Position = UDim2.new(0, 12, 0, 248)
-    giftPickedLbl.BackgroundTransparency = 1 giftPickedLbl.Text = "Targets: 0 | Pet types: 0"
+    giftPickedLbl.Size = UDim2.new(1, 0, 0, 16) giftPickedLbl.BackgroundTransparency = 1 giftPickedLbl.Text = "Targets: 0 | Pet Types: 0"
     giftPickedLbl.TextColor3 = C.textDim giftPickedLbl.Font = FM giftPickedLbl.TextSize = 11
-    giftPickedLbl.TextXAlignment = Enum.TextXAlignment.Left giftPickedLbl.Parent = giftCard
+    giftPickedLbl.TextXAlignment = Enum.TextXAlignment.Left giftPickedLbl.LayoutOrder = 9 giftPickedLbl.Parent = giftCard
 
     -- ===== Gift remote setup =====
     local outGiftRE = nil
@@ -13026,7 +13179,8 @@ BH.buildGardenPanel = function()
         local np = 0; for _ in pairs(giftSelectedPets) do np = np + 1 end
         gTargetBtn.Text = nt > 0 and (""..nt.." target") or "Target..."
         gPetBtn.Text = np > 0 and (""..np.." pet type") or "Pet Type..."
-        giftPickedLbl.Text = string.format("Targets: %d | Pet types: %d", nt, np)
+        giftPickedLbl.Text = string.format("Targets: %d | Pet Types: %d", nt, np)
+        if BH.__renderGiftChips then pcall(BH.__renderGiftChips) end
         -- Refresh match count
         local bp = player:FindFirstChild("Backpack")
         local cnt = 0
@@ -13036,7 +13190,7 @@ BH.buildGardenPanel = function()
             end
         end
         giftMatchCount = cnt
-        gTotalLbl.Text = "Match: "..cnt
+        gTotalLbl.Text = "MATCH: "..cnt
     end
 
     -- Refresh match count periodically
@@ -13463,7 +13617,7 @@ BH.buildGardenPanel = function()
             end
             giftActive = false
             giftToggle.Text = "GIFT: OFF"
-            giftToggle.BackgroundColor3 = C.danger
+            giftToggle.BackgroundColor3 = C.accent
             giftStatusLbl.Text = "Stopped (Sent: "..giftSent..")"
             giftStatusLbl.TextColor3 = C.textDim
             persistGiftState()
@@ -13944,28 +14098,49 @@ end)
         -- sama kayak up6kg. Cuma trade ke akun yg ADA di daftar ini + present di server (bukan
         -- first-player yg bisa nyasar ke orang random). Refresh 30s.
         local TlvlAkun = {}
+        -- v8.405: cache akun leveling. Restore dari save dulu biar gak minta ulang tiap start.
+        pcall(function()
+            if BH.marketState and type(BH.marketState.lvlData) == "table" and next(BH.marketState.lvlData) then
+                local m, mAge = {}, {}
+                for k, d in pairs(BH.marketState.lvlData) do m[k] = true; if type(d) == "table" and d.age500 then mAge[k] = d.age500 end end
+                TlvlAkun = m; _G.__ZenxLvlAkun = m; _G.__ZenxLvlAge500 = mAge; _G.__ZenxLvlData = BH.marketState.lvlData
+            end
+        end)
         task.spawn(function()
             local LVLMAX_URL = "https://dry-glitter-63e4.petagee5.workers.dev/lvlmax"
             local req2 = request or http_request or (syn and syn.request)
+            local haveLvl = (type(_G.__ZenxLvlAkun) == "table" and next(_G.__ZenxLvlAkun)) and true or false
             while true do
                 pcall(function()
                     local raw
-                    pcall(function() raw = game:HttpGet(LVLMAX_URL) end)
-                    if (not raw or raw == "") and req2 then
-                        local ok, res = pcall(function() return req2({ Url = LVLMAX_URL, Method = "GET" }) end)
-                        if ok and res and res.Body then raw = res.Body end
+                    -- v8.406: baca file lokal (di-sync worker) DULU -> gak minta panel tiap akun
+                    pcall(function() if isfile and isfile("zenx_lvlmax.txt") and readfile then local b = readfile("zenx_lvlmax.txt"); if b and b ~= "" then raw = b end end end)
+                    if not raw or raw == "" then
+                        pcall(function() raw = game:HttpGet(LVLMAX_URL) end)
+                        if (not raw or raw == "") and req2 then
+                            local ok, res = pcall(function() return req2({ Url = LVLMAX_URL, Method = "GET" }) end)
+                            if ok and res and res.Body then raw = res.Body end
+                        end
                     end
                     if raw and raw ~= "" then
-                        local m, mAge = {}, {}
+                        local m, mAge, mData = {}, {}, {}
                         for pair in tostring(raw):gmatch("[^,]+") do
                             local k = pair:match("^%s*(.-)%s*=")
-                            local a5 = pair:match("=%s*%d+:%d+:(%d+)")   -- field ke-3 = age500 (v8.375)
-                            if k and k ~= "" then m[k] = true; if a5 then mAge[k] = tonumber(a5) end end
+                            local f1, f2, f3 = pair:match("=%s*(%d+):(%d+):(%d+)")   -- max:total:age500 (v8.404)
+                            if k and k ~= "" then
+                                m[k] = true
+                                if f3 then mAge[k] = tonumber(f3) end
+                                mData[k] = { max = tonumber(f1), total = tonumber(f2), age500 = tonumber(f3) }
+                            end
                         end
-                        if next(m) then TlvlAkun = m; _G.__ZenxLvlAkun = m; _G.__ZenxLvlAge500 = mAge end
+                        if next(m) then
+                            TlvlAkun = m; _G.__ZenxLvlAkun = m; _G.__ZenxLvlAge500 = mAge; _G.__ZenxLvlData = mData
+                            haveLvl = true
+                            if BH.marketState then BH.marketState.lvlData = mData; pcall(function() BH.saveMarketState(BH.marketState) end) end
+                        end
                     end
                 end)
-                task.wait(30)
+                task.wait(haveLvl and 300 or 20)   -- belum dapet: 20s | udah dapet: 5 menit
             end
         end)
 
