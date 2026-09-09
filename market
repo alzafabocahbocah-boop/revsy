@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.429"
+local VERSION = "8.433"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -720,11 +720,19 @@ function _G.__ZenxPL(msg)
     table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  " .. tostring(msg))
     if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
 end
--- v8.389: baca presence dari FILE LOKAL dulu (worker fetch + tulis), fallback HttpGet backend.
+-- v8.432: HTTP /market-presence DULU (fresh) -> anti-nabrak akurat. File lokal cuma fallback kalo HTTP gagal.
+-- (Dulu file-dulu -> kalo file stale, akun nyusul gak liat presence lawan -> gak kedetect nabrak -> gak hop.)
 function _G.__ZenxPresRaw()
     local raw
-    pcall(function() if isfile and isfile("zenx_market_presence.json") and readfile then local b = readfile("zenx_market_presence.json"); if b and b ~= "" then raw = b end end end)
-    if not raw or raw == "" then pcall(function() raw = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev" .. "/market-presence") end) end
+    pcall(function() raw = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev" .. "/market-presence") end)
+    if (not raw or raw == "") then
+        local rq = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
+        if type(http) == "table" and http.request then rq = http.request end
+        if rq then local ok, res = pcall(function() return rq({ Url = "https://dry-glitter-63e4.petagee5.workers.dev/market-presence", Method = "GET" }) end); if ok and res and res.Body then raw = res.Body end end
+    end
+    if (not raw or raw == "") then
+        pcall(function() if isfile and isfile("zenx_market_presence.json") and readfile then local b = readfile("zenx_market_presence.json"); if b and b ~= "" then raw = b end end end)
+    end
     return raw
 end
 
@@ -9531,6 +9539,9 @@ BH.savePresence = function(jobId)
     pcall(function()
         local jid = tostring(jobId or game.JobId)
         if _G.__ZenxLastPresenceJob ~= jid then _G.__ZenxLastPresenceJob = jid; _G.__ZenxJobIdSince = os.time() end
+        -- v8.433: LAPOR CUMA PAS GANTI SERVER. Kalo jobId ini udah ke-POST sukses -> skip (gak spam 30s).
+        --         (flag di-set setelah sukses, jadi kalo gagal tetep di-retry siklus berikut.)
+        if _G.__ZenxLastPostedJob == jid then return end
         -- v8.426: finder LENGKAP (samain MarketBridge yg kebukti jalan). request() polos sering stub rusak.
         local rq = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request)
                 or http_request or request or httprequest
@@ -9548,6 +9559,7 @@ BH.savePresence = function(jobId)
             Body = HttpService:JSONEncode({ akun = player.Name, jobId = jid, since = _G.__ZenxJobIdSince }) })
         -- v8.426: log status POST ke KABAR (deduped) — biar ketauan presence beneran ke-kirim apa nggak
         local okPost = r and (r.StatusCode == 200 or r.Success or r.StatusCode == 204)
+        if okPost then _G.__ZenxLastPostedJob = jid end   -- v8.433: tandain jobId ini udah ke-POST (jangan ulang sampe ganti server)
         local st = "code=" .. tostring(r and (r.StatusCode or r.status) or "?")
         local msg = okPost and ("[presence] ✅ ke-kirim (" .. st .. ") jobId=" .. jid:sub(1,8)) or ("[presence] ❌ POST GAGAL (" .. st .. ")")
         if _G.__ZenxPresPostLast ~= msg then
@@ -14411,14 +14423,15 @@ end)
             while true do
                 pcall(function()
                     local raw
-                    -- v8.406: baca file lokal (di-sync worker) DULU -> gak minta panel tiap akun
-                    pcall(function() if isfile and isfile("zenx_lvlmax.txt") and readfile then local b = readfile("zenx_lvlmax.txt"); if b and b ~= "" then raw = b end end end)
+                    -- v8.430: HTTP /lvlmax DULU (authoritative, selalu fresh). File lokal cuma fallback
+                    --          kalo HTTP gagal. (Dulu file-dulu -> kalo file stale, akun leveling ke-kunci sedikit.)
+                    pcall(function() raw = game:HttpGet(LVLMAX_URL) end)
+                    if (not raw or raw == "") and req2 then
+                        local ok, res = pcall(function() return req2({ Url = LVLMAX_URL, Method = "GET" }) end)
+                        if ok and res and res.Body then raw = res.Body end
+                    end
                     if not raw or raw == "" then
-                        pcall(function() raw = game:HttpGet(LVLMAX_URL) end)
-                        if (not raw or raw == "") and req2 then
-                            local ok, res = pcall(function() return req2({ Url = LVLMAX_URL, Method = "GET" }) end)
-                            if ok and res and res.Body then raw = res.Body end
-                        end
+                        pcall(function() if isfile and isfile("zenx_lvlmax.txt") and readfile then local b = readfile("zenx_lvlmax.txt"); if b and b ~= "" then raw = b end end end)
                     end
                     if raw and raw ~= "" then
                         local m, mAge, mData = {}, {}, {}
@@ -14438,7 +14451,8 @@ end)
                         end
                     end
                 end)
-                task.wait(haveLvl and 300 or 20)   -- belum dapet: 20s | udah dapet: 5 menit
+                if haveLvl then break end   -- v8.431: fetch /lvlmax CUMA sekali (pas awal masuk server garden). Udah dapet -> STOP (gak nge-loop HTTP terus). Rejoin = script ulang = fetch lagi.
+                task.wait(20)   -- belum dapet: retry 20s
             end
         end)
 
