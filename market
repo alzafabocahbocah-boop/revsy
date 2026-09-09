@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.415"
+local VERSION = "8.417"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -3152,26 +3152,43 @@ do
     -- v8.383: LOG event di tab Listing (dari _G.ZenxV8 -> SELL/LIST/HOP/rejoin/scale realtime).
     local logHdr = Instance.new("TextLabel")
     logHdr.Size = UDim2.new(1, -4, 0, 14) logHdr.Position = UDim2.new(0, 2, 0, 190)
-    logHdr.BackgroundTransparency = 1 logHdr.Text = "KABAR DARI PANEL"
+    logHdr.BackgroundTransparency = 1 logHdr.Text = "KABAR DARI PANEL  (pencet 2x = copy)"
     logHdr.TextColor3 = C.textMute logHdr.Font = FB logHdr.TextSize = 9
     logHdr.TextXAlignment = Enum.TextXAlignment.Left logHdr.Parent = listingPanel
-    local logBox = Instance.new("TextLabel")
-    logBox.Size = UDim2.new(1, 0, 0, 92) logBox.Position = UDim2.new(0, 0, 0, 206)
+    local logBox = Instance.new("TextButton")
+    logBox.Size = UDim2.new(1, 0, 0, 130) logBox.Position = UDim2.new(0, 0, 0, 206)
     logBox.BackgroundColor3 = Color3.fromRGB(8, 8, 8) logBox.BorderSizePixel = 0
+    logBox.AutoButtonColor = false
     logBox.Text = "" logBox.TextColor3 = C.textDim logBox.Font = Enum.Font.Code logBox.TextSize = 10
     logBox.TextXAlignment = Enum.TextXAlignment.Left logBox.TextYAlignment = Enum.TextYAlignment.Top
     logBox.TextWrapped = true logBox.Parent = listingPanel
     Instance.new("UICorner", logBox).CornerRadius = UDim.new(0, 8)
     do local lp = Instance.new("UIPadding") lp.PaddingLeft = UDim.new(0,10) lp.PaddingTop = UDim.new(0,8) lp.PaddingRight = UDim.new(0,8) lp.Parent = logBox end
+    -- v8.418: pencet 2x -> copy semua ke clipboard
+    local _lastTapLog = 0
+    logBox.MouseButton1Click:Connect(function()
+        local now = tick()
+        if now - _lastTapLog < 0.45 then
+            _lastTapLog = 0
+            local txt = table.concat(_G.__ZenxPanelLog or {}, "\n")
+            if txt == "" then txt = "(kosong)" end
+            local done = false
+            pcall(function() if setclipboard then setclipboard(txt); done = true elseif toclipboard then toclipboard(txt); done = true end end)
+            pcall(function() logHdr.Text = done and "✅ TERSALIN!" or "❌ COPY GAGAL (exec gak support)" end)
+            task.delay(1.5, function() pcall(function() logHdr.Text = "KABAR DARI PANEL  (pencet 2x = copy)" end) end)
+        else
+            _lastTapLog = now
+        end
+    end)
     task.spawn(function()
         while logBox.Parent do
             local lines = _G.__ZenxPanelLog or {}
             local n = #lines
             if n == 0 then
-                logBox.Text = "(belum ada kabar dari panel)"
+                logBox.Text = "(belum ada kabar / debug)"
             else
                 local buf = {}
-                for i = math.max(1, n - 5), n do buf[#buf+1] = tostring(lines[i]) end
+                for i = math.max(1, n - 8), n do buf[#buf+1] = tostring(lines[i]) end
                 logBox.Text = table.concat(buf, "\n")
             end
             task.wait(2)
@@ -6859,7 +6876,7 @@ BH.countMyPetsForRule = function(r)
     local ruleMin = r.min or 0
     local ruleMax = (r.max == math.huge) and math.huge or r.max
     local count = 0
-    local debugInfo = {checked=0, typeMatch=0, kgMatch=0, hasBase=0, noBase=0}
+    local debugInfo = {checked=0, typeMatch=0, kgMatch=0, hasBase=0, noBase=0, kgs={}}
     for _, t in ipairs(bp:GetChildren()) do
         if isPet(t) then
             debugInfo.checked = debugInfo.checked + 1
@@ -6870,6 +6887,7 @@ BH.countMyPetsForRule = function(r)
                 debugInfo.typeMatch = debugInfo.typeMatch + 1
                 local baseKg = getBaseKg(t)
                 if baseKg then debugInfo.hasBase = debugInfo.hasBase + 1
+                    if #debugInfo.kgs < 12 then table.insert(debugInfo.kgs, baseKg) end   -- v8.416: sample kg asli
                 else debugInfo.noBase = debugInfo.noBase + 1 end
                 if baseKg and baseKg >= ruleMin and (ruleMax == math.huge or baseKg <= ruleMax) then
                     debugInfo.kgMatch = debugInfo.kgMatch + 1
@@ -6880,12 +6898,38 @@ BH.countMyPetsForRule = function(r)
     end
     -- v8.122: log diagnostic kalo count==0 tapi ada typeMatch (debug bug)
     if count == 0 and debugInfo.typeMatch > 0 and ruleType then
+        -- v8.416: tampilin kg ASLI pet (min-max + sample) biar ketauan harus set range berapa
+        local kgStr, kgShort = "", ""
+        if #debugInfo.kgs > 0 then
+            local lo, hi = debugInfo.kgs[1], debugInfo.kgs[1]
+            local parts = {}
+            for _, k in ipairs(debugInfo.kgs) do
+                if k < lo then lo = k end
+                if k > hi then hi = k end
+                parts[#parts+1] = string.format("%.2f", k)
+            end
+            kgShort = string.format("%.2f", lo) .. "-" .. string.format("%.2f", hi)
+            kgStr = " | KG PET ASLI: " .. kgShort ..
+                    " (rule minta " .. ruleMin .. "-" .. (ruleMax==math.huge and "∞" or ruleMax) .. ") [" .. table.concat(parts, ",") .. "]"
+        end
         L("[COUNT-DIAG] r='"..ruleType.."' "..ruleMin.."-"..(ruleMax==math.huge and "∞" or ruleMax)..
           " | checked="..debugInfo.checked..
           " typeMatch="..debugInfo.typeMatch..
           " hasBase="..debugInfo.hasBase..
           " noBase="..debugInfo.noBase..
-          " kgMatch="..debugInfo.kgMatch)
+          " kgMatch="..debugInfo.kgMatch..
+          kgStr)
+        -- v8.417: PUSH ke KABAR DARI PANEL (deduped per rule) — biar keliatan di GUI, gak perlu console
+        local rmax = (ruleMax==math.huge and "∞" or tostring(ruleMax))
+        local diagMsg = "⚠ " .. ruleType .. ": " .. debugInfo.typeMatch .. "pet, KG asli " ..
+                        (kgShort ~= "" and kgShort or "?") .. " TAPI rule " .. ruleMin .. "-" .. rmax .. " → set range!"
+        _G.__ZenxDiagLast = _G.__ZenxDiagLast or {}
+        if _G.__ZenxDiagLast[ruleType] ~= diagMsg then
+            _G.__ZenxDiagLast[ruleType] = diagMsg
+            _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
+            table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  " .. diagMsg)
+            if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
+        end
     end
     return count
 end
@@ -7366,8 +7410,10 @@ end
 setStartIdle()
 
 local function setStats(text, color)
-    statsLbl.Text = text
-    statsLbl.TextColor3 = color or C.success
+    pcall(function()   -- v8.416: bungkus pcall — exec tertentu (thread spawn) lempar "lacking capability Plugin"
+        statsLbl.Text = text
+        statsLbl.TextColor3 = color or C.success
+    end)
 end
 
 -- ===== v8.28: BOOTH HELPERS (same BH table from state) =====
@@ -14336,156 +14382,3 @@ if not _G.__ZenxAutoNightEgg then
         end
     end)
 end
-
--- ===== v8.411: GUI DEBUG LISTING — panel di samping, jelasin kenapa pet gak ke-list + tombol COPY =====
-task.spawn(function()
-    task.wait(1)
-    local ok = pcall(function()
-        -- v8.415: ScreenGui SENDIRI, DisplayOrder paling tinggi -> gak bakal ketiban GUI apapun
-        local dgui = Instance.new("ScreenGui")
-        dgui.Name = "ZenxDebugGui"
-        dgui.ResetOnSpawn = false
-        dgui.DisplayOrder = 999999
-        dgui.IgnoreGuiInset = true
-        pcall(function() dgui.Parent = (gethui and gethui()) or CoreGui end)
-        if not dgui.Parent then dgui.Parent = CoreGui end
-
-        local dg = Instance.new("Frame")
-        dg.Name = "ZenxListDebug"
-        dg.Size = UDim2.new(0, 440, 0, 600)
-        dg.Position = UDim2.new(0, 20, 0.5, -300)
-        dg.BackgroundColor3 = C.bg
-        dg.BorderSizePixel = 0
-        dg.Visible = false
-        dg.ZIndex = 50
-        dg.Active = true
-        dg.Draggable = true
-        dg.Parent = dgui
-        Instance.new("UICorner", dg).CornerRadius = UDim.new(0, 12)
-        do local s = Instance.new("UIStroke", dg) s.Color = C.accent s.Thickness = 1 s.Transparency = 0.3 end
-
-        local title = Instance.new("TextLabel")
-        title.Size = UDim2.new(1, -20, 0, 24) title.Position = UDim2.new(0, 12, 0, 10) title.BackgroundTransparency = 1
-        title.Text = "DEBUG LISTING" title.TextColor3 = C.accent title.Font = Enum.Font.GothamBold title.TextSize = 16
-        title.TextXAlignment = Enum.TextXAlignment.Left title.ZIndex = 51 title.Parent = dg
-
-        local sumLbl = Instance.new("TextLabel")
-        sumLbl.Size = UDim2.new(1, -20, 0, 110) sumLbl.Position = UDim2.new(0, 12, 0, 38) sumLbl.BackgroundTransparency = 1
-        sumLbl.Text = "-" sumLbl.TextColor3 = C.textDim sumLbl.Font = Enum.Font.Gotham sumLbl.TextSize = 12
-        sumLbl.TextXAlignment = Enum.TextXAlignment.Left sumLbl.TextYAlignment = Enum.TextYAlignment.Top
-        sumLbl.TextWrapped = true sumLbl.RichText = true sumLbl.ZIndex = 51 sumLbl.Parent = dg
-
-        local scroll = Instance.new("ScrollingFrame")
-        scroll.Size = UDim2.new(1, -16, 1, -196) scroll.Position = UDim2.new(0, 8, 0, 154)
-        scroll.BackgroundColor3 = C.card scroll.BorderSizePixel = 0
-        scroll.ScrollBarThickness = 3 scroll.ScrollBarImageColor3 = C.border
-        scroll.CanvasSize = UDim2.new(0, 0, 0, 0) scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-        scroll.ZIndex = 51 scroll.Parent = dg
-        Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 8)
-        local slay = Instance.new("UIListLayout") slay.Padding = UDim.new(0, 3) slay.SortOrder = Enum.SortOrder.LayoutOrder slay.Parent = scroll
-        local spad = Instance.new("UIPadding") spad.PaddingTop = UDim.new(0,6) spad.PaddingBottom = UDim.new(0,6) spad.PaddingLeft = UDim.new(0,8) spad.PaddingRight = UDim.new(0,8) spad.Parent = scroll
-
-        local copyBtn = Instance.new("TextButton")
-        copyBtn.Size = UDim2.new(1, -16, 0, 36) copyBtn.Position = UDim2.new(0, 8, 1, -44)
-        copyBtn.BackgroundColor3 = C.accent copyBtn.AutoButtonColor = false copyBtn.Text = "COPY SEMUA"
-        copyBtn.TextColor3 = Color3.fromRGB(17,17,17) copyBtn.Font = Enum.Font.GothamBold copyBtn.TextSize = 14
-        copyBtn.BorderSizePixel = 0 copyBtn.ZIndex = 51 copyBtn.Parent = dg
-        Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 8)
-
-        local kindCol = {
-            ok = C.success, warn = Color3.fromRGB(230,120,90), skip = C.textDim,
-            listed = Color3.fromRGB(120,160,230), wait = Color3.fromRGB(230,190,90),
-        }
-        local function buildText()
-            local d = _G.__ZenxListDebug
-            if not d or not d.pets then return "LISTING BELUM PERNAH JALAN. Cek: auto-start ON? udah di tab MARKET? booth ke-claim?" end
-            local lastTs = _G.__ZenxLastCycleTs or 0
-            local sinceCycle = os.time() - lastTs
-            local jalan = lastTs > 0 and sinceCycle < 60
-            local lines = {
-                "=== DEBUG LISTING ===",
-                "listing jalan: " .. (jalan and ("YA (cycle "..(_G.__ZenxCycleNum or 0)..", "..sinceCycle.."s lalu)") or ("TIDAK/STUCK ("..(lastTs>0 and (sinceCycle.."s lalu") or "belum pernah")..")")),
-                "booth claimed: " .. tostring(d.boothClaimed) .. (d.boothUuid and (" ("..d.boothUuid..")") or ""),
-                "APS ready: " .. tostring(d.apsReady),
-                "auto-start: " .. tostring(d.autoStart) .. " | running: " .. tostring(d.running),
-                "rate-limited: " .. tostring(d.rateLimited) .. (d.rateLimited and (" ("..tostring(d.rateLeft).."s)") or ""),
-                "rules: " .. tostring(d.ruleCount) .. " | pet ke-scan: " .. tostring(d.petsFound or #d.pets),
-                "--- per pet ---",
-            }
-            for _, pt in ipairs(d.pets) do
-                lines[#lines+1] = string.format("[%s] %s (%.2fkg) -> %s",
-                    tostring(pt.base), tostring(pt.name), tonumber(pt.wt) or 0, tostring(pt.reason))
-            end
-            return table.concat(lines, "\n")
-        end
-        copyBtn.MouseButton1Click:Connect(function()
-            local txt = buildText()
-            local done = false
-            pcall(function() if setclipboard then setclipboard(txt); done = true elseif toclipboard then toclipboard(txt); done = true end end)
-            copyBtn.Text = done and "TERSALIN!" or "COPY GAGAL (exec gak support)"
-            task.delay(1.5, function() copyBtn.Text = "COPY SEMUA" end)
-        end)
-
-        -- refresh loop
-        task.spawn(function()
-            while dg.Parent do
-                if dg.Visible then
-                    local d = _G.__ZenxListDebug
-                    -- v8.412: cek listing JALAN atau MATI (dari lastCycleTs)
-                    local lastTs = _G.__ZenxLastCycleTs or 0
-                    local sinceCycle = os.time() - lastTs
-                    local jalan = lastTs > 0 and sinceCycle < 60
-                    local function ya(b, t, f) return b and ("<font color=\"#82d2a0\">"..t.."</font>") or ("<font color=\"#e67a5a\">"..(f or t).."</font>") end
-                    if d and d.pets then
-                        local nOk, nSkip = 0, 0
-                        for _, pt in ipairs(d.pets) do if pt.kind == "ok" then nOk = nOk + 1 else nSkip = nSkip + 1 end end
-                        local head = {}
-                        head[#head+1] = "LISTING: " .. ya(jalan, "JALAN ("..(_G.__ZenxCycleNum or 0)..", "..sinceCycle.."s lalu)", "MATI/STUCK ("..(lastTs>0 and (sinceCycle.."s lalu") or "belum pernah")..")")
-                        head[#head+1] = "booth: " .. ya(d.boothClaimed, "CLAIMED", "BELUM CLAIM ⚠") .. "  |  APS: " .. ya(d.apsReady, "READY", "BELUM ⚠")
-                        head[#head+1] = "auto-start: " .. ya(d.autoStart, "ON", "OFF ⚠") .. "  |  running: " .. ya(d.running, "YA", "TIDAK ⚠")
-                        head[#head+1] = "rules: "..tostring(d.ruleCount).."  |  pet ke-scan: "..tostring(d.petsFound or #d.pets)
-                        head[#head+1] = "<font color=\"#82d2a0\">cocok: "..nOk.."</font>  |  skip: "..nSkip
-                        if d.rateLimited then head[#head+1] = "<font color=\"#e67a5a\">⏸ RATE-LIMIT aktif "..tostring(d.rateLeft).."s</font>" end
-                        sumLbl.Text = table.concat(head, "\n")
-                        for _, ch in ipairs(scroll:GetChildren()) do if ch:IsA("TextLabel") then ch:Destroy() end end
-                        for i, pt in ipairs(d.pets) do
-                            local row = Instance.new("TextLabel")
-                            row.Size = UDim2.new(1, 0, 0, 0) row.AutomaticSize = Enum.AutomaticSize.Y
-                            row.BackgroundTransparency = 1 row.TextColor3 = kindCol[pt.kind] or C.textDim
-                            row.Font = Enum.Font.Gotham row.TextSize = 12 row.TextXAlignment = Enum.TextXAlignment.Left
-                            row.TextYAlignment = Enum.TextYAlignment.Top row.TextWrapped = true
-                            row.Text = string.format("%s [%s] %.1fkg\n  %s",
-                                tostring(pt.name), tostring(pt.base), tonumber(pt.wt) or 0, tostring(pt.reason))
-                            row.LayoutOrder = i row.ZIndex = 52 row.Parent = scroll
-                        end
-                        if #d.pets == 0 then
-                            local row = Instance.new("TextLabel")
-                            row.Size = UDim2.new(1, 0, 0, 40) row.BackgroundTransparency = 1 row.TextColor3 = C.textMute
-                            row.Font = Enum.Font.Gotham row.TextSize = 12 row.TextWrapped = true
-                            row.Text = "0 pet ke-scan.\nInventory kosong? Atau cycle listing belum jalan?"
-                            row.ZIndex = 52 row.Parent = scroll
-                        end
-                    else
-                        sumLbl.Text = "LISTING: " .. ya(false, "", "BELUM PERNAH JALAN ⚠") .. "\n\nCycle listing belum jalan sama sekali.\nKemungkinan: auto-start OFF, atau belum pindah ke tab MARKET, atau booth belum di-claim.\n\nauto-start: " .. ya((_G.__ZenxListDebug and _G.__ZenxListDebug.autoStart), "ON", "cek Misc > Auto-Start")
-                    end
-                end
-                task.wait(2)
-            end
-        end)
-
-        -- v8.415: tombol toggle di TENGAH-ATAS layar (pasti keliatan), ScreenGui sendiri
-        local tgl = Instance.new("TextButton")
-        tgl.Name = "ZenxDebugToggle"
-        tgl.Size = UDim2.new(0, 170, 0, 40) tgl.Position = UDim2.new(0.5, -85, 0, 8)
-        tgl.BackgroundColor3 = C.accent tgl.AutoButtonColor = false tgl.Text = "🔍 DEBUG LIST"
-        tgl.TextColor3 = Color3.fromRGB(17,17,17) tgl.Font = Enum.Font.GothamBold tgl.TextSize = 15
-        tgl.BorderSizePixel = 0 tgl.ZIndex = 100 tgl.Active = true tgl.Draggable = true tgl.Parent = dgui
-        Instance.new("UICorner", tgl).CornerRadius = UDim.new(0, 10)
-        do local s = Instance.new("UIStroke", tgl) s.Color = Color3.fromRGB(0,0,0) s.Thickness = 2 s.Transparency = 0.3 end
-        tgl.MouseButton1Click:Connect(function()
-            dg.Visible = not dg.Visible
-            tgl.Text = dg.Visible and "DEBUG LIST ✕" or "🔍 DEBUG LIST"
-        end)
-    end)
-    if not ok then L("[Debug] gagal bikin GUI debug listing") end
-end)
