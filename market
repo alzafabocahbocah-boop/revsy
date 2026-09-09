@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.428"
+local VERSION = "8.429"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -12660,23 +12660,31 @@ L("  - Inventory capacity")
 end)()
 
 
--- v8.253: ambil batas pet inventory (MaxPetsInInventory) dari memory game.
--- cache 5s biar getgc gak berat. ambil nilai TERBESAR valid (hindari template default).
+-- v8.429: ambil MaxPetsInInventory pake MODE (paling sering) — dulu ambil TERBESAR (salah:
+-- ke-ambil default game 210/275). Sama kayak up6kg v10.64 / uplevel v0.25. Filter PlayerData asli + >= pet.
 local _zenxMaxPetsCache, _zenxMaxPetsTime = nil, 0
 local function getMaxPetsZenx()
     if _zenxMaxPetsCache and (tick() - _zenxMaxPetsTime) < 5 then return _zenxMaxPetsCache end
-    local best = nil
+    local best, bestN = nil, 0
+    local floor = (tonumber(_G.__ZenxMarketTotalPet) or 0) - 5
     if getgc then
+        local tally = {}
         pcall(function()
             for _, obj in ipairs(getgc(true)) do
                 if type(obj) == "table" then
                     local mp = rawget(obj, "MaxPetsInInventory")
-                    if type(mp) == "number" and mp > 0 then
-                        if not best or mp > best then best = mp end
+                    if type(mp) == "number" and mp > 0
+                        and rawget(obj, "MaxEggsInFarm") ~= nil
+                        and rawget(obj, "MaxEquippedPets") ~= nil
+                        and mp >= floor then
+                        tally[mp] = (tally[mp] or 0) + 1
                     end
                 end
             end
         end)
+        for v, n in pairs(tally) do
+            if n > bestN or (n == bestN and (not best or v < best)) then best = v; bestN = n end
+        end
     end
     -- fallback: atribut player kalau memory gak ketemu
     if not best then
