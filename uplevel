@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.28"
+local VERSION = "uplevel-v0.29"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -717,19 +717,35 @@ task.spawn(function()
             local age500plus, age500minus = 0, 0   -- leveling: age500+ / age500-
             local petAgePlus, petAgeMinus = {}, {}   -- v0.22: {tipe -> [12 bucket base weight]} split age500 (buat popup bp)
             local totalAll = 0   -- v0.87: total SEMUA pet (buat "180/210" di panel)
+            -- v0.29: uuid pet yg di-FAV (support/protected) -> JANGAN dihitung di age 500+
+            local favUuids = {}
+            if type(_G.ZenxSupportUuids) == "table" then for u in pairs(_G.ZenxSupportUuids) do favUuids[tostring(u)] = true end end
+            do
+                local scan = {}
+                local bp2 = player:FindFirstChild("Backpack"); if bp2 then for _, t in ipairs(bp2:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
+                if player.Character then for _, t in ipairs(player.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
+                for _, t in ipairs(scan) do
+                    local fv = false
+                    for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr) == true then fv = true; break end end
+                    if fv then local u = t:GetAttribute("PET_UUID"); if u then local k = tostring(u); if k:sub(1,1) ~= "{" then k = "{"..k.."}" end; favUuids[k] = true end end
+                end
+            end
             -- ITERASI CONTAINER = SEMUA pet (backpack + yg lagi ke-equip di kebun)
             if container then
-                for _, entry in pairs(container) do
+                for cuuid, entry in pairs(container) do
                     if type(entry) == "table" and entry.PetType and type(entry.PetData) == "table" then
                         totalAll = totalAll + 1   -- v0.87: hitung SEMUA pet (semua jenis)
-                        do local _lv = tonumber(entry.PetData.Level) or 0; if _lv >= 500 then age500plus = age500plus + 1 else age500minus = age500minus + 1 end end
+                        local _kfav = favUuids[tostring(cuuid)]   -- v0.29: pet di-fav -> skip age500
+                        if not _kfav then
+                            do local _lv = tonumber(entry.PetData.Level) or 0; if _lv >= 500 then age500plus = age500plus + 1 else age500minus = age500minus + 1 end end
+                        end
                         local ptype = stripMutation(tostring(entry.PetType))
                         tipe[ptype] = (tipe[ptype] or 0) + 1   -- SEMUA tipe buat picker
                         -- v0.22: histogram base weight (1..12) per jenis, split age500+ / age500-
                         do
                             local bwH = tonumber(entry.PetData.BaseWeight) or 0
                             local lvH = tonumber(entry.PetData.Level) or 0
-                            if bwH > 0 then
+                            if (not _kfav) and bwH > 0 then
                                 local b = math.floor(bwH); if b < 1 then b = 1 elseif b > 12 then b = 12 end
                                 local grp = (lvH >= 500) and petAgePlus or petAgeMinus
                                 local arr = grp[ptype]
@@ -2881,9 +2897,17 @@ do
                     local uuid = t:GetAttribute("PET_UUID")
                     if uuid then
                         local u = tostring(uuid); if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
-                        if sup[u] and not isFav(t) then
-                            pcall(function() favRE:FireServer(t) end)   -- favorite -> protected
-                            if _G.ZenxKgLog then _G.ZenxKgLog("[auto-fav] support "..tostring(t.Name).." di-favorite (gak ke-gift)") end
+                        if sup[u] then
+                            if not isFav(t) then
+                                pcall(function() favRE:FireServer(t) end)   -- support -> favorite (protected)
+                                if _G.ZenxKgLog then _G.ZenxKgLog("[auto-fav] support "..tostring(t.Name).." di-favorite (gak ke-gift)") end
+                            end
+                        else
+                            -- v0.29: pet BUKAN support tapi ke-fav (nyasar) -> UNFAV
+                            if isFav(t) then
+                                pcall(function() favRE:FireServer(t) end)
+                                if _G.ZenxKgLog then _G.ZenxKgLog("[auto-unfav] "..tostring(t.Name).." bukan support -> di-unfavorite") end
+                            end
                         end
                     end
                 end
