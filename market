@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.407"
+local VERSION = "8.410"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -1310,6 +1310,37 @@ do
             end
         end)
     end)
+
+    -- v8.408: DIAGNOSTIC — dump field pembeda pet (native rainbow vs mutasi). Console: _G.ZenxDumpPet("dilo")
+    _G.ZenxDumpPet = function(filter)
+        local plr = game:GetService("Players").LocalPlayer
+        local flt = filter and tostring(filter):lower() or nil
+        local seen = 0
+        local function scan(cont, tag)
+            if not cont then return end
+            for _, t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") and t:GetAttribute("PET_UUID") then
+                    local f = tostring(t:GetAttribute("f") or "?")
+                    if (not flt) or f:lower():find(flt, 1, true) or tostring(t.Name):lower():find(flt, 1, true) then
+                        local uuid = t:GetAttribute("PET_UUID")
+                        local _, mutName = ZAPS.getMutation(uuid)
+                        local info = ZAPS.getPetData(uuid)
+                        local pd = info and info.PetData
+                        local hf = pd and tostring(pd.HatchedFrom or "") or ""
+                        local isPrem = hf:lower():find("premium") ~= nil
+                        seen = seen + 1
+                        print(string.format(
+                            "[DUMP %s] nama='%s' | PetType(f)='%s' | mutation='%s' | HatchedFrom='%s' | premium=%s",
+                            tag, tostring(t.Name), f, tostring(mutName or "-"), (hf ~= "" and hf or "-"), tostring(isPrem)))
+                    end
+                end
+            end
+        end
+        scan(plr:FindFirstChild("Backpack"), "BP")
+        scan(plr.Character, "EQUIP")
+        print("[DUMP] total pet ke-scan: " .. seen .. (flt and (" (filter: " .. flt .. ")") or ""))
+        return seen
+    end
 end
 
 -- ===== v8.35: MUTATION strip helper (sync sama inventory.lua) =====
@@ -11199,6 +11230,7 @@ do
                                         -- v8.265: sukses -> baru mark bought permanen
                                         BH.autoSnipe.bought[listingUuid] = true
                                         BH.autoSnipe.boughtCount = BH.autoSnipe.boughtCount + 1
+                                        -- v8.410: sound alert DIMATIIN di sc — pindah ke PANEL (TTS). Cuma panel yg bunyi.
                                         -- v8.270: log egg asal (prem/biasa) buat verifikasi filter
                                         L(string.format("[AutoSnipe] ✅ Bought %s%s @ %s from %s | EGG: %s (%s)",
                                             petType or "?",
