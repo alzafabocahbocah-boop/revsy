@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.469-cf"
+local VERSION = "9.470-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -2354,6 +2354,8 @@ function sync_market_files(cfg)
     if (os.time() - (_G.__ZenxSyncMktTs or 0)) < 5 then return end
     _G.__ZenxSyncMktTs = os.time()
     local dirs = denyut_dirs(cfg)
+    _G.__ZenxMktLog = _G.__ZenxMktLog or {}
+    local ML = _G.__ZenxMktLog
     local function tulis(jalur, nama)
         local body = api_get(cfg, jalur)
         if type(body) == "string" and #body > 0 and body:sub(1, 1) ~= "<" then
@@ -2361,16 +2363,44 @@ function sync_market_files(cfg)
             local f = io.open(tmp, "w")
             if f then
                 f:write(body); f:close()
+                local nOk = 0
                 for _, dir in ipairs(dirs) do
                     sh_silent("su -c 'cat " .. tmp .. " > \"" .. dir .. "/" .. nama .. "\"' 2>/dev/null")
+                    nOk = nOk + 1
                 end
+                ML[nama .. "_len"] = #body
+                -- v9.470: log CUMA pas isi BERUBAH (biar keliatan pas list update, gak spam)
+                local sig = #body .. ":" .. body:sub(1, 24)
+                if ML[nama] ~= sig then
+                    ML[nama] = sig
+                    info("[curl-market] " .. nama .. " UPDATE -> " .. #body .. " bytes ke " .. nOk .. " folder")
+                end
+                ML[nama .. "_errts"] = nil
+            else
+                warn("[curl-market] " .. nama .. " GAGAL buka tmp file (write)")
+            end
+        else
+            -- v9.470: fetch GAGAL/kosong/error -> log (throttle 60s per file biar gak spam)
+            local why = (body == nil and "nil/timeout") or (type(body) ~= "string" and "bukan-string")
+                     or (#body == 0 and "KOSONG (backend gak balikin data)") or (body:sub(1, 1) == "<" and "HTML-error (rate-limit/blok?)") or "?"
+            local now = os.time()
+            if (now - (ML[nama .. "_errts"] or 0)) >= 60 then
+                ML[nama .. "_errts"] = now
+                warn("[curl-market] " .. nama .. " FETCH GAGAL: " .. why)
             end
         end
     end
     tulis("/market-rules", "zenx_market_rules.json")
     tulis("/snipe-rules", "zenx_snipe_rules.json")
     tulis("/market-presence", "zenx_market_presence.json")
-    tulis("/lvlmax", "zenx_lvlmax.txt")   -- v9.467: akun leveling (max:total:age500) -> market baca lokal, gak minta panel tiap akun
+    tulis("/lvlmax", "zenx_lvlmax.txt")   -- v9.467: akun leveling (max:total:age500) -> market baca lokal
+    -- v9.470: heartbeat tiap 120s -> tau curl-market IDUP + ukuran terakhir tiap file
+    if (os.time() - (ML._hbTs or 0)) >= 120 then
+        ML._hbTs = os.time()
+        info(string.format("[curl-market] jalan | rules=%s snipe=%s pres=%s lvl=%s bytes",
+            tostring(ML["zenx_market_rules.json_len"] or 0), tostring(ML["zenx_snipe_rules.json_len"] or 0),
+            tostring(ML["zenx_market_presence.json_len"] or 0), tostring(ML["zenx_lvlmax.txt_len"] or 0)))
+    end
 end
 
 -- JSON kecil doang, cukup pola. gak perlu library.
