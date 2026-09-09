@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.78"
+local VERSION = "up6kg-v10.82"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2905,6 +2905,12 @@ do
     local function unfav(tool) if favRE and tool then pcall(function() favRE:FireServer(tool) end) end end
     -- AUTO-FAV support pet (dari _G.ZenxSupportUuids) -> ke-favorite -> GAK ke-gift/jual.
     local function isFav(t)
+        -- v10.79: cek PetData.IsFavorite (dari container) DULU — kayak hact (atribut tool sering GAK ke-set -> flapping). fallback atribut.
+        local uuid = t:GetAttribute("PET_UUID")
+        if uuid and _kgContainer then
+            local e = _kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
+            if type(e) == "table" and type(e.PetData) == "table" and e.PetData.IsFavorite == true then return true end
+        end
         for _, attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do
             if t:GetAttribute(attr) == true then return true end
         end
@@ -3205,30 +3211,44 @@ do
         local minAge = AL and 0 or (TR.minAge or 0)
         local supU = AL and (_G.ZenxSupportUuids or {}) or {}
         local supAll = _G.ZenxSupportUuids or {}   -- support (segala mode) buat proteksi
-        -- v10.78: scan backpack + yg lagi DI-EQUIP (Character) -> pet di header/hotbar juga ke-cek, bukan cuma inventory
+        -- v10.80: cek fav pake PetData.IsFavorite (container), fallback atribut
+        local function _isFavP(t, uuid)
+            if uuid and c then local e = c[fmtU(uuid)] or c[tostring(uuid)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite==true then return true end end
+            for _, attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr) == true then return true end end
+            return false
+        end
         local scan = {}
         for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end
         if player.Character then for _, t in ipairs(player.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
+        local nTotal, nSup, nFav, nKirim = 0, 0, 0, 0   -- v10.81: breakdown buat log
         for _, t in ipairs(scan) do
             do
                 local uuid = t:GetAttribute("PET_UUID")
-                local isSup = uuid and (supAll[uuid] or supAll[fmtU(uuid)] or (AL and (supU[uuid] or supU[fmtU(uuid)])))
-                if uuid and not isSup then
-                    local tipe = stripMutation(tostring(t:GetAttribute("f") or ""))
-                    local isEle = AL and tostring(tipe):lower():find("rainbow elephant", 1, true)
-                    local tipeOk
-                    if AL then tipeOk = (bahanSet[tipe] == true) else tipeOk = (next(bahanSet)==nil or bahanSet[tipe]) end
-                    if (not isEle) and tipeOk then
-                        local kgBase, age = 0, 0
-                        if c then local e=c[fmtU(uuid)]; if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end end
-                        local okAge = age >= minAge and ((not AL) or age < 500)
-                        if kgBase >= minKg and okAge then
-                            out[#out+1] = { uuid=uuid, tool=t, tipe=tipe, kg=kgBase, age=age }
+                if uuid then
+                    nTotal = nTotal + 1
+                    local isSup = (supAll[uuid] or supAll[fmtU(uuid)] or (AL and (supU[uuid] or supU[fmtU(uuid)])))
+                    if isSup then
+                        nSup = nSup + 1   -- support (by uuid) -> skip
+                    else
+                        local tipe = stripMutation(tostring(t:GetAttribute("f") or ""))
+                        local isEle = AL and tostring(tipe):lower():find("rainbow elephant", 1, true)
+                        local tipeOk
+                        if AL then tipeOk = (bahanSet[tipe] == true) else tipeOk = (next(bahanSet)==nil or bahanSet[tipe]) end
+                        if (not isEle) and tipeOk then
+                            local kgBase, age = 0, 0
+                            if c then local e=c[fmtU(uuid)]; if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end end
+                            local okAge = age >= minAge and ((not AL) or age < 500)
+                            if kgBase >= minKg and okAge then
+                                -- v10.82: bahan (match jenis+kg+age) MASUK daftar kirim walau FAV -> di-PAKSA unfav pas kirim (unfavSemua). support udah di-skip di atas.
+                                out[#out+1] = { uuid=uuid, tool=t, tipe=tipe, kg=kgBase, age=age }; nKirim = nKirim + 1
+                                if _isFavP(t, uuid) then nFav = nFav + 1 end   -- bahan kefav -> bakal di-force-unfav
+                            end
                         end
                     end
                 end
             end
         end
+        if _G.ZenxKgLog then _G.ZenxKgLog(string.format("[petsLolos] total=%d | support(skip)=%d | KIRIM=%d (bahan-fav-yg-diforce-unfav=%d)", nTotal, nSup, nKirim, nFav)) end
         return out
     end
 
@@ -3239,8 +3259,13 @@ do
         local uuid = tool:GetAttribute("PET_UUID")
         local supAll = _G.ZenxSupportUuids or {}
         if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)]) then return end   -- SUPPORT -> jangan unfav
+        -- v10.79: deteksi fav pake PetData.IsFavorite (container) DULU, fallback atribut
         local fav = false
-        for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr) == true then fav = true; break end end
+        if uuid and _kgContainer then
+            local e = _kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
+            if type(e) == "table" and type(e.PetData) == "table" and e.PetData.IsFavorite == true then fav = true end
+        end
+        if not fav then for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr) == true then fav = true; break end end end
         if fav then
             local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
             local fRE = ge and ge:FindFirstChild("Favorite_Item")
