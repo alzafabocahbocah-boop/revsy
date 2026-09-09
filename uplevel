@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.26"
+local VERSION = "uplevel-v0.28"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -455,6 +455,41 @@ local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
 local UIS     = game:GetService("UserInputService")
 local player  = Players.LocalPlayer
+
+-- v0.27: fetch akun MARKET (target gift) + tipe gift dari panel. 20s belum dapet -> 5m kalo udah.
+task.spawn(function()
+    local base = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local req = request or http_request or (syn and syn.request)
+    local function get(path)
+        local raw
+        pcall(function() raw = game:HttpGet(base .. path) end)
+        if (not raw or raw == "") and req then local ok, r = pcall(function() return req({ Url = base .. path, Method = "GET" }) end); if ok and r and r.Body then raw = r.Body end end
+        return raw
+    end
+    local have = false
+    while true do
+        pcall(function()
+            -- akun market: "akun=total:max,..."
+            local raw = get("/marketakun")
+            if raw and raw ~= "" then
+                local m = {}
+                for pair in tostring(raw):gmatch("[^,]+") do
+                    local k, tot, mx = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")
+                    if k and k ~= "" then m[k] = { total = tonumber(tot) or 0, max = tonumber(mx) or 0 }; have = true end
+                end
+                if next(m) then _G.ZenxMarketAkun = m end
+            end
+            -- tipe pet gift: "Tipe1,Tipe2,..." (kosong = semua)
+            local raw2 = get("/uplevel-giftpet")
+            if raw2 ~= nil then
+                local t = {}
+                for tp in tostring(raw2):gmatch("[^,]+") do local x = tp:gsub("^%s+", ""):gsub("%s+$", ""); if x ~= "" then t[x] = true end end
+                _G.ZenxUplevelGiftTipe = t
+            end
+        end)
+        task.wait(have and 300 or 20)
+    end
+end)
 
 -- ============================================================
 -- STAT KG — total pet + belum/udah 3.8kg (dari hact PetDetect + kg.lua base weight)
@@ -3202,6 +3237,23 @@ do
     task.spawn(function()
         while true do
             task.wait(2)
+            -- v0.27: Gift 1 -> auto target akun MARKET (dari panel /marketakun), SKIP yg FULL.
+            --        tipe pet dari /uplevel-giftpet (kosong = semua pet).
+            pcall(function()
+                local mk = _G.ZenxMarketAkun
+                if type(mk) == "table" and next(mk) then
+                    local Players = game:GetService("Players")
+                    local tgt = {}
+                    for nm, d in pairs(mk) do
+                        if Players:FindFirstChild(nm) then
+                            local full = d and d.max and d.max > 0 and d.total and d.total >= d.max
+                            if not full then tgt[#tgt + 1] = nm end
+                        end
+                    end
+                    TR.targets = tgt   -- override: target = akun market present + belum full
+                    if type(_G.ZenxUplevelGiftTipe) == "table" then TR.tipe = _G.ZenxUplevelGiftTipe end
+                end
+            end)
             if (TR.mode == "trade" or TR.mode == "gift") and not trBusy then
                 local pets = petsLolos()
                 if #pets > 0 then jalankan(TR.mode) end
@@ -3836,6 +3888,10 @@ task.spawn(function()
     while true do
         task.wait(120)
         pcall(function()
+            -- SKIP ascend kalo pet inventory > 200 (biar gak ascend pas pet lagi banyak)
+            local st = _G.ZenxKgStat
+            local total = (st and tonumber(st.totalAll)) or 0
+            if total > 200 then return end
             local ge = RS:FindFirstChild("GameEvents")
             local re = ge and ge:FindFirstChild("BuyRebirth")
             if re then re:FireServer() end
