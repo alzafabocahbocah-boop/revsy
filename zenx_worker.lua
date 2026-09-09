@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.466-cf"
+local VERSION = "9.469-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -648,6 +648,7 @@ TIM1_AKHIR = 10
 -- kedua bakal dilewat dan client-nya nyangkut.
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
+RESTART_JADWAL_SLOT = -1   -- v9.468: slot 30-menit terakhir yg udah di-restart (jadwal UP6KG :00/:30 WIB)
 TEMBAK_SIG_PROSES = ""  -- v9.388: TEMBAK terakhir (isi+ts) yg udah nyela -- anti sticky-preempt
 _placeBerubah = false   -- v9.429: place baru berubah -> ps_link lama (place lama) nyasar -> abaikan PS -> public place baru sampe getps regenerate
 DEBUG_JEJAK = false     -- v9.411: mode debug (log tiap command + keputusan). Toggle DEBUGON/DEBUGOFF. Default off (nol overhead).
@@ -2369,6 +2370,7 @@ function sync_market_files(cfg)
     tulis("/market-rules", "zenx_market_rules.json")
     tulis("/snipe-rules", "zenx_snipe_rules.json")
     tulis("/market-presence", "zenx_market_presence.json")
+    tulis("/lvlmax", "zenx_lvlmax.txt")   -- v9.467: akun leveling (max:total:age500) -> market baca lokal, gak minta panel tiap akun
 end
 
 -- JSON kecil doang, cukup pola. gak perlu library.
@@ -6918,7 +6920,12 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     -- v9.87: cek batal pas buka client = ada_perintah_baru (bukan cuma ada_stop).
     -- Biar UPDATE/REBOOT/STOP dari panel MOTONG buka-client di tengah (kayak FORCE).
     -- RESTART/FORCE yg lagi jalan gak self-interrupt (ada_perintah_baru cek isi).
-    local function batal_buka() return ada_perintah_baru(cfg, isi) end
+    -- v9.469: kalo restart TERJADWAL (_G.__ZenxForceRestart), batal_buka SELALU false
+    -- -> gak bisa dibatalin command/STOP apapun di tengah (restart wajib kelar).
+    local function batal_buka()
+        if _G.__ZenxForceRestart then return false end
+        return ada_perintah_baru(cfg, isi)
+    end
     local n = close_all_cepat(cfg)   -- tutup barengan (cepet)
     ok("RESTART: " .. n .. " client ditutup -- buka ulang fresh...")
     os.execute("sleep 3")   -- proses bener2 mati (App Cloner baca prefs pas mati total)
@@ -8895,6 +8902,26 @@ local function run(cfg)
 
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
         local isi  = ambil_str(resp, "isi") or ""
+
+        -- v9.468: JADWAL RESTART UP6KG tiap :00 & :30 WIB (force-stop + tembak ulang otomatis).
+        -- os.time() = epoch UTC; +7 jam = WIB. Slot 30-menit unik biar fire SEKALI per slot.
+        if tostring(cfg.script_label or ""):find("UP6KG") then
+            local wibNow = os.time() + 7 * 3600
+            local wt = os.date("!*t", wibNow)
+            local slot = math.floor(wibNow / 1800)
+            if (wt.min == 0 or wt.min == 30) and RESTART_JADWAL_SLOT ~= slot then
+                RESTART_JADWAL_SLOT = slot
+                warn(string.format("[JADWAL] UP6KG restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang (UNINTERRUPTIBLE)", wt.hour, wt.min))
+                _G.__ZenxForceRestart = true   -- v9.469: restart terjadwal WAJIB kelar, gak bisa dibatalin command/STOP
+                local okR = pcall(function()
+                    PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
+                end)
+                _G.__ZenxForceRestart = nil
+                if okR and PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end
+                _apb_waktu = 0
+            end
+        end
+
         -- v6.84: kalau perintah KOSONG (worker baru jalan / panel belum set) ->
         -- STANDBY. User minta FORCE HARUS dari panel -- worker jalan itu STANDBY
         -- dulu (cek cookie/lisensi, GAK buka client), nunggu user pencet FORCE
