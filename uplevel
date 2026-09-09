@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.22"
+local VERSION = "uplevel-v0.24"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -852,6 +852,76 @@ task.spawn(function()
             end
         end)
         task.wait(15)
+    end
+end)
+
+-- v0.23: AUTO-ACCEPT TRADE TOKEN -- nerima token dari akun MARKET yg oper ke server leveling.
+-- CUMA di GARDEN. Respond request masuk (auto YES) + accept/confirm window trade.
+-- (Port dari market.lua TRADE. Receiver-side biar auto-trade market kelar tanpa manual.)
+task.spawn(function()
+    local RS = game:GetService("ReplicatedStorage")
+    local Players = game:GetService("Players")
+    local WS = game:GetService("Workspace")
+    local plr = Players.LocalPlayer
+    if not plr then return end
+    local function diGarden() return WS:FindFirstChild("TradeWorld") == nil end
+    local function getR()
+        local ge = RS:FindFirstChild("GameEvents"); local te = ge and ge:FindFirstChild("TradeEvents")
+        if not te then return nil end
+        return { sendReq = te:FindFirstChild("SendRequest"), respond = te:FindFirstChild("RespondRequest"),
+                 accept = te:FindFirstChild("Accept"), confirm = te:FindFirstChild("Confirm") }
+    end
+    local function klik(b)
+        if not b then return end
+        local function ev(sig)
+            if not sig then return end
+            if getconnections then pcall(function() for _, c in ipairs(getconnections(sig)) do
+                if c.Fire then pcall(function() c:Fire() end) elseif c.Function then pcall(function() c.Function() end) end end end) end
+            if firesignal then pcall(function() firesignal(sig) end) end
+        end
+        pcall(function() ev(b.MouseButton1Click) end); pcall(function() ev(b.Activated) end)
+    end
+    local function klikAccept()
+        local pg = plr:FindFirstChild("PlayerGui"); local tui = pg and pg:FindFirstChild("TradingUI")
+        local lt = tui and tui:FindFirstChild("LiveTrade"); local opts = lt and lt:FindFirstChild("Options")
+        klik(opts and opts:FindFirstChild("Accept"))
+    end
+    local function klikYes()
+        local pg = plr:FindFirstChild("PlayerGui"); if not pg then return end
+        for _, nm in ipairs({ "UnfairTrade", "GenericConfirmationPrompt", "GiveawayConfirmation_UI" }) do
+            local pp = pg:FindFirstChild(nm)
+            if pp then for _, bn in ipairs({ "Yes", "Confirm", "Continue" }) do
+                local b = pp:FindFirstChild(bn, true)
+                if b and (b:IsA("ImageButton") or b:IsA("TextButton")) then
+                    local v = false; pcall(function() v = b.Visible end); if v then klik(b) end
+                end
+            end end
+        end
+    end
+    local conn = nil
+    while true do
+        pcall(function()
+            if not diGarden() then return end
+            if tostring(game.PrivateServerId or "") == "" then return end   -- v0.24: cuma private server (anti auto-accept trade orang random di public)
+            local R = getR()
+            if R and R.respond and R.sendReq and not conn then
+                conn = R.sendReq.OnClientEvent:Connect(function(...)
+                    local id
+                    for _, a in ipairs({ ... }) do if type(a) == "string" and #a > 20 and a:find("-") then id = a; break end end
+                    if id then pcall(function() R.respond:FireServer(id, true) end) end
+                end)
+            end
+            local pg = plr:FindFirstChild("PlayerGui"); local tui = pg and pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade"); local vis = false
+            if lt then pcall(function() vis = lt.Visible end) end
+            if lt and vis then
+                klikAccept()
+                if R and R.accept then pcall(function() R.accept:FireServer() end) end
+                if R and R.confirm then pcall(function() R.confirm:FireServer() end) end
+                klikYes()
+            end
+        end)
+        task.wait(0.5)
     end
 end)
 
