@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.41"
+local VERSION = "uplevel-v0.49"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1437,6 +1437,7 @@ do
     if _G.ZenxAutoTengah == nil then _G.ZenxAutoTengah = true end
     local CLUSTER = nil
     local supportKunci = {}   -- uuid -> nama (support terkunci)
+    _G.ZenxSupportKunci = supportKunci   -- v0.49: expose tim support asli buat petsLolos skip
     local bahanAktif = {}     -- uuid -> tipe (bahan)
     local function kgLog(s) if _G.ZenxKgLog then _G.ZenxKgLog(s) end print("[UpKg] "..s) end
     local function jml(t) local n = 0; for _ in pairs(t) do n = n + 1 end return n end
@@ -1817,7 +1818,7 @@ do
         pcall(function() if delfile and isfile and isfile(POOL_FILE) then delfile(POOL_FILE) end end)
         supPool = nil
         for u in pairs(supportKunci) do pcall(function() unequipPet(u) end) end
-        supportKunci = {}
+        supportKunci = {}; _G.ZenxSupportKunci = supportKunci
         kunciSupPool(true)   -- kunci baru (kg terbesar) + simpen
         if KG.aktif then pasangSesi(KG.sesi, false) end
         kgLog("KUNCI SUPPORT BARU dipencet -> support di-pilih ulang (kg terbesar)")
@@ -1942,7 +1943,7 @@ do
         KG.sesi = 1
         KG.pickup = 0.25   -- jeda setelah ready sebelum copot (kecil = pickup responsif). spider gak di-swap jadi gak perlu special.
         CLUSTER = farmCenter()   -- v0.73: BALIKIN buat swap (equip ke tengah pas swap = gacor, nentuin posisi). HOLD-loop yg dimatiin (biar gak ditahan terus pas gak swap).
-        supportKunci = {}; bahanAktif = {}
+        supportKunci = {}; bahanAktif = {}; _G.ZenxSupportKunci = supportKunci
         kgLog("START ("..tostring(config)..") pickup="..KG.pickup.."s center="..(CLUSTER and "ada" or "NIL"))
         -- (RESET 3-menit DIHAPUS — HEALER 1s udah jaga visual, gak perlu refresh berkala)
         KG.reset = false
@@ -2149,7 +2150,7 @@ do
         task.spawn(function()
             for u in pairs(supportKunci) do unequipPet(u); task.wait(0.04) end
             for u in pairs(bahanAktif) do unequipPet(u); task.wait(0.04) end
-            supportKunci = {}; bahanAktif = {}
+            supportKunci = {}; bahanAktif = {}; _G.ZenxSupportKunci = supportKunci
             kgLog("STOP + unequip semua")
         end)
     end
@@ -2884,6 +2885,12 @@ do
     local function unfav(tool) if favRE and tool then pcall(function() favRE:FireServer(tool) end) end end
     -- AUTO-FAV support pet (dari _G.ZenxSupportUuids) -> ke-favorite -> GAK ke-gift/jual.
     local function isFav(t)
+        -- v0.42: cek PetData.IsFavorite (container) DULU — kayak hact (atribut tool sering GAK ke-set -> flapping). fallback atribut.
+        local uuid = t:GetAttribute("PET_UUID")
+        if uuid and _kgContainer then
+            local e = _kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
+            if type(e) == "table" and type(e.PetData) == "table" and e.PetData.IsFavorite == true then return true end
+        end
         for _, attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do
             if t:GetAttribute(attr) == true then return true end
         end
@@ -3176,27 +3183,53 @@ do
         local out = {}
         local bp = player:FindFirstChild("Backpack"); local c = _kgContainer
         if not bp then return out end
-        -- v0.41: scan backpack + yg lagi DI-EQUIP (Character) -> pet di header/hotbar juga ke-cek
+        -- v0.43: cek fav pake PetData.IsFavorite (container), fallback atribut
+        local function _isFavP(t, uuid)
+            if uuid and c then local e = c[fmtU(uuid)] or c[tostring(uuid)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite==true then return true end end
+            for _, attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr) == true then return true end end
+            return false
+        end
         local scan = {}
         for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end
         if player.Character then for _, t in ipairs(player.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
+        local nTotal, nSup, nFav, nKirim = 0, 0, 0, 0   -- v0.44: breakdown buat log
+        local nTipeNo, nKgNo, nAgeNo = 0, 0, 0
         for _, t in ipairs(scan) do
             do
                 local uuid = t:GetAttribute("PET_UUID")
                 local _supAll = _G.ZenxSupportUuids or {}
-                local isSup = uuid and (_supAll[uuid] or _supAll[fmtU(uuid)])
-                if uuid and not isSup then
-                    local tipe = stripMutation(tostring(t:GetAttribute("f") or ""))
-                    if next(TR.tipe)==nil or TR.tipe[tipe] then
-                        local kgBase, age = 0, 0
-                        if c then local e=c[fmtU(uuid)]; if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end end
-                        if kgBase >= (TR.minKg or 0) and age >= (TR.minAge or 0) then
-                            out[#out+1] = { uuid=uuid, tool=t, tipe=tipe, kg=kgBase, age=age }
+                local _sk = _G.ZenxSupportKunci or {}   -- v0.49: tim support ASLI (ke-equip)
+                if uuid then
+                    nTotal = nTotal + 1
+                    local isSup = (_supAll[uuid] or _supAll[fmtU(uuid)] or _sk[uuid] or _sk[fmtU(uuid)])
+                    if isSup then
+                        nSup = nSup + 1
+                    else
+                        local e = c and (c[fmtU(uuid)] or c[tostring(uuid)])
+                        -- v0.47: tipe dari container PetType (SAMA kayak picker). fallback atribut "f".
+                        local tipe = (type(e)=="table" and e.PetType) and stripMutation(tostring(e.PetType)) or stripMutation(tostring(t:GetAttribute("f") or ""))
+                        if not (next(TR.tipe)==nil or TR.tipe[tipe]) then
+                            nTipeNo = nTipeNo + 1
+                        else
+                            local kgBase, age = 0, 0
+                            if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end
+                            if kgBase < (TR.minKg or 0) then
+                                nKgNo = nKgNo + 1
+                            elseif age < (TR.minAge or 0) then
+                                nAgeNo = nAgeNo + 1
+                            elseif _isFavP(t, uuid) then
+                                nFav = nFav + 1   -- v0.48: FAV (support/protected) -> SKIP kirim
+                            else
+                                out[#out+1] = { uuid=uuid, tool=t, tipe=tipe, kg=kgBase, age=age }; nKirim = nKirim + 1
+                            end
                         end
                     end
                 end
             end
         end
+        local nBahanTipe = 0; for _ in pairs(TR.tipe) do nBahanTipe = nBahanTipe + 1 end
+        _G.__ZenxPlLog = string.format("[petsLolos] total=%d sup=%d | reject: tipe=%d kg=%d age=%d FAV=%d | KIRIM=%d | tipe-set=%d (minKg=%s minAge=%s)", nTotal, nSup, nTipeNo, nKgNo, nAgeNo, nFav, nKirim, nBahanTipe, tostring(TR.minKg), tostring(TR.minAge))
+        if _G.ZenxKgLog then _G.ZenxKgLog(_G.__ZenxPlLog) end
         return out
     end
 
@@ -3206,8 +3239,13 @@ do
         local uuid = tool:GetAttribute("PET_UUID")
         local supAll = _G.ZenxSupportUuids or {}
         if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)]) then return end   -- SUPPORT -> jangan unfav
+        -- v0.42: deteksi fav pake PetData.IsFavorite (container) DULU, fallback atribut
         local fav = false
-        for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr) == true then fav = true; break end end
+        if uuid and _kgContainer then
+            local e = _kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
+            if type(e) == "table" and type(e.PetData) == "table" and e.PetData.IsFavorite == true then fav = true end
+        end
+        if not fav then for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr) == true then fav = true; break end end end
         if fav then
             local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
             local fRE = ge and ge:FindFirstChild("Favorite_Item")
