@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.38"
+local VERSION = "uplevel-v0.41"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2909,16 +2909,8 @@ do
                                 pcall(function() favRE:FireServer(t) end)   -- support -> favorite (protected)
                                 if _G.ZenxKgLog then _G.ZenxKgLog("[auto-fav] support "..tostring(t.Name).." di-favorite") end
                             end
-                        elseif supKnown then
-                            -- v0.38: unfav CUMA pet tipe GIFT (support-type di-skip walau uuid blm ke-lock).
-                            local _tp = stripMutation(tostring(t:GetAttribute("f") or t.Name or ""))
-                            local _bl = _G.ZenxUplevelGiftTipe
-                            local _isBahan = (type(_bl) ~= "table") or (not next(_bl)) or _bl[_tp]
-                            if _isBahan and isFav(t) then
-                                pcall(function() favRE:FireServer(t) end)
-                                if _G.ZenxKgLog then _G.ZenxKgLog("[auto-unfav] "..tostring(t.Name).." (gift) -> unfav") end
-                            end
                         end
+                        -- v0.39: auto-fav loop CUMA fav support. Unfav bahan pas mau kirim (unfavIfNeeded) -> support gak keganggu.
                     end
                 end
             end)
@@ -3184,12 +3176,13 @@ do
         local out = {}
         local bp = player:FindFirstChild("Backpack"); local c = _kgContainer
         if not bp then return out end
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") then
+        -- v0.41: scan backpack + yg lagi DI-EQUIP (Character) -> pet di header/hotbar juga ke-cek
+        local scan = {}
+        for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end
+        if player.Character then for _, t in ipairs(player.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1] = t end end end
+        for _, t in ipairs(scan) do
+            do
                 local uuid = t:GetAttribute("PET_UUID")
-                local _fav = false
-                for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr) == true then _fav = true; break end end
-                -- v0.34: SUPPORT -> skip (gak kirim, gak di-unfav). bahan ke-fav -> UNFAV biar bisa dikirim.
                 local _supAll = _G.ZenxSupportUuids or {}
                 local isSup = uuid and (_supAll[uuid] or _supAll[fmtU(uuid)])
                 if uuid and not isSup then
@@ -3198,7 +3191,6 @@ do
                         local kgBase, age = 0, 0
                         if c then local e=c[fmtU(uuid)]; if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end end
                         if kgBase >= (TR.minKg or 0) and age >= (TR.minAge or 0) then
-                            if _fav then local ge=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents"); local fRE=ge and ge:FindFirstChild("Favorite_Item"); if fRE then pcall(function() fRE:FireServer(t) end) end end   -- bahan ke-fav -> unfav
                             out[#out+1] = { uuid=uuid, tool=t, tipe=tipe, kg=kgBase, age=age }
                         end
                     end
@@ -3208,8 +3200,27 @@ do
         return out
     end
 
+    -- v0.40: unfav pet (kalo ke-fav) + wait. DOUBLE-CHECK support -> support GAK PERNAH di-unfav. toggle -> cek isFav dulu.
+    local function unfavIfNeeded(tool)
+        if not tool then return end
+        local uuid = tool:GetAttribute("PET_UUID")
+        local supAll = _G.ZenxSupportUuids or {}
+        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)]) then return end   -- SUPPORT -> jangan unfav
+        local fav = false
+        for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr) == true then fav = true; break end end
+        if fav then
+            local ge = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            local fRE = ge and ge:FindFirstChild("Favorite_Item")
+            if fRE then pcall(function() fRE:FireServer(tool) end); task.wait(0.2) end
+        end
+    end
+    local function unfavSemua(pets)   -- v0.40: unfav SEMUA pet sebelum send ticket/gift
+        for _, p in ipairs(pets) do unfavIfNeeded(p.tool) end
+        task.wait(0.25)
+    end
     local function tradeToTarget(targetPlayer, pets)
         if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+        unfavSemua(pets)   -- v0.40: unfav SEMUA pet DULU sebelum SendRequest
         pcall(holdTradingTicket)
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
         task.wait(0.5)
@@ -3236,6 +3247,7 @@ do
         local char = player.Character
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if not (hum and targetPlayer) then return 0 end
+        unfavSemua(pets)   -- v0.40: unfav SEMUA pet DULU sebelum gift
         local sent = 0
         for _, p in ipairs(pets) do
             local petTool = p.tool
