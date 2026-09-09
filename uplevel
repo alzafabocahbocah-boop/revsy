@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.24"
+local VERSION = "uplevel-v0.25"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -748,45 +748,34 @@ task.spawn(function()
                     end)
                     local mx = maxUI
                     if not mx then                            -- FALLBACK getgc (UI belum ke-load)
-                        local mxParent, allMax = nil, {}
+                        -- v0.25: sama kayak up6kg v10.64 — cuma table PlayerData ASLI (MaxEggsInFarm+MaxEquippedPets)
+                        -- + >= jumlah pet, ambil MODE (paling sering). Buang stale/default (60/210 yg nyasar).
+                        local tally = {}
+                        local floor = (totalAll or 0) - 5
                         pcall(function()
                             if getgc then
                                 for _, obj in ipairs(getgc(true)) do
                                     if type(obj) == "table" then
                                         local mp = rawget(obj, "MaxPetsInInventory")
-                                        if type(mp) == "number" and mp > 0 then
-                                            allMax[#allMax+1] = mp
-                                            if container and not mxParent then
-                                                for _, v in pairs(obj) do
-                                                    if v == container then mxParent = mp; break end
-                                                    if type(v) == "table" then
-                                                        for _, v2 in pairs(v) do
-                                                            if v2 == container then mxParent = mp; break end
-                                                        end
-                                                        if mxParent then break end
-                                                    end
-                                                end
-                                            end
+                                        if type(mp) == "number" and mp > 0
+                                            and rawget(obj, "MaxEggsInFarm") ~= nil
+                                            and rawget(obj, "MaxEquippedPets") ~= nil
+                                            and mp >= floor then
+                                            tally[mp] = (tally[mp] or 0) + 1
                                         end
                                     end
                                 end
                             end
                         end)
-                        local floor = (totalAll or 0) - 10
-                        if mxParent and mxParent >= floor then
-                            mx = mxParent
-                        else
-                            for _, v in ipairs(allMax) do
-                                if v >= floor and (not mx or v < mx) then mx = v end
-                            end
-                            if not mx then
-                                for _, v in ipairs(allMax) do if not mx or v > mx then mx = v end end
-                            end
+                        local bestN = 0
+                        for v, n in pairs(tally) do
+                            if n > bestN or (n == bestN and (not mx or v < mx)) then mx = v; bestN = n end
                         end
                     end
-                    _G.__ZenxMaxPetCache = mx
+                    if maxUI and maxUI > 0 then mx = maxUI end   -- UI = paling reliable
+                    _G.__ZenxMaxPetCache = mx or _G.__ZenxMaxPetCache
                     _G.__ZenxMaxPetTime = tick()
-                    _G.__ZenxMaxPetSrc = maxUI and "ui" or "gc"
+                    _G.__ZenxMaxPetSrc = maxUI and "ui" or "gc-mode"
                     _G.__ZenxMaxPetTotal = totalAll
                 end
                 local maxInv = _G.__ZenxMaxPetCache or 200
