@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.93"
+local VERSION = "up6kg-v10.94"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3338,31 +3338,10 @@ do
         return sent
     end
 
-    -- v10.93: BAHAN GLOBAL up6kg (di-set panel via popup -> /up6kg-bahan). SEMUA akun up6kg pake ini.
-    do
-        local BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/up6kg-bahan"
-        task.spawn(function()
-            local have = false
-            local req = request or http_request or (syn and syn.request)
-            while true do
-                pcall(function()
-                    local raw
-                    pcall(function() raw = game:HttpGet(BAHAN_URL) end)
-                    if (not raw or raw == "") and req then local ok, r = pcall(function() return req({ Url = BAHAN_URL, Method = "GET" }) end); if ok and r and r.Body then raw = r.Body end end
-                    if raw ~= nil then
-                        local t = {}
-                        for tp in tostring(raw):gmatch("[^,]+") do local x = tp:gsub("^%s+",""):gsub("%s+$",""); if x ~= "" then t[x] = true end end
-                        if next(t) then _G.ZenxKgUpTipe = t; have = true end   -- global override
-                    end
-                end)
-                task.wait(have and 60 or 15)
-            end
-        end)
-    end
-
     -- v10.10: max inv akun leveling (di-push panel via worker -> file zenx_lvlmax.txt) buat deteksi full
     do
         local LVLMAX_URL = "https://dry-glitter-63e4.petagee5.workers.dev/lvlmax"
+        local BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/up6kg-bahan"   -- v10.94: bahan global, di-fetch barengan
         task.spawn(function()
             local haveLvl = false   -- v10.60: pas awal execute, retry cepet (10s) sampe dapet; abis dapet -> 30s
             while true do
@@ -3387,7 +3366,21 @@ do
                         if next(m) then _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true end
                     end
                 end)
-                if haveLvl then break end   -- v10.67: fetch /lvlmax CUMA sekali (pas awal masuk server garden). Udah dapet -> STOP. Rejoin = fetch lagi.
+                -- v10.94: BARENGAN fetch bahan global /up6kg-bahan (1 loop, bukan 2)
+                pcall(function()
+                    local raw
+                    pcall(function() raw = game:HttpGet(BAHAN_URL) end)
+                    if (not raw or raw == "") then
+                        local req = request or http_request or (syn and syn.request)
+                        if req then local ok, res = pcall(function() return req({ Url = BAHAN_URL, Method = "GET" }) end); if ok and res and res.Body then raw = res.Body end end
+                    end
+                    if raw ~= nil then
+                        local t = {}
+                        for tp in tostring(raw):gmatch("[^,]+") do local x = tp:gsub("^%s+",""):gsub("%s+$",""); if x ~= "" then t[x] = true end end
+                        if next(t) then _G.ZenxKgUpTipe = t end   -- bahan global override
+                    end
+                end)
+                if haveLvl then break end   -- v10.67: fetch CUMA sekali (pas awal masuk server garden). Udah dapet -> STOP. Rejoin = fetch lagi.
                 task.wait(10)   -- belum dapet: retry 10s
             end
         end)
