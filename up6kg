@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.96"
+local VERSION = "up6kg-v10.99"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3996,52 +3996,48 @@ do
         opLog("== GIFT ELE -> "..nm)
         if not targetPlayer or not OP.pick[targetPlayer.Name] then opLog("  X target gak di picker (ditolak)"); return false, "gak di picker (ditolak)" end
         local plr = Players.LocalPlayer
-        local bp = plr:FindFirstChild("Backpack"); local char = plr.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not (bp and hum) then opLog("  X no backpack/humanoid"); return false, "no bp/hum" end
-        local eleTool
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") then
-                local f = tostring(t:GetAttribute("f") or t.Name)
-                if f:lower():find("rainbow elephant", 1, true) then eleTool = t; break end
-            end
-        end
-        -- v10.49: kalo gak di backpack, cek CHARACTER (Ele lagi DIPEGANG di tangan / ke-equip).
-        -- Bug user: Ele ke-equip -> pindah dari backpack ke character -> giftEle gak nemu -> gift gagal loop.
-        if not eleTool and char then
-            for _, t in ipairs(char:GetChildren()) do
-                if t:IsA("Tool") then
-                    local f = tostring(t:GetAttribute("f") or t.Name)
-                    if f:lower():find("rainbow elephant", 1, true) then eleTool = t; break end
-                end
-            end
-        end
-        if not eleTool then opLog("  X Ele gak ketemu di backpack/tangan"); return false, "Ele gak di backpack/tangan" end
-        opLog("  equip Ele ke tangan...")
-        pcall(function() hum:EquipTool(eleTool) end); task.wait(0.25)
-        local ge = RS:FindFirstChild("GameEvents"); local re = ge and ge:FindFirstChild("PetGiftingService")
-        -- v10.96: Ele di-FAV (support/protected) -> WAJIB UNFAV dulu (favorit gak bisa di-gift). Verify sampe unfaved.
-        do
-            local u2 = eleTool:GetAttribute("PET_UUID")
-            local fRE = ge and ge:FindFirstChild("Favorite_Item")
-            local function eleFav()
-                if u2 and _kgContainer then local e = _kgContainer[fmtU(u2)] or _kgContainer[tostring(u2)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite == true then return true end end
-                for _, attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if eleTool:GetAttribute(attr) == true then return true end end
-                return false
-            end
-            if eleFav() and fRE then
-                opLog("  Ele ke-fav -> UNFAV dulu")
-                pcall(function() fRE:FireServer(eleTool) end); task.wait(0.5)
-            end
-        end
+        local ge = RS:FindFirstChild("GameEvents")
+        local re = ge and ge:FindFirstChild("PetGiftingService")
+        local fRE = ge and ge:FindFirstChild("Favorite_Item")
         if not re then opLog("  X remote PetGiftingService gak ada"); return false, "remote gift gak ada" end
-        local uuid = eleTool:GetAttribute("PET_UUID"); local u = tostring(uuid)
-        if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
-        opLog("  FireServer GivePet uuid="..u:sub(1,12).."...")
-        pcall(function() re:FireServer("GivePet", targetPlayer, u) end); task.wait(0.5)
-        if not eleTool.Parent then opLog("  OK! Ele TERKIRIM ke "..nm); return true, "gift ok" end
-        opLog("  X Ele masih di backpack (gift gagal / target nolak?)")
-        return false, "gift gagal (Ele masih ada)"
+        local function findEle()
+            local bp = plr:FindFirstChild("Backpack"); local char = plr.Character
+            if bp then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") and tostring(t:GetAttribute("f") or t.Name):lower():find("rainbow elephant",1,true) then return t end end end
+            if char then for _, t in ipairs(char:GetChildren()) do if t:IsA("Tool") and tostring(t:GetAttribute("f") or t.Name):lower():find("rainbow elephant",1,true) then return t end end end
+            return nil
+        end
+        local function eleFav(eleTool, u2)
+            local key = tostring(u2); if key:sub(1,1) ~= "{" then key = "{"..key.."}" end
+            if _kgContainer then local e = _kgContainer[key] or _kgContainer[tostring(u2)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite == true then return true, "cont" end end
+            local g = false
+            if getgc then pcall(function() for _, obj in ipairs(getgc(true)) do if type(obj)=="table" then local e = obj[key]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite == true then g = true; break end end end end) end
+            if g then return true, "getgc" end
+            for _, attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if eleTool:GetAttribute(attr) == true then return true, "attr" end end
+            return false, "-"
+        end
+        -- v10.98: RETRY 3x. Pas awal Ele mungkin masih KE-TANAM di kebun (baru dilepas, async) -> attempt berikut
+        --         (abis kecabut jadi Tool) berhasil. Tiap attempt: re-find + equip + unfav-kalo-fav + gift.
+        for att = 1, 3 do
+            local eleTool = findEle()
+            if not eleTool then
+                opLog("  att="..att..": Ele belum di backpack/tangan (masih di kebun?)")
+            else
+                local u2 = eleTool:GetAttribute("PET_UUID"); local u = tostring(u2); if u:sub(1,1) ~= "{" then u = "{"..u.."}" end
+                -- v10.99: UNFAV DULU langsung di inventory (kayak hact -> Favorite_Item:FireServer, GAK perlu equip).
+                local isF, src = eleFav(eleTool, u2)
+                opLog("  att="..att.." Ele fav? "..tostring(isF).." ("..src..") fRE="..tostring(fRE~=nil))
+                if isF and fRE then opLog("  -> UNFAV dulu (di inventory)"); pcall(function() fRE:FireServer(eleTool) end); task.wait(0.6) end
+                -- baru equip buat gift
+                local char = plr.Character; local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if hum then pcall(function() hum:EquipTool(eleTool) end); task.wait(0.3) end
+                opLog("  GivePet uuid="..u:sub(1,12).."...")
+                pcall(function() re:FireServer("GivePet", targetPlayer, u) end); task.wait(0.6)
+                if not eleTool.Parent then opLog("  OK! Ele TERKIRIM ke "..nm); return true, "gift ok" end
+                opLog("  X Ele masih ada -> retry")
+            end
+            task.wait(1)   -- tunggu Ele kecabut dari kebun / settle
+        end
+        return false, "gift gagal 3x (Ele ke-tanam/target nolak?)"
     end
 
     -- === UI (desain baru: stat cards + kartu akun kaya) ===
