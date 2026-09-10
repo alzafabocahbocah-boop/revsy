@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.91"
+local VERSION = "up6kg-v10.93"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3207,8 +3207,8 @@ do
         if not bp then return out end
         -- AUTO LEVELING: bahan-only + kg6+ + age<500 + exclude pet tim (support+Ele)
         local AL = TR.autoLevel
-        -- v10.86: pake TR.tipe (picker "JENIS PET" di Gift) buat AL juga. kosong = semua. (dulu AL maksa _G.ZenxKgUpTipe -> picker Gift diabaikan)
-        local bahanSet = (TR.tipe and next(TR.tipe)) and TR.tipe or (AL and (_G.ZenxKgUpTipe or {})) or {}
+        -- v10.93: bahan GLOBAL (_G.ZenxKgUpTipe dari panel /up6kg-bahan) PRIMARY. fallback TR.tipe (picker Gift). kosong = semua.
+        local bahanSet = ((type(_G.ZenxKgUpTipe)=="table" and next(_G.ZenxKgUpTipe)) and _G.ZenxKgUpTipe) or ((TR.tipe and next(TR.tipe)) and TR.tipe) or {}
         local minKg = AL and 6 or (TR.minKg or 0)
         local minAge = AL and 0 or (TR.minAge or 0)
         local supU = AL and (_G.ZenxSupportUuids or {}) or {}
@@ -3258,8 +3258,13 @@ do
                 end
             end
         end
-        local nBahanTipe = 0; for _ in pairs(bahanSet) do nBahanTipe = nBahanTipe + 1 end
-        _G.__ZenxPlLog = string.format("[petsLolos] total=%d sup=%d | reject: tipe=%d kg<6=%d age>501=%d FAV=%d | KIRIM=%d | bahanSet=%d (AL=%s)", nTotal, nSup, nTipeNo, nKgNo, nAgeNo, nFav, nKirim, nBahanTipe, tostring(AL))
+        local nBahanTipe = 0; local bahanNames = {}
+        for k in pairs(bahanSet) do nBahanTipe = nBahanTipe + 1; if #bahanNames < 30 then bahanNames[#bahanNames+1] = tostring(k) end end
+        table.sort(bahanNames)
+        local bahanStr = (nBahanTipe == 0) and "SEMUA (kosong)" or table.concat(bahanNames, ", ")
+        _G.ZenxBahanDipilih = bahanNames   -- v10.93: expose bahan AKTUAL (dari TR.tipe/picker) buat report ke panel
+        _G.ZenxKirimN = nKirim; _G.ZenxSupSkipN = nSup
+        _G.__ZenxPlLog = string.format("[petsLolos] total=%d sup=%d | reject: tipe=%d kg<6=%d age>501=%d FAV=%d | KIRIM=%d (AL=%s)\n  BAHAN dipilih (%d): %s", nTotal, nSup, nTipeNo, nKgNo, nAgeNo, nFav, nKirim, tostring(AL), nBahanTipe, bahanStr)
         if _G.ZenxKgLog then _G.ZenxKgLog(_G.__ZenxPlLog) end
         return out
     end
@@ -3331,6 +3336,28 @@ do
             task.wait(0.1)
         end
         return sent
+    end
+
+    -- v10.93: BAHAN GLOBAL up6kg (di-set panel via popup -> /up6kg-bahan). SEMUA akun up6kg pake ini.
+    do
+        local BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/up6kg-bahan"
+        task.spawn(function()
+            local have = false
+            local req = request or http_request or (syn and syn.request)
+            while true do
+                pcall(function()
+                    local raw
+                    pcall(function() raw = game:HttpGet(BAHAN_URL) end)
+                    if (not raw or raw == "") and req then local ok, r = pcall(function() return req({ Url = BAHAN_URL, Method = "GET" }) end); if ok and r and r.Body then raw = r.Body end end
+                    if raw ~= nil then
+                        local t = {}
+                        for tp in tostring(raw):gmatch("[^,]+") do local x = tp:gsub("^%s+",""):gsub("%s+$",""); if x ~= "" then t[x] = true end end
+                        if next(t) then _G.ZenxKgUpTipe = t; have = true end   -- global override
+                    end
+                end)
+                task.wait(have and 60 or 15)
+            end
+        end)
     end
 
     -- v10.10: max inv akun leveling (di-push panel via worker -> file zenx_lvlmax.txt) buat deteksi full
