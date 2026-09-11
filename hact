@@ -77,7 +77,13 @@ do
                 for _, d in ipairs(cg:GetDescendants()) do
                     if d:IsA("TextLabel") and d.Visible then
                         local t = tostring(d.Text or ""):lower()
-                        if t:find("disconnected") or t:find("koneksi terputus") then
+                        -- v27.111: v-dc8 FIX false-positive (samain up6kg). "headset disconnected"/
+                        -- "controller disconnected"/audio BUKAN disconnect GAME -> exclude. Dulu hact
+                        -- kena false-positive -> berhenti nulis denyut -> worker "belum ada file".
+                        if (t:find("disconnected") or t:find("koneksi terputus"))
+                           and not (t:find("headset") or t:find("controller") or t:find("audio")
+                                    or t:find("bluetooth") or t:find("mic") or t:find("earphone")
+                                    or t:find("headphone") or t:find("perangkat audio")) then
                             dc = true; return
                         end
                     end
@@ -275,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.110"
+local VERSION = "v27.111"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1364,7 +1370,7 @@ makeSideBtn("AUTO HACT", 14)
 makeSideBtn("MISC", 56)
 makeSideBtn("MANUAL", 98)
 makeSideBtn("TRADE", 140)
-local tradeContent  -- v27.110: forward declare (tab TRADE gift pet keep ke up3.8kg)
+local tradeContent  -- v27.111: forward declare (tab TRADE gift pet keep ke up3.8kg)
 -- set default active
 do
     local d = sideBtns["AUTO HACT"]
@@ -1669,7 +1675,7 @@ local function applyPresetHact(name)
             config.sellRules[pet] = { action = rule.action, kg = rule.kg }
         end
     end
-    -- v27.110: OVERRIDE dari PANEL (/hact-sellconfig). Fetch pas apply preset (= tiap start/reexe/rejoin).
+    -- v27.111: OVERRIDE dari PANEL (/hact-sellconfig). Fetch pas apply preset (= tiap start/reexe/rejoin).
     -- Kalo panel ada config -> timpa sellRules/petPool/keepOnly preset. Kosong -> pake preset.
     pcall(function()
         local ZENX_URL = "https://dry-glitter-63e4.petagee5.workers.dev"
@@ -1846,7 +1852,7 @@ local function autoAcceptTrade()
         local tui = pg:FindFirstChild("TradingUI")
         local lt = tui and tui:FindFirstChild("LiveTrade")
         if lt and lt.Visible then
-            _G.__hactTradeAktif = tick()   -- v27.110: GUI trade ada -> fav MATI (reset timer 30s tiap keliatan)
+            _G.__hactTradeAktif = tick()   -- v27.111: GUI trade ada -> fav MATI (reset timer 30s tiap keliatan)
             local opts = lt:FindFirstChild("Options")
             -- v27.67: klik Accept DAN Confirm (2 langkah), bukan Accept doang
             if opts then tekan(opts:FindFirstChild("Accept")); tekan(opts:FindFirstChild("Confirm")) end
@@ -1972,7 +1978,7 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         if stopCheck and stopCheck() then break end
         if idx > #petList then break end
         pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
-        _G.__hactTradeAktif = tick()   -- v27.110: MULAI trade (fire send tiket) -> fav MATI
+        _G.__hactTradeAktif = tick()   -- v27.111: MULAI trade (fire send tiket) -> fav MATI
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
         task.wait(0.3)   -- tunggu window kebuka (was 0.4)
         local added = 0
@@ -2235,7 +2241,7 @@ local function getMatchedPets(cfg)
             local okKg = true
             if p then
                 local kgVal = p.age1Kg or p.dispKg or 0
-                -- v27.110: range kg (kgMin/kgMax) buat TRADE bahan (mis 2-3kg)
+                -- v27.111: range kg (kgMin/kgMax) buat TRADE bahan (mis 2-3kg)
                 if cfg.kgMin and cfg.kgMin > 0 then okKg = okKg and (kgVal >= cfg.kgMin) end
                 if cfg.kgMax and cfg.kgMax > 0 then okKg = okKg and (kgVal <= cfg.kgMax) end
                 -- backward compat: cfg.kg (1 arah)
@@ -2244,13 +2250,13 @@ local function getMatchedPets(cfg)
                     else okKg = okKg and (kgVal <= math.abs(cfg.kg)) end
                 end
             end
-            -- v27.110: keepOnly -> CUMA pet yg petFate=="keep" (buat tab TRADE: gift pet keep ke up3.8kg)
+            -- v27.111: keepOnly -> CUMA pet yg petFate=="keep" (buat tab TRADE: gift pet keep ke up3.8kg)
             local okKeep = true
             if cfg.keepOnly and petFate then
                 local ok2, fate = pcall(function() return petFate({ name = base, dispKg = (p and (p.dispKg or p.age1Kg)) or 0 }) end)
                 okKeep = ok2 and (fate == "keep")
             end
-            -- v27.110: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
+            -- v27.111: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
             if okPet and okMut and okAge and okKg and okKeep and uclean and not (p and p.fav) then
                 table.insert(matched, uclean)
             end
@@ -2539,7 +2545,7 @@ end
 -- AUTO FAV: favoritkan semua pet yg ada di pemilihan tim (Reduce/Hatch/Sell)
 -- biar selalu kelindungi dari Sell All
 function favTeamPets()
-    -- v27.110: MATI TOTAL pas lagi trade (dari fire send tiket / GUI trade ada) -> 30s setelah GUI trade ilang baru hidup lagi
+    -- v27.111: MATI TOTAL pas lagi trade (dari fire send tiket / GUI trade ada) -> 30s setelah GUI trade ilang baru hidup lagi
     if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin p.fav salah -> favoritePet (toggle) malah UNFAV pet tim
     local teamSel = {}
@@ -2566,7 +2572,7 @@ end
 -- SYNC FAVORIT IKUT RULE: pet yg masuk kriteria SELL -> unfav (biar kejual),
 -- pet keep -> fav (terlindungi). dipanggil tiap rule diubah.
 function syncFavByRules()
-    -- v27.110: MATI TOTAL pas lagi trade (biar gak fav/unfav pas trade). 30s setelah GUI trade ilang baru hidup.
+    -- v27.111: MATI TOTAL pas lagi trade (biar gak fav/unfav pas trade). 30s setelah GUI trade ilang baru hidup.
     if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin fav salah toggle
     -- pet tim selalu keep (jgn di-unfav walau masuk rule)
@@ -7028,7 +7034,7 @@ showSideFn = function(name)
 end
 _G.HactTelurShowMisc = showMiscFn
 
--- ============ v27.110: TAB TRADE — gift pet KEEP ke akun up3.8kg ============
+-- ============ v27.111: TAB TRADE — gift pet KEEP ke akun up3.8kg ============
 do
     local HS2 = game:GetService("HttpService")
     local TRADE_CFG_FILE = "zenx_hact_trade.json"
@@ -7086,7 +7092,7 @@ do
     y = y + 48
     local infoL = lbl(tradeContent, "gift Spider/Peacock/Nutcracker (keep, age<500, base 2-3kg) ke akun up3.8kg paling kosong. fav mati pas trade.", 10, C.textDim)
     infoL.Position = UDim2.new(0,0,0,y); infoL.Size = UDim2.new(1,0,0,32); infoL.TextWrapped = true; infoL.TextYAlignment = Enum.TextYAlignment.Top
-    y = y + 40   -- v27.110: fix — advance y biar akun list gak numpuk infoL
+    y = y + 40   -- v27.111: fix — advance y biar akun list gak numpuk infoL
 
     local function applyCfg()
         local ts = {}
@@ -7106,12 +7112,12 @@ do
         saveTradeCfg()
     end)
 
-    -- v27.110: FETCH akun up3.8kg dari panel (/up38akun "akun=total:max") -> target auto + inv (buat least-full).
+    -- v27.111: FETCH akun up3.8kg dari panel (/up38akun "akun=total:max") -> target auto + inv (buat least-full).
     -- Di-fetch tiap loop (+ pas start/rejoin). tgtBox jadi DISPLAY (read-only), bukan input manual.
     tgtBox.TextEditable = false
     tgtBox.PlaceholderText = "auto dari panel (akun up3.8kg)"
     local akunInv = {}   -- nama -> { total, max }
-    -- v27.110: daftar akun UP 3.8KG + inventory (kayak up6kg nunjukin akun leveling)
+    -- v27.111: daftar akun UP 3.8KG + inventory (kayak up6kg nunjukin akun leveling)
     local akLbl = lbl(tradeContent, "Akun UP 3.8KG (target + inv)", 12, C.textDim); akLbl.Font = FONT_B
     akLbl.Position = UDim2.new(0,0,0,y); akLbl.Size = UDim2.new(1,0,0,18); y = y + 22
     local akFrame = mk("ScrollingFrame", {
@@ -7186,9 +7192,9 @@ do
                 if not best then if statusL then statusL.Text = "target online penuh / blm ada" end return end
                 if Auto and Auto.giftBusy then return end
                 local cfg = { targets = { [best] = true }, keepOnly = true,
-                    pets = { ["peacock"] = true, ["spider"] = true, ["nutcracker"] = true },   -- v27.110: cuma 3 jenis ini
+                    pets = { ["peacock"] = true, ["spider"] = true, ["nutcracker"] = true },   -- v27.111: cuma 3 jenis ini
                     age = -500,       -- age < 500 (max)
-                    kgMin = 2, kgMax = 3,   -- v27.110: base kg 2-3 (di atas 2, di bawah 3)
+                    kgMin = 2, kgMax = 3,   -- v27.111: base kg 2-3 (di atas 2, di bawah 3)
                     unfavFirst = true }
                 if statusL then statusL.Text = "gift -> "..best.." (room "..bestRoom..")" end
                 local sent = giftPetsByFilter(cfg)
@@ -7709,7 +7715,7 @@ do
                 pcall(function()
                     if PetDetect and PetDetect.listBackpackPets and petFate then
                         for _, p in ipairs(PetDetect.listBackpackPets()) do
-                            -- v27.110: CUMA hitung pet yg ADA di rule (sellRules atau petPool) + petFate keep.
+                            -- v27.111: CUMA hitung pet yg ADA di rule (sellRules atau petPool) + petFate keep.
                             -- Jadi cuma "keep target" (mis Peacock >=2kg), BUKAN pet default-keep (tanpa rule).
                             local inRule = (config.sellRules and config.sellRules[p.name] ~= nil)
                                         or (config.petPool and config.petPool[p.name])
