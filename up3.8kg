@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.1"
+local VERSION = "up38kg-v1.2"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -4676,6 +4676,73 @@ task.spawn(function()
             local ge = RS:FindFirstChild("GameEvents")
             local re = ge and ge:FindFirstChild("BuyRebirth")
             if re then re:FireServer() end
+        end)
+    end
+end)
+
+-- ============================================================
+-- v1.2: AUTO BALIK HOME (up3.8kg pas nerima bahan di server hact)
+-- Balik home (tulis zenx_gohome -> worker balikin) kalau:
+--   (a) inventory up3.8kg FULL (totalAll >= maxInv), ATAU
+--   (b) bahan hact (Peacock/Spider/Nutcracker base <3kg) < 10 di server ini
+--       -> intip pakai ViewInventory (kayak up6kg/market countTargetPets).
+-- Cuma jalan kalau PERNAH liat bahan di server (biar gak balik pas di home sendiri).
+-- ============================================================
+task.spawn(function()
+    local Players = game:GetService("Players")
+    local RS = game:GetService("ReplicatedStorage")
+    local plr = Players.LocalPlayer
+    local BAHAN_JENIS = { "peacock", "spider", "nutcracker" }
+    local function isBahan(ptype)
+        ptype = tostring(ptype):lower()
+        if ptype:find("rainbow", 1, true) then return false end   -- base < 3kg, bukan rainbow
+        for _, k in ipairs(BAHAN_JENIS) do if ptype:find(k, 1, true) then return true end end
+        return false
+    end
+    local function goHome(alasan)
+        pcall(function() if writefile then writefile("zenx_gohome_" .. (plr and plr.Name or "x") .. ".txt", tostring(os.time())) end end)
+        print("[up3.8kg] minta BALIK HOME -> " .. tostring(alasan))
+    end
+    task.wait(20)
+    while true do
+        task.wait(30)
+        pcall(function()
+            -- (a) inv up3.8kg full
+            local st = _G.ZenxKgStat or {}
+            local tot = tonumber(st.totalAll) or 0
+            local mx  = tonumber(st.maxInv) or 0
+            if mx > 0 and tot >= mx then goHome("inv FULL (" .. tot .. "/" .. mx .. ")"); return end
+            -- (b) intip bahan hact via ViewInventory
+            local ge = RS:FindFirstChild("GameEvents")
+            local te = ge and ge:FindFirstChild("TradeEvents")
+            local vi = te and te:FindFirstChild("ViewInventory")
+            if not vi then return end
+            local bahanTotal = 0
+            for _, pl in ipairs(Players:GetPlayers()) do
+                if pl ~= plr then
+                    local list
+                    for att = 1, 2 do
+                        local ok, res = pcall(function() return vi:InvokeServer(pl) end)
+                        if ok and type(res) == "table" then list = res; break end
+                        task.wait(0.5)
+                    end
+                    if type(list) == "table" then
+                        for _, item in pairs(list) do
+                            if type(item) == "table" and tostring(item.type) == "Pet" then
+                                local ptype = item.PetType or item.name or item.Name or ""
+                                local bw = (item.PetData and tonumber(item.PetData.BaseWeight)) or tonumber(item.BaseWeight) or 0
+                                if isBahan(ptype) and (bw * 1.1) < 3 then bahanTotal = bahanTotal + 1 end
+                            end
+                        end
+                    end
+                end
+            end
+            -- tandai pernah liat bahan (= lagi di server hact)
+            if bahanTotal > 0 then _G.__up38SawBahan = tick() end
+            -- balik kalau lagi di server hact (pernah liat bahan <90s) DAN bahan < 10
+            if _G.__up38SawBahan and (tick() - _G.__up38SawBahan) < 90 and bahanTotal < 10 then
+                goHome("bahan hact < 10 (" .. bahanTotal .. ")")
+            end
         end)
     end
 end)
