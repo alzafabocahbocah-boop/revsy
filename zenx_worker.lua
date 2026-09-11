@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.474-cf"
+local VERSION = "9.477-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1181,6 +1181,7 @@ function interval_denyut(cfg)
     -- v9.463: UP6KG khusus 45s (grace buka/rejoin/tembak + interval cek denyut). user minta.
     -- uplevel + market TETEP 3 menit (180s). Lainnya 6 menit (360s).
     local sl = tostring(cfg and cfg.script_label or "")
+    if sl:find("UP3", 1, true) then return 60 end   -- up3.8kg: cek denyut 60s (bukan 45s kayak up6kg)
     if sl:find("UP6KG") then return 45 end
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
     return 360
@@ -1188,6 +1189,7 @@ end
 function denyut_fresh_sec(cfg)
     -- v9.463: UP6KG khusus 30s. uplevel + market TETEP 2 menit (120s). Lainnya 5 menit (300s).
     local sl = tostring(cfg and cfg.script_label or "")
+    if sl:find("UP3", 1, true) then return 45 end   -- up3.8kg: denyut fresh 45s (bukan 30s kayak up6kg)
     if sl:find("UP6KG") then return 30 end
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 120 end
     return 300
@@ -3065,7 +3067,7 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         -- v9.437: up6kg = 1 client FULL Roblox (bukan lite/cloner) -> SKIP atur grid (fullscreen).
         -- v9.439: leveling juga 1 client full per device -> SKIP grid (gak mencar).
         local _scl1 = tostring(cfg.script_label or "")
-        if not (_scl1:find("UP6KG") or _scl1:find("LEVELING")) then
+        if not (_scl1:find("UP6KG") or _scl1:find("UP3", 1, true) or _scl1:find("LEVELING")) then
             pcall(function() grid_satu(cfg, pkg) end)
         end
     end
@@ -5418,7 +5420,7 @@ local function open_all(cfg, only, cek_batal, lapor_fn, mapLink, mapAkun, fast, 
     -- terus dibuka ulang (user liat "keluar semua"). SUDAH_GRID di-reset cuma
     -- pas FORCE transisi (Start baru), jadi grid keset sekali per sesi.
     -- v9.437: up6kg = 1 client full Roblox -> SKIP grid batch (gak perlu tata window)
-    if lisensiAda and petaGrid and not SUDAH_GRID and not (tostring(cfg.script_label or ""):find("UP6KG") or tostring(cfg.script_label or ""):find("LEVELING")) then
+    if lisensiAda and petaGrid and not SUDAH_GRID and not (tostring(cfg.script_label or ""):find("UP6KG") or tostring(cfg.script_label or ""):find("UP3", 1, true) or tostring(cfg.script_label or ""):find("LEVELING")) then
         info("Set grid semua client sekali (tulis prefs, gak force-stop)...")
         for _, pkg in ipairs(list) do
             if petaGrid[pkg] then
@@ -8938,22 +8940,32 @@ local function run(cfg)
         local resp = api_get(cfg, "/perintah?tim=" .. cfg.tim)
         local isi  = ambil_str(resp, "isi") or ""
 
-        -- v9.468: JADWAL RESTART UP6KG tiap :00 & :30 WIB (force-stop + tembak ulang otomatis).
-        -- os.time() = epoch UTC; +7 jam = WIB. Slot 30-menit unik biar fire SEKALI per slot.
-        if tostring(cfg.script_label or ""):find("UP6KG") then
-            local wibNow = os.time() + 7 * 3600
-            local wt = os.date("!*t", wibNow)
-            local slot = math.floor(wibNow / 1800)
-            if (wt.min == 0 or wt.min == 30) and RESTART_JADWAL_SLOT ~= slot then
-                RESTART_JADWAL_SLOT = slot
-                warn(string.format("[JADWAL] UP6KG restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang (UNINTERRUPTIBLE)", wt.hour, wt.min))
-                _G.__ZenxForceRestart = true   -- v9.469: restart terjadwal WAJIB kelar, gak bisa dibatalin command/STOP
-                local okR = pcall(function()
-                    PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
-                end)
-                _G.__ZenxForceRestart = nil
-                if okR and PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end
-                _apb_waktu = 0
+        -- v9.468: JADWAL RESTART UP6KG tiap :00 & :30 WIB. v9.477: UP3.8KG tiap :00 (60 menit).
+        -- os.time() = epoch UTC; +7 jam = WIB. Slot unik biar fire SEKALI per slot.
+        do
+            local _sl = tostring(cfg.script_label or "")
+            local _isUp38 = _sl:find("UP3", 1, true)
+            local _isUp6  = _sl:find("UP6KG")
+            if _isUp38 or _isUp6 then
+                local wibNow = os.time() + 7 * 3600
+                local wt = os.date("!*t", wibNow)
+                local slotSize = _isUp38 and 3600 or 1800   -- up3.8kg 60min, up6kg 30min
+                local slot = math.floor(wibNow / slotSize)
+                local fireNow
+                if _isUp38 then fireNow = (wt.min == 0)                       -- up3.8kg: :00 doang (tiap jam)
+                else fireNow = (wt.min == 0 or wt.min == 30) end              -- up6kg: :00 & :30
+                if fireNow and RESTART_JADWAL_SLOT ~= slot then
+                    RESTART_JADWAL_SLOT = slot
+                    local _nm = _isUp38 and "UP3.8KG" or "UP6KG"
+                    warn(string.format("[JADWAL] %s restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang (UNINTERRUPTIBLE)", _nm, wt.hour, wt.min))
+                    _G.__ZenxForceRestart = true   -- v9.469: restart terjadwal WAJIB kelar, gak bisa dibatalin command/STOP
+                    local okR = pcall(function()
+                        PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
+                    end)
+                    _G.__ZenxForceRestart = nil
+                    if okR and PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end
+                    _apb_waktu = 0
+                end
             end
         end
 
