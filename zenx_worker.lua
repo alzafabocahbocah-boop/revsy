@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.480-cf"
+local VERSION = "9.481-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -3977,6 +3977,10 @@ local function grid_hitung(cfg, pkgsPilih)
     elseif tostring(cfg.script_label or ""):find("MARKET") then
         -- v9.454: MARKET -> 2 BARIS (4 client = 2x2). user minta. default kalo grid_kolom belom di-set.
         if not (barPaksa and barPaksa >= 1) then barPaksa = math.min(2, n) end
+    elseif tostring(cfg.script_label or ""):find("HACT") then
+        -- v9.481: HACT -> ABAIKAN override grid_kolom, pake SUSUNAN. 2 client = 1 baris 2 kolom
+        --         (horizontal), 4 = 2x2, 6 = 3x2 dst. User: 2 client jgn numpuk atas-bawah.
+        barPaksa = nil
     end
     if barPaksa and barPaksa >= 1 then
         bar = math.min(barPaksa, n)
