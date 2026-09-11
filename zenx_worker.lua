@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.473-cf"
+local VERSION = "9.474-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6417,7 +6417,10 @@ local function setup_otomatis(namaPreset)
     end
     if not pre then
         err("Preset '" .. tostring(namaPreset) .. "' gak dikenal.")
-        info("Yang ada: farm / seed / market / gag1 / hact / panen / campur  (+ suffix -arceus, mis: campur-arceus)")
+        local keys = {}
+        for k in pairs(PRESET) do keys[#keys+1] = k end
+        table.sort(keys)
+        info("Yang ada: " .. table.concat(keys, " / ") .. "  (+ suffix -arceus, mis: campur-arceus)")
         return nil
     end
 
