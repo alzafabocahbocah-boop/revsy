@@ -67,18 +67,18 @@ do
         end
         local function zenxDcStrict()
             local dc = false
+            -- v-dc7: FOKUS JUDUL AJA. Cek CUMA judul prompt disconnect "Disconnected" /
+            -- "Koneksi terputus" (TextLabel visible). Dulu pake GetErrorCode + tombol
+            -- (leave/reconnect/keluar) + pesan (connection/same account) -> bisa FALSE-POSITIVE
+            -- (tombol/kata nyangkut di UI game biasa, atau errorcode stale) -> denyut BEKU
+            -- walau GAK disconnect. Judul paling spesifik -- cuma nongol di prompt disconnect asli.
             pcall(function()
                 local cg = game:GetService("CoreGui")
-                local pg = cg:FindFirstChild("RobloxPromptGui")
-                local overlay = pg and pg:FindFirstChild("promptOverlay")
-                if not overlay then return end
-                for _, child in ipairs(overlay:GetChildren()) do
-                    if child:IsA("GuiObject") and child.Visible then
-                        for _, d in ipairs(child:GetDescendants()) do
-                            if d:IsA("TextButton") and d.Visible then
-                                local t = tostring(d.Text or ""):lower()
-                                if t:find("reconnect") or t == "leave" or t:find("sambung ulang") then dc = true; return end
-                            end
+                for _, d in ipairs(cg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then
+                        local t = tostring(d.Text or ""):lower()
+                        if t:find("disconnected") or t:find("koneksi terputus") then
+                            dc = true; return
                         end
                     end
                 end
@@ -124,15 +124,18 @@ do
                 pcall(function()
                     local plr = game:GetService("Players").LocalPlayer
                     if not plr or not plr.Name or _G.ZenxRejoining then dcStrict = 0; return end
-                    if zenxDcStrict() and delfile and isfile and isfile("zenx_denyut_" .. plr.Name .. ".txt") then
-                        pcall(function() delfile("zenx_denyut_" .. plr.Name .. ".txt") end)
-                    end
+                    -- v-dc4: JANGAN hapus file denyut pas disconnect. Cukup BERHENTI
+                    -- nulis (write di-gate not zenxDcStrict) -> denyut basi -> worker rejoin
+                    -- setelah 2 menit. Hapus file bikin "BELUM ADA FILE" (lebih ribet).
                     if zenxDcStrict() then
                         dcStrict = dcStrict + 1
                         local umur = os.time() - (_G.__ZenxBootT or os.time())
-                        if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then
-                            _G.ZenxSelfRejoin("prompt reconnect Roblox (" .. dcStrict .. "x)")
-                        end
+                        -- v-sr-off: SELF-REJOIN SCRIPT DIMATIIN. Worker + panel yg handle rejoin
+                        -- (samain AUTO-REJOIN yg udah dimatiin). Dulu script teleport SENDIRI pas
+                        -- dcStrict>=4 -> kalau zenxDcStrict false-positive / prompt 276 kena semua
+                        -- client -> teleport BARENGAN (walau denyut fresh) -> "rejoin barengan".
+                        -- Sekarang script cuma BERHENTI nulis denyut (basi) -> worker rejoin (1-1).
+                        -- if dcStrict >= 4 and umur > 60 and _G.ZenxSelfRejoin then _G.ZenxSelfRejoin("dc") end
                     else
                         dcStrict = 0
                     end
@@ -189,7 +192,7 @@ do
                         writefile("zenx_denyut_" .. plr.Name .. ".txt", os.time() .. ";0;hact;" .. fps)
                     end
                 end)
-                task.wait(20)
+                task.wait(5)
             end
         end)
     end
@@ -272,7 +275,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.90"
+local VERSION = "v27.104"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2204,7 +2207,8 @@ local function getMatchedPets(cfg)
                 if cfg.kg > 0 then okKg = kgVal >= cfg.kg
                 else okKg = kgVal <= math.abs(cfg.kg) end
             end
-            if okPet and okMut and okAge and okKg and uclean then
+            -- v27.104: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
+            if okPet and okMut and okAge and okKg and uclean and not (p and p.fav) then
                 table.insert(matched, uclean)
             end
         end
@@ -7487,7 +7491,11 @@ do
                 pcall(function()
                     if PetDetect and PetDetect.listBackpackPets and petFate then
                         for _, p in ipairs(PetDetect.listBackpackPets()) do
-                            if petFate(p) == "keep" and (not config.petPool or config.petPool[p.name]) then
+                            -- v27.104: CUMA hitung pet yg ADA di rule (sellRules atau petPool) + petFate keep.
+                            -- Jadi cuma "keep target" (mis Peacock >=2kg), BUKAN pet default-keep (tanpa rule).
+                            local inRule = (config.sellRules and config.sellRules[p.name] ~= nil)
+                                        or (config.petPool and config.petPool[p.name])
+                            if petFate(p) == "keep" and inRule then
                                 local kg = tonumber(p.dispKg) or 0
                                 local lo = math.floor(kg)
                                 local bucket = lo .. "-" .. (lo + 1)
