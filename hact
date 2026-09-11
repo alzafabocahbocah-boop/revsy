@@ -275,7 +275,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.106"
+local VERSION = "v27.107"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1322,7 +1322,7 @@ local sideDiv = mk("Frame", {
     Size = UDim2.new(0, 1.5, 1, 0), Position = UDim2.new(1, 0, 0, 0),
     BackgroundColor3 = C.line, BorderSizePixel = 0, Parent = sidebar })
 
-local sidebarItems = { "AUTO HACT", "MISC", "MANUAL" }
+local sidebarItems = { "AUTO HACT", "MISC", "MANUAL", "TRADE" }
 local activeSide = "AUTO HACT"
 local showMiscFn  -- forward declare (diisi setelah miscContent dibuat)
 local showSideFn  -- forward declare 3-state (AUTO HACT / MISC / MANUAL)
@@ -1363,6 +1363,8 @@ end
 makeSideBtn("AUTO HACT", 14)
 makeSideBtn("MISC", 56)
 makeSideBtn("MANUAL", 98)
+makeSideBtn("TRADE", 140)
+local tradeContent  -- v27.107: forward declare (tab TRADE gift pet keep ke up3.8kg)
 -- set default active
 do
     local d = sideBtns["AUTO HACT"]
@@ -1667,7 +1669,7 @@ local function applyPresetHact(name)
             config.sellRules[pet] = { action = rule.action, kg = rule.kg }
         end
     end
-    -- v27.106: OVERRIDE dari PANEL (/hact-sellconfig). Fetch pas apply preset (= tiap start/reexe/rejoin).
+    -- v27.107: OVERRIDE dari PANEL (/hact-sellconfig). Fetch pas apply preset (= tiap start/reexe/rejoin).
     -- Kalo panel ada config -> timpa sellRules/petPool/keepOnly preset. Kosong -> pake preset.
     pcall(function()
         local ZENX_URL = "https://dry-glitter-63e4.petagee5.workers.dev"
@@ -1844,7 +1846,7 @@ local function autoAcceptTrade()
         local tui = pg:FindFirstChild("TradingUI")
         local lt = tui and tui:FindFirstChild("LiveTrade")
         if lt and lt.Visible then
-            _G.__hactTradeAktif = tick()   -- v27.106: GUI trade ada -> fav MATI (reset timer 30s tiap keliatan)
+            _G.__hactTradeAktif = tick()   -- v27.107: GUI trade ada -> fav MATI (reset timer 30s tiap keliatan)
             local opts = lt:FindFirstChild("Options")
             -- v27.67: klik Accept DAN Confirm (2 langkah), bukan Accept doang
             if opts then tekan(opts:FindFirstChild("Accept")); tekan(opts:FindFirstChild("Confirm")) end
@@ -1970,7 +1972,7 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         if stopCheck and stopCheck() then break end
         if idx > #petList then break end
         pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
-        _G.__hactTradeAktif = tick()   -- v27.106: MULAI trade (fire send tiket) -> fav MATI
+        _G.__hactTradeAktif = tick()   -- v27.107: MULAI trade (fire send tiket) -> fav MATI
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
         task.wait(0.3)   -- tunggu window kebuka (was 0.4)
         local added = 0
@@ -2236,8 +2238,14 @@ local function getMatchedPets(cfg)
                 if cfg.kg > 0 then okKg = kgVal >= cfg.kg
                 else okKg = kgVal <= math.abs(cfg.kg) end
             end
-            -- v27.106: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
-            if okPet and okMut and okAge and okKg and uclean and not (p and p.fav) then
+            -- v27.107: keepOnly -> CUMA pet yg petFate=="keep" (buat tab TRADE: gift pet keep ke up3.8kg)
+            local okKeep = true
+            if cfg.keepOnly and petFate then
+                local ok2, fate = pcall(function() return petFate({ name = base, dispKg = (p and (p.dispKg or p.age1Kg)) or 0 }) end)
+                okKeep = ok2 and (fate == "keep")
+            end
+            -- v27.107: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
+            if okPet and okMut and okAge and okKg and okKeep and uclean and not (p and p.fav) then
                 table.insert(matched, uclean)
             end
         end
@@ -2525,7 +2533,7 @@ end
 -- AUTO FAV: favoritkan semua pet yg ada di pemilihan tim (Reduce/Hatch/Sell)
 -- biar selalu kelindungi dari Sell All
 function favTeamPets()
-    -- v27.106: MATI TOTAL pas lagi trade (dari fire send tiket / GUI trade ada) -> 30s setelah GUI trade ilang baru hidup lagi
+    -- v27.107: MATI TOTAL pas lagi trade (dari fire send tiket / GUI trade ada) -> 30s setelah GUI trade ilang baru hidup lagi
     if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin p.fav salah -> favoritePet (toggle) malah UNFAV pet tim
     local teamSel = {}
@@ -2552,7 +2560,7 @@ end
 -- SYNC FAVORIT IKUT RULE: pet yg masuk kriteria SELL -> unfav (biar kejual),
 -- pet keep -> fav (terlindungi). dipanggil tiap rule diubah.
 function syncFavByRules()
-    -- v27.106: MATI TOTAL pas lagi trade (biar gak fav/unfav pas trade). 30s setelah GUI trade ilang baru hidup.
+    -- v27.107: MATI TOTAL pas lagi trade (biar gak fav/unfav pas trade). 30s setelah GUI trade ilang baru hidup.
     if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin fav salah toggle
     -- pet tim selalu keep (jgn di-unfav walau masuk rule)
@@ -7010,8 +7018,107 @@ showSideFn = function(name)
     content.Visible      = (name == "AUTO HACT")
     miscContent.Visible  = (name == "MISC")
     if manualContent then manualContent.Visible = (name == "MANUAL") end
+    if tradeContent then tradeContent.Visible = (name == "TRADE") end
 end
 _G.HactTelurShowMisc = showMiscFn
+
+-- ============ v27.107: TAB TRADE — gift pet KEEP ke akun up3.8kg ============
+do
+    local HS2 = game:GetService("HttpService")
+    local TRADE_CFG_FILE = "zenx_hact_trade.json"
+    local TRADECFG = { targets = {}, minKg = 0, minAge = 0, on = false }
+    pcall(function()
+        if isfile and isfile(TRADE_CFG_FILE) and readfile then
+            local c = HS2:JSONDecode(readfile(TRADE_CFG_FILE))
+            if type(c) == "table" then
+                if type(c.targets) == "table" then local a = {}; for _, v in ipairs(c.targets) do if type(v) == "string" and v ~= "" then a[#a+1] = v end end TRADECFG.targets = a end
+                TRADECFG.minKg = tonumber(c.minKg) or 0
+                TRADECFG.minAge = tonumber(c.minAge) or 0
+                TRADECFG.on = (c.on == true)
+            end
+        end
+    end)
+    local function saveTradeCfg() pcall(function() if writefile then writefile(TRADE_CFG_FILE, HS2:JSONEncode(TRADECFG)) end end) end
+
+    tradeContent = mk("Frame", {
+        Size = UDim2.new(1, -141, 1, -45), Position = UDim2.new(0, 141, 0, 45),
+        BackgroundTransparency = 1, Visible = false, Parent = main })
+    pad(tradeContent, 16)
+    local y = 0
+    local titleL = lbl(tradeContent, "TRADE \u{2014} gift pet KEEP", 15, C.text); titleL.Font = FONT_B
+    titleL.Position = UDim2.new(0,0,0,y); titleL.Size = UDim2.new(1,0,0,22); y = y + 24
+    local subL = lbl(tradeContent, "kirim pet keep ke akun up3.8kg (target)", 11, C.textDim)
+    subL.Position = UDim2.new(0,0,0,y); subL.Size = UDim2.new(1,0,0,16); y = y + 26
+
+    local function inputRow(label, val, ph)
+        local l = lbl(tradeContent, label, 12, C.textDim)
+        l.Position = UDim2.new(0,0,0,y); l.Size = UDim2.new(0,88,0,30)
+        local box = mk("TextBox", {
+            Size = UDim2.new(1,-94,0,30), Position = UDim2.new(0,94,0,y),
+            BackgroundColor3 = C.card, BorderSizePixel = 0, Text = tostring(val),
+            TextColor3 = C.text, Font = FONT, TextSize = 12, ClearTextOnFocus = false,
+            TextXAlignment = Enum.TextXAlignment.Left, Parent = tradeContent })
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0,5)
+        local pp = Instance.new("UIPadding", box); pp.PaddingLeft = UDim.new(0,8)
+        if ph then box.PlaceholderText = ph; box.PlaceholderColor3 = C.textDim end
+        y = y + 38
+        return box
+    end
+    local tgtBox = inputRow("Target", table.concat(TRADECFG.targets, ", "), "akun up3.8kg (pisah koma)")
+    local kgBox  = inputRow("Min KG", TRADECFG.minKg, "0 = semua")
+    local ageBox = inputRow("Min Age", TRADECFG.minAge, "0 = semua")
+
+    local toggle = mk("TextButton", {
+        Size = UDim2.new(0,150,0,36), Position = UDim2.new(0,0,0,y+4),
+        BackgroundColor3 = TRADECFG.on and C.accent or C.card, BorderSizePixel = 0,
+        Text = TRADECFG.on and "ON \u{2014} gift jalan" or "OFF", TextColor3 = TRADECFG.on and Color3.new(0,0,0) or C.text,
+        Font = FONT_B, TextSize = 13, AutoButtonColor = false, Parent = tradeContent })
+    Instance.new("UICorner", toggle).CornerRadius = UDim.new(0,6)
+    local statusL = lbl(tradeContent, "", 11, C.textDim)
+    statusL.Position = UDim2.new(0,160,0,y+4); statusL.Size = UDim2.new(1,-160,0,36)
+    statusL.TextXAlignment = Enum.TextXAlignment.Left
+    y = y + 48
+    local infoL = lbl(tradeContent, "gift pet keep (lolos filter) ke SEMUA target online (rotasi). fav mati pas trade.", 10, C.textDim)
+    infoL.Position = UDim2.new(0,0,0,y); infoL.Size = UDim2.new(1,0,0,32); infoL.TextWrapped = true; infoL.TextYAlignment = Enum.TextYAlignment.Top
+
+    local function applyCfg()
+        local ts = {}
+        for nm in tostring(tgtBox.Text):gmatch("[^,]+") do nm = nm:gsub("^%s+",""):gsub("%s+$",""); if nm ~= "" then ts[#ts+1] = nm end end
+        TRADECFG.targets = ts
+        TRADECFG.minKg = tonumber(kgBox.Text) or 0
+        TRADECFG.minAge = tonumber(ageBox.Text) or 0
+        saveTradeCfg()
+    end
+    tgtBox.FocusLost:Connect(applyCfg); kgBox.FocusLost:Connect(applyCfg); ageBox.FocusLost:Connect(applyCfg)
+    toggle.MouseButton1Click:Connect(function()
+        applyCfg()
+        TRADECFG.on = not TRADECFG.on
+        toggle.Text = TRADECFG.on and "ON \u{2014} gift jalan" or "OFF"
+        toggle.BackgroundColor3 = TRADECFG.on and C.accent or C.card
+        toggle.TextColor3 = TRADECFG.on and Color3.new(0,0,0) or C.text
+        saveTradeCfg()
+    end)
+
+    -- auto-loop: gift pet KEEP ke target up3.8kg yg online (giftPetsByFilter = gacor: tiket + accept/confirm)
+    task.spawn(function()
+        task.wait(12)
+        while true do
+            task.wait(8)
+            pcall(function()
+                if not TRADECFG.on or #TRADECFG.targets == 0 then if statusL then statusL.Text = TRADECFG.on and "isi target dulu" or "" end return end
+                local tset = {}; for _, nm in ipairs(TRADECFG.targets) do tset[nm] = true end
+                local Players = game:GetService("Players")
+                local nOn = 0; for nm in pairs(tset) do if Players:FindFirstChild(nm) then nOn = nOn + 1 end end
+                if nOn == 0 then if statusL then statusL.Text = "target belum online" end return end
+                if Auto and Auto.giftBusy then return end   -- lagi gift, tunggu
+                local cfg = { targets = tset, keepOnly = true, kg = TRADECFG.minKg or 0, age = TRADECFG.minAge or 0, unfavFirst = true }
+                if statusL then statusL.Text = "gift\u{2026} ("..nOn.." online)" end
+                local sent = giftPetsByFilter(cfg)
+                if statusL then statusL.Text = "terkirim "..tostring(sent).." pet" end
+            end)
+        end
+    end)
+end
 
 -- ============ AUTO AFK (anti idle kick) ============
 task.spawn(function()
@@ -7524,7 +7631,7 @@ do
                 pcall(function()
                     if PetDetect and PetDetect.listBackpackPets and petFate then
                         for _, p in ipairs(PetDetect.listBackpackPets()) do
-                            -- v27.106: CUMA hitung pet yg ADA di rule (sellRules atau petPool) + petFate keep.
+                            -- v27.107: CUMA hitung pet yg ADA di rule (sellRules atau petPool) + petFate keep.
                             -- Jadi cuma "keep target" (mis Peacock >=2kg), BUKAN pet default-keep (tanpa rule).
                             local inRule = (config.sellRules and config.sellRules[p.name] ~= nil)
                                         or (config.petPool and config.petPool[p.name])
