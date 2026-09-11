@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.481-cf"
+local VERSION = "9.482-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -7551,11 +7551,24 @@ local function run(cfg)
                 -- prefer share (linkCode = anyone-with-link) -> client lain BISA join PS akun lain
                 -- (persis kayak campur). ps_link tetep full "accessCode=X|share=Y".
                 if not mapLink[pkg] then mapLink[pkg] = psl; nDapet = nDapet + 1 end
+                KICK_DIURUS["pslink_cache:" .. pkg] = psl   -- v9.482: cache ps_link sukses
+            end
+        end
+        -- v9.482: FALLBACK -- akun yg /ps-list gak kasih ps_link (getps LUNTUR momentan pas rejoin)
+        -- -> pake CACHE getps sukses terakhir. Cegah drift ke PUBLIC pas rejoin (ps_link kepilih 0
+        -- sementara akun lagi transisi/loading). Insight user: up6kg rejoin tiap 30 menit -> getps
+        -- luntur pas rejoin -> masuk public. Cache = ps_link akun PERSIST (accessCode/share sendiri).
+        local nCache = 0
+        for pkg in pairs(mapAkun) do
+            if not mapLink[pkg] then
+                local cached = KICK_DIURUS["pslink_cache:" .. pkg]
+                if cached and cached ~= "" then mapLink[pkg] = cached; nCache = nCache + 1 end
             end
         end
         -- v9.361: hitung total mapLink yg ada (dari assign-ps panel + getps), bukan cuma yg baru dari getps
         local nTotal = 0
         for pkg in pairs(akun2pkg) do if mapLink[akun2pkg[pkg] or ""] then nTotal = nTotal + 1 end end
+        if nCache > 0 then info(("[ps-getps] %d akun pake ps_link CACHE (getps luntur -> fallback, GAK public)"):format(nCache)) end
 
         -- v9.425: report. FIX dobel-hitung -- dulu nDapet+nTotal (nTotal udah termasuk nDapet)
         -- -> 7 padahal cuma 6 akun. Sekarang nTotal (jumlah bener) + "baru getps" (yg baru run ini).
