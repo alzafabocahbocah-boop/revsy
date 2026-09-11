@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.435"
+local VERSION = "8.437"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -4444,6 +4444,16 @@ task.spawn(function()
             -- Notif banner
             BH.showNotif(string.format("🛒 SOLD: %s @ %s → %s (%dx)", petName, price, buyerName, cnt), C.success)
             L(string.format("🛒 [Buyer-Tracker] %s @ %s → %s (total %dx)", petName, price, buyerName, cnt))
+
+            -- v8.437: feed salesHistory pake nama pet BENER dari ItemName UI (event server AddToHistory
+            -- gak bawa nama -> "?"). Ini yg bikin history laku per-jenis kebaca bener.
+            pcall(function()
+                if getgenv().__ZenxAddSale and petName and petName ~= "?" and petName ~= "" then
+                    local priceN = tonumber(tostring(price):gsub("[^%d]", "")) or 0
+                    getgenv().__ZenxAddSale({ PetType = petName, Price = priceN, Time = os.time(), BuyerName = buyerName,
+                        Id = petName .. "_" .. priceN .. "_" .. buyerName .. "_" .. os.time() })
+                end
+            end)
 
             -- Refresh frequent buyers UI kalo udah > threshold
             if cnt >= BH.frequentBuyerThreshold and BH.refreshFrequentBuyers then
@@ -12095,24 +12105,22 @@ L("  - Inventory capacity")
     local function addEntry(e)
         local p = parseEntry(e)
         if not p then return false end
+        if p.petType == "?" or p.petType == "" then return false end   -- v8.437: skip "?" (event server gak bawa nama pet) -> pet name dari buyer-tracker (ItemName UI)
         if salesByKey[p.key] then return false end
         salesByKey[p.key] = true
         table.insert(salesHistory, p)
         saveHist()  -- v8.159: persist on add
         return true
     end
+    getgenv().__ZenxAddSale = addEntry   -- v8.437: expose biar buyer-tracker (baca ItemName UI) bisa feed salesHistory dgn nama pet BENER
 
     -- v8.338: buka ringkasan penjualan buat BRIDGE (dikirim ke panel).
     -- Dikelompokin per jenis pet biar payload-nya kecil -- bukan kirim mentahan.
     getgenv().ZenxRingkasJual = function(sejakDetik)
-        -- v8.355: breakdown per RULE (tipe + kg range) + laku HARI INI vs KEMARIN.
+        -- v8.436: breakdown per JENIS PET ASLI (dari e.petType, base name) + laku HARI INI vs KEMARIN.
+        -- Dulu group per RULE -> sale gak match rule masuk "(lain)" doang. Sekarang per jenis pet beneran.
         local now = os.time()
-        local rules = (BH and BH.marketState and BH.marketState.listingRules) or {}
-        local perRule = {}
-        for i, r in ipairs(rules) do
-            perRule[i] = { n = tostring(r.type or "?"), min = tonumber(r.min) or 0, max = tonumber(r.max) or 0, ini = 0, kmr = 0, tok = 0 }
-        end
-        local lain = { n = "(lain)", min = 0, max = 0, ini = 0, kmr = 0, tok = 0 }
+        local perType = {}   -- basePetName -> { n, min, max, ini, kmr, tok }
         local totIni, totKmr, tokIni = 0, 0, 0
         for _, e in ipairs(salesHistory) do
             local t = tonumber(e.time) or 0
@@ -12120,25 +12128,23 @@ L("  - Inventory capacity")
             local hariIni = umur < 24*3600
             local kemarin = (umur >= 24*3600) and (umur < 48*3600)
             if hariIni or kemarin then
-                local pt = tostring(e.petType or "")
+                local raw = tostring(e.petType or "?")
+                local pt = (BH and BH.getBaseName) and BH.getBaseName(raw) or raw   -- strip mutasi -> base name
+                if pt == "" then pt = raw end
                 local kg = tonumber(e.kg) or 0
                 local price = tonumber(e.price) or 0
-                local hit = lain
-                for i, r in ipairs(rules) do
-                    if tostring(r.type) == pt and kg >= (tonumber(r.min) or 0) and kg <= (tonumber(r.max) or 999) then
-                        hit = perRule[i]; break
-                    end
-                end
-                if hariIni then hit.ini = hit.ini + 1; hit.tok = hit.tok + price; totIni = totIni + 1; tokIni = tokIni + price
-                else hit.kmr = hit.kmr + 1; totKmr = totKmr + 1 end
+                local d = perType[pt]
+                if not d then d = { n = pt, min = kg, max = kg, ini = 0, kmr = 0, tok = 0 }; perType[pt] = d end
+                if kg < d.min then d.min = kg end
+                if kg > d.max then d.max = kg end
+                if hariIni then d.ini = d.ini + 1; d.tok = d.tok + price; totIni = totIni + 1; tokIni = tokIni + price
+                else d.kmr = d.kmr + 1; totKmr = totKmr + 1 end
             end
         end
         local arr = {}
-        for _, d in ipairs(perRule) do if d.ini > 0 or d.kmr > 0 then arr[#arr+1] = d end end
-        if lain.ini > 0 or lain.kmr > 0 then arr[#arr+1] = lain end
-        table.sort(arr, function(x, y) return x.ini > y.ini end)
+        for _, d in pairs(perType) do arr[#arr+1] = d end
+        table.sort(arr, function(x, y) if x.ini ~= y.ini then return x.ini > y.ini end return (x.kmr or 0) > (y.kmr or 0) end)
         while #arr > 40 do table.remove(arr) end
-        -- v8.355: total = hari ini (biar kompat lama), token = hari ini, jenis = arr (per-rule)
         return { total = totIni, totalKmr = totKmr, token = tokIni, jenis = arr }
     end
 
