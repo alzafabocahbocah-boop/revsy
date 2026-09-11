@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.477-cf"
+local VERSION = "9.480-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -1184,6 +1184,7 @@ function interval_denyut(cfg)
     if sl:find("UP3", 1, true) then return 60 end   -- up3.8kg: cek denyut 60s (bukan 45s kayak up6kg)
     if sl:find("UP6KG") then return 45 end
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
+    if sl:find("HACT") then return 120 end   -- hact: cek denyut 120s
     return 360
 end
 function denyut_fresh_sec(cfg)
@@ -1192,6 +1193,7 @@ function denyut_fresh_sec(cfg)
     if sl:find("UP3", 1, true) then return 45 end   -- up3.8kg: denyut fresh 45s (bukan 30s kayak up6kg)
     if sl:find("UP6KG") then return 30 end
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 120 end
+    if sl:find("HACT") then return 60 end   -- hact: denyut fresh 60s
     return 300
 end
 -- v9.456: folder2 tempat cari file denyut. Market bisa jalan di ARCEUS sementara script
@@ -7579,6 +7581,7 @@ local function run(cfg)
     -- MENETAP: mapLink tetep = PS target -> rejoin pun balik ke target (gak balik server sendiri).
     local _hactotoDbg = 0
     local function refresh_hactoto()
+        do return end   -- v9.479: HACT OTO override DIMATIIN. Semua hact (termasuk HACT OTO) TETEP di server sendiri, kayak up3.8kg/up6kg. Gak join ke PS target lagi.
         local sl = cfg.script_label or ""
         _hactotoDbg = _hactotoDbg + 1
         local dbg = (_hactotoDbg % 3 == 1)   -- log tiap 3x panggil (kurangin spam)
@@ -8584,6 +8587,7 @@ local function run(cfg)
                                 -- fresh dari getps 30s). Ini yg bikin olivia nyusul walau psLink gak berubah.
                                 local hasTarget = js:match('"hactotoTarget"%s*:%s*"([^"]-)"')
                                 local online = js:match('"hactotoOnline"%s*:%s*(%a+)')
+                                hasTarget = ""   -- v9.479: HACT OTO DIMATIIN -> abaikan target hactoto. hact = up3.8kg (tetep di server sendiri, gak react target).
                                 local psampleJ = js:match('"hactotoPsample"%s*:%s*"([^"]-)"') or "-"
                                 if hasTarget and hasTarget ~= "" and hasTarget ~= "(no file)"
                                    and hasTarget ~= "(parse GAGAL)" and online == "false" then
@@ -8946,19 +8950,21 @@ local function run(cfg)
             local _sl = tostring(cfg.script_label or "")
             local _isUp38 = _sl:find("UP3", 1, true)
             local _isUp6  = _sl:find("UP6KG")
-            if _isUp38 or _isUp6 then
+            local _isHact = _sl:find("HACT")
+            if _isUp38 or _isUp6 or _isHact then
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
-                local slotSize = _isUp38 and 3600 or 1800   -- up3.8kg 60min, up6kg 30min
+                local per60 = _isUp38 or _isHact                            -- up3.8kg + hact: tiap 60 menit
+                local slotSize = per60 and 3600 or 1800                     -- up3.8kg/hact 60min, up6kg 30min
                 local slot = math.floor(wibNow / slotSize)
                 local fireNow
-                if _isUp38 then fireNow = (wt.min == 0)                       -- up3.8kg: :00 doang (tiap jam)
-                else fireNow = (wt.min == 0 or wt.min == 30) end              -- up6kg: :00 & :30
+                if per60 then fireNow = (wt.min == 0)                        -- up3.8kg/hact: :00 doang (tiap jam)
+                else fireNow = (wt.min == 0 or wt.min == 30) end             -- up6kg: :00 & :30
                 if fireNow and RESTART_JADWAL_SLOT ~= slot then
                     RESTART_JADWAL_SLOT = slot
-                    local _nm = _isUp38 and "UP3.8KG" or "UP6KG"
-                    warn(string.format("[JADWAL] %s restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang (UNINTERRUPTIBLE)", _nm, wt.hour, wt.min))
-                    _G.__ZenxForceRestart = true   -- v9.469: restart terjadwal WAJIB kelar, gak bisa dibatalin command/STOP
+                    local _nm = _isUp38 and "UP3.8KG" or (_isHact and "HACT" or "UP6KG")
+                    warn(string.format("[JADWAL] %s restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang%s", _nm, wt.hour, wt.min, _isHact and " (bisa di-nyela manual command)" or " (UNINTERRUPTIBLE)"))
+                    if not _isHact then _G.__ZenxForceRestart = true end   -- hact: rejoin INTERRUPTIBLE (start/balik home manual selalu bisa nyela). up6kg/up3.8kg: WAJIB kelar.
                     local okR = pcall(function()
                         PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                     end)
