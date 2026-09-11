@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.437"
+local VERSION = "8.438"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -4419,7 +4419,6 @@ task.spawn(function()
 
     sf.ChildAdded:Connect(function(template)
         if template.Name ~= "BoothHistoryTemplate" then return end
-        if not BH.buyerTrackerEnabled then return end
         task.wait(0.3)
         pcall(function()
             local spacer = template:FindFirstChild("Spacer")
@@ -4435,18 +4434,9 @@ task.spawn(function()
             local price = spacer:FindFirstChild("Price") and spacer.Price:FindFirstChild("Amount")
                           and tostring(spacer.Price.Amount.Text) or "?"
 
-            -- Increment count
-            BH.buyerCounts[buyerName] = (BH.buyerCounts[buyerName] or 0) + 1
-            local cnt = BH.buyerCounts[buyerName]
-            BH.marketState.buyerCounts = BH.buyerCounts
-            BH.saveMarketState(BH.marketState)
-
-            -- Notif banner
-            BH.showNotif(string.format("🛒 SOLD: %s @ %s → %s (%dx)", petName, price, buyerName, cnt), C.success)
-            L(string.format("🛒 [Buyer-Tracker] %s @ %s → %s (total %dx)", petName, price, buyerName, cnt))
-
-            -- v8.437: feed salesHistory pake nama pet BENER dari ItemName UI (event server AddToHistory
-            -- gak bawa nama -> "?"). Ini yg bikin history laku per-jenis kebaca bener.
+            -- v8.438: feed salesHistory SELALU (gak peduli buyerTracker on/off) — pake nama pet BENER
+            -- dari ItemName UI (event server AddToHistory gak bawa nama -> "?"). Ini yg bikin history laku
+            -- per-jenis kebaca bener. Dulu ke-gate buyerTrackerEnabled (default OFF) -> gak jalan.
             pcall(function()
                 if getgenv().__ZenxAddSale and petName and petName ~= "?" and petName ~= "" then
                     local priceN = tonumber(tostring(price):gsub("[^%d]", "")) or 0
@@ -4455,7 +4445,15 @@ task.spawn(function()
                 end
             end)
 
-            -- Refresh frequent buyers UI kalo udah > threshold
+            -- buyer-counting CUMA kalo tracker ON (fitur terpisah)
+            if not BH.buyerTrackerEnabled then return end
+
+            BH.buyerCounts[buyerName] = (BH.buyerCounts[buyerName] or 0) + 1
+            local cnt = BH.buyerCounts[buyerName]
+            BH.marketState.buyerCounts = BH.buyerCounts
+            BH.saveMarketState(BH.marketState)
+            BH.showNotif(string.format("🛒 SOLD: %s @ %s → %s (%dx)", petName, price, buyerName, cnt), C.success)
+            L(string.format("🛒 [Buyer-Tracker] %s @ %s → %s (total %dx)", petName, price, buyerName, cnt))
             if cnt >= BH.frequentBuyerThreshold and BH.refreshFrequentBuyers then
                 BH.refreshFrequentBuyers()
             end
