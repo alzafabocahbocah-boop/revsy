@@ -275,7 +275,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.105"
+local VERSION = "v27.106"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1667,7 +1667,7 @@ local function applyPresetHact(name)
             config.sellRules[pet] = { action = rule.action, kg = rule.kg }
         end
     end
-    -- v27.105: OVERRIDE dari PANEL (/hact-sellconfig). Fetch pas apply preset (= tiap start/reexe/rejoin).
+    -- v27.106: OVERRIDE dari PANEL (/hact-sellconfig). Fetch pas apply preset (= tiap start/reexe/rejoin).
     -- Kalo panel ada config -> timpa sellRules/petPool/keepOnly preset. Kosong -> pake preset.
     pcall(function()
         local ZENX_URL = "https://dry-glitter-63e4.petagee5.workers.dev"
@@ -1844,6 +1844,7 @@ local function autoAcceptTrade()
         local tui = pg:FindFirstChild("TradingUI")
         local lt = tui and tui:FindFirstChild("LiveTrade")
         if lt and lt.Visible then
+            _G.__hactTradeAktif = tick()   -- v27.106: GUI trade ada -> fav MATI (reset timer 30s tiap keliatan)
             local opts = lt:FindFirstChild("Options")
             -- v27.67: klik Accept DAN Confirm (2 langkah), bukan Accept doang
             if opts then tekan(opts:FindFirstChild("Accept")); tekan(opts:FindFirstChild("Confirm")) end
@@ -1969,6 +1970,7 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         if stopCheck and stopCheck() then break end
         if idx > #petList then break end
         pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
+        _G.__hactTradeAktif = tick()   -- v27.106: MULAI trade (fire send tiket) -> fav MATI
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
         task.wait(0.3)   -- tunggu window kebuka (was 0.4)
         local added = 0
@@ -2234,7 +2236,7 @@ local function getMatchedPets(cfg)
                 if cfg.kg > 0 then okKg = kgVal >= cfg.kg
                 else okKg = kgVal <= math.abs(cfg.kg) end
             end
-            -- v27.105: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
+            -- v27.106: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
             if okPet and okMut and okAge and okKg and uclean and not (p and p.fav) then
                 table.insert(matched, uclean)
             end
@@ -2523,6 +2525,8 @@ end
 -- AUTO FAV: favoritkan semua pet yg ada di pemilihan tim (Reduce/Hatch/Sell)
 -- biar selalu kelindungi dari Sell All
 function favTeamPets()
+    -- v27.106: MATI TOTAL pas lagi trade (dari fire send tiket / GUI trade ada) -> 30s setelah GUI trade ilang baru hidup lagi
+    if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin p.fav salah -> favoritePet (toggle) malah UNFAV pet tim
     local teamSel = {}
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -2548,6 +2552,8 @@ end
 -- SYNC FAVORIT IKUT RULE: pet yg masuk kriteria SELL -> unfav (biar kejual),
 -- pet keep -> fav (terlindungi). dipanggil tiap rule diubah.
 function syncFavByRules()
+    -- v27.106: MATI TOTAL pas lagi trade (biar gak fav/unfav pas trade). 30s setelah GUI trade ilang baru hidup.
+    if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin fav salah toggle
     -- pet tim selalu keep (jgn di-unfav walau masuk rule)
     local teamSel = {}
@@ -7518,7 +7524,7 @@ do
                 pcall(function()
                     if PetDetect and PetDetect.listBackpackPets and petFate then
                         for _, p in ipairs(PetDetect.listBackpackPets()) do
-                            -- v27.105: CUMA hitung pet yg ADA di rule (sellRules atau petPool) + petFate keep.
+                            -- v27.106: CUMA hitung pet yg ADA di rule (sellRules atau petPool) + petFate keep.
                             -- Jadi cuma "keep target" (mis Peacock >=2kg), BUKAN pet default-keep (tanpa rule).
                             local inRule = (config.sellRules and config.sellRules[p.name] ~= nil)
                                         or (config.petPool and config.petPool[p.name])
