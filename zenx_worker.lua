@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.472-cf"
+local VERSION = "9.473-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -6380,7 +6380,7 @@ local function setup_otomatis(namaPreset)
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
         upkg   = { place = "126884695634066", game = "GAG 1 UPKG",   sc = "UP KG",     url = "upkg"   },
         up6kg  = { place = "126884695634066", game = "GAG 1 UP6KG",  sc = "UP6KG",      url = "up6kg"  },
-        ["up3.8kg"] = { place = "126884695634066", game = "GAG 1 UP3.8KG", sc = "UP3.8KG", url = "up38kg" },
+        ["up3.8kg"] = { place = "126884695634066", game = "GAG 1 UP3.8KG", sc = "UP3.8KG", url = "up3.8kg" },
         uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
