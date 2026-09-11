@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.434"
+local VERSION = "8.435"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2146,11 +2146,64 @@ do
     end
     BH.fetchSnipeFromPanel = fetchSnipeFromPanel
 
+    -- v8.435: RISET HARGA PASAR — panel minta 1 jenis pet (/market-pricereq), market kumpulin
+    -- SEMUA listing pet itu di server ini (harga + base kg + mutasi) -> PUT ke slot server sendiri
+    -- (/market-pricedata). Panel gabung dari semua server. Cuma lapor kalo ADA yg diminta.
+    local function laporHargaPasar()
+        local reqPet = ""
+        pcall(function()
+            local r = req({ Url = PANEL_URL .. "/market-pricereq", Method = "GET", Headers = { ["X-Kunci"] = PANEL_KUNCI } })
+            reqPet = (r and (r.Body or r.body)) or ""
+        end)
+        reqPet = tostring(reqPet):gsub("^%s+", ""):gsub("%s+$", "")
+        if reqPet == "" then return end   -- gak ada yg diminta -> gak lapor
+        local listings = {}
+        if BH.TBC then
+            for _, pp in ipairs(Players:GetPlayers()) do
+                local ok, data = pcall(function() return BH.fetchBoothData and BH.fetchBoothData(pp) end)
+                if ok and data and data.Listings then
+                    for _, listing in pairs(data.Listings) do
+                        if listing.ItemType == "Pet" and listing.ItemId then
+                            local item = data.Items and data.Items[listing.ItemId]
+                            if item and item.PetType then
+                                local petType = tostring(item.PetType)
+                                local base = (BH.getBaseName and BH.getBaseName(petType)) or petType
+                                if base:lower() == reqPet:lower() then
+                                    local bw = (item.PetData and tonumber(item.PetData.BaseWeight)) or 0
+                                    local kg = bw * 1.1
+                                    local mut = ""
+                                    if base ~= petType and #petType >= #base and petType:sub(-#base) == base then
+                                        mut = petType:sub(1, #petType - #base):gsub("[,%s]+$", ""):gsub("^%s+", "")
+                                    end
+                                    listings[#listings+1] = { p = tonumber(listing.Price) or 0, k = tonumber(string.format("%.2f", kg)) or 0, m = mut }
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        local jobId = tostring(game.JobId or "?"):sub(1, 14)
+        pcall(function()
+            req({ Url = PANEL_URL .. "/market-pricedata", Method = "PUT",
+                  Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
+                  Body = game:GetService("HttpService"):JSONEncode({ srv = jobId, pet = reqPet, listings = listings }) })
+        end)
+    end
+    BH.laporHargaPasar = laporHargaPasar
+
     task.spawn(function()
         task.wait(6)
         pcall(fetchRuleFromPanel)
         pcall(fetchSnipeFromPanel)
-        while true do task.wait(5) pcall(fetchRuleFromPanel) pcall(fetchSnipeFromPanel) end
+        local _hpTick = 0
+        while true do
+            task.wait(5)
+            pcall(fetchRuleFromPanel)
+            pcall(fetchSnipeFromPanel)
+            _hpTick = _hpTick + 1
+            if _hpTick % 3 == 0 then pcall(laporHargaPasar) end   -- riset harga tiap 15s (kalo ada req)
+        end
     end)
 
     -- ===== tombol title bar: SALIN TEMPLATE (buka manager) =====
