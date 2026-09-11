@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.53"
+local VERSION = "uplevel-v0.55"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1458,7 +1458,7 @@ do
             end
         end
     end
-    -- pilih bahan — v0.51: jenis dari list Gift Pet Uplevel (_G.ZenxUplevelGiftTipe) + 6kg+ base. kosong = semua jenis.
+    -- pilih bahan — v0.54: jenis dari list Gift Pet Uplevel + base 6-7.99 kg (pet 8kg+ GAK di-uplevel). kosong = semua jenis.
     local function pilihBahan(sesi)
         local maxB = bahanMax()
         local pets = listPetsEngine()
@@ -1468,7 +1468,8 @@ do
         for _, p in ipairs(pets) do
             if n >= maxB then break end
             local inGift = (type(gt) ~= "table") or (not next(gt)) or (gt[p.tipe] == true)
-            if not supportKunci[p.uuid] and not bahanAktif[p.uuid] and (p.age or 0) < AGE_TARGET and (p.kgBase or 0) >= 6.0 - 0.005 and inGift then
+            local kg6to8 = (p.kgBase or 0) >= 6.0 - 0.005 and (p.kgBase or 0) < 8.0   -- 6 s/d 7.99
+            if not supportKunci[p.uuid] and not bahanAktif[p.uuid] and (p.age or 0) < AGE_TARGET and kg6to8 and inGift then
                 bahanAktif[p.uuid] = p.tipe; n = n + 1
                 kgLog("bahan: "..p.tipe.." age "..(p.age or 0).." kg "..string.format("%.2f", p.kgBase or 0))
             end
@@ -3056,7 +3057,7 @@ do
     local GE = RS:FindFirstChild("GameEvents")
     local TRADE_CFG = "zenx_trade_cfg.json"
     local TR_ALL = {}
-    for i = 1, 3 do TR_ALL[i] = { targets = {}, tipe = {}, minKg = 0, minAge = 0, autoAcc = false, mode = "off", nama = "Gift " .. i } end
+    for i = 1, 3 do TR_ALL[i] = { targets = {}, tipe = {}, minKg = 0, minAge = 0, autoAcc = false, mode = (i == 1 and "gift" or "off"), nama = "Gift " .. i } end   -- v0.55: Gift 1 (market) default GIFT biasa, bukan trade ticket
     local activeTemplate = 1
     local TR = TR_ALL[1]   -- referensi ke template aktif
     local function saveTr()
@@ -3082,6 +3083,7 @@ do
                         if type(ct.tipe)=="table" then local s={} for k,v in pairs(ct.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
                         t.minKg=tonumber(ct.minKg) or 0; t.minAge=tonumber(ct.minAge) or 0; t.autoAcc=(ct.autoAcc==true)
                         t.mode = (ct.mode=="trade" or ct.mode=="gift") and ct.mode or "off"
+                        if i == 1 and t.mode == "trade" then t.mode = "gift" end   -- v0.55: Gift 1 (market) trade -> gift biasa
                         if type(ct.nama)=="string" and ct.nama~="" then t.nama = ct.nama end
                     end
                 end
@@ -3094,6 +3096,7 @@ do
                 if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
                 t.minKg=tonumber(c.minKg) or 0; t.minAge=tonumber(c.minAge) or 0; t.autoAcc=(c.autoAcc==true)
                 t.mode = (c.mode=="trade" or c.mode=="gift") and c.mode or "off"
+                if t.mode == "trade" then t.mode = "gift" end   -- v0.55: Gift 1 (market) trade -> gift biasa
             end
         end
     end)
@@ -3342,6 +3345,7 @@ do
                     if type(_G.ZenxUplevelGiftTipe) == "table" then TR.tipe = _G.ZenxUplevelGiftTipe end
                     TR.minKg = 6.0     -- v0.31: Gift 1 = pet 6kg+ ...
                     TR.minAge = 500    -- ... DAN age 500+ (pet yg udah jadi -> baru di-gift ke market)
+                    if TR.mode == "trade" then TR.mode = "gift" end   -- v0.55: ke MARKET PAKSA gift biasa (GiftPet), BUKAN trade ticket
                 end
             end)
             if (TR.mode == "trade" or TR.mode == "gift") and not trBusy then
