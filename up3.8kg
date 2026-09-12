@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.18"
+local VERSION = "up38kg-v1.22"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -14,40 +14,6 @@ task.spawn(function()
     local sg = Instance.new("ScreenGui")
     sg.Name = "ZenxUp6kgStat"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 999998
     sg.Parent = par
-    -- v1.11: overlay DEBUG UNFAV (kiri bawah) -> tampil log kenapa pet gak ke-unfav pas trade
-    task.spawn(function()
-        local dg = Instance.new("Frame"); dg.AnchorPoint = Vector2.new(0, 0.5)
-        dg.Size = UDim2.new(0, 300, 0, 210); dg.Position = UDim2.new(0, 10, 0.42, 0)   -- v1.14: kiri-TENGAH (gak ketutup joystick kiri-bawah)
-        dg.BackgroundColor3 = Color3.fromRGB(10, 10, 14); dg.BackgroundTransparency = 0.12; dg.Visible = false; dg.Parent = sg
-        dg.Active = true; dg.Draggable = true   -- bisa di-geser
-        Instance.new("UICorner", dg).CornerRadius = UDim.new(0, 8)
-        local ds = Instance.new("UIStroke", dg); ds.Color = Color3.fromRGB(236, 72, 153); ds.Thickness = 1
-        local dt = Instance.new("TextLabel"); dt.Size = UDim2.new(1, -12, 1, -8); dt.Position = UDim2.new(0, 6, 0, 4)
-        dt.BackgroundTransparency = 1; dt.Font = Enum.Font.Code; dt.TextSize = 10; dt.TextColor3 = Color3.fromRGB(235, 205, 220)
-        dt.TextXAlignment = Enum.TextXAlignment.Left; dt.TextYAlignment = Enum.TextYAlignment.Top; dt.TextWrapped = true; dt.Parent = dg
-        -- v1.12: KETUK 2x buat SALIN log ke clipboard
-        dg.Active = true
-        local lastTap, copiedFlash = 0, 0
-        dg.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-                local nowt = tick()
-                if nowt - lastTap < 0.45 then
-                    local txt = "UP3.8KG DEBUG:\n" .. tostring(_G.__ZenxUnfavDbg or "")
-                    local ok = false
-                    if setclipboard then ok = pcall(setclipboard, txt) elseif toclipboard then ok = pcall(toclipboard, txt) end
-                    copiedFlash = ok and (tick() + 1.5) or 0
-                end
-                lastTap = nowt
-            end
-        end)
-        while true do
-            local d = _G.__ZenxUnfavDbg
-            dg.Visible = true
-            local head = (tick() < copiedFlash) and "\u{2705} DISALIN!\n\n" or "\240\159\148\167 DEBUG (ketuk 2x = salin, bisa geser):\n\n"
-            dt.Text = head .. ((d and d ~= "") and d or "nunggu scan backpack... (~10s)")
-            task.wait(0.4)
-        end
-    end)
     local frame = Instance.new("Frame")
     local owrap = Instance.new("Frame")
     owrap.Size = UDim2.new(1, 0, 1, 0)
@@ -1921,6 +1887,17 @@ do
         if KG.aktif then pasangSesi(KG.sesi, false) end
         kgLog("KUNCI SUPPORT BARU dipencet -> support di-pilih ulang (kg terbesar)")
     end
+    -- v1.21: loader buat lineup GUI -> load pool SAVED pas rejoin (gak nunggu leveling mulai).
+    -- Fix: pas rejoin lineup kosong (ZenxSupportPool blm ke-set) sampe user pencet pick manual.
+    _G.__ZenxEnsurePool = function() pcall(kunciSupPool, false) end
+    -- v1.22: LOAD pool saved pas STARTUP (gak perlu buka tab lineup). Retry sampe pool ke-build (container siap).
+    task.spawn(function()
+        for _ = 1, 10 do
+            task.wait(3)
+            if next(_G.ZenxSupportPool or {}) then break end
+            pcall(kunciSupPool, false)
+        end
+    end)
 
     local function pasangSesi(sesi, pickup)
         kunciSupPool()   -- lock pool sekali -> uuid support KONSISTEN
@@ -2631,7 +2608,16 @@ kunciSupBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-task.spawn(function() while gui.Parent do if content.Visible then pcall(renderLineup) end task.wait(2) end end)
+task.spawn(function()
+    while gui.Parent do
+        if content.Visible then
+            -- v1.21: pool kosong pas rejoin -> LOAD pool saved dulu, baru render (biar slot langsung keisi)
+            if not next(_G.ZenxSupportPool or {}) and _G.__ZenxEnsurePool then pcall(_G.__ZenxEnsurePool) end
+            pcall(renderLineup)
+        end
+        task.wait(2)
+    end
+end)
 
 -- up6kg: config cuma Tim Ele
 local KG_CONFIGS = { "Tim Ele" }
@@ -3421,55 +3407,18 @@ do
         task.wait(0.25)   -- kasih waktu semua fav clear sebelum trade/gift
     end
 
-    -- v1.12: SCAN kontinu backpack (gak nunggu trade) -> kategoriin SUPPORT vs BAHAN + status fav + entry.
-    -- Update _G.__ZenxUnfavDbg buat overlay debug. Biar ketauan pet mana yg mestinya ke-unfav tapi enggak.
+    -- v1.20: AKTIF unfav bahan faved tiap 2s. GUARD: cuma jalan kalo support udah ke-TRACK
+    -- (ZenxSupportKunci/Uuids ada isi) -> jangan unfav support pas startup (Dilop nyangkut di backpack
+    -- sebelum ke-equip + belum ke-track -> dulu ke-unfav -> kekirim -> tim reset).
     task.spawn(function()
-        task.wait(10)
+        task.wait(12)
         while true do
             task.wait(2)
-            local _ok, _err = pcall(function()
-            local bp = player:FindFirstChild("Backpack")
-            if bp then
-                local supAll = _G.ZenxSupportUuids or {}
-                local sk = _G.ZenxSupportKunci or {}
-                local pr = _G.__ZenxSupProtect or {}
-                local sup, bahanFav, bahanOk = {}, {}, 0
-                for _, t in ipairs(bp:GetChildren()) do
-                    if t:IsA("Tool") then
-                        local uuid = t:GetAttribute("PET_UUID")
-                        if uuid then
-                            local e = _kgContainer and (_kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)])
-                            if _kgContainer and type(e) ~= "table" then
-                                local raw = tostring(uuid):gsub("[{}]", "")
-                                for k, v in pairs(_kgContainer) do if tostring(k):gsub("[{}]", "") == raw then e = v; break end end
-                            end
-                            local tipe = tostring((type(e) == "table" and e.PetType) or t:GetAttribute("f") or "?"):sub(1, 14)
-                            local isSup = supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)]
-                            local fav = false
-                            if type(e) == "table" and type(e.PetData) == "table" and (e.PetData.IsFavorite == true or e.PetData.Favorite == true) then fav = true end
-                            if not fav then for _, a in ipairs({ "Favorited", "Favorite", "IsFavorited" }) do if t:GetAttribute(a) == true then fav = true; break end end end
-                            local ent = (type(e) == "table") and "OK" or "NONE"
-                            if isSup then
-                                if #sup < 12 then sup[#sup + 1] = tipe .. (fav and "" or "(!nofav)") end
-                            elseif fav then
-                                if #bahanFav < 12 then bahanFav[#bahanFav + 1] = tipe .. " ent:" .. ent end
-                                pcall(unfavIfNeeded, t)   -- v1.18: AKTIF unfav bahan faved (bukan cuma pas trade). skip support (3 sumber).
-                            else
-                                bahanOk = bahanOk + 1
-                            end
-                        end
-                    end
-                end
-                local spCnt = 0; local sp = _G.ZenxSupportPool; if type(sp) == "table" then for _, l in pairs(sp) do if type(l) == "table" then spCnt = spCnt + #l end end end
-                local skCnt = 0; for _ in pairs(sk) do skCnt = skCnt + 1 end
-                local suCnt = 0; for _ in pairs(supAll) do suCnt = suCnt + 1 end
-                _G.__ZenxUnfavDbg = "pool:" .. spCnt .. " kunci:" .. skCnt .. " supUuid:" .. suCnt
-                    .. "\n\nSUPPORT (" .. #sup .. ", HARUS fav):\n" .. table.concat(sup, ", ")
-                    .. "\n\nBAHAN msh FAV (" .. #bahanFav .. ", HARUS unfav):\n" .. (table.concat(bahanFav, "\n"))
-                    .. "\n\nBAHAN udah unfav (siap trade): " .. bahanOk
-            end
+            pcall(function()
+                local bp = player:FindFirstChild("Backpack")
+                local supOk = (next(_G.ZenxSupportKunci or {}) ~= nil) or (next(_G.ZenxSupportUuids or {}) ~= nil)
+                if bp and supOk then for _, t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then unfavIfNeeded(t) end end end
             end)
-            if not _ok then _G.__ZenxUnfavDbg = "SCAN ERROR:\n" .. tostring(_err) end
         end
     end)
 
