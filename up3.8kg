@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.6"
+local VERSION = "up38kg-v1.7"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -29,6 +29,7 @@ task.spawn(function()
     local AQ = Color3.fromRGB(78, 214, 204)
     local WH = Color3.fromRGB(255, 255, 255)
     local RED = Color3.fromRGB(235, 40, 40)
+    local PINK = Color3.fromRGB(236, 72, 153)      -- v1.7: state "tim gak lengkap"
     -- HEADER: dot + UP6KG + badge ELE (nyala pas pegang Ele)
     local hdr = Instance.new("Frame"); hdr.Size = UDim2.new(1,0,0,22); hdr.BackgroundTransparency = 1; hdr.BorderSizePixel = 0; hdr.LayoutOrder = 1; hdr.Parent = frame
     local dot = Instance.new("Frame"); dot.Size = UDim2.new(0,9,0,9); dot.Position = UDim2.new(0,2,0.5,-4); dot.BackgroundColor3 = AQ; dot.BorderSizePixel = 0; dot.Parent = hdr
@@ -95,7 +96,15 @@ task.spawn(function()
         fpsLbl.Text = tostring(_G.ZenxFPS or 0).." fps"
         -- v10.8: pegang Ele -> overlay MERAH + badge ELE (v10.12: grace 3s anti-kedip pas swap)
         if cekEle() then _eleSeenT = tick() end
-        if (tick() - _eleSeenT) < 3 then
+        local _timInc = _G.__ZenxTimIncomplete
+        if _timInc then
+            -- v1.7: TIM support GAK LENGKAP/HILANG (>10s) -> tab MAGENTA + kurang apa
+            st1.Color = PINK; st1.Thickness = 3; frame.BackgroundColor3 = Color3.fromRGB(22,6,16)
+            dot.BackgroundColor3 = PINK; ttl.TextColor3 = PINK; eleBadge.Visible = false
+            cTotal.BackgroundColor3 = Color3.fromRGB(30,10,22); cAge.BackgroundColor3 = Color3.fromRGB(30,10,22); cUdah.BackgroundColor3 = Color3.fromRGB(30,10,22); cBelum.BackgroundColor3 = Color3.fromRGB(30,10,22)
+            vTotal.TextColor3 = WH; vAge.TextColor3 = PINK; vUdah.TextColor3 = PINK; vBelum.TextColor3 = WH; fpsLbl.TextColor3 = PINK
+            nextF.Visible = true; nextL.Text = "\u{26A0} tim S"..tostring(_timInc.sesi).." kurang: "..tostring(_timInc.kurang)
+        elseif (tick() - _eleSeenT) < 3 then
             st1.Color = RED; st1.Thickness = 3; frame.BackgroundColor3 = Color3.fromRGB(6,6,8)
             dot.BackgroundColor3 = RED; ttl.TextColor3 = RED; eleBadge.Visible = true
             cTotal.BackgroundColor3 = Color3.fromRGB(14,14,16); cAge.BackgroundColor3 = Color3.fromRGB(14,14,16); cUdah.BackgroundColor3 = Color3.fromRGB(14,14,16); cBelum.BackgroundColor3 = Color3.fromRGB(14,14,16)
@@ -1477,6 +1486,37 @@ do
     local function getSUP(sesi)
         return (sesi == 2) and SUPPORT_S2_ELE or SUPPORT_S1_ELE
     end
+    -- v1.7: DETEKSI tim support GAK LENGKAP/HILANG (config up3.8kg — Elephant biasa masuk hitungan).
+    -- Grace 10s (gak langsung, biar gak false pas transisi/swap). Set _G.__ZenxTimIncomplete buat tab.
+    task.spawn(function()
+        local badSince = nil
+        while true do
+            task.wait(2)
+            if not KG.aktif then badSince = nil; _G.__ZenxTimIncomplete = nil
+            else
+                local sesi = KG.sesi or 1
+                local SUP = getSUP(sesi)
+                local presentPer = {}
+                for uuid, nama in pairs(supportKunci) do
+                    local m = modelByUuid[uuid] or modelByUuid[fmtUUID(uuid)] or modelByUuid[tostring(uuid):gsub("[{}]", "")]
+                    if m and m.Parent then presentPer[nama] = (presentPer[nama] or 0) + 1 end
+                end
+                local kurang = {}
+                for _, sup in ipairs(SUP) do
+                    local ada = presentPer[sup.nama] or 0
+                    if ada < sup.jml then kurang[#kurang + 1] = (sup.jml - ada) .. " " .. sup.nama end
+                end
+                if #kurang > 0 then
+                    if not badSince then badSince = tick() end
+                    if tick() - badSince >= 10 then
+                        _G.__ZenxTimIncomplete = { sesi = sesi, kurang = table.concat(kurang, " \u{00b7} ") }
+                    end
+                else
+                    badSince = nil; _G.__ZenxTimIncomplete = nil
+                end
+            end
+        end
+    end)
     local function getMaxB(sesi)
         return (sesi == 2) and BAHAN_S2 or BAHAN_S1
     end
