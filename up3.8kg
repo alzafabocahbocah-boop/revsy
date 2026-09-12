@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.9"
+local VERSION = "up38kg-v1.13"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -14,6 +14,41 @@ task.spawn(function()
     local sg = Instance.new("ScreenGui")
     sg.Name = "ZenxUp6kgStat"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 999998
     sg.Parent = par
+    -- v1.11: overlay DEBUG UNFAV (kiri bawah) -> tampil log kenapa pet gak ke-unfav pas trade
+    task.spawn(function()
+        local dg = Instance.new("Frame"); dg.AnchorPoint = Vector2.new(0, 1)
+        dg.Size = UDim2.new(0, 300, 0, 210); dg.Position = UDim2.new(0, 10, 1, -10)
+        dg.BackgroundColor3 = Color3.fromRGB(10, 10, 14); dg.BackgroundTransparency = 0.12; dg.Visible = false; dg.Parent = sg
+        Instance.new("UICorner", dg).CornerRadius = UDim.new(0, 8)
+        local ds = Instance.new("UIStroke", dg); ds.Color = Color3.fromRGB(236, 72, 153); ds.Thickness = 1
+        local dt = Instance.new("TextLabel"); dt.Size = UDim2.new(1, -12, 1, -8); dt.Position = UDim2.new(0, 6, 0, 4)
+        dt.BackgroundTransparency = 1; dt.Font = Enum.Font.Code; dt.TextSize = 10; dt.TextColor3 = Color3.fromRGB(235, 205, 220)
+        dt.TextXAlignment = Enum.TextXAlignment.Left; dt.TextYAlignment = Enum.TextYAlignment.Top; dt.TextWrapped = true; dt.Parent = dg
+        -- v1.12: KETUK 2x buat SALIN log ke clipboard
+        dg.Active = true
+        local lastTap, copiedFlash = 0, 0
+        dg.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                local nowt = tick()
+                if nowt - lastTap < 0.45 then
+                    local txt = "UNFAV DEBUG (trade):\n" .. tostring(_G.__ZenxUnfavDbg or "")
+                    local ok = false
+                    if setclipboard then ok = pcall(setclipboard, txt) elseif toclipboard then ok = pcall(toclipboard, txt) end
+                    copiedFlash = ok and (tick() + 1.5) or 0
+                end
+                lastTap = nowt
+            end
+        end)
+        while true do
+            local d = _G.__ZenxUnfavDbg
+            if d and d ~= "" then
+                dg.Visible = true
+                local head = (tick() < copiedFlash) and "\u{2705} DISALIN!\n\n" or "\240\159\148\167 DEBUG (ketuk 2x = salin):\n\n"
+                dt.Text = head .. d
+            else dg.Visible = false end
+            task.wait(0.4)
+        end
+    end)
     local frame = Instance.new("Frame")
     local owrap = Instance.new("Frame")
     owrap.Size = UDim2.new(1, 0, 1, 0)
@@ -3356,11 +3391,20 @@ do
         local uuid = tool:GetAttribute("PET_UUID")
         local supAll = _G.ZenxSupportUuids or {}
         if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)]) then return end   -- SUPPORT -> jangan unfav
-        -- v10.79: deteksi fav pake PetData.IsFavorite (container) DULU, fallback atribut
-        local fav = false
+        -- v1.10: cari entry container NORMALIZED (strip brace) -> mutasi format uuid kadang beda -> gak ke-unfav.
+        local e = nil
         if uuid and _kgContainer then
-            local e = _kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
-            if type(e) == "table" and type(e.PetData) == "table" and e.PetData.IsFavorite == true then fav = true end
+            e = _kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
+            if type(e) ~= "table" then
+                local raw = tostring(uuid):gsub("[{}]", "")
+                for k, v in pairs(_kgContainer) do if tostring(k):gsub("[{}]", "") == raw then e = v; break end end
+            end
+        end
+        local fav = false
+        if type(e) == "table" then
+            local pd = e.PetData
+            if type(pd) == "table" and (pd.IsFavorite == true or pd.Favorite == true or pd.Favorited == true) then fav = true end
+            if not fav and (e.IsFavorite == true or e.Favorite == true) then fav = true end
         end
         if not fav then for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr) == true then fav = true; break end end end
         if fav then
@@ -3374,6 +3418,48 @@ do
         for _, p in ipairs(pets) do unfavIfNeeded(p.tool) end
         task.wait(0.25)   -- kasih waktu semua fav clear sebelum trade/gift
     end
+
+    -- v1.12: SCAN kontinu backpack (gak nunggu trade) -> kategoriin SUPPORT vs BAHAN + status fav + entry.
+    -- Update _G.__ZenxUnfavDbg buat overlay debug. Biar ketauan pet mana yg mestinya ke-unfav tapi enggak.
+    task.spawn(function()
+        task.wait(10)
+        while true do
+            task.wait(2)
+            local bp = player:FindFirstChild("Backpack")
+            if bp then
+                local supAll = _G.ZenxSupportUuids or {}
+                local sup, bahanFav, bahanOk = {}, {}, 0
+                for _, t in ipairs(bp:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local uuid = t:GetAttribute("PET_UUID")
+                        if uuid then
+                            local e = _kgContainer and (_kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)])
+                            if _kgContainer and type(e) ~= "table" then
+                                local raw = tostring(uuid):gsub("[{}]", "")
+                                for k, v in pairs(_kgContainer) do if tostring(k):gsub("[{}]", "") == raw then e = v; break end end
+                            end
+                            local tipe = tostring((type(e) == "table" and e.PetType) or t:GetAttribute("f") or "?"):sub(1, 14)
+                            local isSup = supAll[tostring(uuid)] or supAll[fmtU(uuid)]
+                            local fav = false
+                            if type(e) == "table" and type(e.PetData) == "table" and (e.PetData.IsFavorite == true or e.PetData.Favorite == true) then fav = true end
+                            if not fav then for _, a in ipairs({ "Favorited", "Favorite", "IsFavorited" }) do if t:GetAttribute(a) == true then fav = true; break end end end
+                            local ent = (type(e) == "table") and "OK" or "NONE"
+                            if isSup then
+                                if #sup < 12 then sup[#sup + 1] = tipe .. (fav and "" or "(!nofav)") end
+                            elseif fav then
+                                if #bahanFav < 12 then bahanFav[#bahanFav + 1] = tipe .. " ent:" .. ent end
+                            else
+                                bahanOk = bahanOk + 1
+                            end
+                        end
+                    end
+                end
+                _G.__ZenxUnfavDbg = "SUPPORT (" .. #sup .. ", HARUS fav):\n" .. table.concat(sup, ", ")
+                    .. "\n\nBAHAN msh FAV (" .. #bahanFav .. ", HARUS unfav):\n" .. (table.concat(bahanFav, "\n"))
+                    .. "\n\nBAHAN udah unfav (siap trade): " .. bahanOk
+            end
+        end
+    end)
 
     local function tradeToTarget(targetPlayer, pets)
         if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
