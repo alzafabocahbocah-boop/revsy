@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.447"
+local VERSION = "8.448"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -11952,7 +11952,13 @@ L("  - Inventory capacity")
             local ok, data = pcall(function() return HttpService:JSONDecode(readfile(HIST_FILE)) end)
             if ok and type(data) == "table" then
                 if type(data.history) == "table" then
-                    salesHistory = data.history
+                    -- v8.448: BUANG entry lama yg petType "?" (dari sebelum skip v8.437) -> gak numpuk di popup
+                    local bersih = {}
+                    for _, e in ipairs(data.history) do
+                        local pt = tostring(e.petType or "?")
+                        if pt ~= "?" and pt ~= "" then bersih[#bersih + 1] = e end
+                    end
+                    salesHistory = bersih
                     for _, e in ipairs(salesHistory) do
                         if e.key then salesByKey[e.key] = true end
                     end
@@ -12244,6 +12250,8 @@ L("  - Inventory capacity")
             local kemarin = (umur >= 24*3600) and (umur < 48*3600)
             if hariIni or kemarin then
                 local raw = tostring(e.petType or "?")
+                if raw == "?" or raw == "" then raw = nil end   -- v8.448: skip yg gak kebaca nama (jangan group ke "?")
+                if raw then
                 local pt = (BH and BH.getBaseName) and BH.getBaseName(raw) or raw   -- strip mutasi -> base name
                 if pt == "" then pt = raw end
                 local kg = tonumber(e.kg) or 0
@@ -12254,6 +12262,7 @@ L("  - Inventory capacity")
                 if kg > d.max then d.max = kg end
                 if hariIni then d.ini = d.ini + 1; d.tok = d.tok + price; totIni = totIni + 1; tokIni = tokIni + price
                 else d.kmr = d.kmr + 1; totKmr = totKmr + 1 end
+                end   -- v8.448: tutup "if raw then"
             end
         end
         local arr = {}
