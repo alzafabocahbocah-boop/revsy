@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.450"
+local VERSION = "8.451"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -486,6 +486,13 @@ task.spawn(function()
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
+    -- v8.451: load maxInv terakhir dari file -> di garden gak ada UI, pake yg ke-save pas di market
+    pcall(function()
+        if isfile and readfile and plr and plr.Name and isfile("zenx_maxinv_" .. plr.Name .. ".txt") then
+            local mi = tonumber(readfile("zenx_maxinv_" .. plr.Name .. ".txt"))
+            if mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
+        end
+    end)
     local snipeJenisTerakhir, snipeTokTerakhir = {}, 0   -- v8.356: snipe breakdown per tipe
     local petJenisTerakhir = {}   -- v8.358: SEMUA pet backpack per jenis (buat popup "pet apa aja")
     task.spawn(function()
@@ -553,15 +560,27 @@ task.spawn(function()
                         end
                     end
                 end)
-                if mxUI and mxUI > 0 then maxInvTerakhir = mxUI
-                else local mi = tonumber(_G.__ZenxMaxInv); if mi and mi > 0 then maxInvTerakhir = mi end end
+                if mxUI and mxUI > 0 then
+                    maxInvTerakhir = mxUI; _G.__ZenxMaxInv = mxUI
+                    pcall(function() if writefile and plr and plr.Name then writefile("zenx_maxinv_" .. plr.Name .. ".txt", tostring(mxUI)) end end)   -- v8.451: persist buat garden
+                else
+                    local mi = tonumber(_G.__ZenxMaxInv)
+                    if not mi or mi <= 0 then   -- v8.451: di garden gak ada UI -> baca ATTRIBUTE langsung
+                        for _, attr in ipairs({ "MaxInventory", "InventoryCapacity", "MaxPets", "PetCapacity", "MaxStorage" }) do
+                            local v = plr:GetAttribute(attr)
+                            if v and tonumber(v) and tonumber(v) > 0 then mi = tonumber(v); _G.__ZenxMaxInv = mi; break end
+                        end
+                    end
+                    if mi and mi > 0 then maxInvTerakhir = mi end
+                end
                 -- v8.368: BALIK HOME pas FULL di GARDEN (leveling). Akun market di-oper ke leveling
                 -- buat diisi bahan; pas totalPet >= maxInv (full) -> minta worker balikin ke market.
                 -- CUMA di garden (bukan TradeWorld). Tulis signal file SEKALI -> worker baca -> tembak
                 -- balik ke market + hapus move_link. Reset guard pas gak-full / udah di market.
                 do
                     local diGarden = (game:GetService("Workspace"):FindFirstChild("TradeWorld") == nil)
-                    local full = (maxInvTerakhir > 0) and (totalPetTerakhir >= maxInvTerakhir)
+                    local maxEff = (maxInvTerakhir > 0) and maxInvTerakhir or 200   -- v8.451: fallback 200 kalo maxInv gak ke-detect (biar gak nyangkut penuh)
+                    local full = (totalPetTerakhir >= maxEff)
                     -- v8.375: BALIK HOME kedua -> age-500 leveling HABIS = SEMUA akun leveling present
                     -- di server punya age-500 < 10 (dari /lvlmax field ke-3). min 1 akun present.
                     local age500Habis = false
