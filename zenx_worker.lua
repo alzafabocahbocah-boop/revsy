@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.482-cf"
+local VERSION = "9.483-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -9634,6 +9634,14 @@ local function run(cfg)
                     else
                         cfg._goHomeTs = os.time()
                         cfg._ps_override = cfg.server_utama   -- v9.445: set home sekarang (biar gak re-fire)
+                        -- v9.483: CLEAR move_link (ingatan server leveling) buat akun gohome. Tanpa ini,
+                        -- rejoin terjadwal (:00) berikutnya pake move_link=leveling -> akun BALIK KE LEVELING
+                        -- walau udah gohome. Samain balikhome handler (8524).
+                        for _, akunG in ipairs(goAkuns) do
+                            for pk, u in pairs(mapAkun or {}) do
+                                if u == akunG then KICK_DIURUS["move_link:" .. pk] = nil; break end
+                            end
+                        end
                         api_post(cfg, "/ps", string.format('{"tim":%q,"link":%q}', cfg.tim, cfg.server_utama), "PUT")
                         -- v9.449: REJOIN:daftar (open_one, GAK ke-block) -- bukan REJOIN polos (open_all +
                         -- refresh_denyut_umur + batal_r -> "0 jalan"). Akun dari flag file.
