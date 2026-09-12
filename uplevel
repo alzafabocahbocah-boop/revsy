@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.55"
+local VERSION = "uplevel-v0.56"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -28,6 +28,7 @@ task.spawn(function()
     local grid = Instance.new("UIGridLayout"); grid.CellSize = UDim2.new(0.5,-5,0.5,-5); grid.CellPadding = UDim2.new(0,10,0,10); grid.SortOrder = Enum.SortOrder.LayoutOrder; grid.Parent = frame
     local AQ = Color3.fromRGB(78, 214, 204)
     local WH = Color3.fromRGB(255, 255, 255)
+    local PINK = Color3.fromRGB(236, 72, 153)   -- v0.56: state "tim gak lengkap"
     local function makeCard(col, labelTxt, lo)
         local c = Instance.new("Frame"); c.BackgroundColor3 = Color3.fromRGB(20, 20, 20); c.BorderSizePixel = 0; c.LayoutOrder = lo; c.Parent = frame
         local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0, 10); cc.Parent = c
@@ -41,6 +42,16 @@ task.spawn(function()
     local vUdah  = makeCard(AQ, "fps", 2)
     local vBelum = makeCard(WH, "age 500+", 3)
     local vAge   = makeCard(AQ, "age 500-", 4)
+    -- v0.56: warning banner "tim gak lengkap" (nutupin tab pas _G.__ZenxTimIncomplete keset)
+    local warnBanner = Instance.new("Frame")
+    warnBanner.AnchorPoint = Vector2.new(1, 0); warnBanner.Position = UDim2.new(1/1.5, -14/1.5, 0, 14/1.5)
+    warnBanner.Size = UDim2.new(0, 356, 0, 220); warnBanner.BackgroundColor3 = Color3.fromRGB(22, 6, 16)
+    warnBanner.BackgroundTransparency = 0.04; warnBanner.Visible = false; warnBanner.ZIndex = 20; warnBanner.Parent = owrap
+    Instance.new("UICorner", warnBanner).CornerRadius = UDim.new(0, 14)
+    local _ws = Instance.new("UIStroke", warnBanner); _ws.Color = PINK; _ws.Thickness = 2.5
+    local wIcon = Instance.new("TextLabel"); wIcon.BackgroundTransparency = 1; wIcon.Text = "\u{26A0}"; wIcon.Font = Enum.Font.GothamBold; wIcon.TextSize = 46; wIcon.TextColor3 = PINK; wIcon.Size = UDim2.new(1, 0, 0, 56); wIcon.Position = UDim2.new(0, 0, 0, 28); wIcon.ZIndex = 21; wIcon.Parent = warnBanner
+    local wTtl = Instance.new("TextLabel"); wTtl.BackgroundTransparency = 1; wTtl.Text = "TIM GAK LENGKAP"; wTtl.Font = Enum.Font.GothamBlack; wTtl.TextSize = 25; wTtl.TextColor3 = Color3.fromRGB(249, 168, 212); wTtl.Size = UDim2.new(1, 0, 0, 30); wTtl.Position = UDim2.new(0, 0, 0, 94); wTtl.ZIndex = 21; wTtl.Parent = warnBanner
+    local wSub = Instance.new("TextLabel"); wSub.BackgroundTransparency = 1; wSub.RichText = true; wSub.Text = ""; wSub.Font = Enum.Font.GothamSemibold; wSub.TextSize = 17; wSub.TextColor3 = Color3.fromRGB(205, 145, 175); wSub.Size = UDim2.new(1, -24, 0, 54); wSub.Position = UDim2.new(0, 12, 0, 128); wSub.TextWrapped = true; wSub.ZIndex = 21; wSub.Parent = warnBanner
     -- pas pencet layar: MENGECIL ke 0.7x (bukan ilang), balik 1.5x abis gak touch
     local kecilSampai = 0
     local UIS = game:GetService("UserInputService")
@@ -59,6 +70,13 @@ task.spawn(function()
         vUdah.Text = tostring(_G.ZenxFPS or 0)
         vBelum.Text = tostring(st.age500plus or 0)
         vAge.Text = tostring(st.age500minus or 0)
+        local _timInc = _G.__ZenxTimIncomplete   -- v0.56: tim gak lengkap -> banner PINK nutupin tab
+        if _timInc then
+            warnBanner.Visible = true; st1.Color = PINK; st1.Thickness = 3
+            wSub.Text = "SESI " .. tostring(_timInc.sesi) .. " \u{00b7} kurang: <font color='#f9a8d4'>" .. tostring(_timInc.kurang) .. "</font>"
+        else
+            warnBanner.Visible = false; st1.Color = Color3.fromRGB(38, 38, 38); st1.Thickness = 1.5
+        end
         task.wait(0.2)
     end
 end)
@@ -1487,6 +1505,36 @@ do
     local function getSUP(sesi)
         return (sesi == 2) and SUPPORT_S2_ELE or SUPPORT_S1_ELE
     end
+    -- v0.56: DETEKSI tim support GAK LENGKAP/HILANG (config uplevel). Grace 10s (gak langsung).
+    task.spawn(function()
+        local badSince = nil
+        while true do
+            task.wait(2)
+            if not KG.aktif then badSince = nil; _G.__ZenxTimIncomplete = nil
+            else
+                local sesi = KG.sesi or 1
+                local SUP = getSUP(sesi)
+                local presentPer = {}
+                for uuid, nama in pairs(supportKunci) do
+                    local m = modelByUuid[uuid] or modelByUuid[fmtUUID(uuid)] or modelByUuid[tostring(uuid):gsub("[{}]", "")]
+                    if m and m.Parent then presentPer[nama] = (presentPer[nama] or 0) + 1 end
+                end
+                local kurang = {}
+                for _, sup in ipairs(SUP) do
+                    local ada = presentPer[sup.nama] or 0
+                    if ada < sup.jml then kurang[#kurang + 1] = (sup.jml - ada) .. " " .. sup.nama end
+                end
+                if #kurang > 0 then
+                    if not badSince then badSince = tick() end
+                    if tick() - badSince >= 10 then
+                        _G.__ZenxTimIncomplete = { sesi = sesi, kurang = table.concat(kurang, " \u{00b7} ") }
+                    end
+                else
+                    badSince = nil; _G.__ZenxTimIncomplete = nil
+                end
+            end
+        end
+    end)
     local function getMaxB(sesi)
         return bahanMax()
     end
