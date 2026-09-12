@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.451"
+local VERSION = "8.452"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -619,27 +619,25 @@ task.spawn(function()
                         if now < anchor then
                             -- TUNDA (kena sentuh saat countdown) -> nunggu 5 menit bersih
                             _G.__ZenxBalikState = "touch"
-                            _G.__ZenxBalikCountdownSisa = anchor - now
+                            _G.__ZenxBalikDeadline = anchor   -- v8.452: deadline = mulai 30s countdown (overlay hitung tiap detik)
                             _G.__ZenxBalikHomeTulis = nil
                         else
                             -- 30s countdown -> balik home
                             _G.__ZenxBalikState = full and "full" or "leveling"
-                            local sisa = 30 - (now - anchor)
-                            if sisa <= 0 then
-                                _G.__ZenxBalikCountdownSisa = nil
+                            _G.__ZenxBalikDeadline = anchor + 30   -- v8.452: deadline = tulis flag
+                            if now >= anchor + 30 then
                                 if not _G.__ZenxBalikHomeTulis then
                                     _G.__ZenxBalikHomeTulis = true
                                     pcall(function() writefile("zenx_balikhome_" .. plr.Name .. ".txt", tostring(os.time())) end)
                                     print("[ZenxMarket] minta BALIK HOME ke market (abis countdown)")
                                 end
-                            else
-                                _G.__ZenxBalikCountdownSisa = sisa
                             end
                         end
                     else
                         _G.__ZenxBalikHomeTulis = nil
                         _G.__ZenxBalikTrigger = nil
                         _G.__ZenxBalikCountdownSisa = nil
+                        _G.__ZenxBalikDeadline = nil
                         _G.__ZenxBalikState = nil
                     end
                 end
@@ -769,7 +767,10 @@ task.spawn(function()
     Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
     local AMBER, GREEN, BLUE, RED = Color3.fromRGB(245,158,11), Color3.fromRGB(16,185,129), Color3.fromRGB(96,165,250), Color3.fromRGB(239,68,68)
     while true do
-        local state, sisa = _G.__ZenxBalikState, _G.__ZenxBalikCountdownSisa
+        local state = _G.__ZenxBalikState
+        local deadline = _G.__ZenxBalikDeadline
+        local sisa = (type(deadline) == "number") and (deadline - os.time()) or nil   -- v8.452: overlay hitung sendiri -> ngurang tiap detik
+        if sisa and sisa < 0 then sisa = 0 end
         if state and type(sisa) == "number" and sisa >= 0 then
             fr.Visible = true
             if state == "touch" then
