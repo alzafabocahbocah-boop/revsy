@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.446"
+local VERSION = "8.447"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -2270,17 +2270,21 @@ do
         reqPet = tostring(reqPet):gsub("^%s+", ""):gsub("%s+$", "")
         if reqPet == "" then return end   -- gak ada yg diminta -> gak lapor
         local listings = {}
+        local nPlayer, nWithList, nAllPet = 0, 0, 0   -- v8.447: DEBUG count biar ketauan scan jalan/nggak
         if BH.TBC then
             for _, pp in ipairs(Players:GetPlayers()) do
+                nPlayer = nPlayer + 1
                 local ok, data = pcall(function() return BH.fetchBoothData and BH.fetchBoothData(pp) end)
                 if ok and data and data.Listings then
+                    nWithList = nWithList + 1
                     for _, listing in pairs(data.Listings) do
                         if listing.ItemType == "Pet" and listing.ItemId then
+                            nAllPet = nAllPet + 1
                             local item = data.Items and data.Items[listing.ItemId]
                             if item and item.PetType then
                                 local petType = tostring(item.PetType)
                                 local base = (BH.getBaseName and BH.getBaseName(petType)) or petType
-                                if base:lower() == reqPet:lower() then
+                                if base:lower():find(reqPet:lower(), 1, true) then   -- v8.447: match LONGGAR (find, bukan ==)
                                     local bw = (item.PetData and tonumber(item.PetData.BaseWeight)) or 0
                                     local kg = bw * 1.1
                                     local mut = ""
@@ -2299,7 +2303,8 @@ do
         pcall(function()
             req({ Url = PANEL_URL .. "/market-pricedata", Method = "PUT",
                   Headers = { ["Content-Type"] = "application/json", ["X-Kunci"] = PANEL_KUNCI },
-                  Body = game:GetService("HttpService"):JSONEncode({ srv = jobId, pet = reqPet, listings = listings }) })
+                  Body = game:GetService("HttpService"):JSONEncode({ srv = jobId, pet = reqPet, listings = listings,
+                    dbg = string.format("tbc:%s pl:%d wl:%d pet:%d match:%d", tostring(BH.TBC ~= nil), nPlayer, nWithList, nAllPet, #listings) }) })
         end)
     end
     BH.laporHargaPasar = laporHargaPasar
