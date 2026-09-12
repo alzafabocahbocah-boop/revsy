@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.443"
+local VERSION = "8.445"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -579,7 +579,11 @@ task.spawn(function()
                             age500Habis = (nPresent >= 1 and nHabis == nPresent)
                         end
                     end
-                    if diGarden and (full or age500Habis) and plr and plr.Name and writefile then
+                    -- v8.445: DIAGNOSTIC -- biar keliatan kenapa balik-home gak firing (diGarden/full/dll)
+                    _G.__ZenxBalikDebug = string.format("grd:%s full:%s(%d/%d) a5h:%s bl:%s",
+                        tostring(diGarden), tostring(full), totalPetTerakhir or 0, maxInvTerakhir or 0,
+                        tostring(age500Habis), tostring(_G.__ZenxBahanLow))
+                    if diGarden and (full or age500Habis or _G.__ZenxBahanLow) and plr and plr.Name and writefile then
                         local now = os.time()
                         if not _G.__ZenxBalikTrigger then
                             -- trigger PERTAMA nyala = anchor countdown 30s. Sentuhan SEBELUM ini GAK ngaruh.
@@ -764,7 +768,16 @@ task.spawn(function()
                 else ic.Text = "\240\159\140\177"; rea.Text = "bahan leveling habis" end
             end
         else
-            fr.Visible = false
+            -- v8.445: DEBUG -- tampil status kenapa balik-home gak jalan (diGarden/full/dll)
+            local dbg = _G.__ZenxBalikDebug
+            if dbg then
+                fr.Visible = true; scl.Scale = 0.8
+                ttl.Text = "BALIK-HOME?"; ttl.TextColor3 = Color3.fromRGB(150,150,165); cd.Text = ""
+                ic.Text = "?"; ic.BackgroundColor3 = Color3.fromRGB(60,60,72)
+                rea.Text = dbg; stk.Color = Color3.fromRGB(80,80,95); fill.Size = UDim2.new(0,0,1,0)
+            else
+                fr.Visible = false
+            end
         end
         task.wait(0.4)
     end
@@ -13669,10 +13682,10 @@ BH.buildGardenPanel = function()
     end)
 
     -- ===== v8.352: AUTO TP MARKET pas LEVELING gak punya bahan 6kg age-500 lagi =====
-    -- v8.443: DIMATIIN TOTAL. Return ke market CUMA lewat balik-home flag (zenx_balikhome ->
-    -- worker, ada countdown 30s + tunda sentuhan). AutoTP-Bahan dulu self-teleport LANGSUNG
-    -- tanpa delay -> "balik mendadak". Sekarang jalur balik market cuma 1: balik-home.
-    if false then   -- (dulu: Workspace:FindFirstChild("TradeWorld") == nil)
+    -- v8.444: DETEKTOR bahan-low (ViewInventory, reliable). Bukan self-TP lagi -> cuma set
+    -- _G.__ZenxBahanLow -> block balik-home utama yang tulis flag (worker teleport + countdown).
+    -- Jadi jalur balik market TETAP cuma 1 (flag), tapi trigger-nya reliable (gak nunggu full doang).
+    if Workspace:FindFirstChild("TradeWorld") == nil then
     task.spawn(function()
         local function viewRemote()
             local ge = RS:FindFirstChild("GameEvents")
@@ -13742,33 +13755,12 @@ BH.buildGardenPanel = function()
                 lowStreak = lowStreak + 1
                 L(string.format("[AutoTP-Bahan] bahan 6kg age-500 = %d (<%d), streak %d/2", total, AMBANG, lowStreak))
                 if lowStreak >= 2 then
-                    L(string.format("[AutoTP-Bahan] BAHAN < %d -> countdown sebelum TP Market", AMBANG))
-                    -- v8.442: countdown 30s + tunda 5 menit sentuhan (SAMAIN balik-home flag) sebelum TP.
-                    -- Tanpa ini AutoTP-Bahan self-teleport LANGSUNG -> balik market mendadak tanpa delay.
-                    local trigStart = os.time()
-                    while gp and gp.Parent do
-                        local now = os.time()
-                        local lastTouch = _G.__ZenxLastTouch or 0
-                        local anchor = trigStart
-                        if lastTouch > trigStart then anchor = lastTouch + 300 end   -- sentuh saat countdown -> 5 menit
-                        if now < anchor then
-                            _G.__ZenxBalikState = "touch"; _G.__ZenxBalikCountdownSisa = anchor - now
-                        else
-                            _G.__ZenxBalikState = "leveling"; _G.__ZenxBalikFullTxt = nil
-                            local sisa = 30 - (now - anchor)
-                            if sisa <= 0 then _G.__ZenxBalikCountdownSisa = nil; break end
-                            _G.__ZenxBalikCountdownSisa = sisa
-                        end
-                        task.wait(0.5)
-                    end
-                    _G.__ZenxBalikState = nil; _G.__ZenxBalikCountdownSisa = nil
-                    fired = true
-                    L("[AutoTP-Bahan] countdown kelar -> TP Market")
-                    fireTpMarket()
+                    _G.__ZenxBahanLow = true   -- v8.444: bahan leveling ABIS -> trigger balik-home FLAG (block utama handle countdown + worker)
+                    L(string.format("[AutoTP-Bahan] BAHAN < %d -> set bahanLow (block utama minta balik home)", AMBANG))
                 end
             else
                 if not allRead then L("[AutoTP-Bahan] sebagian inventory gagal kebaca, skip cycle")
-                else L(string.format("[AutoTP-Bahan] bahan masih %d (>=%d), lanjut collect", total, AMBANG)) end
+                else _G.__ZenxBahanLow = false; L(string.format("[AutoTP-Bahan] bahan masih %d (>=%d), lanjut collect", total, AMBANG)) end
                 lowStreak = 0
             end
             task.wait(30)
