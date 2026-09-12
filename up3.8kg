@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.13"
+local VERSION = "up38kg-v1.14"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3390,7 +3390,11 @@ do
         if not tool then return end
         local uuid = tool:GetAttribute("PET_UUID")
         local supAll = _G.ZenxSupportUuids or {}
-        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)]) then return end   -- SUPPORT -> jangan unfav
+        local sk = supportKunci or {}
+        local pr = _G.__ZenxSupProtect or {}
+        -- v1.13: cek support 3 SUMBER (samain petsLolos). Dulu cuma ZenxSupportUuids -> kalo kosong,
+        -- support ke-unfav + kekirim. Sekarang supportKunci + SupProtect juga.
+        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)]) then return end
         -- v1.10: cari entry container NORMALIZED (strip brace) -> mutasi format uuid kadang beda -> gak ke-unfav.
         local e = nil
         if uuid and _kgContainer then
@@ -3428,6 +3432,8 @@ do
             local bp = player:FindFirstChild("Backpack")
             if bp then
                 local supAll = _G.ZenxSupportUuids or {}
+                local sk = supportKunci or {}
+                local pr = _G.__ZenxSupProtect or {}
                 local sup, bahanFav, bahanOk = {}, {}, 0
                 for _, t in ipairs(bp:GetChildren()) do
                     if t:IsA("Tool") then
@@ -3439,7 +3445,7 @@ do
                                 for k, v in pairs(_kgContainer) do if tostring(k):gsub("[{}]", "") == raw then e = v; break end end
                             end
                             local tipe = tostring((type(e) == "table" and e.PetType) or t:GetAttribute("f") or "?"):sub(1, 14)
-                            local isSup = supAll[tostring(uuid)] or supAll[fmtU(uuid)]
+                            local isSup = supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)]
                             local fav = false
                             if type(e) == "table" and type(e.PetData) == "table" and (e.PetData.IsFavorite == true or e.PetData.Favorite == true) then fav = true end
                             if not fav then for _, a in ipairs({ "Favorited", "Favorite", "IsFavorited" }) do if t:GetAttribute(a) == true then fav = true; break end end end
@@ -3454,7 +3460,11 @@ do
                         end
                     end
                 end
-                _G.__ZenxUnfavDbg = "SUPPORT (" .. #sup .. ", HARUS fav):\n" .. table.concat(sup, ", ")
+                local spCnt = 0; if supPool then for _, l in pairs(supPool) do spCnt = spCnt + #l end end
+                local skCnt = 0; for _ in pairs(sk) do skCnt = skCnt + 1 end
+                _G.__ZenxUnfavDbg = "aktif:" .. tostring(KG.aktif) .. " sesi:" .. tostring(KG.sesi)
+                    .. " pool:" .. spCnt .. " kunci:" .. skCnt .. " supU:" .. #sup
+                    .. "\n\nSUPPORT (" .. #sup .. ", HARUS fav):\n" .. table.concat(sup, ", ")
                     .. "\n\nBAHAN msh FAV (" .. #bahanFav .. ", HARUS unfav):\n" .. (table.concat(bahanFav, "\n"))
                     .. "\n\nBAHAN udah unfav (siap trade): " .. bahanOk
             end
