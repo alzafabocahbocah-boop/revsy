@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.7"
+local VERSION = "up38kg-v1.8"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1806,13 +1806,20 @@ do
         end)
         if not ok or not data then return nil end
         local pool = {}
+        local adaDup, globalSeen = false, {}   -- v1.8: deteksi pet KEMBAR (dalam-pool + lintas-pool)
         for line in tostring(data):gmatch("[^\n]+") do
             local nm, uuids = line:match("^(.-)=(.*)$")
             if nm and nm ~= "" then
                 pool[nm] = {}
-                for u in tostring(uuids):gmatch("[^,]+") do pool[nm][#pool[nm] + 1] = u end
+                for u in tostring(uuids):gmatch("[^,]+") do
+                    if u ~= "" then
+                        if globalSeen[u] then adaDup = true
+                        else pool[nm][#pool[nm] + 1] = u; globalSeen[u] = true end
+                    end
+                end
             end
         end
+        if adaDup then kgLog("pool support FILE ada pet KEMBAR -> buang, re-pick fresh"); return nil end
         return next(pool) and pool or nil
     end
     -- KUNCI support: paksa=true -> kunci BARU (re-pick kg terbesar). else: pakai kunci lama
@@ -1835,6 +1842,15 @@ do
         end
     end
     local function kunciSupPool(paksa)
+        -- v1.8: validasi pool in-memory -> kalo ada pet KEMBAR (uuid dobel), buang + re-pick fresh
+        if supPool and not paksa then
+            local seen, dup = {}, false
+            for _, list in pairs(supPool) do
+                for _, u in ipairs(list) do if seen[u] then dup = true break else seen[u] = true end end
+                if dup then break end
+            end
+            if dup then supPool = nil; paksa = true; kgLog("pool in-memory ada pet KEMBAR -> re-pick fresh") end
+        end
         if not paksa and supPool then updateSupportUuids(); return end   -- udah ke-kunci di memory
         if not paksa then
             local saved = loadPoolFile()
@@ -2003,9 +2019,12 @@ do
     end
     -- list pet 1 jenis (buat picker lineup): {uuid, kg, age}
     _G.ZenxListPetJenis = function(cari)
+        -- v1.8: EXCLUDE pet yg udah di pool (kepake slot lain) -> ilang dari picker (gak bisa dobel).
+        local picked = {}
+        for _, list in pairs(_G.ZenxSupportPool or {}) do for _, e in ipairs(list) do if e.uuid then picked[e.uuid] = true end end end
         local out = {}
         for _, p in ipairs(listPetsAll()) do
-            if cocokSemua(p.tipe, cari) then out[#out+1] = { uuid = p.uuid, kg = p.kg, age = p.age, tipe = p.tipe } end
+            if not picked[p.uuid] and cocokSemua(p.tipe, cari) then out[#out+1] = { uuid = p.uuid, kg = p.kg, age = p.age, tipe = p.tipe } end
         end
         table.sort(out, function(a, b) return (a.kg or 0) > (b.kg or 0) end)
         return out
