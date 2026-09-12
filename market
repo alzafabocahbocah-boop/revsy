@@ -295,7 +295,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.448"
+local VERSION = "8.450"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -4548,6 +4548,18 @@ task.spawn(function()
             local plrLbl = title:FindFirstChild("PlrName")
             local buyerName = plrLbl and tostring(plrLbl.Text) or "?"
             local petName = spacer:FindFirstChild("ItemName") and tostring(spacer.ItemName.Text) or "?"
+            -- v8.449: DEBUG capture nama jual -> _G.__ZenxJualDbg (biar ketauan nama pet-nya di field mana)
+            _G.__ZenxJualN = (_G.__ZenxJualN or 0) + 1
+            if petName ~= "?" and petName ~= "" then _G.__ZenxJualNamed = (_G.__ZenxJualNamed or 0) + 1
+            else
+                _G.__ZenxJualUnnamed = (_G.__ZenxJualUnnamed or 0) + 1
+                local kids = {}
+                for _, c in ipairs(spacer:GetDescendants()) do
+                    if c:IsA("TextLabel") and #kids < 8 then kids[#kids + 1] = c.Name .. ":" .. tostring(c.Text):sub(1, 14) end
+                end
+                _G.__ZenxJualDump = table.concat(kids, " | ")
+            end
+            _G.__ZenxJualDbg = string.format("notif:%d named:%d unnamed:%d | %s", _G.__ZenxJualN or 0, _G.__ZenxJualNamed or 0, _G.__ZenxJualUnnamed or 0, tostring(_G.__ZenxJualDump or "-"))
             local price = spacer:FindFirstChild("Price") and spacer.Price:FindFirstChild("Amount")
                           and tostring(spacer.Price.Amount.Text) or "?"
 
@@ -12269,7 +12281,7 @@ L("  - Inventory capacity")
         for _, d in pairs(perType) do arr[#arr+1] = d end
         table.sort(arr, function(x, y) if x.ini ~= y.ini then return x.ini > y.ini end return (x.kmr or 0) > (y.kmr or 0) end)
         while #arr > 40 do table.remove(arr) end
-        return { total = totIni, totalKmr = totKmr, token = tokIni, jenis = arr }
+        return { total = totIni, totalKmr = totKmr, token = tokIni, jenis = arr, dbg = tostring(_G.__ZenxJualDbg or "-") }
     end
 
     local function purgeOld()
@@ -12486,6 +12498,24 @@ L("  - Inventory capacity")
             L("[Hist] refresh: listen-only mode, "..#salesHistory.." total")
         end)
     end
+
+    -- v8.450: AUTO parse dari UI templates tiap 30s -> nama pet dari ItemName (gak perlu panel kebuka).
+    -- FIX ROOT: dulu sale pas panel ketutup ke-record via AddToHistory event (gak bawa nama) -> "?".
+    -- parseFromNativeUI baca ItemName langsung dari template -> nama BENER. addEntry dedup by key.
+    task.spawn(function()
+        task.wait(15)
+        while true do
+            pcall(function()
+                if fetchHistRE then pcall(function() fetchHistRE:InvokeServer() end) end
+                task.wait(2)
+                local entries = parseFromNativeUI()
+                local added = 0
+                for _, e in ipairs(entries) do if addEntry(e) then added = added + 1 end end
+                if added > 0 then purgeOld(); L("[Hist] auto-parse UI: +"..added.." (nama pet bener)") end
+            end)
+            task.wait(30)
+        end
+    end)
 
     -- v8.187: tombol IMPORT OLD - manual import dari UI templates (kalo user mau load history lama)
     -- Pindah TypeBtn ke kanan biar muat IMPORT
