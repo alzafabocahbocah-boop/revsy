@@ -281,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.112"
+local VERSION = "v27.113"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1250,21 +1250,24 @@ local minBtn = mk("TextButton", {
     BackgroundColor3 = C.card, Text = "\u{2013}", Font = FONT_B, TextSize = 32,
     TextColor3 = C.textDim, AutoButtonColor = false, Parent = titleBar })
 corner(minBtn, 7); stroke(minBtn, C.border, 1.5)
--- v27.112: PILL STATUS TRADE/JEDA (gede, kanan atas sebelah minimize).
--- HACT ON (ijo) / TRADE JALAN (amber) / JEDA Ns (biru countdown). Update loop di bawah (setelah Auto).
+-- v27.113: PILL STATUS di POJOK KANAN ATAS LAYAR (ScreenGui sendiri, gak nempel title bar/CONFIG HACT).
+-- HACT ON (ijo) / TRADE JALAN (amber) / JEDA Ns (biru). Draggable. Update loop di bawah (setelah Auto).
+local pillGui = mk("ScreenGui", { Name = "ZenxHactPill", ResetOnSpawn = false,
+    IgnoreGuiInset = true, DisplayOrder = 9999, ZIndexBehavior = Enum.ZIndexBehavior.Sibling, Parent = CoreGui })
 local tradePill = mk("Frame", {
-    Size = UDim2.new(0, 172, 0, 32), Position = UDim2.new(1, -256, 0, 6),
-    BackgroundColor3 = Color3.fromRGB(18,40,29), Parent = titleBar })
-corner(tradePill, 16)
+    AnchorPoint = Vector2.new(1, 0),
+    Size = UDim2.new(0, 186, 0, 36), Position = UDim2.new(1, -14, 0, 12),
+    BackgroundColor3 = Color3.fromRGB(18,40,29), Active = true, Draggable = true, Parent = pillGui })
+corner(tradePill, 18)
 local tradePillStroke = stroke(tradePill, Color3.fromRGB(31,81,56), 1.5)
 local tradePillDot = mk("Frame", {
-    Size = UDim2.new(0, 12, 0, 12), Position = UDim2.new(0, 14, 0.5, -6),
+    Size = UDim2.new(0, 13, 0, 13), Position = UDim2.new(0, 15, 0.5, -6),
     BackgroundColor3 = Color3.fromRGB(62,207,142), Parent = tradePill })
-corner(tradePillDot, 6)
-local tradePillTxt = lbl(tradePill, "HACT ON", 17, Color3.fromRGB(62,207,142))
+corner(tradePillDot, 7)
+local tradePillTxt = lbl(tradePill, "HACT ON", 18, Color3.fromRGB(62,207,142))
 tradePillTxt.Font = FONT_B
-tradePillTxt.Position = UDim2.new(0, 34, 0, 0)
-tradePillTxt.Size = UDim2.new(1, -42, 1, 0)
+tradePillTxt.Position = UDim2.new(0, 36, 0, 0)
+tradePillTxt.Size = UDim2.new(1, -44, 1, 0)
 tradePillTxt.TextXAlignment = Enum.TextXAlignment.Left
 _G.__hactPill = { frame = tradePill, stroke = tradePillStroke, dot = tradePillDot, txt = tradePillTxt }
 -- drag
@@ -7237,7 +7240,7 @@ do
     task.spawn(function()
         task.wait(12)
         while true do
-            task.wait(8)
+            local didGift = false
             pcall(function()
                 pcall(fetchUp38Akun)   -- refresh target + inv tiap loop
                 if not TRADECFG.on then if statusL then statusL.Text = "" end return end
@@ -7254,6 +7257,7 @@ do
                 if not best then if statusL then statusL.Text = "target online penuh / blm ada" end return end
                 if Auto and Auto.giftBusy then return end
                 local cfg = { targets = { [best] = true }, keepOnly = true,
+                    method = "gift",   -- v27.113: GIFT (bukan trade). up38kg auto-accept (AcceptPetGift) = gacor kayak up6kg
                     pets = { ["peacock"] = true, ["spider"] = true, ["nutcracker"] = true },   -- v27.111: cuma 3 jenis ini
                     age = -500,       -- age < 500 (max)
                     kgMin = 2, kgMax = 3,   -- v27.111: base kg 2-3 (di atas 2, di bawah 3)
@@ -7261,7 +7265,11 @@ do
                 if statusL then statusL.Text = "gift -> "..best.." (room "..bestRoom..")" end
                 local sent = giftPetsByFilter(cfg)
                 if statusL then statusL.Text = "terkirim "..tostring(sent).." -> "..best end
+                didGift = (sent and sent > 0)
             end)
+            -- v27.113: UTAMAIN TRADE -> abis gift SUKSES lanjut CEPET (1.5s), jgn balik hatch dulu.
+            -- Kalo gak ada yg kekirim (sent 0) -> tunggu 8s, baru kasih hatch produksi pet baru.
+            task.wait(didGift and 1.5 or 8)
         end
     end)
 end
