@@ -281,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.113"
+local VERSION = "v27.116"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1871,6 +1871,7 @@ local function autoAcceptTrade()
         end
         local tui = pg:FindFirstChild("TradingUI")
         local lt = tui and tui:FindFirstChild("LiveTrade")
+        if not (lt and lt.Visible) then return end   -- v27.115: cuma pas window trade kebuka -> aman buat loop spam 0.12s (gak mis-click UI game pas gak trading)
         if lt and lt.Visible then
             _G.__hactTradeAktif = tick()   -- v27.111: GUI trade ada -> fav MATI (reset timer 30s tiap keliatan)
             local opts = lt:FindFirstChild("Options")
@@ -1884,8 +1885,21 @@ local function autoAcceptTrade()
                 end
             end
         end
-        -- auto-YES popup "Unfair Trade" (cari tombol YES/Confirm di seluruh PlayerGui)
-        clickBtnByText(pg, {"yes", "confirm", "continue", "lanjut"})
+        -- v27.116: popup "UNFAIR TRADE" (value gak imbang -> game minta konfirmasi IYA/TIDAK). Scan SELURUH
+        -- PlayerGui, cek TEXT + NAME (kadang ImageButton tanpa text). Klik yes/confirm/sure/anyway/proceed/accept.
+        -- SKIP no/cancel/decline/reject biar GAK salah klik "TIDAK" (batalin trade). Cuma jalan pas trade aktif.
+        for _, d in ipairs(pg:GetDescendants()) do
+            if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                local t = (((d:IsA("TextButton") and d.Text) or "") .. " " .. (d.Name or "")):lower()
+                if not (t:find("cancel") or t:find("decline") or t:find("reject") or t == "no " or t:find(" no ")) then
+                    if t:find("yes") or t:find("confirm") or t:find("continue") or t:find("lanjut")
+                       or t:find("sure") or t:find("anyway") or t:find("proceed") or t:find("accept") then
+                        if firesignal then pcall(function() firesignal(d.Activated) end) end
+                        if getconnections then for _, c in ipairs(getconnections(d.Activated)) do pcall(function() c:Fire() end) end end
+                    end
+                end
+            end
+        end
         -- backup remote
         local te = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
         te = te and te:FindFirstChild("TradeEvents")
@@ -1896,6 +1910,14 @@ local function autoAcceptTrade()
         end
     end)
 end
+-- v27.115: LOOP ACCEPT/CONFIRM trade TERUS 0.12s (samain up6kg "gacor"). Spam accept+confirm selama
+-- window trade kebuka -> trade LANGSUNG kelar, gak nyangkut. Aman: autoAcceptTrade return kalo gak ada window.
+task.spawn(function()
+    while true do
+        task.wait(0.12)
+        pcall(autoAcceptTrade)
+    end
+end)
 -- kirim pet ke target via TRADE. petList = array uuid
 -- v26.9: pegang Trading Ticket pas mau trade (gift lewat trade butuh item tiket di tangan).
 -- kalau lagi pegang tool lain, lepas dulu lalu equip tiket.
@@ -7257,7 +7279,7 @@ do
                 if not best then if statusL then statusL.Text = "target online penuh / blm ada" end return end
                 if Auto and Auto.giftBusy then return end
                 local cfg = { targets = { [best] = true }, keepOnly = true,
-                    method = "gift",   -- v27.113: GIFT (bukan trade). up38kg auto-accept (AcceptPetGift) = gacor kayak up6kg
+                    -- v27.114: TETEP TRADE (send trade request), bukan gift. User mau trade.
                     pets = { ["peacock"] = true, ["spider"] = true, ["nutcracker"] = true },   -- v27.111: cuma 3 jenis ini
                     age = -500,       -- age < 500 (max)
                     kgMin = 2, kgMax = 3,   -- v27.111: base kg 2-3 (di atas 2, di bawah 3)
