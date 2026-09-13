@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.30"
+local VERSION = "up38kg-v1.33"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1911,16 +1911,101 @@ do
         return true
     end
     _G.__ZenxPoolLengkap = poolLengkap
-    -- v1.30: AUTO BALIK HOME (v1.24) DIHAPUS (user minta). up3.8kg gak balik-home pas full lagi.
-    -- v1.29: BALIK ke cara up6kg (LOAD SEKALI, gak churn). Recovery loop v1.25/27 tadi re-pick SELURUH
-    -- pool tiap 6s -> Dilop/Peacock/GCP ikut ke-reset terus -> gak pernah stabil -> "gak ada kepilih".
-    -- up6kg cuma load dari file sampe pool ke-set, terus BERHENTI. File up3.8kg udah sendiri (v1.23) +
-    -- ke-save lengkap pas leveling pick -> load berikutnya lengkap. Gak perlu force-pick churn.
+    -- v1.32: DEBUG OVERLAY pool pick (draggable, ketuk 2x = SALIN ke clipboard). Buat diagnosa "tim gak kepilih".
     task.spawn(function()
-        for _ = 1, 12 do
+        task.wait(4)
+        local cg = game:GetService("CoreGui")
+        local dg = Instance.new("ScreenGui"); dg.Name = "ZenxPoolDbg"; dg.ResetOnSpawn = false
+        dg.IgnoreGuiInset = true; dg.DisplayOrder = 99999; dg.Parent = cg
+        local fr = Instance.new("Frame"); fr.Size = UDim2.new(0, 330, 0, 230); fr.Position = UDim2.new(0, 10, 0.28, 0)
+        fr.BackgroundColor3 = Color3.fromRGB(12, 12, 18); fr.BackgroundTransparency = 0.08
+        fr.Active = true; fr.Draggable = true; fr.Parent = dg
+        Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 8)
+        local st = Instance.new("UIStroke", fr); st.Color = Color3.fromRGB(91, 141, 239); st.Thickness = 1.5
+        local tx = Instance.new("TextLabel"); tx.Size = UDim2.new(1, -12, 1, -8); tx.Position = UDim2.new(0, 6, 0, 4)
+        tx.BackgroundTransparency = 1; tx.Font = Enum.Font.Code; tx.TextSize = 11
+        tx.TextColor3 = Color3.fromRGB(210, 220, 235); tx.TextXAlignment = Enum.TextXAlignment.Left
+        tx.TextYAlignment = Enum.TextYAlignment.Top; tx.TextWrapped = true; tx.Parent = fr
+        local lastTap, flash = 0, 0
+        fr.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                local nowt = tick()
+                if nowt - lastTap < 0.45 then
+                    local body = "UP3.8KG POOL DEBUG:\n" .. (_G.__ZenxPoolDbgTxt or "")
+                    local okc = false
+                    if setclipboard then okc = pcall(setclipboard, body) elseif toclipboard then okc = pcall(toclipboard, body) end
+                    flash = okc and (tick() + 1.5) or 0
+                end
+                lastTap = nowt
+            end
+        end)
+        while dg.Parent do
+            task.wait(0.5)
+            local okC, errC = pcall(function()
+                -- RAW count per tipe support DI CONTAINER (akun PUNYA berapa) -> pisahin "kurang pet" vs "pick bug"
+                local allSup = {}
+                for _, s in ipairs(SUPPORT_S1_ELE) do allSup[s.nama] = s.cari end
+                for _, s in ipairs(SUPPORT_S2_ELE) do allSup[s.nama] = s.cari end
+                local rawCount, nCont = {}, 0
+                local c = _kgContainer
+                if type(c) == "table" then
+                    for _, e in pairs(c) do
+                        if type(e) == "table" and e.PetType then
+                            nCont = nCont + 1
+                            local tipe = stripMutation(tostring(e.PetType))
+                            for nm, cari in pairs(allSup) do
+                                if cocokSemua(tipe, cari) then rawCount[nm] = (rawCount[nm] or 0) + 1 end
+                            end
+                        end
+                    end
+                end
+                local function shortNm(nm) return tostring(nm):gsub("Rainbow ", ""):gsub("Choc ", "") end
+                local rawStr = ""
+                for nm in pairs(allSup) do rawStr = rawStr .. shortNm(nm) .. ":" .. (rawCount[nm] or 0) .. " " end
+                -- pool skrg
+                local sp = _G.ZenxSupportPool or {}
+                local poolStr = ""
+                for nm, l in pairs(sp) do poolStr = poolStr .. shortNm(nm) .. "=" .. #l .. " " end
+                if poolStr == "" then poolStr = "(KOSONG)" end
+                -- equip + state
+                local nEquip = 0; for _ in pairs(supportKunci) do nEquip = nEquip + 1 end
+                local nBahan = 0; for _ in pairs(bahanAktif) do nBahan = nBahan + 1 end
+                local nModel = 0; for _ in pairs(modelByUuid) do nModel = nModel + 1 end
+                local ks = _G.ZenxKgStat or {}
+                local fileAda = (isfile and isfile(POOL_FILE)) and "ADA" or "GAK"
+                local lengkap = _G.__ZenxPoolLengkap and _G.__ZenxPoolLengkap()
+                local timInc = _G.__ZenxTimIncomplete
+                local kurang = (type(timInc) == "table") and ("KURANG: " .. tostring(timInc.kurang)) or "tim OK"
+                _G.__ZenxPoolDbgTxt =
+                       "CONTAINER: " .. nCont .. " pet (equip di garden: " .. nModel .. ")"
+                    .. "\nPUNYA(raw): " .. rawStr
+                    .. "\nPICK terakhir: " .. tostring(_G.ZenxPoolPickDbg or "(blm pick)")
+                    .. "\nPOOL skrg: " .. poolStr
+                    .. "\nEQUIP supKunci: " .. nEquip .. " | bahan: " .. nBahan
+                    .. "\nLENGKAP: " .. tostring(lengkap) .. " | FILE: " .. fileAda
+                    .. "\nsesi:" .. tostring(KG.sesi) .. " aktif:" .. tostring(KG.aktif) .. " reset:" .. tostring(KG.reset)
+                    .. "\nKGstat total:" .. tostring(ks.total) .. " muda:" .. tostring(ks.mudaBelum) .. " age50:" .. tostring(ks.age50Belum)
+                    .. "\n" .. kurang
+            end)
+            if not okC then _G.__ZenxPoolErr = "dbg-compute: " .. tostring(errC) end
+            local errLine = (_G.__ZenxPoolErr and _G.__ZenxPoolErr ~= "") and ("\n\n[ERROR] " .. _G.__ZenxPoolErr) or ""
+            local head = (tick() < flash) and "[DISALIN!]\n\n" or "POOL DEBUG LENGKAP (ketuk 2x = salin):\n\n"
+            tx.Text = head .. (_G.__ZenxPoolDbgTxt or "(loading...)") .. errLine
+        end
+    end)
+    -- v1.30: AUTO BALIK HOME (v1.24) DIHAPUS (user minta). up3.8kg gak balik-home pas full lagi.
+    -- v1.31: load pool sampe LENGKAP (Dilop+Peacock+GCP, Ele di-skip poolLengkap), BUKAN cuma non-kosong.
+    -- Bug v1.29: break pas ZenxSupportPool non-kosong (walau baru Dilop) -> pool separo. BOUNDED 15x (45s)
+    -- biar gak churn selamanya (beda v1.25 yg while-true). Abis 45s berhenti (kalo akun emang kurang pet).
+    task.spawn(function()
+        for _ = 1, 15 do
             task.wait(3)
-            if next(_G.ZenxSupportPool or {}) then break end   -- pool udah ke-set (dari file/pick) -> stop
-            pcall(kunciSupPool, false)   -- LOAD saved dari file (fresh-pick cuma kalo gak ada file)
+            if poolLengkap() then break end   -- LENGKAP -> stop
+            if next(_G.ZenxSupportPool or {}) then
+                pcall(kunciSupPool, true)      -- ada tapi kurang -> re-pick (container makin siap)
+            else
+                pcall(kunciSupPool, false)     -- kosong -> LOAD dari file / fresh-pick
+            end
         end
     end)
 
