@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.483-cf"
+local VERSION = "9.484-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -10282,9 +10282,17 @@ local function run(cfg)
                         -- v9.464: INGET server terakhir tiap akun ditembak (oper/isi bahan/dll ->
                         -- server tujuan). Pas rejoin nanti, balik ke SITU (bukan market default).
                         -- balikin = pulang -> HAPUS ingatan (rejoin pakai default/home lagi).
+                        -- v9.484: TEMBAK ber-label (ambil/oper/isibahan/isitelur) = pindah ke server TUJUAN
+                        -- dari /ps (cfg._ps_override), BUKAN ps_link akun SENDIRI (mapLink[pkg]). BUG LAMA:
+                        -- panel set /ps={link hact} (tim-level -> cfg._ps_override) TAPI worker pake
+                        -- mapLink[pkg] = server akun sendiri (dari /assign-ps + getps per-akun) ->
+                        -- "di tembak server sendiri" (gak pindah ke hact/leveling). balikin/"" tetep mapLink.
+                        local _dest = (labelT ~= "" and labelT ~= "balikin" and cfg._ps_override and cfg._ps_override ~= "") and cfg._ps_override or nil
                         for _, pkg in ipairs(pkgsT) do
                             if labelT == "balikin" or labelT == "" then
                                 KICK_DIURUS["move_link:" .. pkg] = nil
+                            elseif _dest then
+                                KICK_DIURUS["move_link:" .. pkg] = _dest
                             elseif mapLink[pkg] and mapLink[pkg] ~= "" then
                                 KICK_DIURUS["move_link:" .. pkg] = mapLink[pkg]
                             end
@@ -10320,7 +10328,7 @@ local function run(cfg)
                                 if u then DENYUT_UMUR[u] = nil end
                                 KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace loading fresh (baru ditembak)
                                 KICK_DIURUS["mau_force:" .. pkg] = nil   -- v9.443: udah dibuka via oper, clear flag
-                                open_one(cfg, pkg, mapLink[pkg], "tembak-panel", true)   -- arceus -> dipaksa WC
+                                open_one(cfg, pkg, (_dest or mapLink[pkg]), "tembak-panel", true)   -- v9.484: _dest = server tujuan /ps (bukan server akun sendiri)
                                 TERAKHIR_BUKA[pkg] = os.time()
                                 nTembak = nTembak + 1
                                 -- v9.289: 1x per client + jeda 30s antar client. Arceus = 30; lain = stagger_sec.
