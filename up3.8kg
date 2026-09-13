@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.22"
+local VERSION = "up38kg-v1.23"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1792,7 +1792,7 @@ do
     -- POOL support LOCKED once -> uuid pet support TETAP di 2 sesi (gak re-pick tiap sesi,
     -- biar gak numpuk/lebih). Max count per tipe = max(sesi1, sesi2).
     local supPool = nil   -- nama -> { uuid, ... }
-    local POOL_FILE = "zenx_up6kg_pool.txt"
+    local POOL_FILE = "zenx_up38kg_pool.txt"   -- v1.23: file SENDIRI (dulu "zenx_up6kg_pool.txt" -> NABRAK up6kg -> pool up3.8kg ketimpa/kosong)
     local function savePool()
         if not supPool then return end
         local parts = {}
@@ -1890,12 +1890,29 @@ do
     -- v1.21: loader buat lineup GUI -> load pool SAVED pas rejoin (gak nunggu leveling mulai).
     -- Fix: pas rejoin lineup kosong (ZenxSupportPool blm ke-set) sampe user pencet pick manual.
     _G.__ZenxEnsurePool = function() pcall(kunciSupPool, false) end
-    -- v1.22: LOAD pool saved pas STARTUP (gak perlu buka tab lineup). Retry sampe pool ke-build (container siap).
+    -- v1.23: LOAD pool pas STARTUP + pastiin LENGKAP (sesuai config), bukan cuma non-kosong.
+    -- Bug: container blm siap pas startup -> pick separo -> berhenti -> support kurang -> harus pilih ulang.
+    -- Sekarang: cek tiap slot config kepenuhan; kalo kurang -> re-pick FRESH (container makin siap). Window 60s.
+    local function poolLengkap()
+        if not supPool then return false end
+        local need = {}
+        for _, s in ipairs(SUPPORT_S1_ELE) do need[s.nama] = math.max(need[s.nama] or 0, s.jml) end
+        for _, s in ipairs(SUPPORT_S2_ELE) do need[s.nama] = math.max(need[s.nama] or 0, s.jml) end
+        for nm, cnt in pairs(need) do
+            if #((supPool[nm]) or {}) < cnt then return false end
+        end
+        return true
+    end
+    _G.__ZenxPoolLengkap = poolLengkap
     task.spawn(function()
-        for _ = 1, 10 do
+        for _ = 1, 20 do
             task.wait(3)
-            if next(_G.ZenxSupportPool or {}) then break end
-            pcall(kunciSupPool, false)
+            if poolLengkap() then break end   -- udah lengkap -> stop
+            if not supPool or not next(supPool) then
+                pcall(kunciSupPool, false)    -- blm ada pool -> load saved dulu
+            else
+                pcall(kunciSupPool, true)     -- ada tapi KURANG -> re-pick FRESH (container udah lebih siap)
+            end
         end
     end)
 
