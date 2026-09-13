@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.33"
+local VERSION = "up38kg-v1.35"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1914,9 +1914,11 @@ do
     -- v1.32: DEBUG OVERLAY pool pick (draggable, ketuk 2x = SALIN ke clipboard). Buat diagnosa "tim gak kepilih".
     task.spawn(function()
         task.wait(4)
-        local cg = game:GetService("CoreGui")
         local dg = Instance.new("ScreenGui"); dg.Name = "ZenxPoolDbg"; dg.ResetOnSpawn = false
-        dg.IgnoreGuiInset = true; dg.DisplayOrder = 99999; dg.Parent = cg
+        dg.IgnoreGuiInset = true; dg.DisplayOrder = 99999
+        -- v1.35: parent samain GUI utama (gethui/PlayerGui), BUKAN CoreGui (banyak executor block -> gak render)
+        pcall(function() dg.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+        if not dg.Parent then pcall(function() dg.Parent = player:WaitForChild("PlayerGui") end) end
         local fr = Instance.new("Frame"); fr.Size = UDim2.new(0, 330, 0, 230); fr.Position = UDim2.new(0, 10, 0.28, 0)
         fr.BackgroundColor3 = Color3.fromRGB(12, 12, 18); fr.BackgroundTransparency = 0.08
         fr.Active = true; fr.Draggable = true; fr.Parent = dg
@@ -1931,7 +1933,7 @@ do
             if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
                 local nowt = tick()
                 if nowt - lastTap < 0.45 then
-                    local body = "UP3.8KG POOL DEBUG:\n" .. (_G.__ZenxPoolDbgTxt or "")
+                    local body = "UP3.8KG POOL DEBUG:\n" .. (_G.__ZenxPoolDbgTxt or "") .. (_G.__ZenxPoolErr and ("\n\n[ERROR] " .. _G.__ZenxPoolErr) or "")
                     local okc = false
                     if setclipboard then okc = pcall(setclipboard, body) elseif toclipboard then okc = pcall(toclipboard, body) end
                     flash = okc and (tick() + 1.5) or 0
@@ -2002,9 +2004,11 @@ do
             task.wait(3)
             if poolLengkap() then break end   -- LENGKAP -> stop
             if next(_G.ZenxSupportPool or {}) then
-                pcall(kunciSupPool, true)      -- ada tapi kurang -> re-pick (container makin siap)
+                local okp, errp = pcall(kunciSupPool, true)      -- ada tapi kurang -> re-pick (container makin siap)
+                if not okp then _G.__ZenxPoolErr = "pick(true): " .. tostring(errp) end
             else
-                pcall(kunciSupPool, false)     -- kosong -> LOAD dari file / fresh-pick
+                local okp, errp = pcall(kunciSupPool, false)     -- kosong -> LOAD dari file / fresh-pick
+                if not okp then _G.__ZenxPoolErr = "pick(false): " .. tostring(errp) end
             end
         end
     end)
