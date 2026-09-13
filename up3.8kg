@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up38kg-v1.38"
+local VERSION = "up38kg-v1.40"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1587,6 +1587,7 @@ do
     local function redoSesi(sesi, alasan)
         KG.reset = true   -- v0.94: pause HEAL/swap selama redo biar gak rebutan
         kgLog("PLACEMENT SALAH ("..tostring(alasan)..") -> OUT SEMUA + masukin lagi")
+        _G.__ZenxPoolClearedBy = "redoSesi:" .. tostring(alasan) .. " @" .. math.floor(tick())
         for uuid in pairs(modelByUuid) do
             if tipeDariUuid(uuid) then unequipPet(uuid); task.wait(0.04) end   -- cuma pet gua
         end
@@ -1848,7 +1849,7 @@ do
                 for _, u in ipairs(list) do if seen[u] then dup = true break else seen[u] = true end end
                 if dup then break end
             end
-            if dup then supPool = nil; paksa = true; kgLog("pool in-memory ada pet KEMBAR -> re-pick fresh") end
+            if dup then supPool = nil; paksa = true; _G.__ZenxPoolClearedBy = "DUP-kembar @" .. math.floor(tick()); kgLog("pool in-memory ada pet KEMBAR -> re-pick fresh") end
         end
         if not paksa and supPool then updateSupportUuids(); return end   -- udah ke-kunci di memory
         if not paksa then
@@ -1982,13 +1983,25 @@ do
                 if uuidStr == "" then uuidStr = "\n(gak ada support ke-equip)" end
                 local nBahan = 0; for _ in pairs(bahanAktif) do nBahan = nBahan + 1 end
                 local nModel = 0; for _ in pairs(modelByUuid) do nModel = nModel + 1 end
+                -- v1.40: berapa pet ke-equip di garden yg UNTRACKED (bukan support/bahan) -> curiga bikin redoSesi
+                local nUntracked = 0
+                for u in pairs(modelByUuid) do
+                    if not supportKunci[u] and not bahanAktif[u] then nUntracked = nUntracked + 1 end
+                end
+                -- support ke-track tapi GAK present di garden (uuid mana yg gagal equip)
+                local nPresent = 0
+                for u in pairs(supportKunci) do
+                    local m = modelByUuid[u] or modelByUuid[fmtUUID(u)] or modelByUuid[tostring(u):gsub("[{}]", "")]
+                    if m and m.Parent then nPresent = nPresent + 1 end
+                end
                 local ks = _G.ZenxKgStat or {}
                 local fileAda = (isfile and isfile(POOL_FILE)) and "ADA" or "GAK"
                 local lengkap = _G.__ZenxPoolLengkap and _G.__ZenxPoolLengkap()
                 local timInc = _G.__ZenxTimIncomplete
                 local kurang = (type(timInc) == "table") and ("KURANG: " .. tostring(timInc.kurang)) or "tim OK"
                 _G.__ZenxPoolDbgTxt =
-                       "CONTAINER: " .. nCont .. " pet (equip di garden: " .. nModel .. ")"
+                       "CONTAINER: " .. nCont .. " pet (garden: " .. nModel .. ", untracked: " .. nUntracked .. ")"
+                    .. "\nSUPPORT present di garden: " .. nPresent .. "/" .. nEquip .. " (sisa gagal equip)"
                     .. "\nPUNYA(raw): " .. rawStr
                     .. "\nPICK terakhir: " .. tostring(_G.ZenxPoolPickDbg or "(blm pick)")
                     .. "\nPOOL skrg: " .. poolStr
@@ -1998,6 +2011,7 @@ do
                     .. "\nKGstat total:" .. tostring(ks.total) .. " muda:" .. tostring(ks.mudaBelum) .. " age50:" .. tostring(ks.age50Belum)
                     .. "\n" .. kurang
                     .. "\nLINEUP: " .. tostring(_G.__ZenxLineupDbg or "(blm render)") .. " | now:" .. tostring(math.floor(tick()))
+                    .. "\nDI-CLEAR OLEH: " .. tostring(_G.__ZenxPoolClearedBy or "(blm pernah)")
                     .. "\n\nUUID TIM (equip):" .. uuidStr
             end)
             if not okC then _G.__ZenxPoolErr = "dbg-compute: " .. tostring(errC) end
