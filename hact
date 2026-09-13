@@ -281,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.111"
+local VERSION = "v27.112"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1250,6 +1250,23 @@ local minBtn = mk("TextButton", {
     BackgroundColor3 = C.card, Text = "\u{2013}", Font = FONT_B, TextSize = 32,
     TextColor3 = C.textDim, AutoButtonColor = false, Parent = titleBar })
 corner(minBtn, 7); stroke(minBtn, C.border, 1.5)
+-- v27.112: PILL STATUS TRADE/JEDA (gede, kanan atas sebelah minimize).
+-- HACT ON (ijo) / TRADE JALAN (amber) / JEDA Ns (biru countdown). Update loop di bawah (setelah Auto).
+local tradePill = mk("Frame", {
+    Size = UDim2.new(0, 172, 0, 32), Position = UDim2.new(1, -256, 0, 6),
+    BackgroundColor3 = Color3.fromRGB(18,40,29), Parent = titleBar })
+corner(tradePill, 16)
+local tradePillStroke = stroke(tradePill, Color3.fromRGB(31,81,56), 1.5)
+local tradePillDot = mk("Frame", {
+    Size = UDim2.new(0, 12, 0, 12), Position = UDim2.new(0, 14, 0.5, -6),
+    BackgroundColor3 = Color3.fromRGB(62,207,142), Parent = tradePill })
+corner(tradePillDot, 6)
+local tradePillTxt = lbl(tradePill, "HACT ON", 17, Color3.fromRGB(62,207,142))
+tradePillTxt.Font = FONT_B
+tradePillTxt.Position = UDim2.new(0, 34, 0, 0)
+tradePillTxt.Size = UDim2.new(1, -42, 1, 0)
+tradePillTxt.TextXAlignment = Enum.TextXAlignment.Left
+_G.__hactPill = { frame = tradePill, stroke = tradePillStroke, dot = tradePillDot, txt = tradePillTxt }
 -- drag
 do
     local UIS = game:GetService("UserInputService")
@@ -2033,6 +2050,42 @@ end
 -- v23.6: Auto dideklarasi DI SINI (sebelum giftPetToTarget) — dulu di ~1389, jadi giftPetToTarget
 -- (1179) pakai Auto.lastGiftOut saat Auto masih nil -> error "index nil with 'lastGiftOut'".
 local Auto = {}
+-- v27.112: LOOP UPDATE PILL STATUS di header. TRADE JALAN (amber) / JEDA Ns (biru countdown) / HACT ON (ijo).
+-- Poll 0.2s -> kalo trade mulai LAGI pas jeda, langsung balik ke TRADE (mulus), jeda auto-restart
+-- (giftPetsByFilter reset _G.__hactTradeAktif tiap trade selesai). GRACE = grace fav (30s).
+task.spawn(function()
+    local GRACE = 30
+    while true do
+        task.wait(0.2)
+        local pill = _G.__hactPill
+        if pill and pill.frame and pill.frame.Parent then
+            pcall(function()
+                local busy = Auto.giftBusy
+                local ta = _G.__hactTradeAktif
+                local sisa = ta and math.ceil(GRACE - (tick() - ta)) or 0
+                if busy then
+                    pill.frame.BackgroundColor3 = Color3.fromRGB(46,36,16)
+                    pill.stroke.Color = Color3.fromRGB(107,77,18)
+                    pill.dot.BackgroundColor3 = Color3.fromRGB(245,165,36)
+                    pill.txt.TextColor3 = Color3.fromRGB(245,165,36)
+                    pill.txt.Text = "TRADE JALAN"
+                elseif sisa > 0 then
+                    pill.frame.BackgroundColor3 = Color3.fromRGB(16,31,46)
+                    pill.stroke.Color = Color3.fromRGB(28,74,112)
+                    pill.dot.BackgroundColor3 = Color3.fromRGB(91,141,239)
+                    pill.txt.TextColor3 = Color3.fromRGB(91,141,239)
+                    pill.txt.Text = "JEDA " .. sisa .. "s"
+                else
+                    pill.frame.BackgroundColor3 = Color3.fromRGB(18,40,29)
+                    pill.stroke.Color = Color3.fromRGB(31,81,56)
+                    pill.dot.BackgroundColor3 = Color3.fromRGB(62,207,142)
+                    pill.txt.TextColor3 = Color3.fromRGB(62,207,142)
+                    pill.txt.Text = "HACT ON"
+                end
+            end)
+        end
+    end
+end)
 local GiftSys = {}
 do
     local RS = game:GetService("ReplicatedStorage")
@@ -2256,8 +2309,10 @@ local function getMatchedPets(cfg)
                 local ok2, fate = pcall(function() return petFate({ name = base, dispKg = (p and (p.dispKg or p.age1Kg)) or 0 }) end)
                 okKeep = ok2 and (fate == "keep")
             end
-            -- v27.111: pet di-FAV -> SKIP dari pemilihan kirim (jangan dipaksa trade/gift)
-            if okPet and okMut and okAge and okKg and okKeep and uclean and not (p and p.fav) then
+            -- v27.112: pet di-FAV -> SKIP dari pemilihan kirim, KECUALI unfavFirst aktif (keep-gift:
+            -- pet keep emang di-FAV, nanti ke-unfav dulu sebelum trade). Dulu: fav di-skip DULUAN
+            -- di getMatchedPets -> 0 match -> return SEBELUM unfavFirst jalan -> TERKIRIM 0 selamanya.
+            if okPet and okMut and okAge and okKg and okKeep and uclean and (cfg.unfavFirst or not (p and p.fav)) then
                 table.insert(matched, uclean)
             end
         end
@@ -2299,7 +2354,7 @@ local function giftPetsByFilter(cfg)
             local p = info2[u]
             if p and p.fav and p.tool then favoritePet(p.tool); task.wait(0.04) end
         end
-        task.wait(0.3)
+        task.wait(0.6)   -- v27.112: jeda lebih (0.3->0.6) biar unfav beneran ke-apply sebelum trade mulai
     end
     -- bagi pet rata ke semua target (rotasi)
     local buckets = {}
@@ -2348,6 +2403,9 @@ local function giftPetsByFilter(cfg)
     task.wait(0.5)
     end)  -- end pcall
     Auto.giftBusy = false  -- v20.3: SELALU reset (di luar pcall) — walau gift error
+    _G.__hactTradeAktif = tick()   -- v27.112: RESTART grace 30s dari SINI (trade baru selesai) -> fav
+    Auto.lastTradeComplete = tick()   -- v27.112: tandain trade complete (doAutoSell tunda + jeda)
+    task.wait(0.6)   -- v27.112: jeda dikit biar backpack/fav settle sebelum automation lain lanjut
     if not okRun then print("[HactTelur] gift/trade error: "..tostring(errRun)..", giftBusy di-reset") end
     return sent
 end
@@ -2545,8 +2603,9 @@ end
 -- AUTO FAV: favoritkan semua pet yg ada di pemilihan tim (Reduce/Hatch/Sell)
 -- biar selalu kelindungi dari Sell All
 function favTeamPets()
-    -- v27.111: MATI TOTAL pas lagi trade (dari fire send tiket / GUI trade ada) -> 30s setelah GUI trade ilang baru hidup lagi
-    if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
+    -- v27.112: MATI TOTAL selama trade (Auto.giftBusy nyala SELAMA trade, gak peduli berapa lama)
+    -- + 30s grace setelah trade selesai. Dulu cuma timer 30s -> trade lama, fav nyala mid-trade.
+    if (Auto and Auto.giftBusy) or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin p.fav salah -> favoritePet (toggle) malah UNFAV pet tim
     local teamSel = {}
     for _, tn in ipairs({"Reduce Tim", "Hatch Tim", "Sell Tim"}) do
@@ -2572,8 +2631,8 @@ end
 -- SYNC FAVORIT IKUT RULE: pet yg masuk kriteria SELL -> unfav (biar kejual),
 -- pet keep -> fav (terlindungi). dipanggil tiap rule diubah.
 function syncFavByRules()
-    -- v27.111: MATI TOTAL pas lagi trade (biar gak fav/unfav pas trade). 30s setelah GUI trade ilang baru hidup.
-    if _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30 then return end
+    -- v27.112: MATI TOTAL selama trade (Auto.giftBusy) + 30s grace setelah. Gak fav/unfav pas trade.
+    if (Auto and Auto.giftBusy) or (_G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30) then return end
     PetDetect.rebuild(true)  -- v23.8: FORCE fresh — cache basi bikin fav salah toggle
     -- pet tim selalu keep (jgn di-unfav walau masuk rule)
     local teamSel = {}
@@ -2624,10 +2683,13 @@ function syncFavByRules()
 end
 -- AUTO SELL: favoritkan semua pet yg di-KEEP (termasuk gak di-list), lalu jual yg SELL.
 function doAutoSell()
+    -- v27.112: SKIP total selama trade (Auto.giftBusy) -> proteksi-fav di bawah gak nyalain fav
+    -- pet keep pas lagi di-trade (dulu doAutoSell gak cek giftBusy -> re-fav mid-trade -> trade gagal).
+    if Auto and Auto.giftBusy then print("[HactTelur] Auto-sell SKIP: lagi trade (giftBusy)"); return 0 end
     -- v26.3: tunda sell CUMA kalau baru aja "Trade completed!" (dalam 3 detik) — pet keep lagi
     -- transisi unfav buat gift. KALAU cuma fitur gift ON tapi gak ada trade complete, sell JALAN
     -- (dulu: gift cfg running = langsung tunda -> sell ke-block terus walau gift gak ngapa2in).
-    local recentTrade = (tick() - (Auto.lastTradeComplete or 0)) < 3
+    local recentTrade = (tick() - (Auto.lastTradeComplete or 0)) < 5   -- v27.112: 3->5s (jeda lebih)
     if recentTrade then
         print("[HactTelur] Auto-sell DITUNDA: baru trade complete (tunggu fav stabil)")
         return 0
