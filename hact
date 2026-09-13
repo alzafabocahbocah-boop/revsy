@@ -281,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.116"
+local VERSION = "v27.118"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2301,6 +2301,7 @@ local function getMatchedPets(cfg)
     local info = {}
     for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[tostring(p.uuid):gsub("[{}]","")] = p end
     local matched = {}
+    _G.__hactGiftDbg = { total=0, failAge=0, failKg=0, failKeep=0, failFav=0, ok=0, kgSample="" }   -- v27.117: debug alasan skip
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
             local uuid = t:GetAttribute("PET_UUID")
@@ -2333,6 +2334,16 @@ local function getMatchedPets(cfg)
             if cfg.keepOnly and petFate then
                 local ok2, fate = pcall(function() return petFate({ name = base, dispKg = (p and (p.dispKg or p.age1Kg)) or 0 }) end)
                 okKeep = ok2 and (fate == "keep")
+            end
+            -- v27.117: DEBUG -- buat pet yg TYPE cocok (peacock/spider/nutcracker), catat kenapa ke-skip
+            if okPet then
+                local D = _G.__hactGiftDbg
+                D.total = D.total + 1
+                if not okAge then D.failAge = D.failAge + 1 end
+                if not okKg then D.failKg = D.failKg + 1; if #D.kgSample < 44 then D.kgSample = D.kgSample .. string.format("%.2f ", (p and (p.age1Kg or p.dispKg)) or 0) end end
+                if not okKeep then D.failKeep = D.failKeep + 1 end
+                if (not cfg.unfavFirst) and p and p.fav then D.failFav = D.failFav + 1 end
+                if okAge and okKg and okKeep then D.ok = D.ok + 1 end
             end
             -- v27.112: pet di-FAV -> SKIP dari pemilihan kirim, KECUALI unfavFirst aktif (keep-gift:
             -- pet keep emang di-FAV, nanti ke-unfav dulu sebelum trade). Dulu: fav di-skip DULUAN
@@ -7124,7 +7135,7 @@ _G.HactTelurShowMisc = showMiscFn
 -- ============ v27.111: TAB TRADE — gift pet KEEP ke akun up3.8kg ============
 do
     local HS2 = game:GetService("HttpService")
-    local TRADE_CFG_FILE = "zenx_hact_trade.json"
+    local TRADE_CFG_FILE = "zenx_hact_trade_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"   -- PER-AKUN (config trade dulu SHARED)
     local TRADECFG = { targets = {}, minKg = 0, minAge = 0, on = false }
     pcall(function()
         if isfile and isfile(TRADE_CFG_FILE) and readfile then
@@ -7286,7 +7297,16 @@ do
                     unfavFirst = true }
                 if statusL then statusL.Text = "gift -> "..best.." (room "..bestRoom..")" end
                 local sent = giftPetsByFilter(cfg)
-                if statusL then statusL.Text = "terkirim "..tostring(sent).." -> "..best end
+                if statusL then
+                    if (sent or 0) > 0 then
+                        statusL.Text = "terkirim "..tostring(sent).." -> "..best
+                    else
+                        -- v27.117: 0 kirim -> tampil ALASAN (breakdown p/s/n keep vs kg/age/keep/fav gagal)
+                        local D = _G.__hactGiftDbg or {}
+                        statusL.Text = string.format("0 kirim | p/s/n:%d ok:%d | GAGAL kg:%d age:%d keep:%d fav:%d | kg-gagal: %s",
+                            D.total or 0, D.ok or 0, D.failKg or 0, D.failAge or 0, D.failKeep or 0, D.failFav or 0, (D.kgSample ~= "" and D.kgSample or "-"))
+                    end
+                end
                 didGift = (sent and sent > 0)
             end)
             -- v27.113: UTAMAIN TRADE -> abis gift SUKSES lanjut CEPET (1.5s), jgn balik hatch dulu.
