@@ -281,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.119"
+local VERSION = "v27.123"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1861,6 +1861,9 @@ local function clickBtnByText(root, texts)
     return hit
 end
 local function autoAcceptTrade()
+    -- v27.122: pas LAGI KIRIM (giftBusy) tapi pet belum ke-add -> JANGAN accept/confirm.
+    -- Loop 0.12s (v27.115) tadinya confirm window kosong yg baru kebuka -> trade "complete" kosong.
+    if Auto and Auto.giftBusy and not Auto.__petsAdded then return end
     pcall(function()
         local pg = player:FindFirstChild("PlayerGui")
         if not pg then return end
@@ -1950,6 +1953,7 @@ end
 
 local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+    Auto.__petsAdded = false   -- v27.122: reset -> confirm baru boleh jalan setelah pet ke-add (anti trade kosong)
     -- deteksi notif "you can't add more items" di layar (slot trade penuh)
     local function cantAddMore()
         local found = false
@@ -2040,6 +2044,9 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
             task.wait(0.05)
             if cantAddMore() then break end   -- slot trade penuh (12) -> accept + re-send sisa
         end
+        -- v27.122: tandain pet UDAH ke-add -> baru boleh confirm (anti race: loop 0.12s confirm window
+        -- kosong yg baru kebuka -> "langsung skip ke trade complete")
+        if added > 0 then Auto.__petsAdded = true end
         -- auto-accept (spam loop v27.68 udah bantu, jadi cukup 2x)
         for i = 1, 2 do autoAcceptTrade(); task.wait(0.2) end
         totalSent = totalSent + added
@@ -2297,7 +2304,7 @@ local function getMatchedPets(cfg)
     if not bp then return {} end
     local hasPet = false; for _ in pairs(cfg.pets or {}) do hasPet = true break end
     local hasMut = false; for _ in pairs(cfg.muts or {}) do hasMut = true break end
-    PetDetect.rebuild()
+    PetDetect.rebuild(true)   -- v27.121: FORCE fresh -> cache basi bikin getMatchedPets return 0 (pet gak kedetek) -> "trade gak ada pet dipilih"
     local info = {}
     for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[tostring(p.uuid):gsub("[{}]","")] = p end
     local matched = {}
@@ -2382,15 +2389,27 @@ local function giftPetsByFilter(cfg)
     -- v20.3: bungkus pcall — kalau error di tengah, giftBusy TETAP di-reset (anti-stuck)
     local sent = 0
     local okRun, errRun = pcall(function()
-    -- unfav dulu kalau diminta (pet favorit kadang gak bisa di-trade)
+    -- v27.123: UNFAV pet di LIST dulu (cuma yg mau di-trade, BUKAN semua pet) + CONFIRM bener-bener
+    -- ke-unfav semua (poll + retry), BARU re-scan & trade. User: pastiin unfav semua pet-trade dulu,
+    -- baru cek pet yg mau dikirim, baru send. Anti "trade gak ada pet" gara-gara pet keep masih ke-fav.
     if cfg.unfavFirst then
-        local info2 = {}
-        for _, p in ipairs(PetDetect.listBackpackPets(true)) do info2[tostring(p.uuid):gsub("[{}]","")] = p end
-        for _, u in ipairs(matched) do
-            local p = info2[u]
-            if p and p.fav and p.tool then favoritePet(p.tool); task.wait(0.04) end
+        for attempt = 1, 5 do
+            local info2 = {}
+            for _, p in ipairs(PetDetect.listBackpackPets(true)) do info2[tostring(p.uuid):gsub("[{}]","")] = p end
+            local stillFav = 0
+            for _, u in ipairs(matched) do
+                local p = info2[u]
+                if p and p.fav and p.tool then favoritePet(p.tool); stillFav = stillFav + 1; task.wait(0.05) end
+            end
+            if stillFav == 0 then break end   -- semua pet di list udah ke-unfav -> lanjut
+            print("[HactTelur] unfav list: masih "..stillFav.." pet ke-fav, retry ("..attempt.."/5)")
+            PetDetect.rebuild(true)   -- fresh -> cek ulang status fav pet list
+            task.wait(0.3)
         end
-        task.wait(0.6)   -- v27.112: jeda lebih (0.3->0.6) biar unfav beneran ke-apply sebelum trade mulai
+        task.wait(0.3)   -- jeda biar unfav bener-bener ke-apply
+        -- re-scan: cek ulang pet yg mau dikirim setelah unfav (pastiin list masih valid)
+        matched = getMatchedPets(cfg)
+        print("[HactTelur] abis unfav list -> "..#matched.." pet siap dikirim")
     end
     -- bagi pet rata ke semua target (rotasi)
     local buckets = {}
@@ -4109,11 +4128,15 @@ local function automationLoop()
         -- TAPI kalo backpack penuh (bpFullFlag) & gift gak lagi jalan -> jgn pause, sell dulu!
         -- terima pet / gift / trade SELALU pause (prioritas, biar gak bentrok)
         local pauseNow = isPausedForGift()
+        -- v27.120: pas JEDA (30s abis trade) -> pause TOTAL walau backpack PENUH (user: pas jeda tim masih
+        -- ganti-ganti + pet masuk karena full-exception di bawah bypass pause). Regular-pause (bukan jeda)
+        -- tetep boleh sell pas full (biar gak mandek).
+        local dalamJeda = _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30
         -- v26.2: kalau backpack PENUH, sell HARUS jalan walau ada pause trade complete —
         -- soalnya kalau penuh & sell ke-block terus, hatch juga mandek (gak ada slot).
         -- jadi: pause skip-aksi cuma kalau backpack BELUM penuh. kalau penuh -> lanjut ke sell.
         local fullCheck = isBackpackFull()
-        if pauseNow and not fullCheck then
+        if pauseNow and (dalamJeda or not fullCheck) then
             task.wait(0.5)
         else
         local full, cur, max = isBackpackFull()
