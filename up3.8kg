@@ -1920,14 +1920,23 @@ do
             end)
         end
     end)
+    -- v1.25: JAGA POOL LENGKAP TERUS-TERUSAN (bukan cuma startup 60s). up3.8kg butuh 4 tipe support
+    -- (Dilop/Peacock/GCP/Ele) -> pick rawan kecicil + pool ilang pas rejoin (rejoin sering). up6kg cuma
+    -- 1 tipe (Ele) jadi jarang kena. Loop ini: pool ilang -> LOAD saved dari file; masih kurang -> re-pick
+    -- fresh (throttle 20s biar gak churn). Jadi tim gak pernah kosong walau rejoin berapa kali pun.
     task.spawn(function()
-        for _ = 1, 20 do
-            task.wait(3)
-            if poolLengkap() then break end   -- udah lengkap -> stop
-            if not supPool or not next(supPool) then
-                pcall(kunciSupPool, false)    -- blm ada pool -> load saved dulu
-            else
-                pcall(kunciSupPool, true)     -- ada tapi KURANG -> re-pick FRESH (container udah lebih siap)
+        local n, lastForce = 0, 0
+        while true do
+            n = n + 1
+            task.wait(n <= 20 and 3 or 15)   -- 60s awal rapat, abis itu jaga tiap 15s
+            if not poolLengkap() then
+                if not supPool or not next(supPool) then
+                    pcall(kunciSupPool, false)   -- pool ilang (rejoin/luntur) -> LOAD saved dari file dulu
+                end
+                if not poolLengkap() and (os.clock() - lastForce) > 20 then
+                    lastForce = os.clock()
+                    pcall(kunciSupPool, true)    -- masih kurang -> re-pick fresh (container makin siap)
+                end
             end
         end
     end)
