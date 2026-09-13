@@ -637,7 +637,7 @@
 --        client ditutup buat bypass percuma. Ikut ditutup di sini.
 -- ============================================================
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.484-cf"
+local VERSION = "9.485-cf"
 -- v9.205: SPLIT tim. tim 1 (loop utama) = client 1..TIM1_AKHIR, tim 2 (borong) =
 -- TIM1_AKHIR+1..total. Ubah angka ini buat ganti pembagian (default 15 -> tim1 1-15,
 -- tim2 16-total). GLOBAL (bukan local) biar gak makan slot 200 main chunk.
@@ -10328,6 +10328,17 @@ local function run(cfg)
                                 if u then DENYUT_UMUR[u] = nil end
                                 KICK_DIURUS["tembak_ts:" .. pkg] = os.time()   -- grace loading fresh (baru ditembak)
                                 KICK_DIURUS["mau_force:" .. pkg] = nil   -- v9.443: udah dibuka via oper, clear flag
+                                -- v9.485: LOG DIAGNOSTIK -- link apa yg dipake (biar ketauan kenapa "server sendiri")
+                                do
+                                    local _ml = mapLink[pkg] or ""
+                                    local _ov = cfg._ps_override or ""
+                                    local _fin = _dest or mapLink[pkg] or ""
+                                    info(("[tembak-link] %s | label=%s | mapLink(sendiri)=%s | _ps_override(tujuan)=%s | DIPAKE=%s"):format(
+                                        u or pkg, labelT ~= "" and labelT or "-",
+                                        _ml ~= "" and (_ml:sub(1,30)) or "KOSONG",
+                                        _ov ~= "" and (_ov:sub(1,30)) or "KOSONG",
+                                        _fin ~= "" and (_fin:sub(1,30)) or "KOSONG(->public/lokal)"))
+                                end
                                 open_one(cfg, pkg, (_dest or mapLink[pkg]), "tembak-panel", true)   -- v9.484: _dest = server tujuan /ps (bukan server akun sendiri)
                                 TERAKHIR_BUKA[pkg] = os.time()
                                 nTembak = nTembak + 1
