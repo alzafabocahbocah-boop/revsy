@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.487-cf"
+local VERSION = "9.488-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -395,7 +395,7 @@ end
 function interval_denyut(cfg)
     local sl = tostring(cfg and cfg.script_label or "")
     if sl:find("UP3", 1, true) then return 90 end   -- up3.8kg: cek denyut 90s (v9.487, dari 60s)
-    if sl:find("UP6KG") then return 45 end
+    if sl:find("UP6KG") then return 65 end   -- up6kg: cek denyut 65s (v9.488, dari 45s)
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 180 end
     if sl:find("HACT") then return 120 end   -- hact: cek denyut 120s
     return 360
@@ -403,7 +403,7 @@ end
 function denyut_fresh_sec(cfg)
     local sl = tostring(cfg and cfg.script_label or "")
     if sl:find("UP3", 1, true) then return 70 end   -- up3.8kg: denyut fresh 70s (v9.487, dari 45s)
-    if sl:find("UP6KG") then return 30 end
+    if sl:find("UP6KG") then return 45 end   -- up6kg: denyut fresh 45s (v9.488, dari 30s)
     if sl:find("UPLEVEL") or sl:find("MARKET") then return 120 end
     if sl:find("HACT") then return 60 end   -- hact: denyut fresh 60s
     return 300
