@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.141  ══════════════════════════
+-- ══════════════════════════  HACT  v27.142  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.141"
+local VERSION = "v27.142"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7210,7 +7210,7 @@ do
     local y = 0
     local titleL = lbl(tradeContent, "TRADE \u{2014} gift pet KEEP", 15, C.text); titleL.Font = FONT_B
     titleL.Position = UDim2.new(0,0,0,y); titleL.Size = UDim2.new(1,0,0,22); y = y + 24
-    local subL = lbl(tradeContent, "kirim pet keep ke akun up3.8kg (target)", 11, C.textDim)
+    local subL = lbl(tradeContent, "kirim pet keep ke akun up3.8kg + up6kg (target)", 11, C.textDim)
     subL.Position = UDim2.new(0,0,0,y); subL.Size = UDim2.new(1,0,0,16); y = y + 26
 
     local function inputRow(label, val, ph)
@@ -7245,7 +7245,7 @@ do
     statusL.TextYAlignment = Enum.TextYAlignment.Top
     statusL.TextXAlignment = Enum.TextXAlignment.Left
     y = y + 44 + 46   -- button (40) + reserve ~3 baris debug
-    local infoL = lbl(tradeContent, "gift Spider/Peacock/Nutcracker/Seal (keep, age<500, base 2-3kg) ke akun up3.8kg paling kosong. fav mati pas trade.", 10, C.textDim)
+    local infoL = lbl(tradeContent, "gift Spider/Peacock/Nutcracker/Seal (keep, age<500, base 2-3kg) ke akun up3.8kg + up6kg paling kosong. fav mati pas trade.", 10, C.textDim)
     infoL.Position = UDim2.new(0,0,0,y); infoL.Size = UDim2.new(1,0,0,32); infoL.TextWrapped = true; infoL.TextYAlignment = Enum.TextYAlignment.Top
     y = y + 40   -- v27.111: fix — advance y biar akun list gak numpuk infoL
 
@@ -7273,7 +7273,7 @@ do
     tgtBox.PlaceholderText = "auto dari panel (akun up3.8kg)"
     local akunInv = {}   -- nama -> { total, max }
     -- v27.111: daftar akun UP 3.8KG + inventory (kayak up6kg nunjukin akun leveling)
-    local akLbl = lbl(tradeContent, "Akun UP 3.8KG (target + inv)", 12, C.textDim); akLbl.Font = FONT_B
+    local akLbl = lbl(tradeContent, "Akun UP 3.8KG + UP 6KG (target + inv)", 12, C.textDim); akLbl.Font = FONT_B
     akLbl.Position = UDim2.new(0,0,0,y); akLbl.Size = UDim2.new(1,0,0,18); y = y + 22
     local akFrame = mk("ScrollingFrame", {
         Size = UDim2.new(1,0,1,-(y+6)), Position = UDim2.new(0,0,0,y),
@@ -7285,7 +7285,7 @@ do
         local Players = game:GetService("Players")
         local names2 = {}; for nm in pairs(akunInv) do names2[#names2+1] = nm end; table.sort(names2)
         if #names2 == 0 then
-            local e = lbl(akFrame, "belum ada akun up3.8kg dari panel", 11, C.textDim)
+            local e = lbl(akFrame, "belum ada akun up3.8kg/up6kg dari panel", 11, C.textDim)
             e.Size = UDim2.new(1,0,0,40); e.TextWrapped = true
         end
         for _, nm in ipairs(names2) do
@@ -7302,21 +7302,27 @@ do
         akFrame.CanvasSize = UDim2.new(0,0,0, akLay.AbsoluteContentSize.Y + 6)
     end
     local function fetchUp38Akun()
-        local resp = ""
-        pcall(function()
-            local reqf = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
-            if reqf then local r = reqf({ Url = "https://dry-glitter-63e4.petagee5.workers.dev/up38akun", Method = "GET" }); resp = r and (r.Body or r.body) or ""
-            elseif game.HttpGet then resp = game:HttpGet("https://dry-glitter-63e4.petagee5.workers.dev/up38akun") end
-        end)
-        resp = tostring(resp)
-        if resp == "" then return end
         local inv, names = {}, {}
-        for pair in resp:gmatch("[^,]+") do
-            local nm, tm = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
-            if nm and nm ~= "" then
-                local tot, mx = tm:match("^(%d+):(%d+)")
-                inv[nm] = { total = tonumber(tot) or 0, max = tonumber(mx) or 0 }
-                names[#names+1] = nm
+        -- v27.133: target = akun up3.8kg (/up38akun "total:max") + up6kg (/up6kgakun "max:count" -> KEBALIK). Merge + dedup.
+        for _, entry in ipairs({ { url = "https://dry-glitter-63e4.petagee5.workers.dev/up38akun", rev = false },
+                                 { url = "https://dry-glitter-63e4.petagee5.workers.dev/up6kgakun", rev = true } }) do
+            local resp = ""
+            pcall(function()
+                local reqf = (syn and syn.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or http_request or request or httprequest
+                if reqf then local r = reqf({ Url = entry.url, Method = "GET" }); resp = r and (r.Body or r.body) or ""
+                elseif game.HttpGet then resp = game:HttpGet(entry.url) end
+            end)
+            resp = tostring(resp)
+            for pair in resp:gmatch("[^,]+") do
+                local nm, tm = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
+                if nm and nm ~= "" and not inv[nm] then
+                    local a, b = tm:match("^(%d+):(%d+)")
+                    a, b = tonumber(a) or 0, tonumber(b) or 0
+                    local tot, mx
+                    if entry.rev then mx, tot = a, b else tot, mx = a, b end   -- up6kg: max:count | up38: total:max
+                    inv[nm] = { total = tot, max = mx }
+                    names[#names+1] = nm
+                end
             end
         end
         akunInv = inv
@@ -7334,7 +7340,7 @@ do
             pcall(function()
                 pcall(fetchUp38Akun)   -- refresh target + inv tiap loop
                 if not TRADECFG.on then if statusL then statusL.Text = "" end return end
-                if not next(akunInv) then if statusL then statusL.Text = "nunggu akun up3.8kg dari panel" end return end
+                if not next(akunInv) then if statusL then statusL.Text = "nunggu akun up3.8kg/up6kg dari panel" end return end
                 local Players = game:GetService("Players")
                 -- pilih target ONLINE yg paling KOSONG (room = max-total terbanyak, skip full)
                 local best, bestRoom = nil, -1
