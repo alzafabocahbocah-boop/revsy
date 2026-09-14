@@ -281,7 +281,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.126"
+local VERSION = "v27.127"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -1968,12 +1968,14 @@ end
 
 local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     if not TradeSys.ensure() then
+        _G.__hactStep = "GUARD: remote nil"
         _G.__hactTradeRemoteNil = true   -- v27.126: buat debug panel
         print("[HactTelur] \u{26A0} REMOTE TRADE NIL (ReplicatedStorage.GameEvents.TradeEvents gak ke-resolve) -> gak bisa kirim request")
         return 0
     end
     _G.__hactTradeRemoteNil = false
-    if not targetPlayer then return 0 end
+    if not targetPlayer then _G.__hactStep="GUARD: target nil"; return 0 end
+    _G.__hactStep = "masuk trade loop"
     Auto.__petsAdded = false   -- v27.122: reset -> confirm baru boleh jalan setelah pet ke-add (anti trade kosong)
     -- deteksi notif "you can't add more items" di layar (slot trade penuh)
     local function cantAddMore()
@@ -2046,6 +2048,7 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         if idx > #petList then break end
         pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
         _G.__hactTradeAktif = tick()   -- v27.111: MULAI trade (fire send tiket) -> fav MATI
+        _G.__hactStep = "FIRE TIKET -> "..targetPlayer.Name
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
         task.wait(0.3)   -- tunggu window kebuka (was 0.4)
         local added = 0
@@ -2054,6 +2057,7 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
             -- v27.78: TARGET full (max pet) -> lapor + STOP
             if targetMaxPet() then
                 _G.__hactTargetFull = targetPlayer.Name
+                _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()   -- v27.127: skip target penuh sementara
                 print("[HactTelur] HACT OTO: target " .. targetPlayer.Name .. " FULL (max pet) -> lapor panel")
                 break
             end
@@ -2076,6 +2080,7 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
         -- CONFIRM, BUKAN pas add-pet. Dulu cuma cek pas add -> notif kelewat -> trade terus walau full.
         if targetMaxPet() then
             _G.__hactTargetFull = targetPlayer.Name
+            _G.__hactFullTargets = _G.__hactFullTargets or {}; _G.__hactFullTargets[targetPlayer.Name] = tick()   -- v27.127
             print("[HactTelur] HACT OTO: target "..targetPlayer.Name.." FULL (max pet pas confirm) -> stop + lapor")
             break
         end
@@ -2396,7 +2401,8 @@ local function giftPetsByFilter(cfg)
         local pl = Players:FindFirstChild(name)
         if pl then table.insert(targetList, pl) end
     end
-    if #targetList == 0 then print("[HactTelur] gak ada target online"); return 0 end
+    if #targetList == 0 then _G.__hactStep="target NIL (gak online)"; print("[HactTelur] gak ada target online"); return 0 end
+    _G.__hactStep = "target OK ("..#targetList..")"
     local matched = getMatchedPets(cfg)
     if #matched == 0 then return 0 end
     Auto.giftBusy = true  -- automation hatch pause selama gift/trade jalan
@@ -2430,6 +2436,7 @@ local function giftPetsByFilter(cfg)
         task.wait(0.3)   -- jeda biar unfav bener-bener ke-apply
         -- re-scan: cek ulang pet yg mau dikirim setelah unfav (pastiin list masih valid)
         matched = getMatchedPets(cfg)
+        _G.__hactStep = "abis unfav, matched="..#matched
         print("[HactTelur] abis unfav list -> "..#matched.." pet siap dikirim")
     end
     -- bagi pet rata ke semua target (rotasi)
@@ -2469,6 +2476,7 @@ local function giftPetsByFilter(cfg)
                 print("[HactTelur] gift "..sent.." pet ke "..tgt.Name)
             else
                 if cfg._running ~= false then
+                    _G.__hactStep = "call-trade "..#pets.." -> "..tgt.Name
                     sent = sent + tradePetsToTarget(tgt, pets, function() return cfg._running == false end)
                     print("[HactTelur] trade "..#pets.." pet ke "..tgt.Name)
                     task.wait(0.5)
@@ -7356,11 +7364,9 @@ do
                         -- v27.125: 0 kirim -> BEDAIN: filter nolak semua (ok:0) vs pet SIAP tapi trade gagal (ok>0)
                         local D = _G.__hactGiftDbg or {}
                         if (D.ok or 0) > 0 then
-                            -- pet ADA & lolos filter tapi 0 kirim -> masalah di TRADE (bukan filter)
-                            local why = _G.__hactTradeRemoteNil and "REMOTE TRADE NIL (re-exe / game update?)"
-                                or (_G.__hactTargetFull == best) and "TARGET PENUH"
-                                or "trade gagal (target gak nerima / window gak kebuka)"
-                            statusL.Text = string.format("0 kirim | %d pet SIAP -> %s | %s", D.ok or 0, tostring(best), why)
+                            -- v27.127: STEP di depan -> keliatan sampe mana (target OK? matched? fire tiket?)
+                            statusL.Text = string.format("STEP: %s | 0kirim %d siap -> %s",
+                                tostring(_G.__hactStep or "?"), D.ok or 0, tostring(best))
                         else
                             statusL.Text = string.format("0 kirim | n:%d ok:0 | gagal kg:%d age:%d keep:%d fav:%d | kg:%s",
                                 D.total or 0, D.failKg or 0, D.failAge or 0, D.failKeep or 0, D.failFav or 0, (D.kgSample ~= "" and D.kgSample or "-"))
