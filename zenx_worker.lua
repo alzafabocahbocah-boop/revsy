@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.488-cf"
+local VERSION = "9.491-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -4285,6 +4285,66 @@ function restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
     return nil   -- semua client
 end
 
+-- ============ v9.489: TEMBAK MANUAL dari terminal ============
+-- Paste URL PS Roblox di terminal worker -> muncul menu client (nomor + akun) -> ketik nomor -> tembak.
+local TMB = { inFile = (os.getenv("HOME") or ".") .. "/zenx_tembak_in.txt", done = 0, pending = nil }
+function TMB.readerStart()
+    os.remove(TMB.inFile)
+    os.execute("(while IFS= read -r l; do printf '%s\\n' \"$l\" >> \"" .. TMB.inFile .. "\"; done </dev/tty) >/dev/null 2>&1 &")
+end
+function TMB.klienList(cfg)
+    local list = {}
+    for pkg in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do
+        list[#list+1] = { pkg = pkg, akun = (baca_username(pkg) or "?") }
+    end
+    return list
+end
+function TMB.tembak(url, pkg)
+    sh_silent("su -c \"am start -f 0x20000000 -a android.intent.action.VIEW -d '" .. url .. "' -p " .. pkg .. "\"")
+end
+function TMB.isPsUrl(s)
+    return (s:find("roblox", 1, true) or s:find("privateServer", 1, true) or s:find("linkCode", 1, true)
+            or s:find("accessCode", 1, true) or s:find("share", 1, true)) and s:find("http", 1, true)
+end
+function TMB.cek(cfg)
+    local f = io.open(TMB.inFile, "r"); if not f then return end
+    local lines = {}; for ln in f:lines() do lines[#lines+1] = ln end; f:close()
+    while TMB.done < #lines do
+        TMB.done = TMB.done + 1
+        local ln = (lines[TMB.done] or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if ln == "" then
+            -- lewat
+        elseif TMB.pending then
+            local url = TMB.pending; TMB.pending = nil
+            local list = TMB.klienList(cfg)
+            local pilih = {}
+            if ln:lower() == "semua" or ln:lower() == "all" then
+                for i = 1, #list do pilih[i] = true end
+            else
+                for bag in ln:gmatch("[^,]+") do
+                    local a, z = bag:match("^(%d+)%-(%d+)$")
+                    if a then for i = tonumber(a), tonumber(z) do if list[i] then pilih[i] = true end end
+                    else local nn = tonumber(bag); if nn and list[nn] then pilih[nn] = true end end
+                end
+            end
+            local cnt = 0
+            for i, c in ipairs(list) do
+                if pilih[i] then
+                    io.write(C.KOP .. ("   -> TEMBAK client %d (%s)\n"):format(i, c.akun) .. C.N); io.flush()
+                    TMB.tembak(url, c.pkg); cnt = cnt + 1; os.execute("sleep 0.6")
+                end
+            end
+            if cnt == 0 then warn(("   gak ada kepilih -- ketik nomor 1-%d"):format(#list)) end
+        elseif TMB.isPsUrl(ln) then
+            TMB.pending = ln
+            local list = TMB.klienList(cfg)
+            io.write("\n" .. C.BOLD .. "  TEMBAK PS -> pilih client:" .. C.N .. "\n")
+            for i, c in ipairs(list) do io.write(("   %d. %s\n"):format(i, c.akun)) end
+            io.write(C.Y .. ("  ketik nomor (1,2,3 / 1-%d / semua): "):format(#list) .. C.N); io.flush()
+        end
+    end
+end
+
 local function run(cfg)
     cfg.reopen_sec  = cfg.reopen_sec or 300
     pcall(function()
@@ -4861,11 +4921,13 @@ local function run(cfg)
 
     local lastBanner = 0
 
+    TMB.readerStart()   -- v9.489: mulai baca URL tembak dari terminal
     while true do
         if ada_stop() then
             bersih(cfg, "diminta stop")
             return
         end
+        TMB.cek(cfg)   -- v9.489: cek ada paste URL PS -> menu tembak client
 
         if cfg.auto_delta and os.time() - DELTA_CEK_TS >= 600 then
             DELTA_CEK_TS = os.time()
@@ -5535,11 +5597,13 @@ local function run(cfg)
             local _isUp38 = _sl:find("UP3", 1, true)
             local _isUp6  = _sl:find("UP6KG")
             local _isHact = _sl:find("HACT")
-            if _isUp38 or _isUp6 or _isHact then
+            local _isUplevel = _sl:find("UPLEVEL")   -- v9.490: uplevel ikut restart terjadwal
+            local _isMarket = _sl:find("MARKET")     -- v9.491: market ikut restart terjadwal
+            if _isUp38 or _isUp6 or _isHact or _isUplevel or _isMarket then
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
-                local per60 = _isUp38 or _isHact                            -- up3.8kg + hact: tiap 60 menit
-                local slotSize = per60 and 3600 or 1800                     -- up3.8kg/hact 60min, up6kg 30min
+                local per60 = _isUp38 or _isHact or _isUplevel or _isMarket -- up3.8kg + hact + uplevel + market: tiap 60 menit (:00)
+                local slotSize = per60 and 3600 or 1800                     -- 60min, up6kg 30min
                 local slot = math.floor(wibNow / slotSize)
                 local fireNow
                 if per60 then fireNow = (wt.min == 0)                        -- up3.8kg/hact: :00 doang (tiap jam)
