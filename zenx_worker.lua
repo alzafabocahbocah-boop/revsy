@@ -1,4 +1,5 @@
 #!/usr/bin/env lua
+-- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
 local VERSION = "9.487-cf"
 TIM1_AKHIR = 10
