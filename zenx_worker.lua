@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.491-cf"
+local VERSION = "9.492-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5610,6 +5610,14 @@ local function run(cfg)
                 else fireNow = (wt.min == 0 or wt.min == 30) end             -- up6kg: :00 & :30
                 if fireNow and RESTART_JADWAL_SLOT ~= slot then
                     RESTART_JADWAL_SLOT = slot
+                    -- v9.492: RE-TEST captcha pas restart terjadwal (:00) -> clear flag captcha, biar akun yg
+                    -- lagi ke-skip (captcha) di-REJOIN ULANG. Siapa tau captcha-nya udah kelar di-solve = balik on.
+                    -- Kalau masih captcha, cek_captcha ke-fire lagi otomatis -> re-flag + skip lagi.
+                    local _clrCap = 0
+                    for pkg in ((cfg.pkgs or "")):gmatch("[^,]+") do
+                        if KICK_DIURUS["captcha:" .. pkg] then KICK_DIURUS["captcha:" .. pkg] = nil; _clrCap = _clrCap + 1 end
+                    end
+                    if _clrCap > 0 then warn(("[JADWAL] re-test captcha: clear %d flag -> coba rejoin ulang (cek captcha lagi)"):format(_clrCap)) end
                     local _nm = _isUp38 and "UP3.8KG" or (_isHact and "HACT" or "UP6KG")
                     warn(string.format("[JADWAL] %s restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang%s", _nm, wt.hour, wt.min, _isHact and " (bisa di-nyela manual command)" or " (UNINTERRUPTIBLE)"))
                     if not _isHact then _G.__ZenxForceRestart = true end   -- hact: rejoin INTERRUPTIBLE (start/balik home manual selalu bisa nyela). up6kg/up3.8kg: WAJIB kelar.
