@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.123"
+local VERSION = "up6kg-v10.125"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3487,13 +3487,48 @@ do
             end)
             return found
         end
+        -- v10.125: port dari hact.lua targetMaxPet() -- deteksi teks "inventory full" TARGET (bukan
+        -- slot trade 12). Lebih cepet + akurat daripada nunggu countTargetPets (RPC bisa gagal/nil).
+        local function targetInvFull()
+            local found = false
+            pcall(function()
+                local pg = player:FindFirstChild("PlayerGui"); if not pg then return end
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then
+                        local t = (d.Text or ""):lower()
+                        if t:find("give more pets") or t:find("max their inventory")
+                           or t:find("can.t give more") or (t:find("max") and t:find("inventory"))
+                           or t:find("their inventory")
+                           or t:find("tidak bisa memberi") or t:find("tidak dapat memberi")
+                           or t:find("gak bisa memberi") or t:find("tidak bisa memberikan")
+                           or (t:find("inventaris") and (t:find("penuh") or t:find("maks") or t:find("maksimal")))
+                           or (t:find("inventori") and (t:find("penuh") or t:find("maks"))) then
+                            found = true; break
+                        end
+                        local xx, yy = t:match("%((%d+)%s*/%s*(%d+)%)")
+                        if xx and yy then
+                            xx = tonumber(xx); yy = tonumber(yy)
+                            if xx and yy and yy >= 50 and xx >= yy then found = true; break end
+                        end
+                    end
+                end
+            end)
+            return found
+        end
+        local wasFull = false
         for _, p in ipairs(pets) do
             if cantAddMore() then break end
+            if targetInvFull() then wasFull = true; break end
             pcall(function() TradeSys.addItemRE:FireServer("Pet", fmtU(p.uuid)) end)
             added = added + 1; task.wait(0.12)
         end
         for i = 1, 4 do autoAcceptTrade(); task.wait(0.3) end
-        return added
+        if not wasFull and targetInvFull() then wasFull = true end   -- v10.125: cek juga abis confirm
+        if wasFull then
+            _G.__up6FullTargets = _G.__up6FullTargets or {}
+            _G.__up6FullTargets[targetPlayer.Name] = tick()
+        end
+        return added, wasFull
     end
     local function giftToTarget(targetPlayer, pets)
         local char = player.Character
@@ -3563,6 +3598,7 @@ do
     local _lvlCnt = {}   -- nama -> {cnt, ts}: cache pet-count target (ViewInventory berat)
     local trLog = {}
     local function trLogAdd(m) trLog[#trLog+1] = os.date("%H:%M:%S").." "..tostring(m); if #trLog > 40 then table.remove(trLog, 1) end end
+    local _lvlNilStreak = {}   -- v10.124: hitung gagal-baca BERTURUT per akun (anti nyangkut di akun full)
     local function countTargetPets(target)
         if not target then return nil end
         -- v10.26: target HARUS Player object (bukan string) buat InvokeServer. cache by nama.
@@ -3626,7 +3662,14 @@ do
                 local nFull = 0
                 for nm, mxv in pairs(lvlMax) do
                     local present = Players:FindFirstChild(nm)
-                    if nm ~= player.Name and present then
+                    -- v10.125: skip yg BARU AJA ke-detect full lewat teks in-game (5 menit), gak nunggu
+                    -- countTargetPets buat konfirmasi (lebih cepet + gak kena nil-streak dulu).
+                    local fullTs = (_G.__up6FullTargets or {})[nm]
+                    local barusanFull = fullTs and (tick() - fullTs) < 300
+                    if nm ~= player.Name and present and barusanFull then
+                        nOther = nOther + 1; nFull = nFull + 1
+                        trLogAdd(nm..": FULL (kedetek teks in-game "..math.floor(tick()-fullTs).."s lalu) -> skip")
+                    elseif nm ~= player.Name and present then
                         nOther = nOther + 1
                         local cnt = countTargetPets(present)   -- nil = read gagal (VI + panel dua-duanya gagal)
                         local pc = (_G.ZenxLvlCount or {})[nm]
@@ -3660,16 +3703,38 @@ do
                 if tp then
                     -- v10.25: cek inventory target FRESH sebelum gift -> skip kalo udah FULL (target bisa keburu penuh)
                     local skip = false
-                    if TR.autoLevel then
+                    -- v10.125: skip juga kalo BARU AJA ke-detect full lewat teks in-game (5 menit) -- sinyal
+                    -- lebih cepet/akurat daripada nunggu countTargetPets.
+                    local _fts = (_G.__up6FullTargets or {})[nama]
+                    if _fts and (tick() - _fts) < 300 then
+                        skip = true; setStat(nama.." FULL (kedetek teks in-game) - skip, cari akun lain")
+                    end
+                    if not skip and TR.autoLevel then
                         local cnt = countTargetPets(tp)   -- pake cache 5s (gak invalidate -> read gak sering gagal)
                         local mx = (_G.ZenxLvlMax or {})[nama]
                         -- v10.31: cuma skip kalo count KEBACA + udah full. read gagal (nil) -> JANGAN skip, trade tetep jalan (biar gak macet gara2 read flaky).
-                        if cnt ~= nil and mx and cnt >= mx then skip = true; setStat(nama.." FULL ("..cnt.."/"..mx..") - skip, cari akun lain") end
+                        if cnt ~= nil and mx and cnt >= mx then
+                            skip = true; setStat(nama.." FULL ("..cnt.."/"..mx..") - skip, cari akun lain")
+                            _lvlNilStreak[nama] = 0
+                        elseif cnt == nil then
+                            -- v10.124: gagal baca BERTURUT 2x utk akun yg SAMA -> anggap kemungkinan besar
+                            -- full/nolak baca -> SKIP (anti nyangkut trade ke 1 akun terus). 1x gagal (flaky
+                            -- sesaat) masih ditoleransi -> trade jalan seperti biasa.
+                            _lvlNilStreak[nama] = (_lvlNilStreak[nama] or 0) + 1
+                            if _lvlNilStreak[nama] >= 2 then
+                                skip = true; setStat(nama.." gagal baca 2x berturut - skip (mungkin full), cari akun lain")
+                            end
+                        else
+                            _lvlNilStreak[nama] = 0
+                        end
                     end
                     if not skip then
                         nTgt = nTgt + 1
                         setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
-                        if mode == "trade" then tradeToTarget(tp, pets) else giftToTarget(tp, pets) end
+                        local _wasFull = false
+                        if mode == "trade" then local _a, _f = tradeToTarget(tp, pets); _wasFull = _f
+                        else giftToTarget(tp, pets) end
+                        if _wasFull then setStat(nama.." FULL (kedetek teks in-game) - skip, cari akun lain") end
                         task.wait(1)
                         pets = petsLolos()
                         if #pets == 0 then break end
