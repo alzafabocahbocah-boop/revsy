@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.492-cf"
+local VERSION = "9.494-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6059,6 +6059,34 @@ local function run(cfg)
         local U = isi:upper()
 
         local loginPrioritas = false
+        -- v9.493: GOSERVER:akun:link -- akun TERTENTU join PS TERTENTU (dipake tombol Oper/Ambil bahan
+        -- panel, popup "GO ke server"). Command ini BELUM PERNAH di-handle sama sekali sebelumnya
+        -- (panel kirim, worker gak ngerti) -> tombol Oper/Ambil selalu no-op diem-diem.
+        do
+            local akunG2, linkG2 = isi:match("^GOSERVER:([^:]+):(.+)$")
+            if akunG2 and linkG2 and linkG2 ~= "" and isi ~= lastIsi then
+                print("")
+                print(C.BOLD .. C.C .. ">>> JALANIN PERINTAH GOSERVER <<<" .. C.N)
+                info(("GOSERVER: %s -> %s"):format(akunG2, linkG2:sub(1,60)))
+                local pkgG2 = nil
+                for pkg, u in pairs(mapAkun or {}) do if u == akunG2 then pkgG2 = pkg; break end end
+                if pkgG2 then
+                    -- akun DITEMBAK EKSPLISIT dari panel -> reset semua flag skip, jangan di-skip
+                    KICK_DIURUS["mati:" .. akunG2] = nil
+                    KICK_DIURUS["captcha:" .. pkgG2] = nil
+                    KICK_DIURUS["denyut_rejoin:" .. pkgG2] = nil
+                    KICK_DIURUS["nofile_since:" .. pkgG2] = nil
+                    KICK_DIURUS["tembak_ts:" .. pkgG2] = os.time()
+                    DENYUT_UMUR[akunG2] = nil
+                    open_one(cfg, pkgG2, linkG2, "goserver-panel", true)
+                    TERAKHIR_BUKA[pkgG2] = os.time()
+                    ok(("GOSERVER: %s dibuka ke server tujuan"):format(akunG2))
+                else
+                    warn(("GOSERVER: akun %s gak ketemu di device ini"):format(akunG2))
+                end
+                lastIsi = isi
+            end
+        end
         do
             local akunL, clientL = isi:match("^LOGIN:([^:]+):([^:]+)")
             if akunL and clientL and isi ~= lastIsi then
@@ -6142,7 +6170,9 @@ local function run(cfg)
                     for _, pk in ipairs(onlyRejoin or split(cfg.pkgs)) do
                         KICK_DIURUS["tembak_ts:" .. pk] = nil; KICK_DIURUS["denyut_rejoin:" .. pk] = nil
                         KICK_DIURUS["nofile_since:" .. pk] = nil; KICK_DIURUS["mau_force:" .. pk] = nil
-                        local ak3 = (mapAkun or {})[pk]; if ak3 then DENYUT_UMUR[ak3] = nil end
+                        local ak3 = (mapAkun or {})[pk]; if ak3 then DENYUT_UMUR[ak3] = nil
+                            KICK_DIURUS["mati:" .. ak3] = nil   -- v9.493: tembak/rejoin EKSPLISIT dari panel -> reset status "mati" lama, coba lagi (jangan skip terus)
+                        end
                     end
                     local function batal_r()
                         return ada_perintah_baru(cfg, isi)
@@ -6957,6 +6987,7 @@ local function run(cfg)
                     for pkg, u in pairs(mapAkun or {}) do
                         if u == ak or pkg == ak or pkg:gsub("com%.roblox%.", "") == ak then
                             only[pkg] = true; ketemu = true
+                            KICK_DIURUS["mati:" .. u] = nil   -- v9.493: akun DITEMBAK EKSPLISIT dari panel -> reset status "mati" lama, tetep coba (jangan skip)
                         end
                     end
                     if not ketemu and ak:find("roblox") then only[ak] = true end
