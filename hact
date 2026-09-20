@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.146  ══════════════════════════
+-- ══════════════════════════  HACT  v27.148  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.146"
+local VERSION = "v27.148"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7333,8 +7333,16 @@ do
         akFrame.CanvasSize = UDim2.new(0,0,0, akLay.AbsoluteContentSize.Y + 6)
     end
     local function fetchUp38Akun()
+        -- v27.148: dipanggil CUMA 1x pas start/rejoin (line ~7370). Rejoin = script restart = fetch
+        -- ulang otomatis. Script SIMPEN SENDIRI hasilnya di `akunInv` (module-level), dipakai terus
+        -- sepanjang sesi tanpa perlu fetch ulang berkali-kali.
         local inv, names = {}, {}
         -- v27.133: target = akun up3.8kg (/up38akun "total:max") + up6kg (/up6kgakun "max:count" -> KEBALIK). Merge + dedup.
+        local raw2 = ""
+        -- v27.148: cache lokal per-akun (pola sama kayak up6kg/up38kg/market) -- kalau HTTP gagal
+        -- (network/panel lagi bermasalah pas start/rejoin), load data TERAKHIR yg berhasil dari file.
+        local CACHE_FILE_HT = "zenx_lvlmax_cache_hact_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
+        local sawAny = false
         for _, entry in ipairs({ { url = "https://dry-glitter-63e4.petagee5.workers.dev/up38akun", rev = false },
                                  { url = "https://dry-glitter-63e4.petagee5.workers.dev/up6kgakun", rev = true } }) do
             local resp = ""
@@ -7344,6 +7352,7 @@ do
                 elseif game.HttpGet then resp = game:HttpGet(entry.url) end
             end)
             resp = tostring(resp)
+            if resp ~= "" then sawAny = true; raw2 = raw2 .. (raw2 ~= "" and "," or "") .. resp end
             for pair in resp:gmatch("[^,]+") do
                 local nm, tm = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
                 if nm and nm ~= "" and not inv[nm] then
@@ -7355,6 +7364,26 @@ do
                     names[#names+1] = nm
                 end
             end
+        end
+        if sawAny and next(inv) then
+            pcall(function() writefile(CACHE_FILE_HT, raw2) end)   -- fetch sukses -> update cache
+        elseif not next(inv) then
+            -- fetch gagal total -> coba load cache lokal (lebih baik daripada kosong)
+            pcall(function()
+                if isfile and isfile(CACHE_FILE_HT) then
+                    local b = readfile(CACHE_FILE_HT)
+                    for pair in tostring(b):gmatch("[^,]+") do
+                        local nm, tm = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
+                        if nm and nm ~= "" then
+                            local a, bb = tm:match("^(%d+):(%d+)")
+                            a, bb = tonumber(a) or 0, tonumber(bb) or 0
+                            inv[nm] = { total = a, max = bb }
+                            names[#names+1] = nm
+                        end
+                    end
+                    if next(inv) then print("[HactTelur] load cache lokal (fetch gagal, pake data terakhir)") end
+                end
+            end)
         end
         akunInv = inv
         TRADECFG.targets = names
@@ -7369,7 +7398,10 @@ do
         while true do
             local didGift = false
             pcall(function()
-                pcall(fetchUp38Akun)   -- refresh target + inv tiap loop
+                -- v27.148: HAPUS panggilan fetch di sini -- udah dipanggil 1x pas start/rejoin (line
+                -- ~7370). Rejoin = script restart dari awal = otomatis fetch ulang sendiri (script SIMPEN
+                -- SENDIRI di akunInv), jadi gak perlu manggil lagi tiap siklus loop (dulu 2x HTTP request
+                -- tiap 1.5-8 detik terus-terusan = boros + numpuk lambat).
                 if not TRADECFG.on then if statusL then statusL.Text = "" end return end
                 if not next(akunInv) then if statusL then statusL.Text = "nunggu akun up3.8kg/up6kg dari panel" end return end
                 local Players = game:GetService("Players")
@@ -7415,6 +7447,7 @@ do
                     end
                 end
                 didGift = (sent and sent > 0)
+                _G.__hactLastCycleEnd = tick()   -- v27.147: catat akhir siklus buat ukur gap ke siklus berikutnya
             end)
             -- v27.113: UTAMAIN TRADE -> abis gift SUKSES lanjut CEPET (1.5s), jgn balik hatch dulu.
             -- Kalo gak ada yg kekirim (sent 0) -> tunggu 8s, baru kasih hatch produksi pet baru.
