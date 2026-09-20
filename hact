@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.145  ══════════════════════════
+-- ══════════════════════════  HACT  v27.146  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.145"
+local VERSION = "v27.146"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2288,30 +2288,39 @@ do
                 end
             end
         end)
-        -- trade masuk: TradeEvents.SendRequest.OnClientEvent -> RespondRequest(tradeID, true)
+        -- trade masuk: TradeEvents SEMUA remote -> RespondRequest(tradeID, true)
+        -- v27.146: port pola MARKET (lebih reliable) -- dulu cuma denger SendRequest doang.
+        -- Sekarang denger SEMUA RemoteEvent di TradeEvents -> lebih banyak kesempatan nangkep tradeID.
         local te = ge:FindFirstChild("TradeEvents")
         if te then
             local sendReqRE = te:FindFirstChild("SendRequest")
             local respondRE = te:FindFirstChild("RespondRequest")
             if sendReqRE and respondRE then
-                sendReqRE.OnClientEvent:Connect(function(...)
-                    if not AutoAcc.trade then return end
-                    local args = {...}
-                    if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("-") then
-                        AutoAcc.lastTradeID = args[1]
+                for _, r in ipairs(te:GetChildren()) do
+                    if r:IsA("RemoteEvent") then
+                        local lname = r.Name:lower()
+                        if not (lname:find("history") or lname:find("inventory")) then
+                            r.OnClientEvent:Connect(function(...)
+                                if not AutoAcc.trade then return end
+                                local args = {...}
+                                if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("%-") then
+                                    AutoAcc.lastTradeID = args[1]
+                                end
+                                if lname:find("cancel") or lname:find("reject") or lname:find("decline") then return end
+                                if r == sendReqRE and AutoAcc.lastTradeID then
+                                    pcall(function() respondRE:FireServer(AutoAcc.lastTradeID, true) end)
+                                    print("[HactTelur] auto-accept trade masuk")
+                                    task.spawn(function()
+                                        for i = 1, 8 do
+                                            if not AutoAcc.trade then break end
+                                            autoAcceptTrade(); task.wait(0.5)
+                                        end
+                                    end)
+                                end
+                            end)
+                        end
                     end
-                    if AutoAcc.lastTradeID then
-                        pcall(function() respondRE:FireServer(AutoAcc.lastTradeID, true) end)
-                        print("[HactTelur] auto-accept trade masuk")
-                        -- spam accept GUI biar trade kelar
-                        task.spawn(function()
-                            for i = 1, 8 do
-                                if not AutoAcc.trade then break end
-                                autoAcceptTrade(); task.wait(0.5)
-                            end
-                        end)
-                    end
-                end)
+                end
             end
         end
     end
