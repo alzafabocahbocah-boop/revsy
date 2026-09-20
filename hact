@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.142  ══════════════════════════
+-- ══════════════════════════  HACT  v27.145  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.142"
+local VERSION = "v27.145"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2328,6 +2328,7 @@ local function getMatchedPets(cfg)
     local info = {}
     for _, p in ipairs(PetDetect.listBackpackPets(true)) do info[tostring(p.uuid):gsub("[{}]","")] = p end
     local matched = {}
+    _G.__hactMatchedRef = {}   -- v27.145: simpen referensi {tool, pd} per uuid matched -> re-check fav TANPA getgc lagi (PetData Lua table by-reference, update in-place kebaca ulang)
     _G.__hactGiftDbg = { total=0, failAge=0, failKg=0, failKeep=0, failFav=0, ok=0, kgSample="" }   -- v27.117: debug alasan skip
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
@@ -2377,6 +2378,8 @@ local function getMatchedPets(cfg)
             -- di getMatchedPets -> 0 match -> return SEBELUM unfavFirst jalan -> TERKIRIM 0 selamanya.
             if okPet and okMut and okAge and okKg and okKeep and uclean and (cfg.unfavFirst or not (p and p.fav)) then
                 table.insert(matched, uclean)
+                local pdRef = PetDetect.cache[uclean] or PetDetect.cache["{"..uclean.."}"]
+                _G.__hactMatchedRef[uclean] = { tool = t, pd = pdRef }
             end
         end
     end
@@ -2399,6 +2402,7 @@ local function giftPetsByFilter(cfg)
     _G.__hactStep = "target OK ("..#targetList..")"
     local matched = getMatchedPets(cfg)
     if #matched == 0 then return 0 end
+    local _tMatch1 = tick()   -- v27.144: timing diagnostik
     Auto.giftBusy = true  -- automation hatch pause selama gift/trade jalan
     Auto.giftBusySince = tick()  -- v20.3: timestamp buat safety timeout (anti-nyangkut)
     _G.__hactLastErr = ""  -- v27.135: reset error tiap call
@@ -2415,24 +2419,42 @@ local function giftPetsByFilter(cfg)
     -- ke-unfav semua (poll + retry), BARU re-scan & trade. User: pastiin unfav semua pet-trade dulu,
     -- baru cek pet yg mau dikirim, baru send. Anti "trade gak ada pet" gara-gara pet keep masih ke-fav.
     if cfg.unfavFirst then
-        for attempt = 1, 5 do
-            local info2 = {}
-            for _, p in ipairs(PetDetect.listBackpackPets(true)) do info2[tostring(p.uuid):gsub("[{}]","")] = p end
+        local _t0 = tick()   -- v27.144: timing diagnostik
+        for attempt = 1, 4 do
+            local _ta = tick()
             local stillFav = 0
+            -- v27.145: baca ULANG referensi pd yg UDAH DIPEGANG dari getMatchedPets (Lua table
+            -- by-reference -> kalau game update IsFavorite in-place, kebaca update TANPA getgc lagi).
+            -- Dulu: rebuild(true)+listBackpackPets(true) tiap attempt = getgc SCAN SELURUH MEMORI GAME
+            -- berkali-kali (5x) -> ini yg bikin 15-30 detik, bukan soal jumlah pet di backpack.
             for _, u in ipairs(matched) do
-                local p = info2[u]
-                if p and p.fav and p.tool then favoritePet(p.tool); stillFav = stillFav + 1; task.wait(0.05) end
+                local ref = _G.__hactMatchedRef[u]
+                local isFav = ref and ref.pd and ref.pd.IsFavorite
+                if isFav == nil and ref and ref.tool then   -- fallback: attribute tool (kalau PetData gak ke-pegang)
+                    for _, attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do
+                        if ref.tool:GetAttribute(attr) == true then isFav = true break end
+                    end
+                end
+                if isFav and ref and ref.tool then favoritePet(ref.tool); stillFav = stillFav + 1; task.wait(0.05) end
             end
-            if stillFav == 0 then break end   -- semua pet di list udah ke-unfav -> lanjut
-            print("[HactTelur] unfav list: masih "..stillFav.." pet ke-fav, retry ("..attempt.."/5)")
-            PetDetect.rebuild(true)   -- fresh -> cek ulang status fav pet list
-            task.wait(0.3)
+            if stillFav == 0 then
+                print(("[HactTelur] TIMING unfav OK attempt %d, %.2fs (0 getgc, referensi langsung)"):format(attempt, tick()-_ta))
+                break
+            end
+            print(("[HactTelur] unfav list: masih %d pet ke-fav, retry (%d/4), attempt makan %.2fs"):format(stillFav, attempt, tick()-_ta))
+            task.wait(0.4)   -- kasih waktu server proses unfav (gak perlu getgc buat nunggu, cukup delay)
         end
+        print(("[HactTelur] TIMING total unfav-confirm loop: %.2fs"):format(tick()-_t0))
         task.wait(0.3)   -- jeda biar unfav bener-bener ke-apply
-        -- re-scan: cek ulang pet yg mau dikirim setelah unfav (pastiin list masih valid)
+        -- re-scan: cek ulang pet yg mau dikirim setelah unfav (pastiin list masih valid) -- INI SATU-
+        -- SATUNYA getgc lagi yg tersisa (perlu, biar list final akurat sebelum trade)
+        local _t1 = tick()
         matched = getMatchedPets(cfg)
+        print(("[HactTelur] TIMING re-scan getMatchedPets: %.2fs"):format(tick()-_t1))
         _G.__hactStep = "abis unfav, matched="..#matched
         print("[HactTelur] abis unfav list -> "..#matched.." pet siap dikirim")
+        print(("[HactTelur] TIMING total dari getMatchedPets awal -> siap fire: %.2fs"):format(tick()-_tMatch1))
+        _G.__hactTimingLast = string.format("unfav:%.1fs rescan:%.1fs total:%.1fs", tick()-_t0-0.3, tick()-_t1, tick()-_tMatch1)
     end
     -- bagi pet rata ke semua target (rotasi)
     local buckets = {}
@@ -7345,7 +7367,12 @@ do
                 -- pilih target ONLINE yg paling KOSONG (room = max-total terbanyak, skip full)
                 local best, bestRoom = nil, -1
                 for nm, iv in pairs(akunInv) do
-                    if Players:FindFirstChild(nm) then
+                    -- v27.143: skip target yg BARU AJA ke-detect FULL in-game (lewat teks trade, 5 menit
+                    -- terakhir). Dulu ditandain doang (__hactFullTargets) tapi gak pernah dibaca -> target
+                    -- yg baru penuh bisa langsung kepilih lagi walau data panel (iv.max/total) masih basi.
+                    local fullTs = (_G.__hactFullTargets or {})[nm]
+                    local barusanFull = fullTs and (tick() - fullTs) < 300
+                    if Players:FindFirstChild(nm) and not barusanFull then
                         local room = (iv.max > 0) and (iv.max - iv.total) or 9999
                         if room > 0 and room > bestRoom then best = nm; bestRoom = room end
                     end
@@ -7364,7 +7391,7 @@ do
                     statusL.Text = "ERR: ".._G.__hactLastErr   -- v27.135: error SELALU keliatan
                 elseif statusL then
                     if (sent or 0) > 0 then
-                        statusL.Text = "terkirim "..tostring(sent).." -> "..best
+                        statusL.Text = "terkirim "..tostring(sent).." -> "..best.." | TIMING: "..(tostring(_G.__hactTimingLast or "?"))
                     else
                         -- v27.125: 0 kirim -> BEDAIN: filter nolak semua (ok:0) vs pet SIAP tapi trade gagal (ok>0)
                         local D = _G.__hactGiftDbg or {}
