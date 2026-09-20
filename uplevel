@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "uplevel-v0.73"
+local VERSION = "uplevel-v0.75"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -1139,22 +1139,34 @@ task.spawn(function()
                 end)
             end)
         end
-        -- TIKET: TradeEvents.SendRequest -> RespondRequest(tradeID, true)
+        -- TIKET: TradeEvents SEMUA remote -> RespondRequest(tradeID, true)
+        -- v0.75: port pola MARKET (lebih reliable) -- dulu cuma denger SendRequest doang (1 kesempatan
+        -- nangkep tradeID). Sekarang denger SEMUA RemoteEvent di TradeEvents (kayak UpdateTradeState dll
+        -- ikut kekirim tradeID juga) -- lebih banyak kesempatan nangkep args[1] yg valid.
         local te = ge:FindFirstChild("TradeEvents")
         if te then
             local sendReqRE = te:FindFirstChild("SendRequest")
             local respondRE = te:FindFirstChild("RespondRequest")
             local lastTradeID = nil
             if sendReqRE and respondRE then
-                sendReqRE.OnClientEvent:Connect(function(...)
-                    local args = {...}
-                    if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("-") then
-                        lastTradeID = args[1]
+                for _, r in ipairs(te:GetChildren()) do
+                    if r:IsA("RemoteEvent") then
+                        local lname = r.Name:lower()
+                        if not (lname:find("history") or lname:find("inventory")) then
+                            r.OnClientEvent:Connect(function(...)
+                                local args = {...}
+                                if type(args[1]) == "string" and #args[1] > 20 and args[1]:find("%-") then
+                                    lastTradeID = args[1]
+                                end
+                                if lname:find("cancel") or lname:find("reject") or lname:find("decline") then return end
+                                if r == sendReqRE and lastTradeID then
+                                    pcall(function() respondRE:FireServer(lastTradeID, true) end)
+                                    print("[UpLevel] auto-accept trade masuk: " .. lastTradeID:sub(1,8))
+                                end
+                            end)
+                        end
                     end
-                    if lastTradeID then
-                        pcall(function() respondRE:FireServer(lastTradeID, true) end)
-                    end
-                end)
+                end
             end
         end
     end
