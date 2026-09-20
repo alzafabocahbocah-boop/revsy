@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.456"
+local VERSION = "8.458"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -14645,6 +14645,10 @@ end)
             local LVLMAX_URL = "https://dry-glitter-63e4.petagee5.workers.dev/lvlmax"
             local req2 = request or http_request or (syn and syn.request)
             local haveLvl = (type(_G.__ZenxLvlAkun) == "table" and next(_G.__ZenxLvlAkun)) and true or false
+            -- v8.458: file PER-AKUN (dulu "zenx_lvlmax.txt" polos -> 1 device 4 akun market REBUTAN 1
+            -- file yg sama, yg terakhir nulis nimpa punya akun lain -- sama persis "file share bug"
+            -- yg pernah kejadian di pool up38kg sesi lalu).
+            local LVLMAX_CACHE_FILE_MKT = "zenx_lvlmax_cache_mkt_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
             while true do
                 pcall(function()
                     local raw
@@ -14656,7 +14660,7 @@ end)
                         if ok and res and res.Body then raw = res.Body end
                     end
                     if not raw or raw == "" then
-                        pcall(function() if isfile and isfile("zenx_lvlmax.txt") and readfile then local b = readfile("zenx_lvlmax.txt"); if b and b ~= "" then raw = b end end end)
+                        pcall(function() if isfile and isfile(LVLMAX_CACHE_FILE_MKT) and readfile then local b = readfile(LVLMAX_CACHE_FILE_MKT); if b and b ~= "" then raw = b end end end)
                     end
                     if raw and raw ~= "" then
                         local m, mAge, mData = {}, {}, {}
@@ -14673,11 +14677,12 @@ end)
                             TlvlAkun = m; _G.__ZenxLvlAkun = m; _G.__ZenxLvlAge500 = mAge; _G.__ZenxLvlData = mData
                             haveLvl = true
                             if BH.marketState then BH.marketState.lvlData = mData; pcall(function() BH.saveMarketState(BH.marketState) end) end
+                            pcall(function() writefile(LVLMAX_CACHE_FILE_MKT, tostring(raw)) end)   -- v8.458: PER-AKUN (dulu shared "zenx_lvlmax.txt" -> rebutan antar akun 1 device)
                         end
                     end
                 end)
-                if haveLvl then break end   -- v8.431: fetch /lvlmax CUMA sekali (pas awal masuk server garden). Udah dapet -> STOP (gak nge-loop HTTP terus). Rejoin = script ulang = fetch lagi.
-                task.wait(20)   -- belum dapet: retry 20s
+                if haveLvl then task.wait(60) else task.wait(20) end
+                -- v8.457: refetch tiap 60s terus (dulu "fetch sekali -> stop selamanya" - sama bug kayak up6kg/up38kg)
             end
         end)
 
