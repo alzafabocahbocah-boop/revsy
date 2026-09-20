@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.126"
+local VERSION = "up6kg-v10.127"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -3552,6 +3552,23 @@ do
     do
         local LVLMAX_URL = "https://dry-glitter-63e4.petagee5.workers.dev/lvlmax"
         local BAHAN_URL = "https://dry-glitter-63e4.petagee5.workers.dev/up6kg-bahan"   -- v10.94: bahan global, di-fetch barengan
+        -- v10.127: CACHE LOKAL per-akun (kayak zenx_hact_trade_<nama>.json punya hact) -- kalau panel
+        -- lagi mati/fetch gagal, load data TERAKHIR yg berhasil dari file lokal (lebih baik daripada
+        -- nil/kosong total). Tiap fetch SUKSES, cache di-update.
+        local LVLMAX_CACHE_FILE = "zenx_lvlmax_cache_" .. tostring((game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer.Name) or "x") .. ".json"
+        do
+            pcall(function()
+                if isfile and isfile(LVLMAX_CACHE_FILE) then
+                    local raw = readfile(LVLMAX_CACHE_FILE)
+                    local m, mc = {}, {}
+                    for pair in tostring(raw):gmatch("[^,]+") do
+                        local k, mx, cn = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")
+                        if k and mx then m[k] = tonumber(mx); mc[k] = tonumber(cn) end
+                    end
+                    if next(m) then _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; print("[up6kg] load cache lvlmax lokal (fallback awal, sblm fetch panel)") end
+                end
+            end)
+        end
         task.spawn(function()
             local haveLvl = false   -- v10.60: pas awal execute, retry cepet (10s) sampe dapet; abis dapet -> 30s
             while true do
@@ -3573,7 +3590,10 @@ do
                                 if k2 and v2 then m[k2] = tonumber(v2) end
                             end
                         end
-                        if next(m) then _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true end
+                        if next(m) then
+                            _G.ZenxLvlMax = m; _G.ZenxLvlCount = mc; haveLvl = true
+                            pcall(function() writefile(LVLMAX_CACHE_FILE, tostring(raw)) end)   -- v10.127: update cache lokal tiap fetch sukses
+                        end
                     end
                 end)
                 -- v10.94: BARENGAN fetch bahan global /up6kg-bahan (1 loop, bukan 2)
