@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.148  ══════════════════════════
+-- ══════════════════════════  HACT  v27.152  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.148"
+local VERSION = "v27.152"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2040,14 +2040,19 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
     end
     local totalSent = 0
     local idx = 1
+    local _roundEndTs = tick()   -- v27.150: timing PERSIS antar round (curiga gap 30s di sini)
     -- v27.65: SPAM RE-SEND. Kirim batch pet, accept, TUNGGU window HILANG (trade kelar),
     -- lalu re-send SISA pet sampai abis / target penuh. Dulu cuma 1 batch -> sisa gak kekirim.
     for round = 1, 40 do
+        local _roundGap = tick() - _roundEndTs
+        if _roundGap > 1 then print(("[HactTelur] TIMING round %d: GAP %.1fs sebelum mulai (dari akhir round sebelumnya)"):format(round, _roundGap)) end
+        local _roundStart = tick()
         if stopCheck and stopCheck() then _G.__hactStep = "STOP (cfg._running=false)"; break end
         if idx > #petList then _G.__hactStep = "petList HABIS (idx="..idx.." len="..#petList..")"; break end
         pcall(holdTradingTicket)  -- pegang tiket dulu tiap re-send
         _G.__hactTradeAktif = tick()   -- v27.111: MULAI trade (fire send tiket) -> fav MATI
         _G.__hactStep = "FIRE TIKET -> "..targetPlayer.Name
+        local _completeBaseline = _G.__hactLastTradeComplete or 0   -- v27.152: catat baseline SEBELUM fire, buat deteksi "Trade completed!" baru abis round ini
         pcall(function() TradeSys.sendReqRE:FireServer(targetPlayer) end)
         task.wait(0.3)   -- tunggu window kebuka (was 0.4)
         local added = 0
@@ -2091,8 +2096,19 @@ local function tradePetsToTarget(targetPlayer, petList, stopCheck)
             print("[HactTelur] HACT OTO: target "..targetPlayer.Name.." FULL -> stop + lapor")
             break
         end
-        task.wait(0.2)   -- jeda kecil antar batch (BUKAN nunggu window nutup)
+        -- v27.152: JANGAN wait tetap 0.2s -- POLL CEPAT nunggu sinyal "Trade completed!" (server-confirmed,
+        -- reliable, bukan nebak) ke-update SETELAH round ini. Begitu kedeteksi -> LANGSUNG lanjut round
+        -- berikutnya (bisa lebih cepet dari 0.2s kalau sinyal udah nongol duluan). Ada batas atas 3 detik
+        -- (kalau sinyal gak pernah muncul -- misal trade partial/gak lengkap -- jangan nyangkut selamanya,
+        -- lanjut aja pake fallback, sama kayak sebelumnya).
+        local _waitStart = tick()
+        while tick() - _waitStart < 3 do
+            if (_G.__hactLastTradeComplete or 0) > _completeBaseline then break end
+            task.wait(0.05)
+        end
         if added == 0 then break end   -- gak ada yg ke-add (target penuh / gak bisa) -> stop
+        print(("[HactTelur] TIMING round %d selesai dlm %.1fs (added=%d)"):format(round, tick()-_roundStart, added))
+        _roundEndTs = tick()
     end
     _G.__hactSending = false   -- v27.132
     return totalSent
@@ -3896,6 +3912,7 @@ do
                 -- begitu muncul -> automation STOP MENDADAK + unequip pet garden.
                 if low:find("trade completed") or low:find("trade complete") then
                     Auto.lastTradeComplete = tick()
+                    _G.__hactLastTradeComplete = tick()   -- v27.152: mirror ke _G -> bisa diakses tradePetsToTarget (didefinisiin SEBELUM Auto ada)
                 end
             end)
         end
@@ -3969,6 +3986,23 @@ local function isPausedForGift()
     -- v27.119: JEDA 30s (samain pill) -> pause SELURUH automation (hatch/reduce/sell/equip), bukan cuma
     -- RESUME_QUIET 3s. Dulu automation resume di 3s tapi pill masih JEDA -> user liat "masih running pas jeda".
     local dalamJeda = _G.__hactTradeAktif and (tick() - _G.__hactTradeAktif) < 30
+
+    -- v27.151: SAFETY CAP -- jeda ini SERING di-reset (tiap window trade keliatan, tiap 0.12s loop).
+    -- Kalau window trade nyangkut "visible" (gak ketutup sempurna, entah kenapa), jeda bisa gak
+    -- pernah abis SELAMANYA (di-reset terus tiap 0.12s walau gak ada proses trade beneran). Track
+    -- kapan STREAK jeda ini MULAI (bukan momen reset-nya) -> kalau udah >3 menit NONSTOP, paksa lepas
+    -- (anggap window-nya nyangkut, bukan trade beneran yg masih aktif).
+    if dalamJeda then
+        if not _G.__hactJedaStreakStart then _G.__hactJedaStreakStart = tick() end
+        if tick() - _G.__hactJedaStreakStart > 180 then
+            print("[HactTelur] \u{26A0} JEDA nyangkut >3menit NONSTOP -> paksa lepas (window trade kemungkinan nyangkut visible)")
+            dalamJeda = false
+            _G.__hactTradeAktif = nil
+            _G.__hactJedaStreakStart = nil
+        end
+    else
+        _G.__hactJedaStreakStart = nil
+    end
 
     -- safety: giftBusy nyangkut kelamaan (proses gift error gak ke-reset) -> paksa reset
     if Auto.giftBusy and Auto.giftBusySince and (tick() - Auto.giftBusySince) > 30 then
@@ -7405,6 +7439,11 @@ do
                 if not TRADECFG.on then if statusL then statusL.Text = "" end return end
                 if not next(akunInv) then if statusL then statusL.Text = "nunggu akun up3.8kg/up6kg dari panel" end return end
                 local Players = game:GetService("Players")
+                -- v27.149: pasang LAGI timing gap (kehapus gak sengaja pas fix v27.148) -- biar keliatan
+                -- PASTI apa gap 15-30 detik itu udah ketutup abis hapus fetch duplikat, atau ada penyebab lain.
+                local _cycleGap = _G.__hactLastCycleEnd and (tick() - _G.__hactLastCycleEnd) or 0
+                if _cycleGap > 1 then print(("[HactTelur] TIMING gap dari siklus sebelumnya: %.1fs"):format(_cycleGap)) end
+                _G.__hactLastGap = _cycleGap
                 -- pilih target ONLINE yg paling KOSONG (room = max-total terbanyak, skip full)
                 local best, bestRoom = nil, -1
                 for nm, iv in pairs(akunInv) do
@@ -7426,13 +7465,13 @@ do
                     age = -500,       -- age < 500 (max)
                     kgMin = 2, kgMax = 3,   -- v27.111: base kg 2-3 (di atas 2, di bawah 3)
                     unfavFirst = true }
-                if statusL then statusL.Text = "gift -> "..best.." (room "..bestRoom..")" end
+                if statusL then statusL.Text = "gift -> "..best.." (room "..bestRoom..")".." [gap sblmnya: "..string.format("%.1f", _G.__hactLastGap or 0).."s]" end
                 local sent = giftPetsByFilter(cfg)
                 if statusL and _G.__hactLastErr and _G.__hactLastErr ~= "" then
                     statusL.Text = "ERR: ".._G.__hactLastErr   -- v27.135: error SELALU keliatan
                 elseif statusL then
                     if (sent or 0) > 0 then
-                        statusL.Text = "terkirim "..tostring(sent).." -> "..best.." | TIMING: "..(tostring(_G.__hactTimingLast or "?"))
+                        statusL.Text = "terkirim "..tostring(sent).." -> "..best.." | gap-sblmnya:".. string.format("%.1f", _G.__hactLastGap or 0) .."s | TIMING: "..(tostring(_G.__hactTimingLast or "?"))
                     else
                         -- v27.125: 0 kirim -> BEDAIN: filter nolak semua (ok:0) vs pet SIAP tapi trade gagal (ok>0)
                         local D = _G.__hactGiftDbg or {}
