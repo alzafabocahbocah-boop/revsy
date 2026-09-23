@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.494-cf"
+local VERSION = "9.495-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -3647,6 +3647,7 @@ local function setup_otomatis(namaPreset)
         farm   = { place = "129343810645058", game = "GAG 2",        sc = "STAR FARM", url = "gag2"   },
         seed   = { place = "129343810645058", game = "GAG 2",        sc = "STAR SEED", url = "seed"   },
         market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
+        newmarket = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET", url = "market" },   -- v9.495: sama kayak market, dibedain lewat cfg.restart_min_override (khusus preset newmarket-arceus)
         gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
         hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
@@ -3738,6 +3739,14 @@ local function setup_otomatis(namaPreset)
         cfg.workspace_dir = "/sdcard/Arceus X/Workspace"
         cfg.autoexec_dir  = "/sdcard/Arceus X/Autoexec"
         ok("Executor: ARCEUS X (dipaksa via preset -arceus)")
+    end
+    -- v9.495: preset newmarket-arceus -- stagger_sec 45s (jeda antar buka client, termasuk pas rejoin
+    -- denyut mati -- semua lewat open_all yg sama) + restart terjadwal 180 menit (beda dari market
+    -- biasa yg 60 menit). Ditandain khusus lewat cfg.restart_min_override, dibaca di jadwal restart.
+    if (namaPreset or ""):lower() == "newmarket-arceus" then
+        cfg.stagger_sec = 45
+        cfg.restart_min_override = 180
+        ok("Preset newmarket-arceus: stagger_sec=45s, restart terjadwal tiap 180 menit")
     end
     if placeLama and tostring(placeLama) ~= tostring(pre.place) then
         info(("Place BERUBAH (%s -> %s) -> close semua client, reopen di place baru"):format(
@@ -5604,10 +5613,15 @@ local function run(cfg)
                 local wt = os.date("!*t", wibNow)
                 local per60 = _isUp38 or _isHact or _isUplevel or _isMarket -- up3.8kg + hact + uplevel + market: tiap 60 menit (:00)
                 local slotSize = per60 and 3600 or 1800                     -- 60min, up6kg 30min
-                local slot = math.floor(wibNow / slotSize)
                 local fireNow
-                if per60 then fireNow = (wt.min == 0)                        -- up3.8kg/hact: :00 doang (tiap jam)
-                else fireNow = (wt.min == 0 or wt.min == 30) end             -- up6kg: :00 & :30
+                if cfg.restart_min_override then
+                    -- v9.495: penanda khusus (mis. newmarket-arceus) -- interval custom (mis. 180 menit),
+                    -- gak selalu kelipatan yg pas sama ":00 tiap jam" -> pake modulo generik.
+                    slotSize = cfg.restart_min_override * 60
+                    fireNow = (wibNow % slotSize) < 60
+                elseif per60 then fireNow = (wt.min == 0)                   -- up3.8kg/hact/uplevel/market: :00 doang (tiap jam)
+                else fireNow = (wt.min == 0 or wt.min == 30) end            -- up6kg: :00 & :30
+                local slot = math.floor(wibNow / slotSize)
                 if fireNow and RESTART_JADWAL_SLOT ~= slot then
                     RESTART_JADWAL_SLOT = slot
                     -- v9.492: RE-TEST captcha pas restart terjadwal (:00) -> clear flag captcha, biar akun yg
