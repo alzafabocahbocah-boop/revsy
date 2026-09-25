@@ -1,11 +1,12 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.495-cf"
+local VERSION = "9.502-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
 RESTART_JADWAL_SLOT = -1   -- v9.468: slot 30-menit terakhir yg udah di-restart (jadwal UP6KG :00/:30 WIB)
+TP_GARDEN_SLOT = -1   -- v9.501: slot 4-jam terakhir yg udah di-TP ke Garden (in-memory doang, gak ditulis file)
 TEMBAK_SIG_PROSES = ""  -- v9.388: TEMBAK terakhir (isi+ts) yg udah nyela -- anti sticky-preempt
 _placeBerubah = false   -- v9.429: place baru berubah -> ps_link lama (place lama) nyasar -> abaikan PS -> public place baru sampe getps regenerate
 DEBUG_JEJAK = false     -- v9.411: mode debug (log tiap command + keputusan). Toggle DEBUGON/DEBUGOFF. Default off (nol overhead).
@@ -227,6 +228,11 @@ local function save_config(cfg)
     f:write(string.format("  win_mode=%d,\n",cfg.win_mode or 0))
     f:write(string.format("  tunggu_sec=%d,\n",cfg.tunggu_sec or 60))
     f:write(string.format("  konfirmasi_sec=%d,\n",cfg.konfirmasi_sec or 90))
+    -- v9.501: FIX -- restart_min_override & tp_garden_4h (penanda khusus newmarket-arceus) belum
+    -- pernah ditulis ke config file, cuma in-memory pas sesi pertama abis `pasang`. Kalau worker
+    -- restart (bukan pasang ulang), setting khusus ini ilang. Sekarang di-tulis, persist antar restart.
+    if cfg.restart_min_override then f:write(string.format("  restart_min_override=%d,\n",cfg.restart_min_override)) end
+    if cfg.tp_garden_4h then f:write("  tp_garden_4h=true,\n") end
     f:write(string.format("  orientasi=%q,\n",cfg.orientasi or ""))
     f:write(string.format("  keep_alive=%s,\n",tostring(cfg.keep_alive ~= false)))
     f:write(string.format("  auto_grid=%s,\n",tostring(cfg.auto_grid == true)))
@@ -1627,6 +1633,18 @@ local function open_one(cfg, pkg, link_client, alasan, pakai_S)
         end)
     end
     local _moveLink = pkg and KICK_DIURUS["move_link:" .. pkg]
+    -- v8.461: AUTO-EXPIRY -- dulu move_link cuma ke-clear kalau ada sinyal eksplisit (file balikhome dari
+    -- market, atau label "balikin"). Sekarang market.lua gak kirim sinyal itu lagi (0 komunikasi, sengaja).
+    -- Biar move_link gak nyangkut SELAMANYA (bisa nyeret akun balik ke server leveling/garden lama tiap
+    -- kali dibuka), auto-expire sendiri kalau udah lebih dari 60 menit sejak di-set -- gak perlu sinyal apapun.
+    if _moveLink and pkg then
+        local _mlTs = KICK_DIURUS["move_link_ts:" .. pkg]
+        if _mlTs and (os.time() - _mlTs) > 3600 then
+            _moveLink = nil
+            KICK_DIURUS["move_link:" .. pkg] = nil
+            KICK_DIURUS["move_link_ts:" .. pkg] = nil
+        end
+    end
     local _smtSave = SERVER_MOVE_TEMBAK
     if _moveLink and _moveLink ~= "" then link_client = _moveLink; SERVER_MOVE_TEMBAK = true end
     local url = build_url(cfg, link_client)
@@ -3647,7 +3665,7 @@ local function setup_otomatis(namaPreset)
         farm   = { place = "129343810645058", game = "GAG 2",        sc = "STAR FARM", url = "gag2"   },
         seed   = { place = "129343810645058", game = "GAG 2",        sc = "STAR SEED", url = "seed"   },
         market = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET",    url = "market" },
-        newmarket = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET", url = "market" },   -- v9.495: sama kayak market, dibedain lewat cfg.restart_min_override (khusus preset newmarket-arceus)
+        newmarket = { place = "129954712878723", game = "GAG 1 MARKET", sc = "MARKET", url = "newmarket" },   -- v9.498: FIX -- kemarin salah nunjuk ke url="market" (file lama v8.458), padahal "newmarket" itu file TERPISAH (v8.463+, punya fitur TP-Garden-terjadwal)
         gag1   = { place = "126884695634066", game = "GAG 1",        sc = "MARKET",    url = "market" },
         hact   = { place = "126884695634066", game = "GAG 1 HACT",   sc = "HACT",      url = "hact"   },
         panen  = { place = "126884695634066", game = "GAG 1 PANEN",  sc = "PANEN",     url = "panen"  },
@@ -3740,13 +3758,21 @@ local function setup_otomatis(namaPreset)
         cfg.autoexec_dir  = "/sdcard/Arceus X/Autoexec"
         ok("Executor: ARCEUS X (dipaksa via preset -arceus)")
     end
+    -- v9.502: preset market-arceus (LAMA, beda dari newmarket-arceus) -- restart terjadwal diubah
+    -- dari 1 jam jadi 2 jam (00/02/04/06/08.../22:00 WIB). Pattern match (bukan exact) biar kena juga
+    -- varian bernomor tim (market-arceus-1, market-arceus-2, dst) kalau ada.
+    if (namaPreset or ""):lower():match("^market%-arceus") then
+        cfg.restart_min_override = 120
+        ok("Preset market-arceus: restart terjadwal tiap 120 menit (2 jam)")
+    end
     -- v9.495: preset newmarket-arceus -- stagger_sec 45s (jeda antar buka client, termasuk pas rejoin
     -- denyut mati -- semua lewat open_all yg sama) + restart terjadwal 180 menit (beda dari market
     -- biasa yg 60 menit). Ditandain khusus lewat cfg.restart_min_override, dibaca di jadwal restart.
     if (namaPreset or ""):lower() == "newmarket-arceus" then
         cfg.stagger_sec = 45
         cfg.restart_min_override = 180
-        ok("Preset newmarket-arceus: stagger_sec=45s, restart terjadwal tiap 180 menit")
+        cfg.tp_garden_4h = true   -- v9.501: penanda -- worker (bukan script) yg nembak ke Garden public tiap 4 jam
+        ok("Preset newmarket-arceus: stagger_sec=45s, restart terjadwal tiap 180 menit, TP-Garden 4 jam (worker)")
     end
     if placeLama and tostring(placeLama) ~= tostring(pre.place) then
         info(("Place BERUBAH (%s -> %s) -> close semua client, reopen di place baru"):format(
@@ -5299,11 +5325,20 @@ local function run(cfg)
                                     KICK_DIURUS["move_link:" .. pkgBH] = nil   -- hapus ingatan (server leveling/hact) -> rejoin balik
                                     -- v9.486: MARKET (TradeWorld) -> nil (market public). SELAIN itu (up3.8kg dll) ->
                                     -- mapLink[pkg] = SERVER SENDIRI (up3.8kg balik ke server nya pas full, bukan nyangkut di hact).
-                                    local _bhLink = (tostring(cfg.place_id) == "129954712878723") and nil or (mapLink[pkgBH] or nil)
-                                    info(("[balik-home] %s FULL -> balik %s + hapus move_link"):format(akun, _bhLink and "server sendiri" or "MARKET"))
-                                    pcall(function() open_one(cfg, pkgBH, _bhLink, "balik-home", true) end)
-                                    KICK_DIURUS["tembak_ts:" .. pkgBH] = os.time()
-                                    TERAKHIR_BUKA[pkgBH] = os.time()
+                                    local _isMarketPlace = (tostring(cfg.place_id) == "129954712878723")
+                                    local _bhLink = _isMarketPlace and nil or (mapLink[pkgBH] or nil)
+                                    if _isMarketPlace then
+                                        -- v8.461/v9.496: MARKET udah self-teleport dari script sendiri (langsung, 0 tunggu
+                                        -- worker). File ini sekarang CUMA informational -- worker cukup bersihin
+                                        -- move_link, JANGAN open_one lagi (bakal dobel/bentrok sama teleport yg udah
+                                        -- kejadian duluan di script).
+                                        info(("[balik-home] %s FULL -> udah self-teleport di script, worker cuma bersihin move_link"):format(akun))
+                                    else
+                                        info(("[balik-home] %s FULL -> balik %s + hapus move_link"):format(akun, _bhLink and "server sendiri" or "MARKET"))
+                                        pcall(function() open_one(cfg, pkgBH, _bhLink, "balik-home", true) end)
+                                        KICK_DIURUS["tembak_ts:" .. pkgBH] = os.time()
+                                        TERAKHIR_BUKA[pkgBH] = os.time()
+                                    end
                                 end
                                 pcall(function() sh("su -c 'rm -f \"" .. _dd .. "/" .. fline .. "\"' 2>/dev/null") end)
                             end
@@ -5570,7 +5605,12 @@ local function run(cfg)
                         local tnowBuka = os.time()
                         for _, pkg in ipairs(perluTembak) do KICK_DIURUS["tembak_ts:" .. pkg] = tnowBuka end
                     else
-                    info(("[antrian] %d client OUT -> rejoin (1-1 tiap %ds)"):format(#perluTembak, jeda_client(cfg, 30)))
+                    -- v9.499: FIX -- dulu hardcode 30 di dua tempat (log message + sleep loop beneran),
+                    -- GAK baca cfg.stagger_sec sama sekali. Preset khusus (mis. newmarket-arceus,
+                    -- stagger_sec=45) jadi gak kepake di jalur "antrian" ini, selalu 30 detik apapun
+                    -- config-nya. Sekarang baca cfg.stagger_sec (fallback 30 kalau emang gak di-set).
+                    local _staggerAntrian = cfg.stagger_sec or 30
+                    info(("[antrian] %d client OUT -> rejoin (1-1 tiap %ds)"):format(#perluTembak, jeda_client(cfg, _staggerAntrian)))
                     for idx, pkg in ipairs(perluTembak) do
                         if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                         pcall(function() grid_satu(cfg, pkg) end)
@@ -5580,7 +5620,7 @@ local function run(cfg)
                         KICK_DIURUS["denyut_rejoin:" .. pkg] = os.time()   -- v9.382: BLOCK FORCE. Client
                         pcall(function() jaga_depan(cfg, mapLink) end)
                         if idx < #perluTembak then
-                            for _ = 1, jeda_client(cfg, 30) do
+                            for _ = 1, jeda_client(cfg, _staggerAntrian) do
                                 if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                                 os.execute("sleep 1")
                             end
@@ -5642,6 +5682,26 @@ local function run(cfg)
                     if okR and PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end
                     _apb_waktu = 0
                 end
+            end
+        end
+
+        -- v9.501: TP KE GARDEN PUBLIC tiap 4 jam (00/04/08/12/16/20:00 WIB) -- KHUSUS preset
+        -- newmarket-arceus (cfg.tp_garden_4h). Pindah dari script (self-teleport) ke WORKER atas
+        -- permintaan. In-memory doang (TP_GARDEN_SLOT, GAK ditulis ke file apapun) -- fire-and-forget,
+        -- gak nyimpen histori/state selain slot-guard biar gak nembak 2x dalam window 4 jam yg sama.
+        if cfg.tp_garden_4h then
+            local wibNow2 = os.time() + 7 * 3600
+            local wt2 = os.date("!*t", wibNow2)
+            local slot4h = math.floor(wibNow2 / 14400)
+            if wt2.hour % 4 == 0 and wt2.min == 0 and TP_GARDEN_SLOT ~= slot4h then
+                TP_GARDEN_SLOT = slot4h
+                info(("[tp-garden] jam %02d:00 WIB -> tembak SEMUA client ke Garden public (126884695634066)"):format(wt2.hour))
+                local _placeAsli, _srvAsli = cfg.place_id, SERVER_TERAKHIR
+                cfg.place_id = "126884695634066"; SERVER_TERAKHIR = "public"
+                for _, pkg in ipairs(split(cfg.pkgs or "")) do
+                    pcall(function() open_one(cfg, pkg, nil, "tp-garden-4h") end)
+                end
+                cfg.place_id, SERVER_TERAKHIR = _placeAsli, _srvAsli   -- balikin, JANGAN nyimpen apapun
             end
         end
 
@@ -6569,8 +6629,10 @@ local function run(cfg)
                                 KICK_DIURUS["move_link:" .. pkg] = nil
                             elseif _dest then
                                 KICK_DIURUS["move_link:" .. pkg] = _dest
+                                KICK_DIURUS["move_link_ts:" .. pkg] = os.time()   -- v8.461: timestamp buat auto-expiry
                             elseif mapLink[pkg] and mapLink[pkg] ~= "" then
                                 KICK_DIURUS["move_link:" .. pkg] = mapLink[pkg]
+                                KICK_DIURUS["move_link_ts:" .. pkg] = os.time()   -- v8.461: timestamp buat auto-expiry
                             end
                         end
                         for i, pkg in ipairs(pkgsT) do
@@ -7058,6 +7120,16 @@ local function run(cfg)
                 end
 
                 local fastStart = (lastOpen == 0)
+                -- v9.500: FIX -- refresh_map() CUMA jalan 1x pas startup (v7.49 matiin panggilan
+                -- periodiknya, kena "if false then" dead code, GAK PERNAH jalan lagi). Kalau akun
+                -- di-ganti/di-swap SETELAH worker udah jalan, mapAkun nyangkut nama LAMA SELAMANYA
+                -- (sampe worker di-restart total) -> akun lama terus dianggep "denyut mati". Sekarang
+                -- refresh tiap 90 detik di jalur yang BENERAN aktif.
+                if (os.time() - (lastMapRefresh or 0)) >= 90 then
+                    local adaBaruMap = refresh_map()
+                    lastMapRefresh = os.time()
+                    if adaBaruMap then warn("[map] akun baru/ganti kedeteksi -> mapAkun di-refresh") end
+                end
                 local h = open_all(cfg, only, batal, lapor_sela, mapLink, mapAkun, fastStart)
 
                 lastCekCaptcha = 0
