@@ -317,7 +317,7 @@ local function makeSideBtn(name, y)
         if showSideFn then showSideFn(name) end
     end)
 end
-makeSideBtn("AUTO LVL",14); makeSideBtn("MISC",56); makeSideBtn("LOG",98)
+makeSideBtn("AUTO LVL",14); makeSideBtn("MISC",56); makeSideBtn("LOG",98); makeSideBtn("TRADE",140)
 
 -- ===================== CONTENT CONTAINERS =====================
 local autoContent=mk("Frame",{Size=UDim2.new(1,-125,1,-44),Position=UDim2.new(0,125,0,44),BackgroundTransparency=1,Parent=main}); pad(autoContent,10)
@@ -338,8 +338,15 @@ local logScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTranspare
     AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=logContent})
 mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=logScroll})
 
+local tradeContent=mk("Frame",{Size=UDim2.new(1,-125,1,-44),Position=UDim2.new(0,125,0,44),BackgroundTransparency=1,Visible=false,Parent=main}); pad(tradeContent,10)
+local tradeScroll=mk("ScrollingFrame",{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,
+    ScrollBarThickness=4,ScrollBarImageColor3=C.line,CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=tradeContent})
+mk("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder,Parent=tradeScroll})
+
 showSideFn=function(name)
-    autoContent.Visible=(name=="AUTO LVL"); miscContent.Visible=(name=="MISC"); logContent.Visible=(name=="LOG")
+    autoContent.Visible=(name=="AUTO LVL"); miscContent.Visible=(name=="MISC")
+    logContent.Visible=(name=="LOG"); tradeContent.Visible=(name=="TRADE")
 end
 
 -- ===================== HELPERS REUSABLE =====================
@@ -1362,6 +1369,157 @@ local function updateUI(collected,kebun,sesiNum)
 end
 clrLogBtn.MouseButton1Click:Connect(function() logs={}; logBox.Text="— log dikosongkan —" end)
 
+-- ===================== AUTO-ACCEPT TRADE (background, selalu ON) =====================
+-- Nerima trade ticket/gift dari akun MARKET. Cuma di private server + garden.
+task.spawn(function()
+    local RS=game:GetService("ReplicatedStorage"); local WS=game:GetService("Workspace")
+    local function diGarden() return WS:FindFirstChild("TradeWorld")==nil end
+    local function getR()
+        local ge=RS:FindFirstChild("GameEvents"); local te=ge and ge:FindFirstChild("TradeEvents"); if not te then return nil end
+        return{sendReq=te:FindFirstChild("SendRequest"),respond=te:FindFirstChild("RespondRequest"),accept=te:FindFirstChild("Accept"),confirm=te:FindFirstChild("Confirm")}
+    end
+    local function fs2(sig) if not sig then return end
+        if getconnections then pcall(function() for _,c in ipairs(getconnections(sig)) do if c.Fire then pcall(function()c:Fire()end)elseif c.Function then pcall(function()c.Function()end)end end end) end
+        if firesignal then pcall(function()firesignal(sig)end) end
+    end
+    local function klik(b) if not b then return end pcall(function()fs2(b.MouseButton1Click)end); pcall(function()fs2(b.Activated)end) end
+    local function klikAccept()
+        local pg=plr:FindFirstChild("PlayerGui"); local tui=pg and pg:FindFirstChild("TradingUI")
+        local lt=tui and tui:FindFirstChild("LiveTrade"); local opts=lt and lt:FindFirstChild("Options")
+        klik(opts and opts:FindFirstChild("Accept"))
+    end
+    local function klikYes()
+        local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+        for _,nm in ipairs({"UnfairTrade","GenericConfirmationPrompt","GiveawayConfirmation_UI"}) do
+            local pp=pg:FindFirstChild(nm)
+            if pp then for _,bn in ipairs({"Yes","Confirm","Continue"}) do
+                local b=pp:FindFirstChild(bn,true)
+                if b and (b:IsA("ImageButton") or b:IsA("TextButton")) then
+                    local v=false; pcall(function()v=b.Visible end); if v then klik(b) end
+                end
+            end end
+        end
+    end
+    local conn=nil
+    while true do
+        pcall(function()
+            if not diGarden() then return end
+            if tostring(game.PrivateServerId or "")=="" then return end
+            local R=getR()
+            if R and R.respond and R.sendReq and not conn then
+                conn=R.sendReq.OnClientEvent:Connect(function(...)
+                    local id; for _,a in ipairs({...}) do if type(a)=="string" and #a>20 and a:find("-") then id=a; break end end
+                    if id then pcall(function()R.respond:FireServer(id,true)end) end
+                end)
+            end
+            local pg=plr:FindFirstChild("PlayerGui"); local tui=pg and pg:FindFirstChild("TradingUI")
+            local lt=tui and tui:FindFirstChild("LiveTrade"); local vis=false
+            if lt then pcall(function()vis=lt.Visible end) end
+            if lt and vis then
+                klikAccept()
+                if R and R.accept then pcall(function()R.accept:FireServer()end) end
+                if R and R.confirm then pcall(function()R.confirm:FireServer()end) end
+                klikYes()
+            end
+        end)
+        task.wait(0.5)
+    end
+end)
+
+-- ===================== AUTO-ACCEPT GIFT (background, selalu ON) =====================
+task.spawn(function()
+    local RS=game:GetService("ReplicatedStorage")
+    local function fireBtn(btn)
+        if not btn then return false end
+        if firesignal then pcall(function()firesignal(btn.MouseButton1Down)end); pcall(function()firesignal(btn.MouseButton1Click)end); return true end
+        return false
+    end
+    local function acceptAllGiftPopups()
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui")
+            local gn=pg and pg:FindFirstChild("Gift_Notification"); if not gn then return end
+            local outer=gn:FindFirstChild("Frame"); local inner=outer and (outer:FindFirstChild("Gift_Notification") or outer) or nil
+            for _,holder in ipairs((inner or gn):GetChildren()) do
+                local accept; local fr=holder:FindFirstChild("Frame")
+                if fr then accept=fr:FindFirstChild("Accept") end
+                if not accept then for _,dd in ipairs(holder:GetDescendants()) do if dd.Name=="Accept" and dd:IsA("GuiButton") then accept=dd break end end end
+                if accept and accept:IsA("GuiButton") then local vis=true; pcall(function()vis=accept.Visible end); if vis then fireBtn(accept) end end
+            end
+        end)
+    end
+    local function autoAcceptTradeWindow()
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui=pg:FindFirstChild("TradingUI"); local lt=tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts=lt:FindFirstChild("Options")
+                for _,bn in ipairs({"Accept","Confirm"}) do
+                    local b=opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function()firesignal(b.Activated)end) end
+                        if getconnections then for _,c in ipairs(getconnections(b.Activated)) do pcall(function()c:Fire()end) end end
+                    end
+                end
+                for _,d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="accept" then pcall(function()fireBtn(d)end) end
+                    end
+                end
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="lanjut" then
+                            pcall(function()fireBtn(d)end)
+                            if firesignal then pcall(function()firesignal(d.Activated)end) end
+                            if getconnections then for _,c in ipairs(getconnections(d.Activated)) do pcall(function()c:Fire()end) end end
+                        end
+                    end
+                end
+            end
+            local te=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents"); te=te and te:FindFirstChild("TradeEvents")
+            if te then
+                local a=te:FindFirstChild("Accept"); local c=te:FindFirstChild("Confirm")
+                if c then pcall(function()c:FireServer()end) end
+                if a then pcall(function()a:FireServer()end) end
+            end
+        end)
+    end
+    local ge=RS:WaitForChild("GameEvents",30)
+    if ge then
+        local giftRE=ge:FindFirstChild("GiftPet"); local acceptGiftRE=ge:FindFirstChild("AcceptPetGift")
+        if giftRE then
+            giftRE.OnClientEvent:Connect(function(petUUID)
+                if acceptGiftRE and type(petUUID)=="string" and #petUUID>8 then
+                    pcall(function()acceptGiftRE:FireServer(true,petUUID)end)
+                end
+                task.spawn(function() for _=1,10 do if true then acceptAllGiftPopups() end task.wait(0.25) end end)
+            end)
+        end
+        local te=ge:FindFirstChild("TradeEvents")
+        if te then
+            local sendReqRE=te:FindFirstChild("SendRequest"); local respondRE=te:FindFirstChild("RespondRequest"); local lastTradeID=nil
+            if sendReqRE and respondRE then
+                for _,r in ipairs(te:GetChildren()) do
+                    if r:IsA("RemoteEvent") then
+                        local lname=r.Name:lower()
+                        if not (lname:find("history") or lname:find("inventory")) then
+                            r.OnClientEvent:Connect(function(...)
+                                local args={...}
+                                if type(args[1])=="string" and #args[1]>20 and args[1]:find("%-") then lastTradeID=args[1] end
+                                if lname:find("cancel") or lname:find("reject") or lname:find("decline") then return end
+                                if r==sendReqRE and lastTradeID then pcall(function()respondRE:FireServer(lastTradeID,true)end) end
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    task.spawn(function() while true do task.wait(0.6); pcall(acceptAllGiftPopups) end end)
+    while true do task.wait(0.12); pcall(autoAcceptTradeWindow) end
+end)
+
 -- ===================== ENGINE (closure untuk hemat register _main) =====================
 local function _startEngine()
 -- ===================== PET MANAGEMENT =====================
@@ -2164,6 +2322,380 @@ task.spawn(function()
         end)
     end
 end)
+
+-- ===================== TAB TRADE =====================
+do
+    local RS=game:GetService("ReplicatedStorage"); local HS=game:GetService("HttpService")
+    local GE=RS:FindFirstChild("GameEvents"); local TRADE_CFG="zenx_trade_cfg.json"
+    local TR_ALL={}
+    for i=1,3 do TR_ALL[i]={targets={},tipe={},minKg=0,minAge=0,autoAcc=false,mode=(i==1 and "gift" or "off"),nama="Gift "..i} end
+    local activeTemplate=1; local TR=TR_ALL[1]
+    local function saveTr()
+        pcall(function()
+            if not writefile then return end
+            local data={active=activeTemplate,templates={}}
+            for i=1,3 do local t=TR_ALL[i]; data.templates[i]={targets=t.targets,tipe=t.tipe,minKg=t.minKg,minAge=t.minAge,autoAcc=t.autoAcc,mode=t.mode,nama=t.nama} end
+            writefile(TRADE_CFG,HS:JSONEncode(data))
+        end)
+    end
+    pcall(function()
+        if isfile and isfile(TRADE_CFG) and readfile then
+            local c=HS:JSONDecode(readfile(TRADE_CFG))
+            if type(c)=="table" and type(c.templates)=="table" then
+                for i=1,3 do
+                    local ct=c.templates[i]
+                    if type(ct)=="table" then
+                        local t=TR_ALL[i]
+                        if type(ct.targets)=="table" then local a={} for _,v in ipairs(ct.targets) do if type(v)=="string" then a[#a+1]=v end end t.targets=a end
+                        if type(ct.tipe)=="table" then local s={} for k,v in pairs(ct.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
+                        t.minKg=tonumber(ct.minKg) or 0; t.minAge=tonumber(ct.minAge) or 0; t.autoAcc=(ct.autoAcc==true)
+                        t.mode=(ct.mode=="trade" or ct.mode=="gift") and ct.mode or "off"
+                        if i==1 and t.mode=="trade" then t.mode="gift" end
+                        if type(ct.nama)=="string" and ct.nama~="" then t.nama=ct.nama end
+                    end
+                end
+                activeTemplate=tonumber(c.active) or 1
+                if activeTemplate<1 or activeTemplate>3 then activeTemplate=1 end
+                TR=TR_ALL[activeTemplate]
+            elseif type(c)=="table" then
+                local t=TR_ALL[1]
+                if type(c.targets)=="table" then local a={} for _,v in ipairs(c.targets) do if type(v)=="string" then a[#a+1]=v end end t.targets=a end
+                if type(c.tipe)=="table" then local s={} for k,v in pairs(c.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
+                t.minKg=tonumber(c.minKg) or 0; t.minAge=tonumber(c.minAge) or 0; t.autoAcc=(c.autoAcc==true)
+                t.mode=(c.mode=="trade" or c.mode=="gift") and c.mode or "off"
+                if t.mode=="trade" then t.mode="gift" end
+            end
+        end
+    end)
+
+    local TradeSys={}
+    do
+        local te=GE and GE:FindFirstChild("TradeEvents")
+        if te then
+            TradeSys.sendReqRE=te:FindFirstChild("SendRequest"); TradeSys.addItemRE=te:FindFirstChild("AddItem")
+            TradeSys.respondRE=te:FindFirstChild("RespondRequest"); TradeSys.acceptRE=te:FindFirstChild("Accept"); TradeSys.confirmRE=te:FindFirstChild("Confirm")
+        end
+    end
+    local GiftSys={}
+    do
+        GiftSys.giftRE=GE and GE:FindFirstChild("PetGiftingService")
+        if not GiftSys.giftRE then GiftSys.giftRE=RS:FindFirstChild("PetGiftingService",true) end
+        pcall(function()
+            local mods=RS:FindFirstChild("Modules") and RS.Modules:FindFirstChild("PetServices")
+            local gm=mods and mods:FindFirstChild("PetGiftingInputService")
+            if gm then local ok,mod=pcall(require,gm); if ok then GiftSys.pgs=mod end end
+        end)
+    end
+
+    local function fmtU(u) local s=tostring(u); if s:sub(1,1)~="{" then s="{"..s.."}" end return s end
+    local trBusy=false; local trStatus
+
+    local function setStat(s) if trStatus then trStatus.Text=s end print("[Trade] "..tostring(s)) end
+
+    local function clickBtnByText(root,texts)
+        if not root then return end
+        pcall(function()
+            for _,d in ipairs(root:GetDescendants()) do
+                if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                    local txt=(d:IsA("TextButton") and d.Text or ""):lower()
+                    for _,want in ipairs(texts) do
+                        if txt==want or txt:find(want,1,true) then
+                            if firesignal then pcall(function()firesignal(d.Activated)end) end
+                            if getconnections then for _,c in ipairs(getconnections(d.Activated)) do pcall(function()c:Fire()end) end end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+    local function autoAccTrade()
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui=pg:FindFirstChild("TradingUI"); local lt=tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts=lt:FindFirstChild("Options"); local acc=opts and opts:FindFirstChild("Accept")
+                if acc then if firesignal then pcall(function()firesignal(acc.Activated)end) end
+                    if getconnections then for _,c in ipairs(getconnections(acc.Activated)) do pcall(function()c:Fire()end) end end
+                end
+            end
+            clickBtnByText(pg,{"yes","confirm","continue","lanjut"})
+            if TradeSys.confirmRE then pcall(function()TradeSys.confirmRE:FireServer()end) end
+            if TradeSys.acceptRE then pcall(function()TradeSys.acceptRE:FireServer()end) end
+        end)
+    end
+    local function holdTicket()
+        local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid"); local bp=plr:FindFirstChild("Backpack")
+        if not (char and hum and bp) then return false end
+        local function findTk(cont) if not cont then return nil end
+            for _,t in ipairs(cont:GetChildren()) do if t:IsA("Tool") then local n=t.Name:lower(); if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end end end
+        end
+        if findTk(char) then return true end
+        local tk=findTk(bp); if not tk then return false end
+        pcall(function()hum:UnequipTools()end); task.wait(0.1); pcall(function()hum:EquipTool(tk)end); task.wait(0.15)
+        return findTk(char)~=nil
+    end
+
+    local function petsLolos()
+        local out={}; local bp=plr:FindFirstChild("Backpack"); local c=_kgContainer; if not bp then return out end
+        local function isFavP(t,uuid)
+            if uuid and c then local e=c[fmtU(uuid)] or c[tostring(uuid)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite==true then return true end end
+            for _,attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr)==true then return true end end
+            return false
+        end
+        local scan={}
+        for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end
+        if plr.Character then for _,t in ipairs(plr.Character:GetChildren()) do if t:IsA("Tool") then scan[#scan+1]=t end end end
+        for _,t in ipairs(scan) do
+            local uuid=t:GetAttribute("PET_UUID")
+            local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}
+            if uuid then
+                local isSup=(supAll[uuid] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)])
+                if not isSup then
+                    local e=c and (c[fmtU(uuid)] or c[tostring(uuid)])
+                    local tipe=(type(e)=="table" and e.PetType) and stripMutation(tostring(e.PetType)) or stripMutation(tostring(t:GetAttribute("f") or ""))
+                    if next(TR.tipe)==nil or TR.tipe[tipe] then
+                        local kgBase,age=0,0
+                        if type(e)=="table" and e.PetData then kgBase=(tonumber(e.PetData.BaseWeight) or 0)*1.1; age=tonumber(e.PetData.Level) or 0 end
+                        local function th(val,thr) thr=thr or 0; if thr<0 then return val<(-thr) end; return val>=thr end
+                        if th(kgBase,TR.minKg) and th(age,TR.minAge) and not isFavP(t,uuid) then
+                            out[#out+1]={uuid=uuid,tool=t,tipe=tipe,kg=kgBase,age=age}
+                        end
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    local function unfavIfNeeded(tool)
+        if not tool then return end
+        local uuid=tool:GetAttribute("PET_UUID")
+        local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}; local pr=_G.__ZenxSupProtect or {}
+        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)]) then return end
+        local fav=false
+        if uuid and _kgContainer then
+            local e=_kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
+            if type(e)=="table" then local pd=e.PetData; if type(pd)=="table" and (pd.IsFavorite or pd.Favorite or pd.Favorited) then fav=true end; if not fav and (e.IsFavorite or e.Favorite) then fav=true end end
+        end
+        if not fav then for _,attr in ipairs({"Favorited","Favourited","Favorite","Favourite","IsFavorited","IsFavourited"}) do if tool:GetAttribute(attr)==true then fav=true; break end end end
+        if fav then
+            local ge=game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+            local fRE=ge and ge:FindFirstChild("Favorite_Item")
+            if fRE then pcall(function()fRE:FireServer(tool)end); task.wait(0.2) end
+        end
+    end
+    local function unfavSemua(pets) for _,p in ipairs(pets) do unfavIfNeeded(p.tool) end task.wait(0.25) end
+
+    task.spawn(function()
+        task.wait(12)
+        while true do
+            task.wait(2)
+            pcall(function()
+                local bp=plr:FindFirstChild("Backpack")
+                local supOk=(next(_G.ZenxSupportKunci or {})~=nil) or (next(_G.ZenxSupportUuids or {})~=nil)
+                if bp and supOk then for _,t in ipairs(bp:GetChildren()) do if t:IsA("Tool") then unfavIfNeeded(t) end end end
+            end)
+        end
+    end)
+
+    local function tradeToTarget(targetPlayer,pets)
+        if not (TradeSys.sendReqRE and TradeSys.addItemRE and targetPlayer) then return 0 end
+        unfavSemua(pets); pcall(holdTicket)
+        pcall(function()TradeSys.sendReqRE:FireServer(targetPlayer)end); task.wait(0.5)
+        local added=0
+        local function cantAddMore()
+            local found=false; pcall(function()
+                local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if d:IsA("TextLabel") and d.Visible then local t=(d.Text or ""):lower(); if t:find("can't add more") or t:find("cant add more") then found=true break end end
+                end
+            end); return found
+        end
+        for _,p in ipairs(pets) do
+            if cantAddMore() then break end
+            pcall(function()TradeSys.addItemRE:FireServer("Pet",fmtU(p.uuid))end); added=added+1; task.wait(0.12)
+        end
+        for i=1,4 do autoAccTrade(); task.wait(0.3) end
+        return added
+    end
+    local function giftToTarget(targetPlayer,pets)
+        local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid")
+        if not (hum and targetPlayer) then return 0 end
+        unfavSemua(pets); local sent=0
+        for _,p in ipairs(pets) do
+            local petTool=p.tool
+            pcall(function()hum:EquipTool(petTool)end); task.wait(0.2)
+            if petTool.Parent~=char then pcall(function()hum:EquipTool(petTool)end); task.wait(0.2) end
+            if GiftSys.pgs and GiftSys.pgs.GivePet then pcall(function()GiftSys.pgs.GivePet(targetPlayer)end); task.wait(0.25) end
+            if petTool.Parent and GiftSys.giftRE then pcall(function()GiftSys.giftRE:FireServer("GivePet",targetPlayer,fmtU(p.uuid))end); task.wait(0.25) end
+            if not petTool.Parent then sent=sent+1 end
+            task.wait(0.1)
+        end
+        return sent
+    end
+
+    local function jalankan(mode)
+        if trBusy then setStat("lagi jalan, tunggu...") return end
+        trBusy=true
+        task.spawn(function()
+            local Players=game:GetService("Players"); local pets=petsLolos()
+            if #pets==0 then setStat("gak ada pet lolos filter"); trBusy=false; return end
+            local nTgt=0
+            for _,nama in ipairs(TR.targets) do
+                local tp=Players:FindFirstChild(nama)
+                if tp then
+                    nTgt=nTgt+1; setStat((mode=="trade" and "TRADE" or "GIFT").." -> "..nama.." ("..#pets.." pet)")
+                    if mode=="trade" then tradeToTarget(tp,pets) else giftToTarget(tp,pets) end
+                    task.wait(1); pets=petsLolos(); if #pets==0 then break end
+                end
+            end
+            if nTgt==0 then setStat("gak ada target ONLINE") else setStat("selesai ("..nTgt.." target)") end
+            trBusy=false
+        end)
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            TR_ALL[1].mode="gift"
+            pcall(function()
+                local mk2=_G.ZenxMarketAkun
+                if type(mk2)=="table" and next(mk2) then
+                    local Players=game:GetService("Players"); local tgt={}
+                    for nm,d in pairs(mk2) do
+                        if Players:FindFirstChild(nm) then
+                            local full=d and d.max and d.max>0 and d.total and d.total>=d.max
+                            if not full then tgt[#tgt+1]=nm end
+                        end
+                    end
+                    TR_ALL[1].targets=tgt
+                    if type(_G.ZenxUplevelGiftTipe)=="table" then TR_ALL[1].tipe=_G.ZenxUplevelGiftTipe end
+                    TR_ALL[1].minKg=6.0; TR_ALL[1].minAge=500; TR_ALL[1].mode="gift"
+                end
+            end)
+            if (TR.mode=="trade" or TR.mode=="gift") and not trBusy then
+                local pets=petsLolos(); if #pets>0 then jalankan(TR.mode) end
+            end
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            if TR.autoAcc then
+                pcall(function()
+                    local pg=plr:FindFirstChild("PlayerGui"); local gn=pg and pg:FindFirstChild("Gift_Notification"); if not gn then return end
+                    for _,d in ipairs(gn:GetDescendants()) do
+                        if d.Name=="Accept" and d:IsA("GuiButton") and d.Visible then
+                            if firesignal then pcall(function()firesignal(d.MouseButton1Click)end) end
+                            if getconnections then for _,c in ipairs(getconnections(d.MouseButton1Click)) do pcall(function()c:Fire()end) end end
+                        end
+                    end
+                end)
+                pcall(autoAccTrade)
+            end
+        end
+    end)
+
+    -- ===== UI TAB TRADE =====
+    local function trHeader(txt,lo)
+        local h=mk("Frame",{Size=UDim2.new(1,0,0,26),BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=lo,Parent=tradeScroll})
+        local bar=mk("Frame",{Size=UDim2.new(0,3,0,14),Position=UDim2.new(0,2,0.5,-7),BackgroundColor3=C.accent2 or C.accent,BorderSizePixel=0,Parent=h}); corner(bar,2)
+        local t=lbl(h,txt,11.5,C.accent2 or C.accent); t.Font=FONT_B; t.Position=UDim2.new(0,12,0,0); t.Size=UDim2.new(1,-12,1,0)
+    end
+    local tradeRefresh
+    local tplBtns={}
+    local tplRow=mk("Frame",{Size=UDim2.new(1,0,0,46),BackgroundTransparency=1,LayoutOrder=0,Parent=tradeScroll})
+    mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,7),Parent=tplRow})
+    local function updTplVisual()
+        for i,d in ipairs(tplBtns) do
+            local on=(i==activeTemplate)
+            d.btn.BackgroundColor3=on and C.cardSel or C.card; d.st.Color=on and C.accent or C.border
+            d.lbl.TextColor3=on and C.accent or C.textDim; d.sub.Text=TR_ALL[i].nama
+        end
+    end
+    local function switchTo(n)
+        activeTemplate=n; TR=TR_ALL[n]; saveTr(); updTplVisual(); if tradeRefresh then tradeRefresh() end
+    end
+    for i=1,3 do
+        local b=mk("TextButton",{Size=UDim2.new(1/3,-5,1,0),BackgroundColor3=C.card,Text="",AutoButtonColor=false,Parent=tplRow}); corner(b,9)
+        local st=stroke(b,C.border,1)
+        local l=lbl(b,"GIFT "..i,12,C.textDim); l.Font=FONT_B; l.Position=UDim2.new(0,0,0,7); l.Size=UDim2.new(1,0,0,16); l.TextXAlignment=Enum.TextXAlignment.Center
+        local sub=lbl(b,TR_ALL[i].nama,9,C.textMute); sub.Position=UDim2.new(0,0,0,25); sub.Size=UDim2.new(1,0,0,12); sub.TextXAlignment=Enum.TextXAlignment.Center
+        tplBtns[i]={btn=b,st=st,lbl=l,sub=sub}
+        local n=i; b.MouseButton1Click:Connect(function()switchTo(n)end)
+    end
+
+    trHeader("PENGATURAN",1)
+
+    -- Mode (OFF / GIFT / TRADE)
+    local modeRow=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=2,Parent=tradeScroll}); corner(modeRow,9); stroke(modeRow,C.border,1)
+    lbl(modeRow,"Mode",12,C.textDim).Position=UDim2.new(0,12,0,0)
+    local modeVal=lbl(modeRow,"OFF",13,C.text,Enum.TextXAlignment.Right); modeVal.Font=FONT_B; modeVal.Position=UDim2.new(0.5,0,0,0); modeVal.Size=UDim2.new(0.5,-10,1,0)
+    modeRow.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then
+        if TR.mode=="off" then TR.mode="gift" elseif TR.mode=="gift" then TR.mode="trade" else TR.mode="off" end
+        modeVal.Text=TR.mode:upper(); saveTr()
+    end end)
+
+    -- Target (input username)
+    local tgtRow=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=3,Parent=tradeScroll}); corner(tgtRow,9); stroke(tgtRow,C.border,1)
+    lbl(tgtRow,"Target",12,C.textDim).Position=UDim2.new(0,12,0,0)
+    local tgtBox=mk("TextBox",{Size=UDim2.new(0.55,0,0.7,0),Position=UDim2.new(0.43,0,0.15,0),BackgroundTransparency=1,
+        PlaceholderText="username",Text="",Font=FONT_B,TextSize=12,TextColor3=C.text,TextXAlignment=Enum.TextXAlignment.Right,Parent=tgtRow})
+    local tgtAddBtn=mk("TextButton",{Size=UDim2.new(0,32,0,24),Position=UDim2.new(1,-38,0.5,-12),BackgroundColor3=C.accent,
+        Text="+",Font=FONT_B,TextSize=14,TextColor3=Color3.new(1,1,1),Parent=tgtRow}); corner(tgtAddBtn,6)
+    tgtAddBtn.MouseButton1Click:Connect(function()
+        local nm=tgtBox.Text:match("^%s*(.-)%s*$"); if nm=="" then return end
+        local exists=false; for _,v in ipairs(TR.targets) do if v==nm then exists=true break end end
+        if not exists then TR.targets[#TR.targets+1]=nm; saveTr() end
+        tgtBox.Text=""
+        if tradeRefresh then tradeRefresh() end
+    end)
+
+    -- Min KG + Min Age
+    local function numRow(label,getter,setter,lo)
+        local f=mk("Frame",{Size=UDim2.new(1,0,0,38),BackgroundColor3=C.card,BorderSizePixel=0,LayoutOrder=lo,Parent=tradeScroll}); corner(f,9); stroke(f,C.border,1)
+        lbl(f,label,12,C.textDim).Position=UDim2.new(0,12,0,0)
+        local box=mk("TextBox",{Size=UDim2.new(0.55,0,0.7,0),Position=UDim2.new(0.43,0,0.15,0),BackgroundTransparency=1,
+            Text=tostring(getter()),Font=FONT_B,TextSize=12,TextColor3=C.text,TextXAlignment=Enum.TextXAlignment.Right,Parent=f})
+        box.FocusLost:Connect(function() local n=tonumber(box.Text); if n then setter(n) end; box.Text=tostring(getter()); saveTr() end)
+        return box
+    end
+    local minKgBox=numRow("Min KG (0=semua)",function()return TR.minKg end,function(n)TR.minKg=n end,4)
+    local minAgeBox=numRow("Min Age (0=semua)",function()return TR.minAge end,function(n)TR.minAge=n end,5)
+
+    trHeader("TARGET LIST",6)
+    local tgtListFrame=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=7,Parent=tradeScroll})
+    mk("UIListLayout",{Padding=UDim.new(0,4),Parent=tgtListFrame})
+
+    local function rebuildTgtList()
+        for _,c in ipairs(tgtListFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+        for idx,nm in ipairs(TR.targets) do
+            local row=mk("Frame",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.card,BorderSizePixel=0,Parent=tgtListFrame}); corner(row,8); stroke(row,C.border,1)
+            lbl(row,nm,12,C.text).Position=UDim2.new(0,10,0,0)
+            local del=mk("TextButton",{Size=UDim2.new(0,28,0,22),Position=UDim2.new(1,-34,0.5,-11),BackgroundColor3=Color3.fromRGB(180,50,50),
+                Text="✕",Font=FONT_B,TextSize=12,TextColor3=Color3.new(1,1,1),Parent=row}); corner(del,6)
+            local i=idx; del.MouseButton1Click:Connect(function() table.remove(TR.targets,i); saveTr(); if tradeRefresh then tradeRefresh() end end)
+        end
+    end
+
+    trHeader("AKSI",8)
+    local trStatusLbl=mk("TextLabel",{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,Text="—",Font=FONT_B,TextSize=12,TextColor3=C.textMute,LayoutOrder=9,Parent=tradeScroll})
+    trStatus=trStatusLbl
+
+    local sendBtn=mk("TextButton",{Size=UDim2.new(1,0,0,40),BackgroundColor3=C.accent,Text="KIRIM SEKARANG",Font=FONT_B,TextSize=13,TextColor3=Color3.new(1,1,1),LayoutOrder=10,Parent=tradeScroll}); corner(sendBtn,10)
+    sendBtn.MouseButton1Click:Connect(function() jalankan(TR.mode~="off" and TR.mode or "gift") end)
+
+    tradeRefresh=function()
+        updTplVisual()
+        modeVal.Text=TR.mode:upper()
+        minKgBox.Text=tostring(TR.minKg); minAgeBox.Text=tostring(TR.minAge)
+        tgtBox.Text=""
+        rebuildTgtList()
+    end
+    tradeRefresh()
+end -- end TAB TRADE
+
 end -- closes _startEngine
 _startEngine()
 end
