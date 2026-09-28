@@ -1,12 +1,8 @@
--- uplevel.lua v8.73 — fix crash silent: forward decl logs+logBox, addLog nil-safe sebelum UI ready
+-- uplevel.lua v8.74 — revert warning fixes (restore local function declarations)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
 
--- forward declarations (fungsi didefinisikan lebih bawah, dipakai lebih awal)
-local addLog, closePopup, getPlayerFarm
-local logs = {}  -- early init agar addLog aman dipanggil kapanpun
-local logBox  -- forward declare agar addLog bisa nil-check sebelum UI siap
 
 local RS = game:GetService("ReplicatedStorage")
 local plr = game.Players.LocalPlayer
@@ -77,7 +73,7 @@ local function setFruitFav(id, b)
     return true
 end
 
-local VERSION = "v8.73"
+local VERSION = "v8.74"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1055,7 +1051,7 @@ mk("UIPadding",{PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,4),PaddingTop=
 local psSeedNameLbl  -- label nama seed yang dipilih (di card utama)
 local psKebunLbl     -- label jumlah di kebun (di card utama)
 
-closePopup = function()
+local function closePopup()
     psPopup.Visible = false; _psPopupOpen = false
 end
 local function openPopup()
@@ -1285,7 +1281,7 @@ infoR("Target","4100 nightmare",10); infoR("Loop interval","5 detik",11)
 sectionHeader(logScroll,"\u{2022} LOG",1)
 local logBg=mk("Frame",{Size=UDim2.new(1,0,0,300),BackgroundColor3=C.card,BorderSizePixel=0,
     LayoutOrder=2,Parent=logScroll}); corner(logBg,10); stroke(logBg,C.border,1)
-logBox=mk("TextLabel",{Size=UDim2.new(1,-16,1,-16),Position=UDim2.new(0,8,0,8),
+local logBox=mk("TextLabel",{Size=UDim2.new(1,-16,1,-16),Position=UDim2.new(0,8,0,8),
     BackgroundTransparency=1,Text="— menunggu mulai —",TextColor3=C.textMute,
     Font=Enum.Font.Code,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left,
     TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=logBg})
@@ -1304,7 +1300,7 @@ cpyBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ===================== STATE =====================
-local running=false; local stopRequested=false
+local logs={}; local running=false; local stopRequested=false
 local totalNightmareCollected=0; local totalShovel=0; local totalFav=0; local _lastMutasiCount=0
 local _fruitCollectedSinceLastSell = 0  -- counter lintas processFruits, sell saat >=200
 local SELL_THRESHOLD = 200
@@ -1312,14 +1308,14 @@ local SELL_THRESHOLD = 200
 local _activeSesiNum = 1
 local _activeSesiDef = nil
 
-addLog = function(s)
+local function addLog(s)
     -- print hanya kalau WARN/ERROR/HEAL (jangan spam console)
     local str=tostring(s)
     if str:find("WARN") or str:find("TIDAK") or str:find("NIL") or str:find("HEAL") or str:find("ERROR") then
         print("[UPL] "..str)
     end
     table.insert(logs,1,str); if #logs>80 then logs[#logs]=nil end
-    if logBox then pcall(function() logBox.Text=table.concat(logs,"\n") end) end
+    pcall(function() logBox.Text=table.concat(logs,"\n") end)
 end
 
 -- waitForContainer: tunggu sampai _kgContainer ready (max maxSec detik)
@@ -1676,7 +1672,7 @@ local function _getFavTool()
     return findIn(plr.Character) or findIn(plr:FindFirstChild("Backpack"))
 end
 -- getPlayerFarm: cari folder farm milik player (pakai logic farmCenter)
-getPlayerFarm = function()
+local function getPlayerFarm()
     local farms=workspace:FindFirstChild("Farm"); if not farms then return nil end
     for _,f in ipairs(farms:GetChildren()) do
         local imp=f:FindFirstChild("Important")
