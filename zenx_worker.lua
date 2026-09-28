@@ -2200,7 +2200,7 @@ local function grid_hitung(cfg, pkgsPilih)
 
     local kol, bar
     local barPaksa = tonumber(cfg.grid_kolom)
-    if cfg.script_label == "UPLEVEL" then
+    if cfg.script_label == "UPLEVEL" or cfg.script_label == "UPLEVELNEW" then
         local _kol = math.ceil(n / 3)
         barPaksa = math.ceil(n / _kol)
     elseif tostring(cfg.script_label or ""):find("MARKET") then
@@ -3673,6 +3673,7 @@ local function setup_otomatis(namaPreset)
         up6kg  = { place = "126884695634066", game = "GAG 1 UP6KG",  sc = "UP6KG",      url = "up6kg"  },
         ["up3.8kg"] = { place = "126884695634066", game = "GAG 1 UP3.8KG", sc = "UP3.8KG", url = "up3.8kg" },
         uplevel = { place = "126884695634066", game = "GAG 1 UPLEVEL", sc = "UPLEVEL", url = "uplevel" },
+        uplevelnew = { place = "126884695634066", game = "GAG 1 UPLEVELNEW", sc = "UPLEVELNEW", url = "uplevelnew" },
         hactotomatis = { place = "126884695634066", game = "GAG 1 HACT OTO", sc = "HACT OTO", url = "hact" },
         campur = { place = "126884695634066", game = "GAG 1 CAMPUR", sc = "CAMPUR",    url = "hact"   },
     }
