@@ -1,4 +1,4 @@
--- uplevel.lua v8.80 — kurangi jeda collect: 0.3s antar scan, 0.1s loop utama (was 1s)
+-- uplevel.lua v8.81 — tambah auto buy Blueberry seed + auto buy Trading Ticket (background)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.80"
+local VERSION = "v8.81"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1574,6 +1574,122 @@ task.spawn(function()
     task.spawn(function() while true do task.wait(0.6); pcall(acceptAllGiftPopups) end end)
     while true do task.wait(0.12); pcall(autoAcceptTradeWindow) end
 end)
+
+-- ===================== AUTO BUY SEED (Blueberry) + AUTO BUY TICKET =====================
+-- Jalan background terus, tidak tergantung tombol START
+if not _G.__ZenxAutoBuySeed then
+    _G.__ZenxAutoBuySeed = true
+    task.spawn(function()
+        -- Dapatkan NET (SharedModules.Networking) — sama seperti seed script
+        local NET = nil
+        pcall(function()
+            local sm = RS:FindFirstChild("SharedModules")
+            local net = sm and sm:FindFirstChild("Networking")
+            if net then local ok,m = pcall(require,net); if ok then NET=m end end
+        end)
+        local function pkt(grp,name)
+            if not NET then return nil end
+            local g = NET[grp]; return g and g[name] or nil
+        end
+        -- cek stok seed di server: StockValues.SeedShop.Items.<nama> = NumberValue
+        local function seedStok(nama)
+            local ok,n = pcall(function()
+                local sv = RS:FindFirstChild("StockValues")
+                local shop = sv and sv:FindFirstChild("SeedShop")
+                local items = shop and shop:FindFirstChild("Items")
+                local entry = items and (items:FindFirstChild(nama) or items:FindFirstChild(nama.." Seed"))
+                return entry and entry.Value or 0
+            end)
+            return ok and n or 0
+        end
+        -- cek sheckles player
+        local function sheckles()
+            local ok,n = pcall(function()
+                local data = plr:FindFirstChild("Data") or RS:FindFirstChild("PlayerData")
+                    or RS:FindFirstChild("Data")
+                if data then
+                    local curr = data:FindFirstChild("Currency") or data:FindFirstChild("Sheckles")
+                    if curr then return curr.Value or 0 end
+                    for _,v in ipairs(data:GetDescendants()) do
+                        if v.Name:lower():find("sheck") and v:IsA("NumberValue") then return v.Value end
+                    end
+                end
+                return 0
+            end)
+            return ok and n or 0
+        end
+        addLog("[AutoBuy] seed+ticket loop start")
+        while true do
+            task.wait(4)
+            pcall(function()
+                local p = pkt("SeedShop","PurchaseSeed")
+                if p and p.Fire then
+                    local saldo = sheckles()
+                    if saldo > 0 then
+                        local stok = seedStok("Blueberry")
+                        if stok and stok > 0 then
+                            local beli = math.min(stok, 20)
+                            for i=1,beli do
+                                pcall(function() p:Fire("Blueberry") end)
+                                if i%5==0 then task.wait() end
+                            end
+                            addLog("[AutoBuy] Blueberry x"..beli.." fired (stok="..stok..")")
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+if not _G.__ZenxAutoTicket then
+    _G.__ZenxAutoTicket = true
+    task.spawn(function()
+        -- auto-detect nama tiket dari GearData (fallback "Trading Ticket")
+        local ticketName = "Trading Ticket"
+        pcall(function()
+            local dataF = RS:FindFirstChild("Data")
+            local mod = dataF and dataF:FindFirstChild("GearData")
+            if mod then
+                local ok,tbl = pcall(require,mod)
+                if ok and type(tbl)=="table" then
+                    for k,v in pairs(tbl) do
+                        local nm = type(k)=="string" and k or (type(v)=="table" and (v.Name or v.ItemName or v.DisplayName))
+                        if type(nm)=="string" then
+                            local low=nm:lower()
+                            if low:find("trading",1,true) and low:find("ticket",1,true) then ticketName=nm; break end
+                        end
+                    end
+                end
+            end
+        end)
+        local ge = RS:FindFirstChild("GameEvents")
+        local re = ge and ge:FindFirstChild("BuyGearStock")
+        if not re then addLog("[AutoTicket] BuyGearStock gak ketemu — skip"); return end
+        addLog("[AutoTicket] aktif, beli '"..ticketName.."' kalau < 2")
+        local function ticketCount()
+            local n=0
+            pcall(function()
+                local function scan(c) if not c then return end
+                    for _,t in ipairs(c:GetChildren()) do
+                        if t:IsA("Tool") then local low=t.Name:lower()
+                            if (low:find("trading") and low:find("ticket")) or low:find("trade ticket") then n=n+1 end
+                        end
+                    end
+                end
+                scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+            end)
+            return n
+        end
+        while true do
+            task.wait(5)
+            if ticketCount() < 2 then
+                pcall(function() re:FireServer(ticketName) end)
+                addLog("[AutoTicket] beli '"..ticketName.."' (tiket="..ticketCount()..")")
+            end
+        end
+    end)
+end
 
 -- ===================== ENGINE (closure untuk hemat register _main) =====================
 local function _startEngine()
