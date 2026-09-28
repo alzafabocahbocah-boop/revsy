@@ -1,4 +1,4 @@
--- uplevel.lua v8.76 — wrap dalam function() untuk bypass 200 local limit
+-- uplevel.lua v8.77 — fix cadangan 2: fav buah dari farm (bukan backpack), fix FavRE scan
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -37,43 +37,79 @@ end
 local plantRE = gameEvents:FindFirstChild("Plant_RE")
 local sellInventoryRE = gameEvents:FindFirstChild("Sell_Inventory")
 
--- ===== FAV BUAH — Backpack.SetFruitFavorite:Fire(id, bool) =====
-local _fruitFavNet = nil
-local function getFruitFavPacket()
-    if _fruitFavNet then return _fruitFavNet end
-    pcall(function()
-        local sm = RS:FindFirstChild("SharedModules")
-        local net = sm and sm:FindFirstChild("Networking")
-        if net then
-            local m = require(net)
-            _fruitFavNet = m and m.Backpack and m.Backpack.SetFruitFavorite
-        end
-    end)
-    return _fruitFavNet
-end
--- ambil semua buah dari backpack/character (punya attribute Id)
-local function getFruitsInBackpack()
-    local out = {}
-    local holders = {plr.Character, plr:FindFirstChildOfClass("Backpack")}
-    for _,h in ipairs(holders) do
-        if h then
-            for _,o in ipairs(h:GetChildren()) do
-                local id = o:GetAttribute("Id")
-                if id then out[#out+1] = {obj=o, id=tostring(id)} end
-            end
+-- ===== FAV BUAH — cari RemoteEvent "FavoriteFruit"/"SetFruitFavorite" di RS =====
+local _fruitFavRE = nil
+local function getFruitFavRE()
+    if _fruitFavRE then return _fruitFavRE end
+    -- cari di gameEvents dulu (paling cepat)
+    local names = {"FavoriteFruit","SetFruitFavorite","Favourite_Fruit","FavFruit","Favorite_Fruit"}
+    for _,n in ipairs(names) do
+        local v = gameEvents:FindFirstChild(n)
+        if v then _fruitFavRE = v; addLog("FavRE found in gameEvents: "..n); return v end
+    end
+    -- scan seluruh RS descendants
+    for _,v in ipairs(RS:GetDescendants()) do
+        local ln = v.Name:lower()
+        if (ln:find("favorite") or ln:find("favourite") or ln:find("favfruit")) and
+           (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) then
+            _fruitFavRE = v; addLog("FavRE found: "..v:GetFullName()); return v
         end
     end
+    addLog("WARN: FavoriteFruit RE tidak ditemukan di RS")
+    return nil
+end
+-- ambil buah dari farm (Plants_Physical) — bukan dari Backpack Roblox
+local function getFruitsFromFarm()
+    local out = {}
+    pcall(function()
+        local farm = getPlayerFarm()
+        if not farm then return end
+        local imp = farm:FindFirstChild("Important"); if not imp then return end
+        local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+        for _,pt in ipairs(plants:GetChildren()) do
+            local fruits = pt:FindFirstChild("Fruits"); if fruits then
+                for _,fruit in ipairs(fruits:GetChildren()) do
+                    local id = fruit:GetAttribute("Id") or fruit:GetAttribute("id")
+                    if id then out[#out+1] = {obj=fruit, id=tostring(id)} end
+                end
+            end
+        end
+    end)
     return out
 end
--- fav/unfav 1 buah berdasarkan id
+-- fav/unfav 1 buah berdasarkan id (fire RemoteEvent ke server)
 local function setFruitFav(id, b)
-    local p = getFruitFavPacket()
-    if not p then addLog("WARN: SetFruitFavorite packet gak ada"); return false end
-    pcall(function() p:Fire(tostring(id), b and true or false) end)
-    return true
+    local re = getFruitFavRE()
+    if re then
+        local ok,err = pcall(function()
+            if re:IsA("RemoteEvent") then re:FireServer(tostring(id), b and true or false)
+            else re:InvokeServer(tostring(id), b and true or false) end
+        end)
+        if ok then addLog("setFruitFav id="..tostring(id):sub(1,12).." b="..tostring(b)); return true
+        else addLog("WARN setFruitFav: "..tostring(err)) end
+    end
+    -- fallback: set attribute langsung di object (bisa jalan di beberapa versi game)
+    pcall(function()
+        local farm = getPlayerFarm(); if not farm then return end
+        local imp = farm:FindFirstChild("Important"); if not imp then return end
+        local plants = imp:FindFirstChild("Plants_Physical"); if not plants then return end
+        for _,pt in ipairs(plants:GetChildren()) do
+            local fruits = pt:FindFirstChild("Fruits"); if fruits then
+                for _,fruit in ipairs(fruits:GetChildren()) do
+                    local fid = fruit:GetAttribute("Id") or fruit:GetAttribute("id")
+                    if fid and tostring(fid) == tostring(id) then
+                        fruit:SetAttribute("Favorited", b)
+                        fruit:SetAttribute("Favourite", b)
+                        addLog("setFruitFav attr fallback id="..tostring(id):sub(1,12).." b="..tostring(b))
+                    end
+                end
+            end
+        end
+    end)
+    return false
 end
 
-local VERSION = "v8.76"
+local VERSION = "v8.77"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2107,15 +2143,23 @@ local function processFruits()
         -- fav 1 buah random dari backpack (biar cepat dideteksi dapat mutasi nightmare)
         local _favFruitId = nil
         task.spawn(function()
-            task.wait(1)  -- tunggu sebentar biar backpack settle
-            local fruits = getFruitsInBackpack()
-            if #fruits > 0 then
-                local pick = fruits[math.random(1, #fruits)]
+            task.wait(2)  -- tunggu biar farm fruits load
+            local farmFruits = getFruitsFromFarm()
+            -- prioritas: pilih nightmare fruit (biar fav nightmare, gak ke-shovel)
+            -- kalau gak ada nightmare, pilih buah random
+            local pick = nil
+            for _,f in ipairs(farmFruits) do
+                if f.obj:GetAttribute("Nightmare") == true then pick = f; break end
+            end
+            if not pick and #farmFruits > 0 then
+                pick = farmFruits[math.random(1, #farmFruits)]
+            end
+            if pick then
                 _favFruitId = pick.id
                 setFruitFav(pick.id, true)
                 addLog("Cad2: fav buah id="..tostring(pick.id):sub(1,12))
             else
-                addLog("Cad2: gak ada buah di backpack untuk di-fav")
+                addLog("Cad2: gak ada buah di farm untuk di-fav")
             end
         end)
         -- loop scan sampai nightmare muncul DAN tidak ada mutasi lain
