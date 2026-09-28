@@ -1,4 +1,4 @@
--- uplevel.lua v8.78 — fix autoIsiSemua: usedGlobal antar sesi, tipeMatch fullName fallback
+-- uplevel.lua v8.79 — fix autoIsiSemua: tunggu _kgContainer dulu biar sort kg benar
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.78"
+local VERSION = "v8.79"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -892,6 +892,19 @@ end
 autoIsiBtn.MouseButton1Click:Connect(function()
     autoIsiBtn.Text="\u{231B}  mengisi..."; autoIsiBtn.TextColor3=C.textDim
     task.spawn(function()
+        -- tunggu container load dulu (max 8s) — kalau container nil, kg semua 0 dan sort sia-sia
+        if not _kgContainer then
+            autoIsiBtn.Text="\u{231B}  tunggu data kg..."
+            local t0=tick()
+            while not _kgContainer and tick()-t0 < 8 do task.wait(0.3) end
+            if not _kgContainer then
+                autoIsiBtn.Text="\u{26A0}  data kg belum ada!"; autoIsiBtn.TextColor3=Color3.fromRGB(220,80,80)
+                task.delay(3,function()
+                    autoIsiBtn.TextColor3=C.textDim; autoIsiBtn.Text="\u{26A1}  Auto Isi Semua (rejoin)"
+                end)
+                return
+            end
+        end
         autoIsiSemua()
         autoIsiBtn.TextColor3=C.accent; autoIsiBtn.Text="\u{2713}  Semua terisi!"
         task.delay(2.5,function()
