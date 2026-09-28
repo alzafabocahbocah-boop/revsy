@@ -1,4 +1,4 @@
--- uplevel.lua v8.81 — tambah auto buy Blueberry seed + auto buy Trading Ticket (background)
+-- uplevel.lua v8.82 — auto plant default Blueberry/800 + fix autoIsiSemua guard (tidak looping)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.81"
+local VERSION = "v8.82"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -889,7 +889,10 @@ local function autoIsiSemua()
     renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
     renderLineup(3,SESI_CADANGAN_DEF); renderLineup(4,SESI_CADANGAN2_DEF)
 end
+local _autoIsiBusy=false
 autoIsiBtn.MouseButton1Click:Connect(function()
+    if _autoIsiBusy then return end  -- guard: jangan spawn ganda
+    _autoIsiBusy=true
     autoIsiBtn.Text="\u{231B}  mengisi..."; autoIsiBtn.TextColor3=C.textDim
     task.spawn(function()
         -- tunggu container load dulu (max 8s) — kalau container nil, kg semua 0 dan sort sia-sia
@@ -902,10 +905,12 @@ autoIsiBtn.MouseButton1Click:Connect(function()
                 task.delay(3,function()
                     autoIsiBtn.TextColor3=C.textDim; autoIsiBtn.Text="\u{26A1}  Auto Isi Semua (rejoin)"
                 end)
+                _autoIsiBusy=false
                 return
             end
         end
         autoIsiSemua()
+        _autoIsiBusy=false
         autoIsiBtn.TextColor3=C.accent; autoIsiBtn.Text="\u{2713}  Semua terisi!"
         task.delay(2.5,function()
             autoIsiBtn.TextColor3=C.textDim; autoIsiBtn.Text="\u{26A1}  Auto Isi Semua (rejoin)"
@@ -958,7 +963,7 @@ renderLineup(3,SESI_CADANGAN_DEF); renderLineup(4,SESI_CADANGAN2_DEF); setLineup
 
 -- ===================== MISC TAB =====================
 local _psRunning,_psSelectedSeed,_psTarget,_psPopupOpen,countSeedInGarden,getSeedsInBackpack
-_psRunning=false; _psSelectedSeed=nil; _psTarget=10; _psPopupOpen=false
+_psRunning=true; _psSelectedSeed="Blueberry"; _psTarget=800; _psPopupOpen=false
 do
 sectionHeader(miscScroll,"\u{2022} REJOIN",1)
 local rejNow=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.cardSel,
