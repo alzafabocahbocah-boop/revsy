@@ -1,7 +1,8 @@
--- uplevel.lua v8.74 — revert warning fixes (restore local function declarations)
+-- uplevel.lua v8.75 — wrap dalam function() untuk bypass 200 local limit
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+local function _main()
 
 
 local RS = game:GetService("ReplicatedStorage")
@@ -33,7 +34,6 @@ if not equipRE then
         end
     end)
 end
-local _removeItemRE = gameEvents:WaitForChild("Remove_Item", 5)
 local plantRE = gameEvents:FindFirstChild("Plant_RE")
 local sellInventoryRE = gameEvents:FindFirstChild("Sell_Inventory")
 
@@ -73,7 +73,7 @@ local function setFruitFav(id, b)
     return true
 end
 
-local VERSION = "v8.74"
+local VERSION = "v8.75"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -111,7 +111,6 @@ local sesiPool = _G.UPL_POOL
 
 -- ===== POOL FILE PERSIST (writefile/readfile — survive rejoin) =====
 local _poolFile = "zenx_uplevel_pool_" .. (plr.Name or "x") .. ".txt"
-local _HS = game:GetService("HttpService")
 
 local function savePoolFile()
     pcall(function()
@@ -545,7 +544,6 @@ end
 
 -- ===================== PET PICKER POPUP =====================
 local lineupHolders={}
-local _currentSesi=1
 
 local function openPetPicker(sesiNum, nama, idx, onPicked)
     local old=gui:FindFirstChild("ZenxUPLPicker"); if old then old:Destroy() end
@@ -704,41 +702,42 @@ end
 -- ===================== AUTO LVL TAB =====================
 sectionHeader(cfgScroll,"\u{2022} STATUS",1)
 
-local progCard=mk("Frame",{Size=UDim2.new(1,0,0,66),BackgroundColor3=C.card,BorderSizePixel=0,
-    LayoutOrder=2,Parent=cfgScroll}); corner(progCard,10); stroke(progCard,C.border,1)
-local pTopLbl=lbl(progCard,"NIGHTMARE COLLECTED",11,C.textMute)
-pTopLbl.Position=UDim2.new(0,14,0,10); pTopLbl.Size=UDim2.new(0.6,0,0,14)
-local progCountLbl=lbl(progCard,"0 / 4100",14,C.text,Enum.TextXAlignment.Right)
-progCountLbl.Font=FONT_B; progCountLbl.Position=UDim2.new(1,-106,0,8); progCountLbl.Size=UDim2.new(0,92,0,18)
-local progPctLbl=lbl(progCard,"0%",14,C.accent,Enum.TextXAlignment.Right)
-progPctLbl.Font=FONT_B; progPctLbl.Position=UDim2.new(1,-106,0,28); progPctLbl.Size=UDim2.new(0,92,0,14)
-local progBg=mk("Frame",{Size=UDim2.new(1,-28,0,5),Position=UDim2.new(0,14,0,50),
-    BackgroundColor3=C.input,BorderSizePixel=0,Parent=progCard}); corner(progBg,3)
-local progFill=mk("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=C.accent,BorderSizePixel=0,Parent=progBg}); corner(progFill,3)
-
-local statRow=mk("Frame",{Size=UDim2.new(1,0,0,52),BackgroundTransparency=1,LayoutOrder=3,Parent=cfgScroll})
-mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,6),Parent=statRow})
-local function statMini(parent,val,sub,col)
-    local c=mk("Frame",{Size=UDim2.new(0.25,-5,1,0),BackgroundColor3=C.card,BorderSizePixel=0,Parent=parent})
-    corner(c,10); stroke(c,C.border,1)
-    local v=lbl(c,val,18,col or C.text,Enum.TextXAlignment.Left); v.Font=FONT_B
-    v.Position=UDim2.new(0,9,0,7); v.Size=UDim2.new(1,-9,0,22)
-    local s=lbl(c,sub,9,C.textMute); s.Position=UDim2.new(0,9,0,31); s.Size=UDim2.new(1,-9,0,14)
-    return v
+local progCountLbl,progPctLbl,progFill,sesiStatL,nmKebunL,shovelL,favL,sesiBL,sesiInfoL
+do
+    local progCard=mk("Frame",{Size=UDim2.new(1,0,0,66),BackgroundColor3=C.card,BorderSizePixel=0,
+        LayoutOrder=2,Parent=cfgScroll}); corner(progCard,10); stroke(progCard,C.border,1)
+    local pTopLbl=lbl(progCard,"NIGHTMARE COLLECTED",11,C.textMute)
+    pTopLbl.Position=UDim2.new(0,14,0,10); pTopLbl.Size=UDim2.new(0.6,0,0,14)
+    progCountLbl=lbl(progCard,"0 / 4100",14,C.text,Enum.TextXAlignment.Right)
+    progCountLbl.Font=FONT_B; progCountLbl.Position=UDim2.new(1,-106,0,8); progCountLbl.Size=UDim2.new(0,92,0,18)
+    progPctLbl=lbl(progCard,"0%",14,C.accent,Enum.TextXAlignment.Right)
+    progPctLbl.Font=FONT_B; progPctLbl.Position=UDim2.new(1,-106,0,28); progPctLbl.Size=UDim2.new(0,92,0,14)
+    local progBg=mk("Frame",{Size=UDim2.new(1,-28,0,5),Position=UDim2.new(0,14,0,50),
+        BackgroundColor3=C.input,BorderSizePixel=0,Parent=progCard}); corner(progBg,3)
+    progFill=mk("Frame",{Size=UDim2.new(0,0,1,0),BackgroundColor3=C.accent,BorderSizePixel=0,Parent=progBg}); corner(progFill,3)
+    local statRow=mk("Frame",{Size=UDim2.new(1,0,0,52),BackgroundTransparency=1,LayoutOrder=3,Parent=cfgScroll})
+    mk("UIListLayout",{FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,6),Parent=statRow})
+    local function statMini(parent,val,sub,col)
+        local c=mk("Frame",{Size=UDim2.new(0.25,-5,1,0),BackgroundColor3=C.card,BorderSizePixel=0,Parent=parent})
+        corner(c,10); stroke(c,C.border,1)
+        local v=lbl(c,val,18,col or C.text,Enum.TextXAlignment.Left); v.Font=FONT_B
+        v.Position=UDim2.new(0,9,0,7); v.Size=UDim2.new(1,-9,0,22)
+        local s=lbl(c,sub,9,C.textMute); s.Position=UDim2.new(0,9,0,31); s.Size=UDim2.new(1,-9,0,14)
+        return v
+    end
+    sesiStatL=statMini(statRow,"1","SESI",C.accent)
+    nmKebunL=statMini(statRow,"0","KEBUN",C.text)
+    shovelL=statMini(statRow,"0","MUTASI",C.textDim)
+    favL=statMini(statRow,"0","FAVORIT",C.textDim)
+    local sesiF=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.card,BorderSizePixel=0,
+        LayoutOrder=4,Parent=cfgScroll}); corner(sesiF,10); stroke(sesiF,C.accent,1)
+    local sesiBadge=mk("Frame",{Size=UDim2.new(0,60,0,22),Position=UDim2.new(0,12,0.5,-11),
+        BackgroundColor3=C.cardSel,BorderSizePixel=0,Parent=sesiF}); corner(sesiBadge,6)
+    sesiBL=lbl(sesiBadge,"SESI 1",10,C.accent,Enum.TextXAlignment.Center)
+    sesiBL.Font=FONT_B; sesiBL.Size=UDim2.new(1,0,1,0)
+    sesiInfoL=lbl(sesiF,"leveling — kumpul nightmare",11.5,C.text)
+    sesiInfoL.Position=UDim2.new(0,80,0,0); sesiInfoL.Size=UDim2.new(1,-90,1,0)
 end
-local sesiStatL=statMini(statRow,"1","SESI",C.accent)
-local nmKebunL=statMini(statRow,"0","KEBUN",C.text)
-local shovelL=statMini(statRow,"0","MUTASI",C.textDim)
-local favL=statMini(statRow,"0","FAVORIT",C.textDim)
-
-local sesiF=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.card,BorderSizePixel=0,
-    LayoutOrder=4,Parent=cfgScroll}); corner(sesiF,10); stroke(sesiF,C.accent,1)
-local sesiBadge=mk("Frame",{Size=UDim2.new(0,60,0,22),Position=UDim2.new(0,12,0.5,-11),
-    BackgroundColor3=C.cardSel,BorderSizePixel=0,Parent=sesiF}); corner(sesiBadge,6)
-local sesiBL=lbl(sesiBadge,"SESI 1",10,C.accent,Enum.TextXAlignment.Center)
-sesiBL.Font=FONT_B; sesiBL.Size=UDim2.new(1,0,1,0)
-local sesiInfoL=lbl(sesiF,"leveling — kumpul nightmare",11.5,C.text)
-sesiInfoL.Position=UDim2.new(0,80,0,0); sesiInfoL.Size=UDim2.new(1,-90,1,0)
 
 -- ===================== TAB SESI (pill toggle) =====================
 sectionHeader(cfgScroll,"\u{2022} LINEUP PET",5)
@@ -793,14 +792,7 @@ local resetPoolBtn=mk("TextButton",{Size=UDim2.new(0.35,-3,1,0),BackgroundColor3
     Text="\u{1F5D1}  Reset Semua",Font=FONT_B,TextSize=11,TextColor3=Color3.fromRGB(220,80,80),
     AutoButtonColor=false,LayoutOrder=2,Parent=btnRowBot}); corner(resetPoolBtn,8); stroke(resetPoolBtn,Color3.fromRGB(80,30,30),1)
 
-local function _getSesiDef(n)
-    if n==1 then return SESI1_DEF
-    elseif n==2 then return SESI2_DEF
-    elseif n==3 then return SESI_CADANGAN_DEF
-    else return SESI_CADANGAN2_DEF end
-end
 local function setLineupTab(sesiNum)
-    _currentSesi=sesiNum
     local tabs={s1Tab,s2Tab,s3Tab,s4Tab}; local holders={s1Holder,s2Holder,s3Holder,s4Holder}
     for i,tab in ipairs(tabs) do
         local on=(i==sesiNum)
@@ -903,6 +895,9 @@ renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
 renderLineup(3,SESI_CADANGAN_DEF); renderLineup(4,SESI_CADANGAN2_DEF); setLineupTab(1)
 
 -- ===================== MISC TAB =====================
+local _psRunning,_psSelectedSeed,_psTarget,_psPopupOpen,countSeedInGarden,getSeedsInBackpack
+_psRunning=false; _psSelectedSeed=nil; _psTarget=10; _psPopupOpen=false
+do
 sectionHeader(miscScroll,"\u{2022} REJOIN",1)
 local rejNow=mk("TextButton",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.cardSel,
     Text="REJOIN NOW",Font=FONT_B,TextSize=13,TextColor3=C.accent,
@@ -950,19 +945,13 @@ end)
 
 sectionHeader(miscScroll,"\u{2022} PLANT SEED",5)
 
--- state plant seed
-local _psRunning = false       -- toggle on/off
-local _psSelectedSeed = nil    -- nama seed yang dipilih (string)
-local _psTarget = 10           -- target jumlah di kebun
-local _psPopupOpen = false     -- popup sedang terbuka?
-
+-- state plant seed (declared above do block)
 -- forward ref countSeedInGarden — diisi setelah getPlayerFarm tersedia
-local countSeedInGarden
 
 -- getSeedsInBackpack: scan backpack cari Tool seed (tidak butuh getPlayerFarm, bisa di sini)
 -- Returns list of {display=tool.Name, seedType=SeedAttr, count=Quantity}
 -- seedType adalah nilai attr "Seed" (mis. "Watermelon") — ini yang dipakai FireServer & countSeedInGarden
-local function getSeedsInBackpack()
+getSeedsInBackpack = function()
     local result = {}
     -- key = seedType (attr Seed value), value = entry tabel
     local seen = {}
@@ -1020,6 +1009,8 @@ local function getSeedsInBackpack()
     return result
 end
 
+end -- MISC TAB do block
+
 -- ===================== POPUP SEED PICKER =====================
 -- popup frame (overlay di atas GUI utama)
 -- parent ke `gui` (ScreenGui ZenxUpLevel) — didefinisikan sebelum UI block ini
@@ -1045,7 +1036,7 @@ local psScrollPop=mk("ScrollingFrame",{
     BackgroundTransparency=1,ScrollBarThickness=3,
     ScrollBarImageColor3=C.border,CanvasSize=UDim2.new(0,0,0,0),
     AutomaticCanvasSize=Enum.AutomaticSize.Y, ZIndex=51, Parent=psPopup})
-local _psPopLayout=mk("UIListLayout",{Padding=UDim.new(0,3),SortOrder=Enum.SortOrder.LayoutOrder,Parent=psScrollPop})
+mk("UIListLayout",{Padding=UDim.new(0,3),SortOrder=Enum.SortOrder.LayoutOrder,Parent=psScrollPop})
 mk("UIPadding",{PaddingLeft=UDim.new(0,4),PaddingRight=UDim.new(0,4),PaddingTop=UDim.new(0,2),Parent=psScrollPop})
 
 local psSeedNameLbl  -- label nama seed yang dipilih (di card utama)
@@ -1371,6 +1362,8 @@ local function updateUI(collected,kebun,sesiNum)
 end
 clrLogBtn.MouseButton1Click:Connect(function() logs={}; logBox.Text="— log dikosongkan —" end)
 
+-- ===================== ENGINE (closure untuk hemat register _main) =====================
+local function _startEngine()
 -- ===================== PET MANAGEMENT =====================
 -- modelByUuid: track model pet yang sedang di-equip di workspace (seperti uplevel asli)
 -- Hanya model di workspace yang perlu di-unequip. Container includes backpack = jangan loop semua.
@@ -1414,7 +1407,6 @@ local function getPetTipeFromUUID(uuid)
     return nil
 end
 
-local function _isPet(item) return item:FindFirstChild("PetToolLocal") or item:FindFirstChild("PetToolServer") end
 local function getUUIDAlt(item)
     -- coba PET_UUID dulu (attribute resmi), fallback ke UUID/uuid/Name
     local u=item:GetAttribute("PET_UUID"); if u then return fmtUUID(u) end
@@ -1663,14 +1655,6 @@ local function unequipBahanTua()
 end
 
 -- ===================== FRUIT MANAGEMENT =====================
-local function _getFavTool()
-    local function findIn(c)
-        if not c then return nil end
-        for _,item in ipairs(c:GetChildren()) do if item:IsA("Tool") and item.Name:find("Favorite Tool") then return item end end
-        return nil  -- explicit return
-    end
-    return findIn(plr.Character) or findIn(plr:FindFirstChild("Backpack"))
-end
 -- getPlayerFarm: cari folder farm milik player (pakai logic farmCenter)
 local function getPlayerFarm()
     local farms=workspace:FindFirstChild("Farm"); if not farms then return nil end
@@ -2179,3 +2163,7 @@ task.spawn(function()
         end)
     end
 end)
+end -- closes _startEngine
+_startEngine()
+end
+_main()
