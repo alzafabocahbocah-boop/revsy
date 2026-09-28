@@ -1,4 +1,4 @@
--- uplevel.lua v8.82 — auto plant default Blueberry/800 + fix autoIsiSemua guard (tidak looping)
+-- uplevel.lua v8.83 — tambah denyut + FPS tracker (kirim ke worker tiap 5s)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.82"
+local VERSION = "v8.83"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1692,6 +1692,91 @@ if not _G.__ZenxAutoTicket then
                 pcall(function() re:FireServer(ticketName) end)
                 addLog("[AutoTicket] beli '"..ticketName.."' (tiket="..ticketCount()..")")
             end
+        end
+    end)
+end
+
+-- ===================== DENYUT (kirim ke worker via writefile tiap 5s) =====================
+-- Worker baca zenx_denyut_<nama>.txt untuk deteksi client mati/putih -> auto rejoin
+if not _G.__ZenxFpsTrack then
+    _G.__ZenxFpsTrack = true
+    _G.__ZenxFps = 60  -- optimis (sebelum keukur, biar gak salah rejoin pas loading)
+    local cnt = 0
+    pcall(function()
+        game:GetService("RunService").RenderStepped:Connect(function() cnt = cnt + 1 end)
+    end)
+    local fpsLbl
+    pcall(function()
+        local plr2 = game:GetService("Players").LocalPlayer
+        local g = Instance.new("ScreenGui"); g.Name = "ZenxFpsHud"; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
+        pcall(function() g.Parent = (gethui and gethui()) or game:GetService("CoreGui") end)
+        if not g.Parent then g.Parent = plr2:WaitForChild("PlayerGui") end
+        fpsLbl = Instance.new("TextLabel", g)
+        fpsLbl.Size = UDim2.new(0, 120, 0, 34)
+        fpsLbl.Position = UDim2.new(1, -128, 0, 8)
+        fpsLbl.BackgroundColor3 = Color3.fromRGB(15, 15, 22); fpsLbl.BackgroundTransparency = 0.25
+        fpsLbl.Font = Enum.Font.GothamBold; fpsLbl.TextSize = 18
+        fpsLbl.TextColor3 = Color3.fromRGB(120, 255, 140); fpsLbl.BorderSizePixel = 0
+        fpsLbl.Text = "FPS --"
+        Instance.new("UICorner", fpsLbl).CornerRadius = UDim.new(0, 8)
+    end)
+    task.spawn(function()
+        while true do
+            task.wait(1); _G.__ZenxFps = cnt; cnt = 0
+            if fpsLbl then
+                local f = _G.__ZenxFps or 0
+                fpsLbl.Text = "FPS " .. f .. (f <= 5 and " (putih)" or "")
+                fpsLbl.TextColor3 = (f <= 5) and Color3.fromRGB(255, 90, 90)
+                    or (f <= 20) and Color3.fromRGB(255, 210, 90)
+                    or Color3.fromRGB(120, 255, 140)
+            end
+        end
+    end)
+end
+if not _G.__ZenxDenyut then
+    _G.__ZenxDenyut = true
+    task.spawn(function()
+        local function parseSheck(raw)
+            raw = tostring(raw or ""):gsub("[%s,]", ""):gsub("\226\130\162", "")
+            local n2 = tonumber(raw:match("^(%-?[%d%.]+)"))
+            if not n2 then return 0 end
+            local suf = (raw:match("([KkMmBbTt])") or ""):lower()
+            local mult = ({ k=1e3, m=1e6, b=1e9, t=1e12 })[suf] or 1
+            return math.floor(n2 * mult)
+        end
+        while true do
+            pcall(function()
+                local plr2 = game:GetService("Players").LocalPlayer
+                if plr2 and plr2.Name and writefile then
+                    local fps = math.floor(tonumber(_G.__ZenxFps) or 60)
+                    local skV = 0
+                    pcall(function()
+                        local ls = plr2:FindFirstChild("leaderstats")
+                        if ls then
+                            local sv = ls:FindFirstChild("Sheckles") or ls:FindFirstChild("Leaves")
+                                       or ls:FindFirstChild("Cash") or ls:FindFirstChild("Coins") or ls:FindFirstChild("Money")
+                            if sv and sv.Value then skV = parseSheck(sv.Value) end
+                            if skV == 0 then
+                                for _, v in ipairs(ls:GetChildren()) do
+                                    local nm = tostring(v.Name):lower()
+                                    if (nm:find("sheck") or nm:find("cash") or nm:find("coin") or nm:find("money") or nm:find("leaves")) and v:IsA("ValueBase") then
+                                        skV = parseSheck(v.Value); if skV > 0 then break end
+                                    end
+                                end
+                            end
+                        end
+                        if skV == 0 then
+                            local a = plr2:GetAttribute("Sheckles") or plr2:GetAttribute("Cash")
+                                      or plr2:GetAttribute("Money") or plr2:GetAttribute("Coins")
+                            if a then skV = parseSheck(a) end
+                        end
+                    end)
+                    -- format: ts;0;kg;fps;S<sheckles>;N0 (kompatibel sama worker)
+                    writefile("zenx_denyut_" .. plr2.Name .. ".txt",
+                        os.time() .. ";0;kg;" .. fps .. ";S" .. skV .. ";N0")
+                end
+            end)
+            task.wait(5)
         end
     end)
 end
