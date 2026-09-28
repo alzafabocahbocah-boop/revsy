@@ -1,4 +1,4 @@
--- uplevel.lua v8.77 — fix cadangan 2: fav buah dari farm (bukan backpack), fix FavRE scan
+-- uplevel.lua v8.78 — fix autoIsiSemua: usedGlobal antar sesi, tipeMatch fullName fallback
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.77"
+local VERSION = "v8.78"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -854,26 +854,32 @@ s4Tab.MouseButton1Click:Connect(function() setLineupTab(4) end)
 local function autoIsiSemua()
     local all=listPetsAll()
     table.sort(all,function(a,b) return (a.kg or 0)>(b.kg or 0) end)
+    addLog("AutoIsi: total pet="..#all)
     -- clear semua pool dulu
     for k in pairs(sesiPool[1]) do sesiPool[1][k]=nil end
     for k in pairs(sesiPool[2]) do sesiPool[2][k]=nil end
     for k in pairs(sesiPool[3]) do sesiPool[3][k]=nil end
     for k in pairs(sesiPool[4]) do sesiPool[4][k]=nil end
-    -- isi tiap sesi: ambil pet per tipe terbaik, urut slot
+    -- uuid global yang sudah dipakai (satu pet tidak boleh di dua sesi sekaligus)
+    local usedGlobal={}
     local function isiSesi(sesiNum, defs)
-        local used={}  -- uuid yang sudah dipake di sesi ini
         for _,sup in ipairs(defs) do
             local nm=sup.nama
             local count=0
             for _,p in ipairs(all) do
                 if count>=sup.jml then break end
-                if p.tipe==nm and not used[tostring(p.uuid)] then
+                -- cocokkan tipe: exact match ATAU tipe ada di fullName (buat jaga-jaga case beda)
+                local uuidStr=tostring(p.uuid)
+                local tipeMatch = (p.tipe==nm) or
+                    (p.fullName and p.fullName:find(nm,1,true) ~= nil)
+                if tipeMatch and not usedGlobal[uuidStr] then
                     if not sesiPool[sesiNum][nm] then sesiPool[sesiNum][nm]={} end
                     count=count+1
                     sesiPool[sesiNum][nm][count]={uuid=p.uuid, tipe=p.tipe, kg=p.kg}
-                    used[tostring(p.uuid)]=true
+                    usedGlobal[uuidStr]=true
                 end
             end
+            addLog("AutoIsi S"..sesiNum.." "..nm..": "..count.."/"..sup.jml)
         end
     end
     isiSesi(1,SESI1_DEF); isiSesi(2,SESI2_DEF)
