@@ -1,4 +1,4 @@
--- uplevelnew v8.83 — tambah denyut + FPS tracker (kirim ke worker tiap 5s)
+-- uplevelnew v8.84 — tambah scale GUI (gedein/kecilkan, persist ke file)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.83"
+local VERSION = "v8.84"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2967,5 +2967,59 @@ end -- end TAB TRADE
 
 end -- closes _startEngine
 _startEngine()
+
+-- ===================== SCALE GUI (tombol "range" + popup ukuran, persist) =====================
+do
+    local scaleWrap = mk("Frame",{Name="ZenxScaleWrap",Size=UDim2.new(1,0,1,0),
+        BackgroundTransparency=1,BorderSizePixel=0,Parent=gui})
+    main.Parent = scaleWrap
+    local uiScale = Instance.new("UIScale"); uiScale.Scale=1; uiScale.Parent=scaleWrap
+    local SCALES = {0.5,0.75,1,1.25,1.5,1.75}
+    local SFILE = "zenx_uplevelnew_scale.txt"
+    local function saveScale(sc) pcall(function() if writefile then writefile(SFILE,tostring(sc)) end end) end
+    local function loadScale()
+        local ok,v=pcall(function()
+            if isfile and isfile(SFILE) and readfile then return readfile(SFILE) end return nil end)
+        local n=ok and v and tonumber(v) or 1
+        for _,sc in ipairs(SCALES) do if math.abs(n-sc)<0.001 then return sc end end
+        return 1
+    end
+    -- popup pilihan ukuran (di gui, tidak ke-scale)
+    local pop=mk("Frame",{Name="ZenxRangePop",Size=UDim2.new(0,200,0,0),
+        AutomaticSize=Enum.AutomaticSize.Y,Position=UDim2.new(0.5,-100,0.3,0),
+        BackgroundColor3=C.panel,BorderSizePixel=0,Visible=false,ZIndex=800,Parent=gui})
+    corner(pop,10); stroke(pop,C.border,1.5)
+    local popPad=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
+        BackgroundTransparency=1,ZIndex=801,Parent=pop})
+    mk("UIListLayout",{Padding=UDim.new(0,6),HorizontalAlignment=Enum.HorizontalAlignment.Center,
+        SortOrder=Enum.SortOrder.LayoutOrder,Parent=popPad})
+    mk("UIPadding",{PaddingTop=UDim.new(0,10),PaddingBottom=UDim.new(0,10),
+        PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10),Parent=popPad})
+    local popT=lbl(popPad,"Ukuran GUI",14,C.accent)
+    popT.Size=UDim2.new(1,0,0,22); popT.Font=FONT_B; popT.ZIndex=802; popT.LayoutOrder=0
+    local scaleBtns={}; local rangeBtn
+    local function applyScale(sc)
+        uiScale.Scale=sc; saveScale(sc)
+        main.Position=UDim2.new(0.5/sc,-330,0.5/sc,-210)
+        for sv,b in pairs(scaleBtns) do b.BackgroundColor3=(math.abs(sv-sc)<0.001) and C.accent or C.card end
+        if rangeBtn then rangeBtn.Text="range x"..tostring(sc):gsub("%.",",") end
+    end
+    local lo=1
+    for _,sc in ipairs(SCALES) do
+        local txt="x"..tostring(sc):gsub("%.",",")
+        local b=mk("TextButton",{Size=UDim2.new(1,0,0,32),BackgroundColor3=C.card,Text=txt,
+            Font=FONT_B,TextSize=15,TextColor3=Color3.fromRGB(255,255,255),ZIndex=802,LayoutOrder=lo,Parent=popPad})
+        corner(b,7); scaleBtns[sc]=b; lo=lo+1
+        b.MouseButton1Click:Connect(function() applyScale(sc); pop.Visible=false end)
+    end
+    -- tombol range di titleBar
+    rangeBtn=mk("TextButton",{Size=UDim2.new(0,92,0,24),Position=UDim2.new(0,108,0.5,-12),
+        BackgroundColor3=C.card,Text="range",Font=FONT_B,TextSize=12,
+        TextColor3=C.textDim,Parent=titleBar})
+    corner(rangeBtn,7); stroke(rangeBtn,C.border,1)
+    rangeBtn.MouseButton1Click:Connect(function() pop.Visible=not pop.Visible end)
+    applyScale(loadScale())
+end
+
 end
 _main()
