@@ -1,4 +1,4 @@
--- uplevelnew v8.87 — semua file setting per player (trade cfg + scale)
+-- uplevelnew v8.88 — fix auto buy seed: scan GameEvents RE langsung (bukan NET)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.87"
+local VERSION = "v8.88"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1585,16 +1585,32 @@ end)
 if not _G.__ZenxAutoBuySeed then
     _G.__ZenxAutoBuySeed = true
     task.spawn(function()
-        -- Dapatkan NET (SharedModules.Networking) — sama seperti seed script
-        local NET = nil
-        pcall(function()
-            local sm = RS:FindFirstChild("SharedModules")
-            local net = sm and sm:FindFirstChild("Networking")
-            if net then local ok,m = pcall(require,net); if ok then NET=m end end
-        end)
-        local function pkt(grp,name)
-            if not NET then return nil end
-            local g = NET[grp]; return g and g[name] or nil
+        -- Scan GameEvents untuk RE beli seed (cari nama mirip "BuySeed"/"PurchaseSeed"/"SeedShop")
+        local buyRE = nil
+        local function cariRE()
+            if buyRE then return buyRE end
+            pcall(function()
+                local ge = RS:FindFirstChild("GameEvents")
+                if not ge then return end
+                for _,v in ipairs(ge:GetDescendants()) do
+                    if v:IsA("RemoteEvent") then
+                        local n = v.Name:lower()
+                        if n:find("buyseed") or n:find("purchaseseed") or n:find("seedshop") or n:find("buy_seed") then
+                            buyRE = v; return
+                        end
+                    end
+                end
+                -- fallback: scan seluruh RS
+                for _,v in ipairs(RS:GetDescendants()) do
+                    if v:IsA("RemoteEvent") then
+                        local n = v.Name:lower()
+                        if n:find("buyseed") or n:find("purchaseseed") or n:find("buy_seed") then
+                            buyRE = v; return
+                        end
+                    end
+                end
+            end)
+            return buyRE
         end
         -- cek stok seed di server: StockValues.SeedShop.Items.<nama> = NumberValue
         local function seedStok(nama)
@@ -1610,36 +1626,44 @@ if not _G.__ZenxAutoBuySeed then
         -- cek sheckles player
         local function sheckles()
             local ok,n = pcall(function()
-                local data = plr:FindFirstChild("Data") or RS:FindFirstChild("PlayerData")
-                    or RS:FindFirstChild("Data")
+                local ls = plr:FindFirstChild("leaderstats")
+                if ls then
+                    for _,v in ipairs(ls:GetChildren()) do
+                        if v.Name:lower():find("sheck") or v.Name:lower():find("coin") or v.Name:lower():find("curr") then
+                            return v.Value or 0
+                        end
+                    end
+                end
+                local data = plr:FindFirstChild("Data")
                 if data then
-                    local curr = data:FindFirstChild("Currency") or data:FindFirstChild("Sheckles")
-                    if curr then return curr.Value or 0 end
                     for _,v in ipairs(data:GetDescendants()) do
                         if v.Name:lower():find("sheck") and v:IsA("NumberValue") then return v.Value end
                     end
                 end
-                return 0
+                return 999999 -- fallback: anggap cukup saldo
             end)
-            return ok and n or 0
+            return ok and n or 999999
         end
         addLog("[AutoBuy] seed+ticket loop start")
         while true do
             task.wait(4)
             pcall(function()
-                local p = pkt("SeedShop","PurchaseSeed")
-                if p and p.Fire then
+                local re = cariRE()
+                if re then
                     local saldo = sheckles()
                     if saldo > 0 then
                         local stok = seedStok("Blueberry")
-                        if stok and stok > 0 then
-                            local beli = math.min(stok, 20)
-                            for i=1,beli do
-                                pcall(function() p:Fire("Blueberry") end)
-                                if i%5==0 then task.wait() end
-                            end
-                            addLog("[AutoBuy] Blueberry x"..beli.." fired (stok="..stok..")")
+                        local beli = (stok and stok > 0) and math.min(stok, 20) or 5
+                        for i=1,beli do
+                            pcall(function() re:FireServer("Blueberry") end)
+                            if i%5==0 then task.wait() end
                         end
+                        addLog("[AutoBuy] Blueberry x"..beli.." (RE="..re.Name.." stok="..(stok or "?")..")")
+                    end
+                else
+                    -- RE belum ketemu, log sekali per menit
+                    if math.floor(tick())%60 < 4 then
+                        addLog("[AutoBuy] RE beli seed belum ketemu, masih cari...")
                     end
                 end
             end)
