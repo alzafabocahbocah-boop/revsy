@@ -1,4 +1,4 @@
--- uplevelnew v8.93 — auto buy seed: monitor OnClientEvent + cek SeedShopData key
+-- uplevelnew v8.94 — auto buy seed: BuyDailySeedShopStock + key "Blueberry Seed"
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.93"
+local VERSION = "v8.94"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1588,56 +1588,23 @@ if not _G.__ZenxAutoBuySeed then
         -- tunggu GameEvents siap dulu
         task.wait(3)
         local ge = RS:FindFirstChild("GameEvents")
-        local re = ge and ge:FindFirstChild("BuySeedStock")
         local reDaily = ge and ge:FindFirstChild("BuyDailySeedShopStock")
-        addLog("[AutoBuy] BuySeedStock="..(re and "ADA" or "NIL").." Daily="..(reDaily and "ADA" or "NIL"))
+        local reSeed  = ge and ge:FindFirstChild("BuySeedStock")
+        addLog("[AutoBuy] Daily="..(reDaily and "ADA" or "NIL").." Seed="..(reSeed and "ADA" or "NIL"))
 
-        -- cek SeedShopData untuk tau key Blueberry yang benar
-        pcall(function()
-            local dataF = RS:FindFirstChild("Data")
-            local mod = dataF and (dataF:FindFirstChild("SeedShopData") or dataF:FindFirstChild("SeedData"))
-            if mod then
-                local ok,tbl = pcall(require, mod)
-                if ok and type(tbl) == "table" then
-                    -- cari key yang mengandung "Blueberry"
-                    local keys = {}
-                    for k in pairs(tbl) do
-                        local ks = tostring(k):lower()
-                        if ks:find("blueberry",1,true) then keys[#keys+1]=tostring(k) end
-                    end
-                    if #keys > 0 then
-                        addLog("[AutoBuy] SeedData keys Blueberry: "..table.concat(keys,", "))
-                    else
-                        addLog("[AutoBuy] SeedData: Blueberry NOT found, total="..tostring(#(function() local c=0 for _ in pairs(tbl) do c=c+1 end return c end)()))
-                    end
-                end
-            else
-                addLog("[AutoBuy] RS.Data.SeedShopData = NIL")
-            end
-        end)
+        -- key konfirmasi: "Blueberry Seed" (dari DailySeedShopData)
+        local SEED_KEY = "Blueberry Seed"
 
-        -- monitor OnClientEvent dari BuySeedStock untuk tau response server
-        if re then
-            re.OnClientEvent:Connect(function(...)
-                local args = {...}
-                local parts = {}
-                for i,v in ipairs(args) do parts[i] = tostring(v) end
-                addLog("[AutoBuy] Server resp: "..table.concat(parts,"|"))
-            end)
-        end
-
-        -- loop beli tiap 2 detik (lebih jarang supaya tidak spam)
         local buyCount = 0
         while true do
             task.wait(2)
             pcall(function()
-                if re then re:FireServer("Blueberry") end
-                if reDaily then reDaily:FireServer("Blueberry") end
+                if reDaily then reDaily:FireServer(SEED_KEY) end
+                if reSeed  then reSeed:FireServer(SEED_KEY) end
             end)
             buyCount = buyCount + 1
             if buyCount % 15 == 0 then
-                -- setiap 30 detik log status
-                addLog("[AutoBuy] fired x"..tostring(buyCount).." (Blueberry)")
+                addLog("[AutoBuy] fired x"..tostring(buyCount).." ("..SEED_KEY..")")
             end
         end
     end)
