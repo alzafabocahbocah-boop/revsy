@@ -1,4 +1,4 @@
--- uplevelnew v8.89 — fix auto buy seed: pakai RE BuySeedStock (konfirmasi dari hact)
+-- uplevelnew v8.90 — auto buy seed: langsung fire BuySeedStock tiap 1s (kayak hact)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4100)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.89"
+local VERSION = "v8.90"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1607,59 +1607,13 @@ if not _G.__ZenxAutoBuySeed then
             end)
             return buyRE
         end
-        -- cek stok seed di server: StockValues.SeedShop.Items.<nama> = NumberValue
-        local function seedStok(nama)
-            local ok,n = pcall(function()
-                local sv = RS:FindFirstChild("StockValues")
-                local shop = sv and sv:FindFirstChild("SeedShop")
-                local items = shop and shop:FindFirstChild("Items")
-                local entry = items and (items:FindFirstChild(nama) or items:FindFirstChild(nama.." Seed"))
-                return entry and entry.Value or 0
-            end)
-            return ok and n or 0
-        end
-        -- cek sheckles player
-        local function sheckles()
-            local ok,n = pcall(function()
-                local ls = plr:FindFirstChild("leaderstats")
-                if ls then
-                    for _,v in ipairs(ls:GetChildren()) do
-                        if v.Name:lower():find("sheck") or v.Name:lower():find("coin") or v.Name:lower():find("curr") then
-                            return v.Value or 0
-                        end
-                    end
-                end
-                local data = plr:FindFirstChild("Data")
-                if data then
-                    for _,v in ipairs(data:GetDescendants()) do
-                        if v.Name:lower():find("sheck") and v:IsA("NumberValue") then return v.Value end
-                    end
-                end
-                return 999999 -- fallback: anggap cukup saldo
-            end)
-            return ok and n or 999999
-        end
-        addLog("[AutoBuy] seed+ticket loop start")
+        addLog("[AutoBuy] seed loop start")
         while true do
-            task.wait(4)
+            task.wait(1)
             pcall(function()
                 local re = cariRE()
                 if re then
-                    local saldo = sheckles()
-                    if saldo > 0 then
-                        local stok = seedStok("Blueberry")
-                        local beli = (stok and stok > 0) and math.min(stok, 20) or 5
-                        for i=1,beli do
-                            pcall(function() re:FireServer("Blueberry") end)
-                            if i%5==0 then task.wait() end
-                        end
-                        addLog("[AutoBuy] Blueberry x"..beli.." (RE="..re.Name.." stok="..(stok or "?")..")")
-                    end
-                else
-                    -- RE belum ketemu, log sekali per menit
-                    if math.floor(tick())%60 < 4 then
-                        addLog("[AutoBuy] RE beli seed belum ketemu, masih cari...")
-                    end
+                    pcall(function() re:FireServer("Blueberry") end)
                 end
             end)
         end
