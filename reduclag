@@ -2,7 +2,7 @@
 -- standalone script, jalanin terpisah dari up6kg
 -- v1.6
 
-local VERSION = "reduclag-v1.6"
+local VERSION = "reduclag-v1.7"
 print("[ReducLag] " .. VERSION .. " start")
 
 local Lighting = game:GetService("Lighting")
@@ -18,6 +18,7 @@ local CFG = {
     disableWeather      = true,
     disableSky          = true,
     disableColorFX      = true,
+    disablePohon        = true,
     cleanupInterval     = 10,
 }
 
@@ -144,6 +145,44 @@ local function applySky(on)
     end)
 end
 
+local function applyPohon(on)
+    if not on then return end
+    pcall(function()
+        local WS = workspace
+        local roots = {}
+        local farm = WS:FindFirstChild("Farm")
+        if farm then
+            for _, f in ipairs(farm:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                    table.insert(roots, f)
+                end
+            end
+        end
+        if #roots == 0 then
+            for _, f in ipairs(WS:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                    table.insert(roots, f)
+                end
+            end
+        end
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end) end
+            end
+        end
+    end)
+    -- watch baru
+    task.spawn(function()
+        local farm = workspace:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if CFG.disablePohon and c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                task.wait(0.05); pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+end
+
 local function applyColorFX(on)
     if not on then return end
     pcall(function()
@@ -169,6 +208,7 @@ local function applyAll()
     applyWeather(CFG.disableWeather)
     applySky(CFG.disableSky)
     applyColorFX(CFG.disableColorFX)
+    applyPohon(CFG.disablePohon)
 end
 
 -- ============ GUI ============
@@ -210,7 +250,7 @@ local function buatGui()
 
         -- MAIN FRAME
         local fr = Instance.new("Frame")
-        fr.Size = UDim2.new(0, 200, 0, 310)
+        fr.Size = UDim2.new(0, 200, 0, 340)
         fr.Position = UDim2.new(0, 8/1.8, 0.5, -155/1.8)
         fr.AnchorPoint = Vector2.new(0, 0.5)
         fr.BackgroundColor3 = BG; fr.BackgroundTransparency = 0.08
@@ -235,7 +275,7 @@ local function buatGui()
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
         local ttl = Instance.new("TextLabel"); ttl.BackgroundTransparency = 1
         ttl.Font = Enum.Font.GothamBold; ttl.TextSize = 13; ttl.TextColor3 = AQ
-        ttl.Text = "REDUCLAG  v1.6"; ttl.Position = UDim2.new(0,14,0,0)
+        ttl.Text = "REDUCLAG  v1.7"; ttl.Position = UDim2.new(0,14,0,0)
         ttl.Size = UDim2.new(1,-14,1,0); ttl.TextXAlignment = Enum.TextXAlignment.Left
         ttl.Parent = hdr
 
@@ -270,6 +310,7 @@ local function buatGui()
             { key = "disableWeather",      label = "Weather+Models DESTROY" },
             { key = "disableSky",          label = "Sky/Atmos DESTROY" },
             { key = "disableColorFX",      label = "Color FX DESTROY" },
+            { key = "disablePohon",        label = "Pohon/Plants DESTROY" },
         }
 
         local applyMap = {
@@ -281,6 +322,7 @@ local function buatGui()
             disableWeather      = applyWeather,
             disableSky          = applySky,
             disableColorFX      = applyColorFX,
+            disablePohon        = applyPohon,
         }
 
         -- toggle yang destroy-permanent (sekali apply, locked)
@@ -293,6 +335,7 @@ local function buatGui()
             disableWeather = true,
             disableSky = true,
             disableColorFX = true,
+            disablePohon = true,
         }
 
         for i, tog in ipairs(toggles) do
@@ -378,6 +421,7 @@ task.spawn(function()
         if CFG.disableBloom then applyBloom(true) end
         if CFG.disableColorFX then applyColorFX(true) end
         if CFG.disableSky then applySky(true) end
+        if CFG.disablePohon then applyPohon(true) end
     end
 end)
 
