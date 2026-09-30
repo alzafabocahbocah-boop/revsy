@@ -932,7 +932,7 @@ end)
 
 -- ===================== KONTROL =====================
 sectionHeader(cfgScroll,"\u{2022} KONTROL",9)
-local swRow,setSw,_getSw,swEv=makeSwitch(cfgScroll,"AUTO LVL — START",10,false)
+local swRow,setSw,_getSw,swEv=makeSwitch(cfgScroll,"AUTO LVL — START",10,true)
 local swLbl=swRow:FindFirstChildWhichIsA("TextLabel")
 
 local statusCard=mk("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.card,BorderSizePixel=0,
@@ -2500,6 +2500,7 @@ swEv:Connect(function(nowOn)
     if nowOn then
         if running then return end
         running=true; stopRequested=false
+        -- auto-start: dipanggil dari task.defer di bawah
         if swLbl then swLbl.Text="AUTO LVL — RUNNING" end
         task.spawn(function()
             addLog("uplevel.lua "..VERSION.." start!")
@@ -2514,6 +2515,25 @@ swEv:Connect(function(nowOn)
     else
         stopRequested=true; setStatus("Menghentikan...",C.textDim); addLog("Stop diminta...")
         if swLbl then swLbl.Text="AUTO LVL — STOPPING..." end
+    end
+end)
+
+-- auto-start: trigger switch ON saat script pertama jalan
+task.defer(function()
+    if not running then
+        setSw(true)
+        if swLbl then swLbl.Text="AUTO LVL — RUNNING" end
+        running=true; stopRequested=false
+        task.spawn(function()
+            addLog("uplevel.lua "..VERSION.." start!")
+            setStatus("Running...",C.accent)
+            while not stopRequested do
+                if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
+                else runSesi2(); if not stopRequested then sesiAktif=1 end end
+            end
+            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=nil; addLog("Loop stop."); setStatus("Stopped")
+            setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
+        end)
     end
 end)
 
