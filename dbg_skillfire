@@ -192,74 +192,7 @@ local function fmtInfo(key, uuid)
     return s
 end
 
--- ============ EQUIP RE (untuk pickup+place) ============
-local equipRE = nil
-pcall(function()
-    for _, v in pairs(RS:GetDescendants()) do
-        if v.Name == "PetsService" and v:IsA("RemoteEvent") then
-            equipRE = v; break
-        end
-    end
-    if not equipRE then
-        for _, v in pairs(RS:GetDescendants()) do
-            if v.Name == "PetsService" then equipRE = v; break end
-        end
-    end
-end)
-
-local swapBusy = {}  -- debounce per uuid biar gak spam swap
-local petPosCache = {}  -- key=uuid_key, val=Vector3
-
-local function isUUID(s)
-    return type(s) == "string" and
-        s:match("[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-")
-end
-
-local RunService = game:GetService("RunService")
-RunService.Heartbeat:Connect(function()
-    local pp = workspace:FindFirstChild("PetsPhysical")
-    if not pp then return end
-    for _, mover in ipairs(pp:GetChildren()) do
-        for _, uuidObj in ipairs(mover:GetChildren()) do
-            if isUUID(uuidObj.Name) then
-                local key = uuidObj.Name:gsub("[{}]","")
-                for _, ch in ipairs(uuidObj:GetChildren()) do
-                    if ch:IsA("BasePart") then
-                        petPosCache[key] = ch.Position
-                        break
-                    end
-                end
-            end
-        end
-    end
-end)
-
-local function fmtUUID2(u)
-    local s = tostring(u):gsub("[{}]","")
-    return "{"..s.."}"
-end
-
-local function doSwap(key)
-    if swapBusy[key] then return end
-    swapBusy[key] = true
-    task.spawn(function()
-        pcall(function()
-            if equipRE then
-                local pos = petPosCache[key]
-                local uuid = fmtUUID2(key)
-                equipRE:FireServer("UnequipPet", uuid)
-                task.wait(0.05)
-                if pos then
-                    equipRE:FireServer("EquipPet", uuid, CFrame.new(pos))
-                else
-                    equipRE:FireServer("EquipPet", uuid, nil)
-                end
-            end
-        end)
-        task.wait(1)
-        swapBusy[key] = nil
-    end)
-end
+-- ZenxSkillSwap di-set oleh up6kg saat engine jalan
 
 -- ============ DETECT VIA SOUND (skill sound per pet) ============
 -- Diloph skill         : rbxassetid://109335879280084
@@ -285,8 +218,7 @@ local function onSkillSound(uuid, label)
     addLog("FIRE ["..infoStr.."] "..label, ORG)
     print("[dbg-skillfire] FIRE "..infoStr.." "..label)
     ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
-    local fn = _G.ZenxSkillSwap or doSwap
-    fn(key)
+    if _G.ZenxSkillSwap then _G.ZenxSkillSwap(key) end
     addLog("  → swap "..key:sub(1,8).."…", GR)
 end
 
