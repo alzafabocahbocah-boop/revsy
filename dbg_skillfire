@@ -1,6 +1,6 @@
 -- dbg_skillfire: debug kapan pet keluarin skill (PetCooldownsUpdated)
 -- standalone script, jalanin terpisah
--- v1.1 — add pickup+place on FIRE
+-- v1.2 — sound-based skill detection (diloph+peacock)
 
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -208,34 +208,6 @@ pcall(function()
 end)
 
 local swapBusy = {}  -- debounce per uuid biar gak spam swap
-
-local function fmtUUID2(u)
-    local s = tostring(u):gsub("[{}]","")
-    return "{"..s.."}"
-end
-
-local function doSwap(key, pos)
-    if swapBusy[key] then return end
-    swapBusy[key] = true
-    task.spawn(function()
-        pcall(function()
-            if equipRE then
-                local uuid = fmtUUID2(key)
-                equipRE:FireServer("UnequipPet", uuid)
-                task.wait(0.05)
-                equipRE:FireServer("EquipPet", uuid, CFrame.new(pos))
-            end
-        end)
-        task.wait(1)  -- cooldown antar swap
-        swapBusy[key] = nil
-    end)
-end
-
--- ============ DETECT VIA POSITION (SpottedEffect + Zone) ============
--- SpottedEffect = Diloph/Spotted skill, Zone = Peacock/zone skill
--- pre-cache posisi tiap UUID tiap heartbeat → lookup cepat saat VFX spawn
-
-local lastVFXFire = {}  -- debounce per uuid
 local petPosCache = {}  -- key=uuid_key, val=Vector3
 
 local function isUUID(s)
@@ -243,7 +215,6 @@ local function isUUID(s)
         s:match("[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-")
 end
 
--- update cache tiap heartbeat
 local RunService = game:GetService("RunService")
 RunService.Heartbeat:Connect(function()
     local pp = workspace:FindFirstChild("PetsPhysical")
@@ -263,57 +234,75 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-local function findClosestPetUUID(pos, maxDist)
-    local bestKey, bestDist = nil, maxDist or 5
-    for key, petPos in pairs(petPosCache) do
-        local d = (petPos - pos).Magnitude
-        if d < bestDist then
-            bestDist = d
-            bestKey = key
-        end
-    end
-    return bestKey
+local function fmtUUID2(u)
+    local s = tostring(u):gsub("[{}]","")
+    return "{"..s.."}"
 end
 
-local function onSkillVFX(obj, label)
-    task.defer(function()  -- defer biar posisi settle
-        local pos = nil
+local function doSwap(key)
+    if swapBusy[key] then return end
+    swapBusy[key] = true
+    task.spawn(function()
         pcall(function()
-            if obj:IsA("BasePart") then pos = obj.Position end
+            if equipRE then
+                local pos = petPosCache[key]
+                local uuid = fmtUUID2(key)
+                equipRE:FireServer("UnequipPet", uuid)
+                task.wait(0.05)
+                if pos then
+                    equipRE:FireServer("EquipPet", uuid, CFrame.new(pos))
+                else
+                    equipRE:FireServer("EquipPet", uuid, nil)
+                end
+            end
         end)
-        if not pos then return end
-        local key = findClosestPetUUID(pos, 5)
-        if not key then return end
-        local now = tick()
-        if lastVFXFire[key] and (now - lastVFXFire[key]) < 0.5 then return end
-        lastVFXFire[key] = now
-        fireCount = fireCount + 1
-        eventCount = eventCount + 1
-        local infoStr = fmtInfo(key, key)
-        addLog("FIRE ["..infoStr.."] "..label, ORG)
-        print("[dbg-skillfire] FIRE "..infoStr.." "..label)
-        ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
-        -- pickup+place langsung
-        local petPos = petPosCache[key]
-        if petPos then
-            doSwap(key, petPos)
-            addLog("  → swap "..key:sub(1,8).."…", GR)
-        end
+        task.wait(1)
+        swapBusy[key] = nil
     end)
 end
 
-addLog("✓ watching VFX spawns (pos-based)", GRN)
+-- ============ DETECT VIA SOUND (skill sound per pet) ============
+-- Diloph skill : rbxassetid://109335879280084
+-- Peacock skill: rbxassetid://73915703683838
 
-workspace.DescendantAdded:Connect(function(obj)
-    if obj.Name == "SpottedEffect" and obj:IsA("BasePart") then
-        onSkillVFX(obj, "spotted")
-    elseif obj.Name == "Zone" and obj:IsA("BasePart") then
-        local par = obj.Parent
-        if par and par.Name == "PetZoneAbilityVFX" then
-            onSkillVFX(obj, "zone")
-        end
-    end
-end)
+local SKILL_SOUNDS = {
+    ["rbxassetid://109335879280084"] = "diloph",
+    ["rbxassetid://73915703683838"]  = "peacock",
+}
+
+local lastFire = {}  -- debounce per uuid
+
+local function onSkillSound(uuid, label)
+    local key = uuid:gsub("[{}]","")
+    local now = tick()
+    if lastFire[key] and (now - lastFire[key]) < 1 then return end
+    lastFire[key] = now
+    fireCount = fireCount + 1
+    eventCount = eventCount + 1
+    local infoStr = fmtInfo(key, key)
+    addLog("FIRE ["..infoStr.."] "..label, ORG)
+    print("[dbg-skillfire] FIRE "..infoStr.." "..label)
+    ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
+    -- pickup+place langsung
+    doSwap(key)
+    addLog("  → swap "..key:sub(1,8).."…", GR)
+end
+
+addLog("✓ watching skill sounds", GRN)
+
+local pp = workspace:WaitForChild("PetsPhysical", 10)
+if pp then
+    pp.DescendantAdded:Connect(function(obj)
+        if not obj:IsA("Sound") then return end
+        local label = SKILL_SOUNDS[obj.SoundId]
+        if not label then return end
+        local uuid = obj.Parent and obj.Parent.Parent and obj.Parent.Parent.Name
+        if not uuid then return end
+        onSkillSound(uuid, label)
+    end)
+else
+    addLog("✗ PetsPhysical not found", RED)
+end
 
 -- ============ FALLBACK: PetCooldownsUpdated (untuk RDY info) ============
 local ge = RS:FindFirstChild("GameEvents")
