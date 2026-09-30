@@ -194,32 +194,43 @@ end
 
 -- ============ DETECT VIA POSITION (SpottedEffect + Zone) ============
 -- SpottedEffect = Diloph/Spotted skill, Zone = Peacock/zone skill
--- cari UUID pet terdekat dari posisi VFX
+-- pre-cache posisi tiap UUID tiap heartbeat → lookup cepat saat VFX spawn
 
 local lastVFXFire = {}  -- debounce per uuid
+local petPosCache = {}  -- key=uuid_key, val=Vector3
 
 local function isUUID(s)
     return type(s) == "string" and
         s:match("[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-")
 end
 
-local function findClosestPetUUID(pos, maxDist)
+-- update cache tiap heartbeat
+local RunService = game:GetService("RunService")
+RunService.Heartbeat:Connect(function()
     local pp = workspace:FindFirstChild("PetsPhysical")
-    if not pp then return nil end
-    local bestKey, bestDist = nil, maxDist or 5
+    if not pp then return end
     for _, mover in ipairs(pp:GetChildren()) do
         for _, uuidObj in ipairs(mover:GetChildren()) do
             if isUUID(uuidObj.Name) then
+                local key = uuidObj.Name:gsub("[{}]","")
                 for _, ch in ipairs(uuidObj:GetChildren()) do
                     if ch:IsA("BasePart") then
-                        local d = (ch.Position - pos).Magnitude
-                        if d < bestDist then
-                            bestDist = d
-                            bestKey = uuidObj.Name:gsub("[{}]","")
-                        end
+                        petPosCache[key] = ch.Position
+                        break
                     end
                 end
             end
+        end
+    end
+end)
+
+local function findClosestPetUUID(pos, maxDist)
+    local bestKey, bestDist = nil, maxDist or 5
+    for key, petPos in pairs(petPosCache) do
+        local d = (petPos - pos).Magnitude
+        if d < bestDist then
+            bestDist = d
+            bestKey = key
         end
     end
     return bestKey
