@@ -192,7 +192,44 @@ local function fmtInfo(key, uuid)
     return s
 end
 
--- ZenxSkillSwap di-set oleh up6kg saat engine jalan
+-- ============ STANDALONE SWAP ============
+local equipRE
+do
+    local RS2 = game:GetService("ReplicatedStorage")
+    for _, v in pairs(RS2:GetDescendants()) do
+        if v.Name == "PetsService" and v:IsA("RemoteEvent") then equipRE = v; break end
+    end
+end
+
+local function fmtUUID2(u)
+    local s = tostring(u):gsub("[{}]","")
+    return "{"..s.."}"
+end
+
+local function doSkillSwap(key)
+    if not equipRE then addLog("✗ equipRE nil", RED); return end
+    local uuid = fmtUUID2(key)
+    -- cari posisi dari PetsPhysical
+    local pos
+    local pp2 = workspace:FindFirstChild("PetsPhysical")
+    if pp2 then
+        local model = pp2:FindFirstChild(uuid)
+        if model then
+            pcall(function() pos = model:GetPivot().Position end)
+        end
+    end
+    pcall(function() equipRE:FireServer("UnequipPet", uuid) end)
+    task.wait(0.05)
+    if pos then
+        pcall(function() equipRE:FireServer("EquipPet", uuid, CFrame.new(pos)) end)
+    else
+        pcall(function() equipRE:FireServer("EquipPet", uuid, nil) end)
+    end
+    addLog("  ↺ standalone swap "..key:sub(1,8).."…", AQ)
+end
+
+-- ZenxSkillSwap di-set oleh up6kg saat engine jalan (prioritas)
+-- fallback: doSkillSwap standalone
 
 -- ============ DETECT VIA SOUND (skill sound per pet) ============
 -- Diloph skill         : rbxassetid://109335879280084
@@ -218,8 +255,12 @@ local function onSkillSound(uuid, label)
     addLog("SND  ["..infoStr.."] "..label, ORG)
     print("[dbg-skillfire] SND "..infoStr.." "..label)
     ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
-    if _G.ZenxSkillSwap then _G.ZenxSkillSwap(key) end
-    addLog("  → swap "..key:sub(1,8).."…", GR)
+    if _G.ZenxSkillSwap then
+        _G.ZenxSkillSwap(key)
+        addLog("  → swap via up6kg "..key:sub(1,8).."…", GR)
+    else
+        doSkillSwap(key)
+    end
 end
 
 addLog("✓ watching skill sounds", GRN)
