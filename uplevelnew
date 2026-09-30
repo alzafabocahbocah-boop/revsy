@@ -1,4 +1,4 @@
--- uplevelnew v8.97 — auto buy seed: BuyDailySeedShopStock + key "Blueberry Seed"
+-- uplevelnew v8.98 — fix doCollect: enabled+maxdist+sync fire, batch wait tiap 50
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.97"
+local VERSION = "v8.98"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2319,16 +2319,23 @@ local function doCollect(fruits)
         if ok and prompt then
             if not _loggedAction then
                 _loggedAction = true
-                dbgLog("prompt ActionText='"..tostring(prompt.ActionText).."' ObjectText='"..tostring(prompt.ObjectText).."'")
+                dbgLog("prompt Act='"..tostring(prompt.ActionText).."' Enabled="..tostring(prompt.Enabled).." MaxDist="..tostring(prompt.MaxActivationDistance))
             end
-            pcall(function() prompt.HoldDuration = 0 end)
-            task.spawn(fireproximityprompt, prompt)
+            -- force enable prompt + jarak tak terbatas + no hold
+            pcall(function()
+                prompt.Enabled = true
+                prompt.MaxActivationDistance = math.huge
+                prompt.HoldDuration = 0
+            end)
+            fireproximityprompt(prompt)
             collected = collected + 1
+            -- task.wait kecil setiap 50 buah untuk hindari rate-limit server
+            if i % 50 == 0 then task.wait(0.05) end
         else
             gagal = gagal + 1
         end
     end
-    task.wait(0.1)
+    task.wait(0.3)  -- tunggu server proses
     dbgLog("doCollect: "..collected.."/"..#fruits.." OK"..(gagal>0 and " | GAGAL: "..gagal or ""))
     return collected
 end
