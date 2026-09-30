@@ -1,6 +1,6 @@
 -- dbg_skillfire: debug kapan pet keluarin skill (PetCooldownsUpdated)
 -- standalone script, jalanin terpisah
--- v1.0
+-- v1.1 — add pickup+place on FIRE
 
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
@@ -192,6 +192,45 @@ local function fmtInfo(key, uuid)
     return s
 end
 
+-- ============ EQUIP RE (untuk pickup+place) ============
+local equipRE = nil
+pcall(function()
+    for _, v in pairs(RS:GetDescendants()) do
+        if v.Name == "PetsService" and v:IsA("RemoteEvent") then
+            equipRE = v; break
+        end
+    end
+    if not equipRE then
+        for _, v in pairs(RS:GetDescendants()) do
+            if v.Name == "PetsService" then equipRE = v; break end
+        end
+    end
+end)
+
+local swapBusy = {}  -- debounce per uuid biar gak spam swap
+
+local function fmtUUID2(u)
+    local s = tostring(u):gsub("[{}]","")
+    return "{"..s.."}"
+end
+
+local function doSwap(key, pos)
+    if swapBusy[key] then return end
+    swapBusy[key] = true
+    task.spawn(function()
+        pcall(function()
+            if equipRE then
+                local uuid = fmtUUID2(key)
+                equipRE:FireServer("UnequipPet", uuid)
+                task.wait(0.05)
+                equipRE:FireServer("EquipPet", uuid, CFrame.new(pos))
+            end
+        end)
+        task.wait(1)  -- cooldown antar swap
+        swapBusy[key] = nil
+    end)
+end
+
 -- ============ DETECT VIA POSITION (SpottedEffect + Zone) ============
 -- SpottedEffect = Diloph/Spotted skill, Zone = Peacock/zone skill
 -- pre-cache posisi tiap UUID tiap heartbeat → lookup cepat saat VFX spawn
@@ -254,6 +293,12 @@ local function onSkillVFX(obj, label)
         addLog("FIRE ["..infoStr.."] "..label, ORG)
         print("[dbg-skillfire] FIRE "..infoStr.." "..label)
         ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
+        -- pickup+place langsung
+        local petPos = petPosCache[key]
+        if petPos then
+            doSwap(key, petPos)
+            addLog("  → swap "..key:sub(1,8).."…", GR)
+        end
     end)
 end
 
