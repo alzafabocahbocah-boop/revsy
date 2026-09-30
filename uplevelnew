@@ -1,4 +1,4 @@
--- uplevelnew v8.96 — auto buy seed: BuyDailySeedShopStock + key "Blueberry Seed"
+-- uplevelnew v8.97 — auto buy seed: BuyDailySeedShopStock + key "Blueberry Seed"
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -1359,9 +1359,9 @@ end)
 
 -- ===================== DEBUG COLLECT LOG =====================
 sectionHeader(logScroll,"\u{2022} DEBUG COLLECT",4)
-local dbgBg=mk("Frame",{Size=UDim2.new(1,0,0,200),BackgroundColor3=C.card,BorderSizePixel=0,
+local dbgBg=mk("Frame",{Size=UDim2.new(1,0,0,230),BackgroundColor3=C.card,BorderSizePixel=0,
     LayoutOrder=5,Parent=logScroll}); corner(dbgBg,10); stroke(dbgBg,Color3.fromRGB(220,100,60),1)
-local dbgBox=mk("TextLabel",{Size=UDim2.new(1,-16,1,-36),Position=UDim2.new(0,8,0,8),
+local dbgBox=mk("TextLabel",{Size=UDim2.new(1,-16,1,-66),Position=UDim2.new(0,8,0,8),
     BackgroundTransparency=1,Text="— menunggu collect —",TextColor3=C.textMute,
     Font=Enum.Font.Code,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
     TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=dbgBg})
@@ -1374,10 +1374,21 @@ dbgCpyBtn.MouseButton1Click:Connect(function()
     dbgCpyBtn.Text="COPIED!"; task.delay(1.5,function() dbgCpyBtn.Text="COPY DEBUG" end)
 end)
 local dbgLogs={}
+local dbgAllLogs={}  -- semua log, tidak terpotong, untuk COPY
 local function dbgLog(s)
-    table.insert(dbgLogs,1,tostring(s)); if #dbgLogs>30 then dbgLogs[#dbgLogs]=nil end
+    local line=tostring(s)
+    table.insert(dbgAllLogs,line)
+    table.insert(dbgLogs,1,line); if #dbgLogs>50 then dbgLogs[#dbgLogs]=nil end
     pcall(function() dbgBox.Text=table.concat(dbgLogs,"\n") end)
 end
+-- COPY ALL button — copy semua log dari awal
+local dbgCpyAllBtn=mk("TextButton",{Size=UDim2.new(1,-16,0,24),Position=UDim2.new(0,8,1,-56),
+    BackgroundColor3=Color3.fromRGB(60,140,220),Text="COPY ALL",Font=FONT_B,TextSize=12,
+    TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=dbgBg}); corner(dbgCpyAllBtn,6)
+dbgCpyAllBtn.MouseButton1Click:Connect(function()
+    pcall(function() if sc2 then sc2(table.concat(dbgAllLogs,"\n")) end end)
+    dbgCpyAllBtn.Text="COPIED ALL!"; task.delay(1.5,function() dbgCpyAllBtn.Text="COPY ALL" end)
+end)
 
 -- ===================== STATE =====================
 local logs={}; local running=false; local stopRequested=false
@@ -2201,7 +2212,7 @@ local FRUIT_NON_MUTATIONS = {
     WeightMulti=true, MaxAge=true, GrowRateMulti=true,
 }
 -- cek apakah buah punya mutasi selain Nightmare (dynamic: semua boolean attr true yang bukan non-mutasi)
-local _dbgMutLogged = false
+local _dbgMutLogged = {}
 local function fruitHasMutation(fruit)
     local found = nil
     for k, v in pairs(fruit:GetAttributes()) do
@@ -2209,15 +2220,17 @@ local function fruitHasMutation(fruit)
             found = k; break
         end
     end
-    -- log sekali aja biar gak spam
-    if not _dbgMutLogged and fruit.Name == "Blueberry" then
-        _dbgMutLogged = true
-        local attrs = {}
+    -- log ALL attrs per nama buah sekali (baik yang mut maupun tidak)
+    local fn = fruit.Name
+    if not _dbgMutLogged[fn] then
+        _dbgMutLogged[fn] = true
+        local all = {}
         for k,v in pairs(fruit:GetAttributes()) do
-            if v == true then table.insert(attrs, k) end
+            table.insert(all, k.."="..tostring(v))
         end
-        dbgLog("Blueberry bool attrs: "..table.concat(attrs,", "))
-        dbgLog("detected mut: "..(found or "NONE"))
+        table.sort(all)
+        dbgLog("["..fn.."] attrs: "..table.concat(all,", "))
+        dbgLog("["..fn.."] mut? "..(found or "NO"))
     end
     return found ~= nil
 end
