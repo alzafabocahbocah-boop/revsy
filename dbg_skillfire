@@ -1,9 +1,122 @@
--- dbg_skillfire: debug kapan pet keluarin skill (PetCooldownsUpdated)
+-- dbg_skillfire: debug skill fire + reduclag all-in-one
 -- standalone script, jalanin terpisah
--- v1.3 — add gilded choc peryton skill sound
+-- v1.4 — gabung reduclag (no toggle, langsung on semua)
 
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+
+-- ============ REDUCLAG (langsung on, no toggle) ============
+local function destroyParticlesIn(obj)
+    pcall(function()
+        for _, d in ipairs(obj:GetDescendants()) do
+            if d:IsA("ParticleEmitter") or d:IsA("Trail")
+            or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                d:Destroy()
+            end
+        end
+    end)
+end
+
+local WEATHER_WS_NAMES = {
+    "WeatherVisuals","WeatherObjects","WindBlastTemplate",
+    "Whale","Clam","Kelp","Water_Effect","SpottedEffect",
+    "SpiderWebFX","Rainbows","Dirt_VFX","BirthdayDecor",
+    "BeanstalkEvent","AcornChaosLocal","Visuals","FishRainClient",
+    "TornadoFX","CycloneFX","MeteorFX","LavaPools",
+    "IcicleSpawner","SnowFX","FrostFX","LightningFX",
+}
+
+local function applyWeather()
+    pcall(function()
+        for _, obj in ipairs(workspace:GetChildren()) do
+            for _, name in ipairs(WEATHER_WS_NAMES) do
+                if obj.Name == name then obj:Destroy(); break end
+            end
+        end
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj:IsA("ColorCorrectionEffect") or obj:IsA("BlurEffect")
+            or obj:IsA("BloomEffect") or obj:IsA("SunRaysEffect")
+            or obj:IsA("ParticleEmitter") then obj:Destroy() end
+        end
+    end)
+end
+
+local function applyColorFX()
+    pcall(function()
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("Folder") then v:Destroy()
+            elseif v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect")
+            or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect")
+            or v:IsA("BloomEffect") then v:Destroy() end
+        end
+    end)
+end
+
+local function applyPohon()
+    pcall(function()
+        local roots = {}
+        local farm = workspace:FindFirstChild("Farm")
+        if farm then
+            for _, f in ipairs(farm:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                    table.insert(roots, f)
+                end
+            end
+        end
+        if #roots == 0 then
+            for _, f in ipairs(workspace:GetDescendants()) do
+                if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                    table.insert(roots, f)
+                end
+            end
+        end
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end) end
+            end
+        end
+    end)
+end
+
+-- apply semua sekarang
+pcall(function() Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0 end)
+pcall(function() Lighting.FogEnd = 100000; Lighting.FogStart = 99999 end)
+pcall(function() for _, v in ipairs(Lighting:GetDescendants()) do
+    if v:IsA("BloomEffect") or v:IsA("Sky") or v:IsA("Atmosphere") then v:Destroy() end
+end end)
+pcall(function() local t = workspace:FindFirstChildOfClass("Terrain"); if t then t.Decoration = false end end)
+destroyParticlesIn(workspace)
+applyWeather()
+applyColorFX()
+task.spawn(function() task.wait(3); applyPohon() end)
+
+-- watch pohon baru
+task.spawn(function()
+    local farm = workspace:WaitForChild("Farm", 15)
+    if not farm then return end
+    farm.DescendantAdded:Connect(function(c)
+        if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+            task.wait(0.05); pcall(function() c:Destroy() end)
+        end
+    end)
+end)
+
+-- cleanup loop tiap 10s
+task.spawn(function()
+    while true do
+        task.wait(10)
+        destroyParticlesIn(workspace)
+        applyWeather()
+        applyColorFX()
+        applyPohon()
+        pcall(function() for _, v in ipairs(Lighting:GetDescendants()) do
+            if v:IsA("BloomEffect") or v:IsA("Sky") or v:IsA("Atmosphere") then v:Destroy() end
+        end end)
+    end
+end)
+
+print("[dbg_skillfire] reduclag ON")
 
 local AQ  = Color3.fromRGB(78, 214, 204)
 local WH  = Color3.fromRGB(255, 255, 255)
