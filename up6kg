@@ -5241,3 +5241,131 @@ task.spawn(function()
         end)
     end
 end)
+
+-- ============================================================
+-- DEBUG GUI — pojok kiri bawah, tombol Copy untuk debug Arceus/executor
+-- Isi: PetsPhysical found?, equipRE path, skill-sound test
+-- ============================================================
+task.spawn(function()
+    local plr = game:GetService("Players").LocalPlayer
+    local par = (gethui and gethui()) or plr:WaitForChild("PlayerGui")
+    pcall(function() local o = par:FindFirstChild("ZenxDbgGui"); if o then o:Destroy() end end)
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "ZenxDbgGui"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.DisplayOrder = 9999997
+    sg.Parent = par
+
+    -- container pojok kiri bawah
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 280, 0, 160)
+    frame.Position = UDim2.new(0, 10, 1, -170)
+    frame.AnchorPoint = Vector2.new(0, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    frame.BackgroundTransparency = 0.12
+    frame.BorderSizePixel = 0
+    frame.Parent = sg
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+    local stroke = Instance.new("UIStroke"); stroke.Color = Color3.fromRGB(40,40,40); stroke.Thickness = 1.2; stroke.Parent = frame
+
+    -- header
+    local hdr = Instance.new("TextLabel")
+    hdr.Size = UDim2.new(1, -12, 0, 22)
+    hdr.Position = UDim2.new(0, 10, 0, 8)
+    hdr.BackgroundTransparency = 1
+    hdr.Font = Enum.Font.GothamBold
+    hdr.TextSize = 13
+    hdr.TextColor3 = Color3.fromRGB(78, 214, 204)
+    hdr.TextXAlignment = Enum.TextXAlignment.Left
+    hdr.Text = "DBG — up6kg"
+    hdr.Parent = frame
+
+    -- status lines
+    local statusBox = Instance.new("TextLabel")
+    statusBox.Size = UDim2.new(1, -16, 0, 80)
+    statusBox.Position = UDim2.new(0, 8, 0, 34)
+    statusBox.BackgroundTransparency = 1
+    statusBox.Font = Enum.Font.Gotham
+    statusBox.TextSize = 12
+    statusBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusBox.TextXAlignment = Enum.TextXAlignment.Left
+    statusBox.TextYAlignment = Enum.TextYAlignment.Top
+    statusBox.TextWrapped = true
+    statusBox.RichText = true
+    statusBox.Text = "checking..."
+    statusBox.Parent = frame
+
+    -- tombol COPY
+    local copyBtn = Instance.new("TextButton")
+    copyBtn.Size = UDim2.new(1, -16, 0, 28)
+    copyBtn.Position = UDim2.new(0, 8, 1, -36)
+    copyBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    copyBtn.BorderSizePixel = 0
+    copyBtn.Font = Enum.Font.GothamBold
+    copyBtn.TextSize = 13
+    copyBtn.TextColor3 = Color3.fromRGB(78, 214, 204)
+    copyBtn.Text = "📋 COPY DEBUG"
+    copyBtn.Parent = frame
+    Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 8)
+
+    -- collect debug info
+    local function getDebugInfo()
+        local lines = {}
+        -- PetsPhysical
+        local pp = workspace:FindFirstChild("PetsPhysical")
+        table.insert(lines, "PetsPhysical: " .. (pp and "✓ found ("..#pp:GetChildren().." children)" or "✗ nil"))
+        -- equipRE
+        local RS = game:GetService("ReplicatedStorage")
+        local equipRE
+        for _, v in pairs(RS:GetDescendants()) do
+            if v.Name == "PetsService" and v:IsA("RemoteEvent") then equipRE = v; break end
+        end
+        table.insert(lines, "equipRE: " .. (equipRE and equipRE:GetFullName() or "✗ nil"))
+        -- ZenxSkillSwap
+        table.insert(lines, "ZenxSkillSwap: " .. (type(_G.ZenxSkillSwap) == "function" and "✓ ok" or "✗ nil"))
+        -- ZenxSwapPet
+        table.insert(lines, "ZenxSwapPet: " .. (type(_G.ZenxSwapPet) == "function" and "✓ ok" or "✗ nil"))
+        -- skill sound check: scan PetsPhysical untuk Sound
+        local soundCount = 0
+        if pp then
+            for _, d in ipairs(pp:GetDescendants()) do
+                if d:IsA("Sound") then soundCount = soundCount + 1 end
+            end
+        end
+        table.insert(lines, "Sound in PP: " .. soundCount)
+        -- executor check
+        table.insert(lines, "gethui: " .. (gethui and "✓" or "✗") .. " | writefile: " .. (writefile and "✓" or "✗"))
+        return lines
+    end
+
+    local function refresh()
+        local lines = getDebugInfo()
+        local rich = {}
+        for _, l in ipairs(lines) do
+            local col = l:find("✓") and "#4ed6cc" or (l:find("✗") and "#e84040" or "#aaaaaa")
+            rich[#rich+1] = "<font color='"..col.."'>"..l:gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;").."</font>"
+        end
+        statusBox.Text = table.concat(rich, "\n")
+        return lines
+    end
+
+    -- copy ke clipboard
+    copyBtn.MouseButton1Click:Connect(function()
+        local lines = refresh()
+        local txt = "=== up6kg debug ===\n" .. table.concat(lines, "\n")
+        pcall(function()
+            if setclipboard then setclipboard(txt)
+            elseif toclipboard then toclipboard(txt) end
+        end)
+        copyBtn.Text = "✓ COPIED"
+        task.wait(1.5)
+        copyBtn.Text = "📋 COPY DEBUG"
+    end)
+
+    -- auto refresh tiap 3s
+    task.spawn(function()
+        while sg.Parent do
+            refresh()
+            task.wait(3)
+        end
+    end)
+end)
