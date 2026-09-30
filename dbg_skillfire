@@ -174,77 +174,78 @@ local function getPetInfo(uuid)
     return nil, nil, nil
 end
 
--- ============ CONNECT EVENT ============
+-- ============ PET INFO CACHE (shared) ============
+local petInfoCache = {}
+local function getCachedInfo(key, uuid)
+    local c = petInfoCache[key]
+    if c and (tick() - c.at) < 5 then return c.nm, c.age, c.kg end
+    local nm, age, kg = getPetInfo(uuid)
+    petInfoCache[key] = { nm = nm or "?", age = age, kg = kg, at = tick() }
+    return nm or "?", age, kg
+end
+
+local function fmtInfo(key, uuid)
+    local pnm, page, pkg = getCachedInfo(key, uuid)
+    local s = tostring(pnm):sub(1,14)
+    if page then s = s.." a"..tostring(page) end
+    if pkg  then s = s.." "..string.format("%.2f",pkg).."kg" end
+    return s
+end
+
+-- ============ DETECT VIA HIGHLIGHT (per-uuid, real-time) ============
+-- Highlight spawn di dalam object ber-UUID = skill fire
+addLog("✓ watching Highlight spawns", GRN)
+
+-- debounce per uuid agar tidak double-log
+local lastHighlightFire = {}
+
+workspace.DescendantAdded:Connect(function(obj)
+    if obj.ClassName ~= "Highlight" then return end
+    local par = obj.Parent
+    if not par then return end
+    local parName = tostring(par.Name or "")
+    -- parent name harus UUID format {xxxxxxxx-...}
+    if not parName:match("^{?[0-9a-fA-F%-]+}?$") or #parName < 32 then return end
+    local key = parName:gsub("[{}]","")
+    local now = tick()
+    -- debounce 0.5s per uuid
+    if lastHighlightFire[key] and (now - lastHighlightFire[key]) < 0.5 then return end
+    lastHighlightFire[key] = now
+    fireCount = fireCount + 1
+    eventCount = eventCount + 1
+    local infoStr = fmtInfo(key, parName)
+    addLog("FIRE ["..infoStr.."]", ORG)
+    print("[dbg-skillfire] FIRE "..infoStr)
+    ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
+end)
+
+-- ============ FALLBACK: PetCooldownsUpdated (untuk RDY info) ============
 local ge = RS:FindFirstChild("GameEvents")
 local pcu = ge and ge:FindFirstChild("PetCooldownsUpdated")
 local req = ge and ge:FindFirstChild("RequestPetCooldowns")
 
-if not pcu then
-    addLog("❌ PetCooldownsUpdated NOT FOUND", RED)
-else
-    addLog("✓ connected PetCooldownsUpdated", GRN)
-
+if pcu then
+    addLog("✓ connected PetCooldownsUpdated (RDY only)", GRN)
     local lastMinTime = {}
-    local petInfoCache = {}
-
-    local function getCachedInfo(key, uuid)
-        local c = petInfoCache[key]
-        if c and (tick() - c.at) < 5 then return c.nm, c.age, c.kg end
-        local nm, age, kg = getPetInfo(uuid)
-        petInfoCache[key] = { nm = nm or "?", age = age, kg = kg, at = tick() }
-        return nm or "?", age, kg
-    end
-
     pcu.OnClientEvent:Connect(function(uuid, data)
-        eventCount = eventCount + 1
+        if type(data) ~= "table" then return end
         local key = tostring(uuid):gsub("[{}]", "")
-
-        if type(data) ~= "table" then
-            ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
-            return
-        end
-
         local minNow = math.huge
-        local skillNames = {}
         for _, v in ipairs(data) do
             if type(v) == "table" then
                 local t = tonumber(v.Time) or tonumber(v.time) or tonumber(v[2]) or math.huge
-                local nm = tostring(v.Name or v.name or v[1] or "?")
+                local nm = tostring(v.Name or v.name or v[1] or "")
                 if not nm:lower():find("mutation") then
                     minNow = math.min(minNow, t)
-                    table.insert(skillNames, nm:sub(1,10).."="..string.format("%.1f",t))
                 end
             end
         end
-
-        local prev = lastMinTime[key]
-        local skillStr = table.concat(skillNames, " | ")
-
-        local pnm, page, pkg = getCachedInfo(key, uuid)
-        local infoStr = tostring(pnm):sub(1,14)
-        if page then infoStr = infoStr.." a"..tostring(page) end
-        if pkg  then infoStr = infoStr.." "..string.format("%.2f",pkg).."kg" end
-
-        local now = tick()
-        if prev ~= nil and prev <= 0.5 and minNow > 1 then
-            fireCount = fireCount + 1
-            -- RST = cooldown reset → skill baru fire di server
-            -- timestamp untuk ukur delay
-            addLog("FIRE ["..infoStr.."] cd→"..string.format("%.1f",minNow).." t="..string.format("%.3f", now % 1000), ORG)
-            print("[dbg-skillfire] FIRE "..infoStr.." cd="..string.format("%.1f",minNow).." t="..string.format("%.3f", now % 1000))
-        elseif minNow <= 0 then
-            -- RDY = cooldown habis, skill mau fire
-            addLog("RDY  ["..infoStr.."] t="..string.format("%.3f", now % 1000), GRN)
-            print("[dbg-skillfire] RDY  "..infoStr.." t="..string.format("%.3f", now % 1000))
-        else
-            addLog("upd  ["..infoStr.."] cd="..string.format("%.1f", minNow == math.huge and -1 or minNow), GR)
+        if minNow <= 0 then
+            local infoStr = fmtInfo(key, uuid)
+            addLog("RDY  ["..infoStr.."]", GRN)
         end
-
         lastMinTime[key] = minNow
-        ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
     end)
-
-    -- request fresh cooldown data
     if req then pcall(function() req:FireServer() end) end
 end
 
