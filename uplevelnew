@@ -1,4 +1,4 @@
--- uplevelnew v8.98 — fix doCollect: enabled+maxdist+sync fire, batch wait tiap 50
+-- uplevelnew v8.99 — doCollect: tampilkan error (getFruitPrompt/prop/fire) di debug log
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.98"
+local VERSION = "v8.99"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2314,29 +2314,53 @@ local function doCollect(fruits)
     dbgLog("doCollect: "..#fruits.." buah")
     local gagal = 0
     local _loggedAction = false
+    -- kumpul semua error unik (deduplicate)
+    local _errUniq = {}
+    local _errList = {}
+    local function _addErr(msg)
+        if not _errUniq[msg] then
+            _errUniq[msg] = true
+            table.insert(_errList, msg)
+            dbgLog("ERR: "..msg)  -- log langsung ke debug panel saat terjadi
+        end
+    end
     for i, fruit in ipairs(fruits) do
         local ok, prompt = pcall(getFruitPrompt, fruit)
         if ok and prompt then
             if not _loggedAction then
                 _loggedAction = true
-                dbgLog("prompt Act='"..tostring(prompt.ActionText).."' Enabled="..tostring(prompt.Enabled).." MaxDist="..tostring(prompt.MaxActivationDistance))
+                dbgLog("prompt Act='"..tostring(prompt.ActionText)
+                    .."' Enabled="..tostring(prompt.Enabled)
+                    .." MaxDist="..tostring(prompt.MaxActivationDistance)
+                    .." Hold="..tostring(prompt.HoldDuration))
             end
             -- force enable prompt + jarak tak terbatas + no hold
-            pcall(function()
+            local propOk, propErr = pcall(function()
                 prompt.Enabled = true
                 prompt.MaxActivationDistance = math.huge
                 prompt.HoldDuration = 0
             end)
-            fireproximityprompt(prompt)
-            collected = collected + 1
+            if not propOk then _addErr("prop["..i.."]: "..tostring(propErr)) end
+            local fireOk, fireErr = pcall(fireproximityprompt, prompt)
+            if not fireOk then
+                gagal = gagal + 1
+                _addErr("fire["..i.."]: "..tostring(fireErr))
+            else
+                collected = collected + 1
+            end
             -- task.wait kecil setiap 50 buah untuk hindari rate-limit server
             if i % 50 == 0 then task.wait(0.05) end
         else
             gagal = gagal + 1
+            local reason = ok and "nil prompt" or tostring(prompt)
+            _addErr("getPrompt["..i.."]: "..reason)
         end
     end
     task.wait(0.3)  -- tunggu server proses
-    dbgLog("doCollect: "..collected.."/"..#fruits.." OK"..(gagal>0 and " | GAGAL: "..gagal or ""))
+    local summary = "doCollect: "..collected.."/"..#fruits.." OK"
+    if gagal > 0 then summary = summary.." | GAGAL: "..gagal end
+    if #_errList > 0 then summary = summary.." | "..#_errList.." jenis err" end
+    dbgLog(summary)
     return collected
 end
 
