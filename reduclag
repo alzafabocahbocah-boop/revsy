@@ -1,8 +1,8 @@
 -- reduclag: reduce FPS lag dari game GAG
 -- standalone script, jalanin terpisah dari up6kg
--- v1.1
+-- v1.2
 
-local VERSION = "reduclag-v1.1"
+local VERSION = "reduclag-v1.2"
 print("[ReducLag] " .. VERSION .. " start")
 
 local Lighting = game:GetService("Lighting")
@@ -15,6 +15,9 @@ local CFG = {
     disableFog          = true,
     disableBloom        = true,
     disableTerrainDecor = true,
+    disableWeather      = true,   -- WeatherVisuals + WindBlastTemplate
+    disableSky          = true,   -- Sky + Atmosphere di Lighting
+    disableColorFX      = true,   -- semua ColorCorrection + Blur weather effect
     cleanupInterval     = 10,
 }
 
@@ -35,10 +38,8 @@ end
 
 local function applyBloom(on)
     pcall(function()
-        for _, v in ipairs(Lighting:GetChildren()) do
-            if v:IsA("BloomEffect") or v:IsA("BlurEffect")
-            or v:IsA("ColorCorrectionEffect") or v:IsA("SunRaysEffect")
-            or v:IsA("DepthOfFieldEffect") then
+        for _, v in ipairs(Lighting:GetDescendants()) do
+            if v:IsA("BloomEffect") then
                 v.Enabled = not on
             end
         end
@@ -68,12 +69,62 @@ local function applyTerrain(on)
     end)
 end
 
+-- matiin WeatherVisuals folder + WindBlastTemplate trail
+local function applyWeather(on)
+    pcall(function()
+        -- WeatherVisuals: disable semua particle
+        local wv = workspace:FindFirstChild("WeatherVisuals")
+        if wv then
+            if on then
+                disableParticlesIn(wv)
+            end
+        end
+        -- WindBlastTemplate: disable trail (sumber lag mutasi angin)
+        local wb = workspace:FindFirstChild("WindBlastTemplate")
+        if wb then
+            for _, d in ipairs(wb:GetDescendants()) do
+                if d:IsA("Trail") or d:IsA("Beam") or d:IsA("ParticleEmitter") then
+                    d.Enabled = not on
+                end
+            end
+        end
+    end)
+end
+
+-- matiin Sky + Atmosphere di semua folder Lighting
+local function applySky(on)
+    pcall(function()
+        for _, v in ipairs(Lighting:GetDescendants()) do
+            if v:IsA("Sky") or v:IsA("Atmosphere") then
+                pcall(function() v.Parent:FindFirstChildOfClass("Sky") and true end)
+                -- destroy sky biar render langit plain (lebih ringan)
+                if on then v:Destroy() end
+            end
+        end
+    end)
+end
+
+-- matiin semua ColorCorrection + Blur + SunRays + DepthOfField (weather effects)
+local function applyColorFX(on)
+    pcall(function()
+        for _, v in ipairs(Lighting:GetDescendants()) do
+            if v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect")
+            or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect") then
+                v.Enabled = not on
+            end
+        end
+    end)
+end
+
 local function applyAll()
     applyShadows(CFG.disableShadows)
     applyFog(CFG.disableFog)
     applyBloom(CFG.disableBloom)
     applyParticles(CFG.disableParticles)
     applyTerrain(CFG.disableTerrainDecor)
+    applyWeather(CFG.disableWeather)
+    applySky(CFG.disableSky)
+    applyColorFX(CFG.disableColorFX)
 end
 
 -- ============ GUI ============
@@ -113,10 +164,10 @@ local function buatGui()
         wrap.BackgroundTransparency = 1; wrap.Parent = sg
         local scale = Instance.new("UIScale"); scale.Scale = 1.8; scale.Parent = wrap
 
-        -- MAIN FRAME
+        -- MAIN FRAME — height dinaikkan untuk 8 toggle
         local fr = Instance.new("Frame")
-        fr.Size = UDim2.new(0, 200, 0, 220)
-        fr.Position = UDim2.new(0, 8/1.8, 0.5, -110/1.8)
+        fr.Size = UDim2.new(0, 200, 0, 310)
+        fr.Position = UDim2.new(0, 8/1.8, 0.5, -155/1.8)
         fr.AnchorPoint = Vector2.new(0, 0.5)
         fr.BackgroundColor3 = BG; fr.BackgroundTransparency = 0.08
         fr.BorderSizePixel = 0; fr.Parent = wrap
@@ -172,6 +223,9 @@ local function buatGui()
             { key = "disableBloom",        label = "Bloom OFF" },
             { key = "disableFog",          label = "Fog OFF" },
             { key = "disableTerrainDecor", label = "Terrain Decor OFF" },
+            { key = "disableWeather",      label = "Weather FX OFF" },
+            { key = "disableSky",          label = "Sky/Atmos OFF" },
+            { key = "disableColorFX",      label = "Color FX OFF" },
         }
 
         local applyMap = {
@@ -180,6 +234,9 @@ local function buatGui()
             disableBloom        = applyBloom,
             disableFog          = applyFog,
             disableTerrainDecor = applyTerrain,
+            disableWeather      = applyWeather,
+            disableSky          = applySky,
+            disableColorFX      = applyColorFX,
         }
 
         for i, tog in ipairs(toggles) do
@@ -193,7 +250,6 @@ local function buatGui()
             lbl.Size = UDim2.new(1,-44,1,0); lbl.TextXAlignment = Enum.TextXAlignment.Left
             lbl.Parent = row
 
-            -- toggle pill
             local pill = Instance.new("Frame"); pill.Size = UDim2.new(0,36,0,18)
             pill.AnchorPoint = Vector2.new(1,0.5); pill.Position = UDim2.new(1,0,0.5,0)
             pill.BackgroundColor3 = CFG[tog.key] and GRN or Color3.fromRGB(60,60,60)
@@ -243,13 +299,15 @@ task.spawn(function()
     end
 end)
 
--- cleanup particle baru tiap interval
+-- cleanup loop: re-apply tiap interval (weather bisa spawn ulang)
 task.spawn(function()
     while true do
         task.wait(CFG.cleanupInterval)
         if CFG.disableParticles then disableParticlesIn(workspace) end
+        if CFG.disableWeather then applyWeather(true) end
         applyShadows(CFG.disableShadows)
         applyBloom(CFG.disableBloom)
+        applyColorFX(CFG.disableColorFX)
     end
 end)
 
