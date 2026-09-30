@@ -1,4 +1,4 @@
--- uplevelnew v8.101 — doCollect: teleport ke tiap buah sebelum fire (fix root cause collect gagal)
+-- uplevelnew v8.102 — doCollect: hapus teleport + Enabled/MaxDist/HoldDuration, pause healer saat collect
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.101"
+local VERSION = "v8.102"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1889,6 +1889,7 @@ end
 -- _activeUuids: uuid yang seharusnya ada di kebun (diisi equipSesi, dibersihkan unequipAll)
 -- Healer loop pakai ini untuk re-equip pet yang modelnya hilang
 local _activeUuids = {}
+local _isCollecting = false  -- pause healer saat doCollect berjalan
 
 -- unequipAll: hanya unequip pet yg SEDANG di-equip (ada model di workspace)
 -- JANGAN loop seluruh container — bisa ratusan pet, bikin rate-limit + equip setelahnya drop
@@ -2309,14 +2310,9 @@ local function sellInventory()
 end
 
 local function doCollect(fruits)
+    _isCollecting = true  -- pause healer loop selama collect
     local collected = 0
     dbgLog("doCollect: "..#fruits.." buah")
-    local hrp = nil
-    pcall(function()
-        local char = plr.Character
-        if char then hrp = char:FindFirstChild("HumanoidRootPart") end
-    end)
-    dbgLog("hrp: "..(hrp and string.format("%.0f,%.0f,%.0f",hrp.Position.X,hrp.Position.Y,hrp.Position.Z) or "NIL"))
     local gagal = 0
     local _loggedAction = false
     local _errUniq = {}
@@ -2338,28 +2334,10 @@ local function doCollect(fruits)
                     .." MaxDist="..tostring(prompt.MaxActivationDistance)
                     .." LoS="..tostring(prompt.RequiresLineOfSight))
             end
-            -- teleport karakter ke posisi buah (seperti script panen)
-            pcall(function()
-                if hrp then
-                    local part = prompt.Parent
-                    local pos = part and (part:IsA("BasePart") and part.Position
-                        or (part.PrimaryPart and part.PrimaryPart.Position)
-                        or part:GetPivot().Position)
-                    if pos then hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) end
-                end
-            end)
-            -- force props
-            pcall(function()
-                prompt.Enabled = true
-                prompt.MaxActivationDistance = math.huge
-                prompt.RequiresLineOfSight = false
-                prompt.HoldDuration = 0
-            end)
-            -- fire 3x (spam seperti panen)
-            local fireOk, fireErr
-            for _ = 1, 3 do
-                fireOk, fireErr = pcall(fireproximityprompt, prompt)
-            end
+            -- hanya set RequiresLineOfSight=false (seperti panen), TIDAK set Enabled/MaxDist/HoldDuration
+            pcall(function() prompt.RequiresLineOfSight = false end)
+            -- fire 1x (bersih, tanpa spam)
+            local fireOk, fireErr = pcall(fireproximityprompt, prompt)
             if not fireOk then
                 gagal = gagal + 1
                 _addErr("fire["..i.."]: "..tostring(fireErr))
@@ -2374,6 +2352,7 @@ local function doCollect(fruits)
         end
     end
     task.wait(0.3)  -- tunggu server proses
+    _isCollecting = false  -- resume healer loop
     local summary = "doCollect: "..collected.."/"..#fruits.." OK"
     if gagal > 0 then summary = summary.." | GAGAL: "..gagal end
     if #_errList > 0 then summary = summary.." | "..#_errList.." jenis err" end
@@ -2553,7 +2532,7 @@ end)
 task.spawn(function()
     while true do
         task.wait(2)
-        if running and not stopRequested then
+        if running and not stopRequested and not _isCollecting then
             local healed = 0
             for uuid in pairs(_activeUuids) do
                 if not modelByUuid[uuid] then
