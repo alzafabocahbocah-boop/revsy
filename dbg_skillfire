@@ -192,39 +192,71 @@ local function fmtInfo(key, uuid)
     return s
 end
 
--- ============ DETECT VIA HIGHLIGHT (per-uuid, real-time) ============
--- Highlight spawn di dalam object ber-UUID = skill fire
-addLog("✓ watching Highlight spawns", GRN)
+-- ============ DETECT VIA POSITION (SpottedEffect + Zone) ============
+-- SpottedEffect = Diloph/Spotted skill, Zone = Peacock/zone skill
+-- cari UUID pet terdekat dari posisi VFX
 
--- debounce per uuid agar tidak double-log
-local lastHighlightFire = {}
+local lastVFXFire = {}  -- debounce per uuid
 
--- path: PetsPhysical > PetMover > {uuid} > Highlight
-local function extractUUIDFromHighlight(obj)
-    -- parent = {uuid} object, grandparent = PetMover
-    local par = obj.Parent
-    if not par then return nil end
-    local parName = tostring(par.Name or "")
-    if parName:match("^{?[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-") then
-        return parName:gsub("[{}]",""), parName
-    end
-    return nil
+local function isUUID(s)
+    return type(s) == "string" and
+        s:match("[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-")
 end
 
+local function findClosestPetUUID(pos, maxDist)
+    local pp = workspace:FindFirstChild("PetsPhysical")
+    if not pp then return nil end
+    local bestKey, bestDist = nil, maxDist or 5
+    for _, mover in ipairs(pp:GetChildren()) do
+        for _, uuidObj in ipairs(mover:GetChildren()) do
+            if isUUID(uuidObj.Name) then
+                for _, ch in ipairs(uuidObj:GetChildren()) do
+                    if ch:IsA("BasePart") then
+                        local d = (ch.Position - pos).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            bestKey = uuidObj.Name:gsub("[{}]","")
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestKey
+end
+
+local function onSkillVFX(obj, label)
+    task.defer(function()  -- defer biar posisi settle
+        local pos = nil
+        pcall(function()
+            if obj:IsA("BasePart") then pos = obj.Position end
+        end)
+        if not pos then return end
+        local key = findClosestPetUUID(pos, 5)
+        if not key then return end
+        local now = tick()
+        if lastVFXFire[key] and (now - lastVFXFire[key]) < 0.5 then return end
+        lastVFXFire[key] = now
+        fireCount = fireCount + 1
+        eventCount = eventCount + 1
+        local infoStr = fmtInfo(key, key)
+        addLog("FIRE ["..infoStr.."] "..label, ORG)
+        print("[dbg-skillfire] FIRE "..infoStr.." "..label)
+        ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
+    end)
+end
+
+addLog("✓ watching VFX spawns (pos-based)", GRN)
+
 workspace.DescendantAdded:Connect(function(obj)
-    if obj.ClassName ~= "Highlight" then return end
-    local key, rawUUID = extractUUIDFromHighlight(obj)
-    if not key then return end
-    local now = tick()
-    -- debounce 0.5s per uuid
-    if lastHighlightFire[key] and (now - lastHighlightFire[key]) < 0.5 then return end
-    lastHighlightFire[key] = now
-    fireCount = fireCount + 1
-    eventCount = eventCount + 1
-    local infoStr = fmtInfo(key, rawUUID or key)
-    addLog("FIRE ["..infoStr.."]", ORG)
-    print("[dbg-skillfire] FIRE "..infoStr)
-    ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
+    if obj.Name == "SpottedEffect" and obj:IsA("BasePart") then
+        onSkillVFX(obj, "spotted")
+    elseif obj.Name == "Zone" and obj:IsA("BasePart") then
+        local par = obj.Parent
+        if par and par.Name == "PetZoneAbilityVFX" then
+            onSkillVFX(obj, "zone")
+        end
+    end
 end)
 
 -- ============ FALLBACK: PetCooldownsUpdated (untuk RDY info) ============
