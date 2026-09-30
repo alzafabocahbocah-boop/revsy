@@ -1357,6 +1357,34 @@ cpyBtn.MouseButton1Click:Connect(function()
     cpyBtn.Text="COPIED!"; task.delay(1.5,function() cpyBtn.Text="COPY LOG" end)
 end)
 
+-- ===================== DEBUG COLLECT LOG =====================
+sectionHeader(logScroll,"\u{2022} DEBUG COLLECT",4)
+local dbgBg=mk("Frame",{Size=UDim2.new(1,0,0,200),BackgroundColor3=C.card,BorderSizePixel=0,
+    LayoutOrder=5,Parent=logScroll}); corner(dbgBg,10); stroke(dbgBg,Color3.fromRGB(220,100,60),1)
+local dbgBox=mk("TextLabel",{Size=UDim2.new(1,-16,1,-16),Position=UDim2.new(0,8,0,8),
+    BackgroundTransparency=1,Text="— menunggu collect —",TextColor3=C.textMute,
+    Font=Enum.Font.Code,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
+    TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=dbgBg})
+-- double-click to copy
+local _dbgClickT=0
+dbgBg.InputBegan:Connect(function(inp)
+    if inp.UserInputType==Enum.UserInputType.MouseButton1 then
+        local now=tick()
+        if now-_dbgClickT<0.4 then
+            local sc2=setclipboard or toclipboard
+            pcall(function() if sc2 then sc2(dbgBox.Text) end end)
+            dbgBox.TextColor3=C.accent
+            task.delay(0.5,function() dbgBox.TextColor3=C.textMute end)
+        end
+        _dbgClickT=now
+    end
+end)
+local dbgLogs={}
+local function dbgLog(s)
+    table.insert(dbgLogs,1,tostring(s)); if #dbgLogs>30 then dbgLogs[#dbgLogs]=nil end
+    pcall(function() dbgBox.Text=table.concat(dbgLogs,"\n") end)
+end
+
 -- ===================== STATE =====================
 local logs={}; local running=false; local stopRequested=false
 local totalNightmareCollected=0; local totalShovel=0; local totalFav=0; local _lastMutasiCount=0
@@ -2254,14 +2282,19 @@ end
 local function doCollect(fruits)
     unequipCurrentTool()
     local collected = 0
-    for _, fruit in ipairs(fruits) do
+    dbgLog("doCollect: "..#fruits.." buah")
+    for i, fruit in ipairs(fruits) do
         local ok, prompt = pcall(getFruitPrompt, fruit)
         if ok and prompt then
             task.spawn(fireproximityprompt, prompt)
             collected = collected + 1
+            dbgLog("  ["..i.."] fire OK: "..tostring(fruit.Name))
+        else
+            dbgLog("  ["..i.."] GAGAL prompt: "..(ok and "nil" or tostring(prompt)))
         end
     end
-    task.wait(0.1)  -- beri waktu sebentar biar fire sempat dikirim
+    task.wait(0.1)
+    dbgLog("doCollect selesai: "..collected.."/"..#fruits.." berhasil")
     return collected
 end
 
