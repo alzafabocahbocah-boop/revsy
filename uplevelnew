@@ -1,4 +1,4 @@
--- uplevelnew v8.100 — doCollect: log posisi karakter + semua PP buah[1] untuk debug collect gagal
+-- uplevelnew v8.101 — doCollect: teleport ke tiap buah sebelum fire (fix root cause collect gagal)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -109,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.100"
+local VERSION = "v8.101"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2309,46 +2309,23 @@ local function sellInventory()
 end
 
 local function doCollect(fruits)
-    -- unequipCurrentTool()  -- DISABLED: suspect bikin server reject PP fire
     local collected = 0
     dbgLog("doCollect: "..#fruits.." buah")
-    -- log posisi karakter
+    local hrp = nil
     pcall(function()
         local char = plr.Character
-        if char then
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                dbgLog("char pos: "..string.format("%.0f,%.0f,%.0f", hrp.Position.X, hrp.Position.Y, hrp.Position.Z))
-            else
-                dbgLog("char: no HRP (mungkin mati/spectate)")
-            end
-        else
-            dbgLog("char: nil!")
-        end
+        if char then hrp = char:FindFirstChild("HumanoidRootPart") end
     end)
-    -- debug semua ProximityPrompt di buah pertama
-    pcall(function()
-        if #fruits > 0 then
-            local f = fruits[1]
-            local pps = {}
-            for _, v in ipairs(f:GetDescendants()) do
-                if v:IsA("ProximityPrompt") then
-                    table.insert(pps, v.Name.."[Act='"..v.ActionText.."' En="..tostring(v.Enabled).."]")
-                end
-            end
-            dbgLog("buah[1]="..f.Name.." PPs: "..(#pps>0 and table.concat(pps,", ") or "NONE"))
-        end
-    end)
+    dbgLog("hrp: "..(hrp and string.format("%.0f,%.0f,%.0f",hrp.Position.X,hrp.Position.Y,hrp.Position.Z) or "NIL"))
     local gagal = 0
     local _loggedAction = false
-    -- kumpul semua error unik (deduplicate)
     local _errUniq = {}
     local _errList = {}
     local function _addErr(msg)
         if not _errUniq[msg] then
             _errUniq[msg] = true
             table.insert(_errList, msg)
-            dbgLog("ERR: "..msg)  -- log langsung ke debug panel saat terjadi
+            dbgLog("ERR: "..msg)
         end
     end
     for i, fruit in ipairs(fruits) do
@@ -2359,23 +2336,36 @@ local function doCollect(fruits)
                 dbgLog("prompt Act='"..tostring(prompt.ActionText)
                     .."' Enabled="..tostring(prompt.Enabled)
                     .." MaxDist="..tostring(prompt.MaxActivationDistance)
-                    .." Hold="..tostring(prompt.HoldDuration))
+                    .." LoS="..tostring(prompt.RequiresLineOfSight))
             end
-            -- force enable prompt + jarak tak terbatas + no hold
-            local propOk, propErr = pcall(function()
+            -- teleport karakter ke posisi buah (seperti script panen)
+            pcall(function()
+                if hrp then
+                    local part = prompt.Parent
+                    local pos = part and (part:IsA("BasePart") and part.Position
+                        or (part.PrimaryPart and part.PrimaryPart.Position)
+                        or part:GetPivot().Position)
+                    if pos then hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) end
+                end
+            end)
+            -- force props
+            pcall(function()
                 prompt.Enabled = true
                 prompt.MaxActivationDistance = math.huge
+                prompt.RequiresLineOfSight = false
                 prompt.HoldDuration = 0
             end)
-            if not propOk then _addErr("prop["..i.."]: "..tostring(propErr)) end
-            local fireOk, fireErr = pcall(fireproximityprompt, prompt)
+            -- fire 3x (spam seperti panen)
+            local fireOk, fireErr
+            for _ = 1, 3 do
+                fireOk, fireErr = pcall(fireproximityprompt, prompt)
+            end
             if not fireOk then
                 gagal = gagal + 1
                 _addErr("fire["..i.."]: "..tostring(fireErr))
             else
                 collected = collected + 1
             end
-            -- task.wait kecil setiap 50 buah untuk hindari rate-limit server
             if i % 50 == 0 then task.wait(0.05) end
         else
             gagal = gagal + 1
