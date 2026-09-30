@@ -199,21 +199,29 @@ addLog("✓ watching Highlight spawns", GRN)
 -- debounce per uuid agar tidak double-log
 local lastHighlightFire = {}
 
+-- path: PetsPhysical > PetMover > {uuid} > Highlight
+local function extractUUIDFromHighlight(obj)
+    -- parent = {uuid} object, grandparent = PetMover
+    local par = obj.Parent
+    if not par then return nil end
+    local parName = tostring(par.Name or "")
+    if parName:match("^{?[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]%-") then
+        return parName:gsub("[{}]",""), parName
+    end
+    return nil
+end
+
 workspace.DescendantAdded:Connect(function(obj)
     if obj.ClassName ~= "Highlight" then return end
-    local par = obj.Parent
-    if not par then return end
-    local parName = tostring(par.Name or "")
-    -- parent name harus UUID format {xxxxxxxx-...}
-    if not parName:match("^{?[0-9a-fA-F%-]+}?$") or #parName < 32 then return end
-    local key = parName:gsub("[{}]","")
+    local key, rawUUID = extractUUIDFromHighlight(obj)
+    if not key then return end
     local now = tick()
     -- debounce 0.5s per uuid
     if lastHighlightFire[key] and (now - lastHighlightFire[key]) < 0.5 then return end
     lastHighlightFire[key] = now
     fireCount = fireCount + 1
     eventCount = eventCount + 1
-    local infoStr = fmtInfo(key, parName)
+    local infoStr = fmtInfo(key, rawUUID or key)
     addLog("FIRE ["..infoStr.."]", ORG)
     print("[dbg-skillfire] FIRE "..infoStr)
     ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
