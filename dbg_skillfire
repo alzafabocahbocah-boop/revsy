@@ -1,0 +1,246 @@
+-- dbg_skillfire: debug kapan pet keluarin skill (PetCooldownsUpdated)
+-- standalone script, jalanin terpisah
+-- v1.0
+
+local RS = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+local AQ  = Color3.fromRGB(78, 214, 204)
+local WH  = Color3.fromRGB(255, 255, 255)
+local GR  = Color3.fromRGB(110, 110, 110)
+local BG  = Color3.fromRGB(12, 12, 12)
+local BG2 = Color3.fromRGB(20, 20, 20)
+local RED = Color3.fromRGB(235, 40, 40)
+local GRN = Color3.fromRGB(34, 197, 94)
+local ORG = Color3.fromRGB(245, 158, 11)
+
+-- ============ GUI ============
+local lp  = Players.LocalPlayer
+local par = lp:FindFirstChildOfClass("PlayerGui") or game:GetService("CoreGui")
+local old = par:FindFirstChild("DbgSkillFireGui"); if old then old:Destroy() end
+
+local sg = Instance.new("ScreenGui")
+sg.Name = "DbgSkillFireGui"; sg.ResetOnSpawn = false
+sg.IgnoreGuiInset = true; sg.DisplayOrder = 999999
+sg.Parent = par
+
+local wrap = Instance.new("Frame"); wrap.Size = UDim2.new(1,0,1,0)
+wrap.BackgroundTransparency = 1; wrap.Parent = sg
+local uisc = Instance.new("UIScale"); uisc.Scale = 1.8; uisc.Parent = wrap
+
+-- MAIN FRAME
+local fr = Instance.new("Frame")
+fr.Size = UDim2.new(0, 260, 0, 380)
+fr.Position = UDim2.new(1, -270/1.8, 0.5, -190/1.8)
+fr.AnchorPoint = Vector2.new(1, 0.5)
+fr.BackgroundColor3 = BG; fr.BackgroundTransparency = 0.06
+fr.BorderSizePixel = 0; fr.Parent = wrap
+Instance.new("UICorner", fr).CornerRadius = UDim.new(0,12)
+local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(38,38,38); st.Thickness = 1.5; st.Parent = fr
+local pad = Instance.new("UIPadding")
+pad.PaddingTop = UDim.new(0,8); pad.PaddingBottom = UDim.new(0,8)
+pad.PaddingLeft = UDim.new(0,8); pad.PaddingRight = UDim.new(0,8)
+pad.Parent = fr
+local vlist = Instance.new("UIListLayout")
+vlist.FillDirection = Enum.FillDirection.Vertical
+vlist.Padding = UDim.new(0,4); vlist.SortOrder = Enum.SortOrder.LayoutOrder
+vlist.Parent = fr
+
+-- HEADER
+local hdr = Instance.new("Frame"); hdr.Size = UDim2.new(1,0,0,18)
+hdr.BackgroundTransparency = 1; hdr.LayoutOrder = 1; hdr.Parent = fr
+local dot = Instance.new("Frame"); dot.Size = UDim2.new(0,7,0,7)
+dot.Position = UDim2.new(0,0,0.5,-3.5); dot.BackgroundColor3 = AQ
+dot.BorderSizePixel = 0; dot.Parent = hdr
+Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
+local ttl = Instance.new("TextLabel"); ttl.BackgroundTransparency = 1
+ttl.Font = Enum.Font.GothamBold; ttl.TextSize = 12; ttl.TextColor3 = AQ
+ttl.Text = "SKILL FIRE DEBUG"; ttl.Position = UDim2.new(0,12,0,0)
+ttl.Size = UDim2.new(1,-12,1,0); ttl.TextXAlignment = Enum.TextXAlignment.Left
+ttl.Parent = hdr
+
+-- COUNTER ROW
+local ctrRow = Instance.new("Frame"); ctrRow.Size = UDim2.new(1,0,0,24)
+ctrRow.BackgroundColor3 = BG2; ctrRow.BorderSizePixel = 0; ctrRow.LayoutOrder = 2; ctrRow.Parent = fr
+Instance.new("UICorner", ctrRow).CornerRadius = UDim.new(0,6)
+local ctrLbl = Instance.new("TextLabel"); ctrLbl.BackgroundTransparency = 1
+ctrLbl.Font = Enum.Font.GothamSemibold; ctrLbl.TextSize = 10; ctrLbl.TextColor3 = GR
+ctrLbl.Text = "events: 0  |  fires: 0"; ctrLbl.Position = UDim2.new(0,6,0,0)
+ctrLbl.Size = UDim2.new(1,-6,1,0); ctrLbl.TextXAlignment = Enum.TextXAlignment.Left
+ctrLbl.Parent = ctrRow
+
+-- DIVIDER
+local div = Instance.new("Frame"); div.Size = UDim2.new(1,0,0,1)
+div.BackgroundColor3 = Color3.fromRGB(38,38,38); div.BorderSizePixel = 0
+div.LayoutOrder = 3; div.Parent = fr
+
+-- SCROLL LOG
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1,0,0,290)
+scroll.CanvasSize = UDim2.new(0,0,0,0)
+scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.ScrollBarThickness = 3; scroll.ScrollBarImageColor3 = AQ
+scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
+scroll.LayoutOrder = 4; scroll.Parent = fr
+local logList = Instance.new("UIListLayout")
+logList.FillDirection = Enum.FillDirection.Vertical
+logList.Padding = UDim.new(0,2); logList.SortOrder = Enum.SortOrder.LayoutOrder
+logList.VerticalAlignment = Enum.VerticalAlignment.Top
+logList.Parent = scroll
+
+-- ============ LOG HELPER ============
+local logCount = 0
+local eventCount = 0
+local fireCount = 0
+
+local function addLog(txt, col)
+    logCount = logCount + 1
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1,0,0,0)
+    row.AutomaticSize = Enum.AutomaticSize.Y
+    row.BackgroundTransparency = 1; row.BorderSizePixel = 0
+    row.LayoutOrder = logCount; row.Parent = scroll
+    local lbl = Instance.new("TextLabel"); lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.Code; lbl.TextSize = 9
+    lbl.TextColor3 = col or WH
+    lbl.Text = txt
+    lbl.Size = UDim2.new(1,-4,0,0); lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.Position = UDim2.new(0,4,0,0)
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextWrapped = true; lbl.Parent = row
+    -- auto scroll ke bawah
+    task.defer(function()
+        scroll.CanvasPosition = Vector2.new(0, math.huge)
+    end)
+    -- batas 60 baris
+    if logCount > 60 then
+        local ch = scroll:GetChildren()
+        for _, c in ipairs(ch) do
+            if c:IsA("Frame") and c.LayoutOrder <= (logCount - 60) then c:Destroy() end
+        end
+    end
+end
+
+local function ts()
+    local t = tick() % 10000
+    return string.format("%.2f", t)
+end
+
+-- ============ PET INFO HELPER ============
+local function fmtUUID(u)
+    local s = tostring(u):gsub("[{}]","")
+    if s:sub(1,1) ~= "{" then s = "{"..s.."}" end
+    return s
+end
+
+local function getPetInfo(uuid)
+    -- coba dari getgc container (sama cara up6kg)
+    local key = fmtUUID(uuid)
+    if getgc then
+        local ok, gc = pcall(getgc, true)
+        if ok and gc then
+            for _, v in ipairs(gc) do
+                local entry = type(v) == "table" and rawget(v, key)
+                if entry and type(entry) == "table" then
+                    local e = entry
+                    local pd = rawget(e, "PetData")
+                    if pd then
+                        local nm  = tostring(rawget(e,"PetType") or rawget(pd,"PetType") or "?")
+                        local bw  = tonumber(rawget(pd,"BaseWeight")) or 0
+                        local lv  = tonumber(rawget(pd,"Level")) or 0
+                        local kg  = bw * (lv + 10) / 10
+                        return nm, lv, kg
+                    end
+                end
+            end
+        end
+    end
+    -- fallback: scan backpack + char
+    local plr = Players.LocalPlayer
+    local sources = {}
+    if plr.Character then table.insert(sources, plr.Character) end
+    if plr.Backpack then table.insert(sources, plr.Backpack) end
+    for _, src in ipairs(sources) do
+        for _, t in ipairs(src:GetChildren()) do
+            if t:IsA("Tool") then
+                local u = t:GetAttribute("PET_UUID")
+                if u and tostring(u):gsub("[{}]","") == tostring(uuid):gsub("[{}]","") then
+                    local nm = tostring(t:GetAttribute("f") or t.Name or "?")
+                    return nm, nil, nil
+                end
+            end
+        end
+    end
+    return nil, nil, nil
+end
+
+-- ============ CONNECT EVENT ============
+local ge = RS:FindFirstChild("GameEvents")
+local pcu = ge and ge:FindFirstChild("PetCooldownsUpdated")
+local req = ge and ge:FindFirstChild("RequestPetCooldowns")
+
+if not pcu then
+    addLog("❌ PetCooldownsUpdated NOT FOUND", RED)
+else
+    addLog("✓ connected PetCooldownsUpdated", GRN)
+
+    local lastMinTime = {}
+    local petInfoCache = {}
+
+    local function getCachedInfo(key, uuid)
+        local c = petInfoCache[key]
+        if c and (tick() - c.at) < 5 then return c.nm, c.age, c.kg end
+        local nm, age, kg = getPetInfo(uuid)
+        petInfoCache[key] = { nm = nm or "?", age = age, kg = kg, at = tick() }
+        return nm or "?", age, kg
+    end
+
+    pcu.OnClientEvent:Connect(function(uuid, data)
+        eventCount = eventCount + 1
+        local key = tostring(uuid):gsub("[{}]", "")
+
+        if type(data) ~= "table" then
+            ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
+            return
+        end
+
+        local minNow = math.huge
+        local skillNames = {}
+        for _, v in ipairs(data) do
+            if type(v) == "table" then
+                local t = tonumber(v.Time) or tonumber(v.time) or tonumber(v[2]) or math.huge
+                local nm = tostring(v.Name or v.name or v[1] or "?")
+                if not nm:lower():find("mutation") then
+                    minNow = math.min(minNow, t)
+                    table.insert(skillNames, nm:sub(1,10).."="..string.format("%.1f",t))
+                end
+            end
+        end
+
+        local prev = lastMinTime[key]
+        local skillStr = table.concat(skillNames, " | ")
+
+        local pnm, page, pkg = getCachedInfo(key, uuid)
+        local infoStr = tostring(pnm):sub(1,14)
+        if page then infoStr = infoStr.." a"..tostring(page) end
+        if pkg  then infoStr = infoStr.." "..string.format("%.2f",pkg).."kg" end
+
+        if prev ~= nil and prev <= 0.5 and minNow > 1 then
+            fireCount = fireCount + 1
+            addLog("FIRE ["..infoStr.."] "..skillStr, ORG)
+            print("[dbg-skillfire] FIRE "..infoStr.." "..skillStr)
+        elseif minNow <= 0 then
+            addLog("RDY  ["..infoStr.."] "..skillStr, GRN)
+        else
+            addLog("upd  ["..infoStr.."] cd="..string.format("%.1f", minNow == math.huge and -1 or minNow), GR)
+        end
+
+        lastMinTime[key] = minNow
+        ctrLbl.Text = "events: "..eventCount.."  |  fires: "..fireCount
+    end)
+
+    -- request fresh cooldown data
+    if req then pcall(function() req:FireServer() end) end
+end
+
+print("[dbg_skillfire] running")
