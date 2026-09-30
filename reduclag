@@ -1,8 +1,8 @@
 -- reduclag: reduce FPS lag dari game GAG
 -- standalone script, jalanin terpisah dari up6kg
--- v1.2
+-- v1.6
 
-local VERSION = "reduclag-v1.2"
+local VERSION = "reduclag-v1.6"
 print("[ReducLag] " .. VERSION .. " start")
 
 local Lighting = game:GetService("Lighting")
@@ -15,102 +15,146 @@ local CFG = {
     disableFog          = true,
     disableBloom        = true,
     disableTerrainDecor = true,
-    disableWeather      = true,   -- WeatherVisuals + WindBlastTemplate
-    disableSky          = true,   -- Sky + Atmosphere di Lighting
-    disableColorFX      = true,   -- semua ColorCorrection + Blur weather effect
+    disableWeather      = true,
+    disableSky          = true,
+    disableColorFX      = true,
     cleanupInterval     = 10,
 }
 
 -- ============ APPLY FUNCTIONS ============
 local function applyShadows(on)
+    if not on then return end
     pcall(function()
-        Lighting.GlobalShadows = not on
-        Lighting.ShadowSoftness = on and 0 or 0.5
+        Lighting.GlobalShadows = false
+        Lighting.ShadowSoftness = 0
     end)
 end
 
 local function applyFog(on)
+    if not on then return end
     pcall(function()
-        Lighting.FogEnd   = on and 100000 or 1000
-        Lighting.FogStart = on and 99999  or 0
+        Lighting.FogEnd   = 100000
+        Lighting.FogStart = 99999
     end)
 end
 
 local function applyBloom(on)
+    if not on then return end
     pcall(function()
         for _, v in ipairs(Lighting:GetDescendants()) do
-            if v:IsA("BloomEffect") then
-                v.Enabled = not on
-            end
+            if v:IsA("BloomEffect") then v:Destroy() end
         end
     end)
 end
 
-local function disableParticlesIn(obj)
+local function destroyParticlesIn(obj)
     pcall(function()
         for _, d in ipairs(obj:GetDescendants()) do
             if d:IsA("ParticleEmitter") or d:IsA("Trail")
             or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-                d.Enabled = false
-                if d:IsA("ParticleEmitter") then pcall(function() d.Rate = 0 end) end
+                d:Destroy()
             end
         end
     end)
 end
 
 local function applyParticles(on)
-    if on then disableParticlesIn(workspace) end
+    if not on then return end
+    destroyParticlesIn(workspace)
 end
 
 local function applyTerrain(on)
+    if not on then return end
     pcall(function()
         local t = workspace:FindFirstChildOfClass("Terrain")
-        if t then t.Decoration = not on end
+        if t then t.Decoration = false end
     end)
 end
 
--- matiin WeatherVisuals folder + WindBlastTemplate trail
+-- semua nama folder/object workspace yang spawn dari mutasi cuaca
+local WEATHER_WS_NAMES = {
+    -- universal
+    "WeatherVisuals",
+    "WeatherObjects",
+    "WindBlastTemplate",
+    -- WhaleWaters
+    "Whale",
+    "Clam",
+    "Kelp",
+    "Water_Effect",
+    "SpottedEffect",
+    -- Halloween / Spider
+    "SpiderWebFX",
+    -- Rainbow mutation
+    "Rainbows",
+    -- Earthquake / Dirt
+    "Dirt_VFX",
+    -- Birthday event
+    "BirthdayDecor",
+    -- Beanstalk event
+    "BeanstalkEvent",
+    -- Acorn Chaos
+    "AcornChaosLocal",
+    -- General visuals (bubbles dll)
+    "Visuals",
+    -- FishRain
+    "FishRainClient",
+    -- Tornado / angin
+    "TornadoFX",
+    "CycloneFX",
+    -- Lainnya yang sering spawn
+    "MeteorFX",
+    "LavaPools",
+    "IcicleSpawner",
+    "SnowFX",
+    "FrostFX",
+    "LightningFX",
+}
+
 local function applyWeather(on)
+    if not on then return end
     pcall(function()
-        -- WeatherVisuals: disable semua particle
-        local wv = workspace:FindFirstChild("WeatherVisuals")
-        if wv then
-            if on then
-                disableParticlesIn(wv)
-            end
-        end
-        -- WindBlastTemplate: disable trail (sumber lag mutasi angin)
-        local wb = workspace:FindFirstChild("WindBlastTemplate")
-        if wb then
-            for _, d in ipairs(wb:GetDescendants()) do
-                if d:IsA("Trail") or d:IsA("Beam") or d:IsA("ParticleEmitter") then
-                    d.Enabled = not on
+        -- destroy semua weather workspace objects by name
+        local children = workspace:GetChildren()
+        for _, obj in ipairs(children) do
+            for _, name in ipairs(WEATHER_WS_NAMES) do
+                if obj.Name == name then
+                    obj:Destroy()
+                    break
                 end
             end
         end
-    end)
-end
-
--- matiin Sky + Atmosphere di semua folder Lighting
-local function applySky(on)
-    pcall(function()
-        for _, v in ipairs(Lighting:GetDescendants()) do
-            if v:IsA("Sky") or v:IsA("Atmosphere") then
-                pcall(function() v.Parent:FindFirstChildOfClass("Sky") and true end)
-                -- destroy sky biar render langit plain (lebih ringan)
-                if on then v:Destroy() end
+        -- destroy effects yang spawn langsung di workspace (bukan dalam folder)
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj:IsA("ColorCorrectionEffect") or obj:IsA("BlurEffect")
+            or obj:IsA("BloomEffect") or obj:IsA("SunRaysEffect")
+            or obj:IsA("ParticleEmitter") then
+                obj:Destroy()
             end
         end
     end)
 end
 
--- matiin semua ColorCorrection + Blur + SunRays + DepthOfField (weather effects)
-local function applyColorFX(on)
+local function applySky(on)
+    if not on then return end
     pcall(function()
         for _, v in ipairs(Lighting:GetDescendants()) do
-            if v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect")
-            or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect") then
-                v.Enabled = not on
+            if v:IsA("Sky") or v:IsA("Atmosphere") then v:Destroy() end
+        end
+    end)
+end
+
+local function applyColorFX(on)
+    if not on then return end
+    pcall(function()
+        -- destroy semua folder + direct children di Lighting yang berisi effects
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("Folder") then
+                v:Destroy() -- destroy Halloween folder dll
+            elseif v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect")
+            or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect")
+            or v:IsA("BloomEffect") then
+                v:Destroy()
             end
         end
     end)
@@ -164,7 +208,7 @@ local function buatGui()
         wrap.BackgroundTransparency = 1; wrap.Parent = sg
         local scale = Instance.new("UIScale"); scale.Scale = 1.8; scale.Parent = wrap
 
-        -- MAIN FRAME — height dinaikkan untuk 8 toggle
+        -- MAIN FRAME
         local fr = Instance.new("Frame")
         fr.Size = UDim2.new(0, 200, 0, 310)
         fr.Position = UDim2.new(0, 8/1.8, 0.5, -155/1.8)
@@ -191,7 +235,7 @@ local function buatGui()
         Instance.new("UICorner", dot).CornerRadius = UDim.new(1,0)
         local ttl = Instance.new("TextLabel"); ttl.BackgroundTransparency = 1
         ttl.Font = Enum.Font.GothamBold; ttl.TextSize = 13; ttl.TextColor3 = AQ
-        ttl.Text = "REDUCLAG"; ttl.Position = UDim2.new(0,14,0,0)
+        ttl.Text = "REDUCLAG  v1.6"; ttl.Position = UDim2.new(0,14,0,0)
         ttl.Size = UDim2.new(1,-14,1,0); ttl.TextXAlignment = Enum.TextXAlignment.Left
         ttl.Parent = hdr
 
@@ -216,16 +260,16 @@ local function buatGui()
         div.BackgroundColor3 = Color3.fromRGB(38,38,38); div.BorderSizePixel = 0
         div.LayoutOrder = 3; div.Parent = fr
 
-        -- TOGGLE ROWS
+        -- TOGGLE ROWS (destroy-permanent, pill jadi RED setelah klik)
         local toggles = {
-            { key = "disableShadows",      label = "Shadows OFF" },
-            { key = "disableParticles",    label = "Particles OFF" },
-            { key = "disableBloom",        label = "Bloom OFF" },
+            { key = "disableShadows",      label = "Shadows DESTROY" },
+            { key = "disableParticles",    label = "Particles DESTROY" },
+            { key = "disableBloom",        label = "Bloom DESTROY" },
             { key = "disableFog",          label = "Fog OFF" },
             { key = "disableTerrainDecor", label = "Terrain Decor OFF" },
-            { key = "disableWeather",      label = "Weather FX OFF" },
-            { key = "disableSky",          label = "Sky/Atmos OFF" },
-            { key = "disableColorFX",      label = "Color FX OFF" },
+            { key = "disableWeather",      label = "Weather+Models DESTROY" },
+            { key = "disableSky",          label = "Sky/Atmos DESTROY" },
+            { key = "disableColorFX",      label = "Color FX DESTROY" },
         }
 
         local applyMap = {
@@ -239,6 +283,18 @@ local function buatGui()
             disableColorFX      = applyColorFX,
         }
 
+        -- toggle yang destroy-permanent (sekali apply, locked)
+        local PERMANENT = {
+            disableShadows = false,   -- shadows: property, bisa di-toggle
+            disableParticles = true,
+            disableBloom = true,
+            disableFog = false,
+            disableTerrainDecor = false,
+            disableWeather = true,
+            disableSky = true,
+            disableColorFX = true,
+        }
+
         for i, tog in ipairs(toggles) do
             local row = Instance.new("Frame"); row.Size = UDim2.new(1,0,0,22)
             row.BackgroundTransparency = 1; row.BorderSizePixel = 0
@@ -250,15 +306,20 @@ local function buatGui()
             lbl.Size = UDim2.new(1,-44,1,0); lbl.TextXAlignment = Enum.TextXAlignment.Left
             lbl.Parent = row
 
+            -- pill: RED jika permanent+applied, GREEN jika on tapi toggleable, GRAY jika off
+            local isPerm = PERMANENT[tog.key]
+            local initOn = CFG[tog.key]
+            local initColor = initOn and (isPerm and RED or GRN) or Color3.fromRGB(60,60,60)
+
             local pill = Instance.new("Frame"); pill.Size = UDim2.new(0,36,0,18)
             pill.AnchorPoint = Vector2.new(1,0.5); pill.Position = UDim2.new(1,0,0.5,0)
-            pill.BackgroundColor3 = CFG[tog.key] and GRN or Color3.fromRGB(60,60,60)
+            pill.BackgroundColor3 = initColor
             pill.BorderSizePixel = 0; pill.Parent = row
             Instance.new("UICorner", pill).CornerRadius = UDim.new(1,0)
 
             local knob = Instance.new("Frame"); knob.Size = UDim2.new(0,14,0,14)
             knob.AnchorPoint = Vector2.new(0,0.5)
-            knob.Position = CFG[tog.key] and UDim2.new(1,-16,0.5,0) or UDim2.new(0,2,0.5,0)
+            knob.Position = initOn and UDim2.new(1,-16,0.5,0) or UDim2.new(0,2,0.5,0)
             knob.BackgroundColor3 = WH; knob.BorderSizePixel = 0; knob.Parent = pill
             Instance.new("UICorner", knob).CornerRadius = UDim.new(1,0)
 
@@ -266,10 +327,19 @@ local function buatGui()
             btn.BackgroundTransparency = 1; btn.Text = ""; btn.Parent = row
 
             local key = tog.key
+            local applied = initOn  -- track apakah sudah di-apply
             btn.MouseButton1Click:Connect(function()
+                if isPerm and applied then return end  -- locked kalau permanent+applied
                 CFG[key] = not CFG[key]
                 local on = CFG[key]
-                pill.BackgroundColor3 = on and GRN or Color3.fromRGB(60,60,60)
+                applied = on
+                if isPerm and on then
+                    pill.BackgroundColor3 = RED
+                elseif on then
+                    pill.BackgroundColor3 = GRN
+                else
+                    pill.BackgroundColor3 = Color3.fromRGB(60,60,60)
+                end
                 knob.Position = on and UDim2.new(1,-16,0.5,0) or UDim2.new(0,2,0.5,0)
                 if applyMap[key] then applyMap[key](on) end
                 print("[ReducLag] " .. key .. " = " .. tostring(on))
@@ -299,15 +369,15 @@ task.spawn(function()
     end
 end)
 
--- cleanup loop: re-apply tiap interval (weather bisa spawn ulang)
+-- cleanup loop: re-destroy weather + particles tiap interval
 task.spawn(function()
     while true do
         task.wait(CFG.cleanupInterval)
-        if CFG.disableParticles then disableParticlesIn(workspace) end
+        if CFG.disableParticles then destroyParticlesIn(workspace) end
         if CFG.disableWeather then applyWeather(true) end
-        applyShadows(CFG.disableShadows)
-        applyBloom(CFG.disableBloom)
-        applyColorFX(CFG.disableColorFX)
+        if CFG.disableBloom then applyBloom(true) end
+        if CFG.disableColorFX then applyColorFX(true) end
+        if CFG.disableSky then applySky(true) end
     end
 end)
 
