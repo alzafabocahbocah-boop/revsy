@@ -1,4 +1,4 @@
--- uplevelnew v8.107 — doCollect: 3 cara fire (HarvestRemote→InputHoldBegin→fireproximityprompt)
+-- uplevelnew v8.108 — fix: Frozen/Shocked bukan mutasi buah (non-mutation attrs diperluas)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -110,7 +110,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.107"
+local VERSION = "v8.108"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2218,11 +2218,15 @@ task.spawn(function()
 end)
 
 -- attr non-mutasi yang diabaikan saat cek mutasi buah
+-- PENTING: Frozen = efek cuaca/game, bukan mutasi visual buah
+-- Shocked = bisa jadi efek petir/cuaca, bukan mutasi collectible
 local FRUIT_NON_MUTATIONS = {
     Nightmare=true, IsOutlined=true,
     -- system attrs
     FruitSpawnIndex=true, FruitVersion=true, DoneGrowTime=true,
     WeightMulti=true, MaxAge=true, GrowRateMulti=true,
+    -- efek cuaca/lingkungan (bukan mutasi visual)
+    Frozen=true, Shocked=true,
 }
 -- cek apakah buah punya mutasi selain Nightmare (dynamic: semua boolean attr true yang bukan non-mutasi)
 local _dbgMutLogged = {}
@@ -2357,32 +2361,33 @@ local function doCollect(fruits)
                 end
                 dbgLog("PP di buah[1]: "..table.concat(allPP, " | "))
             end
-            -- fire: coba semua cara, catat mana yang OK
+            -- fire: HarvestRemote cara utama (terbukti kerja di v8.105)
             local fireOk, fireErr
-            -- cara 1: HarvestRemote(prompt)
             if harvestRE then
                 fireOk, fireErr = pcall(function() harvestRE:FireServer(prompt) end)
+                if not fireOk then _addErr("HarvestRE["..i.."]: "..tostring(fireErr)) end
             end
-            -- cara 2: InputHoldBegin/End (trigger server via ProximityPrompt native)
+            -- fallback: InputHoldBegin/End
             if not fireOk then
                 fireOk, fireErr = pcall(function()
                     prompt:InputHoldBegin()
-                    task.wait(0.02)
+                    task.wait(0.05)
                     prompt:InputHoldEnd()
                 end)
+                if not fireOk then _addErr("IHB["..i.."]: "..tostring(fireErr)) end
             end
-            -- cara 3: fireproximityprompt exploit
+            -- fallback terakhir: fireproximityprompt exploit
             if not fireOk then
                 pcall(function() prompt.RequiresLineOfSight = false end)
                 fireOk, fireErr = pcall(fireproximityprompt, prompt)
+                if not fireOk then _addErr("FPP["..i.."]: "..tostring(fireErr)) end
             end
             if not fireOk then
                 gagal = gagal + 1
-                _addErr("fire["..i.."]: "..tostring(fireErr))
             else
                 collected = collected + 1
             end
-            task.wait(0.05)
+            task.wait(0.08)  -- 0.08s anti-throttle (sedikit lebih aman dari 0.05)
         else
             gagal = gagal + 1
             local reason = ok and "nil prompt" or tostring(prompt)
