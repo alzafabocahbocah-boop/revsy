@@ -162,7 +162,6 @@ local active = false
 
 local function stopSniff()
     active = false
-    -- restore hooks
     for _, h in ipairs(hooks) do
         pcall(function() hookfunction(h.fn, h.orig) end)
     end
@@ -174,6 +173,16 @@ local function stopSniff()
     logWarn("Sniff dihentikan")
 end
 
+local function hookArgs(label, args)
+    for i, a in ipairs(args) do
+        if typeof(a) == "Instance" then
+            log("  ["..i.."] "..a:GetFullName())
+        else
+            log("  ["..i.."] "..typeof(a).."="..tostring(a))
+        end
+    end
+end
+
 local function startSniff()
     if active then stopSniff() end
     active = true
@@ -182,9 +191,9 @@ local function startSniff()
     statusLbl.Text = "● Sniff aktif..."
     statusLbl.TextColor3 = Color3.fromRGB(100, 220, 140)
 
-    local gameEvents = RS:FindFirstChild("GameEvents")
+    local hookCount = 0
 
-    -- 1. hookfunction fireproximityprompt
+    -- 1. fireproximityprompt
     if fireproximityprompt then
         local origFPP = fireproximityprompt
         local newFPP = hookfunction(origFPP, function(pp, ...)
@@ -202,12 +211,13 @@ local function startSniff()
             return origFPP(pp, ...)
         end)
         table.insert(hooks, {fn=newFPP, orig=origFPP})
+        hookCount = hookCount + 1
         logOk("Hook: fireproximityprompt")
     else
         logWarn("fireproximityprompt tidak ada")
     end
 
-    -- 1b. hookfunction firetouchinterest
+    -- 2. firetouchinterest
     if firetouchinterest then
         local origFTI = firetouchinterest
         local newFTI = hookfunction(origFTI, function(part1, part2, toggle, ...)
@@ -219,12 +229,13 @@ local function startSniff()
             return origFTI(part1, part2, toggle, ...)
         end)
         table.insert(hooks, {fn=newFTI, orig=origFTI})
+        hookCount = hookCount + 1
         logOk("Hook: firetouchinterest")
     else
         logWarn("firetouchinterest tidak ada")
     end
 
-    -- 1c. hookfunction fireclickdetector
+    -- 3. fireclickdetector
     if fireclickdetector then
         local origFCD = fireclickdetector
         local newFCD = hookfunction(origFCD, function(cd, ...)
@@ -234,78 +245,104 @@ local function startSniff()
             return origFCD(cd, ...)
         end)
         table.insert(hooks, {fn=newFCD, orig=origFCD})
+        hookCount = hookCount + 1
         logOk("Hook: fireclickdetector")
+    else
+        logWarn("fireclickdetector tidak ada")
     end
 
-    -- 2. hookfunction HarvestRemote:InvokeServer
-    if gameEvents then
-        local hr = gameEvents:FindFirstChild("HarvestRemote")
-        if hr then
-            local origInv = hr.InvokeServer
-            local newInv = hookfunction(origInv, function(self, ...)
-                if active then
-                    logHit("HarvestRemote:InvokeServer")
-                    local args = {...}
-                    for i,a in ipairs(args) do
-                        if typeof(a) == "Instance" then
-                            log("  ["..i.."] "..a:GetFullName())
-                        else
-                            log("  ["..i.."] "..typeof(a).."="..tostring(a))
-                        end
-                    end
-                end
-                return origInv(self, ...)
-            end)
-            table.insert(hooks, {fn=newInv, orig=origInv})
-            logOk("Hook: HarvestRemote:InvokeServer")
+    -- 4. fireserver (exploit shortcut)
+    if fireserver then
+        local origFS = fireserver
+        local newFS = hookfunction(origFS, function(re, ...)
+            if active then
+                logHit("fireserver → "..tostring(re and re:GetFullName()))
+                hookArgs("", {...})
+            end
+            return origFS(re, ...)
+        end)
+        table.insert(hooks, {fn=newFS, orig=origFS})
+        hookCount = hookCount + 1
+        logOk("Hook: fireserver (shortcut)")
+    end
 
-            -- OnClientInvoke (server→client)
-            local c = pcall(function()
-                hr.OnClientInvoke = function(...)
-                    if active then
-                        log("📥 HarvestRemote:OnClientInvoke")
-                        local args = {...}
-                        for i,a in ipairs(args) do
-                            log("  ["..i.."] "..typeof(a).."="..tostring(a))
-                        end
-                    end
-                end
-            end)
-        else
-            logWarn("HarvestRemote tidak ditemukan")
-        end
+    -- 5. invokeserver (exploit shortcut)
+    if invokeserver then
+        local origIS = invokeserver
+        local newIS = hookfunction(origIS, function(rf, ...)
+            if active then
+                logHit("invokeserver → "..tostring(rf and rf:GetFullName()))
+                hookArgs("", {...})
+            end
+            return origIS(rf, ...)
+        end)
+        table.insert(hooks, {fn=newIS, orig=origIS})
+        hookCount = hookCount + 1
+        logOk("Hook: invokeserver (shortcut)")
+    end
 
-        -- 3. hookfunction semua RemoteEvent FireServer di GameEvents (hanya yg belum di-skip)
-        local SKIP = {Fps=true, Input=true, Ping=true, RefreshIndex=true, GetState=true}
-        for _, v in ipairs(gameEvents:GetChildren()) do
-            if v:IsA("RemoteEvent") and not SKIP[v.Name] then
-                local vname = v.Name
+    -- 6. Scan SEMUA RS descendants → hook FireServer + InvokeServer per-instance
+    local SKIP = {Fps=true, Input=true, Ping=true, RefreshIndex=true, GetState=true}
+    local hooked_paths = {}
+    for _, v in ipairs(RS:GetDescendants()) do
+        if not SKIP[v.Name] then
+            local vpath = v:GetFullName()
+            if v:IsA("RemoteEvent") then
                 local origFire = v.FireServer
                 local ok2, newFire = pcall(hookfunction, origFire, function(self, ...)
                     if active then
-                        logHit("FireServer: "..vname)
-                        local args = {...}
-                        for i,a in ipairs(args) do
-                            if typeof(a) == "Instance" then
-                                log("  ["..i.."] "..a:GetFullName())
-                            else
-                                log("  ["..i.."] "..typeof(a).."="..tostring(a))
-                            end
-                        end
+                        logHit("FireServer: "..vpath)
+                        hookArgs("", {...})
                     end
                     return origFire(self, ...)
                 end)
                 if ok2 then
                     table.insert(hooks, {fn=newFire, orig=origFire})
+                    table.insert(hooked_paths, "RE:"..v.Name)
+                    hookCount = hookCount + 1
+                end
+            elseif v:IsA("RemoteFunction") then
+                local origInv = v.InvokeServer
+                local ok2, newInv = pcall(hookfunction, origInv, function(self, ...)
+                    if active then
+                        logHit("InvokeServer: "..vpath)
+                        hookArgs("", {...})
+                    end
+                    return origInv(self, ...)
+                end)
+                if ok2 then
+                    table.insert(hooks, {fn=newInv, orig=origInv})
+                    table.insert(hooked_paths, "RF:"..v.Name)
+                    hookCount = hookCount + 1
                 end
             end
         end
-        logOk("Hook: "..#hooks.." total (GameEvents RE + HR + FPP)")
-    else
-        logWarn("GameEvents tidak ditemukan")
+    end
+    log("RS scan: "..#hooked_paths.." RE/RF di-hook", Color3.fromRGB(150, 150, 150))
+    if #hooked_paths > 0 then
+        log("  "..table.concat(hooked_paths, ", "), Color3.fromRGB(120, 120, 120))
     end
 
+    -- 7. PP Triggered listener (semua PP di workspace)
+    local ppCount = 0
+    for _, v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("ProximityPrompt") then
+            local vpath = v:GetFullName()
+            local c = v.Triggered:Connect(function(plrWho)
+                if active then
+                    logHit("PP.Triggered: "..vpath)
+                    log("  by: "..tostring(plrWho and plrWho.Name))
+                end
+            end)
+            table.insert(conns, c)
+            ppCount = ppCount + 1
+        end
+    end
+    log("PP listeners: "..ppCount, Color3.fromRGB(150, 150, 150))
+
+    logOk("TOTAL HOOKS: "..hookCount.." | PP: "..ppCount)
     log("Sekarang jalankan sc lain → collect 1 buah", Color3.fromRGB(180, 180, 60))
+    statusLbl.Text = "● Aktif — "..hookCount.." hooks + "..ppCount.." PP"
 end
 
 -- buttons
