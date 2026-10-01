@@ -1,4 +1,4 @@
--- uplevelnew v8.104 — debug collect: log gameEvents + prompt path ke debug panel
+-- uplevelnew v8.105 — doCollect: fire HarvestRemote (server-side), fallback fireproximityprompt
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -36,6 +36,7 @@ if not equipRE then
 end
 local plantRE = gameEvents:FindFirstChild("Plant_RE")
 local sellInventoryRE = gameEvents:FindFirstChild("Sell_Inventory")
+local harvestRE = gameEvents:FindFirstChild("HarvestRemote")
 
 -- ===== FAV BUAH — cari RemoteEvent "FavoriteFruit"/"SetFruitFavorite" di RS =====
 local _fruitFavRE = nil
@@ -109,7 +110,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.104"
+local VERSION = "v8.105"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2356,9 +2357,15 @@ local function doCollect(fruits)
                 end
                 dbgLog("PP di buah[1]: "..table.concat(allPP, " | "))
             end
-            -- hanya set RequiresLineOfSight=false, TIDAK set Enabled/MaxDist/HoldDuration
-            pcall(function() prompt.RequiresLineOfSight = false end)
-            local fireOk, fireErr = pcall(fireproximityprompt, prompt)
+            -- fire HarvestRemote (server-side collect), fallback ke fireproximityprompt
+            local fireOk, fireErr
+            if harvestRE then
+                fireOk, fireErr = pcall(function() harvestRE:FireServer(fruit) end)
+            end
+            if not fireOk then
+                pcall(function() prompt.RequiresLineOfSight = false end)
+                fireOk, fireErr = pcall(fireproximityprompt, prompt)
+            end
             if not fireOk then
                 gagal = gagal + 1
                 _addErr("fire["..i.."]: "..tostring(fireErr))
