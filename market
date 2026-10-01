@@ -11571,17 +11571,41 @@ do
 
             if not BH.autoSnipe.active then
                 -- not running, skip
+                -- v8.460: debug kenapa gak scan — log sekali tiap state
+                if not _G._dbgSnipeIdleLogged then
+                    _G._dbgSnipeIdleLogged = true
+                    L("[DEBUG Snipe] IDLE — autoSnipe.active = false")
+                end
             elseif #BH.autoSnipe.rules == 0 then
                 -- no rules
+                if not _G._dbgSnipeNoRulesLogged then
+                    _G._dbgSnipeNoRulesLogged = true
+                    L("[DEBUG Snipe] IDLE — rules kosong (0 rule)")
+                end
             elseif not buyRE then
                 BH.autoSnipe.statusLbl.Text = "❌ buyRE belum cached (klik SNIPE dulu)"
                 BH.autoSnipe.statusLbl.TextColor3 = C.danger
+                if not _G._dbgSnipeNoBuyRELogged then
+                    _G._dbgSnipeNoBuyRELogged = true
+                    L("[DEBUG Snipe] IDLE — buyRE nil (belum klik SNIPE)")
+                end
             else
                 -- v8.95: INLINE lightweight scan — NO logging, NO verbose stats
                 -- v8.251: PARALEL — query semua pemain serempak (task.spawn), bukan 1-1 berurutan.
                 -- Di server rame (30 org) ini mangkas scan dari ~3-5s jadi <0.5s.
+                -- v8.460: reset idle flags saat aktif beneran
+                _G._dbgSnipeIdleLogged = nil
+                _G._dbgSnipeNoRulesLogged = nil
+                _G._dbgSnipeNoBuyRELogged = nil
                 local autoCache = {}
-                if BH.TBC then
+                if not BH.TBC then
+                    -- v8.460: log sekali kalau TBC nil
+                    if not _G._dbgSnipeNoTBCLogged then
+                        _G._dbgSnipeNoTBCLogged = true
+                        L("[DEBUG Snipe] BH.TBC nil — scan dilewati! (TBC belum loaded)")
+                    end
+                else
+                    _G._dbgSnipeNoTBCLogged = nil
                     local plist = Players:GetPlayers()
                     local pending = 0
                     local results = {}
@@ -11603,6 +11627,23 @@ do
                     local waited = 0
                     while pending > 0 and waited < 1.5 do
                         waited = waited + task.wait()
+                    end
+                    -- v8.460: log summary scan sekali tiap 60s (biar tau scan jalan)
+                    if not _G._dbgScanLastLog or (tick() - _G._dbgScanLastLog) > 60 then
+                        _G._dbgScanLastLog = tick()
+                        local totalListings, totalPlayers = 0, 0
+                        local itypeCounts = {}
+                        for pp2, data2 in pairs(results) do
+                            totalPlayers = totalPlayers + 1
+                            for _, lst in pairs(data2.Listings) do
+                                totalListings = totalListings + 1
+                                local it = tostring(lst.ItemType or "nil")
+                                itypeCounts[it] = (itypeCounts[it] or 0) + 1
+                            end
+                        end
+                        local itypeStr = ""
+                        for k, v in pairs(itypeCounts) do itypeStr = itypeStr..k.."="..v.." " end
+                        L("[DEBUG Snipe] SCAN — "..totalPlayers.." player, "..totalListings.." listing | "..itypeStr)
                     end
                     -- olah hasil yg udah masuk
                     for pp, data in pairs(results) do
@@ -11640,7 +11681,8 @@ do
                             end
                         end
                     end
-                end
+                end -- end for pp, data
+                end -- end else (BH.TBC loaded)
 
                 local boughtThisRound = 0
                 for _, p in ipairs(autoCache) do
