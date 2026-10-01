@@ -110,8 +110,8 @@ local function mkBtn(txt, x, w, col)
     return b
 end
 
-local btnDump  = mkBtn("🔬 DUMP 30 BUAH", 0,   140, Color3.fromRGB(40,30,10))
-local btnAll   = mkBtn("📦 DUMP SEMUA",   148, 120, Color3.fromRGB(20,40,20))
+local btnDump  = mkBtn("🔬 DUMP 30 BUAH",    0,   140, Color3.fromRGB(40,30,10))
+local btnAll   = mkBtn("🎯 SCAN MENARIK",   148, 120, Color3.fromRGB(20,40,60))
 local btnCopy  = mkBtn("📋 COPY",         276, 70,  Color3.fromRGB(30,20,50))
 local btnClear = mkBtn("🗑",              354, 36)
 
@@ -121,62 +121,91 @@ local function getPlayerFarm()
 end
 
 local function dumpFruit(f, idx)
-    -- nama
     log("["..idx.."] "..f.Name, Color3.fromRGB(100,200,255))
-    -- attributes
+    -- semua attributes
     local ok1, attrs = pcall(function() return f:GetAttributes() end)
     if ok1 and attrs then
-        local parts = {}
         for k,v in pairs(attrs) do
-            table.insert(parts, k.."="..tostring(v))
-        end
-        if #parts > 0 then
-            log("  ATTR: "..table.concat(parts, " | "), Color3.fromRGB(255,180,80))
-        else
-            log("  ATTR: (kosong)", Color3.fromRGB(120,120,120))
+            log("  ATTR "..k.." = "..tostring(v), Color3.fromRGB(255,180,80))
         end
     end
-    -- children
-    local children = f:GetChildren()
-    if #children > 0 then
-        for _, c in ipairs(children) do
+    -- semua descendants (bukan hanya children langsung)
+    local function dumpDesc(obj, depth)
+        for _, c in ipairs(obj:GetChildren()) do
+            local indent = string.rep("  ", depth)
             local val = ""
             pcall(function()
-                if c:IsA("ValueBase") then val = "="..tostring(c.Value) end
+                if c:IsA("ValueBase") then val = ' = "'..tostring(c.Value)..'"' end
             end)
-            log("  CHILD: "..c.ClassName..":"..c.Name..val, Color3.fromRGB(180,255,180))
+            log(indent..c.ClassName.." ["..c.Name.."]"..val, Color3.fromRGB(180,255,180))
+            -- rekursif 1 level dalam folder
+            if c:IsA("Folder") or c:IsA("Model") then
+                dumpDesc(c, depth+1)
+            end
         end
-    else
-        log("  CHILD: (tidak ada)", Color3.fromRGB(120,120,120))
     end
+    dumpDesc(f, 1)
 end
 
-local function runDump(limit)
-    log("── DUMP FRUIT STRUCTURE (limit="..(limit or "semua")..") ──", Color3.fromRGB(200,200,100))
+-- scan dan hanya tampilkan buah yang ADA Variant != Normal, atau tampilkan semua
+local function runDump(limit, onlyNonNormal)
+    local tag = onlyNonNormal and "NON-NORMAL VARIANT" or ("limit="..(limit or "semua"))
+    log("── DUMP FRUIT STRUCTURE ("..tag..") ──", Color3.fromRGB(200,200,100))
     local farm = getPlayerFarm()
     if not farm then log("❌ Farm tidak ditemukan!"); return end
     local plants = farm:FindFirstChild("Important") and farm.Important:FindFirstChild("Plants_Physical")
     if not plants then log("❌ Plants_Physical tidak ditemukan!"); return end
 
-    local idx = 0
+    local idx = 0; local shown = 0
     for _, pt in ipairs(plants:GetChildren()) do
         local fruits = pt:FindFirstChild("Fruits")
         if fruits then
             for _, f in ipairs(fruits:GetChildren()) do
                 idx += 1
-                dumpFruit(f, idx)
-                if limit and idx >= limit then
-                    log("── Selesai "..idx.." buah ──", Color3.fromRGB(150,150,150))
-                    return
+                if onlyNonNormal then
+                    -- cari buah yang punya child/attr dengan value bukan Normal
+                    local interesting = false
+                    pcall(function()
+                        for _, c in ipairs(f:GetDescendants()) do
+                            if c:IsA("StringValue") and c.Value ~= "Normal" and c.Value ~= "" then
+                                interesting = true
+                            end
+                            if c:IsA("BoolValue") and c.Value == true then
+                                interesting = true
+                            end
+                        end
+                        local attrs = f:GetAttributes()
+                        for k,v in pairs(attrs) do
+                            local sv = tostring(v):lower()
+                            if sv ~= "normal" and sv ~= "false" and sv ~= "1" and sv ~= "2" and k ~= "FruitSpawnIndex" and k ~= "MaxAge" and k ~= "FruitVersion" and k ~= "GrowRateMulti" and k ~= "DoneGrowTime" and k ~= "Item_Seed" and k ~= "WeightMulti" and k ~= "MasteryGrowthMulti" then
+                                interesting = true
+                            end
+                        end
+                    end)
+                    if interesting then
+                        shown += 1
+                        dumpFruit(f, idx)
+                        if shown >= 20 then
+                            log("── 20 buah menarik ditampilkan, total scan: "..idx.." ──", Color3.fromRGB(150,150,150))
+                            return
+                        end
+                    end
+                else
+                    shown += 1
+                    dumpFruit(f, idx)
+                    if limit and shown >= limit then
+                        log("── Selesai "..shown.." buah (total: "..idx..") ──", Color3.fromRGB(150,150,150))
+                        return
+                    end
                 end
             end
         end
     end
-    log("── Total: "..idx.." buah ──", Color3.fromRGB(150,150,150))
+    log("── Total scan: "..idx.." | ditampilkan: "..shown.." ──", Color3.fromRGB(150,150,150))
 end
 
-btnDump.MouseButton1Click:Connect(function() runDump(30) end)
-btnAll.MouseButton1Click:Connect(function() runDump(nil) end)
+btnDump.MouseButton1Click:Connect(function() runDump(30, false) end)
+btnAll.MouseButton1Click:Connect(function() runDump(nil, true) end)  -- scan semua, tampil yang menarik
 
 btnCopy.MouseButton1Click:Connect(function()
     local txt = table.concat(logLines, "\n")
@@ -199,5 +228,5 @@ btnClear.MouseButton1Click:Connect(function()
     logLines = {}; logOrder = 0
 end)
 
-log("Tekan 🔬 DUMP 30 BUAH untuk lihat structure buah", Color3.fromRGB(78,214,204))
-log("Cari: Attr mutation/mutasi/type, atau Child StringValue/IntValue", Color3.fromRGB(150,150,150))
+log("🔬 DUMP 30 BUAH = lihat structure lengkap 30 buah pertama", Color3.fromRGB(78,214,204))
+log("🎯 SCAN MENARIK = scan semua buah, tampilkan yang ada value aneh (mutasi?)", Color3.fromRGB(78,214,204))
