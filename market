@@ -5706,6 +5706,7 @@ p.Parent = snScroll end
 BH.autoSnipe = BH.autoSnipe or {
     active = true,  -- v8.462: always on — langsung aktif saat exe
     rules = {},          -- list of {petType, mutation, maxKg, maxPrice}
+    skinRules = {},      -- v8.467: list of {skinId, maxPrice} untuk skin booth snipe
     bought = {},         -- listingUuid → true (skip yang udah dibeli)
     cooldown = {},       -- v8.265: listingUuid → tick() terakhir gagal (retry setelah 2s)
     boughtCount = 0,
@@ -5718,6 +5719,11 @@ end
 BH.autoSnipe.eggSource = (BH.marketState and BH.marketState.autoSnipeEggSource) or "all"
 -- v8.265: pastikan cooldown table ada (kalau autoSnipe udah dibuat sebelumnya)
 BH.autoSnipe.cooldown = BH.autoSnipe.cooldown or {}
+-- v8.467: pastikan skinRules ada
+BH.autoSnipe.skinRules = BH.autoSnipe.skinRules or {}
+if BH.marketState and BH.marketState.autoSnipeSkinRules then
+    BH.autoSnipe.skinRules = BH.marketState.autoSnipeSkinRules
+end
 
 do
     local snAutoPad = Instance.new("UIPadding")
@@ -6030,8 +6036,8 @@ do
 
     -- Row 5 (y=112 → bottom): Rules list scroll
     BH.autoSnipe.scroll = Instance.new("ScrollingFrame")
-    BH.autoSnipe.scroll.Size = UDim2.new(1, 0, 1, -116)
-    BH.autoSnipe.scroll.Position = UDim2.new(0, 0, 0, 112)
+    BH.autoSnipe.scroll.Size = UDim2.new(1, 0, 1, -142)
+    BH.autoSnipe.scroll.Position = UDim2.new(0, 0, 0, 138)  -- v8.467: +26 buat skin add row
     BH.autoSnipe.scroll.BackgroundColor3 = C.card
     BH.autoSnipe.scroll.BorderSizePixel = 0
     BH.autoSnipe.scroll.ScrollBarThickness = 4
@@ -6189,8 +6195,104 @@ do
                 end
             end)
         end
+        -- v8.467: Skin rules section
+        do
+            local hdr = Instance.new("TextLabel")
+            hdr.Size = UDim2.new(1, -8, 0, 20)
+            hdr.BackgroundColor3 = C.bg hdr.BorderSizePixel = 0
+            hdr.TextColor3 = C.textDim hdr.Font = FB hdr.TextSize = 10
+            hdr.Text = "── SKIN SNIPE ──"
+            hdr.Parent = BH.autoSnipe.scroll
+        end
+        for sidx, sr in ipairs(BH.autoSnipe.skinRules) do
+            local srow = Instance.new("Frame")
+            srow.Size = UDim2.new(1, -8, 0, 28)
+            srow.BackgroundColor3 = C.input srow.BorderSizePixel = 0
+            srow.Parent = BH.autoSnipe.scroll
+            Instance.new("UICorner", srow).CornerRadius = UDim.new(0, 5)
+
+            local sinfoLbl = Instance.new("TextLabel")
+            sinfoLbl.Size = UDim2.new(1, -36, 1, 0) sinfoLbl.Position = UDim2.new(0, 8, 0, 0)
+            sinfoLbl.BackgroundTransparency = 1
+            sinfoLbl.Text = string.format("🎨 <b>%s</b> • <font color='#FFD700'>≤%s</font>",
+                sr.skinId or "*", tostring(sr.maxPrice or "any"))
+            sinfoLbl.RichText = true
+            sinfoLbl.TextColor3 = C.text sinfoLbl.Font = FM sinfoLbl.TextSize = 11
+            sinfoLbl.TextXAlignment = Enum.TextXAlignment.Left
+            sinfoLbl.TextTruncate = Enum.TextTruncate.AtEnd
+            sinfoLbl.Parent = srow
+
+            local sdelBtn = Instance.new("TextButton")
+            sdelBtn.Size = UDim2.new(0, 24, 0, 22)
+            sdelBtn.Position = UDim2.new(1, -28, 0.5, -11)
+            sdelBtn.BackgroundColor3 = C.danger
+            sdelBtn.Text = "✕" sdelBtn.TextColor3 = Color3.new(1,1,1)
+            sdelBtn.Font = FB sdelBtn.TextSize = 10
+            sdelBtn.BorderSizePixel = 0 sdelBtn.Parent = srow
+            Instance.new("UICorner", sdelBtn).CornerRadius = UDim.new(0, 4)
+            sdelBtn.MouseButton1Click:Connect(function()
+                table.remove(BH.autoSnipe.skinRules, sidx)
+                BH.autoSnipe.rebuildRules()
+                if BH.marketState then
+                    BH.marketState.autoSnipeSkinRules = BH.autoSnipe.skinRules
+                    pcall(function() BH.saveMarketState(BH.marketState) end)
+                end
+            end)
+        end
         BH.autoSnipe.scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 8)
     end -- end BH.autoSnipe.rebuildRules
+
+    -- v8.467: Skin snipe add button + inputs
+    local skinNameInput = Instance.new("TextBox")
+    skinNameInput.Size = UDim2.new(0.4, -2, 0, 22)
+    skinNameInput.Position = UDim2.new(0, 0, 0, 58)
+    skinNameInput.BackgroundColor3 = C.input skinNameInput.BorderSizePixel = 0
+    skinNameInput.TextColor3 = C.text skinNameInput.Font = F skinNameInput.TextSize = 10
+    skinNameInput.PlaceholderText = "skin name (*=all)"
+    skinNameInput.PlaceholderColor3 = C.textDim
+    skinNameInput.ClearTextOnFocus = false
+    skinNameInput.Parent = snAutoPanel
+    Instance.new("UICorner", skinNameInput).CornerRadius = UDim.new(0, 4)
+
+    local skinPriceInput = Instance.new("TextBox")
+    skinPriceInput.Size = UDim2.new(0.25, -2, 0, 22)
+    skinPriceInput.Position = UDim2.new(0.4, 2, 0, 58)
+    skinPriceInput.BackgroundColor3 = C.input skinPriceInput.BorderSizePixel = 0
+    skinPriceInput.TextColor3 = C.text skinPriceInput.Font = F skinPriceInput.TextSize = 10
+    skinPriceInput.PlaceholderText = "max price"
+    skinPriceInput.PlaceholderColor3 = C.textDim
+    skinPriceInput.ClearTextOnFocus = false
+    skinPriceInput.Parent = snAutoPanel
+    Instance.new("UICorner", skinPriceInput).CornerRadius = UDim.new(0, 4)
+
+    local skinAddBtn = Instance.new("TextButton")
+    skinAddBtn.Size = UDim2.new(0.35, -2, 0, 22)
+    skinAddBtn.Position = UDim2.new(0.65, 2, 0, 58)
+    skinAddBtn.BackgroundColor3 = C.accent skinAddBtn.BorderSizePixel = 0
+    skinAddBtn.Text = "+ SKIN RULE" skinAddBtn.TextColor3 = Color3.new(0,0,0)
+    skinAddBtn.Font = FB skinAddBtn.TextSize = 9
+    skinAddBtn.Parent = snAutoPanel
+    Instance.new("UICorner", skinAddBtn).CornerRadius = UDim.new(0, 4)
+    skinAddBtn.MouseButton1Click:Connect(function()
+        local sname = skinNameInput.Text
+        local sprice = tonumber(skinPriceInput.Text)
+        if not sname or sname == "" then sname = "*" end
+        if not sprice or sprice <= 0 then
+            BH.autoSnipe.statusLbl.Text = "❌ Skin: isi max price"
+            BH.autoSnipe.statusLbl.TextColor3 = C.danger
+            return
+        end
+        table.insert(BH.autoSnipe.skinRules, {skinId = sname, maxPrice = sprice})
+        skinNameInput.Text = ""
+        skinPriceInput.Text = ""
+        BH.autoSnipe.rebuildRules()
+        if BH.marketState then
+            BH.marketState.autoSnipeSkinRules = BH.autoSnipe.skinRules
+            pcall(function() BH.saveMarketState(BH.marketState) end)
+        end
+        BH.autoSnipe.statusLbl.Text = "✅ Skin rule added: "..(sname=="*" and "all" or sname).." ≤"..sprice
+        BH.autoSnipe.statusLbl.TextColor3 = C.success
+    end)
 
     -- Add rule handler — v8.127: multi-pet loop
     BH.autoSnipe.addBtn.MouseButton1Click:Connect(function()
@@ -11690,44 +11792,18 @@ do
                                     end
                                 end
                             elseif listing.ItemType == "TradeBoothSkin" then
-                                -- v8.466: debug TradeBoothSkin — log listing keys SETIAP uuid baru
-                                _G._dbgSkinSeen = _G._dbgSkinSeen or {}
-                                local uid = tostring(listingUuid)
-                                if not _G._dbgSkinSeen[uid] then
-                                    _G._dbgSkinSeen[uid] = true
-                                    -- log semua field di listing langsung
-                                    local keys = {}
-                                    for k, v in pairs(listing) do
-                                        table.insert(keys, tostring(k).."="..tostring(v))
-                                    end
-                                    _G.__ZenxPL("[DBG Skin] "..uid:sub(1,8).." | "..table.concat(keys, " | "))
-                                    -- cek data.Items (mungkin key berbeda)
-                                    local item = items and listing.ItemId and items[listing.ItemId]
-                                    if item then
-                                        local ikeys = {}
-                                        for k, v in pairs(item) do
-                                            table.insert(ikeys, tostring(k).."="..tostring(v))
-                                        end
-                                        _G.__ZenxPL("[DBG Skin] item: "..table.concat(ikeys, " | "))
-                                    else
-                                        -- cek data.Skins atau field lain
-                                        local altData = data.Skins or data.SkinItems or data.HoldableItems
-                                        if altData and listing.ItemId then
-                                            local alt = altData[listing.ItemId]
-                                            if alt then
-                                                local akeys = {}
-                                                for k, v in pairs(alt) do table.insert(akeys, tostring(k).."="..tostring(v)) end
-                                                _G.__ZenxPL("[DBG Skin] altData: "..table.concat(akeys, " | "))
-                                            else
-                                                _G.__ZenxPL("[DBG Skin] item=nil, altData juga nil untuk ItemId="..tostring(listing.ItemId))
-                                            end
-                                        else
-                                            -- log semua top-level keys di data biar tau ada field apa aja
-                                            local dkeys = {}
-                                            for k in pairs(data) do table.insert(dkeys, tostring(k)) end
-                                            _G.__ZenxPL("[DBG Skin] data keys: "..table.concat(dkeys, ", "))
-                                        end
-                                    end
+                                -- v8.467: SKIN SNIPE — listing.ItemId = nama skin (e.g. "Umbrella")
+                                local skinId = tostring(listing.ItemId or "")
+                                local skinPrice = tonumber(listing.Price) or 0
+                                if skinId ~= "" then
+                                    table.insert(autoCache, {
+                                        isSkin = true,
+                                        skinId = skinId,
+                                        price = skinPrice,
+                                        owner = pp.Name,
+                                        sellerPlayer = pp,
+                                        listingUuid = listingUuid,
+                                    })
                                 end
                             elseif listing.ItemType and listing.ItemType ~= "Pet" then
                                 local _dbgKey = "dbg_itype_"..tostring(listing.ItemType)
@@ -11787,6 +11863,48 @@ do
                     local cd = BH.autoSnipe.cooldown[p.listingUuid]
                     local onCooldown = cd and (tick() - cd) < 2
                     if not BH.autoSnipe.bought[p.listingUuid] and not onCooldown then
+                        -- v8.467: SKIN SNIPE branch
+                        if p.isSkin then
+                            local skinRules = BH.autoSnipe.skinRules or {}
+                            for _, srule in ipairs(skinRules) do
+                                local matchSkin = (srule.skinId == "" or srule.skinId == "*"
+                                    or srule.skinId:lower() == p.skinId:lower())
+                                local priceOk = (not srule.maxPrice or p.price <= srule.maxPrice)
+                                if matchSkin and priceOk then
+                                    BH.autoSnipe.cooldown[p.listingUuid] = tick()
+                                    local clean = tostring(p.listingUuid):gsub("[{}]","")
+                                    local seller, listingUuid = p.sellerPlayer, p.listingUuid
+                                    local skinId, skinPrice, skinOwner = p.skinId, p.price, p.owner
+                                    task.spawn(function()
+                                        local ok, ret = pcall(function()
+                                            return buyRE:InvokeServer(seller, clean)
+                                        end)
+                                        if ok and (ret == true or ret == nil) then
+                                            BH.autoSnipe.bought[listingUuid] = true
+                                            BH.autoSnipe.boughtCount = BH.autoSnipe.boughtCount + 1
+                                            _G.__ZenxPL(string.format("[SkinSnipe] ✅ %s @ %s dari %s",
+                                                skinId, tostring(skinPrice), skinOwner or "?"))
+                                            L(string.format("[SkinSnipe] ✅ Bought skin %s @ %s from %s",
+                                                skinId, tostring(skinPrice), skinOwner or "?"))
+                                            BH.autoSnipe.statusLbl.Text = string.format(
+                                                "✅ %d bought | skin: %s @ %s",
+                                                BH.autoSnipe.boughtCount, skinId, tostring(skinPrice))
+                                            BH.autoSnipe.statusLbl.TextColor3 = C.success
+                                            if BH.marketState then
+                                                BH.marketState.snipeTotal = (tonumber(BH.marketState.snipeTotal) or 0) + 1
+                                                _G.__ZenxSnipeN = BH.marketState.snipeTotal
+                                                pcall(function() BH.saveMarketState(BH.marketState) end)
+                                            end
+                                        else
+                                            L(string.format("[SkinSnipe] ❌ Fail %s: %s",
+                                                skinId, tostring(ret):sub(1,50)))
+                                        end
+                                    end)
+                                    boughtThisRound = boughtThisRound + 1
+                                    break
+                                end
+                            end
+                        else
                         for _, rule in ipairs(BH.autoSnipe.rules) do
                             if matchRule(p, rule) then
                                 -- v8.271: GUARD final filter egg tepat sebelum fire (anti-bocor/race)
@@ -11866,6 +11984,7 @@ do
                                 end  -- v8.271: tutup else guard filter egg
                             end
                         end
+                        end  -- v8.467: tutup else (bukan skin)
                     end
                 end
 
