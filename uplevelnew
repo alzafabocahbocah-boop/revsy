@@ -747,7 +747,7 @@ end
 sectionHeader(cfgScroll,"\u{2022} STATUS",1)
 
 local progCountLbl,progPctLbl,progFill,sesiStatL,nmKebunL,shovelL,favL,sesiBL,sesiInfoL
-local age500plusL,age500minusL,bahanAgeL
+local age500plusL,age500minusL,bahanAgeL,totalPetL
 do
     local progCard=mk("Frame",{Size=UDim2.new(1,0,0,66),BackgroundColor3=C.card,BorderSizePixel=0,
         LayoutOrder=2,Parent=cfgScroll}); corner(progCard,10); stroke(progCard,C.border,1)
@@ -788,17 +788,21 @@ do
     age500plusL  = statMini2(statRow2,"0","AGE 500+", C.text)
     age500minusL = statMini2(statRow2,"0","AGE 500-", C.text)
     bahanAgeL    = statMini2(statRow2,"—","BAHAN AGE", C.text)
-    -- background loop: update stat age 500 tiap 5 detik (tidak tunggu sesi jalan)
+    totalPetL    = statMini2(statRow2,"—","TOTAL PET", C.text)
+    -- background loop: update stat age 500 + total pet tiap 5 detik (tidak tunggu sesi jalan)
     task.spawn(function()
         while true do
             task.wait(5)
             pcall(function()
                 local c = _kgContainer
                 if not c then return end
-                local plus, minus = 0, 0
+                local plus, minus, total = 0, 0, 0
                 for _, entry in pairs(c) do
-                    local lv = tonumber(entry.PetData and entry.PetData.Level) or 0
-                    if lv >= 500 then plus = plus + 1 else minus = minus + 1 end
+                    if type(entry) == "table" and entry.PetData then
+                        total = total + 1
+                        local lv = tonumber(entry.PetData.Level) or 0
+                        if lv >= 500 then plus = plus + 1 else minus = minus + 1 end
+                    end
                 end
                 age500plusL.Text  = tostring(plus)
                 age500minusL.Text = tostring(minus)
@@ -807,6 +811,52 @@ do
                     bahanAgeL.Text = tostring(ba)
                 else
                     bahanAgeL.Text = "—"
+                end
+                -- hitung max inventory: cek UI game "Pet Items (X/Y)" dulu
+                if not _G.__ZenxMaxPetCache or (tick() - (_G.__ZenxMaxPetTime or 0)) > 30 then
+                    local maxUI = nil
+                    pcall(function()
+                        local pg = plr:FindFirstChild("PlayerGui")
+                        if pg then
+                            for _, d in ipairs(pg:GetDescendants()) do
+                                if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text) == "string" then
+                                    local low = d.Text:lower()
+                                    if low:find("pet") and low:find("item") then
+                                        local a, b = d.Text:match("(%d+)%s*/%s*(%d+)")
+                                        if a and b then
+                                            a, b = tonumber(a), tonumber(b)
+                                            if a and b and b > 0 and math.abs(a - total) <= 15 then
+                                                maxUI = b; break
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    -- fallback getgc cari MaxPetsInInventory
+                    if not maxUI and getgc then
+                        pcall(function()
+                            for _, obj in ipairs(getgc(true)) do
+                                if type(obj) == "table" then
+                                    local mp = rawget(obj, "MaxPetsInInventory")
+                                    if type(mp) == "number" and mp > 0
+                                        and rawget(obj, "MaxEggsInFarm") ~= nil
+                                        and rawget(obj, "MaxEquippedPets") ~= nil then
+                                        maxUI = mp; break
+                                    end
+                                end
+                            end
+                        end)
+                    end
+                    _G.__ZenxMaxPetCache = maxUI or _G.__ZenxMaxPetCache
+                    _G.__ZenxMaxPetTime  = tick()
+                end
+                local maxInv = _G.__ZenxMaxPetCache
+                if maxInv and maxInv > 0 then
+                    totalPetL.Text = tostring(total).."/"..tostring(maxInv)
+                else
+                    totalPetL.Text = tostring(total)
                 end
             end)
         end
