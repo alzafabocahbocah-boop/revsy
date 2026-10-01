@@ -123,13 +123,19 @@ local cropsRE = RS:WaitForChild("GameEvents",5)
 if cropsRE then cropsRE = cropsRE:WaitForChild("Crops",5) end
 if cropsRE then cropsRE = cropsRE:WaitForChild("Collect",5) end
 
--- mutasi = Variant != "Normal"
+-- mutasi = attribute boolean = true (Wet, Chilled, Frozen, Bloodlit, dst)
+local SKIP_ATTRS = {
+    WeightMulti=true, FruitSpawnIndex=true, MaxAge=true,
+    MasteryGrowthMulti=true, FruitVersion=true, DoneGrowTime=true,
+    GrowRateMulti=true,
+}
 
 local function isMutasi(f)
-    local v = f:FindFirstChild("Variant")
-    if v and v:IsA("StringValue") then
-        if v.Value ~= "Normal" and v.Value ~= "" then
-            return true, v.Value
+    local ok, attrs = pcall(function() return f:GetAttributes() end)
+    if not ok then return false end
+    for k, v in pairs(attrs) do
+        if not SKIP_ATTRS[k] and v == true then
+            return true, k
         end
     end
     return false
