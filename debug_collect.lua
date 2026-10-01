@@ -1,4 +1,4 @@
--- debug_collect.lua v2 — GUI debug collect dengan tombol test per cara
+-- debug_collect.lua v5 — FIX: HarvestRemote=RemoteFunction, pakai InvokeServer
 local RS = game:GetService("ReplicatedStorage")
 local plr = game.Players.LocalPlayer
 local UIS = game:GetService("UserInputService")
@@ -198,9 +198,9 @@ cntLbl.TextXAlignment = Enum.TextXAlignment.Left; cntLbl.Parent = main
 local btnY = {0, 42, 84, 126}
 local btnDefs = {
     {label="📋  SCAN Buah Mutasi",  col=Color3.fromRGB(40,40,80),  tcol=Color3.fromRGB(140,160,255)},
-    {label="TEST 1: FireServer(fruit)",  col=Color3.fromRGB(20,50,20),  tcol=Color3.fromRGB(100,220,100)},
-    {label="TEST 2: FireServer(prompt)", col=Color3.fromRGB(50,35,10),  tcol=Color3.fromRGB(230,180,80)},
-    {label="TEST 3: InputHoldBegin/End", col=Color3.fromRGB(50,20,50),  tcol=Color3.fromRGB(200,120,220)},
+    {label="TEST 1: InvokeServer(fruit)",  col=Color3.fromRGB(20,50,20),  tcol=Color3.fromRGB(100,220,100)},
+    {label="TEST 2: InvokeServer(prompt)", col=Color3.fromRGB(50,35,10),  tcol=Color3.fromRGB(230,180,80)},
+    {label="TEST 3: InputHoldBegin/End",   col=Color3.fromRGB(50,20,50),  tcol=Color3.fromRGB(200,120,220)},
 }
 local btns = {}
 for i, def in ipairs(btnDefs) do
@@ -274,27 +274,27 @@ btns[1].MouseButton1Click:Connect(function()
     setBusy(false)
 end)
 
--- TEST 1: FireServer(fruit)
+-- TEST 1: InvokeServer(fruit)
 btns[2].MouseButton1Click:Connect(function()
     if _busy then return end
     if not _fruit then addLog("SCAN dulu!", Color3.fromRGB(220,80,80)); return end
     if not harvestRE then addLog("harvestRE NIL!", Color3.fromRGB(220,80,80)); return end
     setBusy(true)
     local before = updateCount()
-    addLog("── TEST 1: FireServer(fruit) ──", Color3.fromRGB(100,220,100))
-    local ok, err = pcall(function() harvestRE:FireServer(_fruit) end)
+    addLog("── TEST 1: InvokeServer(fruit) ──", Color3.fromRGB(100,220,100))
+    local ok, err = pcall(function() harvestRE:InvokeServer(_fruit) end)
     addLog("pcall: ok="..tostring(ok).." | "..tostring(err))
     task.wait(1.5)
     local after = updateCount()
     local delta = before - after
     local col = delta > 0 and Color3.fromRGB(100,220,100) or Color3.fromRGB(220,80,80)
     addLog("Berkurang: " .. delta .. " buah", col)
-    if delta > 0 then addLog("✅ BERHASIL! Argumen: fruit", col)
+    if delta > 0 then addLog("✅ BERHASIL! InvokeServer(fruit)", col)
     else addLog("❌ Tidak ada perubahan", col) end
     setBusy(false)
 end)
 
--- TEST 2: FireServer(prompt)
+-- TEST 2: InvokeServer(prompt)
 btns[3].MouseButton1Click:Connect(function()
     if _busy then return end
     if not _fruit then addLog("SCAN dulu!", Color3.fromRGB(220,80,80)); return end
@@ -302,15 +302,15 @@ btns[3].MouseButton1Click:Connect(function()
     if not _prompt then addLog("Prompt NIL!", Color3.fromRGB(220,80,80)); return end
     setBusy(true)
     local before = updateCount()
-    addLog("── TEST 2: FireServer(prompt) ──", Color3.fromRGB(230,180,80))
-    local ok, err = pcall(function() harvestRE:FireServer(_prompt) end)
+    addLog("── TEST 2: InvokeServer(prompt) ──", Color3.fromRGB(230,180,80))
+    local ok, err = pcall(function() harvestRE:InvokeServer(_prompt) end)
     addLog("pcall: ok="..tostring(ok).." | "..tostring(err))
     task.wait(1.5)
     local after = updateCount()
     local delta = before - after
     local col = delta > 0 and Color3.fromRGB(100,220,100) or Color3.fromRGB(220,80,80)
     addLog("Berkurang: " .. delta .. " buah", col)
-    if delta > 0 then addLog("✅ BERHASIL! Argumen: prompt", col)
+    if delta > 0 then addLog("✅ BERHASIL! InvokeServer(prompt)", col)
     else addLog("❌ Tidak ada perubahan", col) end
     setBusy(false)
 end)
