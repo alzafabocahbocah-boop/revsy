@@ -123,30 +123,14 @@ local cropsRE = RS:WaitForChild("GameEvents",5)
 if cropsRE then cropsRE = cropsRE:WaitForChild("Crops",5) end
 if cropsRE then cropsRE = cropsRE:WaitForChild("Collect",5) end
 
--- list mutasi (sama persis dengan uplevelnew)
-local MUTASI = {
-    "Chocolate","Rainbow","Frozen","Twilight","Disco","Gold","Lava",
-    "Blossom","Moonlit","Plasma","Butterfly","Mutant","Celestial",
-    "Sunrise","Magnetic","Crystal","Zombie","Hive","Starfall",
-    "Sandstorm","Eternal","Divine","Prismatic","Jelly","Venom",
-    "Molten","Shocked","Infected","Ember","Radiant","Mossy",
-    "Dipped","Verdant","Heavenly","Windy","Petal","Atlantean",
-    "Spectral","Bloodlit","Gilded","Mirrored","Infernal","Arcane",
-    "Glacial","Tempest","Void","Astral","Phantom","Eclipse","Obsidian",
-    "Frostbite","Scorched","Thornborn","Typhoon","Crimson","Tidal",
-    "Eldritch","Abyssal","Plague","Zephyr","Mythic","Ancient",
-    "Cosmic","Stellar","Toxic","Neon","Shadow","Spirit","Polar",
-    "Volcanic","Storm","Poison","Plague","Hydro","Terra","Pyro",
-    "Cyber","Bio","Quantum","Nano","Titan","Omega","Alpha",
-    "Nightmare","Mutation",
-}
-local mutasiSet = {}
-for _,m in ipairs(MUTASI) do mutasiSet[m:lower()] = true end
+-- mutasi = Variant != "Normal"
 
-local function isMutasi(fruitName)
-    local low = fruitName:lower()
-    for m,_ in pairs(mutasiSet) do
-        if low:find(m, 1, true) then return true, m end
+local function isMutasi(f)
+    local v = f:FindFirstChild("Variant")
+    if v and v:IsA("StringValue") then
+        if v.Value ~= "Normal" and v.Value ~= "" then
+            return true, v.Value
+        end
     end
     return false
 end
@@ -171,7 +155,7 @@ local function scanMutasi()
         if fruits then
             for _, f in ipairs(fruits:GetChildren()) do
                 total += 1
-                local ok, mut = isMutasi(f.Name)
+                local ok, mut = isMutasi(f)
                 if ok then
                     mutasiCount += 1
                     table.insert(scannedFruits, f)
