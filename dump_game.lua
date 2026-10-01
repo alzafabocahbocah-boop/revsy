@@ -307,10 +307,82 @@ end)
 
 btnCopy.MouseButton1Click:Connect(function()
     local txt = table.concat(allData, "\n")
-    if setclipboard then setclipboard(txt)
-    elseif toclipboard then toclipboard(txt) end
-    addLine("✅ Log disalin ("..#allData.." baris)", Color3.fromRGB(100,220,140))
+    -- coba writefile dulu (lebih reliable)
+    local saved = false
+    pcall(function()
+        if writefile then
+            writefile("dump_result.txt", txt)
+            saved = true
+        end
+    end)
+    -- coba clipboard
+    local clipped = false
+    pcall(function()
+        if setclipboard then setclipboard(txt); clipped = true
+        elseif toclipboard then toclipboard(txt); clipped = true
+        elseif clipboard then clipboard.set(txt); clipped = true end
+    end)
+    if saved then
+        addLine("💾 Tersimpan: dump_result.txt ("..#allData.." baris)", Color3.fromRGB(100,220,140))
+    end
+    if clipped then
+        addLine("📋 Clipboard ok ("..#allData.." baris)", Color3.fromRGB(100,220,140))
+    end
+    if not saved and not clipped then
+        addLine("⚠ Copy gagal — tampil di bawah, select manual:", Color3.fromRGB(255,180,60))
+        -- tampilkan di textbox baru supaya bisa select
+        showTextBox(txt)
+    end
 end)
+
+local textBoxShown = false
+function showTextBox(txt)
+    if textBoxShown then return end
+    textBoxShown = true
+    local tbFrame = Instance.new("Frame", gui)
+    tbFrame.Size = UDim2.new(0, 560, 0, 300)
+    tbFrame.Position = UDim2.new(0.5,-280,0.5,160)
+    tbFrame.BackgroundColor3 = Color3.fromRGB(10,10,10)
+    tbFrame.BorderSizePixel = 0
+    Instance.new("UICorner", tbFrame).CornerRadius = UDim.new(0,8)
+    local tbClose = Instance.new("TextButton", tbFrame)
+    tbClose.Size = UDim2.new(0,28,0,28)
+    tbClose.Position = UDim2.new(1,-34,0,4)
+    tbClose.BackgroundColor3 = Color3.fromRGB(50,20,25)
+    tbClose.Text = "✕"; tbClose.Font = Enum.Font.GothamBold
+    tbClose.TextSize = 13; tbClose.TextColor3 = Color3.fromRGB(220,100,110)
+    tbClose.AutoButtonColor = true
+    Instance.new("UICorner", tbClose).CornerRadius = UDim.new(0,6)
+    tbClose.MouseButton1Click:Connect(function() tbFrame:Destroy(); textBoxShown = false end)
+    local lbl2 = Instance.new("TextLabel", tbFrame)
+    lbl2.Size = UDim2.new(1,-80,0,28)
+    lbl2.Position = UDim2.new(0,8,0,0)
+    lbl2.BackgroundTransparency = 1
+    lbl2.Text = "SELECT ALL → CTRL+C"
+    lbl2.Font = Enum.Font.GothamBold
+    lbl2.TextSize = 11
+    lbl2.TextColor3 = Color3.fromRGB(255,180,60)
+    lbl2.TextXAlignment = Enum.TextXAlignment.Left
+    local tb = Instance.new("TextBox", tbFrame)
+    tb.Size = UDim2.new(1,-16,1,-36)
+    tb.Position = UDim2.new(0,8,0,32)
+    tb.BackgroundColor3 = Color3.fromRGB(4,4,4)
+    tb.BorderSizePixel = 0
+    tb.Text = txt
+    tb.Font = Enum.Font.Code
+    tb.TextSize = 9
+    tb.TextColor3 = Color3.fromRGB(200,200,200)
+    tb.TextXAlignment = Enum.TextXAlignment.Left
+    tb.TextYAlignment = Enum.TextYAlignment.Top
+    tb.MultiLine = true
+    tb.TextWrapped = false
+    tb.ClearTextOnFocus = false
+    Instance.new("UICorner", tb).CornerRadius = UDim.new(0,6)
+    local pad = Instance.new("UIPadding", tb)
+    pad.PaddingLeft = UDim.new(0,4)
+    pad.PaddingTop = UDim.new(0,4)
+    tb:CaptureFocus()
+end
 
 btnClear.MouseButton1Click:Connect(function() clearLog() end)
 
