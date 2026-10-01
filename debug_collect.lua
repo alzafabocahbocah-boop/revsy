@@ -413,29 +413,34 @@ _sniffBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    -- hook __namecall
+    -- hook __namecall — tangkap SEMUA remote di GameEvents
     local oldNamecall = mt.__namecall
     setreadonly(mt, false)
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
-        if self == harvestRE and (method == "InvokeServer" or method == "FireServer") then
-            local args = {...}
-            addLog("SNIFF: "..method.." caught!", Color3.fromRGB(100,255,100))
-            for i, a in ipairs(args) do
-                local info = tostring(a)
-                if typeof(a) == "Instance" then info = a:GetFullName() end
-                addLog("  arg["..i.."]: "..typeof(a).." = "..info, Color3.fromRGB(255,200,80))
-                if typeof(a) == "Instance" then
-                    local attrs = a:GetAttributes()
-                    local attrStr = {}
-                    for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
-                    if #attrStr > 0 then addLog("    attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100)) end
+        if (method == "InvokeServer" or method == "FireServer") and typeof(self) == "Instance" then
+            -- cek apakah instance ini ada di RS (bukan spam dari game lain)
+            local ok2, inRS = pcall(function() return self:IsDescendantOf(RS) end)
+            if ok2 and inRS then
+                local args = {...}
+                addLog("🔴 "..self.Name.." → "..method, Color3.fromRGB(100,255,100))
+                for i, a in ipairs(args) do
+                    local info = tostring(a)
+                    if typeof(a) == "Instance" then info = a:GetFullName() end
+                    addLog("  ["..i.."] "..typeof(a).."="..info, Color3.fromRGB(255,200,80))
+                    if typeof(a) == "Instance" then
+                        local attrs = a:GetAttributes()
+                        local attrStr = {}
+                        for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
+                        if #attrStr>0 then addLog("    attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100)) end
+                    end
                 end
             end
         end
         return oldNamecall(self, ...)
     end)
     setreadonly(mt, true)
+    addLog("Hook __namecall aktif — tangkap SEMUA remote RS", Color3.fromRGB(100,255,100))
 end)
 
 addLog("Script loaded. Tekan SCAN dulu.", Color3.fromRGB(78,214,204))
