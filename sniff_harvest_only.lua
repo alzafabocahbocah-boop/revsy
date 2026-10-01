@@ -1,14 +1,13 @@
--- sniff_harvest_only.lua — wrap InvokeServer HANYA di HarvestRemote (RemoteFunction)
--- HarvestRemote = RemoteFunction → hanya punya InvokeServer, TIDAK ada FireServer
+-- sniff_harvest_only.lua — hookfunction InvokeServer di HarvestRemote
+-- hookfunction = exploit API, bisa hook method bawaan Roblox
 local RS = game:GetService("ReplicatedStorage")
 local gameEvents = RS:WaitForChild("GameEvents", 10)
 local hr = gameEvents:WaitForChild("HarvestRemote", 10)
 
 print("HarvestRemote class: " .. hr.ClassName)
 
--- wrap InvokeServer (RemoteFunction)
-local origInvoke = hr.InvokeServer
-hr.InvokeServer = function(self, ...)
+-- hookfunction langsung ke method InvokeServer milik RemoteFunction
+local origInvoke = hookfunction(hr.InvokeServer, function(self, ...)
     print("=== HarvestRemote:InvokeServer ===")
     local args = {...}
     if #args == 0 then
@@ -30,6 +29,6 @@ hr.InvokeServer = function(self, ...)
     local result = origInvoke(self, ...)
     print("  → result: "..tostring(result))
     return result
-end
+end)
 
-print("✅ Wrap InvokeServer terpasang — collect 1 buah manual sekarang (F9 lihat output)")
+print("✅ hookfunction InvokeServer terpasang — collect 1 buah manual sekarang (F9)")
