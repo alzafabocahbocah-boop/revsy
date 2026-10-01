@@ -1,4 +1,4 @@
--- debug_collect.lua v6 — TEST 4: fireproximityprompt (SNIFF confirm: PP native)
+-- debug_collect.lua v7 — SNIFF FULL: log semua method tanpa filter
 local RS = game:GetService("ReplicatedStorage")
 local plr = game.Players.LocalPlayer
 local UIS = game:GetService("UserInputService")
@@ -371,110 +371,102 @@ btns[5].MouseButton1Click:Connect(function()
     setBusy(false)
 end)
 
--- ===================== SNIFF HOOK =====================
--- Hook InvokeServer di HarvestRemote untuk lihat argumen asli dari game
+-- ===================== SNIFF FULL =====================
+-- Log SEMUA __namecall tanpa filter — pastikan tidak ada yang kelewat
 local _sniffing = false
+local _sniffOldNc = nil
 local _sniffBtn = Instance.new("TextButton")
-_sniffBtn.Size = UDim2.new(1,-16,0,28); _sniffBtn.Position = UDim2.new(0,8,0,8)
-_sniffBtn.BackgroundColor3 = Color3.fromRGB(50,20,20); _sniffBtn.Text = "🎯 SNIFF: mulai tangkap argumen InvokeServer"
+_sniffBtn.Size = UDim2.new(1,-16,0,28)
+_sniffBtn.BackgroundColor3 = Color3.fromRGB(50,20,20)
+_sniffBtn.Text = "🎯 SNIFF FULL — tekan lalu collect 1 buah manual"
 _sniffBtn.Font = Enum.Font.GothamBold; _sniffBtn.TextSize = 11
 _sniffBtn.TextColor3 = Color3.fromRGB(255,80,80); _sniffBtn.AutoButtonColor = false
 _sniffBtn.TextWrapped = true; _sniffBtn.Parent = main
--- posisi di bawah title bar, geser log frame
-logFrame.Position = UDim2.new(0,8,0,44)
-logFrame.Size = UDim2.new(1,-16,1,-248)
 _sniffBtn.Position = UDim2.new(0,8,0,44)
 logFrame.Position = UDim2.new(0,8,0,80)
 logFrame.Size = UDim2.new(1,-16,1,-284)
 Instance.new("UICorner", _sniffBtn).CornerRadius = UDim.new(0,6)
 
-local _origInvoke = nil
-_sniffBtn.MouseButton1Click:Connect(function()
-    if _sniffing then
-        -- stop sniff, restore
-        _sniffing = false
-        if _origInvoke and harvestRE then
-            pcall(function() harvestRE.InvokeServer = _origInvoke end)
-        end
-        _sniffBtn.Text = "🎯 SNIFF: mulai tangkap argumen InvokeServer"
-        _sniffBtn.TextColor3 = Color3.fromRGB(255,80,80)
-        addLog("SNIFF berhenti", Color3.fromRGB(160,160,160))
-        return
-    end
-    -- start sniff via __namecall hook
-    _sniffing = true
-    _sniffBtn.Text = "⏹ SNIFF aktif — collect buah manual sekarang!"
-    _sniffBtn.TextColor3 = Color3.fromRGB(100,255,100)
-    addLog("── SNIFF aktif ──", Color3.fromRGB(255,80,80))
-    addLog("Collect 1 buah manual sekarang (klik/E di buah)", Color3.fromRGB(255,200,80))
+-- Skip: remote yang spam tiap frame supaya log bersih
+local SNIFF_SKIP = {Fps=true, Input=true, Ping=true}
 
-    -- hook via __namecall
+_sniffBtn.MouseButton1Click:Connect(function()
     local mt = getrawmetatable and getrawmetatable(game)
     if not mt then
-        addLog("getrawmetatable tidak ada, coba hook langsung", Color3.fromRGB(220,80,80))
-        -- fallback: wrap InvokeServer
-        _origInvoke = harvestRE.InvokeServer
-        local wrapped = newcclosure and newcclosure(function(self, ...)
-            if self == harvestRE then
-                local args = {...}
-                addLog("SNIFF caught InvokeServer!", Color3.fromRGB(100,255,100))
-                for i, a in ipairs(args) do
-                    local info = tostring(a)
-                    if typeof(a) == "Instance" then info = a:GetFullName() end
-                    addLog("  arg["..i.."]: "..typeof(a).." = "..info, Color3.fromRGB(255,200,80))
-                    if typeof(a) == "Instance" then
-                        local attrs = a:GetAttributes()
-                        local attrStr = {}
-                        for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
-                        if #attrStr > 0 then addLog("    attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100)) end
-                    end
-                end
-            end
-            return _origInvoke(self, ...)
-        end) or function(self, ...)
-            if self == harvestRE then
-                local args = {...}
-                addLog("SNIFF caught InvokeServer!", Color3.fromRGB(100,255,100))
-                for i, a in ipairs(args) do
-                    local info = tostring(a)
-                    if typeof(a) == "Instance" then info = a:GetFullName() end
-                    addLog("  arg["..i.."]: "..typeof(a).." = "..info, Color3.fromRGB(255,200,80))
-                end
-            end
-            return _origInvoke(self, ...)
-        end
-        pcall(function() harvestRE.InvokeServer = wrapped end)
+        addLog("❌ getrawmetatable tidak ada — exploit tidak support hook ini", Color3.fromRGB(220,80,80))
         return
     end
 
-    -- hook __namecall — tangkap SEMUA remote di GameEvents
-    local oldNamecall = mt.__namecall
+    if _sniffing then
+        -- stop & restore
+        _sniffing = false
+        if _sniffOldNc then
+            setreadonly(mt, false)
+            mt.__namecall = _sniffOldNc
+            setreadonly(mt, true)
+            _sniffOldNc = nil
+        end
+        _sniffBtn.Text = "🎯 SNIFF FULL — tekan lalu collect 1 buah manual"
+        _sniffBtn.TextColor3 = Color3.fromRGB(255,80,80)
+        addLog("── SNIFF FULL berhenti ──", Color3.fromRGB(160,160,160))
+        return
+    end
+
+    -- START
+    _sniffing = true
+    _sniffBtn.Text = "⏹ SNIFF FULL aktif — collect buah manual sekarang! (tekan lagi utk stop)"
+    _sniffBtn.TextColor3 = Color3.fromRGB(100,255,100)
+    addLog("── SNIFF FULL aktif ──", Color3.fromRGB(255,80,80))
+    addLog("Collect 1 buah manual (klik/E di buah) lalu tekan stop", Color3.fromRGB(255,200,80))
+    addLog("Skip spam: Fps, Input, Ping", Color3.fromRGB(130,130,130))
+
+    _sniffOldNc = mt.__namecall
     setreadonly(mt, false)
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
-        if (method == "InvokeServer" or method == "FireServer") and typeof(self) == "Instance" then
-            -- cek apakah instance ini ada di RS (bukan spam dari game lain)
-            local ok2, inRS = pcall(function() return self:IsDescendantOf(RS) end)
-            if ok2 and inRS then
-                local args = {...}
-                addLog("🔴 "..self.Name.." → "..method, Color3.fromRGB(100,255,100))
+
+        -- skip spam frame
+        if SNIFF_SKIP[method] then
+            return _sniffOldNc(self, ...)
+        end
+
+        -- log SEMUA method dari instance manapun
+        if typeof(self) == "Instance" then
+            local args = {...}
+            local selfName = pcall(function() return self.Name end) and self.Name or "?"
+            local line = "📡 ["..selfName.."] → "..tostring(method)
+            -- warna: kuning kalau di RS, putih kalau lain
+            local inRS = pcall(function() return self:IsDescendantOf(RS) end)
+            local col = inRS and Color3.fromRGB(255,230,80) or Color3.fromRGB(180,180,180)
+            addLog(line, col)
+            -- log args kalau ada
+            if #args > 0 then
                 for i, a in ipairs(args) do
-                    local info = tostring(a)
-                    if typeof(a) == "Instance" then info = a:GetFullName() end
-                    addLog("  ["..i.."] "..typeof(a).."="..info, Color3.fromRGB(255,200,80))
+                    local info
                     if typeof(a) == "Instance" then
-                        local attrs = a:GetAttributes()
-                        local attrStr = {}
-                        for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
-                        if #attrStr>0 then addLog("    attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100)) end
+                        local ok3, fn = pcall(function() return a:GetFullName() end)
+                        info = ok3 and fn or tostring(a)
+                        -- log atribut
+                        local ok4, attrs = pcall(function() return a:GetAttributes() end)
+                        if ok4 then
+                            local attrStr = {}
+                            for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
+                            if #attrStr > 0 then
+                                addLog("   attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100))
+                            end
+                        end
+                    else
+                        info = tostring(a)
                     end
+                    addLog("  ["..i.."] "..typeof(a).."="..info, Color3.fromRGB(220,200,150))
                 end
             end
         end
-        return oldNamecall(self, ...)
+
+        return _sniffOldNc(self, ...)
     end)
     setreadonly(mt, true)
-    addLog("Hook __namecall aktif — tangkap SEMUA remote RS", Color3.fromRGB(100,255,100))
+    addLog("Hook aktif — semua __namecall (kecuali Fps/Input/Ping) akan dilog", Color3.fromRGB(100,255,100))
 end)
 
 addLog("Script loaded. Tekan SCAN dulu.", Color3.fromRGB(78,214,204))
