@@ -2320,16 +2320,20 @@ do
     BH.laporHargaPasar = laporHargaPasar
 
     task.spawn(function()
+        -- Fetch rules sekali saat startup (retry tiap 10s sampai dapat), setelah dapat stop.
         task.wait(6)
-        pcall(fetchRuleFromPanel)
-        pcall(fetchSnipeFromPanel)
-        local _hpTick = 0
         while true do
-            task.wait(5)
-            pcall(fetchRuleFromPanel)
-            pcall(fetchSnipeFromPanel)
-            _hpTick = _hpTick + 1
-            if _hpTick % 3 == 0 then pcall(laporHargaPasar) end   -- riset harga tiap 15s (kalo ada req)
+            local doneRule = pcall(fetchRuleFromPanel)
+            local doneSnipe = pcall(fetchSnipeFromPanel)
+            if doneRule and doneSnipe then break end
+            task.wait(10)
+        end
+    end)
+    -- Riset harga pasar tetap jalan tiap 15s (laporan ke panel, bukan fetch)
+    task.spawn(function()
+        while true do
+            task.wait(15)
+            pcall(laporHargaPasar)
         end
     end)
 
@@ -5942,20 +5946,6 @@ do
                 end
             end
         end
-        -- Tambahin dari TBC items (pet di booth lain)
-        if BH.TBC then
-            for _, pp in ipairs(Players:GetPlayers()) do
-                local data = BH.fetchBoothData and BH.fetchBoothData(pp)
-                if data and data.Items then
-                    for _, item in pairs(data.Items) do
-                        if item.PetType then
-                            local base = (BH.getBaseName) and BH.getBaseName(tostring(item.PetType)) or tostring(item.PetType)
-                            seen[base] = true
-                        end
-                    end
-                end
-            end
-        end
 
         local list = {}
         for k in pairs(seen) do
@@ -6010,8 +6000,8 @@ do
 
     petTypeBtn.MouseButton1Click:Connect(function()
         pickerSearch.Text = ""
-        populatePicker("")
         petPicker.Visible = true
+        task.defer(function() populatePicker("") end)
     end)
 
     -- Row 2 (y=30): + ADD RULE (40%) | START/STOP (60%)
@@ -11644,6 +11634,14 @@ do
                     for pp, data in pairs(results) do
                         local items = data.Items
                         for listingUuid, listing in pairs(data.Listings) do
+                            -- DEBUG: log ItemType selain Pet sekali aja biar tau skin booth namanya
+                            if listing.ItemType and listing.ItemType ~= "Pet" then
+                                local _dbgKey = "dbg_itype_"..tostring(listing.ItemType)
+                                if not _G[_dbgKey] then
+                                    _G[_dbgKey] = true
+                                    L("[DEBUG ItemType] "..tostring(listing.ItemType).." | owner="..pp.Name)
+                                end
+                            end
                             if listing.ItemType == "Pet" and listing.ItemId then
                                 local item = items and items[listing.ItemId]
                                 if item and item.PetData then
