@@ -861,6 +861,94 @@ do
             end)
         end
     end)
+    -- v8.120: LAPOR STAT ke panel -- tulis zenx_upkgstat_<akun>.json tiap 15s (worker baca -> /upkgstat-batch -> panel)
+    -- Format sama persis dengan uplevel supaya worker bisa baca tanpa perubahan
+    task.spawn(function()
+        while true do
+            pcall(function()
+                if not (plr and plr.Name and writefile) then return end
+                local c = _kgContainer
+                if not c then return end
+                local plus, minus, total = 0, 0, 0
+                local tipeUdah, tipeBelum = {}, {}
+                local petAgePlus, petAgeMinus = {}, {}
+                for _, entry in pairs(c) do
+                    if type(entry) == "table" and entry.PetData then
+                        total = total + 1
+                        local lv = tonumber(entry.PetData.Level) or 0
+                        local tipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
+                        -- strip suffix "[Mutation]..." supaya nama bersih
+                        tipe = tipe:match("^(.-)%s*%[") or tipe
+                        tipe = tipe:gsub("%s+$", "")
+                        if lv >= 500 then
+                            plus = plus + 1
+                            if tipe ~= "" then tipeUdah[tipe] = (tipeUdah[tipe] or 0) + 1 end
+                            if tipe ~= "" then
+                                if not petAgePlus[tipe] then petAgePlus[tipe] = {} end
+                                local arr = petAgePlus[tipe]
+                                if #arr < 12 then arr[#arr+1] = lv end
+                            end
+                        else
+                            minus = minus + 1
+                            if tipe ~= "" then tipeBelum[tipe] = (tipeBelum[tipe] or 0) + 1 end
+                            if tipe ~= "" then
+                                if not petAgeMinus[tipe] then petAgeMinus[tipe] = {} end
+                                local arr = petAgeMinus[tipe]
+                                if #arr < 12 then arr[#arr+1] = lv end
+                            end
+                        end
+                    end
+                end
+                local maxInv = _G.__ZenxMaxPetCache or 0
+                -- helper json
+                local function jsonKV(tbl)
+                    local parts = {}
+                    for k, v in pairs(tbl or {}) do
+                        parts[#parts+1] = string.format("%q:%d", tostring(k), tonumber(v) or 0)
+                    end
+                    return "{" .. table.concat(parts, ",") .. "}"
+                end
+                local function jsonKVArr(tbl)
+                    local parts, n = {}, 0
+                    for k, arr in pairs(tbl or {}) do
+                        if n >= 60 then break end
+                        if type(arr) == "table" then
+                            local nums = {}
+                            for i = 1, 12 do nums[i] = tostring(tonumber(arr[i]) or 0) end
+                            parts[#parts+1] = string.format("%q:[%s]", tostring(k), table.concat(nums, ","))
+                            n = n + 1
+                        end
+                    end
+                    return "{" .. table.concat(parts, ",") .. "}"
+                end
+                -- bahan: tipe bahan yang sedang dipakai (ambil dari container via _bahanUuid)
+                local bahan = {}
+                if _bahanUuid and c then
+                    local e = c[fmtUUID(_bahanUuid)] or c[tostring(_bahanUuid)]
+                    if type(e) == "table" then
+                        local t = tostring(e.PetType or (e.PetData and e.PetData.PetType) or "")
+                        t = t:match("^(.-)%s*%[") or t; t = t:gsub("%s+$", "")
+                        if t ~= "" then bahan[1] = t end
+                    end
+                end
+                local bahanStr = ""
+                for i, b in ipairs(bahan) do bahanStr = bahanStr .. (i>1 and "," or "") .. string.format("%q", b) end
+                -- config label (preset uplevelnew)
+                local cfgLabel = tostring(_G.ZenxKgConfig or "uplevelnew")
+                local js = string.format(
+                    '{"akun":%q,"config":%q,"bahan":[%s],"total":%d,"udah":%d,"belum":%d,"totalAll":%d,"maxInv":%d,"tipeUdah":%s,"tipeBelum":%s,"petAgePlus":%s,"petAgeMinus":%s,"ts":%d}',
+                    plr.Name, cfgLabel, bahanStr,
+                    total, plus, minus,
+                    total, maxInv,
+                    jsonKV(tipeUdah), jsonKV(tipeBelum),
+                    jsonKVArr(petAgePlus), jsonKVArr(petAgeMinus),
+                    os.time())
+                writefile("zenx_upkgstat_" .. plr.Name .. ".json", js)
+            end)
+            task.wait(15)
+        end
+    end)
+
     local sesiF=mk("Frame",{Size=UDim2.new(1,0,0,36),BackgroundColor3=C.card,BorderSizePixel=0,
         LayoutOrder=5,Parent=cfgScroll}); corner(sesiF,10); stroke(sesiF,C.accent,1)
     local sesiBadge=mk("Frame",{Size=UDim2.new(0,60,0,22),Position=UDim2.new(0,12,0.5,-11),
