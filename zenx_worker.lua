@@ -5356,7 +5356,9 @@ local function run(cfg)
                             denyutSemua[nama] = umurIsi
                             local skReal = isi:match(";S(%d+)")
                             local nightKg = isi:match(";N(%d+)")   -- v9.413: night egg dari upkg (format kg)
-                            info(("[DBG-SHECK] %s: ;S=%s ;N=%s | isi=%s"):format(nama, tostring(skReal), tostring(nightKg), isi:sub(1, 55)))
+                            local petTotal = isi:match(";P(%d+)")  -- uplevel: total pet inventory
+                            local petMax   = isi:match(";P%d+;(%d+)")  -- uplevel: max inventory
+                            info(("[DBG-SHECK] %s: ;S=%s ;N=%s ;P=%s/%s | isi=%s"):format(nama, tostring(skReal), tostring(nightKg), tostring(petTotal), tostring(petMax), isi:sub(1, 65)))
                             if isi:match("^%d+;%d+;%d+;%d+;egg3") then
                                 local gem, chr, night = isi:match("^%d+;(%d+);(%d+);(%d+);egg3")
                                 if (tonumber(gem) or 0) > 0 or (tonumber(chr) or 0) > 0 or (tonumber(night) or 0) > 0 or (tonumber(skReal) or 0) > 0 then
@@ -5370,7 +5372,7 @@ local function run(cfg)
                             else
                                 local sk, sw = isi:match("^%d+;(%d+);(%a*)")
                                 if sk and ((tonumber(sk) or 0) > 0 or sw == "kg" or (tonumber(skReal) or 0) > 0) then
-                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "", sheckReal = skReal, night = nightKg }
+                                    sheckDenyut[#sheckDenyut+1] = { nama = nama, sheck = sk, sheckW = sw or "", sheckReal = skReal, night = nightKg, petTotal = petTotal, petMax = petMax }
                                 end
                                 local fpsV = isi:match("^%d+;%d+;%a*;(%d+)")
                                 if fpsV then KICK_DIURUS["fps:" .. nama] = tonumber(fpsV) end
@@ -5388,7 +5390,9 @@ local function run(cfg)
                                    ',"sheckW":"' .. d.sheckW .. '"' ..
                                    (d.chr and (',"chr":' .. d.chr) or '') ..
                                    (d.night and (',"night":' .. d.night) or '') ..
-                                   (d.sheckReal and (',"sheckReal":' .. d.sheckReal) or '') .. '}'
+                                   (d.sheckReal and (',"sheckReal":' .. d.sheckReal) or '') ..
+                                   (d.petTotal and (',"petTotal":' .. d.petTotal) or '') ..
+                                   (d.petMax and (',"petMax":' .. d.petMax) or '') .. '}'
                             if i < #sheckDenyut then body = body .. "," end
                         end
                         body = body .. "]}"

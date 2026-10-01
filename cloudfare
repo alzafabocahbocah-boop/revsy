@@ -361,17 +361,25 @@ export default {
         try {
           // v9.30x: kolom chr (christmas egg) — idempotent, aman dijalanin tiap request
           await db.prepare("ALTER TABLE akun ADD COLUMN chr INTEGER").run().catch(() => {});
+          await db.prepare("ALTER TABLE akun ADD COLUMN totalPet INTEGER").run().catch(() => {});
+          await db.prepare("ALTER TABLE akun ADD COLUMN maxPet INTEGER").run().catch(() => {});
           const stmts = [];
           for (const it of list) {
             if (!it || !it.akun) continue;
             const sk = angka(it.sheck);
             const chr = angka(it.chr);
+            const pt = angka(it.petTotal);
+            const pm = angka(it.petMax);
             if (chr != null) {
               // format egg2: update sheck (gem egg) + chr (christmas egg) sekaligus
               stmts.push(db.prepare("UPDATE akun SET sheck=?2, chr=?3 WHERE nama=?1").bind(String(it.akun), sk || 0, chr));
             } else {
               if (sk == null || sk <= 0) continue;   // skip 0/invalid (format lama)
               stmts.push(db.prepare("UPDATE akun SET sheck=?2 WHERE nama=?1").bind(String(it.akun), sk));
+            }
+            // update totalPet/maxPet kalau ada (uplevel script)
+            if (pt != null && pt > 0) {
+              stmts.push(db.prepare("UPDATE akun SET totalPet=?2, maxPet=?3 WHERE nama=?1").bind(String(it.akun), pt, pm || null));
             }
           }
           if (stmts.length > 0) await db.batch(stmts);
