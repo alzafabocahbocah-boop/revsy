@@ -241,7 +241,7 @@ case "$PRESET" in
         fi
         AX_EXTRA="$AX_DIR/zenx_extra.lua"
         su -c "mkdir -p \"$AX_DIR\"; printf 'loadstring(game:HttpGet(\"%s\"))()' \"$MARKET_URL\" > \"$AX_LOADER\"" 2>/dev/null
-        if [ "$RONIHUB_SC" = "up6kg" ]; then
+        if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
             su -c "printf 'local script_key=\"P0h1DdohmtTALFrITMSmL2z\"\npcall(loadstring(game:HttpGet(\"https://golaspay.net/scv/UlPNGiNxRw44?key=\"..script_key)))' > \"$AX_EXTRA\"" 2>/dev/null
         else
             su -c "rm -f \"$AX_EXTRA\"" 2>/dev/null
@@ -250,7 +250,7 @@ case "$PRESET" in
         AX_CEK=$(su -c "cat \"$AX_LOADER\" 2>/dev/null" 2>/dev/null)
         if printf '%s' "$AX_CEK" | grep -q "HttpGet"; then
             ok "Loader Arceus ketulis: $AX_LOADER ($SC_LABEL)"
-            if [ "$RONIHUB_SC" = "up6kg" ]; then
+            if [ "$RONIHUB_SC" = "up6kg" ] || [ "$RONIHUB_SC" = "up3.8kg" ]; then
                 ok "Extra script: $AX_EXTRA"
                 info "$SC_LABEL + extra auto-nyala tiap Arceus join."
             else
