@@ -2342,42 +2342,41 @@ local function doCollect(fruits)
             dbgLog("ERR: "..msg)
         end
     end
+    -- cache HRP sekali
+    local _char = plr.Character
+    local _hrp = _char and _char:FindFirstChild("HumanoidRootPart")
+
     for i, fruit in ipairs(fruits) do
         local ok, prompt = pcall(getFruitPrompt, fruit)
         if ok and prompt then
             if not _loggedAction then
                 _loggedAction = true
                 dbgLog("prompt path="..prompt:GetFullName())
-                -- log semua PP di buah[1]
-                local allPP = {}
-                for _, v in ipairs(fruit:GetDescendants()) do
-                    if v:IsA("ProximityPrompt") then
-                        table.insert(allPP, v.Name.."[Act="..tostring(v.ActionText).."]")
-                    end
-                end
-                dbgLog("PP di buah[1]: "..table.concat(allPP, " | "))
             end
-            -- SNIFF confirm: game pakai ProximityPrompt native, bukan HarvestRemote
-            -- fireproximityprompt adalah satu-satunya cara trigger dari jarak jauh
+
+            -- TELEPORT karakter ke dekat buah (MaxActivationDistance ~10.85 studs)
+            -- tanpa teleport server reject fireproximityprompt kalau jarak > 10 studs
+            pcall(function()
+                local ppPart = prompt.Parent
+                if ppPart and ppPart:IsA("BasePart") and _hrp then
+                    local targetPos = ppPart.Position + Vector3.new(0, 3, 0)
+                    _hrp.CFrame = CFrame.new(targetPos)
+                end
+            end)
+            task.wait(0.05)  -- tunggu sebentar setelah teleport
+
             local fireOk, fireErr
             pcall(function() prompt.RequiresLineOfSight = false end)
             fireOk, fireErr = pcall(fireproximityprompt, prompt)
             if not fireOk then
                 _addErr("FPP["..i.."]: "..tostring(fireErr))
-                -- fallback: InputHoldBegin/End
-                fireOk, fireErr = pcall(function()
-                    prompt:InputHoldBegin()
-                    task.wait(0.05)
-                    prompt:InputHoldEnd()
-                end)
-                if not fireOk then _addErr("IHB["..i.."]: "..tostring(fireErr)) end
             end
             if not fireOk then
                 gagal = gagal + 1
             else
                 collected = collected + 1
             end
-            -- pause 0.15s tiap 50 buah supaya tidak throttle server
+            -- pause tiap 50 buah supaya tidak throttle server
             if i % 50 == 0 then
                 dbgLog("batch "..i..": "..collected.." OK, pause 2s anti-throttle")
                 task.wait(2)
