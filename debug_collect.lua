@@ -79,8 +79,8 @@ pcall(function() gui.Parent = (gethui and gethui()) or playerGui end)
 if not gui.Parent then gui.Parent = playerGui end
 
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 400, 0, 540)
-main.Position = UDim2.new(0.5, -200, 0.5, -270)
+main.Size = UDim2.new(0, 400, 0, 580)
+main.Position = UDim2.new(0.5, -200, 0.5, -290)
 main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 main.BorderSizePixel = 0; main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
@@ -335,6 +335,107 @@ btns[4].MouseButton1Click:Connect(function()
     if delta > 0 then addLog("✅ BERHASIL! InputHoldBegin/End", col)
     else addLog("❌ Tidak ada perubahan", col) end
     setBusy(false)
+end)
+
+-- ===================== SNIFF HOOK =====================
+-- Hook InvokeServer di HarvestRemote untuk lihat argumen asli dari game
+local _sniffing = false
+local _sniffBtn = Instance.new("TextButton")
+_sniffBtn.Size = UDim2.new(1,-16,0,28); _sniffBtn.Position = UDim2.new(0,8,0,8)
+_sniffBtn.BackgroundColor3 = Color3.fromRGB(50,20,20); _sniffBtn.Text = "🎯 SNIFF: mulai tangkap argumen InvokeServer"
+_sniffBtn.Font = Enum.Font.GothamBold; _sniffBtn.TextSize = 11
+_sniffBtn.TextColor3 = Color3.fromRGB(255,80,80); _sniffBtn.AutoButtonColor = false
+_sniffBtn.TextWrapped = true; _sniffBtn.Parent = main
+-- posisi di bawah title bar, geser log frame
+logFrame.Position = UDim2.new(0,8,0,44)
+logFrame.Size = UDim2.new(1,-16,1,-248)
+_sniffBtn.Position = UDim2.new(0,8,0,44)
+logFrame.Position = UDim2.new(0,8,0,80)
+logFrame.Size = UDim2.new(1,-16,1,-284)
+Instance.new("UICorner", _sniffBtn).CornerRadius = UDim.new(0,6)
+
+local _origInvoke = nil
+_sniffBtn.MouseButton1Click:Connect(function()
+    if _sniffing then
+        -- stop sniff, restore
+        _sniffing = false
+        if _origInvoke and harvestRE then
+            pcall(function() harvestRE.InvokeServer = _origInvoke end)
+        end
+        _sniffBtn.Text = "🎯 SNIFF: mulai tangkap argumen InvokeServer"
+        _sniffBtn.TextColor3 = Color3.fromRGB(255,80,80)
+        addLog("SNIFF berhenti", Color3.fromRGB(160,160,160))
+        return
+    end
+    -- start sniff via __namecall hook
+    _sniffing = true
+    _sniffBtn.Text = "⏹ SNIFF aktif — collect buah manual sekarang!"
+    _sniffBtn.TextColor3 = Color3.fromRGB(100,255,100)
+    addLog("── SNIFF aktif ──", Color3.fromRGB(255,80,80))
+    addLog("Collect 1 buah manual sekarang (klik/E di buah)", Color3.fromRGB(255,200,80))
+
+    -- hook via __namecall
+    local mt = getrawmetatable and getrawmetatable(game)
+    if not mt then
+        addLog("getrawmetatable tidak ada, coba hook langsung", Color3.fromRGB(220,80,80))
+        -- fallback: wrap InvokeServer
+        _origInvoke = harvestRE.InvokeServer
+        local wrapped = newcclosure and newcclosure(function(self, ...)
+            if self == harvestRE then
+                local args = {...}
+                addLog("SNIFF caught InvokeServer!", Color3.fromRGB(100,255,100))
+                for i, a in ipairs(args) do
+                    local info = tostring(a)
+                    if typeof(a) == "Instance" then info = a:GetFullName() end
+                    addLog("  arg["..i.."]: "..typeof(a).." = "..info, Color3.fromRGB(255,200,80))
+                    if typeof(a) == "Instance" then
+                        local attrs = a:GetAttributes()
+                        local attrStr = {}
+                        for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
+                        if #attrStr > 0 then addLog("    attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100)) end
+                    end
+                end
+            end
+            return _origInvoke(self, ...)
+        end) or function(self, ...)
+            if self == harvestRE then
+                local args = {...}
+                addLog("SNIFF caught InvokeServer!", Color3.fromRGB(100,255,100))
+                for i, a in ipairs(args) do
+                    local info = tostring(a)
+                    if typeof(a) == "Instance" then info = a:GetFullName() end
+                    addLog("  arg["..i.."]: "..typeof(a).." = "..info, Color3.fromRGB(255,200,80))
+                end
+            end
+            return _origInvoke(self, ...)
+        end
+        pcall(function() harvestRE.InvokeServer = wrapped end)
+        return
+    end
+
+    -- hook __namecall
+    local oldNamecall = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if self == harvestRE and (method == "InvokeServer" or method == "FireServer") then
+            local args = {...}
+            addLog("SNIFF: "..method.." caught!", Color3.fromRGB(100,255,100))
+            for i, a in ipairs(args) do
+                local info = tostring(a)
+                if typeof(a) == "Instance" then info = a:GetFullName() end
+                addLog("  arg["..i.."]: "..typeof(a).." = "..info, Color3.fromRGB(255,200,80))
+                if typeof(a) == "Instance" then
+                    local attrs = a:GetAttributes()
+                    local attrStr = {}
+                    for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
+                    if #attrStr > 0 then addLog("    attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100)) end
+                end
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+    setreadonly(mt, true)
 end)
 
 addLog("Script loaded. Tekan SCAN dulu.", Color3.fromRGB(78,214,204))
