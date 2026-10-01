@@ -207,6 +207,36 @@ local function startSniff()
         logWarn("fireproximityprompt tidak ada")
     end
 
+    -- 1b. hookfunction firetouchinterest
+    if firetouchinterest then
+        local origFTI = firetouchinterest
+        local newFTI = hookfunction(origFTI, function(part1, part2, toggle, ...)
+            if active then
+                logHit("firetouchinterest toggle="..tostring(toggle))
+                log("  part1: "..tostring(part1 and part1:GetFullName()))
+                log("  part2: "..tostring(part2 and part2:GetFullName()))
+            end
+            return origFTI(part1, part2, toggle, ...)
+        end)
+        table.insert(hooks, {fn=newFTI, orig=origFTI})
+        logOk("Hook: firetouchinterest")
+    else
+        logWarn("firetouchinterest tidak ada")
+    end
+
+    -- 1c. hookfunction fireclickdetector
+    if fireclickdetector then
+        local origFCD = fireclickdetector
+        local newFCD = hookfunction(origFCD, function(cd, ...)
+            if active then
+                logHit("fireclickdetector → "..tostring(cd and cd:GetFullName()))
+            end
+            return origFCD(cd, ...)
+        end)
+        table.insert(hooks, {fn=newFCD, orig=origFCD})
+        logOk("Hook: fireclickdetector")
+    end
+
     -- 2. hookfunction HarvestRemote:InvokeServer
     if gameEvents then
         local hr = gameEvents:FindFirstChild("HarvestRemote")
