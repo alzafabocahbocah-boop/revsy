@@ -2371,14 +2371,9 @@ local function processFruits()
     addLog("scan: mutasi="..#data.shovel.." nm="..data.nightmareCount)
 
     if #data.shovel > 0 then
-        -- ada mutasi non-nightmare -> switch ke cadangan 1, loop sampai habis
-        local needCadangan = _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN_DEF
-        if needCadangan then
-            addLog("Mutasi ditemukan — switch cadangan 1 (M.Oct×7 + Spider)")
-            setStatus("Cadangan 1 — collect mutasi...", Color3.fromRGB(160,120,220))
-            unequipAll()
-            equipSesi(3, SESI_CADANGAN_DEF)
-        end
+        -- ada mutasi -> collect langsung tanpa ganti pet
+        addLog("Mutasi ditemukan — collect langsung")
+        setStatus("Collect mutasi...", Color3.fromRGB(160,120,220))
 
         -- loop collect sampai tidak ada mutasi lagi
         local fruits = data.shovel
@@ -2403,14 +2398,7 @@ local function processFruits()
             end
         end
 
-        -- balik ke sesi aktif sebelumnya
-        if needCadangan and _activeSesiDef and not stopRequested then
-            addLog("Mutasi habis — balik sesi ".._activeSesiNum)
-            setStatus("Sesi ".._activeSesiNum.." — balik equip", C.accent)
-            unequipAll()
-            equipSesi(_activeSesiNum, _activeSesiDef)
-            setStatus("Sesi ".._activeSesiNum.." — running", C.accent)
-        end
+        addLog("Mutasi habis — lanjut sesi ".._activeSesiNum)
     elseif data.nightmareCount == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
         -- tidak ada nightmare DAN tidak ada mutasi -> masuk cadangan 2 (Peacock×4 + Baku×1)
         -- tunggu nightmare muncul lagi, lalu balik ke sesi aktif sebelumnya
@@ -2525,10 +2513,8 @@ local function runSesi2()
         addLog("Nightmare kebun: "..nm)
 
         if #sd.shovel > 0 then
-            -- ada mutasi lain -> cadangan 1 (collect), lalu balik sesi 2
-            addLog("Sesi2: mutasi ditemukan — cadangan 1")
-            setStatus("Cadangan 1 — collect mutasi...", Color3.fromRGB(160,120,220))
-            unequipAll(); equipSesi(3, SESI_CADANGAN_DEF)
+            -- ada mutasi -> collect langsung (tidak perlu ganti pet)
+            addLog("Sesi2: mutasi ditemukan — collect langsung")
             local fruits = sd.shovel
             while #fruits > 0 and not stopRequested do
                 local collected = doCollect(fruits)
@@ -2539,10 +2525,7 @@ local function runSesi2()
                 end
                 local nx=scanFruits(); fruits=nx.shovel
             end
-            -- balik sesi 2
-            addLog("Mutasi habis — balik sesi 2")
-            setStatus("Sesi 2 — tunggu nightmare habis", Color3.fromRGB(220,160,60))
-            unequipAll(); equipSesi(2, SESI2_DEF); equipOneBahan()
+            addLog("Mutasi habis — lanjut sesi 2")
         elseif nm == 0 then
             -- nightmare habis -> cadangan 2 (tunggu nightmare tumbuh lagi)
             addLog("Sesi2: nightmare 0 — masuk cadangan 2")
@@ -2559,8 +2542,21 @@ local function runSesi2()
                 task.wait(CFG.loopWait)
                 local d2=scanFruits()
                 addLog("Cad2(S2): nm="..d2.nightmareCount.." mutasi="..#d2.shovel)
-                if d2.nightmareCount > 0 or #d2.shovel > 0 then
-                    addLog("Nightmare/mutasi muncul — balik sesi 2")
+                if #d2.shovel > 0 then
+                    -- collect mutasi langsung di cadangan 2
+                    local fruits2 = d2.shovel
+                    while #fruits2 > 0 and not stopRequested do
+                        local collected = doCollect(fruits2)
+                        totalShovel = totalShovel + collected
+                        _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
+                        if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
+                            task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
+                        end
+                        local nx=scanFruits(); fruits2=nx.shovel
+                    end
+                end
+                if d2.nightmareCount > 0 then
+                    addLog("Nightmare muncul — balik sesi 2")
                     break
                 end
             end
