@@ -8,17 +8,14 @@ local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 
 pcall(function()
-    local par = (gethui and gethui()) or playerGui
-    local old = par:FindFirstChild("ZenxDebugFarm"); if old then old:Destroy() end
-    local old2 = playerGui:FindFirstChild("ZenxDebugFarm"); if old2 then old2:Destroy() end
+    local old = playerGui:FindFirstChild("ZenxDebugFarm"); if old then old:Destroy() end
 end)
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "ZenxDebugFarm"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
-pcall(function() gui.Parent = (gethui and gethui()) or playerGui end)
-if not gui.Parent then gui.Parent = playerGui end
+gui.Parent = playerGui
 
 local main = Instance.new("Frame")
 main.Size = UDim2.new(0, 540, 0, 480)
