@@ -1898,8 +1898,8 @@ if not _G.__ZenxAutoTicket then
 end
 
 -- ===================== FETCH PANEL: marketakun + uplevel-giftpet =====================
--- Sama persis dengan uplevel v0.27: pull tiap 20s (belum dapat) atau 5 menit (udah dapat)
--- Hasilnya dipake Gift 1 auto-loop: target = market akun yg belum full, filter tipe dari panel
+-- Fetch sekali saat startup (retry tiap 20s sampai dapat), setelah dapat langsung stop.
+-- Data tetap di _G.ZenxMarketAkun / _G.ZenxUplevelGiftTipe sampai re-execute.
 task.spawn(function()
     local _base = "https://dry-glitter-63e4.petagee5.workers.dev"
     local _req = request or http_request or (syn and syn.request)
@@ -1912,8 +1912,8 @@ task.spawn(function()
         end
         return raw
     end
-    local have = false
     while true do
+        local done1, done2 = false, false
         pcall(function()
             -- akun market: "akun=total:max,..."
             local raw = _get("/marketakun")
@@ -1921,9 +1921,9 @@ task.spawn(function()
                 local m = {}
                 for pair in tostring(raw):gmatch("[^,]+") do
                     local k, tot, mx = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")
-                    if k and k ~= "" then m[k] = { total = tonumber(tot) or 0, max = tonumber(mx) or 0 }; have = true end
+                    if k and k ~= "" then m[k] = { total = tonumber(tot) or 0, max = tonumber(mx) or 0 } end
                 end
-                if next(m) then _G.ZenxMarketAkun = m end
+                if next(m) then _G.ZenxMarketAkun = m; done1 = true end
             end
             -- tipe pet gift: "Tipe1,Tipe2,..." (kosong = semua)
             local raw2 = _get("/uplevel-giftpet")
@@ -1933,10 +1933,11 @@ task.spawn(function()
                     local x = tp:gsub("^%s+", ""):gsub("%s+$", "")
                     if x ~= "" then t[x] = true end
                 end
-                _G.ZenxUplevelGiftTipe = t
+                _G.ZenxUplevelGiftTipe = t; done2 = true
             end
         end)
-        task.wait(have and 300 or 20)
+        if done1 and done2 then break end  -- sudah dapat semua, stop
+        task.wait(20)
     end
 end)
 
