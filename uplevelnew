@@ -3103,3 +3103,59 @@ end
 
 end
 _main()
+
+-- ============================================================
+-- AUTO DESTROY POHON ORANG LAIN (SELALU ON)
+-- Skip kebun sendiri via Sign:GetAttribute("_owner")
+-- ============================================================
+do
+    local WS = workspace
+    local plrName = game.Players.LocalPlayer.Name
+    local function getSubfarmOwner(subfarm)
+        local sign = subfarm:FindFirstChild("Sign")
+        if sign then return sign:GetAttribute("_owner") end
+        return nil
+    end
+    local function semuaFarm()
+        local roots = {}
+        local farm = WS:FindFirstChild("Farm")
+        if not farm then return roots end
+        for _, subfarm in ipairs(farm:GetChildren()) do
+            local owner = getSubfarmOwner(subfarm)
+            if owner ~= nil and owner ~= plrName then
+                for _, f in ipairs(subfarm:GetDescendants()) do
+                    if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
+                        table.insert(roots, f)
+                    end
+                end
+            end
+        end
+        return roots
+    end
+    local function destroyPohonSemua()
+        local roots = semuaFarm(); local n = 0
+        for _, root in ipairs(roots) do
+            for _, c in ipairs(root:GetChildren()) do
+                if c:IsA("Model") then pcall(function() c:Destroy() end); n = n + 1 end
+            end
+        end
+        return n
+    end
+    task.spawn(function() task.wait(3); destroyPohonSemua() end)
+    task.spawn(function()
+        local farm = WS:WaitForChild("Farm", 15)
+        if not farm then return end
+        farm.DescendantAdded:Connect(function(c)
+            if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
+                local pp = c.Parent and c.Parent.Parent
+                local subfarm = pp and pp.Parent
+                if subfarm then
+                    local owner = getSubfarmOwner(subfarm)
+                    if owner == nil or owner == plrName then return end
+                end
+                task.wait(0.05); pcall(function() c:Destroy() end)
+            end
+        end)
+    end)
+    task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
+end
