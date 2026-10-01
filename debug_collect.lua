@@ -65,6 +65,12 @@ local function getPrompt(fruit)
     return nil
 end
 
+-- ===================== STATE =====================
+local _logLines = {}
+local _fruit = nil
+local _prompt = nil
+local _busy = false
+
 -- ===================== GUI =====================
 local old = playerGui:FindFirstChild("ZenxDbgCollect"); if old then old:Destroy() end
 local gui = Instance.new("ScreenGui")
@@ -207,12 +213,6 @@ for i, def in ipairs(btnDefs) do
     local bst = Instance.new("UIStroke", b); bst.Color = def.tcol; bst.Thickness = 1; bst.Transparency = 0.6
     btns[i] = b
 end
-
--- state
-local _logLines = {}
-local _fruit = nil
-local _prompt = nil
-local _busy = false
 
 local function setBusy(b)
     _busy = b
