@@ -111,7 +111,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.115"
+local VERSION = "v8.116"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2521,15 +2521,58 @@ local function runSesi2()
     setStatus("Sesi 2 — tunggu nightmare habis",Color3.fromRGB(220,160,60))
     while not stopRequested do
         unequipBahanTua(); equipOneBahan()
-        local nm=processFruits()  -- processFruits handle cadangan 2 kalau nm==0
+        local sd=scanFruits(); _lastMutasiCount=#sd.shovel; local nm=sd.nightmareCount
         updateUI(totalNightmareCollected,nm,2)
         addLog("Nightmare kebun: "..nm)
-        -- nightmare habis dan sudah keluar cadangan 2 (processFruits handle loop cadangan)
-        -- kalau sudah balik dari cadangan dan nm masih 0, cukup return ke sesi 1
-        if nm==0 then
-            addLog("Nightmare habis + cadangan selesai. Balik sesi 1.")
+
+        if #sd.shovel > 0 then
+            -- ada mutasi lain -> cadangan 1 (collect), lalu balik sesi 2
+            addLog("Sesi2: mutasi ditemukan — cadangan 1")
+            setStatus("Cadangan 1 — collect mutasi...", Color3.fromRGB(160,120,220))
+            unequipAll(); equipSesi(3, SESI_CADANGAN_DEF)
+            local fruits = sd.shovel
+            while #fruits > 0 and not stopRequested do
+                local collected = doCollect(fruits)
+                totalShovel = totalShovel + collected
+                _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
+                if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
+                    task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
+                end
+                local nx=scanFruits(); fruits=nx.shovel
+            end
+            -- balik sesi 2
+            addLog("Mutasi habis — balik sesi 2")
+            setStatus("Sesi 2 — tunggu nightmare habis", Color3.fromRGB(220,160,60))
+            unequipAll(); equipSesi(2, SESI2_DEF); equipOneBahan()
+        elseif nm == 0 then
+            -- nightmare habis -> cadangan 2 (tunggu nightmare tumbuh lagi)
+            addLog("Sesi2: nightmare 0 — masuk cadangan 2")
+            setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
+            unequipAll(); equipSesi(4, SESI_CADANGAN2_DEF)
+            -- fav 1 buah random biar cepat dapat nightmare
+            task.spawn(function()
+                task.wait(2)
+                local farmFruits=getFruitsFromFarm()
+                local pick=farmFruits[1]
+                if pick then setFruitFav(pick.id,true); addLog("Cad2(S2): fav id="..tostring(pick.id):sub(1,12)) end
+            end)
+            while not stopRequested do
+                task.wait(CFG.loopWait)
+                local d2=scanFruits()
+                addLog("Cad2(S2): nm="..d2.nightmareCount.." mutasi="..#d2.shovel)
+                if d2.nightmareCount > 0 or #d2.shovel > 0 then
+                    addLog("Nightmare/mutasi muncul — balik sesi 2")
+                    break
+                end
+            end
+            unequipAll(); equipSesi(2, SESI2_DEF); equipOneBahan()
+            setStatus("Sesi 2 — tunggu nightmare habis", Color3.fromRGB(220,160,60))
+        elseif nm < 50 then
+            -- nightmare di bawah 50 -> pindah sesi 1
+            addLog("Sesi2: nm="..nm.." < 50 — pindah sesi 1")
             totalNightmareCollected=0; return
         end
+
         task.wait(CFG.loopWait)
     end
 end
