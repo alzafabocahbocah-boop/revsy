@@ -73,8 +73,8 @@ pcall(function() gui.Parent = (gethui and gethui()) or playerGui end)
 if not gui.Parent then gui.Parent = playerGui end
 
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 400, 0, 520)
-main.Position = UDim2.new(0.5, -200, 0.5, -260)
+main.Size = UDim2.new(0, 400, 0, 540)
+main.Position = UDim2.new(0.5, -200, 0.5, -270)
 main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 main.BorderSizePixel = 0; main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
@@ -135,6 +135,7 @@ logPad.PaddingLeft = UDim.new(0,6); logPad.PaddingRight = UDim.new(0,6)
 logPad.PaddingTop = UDim.new(0,4); logPad.PaddingBottom = UDim.new(0,4)
 
 local function addLog(msg, col)
+    table.insert(_logLines, msg)
     local l = Instance.new("TextLabel")
     l.Size = UDim2.new(1,0,0,0); l.AutomaticSize = Enum.AutomaticSize.Y
     l.BackgroundTransparency = 1; l.Text = msg
@@ -148,9 +149,25 @@ local function addLog(msg, col)
     end)
 end
 
+-- tombol salin log
+local copyLogBtn = Instance.new("TextButton")
+copyLogBtn.Size = UDim2.new(1,-16,0,24); copyLogBtn.Position = UDim2.new(0,8,1,-242)
+copyLogBtn.BackgroundColor3 = Color3.fromRGB(20,20,40); copyLogBtn.Text = "📋  SALIN LOG"
+copyLogBtn.Font = Enum.Font.GothamBold; copyLogBtn.TextSize = 11
+copyLogBtn.TextColor3 = Color3.fromRGB(100,160,255); copyLogBtn.AutoButtonColor = false; copyLogBtn.Parent = main
+Instance.new("UICorner", copyLogBtn).CornerRadius = UDim.new(0,5)
+copyLogBtn.MouseButton1Click:Connect(function()
+    if #_logLines == 0 then return end
+    local txt = table.concat(_logLines, "\n")
+    if setclipboard then setclipboard(txt)
+    elseif toclipboard then toclipboard(txt) end
+    copyLogBtn.Text = "✅ TERSALIN!"
+    task.delay(1.5, function() copyLogBtn.Text = "📋  SALIN LOG" end)
+end)
+
 -- info buah
 local infoFrame = Instance.new("Frame")
-infoFrame.Size = UDim2.new(1,-16,0,70); infoFrame.Position = UDim2.new(0,8,1,-228)
+infoFrame.Size = UDim2.new(1,-16,0,70); infoFrame.Position = UDim2.new(0,8,1,-214)
 infoFrame.BackgroundColor3 = Color3.fromRGB(14,14,14); infoFrame.BorderSizePixel = 0; infoFrame.Parent = main
 Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0,6)
 Instance.new("UIStroke", infoFrame).Color = Color3.fromRGB(40,40,40)
@@ -165,7 +182,7 @@ infoLbl.TextWrapped = true; infoLbl.Parent = infoFrame
 
 -- counter
 local cntLbl = Instance.new("TextLabel")
-cntLbl.Size = UDim2.new(1,-16,0,22); cntLbl.Position = UDim2.new(0,8,1,-152)
+cntLbl.Size = UDim2.new(1,-16,0,22); cntLbl.Position = UDim2.new(0,8,1,-138)
 cntLbl.BackgroundTransparency = 1; cntLbl.Text = "Total buah: ?"
 cntLbl.Font = Enum.Font.GothamBold; cntLbl.TextSize = 12
 cntLbl.TextColor3 = Color3.fromRGB(78,214,204)
@@ -182,7 +199,7 @@ local btnDefs = {
 local btns = {}
 for i, def in ipairs(btnDefs) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1,-16,0,34); b.Position = UDim2.new(0,8,1,-130+btnY[i])
+    b.Size = UDim2.new(1,-16,0,34); b.Position = UDim2.new(0,8,1,-116+btnY[i])
     b.BackgroundColor3 = def.col; b.Text = def.label
     b.Font = Enum.Font.GothamBold; b.TextSize = 12
     b.TextColor3 = def.tcol; b.AutoButtonColor = false; b.Parent = main
@@ -192,6 +209,7 @@ for i, def in ipairs(btnDefs) do
 end
 
 -- state
+local _logLines = {}
 local _fruit = nil
 local _prompt = nil
 local _busy = false
