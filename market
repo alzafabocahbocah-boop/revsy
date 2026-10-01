@@ -11655,12 +11655,54 @@ do
                     for pp, data in pairs(results) do
                         local items = data.Items
                         for listingUuid, listing in pairs(data.Listings) do
-                            -- DEBUG: log ItemType selain Pet sekali aja biar tau skin booth namanya
-                            if listing.ItemType and listing.ItemType ~= "Pet" then
+                            -- v8.464: debug Holdable — log struktur lengkap + kumpul nama skin
+                            if listing.ItemType == "Holdable" then
+                                -- log struktur listing sekali
+                                if not _G._dbgHoldableLogged then
+                                    _G._dbgHoldableLogged = true
+                                    local keys = {}
+                                    for k, v in pairs(listing) do
+                                        table.insert(keys, tostring(k).."="..tostring(v))
+                                    end
+                                    _G.__ZenxPL("[DBG Hold] listing keys: "..table.concat(keys, " | "))
+                                    -- log item data juga
+                                    local item = items and listing.ItemId and items[listing.ItemId]
+                                    if item then
+                                        local ikeys = {}
+                                        for k, v in pairs(item) do
+                                            table.insert(ikeys, tostring(k).."="..tostring(v))
+                                        end
+                                        _G.__ZenxPL("[DBG Hold] item keys: "..table.concat(ikeys, " | "))
+                                    else
+                                        _G.__ZenxPL("[DBG Hold] item=nil (ItemId="..tostring(listing.ItemId)..")")
+                                    end
+                                end
+                                -- kumpul nama skin unik dari semua Holdable listing
+                                _G._dbgHoldableNames = _G._dbgHoldableNames or {}
+                                local skinName = tostring(listing.ItemId or listing.Name or listing.SkinType or listing.HoldableType or "?")
+                                local item2 = items and listing.ItemId and items[listing.ItemId]
+                                if item2 then
+                                    for k, v in pairs(item2) do
+                                        local sv = tostring(v)
+                                        if not _G._dbgHoldableNames[sv] then
+                                            _G._dbgHoldableNames[sv] = tostring(k)
+                                        end
+                                    end
+                                end
+                            elseif listing.ItemType and listing.ItemType ~= "Pet" then
                                 local _dbgKey = "dbg_itype_"..tostring(listing.ItemType)
                                 if not _G[_dbgKey] then
                                     _G[_dbgKey] = true
                                     _G.__ZenxPL("[DBG ItemType] "..tostring(listing.ItemType).." | owner="..pp.Name)
+                                end
+                            end
+                            -- v8.464: log daftar nama skin tiap 120s
+                            if _G._dbgHoldableNames and (not _G._dbgHoldableNamesLog or (tick()-_G._dbgHoldableNamesLog)>120) then
+                                _G._dbgHoldableNamesLog = tick()
+                                local names = {}
+                                for v, k in pairs(_G._dbgHoldableNames) do table.insert(names, k.."="..v) end
+                                if #names > 0 then
+                                    _G.__ZenxPL("[DBG Hold] skin fields: "..table.concat(names, " | "):sub(1,200))
                                 end
                             end
                             if listing.ItemType == "Pet" and listing.ItemId then
