@@ -27,7 +27,6 @@ Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
 local ms = Instance.new("UIStroke", main)
 ms.Color = Color3.fromRGB(40, 40, 40); ms.Thickness = 1.5
 
--- title bar
 local bar = Instance.new("Frame", main)
 bar.Size = UDim2.new(1, 0, 0, 36)
 bar.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
@@ -43,7 +42,7 @@ local titleLbl = Instance.new("TextLabel", bar)
 titleLbl.Size = UDim2.new(1, -50, 1, 0)
 titleLbl.Position = UDim2.new(0, 12, 0, 0)
 titleLbl.BackgroundTransparency = 1
-titleLbl.Text = "🔍 SNIFF COLLECT METHOD"
+titleLbl.Text = "🔍 SNIFF COLLECT METHOD v3"
 titleLbl.Font = Enum.Font.GothamBold
 titleLbl.TextSize = 13
 titleLbl.TextColor3 = Color3.fromRGB(78, 214, 204)
@@ -59,7 +58,6 @@ closeBtn.AutoButtonColor = true
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
 closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
 
--- drag
 do
     local drag, ds, sp
     bar.InputBegan:Connect(function(i)
@@ -76,7 +74,6 @@ do
     end)
 end
 
--- log area
 local logFrame = Instance.new("ScrollingFrame", main)
 logFrame.Size = UDim2.new(1, -16, 1, -90)
 logFrame.Position = UDim2.new(0, 8, 0, 44)
@@ -120,7 +117,6 @@ local function logOk(t) log("✅ "..t, Color3.fromRGB(100, 220, 140)) end
 local function logWarn(t) log("⚠ "..t, Color3.fromRGB(220, 180, 60)) end
 local function logHit(t) log("🎯 "..t, Color3.fromRGB(255, 120, 255)) end
 
--- bottom buttons
 local btnArea = Instance.new("Frame", main)
 btnArea.Size = UDim2.new(1, -16, 0, 36)
 btnArea.Position = UDim2.new(0, 8, 1, -44)
@@ -155,16 +151,13 @@ statusLbl.TextSize = 10
 statusLbl.TextColor3 = Color3.fromRGB(120, 120, 120)
 statusLbl.TextXAlignment = Enum.TextXAlignment.Left
 
--- ===== SNIFF LOGIC =====
 local hooks = {}
 local conns = {}
 local active = false
 
 local function stopSniff()
     active = false
-    for _, h in ipairs(hooks) do
-        pcall(function() hookfunction(h.fn, h.orig) end)
-    end
+    for _, h in ipairs(hooks) do pcall(function() hookfunction(h.fn, h.orig) end) end
     hooks = {}
     for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
     conns = {}
@@ -173,13 +166,10 @@ local function stopSniff()
     logWarn("Sniff dihentikan")
 end
 
-local function hookArgs(label, args)
+local function hookArgs(args)
     for i, a in ipairs(args) do
-        if typeof(a) == "Instance" then
-            log("  ["..i.."] "..a:GetFullName())
-        else
-            log("  ["..i.."] "..typeof(a).."="..tostring(a))
-        end
+        if typeof(a) == "Instance" then log("  ["..i.."] "..a:GetFullName())
+        else log("  ["..i.."] "..typeof(a).."="..tostring(a)) end
     end
 end
 
@@ -187,7 +177,7 @@ local function startSniff()
     if active then stopSniff() end
     active = true
     logLines = {}
-    log("═══ SNIFF AKTIF — jalankan sc lain, collect 1 buah ═══", Color3.fromRGB(78, 214, 204))
+    log("═══ SNIFF v3 AKTIF ═══", Color3.fromRGB(78, 214, 204))
     statusLbl.Text = "● Sniff aktif..."
     statusLbl.TextColor3 = Color3.fromRGB(100, 220, 140)
 
@@ -195,157 +185,175 @@ local function startSniff()
 
     -- 1. fireproximityprompt
     if fireproximityprompt then
-        local origFPP = fireproximityprompt
-        local newFPP = hookfunction(origFPP, function(pp, ...)
+        local orig = fireproximityprompt
+        local new = hookfunction(orig, function(pp, ...)
             if active then
-                logHit("fireproximityprompt → "..tostring(pp and pp:GetFullName()))
+                logHit("fireproximityprompt → "..(pp and pp:GetFullName() or "?"))
                 local ppPart = pp and pp.Parent
                 if ppPart and ppPart:IsA("BasePart") then
-                    local char2 = plr.Character
-                    local hrp2 = char2 and char2:FindFirstChild("HumanoidRootPart")
-                    if hrp2 then
-                        log("  jarak: "..math.floor((hrp2.Position - ppPart.Position).Magnitude).." studs")
-                    end
+                    local hrp2 = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp2 then log("  jarak: "..math.floor((hrp2.Position-ppPart.Position).Magnitude).." studs") end
                 end
             end
-            return origFPP(pp, ...)
+            return orig(pp, ...)
         end)
-        table.insert(hooks, {fn=newFPP, orig=origFPP})
-        hookCount = hookCount + 1
+        table.insert(hooks, {fn=new, orig=orig}); hookCount+=1
         logOk("Hook: fireproximityprompt")
-    else
-        logWarn("fireproximityprompt tidak ada")
-    end
+    else logWarn("fireproximityprompt tidak ada") end
 
     -- 2. firetouchinterest
     if firetouchinterest then
-        local origFTI = firetouchinterest
-        local newFTI = hookfunction(origFTI, function(part1, part2, toggle, ...)
+        local orig = firetouchinterest
+        local new = hookfunction(orig, function(p1,p2,t,...)
             if active then
-                logHit("firetouchinterest toggle="..tostring(toggle))
-                log("  part1: "..tostring(part1 and part1:GetFullName()))
-                log("  part2: "..tostring(part2 and part2:GetFullName()))
+                logHit("firetouchinterest t="..(t or "?"))
+                log("  p1: "..(p1 and p1:GetFullName() or "?"))
+                log("  p2: "..(p2 and p2:GetFullName() or "?"))
             end
-            return origFTI(part1, part2, toggle, ...)
+            return orig(p1,p2,t,...)
         end)
-        table.insert(hooks, {fn=newFTI, orig=origFTI})
-        hookCount = hookCount + 1
+        table.insert(hooks, {fn=new, orig=orig}); hookCount+=1
         logOk("Hook: firetouchinterest")
-    else
-        logWarn("firetouchinterest tidak ada")
-    end
+    else logWarn("firetouchinterest tidak ada") end
 
     -- 3. fireclickdetector
     if fireclickdetector then
-        local origFCD = fireclickdetector
-        local newFCD = hookfunction(origFCD, function(cd, ...)
-            if active then
-                logHit("fireclickdetector → "..tostring(cd and cd:GetFullName()))
-            end
-            return origFCD(cd, ...)
+        local orig = fireclickdetector
+        local new = hookfunction(orig, function(cd,...)
+            if active then logHit("fireclickdetector → "..(cd and cd:GetFullName() or "?")) end
+            return orig(cd,...)
         end)
-        table.insert(hooks, {fn=newFCD, orig=origFCD})
-        hookCount = hookCount + 1
+        table.insert(hooks, {fn=new, orig=orig}); hookCount+=1
         logOk("Hook: fireclickdetector")
-    else
-        logWarn("fireclickdetector tidak ada")
     end
 
-    -- 4. fireserver (exploit shortcut)
+    -- 4. fireserver shortcut
     if fireserver then
-        local origFS = fireserver
-        local newFS = hookfunction(origFS, function(re, ...)
-            if active then
-                logHit("fireserver → "..tostring(re and re:GetFullName()))
-                hookArgs("", {...})
-            end
-            return origFS(re, ...)
+        local orig = fireserver
+        local new = hookfunction(orig, function(re,...)
+            if active then logHit("fireserver → "..(re and re:GetFullName() or "?")); hookArgs({...}) end
+            return orig(re,...)
         end)
-        table.insert(hooks, {fn=newFS, orig=origFS})
-        hookCount = hookCount + 1
+        table.insert(hooks, {fn=new, orig=orig}); hookCount+=1
         logOk("Hook: fireserver (shortcut)")
     end
 
-    -- 5. invokeserver (exploit shortcut)
+    -- 5. invokeserver shortcut
     if invokeserver then
-        local origIS = invokeserver
-        local newIS = hookfunction(origIS, function(rf, ...)
-            if active then
-                logHit("invokeserver → "..tostring(rf and rf:GetFullName()))
-                hookArgs("", {...})
-            end
-            return origIS(rf, ...)
+        local orig = invokeserver
+        local new = hookfunction(orig, function(rf,...)
+            if active then logHit("invokeserver → "..(rf and rf:GetFullName() or "?")); hookArgs({...}) end
+            return orig(rf,...)
         end)
-        table.insert(hooks, {fn=newIS, orig=origIS})
-        hookCount = hookCount + 1
+        table.insert(hooks, {fn=new, orig=orig}); hookCount+=1
         logOk("Hook: invokeserver (shortcut)")
     end
 
-    -- 6. Scan SEMUA RS descendants → hook FireServer + InvokeServer per-instance
+    -- 6. sethiddenproperty
+    if sethiddenproperty then
+        local orig = sethiddenproperty
+        local new = hookfunction(orig, function(inst, prop, val, ...)
+            if active then
+                logHit("sethiddenproperty: "..tostring(prop).."="..tostring(val))
+                log("  on: "..(inst and inst:GetFullName() or "?"))
+            end
+            return orig(inst, prop, val, ...)
+        end)
+        table.insert(hooks, {fn=new, orig=orig}); hookCount+=1
+        logOk("Hook: sethiddenproperty")
+    else logWarn("sethiddenproperty tidak ada") end
+
+    -- 7. Semua RS RE/RF
     local SKIP = {Fps=true, Input=true, Ping=true, RefreshIndex=true, GetState=true}
-    local hooked_paths = {}
+    local rsCount = 0
     for _, v in ipairs(RS:GetDescendants()) do
         if not SKIP[v.Name] then
             local vpath = v:GetFullName()
             if v:IsA("RemoteEvent") then
-                local origFire = v.FireServer
-                local ok2, newFire = pcall(hookfunction, origFire, function(self, ...)
-                    if active then
-                        logHit("FireServer: "..vpath)
-                        hookArgs("", {...})
-                    end
-                    return origFire(self, ...)
+                local orig = v.FireServer
+                local ok, new = pcall(hookfunction, orig, function(self,...)
+                    if active then logHit("FireServer: "..vpath); hookArgs({...}) end
+                    return orig(self,...)
                 end)
-                if ok2 then
-                    table.insert(hooks, {fn=newFire, orig=origFire})
-                    table.insert(hooked_paths, "RE:"..v.Name)
-                    hookCount = hookCount + 1
-                end
+                if ok then table.insert(hooks,{fn=new,orig=orig}); rsCount+=1; hookCount+=1 end
             elseif v:IsA("RemoteFunction") then
-                local origInv = v.InvokeServer
-                local ok2, newInv = pcall(hookfunction, origInv, function(self, ...)
-                    if active then
-                        logHit("InvokeServer: "..vpath)
-                        hookArgs("", {...})
-                    end
-                    return origInv(self, ...)
+                local orig = v.InvokeServer
+                local ok, new = pcall(hookfunction, orig, function(self,...)
+                    if active then logHit("InvokeServer: "..vpath); hookArgs({...}) end
+                    return orig(self,...)
                 end)
-                if ok2 then
-                    table.insert(hooks, {fn=newInv, orig=origInv})
-                    table.insert(hooked_paths, "RF:"..v.Name)
-                    hookCount = hookCount + 1
-                end
+                if ok then table.insert(hooks,{fn=new,orig=orig}); rsCount+=1; hookCount+=1 end
             end
         end
     end
-    log("RS scan: "..#hooked_paths.." RE/RF di-hook", Color3.fromRGB(150, 150, 150))
-    if #hooked_paths > 0 then
-        log("  "..table.concat(hooked_paths, ", "), Color3.fromRGB(120, 120, 120))
-    end
+    log("RS hooks: "..rsCount, Color3.fromRGB(150,150,150))
 
-    -- 7. PP Triggered listener (semua PP di workspace)
+    -- 8. PP hooks: Triggered + InputHoldBegin + InputHoldEnd per PP
     local ppCount = 0
+    local ppHoldCount = 0
     for _, v in ipairs(workspace:GetDescendants()) do
         if v:IsA("ProximityPrompt") then
             local vpath = v:GetFullName()
-            local c = v.Triggered:Connect(function(plrWho)
+
+            -- Triggered event
+            local c1 = v.Triggered:Connect(function(who)
                 if active then
                     logHit("PP.Triggered: "..vpath)
-                    log("  by: "..tostring(plrWho and plrWho.Name))
+                    log("  by: "..(who and who.Name or "?"))
+                end
+            end)
+            table.insert(conns, c1)
+            ppCount += 1
+
+            -- Hook InputHoldBegin
+            pcall(function()
+                local origB = v.InputHoldBegin
+                local nb = hookfunction(origB, function(self,...)
+                    if active then logHit("PP.InputHoldBegin: "..vpath) end
+                    return origB(self,...)
+                end)
+                table.insert(hooks, {fn=nb, orig=origB})
+                ppHoldCount += 1
+            end)
+
+            -- Hook InputHoldEnd
+            pcall(function()
+                local origE = v.InputHoldEnd
+                local ne = hookfunction(origE, function(self,...)
+                    if active then logHit("PP.InputHoldEnd: "..vpath) end
+                    return origE(self,...)
+                end)
+                table.insert(hooks, {fn=ne, orig=origE})
+            end)
+        end
+    end
+    log("PP Triggered: "..ppCount.." | InputHold hooks: "..ppHoldCount, Color3.fromRGB(150,150,150))
+
+    -- 9. Monitor buah hilang (deteksi pasif)
+    local farmFolder = workspace:FindFirstChild("Farm")
+    if farmFolder then
+        local function watchFruits(folder)
+            local c = folder.ChildRemoved:Connect(function(child)
+                if active then
+                    log("🍎 ChildRemoved dari "..folder:GetFullName()..": "..child.Name, Color3.fromRGB(255,200,100))
                 end
             end)
             table.insert(conns, c)
-            ppCount = ppCount + 1
         end
+        -- watch semua Fruits folder
+        for _, v in ipairs(farmFolder:GetDescendants()) do
+            if v.Name == "Fruits" then
+                watchFruits(v)
+            end
+        end
+        logOk("Monitor: farm ChildRemoved aktif")
     end
-    log("PP listeners: "..ppCount, Color3.fromRGB(150, 150, 150))
 
-    logOk("TOTAL HOOKS: "..hookCount.." | PP: "..ppCount)
-    log("Sekarang jalankan sc lain → collect 1 buah", Color3.fromRGB(180, 180, 60))
-    statusLbl.Text = "● Aktif — "..hookCount.." hooks + "..ppCount.." PP"
+    logOk("TOTAL: "..hookCount.." hooks | "..ppCount.." PP listeners")
+    log("Jalankan sc lain → collect 1 buah, lihat 🎯", Color3.fromRGB(180,180,60))
+    statusLbl.Text = "● Aktif — "..hookCount.." hooks"
 end
 
--- buttons
 btnStart.MouseButton1Click:Connect(function() startSniff() end)
 btnStop.MouseButton1Click:Connect(function() stopSniff() end)
 btnClear.MouseButton1Click:Connect(function()
@@ -361,4 +369,4 @@ btnCopy.MouseButton1Click:Connect(function()
     logOk("Log disalin!")
 end)
 
-log("Tekan MULAI SNIFF, lalu jalankan sc lain dan collect 1 buah", Color3.fromRGB(78, 214, 204))
+log("Tekan MULAI SNIFF dulu, BARU jalankan sc lain", Color3.fromRGB(78, 214, 204))
