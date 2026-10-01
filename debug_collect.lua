@@ -1,4 +1,4 @@
--- debug_collect.lua v7 — SNIFF FULL: log semua method tanpa filter
+-- debug_collect.lua v8 — SNIFF SMART: dedup, hanya RS/Workspace, no spam
 local RS = game:GetService("ReplicatedStorage")
 local plr = game.Players.LocalPlayer
 local UIS = game:GetService("UserInputService")
@@ -378,7 +378,7 @@ local _sniffOldNc = nil
 local _sniffBtn = Instance.new("TextButton")
 _sniffBtn.Size = UDim2.new(1,-16,0,28)
 _sniffBtn.BackgroundColor3 = Color3.fromRGB(50,20,20)
-_sniffBtn.Text = "🎯 SNIFF FULL — tekan lalu collect 1 buah manual"
+_sniffBtn.Text = "🎯 SNIFF SMART — tekan lalu collect 1 buah manual"
 _sniffBtn.Font = Enum.Font.GothamBold; _sniffBtn.TextSize = 11
 _sniffBtn.TextColor3 = Color3.fromRGB(255,80,80); _sniffBtn.AutoButtonColor = false
 _sniffBtn.TextWrapped = true; _sniffBtn.Parent = main
@@ -387,18 +387,20 @@ logFrame.Position = UDim2.new(0,8,0,80)
 logFrame.Size = UDim2.new(1,-16,1,-284)
 Instance.new("UICorner", _sniffBtn).CornerRadius = UDim.new(0,6)
 
--- Skip: remote yang spam tiap frame supaya log bersih
-local SNIFF_SKIP = {Fps=true, Input=true, Ping=true}
+-- Skip: remote spam tiap frame
+local SNIFF_SKIP = {Fps=true, Input=true, Ping=true, RefreshIndex=true, GetState=true}
+-- Dedup: catat kombinasi "name→method" yang sudah pernah muncul
+-- Reset dedup saat SNIFF dimulai supaya bisa tangkap event collect yang baru
+local _sniffSeen = {}
 
 _sniffBtn.MouseButton1Click:Connect(function()
     local mt = getrawmetatable and getrawmetatable(game)
     if not mt then
-        addLog("❌ getrawmetatable tidak ada — exploit tidak support hook ini", Color3.fromRGB(220,80,80))
+        addLog("❌ getrawmetatable tidak ada", Color3.fromRGB(220,80,80))
         return
     end
 
     if _sniffing then
-        -- stop & restore
         _sniffing = false
         if _sniffOldNc then
             setreadonly(mt, false)
@@ -406,67 +408,65 @@ _sniffBtn.MouseButton1Click:Connect(function()
             setreadonly(mt, true)
             _sniffOldNc = nil
         end
-        _sniffBtn.Text = "🎯 SNIFF FULL — tekan lalu collect 1 buah manual"
+        _sniffBtn.Text = "🎯 SNIFF SMART — tekan lalu collect 1 buah manual"
         _sniffBtn.TextColor3 = Color3.fromRGB(255,80,80)
-        addLog("── SNIFF FULL berhenti ──", Color3.fromRGB(160,160,160))
+        addLog("── SNIFF berhenti ──", Color3.fromRGB(160,160,160))
         return
     end
 
-    -- START
+    -- reset dedup tiap sesi baru
+    _sniffSeen = {}
     _sniffing = true
-    _sniffBtn.Text = "⏹ SNIFF FULL aktif — collect buah manual sekarang! (tekan lagi utk stop)"
+    _sniffBtn.Text = "⏹ SNIFF aktif — collect buah manual lalu stop"
     _sniffBtn.TextColor3 = Color3.fromRGB(100,255,100)
-    addLog("── SNIFF FULL aktif ──", Color3.fromRGB(255,80,80))
-    addLog("Collect 1 buah manual (klik/E di buah) lalu tekan stop", Color3.fromRGB(255,200,80))
-    addLog("Skip spam: Fps, Input, Ping", Color3.fromRGB(130,130,130))
+    addLog("── SNIFF SMART aktif ──", Color3.fromRGB(255,80,80))
+    addLog("Collect 1 buah manual (klik/E) lalu tekan stop", Color3.fromRGB(255,200,80))
 
     _sniffOldNc = mt.__namecall
     setreadonly(mt, false)
     mt.__namecall = newcclosure(function(self, ...)
         local method = getnamecallmethod()
 
-        -- skip spam frame
-        if SNIFF_SKIP[method] then
-            return _sniffOldNc(self, ...)
-        end
+        -- skip spam
+        if SNIFF_SKIP[method] then return _sniffOldNc(self, ...) end
 
-        -- log SEMUA method dari instance manapun
         if typeof(self) == "Instance" then
-            local args = {...}
-            local selfName = pcall(function() return self.Name end) and self.Name or "?"
-            local line = "📡 ["..selfName.."] → "..tostring(method)
-            -- warna: kuning kalau di RS, putih kalau lain
-            local inRS = pcall(function() return self:IsDescendantOf(RS) end)
-            local col = inRS and Color3.fromRGB(255,230,80) or Color3.fromRGB(180,180,180)
-            addLog(line, col)
-            -- log args kalau ada
-            if #args > 0 then
+            -- hanya log instance di RS atau Workspace (bukan engine internal)
+            local ok2, inScope = pcall(function()
+                return self:IsDescendantOf(RS) or self:IsDescendantOf(workspace)
+            end)
+            if not (ok2 and inScope) then return _sniffOldNc(self, ...) end
+
+            local key = self.Name .. "→" .. method
+            if not _sniffSeen[key] then
+                -- pertama kali muncul — log LENGKAP dengan args
+                _sniffSeen[key] = true
+                local args = {...}
+                addLog("📡 "..self.Name.." → "..method.." (BARU!)", Color3.fromRGB(100,255,100))
                 for i, a in ipairs(args) do
                     local info
                     if typeof(a) == "Instance" then
-                        local ok3, fn = pcall(function() return a:GetFullName() end)
-                        info = ok3 and fn or tostring(a)
-                        -- log atribut
-                        local ok4, attrs = pcall(function() return a:GetAttributes() end)
-                        if ok4 then
-                            local attrStr = {}
-                            for k,v in pairs(attrs) do table.insert(attrStr, k.."="..tostring(v)) end
-                            if #attrStr > 0 then
-                                addLog("   attrs: "..table.concat(attrStr," | "), Color3.fromRGB(200,200,100))
-                            end
+                        local _, fn = pcall(function() return a:GetFullName() end)
+                        info = fn or tostring(a)
+                        local _, attrs = pcall(function() return a:GetAttributes() end)
+                        if attrs then
+                            local at = {}
+                            for k,v in pairs(attrs) do table.insert(at, k.."="..tostring(v)) end
+                            if #at>0 then addLog("   attrs: "..table.concat(at," | "), Color3.fromRGB(200,200,100)) end
                         end
                     else
                         info = tostring(a)
                     end
-                    addLog("  ["..i.."] "..typeof(a).."="..info, Color3.fromRGB(220,200,150))
+                    addLog("  ["..i.."] "..typeof(a).."="..info, Color3.fromRGB(255,220,100))
                 end
             end
+            -- kalau sudah pernah: tidak log ulang (anti-spam)
         end
 
         return _sniffOldNc(self, ...)
     end)
     setreadonly(mt, true)
-    addLog("Hook aktif — semua __namecall (kecuali Fps/Input/Ping) akan dilog", Color3.fromRGB(100,255,100))
+    addLog("Hook aktif — hanya log method BARU dari RS/Workspace", Color3.fromRGB(100,255,100))
 end)
 
 addLog("Script loaded. Tekan SCAN dulu.", Color3.fromRGB(78,214,204))
