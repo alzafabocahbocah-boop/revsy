@@ -1897,6 +1897,49 @@ if not _G.__ZenxAutoTicket then
     end)
 end
 
+-- ===================== FETCH PANEL: marketakun + uplevel-giftpet =====================
+-- Sama persis dengan uplevel v0.27: pull tiap 20s (belum dapat) atau 5 menit (udah dapat)
+-- Hasilnya dipake Gift 1 auto-loop: target = market akun yg belum full, filter tipe dari panel
+task.spawn(function()
+    local _base = "https://dry-glitter-63e4.petagee5.workers.dev"
+    local _req = request or http_request or (syn and syn.request)
+    local function _get(path)
+        local raw
+        pcall(function() raw = game:HttpGet(_base .. path) end)
+        if (not raw or raw == "") and _req then
+            local ok, r = pcall(function() return _req({ Url = _base .. path, Method = "GET" }) end)
+            if ok and r and r.Body then raw = r.Body end
+        end
+        return raw
+    end
+    local have = false
+    while true do
+        pcall(function()
+            -- akun market: "akun=total:max,..."
+            local raw = _get("/marketakun")
+            if raw and raw ~= "" then
+                local m = {}
+                for pair in tostring(raw):gmatch("[^,]+") do
+                    local k, tot, mx = pair:match("^%s*(.-)%s*=%s*(%d+):(%d+)")
+                    if k and k ~= "" then m[k] = { total = tonumber(tot) or 0, max = tonumber(mx) or 0 }; have = true end
+                end
+                if next(m) then _G.ZenxMarketAkun = m end
+            end
+            -- tipe pet gift: "Tipe1,Tipe2,..." (kosong = semua)
+            local raw2 = _get("/uplevel-giftpet")
+            if raw2 ~= nil then
+                local t = {}
+                for tp in tostring(raw2):gmatch("[^,]+") do
+                    local x = tp:gsub("^%s+", ""):gsub("%s+$", "")
+                    if x ~= "" then t[x] = true end
+                end
+                _G.ZenxUplevelGiftTipe = t
+            end
+        end)
+        task.wait(have and 300 or 20)
+    end
+end)
+
 -- ===================== DENYUT (kirim ke worker via writefile tiap 5s) =====================
 -- Worker baca zenx_denyut_<nama>.txt untuk deteksi client mati/putih -> auto rejoin
 if not _G.__ZenxFpsTrack then
