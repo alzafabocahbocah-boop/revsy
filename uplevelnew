@@ -1,4 +1,4 @@
--- uplevelnew v8.110 — FIX: HarvestRemote adalah RemoteFunction, pakai InvokeServer bukan FireServer
+-- uplevelnew v8.111 — FIX: collect pakai fireproximityprompt (SNIFF confirm: game pakai PP native, bukan HarvestRemote)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -2357,32 +2357,20 @@ local function doCollect(fruits)
                 end
                 dbgLog("PP di buah[1]: "..table.concat(allPP, " | "))
             end
-            -- HarvestRemote adalah RemoteFunction → InvokeServer
+            -- SNIFF confirm: game pakai ProximityPrompt native, bukan HarvestRemote
+            -- fireproximityprompt adalah satu-satunya cara trigger dari jarak jauh
             local fireOk, fireErr
-            if harvestRE then
-                -- coba InvokeServer(fruit)
-                fireOk, fireErr = pcall(function() harvestRE:InvokeServer(fruit) end)
-                if not fireOk then
-                    _addErr("HarvestRF(fruit)["..i.."]: "..tostring(fireErr))
-                    -- fallback: InvokeServer(prompt)
-                    fireOk, fireErr = pcall(function() harvestRE:InvokeServer(prompt) end)
-                    if not fireOk then _addErr("HarvestRF(prompt)["..i.."]: "..tostring(fireErr)) end
-                end
-            end
-            -- fallback: InputHoldBegin/End
+            pcall(function() prompt.RequiresLineOfSight = false end)
+            fireOk, fireErr = pcall(fireproximityprompt, prompt)
             if not fireOk then
+                _addErr("FPP["..i.."]: "..tostring(fireErr))
+                -- fallback: InputHoldBegin/End
                 fireOk, fireErr = pcall(function()
                     prompt:InputHoldBegin()
                     task.wait(0.05)
                     prompt:InputHoldEnd()
                 end)
                 if not fireOk then _addErr("IHB["..i.."]: "..tostring(fireErr)) end
-            end
-            -- fallback terakhir: fireproximityprompt exploit
-            if not fireOk then
-                pcall(function() prompt.RequiresLineOfSight = false end)
-                fireOk, fireErr = pcall(fireproximityprompt, prompt)
-                if not fireOk then _addErr("FPP["..i.."]: "..tostring(fireErr)) end
             end
             if not fireOk then
                 gagal = gagal + 1
