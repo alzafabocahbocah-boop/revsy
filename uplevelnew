@@ -1,4 +1,4 @@
--- uplevelnew v8.106 — doCollect: HarvestRemote(prompt), delay 0.05s/buah anti-throttle
+-- uplevelnew v8.107 — doCollect: 3 cara fire (HarvestRemote→InputHoldBegin→fireproximityprompt)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -110,7 +110,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.106"
+local VERSION = "v8.107"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2357,12 +2357,21 @@ local function doCollect(fruits)
                 end
                 dbgLog("PP di buah[1]: "..table.concat(allPP, " | "))
             end
-            -- fire HarvestRemote dengan berbagai argumen
+            -- fire: coba semua cara, catat mana yang OK
             local fireOk, fireErr
+            -- cara 1: HarvestRemote(prompt)
             if harvestRE then
-                -- coba kirim prompt (cara paling umum di game ini)
                 fireOk, fireErr = pcall(function() harvestRE:FireServer(prompt) end)
             end
+            -- cara 2: InputHoldBegin/End (trigger server via ProximityPrompt native)
+            if not fireOk then
+                fireOk, fireErr = pcall(function()
+                    prompt:InputHoldBegin()
+                    task.wait(0.02)
+                    prompt:InputHoldEnd()
+                end)
+            end
+            -- cara 3: fireproximityprompt exploit
             if not fireOk then
                 pcall(function() prompt.RequiresLineOfSight = false end)
                 fireOk, fireErr = pcall(fireproximityprompt, prompt)
@@ -2373,7 +2382,6 @@ local function doCollect(fruits)
             else
                 collected = collected + 1
             end
-            -- delay per buah agar tidak throttle
             task.wait(0.05)
         else
             gagal = gagal + 1
