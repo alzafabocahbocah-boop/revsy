@@ -2584,25 +2584,25 @@ local function runSesi2()
         updateUI(totalNightmareCollected,nm,2)
         addLog("Nightmare kebun: "..nm)
 
-        if #sd.shovel > 0 then
-            -- ada mutasi -> collect langsung (tidak perlu ganti pet)
-            addLog("Sesi2: mutasi ditemukan — collect langsung")
-            local fruits = sd.shovel
-            while #fruits > 0 and not stopRequested do
-                local collected = doCollect(fruits)
-                totalShovel = totalShovel + collected
-                _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-                if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                    task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
-                end
-                local nx=scanFruits(); fruits=nx.shovel
-            end
-            addLog("Mutasi habis — lanjut sesi 2")
-        elseif nm == 0 then
-            -- nightmare habis -> cadangan 2 (tunggu nightmare tumbuh lagi)
+        if nm == 0 then
+            -- nightmare habis -> wajib cadangan 2, collect mutasi dulu kalau ada
             addLog("Sesi2: nightmare 0 — masuk cadangan 2")
             setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
             unequipAllExceptBahan(); equipSesi(4, SESI_CADANGAN2_DEF)
+            -- collect mutasi yang sudah ada sebelum tunggu nightmare
+            if #sd.shovel > 0 then
+                addLog("Cad2: collect mutasi dulu sebelum tunggu")
+                local fruits0 = sd.shovel
+                while #fruits0 > 0 and not stopRequested do
+                    local collected = doCollect(fruits0)
+                    totalShovel = totalShovel + collected
+                    _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
+                    if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
+                        task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
+                    end
+                    local nx=scanFruits(); fruits0=nx.shovel
+                end
+            end
             -- fav 1 buah random biar cepat dapat nightmare
             task.spawn(function()
                 task.wait(2)
@@ -2639,6 +2639,20 @@ local function runSesi2()
             -- nightmare di bawah 50 -> pindah sesi 1
             addLog("Sesi2: nm="..nm.." < 50 — pindah sesi 1")
             totalNightmareCollected=0; return
+        elseif #sd.shovel > 0 then
+            -- ada mutasi, nightmare masih ada -> collect langsung
+            addLog("Sesi2: mutasi ditemukan — collect langsung")
+            local fruits = sd.shovel
+            while #fruits > 0 and not stopRequested do
+                local collected = doCollect(fruits)
+                totalShovel = totalShovel + collected
+                _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
+                if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
+                    task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
+                end
+                local nx=scanFruits(); fruits=nx.shovel
+            end
+            addLog("Mutasi habis — lanjut sesi 2")
         end
 
         task.wait(CFG.loopWait)
