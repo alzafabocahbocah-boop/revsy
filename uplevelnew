@@ -1,4 +1,4 @@
--- uplevelnew v8.103 — debug: log semua gameEvents + prompt path, cari RE collect yang benar
+-- uplevelnew v8.104 — debug collect: log gameEvents + prompt path ke debug panel
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -10,24 +10,6 @@ local plr = game.Players.LocalPlayer
 local UIS = game:GetService("UserInputService")
 local playerGui = plr:WaitForChild("PlayerGui", 10)
 local gameEvents = RS:WaitForChild("GameEvents", 10)
-
--- DEBUG: log semua children gameEvents (cari RE collect yang benar)
-task.spawn(function()
-    task.wait(3)  -- tunggu game load
-    if gameEvents then
-        local evList = {}
-        for _, v in ipairs(gameEvents:GetChildren()) do
-            table.insert(evList, v.Name.."("..v.ClassName..")")
-        end
-        print("[UPL-DEBUG] gameEvents children ("..#evList.."):")
-        -- print per 5 agar tidak kepotong
-        for i = 1, #evList, 5 do
-            local chunk = {}
-            for j = i, math.min(i+4, #evList) do chunk[#chunk+1] = evList[j] end
-            print("  "..table.concat(chunk, " | "))
-        end
-    end
-end)
 
 -- ===================== REMOTES =====================
 -- equipRE: scan SELURUH RS descendants cari "PetsService" RemoteEvent (mirip uplevel asli)
@@ -127,7 +109,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.103"
+local VERSION = "v8.104"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -1908,6 +1890,7 @@ end
 -- Healer loop pakai ini untuk re-equip pet yang modelnya hilang
 local _activeUuids = {}
 local _isCollecting = false  -- pause healer saat doCollect berjalan
+local _geLogged = false      -- gameEvents log cukup sekali
 
 -- unequipAll: hanya unequip pet yg SEDANG di-equip (ada model di workspace)
 -- JANGAN loop seluruh container — bisa ratusan pet, bikin rate-limit + equip setelahnya drop
@@ -2329,6 +2312,22 @@ end
 
 local function doCollect(fruits)
     _isCollecting = true  -- pause healer loop selama collect
+
+    -- LOG SEMUA GAMEEVENTS (sekali saja, untuk cari RE collect yang benar)
+    if gameEvents and not _geLogged then
+        _geLogged = true
+        local evList = {}
+        for _, v in ipairs(gameEvents:GetChildren()) do
+            table.insert(evList, v.Name)
+        end
+        dbgLog("=== gameEvents ("..#evList..") ===")
+        for i = 1, #evList, 4 do
+            local chunk = {}
+            for j = i, math.min(i+3, #evList) do chunk[#chunk+1] = evList[j] end
+            dbgLog(table.concat(chunk, " | "))
+        end
+    end
+
     local collected = 0
     dbgLog("doCollect: "..#fruits.." buah")
     local gagal = 0
@@ -2348,25 +2347,17 @@ local function doCollect(fruits)
             if not _loggedAction then
                 _loggedAction = true
                 dbgLog("prompt path="..prompt:GetFullName())
-                dbgLog("prompt Act='"..tostring(prompt.ActionText)
-                    .."' Enabled="..tostring(prompt.Enabled)
-                    .." MaxDist="..tostring(prompt.MaxActivationDistance)
-                    .." LoS="..tostring(prompt.RequiresLineOfSight))
-                -- log semua PP di buah ini (mungkin ada lebih dari 1)
-                local fruit1 = fruits[1]
-                if fruit1 then
-                    local allPP = {}
-                    for _, v in ipairs(fruit1:GetDescendants()) do
-                        if v:IsA("ProximityPrompt") then
-                            table.insert(allPP, v:GetFullName().."[Act="..tostring(v.ActionText).."]")
-                        end
+                -- log semua PP di buah[1]
+                local allPP = {}
+                for _, v in ipairs(fruit:GetDescendants()) do
+                    if v:IsA("ProximityPrompt") then
+                        table.insert(allPP, v.Name.."[Act="..tostring(v.ActionText).."]")
                     end
-                    dbgLog("ALL PP di buah[1]: "..#allPP.." → "..table.concat(allPP, " | "))
                 end
+                dbgLog("PP di buah[1]: "..table.concat(allPP, " | "))
             end
-            -- hanya set RequiresLineOfSight=false (seperti panen), TIDAK set Enabled/MaxDist/HoldDuration
+            -- hanya set RequiresLineOfSight=false, TIDAK set Enabled/MaxDist/HoldDuration
             pcall(function() prompt.RequiresLineOfSight = false end)
-            -- fire 1x (bersih, tanpa spam)
             local fireOk, fireErr = pcall(fireproximityprompt, prompt)
             if not fireOk then
                 gagal = gagal + 1
@@ -2381,8 +2372,8 @@ local function doCollect(fruits)
             _addErr("getPrompt["..i.."]: "..reason)
         end
     end
-    task.wait(0.3)  -- tunggu server proses
-    _isCollecting = false  -- resume healer loop
+    task.wait(0.3)
+    _isCollecting = false
     local summary = "doCollect: "..collected.."/"..#fruits.." OK"
     if gagal > 0 then summary = summary.." | GAGAL: "..gagal end
     if #_errList > 0 then summary = summary.." | "..#_errList.." jenis err" end
