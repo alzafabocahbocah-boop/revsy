@@ -599,14 +599,20 @@ local KG_CONFIG_PET = { ["Tim Ele"] = "" }   -- up6kg: bahan dari picker, gak di
 do
     local WS = workspace
     local plrName = game.Players.LocalPlayer.Name
+    local function getSubfarmOwner(subfarm)
+        local sign = subfarm:FindFirstChild("Sign")
+        if sign then return sign:GetAttribute("_owner") end
+        return nil
+    end
     local function semuaFarm()
-        -- Ambil Plants_Physical milik orang LAIN (skip kebun sendiri)
+        -- Ambil Plants_Physical milik orang LAIN (skip kebun sendiri via Sign._owner)
         local roots = {}
         local farm = WS:FindFirstChild("Farm")
         if not farm then return roots end
         for _, subfarm in ipairs(farm:GetChildren()) do
-            -- skip folder kebun sendiri
-            if subfarm.Name ~= plrName then
+            local owner = getSubfarmOwner(subfarm)
+            -- skip kalau owner = kita, atau belum loaded (owner nil & Loaded=false)
+            if owner ~= nil and owner ~= plrName then
                 for _, f in ipairs(subfarm:GetDescendants()) do
                     if f.Name == "Plants_Physical" and (f:IsA("Folder") or f:IsA("Model")) then
                         table.insert(roots, f)
@@ -631,10 +637,13 @@ do
         if not farm then return end
         farm.DescendantAdded:Connect(function(c)
             if c:IsA("Model") and c.Parent and c.Parent.Name == "Plants_Physical" then
-                -- cek apakah ini kebun sendiri: Farm>[PlayerName]>Important>Plants_Physical>[Model]
-                local pp = c.Parent and c.Parent.Parent  -- Important
-                local subfarm = pp and pp.Parent          -- [PlayerName]
-                if subfarm and subfarm.Name == plrName then return end
+                -- cek owner via Sign._owner: Farm>subfarm>Important>Plants_Physical>[Model]
+                local pp = c.Parent and c.Parent.Parent        -- Important
+                local subfarm = pp and pp.Parent               -- subfarm (Folder "Farm")
+                if subfarm then
+                    local owner = getSubfarmOwner(subfarm)
+                    if owner == nil or owner == plrName then return end
+                end
                 task.wait(0.05); pcall(function() c:Destroy() end)
             end
         end)
