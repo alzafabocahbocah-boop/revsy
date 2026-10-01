@@ -1,4 +1,4 @@
--- debug_collect.lua v5 — FIX: HarvestRemote=RemoteFunction, pakai InvokeServer
+-- debug_collect.lua v6 — TEST 4: fireproximityprompt (SNIFF confirm: PP native)
 local RS = game:GetService("ReplicatedStorage")
 local plr = game.Players.LocalPlayer
 local UIS = game:GetService("UserInputService")
@@ -79,8 +79,8 @@ pcall(function() gui.Parent = (gethui and gethui()) or playerGui end)
 if not gui.Parent then gui.Parent = playerGui end
 
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 400, 0, 580)
-main.Position = UDim2.new(0.5, -200, 0.5, -290)
+main.Size = UDim2.new(0, 400, 0, 625)
+main.Position = UDim2.new(0.5, -200, 0.5, -312)
 main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 main.BorderSizePixel = 0; main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
@@ -157,7 +157,7 @@ end
 
 -- tombol salin log
 local copyLogBtn = Instance.new("TextButton")
-copyLogBtn.Size = UDim2.new(1,-16,0,24); copyLogBtn.Position = UDim2.new(0,8,1,-242)
+copyLogBtn.Size = UDim2.new(1,-16,0,24); copyLogBtn.Position = UDim2.new(0,8,1,-284)
 copyLogBtn.BackgroundColor3 = Color3.fromRGB(20,20,40); copyLogBtn.Text = "📋  SALIN LOG"
 copyLogBtn.Font = Enum.Font.GothamBold; copyLogBtn.TextSize = 11
 copyLogBtn.TextColor3 = Color3.fromRGB(100,160,255); copyLogBtn.AutoButtonColor = false; copyLogBtn.Parent = main
@@ -173,7 +173,7 @@ end)
 
 -- info buah
 local infoFrame = Instance.new("Frame")
-infoFrame.Size = UDim2.new(1,-16,0,70); infoFrame.Position = UDim2.new(0,8,1,-214)
+infoFrame.Size = UDim2.new(1,-16,0,70); infoFrame.Position = UDim2.new(0,8,1,-256)
 infoFrame.BackgroundColor3 = Color3.fromRGB(14,14,14); infoFrame.BorderSizePixel = 0; infoFrame.Parent = main
 Instance.new("UICorner", infoFrame).CornerRadius = UDim.new(0,6)
 Instance.new("UIStroke", infoFrame).Color = Color3.fromRGB(40,40,40)
@@ -188,24 +188,25 @@ infoLbl.TextWrapped = true; infoLbl.Parent = infoFrame
 
 -- counter
 local cntLbl = Instance.new("TextLabel")
-cntLbl.Size = UDim2.new(1,-16,0,22); cntLbl.Position = UDim2.new(0,8,1,-138)
+cntLbl.Size = UDim2.new(1,-16,0,22); cntLbl.Position = UDim2.new(0,8,1,-180)
 cntLbl.BackgroundTransparency = 1; cntLbl.Text = "Total buah: ?"
 cntLbl.Font = Enum.Font.GothamBold; cntLbl.TextSize = 12
 cntLbl.TextColor3 = Color3.fromRGB(78,214,204)
 cntLbl.TextXAlignment = Enum.TextXAlignment.Left; cntLbl.Parent = main
 
 -- tombol helper
-local btnY = {0, 42, 84, 126}
+local btnY = {0, 42, 84, 126, 168}
 local btnDefs = {
-    {label="📋  SCAN Buah Mutasi",  col=Color3.fromRGB(40,40,80),  tcol=Color3.fromRGB(140,160,255)},
-    {label="TEST 1: InvokeServer(fruit)",  col=Color3.fromRGB(20,50,20),  tcol=Color3.fromRGB(100,220,100)},
-    {label="TEST 2: InvokeServer(prompt)", col=Color3.fromRGB(50,35,10),  tcol=Color3.fromRGB(230,180,80)},
-    {label="TEST 3: InputHoldBegin/End",   col=Color3.fromRGB(50,20,50),  tcol=Color3.fromRGB(200,120,220)},
+    {label="📋  SCAN Buah Mutasi",             col=Color3.fromRGB(40,40,80),   tcol=Color3.fromRGB(140,160,255)},
+    {label="TEST 1: InvokeServer(fruit)",      col=Color3.fromRGB(20,50,20),   tcol=Color3.fromRGB(100,220,100)},
+    {label="TEST 2: InvokeServer(prompt)",     col=Color3.fromRGB(50,35,10),   tcol=Color3.fromRGB(230,180,80)},
+    {label="TEST 3: InputHoldBegin/End",       col=Color3.fromRGB(50,20,50),   tcol=Color3.fromRGB(200,120,220)},
+    {label="🔥 TEST 4: fireproximityprompt",   col=Color3.fromRGB(60,20,10),   tcol=Color3.fromRGB(255,100,60)},
 }
 local btns = {}
 for i, def in ipairs(btnDefs) do
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(1,-16,0,34); b.Position = UDim2.new(0,8,1,-116+btnY[i])
+    b.Size = UDim2.new(1,-16,0,34); b.Position = UDim2.new(0,8,1,-158+btnY[i])
     b.BackgroundColor3 = def.col; b.Text = def.label
     b.Font = Enum.Font.GothamBold; b.TextSize = 12
     b.TextColor3 = def.tcol; b.AutoButtonColor = false; b.Parent = main
@@ -334,6 +335,39 @@ btns[4].MouseButton1Click:Connect(function()
     addLog("Berkurang: " .. delta .. " buah", col)
     if delta > 0 then addLog("✅ BERHASIL! InputHoldBegin/End", col)
     else addLog("❌ Tidak ada perubahan", col) end
+    setBusy(false)
+end)
+
+-- TEST 4: fireproximityprompt
+btns[5].MouseButton1Click:Connect(function()
+    if _busy then return end
+    if not _fruit then addLog("SCAN dulu!", Color3.fromRGB(220,80,80)); return end
+    if not _prompt then addLog("Prompt NIL! (buah tidak punya PP)", Color3.fromRGB(220,80,80)); return end
+    if not fireproximityprompt then
+        addLog("❌ fireproximityprompt tidak ada (exploit tidak support)!", Color3.fromRGB(220,80,80))
+        return
+    end
+    setBusy(true)
+    local before = updateCount()
+    addLog("── TEST 4: fireproximityprompt ──", Color3.fromRGB(255,100,60))
+    addLog("Prompt: " .. _prompt:GetFullName(), Color3.fromRGB(180,180,180))
+    -- disable line-of-sight dulu biar bisa dari jauh
+    local losOk, losErr = pcall(function() _prompt.RequiresLineOfSight = false end)
+    addLog("RequiresLineOfSight=false: " .. tostring(losOk) .. (losOk and "" or " | "..tostring(losErr)), Color3.fromRGB(180,180,180))
+    -- fire
+    local ok, err = pcall(fireproximityprompt, _prompt)
+    addLog("pcall fireproximityprompt: ok="..tostring(ok).." | "..tostring(err))
+    task.wait(1.5)
+    local after = updateCount()
+    local delta = before - after
+    local col = delta > 0 and Color3.fromRGB(100,220,100) or Color3.fromRGB(220,80,80)
+    addLog("Berkurang: " .. delta .. " buah", col)
+    if delta > 0 then
+        addLog("✅ BERHASIL! fireproximityprompt WORKS — uplevelnew v8.111 siap dipakai!", col)
+    else
+        addLog("❌ Tidak ada perubahan — fireproximityprompt gagal", col)
+        addLog("  Coba: dekat ke buah dulu, atau PP RequiresLineOfSight masih true", Color3.fromRGB(200,150,80))
+    end
     setBusy(false)
 end)
 
