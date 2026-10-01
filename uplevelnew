@@ -1,4 +1,4 @@
--- uplevelnew v8.111 — FIX: collect pakai fireproximityprompt (SNIFF confirm: game pakai PP native, bukan HarvestRemote)
+-- uplevelnew v8.112 — FIX: collect pakai Crops.Collect RE (FireServer tabel semua buah, tanpa teleport)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -37,6 +37,7 @@ end
 local plantRE = gameEvents:FindFirstChild("Plant_RE")
 local sellInventoryRE = gameEvents:FindFirstChild("Sell_Inventory")
 local harvestRE = gameEvents:FindFirstChild("HarvestRemote")
+local cropsRE = gameEvents:FindFirstChild("Crops") and gameEvents.Crops:FindFirstChild("Collect")
 
 -- ===== FAV BUAH — cari RemoteEvent "FavoriteFruit"/"SetFruitFavorite" di RS =====
 local _fruitFavRE = nil
@@ -2312,88 +2313,53 @@ local function sellInventory()
 end
 
 local function doCollect(fruits)
-    _isCollecting = true  -- pause healer loop selama collect
-
-    -- LOG SEMUA GAMEEVENTS (sekali saja, untuk cari RE collect yang benar)
-    if gameEvents and not _geLogged then
-        _geLogged = true
-        local evList = {}
-        for _, v in ipairs(gameEvents:GetChildren()) do
-            table.insert(evList, v.Name)
-        end
-        dbgLog("=== gameEvents ("..#evList..") ===")
-        for i = 1, #evList, 4 do
-            local chunk = {}
-            for j = i, math.min(i+3, #evList) do chunk[#chunk+1] = evList[j] end
-            dbgLog(table.concat(chunk, " | "))
-        end
-    end
+    _isCollecting = true
 
     local collected = 0
-    dbgLog("doCollect: "..#fruits.." buah")
-    local gagal = 0
-    local _loggedAction = false
-    local _errUniq = {}
-    local _errList = {}
-    local function _addErr(msg)
-        if not _errUniq[msg] then
-            _errUniq[msg] = true
-            table.insert(_errList, msg)
-            dbgLog("ERR: "..msg)
-        end
+    dbgLog("doCollect: "..#fruits.." buah via Crops.Collect")
+
+    -- pastikan cropsRE tersedia (fallback cari ulang kalau nil)
+    local re = cropsRE
+    if not re then
+        local cropsFolder = gameEvents:FindFirstChild("Crops")
+        re = cropsFolder and cropsFolder:FindFirstChild("Collect")
+        cropsRE = re
     end
-    -- cache HRP sekali
-    local _char = plr.Character
-    local _hrp = _char and _char:FindFirstChild("HumanoidRootPart")
 
-    for i, fruit in ipairs(fruits) do
-        local ok, prompt = pcall(getFruitPrompt, fruit)
-        if ok and prompt then
-            if not _loggedAction then
-                _loggedAction = true
-                dbgLog("prompt path="..prompt:GetFullName())
-            end
-
-            -- TELEPORT karakter ke dekat buah (MaxActivationDistance ~10.85 studs)
-            -- tanpa teleport server reject fireproximityprompt kalau jarak > 10 studs
-            pcall(function()
-                local ppPart = prompt.Parent
-                if ppPart and ppPart:IsA("BasePart") and _hrp then
-                    local targetPos = ppPart.Position + Vector3.new(0, 3, 0)
-                    _hrp.CFrame = CFrame.new(targetPos)
-                end
-            end)
-            task.wait(0.05)  -- tunggu sebentar setelah teleport
-
-            local fireOk, fireErr
-            pcall(function() prompt.RequiresLineOfSight = false end)
-            fireOk, fireErr = pcall(fireproximityprompt, prompt)
-            if not fireOk then
-                _addErr("FPP["..i.."]: "..tostring(fireErr))
-            end
-            if not fireOk then
-                gagal = gagal + 1
-            else
-                collected = collected + 1
-            end
-            -- pause tiap 50 buah supaya tidak throttle server
-            if i % 50 == 0 then
-                dbgLog("batch "..i..": "..collected.." OK, pause 2s anti-throttle")
-                task.wait(2)
-            else
-                task.wait(0.08)
-            end
-        else
-            gagal = gagal + 1
-            local reason = ok and "nil prompt" or tostring(prompt)
-            _addErr("getPrompt["..i.."]: "..reason)
-        end
+    if not re then
+        dbgLog("ERR: Crops.Collect RE tidak ditemukan!")
+        _isCollecting = false
+        return 0
     end
-    task.wait(0.3)
+
+    -- kirim semua buah sekaligus dalam tabel (method yang terbukti jalan)
+    -- server menerima array of fruit instances, tanpa batas jarak
+    local BATCH = 200  -- max per fire supaya tidak overload
+    local i = 1
+    while i <= #fruits do
+        local batch = {}
+        for j = i, math.min(i + BATCH - 1, #fruits) do
+            local f = fruits[j]
+            if f and f.Parent then  -- skip buah yang sudah hilang
+                table.insert(batch, f)
+            end
+        end
+        if #batch > 0 then
+            local ok, err = pcall(function() re:FireServer(batch) end)
+            if ok then
+                collected = collected + #batch
+                dbgLog("batch "..i.."-"..(i+#batch-1)..": "..#batch.." fired OK")
+            else
+                dbgLog("ERR batch "..i..": "..tostring(err))
+            end
+            task.wait(0.5)  -- anti-throttle antar batch
+        end
+        i = i + BATCH
+    end
+
+    task.wait(0.5)
     _isCollecting = false
-    local summary = "doCollect: "..collected.."/"..#fruits.." OK"
-    if gagal > 0 then summary = summary.." | GAGAL: "..gagal end
-    if #_errList > 0 then summary = summary.." | "..#_errList.." jenis err" end
+    local summary = "doCollect: "..collected.."/"..#fruits.." fired"
     dbgLog(summary)
     return collected
 end
