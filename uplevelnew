@@ -1890,6 +1890,7 @@ end
 -- _activeUuids: uuid yang seharusnya ada di kebun (diisi equipSesi, dibersihkan unequipAll)
 -- Healer loop pakai ini untuk re-equip pet yang modelnya hilang
 local _activeUuids = {}
+local _bahanUuid = nil  -- UUID Bahan yang sedang equip (biar tidak di-unequip saat ganti sesi)
 local _isCollecting = false  -- pause healer saat doCollect berjalan
 local _geLogged = false      -- gameEvents log cukup sekali
 
@@ -1917,6 +1918,31 @@ local function unequipAll()
         if not any then break end
     end
     task.wait(0.8)  -- jeda tambahan sebelum equip (beri server waktu settle)
+end
+
+local function unequipAllExceptBahan()
+    -- Sama seperti unequipAll tapi skip Bahan yang sedang aktif
+    for k in pairs(_activeUuids) do _activeUuids[k]=nil end
+    for tri = 1, 3 do
+        local uuids = {}
+        for uuid in pairs(modelByUuid) do uuids[uuid] = true end
+        pcall(function()
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("Model") and tostring(d.Name):sub(1,1) == "{" then uuids[d.Name] = true end
+            end
+        end)
+        local any = false
+        for uuid in pairs(uuids) do
+            if _bahanUuid and uuid == _bahanUuid then
+                -- skip Bahan, biarkan tetap equip
+            else
+                unequipPet(uuid); any = true; task.wait(0.05)
+            end
+        end
+        task.wait(0.5)
+        if not any then break end
+    end
+    task.wait(0.8)
 end
 
 -- equipSesi: equip pet sesuai defs
@@ -2037,6 +2063,7 @@ local function equipOneBahan()
         local age = getAgeFallback(slotBahan.uuid)
         if age < CFG.bahanMaxAge then
             equipPet(slotBahan.uuid)
+            _bahanUuid = tostring(slotBahan.uuid)
             addLog("Equip bahan (pool) "..tostring(slotBahan.tipe or "?").." age="..age)
             return
         else
@@ -2059,6 +2086,7 @@ local function equipOneBahan()
             local age = getAgeFallback(p.uuid)
             if age < CFG.bahanMaxAge then
                 equipPet(p.uuid)
+                _bahanUuid = tostring(p.uuid)
                 addLog("Equip bahan (auto) "..tostring(p.tipe).." age="..age.." kg="..string.format("%.1f", p.kg or 0))
                 return
             end
@@ -2076,7 +2104,7 @@ local function unequipBahanTua()
                 local uuid=getUUIDAlt(t)
                 if uuid then
                     local age=getAgeFallback(uuid)
-                    if age>=CFG.bahanMaxAge then unequipPet(uuid); addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait) end
+                    if age>=CFG.bahanMaxAge then unequipPet(uuid); _bahanUuid=nil; addLog("Unequip bahan tua age="..age); task.wait(CFG.equipWait) end
                 end
             end
         end
@@ -2483,7 +2511,6 @@ local function runSesiUtama(sesiNum, def, label, col)
     _activeSesiDef = def
     unequipAll(); equipSesi(sesiNum, def); setStatus(label.." — running", col)
     while not stopRequested do
-        unequipBahanTua()
         local nm=processFruits()
         -- tampilkan current nightmare count di farm (bukan cumulative)
         totalNightmareCollected = nm
@@ -2530,7 +2557,7 @@ local function runSesi2()
             -- nightmare habis -> cadangan 2 (tunggu nightmare tumbuh lagi)
             addLog("Sesi2: nightmare 0 — masuk cadangan 2")
             setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
-            unequipAll(); equipSesi(4, SESI_CADANGAN2_DEF)
+            unequipAllExceptBahan(); equipSesi(4, SESI_CADANGAN2_DEF)
             -- fav 1 buah random biar cepat dapat nightmare
             task.spawn(function()
                 task.wait(2)
@@ -2560,7 +2587,8 @@ local function runSesi2()
                     break
                 end
             end
-            unequipAll(); equipSesi(2, SESI2_DEF); equipOneBahan()
+            unequipAllExceptBahan(); equipSesi(2, SESI2_DEF)
+            -- Bahan tidak perlu di-equip ulang, sudah tetap dari sebelumnya
             setStatus("Sesi 2 — tunggu nightmare habis", Color3.fromRGB(220,160,60))
         elseif nm < 50 then
             -- nightmare di bawah 50 -> pindah sesi 1
