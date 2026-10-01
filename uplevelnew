@@ -1,4 +1,4 @@
--- uplevelnew v8.108 — fix: Frozen/Shocked bukan mutasi buah (non-mutation attrs diperluas)
+-- uplevelnew v8.109 — revert Frozen/Shocked ke mutasi; fokus debug collect tidak jalan
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -110,7 +110,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.108"
+local VERSION = "v8.109"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2218,15 +2218,11 @@ task.spawn(function()
 end)
 
 -- attr non-mutasi yang diabaikan saat cek mutasi buah
--- PENTING: Frozen = efek cuaca/game, bukan mutasi visual buah
--- Shocked = bisa jadi efek petir/cuaca, bukan mutasi collectible
 local FRUIT_NON_MUTATIONS = {
     Nightmare=true, IsOutlined=true,
     -- system attrs
     FruitSpawnIndex=true, FruitVersion=true, DoneGrowTime=true,
     WeightMulti=true, MaxAge=true, GrowRateMulti=true,
-    -- efek cuaca/lingkungan (bukan mutasi visual)
-    Frozen=true, Shocked=true,
 }
 -- cek apakah buah punya mutasi selain Nightmare (dynamic: semua boolean attr true yang bukan non-mutasi)
 local _dbgMutLogged = {}
@@ -2361,11 +2357,17 @@ local function doCollect(fruits)
                 end
                 dbgLog("PP di buah[1]: "..table.concat(allPP, " | "))
             end
-            -- fire: HarvestRemote cara utama (terbukti kerja di v8.105)
+            -- fire: HarvestRemote(fruit) — v8.105 terbukti berhasil 59 buah dgn argumen fruit
             local fireOk, fireErr
             if harvestRE then
-                fireOk, fireErr = pcall(function() harvestRE:FireServer(prompt) end)
-                if not fireOk then _addErr("HarvestRE["..i.."]: "..tostring(fireErr)) end
+                -- coba fruit dulu (argumen yang terbukti di v8.105)
+                fireOk, fireErr = pcall(function() harvestRE:FireServer(fruit) end)
+                if not fireOk then
+                    _addErr("HarvestRE(fruit)["..i.."]: "..tostring(fireErr))
+                    -- fallback: coba prompt
+                    fireOk, fireErr = pcall(function() harvestRE:FireServer(prompt) end)
+                    if not fireOk then _addErr("HarvestRE(prompt)["..i.."]: "..tostring(fireErr)) end
+                end
             end
             -- fallback: InputHoldBegin/End
             if not fireOk then
@@ -2387,7 +2389,13 @@ local function doCollect(fruits)
             else
                 collected = collected + 1
             end
-            task.wait(0.08)  -- 0.08s anti-throttle (sedikit lebih aman dari 0.05)
+            -- pause 0.15s tiap 50 buah supaya tidak throttle server
+            if i % 50 == 0 then
+                dbgLog("batch "..i..": "..collected.." OK, pause 2s anti-throttle")
+                task.wait(2)
+            else
+                task.wait(0.08)
+            end
         else
             gagal = gagal + 1
             local reason = ok and "nil prompt" or tostring(prompt)
