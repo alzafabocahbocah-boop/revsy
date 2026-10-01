@@ -111,7 +111,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.109"
+local VERSION = "v8.113"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2260,13 +2260,21 @@ local function scanFruits()
         local totalScanned=0
         for _,pt in ipairs(plants:GetChildren()) do
             local fruits=pt:FindFirstChild("Fruits"); if fruits then
+                -- hitung nightmare per pohon dulu (skip pohon yang cuma punya 1 nightmare)
+                local nmInTree=0
+                for _,fruit in ipairs(fruits:GetChildren()) do
+                    if fruit:GetAttribute("Nightmare")==true then nmInTree=nmInTree+1 end
+                end
                 for _,fruit in ipairs(fruits:GetChildren()) do
                     totalScanned=totalScanned+1
                     local isNightmare = fruit:GetAttribute("Nightmare")==true
                     local hasMut = fruitHasMutation(fruit)
                     if isNightmare and not hasMut then
                         res.nightmareCount=res.nightmareCount+1
-                        table.insert(res.nightmare,fruit)
+                        -- kalau pohon ini cuma punya 1 nightmare, skip collect (biarkan tumbuh)
+                        if nmInTree > 1 then
+                            table.insert(res.nightmare,fruit)
+                        end
                     elseif hasMut then
                         table.insert(res.shovel,fruit)
                         if isNightmare then res.nightmareCount=res.nightmareCount+1 end
@@ -2274,7 +2282,7 @@ local function scanFruits()
                 end
             end
         end
-        addLog("scanFruits OK: total="..totalScanned.." shovel="..#res.shovel.." nm="..res.nightmareCount)
+        addLog("scanFruits OK: total="..totalScanned.." shovel="..#res.shovel.." nm="..res.nightmareCount.." collect="..#res.nightmare)
     end)
     if not ok then addLog("scanFruits ERR: "..tostring(err)) end
     return res
@@ -2494,20 +2502,16 @@ local function runSesiUtama(sesiNum, def, label, col)
     _activeSesiNum = sesiNum
     _activeSesiDef = def
     unequipAll(); equipSesi(sesiNum, def); setStatus(label.." — running", col)
-    local prevNm = scanFruits().nightmareCount
     while not stopRequested do
         unequipBahanTua()
         local nm=processFruits()
-        -- hitung nightmare yang hilang dari farm (= terkumpul)
-        if prevNm > nm then
-            local delta = prevNm - nm
-            totalNightmareCollected = totalNightmareCollected + delta
-            addLog("Nightmare +"..(delta).." (farm: "..prevNm.."→"..nm..") total="..totalNightmareCollected)
-        end
-        prevNm = nm
-        updateUI(totalNightmareCollected,nm,sesiNum)
-        if totalNightmareCollected>=CFG.nightmareTarget then
-            addLog("Target! Pindah sesi 2."); setStatus("Target tercapai!",C.accent); return
+        -- tampilkan current nightmare count di farm (bukan cumulative)
+        totalNightmareCollected = nm
+        updateUI(nm,nm,sesiNum)
+        addLog("Nightmare di farm: "..nm.." / "..CFG.nightmareTarget)
+        if nm>=CFG.nightmareTarget then
+            addLog("Target! nm="..nm.." >= "..CFG.nightmareTarget.." — Pindah sesi 2.")
+            setStatus("Target tercapai!",C.accent); return
         end
         task.wait(0.1)  -- yield minimal, loop langsung scan lagi
     end
