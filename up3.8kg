@@ -628,6 +628,126 @@ do
 end
 
 -- ============================================================
+-- v1.08: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
+-- biar karakter aktif pas awal masuk tanpa resiko salah-mencet UI (beli/jual/dll).
+-- ============================================================
+task.spawn(function()
+    local UIS = game:GetService("UserInputService")
+    local Players = game:GetService("Players")
+    local VIM, VU
+    pcall(function() VIM = game:GetService("VirtualInputManager") end)
+    pcall(function() VU = game:GetService("VirtualUser") end)
+    -- 5 detik: KEYBOARD (Space) di-spam TERUS -- Space = tombol lompat, aman gak
+    -- mis-click UI. MOUSE CLICK cuma pas LOADING (belum ada karakter) buat dismiss
+    -- "click to continue". Begitu karakter masuk, mouse click BERHENTI (gak mis-click
+    -- beli/jual), tapi keyboard tetep jalan (cuma bikin lompat, harmless).
+    local t0 = tick()
+    while tick() - t0 < 5 do
+        local plr = Players.LocalPlayer
+        local hum = plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+        -- keyboard Space (firesignal + VIM) -- TERUS selama 30s
+        pcall(function()
+            if firesignal and UIS then
+                firesignal(UIS.InputBegan, { UserInputType = Enum.UserInputType.Keyboard,
+                    KeyCode = Enum.KeyCode.Space, UserInputState = Enum.UserInputState.Begin }, false)
+            end
+        end)
+        pcall(function()
+            if VIM then
+                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end
+        end)
+        -- MOUSE CLICK cuma pas LOADING (belum ada karakter)
+        if not hum then
+            -- MOUSE klik (backup) + TOUCH TAP layar (NATIVE cloud phone -- game respon
+            -- ke TOUCH, bukan mouse -- ini yg bikin lewat "click/tap to continue").
+            pcall(function() if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end end)
+            pcall(function()
+                if VIM then
+                    local x, y = 200, 300
+                    local cam = workspace.CurrentCamera
+                    if cam and cam.ViewportSize and cam.ViewportSize.X > 0 then
+                        x, y = cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2   -- tengah layar
+                    end
+                    VIM:SendTouchEvent(1, 0, x, y); task.wait(0.03)   -- tap DOWN (begin)
+                    VIM:SendTouchEvent(1, 2, x, y)                    -- tap UP (end)
+                end
+            end)
+        end
+        task.wait(1)
+    end
+    print("[UpKg] startup kelar (keyboard 5s, mouse cuma pas loading)")
+end)
+
+
+
+-- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
+local _kgContainer = nil
+local function findMemoryContainer()
+    if not getgc then return nil end
+    local backpackUUIDs, bpCount = {}, 0
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") then
+                local u = t:GetAttribute("PET_UUID")
+                if u then
+                    local k = tostring(u); if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
+                    backpackUUIDs[k] = true; bpCount = bpCount + 1
+                end
+            end
+        end
+    end
+    local best, bestCount, bestMatch = nil, 0, 0
+    pcall(function()
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" then
+                local uuidLike, matchCount = 0, 0
+                for k in pairs(obj) do
+                    if type(k) == "string" and #k >= 32 and k:find("-") then
+                        uuidLike = uuidLike + 1
+                        if backpackUUIDs[k] then matchCount = matchCount + 1 end
+                        if uuidLike >= 50 and matchCount == 0 then break end
+                    end
+                end
+                if uuidLike >= 5 then
+                    local sample = nil
+                    for _, v in pairs(obj) do sample = v; break end
+                    if type(sample) == "table" and rawget(sample, "PetData") then
+                        local cnt = 0; for _ in pairs(obj) do cnt = cnt + 1 end
+                        local better = false
+                        if bpCount > 0 then
+                            if matchCount > bestMatch then better = true
+                            elseif matchCount == bestMatch and cnt > bestCount then better = true end
+                        else
+                            if cnt > bestCount then better = true end
+                        end
+                        if better then best = obj; bestCount = cnt; bestMatch = matchCount end
+                    end
+                end
+            end
+        end
+    end)
+    return best
+end
+local function ambilContainer()
+    -- valid kalau masih tabel + ada PetData. re-find kalau nil.
+    if _kgContainer then
+        local ok = false
+        pcall(function()
+            for _, v in pairs(_kgContainer) do
+                if type(v) == "table" and rawget(v, "PetData") then ok = true end
+                break
+            end
+        end)
+        if ok then return _kgContainer end
+    end
+    _kgContainer = findMemoryContainer()
+    return _kgContainer
+end
+
+-- ============================================================
 -- v10.199: AUTO DESTROY LAG — pet orang lain + animasi kebun (SELALU ON)
 -- P1b: hapus Model di subfarm orang lain sekali saat start
 -- P5: destroy skill FX allowlist (Puddle, SpottedEffect, WindBlastTemplate) tiap 2s
@@ -808,7 +928,7 @@ do
         if fxDel > 0 then print("[DL] fx="..fxDel) end
     end
 
-    -- dlStartup: P1b sekali + setup P6PP
+    -- dlStartup: P1b sekali + setup P6PP (pakai _kgContainer yang sudah in-scope)
     local function dlStartup()
         local plrName = game:GetService("Players").LocalPlayer.Name
         local farm = workspace:FindFirstChild("Farm")
@@ -828,36 +948,15 @@ do
         task.spawn(function()
             local myPetUUIDs = {}; local myUUIDCount = 0
             pcall(function()
-                -- _kgContainer adalah local yg belum in-scope di sini, pakai getgc scan backpack sebagai fallback
-                local bp = game:GetService("Players").LocalPlayer:FindFirstChild("Backpack")
-                if bp then
-                    for _, t in ipairs(bp:GetChildren()) do
-                        if t:IsA("Tool") then
-                            local u = t:GetAttribute("PET_UUID")
-                            if u then
-                                local raw = tostring(u):gsub("[{}]","")
-                                if #raw > 20 then
-                                    myPetUUIDs[raw] = true
-                                    myPetUUIDs["{"..raw.."}"] = true
-                                    myUUIDCount = myUUIDCount + 1
-                                end
-                            end
-                        end
-                    end
-                end
-                -- also check equipped char
-                local char = game:GetService("Players").LocalPlayer.Character
-                if char then
-                    for _, t in ipairs(char:GetChildren()) do
-                        if t:IsA("Tool") then
-                            local u = t:GetAttribute("PET_UUID")
-                            if u then
-                                local raw = tostring(u):gsub("[{}]","")
-                                if #raw > 20 then
-                                    myPetUUIDs[raw] = true
-                                    myPetUUIDs["{"..raw.."}"] = true
-                                    myUUIDCount = myUUIDCount + 1
-                                end
+                local c = _kgContainer
+                if type(c) == "table" then
+                    for uuid, e in pairs(c) do
+                        if type(e) == "table" then
+                            local raw = tostring(uuid):gsub("[{}]","")
+                            if #raw > 20 then
+                                myPetUUIDs[raw] = true
+                                myPetUUIDs["{"..raw.."}"] = true
+                                myUUIDCount = myUUIDCount + 1
                             end
                         end
                     end
@@ -871,7 +970,7 @@ do
 
     -- ALWAYS ON — auto-start saat script load
     task.spawn(function()
-        task.wait(4)  -- tunggu pet/backpack ready
+        task.wait(5)  -- tunggu _kgContainer terisi (findMemoryContainer butuh waktu)
         _dlOn = true
         dlStartup()
         task.spawn(function()
@@ -880,125 +979,6 @@ do
     end)
 end
 
--- ============================================================
--- v1.08: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
--- biar karakter aktif pas awal masuk tanpa resiko salah-mencet UI (beli/jual/dll).
--- ============================================================
-task.spawn(function()
-    local UIS = game:GetService("UserInputService")
-    local Players = game:GetService("Players")
-    local VIM, VU
-    pcall(function() VIM = game:GetService("VirtualInputManager") end)
-    pcall(function() VU = game:GetService("VirtualUser") end)
-    -- 5 detik: KEYBOARD (Space) di-spam TERUS -- Space = tombol lompat, aman gak
-    -- mis-click UI. MOUSE CLICK cuma pas LOADING (belum ada karakter) buat dismiss
-    -- "click to continue". Begitu karakter masuk, mouse click BERHENTI (gak mis-click
-    -- beli/jual), tapi keyboard tetep jalan (cuma bikin lompat, harmless).
-    local t0 = tick()
-    while tick() - t0 < 5 do
-        local plr = Players.LocalPlayer
-        local hum = plr and plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
-        -- keyboard Space (firesignal + VIM) -- TERUS selama 30s
-        pcall(function()
-            if firesignal and UIS then
-                firesignal(UIS.InputBegan, { UserInputType = Enum.UserInputType.Keyboard,
-                    KeyCode = Enum.KeyCode.Space, UserInputState = Enum.UserInputState.Begin }, false)
-            end
-        end)
-        pcall(function()
-            if VIM then
-                VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game); task.wait(0.03)
-                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-            end
-        end)
-        -- MOUSE CLICK cuma pas LOADING (belum ada karakter)
-        if not hum then
-            -- MOUSE klik (backup) + TOUCH TAP layar (NATIVE cloud phone -- game respon
-            -- ke TOUCH, bukan mouse -- ini yg bikin lewat "click/tap to continue").
-            pcall(function() if VU then VU:CaptureController(); VU:ClickButton1(Vector2.new()); VU:ClickButton2(Vector2.new()) end end)
-            pcall(function()
-                if VIM then
-                    local x, y = 200, 300
-                    local cam = workspace.CurrentCamera
-                    if cam and cam.ViewportSize and cam.ViewportSize.X > 0 then
-                        x, y = cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2   -- tengah layar
-                    end
-                    VIM:SendTouchEvent(1, 0, x, y); task.wait(0.03)   -- tap DOWN (begin)
-                    VIM:SendTouchEvent(1, 2, x, y)                    -- tap UP (end)
-                end
-            end)
-        end
-        task.wait(1)
-    end
-    print("[UpKg] startup kelar (keyboard 5s, mouse cuma pas loading)")
-end)
-
-
-
--- cari container getgc (cache, re-find kalau invalid) — port dari kg.lua
-local _kgContainer = nil
-local function findMemoryContainer()
-    if not getgc then return nil end
-    local backpackUUIDs, bpCount = {}, 0
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, t in ipairs(bp:GetChildren()) do
-            if t:IsA("Tool") then
-                local u = t:GetAttribute("PET_UUID")
-                if u then
-                    local k = tostring(u); if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
-                    backpackUUIDs[k] = true; bpCount = bpCount + 1
-                end
-            end
-        end
-    end
-    local best, bestCount, bestMatch = nil, 0, 0
-    pcall(function()
-        for _, obj in pairs(getgc(true)) do
-            if type(obj) == "table" then
-                local uuidLike, matchCount = 0, 0
-                for k in pairs(obj) do
-                    if type(k) == "string" and #k >= 32 and k:find("-") then
-                        uuidLike = uuidLike + 1
-                        if backpackUUIDs[k] then matchCount = matchCount + 1 end
-                        if uuidLike >= 50 and matchCount == 0 then break end
-                    end
-                end
-                if uuidLike >= 5 then
-                    local sample = nil
-                    for _, v in pairs(obj) do sample = v; break end
-                    if type(sample) == "table" and rawget(sample, "PetData") then
-                        local cnt = 0; for _ in pairs(obj) do cnt = cnt + 1 end
-                        local better = false
-                        if bpCount > 0 then
-                            if matchCount > bestMatch then better = true
-                            elseif matchCount == bestMatch and cnt > bestCount then better = true end
-                        else
-                            if cnt > bestCount then better = true end
-                        end
-                        if better then best = obj; bestCount = cnt; bestMatch = matchCount end
-                    end
-                end
-            end
-        end
-    end)
-    return best
-end
-local function ambilContainer()
-    -- valid kalau masih tabel + ada PetData. re-find kalau nil.
-    if _kgContainer then
-        local ok = false
-        pcall(function()
-            for _, v in pairs(_kgContainer) do
-                if type(v) == "table" and rawget(v, "PetData") then ok = true end
-                break
-            end
-        end)
-        if ok then return _kgContainer end
-    end
-    _kgContainer = findMemoryContainer()
-    return _kgContainer
-end
 -- age-1 KG = BaseWeight × 1.1 (dari kg.lua)
 local function getAgeOneKg(container, uuid)
     if not container or not uuid then return 0 end
