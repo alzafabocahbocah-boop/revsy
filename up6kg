@@ -4420,72 +4420,119 @@ do
     scanGardenBtn.MouseButton1Click:Connect(function()
         local plrName = game:GetService("Players").LocalPlayer.Name
         trLogAdd("=== SCAN GARDEN START ===")
-        local totalPet, totalFx = 0, 0
+        local totalModel, totalInst = 0, 0
         pcall(function()
-            -- build set subfarm milik sendiri (untuk skip)
-            local mySubfarms = {}
             local farm = workspace:FindFirstChild("Farm")
+            -- build set subfarm milik sendiri
+            local mySubfarms = {}
             if farm then
                 for _, sf in ipairs(farm:GetChildren()) do
                     local sign = sf:FindFirstChild("Sign")
                     local owner = sign and sign:GetAttribute("_owner")
                     if owner == plrName then mySubfarms[sf] = true end
                 end
-                trLogAdd("Farm ditemukan, subfarm orang lain:")
+                -- log subfarm orang lain yang ada di server
+                local others = {}
                 for _, sf in ipairs(farm:GetChildren()) do
                     local sign = sf:FindFirstChild("Sign")
                     local owner = sign and sign:GetAttribute("_owner")
-                    if owner and owner ~= plrName then
-                        trLogAdd("  subfarm owner="..owner)
-                    end
+                    if owner and owner ~= plrName then others[#others+1] = owner end
                 end
+                trLogAdd("Farm: "..(#others > 0 and ("orang lain = "..table.concat(others,", ")) or "cuma kamu"))
+            else
+                trLogAdd("Farm: TIDAK DITEMUKAN di workspace")
             end
-            -- scan SELURUH workspace untuk semua Model (bukan cuma {uuid})
+
+            -- helper: build full path dari root
+            local function getPath(obj)
+                local parts = {}
+                local cur = obj
+                while cur and cur ~= workspace do
+                    table.insert(parts, 1, tostring(cur.Name):sub(1,12))
+                    cur = cur.Parent
+                end
+                return table.concat(parts, "/")
+            end
+
+            -- helper: ambil atribut suatu instance
+            local function getAttrs(obj)
+                local t = {}
+                pcall(function()
+                    for k, v in pairs(obj:GetAttributes()) do
+                        t[#t+1] = k.."="..tostring(v):sub(1,20)
+                    end
+                end)
+                return #t > 0 and ("{" .. table.concat(t,",") .. "}") or ""
+            end
+
+            -- helper: props penting per class
+            local function getProps(obj)
+                local cls = obj.ClassName
+                local p = {}
+                pcall(function()
+                    if cls == "ParticleEmitter" then
+                        p[#p+1] = "rate="..tostring(obj.Rate)
+                        p[#p+1] = "en="..tostring(obj.Enabled)
+                        p[#p+1] = "tex="..tostring(obj.Texture):sub(-16)
+                    elseif cls == "Trail" then
+                        p[#p+1] = "en="..tostring(obj.Enabled)
+                        p[#p+1] = "lt="..tostring(obj.Lifetime)
+                    elseif cls == "Beam" then
+                        p[#p+1] = "en="..tostring(obj.Enabled)
+                    elseif cls == "Sound" then
+                        p[#p+1] = "id="..tostring(obj.SoundId):sub(-12)
+                        p[#p+1] = "play="..tostring(obj.Playing)
+                    elseif cls == "PointLight" or cls == "SpotLight" then
+                        p[#p+1] = "en="..tostring(obj.Enabled)
+                        p[#p+1] = "br="..tostring(obj.Brightness)
+                    elseif cls == "BillboardGui" then
+                        p[#p+1] = "en="..tostring(obj.Enabled)
+                        p[#p+1] = "sz="..tostring(obj.Size)
+                    elseif cls == "Script" or cls == "LocalScript" or cls == "ModuleScript" then
+                        p[#p+1] = "dis="..tostring(obj.Disabled)
+                    elseif cls == "SpecialMesh" then
+                        p[#p+1] = "mtype="..tostring(obj.MeshType)
+                    elseif cls == "Animation" then
+                        p[#p+1] = "id="..tostring(obj.AnimationId):sub(-12)
+                    elseif cls == "Animator" then
+                        local tracks = 0; pcall(function()
+                            for _ in pairs(obj:GetPlayingAnimationTracks()) do tracks=tracks+1 end
+                        end); p[#p+1] = "tracks="..tracks
+                    end
+                end)
+                return #p > 0 and ("("..table.concat(p,",")..") ") or ""
+            end
+
+            -- scan semua Model di workspace (bukan subfarm sendiri, bukan subfarm itu sendiri)
             for _, obj in ipairs(workspace:GetDescendants()) do
                 if obj:IsA("Model") and obj.Parent ~= workspace then
-                    -- skip kalau ada di subfarm sendiri
                     local inMine = false
                     for sf in pairs(mySubfarms) do
                         if obj:IsDescendantOf(sf) then inMine = true; break end
                     end
-                    -- skip kalau Model ini ADALAH subfarm (langsung child Farm)
-                    local isFarm = workspace:FindFirstChild("Farm") and obj.Parent == workspace:FindFirstChild("Farm")
+                    local isFarm = farm and obj.Parent == farm
                     if not inMine and not isFarm then
-                        totalPet = totalPet + 1
-                        -- log SEMUA class dari semua descendant (lengkap)
-                        local clsCount = {}
-                        local attrs = {}
+                        totalModel = totalModel + 1
+                        local path = getPath(obj)
+                        local attrs = getAttrs(obj)
+                        trLogAdd("▶ MODEL["..totalModel.."] "..path..attrs)
+                        -- log TIAP descendant satu per satu
                         for _, d in ipairs(obj:GetDescendants()) do
-                            local cls = d.ClassName
-                            clsCount[cls] = (clsCount[cls] or 0) + 1
-                            totalFx = totalFx + 1
+                            totalInst = totalInst + 1
+                            local dAttrs = getAttrs(d)
+                            local dProps = getProps(d)
+                            local dName = tostring(d.Name):sub(1,20)
+                            trLogAdd("  "..d.ClassName.." \""..dName.."\" "..dProps..dAttrs)
                         end
-                        -- collect atribut dari Model itu sendiri
-                        local ok2, attList = pcall(function()
-                            local t = {}
-                            for k, v in pairs(obj:GetAttributes()) do
-                                t[#t+1] = k.."="..tostring(v)
-                            end
-                            return t
-                        end)
-                        local attrStr = (ok2 and #attList > 0) and (" attr:["..table.concat(attList,",").."]") or ""
-                        -- compact summary: cls x count
-                        local clsList = {}
-                        for cls, cnt in pairs(clsCount) do
-                            clsList[#clsList+1] = (cnt > 1 and (cls.."x"..cnt) or cls)
-                        end
-                        table.sort(clsList)
-                        local parentPath = tostring(obj.Parent and obj.Parent.Name or "?")
-                        local clsStr = #clsList > 0 and table.concat(clsList,"|") or "kosong"
-                        trLogAdd("  MDL "..tostring(obj.Name):sub(1,16).." @"..parentPath..attrStr.." ["..clsStr.."]")
+                        trLogAdd("  -- total desc: "..#obj:GetDescendants())
                     end
                 end
             end
         end)
-        trLogAdd("=== SELESAI: "..totalPet.." pet, "..totalFx.." fx/partikel ===")
-        scanGardenBtn.Text = "\u{2713} Scan selesai — cek log"
+        trLogAdd("=== SELESAI: "..totalModel.." model, "..totalInst.." instance total ===")
+        scanGardenBtn.Text = "\u{2713} Scan selesai ("..totalModel.." mdl) — copy log"
         scanGardenBtn.TextColor3 = Color3.fromRGB(100,230,100)
-        task.delay(2, function()
+        task.delay(3, function()
             pcall(function()
                 scanGardenBtn.Text = "🔍 Scan Garden — log pet & animasi orang lain"
                 scanGardenBtn.TextColor3 = Color3.fromRGB(140,200,255)
