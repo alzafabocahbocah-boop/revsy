@@ -396,6 +396,10 @@ function jeda_client(cfg, base)
     local n = 0
     for _ in ((cfg and cfg.pkgs) or ""):gmatch("[^,]+") do n = n + 1 end
     if n >= 8 then return 120 end
+    -- v9.502: market: stagger min 90s (biar gak nembak terlalu rapat)
+    if tostring(cfg and cfg.script_label or ""):find("MARKET") then
+        return math.max(base or 0, 90)
+    end
     return base
 end
 function interval_denyut(cfg)
