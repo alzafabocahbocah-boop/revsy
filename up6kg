@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.142"
+local VERSION = "up6kg-v10.143"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -4557,6 +4557,82 @@ do
         end)
     end)
 
+    -- SCAN ELEPHANT: cari model yang kemungkinan elephant di workspace
+    local scanEleBtn = mk("TextButton",{
+        Size=UDim2.new(1,0,0,34), BackgroundColor3=Color3.fromRGB(30,20,10),
+        Text="🐘 Scan Elephant — cari nama & attr elephant",
+        Font=FONT_B, TextSize=11.5, TextColor3=Color3.fromRGB(245,180,80),
+        LayoutOrder=13.6, Parent=tradeScroll
+    }); corner(scanEleBtn,9); stroke(scanEleBtn,Color3.fromRGB(180,120,40),1.5)
+    scanEleBtn.MouseButton1Click:Connect(function()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        local farm = workspace:FindFirstChild("Farm")
+        local mySubfarms = {}
+        if farm then
+            for _, sf in ipairs(farm:GetChildren()) do
+                local sign = sf:FindFirstChild("Sign")
+                local owner = sign and sign:GetAttribute("_owner")
+                if owner == plrName then mySubfarms[sf] = true end
+            end
+        end
+        local found = 0
+        trLogAdd("=== SCAN ELEPHANT ===")
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            -- cek nama
+            local nameMatch = obj.Name:lower():find("elephant")
+            -- cek attribute
+            local attrMatch = false
+            local attrVal = ""
+            pcall(function()
+                local v = obj:GetAttribute("_petType") or obj:GetAttribute("petType")
+                    or obj:GetAttribute("type") or obj:GetAttribute("PetType")
+                if v and tostring(v):lower():find("elephant") then
+                    attrMatch = true; attrVal = tostring(v)
+                end
+            end)
+            if nameMatch or attrMatch then
+                found = found + 1
+                local inMine = false
+                for sf in pairs(mySubfarms) do
+                    if obj:IsDescendantOf(sf) then inMine = true; break end
+                end
+                local tag = inMine and "[MINE]" or "[OTHERS]"
+                local parentName = obj.Parent and obj.Parent.Name or "?"
+                local info = obj.ClassName.." \""..obj.Name:sub(1,40).."\" par="..parentName
+                if attrMatch then info = info.." attr="..attrVal end
+                trLogAdd("  "..tag.." "..info)
+            end
+        end
+        -- cek juga folder PetsPhysical: log semua children-nya
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.ClassName == "Folder" and obj.Name == "PetsPhysical" then
+                local inMine = false
+                for sf in pairs(mySubfarms) do
+                    if obj:IsDescendantOf(sf) then inMine = true; break end
+                end
+                local tag = inMine and "[MINE]" or "[OTHERS]"
+                trLogAdd("📁 PetsPhysical "..tag.." parent="..tostring(obj.Parent and obj.Parent.Name).." n="..#obj:GetChildren())
+                for _, child in ipairs(obj:GetChildren()) do
+                    local ok2, v2 = pcall(function()
+                        return child:GetAttribute("_petType") or child:GetAttribute("petType")
+                            or child:GetAttribute("type") or child:GetAttribute("PetType")
+                    end)
+                    local attr = (ok2 and v2) and (" attr="..tostring(v2)) or ""
+                    trLogAdd("    ↳ \""..child.Name:sub(1,40).."\" "..attr)
+                end
+            end
+        end
+        trLogAdd("=== SELESAI: "..found.." kemungkinan elephant ===")
+        scanEleBtn.Text = "✓ Selesai ("..found.." match) — copy log"
+        scanEleBtn.TextColor3 = Color3.fromRGB(100,230,100)
+        task.delay(3, function()
+            pcall(function()
+                scanEleBtn.Text = "🐘 Scan Elephant — cari nama & attr elephant"
+                scanEleBtn.TextColor3 = Color3.fromRGB(245,180,80)
+            end)
+        end)
+    end)
+
     -- DESTROY LAG: destroy pet + partikel/animasi di kebun orang lain (semua di server sekarang)
     local _dlOn = false
     local dlBtn = mk("TextButton",{
@@ -4611,9 +4687,20 @@ do
                         if obj:IsDescendantOf(sf) then inMine = true; break end
                     end
                     if not inMine then
+                        -- log semua model dalam folder SEBELUM destroy (buat debug nama elephant)
+                        local children = obj:GetChildren()
+                        trLogAdd("📁 PetsPhysical parent="..tostring(obj.Parent and obj.Parent.Name).." n="..#children)
+                        for _, child in ipairs(children) do
+                            local ok2, v2 = pcall(function()
+                                return child:GetAttribute("_petType") or child:GetAttribute("petType")
+                                    or child:GetAttribute("type") or child:GetAttribute("PetType")
+                            end)
+                            local attr = (ok2 and v2) and (" attr="..tostring(v2)) or ""
+                            trLogAdd("  ↳ \""..child.Name:sub(1,40).."\" "..attr)
+                        end
                         if hasElephant(obj) then
                             -- ada elephant: destroy per-model, skip elephant
-                            for _, model in ipairs(obj:GetChildren()) do
+                            for _, model in ipairs(children) do
                                 local mn = model.Name:lower()
                                 local isEl = mn:find("elephant")
                                 if not isEl then
@@ -4624,6 +4711,7 @@ do
                                     if ok2 and v2 and tostring(v2):lower():find("elephant") then isEl = true end
                                 end
                                 if isEl then
+                                    trLogAdd("  🐘 SKIP elephant: \""..model.Name:sub(1,40).."\"")
                                     skipEl = skipEl + 1
                                 else
                                     pcall(function() model:Destroy() end)
