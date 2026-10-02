@@ -3972,7 +3972,7 @@ do
                         -- (biar gak nyangkut trade ke akun yg mungkin udah full)
                         if not full and not gagal then cand[#cand+1] = { nm=nm, cnt=(cnt or 999) } end
                     elseif nm ~= player.Name then
-                        trLogAdd(nm..": gak di server (skip)")
+                        -- skip: gak di server — jangan log (terlalu berisik)
                     end
                 end
                 trLogAdd("total: "..nOther.." present, "..nFull.." full, "..#cand.." bisa di-gift")
@@ -4569,7 +4569,17 @@ do
     local trDbgCopyBtn = mk("TextButton",{Size=UDim2.new(0,68,1,0),Position=UDim2.new(1,-68,0,0),BackgroundColor3=C.card,Text="📋 Copy All",Font=FONT_B,TextSize=10,TextColor3=C.textDim,Parent=trDbgHdrRow}); corner(trDbgCopyBtn,6); stroke(trDbgCopyBtn,C.border,1)
     trDbgCopyBtn.MouseButton1Click:Connect(function()
         local clip = setclipboard or toclipboard or set_clipboard or writeclipboard
-        local ok = clip and pcall(function() clip(table.concat(trLog,"\n")) end)
+        local ok = false
+        if clip then
+            local txt = table.concat(trLog,"\n")
+            ok = pcall(clip, txt)
+            if not ok then
+                -- fallback: coba writefile sebagai alternatif
+                pcall(function()
+                    if writefile then writefile("zenx_tradelog.txt", txt); ok = true end
+                end)
+            end
+        end
         trDbgCopyBtn.Text = ok and "\u{2713} Copied!" or "X gagal"
         trDbgCopyBtn.TextColor3 = ok and Color3.fromRGB(100,230,100) or Color3.fromRGB(255,100,100)
         task.delay(1.5,function() pcall(function() trDbgCopyBtn.Text="📋 Copy All"; trDbgCopyBtn.TextColor3=C.textDim end) end)
