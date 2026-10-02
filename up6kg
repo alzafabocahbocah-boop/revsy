@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.170"
+local VERSION = "up6kg-v10.171"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -4818,13 +4818,36 @@ do
             local sharedPetsPhysical = workspace:FindFirstChild("PetsPhysical")
             -- build set UUID pet sendiri dari _kgContainer (untuk cek di shared PetsPhysical)
             local myUUIDs = {}
+            local myUUIDcount = 0
             if type(_kgContainer) == "table" then
                 for uuid in pairs(_kgContainer) do
                     local k = tostring(uuid)
                     myUUIDs[k] = true
+                    myUUIDcount = myUUIDcount + 1
                     -- normalisasi: dengan/tanpa kurung kurawal
                     if k:sub(1,1) == "{" then myUUIDs[k:sub(2,-2)] = true
                     else myUUIDs["{"..k.."}"] = true end
+                end
+            end
+            -- v10.171: log jumlah UUID kita vs isi PetsPhysical
+            local ppTotal = sharedPetsPhysical and #sharedPetsPhysical:GetChildren() or 0
+            trLogAdd("[DL-UUID] myUUIDs="..myUUIDcount.." sharedPP children="..ppTotal)
+            -- sample 3 model di sharedPP: log nama + attribute PET_UUID (buat debug match)
+            if sharedPetsPhysical then
+                local samp = 0
+                for _, child in ipairs(sharedPetsPhysical:GetChildren()) do
+                    if samp >= 5 then break end
+                    local uuid; pcall(function() uuid = child:GetAttribute("PET_UUID") end)
+                    local isMineDbg = false
+                    if uuid then
+                        local k = tostring(uuid)
+                        isMineDbg = myUUIDs[k] or myUUIDs["{"..k.."}"] or myUUIDs[(k:gsub("[{}]",""))] or false
+                    end
+                    -- cek nama child juga
+                    local nmDbg = child.Name:gsub("[{}]","")
+                    local isMineByName = myUUIDs[child.Name] or myUUIDs["{"..nmDbg.."}"] or myUUIDs[nmDbg] or false
+                    trLogAdd("[DL-UUID] PP["..samp.."] name="..child.Name:sub(1,36).." attr="..tostring(uuid or "nil").." isMine(attr)="..tostring(isMineDbg).." isMine(name)="..tostring(isMineByName))
+                    samp = samp + 1
                 end
             end
             local toDestroy = {}
@@ -5061,6 +5084,9 @@ do
                 -- cleanup listener lama dulu
                 dlCleanupListeners()
                 local listenCount = 0
+                -- v10.171: log semua subfarm yang ada
+                local allSf = farm:GetChildren()
+                trLogAdd("[DL-P6] farm:GetChildren()="..#allSf.." mySubfarmCount="..mySubfarmCount)
                 for _, sf in ipairs(farm:GetChildren()) do
                     -- skip subfarm sendiri (path-based)
                     local sfPath = sf:GetFullName()
