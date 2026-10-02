@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.198"
+local VERSION = "up6kg-v10.199"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -4667,528 +4667,132 @@ do
         LayoutOrder=13.7, Parent=tradeScroll
     }); corner(dlBtn,9); stroke(dlBtn,C.border,1.5)
 
+    -- v10.199: dlRunOnce — P1b sekali saat DL ON (hapus Model di subfarm orang lain)
+    local function dlRunOnce(plrName, farm, mySubfarms)
+        if not farm then return end
+        local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
+        if mySubfarmCount == 0 then trLogAdd("[DL-P1b] SKIP — mySubfarms kosong"); return end
+        local petDel = 0
+        local function isElephant2(obj)
+            local n = obj.Name:lower()
+            if n:find("elephant") then return true end
+            local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
+            if ok0 and v0 and tostring(v0):lower():find("elephant") then return true end
+            local ok1, v1 = pcall(function()
+                return obj:GetAttribute("_petType") or obj:GetAttribute("petType")
+                    or obj:GetAttribute("type") or obj:GetAttribute("PetType")
+            end)
+            if ok1 and v1 and tostring(v1):lower():find("elephant") then return true end
+            for _, d in ipairs(obj:GetDescendants()) do
+                if d.Name:lower():find("elephant") then return true end
+                local ok2, v2 = pcall(function() return d:GetAttribute("f") end)
+                if ok2 and v2 and tostring(v2):lower():find("elephant") then return true end
+            end
+            return false
+        end
+        for _, sf in ipairs(farm:GetChildren()) do
+            local sfIsMine = false
+            pcall(function()
+                if mySubfarms[sf] then sfIsMine = true; return end
+                local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                local owner = sign and sign:GetAttribute("_owner")
+                if owner == plrName then sfIsMine = true end
+            end)
+            if not sfIsMine then
+                local sfOwner = "?"
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                    sfOwner = (sign and sign:GetAttribute("_owner")) or sf.Name
+                end)
+                local p1bCount = 0
+                for _, obj in ipairs(sf:GetDescendants()) do
+                    if not obj or not obj.Parent then continue end
+                    if obj:IsA("Model") and not isElephant2(obj) then
+                        pcall(function() obj:Destroy() end)
+                        petDel = petDel + 1; p1bCount = p1bCount + 1
+                    end
+                end
+                if p1bCount > 0 then trLogAdd("[DL-P1b] destroy "..p1bCount.." @ sf("..sfOwner..")") end
+            end
+        end
+        trLogAdd("[DL-P1b] selesai total="..petDel)
+    end
+
+    -- v10.199: dlSetupP6PP — listener P6PP dengan wajib UUID
+    local function dlSetupP6PP(myPetUUIDs, myUUIDCount, sharedPP)
+        if myUUIDCount == 0 then
+            trLogAdd("[DL-P6PP] BATAL — UUID kosong! coba lagi setelah container ready")
+            return
+        end
+        if not sharedPP then trLogAdd("[DL-P6PP] PetsPhysical tidak ada"); return end
+        local function isElephantPP(obj)
+            local n = obj.Name:lower()
+            if n:find("elephant") then return true end
+            local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
+            if ok0 and v0 and tostring(v0):lower():find("elephant") then return true end
+            return false
+        end
+        local ppConn = sharedPP.ChildAdded:Connect(function(newObj)
+            if not _dlOn then return end
+            if newObj:IsA("Model") and not myPetUUIDs[newObj.Name] and not isElephantPP(newObj) then
+                task.wait(0.08)
+                pcall(function()
+                    if newObj and newObj.Parent and not myPetUUIDs[newObj.Name] then
+                        trLogAdd("[DL-P6PP] destroy: "..newObj.Name:sub(1,36))
+                        newObj:Destroy()
+                    end
+                end)
+            end
+        end)
+        table.insert(_dlListenerConns, ppConn)
+        trLogAdd("[DL-P6PP] listener aktif, UUID="..myUUIDCount)
+    end
+
+    -- v10.199: dlRun — hanya P5 (skill FX allowlist di workspace root), jalan tiap 2s
     local function dlRun()
         local plrName = game:GetService("Players").LocalPlayer.Name
-        local Players = game:GetService("Players")
-        local petDel, folderDel, skipEl, totalPM, fxDel = 0, 0, 0, 0, 0
-        trLogAdd("[DL] run start")
+        local fxDel = 0
         local ok, err = pcall(function()
             local farm = workspace:FindFirstChild("Farm")
-            -- build set subfarm milik sendiri
-            -- v10.170: mySubfarms pakai PATH STRING bukan object reference (immune stale ref)
-            local mySubfarmPaths = {}  -- set of fullpath string milik sendiri
-            local mySubfarms = {}      -- object ref (untuk backward compat)
+            -- build mySubfarms untuk skip FX di area sendiri
+            local mySubfarms = {}
+            local myBBmin, myBBmax = nil, nil
             if farm then
                 for _, sf in ipairs(farm:GetChildren()) do
-                    -- cek Sign langsung
-                    local sign = sf:FindFirstChild("Sign")
-                    local owner = sign and sign:GetAttribute("_owner")
-                    -- fallback: cari Sign recursive
-                    if not owner then
-                        local signDeep = sf:FindFirstChild("Sign", true)
-                        owner = signDeep and signDeep:GetAttribute("_owner")
-                    end
-                    -- fallback: nama subfarm = nama player
-                    if not owner and sf.Name == plrName then owner = plrName end
-                    if owner == plrName then
+                    local isMine = false
+                    pcall(function()
+                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                        local owner = sign and sign:GetAttribute("_owner")
+                        if owner == plrName then isMine = true end
+                    end)
+                    if isMine then
                         mySubfarms[sf] = true
-                        local sfPath = sf:GetFullName()
-                        mySubfarmPaths[sfPath] = true
-                        trLogAdd("[DL] mySubfarm: "..sf.Name.." path="..sfPath)
-                    end
-                end
-                -- kalau masih kosong, log warning
-                local sfCount = 0; for _ in pairs(mySubfarms) do sfCount = sfCount + 1 end
-                if sfCount == 0 then
-                    trLogAdd("[DL] WARN: mySubfarms kosong! farm children="..#farm:GetChildren())
-                    -- fallback terakhir: anggap SEMUA subfarm di Farm adalah milik sendiri kalau cuma 1
-                    local children = farm:GetChildren()
-                    if #children == 1 then
-                        mySubfarms[children[1]] = true
-                        local sfPath = children[1]:GetFullName()
-                        mySubfarmPaths[sfPath] = true
-                        trLogAdd("[DL] fallback: 1 subfarm, dianggap milik sendiri path="..sfPath)
-                    end
-                end
-            end
-            -- helper: cek apakah obj ada di salah satu subfarm sendiri (via path, immune stale ref)
-            local function isInMySfarm(obj)
-                local ok2, fullPath = pcall(function() return obj:GetFullName() end)
-                if not ok2 then return false end
-                for sfPath in pairs(mySubfarmPaths) do
-                    -- path obj harus dimulai dengan sfPath+"." (descendant)
-                    if fullPath:sub(1, #sfPath+1) == sfPath.."." then return true end
-                end
-                return false
-            end
-            -- build set karakter semua player
-            local playerChars = {}
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p.Character then playerChars[p.Character] = true end
-            end
-
-            -- helper: cek apakah instance adalah Rainbow Elephant
-            local function isElephant(obj)
-                local n = obj.Name:lower()
-                if n:find("elephant") then return true end
-                -- cek attribute "f" (nama pet asli, dipakai game)
-                local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
-                if ok0 and v0 and tostring(v0):lower():find("elephant") then return true end
-                -- cek attribute type lain
-                local ok, val = pcall(function()
-                    return obj:GetAttribute("_petType") or obj:GetAttribute("petType")
-                        or obj:GetAttribute("type") or obj:GetAttribute("PetType")
-                end)
-                if ok and val and tostring(val):lower():find("elephant") then return true end
-                -- cek descendants: ada sub-model yang namanya elephant?
-                for _, d in ipairs(obj:GetDescendants()) do
-                    if d.Name:lower():find("elephant") then return true end
-                    local ok2, v2 = pcall(function() return d:GetAttribute("f") end)
-                    if ok2 and v2 and tostring(v2):lower():find("elephant") then return true end
-                end
-                return false
-            end
-
-            -- helper: cek apakah folder mengandung Elephant
-            local function hasElephant(container)
-                for _, child in ipairs(container:GetChildren()) do
-                    if isElephant(child) then return true end
-                end
-                return false
-            end
-
-            -- Pass 1: destroy folder PetsPhysical di subfarm ORANG LAIN
-            -- SKIP: workspace.PetsPhysical (shared, berisi pet semua player) — cek via object identity
-            -- SKIP: PetsPhysical yang ada di subfarm sendiri
-            -- ONLY destroy: PetsPhysical yang parent = subfarm orang lain (di dalam Farm)
-            local sharedPP1 = workspace:FindFirstChild("PetsPhysical")  -- cache object reference
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj.ClassName == "Folder" and obj.Name == "PetsPhysical" then
-                    -- skip kalau INI ADALAH shared folder (object identity check, bukan parent check)
-                    if obj == sharedPP1 then
-                        -- jangan destroy, ini berisi pet semua player
-                    else
-                    -- skip kalau di subfarm sendiri (path-based check, immune stale ref)
-                    local inMine = isInMySfarm(obj)
-                    if not inMine then
-                        -- log semua model dalam folder SEBELUM destroy (buat debug nama elephant)
-                        local children = obj:GetChildren()
-                        totalPM = totalPM + #children
-                        trLogAdd("📁 PetsPhysical parent="..tostring(obj.Parent and obj.Parent.Name).." n="..#children)
-                        -- helper scan attr dari satu instance (self + children + descendants)
-                        local function scanAttrs(inst, depth)
-                            local okF, vF = pcall(function() return inst:GetAttribute("f") end)
-                            local fStr = (okF and vF) and ("f="..tostring(vF)) or ""
-                            local prefix = string.rep("  ", depth).."↳ \""..inst.Name:sub(1,30).."\" "
-                            if fStr ~= "" then
-                                trLogAdd(prefix..fStr)
-                            elseif depth == 1 then
-                                trLogAdd(prefix.."(no f)")
-                            end
-                            -- scan children kalau depth < 3
-                            if depth < 3 then
-                                for _, c in ipairs(inst:GetChildren()) do
-                                    local okC, vC = pcall(function() return c:GetAttribute("f") end)
-                                    if okC and vC then
-                                        trLogAdd(string.rep("  ", depth+1).."🔍 \""..c.Name:sub(1,30).."\" f="..tostring(vC))
+                        -- hitung bbox subfarm kita
+                        pcall(function()
+                            for _, part in ipairs(sf:GetDescendants()) do
+                                if part:IsA("BasePart") then
+                                    local pos = part.Position
+                                    if myBBmin == nil then
+                                        myBBmin = Vector3.new(pos.X, pos.Y, pos.Z)
+                                        myBBmax = Vector3.new(pos.X, pos.Y, pos.Z)
+                                    else
+                                        myBBmin = Vector3.new(math.min(myBBmin.X, pos.X), math.min(myBBmin.Y, pos.Y), math.min(myBBmin.Z, pos.Z))
+                                        myBBmax = Vector3.new(math.max(myBBmax.X, pos.X), math.max(myBBmax.Y, pos.Y), math.max(myBBmax.Z, pos.Z))
                                     end
                                 end
                             end
-                        end
-                        for _, child in ipairs(children) do
-                            scanAttrs(child, 1)
-                        end
-                        -- destroy per-model: skip hanya yang isElephant (UUID atau bukan)
-                        -- UUID non-elephant tetap di-destroy supaya animasinya ilang
-                        local hasElephantUUID = false
-                        for _, model in ipairs(children) do
-                            if isElephant(model) then
-                                hasElephantUUID = true
-                                trLogAdd("  🐘 SKIP ele: \""..model.Name:sub(1,40).."\"")
-                                skipEl = skipEl + 1
-                            else
-                                pcall(function() model:Destroy() end)
-                                petDel = petDel + 1
-                            end
-                        end
-                        if not hasElephantUUID then
-                            -- kalau tidak ada elephant, coba destroy folder juga (cleanup)
-                            -- tapi hanya kalau folder masih ada (mungkin sudah kosong)
-                            pcall(function()
-                                if #obj:GetChildren() == 0 then obj:Destroy(); folderDel = folderDel + 1 end
-                            end)
-                        end
-                    end
-                    end -- end else (bukan parent=workspace)
-                end
-            end
-
-            -- Pass 1b: destroy semua Model di subfarm orang lain (garden: tanaman, pet, dekorasi)
-            local mySubfarmCountEarly = 0
-            for _ in pairs(mySubfarms) do mySubfarmCountEarly = mySubfarmCountEarly + 1 end
-            if farm and mySubfarmCountEarly > 0 then
-                for _, sf in ipairs(farm:GetChildren()) do
-                    -- v10.179: cek owner via Sign._owner (bukan path)
-                    local sfIsMine = false
-                    pcall(function()
-                        if mySubfarms[sf] then sfIsMine = true; return end
-                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
-                        local owner = sign and sign:GetAttribute("_owner")
-                        if owner == plrName then sfIsMine = true; return end
-                        -- v10.182: REMOVED fallback path check (all subfarms named "Farm" → same path → false positives)
-                    end)
-                    local sfOwner = "?"
-                    pcall(function()
-                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
-                        sfOwner = (sign and sign:GetAttribute("_owner")) or sf.Name
-                    end)
-                    if not sfIsMine then
-                        -- subfarm orang lain — hapus semua Model di dalamnya
-                        local p1bCount = 0
-                        for _, obj in ipairs(sf:GetDescendants()) do
-                            if not obj or not obj.Parent then continue end
-                            if obj:IsA("Model") and not isElephant(obj) then
-                                pcall(function() obj:Destroy() end)
-                                petDel = petDel + 1
-                                p1bCount = p1bCount + 1
-                            end
-                        end
-                        if p1bCount > 0 then
-                            trLogAdd("[DL-P1b] destroy "..p1bCount.." @ sf("..sfOwner..")")
-                        end
+                        end)
                     end
                 end
-                trLogAdd("[DL-P1b] selesai total="..petDel)
             end
-
-            -- Pass 2: fallback — destroy sisa Model bukan milik sendiri yang lolos pass 1
-            -- Untuk shared PetsPhysical: skip model milik kita (UUID ada di _kgContainer),
-            -- destroy model orang lain di dalamnya
-            local sharedPetsPhysical = workspace:FindFirstChild("PetsPhysical")
-
-            -- v10.193: kumpulkan UUID pet milik kita dari _kgContainer (memory)
-            -- _kgContainer = dict uuid -> {PetType,...}, semua pet kita (equip + backpack)
-            -- UUID di PetsPhysical PetMover = "{uuid}" (ada kurung kurawal)
-            local myPetUUIDs = {}
-            local myUUIDCount = 0
-            pcall(function()
-                local c = ambilContainer()  -- pakai ambilContainer() supaya ada fallback
-                if type(c) == "table" then
-                    for uuid, e in pairs(c) do
-                        if type(e) == "table" then
-                            local raw = tostring(uuid):gsub("[{}]","")
-                            if #raw > 20 then  -- filter string uuid valid
-                                myPetUUIDs[raw] = true
-                                myPetUUIDs["{"..raw.."}"] = true
-                                myUUIDCount = myUUIDCount + 1
-                            end
-                        end
-                    end
-                end
-            end)
-            trLogAdd("[DL-P2] myPetUUIDs="..myUUIDCount.."(container)")
-            -- v10.173: hitung bounding box subfarm KITA untuk cek posisi PetMover
-            -- PetMover milik kita posisinya pasti di dalam area subfarm kita
-            local myBBmin, myBBmax = nil, nil
-            for sf in pairs(mySubfarms) do
-                pcall(function()
-                    local allDesc = sf:GetDescendants()
-                    local partCount = 0
-                    for _, part in ipairs(allDesc) do
-                        if part:IsA("BasePart") then
-                            partCount = partCount + 1
-                            local pos = part.Position
-                            if myBBmin == nil then
-                                myBBmin = Vector3.new(pos.X, pos.Y, pos.Z)
-                                myBBmax = Vector3.new(pos.X, pos.Y, pos.Z)
-                            else
-                                myBBmin = Vector3.new(math.min(myBBmin.X, pos.X), math.min(myBBmin.Y, pos.Y), math.min(myBBmin.Z, pos.Z))
-                                myBBmax = Vector3.new(math.max(myBBmax.X, pos.X), math.max(myBBmax.Y, pos.Y), math.max(myBBmax.Z, pos.Z))
-                            end
-                        end
-                    end
-                    trLogAdd("[DL-BB] sf="..sf.Name.." desc="..#allDesc.." parts="..partCount)
-                end)
-            end
-            local bbMargin = 60  -- v10.190: perbesar margin, PetMover bisa offset jauh dari subfarm
+            local bbMargin = 60
             if myBBmin then
                 myBBmin = myBBmin - Vector3.new(bbMargin, 100, bbMargin)
                 myBBmax = myBBmax + Vector3.new(bbMargin, 100, bbMargin)
-                trLogAdd("[DL-P2] myBB min=("..math.floor(myBBmin.X)..","..math.floor(myBBmin.Z)..") max=("..math.floor(myBBmax.X)..","..math.floor(myBBmax.Z)..")")
-                -- v10.196: log posisi PetMover kita vs bbox
-                if sharedPetsPhysical then
-                    local myPMCount = 0
-                    for _, pm in ipairs(sharedPetsPhysical:GetChildren()) do
-                        if myPetUUIDs[pm.Name] then
-                            myPMCount = myPMCount + 1
-                            pcall(function()
-                                local bp = pm:FindFirstChildWhichIsA("BasePart")
-                                if bp then
-                                    local p = bp.Position
-                                    local inBB = (p.X >= myBBmin.X and p.X <= myBBmax.X and p.Z >= myBBmin.Z and p.Z <= myBBmax.Z)
-                                    trLogAdd("[DL-MYPM] "..pm.Name:sub(1,20).." pos=("..math.floor(p.X)..","..math.floor(p.Z)..") inBB="..tostring(inBB))
-                                else
-                                    trLogAdd("[DL-MYPM] "..pm.Name:sub(1,20).." pos=nil")
-                                end
-                            end)
-                        end
-                    end
-                    if myPMCount == 0 then trLogAdd("[DL-MYPM] tidak ada PetMover kita di PP saat ini") end
-                end
-            else
-                trLogAdd("[DL-P2] myBB=nil")
             end
-            -- fallback center: posisi player kalau bbox gagal
-            local myCenter, myRadius = nil, 200
-            if myBBmin == nil then
-                pcall(function()
-                    local char = player and player.Character
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        myCenter = hrp.Position
-                        trLogAdd("[DL-P2] bbox nil, fallback center player pos="..math.floor(myCenter.X)..","..math.floor(myCenter.Z).." r="..myRadius)
-                    end
-                end)
-            end
-            local function isPetMoverInMyArea(obj)
-                local pos
-                pcall(function()
-                    if obj.PrimaryPart then
-                        pos = obj.PrimaryPart.Position
-                    else
-                        local p = obj:FindFirstChildWhichIsA("BasePart", true)
-                        if p then pos = p.Position end
-                    end
-                end)
-                -- v10.183: kalau pos nil atau bbox nil → anggap AMAN (jangan destroy)
-                -- Lebih baik biarkan pet orang lain hidup daripada destroy pet sendiri
-                if pos == nil then return true end
-                -- cek bbox dulu
-                if myBBmin then
-                    return pos.X >= myBBmin.X and pos.X <= myBBmax.X
-                       and pos.Y >= myBBmin.Y and pos.Y <= myBBmax.Y
-                       and pos.Z >= myBBmin.Z and pos.Z <= myBBmax.Z
-                end
-                -- fallback: radius dari posisi player
-                if myCenter then
-                    local dx = pos.X - myCenter.X
-                    local dz = pos.Z - myCenter.Z
-                    return (dx*dx + dz*dz) <= (myRadius*myRadius)
-                end
-                -- bbox dan center sama-sama nil → tidak bisa tentukan → JANGAN destroy
-                return true
-            end
-            -- v10.173: log jumlah PetMover di shared PetsPhysical
-            local ppTotal = sharedPetsPhysical and #sharedPetsPhysical:GetChildren() or 0
-            trLogAdd("[DL-P2] sharedPP children="..ppTotal)
-            local toDestroy = {}
-            local p2SafeLog = 0  -- v10.179: counter untuk limit [DL-P2-SAFE] log
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") and obj.Parent ~= workspace then
-                    local inShared = sharedPetsPhysical and obj:IsDescendantOf(sharedPetsPhysical)
-                    if inShared then
-                        -- v10.192: pure UUID check
-                        if obj.Parent == sharedPetsPhysical then
-                            local isMyUUID = myPetUUIDs[obj.Name] == true
-                            if not isMyUUID and not isElephant(obj) then
-                                toDestroy[#toDestroy+1] = obj
-                            else
-                                if p2SafeLog < 5 then
-                                    p2SafeLog = p2SafeLog + 1
-                                    trLogAdd("[DL-P2-SAFE-PP] "..obj.Name:sub(1,20).." UUID=mine")
-                                end
-                            end
-                        end
-                        -- nested child di dalam PetMover tidak di-destroy langsung
-                    else
-                        -- v10.170: path-based check (immune stale ref)
-                        local inMine = isInMySfarm(obj)
-                        local isChar = false
-                        for char in pairs(playerChars) do
-                            if obj == char or obj:IsDescendantOf(char) then isChar = true; break end
-                        end
-                        local isFarmChild = farm and obj.Parent == farm
-                        local isEl = isElephant(obj)
-                        -- v10.179: log SAFE hanya max 3 entry total (pakai counter sendiri)
-                        if inMine and p2SafeLog < 3 then
-                            p2SafeLog = p2SafeLog + 1
-                            trLogAdd("[DL-P2-SAFE] skip milik sendiri: "..obj.Name:sub(1,30))
-                        end
-                        if not inMine and not isChar and not isFarmChild and not isEl then
-                            toDestroy[#toDestroy+1] = obj
-                        end
-                    end
-                end
-            end
-            local p2DestroyCount = 0
-            for _, obj in ipairs(toDestroy) do
-                if obj and obj.Parent then
-                    -- v10.195: WARN kalau UUID kita masuk destroy path
-                    if myPetUUIDs[obj.Name] then
-                        trLogAdd("[DL-WARN!!] PetMover KITA ke-destroy P2: "..obj.Name:sub(1,36))
-                    else
-                        p2DestroyCount = p2DestroyCount + 1
-                    end
-                    pcall(function() obj:Destroy() end)
-                    petDel = petDel + 1
-                end
-            end
-            if p2DestroyCount > 0 then
-                trLogAdd("[DL-P2] destroy "..p2DestroyCount.." PetMover luar")
-            end
-
-            -- Pass 3: DINONAKTIFKAN — jangan hapus FX di subfarm sendiri,
-            -- animasi pet kita sendiri di garden harus tetap keliatan
-
-            -- Pass 4: hapus FX + AnimationController di subfarm ORANG LAIN (bukan milik sendiri, bukan char)
-            -- Ini yang bikin animasi Dilop/Hotdog masih keliatan meski modelnya sudah ke-destroy
-            -- SKIP: workspace.PetsPhysical (shared, berisi pet SEMUA player termasuk kita sendiri)
-            -- v10.188: dibungkus pcall sendiri agar error di Pass 4 tidak blokir Pass 5 & 6
-            local p4ok, p4err = pcall(function()
-            -- objek permanen GAG yang tidak boleh ke-destroy FX-nya
-            local p4StaticSkip = {
-                ShopRestockTimer=true, PetAgeMachine=true, PetAgeMachineV2=true,
-                Blocks=true, LoadingCamPart=true, TradeworldCamPart=true,
-                Farm=true, PetsPhysical=true, Terrain=true, Camera=true,
-                Map=true, World=true, Lobby=true, Market=true, TradeArea=true,
-                NPCS=true, Intro=true, LocalLootChests=true, Booths=true,
-                Tutorial_Arrows=true, Tutorial_Points=true, MapDecorations=true,
-                Crafting=true, OwnerTag=true, FeedPetProxPart=true,
-            }
-            local sharedPP4 = workspace:FindFirstChild("PetsPhysical")
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                -- cek kalau ada di shared PetsPhysical
-                local inSharedPP4 = sharedPP4 and obj:IsDescendantOf(sharedPP4)
-                if inSharedPP4 then
-                    -- v10.181: hapus FX di PetMover orang lain (di luar bbox kita)
-                    -- cari parent PetMover langsung (child dari sharedPP4)
-                    local petMover = nil
-                    do local cur = obj
-                        while cur and cur.Parent and cur.Parent ~= sharedPP4 do cur = cur.Parent end
-                        if cur and cur.Parent == sharedPP4 then petMover = cur end
-                    end
-                    -- kalau gagal dapat PetMover parent → skip (jangan destroy)
-                    if petMover == nil then continue end
-                    -- v10.192: pure UUID check
-                    local inMyArea = myPetUUIDs[petMover.Name] == true
-                    -- v10.186: log PetMover yang di-skip (inMyArea) untuk debug
-                    if inMyArea then
-                        -- pet kita — skip, tidak perlu log spam
-                    else
-                        local cls = obj.ClassName
-                        if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
-                           or cls=="PointLight" or cls=="SpotLight"
-                           or cls=="AnimationController" or cls=="Animator" then
-                            -- v10.195: WARN kalau UUID kita masuk DEL path
-                            if myPetUUIDs[petMover.Name] then
-                                trLogAdd("[DL-WARN!!] PetMover KITA ke-DEL P4: "..petMover.Name:sub(1,36))
-                            end
-                            pcall(function() obj:Destroy() end)
-                            fxDel = fxDel + 1
-                        end
-                    end
-                    continue
-                end
-                -- skip kalau ancestor langsung di workspace adalah objek permanen
-                local topLevel = obj
-                do local cur = obj
-                    while cur and cur.Parent and cur.Parent ~= workspace do cur = cur.Parent end
-                    if cur then topLevel = cur end
-                end
-                if p4StaticSkip[topLevel.Name] then continue end
-                -- v10.187: hanya hapus FX yang MEMANG di dalam subfarm orang lain
-                -- FX di workspace root / tempat lain → biarkan, jangan destroy
-                local inOtherSfarm = false
-                if farm then
-                    for _, sf in ipairs(farm:GetChildren()) do
-                        if not mySubfarms[sf] and obj:IsDescendantOf(sf) then
-                            inOtherSfarm = true; break
-                        end
-                    end
-                end
-                if inOtherSfarm then
-                    local cls = obj.ClassName
-                    if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
-                       or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui"
-                       or cls=="AnimationController" or cls=="Animator" then
-                        if fxDel < 10 then
-                            local p = obj.Parent
-                            trLogAdd("[DL-P4] "..cls.."/"..obj.Name:sub(1,20).." @ "..(p and p:GetFullName():sub(1,60) or "?"))
-                        end
-                        pcall(function() obj:Destroy() end)
-                        fxDel = fxDel + 1
-                    end
-                end
-            end
-            end) -- end pcall Pass 4
-            if not p4ok then trLogAdd("[DL-P4] ERROR: "..tostring(p4err):sub(1,80)) end
-
-            -- Pass 5: hapus Model/Part skill FX di workspace langsung (Ketchup Puddle, Venom dll)
-            -- Pass 2 skip karena obj.Parent == workspace, padahal ini efek skill orang lain
-            local wsWhitelist = {
-                Farm=true, PetsPhysical=true, Terrain=true, Camera=true,
-                ["Sky"]=true, ["Lighting"]=true,
-                -- nama map standar GAG
-                ["Map"]=true, ["World"]=true, ["Lobby"]=true,
-                ["Market"]=true, ["TradeArea"]=true,
-            }
-            -- keyword nama yang kemungkinan tanah/map (jangan dihapus)
-            local wsGroundKeywords = {
-                "ground","floor","land","base","plot","road","path",
-                "gate","wall","fence","island","terrain","tile","grass",
-                "dirt","sand","stone","rock","border","boundary","area",
-                "field","zone","region","garden","farm","hub","spawn",
-            }
-            local function isGroundObj(obj)
-                local n = obj.Name:lower()
-                for _, kw in ipairs(wsGroundKeywords) do
-                    if n:find(kw, 1, true) then return true end
-                end
-                -- skip kalau ada BasePart besar (tanah/map biasanya size > 50)
-                for _, d in ipairs(obj:GetDescendants()) do
-                    if d:IsA("BasePart") then
-                        local s = d.Size
-                        if s.X > 50 or s.Y > 50 or s.Z > 50 then return true end
-                    end
-                end
-                -- obj sendiri BasePart besar
-                if obj:IsA("BasePart") then
-                    local s = obj.Size
-                    if s.X > 50 or s.Y > 50 or s.Z > 50 then return true end
-                end
-                return false
-            end
-            -- juga skip kalau nama = nama player (karakter)
-            local playerNames = {}
-            for _, plr in ipairs(Players:GetPlayers()) do playerNames[plr.Name] = true end
-            -- Pass 5 hanya jalan kalau mySubfarms berhasil di-detect (minimal 1 subfarm)
-            -- Kalau kosong, skip Pass 5 agar pet sendiri tidak ke-destroy
-            local mySubfarmCount = 0
-            for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
-            -- Pass 5: hapus skill FX di workspace root (WindBlastTemplate, SpottedEffect, dll)
-            -- Whitelist dari mapping log: objek permanen GAG yang parent-nya workspace
-            -- Pass 5: ALLOWLIST approach — HANYA destroy nama yang terbukti skill FX
-            -- Lebih aman daripada blacklist (objek permanen GAG terus bertambah)
-            local wsP5Allowlist = {
-                -- skill FX yang ter-konfirmasi dari log
-                WindBlastTemplate=true, SpottedEffect=true, Puddle=true,
-                -- tambah nama FX lain yang muncul di masa depan di sini
-            }
-            -- fallback blacklist untuk nama yang TIDAK boleh ke-destroy (objek permanen)
-            local wsStaticWhitelist = {
-                -- dari wsWhitelist (map besar)
-                Farm=true, PetsPhysical=true, Terrain=true, Camera=true,
-                Sky=true, Lighting=true, Map=true, World=true, Lobby=true,
-                Market=true, TradeArea=true,
-                -- objek permanen GAG yang terbukti ada di workspace root
-                Intro=true, NPCS=true, LocalLootChests=true,
-                Booths=true, FeedPetProxPart=true, Tutorial_Arrows=true,
-                Tutorial_Points=true, MapDecorations=true, Crafting=true,
-                OwnerTag=true,
-                -- dari log v10.166: objek permanen yang ke-destroy salah
-                PetAgeMachine=true, ShopRestockTimer=true, Blocks=true,
-                LoadingCamPart=true, TradeworldCamPart=true,
-            }
+            local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
+            -- Pass 5: ALLOWLIST — hanya destroy nama FX yang terbukti (Puddle, SpottedEffect, WindBlastTemplate)
+            local wsP5Allowlist = { WindBlastTemplate=true, SpottedEffect=true, Puddle=true }
             if mySubfarmCount > 0 then
                 local p5Del, p5Skip = 0, 0
                 for _, obj in ipairs(workspace:GetChildren()) do
@@ -5196,13 +4800,11 @@ do
                         local cls = obj.ClassName
                         if cls == "Model" or cls == "Part" or cls == "MeshPart"
                            or cls == "UnionOperation" or cls == "SpecialMesh" then
-                            -- v10.194: cek posisi FX — kalau di dalam bbox subfarm kita, skip
                             local inMyArea = false
                             if myBBmin and myBBmax then
                                 pcall(function()
                                     local pos = nil
-                                    if obj:IsA("BasePart") then
-                                        pos = obj.Position
+                                    if obj:IsA("BasePart") then pos = obj.Position
                                     else
                                         local pp = obj.PrimaryPart
                                         if pp then pos = pp.Position
@@ -5224,115 +4826,64 @@ do
                                 p5Skip = p5Skip + 1
                             else
                                 pcall(function() obj:Destroy() end)
-                                fxDel = fxDel + 1
-                                p5Del = p5Del + 1
+                                fxDel = fxDel + 1; p5Del = p5Del + 1
                             end
                         end
                     end
                 end
-                -- v10.195: summary saja, tidak spam per-item
-                trLogAdd("[DL-P5] destroy="..p5Del.." skip(mine)="..p5Skip)
+                if p5Del > 0 then trLogAdd("[DL-P5] destroy="..p5Del.." skip(mine)="..p5Skip) end
             else
-                trLogAdd("[DL] Pass 5 SKIP — mySubfarms kosong")
-            end
-
-            -- v10.172: Pass 6 — PERSISTENT LISTENER subfarm orang lain + workspace.PetsPhysical
-            -- Server terus re-create pet garden, jadi kita pasang listener realtime
-            if farm and mySubfarmCount > 0 then
-                -- cleanup listener lama dulu
-                dlCleanupListeners()
-                local listenCount = 0
-                local allSf = farm:GetChildren()
-                trLogAdd("[DL-P6] farm:GetChildren()="..#allSf.." mySubfarmCount="..mySubfarmCount)
-                -- debug: log semua path di mySubfarmPaths
-                for sfPath in pairs(mySubfarmPaths) do
-                    trLogAdd("[DL-P6] myPath="..sfPath)
-                end
-                for _, sf in ipairs(farm:GetChildren()) do
-                    -- v10.179: cek owner via Sign._owner (bukan path — semua subfarm namanya "Farm")
-                    local isMine = false
-                    local p6Owner = "?"
-                    local p6Method = "none"
-                    pcall(function()
-                        -- cek mySubfarms object ref dulu (paling reliable)
-                        if mySubfarms[sf] then isMine = true; p6Method = "ref"; return end
-                        -- cek Sign._owner
-                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
-                        local owner = sign and sign:GetAttribute("_owner")
-                        p6Owner = owner or "nil"
-                        if owner == plrName then isMine = true; p6Method = "sign"; return end
-                        -- v10.182: REMOVED fallback path check (semua subfarm nama "Farm" → path identik → false positive)
-                    end)
-                    trLogAdd("[DL-P6] sf="..sf.Name.." owner="..p6Owner.." via="..p6Method.." isMine="..tostring(isMine))
-                    if not isMine then
-                        -- ini subfarm orang lain — pasang listener
-                        local sfName = sf.Name
-                        listenCount = listenCount + 1
-                        local conn = sf.DescendantAdded:Connect(function(newObj)
-                            if not _dlOn then return end
-                            if newObj:IsA("Model") then
-                                if not isElephant(newObj) then
-                                    task.wait(0.08)
-                                    pcall(function()
-                                        if newObj and newObj.Parent then
-                                            trLogAdd("[DL-P6] destroy "..newObj.Name:sub(1,30).." di sf "..sfName)
-                                            newObj:Destroy()
-                                        end
-                                    end)
-                                end
-                            end
-                        end)
-                        table.insert(_dlListenerConns, conn)
-                    end
-                end
-                if listenCount > 0 then
-                    trLogAdd("[DL-P6] listener aktif di "..listenCount.." subfarm orang lain")
-                end
-
-                -- v10.173: listener di workspace.PetsPhysical
-                -- Destroy PetMover baru di luar area subfarm kita
-                if sharedPetsPhysical then
-                    local ppConn = sharedPetsPhysical.ChildAdded:Connect(function(newObj)
-                        if not _dlOn then return end
-                        if newObj:IsA("Model") then
-                            -- v10.192: pure UUID check
-                            if not isElephant(newObj) and not myPetUUIDs[newObj.Name] then
-                                task.wait(0.08)
-                                pcall(function()
-                                    if newObj and newObj.Parent then
-                                        if not myPetUUIDs[newObj.Name] then
-                                            -- v10.195: WARN kalau UUID kita masuk destroy
-                                            if myPetUUIDs[newObj.Name] ~= nil then
-                                                trLogAdd("[DL-WARN!!] PetMover KITA ke-destroy P6PP: "..newObj.Name:sub(1,36))
-                                            else
-                                                trLogAdd("[DL-P6PP] destroy: "..newObj.Name:sub(1,36))
-                                            end
-                                            newObj:Destroy()
-                                        end
-                                    end
-                                end)
-                            end
-                        end
-                    end)
-                    table.insert(_dlListenerConns, ppConn)
-                    trLogAdd("[DL-P6PP] listener aktif di workspace.PetsPhysical")
-                end
+                trLogAdd("[DL-P5] SKIP — mySubfarms kosong")
             end
         end)
-        if not ok then
-            trLogAdd("[DL] ERROR: "..(tostring(err):sub(1,120)))
-        end
-        local parts = {}
-        if folderDel > 0 then parts[#parts+1] = "folder="..folderDel end
-        if totalPM > 0 then parts[#parts+1] = "total_pm="..totalPM end
-        if petDel > 0 then parts[#parts+1] = "mdl="..petDel end
-        if skipEl > 0 then parts[#parts+1] = "skip="..skipEl end
-        if fxDel > 0 then parts[#parts+1] = "fx="..fxDel end
-        if #parts > 0 then
-            trLogAdd("[DL] destroy "..table.concat(parts,", "))
-        end
+        if not ok then trLogAdd("[DL] ERROR: "..(tostring(err):sub(1,120))) end
+        if fxDel > 0 then trLogAdd("[DL] fx="..fxDel) end
     end
 
+    -- v10.199: helper DL ON — jalankan P1b + setup P6PP lalu loop P5 tiap 2s
+    local function dlStartup()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        local farm = workspace:FindFirstChild("Farm")
+        -- build mySubfarms
+        local mySubfarms = {}
+        if farm then
+            for _, sf in ipairs(farm:GetChildren()) do
+                local isMine = false
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner == plrName then isMine = true end
+                end)
+                if isMine then mySubfarms[sf] = true end
+            end
+        end
+        -- P1b sekali: hapus Model di subfarm orang lain
+        task.spawn(function() pcall(dlRunOnce, plrName, farm, mySubfarms) end)
+        -- P6PP: listener realtime PetsPhysical, wajib UUID
+        task.spawn(function()
+            local myPetUUIDs = {}; local myUUIDCount = 0
+            pcall(function()
+                local c = ambilContainer()
+                if type(c) == "table" then
+                    for uuid, e in pairs(c) do
+                        if type(e) == "table" then
+                            local raw = tostring(uuid):gsub("[{}]","")
+                            if #raw > 20 then
+                                myPetUUIDs[raw] = true
+                                myPetUUIDs["{"..raw.."}"] = true
+                                myUUIDCount = myUUIDCount + 1
+                            end
+                        end
+                    end
+                end
+            end)
+            local sharedPP = workspace:FindFirstChild("PetsPhysical")
+            dlSetupP6PP(myPetUUIDs, myUUIDCount, sharedPP)
+        end)
+        trLogAdd("[DL] ON — P1b sekali, P5 tiap 2s, P6PP listener")
+    end
+
+    -- v10.199: click handler — toggle ON/OFF, tapi always-on saat load
     dlBtn.MouseButton1Click:Connect(function()
         _dlOn = not _dlOn
         if _dlOn then
@@ -5340,19 +4891,33 @@ do
             dlBtn.TextColor3 = Color3.fromRGB(100,230,100)
             dlBtn.BackgroundColor3 = Color3.fromRGB(20,50,20)
             stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
-            trLogAdd("[DL] ON — scan tiap 5s")
-            task.spawn(function() pcall(dlRun) end)
+            dlCleanupListeners()
+            dlStartup()
             task.spawn(function()
-                while _dlOn do task.wait(5); if _dlOn then pcall(dlRun) end end
+                while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
             end)
         else
             dlBtn.Text = "\u{25CB}  Destroy Pet & Animasi Kebun Orang — OFF"
             dlBtn.TextColor3 = C.textMute
             dlBtn.BackgroundColor3 = C.card
             stroke(dlBtn, C.border, 1.5)
-            dlCleanupListeners()  -- v10.170: matikan listener realtime saat DL OFF
+            dlCleanupListeners()
             trLogAdd("[DL] OFF")
         end
+    end)
+
+    -- v10.199: ALWAYS ON — auto-start DL saat script load
+    task.spawn(function()
+        task.wait(3)  -- tunggu UI ready + container loaded
+        _dlOn = true
+        dlBtn.Text = "\u{25CF}  Destroy Pet & Animasi Kebun Orang — ON"
+        dlBtn.TextColor3 = Color3.fromRGB(100,230,100)
+        dlBtn.BackgroundColor3 = Color3.fromRGB(20,50,20)
+        stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
+        dlStartup()
+        task.spawn(function()
+            while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
+        end)
     end)
 
     -- ============ TAB TEST DL ============
