@@ -4410,6 +4410,65 @@ do
     trStatus = lbl(tradeScroll, "siap. pilih target + jenis pet + filter min KG/age.", 11.5, C.textDim)
     trStatus.Size = UDim2.new(1,0,0,42); trStatus.TextWrapped=true; trStatus.LayoutOrder=13; trStatus.TextYAlignment=Enum.TextYAlignment.Top
 
+    -- SCAN GARDEN: debug semua pet + partikel/animasi di kebun orang lain
+    local scanGardenBtn = mk("TextButton",{
+        Size=UDim2.new(1,0,0,36), BackgroundColor3=Color3.fromRGB(20,30,50),
+        Text="🔍 Scan Garden — log pet & animasi orang lain",
+        Font=FONT_B, TextSize=11.5, TextColor3=Color3.fromRGB(140,200,255),
+        LayoutOrder=13.5, Parent=tradeScroll
+    }); corner(scanGardenBtn,9); stroke(scanGardenBtn,Color3.fromRGB(60,120,200),1.5)
+    scanGardenBtn.MouseButton1Click:Connect(function()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        trLogAdd("=== SCAN GARDEN START ===")
+        local totalPet, totalFx = 0, 0
+        pcall(function()
+            local farm = workspace:FindFirstChild("Farm")
+            if not farm then trLogAdd("Farm tidak ditemukan di workspace"); return end
+            for _, subfarm in ipairs(farm:GetChildren()) do
+                local sign = subfarm:FindFirstChild("Sign")
+                local owner = sign and sign:GetAttribute("_owner")
+                if owner and owner ~= plrName then
+                    trLogAdd("-- Subfarm: "..tostring(subfarm.Name).." (owner="..owner..")")
+                    -- scan pet model {uuid} di seluruh subfarm
+                    for _, obj in ipairs(subfarm:GetDescendants()) do
+                        if obj:IsA("Model") and tostring(obj.Name):sub(1,1) == "{" then
+                            totalPet = totalPet + 1
+                            local fxList = {}
+                            for _, d in ipairs(obj:GetDescendants()) do
+                                local cls = d.ClassName
+                                if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
+                                   or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui"
+                                   or cls=="SpecialMesh" or cls=="SelectionBox" then
+                                    fxList[#fxList+1] = cls.."("..tostring(d.Name)..")"
+                                    totalFx = totalFx + 1
+                                end
+                            end
+                            local fxStr = #fxList > 0 and table.concat(fxList,", ") or "no fx"
+                            trLogAdd("  PET "..tostring(obj.Name):sub(1,14).." | "..fxStr)
+                        end
+                    end
+                    -- scan Plants_Physical
+                    for _, f in ipairs(subfarm:GetDescendants()) do
+                        if f.Name == "Plants_Physical" then
+                            local pc = 0
+                            for _, c in ipairs(f:GetChildren()) do if c:IsA("Model") then pc=pc+1 end end
+                            if pc > 0 then trLogAdd("  Plants_Physical: "..pc.." pohon/tanaman") end
+                        end
+                    end
+                end
+            end
+        end)
+        trLogAdd("=== SELESAI: "..totalPet.." pet, "..totalFx.." fx/partikel ===")
+        scanGardenBtn.Text = "\u{2713} Scan selesai — cek log"
+        scanGardenBtn.TextColor3 = Color3.fromRGB(100,230,100)
+        task.delay(2, function()
+            pcall(function()
+                scanGardenBtn.Text = "🔍 Scan Garden — log pet & animasi orang lain"
+                scanGardenBtn.TextColor3 = Color3.fromRGB(140,200,255)
+            end)
+        end)
+    end)
+
     -- v10.32: DEBUG trade log (tap 2x = salin)
     local trDbgHdrRow = mk("Frame",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=14,Parent=tradeScroll})
     local trDbgHdr = lbl(trDbgHdrRow, "DEBUG trade (tap 2x = salin)", 11, C.textMute); trDbgHdr.Font = FONT_B; trDbgHdr.Position=UDim2.new(0,0,0,0); trDbgHdr.Size = UDim2.new(1,-72,1,0)
