@@ -4955,23 +4955,15 @@ do
                 if obj:IsA("Model") and obj.Parent ~= workspace then
                     local inShared = sharedPetsPhysical and obj:IsDescendantOf(sharedPetsPhysical)
                     if inShared then
-                        -- v10.191: cek UUID dulu, lalu fallback bbox
+                        -- v10.192: pure UUID check
                         if obj.Parent == sharedPetsPhysical then
                             local isMyUUID = myPetUUIDs[obj.Name] == true
-                            local inMyArea = isMyUUID or isPetMoverInMyArea(obj)
-                            if not inMyArea and not isElephant(obj) then
+                            if not isMyUUID and not isElephant(obj) then
                                 toDestroy[#toDestroy+1] = obj
                             else
-                                -- log PetMover kita yang di-skip (max 5)
                                 if p2SafeLog < 5 then
                                     p2SafeLog = p2SafeLog + 1
-                                    local reason = isMyUUID and "UUID" or "bbox"
-                                    local posStr = "?"
-                                    pcall(function()
-                                        local pp = obj:FindFirstChildWhichIsA("BasePart")
-                                        if pp then posStr = "("..math.floor(pp.Position.X)..","..math.floor(pp.Position.Y)..","..math.floor(pp.Position.Z)..")" end
-                                    end)
-                                    trLogAdd("[DL-P2-SAFE-PP] "..obj.Name:sub(1,20).." reason="..reason.." pos="..posStr)
+                                    trLogAdd("[DL-P2-SAFE-PP] "..obj.Name:sub(1,20).." UUID=mine")
                                 end
                             end
                         end
@@ -5060,9 +5052,8 @@ do
                     end
                     -- kalau gagal dapat PetMover parent → skip (jangan destroy)
                     if petMover == nil then continue end
-                    -- v10.191: UUID check dulu, fallback bbox
-                    local isMyUUID4 = myPetUUIDs[petMover.Name] == true
-                    local inMyArea = isMyUUID4 or isPetMoverInMyArea(petMover)
+                    -- v10.192: pure UUID check
+                    local inMyArea = myPetUUIDs[petMover.Name] == true
                     -- v10.186: log PetMover yang di-skip (inMyArea) untuk debug
                     if inMyArea then
                         local cls = obj.ClassName
@@ -5272,14 +5263,12 @@ do
                     local ppConn = sharedPetsPhysical.ChildAdded:Connect(function(newObj)
                         if not _dlOn then return end
                         if newObj:IsA("Model") then
-                            -- v10.191: skip kalau UUID milik kita
+                            -- v10.192: pure UUID check
                             if not isElephant(newObj) and not myPetUUIDs[newObj.Name] then
                                 task.wait(0.08)
                                 pcall(function()
                                     if newObj and newObj.Parent then
-                                        local isMyUUID6 = myPetUUIDs[newObj.Name] == true
-                                        local inMyArea = isMyUUID6 or isPetMoverInMyArea(newObj)
-                                        if not inMyArea then
+                                        if not myPetUUIDs[newObj.Name] then
                                             trLogAdd("[DL-P6PP] destroy PetMover luar area: "..newObj.Name:sub(1,30))
                                             newObj:Destroy()
                                         end
