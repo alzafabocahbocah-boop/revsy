@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.181"
+local VERSION = "up6kg-v10.182"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -4824,8 +4824,7 @@ do
                         local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
                         local owner = sign and sign:GetAttribute("_owner")
                         if owner == plrName then sfIsMine = true; return end
-                        local sfPath = sf:GetFullName()
-                        if mySubfarmPaths[sfPath] then sfIsMine = true end
+                        -- v10.182: REMOVED fallback path check (all subfarms named "Farm" → same path → false positives)
                     end)
                     local sfOwner = "?"
                     pcall(function()
@@ -5051,7 +5050,7 @@ do
                     if cur then topLevel = cur end
                 end
                 if p4StaticSkip[topLevel.Name] then continue end
-                -- v10.181: object-ref based inMine check (path-based gagal karena path collision)
+                -- v10.182: object-ref based inMine check (path-based gagal karena path collision)
                 local inMine = false
                 for sf in pairs(mySubfarms) do
                     if obj:IsDescendantOf(sf) then inMine = true; break end
@@ -5060,7 +5059,18 @@ do
                 for char in pairs(playerChars) do
                     if obj:IsDescendantOf(char) then isChar = true; break end
                 end
-                if not inMine and not isChar then
+                if inMine then
+                    -- debug: log FX di subfarm kita sendiri (tidak dihapus, tapi log buat cek)
+                    local cls = obj.ClassName
+                    if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
+                       or cls=="AnimationController" or cls=="Animator" then
+                        -- hanya log 3 pertama supaya tidak spam
+                        if (fxDel + 1) % 100 == 1 then  -- jarang-jarang
+                            local p = obj.Parent
+                            trLogAdd("[DL-P4-MINE] SAFE "..cls.."/"..obj.Name:sub(1,20).." @ "..(p and p:GetFullName():sub(1,50) or "?"))
+                        end
+                    end
+                elseif not isChar then
                     local cls = obj.ClassName
                     if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
                        or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui"
@@ -5184,9 +5194,7 @@ do
                         local owner = sign and sign:GetAttribute("_owner")
                         p6Owner = owner or "nil"
                         if owner == plrName then isMine = true; p6Method = "sign"; return end
-                        -- fallback path (kalau nama subfarm unik)
-                        local sfPath = sf:GetFullName()
-                        if mySubfarmPaths[sfPath] then isMine = true; p6Method = "path" end
+                        -- v10.182: REMOVED fallback path check (semua subfarm nama "Farm" → path identik → false positive)
                     end)
                     trLogAdd("[DL-P6] sf="..sf.Name.." owner="..p6Owner.." via="..p6Method.." isMine="..tostring(isMine))
                     if not isMine then
