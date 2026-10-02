@@ -5652,11 +5652,11 @@ local function run(cfg)
             local _isUp6  = _sl:find("UP6KG")
             local _isHact = _sl:find("HACT")
             local _isUplevel = _sl:find("UPLEVEL")   -- v9.490: uplevel ikut restart terjadwal
-            local _isMarket = _sl:find("MARKET")     -- v9.491: market ikut restart terjadwal
-            if _isUp38 or _isUp6 or _isHact or _isUplevel or _isMarket then
+            -- v9.491: market ikut restart terjadwal -- DIMATIIN user request
+            if _isUp38 or _isUp6 or _isHact or _isUplevel then
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
-                local per60 = _isUp38 or _isHact or _isUplevel or _isMarket -- up3.8kg + hact + uplevel + market: tiap 60 menit (:00)
+                local per60 = _isUp38 or _isHact or _isUplevel -- up3.8kg + hact + uplevel: tiap 60 menit (:00)
                 local slotSize = per60 and 3600 or 1800                     -- 60min, up6kg 30min
                 local fireNow
                 if cfg.restart_min_override then
