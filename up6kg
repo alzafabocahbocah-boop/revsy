@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.194"
+local VERSION = "up6kg-v10.195"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -4831,27 +4831,23 @@ do
                         local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
                         sfOwner = (sign and sign:GetAttribute("_owner")) or sf.Name
                     end)
-                    trLogAdd("[DL-P1b] sf="..sf.Name.." owner="..sfOwner.." isMine="..tostring(sfIsMine))
                     if not sfIsMine then
                         -- subfarm orang lain — hapus semua Model di dalamnya
                         local p1bCount = 0
                         for _, obj in ipairs(sf:GetDescendants()) do
-                            -- v10.184: destroy Model saja (lebih simpel, aman, tidak ada nil parent error)
                             if not obj or not obj.Parent then continue end
-                            local shouldDestroy = false
                             if obj:IsA("Model") and not isElephant(obj) then
-                                shouldDestroy = true
-                            end
-                            if shouldDestroy then
                                 pcall(function() obj:Destroy() end)
                                 petDel = petDel + 1
                                 p1bCount = p1bCount + 1
                             end
                         end
-                        trLogAdd("[DL-P1b] destroy "..p1bCount.." obj di sf orang lain")
+                        if p1bCount > 0 then
+                            trLogAdd("[DL-P1b] destroy "..p1bCount.." @ sf("..sfOwner..")")
+                        end
                     end
                 end
-                trLogAdd("[DL-P1b] selesai, total destroy="..petDel)
+                trLogAdd("[DL-P1b] selesai total="..petDel)
             end
 
             -- Pass 2: fallback — destroy sisa Model bukan milik sendiri yang lolos pass 1
@@ -4993,36 +4989,21 @@ do
                     end
                 end
             end
+            local p2DestroyCount = 0
             for _, obj in ipairs(toDestroy) do
                 if obj and obj.Parent then
-                    -- LOG: catat apa yang di-destroy (max 8 entry)
-                    if petDel < 8 then
-                        trLogAdd("[DL-P2] destroy "..obj.ClassName.."/"..obj.Name:sub(1,20).." @ "..(obj.Parent and obj.Parent:GetFullName():sub(1,50) or "?"))
+                    -- v10.195: WARN kalau UUID kita masuk destroy path
+                    if myPetUUIDs[obj.Name] then
+                        trLogAdd("[DL-WARN!!] PetMover KITA ke-destroy P2: "..obj.Name:sub(1,36))
+                    else
+                        p2DestroyCount = p2DestroyCount + 1
                     end
                     pcall(function() obj:Destroy() end)
                     petDel = petDel + 1
                 end
             end
-            -- LOG: debug subfarm orang lain — sample 3 PetsPhysical subfarm yang di-skip
-            do
-                local skipSample = 0
-                for _, obj in ipairs(workspace:GetDescendants()) do
-                    if skipSample >= 3 then break end
-                    if obj:IsA("Folder") and obj.Name == "PetsPhysical" and obj ~= sharedPetsPhysical then
-                        local inMineDbg = false
-                        for sf in pairs(mySubfarms) do
-                            if obj:IsDescendantOf(sf) then inMineDbg = true; break end
-                        end
-                        local childCount = 0; pcall(function() childCount = #obj:GetChildren() end)
-                        trLogAdd("[DL-P2-DBG] PetsPhysical @ "..obj:GetFullName():sub(1,60).." inMine="..tostring(inMineDbg).." children="..childCount)
-                        skipSample = skipSample + 1
-                    end
-                end
-                -- juga log berapa subfarms terdeteksi
-                local sfCount = 0; for _ in pairs(mySubfarms) do sfCount = sfCount + 1 end
-                if sfCount == 0 then
-                    trLogAdd("[DL-P2-DBG] mySubfarms KOSONG — Pass 2 mungkin skip semua")
-                end
+            if p2DestroyCount > 0 then
+                trLogAdd("[DL-P2] destroy "..p2DestroyCount.." PetMover luar")
             end
 
             -- Pass 3: DINONAKTIFKAN — jangan hapus FX di subfarm sendiri,
@@ -5061,29 +5042,15 @@ do
                     local inMyArea = myPetUUIDs[petMover.Name] == true
                     -- v10.186: log PetMover yang di-skip (inMyArea) untuk debug
                     if inMyArea then
-                        local cls = obj.ClassName
-                        if (cls=="AnimationController" or cls=="Animator") and fxDel < 5 then
-                            -- v10.188: safe access PrimaryPart (petMover mungkin Part bukan Model)
-                            local posStr = "?"
-                            pcall(function()
-                                local pp = petMover:FindFirstChildWhichIsA("BasePart")
-                                if pp then posStr = "("..math.floor(pp.Position.X)..","..math.floor(pp.Position.Z)..")" end
-                            end)
-                            trLogAdd("[DL-P4-KEEP] "..petMover.Name:sub(1,20).." pos="..posStr.." AMAN")
-                        end
+                        -- pet kita — skip, tidak perlu log spam
                     else
                         local cls = obj.ClassName
                         if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
                            or cls=="PointLight" or cls=="SpotLight"
                            or cls=="AnimationController" or cls=="Animator" then
-                            if fxDel < 3 then
-                                -- v10.188: safe access PrimaryPart (petMover mungkin Part bukan Model)
-                                local posStr = "?"
-                                pcall(function()
-                                    local pp = petMover:FindFirstChildWhichIsA("BasePart")
-                                    if pp then posStr = "("..math.floor(pp.Position.X)..","..math.floor(pp.Position.Z)..")" end
-                                end)
-                                trLogAdd("[DL-P4-DEL] "..petMover.Name:sub(1,20).." pos="..posStr.." luar area")
+                            -- v10.195: WARN kalau UUID kita masuk DEL path
+                            if myPetUUIDs[petMover.Name] then
+                                trLogAdd("[DL-WARN!!] PetMover KITA ke-DEL P4: "..petMover.Name:sub(1,36))
                             end
                             pcall(function() obj:Destroy() end)
                             fxDel = fxDel + 1
@@ -5192,8 +5159,8 @@ do
                 LoadingCamPart=true, TradeworldCamPart=true,
             }
             if mySubfarmCount > 0 then
+                local p5Del, p5Skip = 0, 0
                 for _, obj in ipairs(workspace:GetChildren()) do
-                    -- Pass 5: HANYA destroy kalau nama ada di allowlist FX yang diketahui
                     if wsP5Allowlist[obj.Name] then
                         local cls = obj.ClassName
                         if cls == "Model" or cls == "Part" or cls == "MeshPart"
@@ -5206,10 +5173,8 @@ do
                                     if obj:IsA("BasePart") then
                                         pos = obj.Position
                                     else
-                                        -- Model: ambil PrimaryPart atau child pertama
                                         local pp = obj.PrimaryPart
-                                        if pp then
-                                            pos = pp.Position
+                                        if pp then pos = pp.Position
                                         else
                                             for _, c in ipairs(obj:GetChildren()) do
                                                 if c:IsA("BasePart") then pos = c.Position; break end
@@ -5225,15 +5190,17 @@ do
                                 end)
                             end
                             if inMyArea then
-                                -- FX di area kita — skip, jangan destroy
+                                p5Skip = p5Skip + 1
                             else
-                                trLogAdd("[DL-P5] destroy "..cls.."/"..obj.Name:sub(1,30))
                                 pcall(function() obj:Destroy() end)
                                 fxDel = fxDel + 1
+                                p5Del = p5Del + 1
                             end
                         end
                     end
                 end
+                -- v10.195: summary saja, tidak spam per-item
+                trLogAdd("[DL-P5] destroy="..p5Del.." skip(mine)="..p5Skip)
             else
                 trLogAdd("[DL] Pass 5 SKIP — mySubfarms kosong")
             end
@@ -5303,7 +5270,12 @@ do
                                 pcall(function()
                                     if newObj and newObj.Parent then
                                         if not myPetUUIDs[newObj.Name] then
-                                            trLogAdd("[DL-P6PP] destroy PetMover luar area: "..newObj.Name:sub(1,30))
+                                            -- v10.195: WARN kalau UUID kita masuk destroy
+                                            if myPetUUIDs[newObj.Name] ~= nil then
+                                                trLogAdd("[DL-WARN!!] PetMover KITA ke-destroy P6PP: "..newObj.Name:sub(1,36))
+                                            else
+                                                trLogAdd("[DL-P6PP] destroy: "..newObj.Name:sub(1,36))
+                                            end
                                             newObj:Destroy()
                                         end
                                     end
