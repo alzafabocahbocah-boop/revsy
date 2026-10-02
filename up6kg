@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.141"
+local VERSION = "up6kg-v10.142"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -4503,6 +4503,23 @@ do
                 return #p > 0 and ("("..table.concat(p,",")..") ") or ""
             end
 
+            -- log folder PetsPhysical yang ketemu (buat debug elephant)
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj.ClassName == "Folder" and obj.Name == "PetsPhysical" then
+                    local inMine = false
+                    for sf in pairs(mySubfarms) do
+                        if obj:IsDescendantOf(sf) then inMine = true; break end
+                    end
+                    local tag = inMine and "[MINE]" or "[OTHERS]"
+                    trLogAdd("📁 PetsPhysical "..tag.." parent="..tostring(obj.Parent and obj.Parent.Name)
+                        .." children="..#obj:GetChildren())
+                    for _, child in ipairs(obj:GetChildren()) do
+                        local cAttrs = getAttrs(child)
+                        trLogAdd("  ↳ "..child.ClassName.." \""..child.Name:sub(1,30).."\" "..cAttrs)
+                    end
+                end
+            end
+
             -- scan semua Model di workspace (bukan subfarm sendiri, bukan subfarm itu sendiri)
             for _, obj in ipairs(workspace:GetDescendants()) do
                 if obj:IsA("Model") and obj.Parent ~= workspace then
@@ -4552,7 +4569,7 @@ do
     local function dlRun()
         local plrName = game:GetService("Players").LocalPlayer.Name
         local Players = game:GetService("Players")
-        local petDel, animStop = 0, 0
+        local petDel, folderDel, skipEl = 0, 0, 0
         pcall(function()
             local farm = workspace:FindFirstChild("Farm")
             -- build set subfarm milik sendiri
@@ -4564,29 +4581,87 @@ do
                     if owner == plrName then mySubfarms[sf] = true end
                 end
             end
-            -- build set karakter semua player (skip destroy karakter orang)
+            -- build set karakter semua player
             local playerChars = {}
             for _, p in ipairs(Players:GetPlayers()) do
                 if p.Character then playerChars[p.Character] = true end
             end
 
-            -- 1. collect + destroy semua Model yang bukan milik sendiri dan bukan karakter player
-            local toDestroy = {}
+            -- helper: cek apakah folder/model mengandung Elephant (nama model atau attribute)
+            local function hasElephant(container)
+                for _, child in ipairs(container:GetChildren()) do
+                    local n = child.Name:lower()
+                    if n:find("elephant") then return true end
+                    -- cek attribute _petType / petType / type
+                    local ok, val = pcall(function()
+                        return child:GetAttribute("_petType") or child:GetAttribute("petType")
+                            or child:GetAttribute("type") or child:GetAttribute("PetType")
+                    end)
+                    if ok and val and tostring(val):lower():find("elephant") then return true end
+                end
+                return false
+            end
+
+            -- Pass 1: destroy folder PetsPhysical langsung (kecuali yang ada Elephant)
             for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") and obj.Parent ~= workspace then
-                    -- skip subfarm sendiri
+                if obj.ClassName == "Folder" and obj.Name == "PetsPhysical" then
+                    -- skip kalau di subfarm sendiri
                     local inMine = false
                     for sf in pairs(mySubfarms) do
                         if obj:IsDescendantOf(sf) then inMine = true; break end
                     end
-                    -- skip kalau itu adalah/di dalam karakter player
+                    if not inMine then
+                        if hasElephant(obj) then
+                            -- ada elephant: destroy per-model, skip elephant
+                            for _, model in ipairs(obj:GetChildren()) do
+                                local mn = model.Name:lower()
+                                local isEl = mn:find("elephant")
+                                if not isEl then
+                                    local ok2, v2 = pcall(function()
+                                        return model:GetAttribute("_petType") or model:GetAttribute("petType")
+                                            or model:GetAttribute("type") or model:GetAttribute("PetType")
+                                    end)
+                                    if ok2 and v2 and tostring(v2):lower():find("elephant") then isEl = true end
+                                end
+                                if isEl then
+                                    skipEl = skipEl + 1
+                                else
+                                    pcall(function() model:Destroy() end)
+                                    petDel = petDel + 1
+                                end
+                            end
+                        else
+                            -- tidak ada elephant: destroy folder sekaligus
+                            pcall(function() obj:Destroy() end)
+                            folderDel = folderDel + 1
+                        end
+                    end
+                end
+            end
+
+            -- Pass 2: fallback — destroy sisa Model bukan milik sendiri yang lolos pass 1
+            local toDestroy = {}
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") and obj.Parent ~= workspace then
+                    local inMine = false
+                    for sf in pairs(mySubfarms) do
+                        if obj:IsDescendantOf(sf) then inMine = true; break end
+                    end
                     local isChar = false
                     for char in pairs(playerChars) do
                         if obj == char or obj:IsDescendantOf(char) then isChar = true; break end
                     end
-                    -- skip kalau langsung child Farm (subfarm itu sendiri)
                     local isFarmChild = farm and obj.Parent == farm
-                    if not inMine and not isChar and not isFarmChild then
+                    -- skip elephant
+                    local isEl = obj.Name:lower():find("elephant")
+                    if not isEl then
+                        local ok2, v2 = pcall(function()
+                            return obj:GetAttribute("_petType") or obj:GetAttribute("petType")
+                                or obj:GetAttribute("type") or obj:GetAttribute("PetType")
+                        end)
+                        if ok2 and v2 and tostring(v2):lower():find("elephant") then isEl = true end
+                    end
+                    if not inMine and not isChar and not isFarmChild and not isEl then
                         toDestroy[#toDestroy+1] = obj
                     end
                 end
@@ -4598,40 +4673,31 @@ do
                 end
             end
 
-            -- 2. stop animasi + hapus FX di SEMUA workspace (termasuk subfarm sendiri)
-            --    hanya skip karakter player
-            --    Approach: destroy AnimationController + disable Motor6D (GetPlayingAnimationTracks()
-            --    tidak bisa return tracks dari client lain)
+            -- Pass 3: hapus FX visual di subfarm sendiri (Motor6D/AnimCtrl skip — server-owned)
             for _, obj in ipairs(workspace:GetDescendants()) do
+                local inMine = false
+                for sf in pairs(mySubfarms) do
+                    if obj:IsDescendantOf(sf) then inMine = true; break end
+                end
                 local isChar = false
                 for char in pairs(playerChars) do
                     if obj:IsDescendantOf(char) then isChar = true; break end
                 end
-                if not isChar then
+                if inMine and not isChar then
                     local cls = obj.ClassName
-                    -- stop animasi: destroy AnimationController & Animator, disable Motor6D
-                    if cls == "AnimationController" or cls == "Animator" then
+                    if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
+                       or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui" then
                         pcall(function() obj:Destroy() end)
-                        animStop = animStop + 1
-                    elseif cls == "Motor6D" then
-                        -- disable joint → skeleton beku, animasi stop visually
-                        pcall(function()
-                            obj.Enabled = false
-                            obj.CurrentAngle = 0
-                        end)
-                        animStop = animStop + 1
-                    else
-                        -- hapus FX visual
-                        if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
-                           or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui" then
-                            pcall(function() obj:Destroy() end)
-                        end
                     end
                 end
             end
         end)
-        if petDel > 0 or animStop > 0 then
-            trLogAdd("[DL] destroy "..petDel.." mdl, stop "..animStop.." anim track")
+        local parts = {}
+        if folderDel > 0 then parts[#parts+1] = "folder="..folderDel end
+        if petDel > 0 then parts[#parts+1] = "mdl="..petDel end
+        if skipEl > 0 then parts[#parts+1] = "elephant_skip="..skipEl end
+        if #parts > 0 then
+            trLogAdd("[DL] destroy "..table.concat(parts,", "))
         end
     end
 
