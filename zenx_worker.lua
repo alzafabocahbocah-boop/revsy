@@ -5614,7 +5614,7 @@ local function run(cfg)
                     -- GAK baca cfg.stagger_sec sama sekali. Preset khusus (mis. newmarket-arceus,
                     -- stagger_sec=45) jadi gak kepake di jalur "antrian" ini, selalu 30 detik apapun
                     -- config-nya. Sekarang baca cfg.stagger_sec (fallback 30 kalau emang gak di-set).
-                    local _staggerAntrian = cfg.stagger_sec or 30
+                    local _staggerAntrian = cfg.stagger_sec or (tostring(cfg.script_label or ""):find("MARKET") and 90 or 30)
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap %ds)"):format(#perluTembak, jeda_client(cfg, _staggerAntrian)))
                     for idx, pkg in ipairs(perluTembak) do
                         if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
