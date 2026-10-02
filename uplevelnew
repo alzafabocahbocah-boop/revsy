@@ -3437,14 +3437,21 @@ do
     local sendBtn=mk("TextButton",{Size=UDim2.new(1,0,0,40),BackgroundColor3=C.accent,Text="KIRIM SEKARANG",Font=FONT_B,TextSize=13,TextColor3=Color3.new(1,1,1),LayoutOrder=10,Parent=tradeScroll}); corner(sendBtn,10)
     sendBtn.MouseButton1Click:Connect(function() jalankan(TR.mode~="off" and TR.mode or "gift") end)
 
-    -- ===================== DESTROY LAG (pet orang lain + partikel) =====================
+    -- ===================== DESTROY LAG (pet orang lain + animasi kebun) =====================
     trHeader("DESTROY LAG",11)
 
-    -- Toggle button
     local _dlOn = false
+    local _dlListeners = {}
+    local _dlListenerConns = {}
+    local function dlCleanupListeners()
+        for _, conn in ipairs(_dlListenerConns) do pcall(function() conn:Disconnect() end) end
+        _dlListenerConns = {}; _dlListeners = {}
+    end
+
+    -- Toggle button
     local dlBtn = mk("TextButton",{
         Size=UDim2.new(1,0,0,38), BackgroundColor3=C.card,
-        Text="\u{25CB}  Destroy Pet & Partikel Orang Lain — OFF",
+        Text="\u{25CB}  Destroy Pet & Animasi Kebun Orang — OFF",
         Font=FONT_B, TextSize=12, TextColor3=C.textMute,
         LayoutOrder=12, Parent=tradeScroll
     }); corner(dlBtn,9); stroke(dlBtn,C.border,1.5)
@@ -3465,20 +3472,18 @@ do
     local dlLogIdx = 0
     local function dlLog(s)
         dlLogIdx = dlLogIdx + 1
-        local row = mk("TextLabel",{
+        mk("TextLabel",{
             Size=UDim2.new(1,-4,0,16), BackgroundTransparency=1,
             Text="["..os.date("%H:%M:%S").."] "..tostring(s),
             Font=Enum.Font.Code, TextSize=10, TextColor3=Color3.fromRGB(180,230,180),
             TextXAlignment=Enum.TextXAlignment.Left, LayoutOrder=dlLogIdx,
             Parent=dlLogScroll
         })
-        -- auto scroll ke bawah
         task.defer(function()
             pcall(function()
                 dlLogScroll.CanvasPosition = Vector2.new(0, math.max(0, dlLogScroll.AbsoluteCanvasSize.Y - dlLogScroll.AbsoluteSize.Y))
             end)
         end)
-        -- batas 60 baris
         local kids = dlLogScroll:GetChildren()
         if #kids > 62 then
             for _, k in ipairs(kids) do
@@ -3487,101 +3492,247 @@ do
         end
     end
 
-    -- Fungsi destroy partikel dari sebuah instance (rekursif)
-    local function destroyParticlesOf(obj)
-        pcall(function()
+    -- v10.199: P1b — destroy Models di subfarm orang lain, sekali saat ON
+    local function dlRunOnce(plrName, farm, mySubfarms)
+        if not farm then return end
+        local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
+        if mySubfarmCount == 0 then dlLog("[DL-P1b] SKIP — mySubfarms kosong"); return end
+        local petDel = 0
+        local function isElephant2(obj)
+            local n = obj.Name:lower()
+            if n:find("elephant") then return true end
+            local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
+            if ok0 and v0 and tostring(v0):lower():find("elephant") then return true end
+            local ok1, v1 = pcall(function()
+                return obj:GetAttribute("_petType") or obj:GetAttribute("petType")
+                    or obj:GetAttribute("type") or obj:GetAttribute("PetType")
+            end)
+            if ok1 and v1 and tostring(v1):lower():find("elephant") then return true end
             for _, d in ipairs(obj:GetDescendants()) do
-                if d:IsA("ParticleEmitter") or d:IsA("Trail")
-                   or d:IsA("Beam") or d:IsA("PointLight") or d:IsA("SpotLight")
-                   or d:IsA("SelectionBox") or d:IsA("BillboardGui") then
-                    pcall(function() d:Destroy() end)
-                end
+                if d.Name:lower():find("elephant") then return true end
+                local ok2, v2 = pcall(function() return d:GetAttribute("f") end)
+                if ok2 and v2 and tostring(v2):lower():find("elephant") then return true end
             end
-        end)
+            return false
+        end
+        for _, sf in ipairs(farm:GetChildren()) do
+            local sfIsMine = false
+            pcall(function()
+                if mySubfarms[sf] then sfIsMine = true; return end
+                local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                local owner = sign and sign:GetAttribute("_owner")
+                if owner == plrName then sfIsMine = true end
+            end)
+            if not sfIsMine then
+                local sfOwner = "?"
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                    sfOwner = (sign and sign:GetAttribute("_owner")) or sf.Name
+                end)
+                local p1bCount = 0
+                for _, obj in ipairs(sf:GetDescendants()) do
+                    if not obj or not obj.Parent then continue end
+                    if obj:IsA("Model") and not isElephant2(obj) then
+                        pcall(function() obj:Destroy() end)
+                        petDel = petDel + 1; p1bCount = p1bCount + 1
+                    end
+                end
+                if p1bCount > 0 then dlLog("[DL-P1b] destroy "..p1bCount.." @ sf("..sfOwner..")") end
+            end
+        end
+        dlLog("[DL-P1b] selesai total="..petDel)
     end
 
-    -- Fungsi satu putaran destroy
-    local function dlRun()
-        local plrName = pcall(function() return game:GetService("Players").LocalPlayer.Name end) and game:GetService("Players").LocalPlayer.Name or ""
-        local myUuids = {}
-        -- collect uuid pet sendiri dari modelByUuid (global jika ada)
-        if type(_G.ZenxSupportUuids) == "table" then
-            for u in pairs(_G.ZenxSupportUuids) do myUuids[tostring(u)] = true end
+    -- v10.199: P6PP — listener realtime PetsPhysical, wajib UUID
+    local function dlSetupP6PP(myPetUUIDs, myUUIDCount, sharedPP)
+        if myUUIDCount == 0 then
+            dlLog("[DL-P6PP] BATAL — UUID kosong! coba lagi setelah container ready")
+            return
         end
-        -- scan workspace: Model bernama {uuid} yang BUKAN milik sendiri
-        local petDel, partDel = 0, 0
-        pcall(function()
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") then
-                    local nm = tostring(obj.Name)
-                    -- pet model: nama {xxxxxxxx-xxxx-...} (36 karakter braced)
-                    if nm:sub(1,1) == "{" and #nm >= 30 then
-                        if not myUuids[nm] then
-                            -- hapus partikel dulu sebelum destroy model
-                            local pBefore = partDel
-                            destroyParticlesOf(obj)
-                            -- estimasi partikel (gak bisa hitung setelah destroy, jadi log sebelum)
-                            pcall(function()
-                                for _, d in ipairs(obj:GetDescendants()) do
-                                    if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
-                                        partDel = partDel + 1
+        if not sharedPP then dlLog("[DL-P6PP] PetsPhysical tidak ada"); return end
+        local function isElephantPP(obj)
+            local n = obj.Name:lower()
+            if n:find("elephant") then return true end
+            local ok0, v0 = pcall(function() return obj:GetAttribute("f") end)
+            if ok0 and v0 and tostring(v0):lower():find("elephant") then return true end
+            return false
+        end
+        local ppConn = sharedPP.ChildAdded:Connect(function(newObj)
+            if not _dlOn then return end
+            if newObj:IsA("Model") and not myPetUUIDs[newObj.Name] and not isElephantPP(newObj) then
+                task.wait(0.08)
+                pcall(function()
+                    if newObj and newObj.Parent and not myPetUUIDs[newObj.Name] then
+                        dlLog("[DL-P6PP] destroy: "..newObj.Name:sub(1,36))
+                        newObj:Destroy()
+                    end
+                end)
+            end
+        end)
+        table.insert(_dlListenerConns, ppConn)
+        dlLog("[DL-P6PP] listener aktif, UUID="..myUUIDCount)
+    end
+
+    -- v10.199: P5 — skill FX allowlist di workspace root, tiap 2s
+    local function dlRun()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        local fxDel = 0
+        local ok, err = pcall(function()
+            local farm = workspace:FindFirstChild("Farm")
+            local mySubfarms = {}
+            local myBBmin, myBBmax = nil, nil
+            if farm then
+                for _, sf in ipairs(farm:GetChildren()) do
+                    local isMine = false
+                    pcall(function()
+                        local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                        local owner = sign and sign:GetAttribute("_owner")
+                        if owner == plrName then isMine = true end
+                    end)
+                    if isMine then
+                        mySubfarms[sf] = true
+                        pcall(function()
+                            for _, part in ipairs(sf:GetDescendants()) do
+                                if part:IsA("BasePart") then
+                                    local pos = part.Position
+                                    if myBBmin == nil then
+                                        myBBmin = Vector3.new(pos.X, pos.Y, pos.Z)
+                                        myBBmax = Vector3.new(pos.X, pos.Y, pos.Z)
+                                    else
+                                        myBBmin = Vector3.new(math.min(myBBmin.X,pos.X), math.min(myBBmin.Y,pos.Y), math.min(myBBmin.Z,pos.Z))
+                                        myBBmax = Vector3.new(math.max(myBBmax.X,pos.X), math.max(myBBmax.Y,pos.Y), math.max(myBBmax.Z,pos.Z))
                                     end
                                 end
-                            end)
-                            pcall(function() obj:Destroy() end)
-                            petDel = petDel + 1
-                        end
+                            end
+                        end)
                     end
                 end
             end
-        end)
-        -- destroy partikel lepas di workspace (bukan dalam pet model, misal efek tanah/kebun)
-        pcall(function()
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if (obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam"))
-                   and not obj:IsDescendantOf(game:GetService("Players").LocalPlayer.Character or Instance.new("Folder")) then
-                    pcall(function() obj:Destroy() end); partDel = partDel + 1
+            local bbMargin = 60
+            if myBBmin then
+                myBBmin = myBBmin - Vector3.new(bbMargin, 100, bbMargin)
+                myBBmax = myBBmax + Vector3.new(bbMargin, 100, bbMargin)
+            end
+            local mySubfarmCount = 0; for _ in pairs(mySubfarms) do mySubfarmCount = mySubfarmCount + 1 end
+            local wsP5Allowlist = { WindBlastTemplate=true, SpottedEffect=true, Puddle=true }
+            if mySubfarmCount > 0 then
+                local p5Del, p5Skip = 0, 0
+                for _, obj in ipairs(workspace:GetChildren()) do
+                    if wsP5Allowlist[obj.Name] then
+                        local cls = obj.ClassName
+                        if cls == "Model" or cls == "Part" or cls == "MeshPart"
+                           or cls == "UnionOperation" or cls == "SpecialMesh" then
+                            local inMyArea = false
+                            if myBBmin and myBBmax then
+                                pcall(function()
+                                    local pos = nil
+                                    if obj:IsA("BasePart") then pos = obj.Position
+                                    else
+                                        local pp = obj.PrimaryPart
+                                        if pp then pos = pp.Position
+                                        else
+                                            for _, c in ipairs(obj:GetChildren()) do
+                                                if c:IsA("BasePart") then pos = c.Position; break end
+                                            end
+                                        end
+                                    end
+                                    if pos then
+                                        if pos.X >= myBBmin.X and pos.X <= myBBmax.X
+                                           and pos.Z >= myBBmin.Z and pos.Z <= myBBmax.Z then
+                                            inMyArea = true
+                                        end
+                                    end
+                                end)
+                            end
+                            if inMyArea then p5Skip = p5Skip + 1
+                            else pcall(function() obj:Destroy() end); fxDel = fxDel + 1; p5Del = p5Del + 1 end
+                        end
+                    end
                 end
+                if p5Del > 0 then dlLog("[DL-P5] destroy="..p5Del.." skip(mine)="..p5Skip) end
+            else
+                dlLog("[DL-P5] SKIP — mySubfarms kosong")
             end
         end)
-        if petDel > 0 or partDel > 0 then
-            dlLog("Destroy: "..petDel.." pet model, "..partDel.." partikel/efek")
-        end
-        return petDel, partDel
+        if not ok then dlLog("[DL] ERROR: "..(tostring(err):sub(1,120))) end
+        if fxDel > 0 then dlLog("[DL] fx="..fxDel) end
     end
 
-    -- Toggle logic + loop
-    local dlConn
+    -- v10.199: dlStartup — P1b sekali + setup P6PP
+    local function dlStartup()
+        local plrName = game:GetService("Players").LocalPlayer.Name
+        local farm = workspace:FindFirstChild("Farm")
+        local mySubfarms = {}
+        if farm then
+            for _, sf in ipairs(farm:GetChildren()) do
+                local isMine = false
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign", true)
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner == plrName then isMine = true end
+                end)
+                if isMine then mySubfarms[sf] = true end
+            end
+        end
+        task.spawn(function() pcall(dlRunOnce, plrName, farm, mySubfarms) end)
+        task.spawn(function()
+            local myPetUUIDs = {}; local myUUIDCount = 0
+            pcall(function()
+                local c = ambilContainer()
+                if type(c) == "table" then
+                    for uuid, e in pairs(c) do
+                        if type(e) == "table" then
+                            local raw = tostring(uuid):gsub("[{}]","")
+                            if #raw > 20 then
+                                myPetUUIDs[raw] = true
+                                myPetUUIDs["{"..raw.."}"] = true
+                                myUUIDCount = myUUIDCount + 1
+                            end
+                        end
+                    end
+                end
+            end)
+            local sharedPP = workspace:FindFirstChild("PetsPhysical")
+            dlSetupP6PP(myPetUUIDs, myUUIDCount, sharedPP)
+        end)
+        dlLog("[DL] ON — P1b sekali, P5 tiap 2s, P6PP listener")
+    end
+
+    -- Toggle logic
     dlBtn.MouseButton1Click:Connect(function()
         _dlOn = not _dlOn
         if _dlOn then
-            dlBtn.Text = "\u{25CF}  Destroy Pet & Partikel Orang Lain — ON"
+            dlBtn.Text = "\u{25CF}  Destroy Pet & Animasi Kebun Orang — ON"
             dlBtn.TextColor3 = Color3.fromRGB(100,230,100)
             dlBtn.BackgroundColor3 = Color3.fromRGB(20,50,20)
             stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
-            dlLog("ON — mulai scan tiap 5s")
-            -- jalankan sekali langsung
+            dlCleanupListeners()
+            dlStartup()
             task.spawn(function()
-                local p, ef = dlRun()
-                if p == 0 and ef == 0 then dlLog("Scan pertama: tidak ada pet/partikel orang lain") end
-            end)
-            -- loop
-            if dlConn then dlConn:Disconnect() end
-            dlConn = nil
-            task.spawn(function()
-                while _dlOn do
-                    task.wait(5)
-                    if not _dlOn then break end
-                    pcall(dlRun)
-                end
+                while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
             end)
         else
-            dlBtn.Text = "\u{25CB}  Destroy Pet & Partikel Orang Lain — OFF"
+            dlBtn.Text = "\u{25CB}  Destroy Pet & Animasi Kebun Orang — OFF"
             dlBtn.TextColor3 = C.textMute
             dlBtn.BackgroundColor3 = C.card
             stroke(dlBtn, C.border, 1.5)
-            dlLog("OFF")
+            dlCleanupListeners()
+            dlLog("[DL] OFF")
         end
+    end)
+
+    -- v10.199: ALWAYS ON — auto-start saat script load
+    task.spawn(function()
+        task.wait(3)
+        _dlOn = true
+        dlBtn.Text = "\u{25CF}  Destroy Pet & Animasi Kebun Orang — ON"
+        dlBtn.TextColor3 = Color3.fromRGB(100,230,100)
+        dlBtn.BackgroundColor3 = Color3.fromRGB(20,50,20)
+        stroke(dlBtn, Color3.fromRGB(80,200,80), 1.5)
+        dlStartup()
+        task.spawn(function()
+            while _dlOn do task.wait(2); if _dlOn then pcall(dlRun) end end
+        end)
     end)
 
     tradeRefresh=function()
