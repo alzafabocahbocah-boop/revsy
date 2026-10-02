@@ -4422,38 +4422,48 @@ do
         trLogAdd("=== SCAN GARDEN START ===")
         local totalPet, totalFx = 0, 0
         pcall(function()
+            -- build set subfarm milik sendiri (untuk skip)
+            local mySubfarms = {}
             local farm = workspace:FindFirstChild("Farm")
-            if not farm then trLogAdd("Farm tidak ditemukan di workspace"); return end
-            for _, subfarm in ipairs(farm:GetChildren()) do
-                local sign = subfarm:FindFirstChild("Sign")
-                local owner = sign and sign:GetAttribute("_owner")
-                if owner and owner ~= plrName then
-                    trLogAdd("-- Subfarm: "..tostring(subfarm.Name).." (owner="..owner..")")
-                    -- scan pet model {uuid} di seluruh subfarm
-                    for _, obj in ipairs(subfarm:GetDescendants()) do
-                        if obj:IsA("Model") and tostring(obj.Name):sub(1,1) == "{" then
-                            totalPet = totalPet + 1
-                            local fxList = {}
-                            for _, d in ipairs(obj:GetDescendants()) do
-                                local cls = d.ClassName
-                                if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
-                                   or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui"
-                                   or cls=="SpecialMesh" or cls=="SelectionBox" then
-                                    fxList[#fxList+1] = cls.."("..tostring(d.Name)..")"
-                                    totalFx = totalFx + 1
-                                end
-                            end
-                            local fxStr = #fxList > 0 and table.concat(fxList,", ") or "no fx"
-                            trLogAdd("  PET "..tostring(obj.Name):sub(1,14).." | "..fxStr)
-                        end
+            if farm then
+                for _, sf in ipairs(farm:GetChildren()) do
+                    local sign = sf:FindFirstChild("Sign")
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner == plrName then mySubfarms[sf] = true end
+                end
+                trLogAdd("Farm ditemukan, subfarm orang lain:")
+                for _, sf in ipairs(farm:GetChildren()) do
+                    local sign = sf:FindFirstChild("Sign")
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner and owner ~= plrName then
+                        trLogAdd("  subfarm owner="..owner)
                     end
-                    -- scan Plants_Physical
-                    for _, f in ipairs(subfarm:GetDescendants()) do
-                        if f.Name == "Plants_Physical" then
-                            local pc = 0
-                            for _, c in ipairs(f:GetChildren()) do if c:IsA("Model") then pc=pc+1 end end
-                            if pc > 0 then trLogAdd("  Plants_Physical: "..pc.." pohon/tanaman") end
+                end
+            end
+            -- scan SELURUH workspace untuk {uuid} model
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") and tostring(obj.Name):sub(1,1) == "{" then
+                    -- skip kalau ada di subfarm sendiri
+                    local inMine = false
+                    for sf in pairs(mySubfarms) do
+                        if obj:IsDescendantOf(sf) then inMine = true; break end
+                    end
+                    if not inMine then
+                        totalPet = totalPet + 1
+                        local fxList = {}
+                        for _, d in ipairs(obj:GetDescendants()) do
+                            local cls = d.ClassName
+                            if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
+                               or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui"
+                               or cls=="SpecialMesh" or cls=="SelectionBox" or cls=="Sound" then
+                                fxList[#fxList+1] = cls.."("..tostring(d.Name)..")"
+                                totalFx = totalFx + 1
+                            end
                         end
+                        -- log parent path biar tau posisi di workspace
+                        local parentPath = tostring(obj.Parent and obj.Parent.Name or "?")
+                        local fxStr = #fxList > 0 and table.concat(fxList,", ") or "no fx"
+                        trLogAdd("  PET "..tostring(obj.Name):sub(1,14).." @"..parentPath.." | "..fxStr)
                     end
                 end
             end
