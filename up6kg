@@ -4,7 +4,7 @@
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
 
-local VERSION = "up6kg-v10.196"
+local VERSION = "up6kg-v10.197"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2750,6 +2750,7 @@ makeSideBtn("AUTO KG", 14)
 makeSideBtn("MISC", 56)
 makeSideBtn("TRADE", 98)
 makeSideBtn("OPER ELE", 140)
+makeSideBtn("TEST DL", 182)
 
 -- ============ AREA KONTEN ============
 local content = mk("Frame", {
@@ -2783,11 +2784,21 @@ local operScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), Backgrou
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = operContent })
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = operScroll })
 
+local testDLContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(testDLContent, 14)
+local testDLScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = testDLContent })
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = testDLScroll })
+
 showSideFn = function(name)
-    content.Visible     = (name == "AUTO KG")
-    miscContent.Visible = (name == "MISC")
-    tradeContent.Visible = (name == "TRADE")
-    operContent.Visible = (name == "OPER ELE")
+    content.Visible       = (name == "AUTO KG")
+    miscContent.Visible   = (name == "MISC")
+    tradeContent.Visible  = (name == "TRADE")
+    operContent.Visible   = (name == "OPER ELE")
+    testDLContent.Visible = (name == "TEST DL")
 end
 
 -- ---- KONTEN AUTO KG (kanan) = CONFIG ----
@@ -5342,6 +5353,296 @@ do
             dlCleanupListeners()  -- v10.170: matikan listener realtime saat DL OFF
             trLogAdd("[DL] OFF")
         end
+    end)
+
+    -- ============ TAB TEST DL ============
+    -- helper: build shared context (farm, mySubfarms, myPetUUIDs) untuk test pass
+    local function dlBuildCtx()
+        local ctx = {}
+        ctx.plrName = game:GetService("Players").LocalPlayer.Name
+        ctx.Players = game:GetService("Players")
+        ctx.farm = workspace:FindFirstChild("Farm")
+        ctx.mySubfarms = {}
+        ctx.mySubfarmPaths = {}
+        ctx.sharedPP = workspace:FindFirstChild("PetsPhysical")
+        -- build mySubfarms
+        if ctx.farm then
+            for _, sf in ipairs(ctx.farm:GetChildren()) do
+                local isMine = false
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign",true)
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner == ctx.plrName then isMine = true end
+                end)
+                if isMine then
+                    ctx.mySubfarms[sf] = true
+                    ctx.mySubfarmPaths[sf:GetFullName()] = true
+                end
+            end
+        end
+        -- build myPetUUIDs dari _kgContainer
+        ctx.myPetUUIDs = {}
+        ctx.myUUIDCount = 0
+        pcall(function()
+            local c = ambilContainer()
+            if type(c) == "table" then
+                for uuid, e in pairs(c) do
+                    if type(e) == "table" then
+                        local raw = tostring(uuid):gsub("[{}]","")
+                        if #raw > 20 then
+                            ctx.myPetUUIDs[raw] = true
+                            ctx.myPetUUIDs["{"..raw.."}"] = true
+                            ctx.myUUIDCount = ctx.myUUIDCount + 1
+                        end
+                    end
+                end
+            end
+        end)
+        -- build bbox subfarm
+        ctx.myBBmin, ctx.myBBmax = nil, nil
+        for sf in pairs(ctx.mySubfarms) do
+            pcall(function()
+                for _, part in ipairs(sf:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        local p = part.Position
+                        if ctx.myBBmin == nil then
+                            ctx.myBBmin = Vector3.new(p.X,p.Y,p.Z); ctx.myBBmax = Vector3.new(p.X,p.Y,p.Z)
+                        else
+                            ctx.myBBmin = Vector3.new(math.min(ctx.myBBmin.X,p.X),math.min(ctx.myBBmin.Y,p.Y),math.min(ctx.myBBmin.Z,p.Z))
+                            ctx.myBBmax = Vector3.new(math.max(ctx.myBBmax.X,p.X),math.max(ctx.myBBmax.Y,p.Y),math.max(ctx.myBBmax.Z,p.Z))
+                        end
+                    end
+                end
+            end)
+        end
+        if ctx.myBBmin then
+            ctx.myBBmin = ctx.myBBmin - Vector3.new(60,100,60)
+            ctx.myBBmax = ctx.myBBmax + Vector3.new(60,100,60)
+        end
+        return ctx
+    end
+
+    local function isElephantTest(obj)
+        local n = obj.Name:lower()
+        if n:find("elephant") or n:find("ele") then return true end
+        pcall(function()
+            local pt = obj:GetAttribute("_petType") or obj:GetAttribute("petType")
+            if pt and tostring(pt):lower():find("elephant") then return true end
+        end)
+        return false
+    end
+
+    local function dlTestBtn(label, lo, color, fn)
+        local btn = mk("TextButton",{
+            Size=UDim2.new(1,0,0,38), BackgroundColor3=color or C.card,
+            Text=label, Font=FONT_B, TextSize=12, TextColor3=C.text,
+            LayoutOrder=lo, Parent=testDLScroll
+        }); corner(btn,9); stroke(btn,C.border,1.5)
+        btn.MouseButton1Click:Connect(function()
+            btn.Text = "⏳ running..."
+            task.spawn(function()
+                local ok,err = pcall(fn)
+                if not ok then trLogAdd("[TEST] ERROR: "..tostring(err):sub(1,80)) end
+                task.wait(1.5)
+                pcall(function() btn.Text = label end)
+            end)
+        end)
+        return btn
+    end
+
+    -- header
+    local tdlHdr = mk("Frame",{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,BorderSizePixel=0,LayoutOrder=0,Parent=testDLScroll})
+    local tdlHdrLbl = lbl(tdlHdr,"TEST DL — jalanin pass 1-1",11,C.accent); tdlHdrLbl.Font=FONT_B; tdlHdrLbl.Position=UDim2.new(0,2,0,0); tdlHdrLbl.Size=UDim2.new(1,0,1,0)
+
+    -- P1: destroy folder PetsPhysical di subfarm orang lain
+    dlTestBtn("▶ P1 — folder PetsPhysical subfarm orang lain", 1, Color3.fromRGB(30,30,20), function()
+        local ctx = dlBuildCtx()
+        local sharedPP1 = ctx.sharedPP
+        local del = 0
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.ClassName == "Folder" and obj.Name == "PetsPhysical" then
+                if obj == sharedPP1 then continue end
+                local inMine = false
+                for sf in pairs(ctx.mySubfarms) do
+                    if obj:IsDescendantOf(sf) then inMine = true; break end
+                end
+                if not inMine then
+                    trLogAdd("[TEST-P1] destroy PetsPhysical parent="..tostring(obj.Parent and obj.Parent.Name))
+                    pcall(function() obj:Destroy() end); del = del + 1
+                end
+            end
+        end
+        trLogAdd("[TEST-P1] selesai del="..del)
+    end)
+
+    -- P1b: destroy Model di subfarm orang lain
+    dlTestBtn("▶ P1b — Model di subfarm orang lain", 2, Color3.fromRGB(30,30,20), function()
+        local ctx = dlBuildCtx()
+        local del = 0
+        if ctx.farm then
+            for _, sf in ipairs(ctx.farm:GetChildren()) do
+                if ctx.mySubfarms[sf] then continue end
+                local sfOwner = "?"
+                pcall(function()
+                    local sign = sf:FindFirstChild("Sign") or sf:FindFirstChild("Sign",true)
+                    sfOwner = (sign and sign:GetAttribute("_owner")) or "?"
+                end)
+                local p1bCount = 0
+                for _, obj in ipairs(sf:GetDescendants()) do
+                    if obj:IsA("Model") and not isElephantTest(obj) then
+                        pcall(function() obj:Destroy() end)
+                        del = del + 1; p1bCount = p1bCount + 1
+                    end
+                end
+                if p1bCount > 0 then trLogAdd("[TEST-P1b] destroy "..p1bCount.." @ sf("..sfOwner..")") end
+            end
+        end
+        trLogAdd("[TEST-P1b] selesai total="..del)
+    end)
+
+    -- P2: destroy PetMover di shared PetsPhysical bukan UUID kita
+    dlTestBtn("▶ P2 — PetMover luar di workspace.PetsPhysical", 3, Color3.fromRGB(30,20,20), function()
+        local ctx = dlBuildCtx()
+        local pp = ctx.sharedPP
+        if not pp then trLogAdd("[TEST-P2] PetsPhysical tidak ada"); return end
+        local del, safe = 0, 0
+        trLogAdd("[TEST-P2] myUUID="..ctx.myUUIDCount.." PP children="..#pp:GetChildren())
+        for _, obj in ipairs(pp:GetChildren()) do
+            if obj:IsA("Model") then
+                if ctx.myPetUUIDs[obj.Name] then
+                    safe = safe + 1
+                elseif isElephantTest(obj) then
+                    safe = safe + 1
+                else
+                    trLogAdd("[TEST-P2] destroy "..obj.Name:sub(1,36))
+                    pcall(function() obj:Destroy() end); del = del + 1
+                end
+            end
+        end
+        trLogAdd("[TEST-P2] selesai del="..del.." safe="..safe)
+    end)
+
+    -- P4: hapus FX di PetMover orang lain (shared PP) + FX di subfarm orang lain
+    dlTestBtn("▶ P4 — FX/AnimCtrl PetMover luar + subfarm luar", 4, Color3.fromRGB(20,20,35), function()
+        local ctx = dlBuildCtx()
+        local pp = ctx.sharedPP
+        local del = 0
+        local p4Static = {Farm=true,PetsPhysical=true,Terrain=true,Camera=true,Map=true,World=true}
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            local cls = obj.ClassName
+            if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
+               or cls=="PointLight" or cls=="SpotLight"
+               or cls=="AnimationController" or cls=="Animator" then
+                -- di dalam shared PP: cek UUID parent PetMover
+                if pp and obj:IsDescendantOf(pp) then
+                    local pm = nil
+                    do local cur = obj
+                        while cur and cur.Parent and cur.Parent ~= pp do cur = cur.Parent end
+                        if cur and cur.Parent == pp then pm = cur end
+                    end
+                    if pm and not ctx.myPetUUIDs[pm.Name] and not isElephantTest(pm) then
+                        pcall(function() obj:Destroy() end); del = del + 1
+                    end
+                -- di subfarm orang lain
+                elseif ctx.farm then
+                    for _, sf in ipairs(ctx.farm:GetChildren()) do
+                        if not ctx.mySubfarms[sf] and obj:IsDescendantOf(sf) then
+                            pcall(function() obj:Destroy() end); del = del + 1; break
+                        end
+                    end
+                end
+            end
+        end
+        trLogAdd("[TEST-P4] selesai fx_del="..del)
+    end)
+
+    -- P5: destroy skill FX (Puddle, SpottedEffect, WindBlastTemplate) di workspace root
+    dlTestBtn("▶ P5 — skill FX di workspace root", 5, Color3.fromRGB(20,30,20), function()
+        local ctx = dlBuildCtx()
+        local wsP5Allow = {WindBlastTemplate=true, SpottedEffect=true, Puddle=true}
+        local del, skip = 0, 0
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if wsP5Allow[obj.Name] then
+                local cls = obj.ClassName
+                if cls=="Model" or cls=="Part" or cls=="MeshPart"
+                   or cls=="UnionOperation" or cls=="SpecialMesh" then
+                    local inMyArea = false
+                    if ctx.myBBmin then
+                        pcall(function()
+                            local pos
+                            if obj:IsA("BasePart") then pos = obj.Position
+                            else
+                                local pp2 = obj.PrimaryPart
+                                if pp2 then pos = pp2.Position
+                                else for _,c in ipairs(obj:GetChildren()) do if c:IsA("BasePart") then pos=c.Position; break end end
+                                end
+                            end
+                            if pos and pos.X>=ctx.myBBmin.X and pos.X<=ctx.myBBmax.X
+                               and pos.Z>=ctx.myBBmin.Z and pos.Z<=ctx.myBBmax.Z then
+                                inMyArea = true
+                            end
+                        end)
+                    end
+                    if inMyArea then skip = skip + 1
+                    else pcall(function() obj:Destroy() end); del = del + 1 end
+                end
+            end
+        end
+        trLogAdd("[TEST-P5] del="..del.." skip(mine)="..skip)
+    end)
+
+    -- P6: listener realtime (pasang sekali, disconnect saat pencet lagi)
+    local testP6Conns = {}
+    local testP6Btn
+    testP6Btn = dlTestBtn("▶ P6 — pasang listener realtime (subfarm luar + PP)", 6, Color3.fromRGB(30,20,30), function()
+        -- disconnect dulu kalau sudah aktif
+        if #testP6Conns > 0 then
+            for _, c in ipairs(testP6Conns) do pcall(function() c:Disconnect() end) end
+            testP6Conns = {}
+            trLogAdd("[TEST-P6] listener di-disconnect")
+            pcall(function() testP6Btn.Text = "▶ P6 — pasang listener realtime (subfarm luar + PP)"; testP6Btn.BackgroundColor3 = Color3.fromRGB(30,20,30) end)
+            return
+        end
+        local ctx = dlBuildCtx()
+        local listenCount = 0
+        -- listener subfarm orang lain
+        if ctx.farm then
+            for _, sf in ipairs(ctx.farm:GetChildren()) do
+                if not ctx.mySubfarms[sf] then
+                    local sfName = sf.Name
+                    local c = sf.DescendantAdded:Connect(function(newObj)
+                        if newObj:IsA("Model") and not isElephantTest(newObj) then
+                            task.wait(0.08)
+                            pcall(function()
+                                if newObj and newObj.Parent then
+                                    trLogAdd("[TEST-P6] destroy "..newObj.Name:sub(1,30).." di sf "..sfName)
+                                    newObj:Destroy()
+                                end
+                            end)
+                        end
+                    end)
+                    testP6Conns[#testP6Conns+1] = c; listenCount = listenCount + 1
+                end
+            end
+        end
+        -- listener workspace.PetsPhysical
+        local pp = ctx.sharedPP
+        if pp then
+            local c = pp.ChildAdded:Connect(function(newObj)
+                if newObj:IsA("Model") and not ctx.myPetUUIDs[newObj.Name] and not isElephantTest(newObj) then
+                    task.wait(0.08)
+                    pcall(function()
+                        if newObj and newObj.Parent and not ctx.myPetUUIDs[newObj.Name] then
+                            trLogAdd("[TEST-P6PP] destroy "..newObj.Name:sub(1,36))
+                            newObj:Destroy()
+                        end
+                    end)
+                end
+            end)
+            testP6Conns[#testP6Conns+1] = c
+        end
+        trLogAdd("[TEST-P6] listener aktif: "..listenCount.." subfarm + PP")
+        pcall(function() testP6Btn.Text = "⏹ P6 AKTIF — pencet lagi untuk stop"; testP6Btn.BackgroundColor3 = Color3.fromRGB(20,50,20) end)
     end)
 
     -- v10.32: DEBUG trade log (tap 2x = salin)
