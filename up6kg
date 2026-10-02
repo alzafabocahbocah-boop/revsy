@@ -4551,41 +4551,95 @@ do
 
     local function dlRun()
         local plrName = game:GetService("Players").LocalPlayer.Name
-        local petDel = 0
+        local Players = game:GetService("Players")
+        local petDel, animStop = 0, 0
         pcall(function()
             local farm = workspace:FindFirstChild("Farm")
-            if not farm then trLogAdd("[DL] Farm tidak ditemukan"); return end
             -- build set subfarm milik sendiri
             local mySubfarms = {}
-            for _, sf in ipairs(farm:GetChildren()) do
-                local sign = sf:FindFirstChild("Sign")
-                local owner = sign and sign:GetAttribute("_owner")
-                if owner == plrName then mySubfarms[sf] = true end
+            if farm then
+                for _, sf in ipairs(farm:GetChildren()) do
+                    local sign = sf:FindFirstChild("Sign")
+                    local owner = sign and sign:GetAttribute("_owner")
+                    if owner == plrName then mySubfarms[sf] = true end
+                end
             end
-            -- scan SELURUH workspace — sama logika dengan Scan Garden
+            -- build set karakter semua player (skip destroy karakter orang)
+            local playerChars = {}
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Character then playerChars[p.Character] = true end
+            end
+
+            -- 1. collect + destroy semua Model yang bukan milik sendiri dan bukan karakter player
             local toDestroy = {}
             for _, obj in ipairs(workspace:GetDescendants()) do
                 if obj:IsA("Model") and obj.Parent ~= workspace then
+                    -- skip subfarm sendiri
                     local inMine = false
                     for sf in pairs(mySubfarms) do
                         if obj:IsDescendantOf(sf) then inMine = true; break end
                     end
-                    local isFarm = obj.Parent == farm
-                    if not inMine and not isFarm then
+                    -- skip kalau itu adalah/di dalam karakter player
+                    local isChar = false
+                    for char in pairs(playerChars) do
+                        if obj == char or obj:IsDescendantOf(char) then isChar = true; break end
+                    end
+                    -- skip kalau langsung child Farm (subfarm itu sendiri)
+                    local isFarmChild = farm and obj.Parent == farm
+                    if not inMine and not isChar and not isFarmChild then
                         toDestroy[#toDestroy+1] = obj
                     end
                 end
             end
-            -- destroy semua model yang terkumpul (termasuk seluruh descendantnya sekaligus)
             for _, obj in ipairs(toDestroy) do
                 if obj and obj.Parent then
                     pcall(function() obj:Destroy() end)
                     petDel = petDel + 1
                 end
             end
+
+            -- 2. stop semua AnimationTrack yang masih playing di workspace
+            --    (animasi sisa setelah model di-destroy)
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Animator") then
+                    -- skip kalau ada di karakter player
+                    local isChar = false
+                    for char in pairs(playerChars) do
+                        if obj:IsDescendantOf(char) then isChar = true; break end
+                    end
+                    if not isChar then
+                        pcall(function()
+                            local tracks = obj:GetPlayingAnimationTracks()
+                            for _, tr in ipairs(tracks) do
+                                tr:Stop(0); animStop = animStop + 1
+                            end
+                        end)
+                    end
+                end
+            end
+
+            -- 3. destroy semua ParticleEmitter/Trail/Beam/Sound yang masih ada di workspace
+            --    (fx sisa setelah model destroy, attach ke Part yang masih ada)
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                local cls = obj.ClassName
+                if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
+                   or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui" then
+                    local isChar = false
+                    for char in pairs(playerChars) do
+                        if obj:IsDescendantOf(char) then isChar = true; break end
+                    end
+                    local inMine = false
+                    for sf in pairs(mySubfarms) do
+                        if obj:IsDescendantOf(sf) then inMine = true; break end
+                    end
+                    if not isChar and not inMine then
+                        pcall(function() obj:Destroy() end)
+                    end
+                end
+            end
         end)
-        if petDel > 0 then
-            trLogAdd("[DL] destroy "..petDel.." model di kebun orang lain")
+        if petDel > 0 or animStop > 0 then
+            trLogAdd("[DL] destroy "..petDel.." mdl, stop "..animStop.." anim track")
         end
     end
 
