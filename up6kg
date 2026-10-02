@@ -4440,30 +4440,44 @@ do
                     end
                 end
             end
-            -- scan SELURUH workspace untuk {uuid} model
+            -- scan SELURUH workspace untuk semua Model (bukan cuma {uuid})
             for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") and tostring(obj.Name):sub(1,1) == "{" then
+                if obj:IsA("Model") and obj.Parent ~= workspace then
                     -- skip kalau ada di subfarm sendiri
                     local inMine = false
                     for sf in pairs(mySubfarms) do
                         if obj:IsDescendantOf(sf) then inMine = true; break end
                     end
-                    if not inMine then
+                    -- skip kalau Model ini ADALAH subfarm (langsung child Farm)
+                    local isFarm = workspace:FindFirstChild("Farm") and obj.Parent == workspace:FindFirstChild("Farm")
+                    if not inMine and not isFarm then
                         totalPet = totalPet + 1
-                        local fxList = {}
+                        -- log SEMUA class dari semua descendant (lengkap)
+                        local clsCount = {}
+                        local attrs = {}
                         for _, d in ipairs(obj:GetDescendants()) do
                             local cls = d.ClassName
-                            if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
-                               or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui"
-                               or cls=="SpecialMesh" or cls=="SelectionBox" or cls=="Sound" then
-                                fxList[#fxList+1] = cls.."("..tostring(d.Name)..")"
-                                totalFx = totalFx + 1
-                            end
+                            clsCount[cls] = (clsCount[cls] or 0) + 1
+                            totalFx = totalFx + 1
                         end
-                        -- log parent path biar tau posisi di workspace
+                        -- collect atribut dari Model itu sendiri
+                        local ok2, attList = pcall(function()
+                            local t = {}
+                            for k, v in pairs(obj:GetAttributes()) do
+                                t[#t+1] = k.."="..tostring(v)
+                            end
+                            return t
+                        end)
+                        local attrStr = (ok2 and #attList > 0) and (" attr:["..table.concat(attList,",").."]") or ""
+                        -- compact summary: cls x count
+                        local clsList = {}
+                        for cls, cnt in pairs(clsCount) do
+                            clsList[#clsList+1] = (cnt > 1 and (cls.."x"..cnt) or cls)
+                        end
+                        table.sort(clsList)
                         local parentPath = tostring(obj.Parent and obj.Parent.Name or "?")
-                        local fxStr = #fxList > 0 and table.concat(fxList,", ") or "no fx"
-                        trLogAdd("  PET "..tostring(obj.Name):sub(1,14).." @"..parentPath.." | "..fxStr)
+                        local clsStr = #clsList > 0 and table.concat(clsList,"|") or "kosong"
+                        trLogAdd("  MDL "..tostring(obj.Name):sub(1,16).." @"..parentPath..attrStr.." ["..clsStr.."]")
                     end
                 end
             end
@@ -4488,71 +4502,43 @@ do
         LayoutOrder=13.7, Parent=tradeScroll
     }); corner(dlBtn,9); stroke(dlBtn,C.border,1.5)
 
-    local function dlDestroyFx(obj)
-        pcall(function()
-            for _, d in ipairs(obj:GetDescendants()) do
-                if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                   or d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("BillboardGui") then
-                    pcall(function() d:Destroy() end)
-                end
-            end
-        end)
-    end
-
     local function dlRun()
         local plrName = game:GetService("Players").LocalPlayer.Name
-        -- kumpulkan uuid pet sendiri (support + modelByUuid) buat di-skip
-        local myUuids = {}
-        if type(_G.ZenxSupportUuids) == "table" then
-            for u in pairs(_G.ZenxSupportUuids) do
-                local k = tostring(u); if k:sub(1,1) ~= "{" then k = "{"..k.."}" end
-                myUuids[k] = true
-            end
-        end
-        -- modelByUuid ada di closure _startEngine, gak bisa diakses langsung —
-        -- fallback: skip subfarm milik sendiri saja (Sign._owner == plrName)
-        local petDel, fxDel = 0, 0
+        local petDel = 0
         pcall(function()
             local farm = workspace:FindFirstChild("Farm")
             if not farm then trLogAdd("[DL] Farm tidak ditemukan"); return end
-            for _, subfarm in ipairs(farm:GetChildren()) do
-                local sign = subfarm:FindFirstChild("Sign")
+            -- build set subfarm milik sendiri
+            local mySubfarms = {}
+            for _, sf in ipairs(farm:GetChildren()) do
+                local sign = sf:FindFirstChild("Sign")
                 local owner = sign and sign:GetAttribute("_owner")
-                -- SKIP: kebun sendiri (owner == plrName) ATAU owner nil (belum loaded)
-                if owner == nil or owner == plrName then continue end
-                -- 1. Destroy FX dalam pet model DULU (pisah dari destroy model)
-                for _, obj in ipairs(subfarm:GetDescendants()) do
-                    if obj:IsA("Model") and tostring(obj.Name):sub(1,1) == "{" then
-                        if not myUuids[obj.Name] then
-                            -- hapus fx dalam model sebelum destroy model
-                            for _, d in ipairs(obj:GetDescendants()) do
-                                if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
-                                   or d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("BillboardGui") then
-                                    pcall(function() d:Destroy() end); fxDel = fxDel + 1
-                                end
-                            end
-                        end
+                if owner == plrName then mySubfarms[sf] = true end
+            end
+            -- scan SELURUH workspace — sama logika dengan Scan Garden
+            local toDestroy = {}
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Model") and obj.Parent ~= workspace then
+                    local inMine = false
+                    for sf in pairs(mySubfarms) do
+                        if obj:IsDescendantOf(sf) then inMine = true; break end
                     end
-                end
-                -- 2. Destroy pet model (setelah fx sudah diambil)
-                for _, obj in ipairs(subfarm:GetDescendants()) do
-                    if obj:IsA("Model") and tostring(obj.Name):sub(1,1) == "{" then
-                        if not myUuids[obj.Name] then
-                            pcall(function() obj:Destroy() end); petDel = petDel + 1
-                        end
-                    end
-                end
-                -- 3. Destroy fx lepas di subfarm (pohon, tanah, dll)
-                for _, obj in ipairs(subfarm:GetDescendants()) do
-                    if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
-                       or obj:IsA("PointLight") or obj:IsA("SpotLight") then
-                        pcall(function() obj:Destroy() end); fxDel = fxDel + 1
+                    local isFarm = obj.Parent == farm
+                    if not inMine and not isFarm then
+                        toDestroy[#toDestroy+1] = obj
                     end
                 end
             end
+            -- destroy semua model yang terkumpul (termasuk seluruh descendantnya sekaligus)
+            for _, obj in ipairs(toDestroy) do
+                if obj and obj.Parent then
+                    pcall(function() obj:Destroy() end)
+                    petDel = petDel + 1
+                end
+            end
         end)
-        if petDel > 0 or fxDel > 0 then
-            trLogAdd("[DL] destroy "..petDel.." pet, "..fxDel.." fx (kebun orang lain)")
+        if petDel > 0 then
+            trLogAdd("[DL] destroy "..petDel.." model di kebun orang lain")
         end
     end
 
