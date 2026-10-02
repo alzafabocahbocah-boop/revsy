@@ -4600,20 +4600,28 @@ do
 
             -- 2. stop animasi + hapus FX di SEMUA workspace (termasuk subfarm sendiri)
             --    hanya skip karakter player
+            --    Approach: destroy AnimationController + disable Motor6D (GetPlayingAnimationTracks()
+            --    tidak bisa return tracks dari client lain)
             for _, obj in ipairs(workspace:GetDescendants()) do
                 local isChar = false
                 for char in pairs(playerChars) do
                     if obj:IsDescendantOf(char) then isChar = true; break end
                 end
                 if not isChar then
-                    if obj:IsA("Animator") then
+                    local cls = obj.ClassName
+                    -- stop animasi: destroy AnimationController & Animator, disable Motor6D
+                    if cls == "AnimationController" or cls == "Animator" then
+                        pcall(function() obj:Destroy() end)
+                        animStop = animStop + 1
+                    elseif cls == "Motor6D" then
+                        -- disable joint → skeleton beku, animasi stop visually
                         pcall(function()
-                            for _, tr in ipairs(obj:GetPlayingAnimationTracks()) do
-                                tr:Stop(0); animStop = animStop + 1
-                            end
+                            obj.Enabled = false
+                            obj.CurrentAngle = 0
                         end)
+                        animStop = animStop + 1
                     else
-                        local cls = obj.ClassName
+                        -- hapus FX visual
                         if cls=="ParticleEmitter" or cls=="Trail" or cls=="Beam"
                            or cls=="PointLight" or cls=="SpotLight" or cls=="BillboardGui" then
                             pcall(function() obj:Destroy() end)
