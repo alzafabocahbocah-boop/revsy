@@ -3189,6 +3189,15 @@ do
 
     local function petsLolos()
         local out={}; local bp=plr:FindFirstChild("Backpack"); local c=_kgContainer; if not bp then return out end
+        -- build set uuid dari sesiPool (semua sesi) -> support yang dipilih di picker
+        local _poolUuids={}
+        for _,pool in pairs(sesiPool) do
+            for _,slots in pairs(pool) do
+                for _,entry in pairs(slots) do
+                    if entry and entry.uuid then local u=tostring(entry.uuid); _poolUuids[u]=true; _poolUuids[fmtU(u)]=true end
+                end
+            end
+        end
         local function isFavP(t,uuid)
             if uuid and c then local e=c[fmtU(uuid)] or c[tostring(uuid)]; if type(e)=="table" and type(e.PetData)=="table" and e.PetData.IsFavorite==true then return true end end
             for _,attr in ipairs({"Favorited","Favourited","Favorite","IsFavorited","IsFavourited"}) do if t:GetAttribute(attr)==true then return true end end
@@ -3201,8 +3210,8 @@ do
             local uuid=t:GetAttribute("PET_UUID")
             local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}; local pr=_G.__ZenxSupProtect or {}
             if uuid then
-                -- _activeUuids = pet yang lagi di-equip di kebun (support) -> JANGAN kirim
-                local isSup=(supAll[uuid] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[uuid] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)])
+                -- _activeUuids = pet equip di kebun | sesiPool = uuid dipilih di picker (belum tentu ke-equip)
+                local isSup=(supAll[uuid] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[uuid] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)] or _poolUuids[uuid] or _poolUuids[fmtU(uuid)])
                 if not isSup then
                     local e=c and (c[fmtU(uuid)] or c[tostring(uuid)])
                     local tipe=(type(e)=="table" and e.PetType) and stripMutation(tostring(e.PetType)) or stripMutation(tostring(t:GetAttribute("f") or ""))
@@ -3224,7 +3233,10 @@ do
         if not tool then return end
         local uuid=tool:GetAttribute("PET_UUID")
         local supAll=_G.ZenxSupportUuids or {}; local sk=_G.ZenxSupportKunci or {}; local pr=_G.__ZenxSupProtect or {}
-        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)]) then return end
+        -- cek sesiPool: uuid dipilih di picker = support -> jangan unfav
+        local _inPool=false
+        if uuid then local u=tostring(uuid); for _,pool in pairs(sesiPool) do for _,slots in pairs(pool) do for _,entry in pairs(slots) do if entry and (tostring(entry.uuid)==u or tostring(entry.uuid)==fmtU(u)) then _inPool=true end end end end end
+        if uuid and (supAll[tostring(uuid)] or supAll[fmtU(uuid)] or sk[uuid] or sk[fmtU(uuid)] or pr[tostring(uuid)] or pr[fmtU(uuid)] or _activeUuids[uuid] or _activeUuids[fmtU(uuid)] or _inPool) then return end
         local fav=false
         if uuid and _kgContainer then
             local e=_kgContainer[fmtU(uuid)] or _kgContainer[tostring(uuid)]
