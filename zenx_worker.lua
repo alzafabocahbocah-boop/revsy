@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.502-cf"
+local VERSION = "9.503-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -10195,10 +10195,15 @@ if PERINTAH == "pasang" then
         f1:write("#!" .. PREFIX .. "/bin/sh\n")
         f1:write('cd "$HOME"\n')
         f1:write('while true; do\n')
-        f1:write('  ' .. LUA .. ' zenx_worker.lua "$@"\n')
+        f1:write('  ' .. LUA .. ' zenx_worker.lua "$@"; EC=$?\n')
         f1:write('  if [ -f "$HOME/.zenx_restart" ]; then\n')
         f1:write('    rm -f "$HOME/.zenx_restart"\n')
         f1:write('    echo "[zenx] restart sesi (update versi baru)..."; sleep 1; continue\n')
+        f1:write('  fi\n')
+        -- v9.503: exit code 1 = crash -> auto restart 5s. exit code 0 = stop sengaja -> berhenti.
+        f1:write('  if [ "$EC" -ne 0 ]; then\n')
+        f1:write('    echo "[zenx] CRASH (exit $EC) -- restart otomatis 5 detik..."\n')
+        f1:write('    sleep 5; continue\n')
         f1:write('  fi\n')
         f1:write('  break\n')
         f1:write('done\n')
@@ -10468,23 +10473,30 @@ function tulis_launcher_loop()
     local jalur = PREFIX .. "/bin/zenx"
     local cur = io.open(jalur, "r")
     if cur then local isi = cur:read("*a") or ""; cur:close()
-        if isi:find("while true", 1, true) then return end   -- udah loop
+        -- v9.503: cek versi lama (ada "while true" TAPI masih pakai "break" tanpa cek exit code)
+        -- -> upgrade. Kalau udah punya "restart otomatis" -> skip.
+        if isi:find("restart otomatis", 1, true) then return end
     end
     local f = io.open(jalur, "w")
     if f then
         f:write("#!" .. PREFIX .. "/bin/sh\n")
         f:write('cd "$HOME"\n')
         f:write('while true; do\n')
-        f:write('  ' .. LUA .. ' zenx_worker.lua "$@"\n')
+        f:write('  ' .. LUA .. ' zenx_worker.lua "$@"; EC=$?\n')
         f:write('  if [ -f "$HOME/.zenx_restart" ]; then\n')
         f:write('    rm -f "$HOME/.zenx_restart"\n')
         f:write('    echo "[zenx] restart sesi (update versi baru)..."; sleep 1; continue\n')
+        f:write('  fi\n')
+        -- v9.503: exit code 1 = crash -> auto restart 5s. exit code 0 = stop sengaja -> berhenti.
+        f:write('  if [ "$EC" -ne 0 ]; then\n')
+        f:write('    echo "[zenx] CRASH (exit $EC) -- restart otomatis 5 detik..."\n')
+        f:write('    sleep 5; continue\n')
         f:write('  fi\n')
         f:write('  break\n')
         f:write('done\n')
         f:close()
         os.execute("chmod +x " .. shq(jalur))
-        info("[boot] launcher zenx di-upgrade ke mode LOOP (auto-update mulus)")
+        info("[boot] launcher zenx di-upgrade: crash = restart otomatis 5s")
     end
 end
 
@@ -12767,6 +12779,9 @@ local okrun,e=pcall(run,cfg)
 if not okrun then
     err("Berhenti: "..tostring(e))
     bersih(cfg, "error")
+    -- v9.503: exit code 1 -> launcher shell tahu ini CRASH -> restart otomatis
+    os.exit(1)
 elseif io.open(PID_FILE, "r") then
     bersih(cfg, "selesai")
 end
+-- exit code 0 (normal/stop sengaja) -> launcher shell STOP (jangan restart)
