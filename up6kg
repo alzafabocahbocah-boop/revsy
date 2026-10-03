@@ -1851,7 +1851,7 @@ do
         end)
     end
     _G.ZenxSwapPet = swapPet   -- expose ke luar (dbg_skillfire bisa trigger langsung)
-    -- skill swap: khusus Dilop/Peacock/Gilded — tanpa jeda, tanpa busy check
+    -- skill swap: khusus Dilop/Peacock/Gilded — DIMATIIN (hanya Ele yg swap)
     local skillSwapBusy = {}
     _G.ZenxSkillSwap = function(key)
         if skillSwapBusy[key] then return end
@@ -1883,16 +1883,10 @@ do
             if not obj:IsA("Sound") then return end
             local label = SKILL_SOUNDS_KG[obj.SoundId]
             if not label then return end
-            local uuid = obj.Parent and obj.Parent.Parent and obj.Parent.Parent.Name
-            if not uuid then return end
-            local key = uuid:gsub("[{}]","")
-            local now = tick()
-            if skillSoundLastFire[key] and (now - skillSoundLastFire[key]) < 1 then return end
-            skillSoundLastFire[key] = now
-            kgLog("skill-snd "..label.." → swap "..key:sub(1,8))
-            _G.ZenxSkillSwap(key)
+            -- v-fix: sound listener dimatiin (hanya Ele yg swap, Dilop/Peacock/Gilded DIEM)
+            kgLog("skill-snd "..label.." SKIP (non-ele swap dimatiin)")
         end)
-        kgLog("skill-sound listener ON (diloph/peacock/gilded)")
+        kgLog("skill-sound listener ON (diloph/peacock/gilded) — swap SKIP")
     end)
 
     -- ready-loop: swap SUPPORT doang (bahan DIEM di kedua sesi). Cek cepet 0.05s.
@@ -1934,10 +1928,11 @@ do
                             if _G.ZenxKgLog then _G.ZenxKgLog("[fast-harvest] sesi"..(KG.sesi or 1).." bahan AGE "..age.." -> copot") end
                         end
                     else
-                        -- SUPPORT (Dilop/Peacock/Gilded/Ele) -> swap skill SEMUA (Ele ikut swap)
+                        -- SUPPORT: hanya Ele yg di-swap (ready-loop). Dilop/Peacock/Gilded/Hotdog/Lion DIEM.
                         local supNm = supportKunci[uuid]
                         local isWhale = supNm and tostring(supNm):lower():find("blue whale", 1, true)
-                        local swapIni = (supNm ~= nil) and not isWhale   -- Blue Whale: JANGAN di-swap/PNP
+                        local isEle   = supNm and tostring(supNm):lower():find("elephant", 1, true)
+                        local swapIni = (supNm ~= nil) and not isWhale and isEle   -- hanya Ele yg swap ready-loop
                         -- 3 skill pet: swap HANYA dari sound listener, skip ready-loop
                         local isSkillSupport = supNm and (
                             tostring(supNm):lower():find("dilo") or
