@@ -487,12 +487,58 @@ task.spawn(function()
     --   * hitung pet di thread TERPISAH tiap 60s -> gak nge-block lapor
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
-    -- v8.451: load maxInv terakhir dari file -> di garden gak ada UI, pake yg ke-save pas di market
-    -- v8.452: coba readfile langsung tanpa cek isfile dulu (isfile kadang nil di beberapa executor)
+    -- v8.460: detect maxInv SEKALI saat startup (UI atau getgc), simpan ke file.
+    -- Di server manapun (market/garden) tinggal baca file -> selalu valid.
+    local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
-        if readfile and plr and plr.Name then
-            local ok, mi = pcall(function() return tonumber(readfile("zenx_maxinv_" .. plr.Name .. ".txt")) end)
+        if not _maxInvFile then return end
+        -- 1) coba baca dari file dulu (hasil detect sebelumnya)
+        if readfile then
+            local ok, mi = pcall(function() return tonumber(readfile(_maxInvFile)) end)
             if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
+        end
+        -- 2) detect segar: UI "Pet Items (X/Y)" (cuma ada kalau di market)
+        if maxInvTerakhir <= 0 then
+            local pg2 = plr:FindFirstChild("PlayerGui")
+            if pg2 then
+                for _, d in ipairs(pg2:GetDescendants()) do
+                    if (d:IsA("TextLabel") or d:IsA("TextButton")) and type(d.Text)=="string" then
+                        local low = d.Text:lower()
+                        if low:find("pet") and low:find("item") then
+                            local aa, bb = d.Text:match("(%d+)%s*/%s*(%d+)")
+                            if aa and bb then
+                                aa, bb = tonumber(aa), tonumber(bb)
+                                if bb and bb > 0 then maxInvTerakhir = bb; break end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        -- 3) fallback getgc (reliable di garden maupun market)
+        if maxInvTerakhir <= 0 and getgc then
+            local tally = {}
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local mp = rawget(obj, "MaxPetsInInventory")
+                    if type(mp) == "number" and mp > 0
+                        and rawget(obj, "MaxEggsInFarm") ~= nil
+                        and rawget(obj, "MaxEquippedPets") ~= nil then
+                        tally[mp] = (tally[mp] or 0) + 1
+                    end
+                end
+            end
+            local mx, bestN = nil, 0
+            for v, n in pairs(tally) do
+                if n > bestN or (n == bestN and (not mx or v < mx)) then mx = v; bestN = n end
+            end
+            if mx and mx > 0 then maxInvTerakhir = mx end
+        end
+        -- 4) simpan ke file kalau berhasil detect
+        if maxInvTerakhir > 0 then
+            _G.__ZenxMaxInv = maxInvTerakhir
+            pcall(function() if writefile then writefile(_maxInvFile, tostring(maxInvTerakhir)) end end)
+            print("[ZenxMarket] maxInv startup detect: " .. maxInvTerakhir)
         end
     end)
     local snipeJenisTerakhir, snipeTokTerakhir = {}, 0   -- v8.356: snipe breakdown per tipe
@@ -565,36 +611,9 @@ task.spawn(function()
                 if mxUI and mxUI > 0 then
                     maxInvTerakhir = mxUI; _G.__ZenxMaxInv = mxUI
                 else
-                    -- v8.452: fallback getgc (mirip up6kg) -> scan PlayerData di memory
-                    -- reliable di garden maupun market, tidak butuh UI
-                    local mx = nil
-                    pcall(function()
-                        if getgc then
-                            local tally = {}
-                            local floor = (totalPetTerakhir or 0) - 5
-                            for _, obj in ipairs(getgc(true)) do
-                                if type(obj) == "table" then
-                                    local mp = rawget(obj, "MaxPetsInInventory")
-                                    if type(mp) == "number" and mp > 0
-                                        and rawget(obj, "MaxEggsInFarm") ~= nil
-                                        and rawget(obj, "MaxEquippedPets") ~= nil
-                                        and mp >= floor then
-                                        tally[mp] = (tally[mp] or 0) + 1
-                                    end
-                                end
-                            end
-                            local bestN = 0
-                            for v, n in pairs(tally) do
-                                if n > bestN or (n == bestN and (not mx or v < mx)) then mx = v; bestN = n end
-                            end
-                        end
-                    end)
-                    if mx and mx > 0 then
-                        maxInvTerakhir = mx; _G.__ZenxMaxInv = mx
-                    else
-                        local mi = tonumber(_G.__ZenxMaxInv)
-                        if mi and mi > 0 then maxInvTerakhir = mi end
-                    end
+                    -- v8.460: baca dari _G.__ZenxMaxInv (di-set startup via file/getgc)
+                    local mi = tonumber(_G.__ZenxMaxInv)
+                    if mi and mi > 0 then maxInvTerakhir = mi end
                 end
                 -- v8.368: BALIK HOME pas FULL di GARDEN (leveling). Akun market di-oper ke leveling
                 -- buat diisi bahan; pas totalPet >= maxInv (full) -> minta worker balikin ke market.
