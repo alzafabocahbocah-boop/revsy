@@ -462,6 +462,7 @@ task.spawn(function()
     end
 
     local lamaTok, lamaPet, lamaKirim = -1, -1, 0
+    local lamaTotal = -1   -- v8.461: totalPet terakhir dikirim (buat cek perubahan)
     local lamaDetail = 0   -- v8.460: kapan terakhir kirim payload detail (tiap 5 menit)
     task.wait(8)   -- tunggu UI + BH kebangun
     print("[MarketBridge] jalan | " .. plr.Name)
@@ -723,27 +724,25 @@ task.spawn(function()
                 task.spawn(function() pcall(_G.__ZenxTradeAllToLeveling); task.wait(8); _G.__ZenxTradeBusy = nil end)
             end
             local skrg = os.time()
-            local berubah = (tok ~= lamaTok) or (petTerakhir ~= lamaPet)
-            local wajib = (skrg - lamaKirim) >= 120
-            if berubah or wajib then
-                -- v8.460: pisah payload jadi DUA:
-                -- RINGAN (tiap 20s / saat berubah): token + totalPet saja -> denyut panel tau akun hidup
-                -- DETAIL (tiap 5 menit / pertama kali): nRule, rincianPet, snipe, petJenis, maxInv, jual
-                -- -> hemat bandwidth, panel tetap dapat semua data
-                local skrg5 = (skrg - lamaDetail) >= 300
-                local detail = skrg5 or (lamaDetail == 0)
-                local maxInvKirim = detail and (not _G.__ZenxMaxInvTerkirim) and (maxInvTerakhir > 0) and maxInvTerakhir or nil
+            -- v8.461: kirim HANYA kalau ada perubahan token/totalPet, atau keepalive 10 menit.
+            -- Detail berat (snipe, petJenis, dll) hanya ikut tiap 5 menit atau pertama kali.
+            local tokBeda   = (tok ~= lamaTok)
+            local petBeda   = (totalPetTerakhir ~= lamaTotal)
+            local keepalive = (skrg - lamaKirim) >= 600   -- 10 menit tanpa perubahan = tetap lapor (tanda hidup)
+            local detail    = (lamaDetail == 0) or (skrg - lamaDetail) >= 300
+            if tokBeda or petBeda or keepalive or detail then
+                local maxInvKirim = (not _G.__ZenxMaxInvTerkirim) and (maxInvTerakhir > 0) and maxInvTerakhir or nil
                 local jual = nil
                 if detail and getgenv().ZenxRingkasJual then
                     local okJ, rj = pcall(getgenv().ZenxRingkasJual, 86400)
                     if okJ and type(rj) == "table" then jual = rj end
                 end
                 if kirim("/market", {
-                    akun = plr.Name,
-                    place = tostring(game.PlaceId or ""),
-                    tokens = tok,
+                    akun     = plr.Name,
+                    place    = tostring(game.PlaceId or ""),
+                    tokens   = tok,
                     totalPet = totalPetTerakhir,
-                    -- detail: hanya tiap 5 menit
+                    -- detail: hanya tiap 5 menit / pertama kali
                     petRule   = detail and petTerakhir or nil,
                     nRule     = detail and nRuleTerakhir or nil,
                     rincianPet= detail and rincianTerakhir or nil,
@@ -754,7 +753,7 @@ task.spawn(function()
                     petJenis  = detail and petJenisTerakhir or nil,
                     jual      = jual,
                 }) then
-                    lamaTok, lamaPet, lamaKirim = tok, petTerakhir, skrg
+                    lamaTok, lamaTotal, lamaKirim = tok, totalPetTerakhir, skrg
                     if detail then lamaDetail = skrg end
                     if maxInvKirim then _G.__ZenxMaxInvTerkirim = true end
                 end
