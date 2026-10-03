@@ -3626,7 +3626,7 @@ do
                         local t = TR_ALL[i]
                         if type(ct.targets)=="table" then local a={} for _,v in ipairs(ct.targets) do if type(v)=="string" then a[#a+1]=v end end t.targets=a end
                         if type(ct.tipe)=="table" then local s={} for k,v in pairs(ct.tipe) do if type(k)=="string" and v then s[k]=true end end t.tipe=s end
-                        t.minKg=tonumber(ct.minKg) or 0; t.minAge=tonumber(ct.minAge) or 0; t.autoAcc=(ct.autoAcc==true); t.autoLevel=(ct.autoLevel==true) or (i==1)
+                        t.minKg=tonumber(ct.minKg) or 0; t.minAge=tonumber(ct.minAge) or 0; t.autoAcc=(ct.autoAcc==true); t.autoLevel=(ct.autoLevel==true) or (i==1) or (i==2)
                         t.mode = (ct.mode=="trade" or ct.mode=="gift") and ct.mode or "off"
                         if type(ct.nama)=="string" and ct.nama~="" then t.nama = ct.nama end
                     end
@@ -4466,6 +4466,32 @@ do
                 t1.targets = nw; t1.tipe = nbTipe; t1.minKg = 3.8
                 saveTr()
                 if activeTemplate == 1 and tradeRefresh then pcall(tradeRefresh) end
+            end
+            task.wait(5)
+        end
+    end)
+
+    -- v10.33: GIFT 2 = AUTO LEVELING PERMANEN ke akun UP6KG (hardcoded). Pakek mode trade (tiket).
+    --   Target tetap, bahan dari _G.ZenxKgUpTipe, kg3.8. Update tiap 5s.
+    task.spawn(function()
+        local UP6KG_TARGETS = {"age75laptop","mutasizenx2","zenxevent10","zenxevent7","zenxlolipop10","zenxlolipop12","zenxlolipop5","zenxlolipop6"}
+        local UP6KG_MAX = {age75laptop=235,mutasizenx2=255,zenxevent10=260,zenxevent7=245,zenxlolipop10=210,zenxlolipop12=235,zenxlolipop5=235,zenxlolipop6=260}
+        while true do
+            local t2 = TR_ALL[2]; t2.autoLevel = true; t2.mode = "trade"
+            -- inject max inv ke ZenxLvlMax supaya chips tampil dengan (max)
+            _G.ZenxLvlMax = _G.ZenxLvlMax or {}
+            for nm, mx in pairs(UP6KG_MAX) do
+                if not _G.ZenxLvlMax[nm] then _G.ZenxLvlMax[nm] = mx end
+            end
+            local cur = {}; for _, v in ipairs(t2.targets or {}) do cur[#cur+1] = v end; table.sort(cur)
+            local exp = {}; for _, v in ipairs(UP6KG_TARGETS) do exp[#exp+1] = v end; table.sort(exp)
+            local nbTipe = {}; for k in pairs(_G.ZenxKgUpTipe or {}) do nbTipe[k] = true end
+            local tS = {}; for k in pairs(nbTipe) do tS[#tS+1] = k end; table.sort(tS)
+            local cS = {}; for k in pairs(t2.tipe or {}) do cS[#cS+1] = k end; table.sort(cS)
+            if (table.concat(exp,",")~=table.concat(cur,",")) or (t2.minKg~=3.8) or (table.concat(tS,",")~=table.concat(cS,",")) or (t2.mode~="trade") then
+                t2.targets = UP6KG_TARGETS; t2.tipe = nbTipe; t2.minKg = 3.8; t2.mode = "trade"
+                saveTr()
+                if activeTemplate == 2 and tradeRefresh then pcall(tradeRefresh) end
             end
             task.wait(5)
         end
