@@ -3808,7 +3808,7 @@ local function setup_otomatis(namaPreset)
     cfg.wait_sec          = 60
     cfg.konfirmasi_sec    = 90
     cfg.max_coba          = 5
-    cfg.stagger_sec       = 15
+    cfg.stagger_sec       = 45   -- v-fix: ganti default 15s -> 45s
     cfg.status_sec        = 20
     cfg.win_mode          = 0
     cfg.jaga_depan_sec    = 3   -- v7.14: cek tiap 3s (user minta)
@@ -5654,15 +5654,15 @@ local function run(cfg)
             if _isUp38 or _isUp6 or _isHact or _isUplevel then
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
-                local per60 = _isUp38 or _isHact or _isUplevel -- up3.8kg + hact + uplevel: tiap 60 menit (:00)
-                local slotSize = per60 and 3600 or 1800                     -- 60min, up6kg 30min
+                local per2jam = _isUp38 or _isHact or _isUplevel -- v-fix: up3.8kg + hact + uplevel: tiap 2 jam (00/02/04/... WIB)
+                local slotSize = per2jam and 7200 or 1800                    -- 120min, up6kg 30min
                 local fireNow
                 if cfg.restart_min_override then
                     -- v9.495: penanda khusus (mis. newmarket-arceus) -- interval custom (mis. 180 menit),
                     -- gak selalu kelipatan yg pas sama ":00 tiap jam" -> pake modulo generik.
                     slotSize = cfg.restart_min_override * 60
                     fireNow = (wibNow % slotSize) < 60
-                elseif per60 then fireNow = (wt.min == 0)                   -- up3.8kg/hact/uplevel/market: :00 doang (tiap jam)
+                elseif per2jam then fireNow = (wt.hour % 2 == 0 and wt.min == 0) -- up3.8kg/hact/uplevel: tiap 2 jam (00/02/04/... :00 WIB)
                 else fireNow = (wt.min == 0 or wt.min == 30) end            -- up6kg: :00 & :30
                 local slot = math.floor(wibNow / slotSize)
                 if fireNow and RESTART_JADWAL_SLOT ~= slot then
@@ -5675,7 +5675,7 @@ local function run(cfg)
                         if KICK_DIURUS["captcha:" .. pkg] then KICK_DIURUS["captcha:" .. pkg] = nil; _clrCap = _clrCap + 1 end
                     end
                     if _clrCap > 0 then warn(("[JADWAL] re-test captcha: clear %d flag -> coba rejoin ulang (cek captcha lagi)"):format(_clrCap)) end
-                    local _nm = _isUp38 and "UP3.8KG" or (_isHact and "HACT" or "UP6KG")
+                    local _nm = _isUp38 and "UP3.8KG" or (_isHact and "HACT" or (_isUplevel and "UPLEVEL" or "UP6KG"))
                     warn(string.format("[JADWAL] %s restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang%s", _nm, wt.hour, wt.min, _isHact and " (bisa di-nyela manual command)" or " (UNINTERRUPTIBLE)"))
                     if not _isHact then _G.__ZenxForceRestart = true end   -- hact: rejoin INTERRUPTIBLE (start/balik home manual selalu bisa nyela). up6kg/up3.8kg: WAJIB kelar.
                     local okR = pcall(function()
