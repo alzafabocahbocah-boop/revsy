@@ -198,11 +198,92 @@ export default {
         { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
       );
     }
+    // /lvlmax GET (publik) -> daftar akun leveling + max inv "akun=max,akun=max" (dibaca script up6kg via HttpGet)
+    if (jalur === "/lvlmax" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='lvlmax'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /marketakun GET (publik) -> daftar akun MARKET "akun=total:max,..." (dibaca uplevel buat gift target + skip full)
+    if (jalur === "/marketakun" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='marketakun'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /up6kgakun GET (publik) -> daftar akun UP6KG "akun=max:count,..." (dibaca UP 3.8KG buat gift target)
+    if (jalur === "/up6kgakun" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='up6kgakun'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /up38akun GET (publik) -> daftar akun UP 3.8KG "akun=total:max,..." (dibaca HACT buat gift target + skip full)
+    if (jalur === "/up38akun" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='up38akun'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /uplevel-giftpet GET (publik) -> daftar tipe pet yg di-gift uplevel "Tipe1,Tipe2,..." (dibaca uplevel)
+    if (jalur === "/uplevel-giftpet" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='uplevelgiftpet'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /up6kg-bahan GET (publik) -> bahan GLOBAL up6kg "Tipe1,Tipe2,..." (dibaca SEMUA akun up6kg)
+    if (jalur === "/up6kg-bahan" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='up6kgbahan'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /hact-sellconfig GET (publik) -> config sell GLOBAL hact (JSON: {sellRules,petPool,keepOnly}). Dibaca hact pas start/rejoin.
+    if (jalur === "/hact-sellconfig" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='hactsellconfig'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /market-pricereq GET (publik) -> jenis pet yg diminta buat riset harga (string, kosong=gak ada). Dibaca market.
+    if (jalur === "/market-pricereq" && req.method === "GET") {
+      let data = "";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='marketpricereq'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "text/plain", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /market-pricedata GET (publik) -> data harga per-server {srv:{ts,pet,listings:[{p,k,m}]}}. Dibaca panel (gabung semua server).
+    if (jalur === "/market-pricedata" && req.method === "GET") {
+      let data = "{}";
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='marketpricedata'").first(); if (row && row.data) data = row.data; } catch {}
+      return new Response(data, { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+    }
+    // /market-presence GET (publik) -> {akun: {j:jobId, s:since}} fresh (<10m). Anti-nabrak + resolusi.
+    if (jalur === "/market-presence" && req.method === "GET") {
+      let data = {};
+      try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='marketpresence'").first(); if (row && row.data) data = JSON.parse(row.data); } catch {}
+      const now = Math.floor(Date.now() / 1000);
+      const out = {};
+      // v8.433: expiry 30m (1800s) — market lapor cuma pas ganti server, jadi window dipanjangin biar akun yg diem lama gak keburu ilang dari anti-nabrak.
+      for (const akun in data) { if (data[akun] && (now - (data[akun].time || 0)) < 1800) out[akun] = { j: data[akun].jobId, s: data[akun].since || data[akun].time || 0 }; }
+      return new Response(JSON.stringify(out), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+    }
     if (!kunciCocok(kunciDipakai, env.KUNCI)) {
       return salah("kunci salah", 401);
     }
     const db = env.DB;
     const skrg = Math.floor(Date.now() / 1000);
+
+    // /market-presence POST -> akun market lapor jobId-nya (buat anti-nabrak lintas-phone).
+    if (jalur === "/market-presence" && req.method === "POST") {
+      const b = await req.json().catch(() => ({}));
+      const akun = teks(b.akun); const jobId = teks(b.jobId, 128);
+      if (!akun || !jobId) return salah("akun+jobId wajib");
+      let data = {};
+      try { const row = await db.prepare("SELECT data FROM cfg WHERE scope='marketpresence'").first(); if (row && row.data) data = JSON.parse(row.data); } catch {}
+      const prev = data[akun];
+      let since = skrg;
+      if (b.since) since = Number(b.since) || skrg;
+      else if (prev && prev.jobId === jobId && prev.since) since = prev.since;  // jobId sama -> keep since (tetep tau siapa duluan)
+      data[akun] = { jobId, time: skrg, since };
+      for (const k in data) { if (data[k] && (skrg - (data[k].time || 0)) >= 900) delete data[k]; }  // prune >15m
+      await db.prepare("INSERT INTO cfg (scope, ts, data) VALUES ('marketpresence', ?1, ?2) ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2").bind(skrg, JSON.stringify(data)).run();
+      return json({ ok: true });
+    }
 
     // ============================================================
     // /cek-user -- verifikasi username Roblox EXACT + ambil avatar (headshot).
@@ -333,6 +414,23 @@ export default {
         return json({ sc: row && row.scAssign ? String(row.scAssign) : null });
       }
 
+      // ===== TRADE ELE (oper Rainbow Elephant) -- CUMA picker (script baca inventory in-game) =====
+      // panel SET siapa ikut trade. POST /ele-ikut {akun, ikut}
+      if (jalur === "/ele-ikut" && req.method === "POST") {
+        const b = await req.json().catch(() => ({}));
+        if (!b || !b.akun) return json({ ok: false, error: "akun kosong" });
+        await db.prepare("ALTER TABLE akun ADD COLUMN eleIkut INTEGER").run().catch(() => {});
+        const ikut = (b.ikut === true || b.ikut === "true" || b.ikut === 1) ? 1 : 0;
+        await db.prepare("UPDATE akun SET eleIkut=?2 WHERE nama=?1").bind(String(b.akun), ikut).run().catch(() => {});
+        return json({ ok: true, akun: b.akun, ikut });
+      }
+      // script BACA siapa ikut. GET /ele-ikut -> {ikut:[nama,...]}
+      if (jalur === "/ele-ikut" && req.method === "GET") {
+        await db.prepare("ALTER TABLE akun ADD COLUMN eleIkut INTEGER").run().catch(() => {});
+        const r = await db.prepare("SELECT nama FROM akun WHERE eleIkut=1").all().catch(() => ({ results: [] }));
+        return json({ ikut: (r.results || []).map(x => x.nama) });
+      }
+
       // v-kick: panel SET kick per akun. POST /kick-set {akun, menit}
       if (jalur === "/kick-set" && req.method === "POST") {
         const b = await req.json().catch(() => ({}));
@@ -361,25 +459,17 @@ export default {
         try {
           // v9.30x: kolom chr (christmas egg) — idempotent, aman dijalanin tiap request
           await db.prepare("ALTER TABLE akun ADD COLUMN chr INTEGER").run().catch(() => {});
-          await db.prepare("ALTER TABLE akun ADD COLUMN totalPet INTEGER").run().catch(() => {});
-          await db.prepare("ALTER TABLE akun ADD COLUMN maxPet INTEGER").run().catch(() => {});
           const stmts = [];
           for (const it of list) {
             if (!it || !it.akun) continue;
             const sk = angka(it.sheck);
             const chr = angka(it.chr);
-            const pt = angka(it.petTotal);
-            const pm = angka(it.petMax);
             if (chr != null) {
               // format egg2: update sheck (gem egg) + chr (christmas egg) sekaligus
               stmts.push(db.prepare("UPDATE akun SET sheck=?2, chr=?3 WHERE nama=?1").bind(String(it.akun), sk || 0, chr));
             } else {
               if (sk == null || sk <= 0) continue;   // skip 0/invalid (format lama)
               stmts.push(db.prepare("UPDATE akun SET sheck=?2 WHERE nama=?1").bind(String(it.akun), sk));
-            }
-            // update totalPet/maxPet kalau ada (uplevel script)
-            if (pt != null && pt > 0) {
-              stmts.push(db.prepare("UPDATE akun SET totalPet=?2, maxPet=?3 WHERE nama=?1").bind(String(it.akun), pt, pm || null));
             }
           }
           if (stmts.length > 0) await db.batch(stmts);
@@ -763,6 +853,108 @@ export default {
       }
 
       // ---------- panel nulis setelan ----------
+      if (jalur === "/lvlmax" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 100000) || "";
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('lvlmax', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      if (jalur === "/marketakun" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 100000) || "";
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('marketakun', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();        return json({ ok: true, ts: skrg });
+      }
+
+      if (jalur === "/up38akun" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 100000) || "";   // "akun=total:max,..."
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('up38akun', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      if (jalur === "/up6kgakun" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 100000) || "";   // "akun=max:count,..."
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('up6kgakun', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      if (jalur === "/uplevel-giftpet" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 100000) || "";
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('uplevelgiftpet', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      if (jalur === "/up6kg-bahan" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 100000) || "";
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('up6kgbahan', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      if (jalur === "/hact-sellconfig" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 100000) || "";   // JSON string: {sellRules,petPool,keepOnly}
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('hactsellconfig', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      // panel set jenis pet yg diminta -> sekalian CLEAR data lama (fresh buat pet baru / refresh)
+      if (jalur === "/market-pricereq" && req.method === "PUT") {
+        const b = await req.json();
+        const data = teks(b.data, 200) || "";
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('marketpricereq', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, data).run();
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('marketpricedata', ?1, '{}')
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data='{}'`
+        ).bind(skrg).run();
+        return json({ ok: true, ts: skrg });
+      }
+
+      // market lapor listing per-server -> merge ke slot server-nya (gak nimpa server lain)
+      if (jalur === "/market-pricedata" && (req.method === "PUT" || req.method === "POST")) {   // v8.454: terima POST (executor req PUT sering gagal)
+        const b = await req.json();
+        const srv = teks(b.srv, 120) || "?";
+        const pet = teks(b.pet, 200) || "";
+        const listings = Array.isArray(b.listings) ? b.listings.slice(0, 2000) : [];
+        const dbg = teks(b.dbg, 120) || "";
+        let obj = {};
+        try { const row = await db.prepare("SELECT data FROM cfg WHERE scope='marketpricedata'").first(); if (row && row.data) obj = JSON.parse(row.data); } catch {}
+        if (typeof obj !== "object" || obj === null) obj = {};
+        obj[srv] = { ts: skrg, pet: pet, listings: listings, dbg: dbg };
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('marketpricedata', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(obj)).run();
+        return json({ ok: true, ts: skrg, srv: srv, n: listings.length });
+      }
+
       if (jalur === "/cfg" && req.method === "PUT") {
         const b = await req.json();
         const scope = teks(b.scope) || "all";
@@ -922,8 +1114,8 @@ export default {
           for (const j of (isi.jenis || [])) {
             const nm = j.n || "?";
             const g = gabung[nm] || (gabung[nm] = { jual: 0, token: 0 });
-            g.jual  += Number(j.j || 0);
-            g.token += Number(j.t || 0);
+            g.jual  += Number(j.ini || j.j || 0);   // v8.355: ini = hari ini (fallback j lama)
+            g.token += Number(j.tok || j.t || 0);
           }
         }
         const daftar = Object.entries(gabung)
@@ -932,7 +1124,7 @@ export default {
             rata: g.jual ? Math.round(g.token / g.jual) : 0,
           }))
           .sort((a, b) => b.jual - a.jual);
-        return json({ skrg, nAkun, totJual, totToken, daftar });
+        return json({ skrg, nAkun, totJual, totToken, daftar, perAkun: per });   // v8.355: perAkun buat popup detail
       }
 
       if (jalur === "/market" && req.method === "POST") {
@@ -943,12 +1135,16 @@ export default {
         // place tetap dilapor biar panel tau ini GAG 1.
         await db
           .prepare(
-            `INSERT INTO akun (nama, ts, place, tokens, petrule, nrule)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            `INSERT INTO akun (nama, ts, place, tokens, petrule, nrule, upkgstat)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(nama) DO UPDATE SET
-               ts=?2, place=?3, tokens=?4, petrule=?5, nrule=?6`
+               ts=?2, place=?3, tokens=?4, petrule=?5, nrule=?6, upkgstat=?7`
           )
-          .bind(nama, skrg, teks(b.place, 24), angka(b.tokens), angka(b.petRule), angka(b.nRule))
+          .bind(nama, skrg, teks(b.place, 24), angka(b.tokens), angka(b.petRule), angka(b.nRule),
+                JSON.stringify({ totalPet: angka(b.totalPet), maxInv: angka(b.maxInv), snipe: angka(b.snipe),
+                                 snipeTok: angka(b.snipeTok),
+                                 snipeJenis: Array.isArray(b.snipeJenis) ? b.snipeJenis.slice(0,40).map((x)=>({ n: teks(x.n,40)||"?", j: angka(x.j), t: angka(x.t) })) : [],
+                                 petJenis: Array.isArray(b.petJenis) ? b.petJenis.slice(0,80).map((x)=>({ n: teks(x.n,48)||"?", j: angka(x.j), kg: Array.isArray(x.kg) ? x.kg.slice(0,12).map((v)=>angka(v)) : [] })) : [] }))
           .run();
         // v4.78: simpen ringkasan penjualan akun ini (kalau dikirim)
         if (b.jual && typeof b.jual === "object") {
@@ -957,11 +1153,13 @@ export default {
           if (cJ) { try { const d = JSON.parse(cJ.data); if (d && typeof d === "object") per = d; } catch {} }
           per[nama] = {
             ts: skrg,
-            total: angka(b.jual.total),
-            token: angka(b.jual.token),
+            total: angka(b.jual.total),         // laku hari ini
+            totalKmr: angka(b.jual.totalKmr),   // v8.355: laku kemarin
+            token: angka(b.jual.token),         // token hari ini
             jenis: Array.isArray(b.jual.jenis)
               ? b.jual.jenis.slice(0, 40).map((x) => ({
-                  n: teks(x.n, 40) || "?", j: angka(x.j), t: angka(x.t),
+                  n: teks(x.n, 40) || "?", min: angka(x.min), max: angka(x.max),
+                  ini: angka(x.ini), kmr: angka(x.kmr), tok: angka(x.tok),
                 }))
               : [],
           };
@@ -980,6 +1178,7 @@ export default {
             list: b.rincianPet.slice(0, 60).map((x) => ({
               t: teks(x.tipe, 40) || "?",
               min: angka(x.min), max: angka(x.max), j: angka(x.jml),
+              p: angka(x.price),
             })),
           };
           await db.prepare(
@@ -996,6 +1195,58 @@ export default {
         let per = {};
         if (c) { try { const d = JSON.parse(c.data); if (d && typeof d === "object") per = d; } catch {} }
         return json({ skrg, rincian: per });
+      }
+
+      // ---------- ATURAN LIST MARKET (rule global, dipakai semua akun market) ----------
+      // Panel edit rules -> POST /market-rules {rules} -> simpen cfg 'marketrules'
+      // {ver, rules}. Market.lua GET /market-rules -> kalau ver beda dari yg
+      // ke-apply lokal, timpa listingRules-nya. ver = timestamp (naik tiap simpan).
+      if (jalur === "/market-rules" && req.method === "GET") {
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='marketrules'").first();
+        let d = { ver: 0, rules: [] };
+        if (c) { try { const p = JSON.parse(c.data); if (p && typeof p === "object") d = { ver: Number(p.ver) || 0, rules: Array.isArray(p.rules) ? p.rules : [] }; } catch {} }
+        return json(d);
+      }
+      if (jalur === "/market-rules" && req.method === "POST") {
+        const b = await req.json();
+        if (!Array.isArray(b.rules)) return salah("rules harus array");
+        const rules = b.rules.slice(0, 200).map((r) => {
+          const o = { type: teks(r.type, 48) || "(semua)", min: Number(r.min) || 0, max: Number(r.max) || 0,
+                      price: Number(r.price) || 0, maxListings: Math.max(1, Number(r.maxListings) || 1) };
+          return o;
+        }).filter((r) => r.price > 0);
+        const ver = Date.now();
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('marketrules', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(ver, JSON.stringify({ ver, rules })).run();
+        return json({ ok: true, ver, n: rules.length });
+      }
+
+      // ---------- ATURAN SNIPE MARKET (target auto-buy, dipakai semua akun) ----------
+      if (jalur === "/snipe-rules" && req.method === "GET") {
+        const c = await db.prepare("SELECT data FROM cfg WHERE scope='sniperules'").first();
+        let d = { ver: 0, rules: [], eggSource: "all" };
+        if (c) { try { const p = JSON.parse(c.data); if (p && typeof p === "object") d = { ver: Number(p.ver) || 0, rules: Array.isArray(p.rules) ? p.rules : [], eggSource: (p.eggSource === "prem" || p.eggSource === "biasa") ? p.eggSource : "all" }; } catch {} }
+        return json(d);
+      }
+      if (jalur === "/snipe-rules" && req.method === "POST") {
+        const b = await req.json();
+        if (!Array.isArray(b.rules)) return salah("rules harus array");
+        const egOk = (v) => (v === "prem" || v === "biasa" || v === "all") ? v : null;
+        const rules = b.rules.slice(0, 200).map((r) => {
+          const o = { petType: teks(r.petType, 48) || "(semua)", mutation: teks(r.mutation, 32) || "",
+            minKg: Number(r.minKg) || 0, maxKg: Number(r.maxKg) || 0, maxPrice: Number(r.maxPrice) || 0 };
+          const es = egOk(r.eggSource); if (es) o.eggSource = es;   // nil = ikut global
+          return o;
+        }).filter((r) => r.maxPrice > 0);
+        const eggSource = (b.eggSource === "prem" || b.eggSource === "biasa") ? b.eggSource : "all";
+        const ver = Date.now();
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('sniperules', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(ver, JSON.stringify({ ver, rules, eggSource })).run();
+        return json({ ok: true, ver, n: rules.length });
       }
 
       // ---------- bridge lapor inventory (seed+pet rinci) ----------
@@ -2012,6 +2263,20 @@ export default {
         const tim = teks(url.searchParams.get("tim"));
         if (!tim) return salah("tim kosong");
         const r = await db.prepare("SELECT ts, link FROM ps WHERE tim=?1").bind(tim).first();
+        return json({ tim, ts: r ? r.ts : 0, link: r ? r.link : "" });
+      }
+
+      // /ps-utama : SERVER UTAMA (home) per tim -> up6kg auto balik sini pas semua leveling full
+      if (jalur === "/ps-utama" && req.method === "PUT") {
+        const b = await req.json();
+        const tim = teks(b.tim); if (!tim) return salah("tim kosong");
+        const link = teks(b.link, 300) || "";
+        await db.prepare(`INSERT INTO ps (tim, ts, link) VALUES (?1, ?2, ?3) ON CONFLICT(tim) DO UPDATE SET ts=?2, link=?3`).bind(tim+"|utama", skrg, link).run();
+        return json({ ok: true, tim, link });
+      }
+      if (jalur === "/ps-utama" && req.method === "GET") {
+        const tim = teks(url.searchParams.get("tim")); if (!tim) return salah("tim kosong");
+        const r = await db.prepare("SELECT ts, link FROM ps WHERE tim=?1").bind(tim+"|utama").first();
         return json({ tim, ts: r ? r.ts : 0, link: r ? r.link : "" });
       }
 
@@ -3122,6 +3387,322 @@ export default {
         return json({ ok: true, akun });
       }
 
+      // v8.357: BENERIN COOKIE KENA VERIF via BlockSolve captcha solver.
+      // Panel kirim {token, akun, placeId?} -> ambil cookie dari tabel -> POST ke
+      // blocksolve.site/join (cookie + placeId) -> balikin response mentah (buat
+      // tau format-nya + verif ke-solve apa nggak). API key di env.BLOCKSOLVE_KEY.
+      if (jalur === "/cookie-solve" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const akun = teks(b.akun);
+        if (!akun) return salah("akun kosong");
+        let cookie = "";
+        try {
+          const row = await db.prepare("SELECT cookie FROM cookies WHERE akun=?1").bind(akun).first();
+          cookie = (row && row.cookie) || "";
+        } catch (e) { return json({ ok: false, pesan: "gagal baca cookie: " + String(e).slice(0, 120) }); }
+        if (!cookie || !cookie.includes("_|WARNING")) return salah("cookie akun gak ada / gak valid (backup dulu: zenx cookie all)");
+        const placeId = Number(b.placeId) || 121864768012064;   // default dari docs BlockSolve
+        const KEY = env.BLOCKSOLVE_KEY || "block_0c4e43aefd27ab00be0b87d369ab93de";
+        try {
+          const r = await fetch("https://blocksolve.site/join", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-API-Key": KEY },
+            body: JSON.stringify({ cookie, placeId }),
+          });
+          let hasil;
+          try { hasil = await r.json(); }
+          catch (e) { hasil = { raw: (await r.text().catch(() => "")).slice(0, 800) }; }
+          return json({ ok: r.ok, status: r.status, akun, hasil });
+        } catch (e) {
+          return json({ ok: false, pesan: "gagal call BlockSolve: " + String(e).slice(0, 200) });
+        }
+      }
+
+      // ---------- SOLVE CAPTCHA BATCH (BlockSolve) ----------
+      // Akun CAPTCHA LOCK (dari cek cookie) di-solve rame2. Panel kirim
+      // akuns:[...] -> loop tiap akun -> POST blocksolve.site/join {cookie,placeId}.
+      // BlockSolve solve di background (async) -> abis itu re-cek buat konfirmasi.
+      // Dibatesi 30 akun/batch (limit subrequest Worker).
+      if (jalur === "/cap-solve" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const KEY = env.BLOCKSOLVE_KEY || "block_0c4e43aefd27ab00be0b87d369ab93de";
+        const placeId = Number(b.placeId) || 121864768012064;
+        const akuns = Array.isArray(b.akuns) ? b.akuns.map((x) => String(x).trim()).filter(Boolean).slice(0, 30) : [];
+        if (!akuns.length) return salah("gak ada akun dipilih");
+        let rows = [];
+        try {
+          const ph = akuns.map(() => "?").join(",");
+          const r = await db.prepare("SELECT akun, cookie FROM cookies WHERE akun IN (" + ph + ")").bind(...akuns).all();
+          rows = r.results || [];
+        } catch (e) { return json({ ok: false, pesan: "gagal baca cookies: " + String(e).slice(0, 120) }); }
+        const hasil = [];
+        for (const row of rows) {
+          if (!row.cookie || !row.cookie.includes("_|WARNING")) { hasil.push({ akun: row.akun, ok: false, pesan: "cookie invalid" }); continue; }
+          try {
+            const r = await fetch("https://blocksolve.site/join", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-API-Key": KEY },
+              body: JSON.stringify({ cookie: row.cookie, placeId }),
+            });
+            let h; try { h = await r.json(); } catch (e) { h = { raw: (await r.text().catch(() => "")).slice(0, 200) }; }
+            hasil.push({ akun: row.akun, ok: r.ok, status: r.status, hasil: h });
+          } catch (e) { hasil.push({ akun: row.akun, ok: false, pesan: String(e).slice(0, 120) }); }
+        }
+        return json({ ok: true, hasil });
+      }
+
+      // v8.358: CEK STATUS COOKIE via ZeroPoint Cookie Checker (alive/dead/face_lock/
+      // captcha_lock/ban_warn). 2 tahap: /cookie-cek (submit semua) -> session_id,
+      // /cookie-cek-status (poll; pas completed download tiap type -> match ke akun).
+      // Cookie di-prefix "<akun>@@@" biar hasil bisa dicocokin balik ke akun.
+      if (jalur === "/cookie-cekzp" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const ZP_KEY = env.ZEROPOINT_KEY || "ZP_CookieChecker_9bMIG3QNAGYEclFhfY0fIrdQFCAiSax5";
+        let rows = [];
+        try { const r = await db.prepare("SELECT akun, cookie FROM cookies").all(); rows = r.results || []; }
+        catch (e) { return json({ ok: false, pesan: "gagal baca cookies: " + String(e).slice(0, 120) }); }
+        const valid = rows.filter((r) => r.cookie && r.cookie.includes("_|WARNING"));
+        if (!valid.length) return salah("gak ada cookie (backup dulu: zenx cookie all)");
+        // v608: exclude akun seed/farm yg dikirim panel (biar gak ikut ke-cek)
+        const exSet = new Set(Array.isArray(b.exclude) ? b.exclude.map((x) => String(x).trim()).filter(Boolean) : []);
+        const dicek = exSet.size ? valid.filter((r) => !exSet.has(r.akun)) : valid;
+        if (!dicek.length) return salah("semua akun ke-exclude (seed/farm)");
+        const lines = dicek.map((r) => r.akun + "@@@" + r.cookie).join("\n");
+        try {
+          const r = await fetch("https://zeropoint.to/api/cookie-checker-api/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-API-Key": ZP_KEY },
+            body: JSON.stringify({ cookies: lines }),
+          });
+          const h = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ ok: false, status: r.status, pesan: h.error || "submit gagal", cooldown: h.cooldown });
+          return json({ ok: true, session_id: h.session_id, total: h.total });
+        } catch (e) { return json({ ok: false, pesan: "gagal call ZeroPoint: " + String(e).slice(0, 150) }); }
+      }
+
+      if (jalur === "/cookie-cekzp-status" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const ZP_KEY = env.ZEROPOINT_KEY || "ZP_CookieChecker_9bMIG3QNAGYEclFhfY0fIrdQFCAiSax5";
+        const sid = teks(b.session_id, 64);
+        if (!sid) return salah("session_id kosong");
+        try {
+          const r = await fetch("https://zeropoint.to/api/cookie-checker-api/status/" + encodeURIComponent(sid),
+            { headers: { "X-API-Key": ZP_KEY } });
+          const h = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ ok: false, status: r.status, pesan: "status gagal" });
+          const ringkas = { status: h.status, checked: h.checked, total: h.total,
+            alive: h.alive_count, dead: h.dead_count, face: h.face_lock_count,
+            captcha: h.captcha_lock_count, ban: h.ban_warn_count };
+          if (h.status !== "completed") return json({ ok: true, selesai: false, ...ringkas });
+          const perAkun = {};
+          for (const ty of ["alive", "dead", "face_lock", "captcha_lock", "ban_warn"]) {
+            try {
+              const dr = await fetch("https://zeropoint.to/api/cookie-checker-api/download/" + encodeURIComponent(sid) + "/" + ty,
+                { headers: { "X-API-Key": ZP_KEY } });
+              if (!dr.ok) continue;
+              const txt = await dr.text();
+              for (const line of txt.split(/\r?\n/)) {
+                const idx = line.indexOf("@@@");
+                if (idx > 0) { const ak = line.slice(0, idx).trim(); if (ak) perAkun[ak] = ty; }
+              }
+            } catch (e) {}
+          }
+          return json({ ok: true, selesai: true, ...ringkas, perAkun });
+        } catch (e) { return json({ ok: false, pesan: "gagal cek status: " + String(e).slice(0, 150) }); }
+      }
+
+      // ---------- ZEROSOLVER (solve captcha join-challenge / ZP_ZeroSolver) ----------
+      // Solve captcha join per akun (biar bisa masuk server). BAYAR: ~0.0025 credit/solve ingame.
+      //   POST /solver-submit  { token, akuns:[...], captcha_type? } -> job_id + est
+      //   POST /solver-status  { token, job_id }  -> progress (solved/already/failed)
+      if (jalur === "/solver-submit" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const ZS_KEY = env.ZEROSOLVER_KEY || "ZP_ZeroSolver_zskqlAhKBcW7CklzTQQ9DNzxgqVndNZK";
+        const akuns = Array.isArray(b.akuns) ? b.akuns.map((x) => String(x).trim()).filter(Boolean) : [];
+        if (!akuns.length) return salah("gak ada akun dipilih");
+        let rows = [];
+        try {
+          const ph = akuns.map(() => "?").join(",");
+          const r = await db.prepare("SELECT akun, cookie FROM cookies WHERE akun IN (" + ph + ")").bind(...akuns).all();
+          rows = r.results || [];
+        } catch (e) { return json({ ok: false, pesan: "gagal baca cookies: " + String(e).slice(0, 120) }); }
+        const valid = rows.filter((r) => r.cookie && r.cookie.includes("_|WARNING"));
+        if (!valid.length) return salah("gak ada cookie valid buat akun kepilih");
+        const lines = valid.map((r) => r.akun + ":zenx:" + r.cookie).join("\n");
+        const ctype = b.captcha_type === "captchalock" ? "captchalock" : "ingame";
+        try {
+          const r = await fetch("https://zeropoint.to/api/zerosolver-api/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-API-Key": ZS_KEY },
+            body: JSON.stringify({ accounts: lines, captcha_type: ctype }),
+          });
+          const h = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ ok: false, status: r.status, pesan: h.error || "submit gagal" });
+          return json({ ok: true, job_id: h.job_id, total: h.total_accounts, est: h.estimated_cost });
+        } catch (e) { return json({ ok: false, pesan: "gagal call ZeroSolver: " + String(e).slice(0, 150) }); }
+      }
+
+      if (jalur === "/solver-status" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const ZS_KEY = env.ZEROSOLVER_KEY || "ZP_ZeroSolver_zskqlAhKBcW7CklzTQQ9DNzxgqVndNZK";
+        const jid = teks(b.job_id, 64);
+        if (!jid) return salah("job_id kosong");
+        try {
+          const r = await fetch("https://zeropoint.to/api/zerosolver-api/status/" + encodeURIComponent(jid),
+            { headers: { "X-API-Key": ZS_KEY } });
+          const h = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ ok: false, status: r.status, pesan: "status gagal" });
+          const done = (h.status === "completed" || h.status === "failed" || h.status === "cancelled");
+          return json({ ok: true, selesai: done, status: h.status, total: h.total_accounts,
+            processed: h.processed, successful: h.successful, already: h.already_solved,
+            failed: h.failed, charged: h.charged_credits });
+        } catch (e) { return json({ ok: false, pesan: "gagal cek status: " + String(e).slice(0, 150) }); }
+      }
+
+      if (jalur === "/solver-auto" && req.method === "GET") {
+        let on = 0;
+        try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='solver_auto'").first(); if (row && row.data) on = Number(row.data) || 0; } catch {}
+        return new Response(JSON.stringify({ ok: true, on }), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+      }
+      if (jalur === "/solver-auto" && req.method === "PUT") {
+        const b = await req.json();
+        const on = b.on ? "1" : "0";   // flag preferensi UI -> gak butuh auth (biar selalu ke-simpen, gak balik OFF)
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('solver_auto', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, on).run();
+        return json({ ok: true, on: Number(on) });
+      }
+
+      if (jalur === "/solver-history" && req.method === "GET") {
+        let data = "[]";
+        try { const row = await env.DB.prepare("SELECT data FROM cfg WHERE scope='solver_history'").first(); if (row && row.data) data = row.data; } catch {}
+        return new Response(data, { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+      }
+      if (jalur === "/solver-history" && req.method === "PUT") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        if (b.clear) {   // v623: hapus semua history (buang data lama kecicil)
+          await db.prepare(
+            `INSERT INTO cfg (scope, ts, data) VALUES ('solver_history', ?1, '[]')
+             ON CONFLICT(scope) DO UPDATE SET ts=?1, data='[]'`
+          ).bind(skrg).run();
+          return json({ ok: true, count: 0 });
+        }
+        let arr = [];
+        try { const row = await db.prepare("SELECT data FROM cfg WHERE scope='solver_history'").first(); if (row && row.data) arr = JSON.parse(row.data); } catch {}
+        if (!Array.isArray(arr)) arr = [];
+        if (b.entry && typeof b.entry === "object") arr.unshift(b.entry);   // terbaru di atas
+        if (arr.length > 72) arr = arr.slice(0, 72);   // simpen 72 (3 hari kalo per jam)
+        await db.prepare(
+          `INSERT INTO cfg (scope, ts, data) VALUES ('solver_history', ?1, ?2)
+           ON CONFLICT(scope) DO UPDATE SET ts=?1, data=?2`
+        ).bind(skrg, JSON.stringify(arr)).run();
+        return json({ ok: true, count: arr.length });
+      }
+
+      // ---------- FACE UNLOCK (ZeroUnlock / ZP_FaceUnlock) ----------
+      // Akun yang kena FACE LOCK (dari /cookie-cekzp-status) bisa di-unlock via
+      // service ZeroUnlock. BAYAR: $0.05/akun (dipotong balance). Alur:
+      //   POST /face-submit   { token, akuns:[...], priority? } -> job_id + est
+      //   POST /face-status   { token, job_id }  -> progress; kalau selesai
+      //                        download successful.txt -> UPDATE cookie fresh di D1
+      //   POST /face-balance  { token }          -> saldo (effective)
+      // Format kirim: "<akun>:zenx:<cookie>" -- username = akun biar bisa
+      // dicocokin balik pas download (cookie-only gak ada label buat match).
+      // Key di env.FACEUNLOCK_KEY.
+      if (jalur === "/face-submit" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const FU_KEY = env.FACEUNLOCK_KEY || "ZP_FaceUnlock_SHFPj50HIU7LuhuTOFmYldgeoa4hMIcI";
+        const akuns = Array.isArray(b.akuns) ? b.akuns.map((x) => String(x).trim()).filter(Boolean) : [];
+        if (!akuns.length) return salah("gak ada akun dipilih");
+        let rows = [];
+        try {
+          const ph = akuns.map(() => "?").join(",");
+          const r = await db.prepare("SELECT akun, cookie FROM cookies WHERE akun IN (" + ph + ")").bind(...akuns).all();
+          rows = r.results || [];
+        } catch (e) { return json({ ok: false, pesan: "gagal baca cookies: " + String(e).slice(0, 120) }); }
+        const valid = rows.filter((r) => r.cookie && r.cookie.includes("_|WARNING"));
+        if (!valid.length) return salah("gak ada cookie valid buat akun kepilih");
+        const lines = valid.map((r) => r.akun + ":zenx:" + r.cookie).join("\n");
+        try {
+          const r = await fetch("https://zeropoint.to/api/faceunlock-api/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-API-Key": FU_KEY },
+            body: JSON.stringify({ accounts: lines, priority: b.priority === true }),
+          });
+          const h = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ ok: false, status: r.status, pesan: h.error || "submit gagal" });
+          return json({ ok: true, job_id: h.job_id, total: h.total_accounts,
+            paid: h.paid_accounts_count, gratis: h.db_accounts_count,
+            est: h.estimated_cost, priority: h.priority });
+        } catch (e) { return json({ ok: false, pesan: "gagal call ZeroUnlock: " + String(e).slice(0, 150) }); }
+      }
+
+      if (jalur === "/face-status" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const FU_KEY = env.FACEUNLOCK_KEY || "ZP_FaceUnlock_SHFPj50HIU7LuhuTOFmYldgeoa4hMIcI";
+        const jid = teks(b.job_id, 64);
+        if (!jid) return salah("job_id kosong");
+        try {
+          const r = await fetch("https://zeropoint.to/api/faceunlock-api/status/" + encodeURIComponent(jid),
+            { headers: { "X-API-Key": FU_KEY } });
+          const h = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ ok: false, status: r.status, pesan: "status gagal" });
+          const ringkas = { status: h.status, total: h.total_accounts, processed: h.processed,
+            successful: h.successful, failed: h.failed, other: h.other_failed };
+          const logs = Array.isArray(h.terminal_logs)
+            ? h.terminal_logs.map((l) => ({ u: l.username, m: l.message, s: l.status })) : [];
+          if (h.status !== "completed") return json({ ok: true, selesai: false, ...ringkas, logs });
+          // selesai -> download successful.txt, update cookie fresh ke D1
+          const files = Array.isArray(h.result_files) ? h.result_files : [];
+          const updated = []; let sucRaw = "", failRaw = "";
+          for (const f of files) {
+            const fn = (f && (f.filename || f.name)) || (typeof f === "string" ? f : "");
+            if (!fn) continue;
+            try {
+              const dr = await fetch("https://zeropoint.to/api/faceunlock-api/download/" +
+                encodeURIComponent(jid) + "/" + encodeURIComponent(fn), { headers: { "X-API-Key": FU_KEY } });
+              if (!dr.ok) continue;
+              const txt = await dr.text();
+              if (/success/i.test(fn)) {
+                sucRaw = txt;
+                for (const line of txt.split(/\r?\n/)) {
+                  const t = line.trim(); if (!t) continue;
+                  const p1 = t.indexOf(":"); const p2 = t.indexOf(":", p1 + 1);
+                  if (p1 < 0 || p2 < 0) continue;
+                  const ak = t.slice(0, p1).trim(); const ck = t.slice(p2 + 1).trim();
+                  if (ak && ck.includes("_|WARNING")) {
+                    try { await db.prepare("UPDATE cookies SET cookie=?, ts=? WHERE akun=?").bind(ck, Date.now(), ak).run(); updated.push(ak); } catch (e) {}
+                  }
+                }
+              } else if (/fail/i.test(fn)) { failRaw = txt; }
+            } catch (e) {}
+          }
+          return json({ ok: true, selesai: true, ...ringkas, logs, updated, sucRaw, failRaw });
+        } catch (e) { return json({ ok: false, pesan: "gagal cek status: " + String(e).slice(0, 150) }); }
+      }
+
+      if (jalur === "/face-balance" && req.method === "POST") {
+        const b = await req.json();
+        if (!(await tokenSah(b.token))) return salah("sesi habis / belum login", 401);
+        const FU_KEY = env.FACEUNLOCK_KEY || "ZP_FaceUnlock_SHFPj50HIU7LuhuTOFmYldgeoa4hMIcI";
+        try {
+          const r = await fetch("https://zeropoint.to/api/faceunlock-api/balance", { headers: { "X-API-Key": FU_KEY } });
+          const h = await r.json().catch(() => ({}));
+          if (!r.ok) return json({ ok: false, pesan: "balance gagal" });
+          return json({ ok: true, balance: h.balance, effective: h.effective, reserved: h.reserved });
+        } catch (e) { return json({ ok: false, pesan: "gagal cek balance: " + String(e).slice(0, 120) }); }
+      }
+
       // ---------- v15-52: SETELAN SCRIPT SEED (star_seed.lua) ----------
       // v15-60: TIGA LAPIS, digabung di sini. Yang bawah nimpa yang atas:
       //   scope 'seed'            -> semua akun seed
@@ -3664,60 +4245,6 @@ export default {
           ).bind(skrg, JSON.stringify(sd)).run();
         } catch (e) {}
         return json({ ok: true, akun });
-      }
-
-      // v9.500: /lvlmax — daftar akun up6kg + max inventory, buat up3.8kg
-      // Format: "akun=max:total" dipisah koma (sama kayak yg di-parse up3.8kg/up6kg)
-      if (jalur === "/lvlmax" && req.method === "GET") {
-        // Coba ambil dari DB dulu (kolom upkgstat tabel akun, sc=UP6KG)
-        let parts = [];
-        try {
-          const rows = await db.prepare(
-            "SELECT nama, upkgstat FROM akun WHERE sc='UP6KG' AND upkgstat IS NOT NULL"
-          ).all();
-          for (const row of (rows.results || [])) {
-            try {
-              const s = JSON.parse(row.upkgstat);
-              const mx = s.maxInv || 210;
-              const tot = s.total || 0;
-              parts.push(row.nama + "=" + mx + ":" + tot);
-            } catch {}
-          }
-        } catch {}
-        // Fallback: hardcode sementara kalau DB kosong / upkgstat belum ada
-        if (parts.length === 0) {
-          parts = [
-            "zenxevent10=260:0",
-            "mutasizenx2=255:0",
-            "zenxlolipop12=235:0",
-            "age75laptop=235:0",
-            "zenxlolipop5=235:0",
-            "zenxevent7=245:0",
-            "zenxlolipop10=210:0",
-            "zenxlolipop6=260:0",
-          ];
-        }
-        return new Response(parts.join(","), { headers: { "Content-Type": "text/plain" } });
-      }
-
-      // /marketakun — daftar semua akun market + stok pet sekarang, buat uplevelnew tab TRADE
-      // Format: "akun=total:max,..." (total=petrule, max=max inventory default 235)
-      if (jalur === "/marketakun" && req.method === "GET") {
-        const MARKET_PLACE = ["126884695634066", "129954712878723"];
-        let parts = [];
-        try {
-          const rows = await db.prepare(
-            "SELECT nama, petrule, upkgstat FROM akun WHERE place IN (?1, ?2) ORDER BY nama"
-          ).bind(MARKET_PLACE[0], MARKET_PLACE[1]).all();
-          for (const row of (rows.results || [])) {
-            let mx = 235; // default max inventory
-            if (row.upkgstat) {
-              try { const s = JSON.parse(row.upkgstat); if (s.maxInv) mx = s.maxInv; } catch {}
-            }
-            parts.push(row.nama + "=" + (row.petrule || 0) + ":" + mx);
-          }
-        } catch {}
-        return new Response(parts.join(","), { headers: { "Content-Type": "text/plain" } });
       }
 
       return salah("jalur gak dikenal: " + jalur, 404);
