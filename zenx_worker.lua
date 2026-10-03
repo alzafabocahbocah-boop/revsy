@@ -5330,20 +5330,14 @@ local function run(cfg)
                                     KICK_DIURUS["move_link:" .. pkgBH] = nil   -- hapus ingatan (server leveling/hact) -> rejoin balik
                                     -- v9.486: MARKET (TradeWorld) -> nil (market public). SELAIN itu (up3.8kg dll) ->
                                     -- mapLink[pkg] = SERVER SENDIRI (up3.8kg balik ke server nya pas full, bukan nyangkut di hact).
+                                    -- v9.500: FIX balik-home market -- script market TIDAK punya kode teleport sendiri,
+                                    -- jadi worker HARUS open_one seperti biasa (nil link = balik ke market place public).
                                     local _isMarketPlace = (tostring(cfg.place_id) == "129954712878723")
                                     local _bhLink = _isMarketPlace and nil or (mapLink[pkgBH] or nil)
-                                    if _isMarketPlace then
-                                        -- v8.461/v9.496: MARKET udah self-teleport dari script sendiri (langsung, 0 tunggu
-                                        -- worker). File ini sekarang CUMA informational -- worker cukup bersihin
-                                        -- move_link, JANGAN open_one lagi (bakal dobel/bentrok sama teleport yg udah
-                                        -- kejadian duluan di script).
-                                        info(("[balik-home] %s FULL -> udah self-teleport di script, worker cuma bersihin move_link"):format(akun))
-                                    else
-                                        info(("[balik-home] %s FULL -> balik %s + hapus move_link"):format(akun, _bhLink and "server sendiri" or "MARKET"))
-                                        pcall(function() open_one(cfg, pkgBH, _bhLink, "balik-home", true) end)
-                                        KICK_DIURUS["tembak_ts:" .. pkgBH] = os.time()
-                                        TERAKHIR_BUKA[pkgBH] = os.time()
-                                    end
+                                    info(("[balik-home] %s FULL -> balik %s + hapus move_link"):format(akun, _bhLink and "server sendiri" or "MARKET"))
+                                    pcall(function() open_one(cfg, pkgBH, _bhLink, "balik-home", true) end)
+                                    KICK_DIURUS["tembak_ts:" .. pkgBH] = os.time()
+                                    TERAKHIR_BUKA[pkgBH] = os.time()
                                 end
                                 pcall(function() sh("su -c 'rm -f \"" .. _dd .. "/" .. fline .. "\"' 2>/dev/null") end)
                             end
