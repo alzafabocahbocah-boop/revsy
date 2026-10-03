@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════════╗
--- ║  UP KG — v0.1 (KERANGKA UI)                                    ║
+-- ║  UP KG — v0.2 (swap: hanya Ele, support lain diem)             ║
 -- ║  UI mirip PANEN/HACT. Logika naikin KG pet NYUSUL.            ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.             ║
 -- ╚══════════════════════════════════════════════════════════════╝
@@ -1850,16 +1850,20 @@ do
             busy[uuid] = nil   -- SELALU clear (walau error) -> pet gak nyangkut
         end)
     end
-    _G.ZenxSwapPet = swapPet   -- expose ke luar (dbg_skillfire bisa trigger langsung)
+    _G.ZenxSwapPet = nil   -- v-fix: dimatiin, jangan expose (hanya ready-loop Ele yg swap)
     -- skill swap: khusus Dilop/Peacock/Gilded — DIMATIIN (hanya Ele yg swap)
     local skillSwapBusy = {}
     _G.ZenxSkillSwap = function(key)
+        -- v-fix: hanya Ele yg boleh swap via ZenxSkillSwap (Dilop/Peacock/Gilded diblock)
+        local uuid = "{"..key:gsub("[{}]","").."}"
+        local supNm = supportKunci[uuid]
+        local isEleSwap = supNm and tostring(supNm):lower():find("elephant", 1, true)
+        if not isEleSwap then kgLog("ZenxSkillSwap SKIP non-ele: "..(supNm or uuid)); return end
         if skillSwapBusy[key] then return end
         skillSwapBusy[key] = true
         task.spawn(function()
             pcall(function()
                 local pos = CLUSTER
-                local uuid = "{"..key:gsub("[{}]","").."}"
                 if not pos then pos = lastPos[uuid] end
                 if not pos then local m = modelByUuid[uuid]; if m then pcall(function() pos = m:GetPivot().Position end) end end
                 unequipPet(uuid); task.wait(0.05)
@@ -2408,7 +2412,11 @@ do
                     for u in pairs(team) do
                         local idle = lastSwap[u] and (tick() - lastSwap[u]) or 999
                         -- ilang model + gak lagi di-swap + gak baru di-swap (biar gak ganggu swap normal)
-                        if not modelByUuid[u] and not busy[u] and idle > 3 then
+                        -- v-fix: HEAL hanya Ele + bahan (support lain diem, gak di-re-equip)
+                        local supNmH = supportKunci[u]
+                        local isEleH = supNmH and tostring(supNmH):lower():find("elephant", 1, true)
+                        local isBahanH = bahanAktif[u] ~= nil
+                        if not modelByUuid[u] and not busy[u] and idle > 3 and (isEleH or isBahanH) then
                             unequipPet(u); task.wait(0.15)
                             equipPet(u, CLUSTER); task.wait(0.12)
                             healed = healed + 1
