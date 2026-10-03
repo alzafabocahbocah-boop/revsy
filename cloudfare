@@ -3700,6 +3700,26 @@ export default {
         return new Response(parts.join(","), { headers: { "Content-Type": "text/plain" } });
       }
 
+      // /marketakun — daftar semua akun market + stok pet sekarang, buat uplevelnew tab TRADE
+      // Format: "akun=total:max,..." (total=petrule, max=max inventory default 235)
+      if (jalur === "/marketakun" && req.method === "GET") {
+        const MARKET_PLACE = ["126884695634066", "129954712878723"];
+        let parts = [];
+        try {
+          const rows = await db.prepare(
+            "SELECT nama, petrule, upkgstat FROM akun WHERE place IN (?1, ?2) ORDER BY nama"
+          ).bind(MARKET_PLACE[0], MARKET_PLACE[1]).all();
+          for (const row of (rows.results || [])) {
+            let mx = 235; // default max inventory
+            if (row.upkgstat) {
+              try { const s = JSON.parse(row.upkgstat); if (s.maxInv) mx = s.maxInv; } catch {}
+            }
+            parts.push(row.nama + "=" + (row.petrule || 0) + ":" + mx);
+          }
+        } catch {}
+        return new Response(parts.join(","), { headers: { "Content-Type": "text/plain" } });
+      }
+
       return salah("jalur gak dikenal: " + jalur, 404);
     } catch (e) {
       return salah("server: " + e.message, 500);
