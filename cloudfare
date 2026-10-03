@@ -3666,6 +3666,40 @@ export default {
         return json({ ok: true, akun });
       }
 
+      // v9.500: /lvlmax — daftar akun up6kg + max inventory, buat up3.8kg
+      // Format: "akun=max:total" dipisah koma (sama kayak yg di-parse up3.8kg/up6kg)
+      if (jalur === "/lvlmax" && req.method === "GET") {
+        // Coba ambil dari DB dulu (kolom upkgstat tabel akun, sc=UP6KG)
+        let parts = [];
+        try {
+          const rows = await db.prepare(
+            "SELECT nama, upkgstat FROM akun WHERE sc='UP6KG' AND upkgstat IS NOT NULL"
+          ).all();
+          for (const row of (rows.results || [])) {
+            try {
+              const s = JSON.parse(row.upkgstat);
+              const mx = s.maxInv || 210;
+              const tot = s.total || 0;
+              parts.push(row.nama + "=" + mx + ":" + tot);
+            } catch {}
+          }
+        } catch {}
+        // Fallback: hardcode sementara kalau DB kosong / upkgstat belum ada
+        if (parts.length === 0) {
+          parts = [
+            "zenxevent10=260:0",
+            "mutasizenx2=255:0",
+            "zenxlolipop12=235:0",
+            "age75laptop=235:0",
+            "zenxlolipop5=235:0",
+            "zenxevent7=245:0",
+            "zenxlolipop10=210:0",
+            "zenxlolipop6=260:0",
+          ];
+        }
+        return new Response(parts.join(","), { headers: { "Content-Type": "text/plain" } });
+      }
+
       return salah("jalur gak dikenal: " + jalur, 404);
     } catch (e) {
       return salah("server: " + e.message, 500);
