@@ -488,10 +488,11 @@ task.spawn(function()
     local petTerakhir, nRuleTerakhir, rincianTerakhir = 0, 0, {}
     local totalPetTerakhir, maxInvTerakhir = 0, 0   -- v8.354: total pet backpack + maxInv (buat panel)
     -- v8.451: load maxInv terakhir dari file -> di garden gak ada UI, pake yg ke-save pas di market
+    -- v8.452: coba readfile langsung tanpa cek isfile dulu (isfile kadang nil di beberapa executor)
     pcall(function()
-        if isfile and readfile and plr and plr.Name and isfile("zenx_maxinv_" .. plr.Name .. ".txt") then
-            local mi = tonumber(readfile("zenx_maxinv_" .. plr.Name .. ".txt"))
-            if mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
+        if readfile and plr and plr.Name then
+            local ok, mi = pcall(function() return tonumber(readfile("zenx_maxinv_" .. plr.Name .. ".txt")) end)
+            if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
         end
     end)
     local snipeJenisTerakhir, snipeTokTerakhir = {}, 0   -- v8.356: snipe breakdown per tipe
@@ -563,16 +564,37 @@ task.spawn(function()
                 end)
                 if mxUI and mxUI > 0 then
                     maxInvTerakhir = mxUI; _G.__ZenxMaxInv = mxUI
-                    pcall(function() if writefile and plr and plr.Name then writefile("zenx_maxinv_" .. plr.Name .. ".txt", tostring(mxUI)) end end)   -- v8.451: persist buat garden
                 else
-                    local mi = tonumber(_G.__ZenxMaxInv)
-                    if not mi or mi <= 0 then   -- v8.451: di garden gak ada UI -> baca ATTRIBUTE langsung
-                        for _, attr in ipairs({ "MaxInventory", "InventoryCapacity", "MaxPets", "PetCapacity", "MaxStorage" }) do
-                            local v = plr:GetAttribute(attr)
-                            if v and tonumber(v) and tonumber(v) > 0 then mi = tonumber(v); _G.__ZenxMaxInv = mi; break end
+                    -- v8.452: fallback getgc (mirip up6kg) -> scan PlayerData di memory
+                    -- reliable di garden maupun market, tidak butuh UI
+                    local mx = nil
+                    pcall(function()
+                        if getgc then
+                            local tally = {}
+                            local floor = (totalPetTerakhir or 0) - 5
+                            for _, obj in ipairs(getgc(true)) do
+                                if type(obj) == "table" then
+                                    local mp = rawget(obj, "MaxPetsInInventory")
+                                    if type(mp) == "number" and mp > 0
+                                        and rawget(obj, "MaxEggsInFarm") ~= nil
+                                        and rawget(obj, "MaxEquippedPets") ~= nil
+                                        and mp >= floor then
+                                        tally[mp] = (tally[mp] or 0) + 1
+                                    end
+                                end
+                            end
+                            local bestN = 0
+                            for v, n in pairs(tally) do
+                                if n > bestN or (n == bestN and (not mx or v < mx)) then mx = v; bestN = n end
+                            end
                         end
+                    end)
+                    if mx and mx > 0 then
+                        maxInvTerakhir = mx; _G.__ZenxMaxInv = mx
+                    else
+                        local mi = tonumber(_G.__ZenxMaxInv)
+                        if mi and mi > 0 then maxInvTerakhir = mi end
                     end
-                    if mi and mi > 0 then maxInvTerakhir = mi end
                 end
                 -- v8.368: BALIK HOME pas FULL di GARDEN (leveling). Akun market di-oper ke leveling
                 -- buat diisi bahan; pas totalPet >= maxInv (full) -> minta worker balikin ke market.
