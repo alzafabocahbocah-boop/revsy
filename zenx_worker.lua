@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.509-cf"
+local VERSION = "9.510-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -5614,6 +5614,18 @@ local function run(cfg)
                     -- config-nya. Sekarang baca cfg.stagger_sec (fallback 30 kalau emang gak di-set).
                     local _staggerAntrian = cfg.stagger_sec or (tostring(cfg.script_label or ""):find("MARKET") and 90 or 30)
                     info(("[antrian] %d client OUT -> rejoin (1-1 tiap %ds)"):format(#perluTembak, jeda_client(cfg, _staggerAntrian)))
+                    -- v9.510: kalau mapLink kosong (boot baru / stale), refresh dulu sebelum rejoin
+                    -- biar denyut-rejoin otomatis juga pakai server terbaru (bukan join PUBLIC)
+                    do
+                        local adaLink = false
+                        for _, pk in ipairs(perluTembak) do
+                            if mapLink and mapLink[pk] and mapLink[pk] ~= "" then adaLink = true; break end
+                        end
+                        if not adaLink then
+                            info("[antrian] mapLink kosong -> refresh_ps dulu sebelum rejoin")
+                            refresh_ps(); pcall(refresh_ps_getps)
+                        end
+                    end
                     for idx, pkg in ipairs(perluTembak) do
                         if (cek_batal and cek_batal()) or ada_perintah_baru(cfg, "FORCE") then break end
                         pcall(function() grid_satu(cfg, pkg) end)
