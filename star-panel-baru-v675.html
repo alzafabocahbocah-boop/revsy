@@ -4280,25 +4280,19 @@ async function _populateUpkgOper(dev){
   try{ pushLvlMax(); }catch(e){}
   const cont = document.getElementById("upkgOperList");
   if(!cont) return;
+  // v675: parallel fetch /ps-list + /setting-tim sekaligus (lebih cepet)
   let pslink = {};
-  try{ const r = await api("/ps-list"); if(r && Array.isArray(r.ps)) r.ps.forEach(x => { if(x&&x.akun&&x.ps_link) pslink[x.akun]=x.ps_link; }); }catch(e){}
-  // v502: per DEVICE -> split 2 tim by idx (kayak start popup uplevel forced 2-tim)
-  const psFrom = (sc) => { const devs=[]; STAT_TIM.filter(t=>(t.sc||"").toUpperCase().indexOf(sc)>=0&&t.on).forEach(t=>{ const cls=(t.clients||[]).slice().sort((a,b)=>((a.idx!=null?a.idx:999)-(b.idx!=null?b.idx:999))); const sep=Math.ceil(cls.length/2); const halves=[cls.slice(0,sep),cls.slice(sep)]; const tims=[]; halves.forEach((half,hi)=>{ const tim={tim:String(hi+1),srv:"",link:"",akuns:[],need:0}; half.forEach(c=>{const nm=c.akun||"";if(!nm)return;const a=_akunFresh(nm)||{};let mx=0,total=0;if(sc==="HACT"){let hs=a.hactstat;try{if(typeof hs==="string")hs=JSON.parse(hs);}catch(e){hs=null;}if(hs){let keep=0;try{if(hs.keep)for(const k in hs.keep){keep+=Number((hs.keep[k]||{}).total)||0;}}catch(e){}total=keep;mx=0;}}else{try{if(a.upkgstat){const _st=JSON.parse(a.upkgstat);mx=Number(_st.maxInv)||0;total=Number(_st.totalAll)||0;}}catch(e){}}const space=Math.max(0,mx-total);const srv=a.ps_nama||c.ps||"",lk=pslink[nm]||"";tim.akuns.push({nm:nm,belum:(sc==="HACT"?total:space),max:mx});tim.need+=space;if(lk&&!tim.link)tim.link=lk;if(!tim.srv){if(srv&&srv!=="public")tim.srv=srv;else if(lk)tim.srv="home:"+nm;}}); if(tim.akuns.length)tims.push(tim); }); if(tims.length)devs.push({devId:t.id,devNm:((CATAT_RF&&CATAT_RF["#"+t.id])||t.devnama||t.id||""),tims:tims}); }); return devs; };
-  const psLevel=psFrom("UPLEVEL"), psHact=psFrom("HACT");
-  const _ambilSc = dev._ambilFrom || "HACT";   // v594: up6kg ambil dari 3.8KG, UP 3.8KG ambil dari HACT
-  const psAmbil = psFrom(_ambilSc);
-  const _ambilLbl = (_ambilSc === "3.8KG") ? "AMBIL 3.8" : "AMBIL";
-  const _kgLbl = dev._kgTarget || "6kg";   // v595: label stat card ("6kg+" / "3.8kg+")
-
-  // v675: drag reorder + hapus client per-tim (khusus up6kg tab)
-  // Load urutan tersimpan dari backend (setting-tim), lalu sort dev.clients sesuai urutan itu
   let _orderedClients = (dev.clients||[]).slice();
-  try{
-    const st = await api("/setting-tim?tim=" + encodeURIComponent(dev._tim));
-    if(st && st.clients){
-      const savedOrder = typeof st.clients === "string" ? JSON.parse(st.clients) : st.clients;
+  const [_psRes, _stRes] = await Promise.allSettled([
+    api("/ps-list"),
+    api("/setting-tim?tim=" + encodeURIComponent(dev._tim))
+  ]);
+  if(_psRes.status === "fulfilled" && _psRes.value && Array.isArray(_psRes.value.ps))
+    _psRes.value.ps.forEach(x => { if(x&&x.akun&&x.ps_link) pslink[x.akun]=x.ps_link; });
+  if(_stRes.status === "fulfilled" && _stRes.value && _stRes.value.clients){
+    try{
+      const savedOrder = typeof _stRes.value.clients === "string" ? JSON.parse(_stRes.value.clients) : _stRes.value.clients;
       if(Array.isArray(savedOrder) && savedOrder.length > 0){
-        // sort: akun yg ada di savedOrder dulu (sesuai urutan), sisanya tambah di belakang
         const orderMap = {}; savedOrder.forEach((nm, i) => { orderMap[nm] = i; });
         _orderedClients = _orderedClients.slice().sort((a, b) => {
           const ia = orderMap[(a.nm||a.akun)] ?? 9999;
@@ -4306,8 +4300,15 @@ async function _populateUpkgOper(dev){
           return ia - ib;
         });
       }
-    }
-  }catch(e){ console.warn("setting-tim load gagal", e); }
+    }catch(e){ console.warn("setting-tim parse gagal", e); }
+  }
+  // v502: per DEVICE -> split 2 tim by idx (kayak start popup uplevel forced 2-tim)
+  const psFrom = (sc) => { const devs=[]; STAT_TIM.filter(t=>(t.sc||"").toUpperCase().indexOf(sc)>=0&&t.on).forEach(t=>{ const cls=(t.clients||[]).slice().sort((a,b)=>((a.idx!=null?a.idx:999)-(b.idx!=null?b.idx:999))); const sep=Math.ceil(cls.length/2); const halves=[cls.slice(0,sep),cls.slice(sep)]; const tims=[]; halves.forEach((half,hi)=>{ const tim={tim:String(hi+1),srv:"",link:"",akuns:[],need:0}; half.forEach(c=>{const nm=c.akun||"";if(!nm)return;const a=_akunFresh(nm)||{};let mx=0,total=0;if(sc==="HACT"){let hs=a.hactstat;try{if(typeof hs==="string")hs=JSON.parse(hs);}catch(e){hs=null;}if(hs){let keep=0;try{if(hs.keep)for(const k in hs.keep){keep+=Number((hs.keep[k]||{}).total)||0;}}catch(e){}total=keep;mx=0;}}else{try{if(a.upkgstat){const _st=JSON.parse(a.upkgstat);mx=Number(_st.maxInv)||0;total=Number(_st.totalAll)||0;}}catch(e){}}const space=Math.max(0,mx-total);const srv=a.ps_nama||c.ps||"",lk=pslink[nm]||"";tim.akuns.push({nm:nm,belum:(sc==="HACT"?total:space),max:mx});tim.need+=space;if(lk&&!tim.link)tim.link=lk;if(!tim.srv){if(srv&&srv!=="public")tim.srv=srv;else if(lk)tim.srv="home:"+nm;}}); if(tim.akuns.length)tims.push(tim); }); if(tims.length)devs.push({devId:t.id,devNm:((CATAT_RF&&CATAT_RF["#"+t.id])||t.devnama||t.id||""),tims:tims}); }); return devs; };
+  const psLevel=psFrom("UPLEVEL"), psHact=psFrom("HACT");
+  const _ambilSc = dev._ambilFrom || "HACT";   // v594: up6kg ambil dari 3.8KG, UP 3.8KG ambil dari HACT
+  const psAmbil = psFrom(_ambilSc);
+  const _ambilLbl = (_ambilSc === "3.8KG") ? "AMBIL 3.8" : "AMBIL";
+  const _kgLbl = dev._kgTarget || "6kg";   // v595: label stat card ("6kg+" / "3.8kg+")
 
   const _simpanUrutan = async () => {
     const urutan = Array.from(cont.querySelectorAll(".upk-card[data-akun]")).map(el => el.dataset.akun);
