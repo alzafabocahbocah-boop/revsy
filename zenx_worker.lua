@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.503-cf"
+local VERSION = "9.505-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -12779,9 +12779,15 @@ local okrun,e=pcall(run,cfg)
 if not okrun then
     err("Berhenti: "..tostring(e))
     bersih(cfg, "error")
-    -- v9.503: exit code 1 -> launcher shell tahu ini CRASH -> restart otomatis
+    -- v9.505: auto-restart dari dalam worker — spawn diri sendiri sebelum mati
+    -- kalau crash, langsung restart tanpa perlu launcher/wrapper luar
+    local jalur = (arg and arg[0]) or (os.getenv("HOME") or ".") .. "/zenx_worker.lua"
+    local luabin = (sh("command -v lua5.4 2>/dev/null") or ""):match("[^\n]+")
+    luabin = (luabin ~= "" and luabin) or "lua5.4"
+    warn("AUTO-RESTART: spawn ulang dalam 5 detik... (" .. jalur .. ")")
+    os.execute("sleep 5 && nohup " .. luabin .. " '" .. jalur .. "' > /dev/null 2>&1 &")
     os.exit(1)
 elseif io.open(PID_FILE, "r") then
     bersih(cfg, "selesai")
 end
--- exit code 0 (normal/stop sengaja) -> launcher shell STOP (jangan restart)
+-- exit code 0 (normal/stop sengaja) -> STOP (gak restart)
