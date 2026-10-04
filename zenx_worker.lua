@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.511-cf"
+local VERSION = "9.512-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1563,7 +1563,14 @@ local DEBUG_OPEN = false
 
 local function build_url(cfg, link_client)
     if (not SERVER_MOVE_TEMBAK) and tostring(cfg.place_id) == "129954712878723" then
-        return "roblox://placeId=" .. cfg.place_id
+        -- v9.512: up6kg pakai place market tapi bisa punya PS sendiri -> jangan force PUBLIC
+        local _sl512 = (cfg.script_label or ""):upper()
+        local _isUp6kg = _sl512:find("UP6KG") or _sl512:find("UP 6") or _sl512:find("UP6")
+        local _hasPsOverride = cfg._ps_override and cfg._ps_override ~= ""
+        if not (_isUp6kg and _hasPsOverride) then
+            return "roblox://placeId=" .. cfg.place_id
+        end
+        -- up6kg dengan PS override -> lanjut ke bawah, pakai _ps_override
     end
     local serverMode = (SERVER_TERAKHIR or ""):lower()
     if (not SERVER_MOVE_TEMBAK) and serverMode:find("public") then
