@@ -5655,7 +5655,7 @@ local function run(cfg)
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
                 local per2jam = _isUp38 or _isHact or _isUplevel -- v-fix: up3.8kg + hact + uplevel: tiap 2 jam (00/02/04/... WIB)
-                local slotSize = per2jam and 7200 or 1800                    -- 120min, up6kg 30min
+                local slotSize = per2jam and 7200 or 3600                    -- 120min, up6kg 60min (v9.508: dari 30min)
                 local fireNow
                 if cfg.restart_min_override then
                     -- v9.495: penanda khusus (mis. newmarket-arceus) -- interval custom (mis. 180 menit),
@@ -5663,7 +5663,7 @@ local function run(cfg)
                     slotSize = cfg.restart_min_override * 60
                     fireNow = (wibNow % slotSize) < 60
                 elseif per2jam then fireNow = (wt.hour % 2 == 0 and wt.min == 0) -- up3.8kg/hact/uplevel: tiap 2 jam (00/02/04/... :00 WIB)
-                else fireNow = (wt.min == 0 or wt.min == 30) end            -- up6kg: :00 & :30
+                else fireNow = (wt.min == 0) end            -- up6kg: tiap jam :00 (v9.508: dari :00 & :30)
                 local slot = math.floor(wibNow / slotSize)
                 if fireNow and RESTART_JADWAL_SLOT ~= slot then
                     RESTART_JADWAL_SLOT = slot
