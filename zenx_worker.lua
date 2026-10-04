@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.508-cf"
+local VERSION = "9.509-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6828,6 +6828,10 @@ local function run(cfg)
             local jadiForce = isiBaruU:find("FORCE") and not lastU:find("FORCE")
             if jadiForce then
                 info("FORCE dari panel -- mulai fresh (nata tempat + buka client dari awal)")
+                -- v9.509: refresh_ps DULU sebelum buka client, biar mapLink pakai server terbaru
+                -- (fix bug: START dari popup panel masih tembak server lama karena mapLink stale)
+                refresh_ps(); pcall(refresh_ps_getps)
+                info("[FORCE] mapLink di-refresh ulang -- server baru dari panel akan kepakai")
                 SUDAH_GRID = false   -- nata grid/tiling ulang
                 GRID_CACHE = nil     -- v7.61: hitung grid fresh sesi baru
                 lastOpen = 0         -- buka client dari 1/8 lagi (gak nunggu reopen_sec)
