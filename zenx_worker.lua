@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.510-cf"
+local VERSION = "9.511-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6843,7 +6843,21 @@ local function run(cfg)
                 -- v9.509: refresh_ps DULU sebelum buka client, biar mapLink pakai server terbaru
                 -- (fix bug: START dari popup panel masih tembak server lama karena mapLink stale)
                 refresh_ps(); pcall(refresh_ps_getps)
-                info("[FORCE] mapLink di-refresh ulang -- server baru dari panel akan kepakai")
+                -- v9.511: juga update _ps_override dari /ps panel
+                -- (fix up6kg join PUBLIC: mapLink kosong karena place beda, harusnya pakai accessCode dari /ps)
+                do
+                    local rpsF = api_get(cfg, "/ps?tim=" .. cfg.tim)
+                    local psLinkF = ambil_str(rpsF, "link") or ""
+                    if psLinkF ~= "" and psLinkF ~= (cfg._ps_last or "") then
+                        cfg._ps_last = psLinkF
+                        cfg._ps_override = psLinkF
+                        info("[FORCE] ps_override baru dari panel: " .. psLinkF:sub(1,40))
+                    elseif psLinkF ~= "" then
+                        cfg._ps_override = psLinkF   -- pastiin selalu fresh walau sama
+                        info("[FORCE] ps_override dikonfirm: " .. psLinkF:sub(1,40))
+                    end
+                end
+                info("[FORCE] mapLink+ps_override di-refresh -- server baru dari panel akan kepakai")
                 SUDAH_GRID = false   -- nata grid/tiling ulang
                 GRID_CACHE = nil     -- v7.61: hitung grid fresh sesi baru
                 lastOpen = 0         -- buka client dari 1/8 lagi (gak nunggu reopen_sec)
