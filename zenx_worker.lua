@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.505-cf"
+local VERSION = "9.506-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6698,6 +6698,25 @@ local function run(cfg)
                 lastIsi = isi
                 MODE_JALAN = true
                 SUDAH_GRID = false; GRID_CACHE = nil
+                -- v9.506: baca /setting-tim dulu sebelum restart_kerjakan
+                -- biar server baru yang dipilih panel langsung kepakai
+                -- (sebelumnya bisa nyangkut di server lama karena belum terbaca)
+                do
+                    local rSR = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
+                    local sSR = ambil_str(rSR, "server") or ""
+                    local sPlR = ambil_str(rSR, "place") or ""
+                    local sGrR = ambil_num(rSR, "grid") or 0
+                    if sSR ~= "" then
+                        local serverBedaR = (sSR ~= (SERVER_TERAKHIR or ""))
+                        SERVER_TERAKHIR = sSR
+                        if serverBedaR then
+                            info("[RESTART] server baru dari panel: " .. sSR .. " -> pakai sekarang")
+                        end
+                    end
+                    if sPlR ~= "" then cfg.place_id = sPlR end
+                    if sGrR > 0 then cfg.grid_kolom = sGrR; SUDAH_GRID = false; GRID_CACHE = nil end
+                    SETTING_TS_TERAKHIR = ambil_num(rSR, "ts") or SETTING_TS_TERAKHIR
+                end
                 PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                 if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
                 refresh_status(); lastStatusCek = os.time()
