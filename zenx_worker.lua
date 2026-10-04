@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.512-cf"
+local VERSION = "9.513-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1567,6 +1567,10 @@ local function build_url(cfg, link_client)
         local _sl512 = (cfg.script_label or ""):upper()
         local _isUp6kg = _sl512:find("UP6KG") or _sl512:find("UP 6") or _sl512:find("UP6")
         local _hasPsOverride = cfg._ps_override and cfg._ps_override ~= ""
+        -- v9.513: debug log biar ketahuan kenapa masih PUBLIC
+        info(("[build_url-dbg] place=market | script=%s | isUp6kg=%s | psOverride=%s | serverMode=%s"):format(
+            _sl512, tostring(_isUp6kg ~= nil), tostring(_hasPsOverride),
+            (SERVER_TERAKHIR or ""):lower()))
         if not (_isUp6kg and _hasPsOverride) then
             return "roblox://placeId=" .. cfg.place_id
         end
