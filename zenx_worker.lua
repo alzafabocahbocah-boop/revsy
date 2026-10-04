@@ -6461,6 +6461,27 @@ local function run(cfg)
                     end
                 end
                 info("START PAKSA dari panel -- RESET FRESH (kayak worker baru) + restart")
+                -- v9.506: baca /setting-tim + /ps dulu biar server baru dari panel kepakai
+                do
+                    local rSP = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
+                    local sSP = ambil_str(rSP, "server") or ""
+                    local sPlP = ambil_str(rSP, "place") or ""
+                    local sGrP = ambil_num(rSP, "grid") or 0
+                    if sSP ~= "" then
+                        if sSP ~= (SERVER_TERAKHIR or "") then info("[PAKSA] server baru: " .. sSP) end
+                        SERVER_TERAKHIR = sSP
+                    end
+                    if sPlP ~= "" then cfg.place_id = sPlP end
+                    if sGrP > 0 then cfg.grid_kolom = sGrP; SUDAH_GRID = false; GRID_CACHE = nil end
+                    SETTING_TS_TERAKHIR = ambil_num(rSP, "ts") or SETTING_TS_TERAKHIR
+                    local rpsP = api_get(cfg, "/ps?tim=" .. cfg.tim)
+                    local psLinkP = ambil_str(rpsP, "link") or ""
+                    if psLinkP ~= (cfg._ps_last or "") then
+                        cfg._ps_last = psLinkP
+                        cfg._ps_override = psLinkP
+                        info("[PAKSA] ps_override baru: " .. (psLinkP ~= "" and psLinkP:sub(1,40) or "(public)"))
+                    end
+                end
                 local isiRestart = isi:gsub("^PAKSA", "RESTART")
                 PKGS_AKTIF = restart_kerjakan(cfg, isiRestart, mapAkun, mapLink, ada_stop)
                 if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
@@ -6698,24 +6719,30 @@ local function run(cfg)
                 lastIsi = isi
                 MODE_JALAN = true
                 SUDAH_GRID = false; GRID_CACHE = nil
-                -- v9.506: baca /setting-tim dulu sebelum restart_kerjakan
+                -- v9.506: baca /setting-tim + /ps dulu sebelum restart_kerjakan
                 -- biar server baru yang dipilih panel langsung kepakai
-                -- (sebelumnya bisa nyangkut di server lama karena belum terbaca)
                 do
                     local rSR = api_get(cfg, "/setting-tim?tim=" .. cfg.tim)
                     local sSR = ambil_str(rSR, "server") or ""
                     local sPlR = ambil_str(rSR, "place") or ""
                     local sGrR = ambil_num(rSR, "grid") or 0
                     if sSR ~= "" then
-                        local serverBedaR = (sSR ~= (SERVER_TERAKHIR or ""))
-                        SERVER_TERAKHIR = sSR
-                        if serverBedaR then
-                            info("[RESTART] server baru dari panel: " .. sSR .. " -> pakai sekarang")
+                        if sSR ~= (SERVER_TERAKHIR or "") then
+                            info("[RESTART] server baru dari panel: " .. sSR)
                         end
+                        SERVER_TERAKHIR = sSR
                     end
                     if sPlR ~= "" then cfg.place_id = sPlR end
                     if sGrR > 0 then cfg.grid_kolom = sGrR; SUDAH_GRID = false; GRID_CACHE = nil end
                     SETTING_TS_TERAKHIR = ambil_num(rSR, "ts") or SETTING_TS_TERAKHIR
+                    -- baca /ps -> update _ps_override (link server yang dipilih panel)
+                    local rpsR = api_get(cfg, "/ps?tim=" .. cfg.tim)
+                    local psLinkR = ambil_str(rpsR, "link") or ""
+                    if psLinkR ~= (cfg._ps_last or "") then
+                        cfg._ps_last = psLinkR
+                        cfg._ps_override = psLinkR
+                        info("[RESTART] ps_override baru: " .. (psLinkR ~= "" and psLinkR:sub(1,40) or "(public)"))
+                    end
                 end
                 PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                 if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
