@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.506-cf"
+local VERSION = "9.507-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6482,6 +6482,10 @@ local function run(cfg)
                         info("[PAKSA] ps_override baru: " .. (psLinkP ~= "" and psLinkP:sub(1,40) or "(public)"))
                     end
                 end
+                -- v9.507: refresh_ps DULU sebelum restart_kerjakan, biar mapLink bersih dari link lama
+                -- (refresh_ps() reset mapLink ke {}, lalu isi ulang dari /assign-ps + /ps-list terbaru)
+                refresh_ps(); pcall(refresh_ps_getps); pcall(refresh_hactoto)
+                info("[PAKSA] mapLink di-refresh ulang sebelum buka client")
                 local isiRestart = isi:gsub("^PAKSA", "RESTART")
                 PKGS_AKTIF = restart_kerjakan(cfg, isiRestart, mapAkun, mapLink, ada_stop)
                 if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
@@ -6744,6 +6748,10 @@ local function run(cfg)
                         info("[RESTART] ps_override baru: " .. (psLinkR ~= "" and psLinkR:sub(1,40) or "(public)"))
                     end
                 end
+                -- v9.507: refresh_ps DULU sebelum restart_kerjakan, biar mapLink bersih dari link lama
+                -- (refresh_ps() reset mapLink ke {}, lalu isi ulang dari /assign-ps + /ps-list terbaru)
+                refresh_ps(); pcall(refresh_ps_getps); pcall(refresh_hactoto)
+                info("[RESTART] mapLink di-refresh ulang sebelum buka client")
                 PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                 if PKGS_AKTIF and #PKGS_AKTIF > 0 then simpan_aktif(cfg) end   -- v9.89: simpen state
                 refresh_status(); lastStatusCek = os.time()
