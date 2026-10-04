@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.513-cf"
+local VERSION = "9.514-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -1581,7 +1581,12 @@ local function build_url(cfg, link_client)
         return "roblox://placeId=" .. cfg.place_id
     end
     if (not SERVER_MOVE_TEMBAK) and _placeBerubah then
-        return "roblox://placeId=" .. cfg.place_id
+        -- v9.514: up6kg dengan PS override -> tetap pakai PS walau place baru berubah
+        local _sl514 = (cfg.script_label or ""):upper()
+        local _isUp6kg514 = _sl514:find("UP6KG") or _sl514:find("UP 6") or _sl514:find("UP6")
+        if not (_isUp6kg514 and cfg._ps_override and cfg._ps_override ~= "") then
+            return "roblox://placeId=" .. cfg.place_id
+        end
     end
     local lc
     if serverMode == "custom" and cfg._ps_override and cfg._ps_override ~= "" then
