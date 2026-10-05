@@ -1,4 +1,4 @@
--- uplevelnew v8.115 — TRADE ALL: port cara trade dari up6kg (SendRequest->AddItem loop->Accept)
+-- uplevelnew v8.116 — TRADE ALL: stop AUTO LVL + unequip semua pet dari kebun sebelum trade
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -4155,16 +4155,61 @@ do
         return true
     end
 
+    -- ---- HELPER: unequip semua pet dari kebun (equipRE UnequipPet per uuid) ----
+    local function unequipSemuaPet()
+        if not equipRE then taLog("[WARN] equipRE nil — gak bisa unequip"); return end
+        local uuids={}
+        pcall(function()
+            -- scan workspace pet model (uuid = nama model {uuid})
+            for _,m in pairs(workspace:GetDescendants()) do
+                if m:IsA("Model") then
+                    local n=tostring(m.Name)
+                    if n:sub(1,1)=="{" and #n>10 then uuids[n]=true end
+                end
+            end
+            -- scan backpack+character juga (yang belum ke-equip ke kebun)
+            local function scan(c) if not c then return end
+                for _,t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u=t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                        if u then uuids[fmtUUID(u)]=true end
+                    end
+                end
+            end
+            scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+        end)
+        local n=0
+        for uuid in pairs(uuids) do
+            pcall(function() equipRE:FireServer("UnequipPet", uuid) end)
+            n=n+1; task.wait(0.04)
+        end
+        taLog("unequip "..n.." pet dari kebun")
+    end
+
     -- ---- TRADE ALL LOOP ----
     local function runTradeAll()
         if not _taTarget then taProgLbl.Text="pilih target dulu!"; taProgLbl.TextColor3=Color3.fromRGB(255,120,80); return end
-        local delay=math.max(0.5,tonumber(taDelayBox.Text) or 2)
         _taRunning=true
         taStartBtn.Visible=false; taStopBtn.Visible=true
         taProgLbl.TextColor3=Color3.fromRGB(120,220,255)
 
         task.spawn(function()
             taLog("=== TRADE ALL START -> "..(_taTarget or "?").." ===")
+
+            -- stop AUTO LVL engine dulu
+            taProgLbl.Text="stop AUTO LVL..."
+            taLog("stop AUTO LVL engine...")
+            stopRequested=true
+            -- tunggu engine berhenti (max 5s)
+            local t0=os.clock()
+            while running and os.clock()-t0<5 do task.wait(0.3) end
+            taLog("AUTO LVL "..(running and "masih jalan (lanjut)" or "sudah stop"))
+
+            -- ambil semua pet dari kebun
+            taProgLbl.Text="ambil pet dari kebun..."
+            taLog("unequip semua pet...")
+            unequipSemuaPet()
+            task.wait(1)  -- kasih waktu pet masuk backpack
 
             -- pastikan tiket ada
             taProgLbl.Text="nunggu Trading Ticket..."
