@@ -296,7 +296,7 @@ getgenv().__ZenxMarketExecuting = nil
     end
 end
 
-local VERSION = "8.458"
+local VERSION = "8.459"
 
 -- ===== ZENX GAME REGISTRY (auto-baca data game; update sendiri kalau game nambah egg/pet/pack/seed baru) =====
 -- Sc baca registry game LANGSUNG pas runtime -> konten baru (egg/pet/pack) otomatis kebaca, gak perlu edit sc.
@@ -493,12 +493,8 @@ task.spawn(function()
     local _maxInvFile = plr and plr.Name and ("zenx_maxinv_" .. plr.Name .. ".txt")
     pcall(function()
         if not _maxInvFile then return end
-        -- 1) coba baca dari file dulu (hasil detect sebelumnya)
-        if readfile then
-            local ok, mi = pcall(function() return tonumber(readfile(_maxInvFile)) end)
-            if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
-        end
-        -- 2) detect segar: UI "Pet Items (X/Y)" (cuma ada kalau di market)
+        -- 1) detect segar: UI "Pet Items (X/Y)" (cuma ada kalau di market)
+        -- (file dibaca SETELAH detect segar, dipakai cuma kalau detect gagal)
         if maxInvTerakhir <= 0 then
             local pg2 = plr:FindFirstChild("PlayerGui")
             if pg2 then
@@ -535,7 +531,12 @@ task.spawn(function()
             end
             if mx and mx > 0 then maxInvTerakhir = mx end
         end
-        -- 4) simpan ke file kalau berhasil detect
+        -- 4) fallback: baca file lama kalau detect segar + getgc dua-duanya gagal
+        if maxInvTerakhir <= 0 and readfile then
+            local ok, mi = pcall(function() return tonumber(readfile(_maxInvFile)) end)
+            if ok and mi and mi > 0 then maxInvTerakhir = mi; _G.__ZenxMaxInv = mi end
+        end
+        -- 5) simpan ke file kalau berhasil detect
         if maxInvTerakhir > 0 then
             _G.__ZenxMaxInv = maxInvTerakhir
             pcall(function() if writefile then writefile(_maxInvFile, tostring(maxInvTerakhir)) end end)
