@@ -1,4 +1,4 @@
--- uplevelnew v8.113 — tambah tab TRADE ALL: trade semua pet ke player pilihan via trade ticket
+-- uplevelnew v8.114 — TRADE ALL: fix accept/confirm spam 0.12s (kayak up6kg), scan unfair trade popup
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -4042,56 +4042,88 @@ do
         return true
     end
 
-    -- ---- HELPER: send trade request ke target (kirim SEMUA pet sekaligus via 1 trade) ----
+    -- ---- HELPER: auto accept+confirm window trade (spam 0.12s kayak up6kg) ----
+    local function taAutoAcceptWindow(te)
+        pcall(function()
+            local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui=pg:FindFirstChild("TradingUI")
+            local lt=tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts=lt:FindFirstChild("Options")
+                for _,bn in ipairs({"Accept","Confirm"}) do
+                    local b=opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function()firesignal(b.Activated)end) end
+                        if getconnections then for _,c in ipairs(getconnections(b.Activated)) do pcall(function()c:Fire()end) end end
+                        pcall(function()
+                            if firesignal then firesignal(b.MouseButton1Click)
+                            else local cs=getconnections and getconnections(b.MouseButton1Click)
+                                if cs then for _,c in ipairs(cs) do pcall(function()c:Fire()end) end end
+                            end
+                        end)
+                    end
+                end
+                -- scan seluruh LiveTrade descendants
+                for _,d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="accept" then
+                            pcall(function()
+                                if firesignal then firesignal(d.MouseButton1Click) end
+                                local cs=getconnections and getconnections(d.MouseButton1Click)
+                                if cs then for _,c in ipairs(cs) do pcall(function()c:Fire()end) end end
+                            end)
+                        end
+                    end
+                end
+                -- v1.11 style: scan SELURUH PlayerGui (unfair trade popup di luar LiveTrade)
+                for _,d in ipairs(pg:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t=((d:IsA("TextButton") and d.Text) or ""):lower()
+                        if t=="yes" or t:find("confirm") or t=="continue" or t=="lanjut" then
+                            pcall(function()
+                                if firesignal then firesignal(d.MouseButton1Click) end
+                                local cs=getconnections and getconnections(d.MouseButton1Click)
+                                if cs then for _,c in ipairs(cs) do pcall(function()c:Fire()end) end end
+                                if firesignal then firesignal(d.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+            -- backup remote langsung
+            if te then
+                local a=te:FindFirstChild("Accept"); local c=te:FindFirstChild("Confirm")
+                if c then pcall(function()c:FireServer()end) end
+                if a then pcall(function()a:FireServer()end) end
+            end
+        end)
+    end
+
+    -- ---- HELPER: send trade request ke target ----
     local function sendTradeToTarget(targetName, petUUIDs)
         local ge=RS:FindFirstChild("GameEvents")
         local te=ge and ge:FindFirstChild("TradeEvents")
         if not te then taLog("ERR: TradeEvents gak ada"); return false end
 
         local sendReqRE=te:FindFirstChild("SendRequest")
-        local acceptRE=te:FindFirstChild("Accept")
-        local confirmRE=te:FindFirstChild("Confirm")
         if not sendReqRE then taLog("ERR: SendRequest RE gak ada"); return false end
 
-        -- cari target player object
         local targetPlr=game:GetService("Players"):FindFirstChild(targetName)
         if not targetPlr then taLog("ERR: "..targetName.." gak ada di server"); return false end
 
-        -- format UUID list untuk FireServer
-        -- GAG trade request: FireServer(targetUserId, {uuid1, uuid2, ...}) atau FireServer(targetPlr, ...)
-        -- coba beberapa format umum
-        local userId = targetPlr.UserId
-        local ok, err2 = pcall(function()
-            sendReqRE:FireServer(userId, petUUIDs)
-        end)
-        if not ok then
-            -- fallback: player object langsung
-            pcall(function() sendReqRE:FireServer(targetPlr, petUUIDs) end)
+        -- kirim request (coba userId dulu, fallback player object)
+        local userId=targetPlr.UserId
+        local ok2=pcall(function() sendReqRE:FireServer(userId, petUUIDs) end)
+        if not ok2 then pcall(function() sendReqRE:FireServer(targetPlr, petUUIDs) end) end
+
+        -- spam accept+confirm selama 4 detik (0.12s interval, kayak up6kg)
+        local t0=os.clock()
+        while os.clock()-t0 < 4 do
+            taAutoAcceptWindow(te)
+            task.wait(0.12)
         end
 
-        -- tunggu trade window muncul lalu accept+confirm
-        task.wait(1.5)
-        if acceptRE then pcall(function()acceptRE:FireServer()end) end
-        if confirmRE then pcall(function()confirmRE:FireServer()end) end
-
-        -- auto-klik tombol GUI juga (untuk confirm unfair trade popup)
-        task.wait(0.5)
-        pcall(function()
-            local pg=plr:FindFirstChild("PlayerGui"); if not pg then return end
-            for _,d in ipairs(pg:GetDescendants()) do
-                if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
-                    local t=((d:IsA("TextButton") and d.Text) or ""):lower()
-                    if t=="yes" or t:find("confirm") or t=="continue" or t=="lanjut" then
-                        pcall(function()
-                            if firesignal then firesignal(d.MouseButton1Click) else
-                                local cs=getconnections and getconnections(d.MouseButton1Click)
-                                if cs then for _,c in ipairs(cs) do pcall(function()c:Fire()end) end end
-                            end
-                        end)
-                    end
-                end
-            end
-        end)
         return true
     end
 
