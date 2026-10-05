@@ -1,4 +1,4 @@
--- uplevelnew v8.118 — TRADE ALL: 1 SendRequest per pet spam loop
+-- uplevelnew v8.119 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -4242,15 +4242,38 @@ do
                 return
             end
 
-            -- kirim semua pet: 1 SendRequest per pet, spam terus
-            local sent=0; local failed=0; local total=#allUUIDs
+            -- spam SendRequest+AddItem per pet, accept/confirm jalan di background (gak nunggu)
+            local ge=RS:FindFirstChild("GameEvents")
+            local te=ge and ge:FindFirstChild("TradeEvents")
+            local sendReqRE=te and te:FindFirstChild("SendRequest")
+            local addItemRE=te and te:FindFirstChild("AddItem")
+            local tPlr=game:GetService("Players"):FindFirstChild(_taTarget or "")
+            local sent=0; local total=#allUUIDs
+
+            -- background spam accept+confirm terus selama trade jalan
+            local bgRunning=true
+            task.spawn(function()
+                while bgRunning do
+                    pcall(function() taAutoAcceptWindow(te) end)
+                    task.wait(0.12)
+                end
+            end)
+
             for idx,uuid in ipairs(allUUIDs) do
                 if not _taRunning then break end
                 taProgLbl.Text="trade "..idx.."/"..total.."..."
-                local ok3=sendTradeToTarget(_taTarget, {uuid})
-                if ok3 then sent=sent+1 else failed=failed+1 end
-                task.wait(0.2)
+                pcall(holdTradingTicket)
+                if sendReqRE and tPlr then
+                    pcall(function() sendReqRE:FireServer(tPlr) end)
+                    task.wait(0.1)
+                    if addItemRE then
+                        pcall(function() addItemRE:FireServer("Pet", uuid) end)
+                    end
+                    sent=sent+1
+                end
+                task.wait(0.15)
             end
+            bgRunning=false
 
             taLog("=== SELESAI: sent="..sent.." failed="..failed.." total="..total.." ===")
             taProgLbl.Text="selesai: "..sent.."/"..total.." pet dikirim"
