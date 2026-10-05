@@ -1,0 +1,585 @@
+-- upinventory v1.0 — Auto Upgrade Inventory Slot (GAG)
+-- Cara kerja: scan GameEvents cari remote upgrade slot, atau fireproximityprompt NPC shop
+-- Report: maxInv sebelum & sesudah, total upgrade
+local VERSION = "upinventory-v1.0"
+print("==== ["..VERSION.."] LOAD ====")
+
+local function _main()
+
+local RS   = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local HS   = game:GetService("HttpService")
+local CS   = game:GetService("CollectionService")
+local plr  = Players.LocalPlayer
+
+-- ===================== LOG =====================
+local _logs = {}
+local function addLog(msg)
+    local t = os.date("*t")
+    local ts = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
+    local line = "["..ts.."] "..tostring(msg)
+    table.insert(_logs, line)
+    if #_logs > 200 then table.remove(_logs, 1) end
+    print("[INV] "..line)
+end
+
+addLog("start — "..VERSION)
+
+-- ===================== REMOTES =====================
+local gameEvents = RS:WaitForChild("GameEvents", 10)
+if not gameEvents then
+    addLog("WARN: GameEvents tidak ditemukan!")
+    gameEvents = Instance.new("Folder")
+end
+
+-- Cari MaxPetsInInventory via getgc (paling akurat, otomatis ikut upgrade)
+local _maxCache, _maxAt = nil, 0
+local function getMaxInv()
+    if _maxCache and (tick() - _maxAt) < 5 then return _maxCache end
+    local best = nil
+    pcall(function()
+        if getgc then
+            for _, obj in ipairs(getgc(true)) do
+                if type(obj) == "table" then
+                    local mp = rawget(obj, "MaxPetsInInventory")
+                    if type(mp) == "number" and mp > 0 and (not best or mp > best) then
+                        best = mp
+                    end
+                end
+            end
+        end
+    end)
+    if not best then
+        pcall(function()
+            local v = plr:GetAttribute("MaxPets") or plr:GetAttribute("MaxPetsInInventory")
+                   or plr:GetAttribute("MaxPetsInventory")
+            if type(v) == "number" and v > 0 then best = v end
+        end)
+    end
+    _maxCache = best or 0
+    _maxAt = tick()
+    return _maxCache
+end
+
+-- Hitung pet di backpack sekarang
+local function countPets()
+    local n = 0
+    local bp = plr:FindFirstChild("Backpack")
+    if bp then
+        for _, t in ipairs(bp:GetChildren()) do
+            if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:FindFirstChild("PetToolServer")) then
+                n = n + 1
+            end
+        end
+    end
+    if plr.Character then
+        for _, t in ipairs(plr.Character:GetChildren()) do
+            if t:IsA("Tool") and (t:FindFirstChild("PetToolLocal") or t:FindFirstChild("PetToolServer")) then
+                n = n + 1
+            end
+        end
+    end
+    return n
+end
+
+-- ===================== SCAN REMOTES (INVENTORY UPGRADE) =====================
+-- Nama-nama remote yang mungkin dipakai GAG untuk upgrade inventory/slot
+local INV_REMOTE_NAMES = {
+    "ExpandInventory", "ExpandPetInventory", "UpgradeInventory", "BuyInventorySlot",
+    "AddInventorySlot", "InventoryUpgrade", "PetInventoryUpgrade", "BuyPetSlot",
+    "PetSlotUpgrade", "PetStorageUpgrade", "BuyStorage", "UpgradeStorage",
+    "PetInventoryService", "InventoryService", "PurchaseInventory",
+    "BuyInventory", "InventoryExpand", "PetExpand", "ExpandPets",
+    -- format dengan underscore
+    "Expand_Inventory", "Upgrade_Inventory", "Buy_Inventory",
+    "Pet_Inventory", "Inventory_Upgrade", "Storage_Upgrade",
+    -- format camelCase lain
+    "expandInventory", "upgradeInventory", "buyInventorySlot", "petSlot",
+    "inventoryUpgrade", "storageUpgrade",
+}
+
+local invUpgradeRE = nil
+local function findInvRE()
+    -- 1. cek langsung di GameEvents
+    for _, name in ipairs(INV_REMOTE_NAMES) do
+        local v = gameEvents:FindFirstChild(name)
+        if v and (v:IsA("RemoteEvent") or v:IsA("RemoteFunction")) then
+            addLog("invRE FOUND di GameEvents: "..name)
+            return v, name
+        end
+    end
+    -- 2. scan SEMUA descendants GameEvents (cari yang mengandung kata kunci)
+    for _, v in ipairs(gameEvents:GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            local ln = v.Name:lower()
+            if ln:find("expand") or ln:find("slot") or ln:find("storage")
+               or (ln:find("inventory") and (ln:find("buy") or ln:find("upgrade") or ln:find("add") or ln:find("expand")))
+               or (ln:find("pet") and ln:find("slot")) then
+                addLog("invRE scan FOUND: "..v:GetFullName())
+                return v, v.Name
+            end
+        end
+    end
+    -- 3. scan seluruh RS descendants
+    for _, v in ipairs(RS:GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            local ln = v.Name:lower()
+            if ln:find("expand") and (ln:find("inv") or ln:find("pet") or ln:find("slot") or ln:find("stor")) then
+                addLog("invRE RS FOUND: "..v:GetFullName())
+                return v, v.Name
+            end
+        end
+    end
+    return nil, nil
+end
+
+addLog("Mencari remote upgrade inventory...")
+invUpgradeRE, _foundREName = findInvRE()
+if invUpgradeRE then
+    addLog("Remote ditemukan: "..tostring(_foundREName))
+else
+    addLog("Remote tidak ditemukan via scan — akan coba ProximityPrompt NPC")
+end
+
+-- ===================== SCAN SEMUA REMOTE (DEBUG) =====================
+-- Print semua remote di GameEvents supaya bisa dianalisis
+local function printAllGameEvents()
+    addLog("=== SEMUA REMOTE DI GAMEVENTS ===")
+    local list = {}
+    for _, v in ipairs(gameEvents:GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            table.insert(list, v:GetFullName())
+        end
+    end
+    table.sort(list)
+    for _, n in ipairs(list) do addLog("  RE: "..n) end
+    addLog("=== TOTAL: "..#list.." remote ===")
+end
+-- Print sekali waktu start (debug)
+task.delay(3, printAllGameEvents)
+
+-- ===================== PROXIMITYPROMPT NPC SHOP =====================
+-- Scan workspace cari ProximityPrompt yang terkait inventory/slot/expand
+local INV_PP_KEYWORDS = {
+    "expand", "slot", "inventory", "storage", "upgrade", "capacity",
+    "pet slot", "pet storage", "more pets", "increase", "enlarge",
+    -- bahasa Indonesia
+    "tambah slot", "upgrade inv", "slot pet",
+}
+
+local function findInvProximityPrompts()
+    local found = {}
+    pcall(function()
+        for _, dd in ipairs(workspace:GetDescendants()) do
+            if dd:IsA("ProximityPrompt") then
+                local at = (dd.ActionText or ""):lower()
+                local ot = (dd.ObjectText or ""):lower()
+                for _, kw in ipairs(INV_PP_KEYWORDS) do
+                    if at:find(kw, 1, true) or ot:find(kw, 1, true) then
+                        table.insert(found, {pp=dd, action=dd.ActionText, obj=dd.ObjectText})
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    return found
+end
+
+local function tryFireInvPP()
+    local pps = findInvProximityPrompts()
+    if #pps == 0 then return false, "tidak ada PP inventory ditemukan" end
+    for _, entry in ipairs(pps) do
+        local pp = entry.pp
+        addLog("Coba fire PP: action='"..entry.action.."' obj='"..entry.obj.."'")
+        -- expand jangkauan
+        pcall(function()
+            pp.MaxActivationDistance = 10000
+            pp.HoldDuration = 0
+        end)
+        local ok, err = pcall(function()
+            if fireproximityprompt then
+                fireproximityprompt(pp)
+            else
+                pp:InputHoldBegin()
+                task.wait(0.05)
+                pp:InputHoldEnd()
+            end
+        end)
+        if ok then
+            addLog("PP fire OK: "..entry.action)
+            return true, entry.action
+        else
+            addLog("PP fire FAIL: "..tostring(err))
+        end
+    end
+    return false, "semua PP gagal"
+end
+
+-- ===================== COBA FIRE REMOTE LANGSUNG =====================
+-- Format fire berbeda-beda: coba beberapa pola
+local function tryFireInvRE(re)
+    if not re then return false, "no RE" end
+    -- Pola 1: no args
+    local ok, err = pcall(function()
+        if re:IsA("RemoteEvent") then re:FireServer()
+        else re:InvokeServer() end
+    end)
+    if ok then return true, "no args" end
+    addLog("Pola no-args FAIL: "..tostring(err))
+
+    -- Pola 2: arg "Buy" / "Upgrade"
+    for _, arg in ipairs({"Buy", "Upgrade", "Expand", "Add", "Purchase", "buy", "upgrade"}) do
+        local ok2, err2 = pcall(function()
+            if re:IsA("RemoteEvent") then re:FireServer(arg)
+            else re:InvokeServer(arg) end
+        end)
+        if ok2 then return true, "arg="..arg end
+    end
+    return false, "semua pola fire FAIL"
+end
+
+-- ===================== GUI =====================
+local C = {
+    BG=Color3.fromRGB(15,15,15), Panel=Color3.fromRGB(20,20,20),
+    Card=Color3.fromRGB(25,25,25), Dim=Color3.fromRGB(50,50,50),
+    White=Color3.fromRGB(225,225,225), Gray=Color3.fromRGB(110,110,110),
+    Green=Color3.fromRGB(60,200,90), Red=Color3.fromRGB(200,60,60), RDim=Color3.fromRGB(35,10,10),
+    Gold=Color3.fromRGB(220,160,0), Teal=Color3.fromRGB(40,200,160), TDim=Color3.fromRGB(8,30,24),
+    Blue=Color3.fromRGB(80,150,255),
+}
+local function mk(cls, props)
+    local o = Instance.new(cls)
+    for k,v in pairs(props) do o[k] = v end
+    return o
+end
+local function corner(p, r) return mk("UICorner",{CornerRadius=UDim.new(0, r or 7), Parent=p}) end
+local function stroke(p, col, th) return mk("UIStroke",{Color=col or C.Teal, Thickness=th or 1.5, Parent=p}) end
+local function lbl(p, txt, ts, col, xa)
+    return mk("TextLabel",{
+        BackgroundTransparency=1, Text=txt, TextColor3=col or C.White,
+        Font=Enum.Font.GothamBold, TextSize=ts or 11, TextScaled=false,
+        TextXAlignment=xa or Enum.TextXAlignment.Left, Parent=p
+    })
+end
+local function btn(p, txt, ts, bg, tc)
+    local b = mk("TextButton",{
+        BackgroundColor3=bg or C.Card, Text=txt, TextColor3=tc or C.White,
+        Font=Enum.Font.GothamBold, TextSize=ts or 11, TextScaled=false,
+        AutoButtonColor=false, Parent=p
+    })
+    corner(b, 7)
+    return b
+end
+
+-- GUI parent (protected)
+local guiParent = plr:WaitForChild("PlayerGui", 10)
+pcall(function()
+    if gethui then
+        local h = gethui()
+        if h then guiParent = h end
+    end
+end)
+pcall(function()
+    if guiParent:FindFirstChild("ZenxInvUpGui") then guiParent.ZenxInvUpGui:Destroy() end
+end)
+
+local sg = mk("ScreenGui", {
+    Name="ZenxInvUpGui", DisplayOrder=2147483647,
+    ResetOnSpawn=false, IgnoreGuiInset=true,
+    ZIndexBehavior=Enum.ZIndexBehavior.Sibling, Parent=guiParent
+})
+-- keep alive
+task.spawn(function()
+    while sg do
+        task.wait(2)
+        pcall(function()
+            if sg.DisplayOrder ~= 2147483647 then sg.DisplayOrder = 2147483647 end
+            if not sg.Parent then sg.Parent = guiParent end
+        end)
+    end
+end)
+
+local W = 340
+local main = mk("Frame", {
+    Size=UDim2.new(0, W, 0, 280),
+    Position=UDim2.new(0, 70, 1, -360),
+    BackgroundColor3=C.BG, BorderSizePixel=0, Active=true, Draggable=true, Parent=sg
+})
+corner(main, 10) stroke(main, C.Teal, 2)
+
+-- Title bar
+local TB = mk("Frame", {Size=UDim2.new(1,0,0,32), BackgroundColor3=C.Panel, BorderSizePixel=0, Parent=main})
+corner(TB, 10)
+mk("Frame", {Size=UDim2.new(1,0,0,1.5), Position=UDim2.new(0,0,1,-1.5), BackgroundColor3=C.Teal, BorderSizePixel=0, Parent=TB})
+local titleLbl = lbl(TB, "ZENX INV UPGRADE  v1.0", 11, C.Teal)
+titleLbl.Size = UDim2.new(0.7,0,1,0) titleLbl.Position = UDim2.new(0,10,0,0)
+local closeBtn = btn(TB, "X", 10, C.RDim, C.Red)
+closeBtn.Size = UDim2.new(0,22,0,22) closeBtn.Position = UDim2.new(1,-26,0.5,-11) stroke(closeBtn, C.Red, 1.2)
+closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
+
+-- Content
+local content = mk("ScrollingFrame", {
+    Size=UDim2.new(1,-10,1,-42), Position=UDim2.new(0,5,0,37),
+    BackgroundTransparency=1, BorderSizePixel=0,
+    ScrollBarThickness=4, AutomaticCanvasSize=Enum.AutomaticSize.Y, Parent=main
+})
+mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,4), Parent=content})
+mk("UIPadding", {PaddingLeft=UDim.new(0,2), PaddingRight=UDim.new(0,2), Parent=content})
+
+local function mkRow(lo, h)
+    local r = mk("Frame", {
+        Size=UDim2.new(1,0,0,h or 28), BackgroundColor3=C.Card,
+        BorderSizePixel=0, LayoutOrder=lo, Parent=content
+    })
+    corner(r, 6) stroke(r, C.Dim, 1)
+    return r
+end
+
+-- Status row
+local statRow = mkRow(1, 36)
+local statLbl = lbl(statRow, "Status: menunggu...", 10, C.Teal)
+statLbl.Size = UDim2.new(1,-8,1,0) statLbl.Position = UDim2.new(0,8,0,0) statLbl.TextWrapped = true
+
+-- Inv info row
+local invRow = mkRow(2, 28)
+local invLbl = lbl(invRow, "Inv: ? / ? | Pet: ?", 11, C.White)
+invLbl.Size = UDim2.new(1,-8,1,0) invLbl.Position = UDim2.new(0,8,0,0)
+
+-- Remote info row
+local reRow = mkRow(3, 24)
+local reLbl = lbl(reRow, "Remote: scanning...", 9, C.Gray)
+reLbl.Size = UDim2.new(1,-8,1,0) reLbl.Position = UDim2.new(0,8,0,0)
+
+-- Target slot config row
+local tgtRow = mkRow(4, 32)
+local tgtLbl = lbl(tgtRow, "Target slot:", 10, C.Gray)
+tgtLbl.Size = UDim2.new(0.5,0,1,0) tgtLbl.Position = UDim2.new(0,8,0,0)
+local tgtBox = mk("TextBox", {
+    Size=UDim2.new(0,70,0,22), Position=UDim2.new(1,-78,0.5,-11),
+    BackgroundColor3=C.Panel, Text="500", TextColor3=C.White,
+    Font=Enum.Font.GothamBold, TextSize=11, TextXAlignment=Enum.TextXAlignment.Center,
+    ClearTextOnFocus=false, Parent=tgtRow
+})
+corner(tgtBox, 5) stroke(tgtBox, C.Dim, 1)
+
+-- Delay config row
+local dlyRow = mkRow(5, 32)
+local dlyLbl = lbl(dlyRow, "Delay per upgrade (s):", 10, C.Gray)
+dlyLbl.Size = UDim2.new(0.6,0,1,0) dlyLbl.Position = UDim2.new(0,8,0,0)
+local dlyBox = mk("TextBox", {
+    Size=UDim2.new(0,70,0,22), Position=UDim2.new(1,-78,0.5,-11),
+    BackgroundColor3=C.Panel, Text="0.5", TextColor3=C.White,
+    Font=Enum.Font.GothamBold, TextSize=11, TextXAlignment=Enum.TextXAlignment.Center,
+    ClearTextOnFocus=false, Parent=dlyRow
+})
+corner(dlyBox, 5) stroke(dlyBox, C.Dim, 1)
+
+-- Tombol control
+local btnRow = mkRow(6, 32)
+mk("UIListLayout", {FillDirection=Enum.FillDirection.Horizontal, Padding=UDim.new(0,4), Parent=btnRow})
+mk("UIPadding", {PaddingLeft=UDim.new(0,4), PaddingRight=UDim.new(0,4), PaddingTop=UDim.new(0,4), Parent=btnRow})
+
+local startBtn = btn(btnRow, "▶ START", 11, C.TDim, C.Teal)
+startBtn.Size = UDim2.new(0.45,0,0,24) stroke(startBtn, C.Teal, 1.3)
+local stopBtn = btn(btnRow, "■ STOP", 11, C.RDim, C.Red)
+stopBtn.Size = UDim2.new(0.45,0,0,24) stroke(stopBtn, C.Red, 1.3)
+local sniffBtn = btn(btnRow, "🔍", 10, C.Panel, C.Gold)
+sniffBtn.Size = UDim2.new(0.1,0,0,24)
+
+-- Stat row
+local statNumRow = mkRow(7, 24)
+local statNumLbl = lbl(statNumRow, "Total upgrade: 0 | Naik: 0", 10, C.Green)
+statNumLbl.Size = UDim2.new(1,-8,1,0) statNumLbl.Position = UDim2.new(0,8,0,0)
+
+-- Log
+local logRow = mkRow(8, 100)
+local logSF = mk("ScrollingFrame", {
+    Size=UDim2.new(1,-8,1,-4), Position=UDim2.new(0,4,0,2),
+    BackgroundTransparency=1, BorderSizePixel=0,
+    ScrollBarThickness=3, AutomaticCanvasSize=Enum.AutomaticSize.Y, Parent=logRow
+})
+mk("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,1), Parent=logSF})
+
+local logLines = {}
+local function addLogLine(msg, col)
+    col = col or C.Gray
+    local l = mk("TextLabel", {
+        Size=UDim2.new(1,0,0,13), BackgroundTransparency=1, Text=msg,
+        TextColor3=col, Font=Enum.Font.Gotham, TextSize=9,
+        TextXAlignment=Enum.TextXAlignment.Left, TextWrapped=true, LayoutOrder=#logLines, Parent=logSF
+    })
+    table.insert(logLines, l)
+    if #logLines > 80 then
+        logLines[1]:Destroy()
+        table.remove(logLines, 1)
+    end
+    -- auto-scroll
+    task.defer(function()
+        logSF.CanvasPosition = Vector2.new(0, logSF.AbsoluteCanvasSize.Y)
+    end)
+end
+
+-- ===================== MAIN LOGIC =====================
+local running = false
+local upgradeCount = 0
+local maxBefore = 0
+local upgradeTask = nil
+
+local function setStatus(txt, col)
+    statLbl.Text = "Status: "..txt
+    statLbl.TextColor3 = col or C.Teal
+end
+
+local function updateInvDisplay()
+    local mx = getMaxInv()
+    local cnt = countPets()
+    local naik = math.max(0, mx - maxBefore)
+    invLbl.Text = string.format("Inv: %d / %d | Pet: %d | +%d slot", cnt, mx, cnt, naik)
+    statNumLbl.Text = string.format("Total upgrade: %d | Naik: %d slot", upgradeCount, naik)
+end
+
+-- Update remote status di UI
+local function updateREInfo()
+    if invUpgradeRE then
+        reLbl.Text = "Remote: "..invUpgradeRE.Name.." ✓"
+        reLbl.TextColor3 = C.Green
+    else
+        reLbl.Text = "Remote: TIDAK DITEMUKAN — pakai PP"
+        reLbl.TextColor3 = C.Gold
+    end
+end
+updateREInfo()
+
+-- Sniff button: rescan + print semua remote
+sniffBtn.MouseButton1Click:Connect(function()
+    addLogLine("=== RESCAN REMOTE ===", C.Gold)
+    invUpgradeRE, _foundREName = findInvRE()
+    updateREInfo()
+    local count = 0
+    pcall(function()
+        for _, v in ipairs(gameEvents:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                addLogLine("  "..v.Name, C.Gray)
+                count = count + 1
+            end
+        end
+    end)
+    addLogLine("Total "..count.." remote", C.Teal)
+end)
+
+-- Satu siklus upgrade
+local function doOneUpgrade()
+    local mxBefore = getMaxInv()
+    local ok, info = false, ""
+
+    -- Coba Remote dulu
+    if invUpgradeRE then
+        ok, info = tryFireInvRE(invUpgradeRE)
+        if ok then addLogLine("RE fire OK: "..info, C.Green)
+        else addLogLine("RE fire FAIL: "..info, C.Red) end
+    end
+
+    -- Kalau RE gagal atau tidak ada, coba PP
+    if not ok then
+        local ppOk, ppInfo = tryFireInvPP()
+        if ppOk then
+            ok = true
+            addLogLine("PP fire OK: "..tostring(ppInfo), C.Green)
+        else
+            addLogLine("PP: "..tostring(ppInfo), C.Red)
+        end
+    end
+
+    -- Cek apakah maxInv naik
+    task.wait(0.3)
+    local mxAfter = getMaxInv()
+    if mxAfter > mxBefore then
+        upgradeCount = upgradeCount + 1
+        addLogLine(string.format("✓ Slot naik: %d → %d (+%d)", mxBefore, mxAfter, mxAfter - mxBefore), C.Green)
+        return true
+    else
+        if ok then
+            addLogLine("Fire OK tapi maxInv belum naik (mungkin cooldown/gagal)", C.Gold)
+        end
+        return false
+    end
+end
+
+-- Main loop
+local function startLoop()
+    if running then return end
+    running = true
+    maxBefore = getMaxInv()
+    addLogLine(string.format("START — maxInv awal: %d", maxBefore), C.Teal)
+    setStatus("Running...", C.Teal)
+    startBtn.BackgroundColor3 = C.Dim
+    startBtn.TextColor3 = C.Gray
+
+    upgradeTask = task.spawn(function()
+        while running do
+            local target = tonumber(tgtBox.Text) or 500
+            local delay = math.max(0.2, tonumber(dlyBox.Text) or 0.5)
+            local current = getMaxInv()
+
+            updateInvDisplay()
+
+            if current >= target then
+                addLogLine(string.format("Target tercapai! %d >= %d", current, target), C.Green)
+                setStatus(string.format("SELESAI — Inv: %d (target %d)", current, target), C.Green)
+                running = false
+                break
+            end
+
+            setStatus(string.format("Upgrade... %d/%d (target %d)", current, current, target), C.Teal)
+            doOneUpgrade()
+            task.wait(delay)
+        end
+        running = false
+        startBtn.BackgroundColor3 = C.TDim
+        startBtn.TextColor3 = C.Teal
+        updateInvDisplay()
+    end)
+end
+
+local function stopLoop()
+    running = false
+    if upgradeTask then pcall(function() task.cancel(upgradeTask) end) upgradeTask = nil end
+    setStatus("Stop", C.Red)
+    startBtn.BackgroundColor3 = C.TDim
+    startBtn.TextColor3 = C.Teal
+    addLogLine("=== STOP ===", C.Red)
+    updateInvDisplay()
+end
+
+startBtn.MouseButton1Click:Connect(startLoop)
+stopBtn.MouseButton1Click:Connect(stopLoop)
+
+-- Update display tiap 2s
+task.spawn(function()
+    while sg do
+        task.wait(2)
+        pcall(updateInvDisplay)
+    end
+end)
+
+-- Initial log
+addLogLine("Script loaded. Remote: "..( invUpgradeRE and invUpgradeRE.Name or "BELUM DITEMUKAN"), invUpgradeRE and C.Green or C.Gold)
+addLogLine("Klik 🔍 untuk scan ulang semua remote.", C.Gray)
+addLogLine("Klik START untuk mulai upgrade.", C.Gray)
+updateInvDisplay()
+setStatus("Siap. Klik START.", C.Gray)
+
+end -- _main
+
+-- Guard: cegah duplikat
+if getgenv then
+    if getgenv()._zenxInvUp then
+        print("[upinventory] Sudah jalan, stop dulu...")
+        getgenv()._zenxInvUp = false
+        task.wait(0.3)
+    end
+    getgenv()._zenxInvUp = true
+end
+
+_main()
