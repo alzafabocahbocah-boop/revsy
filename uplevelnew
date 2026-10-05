@@ -1,4 +1,4 @@
--- uplevelnew v8.114 — TRADE ALL: fix accept/confirm spam 0.12s (kayak up6kg), scan unfair trade popup
+-- uplevelnew v8.115 — TRADE ALL: port cara trade dari up6kg (SendRequest->AddItem loop->Accept)
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -4100,29 +4100,57 @@ do
         end)
     end
 
-    -- ---- HELPER: send trade request ke target ----
+    -- ---- HELPER: pegang Trading Ticket di tangan (equip) ----
+    local function holdTradingTicket()
+        local char=plr.Character; local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local bp=plr:FindFirstChild("Backpack")
+        if not (char and hum and bp) then return false end
+        local function findTicket(cont)
+            if not cont then return nil end
+            for _,t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") then local n=t.Name:lower()
+                    if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end
+                end
+            end
+        end
+        if findTicket(char) then return true end  -- sudah di tangan
+        local tk=findTicket(bp); if not tk then return false end
+        pcall(function()hum:UnequipTools()end); task.wait(0.1)
+        pcall(function()hum:EquipTool(tk)end); task.wait(0.15)
+        return findTicket(char) ~= nil
+    end
+
+    -- ---- HELPER: send trade request ke target (cara up6kg: SendRequest -> AddItem loop -> Accept) ----
     local function sendTradeToTarget(targetName, petUUIDs)
         local ge=RS:FindFirstChild("GameEvents")
         local te=ge and ge:FindFirstChild("TradeEvents")
         if not te then taLog("ERR: TradeEvents gak ada"); return false end
 
         local sendReqRE=te:FindFirstChild("SendRequest")
+        local addItemRE=te:FindFirstChild("AddItem")
         if not sendReqRE then taLog("ERR: SendRequest RE gak ada"); return false end
+        if not addItemRE then taLog("ERR: AddItem RE gak ada"); return false end
 
         local targetPlr=game:GetService("Players"):FindFirstChild(targetName)
         if not targetPlr then taLog("ERR: "..targetName.." gak ada di server"); return false end
 
-        -- kirim request (coba userId dulu, fallback player object)
-        local userId=targetPlr.UserId
-        local ok2=pcall(function() sendReqRE:FireServer(userId, petUUIDs) end)
-        if not ok2 then pcall(function() sendReqRE:FireServer(targetPlr, petUUIDs) end) end
+        -- equip tiket dulu
+        pcall(holdTradingTicket)
 
-        -- spam accept+confirm selama 4 detik (0.12s interval, kayak up6kg)
-        local t0=os.clock()
-        while os.clock()-t0 < 4 do
-            taAutoAcceptWindow(te)
-            task.wait(0.12)
+        -- kirim trade request (player object langsung, kayak up6kg)
+        pcall(function() sendReqRE:FireServer(targetPlr) end)
+        task.wait(0.5)
+
+        -- tambah pet satu per satu ke slot trade (AddItem per uuid)
+        local added=0
+        for _,uuid in ipairs(petUUIDs) do
+            pcall(function() addItemRE:FireServer("Pet", uuid) end)
+            added=added+1; task.wait(0.12)
         end
+        taLog("AddItem: "..added.." pet ditambah ke trade window")
+
+        -- spam accept+confirm 4x (kayak up6kg)
+        for _=1,4 do taAutoAcceptWindow(te); task.wait(0.3) end
 
         return true
     end
@@ -4160,43 +4188,22 @@ do
             end
             taLog("total pet: "..#allUUIDs.." — kirim ke "..(_taTarget or "?"))
 
-            -- GAG trade biasanya hanya bisa 1 pet per trade request
-            -- Loop satu per satu
-            local sent=0; local failed=0
-            for i,uuid in ipairs(allUUIDs) do
-                if not _taRunning then taLog("STOP oleh user di pet ke-"..i); break end
-
-                -- cek target masih di server
-                local tPlr=game:GetService("Players"):FindFirstChild(_taTarget or "")
-                if not tPlr then
-                    taLog("ERR: "..(_taTarget or "?").." keluar dari server — stop")
-                    taProgLbl.Text="target keluar dari server!"; taProgLbl.TextColor3=Color3.fromRGB(255,80,80)
-                    break
-                end
-
-                -- pastikan ada tiket
-                if not hasTicket() then
-                    taLog("tiket habis, nunggu beli ulang...")
-                    taProgLbl.Text="["..i.."/"..#allUUIDs.."] nunggu tiket..."
-                    local ok2=waitForTicket(15)
-                    if not ok2 then taLog("STOP: tiket gak tersedia"); break end
-                end
-
-                taProgLbl.Text="["..i.."/"..#allUUIDs.."] trade pet "..i.."..."
-                local ok3=sendTradeToTarget(_taTarget, {uuid})
-                if ok3 then
-                    sent=sent+1
-                    taLog("["..(i).."/"..#allUUIDs.."] OK uuid="..tostring(uuid):sub(1,16).."...")
-                else
-                    failed=failed+1
-                    taLog("["..(i).."/"..#allUUIDs.."] GAGAL uuid="..tostring(uuid):sub(1,16))
-                end
-
-                if i < #allUUIDs and _taRunning then task.wait(delay) end
+            -- cek target masih di server
+            local tPlr=game:GetService("Players"):FindFirstChild(_taTarget or "")
+            if not tPlr then
+                taLog("ERR: "..(_taTarget or "?").." gak ada di server — stop")
+                taProgLbl.Text="target gak ada di server!"; taProgLbl.TextColor3=Color3.fromRGB(255,80,80)
+                _taRunning=false; taStartBtn.Visible=true; taStopBtn.Visible=false
+                return
             end
 
+            -- kirim semua pet dalam 1 trade (SendRequest -> AddItem loop -> Accept)
+            taProgLbl.Text="kirim "..#allUUIDs.." pet ke "..(_taTarget or "?").."..."
+            local ok3=sendTradeToTarget(_taTarget, allUUIDs)
+            local sent=ok3 and #allUUIDs or 0; local failed=ok3 and 0 or #allUUIDs
+
             taLog("=== SELESAI: sent="..sent.." failed="..failed.." ===")
-            taProgLbl.Text="selesai: "..sent.." berhasil, "..failed.." gagal"
+            taProgLbl.Text="selesai: "..sent.." pet dikirim"
             taProgLbl.TextColor3=Color3.fromRGB(100,230,100)
             _taRunning=false; taStartBtn.Visible=true; taStopBtn.Visible=false
         end)
