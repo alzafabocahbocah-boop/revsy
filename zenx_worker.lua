@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.514-cf"
+local VERSION = "9.515-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6297,34 +6297,12 @@ local function run(cfg)
             end
             skip_sisa = true
         elseif U:find("REBOOT") then
+            -- DIMATIIN: reboot dari panel dinonaktifkan
             if isi ~= lastIsi then
                 lastIsi = isi
-                local siap, alasan = boot_siap()
-                if not siap then
-                    warn("REBOOT DIBATALIN -- " .. alasan)
-                    tambahLog("REBOOT batal: " .. alasan .. " (RF bakal mati kalau tetep reboot)")
-                    notify("ZenX "..cfg.tim, "REBOOT batal: " .. alasan)
-                    pcall(function()
-                        tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))))
-                    end)
-                    lapor(cfg, "REBOOT-BATAL", cacheRun)
-                    skip_sisa = true
-                    goto lewatReboot
-                end
-                warn("REBOOT dari panel -> RF di-restart, worker STANDBY abis nyala (nunggu Start)")
-                tambahLog("REBOOT: RF di-restart dari panel -> standby (pencet Start buat buka client)")
-                notify("ZenX "..cfg.tim, "RF reboot -- STANDBY, pencet Start buat mulai")
-                pcall(function()
-                    api_post(cfg, "/perintah", string.format('{"tim":%s,"isi":"STANDBY"}', jstr(cfg.tim)), "PUT")
-                end)
-                lapor(cfg, "REBOOT", cacheRun)
-                os.execute("sleep 2")   -- kasih waktu lapor + reset perintah kekirim
-                os.execute("su -c 'svc power reboot' >/dev/null 2>&1 &")
-                os.execute("sleep 8")
-                os.execute("su -c 'reboot' >/dev/null 2>&1 &")
-                os.execute("sleep 30")   -- nunggu HP mati
+                warn("REBOOT dari panel DIABAIKAN (fitur dimatiin)")
+                tambahLog("REBOOT diabaikan (dimatiin)")
             end
-            ::lewatReboot::
             skip_sisa = true
         elseif U:find("FRONT") then
             if isi ~= lastIsi then
