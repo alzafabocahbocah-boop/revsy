@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.515-cf"
+local VERSION = "9.516-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6879,8 +6879,8 @@ local function run(cfg)
         end
 
         if isi:upper():find("^UPDATE") then
-            local siapU, alasanU = boot_siap()
-            if not siapU then
+            local siapU, alasanU = true, ""   -- reboot dimatiin, langsung lanjut
+            if false then
                 warn("UPDATE DIBATALIN -- " .. alasanU .. " (reboot bakal matiin RF)")
                 tambahLog("UPDATE batal: " .. alasanU)
                 notify("ZenX "..cfg.tim, "UPDATE batal: " .. alasanU)
@@ -6889,7 +6889,7 @@ local function run(cfg)
                 end)
                 lapor(cfg, "UPDATE-BATAL", cacheRun)
             else
-            info("UPDATE dari panel -- tarik worker terbaru (proses TERPISAH), terus REBOOT RF")
+            info("UPDATE dari panel -- tarik worker terbaru (proses TERPISAH), tanpa reboot RF")
             local PFX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
             local HOME = os.getenv("HOME") or "/data/data/com.termux/files/home"
             pcall(function()
@@ -6918,10 +6918,7 @@ local function run(cfg)
                     '  echo "GAGAL download (belum di-push?)" > "$HOME/.zenx_update.hasil"',
                     'fi',
                     "sleep 1",
-                    "su -c reboot >/dev/null 2>&1",
-                    "su -c 'svc power reboot' >/dev/null 2>&1",
-                    "sleep 8",
-                    "su -c reboot >/dev/null 2>&1",
+                    "-- reboot dimatiin",
                     "",
                 }, "\n"))
                 f:close()
