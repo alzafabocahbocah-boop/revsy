@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.516-cf"
+local VERSION = "9.517-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -6879,55 +6879,11 @@ local function run(cfg)
         end
 
         if isi:upper():find("^UPDATE") then
-            local siapU, alasanU = true, ""   -- reboot dimatiin, langsung lanjut
-            if false then
-                warn("UPDATE DIBATALIN -- " .. alasanU .. " (reboot bakal matiin RF)")
-                tambahLog("UPDATE batal: " .. alasanU)
-                notify("ZenX "..cfg.tim, "UPDATE batal: " .. alasanU)
-                pcall(function()
-                    tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))))
-                end)
-                lapor(cfg, "UPDATE-BATAL", cacheRun)
-            else
-            info("UPDATE dari panel -- tarik worker terbaru (proses TERPISAH), tanpa reboot RF")
-            local PFX = os.getenv("PREFIX") or "/data/data/com.termux/files/usr"
-            local HOME = os.getenv("HOME") or "/data/data/com.termux/files/home"
-            pcall(function()
-                tulis_perintah_jaga(cfg, string.format('{"tim":%s,"isi":%s}', jstr(cfg.tim), jstr(force_str(cfg, mapAkun))))
-            end)
-            lapor(cfg, "UPDATE", cacheRun)
-            tambahLog("UPDATE: tarik worker baru (terpisah) -> reboot")
-            notify("ZenX "..cfg.tim, "update -> reboot, worker baru abis nyala")
-            local upd = HOME .. "/.zenx_update_now.sh"
-            local f = io.open(upd, "w")
-            if f then
-                f:write(table.concat({
-                    "#!" .. PFX .. "/bin/sh",
-                    "sleep 2",
-                    "zenx stop >/dev/null 2>&1",
-                    'URL="' .. REPO_WORKER .. '/zenx_worker.lua?v=$(date +%s)"',
-                    'if curl --version >/dev/null 2>&1; then',
-                    '  curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" "$URL" -o "$HOME/zenx_worker.baru"',
-                    'else',
-                    '  wget -q --no-cache -O "$HOME/zenx_worker.baru" "$URL"',
-                    'fi',
-                    'if head -5 "$HOME/zenx_worker.baru" 2>/dev/null | grep -q "ZENX WORKER"; then',
-                    '  mv "$HOME/zenx_worker.baru" "$HOME/zenx_worker.lua"',
-                    '  echo "OK $(grep -m1 \'local VERSION\' "$HOME/zenx_worker.lua")" > "$HOME/.zenx_update.hasil"',
-                    'else',
-                    '  echo "GAGAL download (belum di-push?)" > "$HOME/.zenx_update.hasil"',
-                    'fi',
-                    "sleep 1",
-                    "-- reboot dimatiin",
-                    "",
-                }, "\n"))
-                f:close()
-                os.execute("chmod +x " .. upd)
-            end
-            os.execute("setsid nohup sh " .. upd .. " </dev/null >" .. HOME .. "/.zenx_update.log 2>&1 &")
-            ok("Updater dilepas (terpisah) -- worker berhenti, RF reboot bentar lagi")
-            os.execute("sleep 1")
-            os.exit(0)
+            -- DIMATIIN: update+reboot dari panel dinonaktifkan
+            if isi ~= lastIsi then
+                lastIsi = isi
+                warn("UPDATE dari panel DIABAIKAN (fitur dimatiin)")
+                tambahLog("UPDATE diabaikan (dimatiin)")
             end
         end
 
