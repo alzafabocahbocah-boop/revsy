@@ -1566,15 +1566,16 @@ local function build_url(cfg, link_client)
         -- v9.512: up6kg pakai place market tapi bisa punya PS sendiri -> jangan force PUBLIC
         local _sl512 = (cfg.script_label or ""):upper()
         local _isUp6kg = _sl512:find("UP6KG") or _sl512:find("UP 6") or _sl512:find("UP6")
+        local _isUplevel = _sl512:find("UPLEVEL")
         local _hasPsOverride = cfg._ps_override and cfg._ps_override ~= ""
         -- v9.513: debug log biar ketahuan kenapa masih PUBLIC
-        info(("[build_url-dbg] place=market | script=%s | isUp6kg=%s | psOverride=%s | serverMode=%s"):format(
-            _sl512, tostring(_isUp6kg ~= nil), tostring(_hasPsOverride),
+        info(("[build_url-dbg] place=market | script=%s | isUp6kg=%s | isUplevel=%s | psOverride=%s | serverMode=%s"):format(
+            _sl512, tostring(_isUp6kg ~= nil), tostring(_isUplevel ~= nil), tostring(_hasPsOverride),
             (SERVER_TERAKHIR or ""):lower()))
-        if not (_isUp6kg and _hasPsOverride) then
+        if not ((_isUp6kg or _isUplevel) and _hasPsOverride) then
             return "roblox://placeId=" .. cfg.place_id
         end
-        -- up6kg dengan PS override -> lanjut ke bawah, pakai _ps_override
+        -- up6kg/uplevel dengan PS override -> lanjut ke bawah, pakai _ps_override
     end
     local serverMode = (SERVER_TERAKHIR or ""):lower()
     if (not SERVER_MOVE_TEMBAK) and serverMode:find("public") then
