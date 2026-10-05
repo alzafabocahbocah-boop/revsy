@@ -1,4 +1,4 @@
--- uplevelnew v8.117 — TRADE ALL: batch trade loop (4 pet per sesi, spam SendRequest tiap batch)
+-- uplevelnew v8.118 — TRADE ALL: 1 SendRequest per pet spam loop
 -- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -4242,36 +4242,14 @@ do
                 return
             end
 
-            -- kirim semua pet batch per batch (max 4 pet per trade session)
-            local BATCH_SIZE=4
+            -- kirim semua pet: 1 SendRequest per pet, spam terus
             local sent=0; local failed=0; local total=#allUUIDs
-            local i=1
-            while i<=#allUUIDs and _taRunning do
-                -- cek target masih di server tiap batch
-                local tPlrCheck=game:GetService("Players"):FindFirstChild(_taTarget or "")
-                if not tPlrCheck then
-                    taLog("ERR: "..(_taTarget or "?").." keluar server — stop")
-                    taProgLbl.Text="target keluar server!"; taProgLbl.TextColor3=Color3.fromRGB(255,80,80)
-                    break
-                end
-                -- ambil batch
-                local batch={}
-                for b=i, math.min(i+BATCH_SIZE-1, #allUUIDs) do
-                    table.insert(batch, allUUIDs[b])
-                end
-                local batchNum=math.ceil(i/BATCH_SIZE)
-                local totalBatch=math.ceil(total/BATCH_SIZE)
-                taProgLbl.Text="trade "..batchNum.."/"..totalBatch.." ("..#batch.." pet)..."
-                taLog("batch "..batchNum.."/"..totalBatch..": "..#batch.." pet, i="..i)
-                -- equip tiket baru tiap batch
-                pcall(holdTradingTicket)
+            for idx,uuid in ipairs(allUUIDs) do
+                if not _taRunning then break end
+                taProgLbl.Text="trade "..idx.."/"..total.."..."
+                local ok3=sendTradeToTarget(_taTarget, {uuid})
+                if ok3 then sent=sent+1 else failed=failed+1 end
                 task.wait(0.2)
-                -- kirim trade batch ini
-                local ok3=sendTradeToTarget(_taTarget, batch)
-                if ok3 then sent=sent+#batch else failed=failed+#batch end
-                i=i+BATCH_SIZE
-                -- jeda antar batch biar server gak reject
-                if i<=#allUUIDs and _taRunning then task.wait(1.5) end
             end
 
             taLog("=== SELESAI: sent="..sent.." failed="..failed.." total="..total.." ===")
