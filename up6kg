@@ -5,7 +5,7 @@
 -- ╚══════════════════════════════════════════════════════════════╝
 
 
-local VERSION = "up6kg-v10.207"
+local VERSION = "up6kg-v10.208"
 
 -- ============ up6kg: TABEL STAT pojok kanan atas (pet 6kg+ / 6kg- / age 40) ============
 task.spawn(function()
@@ -2741,6 +2741,7 @@ makeSideBtn("MISC", 56)
 makeSideBtn("TRADE", 98)
 makeSideBtn("OPER ELE", 140)
 makeSideBtn("TEST DL", 182)
+makeSideBtn("TRADE ALL", 224)
 
 -- ============ AREA KONTEN ============
 local content = mk("Frame", {
@@ -2783,12 +2784,22 @@ local testDLScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), Backgr
     CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = testDLContent })
 mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = testDLScroll })
 
+local tradeAllContent = mk("Frame", {
+    Size = UDim2.new(1, -125, 1, -44), Position = UDim2.new(0, 125, 0, 44),
+    BackgroundTransparency = 1, Visible = false, Parent = main })
+pad(tradeAllContent, 10)
+local tradeAllScroll = mk("ScrollingFrame", { Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = C.line,
+    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = tradeAllContent })
+mk("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = tradeAllScroll })
+
 showSideFn = function(name)
-    content.Visible       = (name == "AUTO KG")
-    miscContent.Visible   = (name == "MISC")
-    tradeContent.Visible  = (name == "TRADE")
-    operContent.Visible   = (name == "OPER ELE")
-    testDLContent.Visible = (name == "TEST DL")
+    content.Visible          = (name == "AUTO KG")
+    miscContent.Visible      = (name == "MISC")
+    tradeContent.Visible     = (name == "TRADE")
+    operContent.Visible      = (name == "OPER ELE")
+    testDLContent.Visible    = (name == "TEST DL")
+    tradeAllContent.Visible  = (name == "TRADE ALL")
 end
 
 -- ---- KONTEN AUTO KG (kanan) = CONFIG ----
@@ -5700,6 +5711,374 @@ do
         end
     end)
 end
+
+-- ============================================================
+-- TAB TRADE ALL (v10.208) — persis logika uplevelnew
+-- ============================================================
+do
+    local Players = game:GetService("Players")
+    local RS = game:GetService("ReplicatedStorage")
+    local plr = Players.LocalPlayer
+
+    -- ---- helpers equipRE + fmtUUID (lokal scope) ----
+    local equipRE2
+    pcall(function()
+        for _, v in pairs(RS:GetDescendants()) do
+            if v.Name == "PetsService" and v:IsA("RemoteEvent") then equipRE2 = v; break end
+        end
+    end)
+    local function fmtUUID2(u) local s = tostring(u); if s:sub(1,1) ~= "{" then s = "{"..s.."}" end return s end
+
+    -- ---- header helper ----
+    local function taHeader(txt, lo)
+        local h = mk("Frame", { Size = UDim2.new(1,0,0,26), BackgroundTransparency = 1, BorderSizePixel = 0, LayoutOrder = lo, Parent = tradeAllScroll })
+        local bar = mk("Frame", { Size = UDim2.new(0,3,0,14), Position = UDim2.new(0,2,0.5,-7), BackgroundColor3 = C.accent, BorderSizePixel = 0, Parent = h }); corner(bar, 2)
+        local t = lbl(h, txt, 11.5, C.accent); t.Font = FONT_B; t.Position = UDim2.new(0,12,0,0); t.Size = UDim2.new(1,-12,1,0)
+    end
+
+    -- ---- TARGET PLAYER ----
+    taHeader("TARGET PLAYER", 1)
+    local taStatusLbl = mk("TextLabel", { Size = UDim2.new(1,0,0,22), BackgroundTransparency = 1,
+        Text = "pilih player dari list bawah", Font = FONT_B, TextSize = 11, TextColor3 = C.textMute,
+        TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, Parent = tradeAllScroll })
+
+    local taTargetRow = mk("Frame", { Size = UDim2.new(1,0,0,40), BackgroundColor3 = C.card,
+        BorderSizePixel = 0, LayoutOrder = 3, Parent = tradeAllScroll }); corner(taTargetRow, 9); stroke(taTargetRow, C.border, 1)
+    lbl(taTargetRow, "Target", 12, C.textDim).Position = UDim2.new(0,12,0,0)
+    local taTargetLbl = lbl(taTargetRow, "— belum dipilih —", 13, C.textMute)
+    taTargetLbl.Font = FONT_B; taTargetLbl.Position = UDim2.new(0,80,0,0); taTargetLbl.Size = UDim2.new(1,-90,1,0)
+    taTargetLbl.TextXAlignment = Enum.TextXAlignment.Right
+
+    local _taTarget = nil
+
+    -- ---- PLAYERS LIST ----
+    taHeader("PLAYERS DI SERVER", 4)
+    local taPlrListFrame = mk("Frame", { Size = UDim2.new(1,0,0,0), AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1, BorderSizePixel = 0, LayoutOrder = 5, Parent = tradeAllScroll })
+    mk("UIListLayout", { Padding = UDim.new(0,4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = taPlrListFrame })
+
+    local taRefreshBtn = mk("TextButton", { Size = UDim2.new(1,0,0,32), BackgroundColor3 = C.card,
+        Text = "🔄  Refresh List Player", Font = FONT_B, TextSize = 12, TextColor3 = C.textDim,
+        LayoutOrder = 6, Parent = tradeAllScroll }); corner(taRefreshBtn, 8); stroke(taRefreshBtn, C.border, 1)
+
+    local function buildPlayerList()
+        for _, c in ipairs(taPlrListFrame:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+        local me = Players.LocalPlayer
+        local all = Players:GetPlayers()
+        local idx = 0
+        for _, p in ipairs(all) do
+            if p ~= me then
+                idx = idx + 1
+                local isSelected = (_taTarget == p.Name)
+                local row = mk("TextButton", { Size = UDim2.new(1,0,0,36), BackgroundColor3 = isSelected and C.cardSel or C.card,
+                    Text = "", AutoButtonColor = false, BorderSizePixel = 0, LayoutOrder = idx, Parent = taPlrListFrame })
+                corner(row, 8); stroke(row, isSelected and C.accent or C.border, isSelected and 1.5 or 1)
+                local nl = lbl(row, p.Name, 13, isSelected and C.accent or C.text)
+                nl.Font = FONT_B; nl.Position = UDim2.new(0,14,0,0); nl.Size = UDim2.new(0.6,0,1,0)
+                local sl = lbl(row, isSelected and "✓ DIPILIH" or "pilih", 11, isSelected and C.accent or C.textMute)
+                sl.Position = UDim2.new(1,-70,0,0); sl.Size = UDim2.new(0,66,1,0); sl.TextXAlignment = Enum.TextXAlignment.Right
+                local pName = p.Name
+                row.MouseButton1Click:Connect(function()
+                    _taTarget = pName
+                    taTargetLbl.Text = pName; taTargetLbl.TextColor3 = C.accent
+                    taStatusLbl.Text = "target: "..pName
+                    buildPlayerList()
+                end)
+            end
+        end
+        if idx == 0 then
+            local e = lbl(taPlrListFrame, "(tidak ada player lain di server)", 11, C.textMute)
+            e.Size = UDim2.new(1,0,0,26); e.LayoutOrder = 1
+        end
+    end
+    taRefreshBtn.MouseButton1Click:Connect(buildPlayerList)
+    buildPlayerList()
+
+    -- ---- PROGRESS + LOG ----
+    taHeader("AKSI", 7)
+    local taProgLbl = mk("TextLabel", { Size = UDim2.new(1,0,0,22), BackgroundTransparency = 1,
+        Text = "—", Font = FONT_B, TextSize = 11, TextColor3 = C.textMute,
+        TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 8, Parent = tradeAllScroll })
+
+    local _taRunning = false
+    local taStartBtn = mk("TextButton", { Size = UDim2.new(1,0,0,42), BackgroundColor3 = C.accent,
+        Text = "▶  START TRADE ALL", Font = FONT_B, TextSize = 14, TextColor3 = Color3.new(1,1,1),
+        LayoutOrder = 9, Parent = tradeAllScroll }); corner(taStartBtn, 10)
+    local taStopBtn = mk("TextButton", { Size = UDim2.new(1,0,0,42), BackgroundColor3 = Color3.fromRGB(180,40,40),
+        Text = "■  STOP", Font = FONT_B, TextSize = 14, TextColor3 = Color3.new(1,1,1),
+        Visible = false, LayoutOrder = 10, Parent = tradeAllScroll }); corner(taStopBtn, 10)
+
+    local taLogFrame = mk("Frame", { Size = UDim2.new(1,0,0,120), BackgroundColor3 = Color3.fromRGB(12,12,18),
+        BorderSizePixel = 0, LayoutOrder = 11, Parent = tradeAllScroll }); corner(taLogFrame, 8); stroke(taLogFrame, C.border, 1)
+    local taLogScroll = mk("ScrollingFrame", { Size = UDim2.new(1,-6,1,-6), Position = UDim2.new(0,3,0,3),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.line,
+        CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = taLogFrame })
+    mk("UIListLayout", { Padding = UDim.new(0,2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = taLogScroll })
+    local taLogIdx = 0
+    local function taLog(s)
+        taLogIdx = taLogIdx + 1
+        mk("TextLabel", { Size = UDim2.new(1,-4,0,16), BackgroundTransparency = 1,
+            Text = "["..os.date("%H:%M:%S").."] "..tostring(s),
+            Font = Enum.Font.Code, TextSize = 10, TextColor3 = Color3.fromRGB(180,220,255),
+            TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = taLogIdx, Parent = taLogScroll })
+        task.defer(function()
+            pcall(function()
+                taLogScroll.CanvasPosition = Vector2.new(0, math.max(0, taLogScroll.AbsoluteCanvasSize.Y - taLogScroll.AbsoluteSize.Y))
+            end)
+        end)
+        local kids = taLogScroll:GetChildren()
+        if #kids > 80 then for _, k in ipairs(kids) do if k:IsA("TextLabel") then pcall(function() k:Destroy() end); break end end end
+    end
+
+    -- ---- HELPERS ----
+    local function getAllPetUUIDs()
+        local list = {}
+        pcall(function()
+            local bp = plr:FindFirstChild("Backpack")
+            if bp then for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                    if u then list[#list+1] = fmtUUID2(u) end
+                end
+            end end
+            if plr.Character then for _, t in ipairs(plr.Character:GetChildren()) do
+                if t:IsA("Tool") then
+                    local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                    if u then
+                        local dup = false; for _, ex in ipairs(list) do if ex == fmtUUID2(u) then dup = true; break end end
+                        if not dup then list[#list+1] = fmtUUID2(u) end
+                    end
+                end
+            end end
+        end)
+        return list
+    end
+
+    local function hasTicket()
+        local found = false
+        pcall(function()
+            local function scan(c) if not c then return end
+                for _, t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then local low = t.Name:lower()
+                        if (low:find("trading") and low:find("ticket")) or low:find("trade ticket") then found = true end
+                    end
+                end
+            end
+            scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+        end)
+        return found
+    end
+
+    local function waitForTicket(maxWait)
+        local ge = RS:FindFirstChild("GameEvents")
+        local buyRE = ge and ge:FindFirstChild("BuyGearStock")
+        local t0 = os.clock()
+        while not hasTicket() do
+            if os.clock() - t0 > (maxWait or 15) then return false end
+            if buyRE then pcall(function() buyRE:FireServer("Trading Ticket") end) end
+            task.wait(1)
+        end
+        return true
+    end
+
+    local function holdTradingTicket()
+        local char = plr.Character; local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local bp = plr:FindFirstChild("Backpack")
+        if not (char and hum and bp) then return false end
+        local function findTicket(cont)
+            if not cont then return nil end
+            for _, t in ipairs(cont:GetChildren()) do
+                if t:IsA("Tool") then local n = t.Name:lower()
+                    if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end
+                end
+            end
+        end
+        if findTicket(char) then return true end
+        local tk = findTicket(bp); if not tk then return false end
+        pcall(function() hum:UnequipTools() end); task.wait(0.1)
+        pcall(function() hum:EquipTool(tk) end); task.wait(0.15)
+        return findTicket(char) ~= nil
+    end
+
+    local function taAutoAcceptWindow(te)
+        pcall(function()
+            local pg = plr:FindFirstChild("PlayerGui"); if not pg then return end
+            local tui = pg:FindFirstChild("TradingUI")
+            local lt = tui and tui:FindFirstChild("LiveTrade")
+            if lt and lt.Visible then
+                local opts = lt:FindFirstChild("Options")
+                for _, bn in ipairs({"Accept","Confirm"}) do
+                    local b = opts and opts:FindFirstChild(bn)
+                    if b then
+                        if firesignal then pcall(function() firesignal(b.Activated) end) end
+                        if getconnections then for _, c in ipairs(getconnections(b.Activated)) do pcall(function() c:Fire() end) end end
+                        pcall(function()
+                            if firesignal then firesignal(b.MouseButton1Click)
+                            else local cs = getconnections and getconnections(b.MouseButton1Click)
+                                if cs then for _, c in ipairs(cs) do pcall(function() c:Fire() end) end end
+                            end
+                        end)
+                    end
+                end
+                for _, d in ipairs(lt:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t = ((d:IsA("TextButton") and d.Text) or d.Name or ""):lower()
+                        if t == "yes" or t:find("confirm") or t == "continue" or t == "accept" then
+                            pcall(function()
+                                if firesignal then firesignal(d.MouseButton1Click) end
+                                local cs = getconnections and getconnections(d.MouseButton1Click)
+                                if cs then for _, c in ipairs(cs) do pcall(function() c:Fire() end) end end
+                            end)
+                        end
+                    end
+                end
+                for _, d in ipairs(pg:GetDescendants()) do
+                    if (d:IsA("TextButton") or d:IsA("ImageButton")) and d.Visible then
+                        local t = ((d:IsA("TextButton") and d.Text) or ""):lower()
+                        if t == "yes" or t:find("confirm") or t == "continue" or t == "lanjut" then
+                            pcall(function()
+                                if firesignal then firesignal(d.MouseButton1Click) end
+                                local cs = getconnections and getconnections(d.MouseButton1Click)
+                                if cs then for _, c in ipairs(cs) do pcall(function() c:Fire() end) end end
+                                if firesignal then firesignal(d.Activated) end
+                            end)
+                        end
+                    end
+                end
+            end
+            if te then
+                local a = te:FindFirstChild("Accept"); local cf = te:FindFirstChild("Confirm")
+                if cf then pcall(function() cf:FireServer() end) end
+                if a then pcall(function() a:FireServer() end) end
+            end
+        end)
+    end
+
+    local function unequipSemuaPet()
+        if not equipRE2 then taLog("[WARN] equipRE nil — gak bisa unequip"); return end
+        local uuids = {}
+        pcall(function()
+            for _, m in pairs(workspace:GetDescendants()) do
+                if m:IsA("Model") then
+                    local n = tostring(m.Name)
+                    if n:sub(1,1) == "{" and #n > 10 then uuids[n] = true end
+                end
+            end
+            local function scan(c) if not c then return end
+                for _, t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local u = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                        if u then uuids[fmtUUID2(u)] = true end
+                    end
+                end
+            end
+            scan(plr:FindFirstChild("Backpack")); scan(plr.Character)
+        end)
+        local n = 0
+        for uuid in pairs(uuids) do
+            pcall(function() equipRE2:FireServer("UnequipPet", uuid) end)
+            n = n + 1; task.wait(0.04)
+        end
+        taLog("unequip "..n.." pet dari kebun")
+    end
+
+    -- ---- TRADE ALL LOOP ----
+    local function runTradeAll()
+        if not _taTarget then taProgLbl.Text = "pilih target dulu!"; taProgLbl.TextColor3 = Color3.fromRGB(255,120,80); return end
+        _taRunning = true
+        taStartBtn.Visible = false; taStopBtn.Visible = true
+        taProgLbl.TextColor3 = Color3.fromRGB(120,220,255)
+
+        task.spawn(function()
+            taLog("=== TRADE ALL START -> "..(_taTarget or "?").." ===")
+
+            -- unequip semua pet dari kebun
+            taProgLbl.Text = "ambil pet dari kebun..."
+            taLog("unequip semua pet...")
+            unequipSemuaPet()
+            task.wait(1)
+
+            -- pastikan tiket ada
+            taProgLbl.Text = "nunggu Trading Ticket..."
+            taLog("cek tiket...")
+            local gotTicket = waitForTicket(20)
+            if not gotTicket then
+                taLog("GAGAL: Trading Ticket gak tersedia setelah 20s")
+                taProgLbl.Text = "GAGAL: gak ada Trading Ticket"; taProgLbl.TextColor3 = Color3.fromRGB(255,80,80)
+                _taRunning = false; taStartBtn.Visible = true; taStopBtn.Visible = false; return
+            end
+            taLog("tiket ada, kumpulkan pet...")
+
+            -- kumpulkan semua UUID pet
+            local allUUIDs = getAllPetUUIDs()
+            if #allUUIDs == 0 then
+                taLog("GAGAL: inventory kosong (0 pet)")
+                taProgLbl.Text = "inventory kosong!"; taProgLbl.TextColor3 = Color3.fromRGB(255,180,80)
+                _taRunning = false; taStartBtn.Visible = true; taStopBtn.Visible = false; return
+            end
+            taLog("total pet: "..#allUUIDs.." — kirim ke "..(_taTarget or "?"))
+
+            local tPlr = Players:FindFirstChild(_taTarget or "")
+            if not tPlr then
+                taLog("ERR: "..(_taTarget or "?").." gak ada di server")
+                taProgLbl.Text = "target gak ada di server!"; taProgLbl.TextColor3 = Color3.fromRGB(255,80,80)
+                _taRunning = false; taStartBtn.Visible = true; taStopBtn.Visible = false; return
+            end
+
+            -- spam SendRequest+AddItem per pet, accept background
+            local ge = RS:FindFirstChild("GameEvents")
+            local te = ge and ge:FindFirstChild("TradeEvents")
+            local sendReqRE = te and te:FindFirstChild("SendRequest")
+            local addItemRE = te and te:FindFirstChild("AddItem")
+            local sent = 0; local total = #allUUIDs
+
+            local bgRunning = true
+            task.spawn(function()
+                while bgRunning do
+                    pcall(function() taAutoAcceptWindow(te) end)
+                    task.wait(0.12)
+                end
+            end)
+
+            for idx, uuid in ipairs(allUUIDs) do
+                if not _taRunning then break end
+                taProgLbl.Text = "trade "..idx.."/"..total.."..."
+                pcall(holdTradingTicket)
+                if sendReqRE and tPlr then
+                    pcall(function() sendReqRE:FireServer(tPlr) end)
+                    task.wait(0.1)
+                    if addItemRE then pcall(function() addItemRE:FireServer("Pet", uuid) end) end
+                    sent = sent + 1
+                end
+                task.wait(0.15)
+            end
+            bgRunning = false
+
+            taLog("=== SELESAI: "..sent.."/"..total.." pet dikirim ===")
+            taProgLbl.Text = "selesai: "..sent.."/"..total.." pet dikirim"
+            taProgLbl.TextColor3 = Color3.fromRGB(100,230,100)
+            _taRunning = false; taStartBtn.Visible = true; taStopBtn.Visible = false
+        end)
+    end
+
+    taStartBtn.MouseButton1Click:Connect(runTradeAll)
+    taStopBtn.MouseButton1Click:Connect(function()
+        _taRunning = false
+        taProgLbl.Text = "stop oleh user"; taProgLbl.TextColor3 = C.textMute
+        taLog("STOP oleh user")
+        taStartBtn.Visible = true; taStopBtn.Visible = false
+    end)
+
+    -- auto-refresh player list tiap 10s saat tab aktif
+    task.spawn(function()
+        while true do
+            task.wait(10)
+            pcall(function()
+                if tradeAllContent.Visible then buildPlayerList() end
+            end)
+        end
+    end)
+end -- end TAB TRADE ALL
 
 -- ============ SCALE GUI -> tombol "range" + popup pilihan ukuran (persist) ============
 do
