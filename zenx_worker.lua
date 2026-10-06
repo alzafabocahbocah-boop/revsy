@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.518-cf"
+local VERSION = "9.519-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -190,6 +190,11 @@ local function load_config()
                         local sl = (cfg.script_label or ""):upper()
                         if sl == "PANEN" or sl == "HACT" or sl == "UP KG" or sl == "UPKG" or sl == "CAMPUR" or sl == "HACT OTO" then
                             cfg.rotasi_on = false
+                        end
+                        -- v9.519: UPLEVEL/UPLEVELNEW: koreksi place_id kalau masih market (bekas akun market)
+                        if sl:find("UPLEVEL") and tostring(cfg.place_id) == "129954712878723" then
+                            cfg.place_id = "126884695634066"
+                            print("[load_config] UPLEVEL: koreksi place_id market -> GAG1 (v9.519)")
                         end
                     end
                     return cfg
@@ -4954,8 +4959,11 @@ local function run(cfg)
         SERVER_TERAKHIR = ambil_str(rS, "server") or ""   -- v9.62: baseline server
         local berubah = false
         if sPlace ~= "" and sPlace ~= cfg.place_id then
-            if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "126884695634066" and sPlace ~= "129954712878723" then
+            -- v9.519: UPLEVEL/UPLEVELNEW juga dikunci di GAG1 -- tolak place market dari panel
+            if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" or s:find("UPLEVEL") end)() and sPlace ~= "126884695634066" and sPlace ~= "129954712878723" then
                 info(((cfg.script_label or "FARM") .. ": place " .. sPlace .. " DITOLAK (kunci 126884695634066)"))
+            elseif (function() local s=(cfg.script_label or ""):upper(); return s:find("UPLEVEL") end)() and sPlace == "129954712878723" then
+                info(((cfg.script_label or "UPLEVEL") .. ": place MARKET DITOLAK -- akun ini dikunci di GAG1 (v9.519)"))
             else
             info(("Setting panel: place %s (beda dari %s) -- kepakai"):format(sPlace, tostring(cfg.place_id)))
             cfg.place_id = sPlace
@@ -5985,8 +5993,11 @@ local function run(cfg)
                 end
                 warn("SETTING PANEL BERUBAH (place/grid beda) -> RESTART sendiri pakai setting baru")
                 SETTING_TS_TERAKHIR = tsBaru
-                if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" end)() and sPlace ~= "" and sPlace ~= "126884695634066" and sPlace ~= "129954712878723" then
+                if (function() local s=(cfg.script_label or ""):upper(); return s=="PANEN" or s=="HACT" or s=="UP KG" or s=="UPKG" or s=="CAMPUR" or s=="HACT OTO" or s:find("UPLEVEL") end)() and sPlace ~= "" and sPlace ~= "126884695634066" and sPlace ~= "129954712878723" then
                     warn(((cfg.script_label or "FARM")) .. ": place " .. sPlace .. " DITOLAK (kunci di 126884695634066)")
+                -- v9.519: UPLEVEL/UPLEVELNEW dikunci di GAG1 -- tolak place market dari panel (denyut loop)
+                elseif (function() local s=(cfg.script_label or ""):upper(); return s:find("UPLEVEL") end)() and sPlace == "129954712878723" then
+                    warn(((cfg.script_label or "UPLEVEL")) .. ": place MARKET DITOLAK di denyut-loop -- akun ini dikunci GAG1 (v9.519)")
                 elseif sPlace ~= "" then cfg.place_id = sPlace end
                 if sGrid > 0 then cfg.grid_kolom = sGrid end
                 pcall(function() save_config(cfg) end)
@@ -6478,7 +6489,13 @@ local function run(cfg)
                         if sSP ~= (SERVER_TERAKHIR or "") then info("[PAKSA] server baru: " .. sSP) end
                         SERVER_TERAKHIR = sSP
                     end
-                    if sPlP ~= "" then cfg.place_id = sPlP end
+                    -- v9.519: UPLEVEL/UPLEVELNEW dikunci GAG1 -- jangan ikut place market dari panel START PAKSA
+                    if sPlP ~= "" then
+                        local _slPaksa = (cfg.script_label or ""):upper()
+                        if _slPaksa:find("UPLEVEL") and sPlP == "129954712878723" then
+                            warn((_slPaksa..": place MARKET DITOLAK di START-PAKSA (v9.519)"))
+                        else cfg.place_id = sPlP end
+                    end
                     if sGrP > 0 then cfg.grid_kolom = sGrP; SUDAH_GRID = false; GRID_CACHE = nil end
                     SETTING_TS_TERAKHIR = ambil_num(rSP, "ts") or SETTING_TS_TERAKHIR
                     local rpsP = api_get(cfg, "/ps?tim=" .. cfg.tim)
@@ -6743,7 +6760,13 @@ local function run(cfg)
                         end
                         SERVER_TERAKHIR = sSR
                     end
-                    if sPlR ~= "" then cfg.place_id = sPlR end
+                    -- v9.519: UPLEVEL/UPLEVELNEW dikunci GAG1 -- jangan ikut place market dari panel RESTART
+                    if sPlR ~= "" then
+                        local _slRst = (cfg.script_label or ""):upper()
+                        if _slRst:find("UPLEVEL") and sPlR == "129954712878723" then
+                            warn((_slRst..": place MARKET DITOLAK di RESTART-PANEL (v9.519)"))
+                        else cfg.place_id = sPlR end
+                    end
                     if sGrR > 0 then cfg.grid_kolom = sGrR; SUDAH_GRID = false; GRID_CACHE = nil end
                     SETTING_TS_TERAKHIR = ambil_num(rSR, "ts") or SETTING_TS_TERAKHIR
                     -- baca /ps -> update _ps_override (link server yang dipilih panel)
