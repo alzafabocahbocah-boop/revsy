@@ -3276,10 +3276,11 @@ function _populateUplevelStat(dev){
   if(!akuns.length){ cont.innerHTML=`<div style="font-size:12px;color:#8b83a0;padding:8px">belum ada data (script lapor tiap 15s)</div>`; return; }
   const akunCard=(a)=>{ const st=a.stat||{}; const plus=Number(st.udah)||0,minus=Number(st.belum)||0,total=Number(st.totalAll)||0,mx=Number(st.maxInv)||200;
     return `<div style="background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:7px"><div style="display:flex;align-items:center;margin-bottom:8px"><div style="font-weight:600;font-size:12.5px;flex:1">${a.nm}${a.on===false?' <span style="font-size:9px;color:#ef4444;font-weight:700">off</span>':''}</div><div style="font-size:10.5px;color:#8b83a0"><b style="color:var(--ink);font-size:12.5px">${total}</b>/${mx} <span style="font-size:9px">bp</span></div></div><div style="display:flex;gap:6px"><div style="flex:1;background:#ecfdf5;border-radius:8px;padding:5px 8px;text-align:center"><div style="font-weight:700;font-size:14px;color:#10b981">${plus}</div><div style="font-size:8.5px;color:#6b9d85">age 500+</div></div><div style="flex:1;background:#faf5ff;border-radius:8px;padding:5px 8px;text-align:center"><div style="font-weight:700;font-size:14px;color:#8b5cf6">${minus}</div><div style="font-size:8.5px;color:#a898c9">age 500-</div></div></div></div>`; };
-  // v519: split 4 akun device INI jadi 2 tim by index (uplevel forced 2-tim, kayak start popup).
+  // v519: split akun device INI jadi 2 tim by index. v675: kalau ≤2 akun -> 1 tim aja.
   const srt = akuns.slice().sort((a,b)=>(a.idx||0)-(b.idx||0));
-  const sep = Math.ceil(srt.length/2);
-  const grup = { "1": srt.slice(0,sep), "2": srt.slice(sep) };
+  const grup = srt.length <= 2
+    ? { "1": srt }
+    : (()=>{ const sp=Math.ceil(srt.length/2); return {"1":srt.slice(0,sp),"2":srt.slice(sp)}; })();
   const timNos = Object.keys(grup).sort((a,b)=>Number(a)-Number(b));
   cont.innerHTML = timNos.map(tn=>{
     const list=grup[tn]||[];
@@ -5900,7 +5901,8 @@ async function bukaPopupStartMarket(dev){
   // v480: PANEN 8/10 client -> BISA bagi 2 tim (biar bisa tembak salah satu tim).
   // Panen <8 client tetep 1 tim. Market/hact/upkg tetap 2 tim.
   const panen2tim = dev._isPanen && clients.length >= 8;
-  const satuTim = ((dev._isPanen && !panen2tim) || dev._isUp6kg || dev._isMarket || dev._isHact) && !dev._isUplevel;   // v598: hact 1 tim (bukan 2); market/up6kg 1 tim; UPLEVEL PAKSA 2 tim
+  const uplevelSatuTim = dev._isUplevel && clients.length <= 2;   // v675: uplevel ≤2 client -> 1 tim
+  const satuTim = (dev._isPanen && !panen2tim) || dev._isUp6kg || dev._isMarket || dev._isHact || uplevelSatuTim;   // v598: hact 1 tim; market/up6kg 1 tim; v675: uplevel juga 1 tim kalau ≤2 client
   const sep = satuTim ? clients.length : Math.ceil(clients.length / 2);
   const grup = satuTim ? [ clients, [] ] : [ clients.slice(0, sep), clients.slice(sep) ];
 
@@ -5995,7 +5997,7 @@ async function bukaPopupStartMarket(dev){
   ov.innerHTML = `
     <div class="pop">
       <div class="pop-bar">
-        <div><div class="pop-nm">${dev.nm}</div><div class="pop-sub">${satuTim ? (dev._isMarket ? "market \u00b7 1 tim, server sendiri" : "panen \u00b7 1 tim, server sendiri") : (panen2tim ? "panen \u00b7 2 tim (bisa tembak per-tim)" : "market \u00b7 2 tim, server sendiri, jalan bareng")}</div></div>
+        <div><div class="pop-nm">${dev.nm}</div><div class="pop-sub">${satuTim ? (dev._isMarket ? "market \u00b7 1 tim, server sendiri" : uplevelSatuTim ? "uplevel \u00b7 1 tim (klien \u22642)" : "panen \u00b7 1 tim, server sendiri") : (panen2tim ? "panen \u00b7 2 tim (bisa tembak per-tim)" : dev._isUplevel ? "uplevel \u00b7 2 tim, jalan bareng" : "market \u00b7 2 tim, server sendiri, jalan bareng")}</div></div>
         <button class="pop-x" id="popX">\u00d7</button>
       </div>
       <div class="pop-body">
@@ -6003,7 +6005,7 @@ async function bukaPopupStartMarket(dev){
         ${satuTim ? "" : `<div class="pop-mtim-sep"></div>${secHtml(2)}`}
       </div>
       <div class="pop-go-row">
-        ${(satuTim && !dev._isMarket) ? "" : `<button class="pop-go" id="popGo">\u25b6 Jalankan${dev._isMarket ? " (1 tim)" : " (2 tim bareng)"}</button>`}
+        ${(satuTim && !dev._isMarket && !uplevelSatuTim) ? "" : `<button class="pop-go" id="popGo">\u25b6 Jalankan${dev._isMarket ? " (1 tim)" : uplevelSatuTim ? " (1 tim)" : dev._isUplevel ? " (2 tim bareng)" : " (2 tim bareng)"}</button>`}
       </div>
     </div>`;
   document.body.appendChild(ov);
@@ -6120,7 +6122,7 @@ async function bukaPopupStartMarket(dev){
     if ((dev._isUp6kg || dev._isUplevel) && dev._timDevices && dev._timDevices.length) {
       btn.textContent = "Mengirim...";
       const pilih1 = grupTerpilih(1).map(c => c.nm);
-      const pilih2 = dev._isUplevel ? grupTerpilih(2).map(c => c.nm) : [];   // v642: uplevel 2-tim
+      const pilih2 = (dev._isUplevel && !uplevelSatuTim) ? grupTerpilih(2).map(c => c.nm) : [];   // v642: uplevel 2-tim; v675: 1-tim kalau ≤2 client
       let nkirim = 0;
       for (const devId of dev._timDevices) {
         // v496: pake _startTargets -> akun online di device tempat dia online; akun off dimana2 -> semua device-nya. anti FORCE ke device salah pas akun pindah.
@@ -6132,11 +6134,19 @@ async function bukaPopupStartMarket(dev){
         if (!allC.length) continue;
         try {
           if (dev._isUplevel) {
-            // v642: UPLEVEL 2-TIM -> tim1 ke s1, tim2 ke s2 (per device)
-            await api("/start-market", "PUT", { tim: devId, market2: true,
-              tim1: { clients: dc1, server: s1.server, custom: s1.custom, psNama: s1.psNama },
-              tim2: { clients: dc2, server: s2.server, custom: s2.custom, psNama: s2.psNama } });
-            await api("/setting-tim", "PUT", { tim: devId, grid: 2 });
+            if (uplevelSatuTim) {
+              // v675: UPLEVEL 1-TIM (≤2 client) -> semua di tim1, tim2 kosong
+              await api("/start-market", "PUT", { tim: devId, market2: true,
+                tim1: { clients: dc1.concat(dc2), server: s1.server, custom: s1.custom, psNama: s1.psNama },
+                tim2: { clients: [], server: "", custom: "", psNama: "" } });
+              await api("/setting-tim", "PUT", { tim: devId, grid: 1 });
+            } else {
+              // v642: UPLEVEL 2-TIM -> tim1 ke s1, tim2 ke s2 (per device)
+              await api("/start-market", "PUT", { tim: devId, market2: true,
+                tim1: { clients: dc1, server: s1.server, custom: s1.custom, psNama: s1.psNama },
+                tim2: { clients: dc2, server: s2.server, custom: s2.custom, psNama: s2.psNama } });
+              await api("/setting-tim", "PUT", { tim: devId, grid: 2 });
+            }
           } else {
             // up6kg 1-tim (semua di tim1)
             const stBody = { tim: devId, grid: 1 };
