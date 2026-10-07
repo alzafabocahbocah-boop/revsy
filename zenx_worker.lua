@@ -1,7 +1,7 @@
 #!/usr/bin/env lua
 -- ============ ZENX WORKER ============
 local CONFIG_FILE = (os.getenv("HOME") or "/data/data/com.termux/files/home") .. "/zenx_worker_config.lua"
-local VERSION = "9.519-cf"
+local VERSION = "9.520-cf"
 TIM1_AKHIR = 10
 local KICK_DIURUS = {}
 RESTART_TS_PROSES = 0   -- v9.77: ts RESTART terakhir yg udah diproses (anti-loop, global)
@@ -2227,8 +2227,13 @@ local function grid_hitung(cfg, pkgsPilih)
     local kol, bar
     local barPaksa = tonumber(cfg.grid_kolom)
     if cfg.script_label == "UPLEVEL" or cfg.script_label == "UPLEVELNEW" then
-        local _kol = math.ceil(n / 3)
-        barPaksa = math.ceil(n / _kol)
+        -- v9.520: kalau ≤2 client -> pakai SUSUNAN (2 kolom 1 baris), bukan paksa 3-baris
+        if n <= 2 then
+            barPaksa = nil  -- biar jatuh ke SUSUNAN[n] -> {2,1} landscape
+        else
+            local _kol = math.max(2, math.ceil(n / 3))
+            barPaksa = math.ceil(n / _kol)
+        end
     elseif tostring(cfg.script_label or ""):find("MARKET") then
         if not (barPaksa and barPaksa >= 1) then barPaksa = math.min(2, n) end
     elseif tostring(cfg.script_label or ""):find("HACT") then
