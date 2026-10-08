@@ -1639,15 +1639,17 @@
       <!-- ===== PANEL AI ===== -->
       <div class="tg-panel" id="tgPanelAi" style="display:none">
         <div>
-          <div class="tg-sec-lbl">gemini api keys <span style="color:#9c9c90;font-weight:400">— rotate otomatis kalau rate limit</span></div>
+          <div class="tg-sec-lbl">api keys <span style="color:#9c9c90;font-weight:400">— rotate otomatis kalau rate limit</span></div>
           <div class="tg-ai-key-list" id="tgAiKeyList"></div>
           <div style="display:flex;gap:6px;margin-top:8px">
-            <input type="password" class="tg-input" id="tgAiKeyInput" placeholder="AIza…" style="flex:1;padding:7px 10px;font-size:.8rem;border-radius:4px;border:1px solid rgba(26,26,24,.18);background:#fafaf8;font-family:monospace">
+            <input type="password" class="tg-input" id="tgAiKeyInput" placeholder="AQ. / AIzaSy / sk-ant- / gsk_ / sk-" style="flex:1;padding:7px 10px;font-size:.8rem;border-radius:4px;border:1px solid rgba(26,26,24,.18);background:#fafaf8;font-family:monospace">
             <button type="button" class="tg-cari" id="tgAiKeyAddBtn" style="flex-shrink:0">tambah</button>
           </div>
           <div style="font-family:monospace;font-size:.6rem;color:#9c9c90;margin-top:6px;line-height:1.6">
-            // dapat key gratis di <span style="color:#1a1a18">aistudio.google.com</span> → Get API key<br>
-            // tambah beberapa key dari akun berbeda biar gak kena rate limit
+            // Gemini (AQ.* / AIzaSy*) → aistudio.google.com · gratis, kadang 503<br>
+            // Claude (sk-ant-*) → console.anthropic.com · bayar<br>
+            // Groq (gsk_*) → console.groq.com · <span style="color:#7c3aed">gratis 14rb req/hari</span>, super cepat<br>
+            // OpenAI (sk-*) → platform.openai.com · bayar
           </div>
         </div>
         <div>
@@ -8978,15 +8980,30 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     try{ localStorage.setItem(TG_AI_KEYS_KEY, JSON.stringify(_tgAiKeys)); } catch(e){}
   }
 
+  const _PROVIDER_COLORS = {
+    "gemini-interact":"#4285f4","gemini-classic":"#34a853",
+    "claude":"#d97706","groq":"#7c3aed","openai":"#16a34a","unknown":"#9c9c90"
+  };
+  const _PROVIDER_NAMES = {
+    "gemini-interact":"Gemini","gemini-classic":"Gemini",
+    "claude":"Claude","groq":"Groq","openai":"OpenAI","unknown":"?"
+  };
+
   function _tgAiRenderKeyList(){
     const el = document.getElementById("tgAiKeyList");
     if(!el) return;
     if(!_tgAiKeys.length){ el.innerHTML = '<div style="font-family:monospace;font-size:.65rem;color:#9c9c90;padding:4px 0">// belum ada key</div>'; return; }
     el.innerHTML = _tgAiKeys.map((k,i)=>{
-      const masked = k.slice(0,6)+"…"+k.slice(-4);
+      const masked = k.slice(0,8)+"…"+k.slice(-4);
       const isActive = (i === _tgAiKeyIdx % _tgAiKeys.length);
+      const prov = _tgAiDetectProvider(k);
+      const provColor = _PROVIDER_COLORS[prov]||"#9c9c90";
+      const provName = _PROVIDER_NAMES[prov]||"?";
       return `<div class="tg-ai-key-item${isActive?" active":""}">
-        <span>${masked}</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <span style="background:${provColor};color:#fff;font-size:.58rem;padding:1px 5px;border-radius:3px;font-family:sans-serif;font-weight:600;letter-spacing:.03em">${provName}</span>
+          <span>${masked}</span>
+        </span>
         <button class="tg-ai-key-del" data-kidx="${i}" title="hapus">✕</button>
       </div>`;
     }).join("");
@@ -9023,8 +9040,14 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     if(!el) return;
     if(!_tgAiKeys.length){ el.textContent = "// belum ada key — tambah dulu di atas"; return; }
     const active = _tgAiKeyIdx % _tgAiKeys.length;
+    const prov = _tgAiDetectProvider(_tgAiKeys[active]);
     const provider = _tgAiProviderLabel(_tgAiKeys[active]);
-    el.textContent = `// ${_tgAiKeys.length} key tersedia · model: ${_tgAiModel} · ${provider}\n// key aktif: #${active+1} (${_tgAiKeys[active].slice(0,8)}…)`;
+    const isGemini = prov==="gemini-interact"||prov==="gemini-classic";
+    // sembunyikan model picker kalau bukan Gemini (model fixed untuk provider lain)
+    const picker = document.getElementById("tgModelPicker");
+    const pickerWrap = picker && picker.closest("div[class='']") || picker && picker.parentElement;
+    if(picker) picker.style.display = isGemini ? "" : "none";
+    el.textContent = `// ${_tgAiKeys.length} key tersedia · ${provider} · ${_tgAiModel}\n// key aktif: #${active+1} (${_tgAiKeys[active].slice(0,8)}…)`;
     // update model picker visual
     document.querySelectorAll("#tgModelPicker .tg-model-btn").forEach(b=>{
       b.classList.toggle("on", b.dataset.model===_tgAiModel);
@@ -9051,6 +9074,16 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
       if(!_tgAiKeys.includes(v)) _tgAiKeys.push(v);
       tgAiKeyInput.value = "";
       _tgAiSaveKeys();
+
+      // auto-switch model picker sesuai provider key yang baru ditambah
+      const prov = _tgAiDetectProvider(v);
+      const provModel = prov==="claude" ? "claude-haiku-4-5"
+                      : prov==="groq"   ? "llama-3.3-70b-versatile"
+                      : prov==="openai" ? "gpt-4o-mini"
+                      : "gemini-3.8-flash";
+      _tgAiModel = provModel;
+      try{ localStorage.setItem(TG_AI_MODEL_KEY, _tgAiModel); }catch(e){}
+
       _tgAiRenderKeyList();
       _tgAiRefreshStatus();
     };
