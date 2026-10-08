@@ -1,7 +1,8 @@
--- uplevelnew v8.119 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
--- Sesi 1: 7 Mimic Octopus + 1 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
+-- uplevelnew v8.120 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- Sesi 1: 8 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 2500)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.120: SWAP_SKILL_CFG — ready-loop swap per nama pet (tanpa sound listener)
 local function _main()
 
 local RS = game:GetService("ReplicatedStorage")
@@ -113,7 +114,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.118"
+local VERSION = "v8.120"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -138,6 +139,15 @@ local CFG = {
     loopWait       = 1,
     equipWait      = 0.08,  -- 0.08s antar equip (lebih stabil dari 0.06)
 }
+
+-- ===================== SWAP SKILL CONFIG =====================
+-- Pet yang namanya ada di sini -> di-swap tiap skill ready (polling 0.05s, TANPA sound listener)
+-- Format: {["Nama Pet"] = true} — case-sensitive, harus cocok dengan nama di lineup
+-- Contoh: T-Rex di sesi 1 perlu swap skill -> masukkan di sini
+local SWAP_SKILL_CFG = {
+    ["T-Rex"] = true,
+}
+
 -- sesiPool persist via _G agar tidak reset saat re-execute script
 -- Pool juga di-save ke file lokal (writefile) agar survive rejoin
 if type(_G.UPL_POOL) ~= "table" then
@@ -2119,6 +2129,47 @@ workspace.DescendantRemoving:Connect(function(d)
     if isPetModel(d) and modelByUuid[d.Name]==d then modelByUuid[d.Name]=nil end
 end)
 
+-- ===================== COOLDOWN CACHE (untuk swap skill) =====================
+-- Cache dari event PetCooldownsUpdated — dipakai petReadyUpl() di ready-loop
+-- GAK InvokeServer di hot-loop (block). Cache di-refresh otomatis dari event server.
+local _cdCache = {}
+local function _readyDariData(data)
+    if type(data) ~= "table" then return nil end
+    local adaSkill = false
+    for _, v in ipairs(data) do
+        if type(v) == "table" and type(v.Time) == "number" then
+            local p = tostring(v.Passive or ""):lower()
+            if not p:find("mutation") then
+                adaSkill = true
+                if v.Time <= 0 then return true end
+            end
+        end
+    end
+    if adaSkill then return false end
+    return nil
+end
+do
+    local ge2 = RS:FindFirstChild("GameEvents")
+    local pcu2 = ge2 and ge2:FindFirstChild("PetCooldownsUpdated")
+    local req2 = ge2 and ge2:FindFirstChild("RequestPetCooldowns")
+    if pcu2 and pcu2:IsA("RemoteEvent") then
+        pcu2.OnClientEvent:Connect(function(uuid, data)
+            local key = tostring(uuid):gsub("[{}]","")
+            _cdCache[key] = { ready = _readyDariData(data) == true, at = tick() }
+        end)
+        addLog("SwapSkill: cooldown listener ON")
+    end
+    if req2 and req2:IsA("RemoteEvent") then
+        pcall(function() req2:FireServer() end)
+    end
+end
+local function petReadyUpl(uuid)
+    local key = tostring(uuid):gsub("[{}]","")
+    local e = _cdCache[key]
+    if e and (tick() - e.at) <= 8 then return e.ready end
+    return nil  -- cache stale/kosong -> fallback ke idle timeout
+end
+
 -- ===================== POSISI MIMIC =====================
 -- Tiap slot Mimic (nomor urut 1–7) punya koordinat tetap tersebar di 2 plot kebun
 -- Slot #1 = Mimic pertama di lineup, #2 = kedua, dst — tidak bergantung uuid
@@ -2993,6 +3044,54 @@ task.spawn(function()
                 end
             end
             if healed > 0 then addLog("HEAL: "..healed.." pet model hilang -> re-equip") end
+        end
+    end
+end)
+
+-- ===================== SWAP SKILL READY-LOOP =====================
+-- Poll tiap 0.05s: pet di _activeUuids yg namanya ada di SWAP_SKILL_CFG
+-- -> unequip+equip ulang tiap kali skill ready (gak pakai sound listener)
+-- Mirip up6kg ready-loop (Ele), tapi dikonfigurasi via SWAP_SKILL_CFG
+local _swapBusy, _swapLastSwap, _swapBusySince = {}, {}, {}
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        if not running or stopRequested or _isCollecting then continue end
+        for uuid in pairs(_activeUuids) do
+            -- clear busy nyangkut (>6s)
+            if _swapBusy[uuid] and _swapBusySince[uuid] and (tick()-_swapBusySince[uuid])>6 then
+                _swapBusy[uuid]=nil
+            end
+            if _swapBusy[uuid] then continue end
+            -- cek nama pet -> ada di SWAP_SKILL_CFG?
+            local tipe = getPetTipeFromUUID(uuid)
+            if not tipe then continue end
+            if not SWAP_SKILL_CFG[tipe] then continue end
+            -- cek cooldown ready
+            local rdy  = petReadyUpl(uuid)
+            local idle = _swapLastSwap[uuid] and (tick()-_swapLastSwap[uuid]) or 999
+            if (rdy == true) or (rdy == nil and idle > 4) then
+                _swapBusy[uuid]     = true
+                _swapBusySince[uuid]= tick()
+                task.spawn(function()
+                    pcall(function()
+                        local pos = _clusterPos or farmCenter()
+                        local m   = modelByUuid[uuid]
+                        if m then pcall(function() pos = m:GetPivot().Position end) end
+                        unequipPet(uuid); task.wait(0.03)
+                        if pos then equipPet(uuid) else equipPet(uuid) end
+                        _swapLastSwap[uuid] = tick()
+                        -- tunggu model respawn (max 1.2s)
+                        for i=1,12 do
+                            task.wait(0.1)
+                            local m2 = modelByUuid[uuid]
+                            if m2 and m2.Parent then break end
+                            if i%4==0 then equipPet(uuid) end
+                        end
+                    end)
+                    _swapBusy[uuid] = nil
+                end)
+            end
         end
     end
 end)
