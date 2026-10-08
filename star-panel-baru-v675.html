@@ -8307,9 +8307,30 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     renderAll();
   }
 
+  // cek apakah teks ini binary/garbage (bukan teks normal)
+  function _isBinaryText(txt){
+    if(!txt || txt.length < 10) return true;
+    // hitung karakter non-printable
+    let nonPrint = 0;
+    const sample = txt.slice(0, 500);
+    for(let i=0; i<sample.length; i++){
+      const c = sample.charCodeAt(i);
+      if(c < 9 || (c > 13 && c < 32) || c > 126 && c < 160) nonPrint++;
+    }
+    return (nonPrint / sample.length) > 0.1;
+  }
+
   function cariJawaban(soal){
     if(!soal.trim()) return "Isi dulu soalnya ya!";
     if(!_refs.length) return "Upload dulu referensi di tab 📁 Referensi.";
+
+    // cek jika ada ref yang binary — minta upload ulang
+    const binaryRefs = _refs.filter(r => _isBinaryText(r.text));
+    if(binaryRefs.length){
+      const names = binaryRefs.map(r=>"• "+r.name).join("\n");
+      return `⚠️ File berikut perlu di-upload ulang (data lama masih binary):\n${names}\n\nCaranya: tab Referensi → hapus file tsb → upload lagi.`;
+    }
+
     const soalLow = soal.toLowerCase();
     const kata = soalLow.split(/\s+/).filter(k=>k.length>2);
     let hasil = [];
@@ -8327,7 +8348,7 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         }
       }
     }
-    if(!hasil.length) return "Gak nemu di referensi. Coba kata kunci yang lebih spesifik.";
+    if(!hasil.length) return `Gak nemu kata "${kata.join(", ")}" di referensi. Coba kata kunci lain.`;
     hasil.sort((a,b)=>b.skor-a.skor);
     return hasil.slice(0,5).map((h,i)=>`【${i+1}】📄 ${h.src}\n${h.ctx}`).join("\n\n─────────────────\n\n");
   }
