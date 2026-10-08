@@ -9068,24 +9068,29 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         `https://generativelanguage.googleapis.com/v1/interactions`,
         `https://generativelanguage.googleapis.com/v1beta/interactions`,
       ];
-      for(const iUrl of interactUrls){
-        let ir = null;
-        try{
-          ir = await fetch(iUrl, {
-            method:"POST",
-            headers:{"Content-Type":"application/json","x-goog-api-key":key},
-            body:JSON.stringify({ model:"gemini-3.8-flash", input: prompt })
-          });
-        }catch(e){ continue; }
-        if(ir && ir.ok){
-          const d = await ir.json().catch(()=>({}));
-          const txt = d?.output_text
-            || d?.steps?.find(s=>s.type==="model_output")?.content?.find(c=>c.type==="text")?.text
-            || "";
-          if(txt) return txt.trim();
+      // retry sampai 4x kalau 503 (server Google lagi rame)
+      let i503 = 0;
+      outer503: while(i503 < 4){
+        for(const iUrl of interactUrls){
+          let ir = null;
+          try{
+            ir = await fetch(iUrl, {
+              method:"POST",
+              headers:{"Content-Type":"application/json","x-goog-api-key":key},
+              body:JSON.stringify({ model:"gemini-3.8-flash", input: prompt })
+            });
+          }catch(e){ continue; }
+          if(ir && ir.ok){
+            const d = await ir.json().catch(()=>({}));
+            const txt = d?.output_text
+              || d?.steps?.find(s=>s.type==="model_output")?.content?.find(c=>c.type==="text")?.text
+              || "";
+            if(txt) return txt.trim();
+          }
+          if(ir && ir.status === 503){ i503++; await new Promise(r=>setTimeout(r,1500)); continue outer503; }
+          if(ir && (ir.status === 400 || ir.status === 401 || ir.status === 403)) break outer503;
         }
-        if(ir && ir.status === 503) continue; // overload, coba url lain
-        if(ir && (ir.status === 400 || ir.status === 401 || ir.status === 403)) break;
+        break;
       }
 
       // Fallback: generateContent dengan x-goog-api-key header
