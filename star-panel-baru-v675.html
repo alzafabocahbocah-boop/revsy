@@ -9425,7 +9425,7 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
   // sk-ant-* = Claude (Anthropic)
   // gsk_*    = Groq (Llama, gratis)
   // sk-*     = OpenAI
-  async function _tgAiCall(prompt, retries){
+  async function _tgAiCall(prompt, retries, sysMsg){
     if(!_tgAiKeys.length) throw new Error("Belum ada API key. Tambah key dulu di tab AI ✦");
     retries = retries || 0;
     const maxRetries = _tgAiKeys.length;
@@ -9433,6 +9433,9 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     const idx = _tgAiKeyIdx % _tgAiKeys.length;
     const key = _tgAiKeys[idx];
     const provider = _tgAiDetectProvider(key);
+    const _mkMsgs = (p) => sysMsg
+      ? [{ role:"system", content: sysMsg }, { role:"user", content: p }]
+      : [{ role:"user", content: p }];
 
     // ── CLAUDE (Anthropic) ──────────────────────────────────────────
     if(provider === "claude"){
@@ -9449,11 +9452,11 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
           body:JSON.stringify({
             model: claudeModel,
             max_tokens: 1024,
-            messages:[{ role:"user", content: prompt }]
+            messages: _mkMsgs(prompt)
           })
         });
       }catch(e){ throw new Error("Tidak bisa connect ke Claude API: "+e.message); }
-      if(resp.status===429||resp.status===529){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+      if(resp.status===429||resp.status===529){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1, sysMsg); }
       if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`Claude error ${resp.status}: ${t.slice(0,200)}`); }
       const d = await resp.json();
       return (d?.content?.[0]?.text || "").trim();
@@ -9477,12 +9480,12 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
             headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
             body:JSON.stringify({
               model: groqModel,
-              messages:[{ role:"user", content: prompt }],
+              messages: _mkMsgs(prompt),
               max_tokens: 1024, temperature: 0.2
             })
           });
         }catch(e){ throw new Error("Tidak bisa connect ke Groq API: "+e.message); }
-        if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+        if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1, sysMsg); }
         if(resp.status===404||resp.status===400){
           const t=await resp.text().catch(()=>"");
           console.warn(`[AI] Groq model ${groqModel} tidak tersedia (${resp.status}), coba berikutnya:`, t.slice(0,200));
@@ -9523,12 +9526,12 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
           headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
           body:JSON.stringify({
             model: oaiModel,
-            messages:[{ role:"user", content: prompt }],
+            messages: _mkMsgs(prompt),
             max_tokens: 1024, temperature: 0.2
           })
         });
       }catch(e){ throw new Error("Tidak bisa connect ke OpenAI API: "+e.message); }
-      if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+      if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1, sysMsg); }
       if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`OpenAI error ${resp.status}: ${t.slice(0,200)}`); }
       const d = await resp.json();
       return (d?.choices?.[0]?.message?.content || "").trim();
@@ -10111,8 +10114,9 @@ Instruksi: ${instruksi.trim()}
 
 Output: jawaban yang sudah direvisi, dalam Bahasa Indonesia, langsung tanpa basa-basi.`;
 
+    const sysRevisi = "Kamu adalah mesin revisi teks. Output kamu HANYA teks jawaban yang sudah direvisi. DILARANG bertanya balik, DILARANG meminta klarifikasi, DILARANG menambahkan komentar, catatan, atau penjelasan apapun. Langsung tulis jawabannya.";
     try {
-      const hasil = await _tgAiCall(prompt);
+      const hasil = await _tgAiCall(prompt, 0, sysRevisi);
       if(ta) ta.value = hasil.trim();
       if(status) status.textContent = "✔ selesai · edit lagi atau simpan";
       if(document.getElementById("ejpAiPrompt")) document.getElementById("ejpAiPrompt").value = "";
