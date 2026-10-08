@@ -9177,7 +9177,20 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         groqData = await resp.json();
         break;
       }
-      if(!groqData) throw new Error("Semua model Groq tidak tersedia. Cek key atau coba lagi nanti.");
+      if(!groqData){
+        // verifikasi key dengan list models
+        try{
+          const chk = await fetch("https://api.groq.com/openai/v1/models",{headers:{"Authorization":"Bearer "+key}});
+          if(chk.status===401) throw new Error("Groq API key tidak valid atau expired. Ganti key di tab AI ✦");
+          const mlist = await chk.json();
+          const ids = (mlist?.data||[]).map(m=>m.id).join(", ");
+          console.warn("[AI] Groq models tersedia:", ids);
+          throw new Error("Semua model Groq gagal. Models tersedia: "+ids.slice(0,200));
+        }catch(e2){
+          if(e2.message.includes("Groq")) throw e2;
+          throw new Error("Groq error: semua model tidak tersedia. Cek key di console.groq.com");
+        }
+      }
       return (groqData?.choices?.[0]?.message?.content || "").trim();
     }
 
