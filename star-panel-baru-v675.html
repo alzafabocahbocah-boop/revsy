@@ -9046,32 +9046,34 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
       // Coba Interactions API dulu, lalu fallback ke generateContent
       // Key AQ.* = Interactions API key (format baru AI Studio)
       // Coba beberapa model yang tersedia di Interactions API
-      const interactModels = ["gemini-3.8-flash","gemini-2.5-flash","gemini-2.0-flash"];
+      // Interactions API — coba berbagai path REST
+      const interactPaths = [
+        // path yang mungkin untuk Interactions API REST
+        { url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:interact`, body: { contents:[{parts:[{text:prompt}]}] } },
+        { url: `https://generativelanguage.googleapis.com/v1/interactions`, body: { model:"gemini-3.8-flash", input: prompt } },
+        { url: `https://generativelanguage.googleapis.com/v1beta/interactions`, body: { model:"gemini-3.8-flash", input: prompt } },
+      ];
       let interactOk = false;
-      for(const mdl of interactModels){
-        const interactBody = { model: mdl, input: prompt };
+      for(const {url:iUrl, body:iBody} of interactPaths){
         let ir = null;
         try{
-          ir = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+          ir = await fetch(iUrl, {
             method:"POST",
             headers:{"Content-Type":"application/json","x-goog-api-key":key},
-            body:JSON.stringify(interactBody)
+            body:JSON.stringify(iBody)
           });
         }catch(e){ continue; }
+        const errTxt = await ir.clone().text().catch(()=>"");
+        console.log(`[AI] ${iUrl} → ${ir.status}`, errTxt.slice(0,200));
         if(ir && ir.ok){
-          const d = await ir.json();
+          const d = await ir.json().catch(()=>({}));
           const txt = d?.output_text
+            || d?.candidates?.[0]?.content?.parts?.[0]?.text
             || d?.steps?.find(s=>s.type==="model_output")?.content?.find(c=>c.type==="text")?.text
             || "";
           if(txt) return txt.trim();
-          interactOk = true; break;
         }
-        if(ir && ir.status === 400){
-          // 400 = bad request, log body error untuk debug
-          const errTxt = await ir.text().catch(()=>"");
-          console.warn("[AI] Interactions 400 body:", errTxt.slice(0,300));
-          break; // 400 bukan masalah model, stop loop
-        }
+        if(ir && (ir.status === 400 || ir.status === 403)) break; // stop kalau auth error
       }
 
       // Fallback: generateContent dengan x-goog-api-key header
