@@ -1,7 +1,8 @@
--- uplevelnew v8.148 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.149 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4200)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.149: reduclag auto-on (weather, particles, lighting FX, shadows — cleanup tiap 10s)
 -- v8.148: fallback swap idle 4s → 5s, fallback juga kena PNP delay 4.0s
 -- v8.147: fix unequip Mimic pakai getPetTipeFromUUID (bukan manual cek entry.Name)
 -- v8.146: sesi 2 unequip Mimic saat bahan age naik dari snapshot awal masuk sesi 2
@@ -142,7 +143,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.148"
+local VERSION = "v8.149"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -4738,4 +4739,78 @@ do
         end)
     end)
     task.spawn(function() while true do task.wait(30); destroyPohonSemua() end end)
+end
+
+-- ===================== REDUCLAG AUTO-ON =====================
+-- particles, weather, lighting FX, shadows, fog, terrain decor — selalu on, cleanup tiap 10s
+do
+    local Lighting = game:GetService("Lighting")
+
+    local function destroyParticlesIn(obj)
+        pcall(function()
+            for _, d in ipairs(obj:GetDescendants()) do
+                if d:IsA("ParticleEmitter") or d:IsA("Trail")
+                or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+                    d:Destroy()
+                end
+            end
+        end)
+    end
+
+    local WEATHER_WS_NAMES = {
+        "WeatherVisuals","WeatherObjects","WindBlastTemplate",
+        "Whale","Clam","Kelp","Water_Effect","SpottedEffect",
+        "SpiderWebFX","Rainbows","Dirt_VFX","BirthdayDecor",
+        "BeanstalkEvent","AcornChaosLocal","Visuals","FishRainClient",
+        "TornadoFX","CycloneFX","MeteorFX","LavaPools",
+        "IcicleSpawner","SnowFX","FrostFX","LightningFX",
+    }
+
+    local function applyWeather()
+        pcall(function()
+            for _, obj in ipairs(workspace:GetChildren()) do
+                for _, name in ipairs(WEATHER_WS_NAMES) do
+                    if obj.Name == name then obj:Destroy(); break end
+                end
+            end
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj:IsA("ColorCorrectionEffect") or obj:IsA("BlurEffect")
+                or obj:IsA("BloomEffect") or obj:IsA("SunRaysEffect")
+                or obj:IsA("ParticleEmitter") then obj:Destroy() end
+            end
+        end)
+    end
+
+    local function applyColorFX()
+        pcall(function()
+            for _, v in ipairs(Lighting:GetChildren()) do
+                if v:IsA("Folder") then v:Destroy()
+                elseif v:IsA("ColorCorrectionEffect") or v:IsA("BlurEffect")
+                or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect")
+                or v:IsA("BloomEffect") then v:Destroy() end
+            end
+        end)
+    end
+
+    local function applyLightingFX()
+        pcall(function() Lighting.GlobalShadows = false; Lighting.ShadowSoftness = 0 end)
+        pcall(function() Lighting.FogEnd = 100000; Lighting.FogStart = 99999 end)
+        pcall(function()
+            for _, v in ipairs(Lighting:GetDescendants()) do
+                if v:IsA("BloomEffect") or v:IsA("Sky") or v:IsA("Atmosphere") then v:Destroy() end
+            end
+        end)
+        pcall(function() local t = workspace:FindFirstChildOfClass("Terrain"); if t then t.Decoration = false end end)
+    end
+
+    -- apply sekarang
+    applyLightingFX(); destroyParticlesIn(workspace); applyWeather(); applyColorFX()
+
+    -- cleanup loop tiap 10s
+    task.spawn(function()
+        while true do
+            task.wait(10)
+            destroyParticlesIn(workspace); applyWeather(); applyColorFX(); applyLightingFX()
+        end
+    end)
 end
