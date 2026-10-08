@@ -9032,15 +9032,33 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     if(retries >= maxRetries) throw new Error("Semua key kena rate limit. Coba lagi nanti.");
     const idx = _tgAiKeyIdx % _tgAiKeys.length;
     const key = _tgAiKeys[idx];
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${_tgAiModel}:generateContent?key=${key}`;
-    const body = {
-      contents:[{ parts:[{ text: prompt }] }],
-      generationConfig:{ maxOutputTokens:1024, temperature:0.2 }
-    };
-    const resp = await fetch(url, {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify(body)
-    });
+    // Coba dua endpoint: Interactions API baru (key AQ.*) dan generateContent lama (key AIzaSy*)
+    const isNewKey = key.startsWith("AQ.");
+    let resp, data, text;
+    if(isNewKey){
+      // Interactions API (v1alpha) — untuk key format AQ.*
+      const url = `https://generativelanguage.googleapis.com/v1alpha/models/${_tgAiModel}:generateContent`;
+      const body = {
+        contents:[{ parts:[{ text: prompt }] }],
+        generationConfig:{ maxOutputTokens:1024, temperature:0.2 }
+      };
+      resp = await fetch(url, {
+        method:"POST",
+        headers:{"Content-Type":"application/json", "x-goog-api-key": key},
+        body: JSON.stringify(body)
+      });
+    } else {
+      // generateContent (v1beta) — untuk key format AIzaSy*
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${_tgAiModel}:generateContent?key=${key}`;
+      const body = {
+        contents:[{ parts:[{ text: prompt }] }],
+        generationConfig:{ maxOutputTokens:1024, temperature:0.2 }
+      };
+      resp = await fetch(url, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(body)
+      });
+    }
     if(resp.status === 429){
       _tgAiKeyIdx++;
       _tgAiRefreshStatus();
@@ -9050,8 +9068,8 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
       const txt = await resp.text().catch(()=>"");
       throw new Error(`Gemini error ${resp.status}: ${txt.slice(0,120)}`);
     }
-    const data = await resp.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    data = await resp.json();
+    text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
     return text.trim();
   }
 
