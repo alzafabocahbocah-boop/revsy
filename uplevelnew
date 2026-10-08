@@ -2728,37 +2728,10 @@ local function processFruits()
     _lastMutasiCount = #data.shovel
     addLog("scan: mutasi="..#data.shovel.." nm="..data.nightmareCount)
 
-    if #data.shovel > 0 then
-        -- ada mutasi -> collect langsung tanpa ganti pet
-        addLog("Mutasi ditemukan — collect langsung")
-        setStatus("Collect mutasi...", Color3.fromRGB(160,120,220))
-
-        -- loop collect sampai tidak ada mutasi lagi
-        local fruits = data.shovel
-        while #fruits > 0 and not stopRequested do
-            local collected = doCollect(fruits)
-            totalShovel = totalShovel + collected
-            _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
-            addLog("Collect: "..collected.."/"..#fruits.." | tas: ".._fruitCollectedSinceLastSell.."/"..SELL_THRESHOLD)
-            -- sell kalau sudah >= threshold
-            if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
-                task.wait(0.1)
-                addLog("Sell! (tas ".._fruitCollectedSinceLastSell.." >= "..SELL_THRESHOLD..")")
-                sellInventory()
-                _fruitCollectedSinceLastSell = 0
-            end
-            -- scan lagi langsung
-            local next = scanFruits()
-            _lastMutasiCount = #next.shovel
-            fruits = next.shovel
-            if #fruits > 0 then
-                addLog("Masih ada "..#fruits.." mutasi — lanjut collect")
-            end
-        end
-
-        addLog("Mutasi habis — lanjut sesi ".._activeSesiNum)
-    elseif data.nightmareCount == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
-        -- tidak ada nightmare DAN tidak ada mutasi -> masuk cadangan 2 (Peacock×4 + Baku×1)
+    -- prioritas: nightmare=0 -> langsung cadangan 2 (mutasi collect di dalam cad2)
+    -- mutasi ada tapi nightmare masih ada -> collect dulu, lanjut sesi
+    if data.nightmareCount == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
+        -- nightmare 0 -> masuk cadangan 2 DULU, mutasi (kalau ada) dihandle di dalam cad2
         -- tunggu nightmare muncul lagi, lalu balik ke sesi aktif sebelumnya
         addLog("Nightmare 0 + no mutasi — masuk Cadangan 2 (Peacock×7 + Baku×1)")
         setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
@@ -2825,6 +2798,28 @@ local function processFruits()
             equipSesi(prevSesiNum, prevSesiDef)
             setStatus("Sesi "..prevSesiNum.." — running", C.accent)
         end
+    elseif #data.shovel > 0 then
+        -- nightmare masih ada, ada mutasi -> collect langsung tanpa ganti pet
+        addLog("Mutasi ditemukan — collect langsung")
+        setStatus("Collect mutasi...", Color3.fromRGB(160,120,220))
+        local fruits = data.shovel
+        while #fruits > 0 and not stopRequested do
+            local collected = doCollect(fruits)
+            totalShovel = totalShovel + collected
+            _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
+            addLog("Collect: "..collected.."/"..#fruits.." | tas: ".._fruitCollectedSinceLastSell.."/"..SELL_THRESHOLD)
+            if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
+                task.wait(0.1)
+                addLog("Sell! (tas ".._fruitCollectedSinceLastSell.." >= "..SELL_THRESHOLD..")")
+                sellInventory()
+                _fruitCollectedSinceLastSell = 0
+            end
+            local next = scanFruits()
+            _lastMutasiCount = #next.shovel
+            fruits = next.shovel
+            if #fruits > 0 then addLog("Masih ada "..#fruits.." mutasi — lanjut collect") end
+        end
+        addLog("Mutasi habis — lanjut sesi ".._activeSesiNum)
     end
 
     return data.nightmareCount
