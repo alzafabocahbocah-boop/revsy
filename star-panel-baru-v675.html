@@ -9704,30 +9704,30 @@ Berikan jawaban yang langsung menjawab pertanyaan. Di setiap poin atau kalimat p
     if(!arr.length){ box.style.display="none"; return; }
     box.style.display = "";
 
-    // render: header + tab editor + tombol buat dokumen
-    const tabsHTML = arr.map((it,i)=>`
-      <button class="tg-kunci-tab${i===(_kunciActiveTab||0)?' active':''}" data-ki="${i}">${i+1}</button>
+    // render: header + card list clickable + tombol bawah
+    const cardsHTML = arr.map((it,i)=>`
+      <div class="tg-jwb-card" data-ki="${i}" style="
+        border:1.5px solid rgba(124,58,237,.2); border-radius:9px;
+        padding:11px 13px; cursor:pointer; background:#faf8ff;
+        transition:border-color .15s,background .15s;
+      ">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <span style="font-family:monospace;font-size:.6rem;font-weight:700;color:#7c3aed">soal ${i+1}</span>
+          <span style="font-size:.58rem;color:#a09cb0">✏ klik untuk edit</span>
+        </div>
+        <div style="font-size:.75rem;color:#4a4860;line-height:1.4;margin-bottom:6px;white-space:pre-wrap">${_esc(it.soal)||'<em style="color:#b0afc0">(soal kosong)</em>'}</div>
+        <div style="font-family:monospace;font-size:.58rem;font-weight:700;color:#7c3aed;margin-bottom:3px">jawaban</div>
+        <div style="font-size:.75rem;color:#1a1a18;line-height:1.4;white-space:pre-wrap">${_esc(it.jawaban)||'<em style="color:#b0afc0">(jawaban kosong)</em>'}</div>
+      </div>
     `).join("");
 
-    const activeIdx = Math.min(_kunciActiveTab||0, arr.length-1);
-    const it = arr[activeIdx];
     box.innerHTML = `
       <div class="tg-kunci-panel-hdr">
         <span class="tg-kunci-panel-title">📋 jawaban terkunci</span>
         <span class="tg-kunci-count">${arr.length} / 5</span>
       </div>
-      <div class="tg-kunci-tabs" style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">
-        ${tabsHTML}
-      </div>
-      <div class="tg-kunci-editor" style="display:flex;flex-direction:column;gap:8px">
-        <div style="font-family:monospace;font-size:.6rem;color:#7c3aed;font-weight:700">soal ${activeIdx+1}</div>
-        <textarea class="tg-input" id="tgKEditorSoal" rows="3" style="font-size:.78rem;resize:vertical">${_escAttr(it.soal)}</textarea>
-        <div style="font-family:monospace;font-size:.6rem;color:#7c3aed;font-weight:700">jawaban ${activeIdx+1}</div>
-        <textarea class="tg-input" id="tgKEditorJwb" rows="6" style="font-size:.78rem;resize:vertical">${_escAttr(it.jawaban)}</textarea>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="tg-cari" id="tgKSimpanEdit" style="flex:1;font-size:.72rem">💾 simpan edit</button>
-          <button class="tg-bersih" id="tgKHapusItem" style="font-size:.72rem">🗑 hapus no.${activeIdx+1}</button>
-        </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        ${cardsHTML}
       </div>
       <div style="margin-top:8px;border-top:1px solid #e2e2ff;padding-top:8px">
         <button class="tg-dok-btn" id="tgBuatDokBtn">📄 buat lembar jawaban UT</button>
@@ -9735,39 +9735,21 @@ Berikan jawaban yang langsung menjawab pertanyaan. Di setiap poin atau kalimat p
       </div>
     `;
 
-    // tab click
-    box.querySelectorAll(".tg-kunci-tab").forEach(t=>{
-      t.addEventListener("click",function(){
-        // simpan dulu sebelum pindah
-        _kunciSimpanEdit(activeIdx);
-        _kunciActiveTab = parseInt(this.dataset.ki);
-        _renderKunciPanel();
+    // card click → popup edit (sama seperti auto PDF)
+    box.querySelectorAll(".tg-jwb-card").forEach(card=>{
+      card.addEventListener("click",function(){
+        _pdfOpenEditPopup(parseInt(this.dataset.ki));
       });
     });
-    // simpan edit
-    const btnSimp = document.getElementById("tgKSimpanEdit");
-    if(btnSimp) btnSimp.onclick = function(){
-      _kunciSimpanEdit(activeIdx);
-      this.textContent = "✔ tersimpan";
-      setTimeout(()=>{ this.textContent="💾 simpan edit"; },1500);
-    };
-    // hapus item
-    const btnHapus = document.getElementById("tgKHapusItem");
-    if(btnHapus) btnHapus.onclick = function(){
-      const a = _kunciLoad(); a.splice(activeIdx,1); _kunciSave(a);
-      _kunciActiveTab = Math.max(0, activeIdx-1);
-      _renderKunciPanel();
-    };
     // hapus semua
     const btnAll = document.getElementById("tgKHapusSemua");
     if(btnAll) btnAll.onclick = function(){
       if(!confirm("Hapus semua jawaban terkunci?")) return;
-      _kunciSave([]); _kunciActiveTab=0; _renderKunciPanel();
+      _kunciSave([]); _renderKunciPanel();
     };
     // buat dokumen
     const btnDok = document.getElementById("tgBuatDokBtn");
     if(btnDok) btnDok.onclick = function(){
-      _kunciSimpanEdit(activeIdx);
       _showIdentiPopup();
     };
   }
