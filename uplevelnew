@@ -2260,12 +2260,15 @@ end
 local _activeUuids = {}
 local _bahanUuid = nil  -- UUID Bahan yang sedang equip (biar tidak di-unequip saat ganti sesi)
 local _isCollecting = false  -- pause healer saat doCollect berjalan
+local _isTransisi   = false  -- pause healer+swapLoop saat ganti sesi / unequipAll
 local _geLogged = false      -- gameEvents log cukup sekali
 
 -- unequipAll: hanya unequip pet yg SEDANG di-equip (ada model di workspace)
 -- JANGAN loop seluruh container — bisa ratusan pet, bikin rate-limit + equip setelahnya drop
 -- Mirip pickupAll uplevel asli: scan modelByUuid + workspace fresh, retry 3x
 local function unequipAll()
+    -- pause healer + swap-loop selama transisi
+    _isTransisi = true
     -- clear healer tracker dulu (jangan re-equip selama proses unequip)
     for k in pairs(_activeUuids) do _activeUuids[k]=nil end
     for tri = 1, 3 do
@@ -2286,6 +2289,7 @@ local function unequipAll()
         if not any then break end
     end
     task.wait(0.8)  -- jeda tambahan sebelum equip (beri server waktu settle)
+    -- _isTransisi di-clear oleh equipSesi setelah semua pet ter-equip
 end
 
 local function unequipAllExceptBahan()
@@ -2421,6 +2425,7 @@ local function equipSesi(sesiNum, defs)
         for _ in pairs(modelByUuid) do count = count + 1 end
         addLog("Model di kebun setelah retry: "..count)
     end
+    _isTransisi = false  -- equip selesai, healer + swap-loop boleh jalan lagi
 end
 
 local function equipOneBahan()
@@ -3033,7 +3038,7 @@ end)
 task.spawn(function()
     while true do
         task.wait(2)
-        if running and not stopRequested and not _isCollecting then
+        if running and not stopRequested and not _isCollecting and not _isTransisi then
             local healed = 0
             for uuid in pairs(_activeUuids) do
                 if not modelByUuid[uuid] then
@@ -3056,7 +3061,7 @@ local _swapWasReady = {}  -- track state cooldown sebelumnya per uuid
 task.spawn(function()
     while true do
         task.wait(0.05)
-        if not running or stopRequested or _isCollecting then continue end
+        if not running or stopRequested or _isCollecting or _isTransisi then continue end
         for uuid in pairs(_activeUuids) do
             -- clear busy nyangkut (>6s)
             if _swapBusy[uuid] and _swapBusySince[uuid] and (tick()-_swapBusySince[uuid])>6 then
