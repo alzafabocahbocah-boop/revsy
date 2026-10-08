@@ -8557,6 +8557,16 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     const soalLow = soal.toLowerCase();
     const kata = soalLow.split(/\s+/).filter(k=>k.length>2);
 
+    // Hitung IDF: kata yang jarang muncul di seluruh teks = bobot lebih tinggi
+    // (TF-IDF sederhana: log(totalBaris / barisYangMengandungKata))
+    const allLines = _refs.flatMap(r => r.text.split(/\n/).map(l=>l.toLowerCase()));
+    const totalBaris = allLines.length || 1;
+    const idf = {};
+    for(const k of kata){
+      const df = allLines.filter(l=>l.includes(k)).length || 1;
+      idf[k] = Math.log(totalBaris / df) + 1; // +1 agar kata sangat umum tetap ada bobot minimal
+    }
+
     // Deteksi apakah baris adalah heading/judul bab
     function _isHeading(line){
       const t = line.trim();
@@ -8626,7 +8636,7 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         if(!line) continue;
         const ll = line.toLowerCase();
         let skor = 0;
-        for(const k of kata){ if(ll.includes(k)) skor++; }
+        for(const k of kata){ if(ll.includes(k)) skor += idf[k]; }
         if(skor === 0) continue;
 
         // temukan bab induk
@@ -8641,10 +8651,13 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
           const babContent = bab ? _ambilBab(lines, bab.idx) : lines.slice(Math.max(0,i-2), i+8).join(" ").trim();
           // deteksi nomor halaman
           const hal = _deteksiHal(lines, bab ? bab.idx : i);
-          // hitung skor total seluruh bab
+          // hitung skor total seluruh bab pakai TF-IDF
           const babLow = babContent.toLowerCase();
           let totalSkor = 0;
-          for(const k of kata){ if(babLow.includes(k)) totalSkor += (babLow.split(k).length - 1); }
+          for(const k of kata){
+            const tf = babLow.split(k).length - 1; // berapa kali kata muncul di bab
+            totalSkor += tf * idf[k]; // kata langka dapat bobot lebih tinggi
+          }
           const entry = {
             skor: totalSkor || skor,
             ctx: babContent,
