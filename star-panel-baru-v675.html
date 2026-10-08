@@ -9151,27 +9151,34 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
 
     // ── GROQ (Llama, format OpenAI-compatible) ──────────────────────
     if(provider === "groq"){
-      const groqModel = "llama-3.1-8b-instant";
-      let resp;
-      try{
-        resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method:"POST",
-          headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-          body:JSON.stringify({
-            model: groqModel,
-            messages:[{ role:"user", content: prompt }],
-            max_tokens: 1024, temperature: 0.2
-          })
-        });
-      }catch(e){ throw new Error("Tidak bisa connect ke Groq API: "+e.message); }
-      if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
-      if(!resp.ok){
-        const t=await resp.text().catch(()=>"");
-        console.warn("[AI] Groq error body:", t);
-        throw new Error(`Groq error ${resp.status}: ${t.slice(0,300)}`);
+      // coba model dari yang paling ringan ke yang lebih besar
+      const groqModels = ["llama-3.1-8b-instant","llama-3.3-70b-versatile","meta-llama/llama-4-scout-17b-16e-instruct"];
+      let groqResp, groqData;
+      for(const groqModel of groqModels){
+        let resp;
+        try{
+          resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method:"POST",
+            headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+            body:JSON.stringify({
+              model: groqModel,
+              messages:[{ role:"user", content: prompt }],
+              max_tokens: 1024, temperature: 0.2
+            })
+          });
+        }catch(e){ throw new Error("Tidak bisa connect ke Groq API: "+e.message); }
+        if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+        if(resp.status===404||resp.status===400){
+          const t=await resp.text().catch(()=>"");
+          console.warn(`[AI] Groq model ${groqModel} tidak tersedia (${resp.status}), coba berikutnya:`, t.slice(0,200));
+          continue; // coba model berikutnya
+        }
+        if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`Groq error ${resp.status}: ${t.slice(0,300)}`); }
+        groqData = await resp.json();
+        break;
       }
-      const d = await resp.json();
-      return (d?.choices?.[0]?.message?.content || "").trim();
+      if(!groqData) throw new Error("Semua model Groq tidak tersedia. Cek key atau coba lagi nanti.");
+      return (groqData?.choices?.[0]?.message?.content || "").trim();
     }
 
     // ── OPENAI ──────────────────────────────────────────────────────
