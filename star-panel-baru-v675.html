@@ -8339,14 +8339,15 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
   // cek apakah teks ini binary/garbage (bukan teks normal)
   function _isBinaryText(txt){
     if(!txt || txt.length < 10) return true;
-    // hitung karakter non-printable
+    // hitung karakter non-printable (bukan whitespace, bukan ASCII printable, bukan Unicode >= 160)
     let nonPrint = 0;
     const sample = txt.slice(0, 500);
     for(let i=0; i<sample.length; i++){
       const c = sample.charCodeAt(i);
-      if(c < 9 || (c > 13 && c < 32) || c > 126 && c < 160) nonPrint++;
+      // skip: tab(9), LF(10), CR(13), space(32-126), latin extended & unicode(>=160)
+      if(c < 9 || (c > 13 && c < 32)) nonPrint++;
     }
-    return (nonPrint / sample.length) > 0.1;
+    return (nonPrint / sample.length) > 0.15;
   }
 
   function cariJawaban(soal){
@@ -8356,7 +8357,11 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     // cek jika ada ref yang binary — minta upload ulang
     const binaryRefs = _refs.filter(r => _isBinaryText(r.text));
     if(binaryRefs.length){
-      const names = binaryRefs.map(r=>"• "+r.name).join("\n");
+      const pdfOk = typeof pdfjsLib !== "undefined" ? "✅ PDF.js OK" : "❌ PDF.js tidak load (buka via server, bukan file://)";
+      const names = binaryRefs.map(r=>{
+        const preview = (r.text||"").slice(0,80).replace(/[\x00-\x08\x0e-\x1f]/g,"?");
+        return `• ${r.name}\n  (${pdfOk}, preview: "${preview}")`;
+      }).join("\n");
       return `⚠️ File berikut perlu di-upload ulang (data lama masih binary):\n${names}\n\nCaranya: tab Referensi → hapus file tsb → upload lagi.`;
     }
 
