@@ -8546,7 +8546,39 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
 
     const soalLow = soal.toLowerCase();
     const kata = soalLow.split(/\s+/).filter(k=>k.length>2);
+
+    // Deteksi apakah baris adalah heading/judul bab
+    function _isHeading(line){
+      const t = line.trim();
+      if(!t || t.length > 120) return false;
+      // format: "BAB I", "1.", "1.1", "A.", "PENDAHULUAN", semua caps pendek, atau diawali angka+titik
+      return /^(bab\s+\w|[A-Z]{2,}[\s\w]*$|\d+[\.\d]*\s+[A-Z]|[A-Z]\.\s)/i.test(t) || (t === t.toUpperCase() && t.length < 60 && /[A-Z]/.test(t));
+    }
+
+    // Cari heading terdekat di atas baris idx
+    function _findBab(lines, idx){
+      for(let i=idx; i>=0; i--){
+        if(_isHeading(lines[i].trim())) return {idx:i, judul:lines[i].trim()};
+      }
+      return null;
+    }
+
+    // Ambil seluruh konten bab dari heading sampai heading berikutnya
+    function _ambilBab(lines, babIdx){
+      const chunks = [];
+      let i = babIdx + 1;
+      while(i < lines.length){
+        const t = lines[i].trim();
+        if(_isHeading(t) && i > babIdx + 1) break; // bab baru
+        if(t) chunks.push(t);
+        i++;
+      }
+      return chunks.join("\n");
+    }
+
     let hasil = [];
+    const babSeen = new Map(); // "src::babIdx" -> entry yg sudah ada
+
     for(const ref of _refs){
       const lines = ref.text.split(/\n+/);
       for(let i=0;i<lines.length;i++){
@@ -8555,12 +8587,35 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         const ll = line.toLowerCase();
         let skor = 0;
         for(const k of kata){ if(ll.includes(k)) skor++; }
-        if(skor>0){
-          const ctx = lines.slice(Math.max(0,i-2),i+3).join("\n").trim();
-          hasil.push({skor,ctx,src:ref.name});
+        if(skor === 0) continue;
+
+        // temukan bab induk
+        const bab = _findBab(lines, i);
+        const babKey = ref.name + "::" + (bab ? bab.idx : "root");
+
+        if(babSeen.has(babKey)){
+          // sudah ada entry untuk bab ini — tingkatkan skor saja
+          babSeen.get(babKey).skor += skor;
+        } else {
+          // bab baru — ambil seluruh isi bab
+          const babContent = bab ? _ambilBab(lines, bab.idx) : lines.slice(Math.max(0,i-2), i+6).join("\n").trim();
+          // hitung skor total seluruh bab
+          const babLow = babContent.toLowerCase();
+          let totalSkor = 0;
+          for(const k of kata){ if(babLow.includes(k)) totalSkor += (babLow.split(k).length - 1); }
+          const entry = {
+            skor: totalSkor || skor,
+            ctx: babContent.slice(0, 1200), // max 1200 karakter per bab
+            src: ref.name,
+            bab: bab ? bab.judul : null,
+            babKey
+          };
+          babSeen.set(babKey, entry);
+          hasil.push(entry);
         }
       }
     }
+
     if(!hasil.length) return {type:"notfound", kata};
     hasil.sort((a,b)=>b.skor-a.skor);
     const top5 = hasil.slice(0,5);
@@ -8596,12 +8651,13 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         <div class="tg-card-head">
           <span class="tg-card-num">0${i+1}</span>
           <div class="tg-card-divider"></div>
-          <span class="tg-card-src">${_esc(h.src)}</span>
+          <span class="tg-card-src">${_esc(h.src)}${h.bab ? ` <span style="opacity:.55">· ${_esc(h.bab.slice(0,40))}</span>` : ""}</span>
         </div>
         <div class="tg-card-body">${_hilite(h.ctx, data.kata)}</div>
       </div>`).join("");
 
-    const totalInfo = `<div class="tg-total-info">0${Math.min(5,data.total)} / ${data.total} hasil ditampilkan</div>`;
+    const n = Math.min(5, data.total);
+    const totalInfo = `<div class="tg-total-info">${String(n).padStart(2,"0")} / ${data.total} bab relevan ditemukan</div>`;
 
     const kandidatHTML = _renderKandidatHTML(data.kandidat, data.kata, 0);
 
