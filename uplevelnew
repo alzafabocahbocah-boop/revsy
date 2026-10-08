@@ -1,7 +1,8 @@
--- uplevelnew v8.128 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.129 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4200)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.129: T-Rex noguard mode (hapus _swapBusy guard), delay 3s
 -- v8.128: swap PNP delay 3s → 2.7s
 -- v8.127: swap PNP delay 2.6s → 3s
 -- v8.126: swap PNP delay 2.2s → 2.6s
@@ -153,7 +154,7 @@ local CFG = {
 -- Format: {["Nama Pet"] = true} — case-sensitive, harus cocok dengan nama di lineup
 -- Contoh: T-Rex di sesi 1 perlu swap skill -> masukkan di sini
 local SWAP_SKILL_CFG = {
-    ["T-Rex"] = true,
+    ["T-Rex"] = "noguard",
 }
 
 -- sesiPool persist via _G agar tidak reset saat re-execute script
@@ -3090,15 +3091,19 @@ task.spawn(function()
         task.wait(0.05)
         if not running or stopRequested or _isCollecting or _isTransisi then continue end
         for uuid in pairs(_activeUuids) do
-            -- clear busy nyangkut (>6s)
-            if _swapBusy[uuid] and _swapBusySince[uuid] and (tick()-_swapBusySince[uuid])>6 then
-                _swapBusy[uuid]=nil
-            end
-            if _swapBusy[uuid] then continue end
             -- cek nama pet -> ada di SWAP_SKILL_CFG?
             local tipe = getPetTipeFromUUID(uuid)
             if not tipe then continue end
             if not SWAP_SKILL_CFG[tipe] then continue end
+            -- T-Rex: no guard, langsung swap saat transisi ready
+            local noGuard = SWAP_SKILL_CFG[tipe] == "noguard"
+            -- guard untuk pet lain
+            if not noGuard then
+                if _swapBusy[uuid] and _swapBusySince[uuid] and (tick()-_swapBusySince[uuid])>6 then
+                    _swapBusy[uuid]=nil
+                end
+                if _swapBusy[uuid] then continue end
+            end
             -- deteksi transisi: swap HANYA saat false->true (baru jadi ready)
             local rdy = petReadyUpl(uuid)
             local was = _swapWasReady[uuid]
@@ -3109,14 +3114,16 @@ task.spawn(function()
             _swapWasReady[uuid] = rdy  -- update state SEBELUM swap
             local isGenuineReady = (rdy == true and was == false)
             if triggerSwap then
-                _swapBusy[uuid]     = true
-                _swapBusySince[uuid]= tick()
+                if not noGuard then
+                    _swapBusy[uuid]     = true
+                    _swapBusySince[uuid]= tick()
+                end
                 task.spawn(function()
                     pcall(function()
                         local m = modelByUuid[uuid]
                         local pos = _clusterPos or farmCenter()
                         if m then pcall(function() pos = m:GetPivot().Position end) end
-                        if isGenuineReady then task.wait(2.7) end  -- jeda 2.7s hanya saat benar-benar ready (PNP delay)
+                        if isGenuineReady then task.wait(3) end  -- jeda 3s hanya saat benar-benar ready (PNP delay)
                         unequipPet(uuid); task.wait(0.03)
                         equipPet(uuid)
                         _swapLastSwap[uuid] = tick()
@@ -3128,7 +3135,7 @@ task.spawn(function()
                             if i%4==0 then equipPet(uuid) end
                         end
                     end)
-                    _swapBusy[uuid] = nil
+                    if not noGuard then _swapBusy[uuid] = nil end
                 end)
             end
         end
