@@ -9001,12 +9001,30 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     });
   }
 
+  function _tgAiDetectProvider(key){
+    if(key.startsWith("AQ.")) return "gemini-interact";
+    if(key.startsWith("AIzaSy")) return "gemini-classic";
+    if(key.startsWith("sk-ant-")) return "claude";
+    if(key.startsWith("gsk_")) return "groq";
+    if(key.startsWith("sk-")) return "openai";
+    return "unknown";
+  }
+  function _tgAiProviderLabel(key){
+    const p = _tgAiDetectProvider(key);
+    if(p==="gemini-interact"||p==="gemini-classic") return "Gemini";
+    if(p==="claude") return "Claude";
+    if(p==="groq") return "Groq";
+    if(p==="openai") return "OpenAI";
+    return "Unknown";
+  }
+
   function _tgAiRefreshStatus(){
     const el = document.getElementById("tgAiStatus");
     if(!el) return;
     if(!_tgAiKeys.length){ el.textContent = "// belum ada key — tambah dulu di atas"; return; }
     const active = _tgAiKeyIdx % _tgAiKeys.length;
-    el.textContent = `// ${_tgAiKeys.length} key tersedia · model: ${_tgAiModel}\n// key aktif: #${active+1} (${_tgAiKeys[active].slice(0,8)}…)`;
+    const provider = _tgAiProviderLabel(_tgAiKeys[active]);
+    el.textContent = `// ${_tgAiKeys.length} key tersedia · model: ${_tgAiModel} · ${provider}\n// key aktif: #${active+1} (${_tgAiKeys[active].slice(0,8)}…)`;
     // update model picker visual
     document.querySelectorAll("#tgModelPicker .tg-model-btn").forEach(b=>{
       b.classList.toggle("on", b.dataset.model===_tgAiModel);
@@ -9040,35 +9058,94 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     tgAiKeyInput.addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); doAdd(); } });
   }
 
-  // call Gemini — rotates to next key on 429
-  // Key AQ.* = Gemini Interactions API (new format from AI Studio)
-  // Key AIzaSy* = classic generateContent API key
+  // call AI — auto-detect provider dari format key
+  // AQ.*     = Gemini Interactions API (AI Studio baru)
+  // AIzaSy*  = Gemini generateContent (AI Studio lama)
+  // sk-ant-* = Claude (Anthropic)
+  // gsk_*    = Groq (Llama, gratis)
+  // sk-*     = OpenAI
   async function _tgAiCall(prompt, retries){
     if(!_tgAiKeys.length) throw new Error("Belum ada API key. Tambah key dulu di tab AI ✦");
     retries = retries || 0;
     const maxRetries = _tgAiKeys.length;
-    if(retries >= maxRetries) throw new Error("Semua key kena rate limit. Coba lagi nanti.");
+    if(retries >= maxRetries) throw new Error("Semua key kena rate limit/error. Coba lagi nanti.");
     const idx = _tgAiKeyIdx % _tgAiKeys.length;
     const key = _tgAiKeys[idx];
-    const isNewKey = key.startsWith("AQ.");
-    const body = {
-      contents:[{ parts:[{ text: prompt }] }],
-      generationConfig:{ maxOutputTokens:1024, temperature:0.2 }
-    };
-    let resp;
+    const provider = _tgAiDetectProvider(key);
 
-    if(isNewKey){
-      // Key AQ.* = Gemini Interactions API key (format baru dari AI Studio)
-      // Coba Interactions API dulu, lalu fallback ke generateContent
-      // Key AQ.* = Interactions API key (format baru AI Studio)
-      // Coba beberapa model yang tersedia di Interactions API
-      // Interactions API — hanya gemini-3.8-flash (model lain deprecated)
-      // Coba v1 dulu, fallback v1beta
+    // ── CLAUDE (Anthropic) ──────────────────────────────────────────
+    if(provider === "claude"){
+      const claudeModel = "claude-haiku-4-5"; // paling cepat & murah
+      let resp;
+      try{
+        resp = await fetch("https://api.anthropic.com/v1/messages", {
+          method:"POST",
+          headers:{
+            "Content-Type":"application/json",
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01"
+          },
+          body:JSON.stringify({
+            model: claudeModel,
+            max_tokens: 1024,
+            messages:[{ role:"user", content: prompt }]
+          })
+        });
+      }catch(e){ throw new Error("Tidak bisa connect ke Claude API: "+e.message); }
+      if(resp.status===429||resp.status===529){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+      if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`Claude error ${resp.status}: ${t.slice(0,200)}`); }
+      const d = await resp.json();
+      return (d?.content?.[0]?.text || "").trim();
+    }
+
+    // ── GROQ (Llama, format OpenAI-compatible) ──────────────────────
+    if(provider === "groq"){
+      const groqModel = "llama-3.3-70b-versatile";
+      let resp;
+      try{
+        resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+          body:JSON.stringify({
+            model: groqModel,
+            messages:[{ role:"user", content: prompt }],
+            max_tokens: 1024, temperature: 0.2
+          })
+        });
+      }catch(e){ throw new Error("Tidak bisa connect ke Groq API: "+e.message); }
+      if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+      if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`Groq error ${resp.status}: ${t.slice(0,200)}`); }
+      const d = await resp.json();
+      return (d?.choices?.[0]?.message?.content || "").trim();
+    }
+
+    // ── OPENAI ──────────────────────────────────────────────────────
+    if(provider === "openai"){
+      const oaiModel = "gpt-4o-mini";
+      let resp;
+      try{
+        resp = await fetch("https://api.openai.com/v1/chat/completions", {
+          method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
+          body:JSON.stringify({
+            model: oaiModel,
+            messages:[{ role:"user", content: prompt }],
+            max_tokens: 1024, temperature: 0.2
+          })
+        });
+      }catch(e){ throw new Error("Tidak bisa connect ke OpenAI API: "+e.message); }
+      if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+      if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`OpenAI error ${resp.status}: ${t.slice(0,200)}`); }
+      const d = await resp.json();
+      return (d?.choices?.[0]?.message?.content || "").trim();
+    }
+
+    // ── GEMINI INTERACTIONS API (AQ.*) ───────────────────────────────
+    if(provider === "gemini-interact"){
       const interactUrls = [
         `https://generativelanguage.googleapis.com/v1/interactions`,
         `https://generativelanguage.googleapis.com/v1beta/interactions`,
       ];
-      // retry sampai 4x kalau 503 (server Google lagi rame)
       let i503 = 0;
       outer503: while(i503 < 4){
         for(const iUrl of interactUrls){
@@ -9092,53 +9169,23 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         }
         break;
       }
-
-      // Fallback: generateContent dengan x-goog-api-key header
-      const genUrls = [
-        `https://generativelanguage.googleapis.com/v1beta/models/${_tgAiModel}:generateContent`,
-        `https://generativelanguage.googleapis.com/v1/models/${_tgAiModel}:generateContent`,
-        `https://generativelanguage.googleapis.com/v1alpha/models/${_tgAiModel}:generateContent`,
-      ];
-      let lastErr = null;
-      for(const baseUrl of genUrls){
-        try{
-          resp = await fetch(baseUrl, {
-            method:"POST",
-            headers:{"Content-Type":"application/json","x-goog-api-key":key},
-            body:JSON.stringify(body)
-          });
-          if(resp.status !== 404) break;
-        }catch(e){ lastErr = e; }
-      }
-      if(!resp) throw lastErr || new Error("Tidak bisa connect ke Gemini");
-    } else {
-      // Key AIzaSy* — classic generateContent via query param
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${_tgAiModel}:generateContent?key=${key}`;
-      resp = await fetch(url, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(body)
-      });
+      throw new Error("Gemini server sibuk / key tidak valid. Coba Groq (gsk_) sebagai alternatif.");
     }
 
-    if(resp.status === 429){
-      _tgAiKeyIdx++;
-      _tgAiRefreshStatus();
-      return _tgAiCall(prompt, retries+1);
-    }
-    if(!resp.ok){
-      const txt = await resp.text().catch(()=>"");
-      // Kalau masih 404, kemungkinan model tidak tersedia — coba gemini-1.5-flash
-      if(resp.status === 404 && _tgAiModel !== "gemini-1.5-flash"){
-        const savedModel = _tgAiModel;
-        _tgAiModel = "gemini-1.5-flash";
-        try{ return await _tgAiCall(prompt, retries); }
-        finally{ _tgAiModel = savedModel; }
-      }
-      throw new Error(`Gemini error ${resp.status}: ${txt.slice(0,200)}`);
-    }
+    // ── GEMINI generateContent (AIzaSy*) ────────────────────────────
+    const geminiBody = {
+      contents:[{ parts:[{ text: prompt }] }],
+      generationConfig:{ maxOutputTokens:1024, temperature:0.2 }
+    };
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${_tgAiModel}:generateContent?key=${key}`;
+    const resp = await fetch(url, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(geminiBody)
+    });
+    if(resp.status===429){ _tgAiKeyIdx++; _tgAiRefreshStatus(); return _tgAiCall(prompt, retries+1); }
+    if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`Gemini error ${resp.status}: ${t.slice(0,200)}`); }
     const data = await resp.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    return text.trim();
+    return (data?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
   }
 
   // tanya AI button
@@ -9156,11 +9203,17 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     const hasilBox = document.getElementById("tugasHasil");
 
     // tampilkan loading
+    const _activeKey = _tgAiKeys.length ? _tgAiKeys[_tgAiKeyIdx % _tgAiKeys.length] : "";
+    const _providerNow = _activeKey ? _tgAiProviderLabel(_activeKey) : "AI";
+    const _modelNow = (["groq"].includes(_tgAiDetectProvider(_activeKey))) ? "Llama-3.3-70b"
+                    : (["claude"].includes(_tgAiDetectProvider(_activeKey))) ? "claude-haiku-4-5"
+                    : (["openai"].includes(_tgAiDetectProvider(_activeKey))) ? "gpt-4o-mini"
+                    : _tgAiModel;
     if(hasilBox) hasilBox.style.display = "";
     if(hasilEl) hasilEl.innerHTML = `
       <div class="tg-ai-loading">
         <div class="tg-ai-spinner"></div>
-        <span class="tg-ai-loading-txt">✦ generating · ${_tgAiModel}</span>
+        <span class="tg-ai-loading-txt">✦ generating · ${_providerNow} · ${_modelNow}</span>
       </div>`;
 
     // jalankan cari dulu untuk konteks
