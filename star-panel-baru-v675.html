@@ -1706,6 +1706,15 @@
         font-size:.77rem; font-weight:700; cursor:pointer; transition:.13s;
       }
       #tgEditJwbPopup .ejp-save:hover { opacity:.88; }
+      #tgEditJwbPopup .ejp-fix {
+        padding:9px 16px; border-radius:9px; border:1.5px solid #7c3aed;
+        background:#f5f3ff; color:#7c3aed; font-family:'DM Sans',sans-serif;
+        font-size:.8rem; font-weight:700; cursor:pointer;
+        transition:background .15s,opacity .15s; flex-shrink:0;
+        white-space:nowrap;
+      }
+      #tgEditJwbPopup .ejp-fix:hover { background:#ede9fe; }
+      #tgEditJwbPopup .ejp-fix:disabled { opacity:.5; cursor:not-allowed; }
       #tgEditJwbPopup .ejp-cancel {
         padding:11px 18px; background:none; color:#6b6b62;
         border:1px solid #e2e2dc; border-radius:8px; font-family:monospace;
@@ -1979,6 +1988,16 @@
           <div class="ejp-soal-txt" id="ejpSoalTxt"></div>
           <div class="ejp-lbl">jawaban</div>
           <textarea id="ejpJawaban" placeholder="Tulis jawaban di sini..."></textarea>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-shrink:0;align-items:center">
+            <input id="ejpAiPrompt" type="text" placeholder="✦ tanya / minta AI… (misal: perbaiki, lebih singkat, tambah contoh)" style="
+              flex:1;border:1.5px solid rgba(124,58,237,.25);border-radius:9px;
+              padding:8px 12px;font-family:'DM Sans',sans-serif;font-size:.8rem;
+              color:#1a1a18;background:#faf8ff;outline:none;
+              transition:border .15s;
+            ">
+            <button class="ejp-fix" id="ejpFixGo">✦ kirim</button>
+          </div>
+          <div id="ejpAiStatus" style="min-height:16px;font-family:monospace;font-size:.6rem;color:#7c3aed;padding:2px 0;flex-shrink:0"></div>
           <div class="ejp-actions">
             <button class="ejp-save" id="ejpSave">💾 simpan</button>
             <button class="ejp-cancel" id="ejpCancel">batal</button>
@@ -10066,15 +10085,61 @@ Berikan jawaban yang langsung menjawab pertanyaan. Di setiap poin atau kalimat p
     _renderKunciPanel();
   }
 
+  async function _ejpAiKirim(){
+    if(_ejpIdx < 0) return;
+    const instruksi = (document.getElementById("ejpAiPrompt")||{}).value||"";
+    if(!instruksi.trim()) return;
+    const arr = _kunciLoad();
+    const it = arr[_ejpIdx];
+    if(!it) return;
+    const jwbSekarang = (document.getElementById("ejpJawaban")||{}).value||it.jawaban||"";
+
+    const btn = document.getElementById("ejpFixGo");
+    const status = document.getElementById("ejpAiStatus");
+    const ta = document.getElementById("ejpJawaban");
+    if(btn) btn.disabled = true;
+    if(status) status.textContent = "✦ generating…";
+
+    const prompt = `Kamu adalah asisten akademik. Kamu sedang membantu memperbaiki atau melanjutkan jawaban tugas.
+
+SOAL:
+${it.soal||"(tidak ada soal)"}
+
+JAWABAN SAAT INI:
+${jwbSekarang||"(belum ada jawaban)"}
+
+INSTRUKSI PENGGUNA:
+${instruksi.trim()}
+
+Berikan jawaban/revisi dalam Bahasa Indonesia. Langsung tulis jawabannya saja tanpa penjelasan tambahan.`;
+
+    try {
+      const hasil = await _tgAiCall(prompt);
+      if(ta) ta.value = hasil.trim();
+      if(status) status.textContent = "✔ selesai · edit lagi atau simpan";
+      if(document.getElementById("ejpAiPrompt")) document.getElementById("ejpAiPrompt").value = "";
+      setTimeout(()=>{ if(status) status.textContent=""; }, 3000);
+    } catch(e) {
+      if(status) status.textContent = "✗ gagal: " + (e.message||"error");
+    }
+    if(btn) btn.disabled = false;
+  }
+
   // bind popup buttons (sekali saja)
   (function(){
     const pop  = document.getElementById("tgEditJwbPopup");
     const save = document.getElementById("ejpSave");
     const cancel = document.getElementById("ejpCancel");
     const close  = document.getElementById("ejpClose");
+    const fixGo = document.getElementById("ejpFixGo");
+    const aiInp = document.getElementById("ejpAiPrompt");
     if(save)   save.addEventListener("click", _pdfSavePopup);
     if(cancel) cancel.addEventListener("click", _pdfCloseEditPopup);
     if(close)  close.addEventListener("click", _pdfCloseEditPopup);
+    if(fixGo)  fixGo.addEventListener("click", _ejpAiKirim);
+    if(aiInp)  aiInp.addEventListener("keydown", function(e){
+      if(e.key==="Enter"){ e.preventDefault(); _ejpAiKirim(); }
+    });
     if(pop)    pop.addEventListener("click", function(e){ if(e.target===pop) _pdfCloseEditPopup(); });
     // ctrl+enter simpan
     if(pop) pop.addEventListener("keydown", function(e){
