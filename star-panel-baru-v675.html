@@ -1656,6 +1656,53 @@
         border:1px solid #e2e2dc; border-radius:7px; font-family:monospace;
         font-size:.75rem; cursor:pointer;
       }
+      /* ── popup edit jawaban ── */
+      #tgEditJwbPopup {
+        display:none; position:fixed; inset:0; z-index:10000;
+        background:rgba(0,0,0,.5); align-items:center; justify-content:center;
+      }
+      #tgEditJwbPopup.show { display:flex; }
+      #tgEditJwbPopup .ejp-box {
+        background:#fff; border-radius:14px; width:min(96vw,560px);
+        max-height:90vh; overflow-y:auto;
+        padding:20px; box-shadow:0 24px 64px rgba(0,0,0,.35);
+        display:flex; flex-direction:column; gap:10px;
+      }
+      #tgEditJwbPopup .ejp-head {
+        display:flex; align-items:center; justify-content:space-between;
+      }
+      #tgEditJwbPopup .ejp-title {
+        font-family:monospace; font-size:.78rem; font-weight:700;
+        color:#7c3aed; letter-spacing:.04em;
+      }
+      #tgEditJwbPopup .ejp-close {
+        background:none; border:none; font-size:1.2rem; cursor:pointer;
+        color:#9c9c90; line-height:1; padding:0;
+      }
+      #tgEditJwbPopup .ejp-lbl {
+        font-family:monospace; font-size:.6rem; font-weight:700;
+        letter-spacing:.06em; text-transform:uppercase; color:#6b6b62;
+        margin-bottom:3px;
+      }
+      #tgEditJwbPopup textarea {
+        width:100%; background:#fafaf8; border:1px solid rgba(26,26,24,.18);
+        border-radius:7px; padding:10px 12px; font-family:'DM Sans',sans-serif;
+        font-size:.82rem; color:#1a1a18; outline:none; resize:vertical;
+        transition:border .15s,background .15s; line-height:1.6;
+      }
+      #tgEditJwbPopup textarea:focus { border-color:#7c3aed; background:#fff; }
+      #tgEditJwbPopup .ejp-actions { display:flex; gap:8px; }
+      #tgEditJwbPopup .ejp-save {
+        flex:1; padding:10px; background:#7c3aed; color:#fff;
+        border:none; border-radius:8px; font-family:monospace;
+        font-size:.76rem; font-weight:700; cursor:pointer; transition:.13s;
+      }
+      #tgEditJwbPopup .ejp-save:hover { opacity:.88; }
+      #tgEditJwbPopup .ejp-cancel {
+        padding:10px 16px; background:none; color:#6b6b62;
+        border:1px solid #e2e2dc; border-radius:8px; font-family:monospace;
+        font-size:.76rem; cursor:pointer;
+      }
       /* ── print lembar jawaban ── */
       @media print {
         body > *:not(#tgLembarCetak) { display:none !important; }
@@ -1911,6 +1958,28 @@
           <button type="button" class="tg-bersih" id="tgPdfHapusSemua" style="width:100%;margin-top:6px;font-size:.7rem">🗑 hapus semua terkunci</button>
         </div>
 
+      </div>
+
+      <!-- ── popup edit jawaban ── -->
+      <div id="tgEditJwbPopup">
+        <div class="ejp-box">
+          <div class="ejp-head">
+            <div class="ejp-title" id="ejpTitle">✏ edit soal 1</div>
+            <button class="ejp-close" id="ejpClose">✕</button>
+          </div>
+          <div>
+            <div class="ejp-lbl">soal</div>
+            <textarea id="ejpSoal" rows="4" placeholder="Tulis soal di sini..."></textarea>
+          </div>
+          <div>
+            <div class="ejp-lbl">jawaban</div>
+            <textarea id="ejpJawaban" rows="10" placeholder="Tulis jawaban di sini..."></textarea>
+          </div>
+          <div class="ejp-actions">
+            <button class="ejp-save" id="ejpSave">💾 simpan</button>
+            <button class="ejp-cancel" id="ejpCancel">batal</button>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -9904,59 +9973,49 @@ Berikan jawaban yang langsung menjawab pertanyaan. Di setiap poin atau kalimat p
     if(cnt) cnt.textContent = arr.length+" soal";
 
     // render tabs
-    const tabsEl = document.getElementById("tgPdfTabs");
-    if(tabsEl){
-      tabsEl.innerHTML = arr.length ? arr.map((_,i)=>`
-        <button class="tg-kunci-tab${i===_pdfActiveTab?' active':''}" data-pi="${i}">${i+1}</button>
-      `).join("") : "";
-      tabsEl.querySelectorAll(".tg-kunci-tab").forEach(t=>{
-        t.addEventListener("click",function(){
-          _pdfSaveEdit(_pdfActiveTab);
-          _pdfActiveTab = parseInt(this.dataset.pi);
-          _pdfRenderPanel();
-        });
-      });
-    }
-
-    // render editor
+    // render kartu preview jawaban (klik → popup edit)
     const edEl = document.getElementById("tgPdfEditor");
     if(!edEl) return;
     if(!arr.length){
       edEl.innerHTML = `<div style="font-family:monospace;font-size:.62rem;color:#9c9c90;text-align:center;padding:16px 0">// belum ada jawaban terkunci<br>tanya AI dulu → kunci jawabannya</div>`;
     } else {
-      const idx = Math.min(_pdfActiveTab, arr.length-1);
-      _pdfActiveTab = idx;
-      const it = arr[idx];
-      edEl.innerHTML = `
-        <div style="font-family:monospace;font-size:.6rem;color:#7c3aed;font-weight:700">soal ${idx+1}</div>
-        <textarea class="tg-input" id="tgPdfEdSoal" rows="3" style="font-size:.78rem;resize:vertical">${_escAttr(it.soal)}</textarea>
-        <div style="font-family:monospace;font-size:.6rem;color:#7c3aed;font-weight:700">jawaban ${idx+1}</div>
-        <textarea class="tg-input" id="tgPdfEdJwb" rows="7" style="font-size:.78rem;resize:vertical">${_escAttr(it.jawaban)}</textarea>
-        <div style="display:flex;gap:6px">
-          <button class="tg-cari" id="tgPdfBtnSimp" style="flex:1;font-size:.72rem">💾 simpan</button>
-          <button class="tg-bersih" id="tgPdfBtnHapus" style="font-size:.72rem">🗑 hapus no.${idx+1}</button>
+      edEl.innerHTML = arr.map((it,i)=>`
+        <div class="tg-jwb-card" data-ji="${i}" style="
+          border:1.5px solid rgba(124,58,237,.2); border-radius:9px;
+          padding:11px 13px; cursor:pointer; background:#faf8ff;
+          transition:.13s; position:relative;
+        ">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <span style="font-family:monospace;font-size:.63rem;font-weight:700;color:#7c3aed">soal ${i+1}</span>
+            <span style="font-family:monospace;font-size:.58rem;color:#9c9c90">✏ klik untuk edit</span>
+          </div>
+          <div style="font-size:.78rem;color:#1a1a18;line-height:1.45;margin-bottom:7px;
+            white-space:pre-wrap;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${_esc(it.soal)||'(soal kosong)'}</div>
+          <div style="font-family:monospace;font-size:.6rem;font-weight:700;color:#7c3aed;margin-bottom:4px">jawaban</div>
+          <div style="font-size:.78rem;color:#334155;line-height:1.45;
+            white-space:pre-wrap;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical">${_esc(it.jawaban)||'(jawaban kosong)'}</div>
         </div>
-      `;
-      document.getElementById("tgPdfBtnSimp").onclick = function(){
-        _pdfSaveEdit(idx);
-        this.textContent = "✔ tersimpan";
-        setTimeout(()=>{ this.textContent="💾 simpan"; },1500);
-      };
-      document.getElementById("tgPdfBtnHapus").onclick = function(){
-        _pdfSaveEdit(idx);
-        const a = _kunciLoad(); a.splice(idx,1); _kunciSave(a);
-        _pdfActiveTab = Math.max(0, idx-1);
-        _pdfRenderPanel();
-        _renderKunciPanel();
-      };
+      `).join("");
+
+      edEl.querySelectorAll(".tg-jwb-card").forEach(card=>{
+        card.addEventListener("mouseenter",function(){ this.style.background="#f5f0ff"; this.style.borderColor="rgba(124,58,237,.45)"; });
+        card.addEventListener("mouseleave",function(){ this.style.background="#faf8ff"; this.style.borderColor="rgba(124,58,237,.2)"; });
+        card.addEventListener("click",function(){
+          const i = parseInt(this.dataset.ji);
+          _pdfOpenEditPopup(i);
+        });
+      });
     }
+
+    // hapus semua (rebind kalau baru)
+    const tabsEl = document.getElementById("tgPdfTabs");
+    if(tabsEl) tabsEl.innerHTML = "";
 
     // tombol generate
     const genBtn = document.getElementById("tgPdfGenBtn");
     if(genBtn && !genBtn._bound){
       genBtn._bound = true;
       genBtn.onclick = function(){
-        _pdfSaveEdit(_pdfActiveTab);
         // ambil identitas dari form PDF
         const map = {
           "pid_nama":"id_nama","pid_nim":"id_nim","pid_prodi":"id_prodi",
@@ -9985,16 +10044,60 @@ Berikan jawaban yang langsung menjawab pertanyaan. Di setiap poin atau kalimat p
   }
 
   function _pdfSaveEdit(idx){
-    const soalEl = document.getElementById("tgPdfEdSoal");
-    const jwbEl  = document.getElementById("tgPdfEdJwb");
-    if(!soalEl||!jwbEl) return;
-    const arr = _kunciLoad();
-    if(arr[idx]){
-      arr[idx].soal = soalEl.value.trim();
-      arr[idx].jawaban = jwbEl.value.trim();
-      _kunciSave(arr);
-    }
+    // legacy — tidak dipakai lagi (popup yang handle)
   }
+
+  // ── popup edit jawaban ──
+  let _ejpIdx = -1;
+  function _pdfOpenEditPopup(idx){
+    const arr = _kunciLoad();
+    if(!arr[idx]) return;
+    _ejpIdx = idx;
+    const pop = document.getElementById("tgEditJwbPopup");
+    document.getElementById("ejpTitle").textContent = `✏ edit soal ${idx+1}`;
+    document.getElementById("ejpSoal").value = arr[idx].soal || "";
+    document.getElementById("ejpJawaban").value = arr[idx].jawaban || "";
+    pop.classList.add("show");
+    document.getElementById("ejpJawaban").focus();
+  }
+
+  function _pdfCloseEditPopup(){
+    const pop = document.getElementById("tgEditJwbPopup");
+    if(pop) pop.classList.remove("show");
+    _ejpIdx = -1;
+  }
+
+  function _pdfSavePopup(){
+    if(_ejpIdx < 0) return;
+    const arr = _kunciLoad();
+    if(!arr[_ejpIdx]) return;
+    arr[_ejpIdx].soal    = document.getElementById("ejpSoal").value.trim();
+    arr[_ejpIdx].jawaban = document.getElementById("ejpJawaban").value.trim();
+    _kunciSave(arr);
+    _pdfCloseEditPopup();
+    _pdfRenderPanel();
+    _renderKunciPanel();
+    // feedback
+    const btn = document.getElementById("ejpSave");
+    if(btn){ const t = btn.textContent; btn.textContent="✔ tersimpan"; setTimeout(()=>btn.textContent=t,1400); }
+  }
+
+  // bind popup buttons (sekali saja)
+  (function(){
+    const pop  = document.getElementById("tgEditJwbPopup");
+    const save = document.getElementById("ejpSave");
+    const cancel = document.getElementById("ejpCancel");
+    const close  = document.getElementById("ejpClose");
+    if(save)   save.addEventListener("click", _pdfSavePopup);
+    if(cancel) cancel.addEventListener("click", _pdfCloseEditPopup);
+    if(close)  close.addEventListener("click", _pdfCloseEditPopup);
+    if(pop)    pop.addEventListener("click", function(e){ if(e.target===pop) _pdfCloseEditPopup(); });
+    // ctrl+enter simpan
+    if(pop) pop.addEventListener("keydown", function(e){
+      if((e.ctrlKey||e.metaKey) && e.key==="Enter"){ e.preventDefault(); _pdfSavePopup(); }
+      if(e.key==="Escape") _pdfCloseEditPopup();
+    });
+  })();
 
   // ══════════════════════════════════════════════
 
