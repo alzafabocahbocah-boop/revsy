@@ -1,7 +1,8 @@
--- uplevelnew v8.134 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.135 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4200)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare = 0 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.135: scan + collect paralel di sesi 1 (scan terus jalan, collect di background)
 -- v8.134: updateUI nightmare count saat collect mutasi (GUI gak freeze)
 -- v8.133: unequipAll sebelum return dari sesi 1 saat target tercapai
 -- v8.132: T-Rex kembali 8, delay 3.3s → 1.5s
@@ -128,7 +129,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.134"
+local VERSION = "v8.135"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -2945,25 +2946,52 @@ local function runSesiUtama(sesiNum, def, label, col)
     _clusterPos = farmCenter()
     addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
     waitForContainer(10)
-    -- set tracker sesi aktif (dipakai processFruits untuk switch cadangan & balik)
     _activeSesiNum = sesiNum; _G._UPL_SESI_NUM = sesiNum
     _activeSesiDef = def; _G._UPL_SESI_DEF = def
     unequipAll(); equipSesi(sesiNum, def); setStatus(label.." — running", col)
-    while not stopRequested do
+    local _targetReached = false
+    local _collectBusy = false
+    -- scan loop: jalan terus, update GUI + cek target
+    while not stopRequested and not _targetReached do
         enforceEquip(def)
-        local nm=processFruits()
-        -- tampilkan current nightmare count di farm (bukan cumulative)
+        local data = scanFruits()
+        local nm = data.nightmareCount
+        _lastMutasiCount = #data.shovel
         totalNightmareCollected = nm
-        updateUI(nm,nm,sesiNum)
-        addLog("Nightmare di farm: "..nm.." / "..CFG.nightmareTarget)
-        if nm>=CFG.nightmareTarget then
+        updateUI(nm, nm, sesiNum)
+        -- cek target
+        if nm >= CFG.nightmareTarget then
             addLog("Target! nm="..nm.." >= "..CFG.nightmareTarget.." — Pindah sesi 2.")
-            setStatus("Target tercapai!",C.accent)
-            unequipAll()
-            return
+            setStatus("Target tercapai!", C.accent)
+            _targetReached = true
+            break
         end
-        task.wait(0.1)  -- yield minimal, loop langsung scan lagi
+        -- cek cadangan 2 (nightmare = 0)
+        if nm == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
+            -- delegate ke processFruits untuk handle cadangan 2
+            processFruits()
+        elseif #data.shovel > 0 and not _collectBusy then
+            -- ada mutasi, collect di background supaya scan tetap jalan
+            _collectBusy = true
+            task.spawn(function()
+                local fruits = data.shovel
+                while #fruits > 0 and not stopRequested and not _targetReached do
+                    local collected = doCollect(fruits)
+                    totalShovel = totalShovel + collected
+                    _fruitCollectedSinceLastSell = _fruitCollectedSinceLastSell + collected
+                    addLog("Collect: "..collected.."/"..#fruits.." | tas: ".._fruitCollectedSinceLastSell.."/"..SELL_THRESHOLD)
+                    if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
+                        task.wait(0.1); sellInventory(); _fruitCollectedSinceLastSell = 0
+                    end
+                    local nxt = scanFruits()
+                    fruits = nxt.shovel
+                end
+                _collectBusy = false
+            end)
+        end
+        task.wait(0.1)
     end
+    unequipAll()
 end
 local function runSesi1()
     runSesiUtama(1, SESI1_DEF, "SESI 1", C.accent)
