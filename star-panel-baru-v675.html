@@ -1737,7 +1737,8 @@
       <div class="tg-tabs">
         <button type="button" class="tg-tab on" id="tgTabCari" onclick="tgSwitchTab('cari')">cari</button>
         <button type="button" class="tg-tab" id="tgTabRef" onclick="tgSwitchTab('ref')">referensi</button>
-        <button type="button" class="tg-tab" id="tgTabAi" onclick="tgSwitchTab('ai')">AI ✦</button>
+        <button type="button" class="tg-tab" id="tgTabAi" onclick="tgSwitchTab('ai')">API ✦</button>
+        <button type="button" class="tg-tab" id="tgTabPdf" onclick="tgSwitchTab('pdf')">auto PDF</button>
       </div>
 
       <!-- ===== PANEL CARI ===== -->
@@ -1826,6 +1827,59 @@
           <span class="tg-ref-count" id="tugasRefCount">0 file · 0 kb</span>
           <button type="button" class="tg-hapus-semua" id="tugasHapusSemua">hapus semua</button>
         </div>
+      </div>
+
+      <!-- ===== PANEL AUTO PDF ===== -->
+      <div class="tg-panel" id="tgPanelPdf" style="display:none">
+
+        <!-- ── template identitas ── -->
+        <div>
+          <div class="tg-sec-lbl">template identitas mahasiswa</div>
+          <div id="tgPdfIdentForm" style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+            ${[
+              ["Nama Mahasiswa","pid_nama","Nama lengkap"],
+              ["NIM","pid_nim","Nomor Induk Mahasiswa"],
+              ["Program Studi","pid_prodi","Manajemen"],
+              ["Semester","pid_sem","5"],
+              ["Kode/Nama Mata Kuliah","pid_mk","EKMA4316/HUKUM BISNIS"],
+              ["Kode/Nama UPBJJ","pid_upbjj","23 / UPBJJ-UT BOGOR"],
+              ["Tahun Akademik","pid_tahun","2025 Genap"],
+              ["Nama Tutor","pid_tutor","Nama tutor"],
+              ["Nomor Tugas","pid_notugas","1"],
+            ].map(([lbl,id,ph])=>`
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <div class="tg-sec-lbl" style="font-size:.58rem">${lbl}</div>
+                <input class="tg-input" type="text" id="${id}" placeholder="${ph}" style="padding:6px 9px;font-size:.78rem;border-radius:4px;border:1px solid rgba(26,26,24,.18);background:#fafaf8">
+              </div>
+            `).join("")}
+            <button type="button" class="tg-cari" id="tgPdfSimpanId" style="font-size:.72rem">💾 simpan identitas</button>
+          </div>
+        </div>
+
+        <!-- ── jawaban terkunci ── -->
+        <div>
+          <div class="tg-sec-lbl" style="display:flex;align-items:center;justify-content:space-between">
+            <span>jawaban terkunci</span>
+            <span id="tgPdfKunciCount" style="font-family:monospace;font-size:.62rem;color:#9c9c90">0 soal</span>
+          </div>
+
+          <!-- tab nomor soal -->
+          <div id="tgPdfTabs" style="display:flex;gap:5px;margin:8px 0;flex-wrap:wrap"></div>
+
+          <!-- editor aktif -->
+          <div id="tgPdfEditor" style="display:flex;flex-direction:column;gap:7px">
+            <div style="font-family:monospace;font-size:.62rem;color:#9c9c90;text-align:center;padding:16px 0">
+              // belum ada jawaban terkunci<br>tanya AI dulu → kunci jawabannya
+            </div>
+          </div>
+        </div>
+
+        <!-- ── generate ── -->
+        <div>
+          <button class="tg-dok-btn" id="tgPdfGenBtn">📄 buat lembar jawaban UT</button>
+          <button type="button" class="tg-bersih" id="tgPdfHapusSemua" style="width:100%;margin-top:6px;font-size:.7rem">🗑 hapus semua terkunci</button>
+        </div>
+
       </div>
 
     </div>
@@ -8619,12 +8673,15 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     document.getElementById("tgPanelCari").style.display = tab==="cari" ? "" : "none";
     document.getElementById("tgPanelRef").style.display  = tab==="ref"  ? "" : "none";
     document.getElementById("tgPanelAi").style.display   = tab==="ai"   ? "" : "none";
+    document.getElementById("tgPanelPdf").style.display  = tab==="pdf"  ? "" : "none";
     document.getElementById("tgTabCari").classList.toggle("on", tab==="cari");
     document.getElementById("tgTabRef").classList.toggle("on",  tab==="ref");
     document.getElementById("tgTabAi").classList.toggle("on",   tab==="ai");
+    document.getElementById("tgTabPdf").classList.toggle("on",  tab==="pdf");
     if(tab==="ref") renderConfigList();
     if(tab==="cari") renderBadges();
     if(tab==="ai") _tgAiRefreshStatus();
+    if(tab==="pdf"){ _pdfLoadIdentitas(); _pdfRenderPanel(); }
   };
 
   // ekstrak teks dari PDF pakai PDF.js
@@ -9774,8 +9831,139 @@ Berikan jawaban yang langsung menjawab pertanyaan. Di setiap poin atau kalimat p
     setTimeout(()=> URL.revokeObjectURL(url), 30000);
   }
 
-  // render panel kunci saat load
+  // render panel kunci saat load (di tab cari, inject setelah hasil)
   _renderKunciPanel();
+
+  // ══════════════════════════════════════════════
+  // AUTO PDF PANEL (tab terpisah)
+  // ══════════════════════════════════════════════
+  let _pdfActiveTab = 0;
+
+  function _pdfLoadIdentitas(){
+    const saved = _idLoad();
+    const map = {
+      "pid_nama":"id_nama","pid_nim":"id_nim","pid_prodi":"id_prodi",
+      "pid_sem":"id_sem","pid_mk":"id_mk","pid_upbjj":"id_upbjj",
+      "pid_tahun":"id_tahun","pid_tutor":"id_tutor","pid_notugas":"id_notugas"
+    };
+    Object.entries(map).forEach(([pid, idk])=>{
+      const el = document.getElementById(pid);
+      if(el && saved[idk]) el.value = saved[idk];
+    });
+    // simpan identitas
+    const btnSimpId = document.getElementById("tgPdfSimpanId");
+    if(btnSimpId && !btnSimpId._bound){
+      btnSimpId._bound = true;
+      btnSimpId.onclick = function(){
+        const id = {};
+        Object.entries(map).forEach(([pid, idk])=>{
+          id[idk] = (document.getElementById(pid)||{}).value||"";
+        });
+        _idSave(id);
+        this.textContent = "✔ tersimpan";
+        setTimeout(()=>{ this.textContent="💾 simpan identitas"; },1500);
+      };
+    }
+  }
+
+  function _pdfRenderPanel(){
+    const arr = _kunciLoad();
+    // update count
+    const cnt = document.getElementById("tgPdfKunciCount");
+    if(cnt) cnt.textContent = arr.length+" soal";
+
+    // render tabs
+    const tabsEl = document.getElementById("tgPdfTabs");
+    if(tabsEl){
+      tabsEl.innerHTML = arr.length ? arr.map((_,i)=>`
+        <button class="tg-kunci-tab${i===_pdfActiveTab?' active':''}" data-pi="${i}">${i+1}</button>
+      `).join("") : "";
+      tabsEl.querySelectorAll(".tg-kunci-tab").forEach(t=>{
+        t.addEventListener("click",function(){
+          _pdfSaveEdit(_pdfActiveTab);
+          _pdfActiveTab = parseInt(this.dataset.pi);
+          _pdfRenderPanel();
+        });
+      });
+    }
+
+    // render editor
+    const edEl = document.getElementById("tgPdfEditor");
+    if(!edEl) return;
+    if(!arr.length){
+      edEl.innerHTML = `<div style="font-family:monospace;font-size:.62rem;color:#9c9c90;text-align:center;padding:16px 0">// belum ada jawaban terkunci<br>tanya AI dulu → kunci jawabannya</div>`;
+    } else {
+      const idx = Math.min(_pdfActiveTab, arr.length-1);
+      _pdfActiveTab = idx;
+      const it = arr[idx];
+      edEl.innerHTML = `
+        <div style="font-family:monospace;font-size:.6rem;color:#7c3aed;font-weight:700">soal ${idx+1}</div>
+        <textarea class="tg-input" id="tgPdfEdSoal" rows="3" style="font-size:.78rem;resize:vertical">${_escAttr(it.soal)}</textarea>
+        <div style="font-family:monospace;font-size:.6rem;color:#7c3aed;font-weight:700">jawaban ${idx+1}</div>
+        <textarea class="tg-input" id="tgPdfEdJwb" rows="7" style="font-size:.78rem;resize:vertical">${_escAttr(it.jawaban)}</textarea>
+        <div style="display:flex;gap:6px">
+          <button class="tg-cari" id="tgPdfBtnSimp" style="flex:1;font-size:.72rem">💾 simpan</button>
+          <button class="tg-bersih" id="tgPdfBtnHapus" style="font-size:.72rem">🗑 hapus no.${idx+1}</button>
+        </div>
+      `;
+      document.getElementById("tgPdfBtnSimp").onclick = function(){
+        _pdfSaveEdit(idx);
+        this.textContent = "✔ tersimpan";
+        setTimeout(()=>{ this.textContent="💾 simpan"; },1500);
+      };
+      document.getElementById("tgPdfBtnHapus").onclick = function(){
+        _pdfSaveEdit(idx);
+        const a = _kunciLoad(); a.splice(idx,1); _kunciSave(a);
+        _pdfActiveTab = Math.max(0, idx-1);
+        _pdfRenderPanel();
+        _renderKunciPanel();
+      };
+    }
+
+    // tombol generate
+    const genBtn = document.getElementById("tgPdfGenBtn");
+    if(genBtn && !genBtn._bound){
+      genBtn._bound = true;
+      genBtn.onclick = function(){
+        _pdfSaveEdit(_pdfActiveTab);
+        // ambil identitas dari form PDF
+        const map = {
+          "pid_nama":"id_nama","pid_nim":"id_nim","pid_prodi":"id_prodi",
+          "pid_sem":"id_sem","pid_mk":"id_mk","pid_upbjj":"id_upbjj",
+          "pid_tahun":"id_tahun","pid_tutor":"id_tutor","pid_notugas":"id_notugas"
+        };
+        const id = {};
+        Object.entries(map).forEach(([pid, idk])=>{
+          id[idk] = (document.getElementById(pid)||{}).value||"";
+        });
+        _idSave(id);
+        _buatDokumen(id);
+      };
+    }
+
+    // hapus semua
+    const hapusAll = document.getElementById("tgPdfHapusSemua");
+    if(hapusAll && !hapusAll._bound){
+      hapusAll._bound = true;
+      hapusAll.onclick = function(){
+        if(!confirm("Hapus semua jawaban terkunci?")) return;
+        _kunciSave([]); _pdfActiveTab=0;
+        _pdfRenderPanel(); _renderKunciPanel();
+      };
+    }
+  }
+
+  function _pdfSaveEdit(idx){
+    const soalEl = document.getElementById("tgPdfEdSoal");
+    const jwbEl  = document.getElementById("tgPdfEdJwb");
+    if(!soalEl||!jwbEl) return;
+    const arr = _kunciLoad();
+    if(arr[idx]){
+      arr[idx].soal = soalEl.value.trim();
+      arr[idx].jawaban = jwbEl.value.trim();
+      _kunciSave(arr);
+    }
+  }
 
   // ══════════════════════════════════════════════
 
