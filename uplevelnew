@@ -1624,8 +1624,11 @@ local totalNightmareCollected=0; local totalShovel=0; local totalFav=0; local _l
 local _fruitCollectedSinceLastSell = 0  -- counter lintas processFruits, sell saat >=200
 local SELL_THRESHOLD = 200
 -- tracker sesi yang sedang aktif (untuk re-equip balik setelah cadangan)
-local _activeSesiNum = 1
-local _activeSesiDef = nil
+-- _G persist agar survive re-execute (rejoin): kalau SESI2/CADANGAN2 jalan, cadangan 2 tetap trigger walau script di-reload
+if type(_G._UPL_SESI_NUM) ~= "number" then _G._UPL_SESI_NUM = 1 end
+if _G._UPL_SESI_DEF == nil then _G._UPL_SESI_DEF = false end  -- false = sesi 1 (nil = belum init)
+local _activeSesiNum = _G._UPL_SESI_NUM
+local _activeSesiDef = (_G._UPL_SESI_DEF == false) and SESI1_DEF or _G._UPL_SESI_DEF
 
 local function addLog(s)
     -- print hanya kalau WARN/ERROR/HEAL (jangan spam console)
@@ -2817,8 +2820,8 @@ local function processFruits()
         if not stopRequested then
             setStatus("Sesi "..prevSesiNum.." — balik equip", C.accent)
             unequipAll()
-            _activeSesiNum = prevSesiNum
-            _activeSesiDef = prevSesiDef
+            _activeSesiNum = prevSesiNum; _G._UPL_SESI_NUM = prevSesiNum
+            _activeSesiDef = prevSesiDef; _G._UPL_SESI_DEF = prevSesiDef
             equipSesi(prevSesiNum, prevSesiDef)
             setStatus("Sesi "..prevSesiNum.." — running", C.accent)
         end
@@ -2834,8 +2837,8 @@ local function runSesiUtama(sesiNum, def, label, col)
     addLog("Cluster: "..((_clusterPos) and string.format("%.0f,%.0f",_clusterPos.X,_clusterPos.Z) or "NIL — cek workspace.Farm"))
     waitForContainer(10)
     -- set tracker sesi aktif (dipakai processFruits untuk switch cadangan & balik)
-    _activeSesiNum = sesiNum
-    _activeSesiDef = def
+    _activeSesiNum = sesiNum; _G._UPL_SESI_NUM = sesiNum
+    _activeSesiDef = def; _G._UPL_SESI_DEF = def
     unequipAll(); equipSesi(sesiNum, def); setStatus(label.." — running", col)
     while not stopRequested do
         local nm=processFruits()
@@ -2857,7 +2860,7 @@ local function runSesi2()
     addLog("=== SESI 2 ==="); setStatus("Sesi 2 — equip pet",Color3.fromRGB(220,160,60)); updateUI(totalNightmareCollected,0,2)
     _clusterPos = farmCenter()
     waitForContainer(5)
-    _activeSesiNum = 2; _activeSesiDef = SESI2_DEF
+    _activeSesiNum = 2; _activeSesiDef = SESI2_DEF; _G._UPL_SESI_NUM = 2; _G._UPL_SESI_DEF = SESI2_DEF
     unequipAll(); equipSesi(2,SESI2_DEF); equipOneBahan()
     setStatus("Sesi 2 — tunggu nightmare habis",Color3.fromRGB(220,160,60))
     while not stopRequested do
@@ -3016,7 +3019,7 @@ swEv:Connect(function(nowOn)
                 if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
                 else runSesi2(); if not stopRequested then sesiAktif=1 end end
             end
-            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=nil; addLog("Loop stop."); setStatus("Stopped")
+            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
             setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
         end)
     else
@@ -3038,7 +3041,7 @@ task.defer(function()
                 if sesiAktif==1 then runSesi1(); if not stopRequested then sesiAktif=2 end
                 else runSesi2(); if not stopRequested then sesiAktif=1 end end
             end
-            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=nil; addLog("Loop stop."); setStatus("Stopped")
+            running=false; sesiAktif=1; _fruitCollectedSinceLastSell=0; _activeSesiNum=1; _activeSesiDef=SESI1_DEF; _G._UPL_SESI_NUM=1; _G._UPL_SESI_DEF=false; addLog("Loop stop."); setStatus("Stopped")
             setSw(false); if swLbl then swLbl.Text="AUTO LVL — START" end
         end)
     end
