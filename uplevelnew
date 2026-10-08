@@ -2778,6 +2778,21 @@ local function doCollect(fruits)
     return collected
 end
 
+-- Unequip pet asing yang tidak ada di allowedDef dan bukan bahan
+-- allowedDef: tabel {nama, jml} seperti SESI_CADANGAN2_DEF
+local function enforceEquip(allowedDef)
+    local allowed = {}
+    for _, d in ipairs(allowedDef) do allowed[d.nama] = true end
+    for uuid in pairs(modelByUuid) do
+        if uuid == _bahanUuid then continue end
+        local tipe = getPetTipeFromUUID(uuid)
+        if tipe and not allowed[tipe] then
+            addLog("Enforce: unequip '"..tipe.."' (bukan bagian sesi ini)")
+            pcall(function() unequipPet(uuid) end)
+        end
+    end
+end
+
 local function processFruits()
     local data=scanFruits()
     _lastMutasiCount = #data.shovel
@@ -2819,6 +2834,7 @@ local function processFruits()
         -- loop scan sampai nightmare muncul DAN tidak ada mutasi lain
         while not stopRequested do
             task.wait(CFG.loopWait)
+            enforceEquip(SESI_CADANGAN2_DEF)
             local d2 = scanFruits()
             _lastMutasiCount = #d2.shovel
             addLog("Cad2 scan: nm="..d2.nightmareCount.." mutasi="..#d2.shovel)
@@ -2919,6 +2935,7 @@ local function runSesiUtama(sesiNum, def, label, col)
     _activeSesiDef = def; _G._UPL_SESI_DEF = def
     unequipAll(); equipSesi(sesiNum, def); setStatus(label.." — running", col)
     while not stopRequested do
+        enforceEquip(def)
         local nm=processFruits()
         -- tampilkan current nightmare count di farm (bukan cumulative)
         totalNightmareCollected = nm
@@ -2942,6 +2959,7 @@ local function runSesi2()
     unequipAll(); equipSesi(2,SESI2_DEF); equipOneBahan()
     setStatus("Sesi 2 — tunggu nightmare habis",Color3.fromRGB(220,160,60))
     while not stopRequested do
+        enforceEquip(SESI2_DEF)
         unequipBahanTua(); equipOneBahan()
         local sd=scanFruits(); _lastMutasiCount=#sd.shovel; local nm=sd.nightmareCount
         updateUI(totalNightmareCollected,nm,2)
@@ -2975,6 +2993,7 @@ local function runSesi2()
             end)
             while not stopRequested do
                 task.wait(CFG.loopWait)
+                enforceEquip(SESI_CADANGAN2_DEF)
                 local d2=scanFruits()
                 addLog("Cad2(S2): nm="..d2.nightmareCount.." mutasi="..#d2.shovel)
                 if #d2.shovel > 0 then
