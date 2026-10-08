@@ -9044,27 +9044,34 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     if(isNewKey){
       // Key AQ.* = Gemini Interactions API key (format baru dari AI Studio)
       // Coba Interactions API dulu, lalu fallback ke generateContent
-      // Key AQ.* = Interactions API key
-      // Format body yang benar untuk Interactions API
-      const interactBody = {
-        model: _tgAiModel,
-        input: [{ type:"text", text: prompt }],
-      };
-      let interactResp = null;
-      try{
-        interactResp = await fetch("https://generativelanguage.googleapis.com/v1alpha/interactions", {
-          method:"POST",
-          headers:{"Content-Type":"application/json","x-goog-api-key":key},
-          body:JSON.stringify(interactBody)
-        });
-      }catch(e){ interactResp = null; }
-
-      if(interactResp && interactResp.ok){
-        const d = await interactResp.json();
-        const txt = d?.output_text
-          || d?.steps?.find(s=>s.type==="model_output")?.content?.find(c=>c.type==="text")?.text
-          || "";
-        if(txt) return txt.trim();
+      // Key AQ.* = Interactions API key (format baru AI Studio)
+      // Coba beberapa model yang tersedia di Interactions API
+      const interactModels = ["gemini-2.0-flash","gemini-1.5-flash","gemini-2.5-flash"];
+      let interactOk = false;
+      for(const mdl of interactModels){
+        const interactBody = { model: mdl, input: prompt };
+        let ir = null;
+        try{
+          ir = await fetch("https://generativelanguage.googleapis.com/v1alpha/interactions", {
+            method:"POST",
+            headers:{"Content-Type":"application/json","x-goog-api-key":key},
+            body:JSON.stringify(interactBody)
+          });
+        }catch(e){ continue; }
+        if(ir && ir.ok){
+          const d = await ir.json();
+          const txt = d?.output_text
+            || d?.steps?.find(s=>s.type==="model_output")?.content?.find(c=>c.type==="text")?.text
+            || "";
+          if(txt) return txt.trim();
+          interactOk = true; break;
+        }
+        if(ir && ir.status === 400){
+          // 400 = bad request, log body error untuk debug
+          const errTxt = await ir.text().catch(()=>"");
+          console.warn("[AI] Interactions 400 body:", errTxt.slice(0,300));
+          break; // 400 bukan masalah model, stop loop
+        }
       }
 
       // Fallback: generateContent dengan x-goog-api-key header
