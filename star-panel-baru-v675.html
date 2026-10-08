@@ -1415,6 +1415,16 @@
         font-family:monospace; font-size:.65rem; color:#6b6b62;
         white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;
       }
+      #tugasView .tg-card-bab {
+        padding:4px 13px 0;
+        font-family:monospace; font-size:.65rem; font-weight:500;
+        color:#1a1a18; letter-spacing:.01em;
+        border-bottom:1px solid rgba(26,26,24,.06);
+        padding-bottom:5px;
+      }
+      #tugasView .tg-card-hal {
+        font-weight:400; color:#9c9c90; margin-left:2px;
+      }
       #tugasView .tg-card-body {
         padding:10px 13px; font-size:.8rem; line-height:1.67; color:#6b6b62;
         white-space:pre-wrap; word-break:break-word;
@@ -8563,7 +8573,27 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
       return null;
     }
 
+    // Deteksi nomor halaman dari baris (marker OCR atau angka halaman standalone)
+    function _deteksiHal(lines, idx){
+      // cari ke atas max 5 baris: "--- halaman ---", "halaman N", atau angka tunggal kecil
+      for(let i=idx; i>=Math.max(0,idx-8); i--){
+        const t = lines[i].trim();
+        // marker eksplisit dari OCR script
+        const mOcr = t.match(/---\s*halaman\s*(\d+)?\s*---/i);
+        if(mOcr) return mOcr[1] ? parseInt(mOcr[1]) : null;
+        // "Halaman 12" atau "hal. 12" atau "page 12"
+        const mHal = t.match(/^(?:halaman|hal\.?|page)\s*(\d+)$/i);
+        if(mHal) return parseInt(mHal[1]);
+        // angka tunggal (footer/header halaman) — hanya kalau pendek dan bukan di tengah kalimat
+        const mNum = t.match(/^(\d{1,4})$/);
+        if(mNum && parseInt(mNum[1]) > 0 && parseInt(mNum[1]) < 9999) return parseInt(mNum[1]);
+      }
+      // estimasi dari posisi baris (fallback)
+      return null;
+    }
+
     // Ambil seluruh konten bab dari heading sampai heading berikutnya
+    // + potong di batas kalimat (jangan tanggung)
     function _ambilBab(lines, babIdx){
       const chunks = [];
       let i = babIdx + 1;
@@ -8573,14 +8603,25 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
         if(t) chunks.push(t);
         i++;
       }
-      return chunks.join("\n");
+      let full = chunks.join(" ");
+      // Potong di batas kalimat — jangan tanggung di tengah kalimat
+      if(full.length > 1600){
+        // cari akhir kalimat (./?/!) terdekat setelah 1200 char
+        const cut = full.lastIndexOf(".", 1600);
+        const cut2 = full.lastIndexOf("!", 1600);
+        const cut3 = full.lastIndexOf("?", 1600);
+        const bestCut = Math.max(cut, cut2, cut3);
+        if(bestCut > 800) full = full.slice(0, bestCut + 1);
+        else full = full.slice(0, 1600);
+      }
+      return full;
     }
 
     let hasil = [];
     const babSeen = new Map(); // "src::babIdx" -> entry yg sudah ada
 
     for(const ref of _refs){
-      const lines = ref.text.split(/\n+/);
+      const lines = ref.text.split(/\n/);
       for(let i=0;i<lines.length;i++){
         const line = lines[i].trim();
         if(!line) continue;
@@ -8598,16 +8639,19 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
           babSeen.get(babKey).skor += skor;
         } else {
           // bab baru — ambil seluruh isi bab
-          const babContent = bab ? _ambilBab(lines, bab.idx) : lines.slice(Math.max(0,i-2), i+6).join("\n").trim();
+          const babContent = bab ? _ambilBab(lines, bab.idx) : lines.slice(Math.max(0,i-2), i+8).join(" ").trim();
+          // deteksi nomor halaman
+          const hal = _deteksiHal(lines, bab ? bab.idx : i);
           // hitung skor total seluruh bab
           const babLow = babContent.toLowerCase();
           let totalSkor = 0;
           for(const k of kata){ if(babLow.includes(k)) totalSkor += (babLow.split(k).length - 1); }
           const entry = {
             skor: totalSkor || skor,
-            ctx: babContent.slice(0, 1200), // max 1200 karakter per bab
+            ctx: babContent,
             src: ref.name,
             bab: bab ? bab.judul : null,
+            hal: hal,
             babKey
           };
           babSeen.set(babKey, entry);
@@ -8646,15 +8690,20 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     _ringkasState = { idx: 0, extraPage: 0, extraKandidat: [] };
 
     // hasil normal
-    const kartuHTML = data.top5.map((h,i)=>`
+    const kartuHTML = data.top5.map((h,i)=>{
+      // label bab + halaman di baris terpisah
+      const babLabel = h.bab ? `<div class="tg-card-bab">${_esc(h.bab.slice(0,60))}${h.hal ? ` <span class="tg-card-hal">· hal. ${h.hal}</span>` : ""}</div>` : (h.hal ? `<div class="tg-card-bab"><span class="tg-card-hal">hal. ${h.hal}</span></div>` : "");
+      return `
       <div class="tg-card">
         <div class="tg-card-head">
           <span class="tg-card-num">0${i+1}</span>
           <div class="tg-card-divider"></div>
-          <span class="tg-card-src">${_esc(h.src)}${h.bab ? ` <span style="opacity:.55">· ${_esc(h.bab.slice(0,40))}</span>` : ""}</span>
+          <span class="tg-card-src">${_esc(h.src)}</span>
         </div>
+        ${babLabel}
         <div class="tg-card-body">${_hilite(h.ctx, data.kata)}</div>
-      </div>`).join("");
+      </div>`;
+    }).join("");
 
     const n = Math.min(5, data.total);
     const totalInfo = `<div class="tg-total-info">${String(n).padStart(2,"0")} / ${data.total} bab relevan ditemukan</div>`;
