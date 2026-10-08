@@ -3050,9 +3050,9 @@ end)
 
 -- ===================== SWAP SKILL READY-LOOP =====================
 -- Poll tiap 0.05s: pet di _activeUuids yg namanya ada di SWAP_SKILL_CFG
--- -> unequip+equip ulang tiap kali skill ready (gak pakai sound listener)
--- Mirip up6kg ready-loop (Ele), tapi dikonfigurasi via SWAP_SKILL_CFG
+-- Swap TEPAT saat transisi cooldown false->true (baru jadi ready), bukan saat udah lama ready
 local _swapBusy, _swapLastSwap, _swapBusySince = {}, {}, {}
+local _swapWasReady = {}  -- track state cooldown sebelumnya per uuid
 task.spawn(function()
     while true do
         task.wait(0.05)
@@ -3067,19 +3067,24 @@ task.spawn(function()
             local tipe = getPetTipeFromUUID(uuid)
             if not tipe then continue end
             if not SWAP_SKILL_CFG[tipe] then continue end
-            -- cek cooldown ready
-            local rdy  = petReadyUpl(uuid)
+            -- deteksi transisi: swap HANYA saat false->true (baru jadi ready)
+            local rdy = petReadyUpl(uuid)
+            local was = _swapWasReady[uuid]
+            -- fallback: kalau cache nil & idle >4s anggap ready (transisi nil->nil skip)
             local idle = _swapLastSwap[uuid] and (tick()-_swapLastSwap[uuid]) or 999
-            if (rdy == true) or (rdy == nil and idle > 4) then
+            local triggerSwap = (rdy == true and was == false)
+                             or (rdy == nil and idle > 4)
+            _swapWasReady[uuid] = rdy  -- update state SEBELUM swap
+            if triggerSwap then
                 _swapBusy[uuid]     = true
                 _swapBusySince[uuid]= tick()
                 task.spawn(function()
                     pcall(function()
+                        local m = modelByUuid[uuid]
                         local pos = _clusterPos or farmCenter()
-                        local m   = modelByUuid[uuid]
                         if m then pcall(function() pos = m:GetPivot().Position end) end
                         unequipPet(uuid); task.wait(0.03)
-                        if pos then equipPet(uuid) else equipPet(uuid) end
+                        equipPet(uuid)
                         _swapLastSwap[uuid] = tick()
                         -- tunggu model respawn (max 1.2s)
                         for i=1,12 do
