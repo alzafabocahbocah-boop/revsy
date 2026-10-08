@@ -1037,6 +1037,12 @@
 .gift-restart:hover{background:#e0e7ff}
 .gift-restart:disabled{opacity:.6;cursor:default}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+  if(typeof pdfjsLib !== "undefined"){
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+</script>
 </head>
 <body>
 <div class="wrap">
@@ -8263,17 +8269,40 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     if(tab==="cari") renderBadges();
   };
 
+  // ekstrak teks dari PDF pakai PDF.js
+  async function ekstrakPDF(f){
+    if(typeof pdfjsLib === "undefined") return "[PDF.js tidak tersedia]";
+    const ab = await f.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: new Uint8Array(ab)}).promise;
+    let fullText = "";
+    for(let p=1; p<=pdf.numPages; p++){
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      fullText += content.items.map(i=>i.str||"").join(" ") + "\n";
+    }
+    return fullText.trim();
+  }
+
   // proses file
   async function prosesFiles(fileList){
     const files = Array.from(fileList||[]);
+    // tunjukkan loading
+    const dz = document.getElementById("tugasDropZone");
+    if(dz) dz.style.opacity = "0.5";
     for(const f of files){
       let txt = "";
-      try{ txt = await f.text(); }catch(e){ txt = "[File tidak bisa dibaca sebagai teks]"; }
+      const ext = (f.name.split(".").pop()||"").toLowerCase();
+      if(ext === "pdf"){
+        try{ txt = await ekstrakPDF(f); }catch(e){ txt = "[Gagal baca PDF: "+e.message+"]"; }
+      } else {
+        try{ txt = await f.text(); }catch(e){ txt = "[File tidak bisa dibaca sebagai teks]"; }
+      }
       const exist = _refs.findIndex(r=>r.name===f.name);
       const obj = { name:f.name, size:f.size, text:txt, added:Date.now() };
       if(exist>=0) _refs[exist] = obj;
       else _refs.push(obj);
     }
+    if(dz) dz.style.opacity = "";
     _saveRefs();
     renderAll();
   }
