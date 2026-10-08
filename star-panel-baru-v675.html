@@ -1426,6 +1426,17 @@
       #tugasView .tg-card-hal {
         font-weight:400; color:#9c9c90; margin-left:2px;
       }
+      #tugasView .tg-card-cited-badge {
+        margin-left:auto; flex-shrink:0;
+        font-size:.58rem; font-family:sans-serif; font-weight:600;
+        color:#7c3aed; background:rgba(124,58,237,.1);
+        border:1px solid rgba(124,58,237,.2);
+        border-radius:20px; padding:1px 7px; letter-spacing:.01em;
+        white-space:nowrap;
+      }
+      #tugasView .tg-card.tg-card-cited {
+        border-left:2px solid rgba(124,58,237,.35);
+      }
       #tugasView .tg-card-body {
         padding:10px 13px; font-size:.8rem; line-height:1.67; color:#6b6b62;
         white-space:pre-wrap; word-break:break-word;
@@ -9320,20 +9331,37 @@ ${konteks}
 Berikan jawaban yang langsung menjawab pertanyaan. Di setiap poin atau kalimat penting, cantumkan sitasi dalam format: (Sumber X, Bab: ..., Hal. ...) — isi sesuai info sumber yang tersedia. Kalau tidak ada di referensi, bilang terang-terangan.`;
 
     _tgAiCall(prompt).then(aiAnswer=>{
-      // render AI answer + source cards
       const babLabel = (h) => h.bab ? `<div class="tg-card-bab">${_esc(h.bab.slice(0,60))}${h.hal ? ` <span class="tg-card-hal">· hal. ${h.hal}</span>` : ""}</div>` : (h.hal ? `<div class="tg-card-bab"><span class="tg-card-hal">hal. ${h.hal}</span></div>` : "");
+
+      // urutkan kartu sumber sesuai urutan disebut di jawaban AI
       let srcHTML = "";
       if(hasilCari && hasilCari.top5 && hasilCari.top5.length){
-        srcHTML = hasilCari.top5.map((h,i)=>`
-        <div class="tg-card">
+        // cari semua "Sumber X" yang disebut AI, urut kemunculan
+        const mentionOrder = [];
+        const seen = new Set();
+        for(const m of aiAnswer.matchAll(/Sumber\s+(\d+)/gi)){
+          const idx = parseInt(m[1]) - 1;
+          if(!seen.has(idx) && idx >= 0 && idx < hasilCari.top5.length){
+            seen.add(idx); mentionOrder.push(idx);
+          }
+        }
+        // sumber yang tidak disebut AI tetap ditampilkan di belakang
+        hasilCari.top5.forEach((_,i)=>{ if(!seen.has(i)) mentionOrder.push(i); });
+        srcHTML = mentionOrder.map((origIdx, displayIdx)=>{
+          const h = hasilCari.top5[origIdx];
+          const num = String(displayIdx+1).padStart(2,"0");
+          const isCited = seen.has(origIdx);
+          return `<div class="tg-card${isCited ? " tg-card-cited" : ""}">
           <div class="tg-card-head">
-            <span class="tg-card-num">0${i+1}</span>
+            <span class="tg-card-num">${num}</span>
             <div class="tg-card-divider"></div>
             <span class="tg-card-src">${_esc(h.src)}</span>
+            ${isCited ? `<span class="tg-card-cited-badge">✦ dikutip AI</span>` : ""}
           </div>
           ${babLabel(h)}
           <div class="tg-card-body">${_hilite(h.ctx, hasilCari.kata)}</div>
-        </div>`).join("");
+        </div>`;
+        }).join("");
       }
       // render markdown sederhana
       function _md(s){
