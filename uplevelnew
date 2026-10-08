@@ -2767,10 +2767,9 @@ local function processFruits()
             local d2 = scanFruits()
             _lastMutasiCount = #d2.shovel
             addLog("Cad2 scan: nm="..d2.nightmareCount.." mutasi="..#d2.shovel)
-            -- kalau ada mutasi non-nightmare -> collect langsung di sini (jangan break ke loop utama
-            -- karena nightmare masih 0, nanti masuk cad2 lagi terus-terusan)
+            -- ada mutasi -> collect semua di dalam cad2, jangan keluar
             if #d2.shovel > 0 then
-                addLog("Cad2: ada "..#d2.shovel.." mutasi — collect di cad2 dulu sebelum lanjut tunggu nightmare")
+                addLog("Cad2: ada "..#d2.shovel.." mutasi — collect di cad2")
                 setStatus("Cad2 — collect "..#d2.shovel.." mutasi...", Color3.fromRGB(160,120,220))
                 local fruits = d2.shovel
                 while #fruits > 0 and not stopRequested do
@@ -2780,19 +2779,29 @@ local function processFruits()
                     addLog("Cad2 collect: "..collected.."/"..#fruits.." | tas: ".._fruitCollectedSinceLastSell.."/"..SELL_THRESHOLD)
                     if _fruitCollectedSinceLastSell >= SELL_THRESHOLD then
                         task.wait(0.1)
-                        addLog("Cad2 sell! (tas ".._fruitCollectedSinceLastSell.." >= "..SELL_THRESHOLD..")")
+                        addLog("Cad2 sell!")
                         sellInventory()
                         _fruitCollectedSinceLastSell = 0
                     end
                     local nxt = scanFruits()
                     _lastMutasiCount = #nxt.shovel
                     fruits = nxt.shovel
+                    -- cek nightmare sambil collect
+                    if nxt.nightmareCount > 0 then
+                        addLog("Cad2: nightmare muncul saat collect mutasi — selesaikan collect dulu")
+                        d2 = nxt  -- update d2 biar check di bawah tau nightmare sudah ada
+                    end
                 end
                 setStatus("Cadangan 2 — tunggu nightmare...", Color3.fromRGB(78,200,130))
-                addLog("Cad2: mutasi beres, lanjut tunggu nightmare")
+                addLog("Cad2: mutasi beres, cek nightmare")
             end
-            -- nightmare muncul lagi -> balik sesi aktif
-            if d2.nightmareCount > 0 then
+            -- nightmare muncul -> balik sesi aktif (re-scan kalau d2 mungkin stale)
+            local nmNow = d2.nightmareCount
+            if nmNow == 0 then
+                local recheck = scanFruits(); nmNow = recheck.nightmareCount
+                d2 = recheck
+            end
+            if nmNow > 0 then
                 addLog("Nightmare muncul! Balik sesi "..prevSesiNum)
                 -- unfav buah yang tadi di-fav (sudah dapat mutasi nightmare-nya)
                 if _favFruitId then
