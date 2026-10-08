@@ -2274,8 +2274,43 @@ do
         if ver <= 0 or type(rules) ~= "table" then return false end
         if BH.marketState.snipeVer == ver then return false end
         if not BH.autoSnipe then return false end
-        BH.autoSnipe.rules = rules
-        BH.marketState.autoSnipeRules = rules
+        -- v8.470: MERGE — panel hanya update jenis pet yang sudah ada di lokal.
+        -- Jenis pet baru dari panel TIDAK ditambah (biar akun bisa punya snipe sendiri).
+        local existing = BH.autoSnipe.rules or {}
+        -- buat set jenis pet lokal (type lowercase sebagai key)
+        local localTypes = {}
+        for _, r in ipairs(existing) do
+            if r.type then localTypes[r.type:lower()] = true end
+        end
+        -- filter rules panel: hanya yang jenisnya sudah ada di lokal
+        local merged = {}
+        local skipped, updated = 0, 0
+        for _, r in ipairs(rules) do
+            if r.type and localTypes[r.type:lower()] then
+                merged[#merged+1] = r; updated = updated + 1
+            else
+                skipped = skipped + 1
+            end
+        end
+        -- kalau tidak ada satupun yang match, jangan apply sama sekali
+        if #merged == 0 then
+            BH.marketState.snipeVer = ver  -- tandai sudah diproses biar gak repeat
+            print("[ZenxMarket] snipe panel: semua "..skipped.." pet baru dilewati (akun punya rules sendiri)")
+            return false
+        end
+        -- merge: ganti rules lokal yang match dengan versi panel, sisanya tetap
+        local finalRules = {}
+        local panelByType = {}
+        for _, r in ipairs(merged) do panelByType[r.type:lower()] = r end
+        for _, r in ipairs(existing) do
+            if r.type and panelByType[r.type:lower()] then
+                finalRules[#finalRules+1] = panelByType[r.type:lower()]
+            else
+                finalRules[#finalRules+1] = r
+            end
+        end
+        BH.autoSnipe.rules = finalRules
+        BH.marketState.autoSnipeRules = finalRules
         BH.marketState.snipeVer = ver
         local eg = data.eggSource
         if eg == "prem" or eg == "biasa" or eg == "all" then
@@ -2284,9 +2319,9 @@ do
         end
         pcall(function() BH.saveMarketState(BH.marketState) end)
         pcall(function() if BH.autoSnipe.rebuildRules then BH.autoSnipe.rebuildRules() end end)
-        print("[ZenxMarket] aturan snipe dari panel ke-apply | ver="..ver.." | "..#rules.." rule")
+        print(("[ZenxMarket] snipe panel merge: update %d, skip %d pet baru | ver=%d"):format(updated, skipped, ver))
         _G.__ZenxPanelLog = _G.__ZenxPanelLog or {}
-        table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. "  « PANEL: update snipe → " .. #rules .. " target »")
+        table.insert(_G.__ZenxPanelLog, os.date("%H:%M:%S") .. ("  « PANEL: snipe merge → update %d, skip %d baru »"):format(updated, skipped))
         if #_G.__ZenxPanelLog > 30 then table.remove(_G.__ZenxPanelLog, 1) end
         return true
     end
