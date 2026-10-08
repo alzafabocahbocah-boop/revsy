@@ -9046,37 +9046,30 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
       // Coba Interactions API dulu, lalu fallback ke generateContent
       // Key AQ.* = Interactions API key (format baru AI Studio)
       // Coba beberapa model yang tersedia di Interactions API
-      // Interactions API — coba model lain kalau 503
-      const interactPaths = [
-        { url: `https://generativelanguage.googleapis.com/v1/interactions`, body: { model:"gemini-3.8-flash", input: prompt } },
-        { url: `https://generativelanguage.googleapis.com/v1/interactions`, body: { model:"gemini-2.5-flash", input: prompt } },
-        { url: `https://generativelanguage.googleapis.com/v1/interactions`, body: { model:"gemini-2.0-flash", input: prompt } },
-        { url: `https://generativelanguage.googleapis.com/v1beta/interactions`, body: { model:"gemini-3.8-flash", input: prompt } },
-        { url: `https://generativelanguage.googleapis.com/v1beta/interactions`, body: { model:"gemini-2.5-flash", input: prompt } },
-        { url: `https://generativelanguage.googleapis.com/v1beta/interactions`, body: { model:"gemini-2.0-flash", input: prompt } },
+      // Interactions API — hanya gemini-3.8-flash (model lain deprecated)
+      // Coba v1 dulu, fallback v1beta
+      const interactUrls = [
+        `https://generativelanguage.googleapis.com/v1/interactions`,
+        `https://generativelanguage.googleapis.com/v1beta/interactions`,
       ];
-      let interactOk = false;
-      for(const {url:iUrl, body:iBody} of interactPaths){
+      for(const iUrl of interactUrls){
         let ir = null;
         try{
           ir = await fetch(iUrl, {
             method:"POST",
             headers:{"Content-Type":"application/json","x-goog-api-key":key},
-            body:JSON.stringify(iBody)
+            body:JSON.stringify({ model:"gemini-3.8-flash", input: prompt })
           });
         }catch(e){ continue; }
-        const errTxt = await ir.clone().text().catch(()=>"");
-        console.log(`[AI] ${iUrl} → ${ir.status}`, errTxt.slice(0,200));
         if(ir && ir.ok){
           const d = await ir.json().catch(()=>({}));
           const txt = d?.output_text
-            || d?.candidates?.[0]?.content?.parts?.[0]?.text
             || d?.steps?.find(s=>s.type==="model_output")?.content?.find(c=>c.type==="text")?.text
             || "";
           if(txt) return txt.trim();
         }
-        if(ir && (ir.status === 400 || ir.status === 403 || ir.status === 401)) break; // stop kalau auth error
-        // 503 = overload, coba model lain
+        if(ir && ir.status === 503) continue; // overload, coba url lain
+        if(ir && (ir.status === 400 || ir.status === 401 || ir.status === 403)) break;
       }
 
       // Fallback: generateContent dengan x-goog-api-key header
