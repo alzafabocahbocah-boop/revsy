@@ -1,7 +1,8 @@
--- uplevelnew v8.146 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.147 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4200)
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.147: fix unequip Mimic pakai getPetTipeFromUUID (bukan manual cek entry.Name)
 -- v8.146: sesi 2 unequip Mimic saat bahan age naik dari snapshot awal masuk sesi 2
 -- v8.145: sesi 2 pindah sesi 1 saat nm < 200 (sebelumnya < 100)
 -- v8.144: sesi 2 pindah sesi 1 saat nm < 100 (sebelumnya < 50)
@@ -140,7 +141,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.146"
+local VERSION = "v8.147"
 
 -- ===================== KONFIGURASI =====================
 local SESI1_DEF = {
@@ -3022,16 +3023,18 @@ local function runSesi2()
             local ageNow = getAgeFallback(_bahanUuid)
             if ageNow > _bahanAgeSnapshot then
                 addLog("Bahan age naik "..ageNow.." > snapshot "..tostring(_bahanAgeSnapshot).." — unequip Mimic")
-                -- unequip semua uuid yang namanya Mimic Octopus
-                local c = _kgContainer
+                -- unequip semua uuid yang tipenya Mimic Octopus
+                local toUnequip = {}
                 for uuid in pairs(_activeUuids) do
-                    local entry = c and (c[uuid] or c[fmtUUID(uuid)])
-                    local nama = entry and (entry.Name or entry.name or entry.type or "")
-                    if nama:find("Mimic") then
-                        unequipPet(uuid)
-                        _activeUuids[uuid] = nil
-                        task.wait(0.05)
+                    local tipe = getPetTipeFromUUID(uuid)
+                    if tipe and tipe:find("Mimic") then
+                        table.insert(toUnequip, uuid)
                     end
+                end
+                for _, uuid in ipairs(toUnequip) do
+                    unequipPet(uuid)
+                    _activeUuids[uuid] = nil
+                    task.wait(0.05)
                 end
                 _mimicUnequipped = true
                 setStatus("Sesi 2 — Mimic diambil (bahan age naik)", Color3.fromRGB(220,160,60))
