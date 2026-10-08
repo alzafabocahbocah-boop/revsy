@@ -8286,23 +8286,40 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
   // proses file
   async function prosesFiles(fileList){
     const files = Array.from(fileList||[]);
-    // tunjukkan loading
     const dz = document.getElementById("tugasDropZone");
-    if(dz) dz.style.opacity = "0.5";
-    for(const f of files){
-      let txt = "";
+    const cl = document.getElementById("tugasConfigList");
+
+    for(let fi=0; fi<files.length; fi++){
+      const f = files[fi];
       const ext = (f.name.split(".").pop()||"").toLowerCase();
+
+      // tampilkan status di drop zone
+      if(dz) dz.innerHTML = `<div style="text-align:center;padding:8px 0">
+        ⏳ Memproses ${fi+1}/${files.length}: <b>${f.name}</b>${ext==="pdf"?" (ekstrak teks PDF...)" : ""}
+      </div>`;
+
+      let txt = "";
       if(ext === "pdf"){
-        try{ txt = await ekstrakPDF(f); }catch(e){ txt = "[Gagal baca PDF: "+e.message+"]"; }
+        try{ txt = await ekstrakPDF(f); }
+        catch(e){ txt = "[Gagal baca PDF: "+e.message+"]"; }
       } else {
-        try{ txt = await f.text(); }catch(e){ txt = "[File tidak bisa dibaca sebagai teks]"; }
+        try{ txt = await f.text(); }
+        catch(e){ txt = "[File tidak bisa dibaca sebagai teks]"; }
       }
+
       const exist = _refs.findIndex(r=>r.name===f.name);
       const obj = { name:f.name, size:f.size, text:txt, added:Date.now() };
       if(exist>=0) _refs[exist] = obj;
       else _refs.push(obj);
     }
-    if(dz) dz.style.opacity = "";
+
+    // kembalikan drop zone
+    if(dz) dz.innerHTML = `<div style="text-align:center">
+      ✅ ${files.length} file selesai diproses<br>
+      <small style="opacity:.6">Drop file lagi atau klik untuk tambah</small>
+    </div>`;
+    setTimeout(()=>{ if(dz) dz.innerHTML = `<div style="text-align:center">📂 Drop file di sini<br><small style="opacity:.6">atau klik untuk pilih</small></div>`; }, 2500);
+
     _saveRefs();
     renderAll();
   }
@@ -8383,11 +8400,33 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
   // cari
   const cariBtn = document.getElementById("tugasCariBtn");
   if(cariBtn) cariBtn.onclick = ()=>{
-    const soal = (document.getElementById("tugasSoal").value||"");
-    const jaw = cariJawaban(soal);
+    const soal = (document.getElementById("tugasSoal").value||"").trim();
     const hEl = document.getElementById("tugasHasil");
     const iEl = document.getElementById("tugasHasilIsi");
-    if(hEl&&iEl){ iEl.textContent=jaw; hEl.style.display=""; }
+    if(!hEl||!iEl) return;
+
+    // validasi awal
+    if(!soal){ iEl.textContent = "✏️ Isi dulu soalnya ya!"; hEl.style.display=""; return; }
+    if(!_refs.length){ iEl.textContent = "📁 Belum ada referensi. Upload dulu di tab Referensi."; hEl.style.display=""; return; }
+
+    // loading
+    cariBtn.disabled = true;
+    cariBtn.textContent = "⏳ Mencari...";
+    iEl.textContent = `🔍 Mencari "${soal}" di ${_refs.length} file referensi...`;
+    hEl.style.display = "";
+
+    // jalankan sedikit delay biar UI sempat render dulu
+    setTimeout(()=>{
+      let jaw = "";
+      try{
+        jaw = cariJawaban(soal);
+      } catch(e){
+        jaw = "❌ Error: " + e.message;
+      }
+      iEl.textContent = jaw;
+      cariBtn.disabled = false;
+      cariBtn.textContent = "🔍 Cari Jawaban";
+    }, 50);
   };
 
   // bersih
