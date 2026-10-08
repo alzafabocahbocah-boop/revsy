@@ -6187,6 +6187,8 @@ local function run(cfg)
         do
             local akunG2, linkG2 = isi:match("^GOSERVER:([^:]+):(.+)$")
             if akunG2 and linkG2 and linkG2 ~= "" and isi ~= lastIsi then
+                -- v9.676: strip nonce "#<digits>" dari akhir link (panel tambah timestamp buat keunikan lastIsi)
+                linkG2 = linkG2:gsub("#%d+$", "")
                 print("")
                 print(C.BOLD .. C.C .. ">>> JALANIN PERINTAH GOSERVER <<<" .. C.N)
                 info(("GOSERVER: %s -> %s"):format(akunG2, linkG2:sub(1,60)))
