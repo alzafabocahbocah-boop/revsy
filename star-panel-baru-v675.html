@@ -8312,7 +8312,10 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
 
       let txt = "";
       if(ext === "pdf"){
-        try{ txt = await ekstrakPDF(f); }
+        try{
+          txt = await ekstrakPDF(f);
+          if(!txt || txt.trim().length < 10) txt = ""; // PDF scan/image, teks kosong
+        }
         catch(e){ txt = "[Gagal baca PDF: "+e.message+"]"; }
       } else {
         try{ txt = await f.text(); }
@@ -8354,14 +8357,17 @@ try{ var _mts=document.getElementById("mTugas"); if(_mts) _mts.onclick = (e) => 
     if(!soal.trim()) return "Isi dulu soalnya ya!";
     if(!_refs.length) return "Upload dulu referensi di tab 📁 Referensi.";
 
+    // cek file kosong (PDF scan/image — PDF.js tidak bisa extract teks)
+    const emptyRefs = _refs.filter(r => !r.text || r.text.trim().length < 10);
+    if(emptyRefs.length){
+      const names = emptyRefs.map(r=>`• ${r.name}`).join("\n");
+      return `⚠️ File berikut tidak bisa dibaca teksnya (kemungkinan PDF scan/gambar):\n${names}\n\nPDF jenis ini tidak bisa di-extract otomatis. Coba:\n1. Salin teks manual dari PDF → simpan sebagai .txt\n2. Atau gunakan Google Drive → buka PDF → klik kanan → "Buka dengan Google Docs" → copy teks`;
+    }
+
     // cek jika ada ref yang binary — minta upload ulang
     const binaryRefs = _refs.filter(r => _isBinaryText(r.text));
     if(binaryRefs.length){
-      const pdfOk = typeof pdfjsLib !== "undefined" ? "✅ PDF.js OK" : "❌ PDF.js tidak load (buka via server, bukan file://)";
-      const names = binaryRefs.map(r=>{
-        const preview = (r.text||"").slice(0,80).replace(/[\x00-\x08\x0e-\x1f]/g,"?");
-        return `• ${r.name}\n  (${pdfOk}, preview: "${preview}")`;
-      }).join("\n");
+      const names = binaryRefs.map(r=>`• ${r.name}`).join("\n");
       return `⚠️ File berikut perlu di-upload ulang (data lama masih binary):\n${names}\n\nCaranya: tab Referensi → hapus file tsb → upload lagi.`;
     }
 
