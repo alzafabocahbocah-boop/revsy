@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.155"
+local VERSION = "v27.156"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7575,17 +7575,79 @@ do
         local teEggSel = "Dinosaur Egg"   -- default
         yE = yE + 34
 
-        -- PLAYER PICKER (online di server ini, kecuali self)
-        local teTargetLabel = elbl(teFrame, "Target", 12, C.textDim)
-        teTargetLabel.Position = UDim2.new(0,0,0,yE); teTargetLabel.Size = UDim2.new(0,80,0,28)
-        local teTargetBtn = mk("TextButton", {
-            Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
-            BackgroundColor3 = C.card, BorderSizePixel = 0,
-            Text = "pilih player...", TextColor3 = C.textDim, Font = FONT, TextSize = 12,
-            AutoButtonColor = false, Parent = teFrame })
-        Instance.new("UICorner", teTargetBtn).CornerRadius = UDim.new(0,5)
-        local teTargetName = nil   -- nama player yg dipilih (string)
-        yE = yE + 34
+        -- PLAYER PICKER (online di server ini, kecuali self) — 2 target
+        local teTargetNames = {nil, nil}   -- max 2 target
+
+        local function makeTargetRow(idx)
+            local label = elbl(teFrame, "Target "..idx, 12, C.textDim)
+            label.Position = UDim2.new(0,0,0,yE); label.Size = UDim2.new(0,80,0,28)
+            local btn = mk("TextButton", {
+                Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
+                BackgroundColor3 = C.card, BorderSizePixel = 0,
+                Text = "pilih player...", TextColor3 = C.textDim, Font = FONT, TextSize = 12,
+                AutoButtonColor = false, Parent = teFrame })
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,5)
+            -- tombol hapus (×) di sisi kanan dalam
+            local clrBtn = mk("TextButton", {
+                Size = UDim2.new(0,22,0,22), Position = UDim2.new(1,-24,0.5,-11),
+                BackgroundTransparency = 1, Text = "×", TextColor3 = C.textDim,
+                Font = FONT_B, TextSize = 16, ZIndex = 2,
+                AutoButtonColor = false, Parent = btn })
+            clrBtn.MouseButton1Click:Connect(function()
+                teTargetNames[idx] = nil
+                btn.Text = "pilih player..."
+                btn.TextColor3 = C.textDim
+            end)
+            yE = yE + 34
+
+            -- PLAYER picker popup
+            btn.MouseButton1Click:Connect(function()
+                local dim3 = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
+                    BackgroundTransparency = 0.5, ZIndex = 110, Parent = main })
+                local box3 = mk("Frame", { Size = UDim2.new(0,220,0,240), Position = UDim2.new(0.5,-110,0.5,-120),
+                    BackgroundColor3 = C.bg, BorderSizePixel = 0, ZIndex = 111, Parent = main })
+                Instance.new("UICorner", box3).CornerRadius = UDim.new(0,8)
+                local cls3 = mk("TextButton", { Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-32,0,4),
+                    BackgroundTransparency = 1, Text = "✕", TextColor3 = C.textDim, Font = FONT_B, TextSize = 16, ZIndex = 112, Parent = box3 })
+                local ttl3 = lbl(box3, "Pilih Target "..idx, 13, C.text)
+                ttl3.Position = UDim2.new(0,12,0,8); ttl3.Size = UDim2.new(1,-40,0,24); ttl3.Font = FONT_B; ttl3.ZIndex = 112
+                local sc3 = mk("ScrollingFrame", { Size = UDim2.new(1,-16,1,-46), Position = UDim2.new(0,8,0,40),
+                    BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+                    CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 112, Parent = box3 })
+                mk("UIListLayout", { Padding = UDim.new(0,3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc3 })
+                local plList = Players:GetPlayers()
+                local hasOther = false
+                for _, pl in ipairs(plList) do
+                    if pl ~= player then
+                        hasOther = true
+                        local chosen = (pl.Name == teTargetNames[idx])
+                        local rb2 = mk("TextButton", { Size = UDim2.new(1,0,0,30), BackgroundColor3 = chosen and C.accent or C.card,
+                            Text = "", AutoButtonColor = false, ZIndex = 113, Parent = sc3 })
+                        Instance.new("UICorner", rb2).CornerRadius = UDim.new(0,5)
+                        local dt2 = mk("Frame", { Size = UDim2.new(0,7,0,7), Position = UDim2.new(0,9,0.5,-3),
+                            BackgroundColor3 = Color3.fromRGB(60,200,120), BorderSizePixel = 0, ZIndex = 114, Parent = rb2 })
+                        Instance.new("UICorner", dt2).CornerRadius = UDim.new(1,0)
+                        local rl2 = lbl(rb2, pl.Name, 12, chosen and Color3.new(0,0,0) or C.text, Enum.TextXAlignment.Left)
+                        rl2.Position = UDim2.new(0,24,0,0); rl2.Size = UDim2.new(1,-28,1,0); rl2.ZIndex = 114
+                        rb2.MouseButton1Click:Connect(function()
+                            teTargetNames[idx] = pl.Name
+                            btn.Text = pl.Name
+                            btn.TextColor3 = C.text
+                            dim3:Destroy()
+                        end)
+                    end
+                end
+                if not hasOther then
+                    local el = lbl(sc3, "gak ada player lain di server", 11, C.textDim)
+                    el.Size = UDim2.new(1,0,0,36); el.TextWrapped = true; el.ZIndex = 113
+                end
+                cls3.MouseButton1Click:Connect(function() dim3:Destroy() end)
+            end)
+            return btn
+        end
+
+        local teTargetBtn1 = makeTargetRow(1)
+        local teTargetBtn2 = makeTargetRow(2)
 
         -- STATUS label
         local teStatL = elbl(teFrame, "", 10, C.textDim)
@@ -7634,49 +7696,6 @@ do
                 end
             end
             cls2.MouseButton1Click:Connect(function() dim2:Destroy() end)
-        end)
-
-        -- PLAYER picker popup
-        teTargetBtn.MouseButton1Click:Connect(function()
-            local dim3 = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
-                BackgroundTransparency = 0.5, ZIndex = 110, Parent = main })
-            local box3 = mk("Frame", { Size = UDim2.new(0,220,0,240), Position = UDim2.new(0.5,-110,0.5,-120),
-                BackgroundColor3 = C.bg, BorderSizePixel = 0, ZIndex = 111, Parent = main })
-            Instance.new("UICorner", box3).CornerRadius = UDim.new(0,8)
-            local cls3 = mk("TextButton", { Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-32,0,4),
-                BackgroundTransparency = 1, Text = "✕", TextColor3 = C.textDim, Font = FONT_B, TextSize = 16, ZIndex = 112, Parent = box3 })
-            local ttl3 = lbl(box3, "Pilih Target Player", 13, C.text)
-            ttl3.Position = UDim2.new(0,12,0,8); ttl3.Size = UDim2.new(1,-40,0,24); ttl3.Font = FONT_B; ttl3.ZIndex = 112
-            local sc3 = mk("ScrollingFrame", { Size = UDim2.new(1,-16,1,-46), Position = UDim2.new(0,8,0,40),
-                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-                CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 112, Parent = box3 })
-            mk("UIListLayout", { Padding = UDim.new(0,3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc3 })
-            local plList = Players:GetPlayers()
-            if #plList <= 1 then
-                local el = lbl(sc3, "gak ada player lain di server", 11, C.textDim)
-                el.Size = UDim2.new(1,0,0,36); el.TextWrapped = true; el.ZIndex = 113
-            end
-            for _, pl in ipairs(plList) do
-                if pl ~= player then
-                    local chosen = (pl.Name == teTargetName)
-                    local rb2 = mk("TextButton", { Size = UDim2.new(1,0,0,30), BackgroundColor3 = chosen and C.accent or C.card,
-                        Text = "", AutoButtonColor = false, ZIndex = 113, Parent = sc3 })
-                    Instance.new("UICorner", rb2).CornerRadius = UDim.new(0,5)
-                    -- dot online
-                    local dt2 = mk("Frame", { Size = UDim2.new(0,7,0,7), Position = UDim2.new(0,9,0.5,-3),
-                        BackgroundColor3 = Color3.fromRGB(60,200,120), BorderSizePixel = 0, ZIndex = 114, Parent = rb2 })
-                    Instance.new("UICorner", dt2).CornerRadius = UDim.new(1,0)
-                    local rl2 = lbl(rb2, pl.Name, 12, chosen and Color3.new(0,0,0) or C.text, Enum.TextXAlignment.Left)
-                    rl2.Position = UDim2.new(0,24,0,0); rl2.Size = UDim2.new(1,-28,1,0); rl2.ZIndex = 114
-                    rb2.MouseButton1Click:Connect(function()
-                        teTargetName = pl.Name
-                        teTargetBtn.Text = pl.Name
-                        teTargetBtn.TextColor3 = C.text
-                        dim3:Destroy()
-                    end)
-                end
-            end
-            cls3.MouseButton1Click:Connect(function() dim3:Destroy() end)
         end)
 
         -- helper: bangun pet-type set dari sellRules preset (pets yg action="sell" atau kg<1e8 -> sell dibawah threshold)
@@ -7730,9 +7749,9 @@ do
                 teStatL.Text = "dihentikan"
                 return
             end
-            -- validasi
-            if not teTargetName or teTargetName == "" then teStatL.Text = "pilih target player dulu"; return end
-            if not Players:FindFirstChild(teTargetName) then teStatL.Text = teTargetName.." gak online di server ini"; return end
+            -- validasi: minimal 1 target
+            local hasTarget = teTargetNames[1] or teTargetNames[2]
+            if not hasTarget then teStatL.Text = "pilih minimal 1 target player"; return end
             if not PRESET_HACT[teEggSel] then teStatL.Text = "preset "..teEggSel.." gak ada"; return end
             -- START
             teRunning = true
@@ -7747,9 +7766,15 @@ do
                 local myGen = teGen   -- gen ini: stop kalau user klik start lagi (gen baru)
                 while teRunning and _G.__hactTradeEggGen == myGen do
                     pcall(function()
-                        -- cek target masih online
-                        if not Players:FindFirstChild(teTargetName) then
-                            teStatL.Text = teTargetName.." offline — stop"
+                        -- cek semua target offline
+                        local anyOnline = false
+                        for ti = 1, 2 do
+                            if teTargetNames[ti] and Players:FindFirstChild(teTargetNames[ti]) then
+                                anyOnline = true; break
+                            end
+                        end
+                        if not anyOnline then
+                            teStatL.Text = "semua target offline — stop"
                             teRunning = false
                             _G.__hactTradeEggAktif = false
                             teBtn.Text = "START TRADE EGG"; teBtn.BackgroundColor3 = C.card; teBtn.TextColor3 = C.text
@@ -7758,6 +7783,9 @@ do
                         local full2 = isBackpackFull()
                         if full2 and not wasFull2 then
                             -- LEADING EDGE: inv baru penuh → snapshot pet sell sekarang
+                            local tgtLabel = table.concat((function()
+                                local t={}; for ti=1,2 do if teTargetNames[ti] then t[#t+1]=teTargetNames[ti] end end; return t
+                            end)(), " & ")
                             teStatL.Text = "inv full! snapshot pet sell dari "..teEggSel.."..."
                             task.wait(0.3)   -- biar game sempet register item terakhir
                             local snapUuids = snapshotSellPets(teEggSel)
@@ -7766,7 +7794,7 @@ do
                                 teStatL.Text = "inv full tapi 0 pet sell ("..teEggSel..") di backpack"
                                 wasFull2 = true
                             else
-                                teStatL.Text = ("snapshot %d pet sell → spam tiket ke %s..."):format(snapCount, teTargetName)
+                                teStatL.Text = ("snapshot %d pet sell → spam tiket ke %s..."):format(snapCount, tgtLabel)
                                 _G.__hactTradeEggAktif = true
                                 Auto.giftBusy = true   -- pause hatch/sell/fav selama kirim
                                 Auto.giftBusySince = tick()
@@ -7778,41 +7806,62 @@ do
                                 local te2 = ge2 and ge2:FindFirstChild("TradeEvents")
                                 local sendReqRE2 = te2 and te2:FindFirstChild("SendRequest")
                                 local addItemRE2 = te2 and te2:FindFirstChild("AddItem")
-                                local tPlr2 = Players:FindFirstChild(teTargetName)
-                                local sent2 = 0
-                                if sendReqRE2 and addItemRE2 and tPlr2 then
-                                    local accRE2 = te2 and te2:FindFirstChild("Accept")
-                                    local cfmRE2 = te2 and te2:FindFirstChild("Confirm")
-                                    local bgOn = true
-
-                                    -- bg task 1: spam SendRequest terus-terusan (tiket di-kirim ulang terus)
-                                    task.spawn(function()
-                                        while bgOn do
-                                            pcall(function() sendReqRE2:FireServer(tPlr2) end)
-                                            task.wait(0.1)
-                                        end
-                                    end)
-                                    -- bg task 2: spam Accept+Confirm terus-terusan
-                                    task.spawn(function()
-                                        while bgOn do
-                                            if accRE2 then pcall(function() accRE2:FireServer() end) end
-                                            if cfmRE2 then pcall(function() cfmRE2:FireServer() end) end
-                                            task.wait(0.12)
-                                        end
-                                    end)
-
-                                    -- main: AddItem per uuid satu per satu (uuid diloop, SendRequest udah jalan di bg)
-                                    for i, uuid in ipairs(uuidList) do
-                                        if not teRunning then break end
-                                        teStatL.Text = ("kirim %d/%d ke %s..."):format(i, #uuidList, teTargetName)
-                                        pcall(function() addItemRE2:FireServer("Pet", uuid) end)
-                                        sent2 = sent2 + 1
-                                        task.wait(0.1)
+                                local accRE2 = te2 and te2:FindFirstChild("Accept")
+                                local cfmRE2 = te2 and te2:FindFirstChild("Confirm")
+                                -- kumpulin target yg online
+                                local activeTgts = {}
+                                for ti = 1, 2 do
+                                    if teTargetNames[ti] then
+                                        local p = Players:FindFirstChild(teTargetNames[ti])
+                                        if p then activeTgts[#activeTgts+1] = p end
                                     end
-                                    bgOn = false
-                                    teStatL.Text = ("selesai: %d pet dikirim ke %s ✓"):format(sent2, teTargetName)
+                                end
+                                local sent2 = 0
+                                if sendReqRE2 and addItemRE2 and #activeTgts > 0 then
+                                    -- split uuid list merata ke tiap target
+                                    local splits = {}
+                                    for ti = 1, #activeTgts do splits[ti] = {} end
+                                    for i, uuid in ipairs(uuidList) do
+                                        local ti = ((i-1) % #activeTgts) + 1
+                                        splits[ti][#splits[ti]+1] = uuid
+                                    end
+                                    -- kirim ke tiap target parallel
+                                    local done2 = 0
+                                    for ti, tPlr2 in ipairs(activeTgts) do
+                                        task.spawn(function()
+                                            local tList = splits[ti]
+                                            local bgOn = true
+                                            task.spawn(function()
+                                                while bgOn do
+                                                    pcall(function() sendReqRE2:FireServer(tPlr2) end)
+                                                    task.wait(0.1)
+                                                end
+                                            end)
+                                            task.spawn(function()
+                                                while bgOn do
+                                                    if accRE2 then pcall(function() accRE2:FireServer() end) end
+                                                    if cfmRE2 then pcall(function() cfmRE2:FireServer() end) end
+                                                    task.wait(0.12)
+                                                end
+                                            end)
+                                            for i2, uuid in ipairs(tList) do
+                                                if not teRunning then break end
+                                                teStatL.Text = ("kirim %d/%d → %s..."):format(i2, #tList, tPlr2.Name)
+                                                pcall(function() addItemRE2:FireServer("Pet", uuid) end)
+                                                sent2 = sent2 + 1
+                                                task.wait(0.1)
+                                            end
+                                            bgOn = false
+                                            done2 = done2 + 1
+                                        end)
+                                    end
+                                    -- tunggu semua task selesai
+                                    while done2 < #activeTgts and teRunning do task.wait(0.2) end
+                                    local names2 = {}
+                                    for _, p in ipairs(activeTgts) do names2[#names2+1] = p.Name end
+                                    teStatL.Text = ("selesai: %d pet → %s ✓"):format(sent2, table.concat(names2, " & "))
                                 else
-                                    teStatL.Text = "ERR: TradeEvents / target gak resolve"
+                                    teStatL.Text = "ERR: TradeEvents / semua target offline"
                                 end
                                 Auto.giftBusy = false
                                 _G.__hactTradeAktif = tick()   -- grace 30s abis trade (pola sama hact)
