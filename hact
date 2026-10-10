@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.153"
+local VERSION = "v27.154"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7766,26 +7766,74 @@ do
                                 teStatL.Text = "inv full tapi 0 pet sell ("..teEggSel..") di backpack"
                                 wasFull2 = true
                             else
-                                teStatL.Text = ("snapshot %d pet sell → gift ke %s..."):format(snapCount, teTargetName)
-                                -- pause semua config lain (sell/auto/fav) lewat giftBusy — dihandle di giftPetsByFilter sendiri
-                                -- set flag global biar doAutoSell skip
+                                teStatL.Text = ("snapshot %d pet sell → spam tiket ke %s..."):format(snapCount, teTargetName)
                                 _G.__hactTradeEggAktif = true
-                                local sellTypes = getSellTypes(teEggSel)
-                                local petSet = {}; for tp in pairs(sellTypes) do petSet[tp] = true end
-                                local cfg2 = {
-                                    targets   = { [teTargetName] = true },
-                                    pets      = petSet,
-                                    uuids     = snapUuids,   -- v27.153: whitelist snapshot
-                                    unfavFirst = true,       -- unfav dulu sebelum kirim
-                                    _running  = true,
-                                }
-                                local sent2 = giftPetsByFilter(cfg2)
-                                if sent2 and sent2 > 0 then
-                                    teStatL.Text = ("terkirim %d pet sell ke %s ✓"):format(sent2, teTargetName)
+                                Auto.giftBusy = true   -- pause hatch/sell/fav selama kirim
+                                Auto.giftBusySince = tick()
+                                -- build UUID list (ordered) dari snapshot
+                                local uuidList = {}
+                                for u in pairs(snapUuids) do uuidList[#uuidList+1] = "{"..u.."}" end
+                                -- resolve TradeEvents RE
+                                local ge2 = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+                                local te2 = ge2 and ge2:FindFirstChild("TradeEvents")
+                                local sendReqRE2 = te2 and te2:FindFirstChild("SendRequest")
+                                local addItemRE2 = te2 and te2:FindFirstChild("AddItem")
+                                local tPlr2 = Players:FindFirstChild(teTargetName)
+                                local sent2 = 0
+                                if sendReqRE2 and addItemRE2 and tPlr2 then
+                                    -- background spam accept terus selama kirim (pola uplevelnew TRADE ALL)
+                                    local bgOn = true
+                                    task.spawn(function()
+                                        while bgOn do
+                                            pcall(function()
+                                                local accBtn = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+                                                -- coba fire Accept+Confirm langsung lewat RE
+                                                if te2 then
+                                                    local accRE = te2:FindFirstChild("Accept")
+                                                    local cfmRE = te2:FindFirstChild("Confirm")
+                                                    if accRE then pcall(function() accRE:FireServer() end) end
+                                                    if cfmRE then pcall(function() cfmRE:FireServer() end) end
+                                                end
+                                            end)
+                                            task.wait(0.12)
+                                        end
+                                    end)
+                                    -- spam: per pet → SendRequest + AddItem (gak nunggu GUI, tiket per pet)
+                                    for i, uuid in ipairs(uuidList) do
+                                        if not teRunning then break end
+                                        teStatL.Text = ("kirim %d/%d ke %s..."):format(i, #uuidList, teTargetName)
+                                        -- equip tiket dulu (holdTradingTicket kalau ada, atau cukup skip)
+                                        pcall(function()
+                                            local bp2 = player:FindFirstChild("Backpack")
+                                            local char2 = player.Character
+                                            local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+                                            if not hum2 then return end
+                                            local function findTk(c) if not c then return end
+                                                for _, t in ipairs(c:GetChildren()) do
+                                                    if t:IsA("Tool") then local n=t.Name:lower()
+                                                        if (n:find("trading") and n:find("ticket")) or n:find("trade ticket") then return t end
+                                                    end
+                                                end
+                                            end
+                                            local tk = findTk(char2) or findTk(bp2)
+                                            if tk and not findTk(char2) then
+                                                hum2:UnequipTools(); task.wait(0.05)
+                                                hum2:EquipTool(tk); task.wait(0.08)
+                                            end
+                                        end)
+                                        pcall(function() sendReqRE2:FireServer(tPlr2) end)
+                                        task.wait(0.1)
+                                        pcall(function() addItemRE2:FireServer("Pet", uuid) end)
+                                        sent2 = sent2 + 1
+                                        task.wait(0.15)
+                                    end
+                                    bgOn = false
+                                    teStatL.Text = ("selesai: %d pet dikirim ke %s ✓"):format(sent2, teTargetName)
                                 else
-                                    local D = _G.__hactGiftDbg or {}
-                                    teStatL.Text = ("0 terkirim | n:%d ok:%d | err:%s"):format(D.total or 0, D.ok or 0, tostring(_G.__hactLastErr or "-"))
+                                    teStatL.Text = "ERR: TradeEvents / target gak resolve"
                                 end
+                                Auto.giftBusy = false
+                                _G.__hactTradeAktif = tick()   -- grace 30s abis trade (pola sama hact)
                                 wasFull2 = true
                             end
                         elseif full2 then
