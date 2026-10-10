@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.152"
+local VERSION = "v27.153"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -2389,6 +2389,8 @@ local function getMatchedPets(cfg)
             local base = t.Name:gsub("%s*%[.*$", ""):gsub("%s+$", "")
             local okPet = not hasPet
             if hasPet then for pt in pairs(cfg.pets) do if base:lower():find(pt:lower(),1,true) then okPet = true break end end end
+            -- v27.153: snapshot uuid whitelist (Trade Egg: cuma gift pet yg ada saat inv penuh, bukan yg datang setelah)
+            if cfg.uuids and uclean and not cfg.uuids[uclean] then okPet = false end
             local okMut = not hasMut
             if hasMut and p then for mt in pairs(cfg.muts) do if p.mut and p.mut:lower():find(mt:lower(),1,true) then okMut = true break end end end
             local okAge = true
@@ -2838,6 +2840,8 @@ function doAutoSell()
     -- v27.112: SKIP total selama trade (Auto.giftBusy) -> proteksi-fav di bawah gak nyalain fav
     -- pet keep pas lagi di-trade (dulu doAutoSell gak cek giftBusy -> re-fav mid-trade -> trade gagal).
     if Auto and Auto.giftBusy then print("[HactTelur] Auto-sell SKIP: lagi trade (giftBusy)"); return 0 end
+    -- v27.153: SKIP selama Trade Egg aktif (mau ngegift sell-pet ke target, jangan duluan ke-sell)
+    if _G.__hactTradeEggAktif then print("[HactTelur] Auto-sell SKIP: Trade Egg aktif"); return 0 end
     -- v26.3: tunda sell CUMA kalau baru aja "Trade completed!" (dalam 3 detik) — pet keep lagi
     -- transisi unfav buat gift. KALAU cuma fitur gift ON tapi gak ada trade complete, sell JALAN
     -- (dulu: gift cfg running = langsung tunda -> sell ke-block terus walau gift gak ngapa2in).
@@ -7529,6 +7533,276 @@ do
             end
         end
     end)
+
+    -- ======= v27.153: TRADE EGG — gift sell-pet ke target server, nunggu inv full, snapshot =======
+    do
+        local Players = game:GetService("Players")
+
+        -- divider
+        local divFrame = mk("Frame", {
+            Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.border, BorderSizePixel = 0,
+            Position = UDim2.new(0, 0, 1, -1), Parent = tradeContent })
+        -- kita taruh di posisi relatif terhadap bagian bawah konten yg ada
+        -- pakai ScrollingFrame sendiri biar gak bentrok sama konten di atas
+
+        local teFrame = mk("Frame", {
+            Size = UDim2.new(1, 0, 0, 999), Position = UDim2.new(0, 0, 0, 0),
+            BackgroundTransparency = 1, Parent = tradeContent })
+        -- posisikan di bawah konten yg udah ada (isi tradeContent terakhir ada di y~360+)
+        -- kita pakai UIListLayout buat auto-stack
+        -- Karena tradeContent pakai absolute positioning, kita taruh teFrame di y=370
+        teFrame.Position = UDim2.new(0, 0, 0, 370)
+        divFrame.Parent = teFrame; divFrame.Position = UDim2.new(0,0,0,0); divFrame.Size = UDim2.new(1,0,0,1)
+
+        local yE = 8
+        local function elbl(parent, txt, sz, col, ax) local l = lbl(parent, txt, sz, col or C.text, ax); return l end
+
+        -- judul
+        local teLbl = elbl(teFrame, "TRADE EGG", 14, C.text)
+        teLbl.Font = FONT_B; teLbl.Position = UDim2.new(0,0,0,yE); teLbl.Size = UDim2.new(1,0,0,20); yE = yE + 24
+        local teSub = elbl(teFrame, "gift sell-pet dari preset ke target online • nunggu inv full • snapshot saat trigger", 10, C.textDim)
+        teSub.TextWrapped = true; teSub.Position = UDim2.new(0,0,0,yE); teSub.Size = UDim2.new(1,0,0,28); yE = yE + 32
+
+        -- EGG PRESET dropdown (baris dengan label + tombol buka picker)
+        local teEggLabel = elbl(teFrame, "Egg Preset", 12, C.textDim)
+        teEggLabel.Position = UDim2.new(0,0,0,yE); teEggLabel.Size = UDim2.new(0,80,0,28)
+        local teEggBtn = mk("TextButton", {
+            Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
+            BackgroundColor3 = C.card, BorderSizePixel = 0,
+            Text = "Dinosaur Egg", TextColor3 = C.text, Font = FONT, TextSize = 12,
+            AutoButtonColor = false, Parent = teFrame })
+        Instance.new("UICorner", teEggBtn).CornerRadius = UDim.new(0,5)
+        local teEggSel = "Dinosaur Egg"   -- default
+        yE = yE + 34
+
+        -- PLAYER PICKER (online di server ini, kecuali self)
+        local teTargetLabel = elbl(teFrame, "Target", 12, C.textDim)
+        teTargetLabel.Position = UDim2.new(0,0,0,yE); teTargetLabel.Size = UDim2.new(0,80,0,28)
+        local teTargetBtn = mk("TextButton", {
+            Size = UDim2.new(1,-86,0,28), Position = UDim2.new(0,86,0,yE),
+            BackgroundColor3 = C.card, BorderSizePixel = 0,
+            Text = "pilih player...", TextColor3 = C.textDim, Font = FONT, TextSize = 12,
+            AutoButtonColor = false, Parent = teFrame })
+        Instance.new("UICorner", teTargetBtn).CornerRadius = UDim.new(0,5)
+        local teTargetName = nil   -- nama player yg dipilih (string)
+        yE = yE + 34
+
+        -- STATUS label
+        local teStatL = elbl(teFrame, "", 10, C.textDim)
+        teStatL.TextWrapped = true; teStatL.TextXAlignment = Enum.TextXAlignment.Left
+        teStatL.TextYAlignment = Enum.TextYAlignment.Top; teStatL.AutomaticSize = Enum.AutomaticSize.Y
+        teStatL.Position = UDim2.new(0,0,0,yE+40); teStatL.Size = UDim2.new(1,0,0,0)
+
+        -- START/STOP button
+        local teRunning = false
+        local teBtn = mk("TextButton", {
+            Size = UDim2.new(1,0,0,34), Position = UDim2.new(0,0,0,yE),
+            BackgroundColor3 = C.card, BorderSizePixel = 0,
+            Text = "START TRADE EGG", TextColor3 = C.text, Font = FONT_B, TextSize = 13,
+            AutoButtonColor = false, Parent = teFrame })
+        Instance.new("UICorner", teBtn).CornerRadius = UDim.new(0,6)
+
+        -- EGG PRESET picker popup
+        teEggBtn.MouseButton1Click:Connect(function()
+            -- buat dim overlay
+            local dim2 = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
+                BackgroundTransparency = 0.5, ZIndex = 110, Parent = main })
+            local box2 = mk("Frame", { Size = UDim2.new(0,220,0,200), Position = UDim2.new(0.5,-110,0.5,-100),
+                BackgroundColor3 = C.bg, BorderSizePixel = 0, ZIndex = 111, Parent = main })
+            Instance.new("UICorner", box2).CornerRadius = UDim.new(0,8)
+            local cls2 = mk("TextButton", { Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-32,0,4),
+                BackgroundTransparency = 1, Text = "✕", TextColor3 = C.textDim, Font = FONT_B, TextSize = 16, ZIndex = 112, Parent = box2 })
+            local ttl2 = lbl(box2, "Pilih Egg Preset", 13, C.text)
+            ttl2.Position = UDim2.new(0,12,0,8); ttl2.Size = UDim2.new(1,-40,0,24); ttl2.Font = FONT_B; ttl2.ZIndex = 112
+            local sc2 = mk("ScrollingFrame", { Size = UDim2.new(1,-16,1,-46), Position = UDim2.new(0,8,0,40),
+                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+                CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 112, Parent = box2 })
+            mk("UIListLayout", { Padding = UDim.new(0,3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc2 })
+            for _, nm in ipairs(PRESET_URUT) do
+                local pr = PRESET_HACT[nm]
+                if pr then
+                    local rb = mk("TextButton", { Size = UDim2.new(1,0,0,30), BackgroundColor3 = (nm == teEggSel) and C.accent or C.card,
+                        Text = "", AutoButtonColor = false, ZIndex = 113, Parent = sc2 })
+                    Instance.new("UICorner", rb).CornerRadius = UDim.new(0,5)
+                    local rl = lbl(rb, nm, 12, (nm == teEggSel) and Color3.new(0,0,0) or C.text, Enum.TextXAlignment.Left)
+                    rl.Position = UDim2.new(0,10,0,0); rl.Size = UDim2.new(1,-12,1,0); rl.ZIndex = 113
+                    rb.MouseButton1Click:Connect(function()
+                        teEggSel = nm
+                        teEggBtn.Text = nm
+                        dim2:Destroy()
+                    end)
+                end
+            end
+            cls2.MouseButton1Click:Connect(function() dim2:Destroy() end)
+        end)
+
+        -- PLAYER picker popup
+        teTargetBtn.MouseButton1Click:Connect(function()
+            local dim3 = mk("Frame", { Size = UDim2.new(1,0,1,0), BackgroundColor3 = Color3.new(0,0,0),
+                BackgroundTransparency = 0.5, ZIndex = 110, Parent = main })
+            local box3 = mk("Frame", { Size = UDim2.new(0,220,0,240), Position = UDim2.new(0.5,-110,0.5,-120),
+                BackgroundColor3 = C.bg, BorderSizePixel = 0, ZIndex = 111, Parent = main })
+            Instance.new("UICorner", box3).CornerRadius = UDim.new(0,8)
+            local cls3 = mk("TextButton", { Size = UDim2.new(0,28,0,28), Position = UDim2.new(1,-32,0,4),
+                BackgroundTransparency = 1, Text = "✕", TextColor3 = C.textDim, Font = FONT_B, TextSize = 16, ZIndex = 112, Parent = box3 })
+            local ttl3 = lbl(box3, "Pilih Target Player", 13, C.text)
+            ttl3.Position = UDim2.new(0,12,0,8); ttl3.Size = UDim2.new(1,-40,0,24); ttl3.Font = FONT_B; ttl3.ZIndex = 112
+            local sc3 = mk("ScrollingFrame", { Size = UDim2.new(1,-16,1,-46), Position = UDim2.new(0,8,0,40),
+                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+                CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 112, Parent = box3 })
+            mk("UIListLayout", { Padding = UDim.new(0,3), SortOrder = Enum.SortOrder.LayoutOrder, Parent = sc3 })
+            local plList = Players:GetPlayers()
+            if #plList <= 1 then
+                local el = lbl(sc3, "gak ada player lain di server", 11, C.textDim)
+                el.Size = UDim2.new(1,0,0,36); el.TextWrapped = true; el.ZIndex = 113
+            end
+            for _, pl in ipairs(plList) do
+                if pl ~= player then
+                    local chosen = (pl.Name == teTargetName)
+                    local rb2 = mk("TextButton", { Size = UDim2.new(1,0,0,30), BackgroundColor3 = chosen and C.accent or C.card,
+                        Text = "", AutoButtonColor = false, ZIndex = 113, Parent = sc3 })
+                    Instance.new("UICorner", rb2).CornerRadius = UDim.new(0,5)
+                    -- dot online
+                    local dt2 = mk("Frame", { Size = UDim2.new(0,7,0,7), Position = UDim2.new(0,9,0.5,-3),
+                        BackgroundColor3 = Color3.fromRGB(60,200,120), BorderSizePixel = 0, ZIndex = 114, Parent = rb2 })
+                    Instance.new("UICorner", dt2).CornerRadius = UDim.new(1,0)
+                    local rl2 = lbl(rb2, pl.Name, 12, chosen and Color3.new(0,0,0) or C.text, Enum.TextXAlignment.Left)
+                    rl2.Position = UDim2.new(0,24,0,0); rl2.Size = UDim2.new(1,-28,1,0); rl2.ZIndex = 114
+                    rb2.MouseButton1Click:Connect(function()
+                        teTargetName = pl.Name
+                        teTargetBtn.Text = pl.Name
+                        teTargetBtn.TextColor3 = C.text
+                        dim3:Destroy()
+                    end)
+                end
+            end
+            cls3.MouseButton1Click:Connect(function() dim3:Destroy() end)
+        end)
+
+        -- helper: bangun pet-type set dari sellRules preset (pets yg action="sell" atau kg<1e8 -> sell dibawah threshold)
+        local function getSellTypes(presetName)
+            local pr = PRESET_HACT[presetName]
+            if not pr or not pr.sellRules then return {} end
+            local types = {}
+            for petType, rule in pairs(pr.sellRules) do
+                -- masuk kalau action sell, atau kg-threshold = 1e9 (sell semua) atau > 0 (sell dibawah)
+                if rule.action == "sell" or rule.kg then
+                    types[petType] = true
+                end
+            end
+            return types
+        end
+
+        -- helper: snapshot UUID pet yg match sellRules di backpack sekarang
+        local function snapshotSellPets(presetName)
+            local sellTypes = getSellTypes(presetName)
+            if not next(sellTypes) then return {} end
+            local bp = player:FindFirstChild("Backpack")
+            if not bp then return {} end
+            local uuids = {}
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") then
+                    local base = t.Name:gsub("%s*%[.*$",""):gsub("%s+$","")
+                    local uuid = t:GetAttribute("PET_UUID")
+                    local uclean = uuid and tostring(uuid):gsub("[{}]","")
+                    if uclean and uclean ~= "" then
+                        for tp in pairs(sellTypes) do
+                            if base:lower():find(tp:lower(), 1, true) then
+                                uuids[uclean] = true
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            return uuids
+        end
+
+        -- START / STOP
+        teBtn.MouseButton1Click:Connect(function()
+            if teRunning then
+                -- STOP
+                teRunning = false
+                _G.__hactTradeEggAktif = false
+                teBtn.Text = "START TRADE EGG"
+                teBtn.BackgroundColor3 = C.card
+                teBtn.TextColor3 = C.text
+                teStatL.Text = "dihentikan"
+                return
+            end
+            -- validasi
+            if not teTargetName or teTargetName == "" then teStatL.Text = "pilih target player dulu"; return end
+            if not Players:FindFirstChild(teTargetName) then teStatL.Text = teTargetName.." gak online di server ini"; return end
+            if not PRESET_HACT[teEggSel] then teStatL.Text = "preset "..teEggSel.." gak ada"; return end
+            -- START
+            teRunning = true
+            _G.__hactTradeEggAktif = true
+            teBtn.Text = "STOP TRADE EGG"
+            teBtn.BackgroundColor3 = C.danger
+            teBtn.TextColor3 = Color3.new(1,1,1)
+            teStatL.Text = "aktif — nunggu inv full..."
+            local teGen = ((_G.__hactTradeEggGen or 0) + 1); _G.__hactTradeEggGen = teGen
+            task.spawn(function()
+                local wasFull2 = false
+                local myGen = teGen   -- gen ini: stop kalau user klik start lagi (gen baru)
+                while teRunning and _G.__hactTradeEggGen == myGen do
+                    pcall(function()
+                        -- cek target masih online
+                        if not Players:FindFirstChild(teTargetName) then
+                            teStatL.Text = teTargetName.." offline — stop"
+                            teRunning = false
+                            _G.__hactTradeEggAktif = false
+                            teBtn.Text = "START TRADE EGG"; teBtn.BackgroundColor3 = C.card; teBtn.TextColor3 = C.text
+                            return
+                        end
+                        local full2 = isBackpackFull()
+                        if full2 and not wasFull2 then
+                            -- LEADING EDGE: inv baru penuh → snapshot pet sell sekarang
+                            teStatL.Text = "inv full! snapshot pet sell dari "..teEggSel.."..."
+                            task.wait(0.3)   -- biar game sempet register item terakhir
+                            local snapUuids = snapshotSellPets(teEggSel)
+                            local snapCount = 0; for _ in pairs(snapUuids) do snapCount = snapCount + 1 end
+                            if snapCount == 0 then
+                                teStatL.Text = "inv full tapi 0 pet sell ("..teEggSel..") di backpack"
+                                wasFull2 = true
+                            else
+                                teStatL.Text = ("snapshot %d pet sell → gift ke %s..."):format(snapCount, teTargetName)
+                                -- pause semua config lain (sell/auto/fav) lewat giftBusy — dihandle di giftPetsByFilter sendiri
+                                -- set flag global biar doAutoSell skip
+                                _G.__hactTradeEggAktif = true
+                                local sellTypes = getSellTypes(teEggSel)
+                                local petSet = {}; for tp in pairs(sellTypes) do petSet[tp] = true end
+                                local cfg2 = {
+                                    targets   = { [teTargetName] = true },
+                                    pets      = petSet,
+                                    uuids     = snapUuids,   -- v27.153: whitelist snapshot
+                                    unfavFirst = true,       -- unfav dulu sebelum kirim
+                                    _running  = true,
+                                }
+                                local sent2 = giftPetsByFilter(cfg2)
+                                if sent2 and sent2 > 0 then
+                                    teStatL.Text = ("terkirim %d pet sell ke %s ✓"):format(sent2, teTargetName)
+                                else
+                                    local D = _G.__hactGiftDbg or {}
+                                    teStatL.Text = ("0 terkirim | n:%d ok:%d | err:%s"):format(D.total or 0, D.ok or 0, tostring(_G.__hactLastErr or "-"))
+                                end
+                                wasFull2 = true
+                            end
+                        elseif full2 then
+                            -- masih full (abis dikirim, sisa gak muat / gak ada yg cocok)
+                            teStatL.Text = "nunggu inv berkurang..."
+                        else
+                            -- inv turun / gak penuh → reset, siap trigger lagi
+                            if wasFull2 then teStatL.Text = "aktif — nunggu inv full lagi..." end
+                            wasFull2 = false
+                        end
+                    end)
+                    task.wait(1.5)
+                end
+            end)
+        end)
+    end
+    -- ======= END TRADE EGG =======
 end
 
 -- ============ AUTO AFK (anti idle kick) ============
