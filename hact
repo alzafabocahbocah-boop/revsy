@@ -280,7 +280,7 @@ local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 local CoreGui = game:GetService("CoreGui")
 
-local VERSION = "v27.156"
+local VERSION = "v27.157"
 
 -- ============================================================
 -- v27.90: STARTUP -- keyboard(Space) + TOUCH TAP layar (cloud phone) 5s + mouse klik CUMA pas loading (gak break kecepetan), terus LONCAT 2 detik doang (yg penting lewatin loading)
@@ -7818,45 +7818,41 @@ do
                                 end
                                 local sent2 = 0
                                 if sendReqRE2 and addItemRE2 and #activeTgts > 0 then
-                                    -- split uuid list merata ke tiap target
-                                    local splits = {}
-                                    for ti = 1, #activeTgts do splits[ti] = {} end
+                                    -- kirim gantian: uuid 1→tgt1, uuid 2→tgt2, uuid 3→tgt1, dst
+                                    local tgtIdx = 1
+                                    local bgOn = true
+                                    task.spawn(function()
+                                        while bgOn do
+                                            local curTgt = activeTgts[tgtIdx]
+                                            if curTgt then pcall(function() sendReqRE2:FireServer(curTgt) end) end
+                                            task.wait(0.1)
+                                        end
+                                    end)
+                                    task.spawn(function()
+                                        while bgOn do
+                                            if accRE2 then pcall(function() accRE2:FireServer() end) end
+                                            if cfmRE2 then pcall(function() cfmRE2:FireServer() end) end
+                                            task.wait(0.12)
+                                        end
+                                    end)
                                     for i, uuid in ipairs(uuidList) do
-                                        local ti = ((i-1) % #activeTgts) + 1
-                                        splits[ti][#splits[ti]+1] = uuid
+                                        if not teRunning then break end
+                                        local tPlr2 = activeTgts[tgtIdx]
+                                        if not tPlr2 or not Players:FindFirstChild(tPlr2.Name) then
+                                            -- target ini offline, skip ke berikutnya
+                                            tgtIdx = (tgtIdx % #activeTgts) + 1
+                                            tPlr2 = activeTgts[tgtIdx]
+                                        end
+                                        if tPlr2 then
+                                            teStatL.Text = ("kirim %d/%d → %s..."):format(i, #uuidList, tPlr2.Name)
+                                            pcall(function() addItemRE2:FireServer("Pet", uuid) end)
+                                            sent2 = sent2 + 1
+                                        end
+                                        -- ganti target berikutnya
+                                        tgtIdx = (tgtIdx % #activeTgts) + 1
+                                        task.wait(0.1)
                                     end
-                                    -- kirim ke tiap target parallel
-                                    local done2 = 0
-                                    for ti, tPlr2 in ipairs(activeTgts) do
-                                        task.spawn(function()
-                                            local tList = splits[ti]
-                                            local bgOn = true
-                                            task.spawn(function()
-                                                while bgOn do
-                                                    pcall(function() sendReqRE2:FireServer(tPlr2) end)
-                                                    task.wait(0.1)
-                                                end
-                                            end)
-                                            task.spawn(function()
-                                                while bgOn do
-                                                    if accRE2 then pcall(function() accRE2:FireServer() end) end
-                                                    if cfmRE2 then pcall(function() cfmRE2:FireServer() end) end
-                                                    task.wait(0.12)
-                                                end
-                                            end)
-                                            for i2, uuid in ipairs(tList) do
-                                                if not teRunning then break end
-                                                teStatL.Text = ("kirim %d/%d → %s..."):format(i2, #tList, tPlr2.Name)
-                                                pcall(function() addItemRE2:FireServer("Pet", uuid) end)
-                                                sent2 = sent2 + 1
-                                                task.wait(0.1)
-                                            end
-                                            bgOn = false
-                                            done2 = done2 + 1
-                                        end)
-                                    end
-                                    -- tunggu semua task selesai
-                                    while done2 < #activeTgts and teRunning do task.wait(0.2) end
+                                    bgOn = false
                                     local names2 = {}
                                     for _, p in ipairs(activeTgts) do names2[#names2+1] = p.Name end
                                     teStatL.Text = ("selesai: %d pet → %s ✓"):format(sent2, table.concat(names2, " & "))
