@@ -1,7 +1,9 @@
--- uplevelnew v8.151 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
--- Sesi 1: 8 T-Rex | collect buah mutasi non-Nightmare + favorit Nightmare (hingga 4200)
+-- uplevelnew v8.153 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
+-- v8.153: sesi 1 def dinamis — >=8 T-Rex age>=500 -> 8 T-Rex, kurang -> 7 Mimic+1 T-Rex
+-- v8.152: hapus unequip Mimic di sesi 2 (enforceEquip jalan terus)
 -- v8.151: T-Rex jml=8, swap delay 4.2s
 -- v8.150: T-Rex jml=1 (test)
 -- v8.149: reduclag auto-on (weather, particles, lighting FX, shadows — cleanup tiap 10s)
@@ -148,6 +150,8 @@ end
 local VERSION = "v8.151"
 
 -- ===================== KONFIGURASI =====================
+-- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
+-- default awal pakai T-Rex; buildSesi1Def() update sebelum runSesi1 jalan
 local SESI1_DEF = {
     {nama="T-Rex", jml=8},
 }
@@ -621,6 +625,25 @@ local function listPetsAll()
     end
     if #out==0 then return listPetsEngine() end
     return out
+end
+
+-- v8.153: buildSesi1Def — hitung T-Rex age>=500 di inventory, pilih lineup sesi 1
+-- >= 8 T-Rex age>=500 -> 8 T-Rex | kurang -> 7 Mimic Octopus + 1 T-Rex
+local function buildSesi1Def()
+    local all = listPetsAll()
+    local trexTua = 0
+    for _, p in ipairs(all) do
+        if p.tipe == "T-Rex" and (p.age or 0) >= 500 then
+            trexTua = trexTua + 1
+        end
+    end
+    if trexTua >= 8 then
+        SESI1_DEF = { {nama="T-Rex", jml=8} }
+        addLog("Sesi 1 def: 8 T-Rex (age>=500 ada "..trexTua..")")
+    else
+        SESI1_DEF = { {nama="Mimic Octopus", jml=7}, {nama="T-Rex", jml=1} }
+        addLog("Sesi 1 def: 7 Mimic+1 T-Rex (T-Rex age>=500 cuma "..trexTua..", belum cukup 8)")
+    end
 end
 
 -- listPetsBackpack: filter by tipe (untuk picker), pakai listPetsAll
@@ -1590,7 +1613,7 @@ local function infoR(t,v,lo)
     local lv=lbl(f,v,13,C.text,Enum.TextXAlignment.Right); lv.Font=FONT_B
     lv.Position=UDim2.new(0.5,0,0,0); lv.Size=UDim2.new(0.5,-10,1,0); return lv
 end
-infoR("Sesi 1","M.Oct×7 + T-Rex×1",8); infoR("Sesi 2","M.Oct×6 + Baku×1 + Bahan",9)
+infoR("Sesi 1","8 T-Rex (age≥500) / 7 M.Oct+1 T-Rex",8); infoR("Sesi 2","M.Oct×6 + Baku×1 + Bahan",9)
 infoR("Target","2500 nightmare",10); infoR("Loop interval","5 detik",11)
 
 -- ===================== LOG TAB =====================
@@ -3008,6 +3031,8 @@ local function runSesiUtama(sesiNum, def, label, col)
     unequipAll()
 end
 local function runSesi1()
+    buildSesi1Def()   -- v8.153: cek T-Rex age>=500, pilih lineup
+    _activeSesiDef = SESI1_DEF; _G._UPL_SESI_DEF = false
     runSesiUtama(1, SESI1_DEF, "SESI 1", C.accent)
 end
 local function runSesi2()
@@ -3016,35 +3041,9 @@ local function runSesi2()
     waitForContainer(5)
     _activeSesiNum = 2; _activeSesiDef = SESI2_DEF; _G._UPL_SESI_NUM = 2; _G._UPL_SESI_DEF = SESI2_DEF
     unequipAll(); equipSesi(2,SESI2_DEF); equipOneBahan()
-    -- snapshot age Bahan saat awal masuk sesi 2 (reset tiap masuk sesi 2)
-    local _bahanAgeSnapshot = _bahanUuid and getAgeFallback(_bahanUuid) or nil
-    local _mimicUnequipped = false
-    addLog("Sesi2: snapshot bahan age="..(tostring(_bahanAgeSnapshot or "nil")))
     setStatus("Sesi 2 — tunggu nightmare habis",Color3.fromRGB(220,160,60))
     while not stopRequested do
-        -- Cek age Bahan naik dari snapshot -> unequip semua Mimic
-        if _bahanUuid and _bahanAgeSnapshot and not _mimicUnequipped then
-            local ageNow = getAgeFallback(_bahanUuid)
-            if ageNow > _bahanAgeSnapshot then
-                addLog("Bahan age naik "..ageNow.." > snapshot "..tostring(_bahanAgeSnapshot).." — unequip Mimic")
-                -- unequip semua uuid yang tipenya Mimic Octopus
-                local toUnequip = {}
-                for uuid in pairs(_activeUuids) do
-                    local tipe = getPetTipeFromUUID(uuid)
-                    if tipe and tipe:find("Mimic") then
-                        table.insert(toUnequip, uuid)
-                    end
-                end
-                for _, uuid in ipairs(toUnequip) do
-                    unequipPet(uuid)
-                    _activeUuids[uuid] = nil
-                    task.wait(0.05)
-                end
-                _mimicUnequipped = true
-                setStatus("Sesi 2 — Mimic diambil (bahan age naik)", Color3.fromRGB(220,160,60))
-            end
-        end
-        if not _mimicUnequipped then enforceEquip(SESI2_DEF) end
+        enforceEquip(SESI2_DEF)
         unequipBahanTua(); equipOneBahan()
         local sd=scanFruits(); _lastMutasiCount=#sd.shovel; local nm=sd.nightmareCount
         updateUI(totalNightmareCollected,nm,2)

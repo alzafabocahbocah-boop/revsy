@@ -4050,7 +4050,7 @@ local function setup_wizard()
     print(C.D.."  Kalau gagal, diulang berapa kali sebelum nyerah."..C.N)
     cfg.max_coba=tonumber(ask("Coba ulang max per client","5")) or 5
     print(C.D.."  Napas setelah 1 client jalan, sebelum buka berikutnya."..C.N)
-    cfg.stagger_sec=tonumber(ask("Jeda antar client (detik)","15")) or 15
+    cfg.stagger_sec=tonumber(ask("Jeda antar client (detik)","45")) or 45
     print(C.D.."  Tiap brp detik lapor CPU/RAM ke panel."..C.N)
     cfg.status_sec=tonumber(ask("Kirim status tiap (detik)","20")) or 20
     print(C.D.."  Mode jendela. Kalau client lo udah auto-freeform, biarin 0."..C.N)
@@ -5693,10 +5693,10 @@ local function run(cfg)
             local _isHact = _sl:find("HACT")
             local _isUplevel = _sl:find("UPLEVEL")   -- v9.490: uplevel ikut restart terjadwal -- DIMATIIN user request
             -- v9.491: market ikut restart terjadwal -- DIMATIIN user request
-            if _isUp38 or _isUp6 or _isHact then
+            if _isUp38 or _isUp6 then   -- v9.520: hact DIKELUARIN dari restart terjadwal (user request)
                 local wibNow = os.time() + 7 * 3600
                 local wt = os.date("!*t", wibNow)
-                local per2jam = _isUp38 or _isHact -- v-fix: up3.8kg + hact: tiap 2 jam (00/02/04/... WIB)
+                local per2jam = _isUp38 -- up3.8kg: tiap 2 jam (00/02/04/... WIB); up6kg: 45 menit
                 local slotSize = per2jam and 7200 or 2700                    -- 120min, up6kg 45min (v9.508: dari 30min)
                 local fireNow
                 if cfg.restart_min_override then
@@ -5704,7 +5704,7 @@ local function run(cfg)
                     -- gak selalu kelipatan yg pas sama ":00 tiap jam" -> pake modulo generik.
                     slotSize = cfg.restart_min_override * 60
                     fireNow = (wibNow % slotSize) < 60
-                elseif per2jam then fireNow = (wt.hour % 2 == 0 and wt.min == 0) -- up3.8kg/hact/uplevel: tiap 2 jam (00/02/04/... :00 WIB)
+                elseif per2jam then fireNow = (wt.hour % 2 == 0 and wt.min == 0) -- up3.8kg: tiap 2 jam (00/02/04/... :00 WIB)
                 else fireNow = (wibNow % 2700) < 90 end     -- up6kg: tiap 45 menit (v9.508: 00:00,00:45,01:30,...)
                 local slot = math.floor(wibNow / slotSize)
                 if fireNow and RESTART_JADWAL_SLOT ~= slot then
@@ -5717,9 +5717,9 @@ local function run(cfg)
                         if KICK_DIURUS["captcha:" .. pkg] then KICK_DIURUS["captcha:" .. pkg] = nil; _clrCap = _clrCap + 1 end
                     end
                     if _clrCap > 0 then warn(("[JADWAL] re-test captcha: clear %d flag -> coba rejoin ulang (cek captcha lagi)"):format(_clrCap)) end
-                    local _nm = _isUp38 and "UP3.8KG" or (_isHact and "HACT" or (_isUplevel and "UPLEVEL" or "UP6KG"))
-                    warn(string.format("[JADWAL] %s restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang%s", _nm, wt.hour, wt.min, _isHact and " (bisa di-nyela manual command)" or " (UNINTERRUPTIBLE)"))
-                    if not _isHact then _G.__ZenxForceRestart = true end   -- hact: rejoin INTERRUPTIBLE (start/balik home manual selalu bisa nyela). up6kg/up3.8kg: WAJIB kelar.
+                    local _nm = _isUp38 and "UP3.8KG" or "UP6KG"
+                    warn(string.format("[JADWAL] %s restart terjadwal (WIB %02d:%02d) -> force-stop + tembak ulang (UNINTERRUPTIBLE)", _nm, wt.hour, wt.min))
+                    _G.__ZenxForceRestart = true
                     local okR = pcall(function()
                         PKGS_AKTIF = restart_kerjakan(cfg, isi, mapAkun, mapLink, ada_stop)
                     end)
