@@ -1,4 +1,4 @@
--- uplevelnew v8.165 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.166 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.165"
+local VERSION = "v8.166"
 
 -- ===================== KONFIGURASI =====================
 -- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
@@ -173,6 +173,7 @@ local CFG = {
     nightmareTarget= 4200,
     loopWait       = 1,
     equipWait      = 0.08,  -- 0.08s antar equip (lebih stabil dari 0.06)
+    sesi1Mode      = "trex", -- "trex" = 8 T-Rex, "mimic" = 7 Mimic+1 T-Rex, "auto" = deteksi otomatis
 }
 
 -- ===================== SWAP SKILL CONFIG =====================
@@ -630,35 +631,30 @@ end
 -- v8.153: buildSesi1Def — hitung T-Rex age>=500 di inventory, pilih lineup sesi 1
 -- >= 8 T-Rex age>=500 -> 8 T-Rex | kurang -> 7 Mimic Octopus + 1 T-Rex
 local function buildSesi1Def()
+    local mode = CFG.sesi1Mode or "auto"
+    if mode == "trex" then
+        SESI1_DEF = { {nama="T-Rex", jml=8} }
+        addLog("Sesi 1 def: 8 T-Rex (manual)")
+        return
+    elseif mode == "mimic" then
+        SESI1_DEF = { {nama="Mimic Octopus", jml=7}, {nama="T-Rex", jml=1} }
+        addLog("Sesi 1 def: 7 Mimic+1 T-Rex (manual)")
+        return
+    end
+    -- mode "auto": deteksi otomatis
     local all = listPetsAll()
     local trexTua = 0
-    -- hitung dari listPetsAll (container/backpack)
     for _, p in ipairs(all) do
         if p.tipe == "T-Rex" and (p.age or 0) >= 500 then
             trexTua = trexTua + 1
         end
     end
-    -- tambah T-Rex yang sedang equipped di Character (mungkin tidak masuk backpack)
-    local char = plr.Character
-    if char then
-        for _, t in ipairs(char:GetChildren()) do
-            if t:IsA("Tool") then
-                local rawTipe = t:GetAttribute("f") or t:GetAttribute("PetType") or t:GetAttribute("type") or ""
-                local tipe = stripMutation(tostring(rawTipe))
-                if tipe == "T-Rex" then
-                    local rawUUID = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
-                    local age = (rawUUID and getAgeFromContainer(rawUUID)) or 0
-                    if age >= 500 then trexTua = trexTua + 1 end
-                end
-            end
-        end
-    end
     if trexTua >= 8 then
         SESI1_DEF = { {nama="T-Rex", jml=8} }
-        addLog("Sesi 1 def: 8 T-Rex (age>=500 ada "..trexTua..")")
+        addLog("Sesi 1 def: 8 T-Rex (auto, age>=500 ada "..trexTua..")")
     else
         SESI1_DEF = { {nama="Mimic Octopus", jml=7}, {nama="T-Rex", jml=1} }
-        addLog("Sesi 1 def: 7 Mimic+1 T-Rex (T-Rex age>=500 cuma "..trexTua..", belum cukup 8)")
+        addLog("Sesi 1 def: 7 Mimic+1 T-Rex (auto, T-Rex cuma "..trexTua..")")
     end
 end
 
@@ -1253,6 +1249,23 @@ end
 cfgInputRow(cfgScroll,"Target Nightmare",CFG.nightmareTarget,13,function(n) if n>0 then CFG.nightmareTarget=math.floor(n) end end)
 cfgInputRow(cfgScroll,"Loop interval (detik)",CFG.loopWait,14,function(n) if n>=1 then CFG.loopWait=n end end)
 cfgInputRow(cfgScroll,"Bahan max age (unequip)",CFG.bahanMaxAge,15,function(n) if n>0 then CFG.bahanMaxAge=math.floor(n) end end)
+-- toggle sesi1Mode
+do
+    local modes = {"trex","mimic","auto"}
+    local modeLabel = {trex="8 T-Rex", mimic="7 Mimic+1 T-Rex", auto="Auto detect"}
+    local row=mk("Frame",{Size=UDim2.new(1,0,0,32),BackgroundTransparency=1,Parent=cfgScroll})
+    lbl(row,"Sesi 1 lineup:",12,C.textMute).Size=UDim2.new(0,140,1,0)
+    local btn=mk("TextButton",{Size=UDim2.new(0,160,0,24),Position=UDim2.new(0,145,0,4),
+        BackgroundColor3=C.card,TextColor3=C.accent,Font=FONT_B,TextSize=12,
+        Text=modeLabel[CFG.sesi1Mode],Parent=row}); corner(btn,5); stroke(btn,C.border,1)
+    btn.MouseButton1Click:Connect(function()
+        local cur=CFG.sesi1Mode
+        local idx=1; for i,m in ipairs(modes) do if m==cur then idx=i; break end end
+        CFG.sesi1Mode=modes[(idx%#modes)+1]
+        btn.Text=modeLabel[CFG.sesi1Mode]
+        addLog("Sesi 1 mode: "..CFG.sesi1Mode)
+    end)
+end
 
 -- initial render
 renderLineup(1,SESI1_DEF); renderLineup(2,SESI2_DEF)
