@@ -147,13 +147,13 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.207"
+local VERSION = "v8.208"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
 local dbgLog
 local addLog
-local mutLog
+local mutLog = function() end
 local weatherLog
 
 -- ===================== KONFIGURASI =====================
@@ -1811,16 +1811,6 @@ weatherLog = function(s)
     _weatherFn(s)
 end
 
--- ===================== DEBUG MUTASI LOG =====================
-sectionHeader(logScroll,"\u{2022} DEBUG MUTASI",8)
-local _mutFn = mkDbgBox(9, Color3.fromRGB(140,60,220), "— menunggu scan buah —")
-local mutLogs={}; local mutAllLogs={}
-mutLog = function(s)
-    local line=tostring(s)
-    table.insert(mutAllLogs,line)
-    table.insert(mutLogs,1,line); if #mutLogs>80 then mutLogs[#mutLogs]=nil end
-    _mutFn(s)
-end
 
 -- ===================== STATE =====================
 local logs={}; local running=false; local stopRequested=false
@@ -2829,91 +2819,19 @@ end)
 -- attr non-mutasi yang diabaikan saat cek mutasi buah
 local FRUIT_NON_MUTATIONS = {
     Nightmare=true, IsOutlined=true,
-    -- system attrs (dari dump: selalu ada di semua buah, bukan mutasi)
     FruitSpawnIndex=true, FruitVersion=true, DoneGrowTime=true,
     WeightMulti=true, MaxAge=true, GrowRateMulti=true,
     MasteryGrowthMulti=true,
-    -- (Firework, Frozen, Glimmering = mutasi collectible, jangan masuk sini)
 }
--- cek apakah buah punya mutasi selain Nightmare (dynamic: semua boolean attr true yang bukan non-mutasi)
-local _dbgMutLogged = {}
-local _lastVfxScan = 0  -- timestamp scan VFX terakhir
-local VFX_SCAN_INTERVAL = 15  -- scan VFX tiap 15 detik saja (bukan tiap scanFruits)
-
--- VFX scan terpisah: mahal (GetDescendants), jalankan jarang
-local function scanFruitVFX(fruit)
-    local fn = fruit.Name
-    local _uid = tostring(fruit:GetAttribute("Id") or fruit:GetAttribute("id") or fruit:GetFullName())
-    local childSeen = {}; local children = {}
-    for _,ch in ipairs(fruit:GetDescendants()) do
-        local cls = ch.ClassName
-        if cls=="ParticleEmitter" or cls=="PointLight" or cls=="SpotLight"
-        or cls=="SurfaceLight" or cls=="SelectionBox" or cls=="BillboardGui"
-        or cls=="SurfaceGui" or cls=="SpecialMesh" or cls=="Fire" or cls=="Smoke"
-        or cls=="Sparkles" or cls:find("Effect") then
-            local key = ch.Name.."("..cls..")"
-            if not childSeen[key] then childSeen[key]=true; table.insert(children, key) end
-        end
-    end
-    table.sort(children)
-    local vfxKey = table.concat(children,"|")
-    local prev = _dbgMutLogged[_uid]
-    if prev ~= vfxKey then
-        _dbgMutLogged[_uid] = vfxKey
-        if not prev then
-            local all = {}
-            for k,v in pairs(fruit:GetAttributes()) do table.insert(all, k.."="..tostring(v)) end
-            table.sort(all)
-            mutLog("["..fn.."] attrs: "..table.concat(all,", "))
-        end
-        if #children > 0 then
-            mutLog("["..fn.."] vfx: "..table.concat(children,", "))
-        else
-            mutLog("["..fn.."] vfx: none")
-        end
-    end
-    return children
-end
 
 local function fruitHasMutation(fruit)
-    -- cek attr dulu: CEPAT, tidak pakai GetDescendants
-    local found = nil
     for k, v in pairs(fruit:GetAttributes()) do
         if v == true and not FRUIT_NON_MUTATIONS[k] then
-            found = k; break
+            return true
         end
     end
-    -- fallback VFX: hanya pakai cache dari scan terakhir (tidak GetDescendants tiap panggil)
-    if not found then
-        local _uid = tostring(fruit:GetAttribute("Id") or fruit:GetAttribute("id") or fruit:GetFullName())
-        local cached = _dbgMutLogged[_uid]
-        if cached and (cached:find("Shockwave") or cached:find("Flash") or cached:find("Sparkle")) then
-            found = "vfx_mutation"
-        end
-    end
-    return found ~= nil
+    return false
 end
-
--- background VFX scan: jalan tiap VFX_SCAN_INTERVAL detik, tidak ganggu collect loop
-task.spawn(function()
-    while true do
-        task.wait(VFX_SCAN_INTERVAL)
-        pcall(function()
-            local farm=getPlayerFarm(); if not farm then return end
-            local imp=farm:FindFirstChild("Important"); if not imp then return end
-            local plants=imp:FindFirstChild("Plants_Physical"); if not plants then return end
-            for _,pt in ipairs(plants:GetChildren()) do
-                local fruits=pt:FindFirstChild("Fruits")
-                if fruits then
-                    for _,fruit in ipairs(fruits:GetChildren()) do
-                        scanFruitVFX(fruit)
-                        task.wait()  -- yield tiap buah supaya tidak block
-                    end
-                end
-            end
-        end)
-    end
-end)
 
 local function scanFruits()
     local res={nightmare={},shovel={},nightmareCount=0}
@@ -2929,9 +2847,10 @@ local function scanFruits()
                     totalScanned=totalScanned+1
                     local isNightmare = fruit:GetAttribute("Nightmare")==true
                     local hasMut = fruitHasMutation(fruit)
-                    -- TEST v8.195: nightmare dianggap mutasi juga, langsung collect
-                    if isNightmare or hasMut then
-                        table.insert(res.shovel, fruit)
+                    if isNightmare and not hasMut then
+                        res.nightmareCount=res.nightmareCount+1
+                    elseif hasMut then
+                        table.insert(res.shovel,fruit)
                         if isNightmare then res.nightmareCount=res.nightmareCount+1 end
                     end
                 end
@@ -3061,7 +2980,7 @@ local function processFruits()
     -- prioritas: nightmare=0 -> langsung cadangan 2 (mutasi collect di dalam cad2)
     -- mutasi ada tapi nightmare masih ada -> collect dulu, lanjut sesi
     -- TEST v8.195: nightmare dianggap collect biasa, skip Cadangan 2
-    if false and data.nightmareCount == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
+    if data.nightmareCount == 0 and _activeSesiDef ~= nil and _activeSesiDef ~= SESI_CADANGAN2_DEF then
         -- nightmare 0 -> masuk cadangan 2 DULU, mutasi (kalau ada) dihandle di dalam cad2
         -- tunggu nightmare muncul lagi, lalu balik ke sesi aktif sebelumnya
         addLog("Nightmare 0 + no mutasi — masuk Cadangan 2 (Peacock×7 + Baku×1)")
