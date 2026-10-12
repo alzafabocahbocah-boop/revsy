@@ -1,4 +1,4 @@
--- uplevelnew v8.168 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.169 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.168"
+local VERSION = "v8.169"
 
 -- ===================== KONFIGURASI =====================
 -- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
@@ -654,11 +654,52 @@ local function buildSesi1Def()
             end
         end
     end
-    dbgLog("[DBG] buildSesi1Def: trexTua="..trexTua)
-    -- threshold 7: 1 T-Rex bisa di garden, sisanya 7 di backpack = total 8
-    if trexTua >= 7 then
+    -- hitung T-Rex di garden (workspace.PetsPhysical) — UUID jadi Name object
+    local seenUUID = {}
+    -- tandai UUID dari container (backpack+equipped) agar tidak double count
+    local all2 = listPetsAll()
+    for _, p in ipairs(all2) do
+        if p.uuid then seenUUID[p.uuid] = true end
+    end
+    -- tandai juga UUID dari Character yang baru di-scan
+    if char then
+        for _, t in ipairs(char:GetChildren()) do
+            if t:IsA("Tool") then
+                local rawUUID = t:GetAttribute("PET_UUID") or t:GetAttribute("UUID") or t:GetAttribute("uuid")
+                if rawUUID then seenUUID[fmtUUID(rawUUID)] = true end
+            end
+        end
+    end
+    local c = _kgContainer
+    pcall(function()
+        local pp = workspace:FindFirstChild("PetsPhysical")
+        if pp then
+            for _, obj in ipairs(pp:GetChildren()) do
+                -- Name = UUID pet (bisa dengan/tanpa kurung kurawal)
+                local rawUUID = obj.Name
+                local uuid = fmtUUID(rawUUID)
+                if not seenUUID[uuid] then
+                    -- cek di container apakah ini T-Rex age>=500
+                    local entry = c and c[uuid]
+                    if type(entry) == "table" then
+                        local rawTipe = tostring(entry.PetType or (entry.PetData and entry.PetData.PetType) or "")
+                        local tipe = stripMutation(rawTipe)
+                        local age = tonumber((entry.PetData or {}).Level) or 0
+                        dbgLog("[DBG] garden pet: "..tipe.." age="..age.." uuid="..uuid:sub(1,8))
+                        if tipe == "T-Rex" and age >= 500 then
+                            trexTua = trexTua + 1
+                            seenUUID[uuid] = true
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    dbgLog("[DBG] buildSesi1Def: trexTua="..trexTua.." (inc garden)")
+    -- threshold 8: scan garden sudah included
+    if trexTua >= 8 then
         SESI1_DEF = { {nama="T-Rex", jml=8} }
-        addLog("Sesi 1 def: 8 T-Rex (age>=500 terdeteksi "..trexTua..", +1 mungkin di garden)")
+        addLog("Sesi 1 def: 8 T-Rex (age>=500 terdeteksi "..trexTua..")")
     else
         SESI1_DEF = { {nama="Mimic Octopus", jml=7}, {nama="T-Rex", jml=1} }
         addLog("Sesi 1 def: 7 Mimic+1 T-Rex (T-Rex age>=500 cuma "..trexTua..")")
