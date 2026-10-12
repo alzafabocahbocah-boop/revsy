@@ -1,4 +1,4 @@
--- uplevelnew v8.193 — weatherLog simpan history; fix COPY ALL fallback ke writefile
+-- uplevelnew v8.194 — pisah VFX scan dari fruitHasMutation: attr check cepat, VFX scan background tiap 15s
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.193"
+local VERSION = "v8.194"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -2837,18 +2837,13 @@ local FRUIT_NON_MUTATIONS = {
 }
 -- cek apakah buah punya mutasi selain Nightmare (dynamic: semua boolean attr true yang bukan non-mutasi)
 local _dbgMutLogged = {}
-local function fruitHasMutation(fruit)
-    local found = nil
-    for k, v in pairs(fruit:GetAttributes()) do
-        if v == true and not FRUIT_NON_MUTATIONS[k] then
-            found = k; break
-        end
-    end
-    -- log attrs + vfx per buah; re-log kalau vfx berubah (partikel baru ke-detect)
+local _lastVfxScan = 0  -- timestamp scan VFX terakhir
+local VFX_SCAN_INTERVAL = 15  -- scan VFX tiap 15 detik saja (bukan tiap scanFruits)
+
+-- VFX scan terpisah: mahal (GetDescendants), jalankan jarang
+local function scanFruitVFX(fruit)
     local fn = fruit.Name
     local _uid = tostring(fruit:GetAttribute("Id") or fruit:GetAttribute("id") or fruit:GetFullName())
-    -- scan children dulu supaya bisa compare
-    -- deduplicate by name: Shine_Particle muncul 2/3/4x tapi kita catat 1x saja
     local childSeen = {}; local children = {}
     for _,ch in ipairs(fruit:GetDescendants()) do
         local cls = ch.ClassName
@@ -2857,10 +2852,7 @@ local function fruitHasMutation(fruit)
         or cls=="SurfaceGui" or cls=="SpecialMesh" or cls=="Fire" or cls=="Smoke"
         or cls=="Sparkles" or cls:find("Effect") then
             local key = ch.Name.."("..cls..")"
-            if not childSeen[key] then
-                childSeen[key] = true
-                table.insert(children, key)
-            end
+            if not childSeen[key] then childSeen[key]=true; table.insert(children, key) end
         end
     end
     table.sort(children)
@@ -2869,14 +2861,10 @@ local function fruitHasMutation(fruit)
     if prev ~= vfxKey then
         _dbgMutLogged[_uid] = vfxKey
         if not prev then
-            -- log pertama kali: tampilkan attrs juga
             local all = {}
-            for k,v in pairs(fruit:GetAttributes()) do
-                table.insert(all, k.."="..tostring(v))
-            end
+            for k,v in pairs(fruit:GetAttributes()) do table.insert(all, k.."="..tostring(v)) end
             table.sort(all)
             mutLog("["..fn.."] attrs: "..table.concat(all,", "))
-            mutLog("["..fn.."] mut? "..(found or "NO"))
         end
         if #children > 0 then
             mutLog("["..fn.."] vfx: "..table.concat(children,", "))
@@ -2884,16 +2872,48 @@ local function fruitHasMutation(fruit)
             mutLog("["..fn.."] vfx: none")
         end
     end
-    -- fallback: kalau tidak ada boolean attr tapi ada VFX mutasi (Shockwave/Flash/Sparkle) -> anggap mutasi
-    if not found and #children > 0 then
-        for _,c in ipairs(children) do
-            if c:find("Shockwave") or c:find("Flash") or c:find("Sparkle") then
-                found = "vfx_mutation"; break
-            end
+    return children
+end
+
+local function fruitHasMutation(fruit)
+    -- cek attr dulu: CEPAT, tidak pakai GetDescendants
+    local found = nil
+    for k, v in pairs(fruit:GetAttributes()) do
+        if v == true and not FRUIT_NON_MUTATIONS[k] then
+            found = k; break
+        end
+    end
+    -- fallback VFX: hanya pakai cache dari scan terakhir (tidak GetDescendants tiap panggil)
+    if not found then
+        local _uid = tostring(fruit:GetAttribute("Id") or fruit:GetAttribute("id") or fruit:GetFullName())
+        local cached = _dbgMutLogged[_uid]
+        if cached and (cached:find("Shockwave") or cached:find("Flash") or cached:find("Sparkle")) then
+            found = "vfx_mutation"
         end
     end
     return found ~= nil
 end
+
+-- background VFX scan: jalan tiap VFX_SCAN_INTERVAL detik, tidak ganggu collect loop
+task.spawn(function()
+    while true do
+        task.wait(VFX_SCAN_INTERVAL)
+        pcall(function()
+            local farm=getPlayerFarm(); if not farm then return end
+            local imp=farm:FindFirstChild("Important"); if not imp then return end
+            local plants=imp:FindFirstChild("Plants_Physical"); if not plants then return end
+            for _,pt in ipairs(plants:GetChildren()) do
+                local fruits=pt:FindFirstChild("Fruits")
+                if fruits then
+                    for _,fruit in ipairs(fruits:GetChildren()) do
+                        scanFruitVFX(fruit)
+                        task.wait()  -- yield tiap buah supaya tidak block
+                    end
+                end
+            end
+        end)
+    end
+end)
 
 local function scanFruits()
     local res={nightmare={},shovel={},nightmareCount=0}
