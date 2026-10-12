@@ -1,4 +1,4 @@
--- ══════════════════════════  HACT  v27.161  ══════════════════════════
+-- ══════════════════════════  HACT  v27.162  ══════════════════════════
 -- ║  HACT TELUR — gift/trade pet KEEP ke akun up3.8kg                    ║
 -- ║  Tema: hitam elegan + aksen putih/abu minimalis.                     ║
 -- ══════════════════════════════════════════════════════════════════════
@@ -2409,13 +2409,16 @@ local function getMatchedPets(cfg)
                     if cfg.kg > 0 then okKg = okKg and (kgVal >= cfg.kg)
                     else okKg = okKg and (kgVal <= math.abs(cfg.kg)) end
                 end
-                -- v27.160: per-pet kg minimum (cfg.kgPerPet = {["t-rex"]=1, ["brontosaurus"]=1.5})
-                -- kgPerPet OVERRIDE kgMin/kgMax untuk pet yg ada di list
+                -- v27.162: per-pet kg range (cfg.kgPerPet = {["t-rex"]={min=0,max=3}, ["brontosaurus"]={min=1.5,max=2.5}})
+                -- kgPerPet OVERRIDE kgMin/kgMax global untuk pet yg ada di list
                 if cfg.kgPerPet then
                     local baseLow = base:lower()
-                    for ptKey, minKg in pairs(cfg.kgPerPet) do
+                    for ptKey, rule in pairs(cfg.kgPerPet) do
                         if baseLow:find(ptKey:lower(), 1, true) then
-                            okKg = (kgVal >= minKg)   -- override total, abaikan kgMin/kgMax global
+                            local mn = type(rule)=="table" and rule.min or rule
+                            local mx = type(rule)=="table" and rule.max or nil
+                            okKg = (kgVal >= (mn or 0))
+                            if mx and mx > 0 then okKg = okKg and (kgVal <= mx) end
                             break
                         end
                     end
@@ -7583,8 +7586,8 @@ _G.HactTelurShowMisc = showMiscFn
                     pets = { ["peacock"] = true, ["spider"] = true, ["nutcracker"] = true, ["seal"] = true, ["t-rex"] = true, ["brontosaurus"] = true },   -- v27.160: + t-rex + bronto
                     age = -500,       -- age < 500 (max)
                     kgMin = 2, kgMax = 3,   -- v27.111: base kg 2-3 (Peacock/Spider/Nutcracker/Seal)
-                    -- v27.160: per-pet kg override (T-Rex 1kg+, Bronto 1.5kg+, bebas dari kgMin/kgMax global)
-                    kgPerPet = { ["t-rex"] = 1, ["brontosaurus"] = 1.5 },
+                    -- v27.162: per-pet kg range override (bebas dari kgMin/kgMax global)
+                    kgPerPet = { ["t-rex"] = {min=0, max=3}, ["brontosaurus"] = {min=1.5, max=2.5} },
                     unfavFirst = true }
                 if statusL then statusL.Text = "gift -> "..best.." (room "..bestRoom..")".." [gap sblmnya: "..string.format("%.1f", _G.__hactLastGap or 0).."s]" end
                 local sent = giftPetsByFilter(cfg)
