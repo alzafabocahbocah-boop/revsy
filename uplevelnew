@@ -1,4 +1,4 @@
--- uplevelnew v8.189 — rename DEBUG WEATHER -> DEBUG LOG (general); weather log tetap pakai dbgLog
+-- uplevelnew v8.190 — add DEBUG WEATHER box (green); weatherLog forward declare; applyWeather log unknown particles
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,13 +147,14 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.185"
+local VERSION = "v8.190"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
 local dbgLog
 local addLog
 local mutLog
+local weatherLog
 
 -- ===================== KONFIGURASI =====================
 -- v8.153: SESI1_DEF dinamis — di-rebuild tiap masuk sesi 1
@@ -1779,7 +1780,7 @@ local function mkDbgBox(layoutOrder, borderCol, placeholder)
     return logFn
 end
 local dbgLogs={}; local dbgAllLogs={}
-local _dbgFn = mkDbgBox(5, Color3.fromRGB(60,140,220), "— menunggu weather scan —")
+local _dbgFn = mkDbgBox(5, Color3.fromRGB(60,140,220), "— menunggu log —")
 dbgLog = function(s)
     local line=tostring(s)
     table.insert(dbgAllLogs,line)
@@ -1787,9 +1788,17 @@ dbgLog = function(s)
     _dbgFn(s)
 end
 
+-- ===================== DEBUG WEATHER (observasi partikel cuaca) =====================
+sectionHeader(logScroll,"\u{2022} DEBUG WEATHER",6)
+local _weatherFn = mkDbgBox(7, Color3.fromRGB(30,180,120), "— menunggu weather scan —")
+weatherLog = function(s)
+    local line=tostring(s)
+    _weatherFn(s)
+end
+
 -- ===================== DEBUG MUTASI LOG =====================
-sectionHeader(logScroll,"\u{2022} DEBUG MUTASI",6)
-local _mutFn = mkDbgBox(7, Color3.fromRGB(140,60,220), "— menunggu scan buah —")
+sectionHeader(logScroll,"\u{2022} DEBUG MUTASI",8)
+local _mutFn = mkDbgBox(9, Color3.fromRGB(140,60,220), "— menunggu scan buah —")
 local mutLogs={}; local mutAllLogs={}
 mutLog = function(s)
     local line=tostring(s)
@@ -4948,29 +4957,47 @@ do
     local function applyWeather()
         pcall(function()
             local found = {}
+            local unknown = {}
+            -- scan semua children workspace
             for _, obj in ipairs(workspace:GetChildren()) do
+                local isKnown = false
                 for _, name in ipairs(WEATHER_WS_NAMES) do
                     if obj.Name == name then
                         table.insert(found, name.."("..obj.ClassName..")")
+                        isKnown = true
                         obj:Destroy(); break
                     end
                 end
+                -- log partikel unknown (belum ada di WEATHER_WS_NAMES)
+                if not isKnown then
+                    if obj:IsA("ParticleEmitter") or obj:IsA("Smoke")
+                    or obj:IsA("Fire") or obj:IsA("Sparkles") or obj:IsA("Trail")
+                    or obj:IsA("SpecialMesh") or obj:IsA("SelectionBox") then
+                        table.insert(unknown, obj.Name.."("..obj.ClassName..")")
+                    end
+                end
             end
+            -- log ke DEBUG LOG (yang sudah dihapus)
             if #found > 0 then
-                dbgLog("[WEATHER] hapus: "..table.concat(found,", "))
+                weatherLog("[HAPUS] "..table.concat(found,", "))
             else
-                dbgLog("[WEATHER] scan: tidak ada weather object")
+                weatherLog("[SCAN] tidak ada weather object")
             end
+            -- log unknown ke DEBUG WEATHER
+            if #unknown > 0 then
+                weatherLog("[UNKNOWN] "..table.concat(unknown,", "))
+            end
+            -- scan workspace-level FX
             local fx = {}
             for _, obj in ipairs(workspace:GetChildren()) do
                 if obj:IsA("ColorCorrectionEffect") or obj:IsA("BlurEffect")
                 or obj:IsA("BloomEffect") or obj:IsA("SunRaysEffect")
                 or obj:IsA("ParticleEmitter") then
-                    table.insert(fx, obj.ClassName)
+                    table.insert(fx, obj.Name.."("..obj.ClassName..")")
                     obj:Destroy()
                 end
             end
-            if #fx > 0 then dbgLog("[WEATHER] fx hapus: "..table.concat(fx,", ")) end
+            if #fx > 0 then weatherLog("[FX] "..table.concat(fx,", ")) end
         end)
     end
 
