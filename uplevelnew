@@ -1,4 +1,4 @@
--- uplevelnew v8.176 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
+-- uplevelnew v8.177 — TRADE ALL: spam SendRequest+AddItem per pet, accept bg task
 -- Sesi 1: 8 T-Rex (age>=500) kalau cukup, fallback 7 Mimic + 1 T-Rex
 -- Sesi 2: 6 Mimic Octopus + 1 Baku + 1 Bahan | tunggu Nightmare < 200 -> kembali sesi 1
 -- Bahan umur >= 500 -> unequip
@@ -147,7 +147,7 @@ local function setFruitFav(id, b)
     return false
 end
 
-local VERSION = "v8.176"
+local VERSION = "v8.177"
 
 -- forward declaration: dbgLog & addLog & mutLog didefinisikan lebih bawah (setelah GUI)
 -- tapi dipakai di buildSesi1Def dll — forward declare supaya tidak nil
@@ -1741,89 +1741,61 @@ end)
 
 -- ===================== DEBUG WEATHER LOG =====================
 sectionHeader(logScroll,"\u{2022} DEBUG WEATHER",4)
-local dbgBg=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
-    BackgroundColor3=C.card,BorderSizePixel=0,
-    LayoutOrder=5,Parent=logScroll}); corner(dbgBg,10); stroke(dbgBg,Color3.fromRGB(60,140,220),1)
-mk("UIListLayout",{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder,Parent=dbgBg})
-mk("UIPadding",{PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,8),
-    PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8),Parent=dbgBg})
-local dbgBox=mk("TextLabel",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
-    LayoutOrder=1,BackgroundTransparency=1,Text="— menunggu weather scan —",TextColor3=C.textMute,
-    Font=Enum.Font.Code,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
-    TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=dbgBg})
 local function _cp(txt)
     local fn=setclipboard or toclipboard or (syn and syn.clipboard and syn.clipboard.set)
         or (Clipboard and Clipboard.set)
     if fn then fn(txt) end
 end
-local dbgCpyBtn=mk("TextButton",{Size=UDim2.new(1,0,0,24),LayoutOrder=2,
-    BackgroundColor3=Color3.fromRGB(220,100,60),Text="COPY DEBUG",Font=FONT_B,TextSize=12,
-    TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=dbgBg}); corner(dbgCpyBtn,6)
-local dbgCpyAllBtn=mk("TextButton",{Size=UDim2.new(1,0,0,24),LayoutOrder=3,
-    BackgroundColor3=Color3.fromRGB(60,140,220),Text="COPY ALL",Font=FONT_B,TextSize=12,
-    TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=dbgBg}); corner(dbgCpyAllBtn,6)
-local dbgLogs={}
-local dbgAllLogs={}
+local function mkDbgBox(layoutOrder, borderCol, placeholder)
+    local bg=mk("Frame",{Size=UDim2.new(1,0,0,240),BackgroundColor3=C.card,BorderSizePixel=0,
+        LayoutOrder=layoutOrder,Parent=logScroll}); corner(bg,10); stroke(bg,borderCol,1.5)
+    local box=mk("TextLabel",{Size=UDim2.new(1,-16,1,-66),Position=UDim2.new(0,8,0,8),
+        BackgroundTransparency=1,Text=placeholder,TextColor3=C.textMute,
+        Font=Enum.Font.Code,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
+        TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=bg})
+    local cpBtn=mk("TextButton",{Size=UDim2.new(0.5,-12,0,26),Position=UDim2.new(0,8,1,-34),
+        BackgroundColor3=borderCol,Text="COPY",Font=FONT_B,TextSize=12,
+        TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=bg}); corner(cpBtn,6)
+    local cpAllBtn=mk("TextButton",{Size=UDim2.new(0.5,-12,0,26),Position=UDim2.new(0.5,4,1,-34),
+        BackgroundColor3=Color3.fromRGB(40,40,60),Text="COPY ALL",Font=FONT_B,TextSize=12,
+        TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=bg}); corner(cpAllBtn,6)
+    local logs={}; local allLogs={}
+    local function logFn(s)
+        local line=tostring(s)
+        table.insert(allLogs,line)
+        table.insert(logs,1,line); if #logs>60 then logs[#logs]=nil end
+        pcall(function() box.Text=table.concat(logs,"\n") end)
+    end
+    cpBtn.MouseButton1Click:Connect(function()
+        pcall(_cp,box.Text)
+        cpBtn.Text="COPIED!"; task.delay(1.5,function() cpBtn.Text="COPY" end)
+    end)
+    cpAllBtn.MouseButton1Click:Connect(function()
+        local ok=pcall(_cp,table.concat(allLogs,"\n"))
+        cpAllBtn.Text=ok and "COPIED ALL!" or "GAGAL"
+        task.delay(1.5,function() cpAllBtn.Text="COPY ALL ("..#allLogs..")" end)
+    end)
+    return logFn
+end
+local dbgLogs={}; local dbgAllLogs={}
+local _dbgFn = mkDbgBox(5, Color3.fromRGB(60,140,220), "— menunggu weather scan —")
 dbgLog = function(s)
     local line=tostring(s)
     table.insert(dbgAllLogs,line)
-    table.insert(dbgLogs,1,line); if #dbgLogs>50 then dbgLogs[#dbgLogs]=nil end
-    pcall(function() dbgBox.Text=table.concat(dbgLogs,"\n") end)
+    table.insert(dbgLogs,1,line); if #dbgLogs>60 then dbgLogs[#dbgLogs]=nil end
+    _dbgFn(s)
 end
-dbgCpyBtn.MouseButton1Click:Connect(function()
-    pcall(_cp,dbgBox.Text)
-    dbgCpyBtn.Text="COPIED!"; task.delay(1.5,function() dbgCpyBtn.Text="COPY DEBUG" end)
-end)
-dbgCpyAllBtn.MouseButton1Click:Connect(function()
-    local txt=table.concat(dbgAllLogs,"\n")
-    local ok=pcall(function()
-        local fn=setclipboard or toclipboard or (syn and syn.clipboard and syn.clipboard.set)
-            or (Clipboard and Clipboard.set)
-        if fn then fn(txt) end
-    end)
-    dbgCpyAllBtn.Text=ok and "COPIED ALL!" or "GAGAL COPY"
-    task.delay(1.5,function() dbgCpyAllBtn.Text="COPY ALL ("..#dbgAllLogs.." baris)" end)
-end)
 
 -- ===================== DEBUG MUTASI LOG =====================
 sectionHeader(logScroll,"\u{2022} DEBUG MUTASI",4)
-local mutBg=mk("Frame",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
-    BackgroundColor3=C.card,BorderSizePixel=0,
-    LayoutOrder=6,Parent=logScroll}); corner(mutBg,10); stroke(mutBg,Color3.fromRGB(140,60,220),1)
-mk("UIListLayout",{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder,Parent=mutBg})
-mk("UIPadding",{PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,8),
-    PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8),Parent=mutBg})
-local mutBox=mk("TextLabel",{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
-    LayoutOrder=1,BackgroundTransparency=1,Text="— menunggu scan buah —",TextColor3=C.textMute,
-    Font=Enum.Font.Code,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,
-    TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Parent=mutBg})
-local mutCpyBtn=mk("TextButton",{Size=UDim2.new(1,0,0,24),LayoutOrder=2,
-    BackgroundColor3=Color3.fromRGB(140,60,220),Text="COPY DEBUG",Font=FONT_B,TextSize=12,
-    TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=mutBg}); corner(mutCpyBtn,6)
-local mutCpyAllBtn=mk("TextButton",{Size=UDim2.new(1,0,0,24),LayoutOrder=3,
-    BackgroundColor3=Color3.fromRGB(100,40,180),Text="COPY ALL",Font=FONT_B,TextSize=12,
-    TextColor3=Color3.fromRGB(255,255,255),AutoButtonColor=false,Parent=mutBg}); corner(mutCpyAllBtn,6)
+local _mutFn = mkDbgBox(6, Color3.fromRGB(140,60,220), "— menunggu scan buah —")
 local mutLogs={}; local mutAllLogs={}
 mutLog = function(s)
     local line=tostring(s)
     table.insert(mutAllLogs,line)
     table.insert(mutLogs,1,line); if #mutLogs>80 then mutLogs[#mutLogs]=nil end
-    pcall(function() mutBox.Text=table.concat(mutLogs,"\n") end)
+    _mutFn(s)
 end
-mutCpyBtn.MouseButton1Click:Connect(function()
-    pcall(_cp, mutBox.Text)
-    mutCpyBtn.Text="COPIED!"; task.delay(1.5,function() mutCpyBtn.Text="COPY DEBUG" end)
-end)
-mutCpyAllBtn.MouseButton1Click:Connect(function()
-    local txt=table.concat(mutAllLogs,"\n")
-    local ok=pcall(function()
-        local fn=setclipboard or toclipboard or (syn and syn.clipboard and syn.clipboard.set)
-            or (Clipboard and Clipboard.set)
-        if fn then fn(txt) end
-    end)
-    mutCpyAllBtn.Text=ok and "COPIED ALL!" or "GAGAL COPY"
-    task.delay(1.5,function() mutCpyAllBtn.Text="COPY ALL ("..#mutAllLogs.." baris)" end)
-end)
 
 -- ===================== STATE =====================
 local logs={}; local running=false; local stopRequested=false
